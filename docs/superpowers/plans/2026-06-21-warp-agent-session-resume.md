@@ -46,6 +46,29 @@
 
 ---
 
+## Task 0: Spike — prove restore-time injection works (fail-fast)
+
+> **Why first:** The entire feature is worthless if Warp can't inject a command into a restored pane after its shell boots. This is the only real unknown (the gpui `PtyController` handle path + `Bootstrapped` subscription) and the load-bearing assumption (Warp snapshots panes at `cmd-Q`). Prove both with throwaway code *before* building any capture machinery. If this fails, Tasks 1–6 are wasted.
+
+**Files:**
+- Modify (temporarily): `app/src/pane_group/mod.rs:~1655` (restore path)
+
+- [ ] **Step 1: Resolve the plumbing.** Run `rg -n "\.write_command\(" app/src` and read one existing call site to learn how a `PtyController` model handle is reached and which `ShellType` it passes. Confirm the `Bootstrapped` subscription pattern at `app/src/terminal/writeable_pty/pty_controller.rs:111-122`.
+- [ ] **Step 2: Confirm snapshot cadence.** Run `rg -n "save_pane_state|persist.*pane|snapshot" app/src/persistence app/src/app_state.rs` and trace callers. Record: does persistence run on `cmd-Q` (required — almost certainly yes, since cwd already restores) and is it periodic (determines crash coverage)? Note the answer for Task 8's README.
+- [ ] **Step 3: Hardcode the spike.** In the restore path after `TerminalPane::new(...)`, subscribe to the pane's model events and on the first non-subshell `Bootstrapped`, call `write_command("echo WARP_RESUME_SPIKE", shell_type, CommandExecutionSource::User, ctx)` once. (This is the exact skeleton Task 7 will generalize.)
+- [ ] **Step 4: Build + manual verify.** `cargo build -p app`, launch the build, open a tab, run any command, `cmd-Q`, relaunch.
+  Expected: the restored tab auto-runs `echo WARP_RESUME_SPIKE` after the shell boots.
+- [ ] **Step 5: Commit the spike** (on the branch; Task 7 replaces the hardcode).
+
+```bash
+git add app/src/pane_group/mod.rs
+git commit -m "spike(agent-resume): prove restore-time command injection after bootstrap"
+```
+
+If Step 4 fails, STOP and report — the design's replay mechanism needs rethinking before any further work.
+
+---
+
 ## Task 1: Shared registry CLI (`warp-agent-resume`)
 
 **Files:**
@@ -629,7 +652,7 @@ git commit -m "feat(agent-resume): capture resume command into pane snapshot"
 **Interfaces:**
 - Consumes: `terminal_snapshot.on_restore_command`; the `Bootstrapped` event (`AnsiHandlerEvent::Bootstrapped`, `app/src/terminal/model_events.rs:449`); `PtyController::write_command(&str, ShellType, CommandExecutionSource::User, ctx)` (`app/src/terminal/writeable_pty/pty_controller.rs:511`).
 
-> **Implementer note (resolve before coding):** The one detail not fully pinned is how to reach the pane's `PtyController` model handle from the restore path to call `write_command`, and which model dispatches `Bootstrapped`. Find the canonical pattern by locating an existing programmatic command-send: `rg "\.write_command\(" app/src` (the Warp AI agent already runs commands in a pane this way). Copy that access path (TerminalManager → writeable pty/PtyController model handle) and its `ShellType` source. Subscribe with the documented pattern `ctx.subscribe_to_model(&model_event_dispatcher, |me, event, ctx| match event { ModelEvent::Handler(AnsiHandlerEvent::Bootstrapped { .. }) => { /* fire once */ } _ => {} })` (see `pty_controller.rs:111-122`).
+> **This task generalizes the Task 0 spike** — the handle path and subscription pattern were already proven there. The only change from the spike: read the command from `terminal_snapshot.on_restore_command` instead of the hardcoded `"echo WARP_RESUME_SPIKE"`, and guard on `Some`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -651,7 +674,7 @@ Expected: FAIL (command never sent).
 
 - [ ] **Step 3: Write minimal implementation**
 
-In `mod.rs`, after the restored `TerminalPane::new(...)` (~1655), when `terminal_snapshot.on_restore_command` is `Some(cmd)`, register a one-shot subscription that, on the first `Bootstrapped`, calls `write_command(&cmd, shell_type, CommandExecutionSource::User, ctx)` on the pane's PtyController, then drops itself. Concrete shape (adapt the handle access per the implementer note):
+Replace the Task 0 spike's hardcoded `"echo WARP_RESUME_SPIKE"` with the snapshot field. After the restored `TerminalPane::new(...)` (~1655), when `terminal_snapshot.on_restore_command` is `Some(cmd)`, the already-proven one-shot subscription calls `write_command(&cmd, …)`:
 
 ```rust
 if let Some(cmd) = terminal_snapshot.on_restore_command.clone() {
@@ -733,9 +756,9 @@ Run: `cargo build -p app` (or the project's release target). Launch the built Wa
 In the built Warp, in ONE repo directory open 3 tabs: tab1 `claude`, tab2 `claude`, tab3 `codex`. Give each a distinct first message so the sessions differ. Then `cmd-Q`; relaunch Warp.
 Expected: each of the 3 tabs auto-runs its own `claude --resume <id>` / `codex resume <id>` after the shell boots, resuming the correct distinct session.
 
-- [ ] **Step 5: Verify the snapshot-cadence (crash) caveat**
+- [ ] **Step 5: Document the snapshot-cadence finding**
 
-Confirm the spec's open question: determine whether Warp persists pane snapshots periodically or only on shutdown (search: `rg -n "save_pane_state|snapshot" app/src/persistence app/src/app_state.rs` and trace callers). Document the finding in `tools/agent-resume/README.md`: `cmd-Q`/update-restart are fully covered; the crash case is covered only if persistence is periodic. No code change if shutdown-only — it simply degrades to today's behavior for crashes.
+Write the cadence finding from Task 0 Step 2 into `tools/agent-resume/README.md`: `cmd-Q`/update-restart are fully covered; the crash case is covered only if persistence is periodic. No code change if shutdown-only — it degrades to today's behavior for crashes.
 
 - [ ] **Step 6: Commit**
 
@@ -751,6 +774,8 @@ git commit -m "feat(agent-resume): installer + e2e docs"
 **Spec coverage:**
 - Registry contract → Task 1. Claude capture → Task 2. Codex capture → Task 3. Rust reader → Task 4. Persist field/DB → Task 5. Snapshot population → Task 6. Replay on Bootstrapped → Task 7. Install + E2E + cadence verification → Task 8. Edge cases (continue/picker passthrough, outside-pane no-op, idempotent remove, recursion guard) → Tasks 1–3. ✅ All spec sections map to a task.
 
-**Placeholder scan:** No "TBD/TODO". Two spots delegate to a `rg`-driven "copy the existing pattern" step (Task 6 harness setup, Task 7 PtyController handle): these are explicit, actionable instructions with the exact search command and the real APIs to call — required because the gpui model-plumbing handle path must be taken from live code rather than fabricated. Flagged as the only adaptation points.
+**Placeholder scan:** No "TBD/TODO". The one genuine unknown — the gpui `PtyController` handle path + `Bootstrapped` subscription — is de-risked up front by the Task 0 spike (`rg`-driven, with the exact APIs), and Task 7 only swaps the hardcoded string for the snapshot field. Task 6's harness setup delegates to "copy the existing assertion pattern" with the exact search command — required because the integration harness idioms must come from live code, not fabrication.
+
+**Risk ordering (fail-fast):** The riskiest/most-uncertain work (restore-time injection + cadence assumption) is Task 0, before any capture machinery is built. Cheap, certain script work (Tasks 1–3) and mechanical persistence plumbing (Tasks 4–5) follow.
 
 **Type consistency:** `on_restore_command: Option<String>` is used identically in `TerminalPaneSnapshot`, `NewTerminalPane`, `TerminalPane`, schema column, both SQLite call sites, and the snapshot constructor. Registry JSON shape `{ "command", "cwd" }` matches between the shell `write` (Task 1), the Rust `RegistryEntry` (Task 4, reads only `command`), and the codex hook (Task 3). Resume command strings (`claude --resume <id>`, `codex resume <id>`) consistent across Tasks 2/3 and the design. ✅
