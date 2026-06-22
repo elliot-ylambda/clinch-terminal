@@ -1660,6 +1660,26 @@ impl PaneGroup {
                     ctx,
                 );
 
+                // SPIKE (task 0): remove/generalize in task 7.
+                // Prove restore-time command injection: register a one-shot command
+                // that runs in this restored pane after its shell finishes bootstrapping.
+                // Task 7 replaces the hardcoded string with `terminal_snapshot.on_restore_command`.
+                #[cfg(feature = "local_tty")]
+                {
+                    let manager_handle = pane_data.terminal_manager(ctx);
+                    manager_handle.update(ctx, |terminal_manager, ctx| {
+                        if let Some(manager) = terminal_manager
+                            .as_any()
+                            .downcast_ref::<local_tty::TerminalManager>()
+                        {
+                            manager.set_on_restore_command(
+                                "echo WARP_RESUME_SPIKE".to_string(),
+                                ctx,
+                            );
+                        }
+                    });
+                }
+
                 let terminal_pane_id = pane_data.terminal_pane_id();
                 let pane_id = terminal_pane_id.into();
                 pane_contents.insert(pane_id, Box::new(pane_data));

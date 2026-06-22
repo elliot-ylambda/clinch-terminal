@@ -17,7 +17,7 @@ use crate::terminal::model::ansi::Handler;
 use crate::terminal::model::completions::ShellCompletion;
 use crate::terminal::model::escape_sequences;
 use crate::terminal::model::session::{
-    ExecutorCommandEvent, InBandCommandCancelledEvent, SessionInfo, Sessions,
+    ExecutorCommandEvent, InBandCommandCancelledEvent, SessionId, SessionInfo, Sessions,
 };
 use crate::terminal::model_events::{AnsiHandlerEvent, ModelEvent, ModelEventDispatcher};
 use crate::terminal::shell::ShellType;
@@ -96,6 +96,10 @@ pub struct PtyController<T: EventLoopSender> {
     #[cfg(not(target_family = "wasm"))]
     bootstrap_file: Option<TempBootstrapFile>,
     in_flight_native_completions_state: Option<NativeShellCompletionsState>,
+    // SPIKE (task 0): remove/generalize in task 7.
+    // One-shot command to run after the (top-level) shell finishes bootstrapping
+    // on restore. Taken (and cleared) on the first non-subshell `Bootstrapped`.
+    pending_on_restore_command: Option<String>,
 }
 
 impl<T: EventLoopSender> PtyController<T> {
@@ -117,8 +121,8 @@ impl<T: EventLoopSender> PtyController<T> {
             }) => {
                 me.initialize_shell(pending_session_info.as_ref(), ctx);
             }
-            ModelEvent::Handler(AnsiHandlerEvent::Bootstrapped { is_subshell, .. }) => {
-                me.shell_bootstrapped(*is_subshell);
+            ModelEvent::Handler(AnsiHandlerEvent::Bootstrapped { is_subshell, session_id }) => {
+                me.shell_bootstrapped(*is_subshell, *session_id, ctx);
             }
             ModelEvent::Handler(AnsiHandlerEvent::SetBracketedPaste) => {
                 me.is_bracketed_paste_enabled = true;
@@ -222,6 +226,8 @@ impl<T: EventLoopSender> PtyController<T> {
             #[cfg(not(target_family = "wasm"))]
             bootstrap_file: None,
             in_flight_native_completions_state: None,
+            // SPIKE (task 0): remove/generalize in task 7.
+            pending_on_restore_command: None,
         }
     }
 
@@ -487,7 +493,12 @@ impl<T: EventLoopSender> PtyController<T> {
     }
 
     /// Handles the shell having finished bootstrapping.
-    fn shell_bootstrapped(&mut self, is_subshell: bool) {
+    fn shell_bootstrapped(
+        &mut self,
+        is_subshell: bool,
+        session_id: SessionId,
+        ctx: &mut ModelContext<Self>,
+    ) {
         if is_subshell {
             self.is_user_command_executing = false;
         }
@@ -496,6 +507,39 @@ impl<T: EventLoopSender> PtyController<T> {
         // file is no longer needed.
         #[cfg(not(target_family = "wasm"))]
         self.bootstrap_file.take();
+
+        // SPIKE (task 0): remove/generalize in task 7.
+        // On the first non-subshell bootstrap, run the one-shot restore command
+        // (if any) exactly once. `take()` guarantees it fires only once.
+        if !is_subshell {
+            if let Some(command) = self.pending_on_restore_command.take() {
+                if let Some(shell_type) = self
+                    .sessions
+                    .as_ref(ctx)
+                    .get(session_id)
+                    .map(|session| session.shell().shell_type())
+                {
+                    self.write_command(
+                        &command,
+                        shell_type,
+                        CommandExecutionSource::User,
+                        ctx,
+                    );
+                } else {
+                    log::warn!(
+                        "on_restore_command spike: no shell type for session {session_id:?}; skipping"
+                    );
+                }
+            }
+        }
+    }
+
+    /// SPIKE (task 0): remove/generalize in task 7.
+    /// Registers a one-shot command to run after the top-level shell finishes
+    /// bootstrapping. Used by the restore path to replay a command in a
+    /// restored pane once its shell is ready.
+    pub fn set_on_restore_command(&mut self, command: String) {
+        self.pending_on_restore_command = Some(command);
     }
 
     /// Converts the given `command` into a byte array and writes its corresponding bytes to the PTY.
