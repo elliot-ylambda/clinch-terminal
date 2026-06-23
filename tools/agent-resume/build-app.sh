@@ -32,10 +32,21 @@ if [[ "${WARP_ELLIOT_REBRAND:-1}" = "1" ]]; then
   NAME="${WARP_ELLIOT_NAME:-Warp (Elliot)}"
   # Display name only — bundle id and channel are unchanged, so data isolation holds.
   /usr/bin/plutil -replace CFBundleDisplayName -string "$NAME" "$DEST/Contents/Info.plist"
-  # Editing Info.plist invalidates the signature; re-sign ad-hoc so macOS will launch it.
-  # (Locally-built apps are not quarantined, so ad-hoc signing is sufficient here.)
-  codesign --force --deep --sign - "$DEST" >/dev/null 2>&1 || \
-    echo "warning: ad-hoc re-sign failed; if macOS reports the app is damaged, run: codesign --force --deep -s - '$DEST'"
+  # Editing Info.plist invalidates the signature, so we must re-sign. Use a STABLE
+  # identity (the same Apple Development cert script/macos/bundle uses), NOT ad-hoc:
+  # macOS keys persisted TCC permission grants on the signing identity, so an ad-hoc
+  # signature makes the OS re-prompt for permissions on EVERY launch. Matches
+  # script/macos/bundle:696.
+  IDENTITY="$(security find-identity -v -p codesigning | grep 'Apple Development' | head -1 | awk '{print $2}')"
+  if [[ -n "$IDENTITY" ]]; then
+    codesign --force --deep --options runtime --sign "$IDENTITY" \
+      --entitlements script/Debug-Entitlements.plist "$DEST" >/dev/null
+    echo "==> Re-signed with stable identity ($IDENTITY); macOS will remember permission grants."
+  else
+    codesign --force --deep --sign - "$DEST" >/dev/null 2>&1 || true
+    echo "==> WARNING: no 'Apple Development' identity in keychain; signed ad-hoc."
+    echo "    macOS will re-prompt for permissions every launch. Create a signing cert to fix."
+  fi
   echo "==> Display name set to: $NAME"
 fi
 
