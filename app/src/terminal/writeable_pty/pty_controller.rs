@@ -96,9 +96,9 @@ pub struct PtyController<T: EventLoopSender> {
     #[cfg(not(target_family = "wasm"))]
     bootstrap_file: Option<TempBootstrapFile>,
     in_flight_native_completions_state: Option<NativeShellCompletionsState>,
-    // SPIKE (task 0): remove/generalize in task 7.
-    // One-shot command to run after the (top-level) shell finishes bootstrapping
-    // on restore. Taken (and cleared) on the first non-subshell `Bootstrapped`.
+    // One-shot agent-resume command to run after the (top-level) shell finishes
+    // bootstrapping on restore. Taken (and cleared) on the first non-subshell
+    // `Bootstrapped` event.
     pending_on_restore_command: Option<String>,
 }
 
@@ -226,7 +226,6 @@ impl<T: EventLoopSender> PtyController<T> {
             #[cfg(not(target_family = "wasm"))]
             bootstrap_file: None,
             in_flight_native_completions_state: None,
-            // SPIKE (task 0): remove/generalize in task 7.
             pending_on_restore_command: None,
         }
     }
@@ -508,9 +507,8 @@ impl<T: EventLoopSender> PtyController<T> {
         #[cfg(not(target_family = "wasm"))]
         self.bootstrap_file.take();
 
-        // SPIKE (task 0): remove/generalize in task 7.
-        // On the first non-subshell bootstrap, run the one-shot restore command
-        // (if any) exactly once. `take()` guarantees it fires only once.
+        // On the first non-subshell bootstrap, run the one-shot agent-resume
+        // command (if any) exactly once. `take()` guarantees it fires only once.
         if !is_subshell {
             if let Some(command) = self.pending_on_restore_command.take() {
                 if let Some(shell_type) = self
@@ -527,17 +525,16 @@ impl<T: EventLoopSender> PtyController<T> {
                     );
                 } else {
                     log::warn!(
-                        "on_restore_command spike: no shell type for session {session_id:?}; skipping"
+                        "on_restore_command: no shell type for session {session_id:?}; skipping"
                     );
                 }
             }
         }
     }
 
-    /// SPIKE (task 0): remove/generalize in task 7.
     /// Registers a one-shot command to run after the top-level shell finishes
-    /// bootstrapping. Used by the restore path to replay a command in a
-    /// restored pane once its shell is ready.
+    /// bootstrapping. Used by the restore path to replay a captured agent-resume
+    /// command in a restored pane once its shell is ready.
     pub fn set_on_restore_command(&mut self, command: String) {
         self.pending_on_restore_command = Some(command);
     }

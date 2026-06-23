@@ -1660,24 +1660,24 @@ impl PaneGroup {
                     ctx,
                 );
 
-                // SPIKE (task 0): remove/generalize in task 7.
-                // Prove restore-time command injection: register a one-shot command
-                // that runs in this restored pane after its shell finishes bootstrapping.
-                // Task 7 replaces the hardcoded string with `terminal_snapshot.on_restore_command`.
+                // Auto-resume agent sessions: if this pane had a live agent session
+                // captured at snapshot time, run its resume command (e.g.
+                // `claude --resume <id>`) once the restored shell finishes bootstrapping.
                 #[cfg(feature = "local_tty")]
                 {
-                    let manager_handle = pane_data.terminal_manager(ctx);
-                    manager_handle.update(ctx, |terminal_manager, ctx| {
-                        if let Some(manager) = terminal_manager
-                            .as_any()
-                            .downcast_ref::<local_tty::TerminalManager>()
-                        {
-                            manager.set_on_restore_command(
-                                "echo WARP_RESUME_SPIKE".to_string(),
-                                ctx,
-                            );
-                        }
-                    });
+                    if let Some(on_restore_command) =
+                        terminal_snapshot.on_restore_command.clone()
+                    {
+                        let manager_handle = pane_data.terminal_manager(ctx);
+                        manager_handle.update(ctx, |terminal_manager, ctx| {
+                            if let Some(manager) = terminal_manager
+                                .as_any()
+                                .downcast_ref::<local_tty::TerminalManager>()
+                            {
+                                manager.set_on_restore_command(on_restore_command, ctx);
+                            }
+                        });
+                    }
                 }
 
                 let terminal_pane_id = pane_data.terminal_pane_id();
