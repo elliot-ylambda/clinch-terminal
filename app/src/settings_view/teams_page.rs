@@ -1844,7 +1844,8 @@ impl SettingsPageMeta for TeamsPageView {
     }
 
     fn should_render(&self, _ctx: &AppContext) -> bool {
-        true
+        // Clinch (skip_login): no backend, so hide the Teams settings page.
+        !cfg!(feature = "skip_login")
     }
 
     fn on_tab_pressed(&mut self, ctx: &mut ViewContext<Self>) {

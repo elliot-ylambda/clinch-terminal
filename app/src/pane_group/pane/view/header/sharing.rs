@@ -77,6 +77,10 @@ impl<P: BackingView> PaneHeader<P> {
     }
 
     pub fn is_sharing_dialog_enabled<C: warpui::ViewAsRef>(&self, ctx: &C) -> bool {
+        // Clinch (skip_login): sharing needs the backend; disable the share button.
+        if cfg!(feature = "skip_login") {
+            return false;
+        }
         let sharing_enabled = self.has_shareable_object(ctx);
         if self.has_shareable_shared_session(ctx) {
             sharing_enabled && FeatureFlag::SessionSharingAcls.is_enabled()

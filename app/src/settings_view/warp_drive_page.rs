@@ -117,7 +117,8 @@ impl SettingsPageMeta for WarpDriveSettingsPageView {
     }
 
     fn should_render(&self, _ctx: &AppContext) -> bool {
-        FeatureFlag::OpenWarpNewSettingsModes.is_enabled()
+        // Clinch (skip_login): no backend, so hide the Warp Drive settings page.
+        !cfg!(feature = "skip_login") && FeatureFlag::OpenWarpNewSettingsModes.is_enabled()
     }
 
     fn update_filter(&mut self, query: &str, ctx: &mut ViewContext<Self>) -> MatchData {

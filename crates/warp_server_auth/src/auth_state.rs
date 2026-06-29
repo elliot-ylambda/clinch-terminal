@@ -121,6 +121,17 @@ impl AuthState {
         let state = Self::new(ctx);
 
         if Self::should_use_test_user() {
+            // Clinch (skip_login): present the test user as anonymous so the app's
+            // existing `is_anonymous_or_logged_out()` gates hide all backend-only
+            // features (AI/agent mode, Drive, billing/teams). `is_logged_in()` is
+            // unchanged (credentials are still set below), so the login screen stays
+            // skipped. Mirrors `new_anonymous_for_test()` above.
+            #[cfg(feature = "skip_login")]
+            state.set_user(Some(User {
+                anonymous_user_type: Some(AnonymousUserType::NativeClientAnonymousUserFeatureGated),
+                ..User::test()
+            }));
+            #[cfg(not(feature = "skip_login"))]
             state.set_user(Some(User::test()));
             #[cfg(any(
                 test,

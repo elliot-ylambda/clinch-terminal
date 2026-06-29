@@ -275,7 +275,8 @@ impl TabData {
                             })
                             .into_item(),
                     );
-                } else {
+                } else if !cfg!(feature = "skip_login") {
+                    // Clinch (skip_login): sharing needs the backend; omit the item.
                     menu_items.push(
                         MenuItemFields::new("Share session")
                             .with_on_select_action(WorkspaceAction::OpenShareSessionModal(index))
