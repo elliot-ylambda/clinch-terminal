@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # Builds the OSS-channel Warp client (with the Clinch agent-resume feature compiled
 # in), rebrands it to "Clinch", and installs it to /Applications as a distinct,
-# co-installable app.
+# co-installable app. Built with the `skip_login` Cargo feature so it runs fully
+# local: no sign-in screen, and authenticated backend calls hard-fail — it never
+# phones home to Warp. Download → use immediately.
 #
-# Clinch is a fork of Warp (https://github.com/warpdotdev/warp), AGPL-3.0. The only
-# functional change vs. upstream is agent-session resume on restart.
+# Clinch is a fork of Warp (https://github.com/warpdotdev/warp), AGPL-3.0. The
+# functional changes vs. upstream are agent-session resume on restart and the
+# local-only (no-login) build.
 #
 # Why this is safe to run alongside the production (downloaded) Warp:
 #   - The build keeps the OSS *channel* but is rebranded to bundle id
@@ -21,8 +24,13 @@ set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
-echo "==> Building + bundling WarpOss (oss channel)…"
-WARP_SKIP_COMMON_SKILLS_INSTALL=1 ./script/run --dont-open
+# `--features skip_login`: boots straight to the terminal (no login screen) and makes
+# every authenticated backend request hard-fail by design — see
+# crates/warp_server_client/src/auth/session.rs ("skip_login enabled; failing all
+# authenticated requests"). ./script/run appends this to the oss feature set and
+# builds `cargo bundle --bin warp-oss --features gui,skip_login`.
+echo "==> Building + bundling WarpOss (oss channel, skip_login = local-only)…"
+WARP_SKIP_COMMON_SKILLS_INSTALL=1 ./script/run --dont-open --features skip_login
 
 APP="$(find target -maxdepth 5 -type d -name 'WarpOss.app' | head -1)"
 [[ -n "$APP" ]] || { echo "error: WarpOss.app not produced" >&2; exit 1; }
@@ -91,4 +99,5 @@ fi
 
 echo "==> Installed: $DEST"
 echo "Launch it from /Applications or Launchpad. It runs independently of your downloaded Warp."
+echo "Mode: local-only (skip_login) — no sign-in, no backend calls to Warp."
 echo "Data dir: ~/.warp-oss (separate from production ~/.warp)."

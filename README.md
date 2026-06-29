@@ -5,8 +5,9 @@
 When you quit and relaunch, Clinch restores each tab *and* re-launches the Claude Code / Codex agent that was running in it (`claude --resume` / `codex resume`) once the shell finishes booting — instead of leaving you with a dead shell. macOS only.
 
 - **What's added:** agent-session resume on restart. See [`tools/agent-resume/`](tools/agent-resume/) for how it works.
+- **No sign-in, fully local:** built with the `skip_login` feature — Clinch opens straight to the terminal with no account, and authenticated calls to Warp's servers hard-fail by design, so it never phones home. Download and use it immediately. (Cloud-only features — Warp AI, Drive, teams — are inert.)
 - **Based on:** [warpdotdev/warp](https://github.com/warpdotdev/warp), the open-source Warp client.
-- **License:** [AGPL-3.0](LICENSE-AGPL), same as upstream (UI crates remain [MIT](LICENSE-MIT)). Clinch is a *modified version* of Warp; the only functional change versus upstream is the agent-session-resume feature described above.
+- **License:** [AGPL-3.0](LICENSE-AGPL), same as upstream (UI crates remain [MIT](LICENSE-MIT)). Clinch is a *modified version* of Warp; the functional changes versus upstream are the agent-session-resume feature and the local-only (no-login) build described above.
 - **Not affiliated with Warp or Denver Technologies, Inc.** "Warp" is their trademark; "Clinch" is an independent, unofficial fork and is not endorsed by them.
 
 ### Build Clinch
