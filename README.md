@@ -1,3 +1,25 @@
+# Clinch
+
+**Clinch is a fork of [Warp](https://github.com/warpdotdev/warp) that doesn't kill your CLI agent sessions.**
+
+When you quit and relaunch, Clinch restores each tab *and* re-launches the Claude Code / Codex agent that was running in it (`claude --resume` / `codex resume`) once the shell finishes booting — instead of leaving you with a dead shell. macOS only.
+
+- **What's added:** agent-session resume on restart. See [`tools/agent-resume/`](tools/agent-resume/) for how it works.
+- **Based on:** [warpdotdev/warp](https://github.com/warpdotdev/warp), the open-source Warp client.
+- **License:** [AGPL-3.0](LICENSE-AGPL), same as upstream (UI crates remain [MIT](LICENSE-MIT)). Clinch is a *modified version* of Warp; the only functional change versus upstream is the agent-session-resume feature described above.
+- **Not affiliated with Warp or Denver Technologies, Inc.** "Warp" is their trademark; "Clinch" is an independent, unofficial fork and is not endorsed by them.
+
+### Build Clinch
+
+```bash
+./script/bootstrap                   # platform-specific setup
+./tools/agent-resume/build-app.sh    # builds + installs "Clinch.app" to /Applications
+```
+
+---
+
+> The upstream Warp README follows.
+
 <a href="https://www.warp.dev">
     <img width="1024" alt="Warp Agentic Development Environment product preview" src="https://github.com/user-attachments/assets/9976b2da-2edd-4604-a36c-8fd53719c6d4" />
 </a>

@@ -1,18 +1,22 @@
 #!/usr/bin/env bash
-# Builds the OSS-channel Warp app (with the agent-resume feature compiled in),
-# optionally rebrands its display name, and installs it to /Applications as a
-# distinct, co-installable app.
+# Builds the OSS-channel Warp client (with the Clinch agent-resume feature compiled
+# in), rebrands it to "Clinch", and installs it to /Applications as a distinct,
+# co-installable app.
+#
+# Clinch is a fork of Warp (https://github.com/warpdotdev/warp), AGPL-3.0. The only
+# functional change vs. upstream is agent-session resume on restart.
 #
 # Why this is safe to run alongside the production (downloaded) Warp:
-#   - The OSS channel uses bundle id `dev.warp.WarpOss` (production is
-#     `dev.warp.Warp-Stable`), so macOS treats them as different apps.
-#   - Its data dir is `~/.warp-oss` + `~/Library/Application Support/dev.warp.WarpOss`,
+#   - The build keeps the OSS *channel* but is rebranded to bundle id
+#     `sh.clinch.Clinch` (production is `dev.warp.Warp-Stable`), so macOS treats them
+#     as different apps.
+#   - Its data dir is `~/.warp-oss` (channel-derived, so the rebrand doesn't move it),
 #     so the two never share session/restore state.
 #
 # Usage:
-#   ./tools/agent-resume/build-app.sh                 # name it "Elliot's Warp"
-#   WARP_ELLIOT_NAME="My Warp" ./tools/agent-resume/build-app.sh
-#   WARP_ELLIOT_REBRAND=0 ./tools/agent-resume/build-app.sh   # keep "WarpOss"
+#   ./tools/agent-resume/build-app.sh                 # name it "Clinch"
+#   CLINCH_NAME="My Build" ./tools/agent-resume/build-app.sh
+#   CLINCH_REBRAND=0 ./tools/agent-resume/build-app.sh        # keep "WarpOss"
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
@@ -24,8 +28,8 @@ APP="$(find target -maxdepth 5 -type d -name 'WarpOss.app' | head -1)"
 [[ -n "$APP" ]] || { echo "error: WarpOss.app not produced" >&2; exit 1; }
 echo "==> Built: $APP"
 
-NAME="${WARP_ELLIOT_NAME:-Elliot's Warp}"
-if [[ "${WARP_ELLIOT_REBRAND:-1}" = "1" ]]; then
+NAME="${CLINCH_NAME:-Clinch}"
+if [[ "${CLINCH_REBRAND:-1}" = "1" ]]; then
   DEST="/Applications/$NAME.app"
 else
   DEST="/Applications/WarpOss.app"
@@ -35,11 +39,19 @@ cp -R "$APP" "$DEST"
 # Remove a previous default-named install so we don't leave a duplicate behind.
 [[ "$DEST" != "/Applications/WarpOss.app" ]] && rm -rf "/Applications/WarpOss.app"
 
-if [[ "${WARP_ELLIOT_REBRAND:-1}" = "1" ]]; then
-  # Cosmetic name only (Finder/Dock/Launchpad/menu bar/system dialogs). Bundle id and
-  # channel are unchanged, so data isolation (~/.warp-oss) holds.
-  /usr/bin/plutil -replace CFBundleDisplayName -string "$NAME" "$DEST/Contents/Info.plist"
-  /usr/bin/plutil -replace CFBundleName        -string "$NAME" "$DEST/Contents/Info.plist"
+if [[ "${CLINCH_REBRAND:-1}" = "1" ]]; then
+  # Rebrand the display name (Finder/Dock/Launchpad/menu bar/system dialogs) AND the
+  # bundle id, so nothing user-visible carries the Warp mark. The oss *channel* is
+  # unchanged, so the data dir stays ~/.warp-oss and co-install with production Warp
+  # still holds (bundle id differs from dev.warp.Warp-Stable). The debug entitlements
+  # don't reference the bundle id, so the re-sign below is unaffected.
+  #
+  # NOTE: changing the bundle id makes macOS treat this as a new app, so the first
+  # launch re-prompts for TCC permissions (expected). Verify a built Clinch.app still
+  # signs in and restores sessions before distributing a binary.
+  /usr/bin/plutil -replace CFBundleDisplayName -string "$NAME"            "$DEST/Contents/Info.plist"
+  /usr/bin/plutil -replace CFBundleName        -string "$NAME"            "$DEST/Contents/Info.plist"
+  /usr/bin/plutil -replace CFBundleIdentifier  -string "sh.clinch.Clinch" "$DEST/Contents/Info.plist"
   # Editing Info.plist invalidates the signature, so we must re-sign. Use a STABLE
   # identity (the same Apple Development cert script/macos/bundle uses), NOT ad-hoc:
   # macOS keys persisted TCC permission grants on the signing identity, so an ad-hoc

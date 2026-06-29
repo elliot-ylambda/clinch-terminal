@@ -62,12 +62,11 @@ restart only loads the replay functions used on the next restore.
 ./tools/agent-resume/build-app.sh
 ```
 
-Builds the **OSS-channel** Warp with this feature compiled in, names it "Elliot's Warp"
-(set `WARP_ELLIOT_NAME` to change), and installs it to `/Applications`. The rename is
-cosmetic (display + bundle name); the bundle id stays `dev.warp.WarpOss`. It co-installs
-alongside your downloaded Warp:
-different bundle id (`dev.warp.WarpOss` vs `dev.warp.Warp-Stable`) and a separate data
-dir (`~/.warp-oss`), so the two never clobber each other's session state.
+Builds the **OSS-channel** client with this feature compiled in, names it "Clinch"
+(set `CLINCH_NAME` to change), and installs it to `/Applications`. The rebrand covers the
+display name and the bundle id (`sh.clinch.Clinch`). It co-installs alongside your
+downloaded Warp: different bundle id (`sh.clinch.Clinch` vs `dev.warp.Warp-Stable`) and a
+separate data dir (`~/.warp-oss`), so the two never clobber each other's session state.
 
 ## What survives what
 
