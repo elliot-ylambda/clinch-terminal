@@ -9352,7 +9352,8 @@ impl Workspace {
 
     fn user_menu_items(&self, app: &AppContext) -> Vec<MenuItem<WorkspaceAction>> {
         let mut items = Vec::new();
-        if !self.auth_state.is_anonymous_or_logged_out() {
+        // Clinch (skip_login): no signed-in identity, so omit the username header.
+        if !cfg!(feature = "skip_login") && !self.auth_state.is_anonymous_or_logged_out() {
             let name = self.auth_state.username_for_display().unwrap_or_default();
             items.push(MenuItemFields::new(name).with_disabled(true).into_item())
         }
@@ -9431,55 +9432,60 @@ impl Workspace {
                 .into_item(),
         );
 
-        items.extend([
+        items.push(
             MenuItemFields::new("Slack")
                 .with_on_select_action(WorkspaceAction::JoinSlack)
                 .into_item(),
-            MenuItem::Separator,
-        ]);
-
-        if self.auth_state.is_anonymous_or_logged_out() {
-            items.push(
-                MenuItemFields::new("Sign up")
-                    .with_on_select_action(WorkspaceAction::SignupAnonymousUser)
-                    .into_item(),
-            );
-        }
-
-        // Check if the user is on any paid plan to determine whether to show "Billing and Usage" or "Upgrade"
-        let is_on_paid_plan = UserWorkspaces::as_ref(app)
-            .current_workspace()
-            .map(|workspace| workspace.billing_metadata.is_user_on_paid_plan())
-            .unwrap_or(false);
-
-        if is_on_paid_plan {
-            items.push(
-                MenuItemFields::new("Billing and usage")
-                    .with_on_select_action(WorkspaceAction::ShowSettingsPage(
-                        SettingsSection::BillingAndUsage,
-                    ))
-                    .into_item(),
-            );
-        } else {
-            items.push(
-                MenuItemFields::new("Upgrade")
-                    .with_on_select_action(WorkspaceAction::ShowUpgrade)
-                    .into_item(),
-            );
-        }
-
-        items.push(
-            MenuItemFields::new("Invite a friend")
-                .with_on_select_action(WorkspaceAction::ShowReferralSettingsPage)
-                .into_item(),
         );
 
-        if !self.auth_state.is_anonymous_or_logged_out() {
+        // Clinch (skip_login) has no accounts: omit the entire user/billing section —
+        // Sign up / Upgrade / Invite a friend / Log out — and its leading separator.
+        if !cfg!(feature = "skip_login") {
+            items.push(MenuItem::Separator);
+
+            if self.auth_state.is_anonymous_or_logged_out() {
+                items.push(
+                    MenuItemFields::new("Sign up")
+                        .with_on_select_action(WorkspaceAction::SignupAnonymousUser)
+                        .into_item(),
+                );
+            }
+
+            // Check if the user is on any paid plan to determine whether to show "Billing and Usage" or "Upgrade"
+            let is_on_paid_plan = UserWorkspaces::as_ref(app)
+                .current_workspace()
+                .map(|workspace| workspace.billing_metadata.is_user_on_paid_plan())
+                .unwrap_or(false);
+
+            if is_on_paid_plan {
+                items.push(
+                    MenuItemFields::new("Billing and usage")
+                        .with_on_select_action(WorkspaceAction::ShowSettingsPage(
+                            SettingsSection::BillingAndUsage,
+                        ))
+                        .into_item(),
+                );
+            } else {
+                items.push(
+                    MenuItemFields::new("Upgrade")
+                        .with_on_select_action(WorkspaceAction::ShowUpgrade)
+                        .into_item(),
+                );
+            }
+
             items.push(
-                MenuItemFields::new("Log out")
-                    .with_on_select_action(WorkspaceAction::LogOut)
+                MenuItemFields::new("Invite a friend")
+                    .with_on_select_action(WorkspaceAction::ShowReferralSettingsPage)
                     .into_item(),
             );
+
+            if !self.auth_state.is_anonymous_or_logged_out() {
+                items.push(
+                    MenuItemFields::new("Log out")
+                        .with_on_select_action(WorkspaceAction::LogOut)
+                        .into_item(),
+                );
+            }
         }
         items
     }
@@ -20878,13 +20884,17 @@ impl Workspace {
     }
 
     fn render_avatar_button(&self, appearance: &Appearance, ctx: &AppContext) -> Box<dyn Element> {
-        let is_anonymous = self.auth_state.is_anonymous_or_logged_out();
+        // Clinch (skip_login) has no real user account, so present the avatar button as
+        // a neutral menu affordance — the existing logged-out gear-icon, no-tooltip
+        // path — instead of a signed-in identity (the user's "T" initial).
+        let is_anonymous =
+            cfg!(feature = "skip_login") || self.auth_state.is_anonymous_or_logged_out();
         let display_name = self
             .auth_state
             .username_for_display()
             .unwrap_or(DEFAULT_USER_DISPLAY_NAME.to_owned());
 
-        let avatar_content = if self.auth_state.is_anonymous_or_logged_out() {
+        let avatar_content = if is_anonymous {
             AvatarContent::Icon(icons::Icon::Gear)
         } else {
             self.auth_state
