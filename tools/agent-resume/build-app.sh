@@ -52,6 +52,25 @@ if [[ "${CLINCH_REBRAND:-1}" = "1" ]]; then
   /usr/bin/plutil -replace CFBundleDisplayName -string "$NAME"            "$DEST/Contents/Info.plist"
   /usr/bin/plutil -replace CFBundleName        -string "$NAME"            "$DEST/Contents/Info.plist"
   /usr/bin/plutil -replace CFBundleIdentifier  -string "sh.clinch.Clinch" "$DEST/Contents/Info.plist"
+
+  # Swap the Warp icon for the Clinch icon. The oss build ships a classic
+  # WarpOss.icns (the adaptive .icon format is skipped for the oss channel), so we
+  # replace that file and repoint CFBundleIconFile. CFBundleIconName is removed so
+  # macOS doesn't look for a (nonexistent) "Clinch" entry in an asset catalog.
+  # Regenerate the .icns from the SVG with branding/build-icon.sh.
+  ICON_SRC="tools/agent-resume/branding/Clinch.icns"
+  if [[ -f "$ICON_SRC" ]]; then
+    rm -f "$DEST/Contents/Resources/WarpOss.icns"
+    cp "$ICON_SRC" "$DEST/Contents/Resources/Clinch.icns"
+    /usr/bin/plutil -replace CFBundleIconFile -string "Clinch" "$DEST/Contents/Info.plist"
+    /usr/bin/plutil -remove  CFBundleIconName "$DEST/Contents/Info.plist" 2>/dev/null || true
+    touch "$DEST"   # nudge macOS to refresh the cached icon
+    echo "==> Icon: swapped in Clinch.icns"
+  else
+    echo "==> WARNING: $ICON_SRC missing; keeping the Warp icon." >&2
+    echo "    Build it with ./tools/agent-resume/branding/build-icon.sh" >&2
+  fi
+
   # Editing Info.plist invalidates the signature, so we must re-sign. Use a STABLE
   # identity (the same Apple Development cert script/macos/bundle uses), NOT ad-hoc:
   # macOS keys persisted TCC permission grants on the signing identity, so an ad-hoc

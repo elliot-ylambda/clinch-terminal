@@ -1,0 +1,21 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="512" y1="92" x2="512" y2="932" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0FB8A0"/>
+      <stop offset="1" stop-color="#0A6B63"/>
+    </linearGradient>
+    <linearGradient id="mark" x1="320" y1="300" x2="700" y2="730" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#D6FBF2"/>
+    </linearGradient>
+  </defs>
+  <!-- app tile (rounded square, Apple-ish padding) -->
+  <rect x="92" y="92" width="840" height="840" rx="190" fill="url(#bg)"/>
+  <!-- subtle top highlight -->
+  <rect x="92" y="92" width="840" height="420" rx="190" fill="#FFFFFF" opacity="0.06"/>
+  <!-- the "clinch": a bold C (clasp) open on the right -->
+  <path d="M 665 641 A 200 200 0 1 1 665 383"
+        stroke="url(#mark)" stroke-width="118" stroke-linecap="round" fill="none"/>
+  <!-- clasp gate: a short bar bridging the opening, like a carabiner latch -->
+  <rect x="600" y="476" width="150" height="72" rx="36" fill="url(#mark)"/>
+</svg>
