@@ -78,8 +78,11 @@ PATH="$TMP/bin:$PATH" warp_install_agent_notification_plugins >/dev/null 2>&1 \
   || fail "function aborted when a plugin command failed"
 
 # Case C: tools absent -> still exits 0, records nothing new.
+# Use an ISOLATED empty PATH (NOT ":$PATH") so command -v cannot fall through to a
+# real claude/codex on the host and run live plugin commands.
+mkdir -p "$TMP/empty"
 : > "$LOG"
-PATH="$TMP/empty:$PATH" warp_install_agent_notification_plugins >/dev/null 2>&1 \
+PATH="$TMP/empty" warp_install_agent_notification_plugins >/dev/null 2>&1 \
   || fail "function aborted when tools absent"
 [[ -s "$LOG" ]] && fail "recorded calls when no tools on PATH"
 
