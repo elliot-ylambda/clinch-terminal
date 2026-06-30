@@ -67,18 +67,34 @@ login of its own**.
 - Endpoint (extracted from the Claude Code 2.1.197 binary):
   **`GET https://api.anthropic.com/api/oauth/usage`**, `Authorization: Bearer <accessToken>`,
   plus the OAuth beta + version headers Claude Code sends.
-- Response is keyed by `rateLimitType`. Confirmed values and their UI labels:
-  - `five_hour` → "session limit" (5h window)
-  - `seven_day` → "weekly limit" (7d window)
-  - `seven_day_opus` / `seven_day_sonnet` / `seven_day_overage_included` → per-model weekly
-- Each entry carries a utilization percentage and a reset time, plus `overageDisabledReason`.
+- **Real response shape (captured live, 2026-06-30):**
 
-> **Known unknown (one implementation spike):** the exact JSON field names for the
-> percentage and reset timestamp in this response were not captured (only the
-> `rateLimitType` keys were extracted from the binary). The implementation plan's first
-> step is a tiny spike: read the Keychain token and `curl`/`reqwest` the endpoint once to
-> record the real response shape, then code against it. We map `five_hour` → session %,
-> `seven_day` → weekly %.
+```jsonc
+{
+  "five_hour": { "utilization": 78.0, "resets_at": "2026-07-01T02:30:00.49+00:00",
+                 "limit_dollars": null, "used_dollars": null, "remaining_dollars": null },
+  "seven_day": { "utilization": 43.0, "resets_at": "2026-07-04T15:00:00.49+00:00", ... },
+  "seven_day_opus": null, "seven_day_sonnet": null, /* per-model windows, often null */
+  "extra_usage": { "is_enabled": true, "used_credits": 35010.0, "currency": "USD", ... },
+  "limits": [
+    { "kind": "session",    "group": "session", "percent": 78, "severity": "warning",
+      "resets_at": "2026-07-01T02:30:00.49+00:00", "is_active": true },
+    { "kind": "weekly_all",  "group": "weekly",  "percent": 43, "severity": "normal",
+      "resets_at": "2026-07-04T15:00:00.49+00:00", "is_active": false }
+  ],
+  "spend": { "used": { "amount_minor": 35010, "currency": "USD", "exponent": 2 }, ... }
+}
+```
+
+- **Parsing rule:** prefer the normalized `limits[]` array — match `group == "session"`
+  (5h) and `group == "weekly"` (7d); use `percent` for the bar and `severity`
+  (`normal`/`warning`/`critical`…) directly for the chip color. Fall back to the
+  `five_hour.utilization` / `seven_day.utilization` + `resets_at` objects if `limits`
+  is absent. `resets_at` is ISO-8601 with offset; parse with `chrono`.
+- Working headers (200 OK): `Authorization: Bearer <accessToken>`,
+  `anthropic-beta: oauth-2025-04-20`, `anthropic-version: 2023-06-01`.
+- Keychain blob top-level keys: `["mcpOAuth", "claudeAiOauth"]`; read
+  `claudeAiOauth.accessToken`; `claudeAiOauth.expiresAt` is **epoch milliseconds**.
 
 ### 3.3 Codex — token totals + real plan-% (all local)
 
@@ -239,8 +255,8 @@ The footer must render correctly when *neither* tool has ever been run.
 - Unit tests in `cli_agent_usage` against fixture JSONL files (Claude + Codex) covering:
   aggregation across windows, dedup-by-`requestId`, today/week/month boundary edges
   (timezone, midnight), pricing math, malformed-line tolerance, and "no files at all".
-- `keychain` and `http` behind traits → tested with fakes; a recorded `/api/oauth/usage`
-  fixture (from the §3.2 spike) drives the Claude plan-% parser test.
+- `keychain` and `http` behind traits → tested with fakes; the recorded `/api/oauth/usage`
+  fixture (the §3.2 live capture) drives the Claude plan-% parser test.
 - A `cache` test proves unchanged files are not re-parsed (mtime/size gate).
 
 ## 13. Dependencies (all already in the workspace)
