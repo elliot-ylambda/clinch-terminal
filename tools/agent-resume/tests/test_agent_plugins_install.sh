@@ -36,7 +36,8 @@ PATH="$TMP/bin:$PATH" warp_install_agent_notification_plugins >/dev/null 2>&1 \
 
 # Case C: tools absent -> still exits 0, records nothing new.
 : > "$LOG"
-PATH="$TMP/empty:$PATH" warp_install_agent_notification_plugins >/dev/null 2>&1 \
+mkdir -p "$TMP/empty"
+PATH="$TMP/empty" warp_install_agent_notification_plugins >/dev/null 2>&1 \
   || fail "function aborted when tools absent"
 [[ -s "$LOG" ]] && fail "recorded calls when no tools on PATH"
 
