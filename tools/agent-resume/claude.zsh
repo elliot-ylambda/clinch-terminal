@@ -35,20 +35,24 @@ warp_agent_resume_resumable() {
 }
 
 # Resume <agent>'s session <id> if it is resumable, otherwise start a fresh session in this
-# pane. Called by Warp on restore. The fresh fallback runs the agent normally (so its
-# SessionStart hook re-captures it under this pane for the next restore).
+# pane. Called by Warp on restore. Any trailing args are launch flags carried over from how the
+# session was originally started (e.g. --dangerously-skip-permissions, --model <m>); they are
+# forwarded to both the resume and the fresh-fallback path so the session reopens the same way.
+# The fresh fallback runs the agent normally (so its SessionStart hook re-captures it under this
+# pane for the next restore).
 warp_agent_resume_launch() {
   local agent="$1" id="$2"
+  shift 2
   if warp_agent_resume_resumable "$agent" "$id"; then
     case "$agent" in
-      claude) claude --resume "$id" ;;
-      codex)  codex resume "$id" ;;
+      claude) claude --resume "$id" "$@" ;;
+      codex)  codex resume "$id" "$@" ;;
     esac
   else
     echo "warp: no resumable $agent session ($id) -- starting fresh." >&2
     case "$agent" in
-      claude) claude ;;
-      codex)  codex ;;
+      claude) claude "$@" ;;
+      codex)  codex "$@" ;;
     esac
   fi
 }

@@ -37,6 +37,13 @@ capture (agent SessionStart hooks)          replay (Rust, in Warp)
   `claude --resume`/`codex resume` reject those with "No conversation found". Resumability
   is checked by locating the session file by its globally-unique id, so we never replicate
   each agent's brittle cwd→directory hashing.
+- **Launch flags are carried over** (Claude). A session started with a non-default
+  permission mode (`--dangerously-skip-permissions`, e.g. the `CA` alias, or
+  `--permission-mode <mode>`) or a `--model` reopens *the same way* — those flags are
+  appended to the recorded `warp_agent_resume_launch claude <id> …` and forwarded on
+  resume. `SessionStart`'s payload doesn't include the permission mode, so the hook reads
+  it off the live `claude` process argv (the alias expands before exec), matching on the
+  flags themselves rather than the string "claude" so a plain launch carries nothing.
 - **Warp stays agent-agnostic**: Rust only stores/replays an opaque command string.
   Adding another agent later is just another capture script — no Rust change.
 
@@ -102,7 +109,7 @@ separate data dir (`~/.warp-oss`), so the two never clobber each other's session
 | File | Role |
 |---|---|
 | `warp-agent-resume` | registry CLI: `write <uuid> <cmd> <cwd>` / `remove <uuid>` |
-| `claude-session-start.sh` | Claude `SessionStart` hook — captures the live session per pane |
+| `claude-session-start.sh` | Claude `SessionStart` hook — captures the live session per pane, plus its permission-mode / `--model` launch flags |
 | `claude.zsh` | replay functions (`warp_agent_resume_resumable` / `warp_agent_resume_launch`) |
 | `codex-session-start.sh` / `codex-session-end.sh` | Codex hooks |
 | `config.toml.snippet` | Codex hook registration (installer applies it) |
