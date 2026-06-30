@@ -63,6 +63,14 @@ The hooks only record when launched inside a Warp pane (`WARP_TERMINAL_SESSION_U
 New Claude sessions are captured immediately — no shell restart needed for capture; the
 restart only loads the replay functions used on the next restore.
 
+The installer also runs `install-agent-plugins.sh`, which installs Warp's CLI-agent
+notification plugins into Claude (`warp@claude-code-warp`) and Codex (`warp@codex-warp`).
+These make the agents emit OSC-777 status events that Clinch turns into tab badges and
+desktop notifications. It is best-effort (skips a missing CLI, warns and continues if
+offline) and requires restarting the agent to take effect. Removing the plugins
+(`claude plugin uninstall warp@claude-code-warp`) disables the badges/notifications;
+everything else keeps working.
+
 ## Build the app (replay layer)
 
 ```bash
@@ -113,6 +121,7 @@ separate data dir (`~/.warp-oss`), so the two never clobber each other's session
 | `claude.zsh` | replay functions (`warp_agent_resume_resumable` / `warp_agent_resume_launch`) |
 | `codex-session-start.sh` / `codex-session-end.sh` | Codex hooks |
 | `config.toml.snippet` | Codex hook registration (installer applies it) |
+| `install-agent-plugins.sh` | install Warp's Claude/Codex notification plugins (emit the OSC-777 status events) |
 | `install.sh` | install capture hooks + replay functions into the shell/agent config |
 | `build-app.sh` | build + brand + install the co-installable app |
 | `tests/` | self-contained shell tests for the scripts |

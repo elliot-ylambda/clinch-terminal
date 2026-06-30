@@ -15,7 +15,8 @@ mkdir -p "$BIN" "$REG"
 chmod 700 "$REG"
 
 install -m 0755 "$SRC/warp-agent-resume" "$SRC/claude-session-start.sh" \
-  "$SRC/codex-session-start.sh" "$SRC/codex-session-end.sh" "$BIN/"
+  "$SRC/codex-session-start.sh" "$SRC/codex-session-end.sh" \
+  "$SRC/install-agent-plugins.sh" "$BIN/"
 install -m 0644 "$SRC/claude.zsh" "$BIN/claude.zsh"
 
 # Wire ~/.zshrc (PATH for the CLI + source the replay functions) once.
@@ -76,6 +77,10 @@ else
   ' "$CLAUDE_CFG" > "$tmp" && mv "$tmp" "$CLAUDE_CFG"
   echo "Added Claude SessionStart hook to ~/.claude/settings.json"
 fi
+
+# Install the CLI-agent notification plugins (best-effort) so Claude/Codex emit the
+# status events that drive tab badges + desktop notifications in Clinch.
+source "$SRC/install-agent-plugins.sh" 2>/dev/null && warp_install_agent_notification_plugins || true
 
 echo ""
 echo "Done. Requirements: jq, uuidgen (uuidgen is preinstalled on macOS; 'brew install jq' if missing)."
