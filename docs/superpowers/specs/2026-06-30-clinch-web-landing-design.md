@@ -69,7 +69,7 @@ product `README.md` documents today). No new installer tooling is built.
 
 ## The page (`/`)
 
-Six sections, copy **repurposed from the existing `README.md`** so messaging
+Seven sections, copy **repurposed from the existing `README.md`** so messaging
 stays consistent:
 
 1. **Hero** — "Clinch"; one-liner ("brings your CLI agents back when you reopen
@@ -84,8 +84,18 @@ stays consistent:
    `/Applications`; `xattr -dr com.apple.quarantine`; optional agent-resume
    hooks install. Includes the "Enable agent-session resume" block.
 5. **Is this safe?** — the trust section: open source, verify SHA-256, why
-   `xattr`, no telemetry / no account / no phone-home, auditable `install.sh`.
-6. **Footer** — AGPL-3.0 + "not affiliated with Warp / Denver Technologies"
+   `xattr`, build-from-source, auditable `install.sh`.
+6. **Privacy & telemetry** — the strongest differentiator, mirroring the README's
+   [Privacy & telemetry](https://github.com/elliot-ylambda/clinch-terminal#privacy--telemetry)
+   section: no telemetry/analytics (compiled out — `telemetry_config`/`crash_reporting_config`/`autoupdate_config`
+   are `None`, no analytics keys baked in, Sentry not built), no backend/sign-in
+   (`skip_login` hard-fails every authenticated request), and verified at runtime
+   (the `warp-oss` process holds **zero** outbound connections — show the `lsof`
+   one-liner and the "block `*.warp.dev` and it still works" check). Honest caveats:
+   your CLI agents reach their own providers (that traffic is theirs, not Clinch's);
+   one image-only theme-asset path to Warp's CDN with bundled fallbacks. Framing:
+   "audit it or watch the wire — don't take our word for it."
+7. **Footer** — AGPL-3.0 + "not affiliated with Warp / Denver Technologies"
    attribution; links to the GitHub repo, FAQ, and build-from-source.
 
 ### Download mechanics
