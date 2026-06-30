@@ -440,10 +440,15 @@ In `enum Indicator` (`tab.rs:749`), add:
 ```rust
     AmbientAgent,
     /// A Claude/Codex CLI agent is running in this tab's focused pane.
-    CLIAgent(IconWithStatusVariant),
+    CLIAgent { agent: CLIAgent, status: Option<ConversationStatus>, is_ambient: bool },
 ```
 
-`Indicator` derives `Clone`; `IconWithStatusVariant` must also be `Clone`. Verify with `cargo check`; if it is not, add `#[derive(Clone)]` to `IconWithStatusVariant` in `icon_with_status.rs` (it is rendered by value and is a small data enum, so deriving `Clone` is safe).
+NOTE (as-built correction): `Indicator` derives `Clone`, but `IconWithStatusVariant` is **not**
+`Clone` (two of its variants hold `Box<dyn Element>`), so `CLIAgent(IconWithStatusVariant)` and a
+`#[derive(Clone)]` on `IconWithStatusVariant` will NOT compile. Store the **flat fields** that
+`IconWithStatusVariant::CLIAgent` carries (`agent`, `status`, `is_ambient` — all `Clone`) and
+reconstruct `IconWithStatusVariant::CLIAgent { .. }` at render time (Step 5). `icon_with_status.rs`
+stays untouched.
 
 - [ ] **Step 3: Add the `cli_agent_indicator` helper**
 
@@ -496,14 +501,19 @@ In `render_indicator` (`tab.rs:1349`), add an arm to the `match &self.indicator`
 
 If `theme()` / `background().into()` types don't line up with `render_icon_with_status`'s `&WarpTheme` / `WarpThemeFill` parameters, copy the exact argument expressions from the existing sidebar call site (`workspace/view/vertical_tabs.rs`, `render_pane_icon_with_status` → `render_icon_with_status(...)`), which renders the identical variant.
 
-- [ ] **Step 6: Satisfy the other exhaustive matches on `Indicator`**
+- [ ] **Step 6: Satisfy the exhaustive match + the title-clip dispatch**
 
-Run: `cargo check -p warp` and add a `CLIAgent` arm wherever rustc reports a non-exhaustive match (the tooltip helpers `get_tooltip_message` / `get_tooltip_directory` / `get_tooltip_git_branch`, and `is_title_from_agent` if it matches). Concrete arms:
+As-built: `render_indicator`'s `match &self.indicator` is the ONLY literal exhaustive `match` on
+`Indicator` in `tab.rs` (Step 5 added its arm). The tooltip helpers are NOT exhaustive matches —
+they use `matches!`/`if let`, so they need no forced arm. Run `cargo check -p warp` and add an arm
+only where rustc reports a non-exhaustive match.
 
-In `get_tooltip_message` — return the agent name + status:
+Add a status-aware tooltip branch in `get_tooltip_message` for the flat-field variant (reconstruct
+the suffix from `status`; adjust the `ConversationStatus` patterns to the real enum shapes if
+`cargo check` complains):
 
 ```rust
-            Indicator::CLIAgent(IconWithStatusVariant::CLIAgent { agent, status, .. }) => {
+            Indicator::CLIAgent { agent, status, .. } => {
                 let suffix = match status {
                     Some(ConversationStatus::Blocked { .. }) => " — needs your attention",
                     Some(ConversationStatus::Success) => " — done",
@@ -512,16 +522,15 @@ In `get_tooltip_message` — return the agent name + status:
                 };
                 Some(format!("{}{}", agent.display_name(), suffix))
             }
-            Indicator::CLIAgent(_) => None,
 ```
 
-In `get_tooltip_directory`, `get_tooltip_git_branch`, and `is_title_from_agent` (and any other match rustc flags), add:
+Title clipping: the title-derived-from-agent check is `is_agent_task_indicator` (used by
+`has_ai_conversation_title` → `should_clip_text_start`), a `matches!` over `Indicator`. Add the new
+variant so CLI-agent tabs clip like `Indicator::Agent` (keep the front), consistent with the brief:
 
 ```rust
-            Indicator::CLIAgent(_) => None,   // or `true` for is_title_from_agent (title comes from the agent)
+    matches!(indicator, Indicator::Agent { .. } | Indicator::AmbientAgent | Indicator::CLIAgent { .. })
 ```
-
-(For `is_title_from_agent`, return `true` so the tab title is treated as agent-derived, consistent with `Indicator::Agent`.)
 
 - [ ] **Step 7: Build**
 
