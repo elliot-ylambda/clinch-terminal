@@ -1,4 +1,5 @@
 use regex::Regex;
+use warp::features::FeatureFlag;
 use warp::integration_testing::step::new_step_with_default_assertions;
 use warp::integration_testing::tab::assert_pane_title;
 use warp::integration_testing::terminal::wait_until_bootstrapped_single_pane_for_tab;
@@ -258,6 +259,60 @@ pub fn test_file_tree_non_openable_files() -> Builder {
                         )
                     })
                 }),
+        )
+}
+
+/// Test that clicking an image file in the file tree opens it in the image
+/// preview pane (split to the right) when the `ImagePreviewPane` flag is on.
+/// End-to-end coverage for the image routing added in `resolve_file_target`.
+pub fn test_file_tree_opens_image_in_image_pane() -> Builder {
+    FeatureFlag::ImagePreviewPane.set_enabled(true);
+    new_builder()
+        .with_setup(|utils| {
+            let test_dir = utils.test_dir();
+            let dir_string = test_dir
+                .to_str()
+                .expect("Should be able to convert test dir to str");
+            write_all_rc_files_for_test(&test_dir, format!("cd {dir_string}"));
+
+            // A tiny, valid SVG so the image viewer has something to load.
+            std::fs::write(
+                test_dir.join("logo.svg"),
+                "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"10\" height=\"10\">\
+                 <rect width=\"10\" height=\"10\" fill=\"red\"/></svg>",
+            )
+            .expect("Failed to create svg file");
+        })
+        .with_step(wait_until_bootstrapped_single_pane_for_tab(0))
+        .with_step(
+            new_step_with_default_assertions("Open file tree panel")
+                .with_action(|app, _, _| open_file_tree_panel(app)),
+        )
+        .with_step(
+            new_step_with_default_assertions("Click on logo.svg in file tree")
+                .with_click_on_saved_position("file_tree_item:logo.svg")
+                .add_named_assertion(
+                    "image pane opened split to the right",
+                    |app, window_id| {
+                        let pane_group = pane_group_view(app, window_id, 0);
+                        pane_group.read(app, |pane_group, _ctx| {
+                            let count = pane_group.pane_count();
+                            let is_image = pane_group
+                                .pane_by_index(1)
+                                .map(|pane| pane.id().is_image_viewer_pane())
+                                .unwrap_or(false);
+                            async_assert!(
+                                count == 2 && is_image,
+                                "Expected 2 panes (terminal + image viewer) with an image \
+                                 pane at index 1, got count={count}, is_image={is_image}"
+                            )
+                        })
+                    },
+                ),
+        )
+        .with_step(
+            new_step_with_default_assertions("Verify image pane title is the file name")
+                .add_assertion(assert_pane_title(0, 1, Regex::new(r"logo\.svg$").unwrap())),
         )
 }
 

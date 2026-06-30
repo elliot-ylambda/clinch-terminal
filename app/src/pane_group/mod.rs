@@ -183,6 +183,7 @@ pub use pane::env_var_collection_pane::EnvVarCollectionPane;
 pub use pane::environment_management_pane::EnvironmentManagementPane;
 pub use pane::execution_profile_editor_pane::ExecutionProfileEditorPane;
 pub use pane::file_pane::FilePane;
+pub use pane::image_pane::ImagePane;
 pub use pane::network_log_pane::NetworkLogPane;
 pub use pane::notebook_pane::NotebookPane;
 pub use pane::settings_pane::SettingsPane;
@@ -1754,6 +1755,20 @@ impl PaneGroup {
                     active_session: None,
                 };
 
+                Ok((PaneData::new(pane_id), focus))
+            }
+            LeafContents::ImageViewer(snapshot) => {
+                let pane = Box::new(ImagePane::new(
+                    snapshot.path.clone().map(LocalOrRemotePath::Local),
+                    None,
+                    ctx,
+                ));
+                let pane_id = pane.id();
+                pane_contents.insert(pane_id, pane);
+                let focus = InitialFocus {
+                    focused_pane: leaf.is_focused.then_some(pane_id),
+                    active_session: None,
+                };
                 Ok((PaneData::new(pane_id), focus))
             }
             #[cfg(feature = "local_fs")]

@@ -151,6 +151,9 @@ pub enum LeafContents {
     NetworkLog,
     /// A new first-time user experience which prioritizes choosing a coding repository.
     GetStarted,
+    /// An image preview pane. Only the local path is persisted; zoom/pan/backdrop
+    /// reset to defaults on restore.
+    ImageViewer(ImagePaneSnapshot),
 }
 
 #[cfg(feature = "local_fs")]
@@ -184,7 +187,8 @@ impl LeafContents {
             | LeafContents::ExecutionProfileEditor
             | LeafContents::CodeReview(_)
             | LeafContents::AmbientAgent(_)
-            | LeafContents::GetStarted => true,
+            | LeafContents::GetStarted
+            | LeafContents::ImageViewer(_) => true,
         }
     }
 }
@@ -236,6 +240,14 @@ pub enum NotebookPaneSnapshot {
         /// the pane contained an unreadable file.
         path: Option<PathBuf>,
     },
+}
+
+/// Snapshot of an image preview pane. Only the local path is persisted;
+/// zoom/pan/backdrop reset to defaults on restore.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ImagePaneSnapshot {
+    /// `None` if the pane held an unreadable/remote image.
+    pub path: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

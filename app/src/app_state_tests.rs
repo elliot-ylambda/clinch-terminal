@@ -106,3 +106,12 @@ fn test_code_pane_snapshot_with_multiple_tabs() {
     assert_eq!(tabs[2].path, None);
     assert!(matches!(source, Some(CodeSource::Link { .. })));
 }
+
+#[cfg(feature = "local_fs")]
+#[test]
+fn image_viewer_snapshot_is_persisted() {
+    let snap = LeafContents::ImageViewer(ImagePaneSnapshot {
+        path: Some(std::path::PathBuf::from("/tmp/diagram.svg")),
+    });
+    assert!(snap.is_persisted());
+}

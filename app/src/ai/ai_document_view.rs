@@ -971,6 +971,14 @@ impl AIDocumentView {
                     } else {
                         resolve_file_target(path, settings, None)
                     };
+                    #[cfg(feature = "image_preview_pane")]
+                    let target = if is_supported_image_file(path)
+                        && warp_core::features::FeatureFlag::ImagePreviewPane.is_enabled()
+                    {
+                        FileTarget::ImageViewer(*settings.open_file_layout)
+                    } else {
+                        target
+                    };
                     ctx.emit(AIDocumentEvent::OpenFileWithTarget {
                         path: path.clone(),
                         target,

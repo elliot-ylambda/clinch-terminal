@@ -3378,6 +3378,10 @@ impl TelemetryEvent {
                     FileTarget::SystemDefault => ("system_default", None, None),
                     FileTarget::SystemGeneric => ("system_generic", None, None),
                     FileTarget::ExternalEditor(editor) => ("external_editor", None, Some(*editor)),
+                    #[cfg(feature = "image_preview_pane")]
+                    FileTarget::ImageViewer(layout) => {
+                        ("warp_image_viewer", Some(*layout), None)
+                    }
                 };
 
                 Some(json!({
