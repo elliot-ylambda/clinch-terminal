@@ -4,6 +4,8 @@
 
 Quit Clinch with Claude Code or Codex running in your tabs, reopen it, and each tab returns with its agent resumed (`claude --resume` / `codex resume`) — not a dead shell. No sign-in, no account, never phones home.
 
+**Website:** [clinch.sh](https://clinch.sh)
+
 ## Download
 
 ### [⬇ Download Clinch for macOS](https://github.com/elliot-ylambda/clinch-terminal/releases/latest/download/Clinch.app.zip)
