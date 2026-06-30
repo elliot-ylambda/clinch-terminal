@@ -1384,6 +1384,7 @@ struct MouseStateHandles {
     long_running_notifications_checkbox: MouseStateHandle,
     agent_task_completed_notifications_checkbox: MouseStateHandle,
     agent_needs_attention_notifications_checkbox: MouseStateHandle,
+    agent_status_on_tabs_checkbox: MouseStateHandle,
     agent_in_app_notifications_switch: SwitchStateHandle,
     #[cfg(target_os = "macos")]
     notification_sound_checkbox: MouseStateHandle,
@@ -5304,6 +5305,15 @@ impl SettingsWidget for DesktopNotificationsWidget {
                     FeaturesPageAction::ToggleNeedsAttentionNotifications,
                     view.button_mouse_states
                         .agent_needs_attention_notifications_checkbox
+                        .clone(),
+                    appearance,
+                ),
+                view.render_notification_toggle(
+                    session_settings.notifications.show_agent_status_on_tabs,
+                    "Show agent status badges on tabs",
+                    FeaturesPageAction::ToggleAgentStatusOnTabs,
+                    view.button_mouse_states
+                        .agent_status_on_tabs_checkbox
                         .clone(),
                     appearance,
                 ),
