@@ -8,14 +8,16 @@ Quit Clinch with Claude Code or Codex running in your tabs, reopen it, and each 
 
 ### [⬇ Download Clinch for macOS](https://github.com/elliot-ylambda/clinch-terminal/releases/latest/download/Clinch.app.zip)
 
-1. Unzip and move **Clinch.app** to **/Applications**.
-2. Clinch is signed with a development certificate (not notarized), so clear the download quarantine once:
+1. **(Recommended) Verify the download.** Each release ships a `Clinch.app.zip.sha256` — see [Is this safe?](#is-this-safe) below:
+   ```bash
+   shasum -a 256 -c Clinch.app.zip.sha256
+   ```
+2. Unzip and move **Clinch.app** to **/Applications**.
+3. Clinch is open source but **not notarized** by Apple, so macOS quarantines downloaded copies. Clear the flag once, then open it:
    ```bash
    xattr -dr com.apple.quarantine /Applications/Clinch.app
    ```
-   Then open it normally — Clinch boots straight to a terminal, no login.
-
-It co-installs next to your real Warp without conflict (separate bundle id and data dir), so you can keep both.
+   Clinch boots straight to a terminal — no login. It co-installs next to your real Warp without conflict (separate bundle id and data dir), so you can keep both.
 
 ### Enable agent-session resume
 
@@ -28,6 +30,16 @@ cd clinch-terminal && ./tools/agent-resume/install.sh
 ```
 
 This wires `SessionStart` hooks for Claude Code and Codex (your existing settings are preserved) so Clinch knows which session each tab was running. Requires `jq` (`brew install jq`).
+
+## Is this safe?
+
+Fair question — you should be skeptical of any app that asks you to clear macOS quarantine. The honest picture:
+
+- **It's open source.** Every line is in this repo under [AGPL-3.0](LICENSE-AGPL). The most trustworthy way to run Clinch is to **[build it yourself](#build-from-source)** — then you aren't trusting a binary from anyone.
+- **Verify what you downloaded.** Each release publishes a SHA-256 and a `Clinch.app.zip.sha256` file; `shasum -a 256 -c Clinch.app.zip.sha256` confirms the bytes are exactly what's published here.
+- **Why the `xattr` step?** Apple's notarization (the "we scanned this" stamp) requires a paid Developer account this project doesn't have. The app *is* code-signed — just not notarized — so Gatekeeper quarantines the download; the command clears that flag. It's the same reason many independent open-source Mac apps need it.
+- **No telemetry, no account, no phone-home.** Clinch is built with `skip_login`: it never signs in, and authenticated calls to Warp's servers hard-fail by design. Confirm it yourself with a network monitor (e.g. Little Snitch) — it doesn't talk to Warp.
+- **`install.sh` is auditable.** The optional agent-resume installer only adds `SessionStart` hooks to `~/.claude/settings.json` (a non-destructive `jq` merge) and `~/.codex/config.toml`, and sources its replay functions from `~/.zshrc`. Read [`tools/agent-resume/install.sh`](tools/agent-resume/install.sh) before running it.
 
 ## How Clinch differs from Warp
 
