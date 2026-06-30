@@ -339,6 +339,49 @@ fn test_detect_no_match() {
 }
 
 #[test]
+fn test_detect_agent_resume_launch_wrapper() {
+    // Clinch's agent-resume replays `warp_agent_resume_launch <agent> <id> [flags]` when a pane
+    // is restored. Detection must see through the wrapper to the underlying agent, so a restored
+    // pane shows the same agent icon/toolbar as a fresh launch instead of the generic terminal.
+    App::test((), |mut app| async move {
+        app.update(|ctx| {
+            assert_eq!(
+                CLIAgent::detect("warp_agent_resume_launch claude 1234-abcd", None, None, ctx),
+                Some(CLIAgent::Claude),
+            );
+            // Carried-over launch flags after the id must not break detection.
+            assert_eq!(
+                CLIAgent::detect(
+                    "warp_agent_resume_launch claude 1234 --dangerously-skip-permissions --model opus",
+                    None,
+                    None,
+                    ctx,
+                ),
+                Some(CLIAgent::Claude),
+            );
+            assert_eq!(
+                CLIAgent::detect("warp_agent_resume_launch codex sess-77", None, None, ctx),
+                Some(CLIAgent::Codex),
+            );
+            // Wrapper with no agent, or an unknown target, must not match.
+            assert_eq!(
+                CLIAgent::detect("warp_agent_resume_launch", None, None, ctx),
+                None,
+            );
+            assert_eq!(
+                CLIAgent::detect("warp_agent_resume_launch frobnicate x", None, None, ctx),
+                None,
+            );
+            // A different command that merely starts with the wrapper name is not the wrapper.
+            assert_eq!(
+                CLIAgent::detect("warp_agent_resume_launcher claude", None, None, ctx),
+                None,
+            );
+        });
+    });
+}
+
+#[test]
 fn test_detect_with_alias() {
     App::test((), |mut app| async move {
         app.update(|ctx| {

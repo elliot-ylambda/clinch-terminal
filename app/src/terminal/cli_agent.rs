@@ -364,6 +364,11 @@ impl CLIAgent {
             })
             .unwrap_or(Cow::Borrowed(trimmed));
 
+        // Clinch's agent-resume replays `warp_agent_resume_launch <agent> <id> [flags]` when a
+        // pane is restored. Strip that wrapper so detection sees the underlying `<agent> ...`
+        // command and a restored pane gets the same agent icon/toolbar as a fresh launch.
+        let resolved_command = Self::unwrap_agent_resume_launch(resolved_command, escape_char);
+
         let resolved_first_word = Self::extract_first_command(&resolved_command, escape_char)?;
 
         // Check if resolved command matches any known CLI agent.
@@ -377,6 +382,24 @@ impl CLIAgent {
                         && Self::is_aifx_agent_run_claude(&resolved_command, ctx))
                     || (matches!(agent, CLIAgent::Vibe) && resolved_first_word == "vibe-acp")
             })
+    }
+
+    /// Strips Clinch's `warp_agent_resume_launch <agent> ...` restore wrapper, returning the
+    /// underlying `<agent> ...` command. Used so a restored pane is detected as its agent rather
+    /// than as the wrapper function. Returns `command` unchanged when it isn't the wrapper.
+    fn unwrap_agent_resume_launch<'a>(
+        command: Cow<'a, str>,
+        escape_char: Option<EscapeChar>,
+    ) -> Cow<'a, str> {
+        const WRAPPER: &str = "warp_agent_resume_launch";
+        if Self::extract_first_command(&command, escape_char).as_deref() != Some(WRAPPER) {
+            return command;
+        }
+        // First word is exactly the wrapper; drop it and the remainder begins with the agent.
+        match command.trim_start().strip_prefix(WRAPPER) {
+            Some(rest) => Cow::Owned(rest.trim_start().to_string()),
+            None => command,
+        }
     }
 
     /// Returns true if the resolved command is `aifx agent run claude` (Uber's
