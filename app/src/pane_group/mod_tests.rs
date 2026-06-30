@@ -3321,3 +3321,138 @@ fn decide_remote_child_hydration_empty_token_falls_back() {
         );
     }
 }
+
+/// When a tab is closed while running a long-running process (e.g. a Claude/
+/// Codex agent), its PTY is killed but the pane view is retained for undo. On
+/// reopen, the dead pane must be replaced by a freshly-created session so the
+/// tab is usable again — not reattached as a corpse. A populated [`RestartSpec`]
+/// is the signal that drives this.
+#[test]
+fn reattach_restarts_pane_with_pending_restart_spec() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let pane_group = mock_pane_group(&mut app, Default::default());
+
+        // The default layout is a single terminal pane. Record its session
+        // identity (the backing terminal view) before the simulated close.
+        let view_id_before = pane_group.read(&app, |panes, ctx| {
+            let pane = panes
+                .panes_of::<TerminalPane>()
+                .next()
+                .expect("default layout should have a terminal pane");
+            pane.terminal_view(ctx).id()
+        });
+
+        // Simulate the close path: it killed this pane's PTY and recorded how to
+        // resume it (here a harmless command standing in for the agent resume).
+        pane_group.read(&app, |panes, _| {
+            panes
+                .panes_of::<TerminalPane>()
+                .next()
+                .unwrap()
+                .set_restart_spec(RestartSpec {
+                    cwd: None,
+                    on_restore_command: Some("echo resumed".to_string()),
+                });
+        });
+
+        // Reopening the closed tab reattaches its panes.
+        pane_group.update(&mut app, |panes, ctx| {
+            panes.reattach_panes(ctx);
+        });
+
+        // Still exactly one pane, but backed by a brand-new session (different
+        // terminal view) rather than the killed one.
+        let (pane_count, view_id_after, spec_consumed) = pane_group.read(&app, |panes, ctx| {
+            let pane = panes
+                .panes_of::<TerminalPane>()
+                .next()
+                .expect("restored pane should exist");
+            (
+                panes.pane_count(),
+                pane.terminal_view(ctx).id(),
+                pane.take_restart_spec().is_none(),
+            )
+        });
+
+        assert_eq!(pane_count, 1, "restart must not change the pane count");
+        assert_ne!(
+            view_id_before, view_id_after,
+            "reopened pane must have a fresh session, not the dead one"
+        );
+        assert!(
+            spec_consumed,
+            "restart spec must be consumed so a second reopen does not re-restart"
+        );
+    });
+}
+
+/// The close path must capture a [`RestartSpec`] for a pane running a
+/// long-running process so that reopening the tab can restart it. (No agent
+/// registry entry exists here, so the resume command is `None`, but the spec is
+/// still recorded to drive a plain-shell respawn.)
+#[test]
+fn close_captures_restart_spec_for_long_running_pane() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let pane_group = mock_pane_group(&mut app, Default::default());
+
+        // Put the single pane's active block into a long-running executing state
+        // (what a live agent looks like to the close path).
+        pane_group.update(&mut app, |panes, ctx| {
+            let terminal_view = panes
+                .panes_of::<TerminalPane>()
+                .next()
+                .expect("default layout should have a terminal pane")
+                .terminal_view(ctx);
+            terminal_view.update(ctx, |view, _| {
+                view.model
+                    .lock()
+                    .simulate_long_running_block("sleep 1000", "");
+            });
+        });
+
+        // Run the close-path capture + shutdown.
+        pane_group.update(&mut app, |panes, ctx| {
+            panes.shutdown_long_running_panes_for_close(ctx);
+        });
+
+        let captured = pane_group.read(&app, |panes, _| {
+            panes
+                .panes_of::<TerminalPane>()
+                .next()
+                .unwrap()
+                .take_restart_spec()
+        });
+        assert!(
+            captured.is_some(),
+            "a long-running pane must capture a restart spec when its tab is closed"
+        );
+    });
+}
+
+/// A pane that is NOT long-running keeps its live PTY on close (no spec), so it
+/// reattaches as-is rather than being respawned.
+#[test]
+fn close_does_not_capture_restart_spec_for_idle_pane() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let pane_group = mock_pane_group(&mut app, Default::default());
+
+        pane_group.update(&mut app, |panes, ctx| {
+            panes.shutdown_long_running_panes_for_close(ctx);
+        });
+
+        let captured = pane_group.read(&app, |panes, _| {
+            panes
+                .panes_of::<TerminalPane>()
+                .next()
+                .unwrap()
+                .take_restart_spec()
+        });
+        assert!(
+            captured.is_none(),
+            "an idle pane must not capture a restart spec on close"
+        );
+    });
+}
