@@ -29,11 +29,28 @@ cd "$(git rev-parse --show-toplevel)"
 # crates/warp_server_client/src/auth/session.rs ("skip_login enabled; failing all
 # authenticated requests"). ./script/run appends this to the oss feature set and
 # builds `cargo bundle --bin warp-oss --features gui,skip_login`.
-echo "==> Building + bundling WarpOss (oss channel, skip_login = local-only)…"
-WARP_SKIP_COMMON_SKILLS_INSTALL=1 ./script/run --dont-open --features skip_login
+#
+# We build in RELEASE by default, and that matters for distribution: in DEBUG builds,
+# rust-embed (crates/warp_assets) does NOT embed app/assets into the binary — it reads
+# them from the source tree at the absolute path baked in at compile time, guarded by a
+# canonicalized starts_with check. So a debug-built /Applications app stops opening the
+# moment this repo is moved, renamed, or deleted (it aborts with "no asset exists at
+# path bundled/png/local.png"). Release builds embed the asset bytes, making the
+# installed app fully self-contained and independent of this folder. Set CLINCH_DEBUG=1
+# for a faster (but non-distributable, source-tethered) debug build while iterating.
+if [[ "${CLINCH_DEBUG:-0}" = "1" ]]; then
+  PROFILE_DIR="debug"; PROFILE_FLAGS=()
+  echo "==> Building + bundling WarpOss (oss channel, skip_login, DEBUG — source-tethered)…"
+else
+  PROFILE_DIR="release"; PROFILE_FLAGS=(--release)
+  echo "==> Building + bundling WarpOss (oss channel, skip_login, release — self-contained)…"
+fi
+WARP_SKIP_COMMON_SKILLS_INSTALL=1 ./script/run --dont-open "${PROFILE_FLAGS[@]}" --features skip_login
 
-APP="$(find target -maxdepth 5 -type d -name 'WarpOss.app' | head -1)"
-[[ -n "$APP" ]] || { echo "error: WarpOss.app not produced" >&2; exit 1; }
+# Pin to the bundle for the profile we just built; both debug/ and release/ bundles may
+# coexist under target, so don't let `head -1` grab a stale one from the other profile.
+APP="$(find target -maxdepth 6 -type d -path "*/${PROFILE_DIR}/bundle/osx/WarpOss.app" | head -1)"
+[[ -n "$APP" ]] || { echo "error: WarpOss.app not produced under target/${PROFILE_DIR}/bundle/osx" >&2; exit 1; }
 echo "==> Built: $APP"
 
 NAME="${CLINCH_NAME:-Clinch}"
