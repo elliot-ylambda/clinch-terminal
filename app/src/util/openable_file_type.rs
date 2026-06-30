@@ -7,6 +7,8 @@ pub use warp_util::file_type::{is_binary_file, is_file_content_binary, is_markdo
 
 #[cfg(feature = "local_fs")]
 use crate::util::file::external_editor::{settings::EditorChoice, Editor, EditorSettings};
+#[cfg(feature = "image_preview_pane")]
+use warp_core::features::FeatureFlag;
 
 #[derive(
     Debug,
@@ -36,7 +38,7 @@ pub enum OpenableFileType {
     Markdown,
     /// A code file, which should be opened in a code editor pane.
     Code,
-    /// Other types of text files, e.g. txt, csv, svg files, which can still be opened in a code editor pane.
+    /// Other types of text files, e.g. txt, csv files, which can still be opened in a code editor pane. SVG files are routed to the image viewer pane when the image_preview_pane feature flag is enabled.
     Text,
 }
 
@@ -45,6 +47,9 @@ pub enum OpenableFileType {
 pub enum FileTarget {
     /// Open in Warp's Markdown viewer.
     MarkdownViewer(EditorLayout),
+    /// Open in Warp's image viewer pane.
+    #[cfg(feature = "image_preview_pane")]
+    ImageViewer(EditorLayout),
     /// Open in Warp's Code Editor.
     CodeEditor(EditorLayout),
     /// Open in an external editor (e.g. VS Code, Emacs).
@@ -204,6 +209,12 @@ pub fn resolve_file_target_with_editor_choice(
     let is_markdown = matches!(is_openable_in_warp, Some(OpenableFileType::Markdown));
     let layout = layout.unwrap_or(default_layout);
     let is_openable_in_warp = is_openable_in_warp.is_some();
+
+    // 0. Image preview pane (feature-flagged; local files only).
+    #[cfg(feature = "image_preview_pane")]
+    if FeatureFlag::ImagePreviewPane.is_enabled() && is_supported_image_file(path) {
+        return FileTarget::ImageViewer(layout);
+    }
 
     // 1. Markdown Viewer (only if user preference specified)
     if is_markdown && prefer_markdown_viewer {

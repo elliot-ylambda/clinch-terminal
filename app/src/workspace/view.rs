@@ -281,6 +281,8 @@ use crate::palette::PaletteMode;
 use crate::pane_group::pane::ActionOrigin;
 #[cfg(feature = "local_fs")]
 use crate::pane_group::FilePane;
+#[cfg(feature = "image_preview_pane")]
+use crate::pane_group::ImagePane;
 use crate::pane_group::{
     self, AIFactPane, AnyPaneContent, ChildAgentOrigin, CodeDiffPane, CodePane, CodeReviewPanelArg,
     Direction as PaneGroupDirection, Direction, EnvironmentManagementPane,
@@ -6126,6 +6128,11 @@ impl Workspace {
                     ctx,
                 );
             }
+            #[cfg(feature = "image_preview_pane")]
+            FileTarget::ImageViewer(layout) => {
+                let session = self.get_active_session(ctx);
+                self.open_file_image(LocalOrRemotePath::Local(path.clone()), session, layout, ctx);
+            }
             FileTarget::EnvEditor => {
                 let editor_value: Option<String> = self
                     .get_active_session(ctx)
@@ -8299,6 +8306,34 @@ impl Workspace {
                         Direction::Right,
                         pane,
                         true, /* focus_new_pane */
+                        ctx,
+                    );
+                });
+            }
+        }
+    }
+
+    /// Open a file as an image pane.
+    #[cfg(feature = "image_preview_pane")]
+    fn open_file_image(
+        &mut self,
+        path: LocalOrRemotePath,
+        session: Option<Arc<Session>>,
+        layout: EditorLayout,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let pane = ImagePane::new(Some(path), session, ctx);
+        match layout {
+            EditorLayout::NewTab => {
+                let (new_idx, group_id) = self.new_tab_index_and_group(ctx);
+                self.add_tab_from_existing_pane(Box::new(pane), new_idx, group_id, ctx);
+            }
+            EditorLayout::SplitPane => {
+                self.active_tab_pane_group().update(ctx, |pane_group, ctx| {
+                    pane_group.add_pane_with_direction(
+                        Direction::Right,
+                        pane,
+                        true,
                         ctx,
                     );
                 });

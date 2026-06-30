@@ -107,6 +107,7 @@ pub fn init(app: &mut AppContext) {
     });
     global_actions::init_global_actions(app);
     notebooks::init(app);
+    crate::image_viewer::init(app);
     code::init(app);
     sync_inputs::init(app);
     lsp::init(app);

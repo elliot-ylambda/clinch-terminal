@@ -366,8 +366,19 @@ fn open_file(
 ) {
     #[cfg(feature = "local_fs")]
     {
-        // Images are safe to open with the system default viewer.
+        // Images are safe to open. When the image_preview_pane feature is on and the flag
+        // is enabled, open in the image viewer pane; otherwise fall back to the OS viewer.
         if is_supported_image_file(&path) {
+            #[cfg(feature = "image_preview_pane")]
+            if warp_core::features::FeatureFlag::ImagePreviewPane.is_enabled() {
+                let layout = *EditorSettings::as_ref(ctx).open_file_layout;
+                ctx.emit(LinkEvent::OpenFileWithTarget {
+                    path,
+                    target: FileTarget::ImageViewer(layout),
+                    line_col: line_and_column,
+                });
+                return;
+            }
             ctx.emit(LinkEvent::OpenFileWithTarget {
                 path,
                 target: FileTarget::SystemGeneric,
@@ -384,6 +395,14 @@ fn open_file(
             | FileTarget::CodeEditor(_)
             | FileTarget::ExternalEditor(_)
             | FileTarget::EnvEditor => {
+                ctx.emit(LinkEvent::OpenFileWithTarget {
+                    path,
+                    target,
+                    line_col: line_and_column,
+                });
+            }
+            #[cfg(feature = "image_preview_pane")]
+            FileTarget::ImageViewer(_) => {
                 ctx.emit(LinkEvent::OpenFileWithTarget {
                     path,
                     target,

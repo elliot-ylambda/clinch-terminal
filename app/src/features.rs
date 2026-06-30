@@ -119,6 +119,8 @@ fn enabled_features() -> HashSet<FeatureFlag> {
         FeatureFlag::AutoupdateUIRevamp,
         #[cfg(all(not(windows), feature = "kitty_images"))]
         FeatureFlag::KittyImages,
+        #[cfg(feature = "image_preview_pane")]
+        FeatureFlag::ImagePreviewPane,
         #[cfg(feature = "warp_packs")]
         FeatureFlag::WarpPacks,
         #[cfg(feature = "global_ai_analytics_banner")]

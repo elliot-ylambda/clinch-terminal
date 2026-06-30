@@ -71,10 +71,10 @@ use crate::ai::mcp::{TemplatableMCPServer, TemplatableMCPServerInstallation};
 use crate::ai::persisted_workspace::EnablementState;
 use crate::app_state::{
     AIFactPaneSnapshot, AmbientAgentPaneSnapshot, AppState, BranchSnapshot, CodePaneSnapShot,
-    CodePaneTabSnapshot, CodeReviewPaneSnapshot, EnvVarCollectionPaneSnapshot, LeafContents,
-    LeafSnapshot, LeftPanelSnapshot, NotebookPaneSnapshot, PaneFlex, PaneNodeSnapshot,
-    RightPanelSnapshot, SettingsPaneSnapshot, SplitDirection, TabGroupSnapshot, TabSnapshot,
-    TerminalPaneSnapshot, WindowSnapshot, WorkflowPaneSnapshot,
+    CodePaneTabSnapshot, CodeReviewPaneSnapshot, EnvVarCollectionPaneSnapshot, ImagePaneSnapshot,
+    LeafContents, LeafSnapshot, LeftPanelSnapshot, NotebookPaneSnapshot, PaneFlex,
+    PaneNodeSnapshot, RightPanelSnapshot, SettingsPaneSnapshot, SplitDirection, TabGroupSnapshot,
+    TabSnapshot, TerminalPaneSnapshot, WindowSnapshot, WorkflowPaneSnapshot,
 };
 use crate::auth::auth_manager::PersistedCurrentUserInformation;
 use crate::auth::auth_state::AuthStateProvider;
@@ -1112,6 +1112,8 @@ fn save_app_state(conn: &mut SqliteConnection, app_state: &AppState) -> Result<(
     Ok(())
 }
 
+const IMAGE_VIEWER_PANE_KIND: &str = "image_viewer";
+
 /// Saves the state of an individual pane, after the corresponding `pane_nodes` entry
 /// has been written.
 fn save_pane_state(
@@ -1134,6 +1136,7 @@ fn save_pane_state(
         LeafContents::ExecutionProfileEditor => EXECUTION_PROFILE_EDITOR_PANE_KIND,
         LeafContents::GetStarted => GET_STARTED_PANE_KIND,
         LeafContents::AIDocument(_) => AI_DOCUMENT_PANE_KIND,
+        LeafContents::ImageViewer(_) => IMAGE_VIEWER_PANE_KIND,
         LeafContents::EnvironmentManagement(_) | LeafContents::NetworkLog => {
             // These pane types are filtered out before this function is
             // called; see `LeafContents::is_persisted` and the skip in
@@ -1361,6 +1364,17 @@ fn save_pane_state(
 
             diesel::insert_into(schema::ambient_agent_panes::dsl::ambient_agent_panes)
                 .values(ambient_agent_pane)
+                .execute(conn)?;
+        }
+        LeafContents::ImageViewer(snapshot) => {
+            let notebook = model::NewNotebookPane {
+                id,
+                notebook_id: None,
+                local_path: snapshot.path.clone().map(encode_path),
+            };
+
+            diesel::insert_into(schema::notebook_panes::dsl::notebook_panes)
+                .values(notebook)
                 .execute(conn)?;
         }
         LeafContents::NetworkLog => {
@@ -2341,6 +2355,15 @@ fn read_node(conn: &mut SqliteConnection, node: model::PaneNode) -> Result<PaneN
                         uuid: pane.uuid,
                         task_id,
                     })
+                }
+                IMAGE_VIEWER_PANE_KIND => {
+                    let notebook_pane = schema::notebook_panes::dsl::notebook_panes
+                        .find(node.id)
+                        .select(model::NotebookPane::as_select())
+                        .first(conn)?;
+
+                    let path = notebook_pane.local_path.map(decode_path);
+                    LeafContents::ImageViewer(ImagePaneSnapshot { path })
                 }
                 other => bail!("Unrecognized pane kind: {other}"),
             };

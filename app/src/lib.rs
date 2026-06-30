@@ -40,6 +40,7 @@ mod external_secrets;
 mod font_fallback;
 mod global_resource_handles;
 mod gpu_state;
+mod image_viewer;
 mod input_classifier;
 mod interval_timer;
 mod linear;
