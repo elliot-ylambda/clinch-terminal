@@ -331,6 +331,36 @@ In `features_page.rs`, after the "notification sounds" `toggle_binding_pairs.pus
     );
 ```
 
+- [ ] **Step 7b: Render the toggle in the visible Notifications settings page**
+
+The `toggle_binding_pairs` entry above only produces the command-palette binding. The
+*visible* Settings → Features → Notifications page renders its switches in
+`DesktopNotificationsWidget::render` (`features_page.rs` ~5239-5324), which builds a `Vec`
+of `view.render_notification_toggle(...)` calls for the three sibling toggles. The new
+toggle must be added there too or it won't appear as a switch.
+
+First add a mouse-state field to the `MouseStateHandles` struct (`features_page.rs` ~1372-1392,
+which `#[derive(Default)]`), NOT macOS-gated (mirroring the non-gated sibling checkbox fields):
+
+```rust
+    agent_status_on_tabs_checkbox: MouseStateHandle,
+```
+
+Then add one entry to the `toggles` Vec in `DesktopNotificationsWidget::render`, between the
+`is_needs_attention_enabled` toggle and the `#[cfg(target_os = "macos")]`-gated sound toggle
+(match the sibling `render_notification_toggle` argument order exactly — value, label, action,
+mouse-state handle, appearance):
+
+```rust
+    view.render_notification_toggle(
+        session_settings.notifications.show_agent_status_on_tabs,
+        "Show agent status badges on tabs",
+        FeaturesPageAction::ToggleAgentStatusOnTabs,
+        view.button_mouse_states.agent_status_on_tabs_checkbox.clone(),
+        appearance,
+    ),
+```
+
 - [ ] **Step 8: Add the handler**
 
 In `features_page.rs`, after the `ToggleNotificationSound => { … }` handler arm (~line 1783), add:
