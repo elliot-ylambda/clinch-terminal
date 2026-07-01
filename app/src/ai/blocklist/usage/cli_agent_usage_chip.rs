@@ -1,5 +1,3 @@
-#![allow(dead_code)] // wired up in Task 5; remove this attribute there.
-
 use chrono::{DateTime, Utc};
 use cli_agent_usage::format::{chip_halves, fmt_pct, fmt_reset, fmt_tokens};
 use cli_agent_usage::{LimitWindow, Provider, Severity, UsageSnapshot, WindowTotals};
