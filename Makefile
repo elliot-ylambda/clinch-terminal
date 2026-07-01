@@ -21,6 +21,14 @@ RELEASE_DMG        := target/$(STABLE_PROFILE_DIR)/bundle/osx/$(STABLE_APP).dmg
 BUNDLE_ARCH_FLAG   := $(if $(UNIVERSAL),,--nouniversal)
 VERSION            ?= v0.$(shell date +%Y.%m.%d.%H%M)
 
+# create-dmg formats the DMG window (background + icon layout) by scripting Finder via
+# AppleScript, which times out (-1712) in headless/automation contexts (agents, CI, no
+# interactive Finder). This local ship flow favors a reliable build over DMG cosmetics, so
+# default to skipping that step — the DMG is still fully functional. Override with
+# `make ship SKIP_DMG_APPLESCRIPT=0` for the custom layout when running interactively.
+SKIP_DMG_APPLESCRIPT ?= 1
+export SKIP_DMG_APPLESCRIPT
+
 # --- Personal local dev app (local channel, never auto-updates) ---
 LOCAL_APP    := WarpLocal.app
 LOCAL_BUNDLE := target/release-lto-debug_assertions/bundle/osx/$(LOCAL_APP)

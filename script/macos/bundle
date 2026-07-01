@@ -758,9 +758,13 @@ if [[ "$ARTIFACT" = app ]]; then
       --filesystem APFS
     )
 
-    # Skip running an AppleScript to format the DMG contents if running in Namespace - this consistently times out.
+    # Skip the AppleScript that formats the DMG window (background + icon layout) whenever it
+    # can't work: on Namespace CI runners (RUNNER_NAME nsc-*), and whenever SKIP_DMG_APPLESCRIPT=1
+    # is set — e.g. the local `make` ship flow or any headless/automation context, where scripting
+    # Finder times out (-1712). The resulting DMG is fully functional, just without the custom
+    # background/icon arrangement.
     # See https://github.com/create-dmg/create-dmg/issues/72
-    if [[ "${RUNNER_NAME:-}" == nsc-* ]]; then
+    if [[ "${RUNNER_NAME:-}" == nsc-* || "${SKIP_DMG_APPLESCRIPT:-}" == 1 ]]; then
       args+=(--skip-jenkins)
     fi
 
