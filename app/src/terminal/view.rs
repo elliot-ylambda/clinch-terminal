@@ -13323,8 +13323,7 @@ impl TerminalView {
 
         // Desktop notifications — fire unless the user is actively looking at this exact pane,
         // and never while the agent is mid-turn.
-        if self.is_pane_actively_focused(ctx)
-            || matches!(status, CLIAgentSessionStatus::InProgress)
+        if self.is_pane_actively_focused(ctx) || matches!(status, CLIAgentSessionStatus::InProgress)
         {
             return;
         }

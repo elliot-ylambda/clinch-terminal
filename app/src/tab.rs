@@ -1173,7 +1173,10 @@ impl<'a> TabComponent<'a> {
 
     /// Check if the given indicator is an agent task indicator
     fn is_agent_task_indicator(indicator: &Indicator) -> bool {
-        matches!(indicator, Indicator::Agent { .. } | Indicator::AmbientAgent | Indicator::CLIAgent { .. })
+        matches!(
+            indicator,
+            Indicator::Agent { .. } | Indicator::AmbientAgent | Indicator::CLIAgent { .. }
+        )
     }
 
     /// Get the current working directory for the tooltip if this is an agent task
