@@ -9,10 +9,19 @@ pub trait ReadSecret {
     fn read(&self, service: &str, account: &str) -> Option<String>;
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ClaudeToken {
     pub access_token: String,
     pub expires_at_ms: Option<i64>,
+}
+
+impl std::fmt::Debug for ClaudeToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClaudeToken")
+            .field("access_token", &"<redacted>")
+            .field("expires_at_ms", &self.expires_at_ms)
+            .finish()
+    }
 }
 
 impl ClaudeToken {
@@ -93,6 +102,7 @@ mod tests {
         assert_eq!(t.expires_at_ms, Some(1782879812921));
         assert!(!t.is_expired(1782879812921 - 1000));
         assert!(t.is_expired(1782879812921 + 1000));
+        assert!(t.is_expired(1782879812921)); // boundary: now == expiresAt -> expired (>=)
     }
 
     #[test]
@@ -104,5 +114,17 @@ mod tests {
     #[test]
     fn garbage_blob_is_none() {
         assert!(parse_claude_token("not json").is_none());
+    }
+
+    #[test]
+    fn debug_redacts_token() {
+        let t = ClaudeToken {
+            access_token: "SECRET".to_string(),
+            expires_at_ms: Some(1234567890),
+        };
+        let debug_str = format!("{:?}", t);
+        assert!(!debug_str.contains("SECRET"), "token must be redacted in debug output");
+        assert!(debug_str.contains("<redacted>"), "should show redaction marker");
+        assert!(debug_str.contains("1234567890"), "expiry should be visible");
     }
 }
