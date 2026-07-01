@@ -36,9 +36,9 @@ itself is retained as a typed alias (user decision).
 - **Compact** sends `/compact` to the live agent in **this pane** (the footer's own pane, scoped
   by `WriteToPty`). Works for **both** agents.
 - Buttons appear **only** when the pane has a detected CLI agent; otherwise absent.
-- Clinch stays **agent-agnostic**: the fork command is an opaque string supplied by the
-  user-space capture scripts (same philosophy as the resume command), with a Rust-side derivation
-  fallback for sessions captured before this change.
+- Fork command derivation lives entirely in Rust: `agent_resume::derive_fork_command` transforms
+  the stored resume `command` (the same string the capture scripts already write) into a fork
+  command via two hardcoded per-agent rules. No capture-script changes were needed.
 
 ## Non-goals (scope guard)
 
@@ -46,8 +46,9 @@ itself is retained as a typed alias (user decision).
 - **Not** a global window-level status bar — buttons are **per-pane**, hosted in the existing
   CLI-agent footer (user-selected host). Per-pane removes "which pane?" ambiguity and, for the
   common single-pane window, looks identical to a global bottom bar.
-- **Not** supporting agents other than Claude + Codex (no Gemini/Amp/etc.). The agent-agnostic
-  registry means adding one later is a capture-script change, not Rust.
+- **Not** supporting agents other than Claude + Codex (no Gemini/Amp/etc.). Adding one later
+  requires a small Rust change (a new rule in `derive_fork_command`), not a capture-script change —
+  the registry itself stays agent-agnostic, but the fork-command *derivation* is not.
 - **Not** preserving in-flight (un-flushed) conversation turns when forking — `--fork-session` /
   `codex fork` read the **on-disk** transcript, so the most recent turn may lag. Inherent; same
   caveat the `/split` script already documents.
@@ -88,46 +89,37 @@ Fork commands (verified against the installed CLIs, codex-cli 0.142.2):
 Four small units, each with one responsibility:
 
 ```
- capture (user-space)          read (Rust)              act (Rust)                 UI (Rust)
- ┌───────────────────┐   ┌────────────────────┐   ┌──────────────────────┐   ┌──────────────────┐
- claude.zsh / codex   ─► agent_resume::         ─► Fork: open_new_tab_…    ◄─ Fork button  ─┐
- hook write             read_fork_command(uuid)    (SubshellCommandArg)       Compact button │
- fork_command into        (+ derive fallback)     Compact: WriteToPty         in CLI-agent   │
- registry json                                     ("/compact\r")             footer ────────┘
+ capture (user-space)          read+derive (Rust)          act (Rust)                 UI (Rust)
+ ┌───────────────────┐   ┌───────────────────────┐   ┌──────────────────────┐   ┌──────────────────┐
+ claude.zsh / codex   ─► agent_resume::           ─► Fork: open_new_tab_…    ◄─ Fork button  ─┐
+ hook write             read_fork_launch(uuid)        (SubshellCommandArg)       Compact button │
+ command + cwd into       (derive_fork_command)      Compact: WriteToPty         in CLI-agent   │
+ registry json                                        ("/compact\r")             footer ────────┘
 ```
 
-### Component 1 — Registry gains `fork_command` (capture scripts + `agent_resume.rs`)
+### Component 1 — Fork command derivation (`agent_resume.rs`, Rust-only)
 
-**Capture side** (`tools/agent-resume/`): the scripts already know the session id (they write the
-resume `command`). Add a sibling `fork_command` field:
+**Capture side** (`tools/agent-resume/`): unchanged by this feature. The scripts already write the
+resume `command` (e.g. `claude --resume <id>` / `codex resume <id>`) and `cwd` to the per-pane
+registry file; no new field was added here.
 
-- `claude.zsh` (the `claude` wrapper): when it records `command = "claude --resume <id>"`, also
-  record `fork_command = "claude --resume <id> --fork-session"` (same cwd-scoping as resume).
-- codex `SessionStart` hook: when it records `command = "codex resume <session_id>"`, also record
-  `fork_command = "codex fork <session_id>"`.
-- Writes stay atomic (`<uuid>.json.tmp` → rename), one file per pane, unchanged otherwise.
-
-Resulting registry entry:
+Registry entry (unchanged shape):
 ```json
-{ "command": "claude --resume <id>",
-  "fork_command": "claude --resume <id> --fork-session",
-  "cwd": "/Users/elliot/projects/clinch-terminal" }
+{ "command": "claude --resume <id>", "cwd": "/Users/elliot/projects/clinch-terminal" }
 ```
 
-**Read side** (`app/src/agent_resume.rs`):
-- Extend `RegistryEntry` with `cwd: Option<String>` and `fork_command: Option<String>`
-  (both `#[serde(default)]` for back-compat with existing files).
-- Add `pub fn read_fork_command(uuid: &[u8]) -> Option<ForkLaunch>` returning the fork command
-  **and** cwd (a small struct, e.g. `ForkLaunch { command: String, cwd: Option<String> }`).
-- **Derivation fallback** (for files written before this change, i.e. `fork_command` absent):
-  derive from `command` —
-  - `claude --resume <id>` → append ` --fork-session`
-  - `codex resume <id>` → rewrite leading `codex resume` → `codex fork`
-  - anything else → `None` (no Fork offered).
+**Read + derive side** (`app/src/agent_resume.rs`): `derive_fork_command` is the **sole** source of
+the fork command — a two-rule transform of the stored resume `command`, with no separate
+capture-script-supplied field:
+- `claude --resume <id>` → append ` --fork-session`
+- `codex resume <id>` → rewrite leading `codex resume` → `codex fork`
+- anything else (or an empty id after the prefix) → `None` (no Fork offered).
 
-  This keeps Fork working immediately for already-running agents, without forcing a restart. The
-  derivation is the **only** place Rust looks inside the command string; the preferred path
-  (`fork_command` present) stays fully opaque.
+`pub fn read_fork_launch(uuid: &[u8]) -> Option<ForkLaunch>` reads the registry entry, runs
+`derive_fork_command` on its `command`, and pairs the result with the entry's `cwd` — returning
+`ForkLaunch { command: String, cwd: Option<String> }`. This is Rust's only fork-command reader;
+there is no opaque `fork_command` field to prefer over derivation, so Fork works uniformly for
+every captured session (no "pre-upgrade" special case).
 
 ### Component 2 — Fork action (Rust)
 
