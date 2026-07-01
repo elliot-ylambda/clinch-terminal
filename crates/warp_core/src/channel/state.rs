@@ -383,7 +383,10 @@ impl ChannelState {
 
     pub fn url_scheme() -> &'static str {
         match Self::channel() {
-            Channel::Stable => "warp",
+            // Clinch fork: the Stable channel ships as the Clinch app and uses
+            // its own `clinch://` URL scheme so deep links and the OAuth login
+            // callback route to Clinch, not to an installed Warp.app.
+            Channel::Stable => "clinch",
             Channel::Preview => "warppreview",
             Channel::Dev => "warpdev",
             // Dummy value--integration tests shouldn't support URL schemes.
