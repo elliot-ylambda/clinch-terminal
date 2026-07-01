@@ -8384,7 +8384,6 @@ impl Workspace {
     /// The original pane is untouched. The new tab opens in the session's original directory
     /// and auto-runs the fork command (`claude --resume <id> --fork-session` / `codex fork <id>`)
     /// after its shell bootstraps, reusing the agent-resume restore-replay path.
-    #[allow(dead_code)] // Wired to the Fork footer button in a later task.
     fn fork_cli_agent_session(
         &mut self,
         pane_group: &ViewHandle<PaneGroup>,
@@ -15927,6 +15926,9 @@ impl Workspace {
                         history_model.set_has_code_review_opened_to_true(conversation_id);
                     });
                 }
+            }
+            pane_group::Event::ForkCliAgentSession { terminal_view_id } => {
+                self.fork_cli_agent_session(&pane_group, *terminal_view_id, ctx);
             }
             pane_group::Event::RunWorkflow {
                 workflow,

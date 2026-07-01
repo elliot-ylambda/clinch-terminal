@@ -70,6 +70,9 @@ pub enum AgentToolbarItemKind {
     // CLI agent only – sends `/compact` to the running agent.
     Compact,
 
+    // CLI agent only – forks this session into a new tab.
+    ForkSession,
+
     // Agent view only – shows fast-forward (auto-approve) toggle in the footer
     FastForwardToggle,
 
@@ -88,9 +91,11 @@ impl AgentToolbarItemKind {
             | Self::ContextWindowUsage
             | Self::FastForwardToggle
             | Self::HandoffToCloud => ToolbarAvailability::AgentViewOnly,
-            Self::FileExplorer | Self::RichInput | Self::Settings | Self::Compact => {
-                ToolbarAvailability::CLIAgentOnly
-            }
+            Self::FileExplorer
+            | Self::RichInput
+            | Self::Settings
+            | Self::Compact
+            | Self::ForkSession => ToolbarAvailability::CLIAgentOnly,
         }
     }
 
@@ -103,9 +108,11 @@ impl AgentToolbarItemKind {
         is_cloud_mode: bool,
     ) -> bool {
         match self {
-            Self::Settings | Self::ShareSession | Self::FileExplorer | Self::Compact => {
-                !status.is_viewer()
-            }
+            Self::Settings
+            | Self::ShareSession
+            | Self::FileExplorer
+            | Self::Compact
+            | Self::ForkSession => !status.is_viewer(),
             Self::FileAttach => !status.is_viewer() || is_cloud_mode,
             Self::FastForwardToggle => !status.is_viewer() || status.is_executor(),
             // Handoff is host-initiated; viewers cannot hand off another user's conversation.
@@ -132,6 +139,7 @@ impl AgentToolbarItemKind {
             Self::ShareSession => "/remote-control",
             Self::Settings => "Settings",
             Self::Compact => "Compact",
+            Self::ForkSession => "Fork",
             Self::FastForwardToggle => "Fast Forward",
             Self::HandoffToCloud => "Hand off to cloud",
         }
@@ -150,6 +158,7 @@ impl AgentToolbarItemKind {
             Self::ShareSession => Some(Icon::Phone01),
             Self::Settings => Some(Icon::Settings),
             Self::Compact => Some(Icon::Minimize),
+            Self::ForkSession => Some(Icon::GitBranch),
             Self::FastForwardToggle => Some(Icon::FastForward),
             // The bundled `upload-cloud-01.svg` (cloud-with-upward-arrow) is the
             // closest fit among the existing icons for V0; design may swap it later.
@@ -174,7 +183,8 @@ impl AgentToolbarItemKind {
             | Self::FileExplorer
             | Self::RichInput
             | Self::Settings
-            | Self::Compact => false,
+            | Self::Compact
+            | Self::ForkSession => false,
         }
     }
 
@@ -270,6 +280,7 @@ impl AgentToolbarItemKind {
     /// Default left-side items for the CLI agent footer.
     pub fn cli_default_left() -> Vec<Self> {
         let mut items = vec![
+            Self::ForkSession,
             Self::Compact,
             Self::FileAttach,
             Self::VoiceInput,
@@ -307,6 +318,7 @@ impl AgentToolbarItemKind {
             Self::RichInput,
             Self::FileAttach,
             Self::VoiceInput,
+            Self::ForkSession,
             Self::Compact,
             Self::Settings,
         ]);

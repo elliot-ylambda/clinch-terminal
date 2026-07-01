@@ -220,6 +220,7 @@ pub struct AgentInputFooter {
     // CLI agent-specific buttons (rendered when a CLI agent session is active).
     file_explorer_button: ViewHandle<ActionButton>,
     compact_button: ViewHandle<ActionButton>,
+    fork_button: ViewHandle<ActionButton>,
     rich_input_button: ViewHandle<ActionButton>,
     settings_button: ViewHandle<ActionButton>,
     install_plugin_button: ViewHandle<ActionButton>,
@@ -408,6 +409,16 @@ impl AgentInputFooter {
                 .with_tooltip_alignment(TooltipAlignment::Left)
                 .on_click(|ctx| {
                     ctx.dispatch_typed_action(AgentInputFooterAction::Compact);
+                })
+        });
+        let fork_button = ctx.add_typed_action_view(|_ctx| {
+            ActionButton::new("Fork", AgentInputButtonTheme)
+                .with_icon(Icon::GitBranch)
+                .with_tooltip("Fork this session into a new tab")
+                .with_size(cli_button_size)
+                .with_tooltip_alignment(TooltipAlignment::Left)
+                .on_click(|ctx| {
+                    ctx.dispatch_typed_action(AgentInputFooterAction::ForkSession);
                 })
         });
         let rich_input_button = ctx.add_typed_action_view(|ctx| {
@@ -851,6 +862,7 @@ impl AgentInputFooter {
             file_button,
             file_explorer_button,
             compact_button,
+            fork_button,
             rich_input_button,
             settings_button,
             start_remote_control_button,
@@ -1462,6 +1474,7 @@ impl AgentInputFooter {
                 Some(ChildView::new(&self.file_explorer_button).finish())
             }
             AgentToolbarItemKind::Compact => Some(ChildView::new(&self.compact_button).finish()),
+            AgentToolbarItemKind::ForkSession => Some(ChildView::new(&self.fork_button).finish()),
             AgentToolbarItemKind::RichInput => FeatureFlag::CLIAgentRichInput
                 .is_enabled()
                 .then(|| ChildView::new(&self.rich_input_button).finish()),
@@ -2188,7 +2201,8 @@ impl AgentInputFooter {
             AgentToolbarItemKind::FileExplorer
             | AgentToolbarItemKind::RichInput
             | AgentToolbarItemKind::Settings
-            | AgentToolbarItemKind::Compact => None,
+            | AgentToolbarItemKind::Compact
+            | AgentToolbarItemKind::ForkSession => None,
         }
     }
 
@@ -2459,6 +2473,7 @@ pub enum AgentInputFooterAction {
     ToggleCodeReview,
     ToggleFileExplorer,
     Compact,
+    ForkSession,
     ToggleRichInput,
     ToggleAutodetectionSetting,
     DismissFtuModelCallout,
@@ -2541,6 +2556,11 @@ impl TypedActionView for AgentInputFooter {
                 // stray keybinding can't type `/compact` into a plain shell.
                 if self.cli_agent(ctx).is_some() {
                     ctx.emit(AgentInputFooterEvent::WriteToPty("/compact\n".to_string()));
+                }
+            }
+            AgentInputFooterAction::ForkSession => {
+                if self.cli_agent(ctx).is_some() {
+                    ctx.emit(AgentInputFooterEvent::ForkSession);
                 }
             }
             AgentInputFooterAction::ToggleRichInput => {
@@ -2709,6 +2729,8 @@ pub enum AgentInputFooterEvent {
     InsertIntoCLIRichInput(String),
     ToggleCodeReviewPane(CLIAgent),
     ToggleFileExplorer(CLIAgent),
+    /// Fork this pane's CLI-agent session into a new tab.
+    ForkSession,
     StartRemoteControl,
     StopRemoteControl,
     OpenRichInput,

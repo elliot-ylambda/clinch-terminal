@@ -1744,6 +1744,9 @@ pub enum Event {
     },
     OpenCodeReviewPane(CodeReviewPanelArg),
     ToggleCodeReviewPane(CodeReviewPanelArg),
+    ForkCliAgentSession {
+        terminal_view_id: EntityId,
+    },
     InsertCodeReviewComments {
         repo_path: LocalOrRemotePath,
         comments: Vec<PendingImportedReviewComment>,
@@ -7039,6 +7042,13 @@ impl TerminalView {
             Event::ToggleCodeReviewPane,
             ctx,
         )
+    }
+
+    /// Requests that the workspace fork this pane's CLI-agent session into a new tab.
+    pub fn fork_cli_agent_session(&mut self, ctx: &mut ViewContext<Self>) {
+        ctx.emit(Event::ForkCliAgentSession {
+            terminal_view_id: self.view_id,
+        });
     }
 
     pub fn open_code_review_pane(

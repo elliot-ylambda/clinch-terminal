@@ -561,6 +561,9 @@ pub enum Event {
     },
     OpenCodeReviewPane(CodeReviewPanelArg),
     ToggleCodeReviewPane(CodeReviewPanelArg),
+    ForkCliAgentSession {
+        terminal_view_id: EntityId,
+    },
     /// Tell the workspace to run a workflow in the active tab's active session.
     RunWorkflow {
         workflow: Arc<WorkflowType>,
