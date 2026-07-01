@@ -310,8 +310,10 @@ elif [[ $RELEASE_CHANNEL = "stable" ]]; then
     BUNDLE_ID="sh.clinch.Clinch"
     WARP_APP_NAME="Clinch"
     WARP_SCHEME_NAME="clinch"
-    # Enable heap usage tracking & profiling using jemalloc through pprof.
-    FEATURES="$FEATURES,jemalloc_pprof,heap_usage_tracking"
+    # Clinch fork: intentionally omit jemalloc_pprof/heap_usage_tracking. They are Warp-internal
+    # profiling features that bundle the Go-based pprof binary (script/prepare_bundled_pprof runs
+    # `go tool -n pprof`), which would force a Go toolchain into this otherwise dependency-light,
+    # "runs locally and free" ship flow. A distributed Clinch build does not need them.
 elif [[ $RELEASE_CHANNEL = "oss" ]]; then
     WARP_BIN="warp-oss"
     BUNDLE_ID="dev.warp.WarpOss"
