@@ -71,6 +71,10 @@ offline) and requires restarting the agent to take effect. Removing the plugins
 (`claude plugin uninstall warp@claude-code-warp`) disables the badges/notifications;
 everything else keeps working.
 
+**Desktop notifications:** on a fresh profile the first agent status change shows an
+in-app banner to enable notifications; enable it once, after which background-pane
+completions/questions push to macOS.
+
 ## Build the app (replay layer)
 
 ```bash
