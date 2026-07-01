@@ -32,11 +32,13 @@ use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::{AnsiColorIdentifier, Fill};
 use warpui::elements::{
     Border, ChildAnchor, ChildView, Clipped, ConstrainedBox, Container, CornerRadius,
-    CrossAxisAlignment, DispatchEventResult, Element, EventHandler, Expanded, Flex,
-    MainAxisAlignment, MainAxisSize, OffsetPositioning, ParentElement, PositionedElementAnchor,
-    PositionedElementOffsetBounds, Radius, Shrinkable, Stack, Text, Wrap, WrapFill,
-    WrapFillEntireRun, DEFAULT_UI_LINE_HEIGHT_RATIO,
+    CrossAxisAlignment, DispatchEventResult, Element, Empty, EventHandler, Expanded, Flex,
+    Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning, ParentAnchor,
+    ParentElement, ParentOffsetBounds, PositionedElementAnchor, PositionedElementOffsetBounds,
+    Radius, Shrinkable, Stack, Text, Wrap, WrapFill, WrapFillEntireRun,
+    DEFAULT_UI_LINE_HEIGHT_RATIO,
 };
+use warpui::platform::Cursor;
 use warpui::r#async::{SpawnedFutureHandle, Timer};
 use warpui::{
     AppContext, Entity, EntityId, ModelHandle, SingletonEntity, TypedActionView, View, ViewContext,
@@ -51,7 +53,10 @@ pub(crate) use self::environment_selector::{
 use crate::ai::blocklist::agent_view::is_in_cloud_context;
 use crate::ai::blocklist::history_model::{BlocklistAIHistoryEvent, BlocklistAIHistoryModel};
 use crate::ai::blocklist::prompt::prompt_alert::{PromptAlertEvent, PromptAlertView};
-use crate::ai::blocklist::usage::icon_for_context_window_usage;
+use crate::ai::blocklist::usage::{
+    icon_for_context_window_usage, render_cli_agent_usage_chip, render_cli_agent_usage_panel,
+    CliAgentUsageModel,
+};
 use crate::ai::blocklist::BlocklistAIInputModel;
 use crate::ai::execution_profiles::profiles::AIExecutionProfilesModel;
 use crate::ai::harness_availability::HarnessAvailabilityModel;
@@ -253,6 +258,12 @@ pub struct AgentInputFooter {
     /// Pending one-shot timer that refreshes the context-window button at the
     /// prompt-cache expiry instant so the yellow tint appears while idle.
     prompt_cache_expiry_timer_handle: Option<SpawnedFutureHandle>,
+
+    // Always-on CLI-agent (Claude Code + Codex) usage chip: whether its
+    // click-to-open panel is currently expanded, and the mouse-tracking handle
+    // for its `Hoverable` (created once here, cloned at render time).
+    cli_agent_usage_panel_open: bool,
+    cli_agent_usage_mouse_state: MouseStateHandle,
 }
 
 impl AgentInputFooter {
@@ -733,6 +744,9 @@ impl AgentInputFooter {
         ctx.subscribe_to_model(&AIRequestUsageModel::handle(ctx), |_, _, _, ctx| {
             ctx.notify()
         });
+        ctx.subscribe_to_model(&CliAgentUsageModel::handle(ctx), |_, _, _, ctx| {
+            ctx.notify()
+        });
         ctx.subscribe_to_model(&AISettings::handle(ctx), |_, _, event, ctx| {
             if matches!(
                 event,
@@ -902,6 +916,8 @@ impl AgentInputFooter {
             }),
             v2_model_selector,
             prompt_cache_expiry_timer_handle: None,
+            cli_agent_usage_panel_open: false,
+            cli_agent_usage_mouse_state: Default::default(),
         };
         me.sync_fast_forward_button(ctx);
         me.sync_remote_control_button(ctx);
@@ -1516,6 +1532,54 @@ impl AgentInputFooter {
         }
     }
 
+    /// The always-on CLI-agent usage chip (Claude Code + Codex plan-%), which
+    /// expands into a panel on click. `None` when there is no data, or in
+    /// viewer/transcript contexts (the host's usage is private).
+    fn render_cli_agent_usage_chip_item(
+        &self,
+        shared_status: &SharedSessionStatus,
+        is_conversation_transcript_context: bool,
+        app: &AppContext,
+    ) -> Option<Box<dyn Element>> {
+        if shared_status.is_viewer() || is_conversation_transcript_context {
+            return None;
+        }
+        let appearance = Appearance::as_ref(app);
+        let bg = appearance.theme().surface_1();
+        let snapshot = CliAgentUsageModel::as_ref(app).latest().clone();
+        // Hidden when neither tool has data.
+        if cli_agent_usage::format::chip_halves(&snapshot).is_none() {
+            return None;
+        }
+        let panel_open = self.cli_agent_usage_panel_open;
+        let snapshot_for_panel = snapshot.clone();
+
+        let hover = Hoverable::new(self.cli_agent_usage_mouse_state.clone(), move |_state| {
+            render_cli_agent_usage_chip(&snapshot, appearance, bg)
+                .unwrap_or_else(|| Empty::new().finish())
+        })
+        .on_click(|ctx, _app, _position| {
+            ctx.dispatch_typed_action(AgentInputFooterAction::ToggleCliAgentUsagePanel);
+        })
+        .with_cursor(Cursor::PointingHand)
+        .finish();
+
+        let mut stack = Stack::new().with_child(hover);
+        if panel_open {
+            let panel = render_cli_agent_usage_panel(&snapshot_for_panel, appearance);
+            stack.add_positioned_overlay_child(
+                panel,
+                OffsetPositioning::offset_from_parent(
+                    vec2f(0., -4.),
+                    ParentOffsetBounds::WindowByPosition,
+                    ParentAnchor::TopLeft,
+                    ChildAnchor::BottomLeft,
+                ),
+            );
+        }
+        Some(stack.finish())
+    }
+
     fn render_cli_mode_footer(&self, app: &AppContext) -> Box<dyn Element> {
         let appearance = Appearance::as_ref(app);
         let cli_icon_size = ButtonSize::AgentInputButton.icon_size(appearance, app);
@@ -1628,6 +1692,14 @@ impl AgentInputFooter {
             ) {
                 right_buttons.add_child(element);
             }
+        }
+
+        if let Some(chip) = self.render_cli_agent_usage_chip_item(
+            &shared_status,
+            is_conversation_transcript_context,
+            app,
+        ) {
+            right_buttons.add_child(chip);
         }
 
         let content = Wrap::row()
@@ -2474,6 +2546,8 @@ pub enum AgentInputFooterAction {
     ToggleFileExplorer,
     Compact,
     ForkSession,
+    /// Toggle the expanded CLI-agent usage panel above the footer chip.
+    ToggleCliAgentUsagePanel,
     ToggleRichInput,
     ToggleAutodetectionSetting,
     DismissFtuModelCallout,
@@ -2562,6 +2636,10 @@ impl TypedActionView for AgentInputFooter {
                 if self.cli_agent(ctx).is_some() {
                     ctx.emit(AgentInputFooterEvent::ForkSession);
                 }
+            }
+            AgentInputFooterAction::ToggleCliAgentUsagePanel => {
+                self.cli_agent_usage_panel_open = !self.cli_agent_usage_panel_open;
+                ctx.notify();
             }
             AgentInputFooterAction::ToggleRichInput => {
                 if self.has_active_cli_agent_input_session(ctx) {

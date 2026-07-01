@@ -2836,6 +2836,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b94f61472cee1439c0b966b47e3aca9ae07e45d070759512cd390ea2bebc6675"
 
 [[package]]
+name = "cli_agent_usage"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "reqwest",
+ "security-framework 3.5.1",
+ "serde",
+ "serde_json",
+ "walkdir",
+]
+
+[[package]]
 name = "clipboard-win"
 version = "5.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14559,6 +14571,7 @@ dependencies = [
  "channel_versions",
  "chrono",
  "clap",
+ "cli_agent_usage",
  "cloud_object_client",
  "cloud_object_models",
  "cloud_object_persistence",
