@@ -62,7 +62,8 @@ fn rates(model: &str) -> Option<Rates> {
 
 pub fn cost(model: &str, t: &TokenCounts) -> f64 {
     let Some(r) = rates(model) else {
-        eprintln!("[cli_agent_usage] no pricing for model '{model}'; counting 0 cost");
+        // Unknown model (e.g. Claude's "<synthetic>" pseudo-model) contributes 0 cost.
+        // Silent by design: a library must not write to stderr; the app layer can log this.
         return 0.0;
     };
     let per = 1_000_000.0;
