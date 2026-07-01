@@ -2,10 +2,12 @@ use warp_core::ui::theme::{Fill, WarpTheme};
 use warp_core::ui::Icon;
 use warpui::Element;
 
+mod cli_agent_usage_chip;
 mod cli_agent_usage_model;
 pub mod conversation_usage_view;
 pub mod rollup;
 
+pub use cli_agent_usage_chip::{render_cli_agent_usage_chip, render_cli_agent_usage_panel};
 pub use cli_agent_usage_model::CliAgentUsageModel;
 
 pub fn icon_for_context_window_usage(context_window_usage: f32) -> Icon {
