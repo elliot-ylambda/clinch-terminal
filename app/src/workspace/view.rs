@@ -20778,6 +20778,42 @@ impl Workspace {
         }
     }
 
+    /// The subtle per-project tint for this window's header (the tab-bar
+    /// strip), following the active tab. An explicit tab color (a manual choice
+    /// or a configured directory color) wins; otherwise the active tab's
+    /// git/project root is hashed to a stable palette color. `None` when there
+    /// is no active tab or no local working directory (e.g. a remote session).
+    fn window_header_tint(&self, appearance: &Appearance, ctx: &AppContext) -> Option<Fill> {
+        let explicit = self
+            .tabs
+            .get(self.active_tab_index)
+            .and_then(|tab| tab.color());
+        let project_dir = self.active_header_project_dir(ctx);
+        let color_id = super::header_color::resolve_header_color(explicit, project_dir.as_deref())?;
+        Some(super::header_color::header_tint_fill(
+            appearance.theme(),
+            color_id,
+        ))
+    }
+
+    /// The active tab's project directory: the git/repo root of its working
+    /// directory when known (so the color stays stable across subdirectories of
+    /// the same project), falling back to the working directory itself. `None`
+    /// for remote sessions or when there is no local cwd.
+    fn active_header_project_dir(&self, ctx: &AppContext) -> Option<PathBuf> {
+        let tab = self.tabs.get(self.active_tab_index)?;
+        let cwd = tab
+            .pane_group
+            .as_ref(ctx)
+            .active_session_view(ctx)
+            .and_then(|tv| tv.as_ref(ctx).canonical_session_pwd_if_local(ctx))?;
+        let cwd_key = LocalOrRemotePath::Local(cwd.as_path().to_path_buf());
+        let root = DetectedRepositories::as_ref(ctx)
+            .get_root_for_path(&cwd_key)
+            .unwrap_or(cwd_key);
+        root.to_local_path().map(|p| p.to_path_buf())
+    }
+
     /// Renders the tab bar contents, wrapped in hover and drag-drop behaviors.
     fn render_tab_bar(
         &self,
@@ -20818,6 +20854,13 @@ impl Workspace {
         if FeatureFlag::NewTabStyling.is_enabled() {
             tab_bar_container = tab_bar_container
                 .with_background(internal_colors::fg_overlay_1(appearance.theme()));
+        }
+        // A subtle per-project tint on top of any base styling, so windows for
+        // different projects are distinguishable at a glance.
+        if FeatureFlag::WindowHeaderColors.is_enabled() {
+            if let Some(tint) = self.window_header_tint(appearance, ctx) {
+                tab_bar_container = tab_bar_container.with_background(tint);
+            }
         }
         let tab_bar_element = tab_bar_container.finish();
 
