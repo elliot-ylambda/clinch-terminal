@@ -328,3 +328,51 @@ fn test_starts_with_shebang_missing_path() {
     let p = dir.path().join("nope");
     assert!(!starts_with_shebang(&p));
 }
+
+#[test]
+#[cfg(feature = "local_fs")]
+#[cfg(feature = "image_preview_pane")]
+fn svg_routes_to_image_viewer_when_flag_on() {
+    use warp_core::features::FeatureFlag;
+    let _g = FeatureFlag::ImagePreviewPane.override_enabled(true);
+    let target = resolve_file_target_with_editor_choice(
+        std::path::Path::new("/tmp/logo.svg"),
+        EditorChoice::Warp,
+        false,
+        EditorLayout::SplitPane,
+        None,
+    );
+    assert_eq!(target, FileTarget::ImageViewer(EditorLayout::SplitPane));
+}
+
+#[test]
+#[cfg(feature = "local_fs")]
+#[cfg(feature = "image_preview_pane")]
+fn png_routes_to_image_viewer_when_flag_on() {
+    use warp_core::features::FeatureFlag;
+    let _g = FeatureFlag::ImagePreviewPane.override_enabled(true);
+    let target = resolve_file_target_with_editor_choice(
+        std::path::Path::new("/tmp/pic.png"),
+        EditorChoice::Warp,
+        false,
+        EditorLayout::SplitPane,
+        None,
+    );
+    assert_eq!(target, FileTarget::ImageViewer(EditorLayout::SplitPane));
+}
+
+#[test]
+#[cfg(feature = "local_fs")]
+#[cfg(feature = "image_preview_pane")]
+fn svg_keeps_code_editor_when_flag_off() {
+    use warp_core::features::FeatureFlag;
+    let _g = FeatureFlag::ImagePreviewPane.override_enabled(false);
+    let target = resolve_file_target_with_editor_choice(
+        std::path::Path::new("/tmp/logo.svg"),
+        EditorChoice::Warp,
+        false,
+        EditorLayout::SplitPane,
+        None,
+    );
+    assert_eq!(target, FileTarget::CodeEditor(EditorLayout::SplitPane));
+}

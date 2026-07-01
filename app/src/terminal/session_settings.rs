@@ -92,6 +92,9 @@ pub struct NotificationsSettings {
 
     #[schemars(description = "Whether to play a sound with notifications.")]
     pub play_notification_sound: bool,
+
+    #[schemars(description = "Whether to show CLI-agent (Claude/Codex) status badges on tabs.")]
+    pub show_agent_status_on_tabs: bool,
 }
 
 impl Default for NotificationsSettings {
@@ -104,6 +107,7 @@ impl Default for NotificationsSettings {
             is_agent_task_completed_enabled: true,
             is_needs_attention_enabled: true,
             play_notification_sound: true,
+            show_agent_status_on_tabs: true,
         }
     }
 }

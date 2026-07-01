@@ -35,11 +35,15 @@ use crate::launch_configs::launch_config::LaunchConfig;
 use crate::menu::{MenuAction, MenuItem, MenuItemFields};
 use crate::pane_group::{PaneGroup, PaneId};
 use crate::shell_indicator::ShellIndicatorType;
+use crate::terminal::session_settings::SessionSettings;
 use crate::terminal::shared_session::render_util::shared_session_indicator_color;
 use crate::terminal::view::TerminalViewState;
+use crate::terminal::CLIAgent;
 use crate::themes::theme::{AnsiColorIdentifier, Fill as ThemeFill, VerticalGradient};
+use crate::ui_components::agent_icon::terminal_view_agent_icon_variant;
 use crate::ui_components::buttons::icon_button;
 use crate::ui_components::color_dot::{render_color_dot, TAB_COLOR_OPTIONS};
+use crate::ui_components::icon_with_status::{render_icon_with_status, IconWithStatusVariant};
 use crate::ui_components::icons::{Icon, ICON_DIMENSIONS};
 use crate::util::color::{coloru_with_opacity, Opacity};
 use crate::util::truncation::truncate_from_end;
@@ -762,6 +766,15 @@ enum Indicator {
         conversation_status: Option<ConversationStatus>,
     },
     AmbientAgent,
+    /// A Claude/Codex CLI agent is running in this tab's focused pane. Carries the same
+    /// fields as `IconWithStatusVariant::CLIAgent` (rather than the variant itself) so
+    /// `Indicator` can keep deriving `Clone`: `IconWithStatusVariant` also has variants
+    /// holding `Box<dyn Element>`, which isn't `Clone`.
+    CLIAgent {
+        agent: CLIAgent,
+        status: Option<ConversationStatus>,
+        is_ambient: bool,
+    },
 }
 
 impl From<TerminalViewState> for Indicator {
@@ -938,6 +951,8 @@ impl<'a> TabComponent<'a> {
             Indicator::Synced
         } else if let Some(agent) = Self::agent_indicator(tab, ctx) {
             agent
+        } else if let Some(cli_agent) = Self::cli_agent_indicator(tab, ctx) {
+            cli_agent
         } else if let Some(shell_indicator_type) = shell_indicator_type {
             Indicator::Shell(shell_indicator_type)
         } else if has_active_pane_state_indicator {
@@ -1041,6 +1056,32 @@ impl<'a> TabComponent<'a> {
         })
     }
 
+    /// CLI-agent (Claude/Codex) status indicator for the tab's focused pane, or `None` when
+    /// the focused pane isn't a recognized CLI agent or the setting is off. Mirrors how the
+    /// sidebar/pane-header derive their badge so all three surfaces stay in lockstep.
+    fn cli_agent_indicator(tab: &TabData, app: &AppContext) -> Option<Indicator> {
+        if !SessionSettings::as_ref(app)
+            .notifications
+            .show_agent_status_on_tabs
+        {
+            return None;
+        }
+        let view = tab.pane_group.as_ref(app).focused_session_view(app)?;
+        let variant = terminal_view_agent_icon_variant(view.as_ref(app), app)?;
+        match variant {
+            IconWithStatusVariant::CLIAgent {
+                agent,
+                status,
+                is_ambient,
+            } => Some(Indicator::CLIAgent {
+                agent,
+                status,
+                is_ambient,
+            }),
+            _ => None,
+        }
+    }
+
     /// Determine if this tab is the active tab.
     fn is_active_tab(&self) -> bool {
         Some(self.tab_index) == self.tab_bar.active_tab_index
@@ -1072,6 +1113,19 @@ impl<'a> TabComponent<'a> {
         tab: &TabData,
         ctx: &AppContext,
     ) -> Option<String> {
+        // CLI agents (Claude/Codex/etc.) aren't tracked in `BlocklistAIHistoryModel`, so they
+        // get their own tooltip text (agent name + status) rather than going through
+        // `get_agent_task_tooltip_message`, which only knows about Oz agent conversations.
+        if let Indicator::CLIAgent { agent, status, .. } = indicator {
+            let suffix = match status {
+                Some(ConversationStatus::Blocked { .. }) => " — needs your attention",
+                Some(ConversationStatus::Success) => " — done",
+                Some(ConversationStatus::InProgress) => " — working",
+                _ => "",
+            };
+            return Some(format!("{}{}", agent.display_name(), suffix));
+        }
+
         if Self::is_agent_task_indicator(indicator) {
             return Self::get_agent_task_tooltip_message(tab, ctx);
         }
@@ -1119,7 +1173,10 @@ impl<'a> TabComponent<'a> {
 
     /// Check if the given indicator is an agent task indicator
     fn is_agent_task_indicator(indicator: &Indicator) -> bool {
-        matches!(indicator, Indicator::Agent { .. } | Indicator::AmbientAgent)
+        matches!(
+            indicator,
+            Indicator::Agent { .. } | Indicator::AmbientAgent | Indicator::CLIAgent { .. }
+        )
     }
 
     /// Get the current working directory for the tooltip if this is an agent task
@@ -1446,6 +1503,21 @@ impl<'a> TabComponent<'a> {
                     .finish(),
                 )
             }
+            Indicator::CLIAgent {
+                agent,
+                status,
+                is_ambient,
+            } => Some(render_icon_with_status(
+                IconWithStatusVariant::CLIAgent {
+                    agent: *agent,
+                    status: status.clone(),
+                    is_ambient: *is_ambient,
+                },
+                TAB_INDICATOR_HEIGHT,
+                0.0,
+                self.appearance.theme(),
+                self.appearance.theme().background(),
+            )),
         };
 
         icon.map(|icon| {
@@ -2047,5 +2119,35 @@ impl UiComponent for TabComponent<'_> {
             styles: self.styles.merge(style),
             ..self
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_agent_task_indicator_true_for_agent_indicators() {
+        assert!(TabComponent::is_agent_task_indicator(&Indicator::Agent {
+            conversation_status: None,
+        }));
+        assert!(TabComponent::is_agent_task_indicator(
+            &Indicator::AmbientAgent
+        ));
+        assert!(TabComponent::is_agent_task_indicator(
+            &Indicator::CLIAgent {
+                agent: CLIAgent::Claude,
+                status: None,
+                is_ambient: false,
+            }
+        ));
+    }
+
+    #[test]
+    fn is_agent_task_indicator_false_for_non_agent_indicators() {
+        assert!(!TabComponent::is_agent_task_indicator(&Indicator::None));
+        assert!(!TabComponent::is_agent_task_indicator(&Indicator::Shell(
+            ShellIndicatorType::Linux
+        )));
     }
 }

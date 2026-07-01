@@ -1,4 +1,5 @@
 //! Implementation of terminal panes.
+use std::cell::RefCell;
 #[cfg(not(target_family = "wasm"))]
 use std::collections::HashMap;
 use std::sync::mpsc::SyncSender;
@@ -75,12 +76,33 @@ use crate::{
 
 pub type TerminalPaneView = PaneView<TerminalView>;
 
+/// How to rebuild a terminal pane whose PTY was killed when its tab/pane was
+/// closed (because it was running a long-running process — e.g. a Claude/Codex
+/// agent). Captured at close time while the process is still alive, then acted
+/// on when the closed tab is reopened (see [`PaneGroup::reattach_panes`]). The
+/// presence of a spec is the single signal that "this leaf is dead and must be
+/// restarted on reopen".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RestartSpec {
+    /// Working directory to spawn the fresh shell in (from `pwd_if_local`).
+    pub cwd: Option<String>,
+    /// Agent resume command to replay after the fresh shell bootstraps
+    /// (e.g. `warp_agent_resume_launch claude <id>`). `None` for non-agent
+    /// long-running processes — those just respawn as a usable shell.
+    pub on_restore_command: Option<String>,
+}
+
 /// Data kept for terminal panes.
 pub struct TerminalPane {
     model_event_sender: Option<SyncSender<ModelEvent>>,
 
     /// Used to uniquely identify the pane, even across separate runs of the app.
     uuid: Vec<u8>,
+
+    /// Set when this pane's PTY is shut down on close so that, if the tab is
+    /// reopened within the undo grace period, the session is re-created and the
+    /// agent conversation resumed. `None` for panes that keep their live PTY.
+    restart_spec: RefCell<Option<RestartSpec>>,
 
     pane_configuration: ModelHandle<PaneConfiguration>,
 
@@ -205,9 +227,23 @@ impl TerminalPane {
         Self {
             model_event_sender,
             uuid,
+            restart_spec: RefCell::new(None),
             pane_configuration,
             view,
         }
+    }
+
+    /// Records how to rebuild this pane's session if its tab is reopened after
+    /// close. Called from the close path right before the PTY is shut down,
+    /// while the agent (if any) is still alive so its resume command can be read.
+    pub(in crate::pane_group) fn set_restart_spec(&self, spec: RestartSpec) {
+        *self.restart_spec.borrow_mut() = Some(spec);
+    }
+
+    /// Takes the pending [`RestartSpec`], if any. Used on reopen to decide
+    /// whether this leaf's dead session must be re-created.
+    pub(in crate::pane_group) fn take_restart_spec(&self) -> Option<RestartSpec> {
+        self.restart_spec.borrow_mut().take()
     }
 
     /// The [`PaneView<TerminalView>`] for this pane.
@@ -1161,6 +1197,11 @@ fn handle_terminal_view_event(
             }
             Event::ToggleCodeReviewPane(arg) => {
                 ctx.emit(pane_group::Event::ToggleCodeReviewPane(arg.clone()));
+            }
+            Event::ForkCliAgentSession { terminal_view_id } => {
+                ctx.emit(pane_group::Event::ForkCliAgentSession {
+                    terminal_view_id: *terminal_view_id,
+                });
             }
             Event::OpenShareSessionModal { open_source } => {
                 group.open_share_session_modal(terminal_pane_id, *open_source, ctx)

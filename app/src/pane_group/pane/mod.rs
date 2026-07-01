@@ -18,6 +18,7 @@ pub(crate) mod environment_management_pane;
 pub(super) mod execution_profile_editor_pane;
 pub(super) mod file_pane;
 pub(super) mod get_started_pane;
+pub(super) mod image_pane;
 pub(super) mod get_started_view;
 #[cfg(not(target_family = "wasm"))]
 pub(super) mod local_harness_launch;
@@ -53,6 +54,7 @@ use crate::code::view::CodeView;
 use crate::drive::sharing::ShareableObject;
 use crate::env_vars::view::env_var_collection::EnvVarCollectionView;
 use crate::menu::MenuItem;
+use crate::image_viewer::ImageView;
 use crate::notebooks::file::FileNotebookView;
 use crate::notebooks::notebook::NotebookView;
 use crate::pane_group::focus_state::PaneFocusHandle;
@@ -145,6 +147,7 @@ pub(crate) enum IPaneType {
     GetStarted,
     NetworkLog,
     DeferredPlaceholder,
+    ImageViewer,
     /// A pane type only for tests.
     #[cfg(test)]
     Dummy,
@@ -168,6 +171,7 @@ impl Display for IPaneType {
             IPaneType::GetStarted => write!(f, "GetStarted"),
             IPaneType::NetworkLog => write!(f, "Network Log"),
             IPaneType::DeferredPlaceholder => write!(f, "Placeholder"),
+            IPaneType::ImageViewer => write!(f, "Image Viewer"),
             #[cfg(test)]
             IPaneType::Dummy => write!(f, "Dummy"),
         }
@@ -262,6 +266,11 @@ impl PaneId {
     /// Creates a [`PaneId`] from a [`ViewContext<PaneView<NetworkLogView>>`].
     pub fn from_network_log_pane_ctx(ctx: &ViewContext<PaneView<NetworkLogView>>) -> Self {
         Self::new_from_ctx(IPaneType::NetworkLog, ctx)
+    }
+
+    /// Creates a [`PaneId`] from a [`ViewContext<PaneView<ImageView>>`].
+    pub fn from_image_pane_ctx(ctx: &ViewContext<PaneView<ImageView>>) -> Self {
+        Self::new_from_ctx(IPaneType::ImageViewer, ctx)
     }
 
     /// Creates a [`PaneId`] from a [`PaneView<TerminalView>`] entity ID.
@@ -361,6 +370,11 @@ impl PaneId {
         Self::new(IPaneType::NetworkLog, network_log_pane_view)
     }
 
+    /// Creates a [`PaneId`] from a [`PaneView<ImageView>`] entity ID.
+    pub fn from_image_pane_view(image_pane_view: &ViewHandle<PaneView<ImageView>>) -> Self {
+        Self::new(IPaneType::ImageViewer, image_pane_view)
+    }
+
     #[cfg_attr(not(feature = "local_fs"), allow(dead_code))]
     pub(super) fn deferred_placeholder_pane_id() -> Self {
         Self(IPaneId {
@@ -409,6 +423,10 @@ impl PaneId {
 
     pub fn is_file_pane(&self) -> bool {
         matches!(self.0.pane_type, IPaneType::File)
+    }
+
+    pub fn is_image_viewer_pane(&self) -> bool {
+        matches!(self.0.pane_type, IPaneType::ImageViewer)
     }
 
     pub fn is_code_diff_pane(&self) -> bool {
@@ -477,6 +495,9 @@ impl PaneId {
                 ChildView::<PaneView<NetworkLogView>>::with_id(self.0.pane_view_id).finish()
             }
             IPaneType::DeferredPlaceholder => warpui::elements::Empty::new().finish(),
+            IPaneType::ImageViewer => {
+                ChildView::<PaneView<ImageView>>::with_id(self.0.pane_view_id).finish()
+            }
             #[cfg(test)]
             IPaneType::Dummy => warpui::elements::Empty::new().finish(),
         };

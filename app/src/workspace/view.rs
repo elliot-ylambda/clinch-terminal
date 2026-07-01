@@ -282,6 +282,8 @@ use crate::palette::PaletteMode;
 use crate::pane_group::pane::ActionOrigin;
 #[cfg(feature = "local_fs")]
 use crate::pane_group::FilePane;
+#[cfg(feature = "image_preview_pane")]
+use crate::pane_group::ImagePane;
 use crate::pane_group::{
     self, AIFactPane, AnyPaneContent, ChildAgentOrigin, CodeDiffPane, CodePane, CodeReviewPanelArg,
     Direction as PaneGroupDirection, Direction, EnvironmentManagementPane,
@@ -6129,6 +6131,11 @@ impl Workspace {
                     ctx,
                 );
             }
+            #[cfg(feature = "image_preview_pane")]
+            FileTarget::ImageViewer(layout) => {
+                let session = self.get_active_session(ctx);
+                self.open_file_image(LocalOrRemotePath::Local(path.clone()), session, layout, ctx);
+            }
             FileTarget::EnvEditor => {
                 let editor_value: Option<String> = self
                     .get_active_session(ctx)
@@ -8334,6 +8341,34 @@ impl Workspace {
         }
     }
 
+    /// Open a file as an image pane.
+    #[cfg(feature = "image_preview_pane")]
+    fn open_file_image(
+        &mut self,
+        path: LocalOrRemotePath,
+        session: Option<Arc<Session>>,
+        layout: EditorLayout,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let pane = ImagePane::new(Some(path), session, ctx);
+        match layout {
+            EditorLayout::NewTab => {
+                let (new_idx, group_id) = self.new_tab_index_and_group(ctx);
+                self.add_tab_from_existing_pane(Box::new(pane), new_idx, group_id, ctx);
+            }
+            EditorLayout::SplitPane => {
+                self.active_tab_pane_group().update(ctx, |pane_group, ctx| {
+                    pane_group.add_pane_with_direction(
+                        Direction::Right,
+                        pane,
+                        true,
+                        ctx,
+                    );
+                });
+            }
+        }
+    }
+
     fn attach_path_as_context(&mut self, path: PathBuf, ctx: &mut ViewContext<Self>) {
         let Some(view) = self.active_session_view(ctx) else {
             log::warn!("No active terminal view session when trying to attach path as context");
@@ -8370,6 +8405,71 @@ impl Workspace {
             None,
             ctx,
         );
+    }
+
+    /// Forks the Claude/Codex session in the pane owning `terminal_view_id` into a NEW tab.
+    ///
+    /// The original pane is untouched. The new tab opens in the session's original directory
+    /// and auto-runs the fork command (`claude --resume <id> --fork-session` / `codex fork <id>`)
+    /// after its shell bootstraps, reusing the agent-resume restore-replay path.
+    fn fork_cli_agent_session(
+        &mut self,
+        pane_group: &ViewHandle<PaneGroup>,
+        terminal_view_id: EntityId,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let Some(fork) = pane_group.read(ctx, |pane_group, ctx| {
+            pane_group.fork_launch_for_terminal_view(terminal_view_id, ctx)
+        }) else {
+            log::warn!("fork: no forkable CLI-agent session for the focused pane");
+            return;
+        };
+
+        // Create a new tab pinned to the session's original directory (bypasses the
+        // user's working-directory setting, so `claude --resume`'s cwd-scoping holds).
+        let options = NewTerminalOptions::default()
+            .with_initial_directory_opt(fork.cwd.as_deref().map(PathBuf::from));
+        self.add_tab_with_pane_layout(
+            PanesLayout::SingleTerminal(Box::new(options)),
+            Arc::new(HashMap::new()),
+            None,
+            ctx,
+        );
+
+        // Attach the one-shot replay command to the new (now active) tab's single pane,
+        // mirroring the snapshot-restore path (pane_group/mod.rs:1672).
+        let command = fork.command;
+        #[cfg(feature = "local_tty")]
+        {
+            let manager_handle = self
+                .active_tab_pane_group()
+                .read(ctx, |pane_group, ctx| pane_group.terminal_manager(0, ctx));
+            if let Some(manager_handle) = manager_handle {
+                manager_handle.update(ctx, |terminal_manager, ctx| {
+                    if let Some(manager) = terminal_manager
+                        .as_any()
+                        .downcast_ref::<crate::terminal::local_tty::TerminalManager>(
+                    ) {
+                        // Must be registered here, synchronously, before the new tab's async
+                        // `Bootstrapped` event fires (mirrors the snapshot-restore path,
+                        // pane_group/mod.rs:1672); otherwise the replay command is lost.
+                        manager.set_on_restore_command(command, ctx);
+                    } else {
+                        log::warn!(
+                            "fork: new tab's terminal manager is not a local_tty::TerminalManager; \
+                             dropping fork command (Fork opened an empty tab)"
+                        );
+                    }
+                });
+            } else {
+                log::warn!(
+                    "fork: new tab has no terminal manager at pane 0; dropping fork command \
+                     (Fork opened an empty tab)"
+                );
+            }
+        }
+        #[cfg(not(feature = "local_tty"))]
+        let _ = command;
     }
 
     #[cfg(feature = "local_fs")]
@@ -11658,20 +11758,9 @@ impl Workspace {
         if !re_adopted && detach_panes_for_close {
             let working_directories_model = self.working_directories_model.clone();
             pane_group.update(ctx, |pane_group, ctx| {
-                pane_group.for_all_terminal_panes(
-                    |terminal_view, ctx| {
-                        if terminal_view
-                            .model
-                            .lock()
-                            .block_list()
-                            .active_block()
-                            .is_active_and_long_running()
-                        {
-                            terminal_view.shutdown_pty(ctx);
-                        }
-                    },
-                    ctx,
-                );
+                // Shut down long-running PTYs (e.g. agents), first recording how
+                // to resume each one so reopening the tab restarts its session.
+                pane_group.shutdown_long_running_panes_for_close(ctx);
 
                 pane_group.detach_panes_for_close(&working_directories_model, ctx);
             });
@@ -15878,6 +15967,9 @@ impl Workspace {
                         history_model.set_has_code_review_opened_to_true(conversation_id);
                     });
                 }
+            }
+            pane_group::Event::ForkCliAgentSession { terminal_view_id } => {
+                self.fork_cli_agent_session(&pane_group, *terminal_view_id, ctx);
             }
             pane_group::Event::RunWorkflow {
                 workflow,
@@ -22396,6 +22488,9 @@ impl Workspace {
         }
         if session_settings.notifications.play_notification_sound {
             context.set.insert(flags::NOTIFICATION_SOUND_FLAG);
+        }
+        if session_settings.notifications.show_agent_status_on_tabs {
+            context.set.insert(flags::AGENT_STATUS_ON_TABS_FLAG);
         }
 
         if *general_settings.link_tooltip {

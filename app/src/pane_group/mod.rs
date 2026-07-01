@@ -183,10 +183,11 @@ pub use pane::env_var_collection_pane::EnvVarCollectionPane;
 pub use pane::environment_management_pane::EnvironmentManagementPane;
 pub use pane::execution_profile_editor_pane::ExecutionProfileEditorPane;
 pub use pane::file_pane::FilePane;
+pub use pane::image_pane::ImagePane;
 pub use pane::network_log_pane::NetworkLogPane;
 pub use pane::notebook_pane::NotebookPane;
 pub use pane::settings_pane::SettingsPane;
-pub use pane::terminal_pane::TerminalPane;
+pub use pane::terminal_pane::{RestartSpec, TerminalPane};
 pub use pane::workflow_pane::WorkflowPane;
 pub use pane::{
     AnyPaneContent, BackingView, PaneConfiguration, PaneConfigurationEvent, PaneContent, PaneEvent,
@@ -560,6 +561,9 @@ pub enum Event {
     },
     OpenCodeReviewPane(CodeReviewPanelArg),
     ToggleCodeReviewPane(CodeReviewPanelArg),
+    ForkCliAgentSession {
+        terminal_view_id: EntityId,
+    },
     /// Tell the workspace to run a workflow in the active tab's active session.
     RunWorkflow {
         workflow: Arc<WorkflowType>,
@@ -1669,9 +1673,7 @@ impl PaneGroup {
                 // `claude --resume <id>`) once the restored shell finishes bootstrapping.
                 #[cfg(feature = "local_tty")]
                 {
-                    if let Some(on_restore_command) =
-                        terminal_snapshot.on_restore_command.clone()
-                    {
+                    if let Some(on_restore_command) = terminal_snapshot.on_restore_command.clone() {
                         let manager_handle = pane_data.terminal_manager(ctx);
                         manager_handle.update(ctx, |terminal_manager, ctx| {
                             if let Some(manager) = terminal_manager
@@ -1756,6 +1758,20 @@ impl PaneGroup {
                     active_session: None,
                 };
 
+                Ok((PaneData::new(pane_id), focus))
+            }
+            LeafContents::ImageViewer(snapshot) => {
+                let pane = Box::new(ImagePane::new(
+                    snapshot.path.clone().map(LocalOrRemotePath::Local),
+                    None,
+                    ctx,
+                ));
+                let pane_id = pane.id();
+                pane_contents.insert(pane_id, pane);
+                let focus = InitialFocus {
+                    focused_pane: leaf.is_focused.then_some(pane_id),
+                    active_session: None,
+                };
                 Ok((PaneData::new(pane_id), focus))
             }
             #[cfg(feature = "local_fs")]
@@ -2233,6 +2249,20 @@ impl PaneGroup {
         self.panes_of::<TerminalPane>()
             .find(|pane| pane.session_uuid() == uuid && !self.is_pane_hidden_for_close(pane.id()))
             .map(|pane| pane.id())
+    }
+
+    /// Resolves the agent-resume "fork" launch (command + cwd) for the pane that owns
+    /// `terminal_view_id`, if that pane currently has a forkable Claude/Codex session.
+    ///
+    /// Used by the Fork footer button: the pane UUID is the agent-resume registry key.
+    pub fn fork_launch_for_terminal_view(
+        &self,
+        terminal_view_id: EntityId,
+        ctx: &AppContext,
+    ) -> Option<crate::agent_resume::ForkLaunch> {
+        let pane_id = self.find_pane_id_for_terminal_view(terminal_view_id, ctx)?;
+        let pane = self.downcast_pane_by_id::<TerminalPane>(pane_id)?;
+        crate::agent_resume::read_fork_launch(&pane.session_uuid())
     }
 
     /// Iterate over the code editors in this pane group.
@@ -7446,11 +7476,141 @@ impl PaneGroup {
     pub fn reattach_panes(&mut self, ctx: &mut ViewContext<Self>) {
         let pane_ids = self.pane_contents.keys().copied().collect_vec();
         for pane_id in pane_ids {
+            // If this pane's PTY was killed on close (it was running a
+            // long-running process — e.g. a Claude/Codex agent), re-create its
+            // session instead of reattaching the dead one, and resume the agent
+            // if one was recorded. See `RestartSpec`.
+            if let Some(spec) = self.take_restart_spec_for_pane(pane_id) {
+                self.restart_terminal_pane(pane_id, spec, ctx);
+                continue;
+            }
             let Some(pane) = self.pane_contents.get(&pane_id) else {
                 continue;
             };
             self.attach_pane(pane.as_ref(), ctx);
             self.restore_missing_child_agent_panes_for_terminal_pane_if_needed(pane_id, ctx);
+        }
+    }
+
+    /// Takes the pending [`RestartSpec`] for `pane_id`, if it is a terminal pane
+    /// whose PTY was killed on close.
+    fn take_restart_spec_for_pane(&self, pane_id: PaneId) -> Option<RestartSpec> {
+        self.panes_of::<TerminalPane>()
+            .find(|pane| pane.id() == pane_id)
+            .and_then(|pane| pane.take_restart_spec())
+    }
+
+    /// Replaces a dead terminal leaf (PTY killed on close) with a freshly
+    /// created session, reusing the original pane UUID so a resumed agent
+    /// re-binds to its conversation. If `spec.on_restore_command` is set, the
+    /// agent resume command is replayed once the new shell bootstraps — the same
+    /// mechanism used when sessions are restored on app relaunch.
+    fn restart_terminal_pane(
+        &mut self,
+        dead_pane_id: PaneId,
+        spec: RestartSpec,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let Some(uuid) = self
+            .panes_of::<TerminalPane>()
+            .find(|pane| pane.id() == dead_pane_id)
+            .map(|pane| pane.session_uuid())
+        else {
+            return;
+        };
+
+        let startup_directory = spec
+            .cwd
+            .as_deref()
+            .map(PathBuf::from)
+            .filter(|path| path.is_dir());
+
+        let resources = TerminalViewResources {
+            tips_completed: self.tips_completed.clone(),
+            server_api: self.server_api.clone(),
+            model_event_sender: self.model_event_sender.clone(),
+        };
+        let view_bounds = Self::estimated_view_bounds(ctx);
+        let (view, terminal_manager) = PaneGroup::create_session(
+            startup_directory,
+            HashMap::new(),
+            &uuid,
+            IsSharedSessionCreator::No,
+            resources,
+            None,
+            None,
+            self.user_default_shell_unsupported_banner_model_handle
+                .clone(),
+            view_bounds.size(),
+            self.model_event_sender.clone(),
+            None, // chosen_shell
+            None, // initial_input_config
+            ctx,
+        );
+
+        let pane_data = TerminalPane::new(
+            uuid,
+            terminal_manager,
+            view,
+            self.model_event_sender.clone(),
+            ctx,
+        );
+
+        // Replay the agent resume command after the fresh shell bootstraps.
+        #[cfg(feature = "local_tty")]
+        if let Some(on_restore_command) = spec.on_restore_command {
+            let manager_handle = pane_data.terminal_manager(ctx);
+            manager_handle.update(ctx, |terminal_manager, ctx| {
+                if let Some(manager) = terminal_manager
+                    .as_any()
+                    .downcast_ref::<local_tty::TerminalManager>()
+                {
+                    manager.set_on_restore_command(on_restore_command, ctx);
+                }
+            });
+        }
+
+        if !self.replace_pane(dead_pane_id, pane_data, false, ctx) {
+            log::error!("Failed to restart terminal pane {dead_pane_id:?} on reopen");
+        }
+    }
+
+    /// On tab/window close, for each terminal pane running a long-running
+    /// process (e.g. a Claude/Codex agent), record how to resume it and then
+    /// shut down its PTY. Capturing here — before shutdown, while the agent is
+    /// still alive and its resume command is still registered — is what lets a
+    /// reopened tab restart the session (see [`Self::reattach_panes`] and
+    /// [`RestartSpec`]).
+    pub fn shutdown_long_running_panes_for_close(&mut self, ctx: &mut ViewContext<Self>) {
+        let panes: Vec<(PaneId, Vec<u8>, ViewHandle<TerminalView>)> = self
+            .panes_of::<TerminalPane>()
+            .map(|pane| (pane.id(), pane.session_uuid(), pane.terminal_view(ctx)))
+            .collect();
+
+        for (pane_id, uuid, terminal_view) in panes {
+            let is_long_running = terminal_view
+                .as_ref(ctx)
+                .model
+                .lock()
+                .block_list()
+                .active_block()
+                .is_active_and_long_running();
+            if !is_long_running {
+                continue;
+            }
+
+            let cwd = terminal_view.as_ref(ctx).pwd_if_local(ctx);
+            let on_restore_command = crate::agent_resume::read_on_restore_command(&uuid);
+            if let Some(pane) = self
+                .panes_of::<TerminalPane>()
+                .find(|pane| pane.id() == pane_id)
+            {
+                pane.set_restart_spec(RestartSpec {
+                    cwd,
+                    on_restore_command,
+                });
+            }
+            terminal_view.update(ctx, |view, ctx| view.shutdown_pty(ctx));
         }
     }
 

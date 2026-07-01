@@ -121,6 +121,8 @@ fn enabled_features() -> HashSet<FeatureFlag> {
         FeatureFlag::KittyImages,
         #[cfg(feature = "skills_panel")]
         FeatureFlag::SkillsPanel,
+        #[cfg(feature = "image_preview_pane")]
+        FeatureFlag::ImagePreviewPane,
         #[cfg(feature = "warp_packs")]
         FeatureFlag::WarpPacks,
         #[cfg(feature = "global_ai_analytics_banner")]

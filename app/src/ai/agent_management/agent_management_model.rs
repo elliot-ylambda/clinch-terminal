@@ -587,7 +587,7 @@ fn find_terminal_view_by_id(
     None
 }
 
-fn active_focused_terminal_id(app: &AppContext) -> Option<EntityId> {
+pub(crate) fn active_focused_terminal_id(app: &AppContext) -> Option<EntityId> {
     let active_window = app.windows().active_window()?;
     let workspace = app
         .views_of_type::<Workspace>(active_window)

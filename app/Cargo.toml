@@ -664,6 +664,7 @@ default = [
     "hoa_onboarding_flow",
     "hoa_remote_control",
     "codex_notifications",
+    "codex_plugin",
     "trim_trailing_blank_lines",
     "open_warp_new_settings_modes",
     "skip_firebase_anonymous_user",
@@ -757,6 +758,7 @@ jemalloc_auto_heap_profiling = ["jemalloc_with_profiling"]
 jemalloc_pprof = ["jemalloc_with_profiling", "dep:jemalloc_pprof"]
 run_generators_with_cmd_exe = []
 inline_ssh_banner = []
+image_preview_pane = []
 kitty_images = []
 skills_panel = []
 kitty_keyboard_protocol = []

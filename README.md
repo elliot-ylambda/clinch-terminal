@@ -1,8 +1,12 @@
 # Clinch
 
-**A local-only fork of [Warp](https://github.com/warpdotdev/warp) that brings your CLI agents back when you reopen it.** macOS only.
+> **A local-only fork of [Warp](https://github.com/warpdotdev/warp) that brings your CLI agents back when you reopen it.** macOS only.
 
-Quit Clinch with Claude Code or Codex running in your tabs, reopen it, and each tab returns with its agent resumed (`claude --resume` / `codex resume`) — not a dead shell. No sign-in, no account, never phones home.
+**macOS** · open source · no sign-in · no account · never phones home · **[clinch.sh »](https://clinch.sh)**
+
+Quit Clinch with Claude Code or Codex running in your tabs, reopen it, and each tab returns with its agent resumed (`claude --resume` / `codex resume`) — not a dead shell.
+
+**Jump to:** [Download](#download) · [Is this safe?](#is-this-safe) · [Privacy & telemetry](#privacy--telemetry) · [Clinch vs Warp](#how-clinch-differs-from-warp) · [Build from source](#build-from-source)
 
 ## Download
 

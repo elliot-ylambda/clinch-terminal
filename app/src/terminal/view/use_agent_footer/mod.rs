@@ -238,6 +238,9 @@ impl TerminalView {
             UseAgentToolbarEvent::ToggleFileExplorer(cli_agent) => {
                 self.toggle_file_tree(Some((*cli_agent).into()), ctx);
             }
+            UseAgentToolbarEvent::ForkSession => {
+                self.fork_cli_agent_session(ctx);
+            }
             UseAgentToolbarEvent::StartRemoteControl { scrollback_type } => {
                 self.auto_stop_sharing_on_cli_end =
                     *scrollback_type == SharedSessionScrollbackType::None;
@@ -1174,6 +1177,9 @@ impl UseAgentToolbar {
             AgentInputFooterEvent::ToggleFileExplorer(agent) => {
                 ctx.emit(UseAgentToolbarEvent::ToggleFileExplorer(*agent));
             }
+            AgentInputFooterEvent::ForkSession => {
+                ctx.emit(UseAgentToolbarEvent::ForkSession);
+            }
             AgentInputFooterEvent::StartRemoteControl => {
                 let scrollback_type = if self.cli_agent(ctx).is_some() {
                     SharedSessionScrollbackType::None
@@ -1278,6 +1284,8 @@ pub enum UseAgentToolbarEvent {
     ToggleCodeReviewPane(CLIAgent),
     /// Toggle the file explorer (from CLI agent view).
     ToggleFileExplorer(CLIAgent),
+    /// Fork the CLI agent session in this pane into a new tab.
+    ForkSession,
     /// Start remote control (one-click share without modal).
     StartRemoteControl {
         scrollback_type: SharedSessionScrollbackType,

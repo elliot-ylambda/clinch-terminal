@@ -1744,6 +1744,9 @@ pub enum Event {
     },
     OpenCodeReviewPane(CodeReviewPanelArg),
     ToggleCodeReviewPane(CodeReviewPanelArg),
+    ForkCliAgentSession {
+        terminal_view_id: EntityId,
+    },
     InsertCodeReviewComments {
         repo_path: LocalOrRemotePath,
         comments: Vec<PendingImportedReviewComment>,
@@ -7039,6 +7042,13 @@ impl TerminalView {
             Event::ToggleCodeReviewPane,
             ctx,
         )
+    }
+
+    /// Requests that the workspace fork this pane's CLI-agent session into a new tab.
+    pub fn fork_cli_agent_session(&mut self, ctx: &mut ViewContext<Self>) {
+        ctx.emit(Event::ForkCliAgentSession {
+            terminal_view_id: self.view_id,
+        });
     }
 
     pub fn open_code_review_pane(
@@ -13321,9 +13331,9 @@ impl TerminalView {
             }
         }
 
-        // Desktop notifications — only when navigated away and not in-progress.
-        if !self.is_navigated_away_from_window(ctx)
-            || matches!(status, CLIAgentSessionStatus::InProgress)
+        // Desktop notifications — fire unless the user is actively looking at this exact pane,
+        // and never while the agent is mid-turn.
+        if self.is_pane_actively_focused(ctx) || matches!(status, CLIAgentSessionStatus::InProgress)
         {
             return;
         }
@@ -21055,6 +21065,15 @@ impl TerminalView {
     fn is_navigated_away_from_window(&self, ctx: &mut ViewContext<Self>) -> bool {
         let active_window = ctx.windows().active_window();
         Some(ctx.window_id()) != active_window
+    }
+
+    /// True only when THIS pane is the focused pane of the OS-active Clinch window — i.e. the
+    /// user is actively looking at this exact agent. Used to suppress a notification for the
+    /// pane in view while still notifying for agents on other tabs/panes (and when Clinch is
+    /// backgrounded, where `is_navigated_away_from_window` is true so this returns false).
+    fn is_pane_actively_focused(&self, ctx: &mut ViewContext<Self>) -> bool {
+        !self.is_navigated_away_from_window(ctx)
+            && crate::ai::agent_management::active_focused_terminal_id(ctx) == Some(self.view_id)
     }
 
     fn is_block_active_and_running(&self, model: &TerminalModel, block_index: BlockIndex) -> bool {

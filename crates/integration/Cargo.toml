@@ -67,8 +67,16 @@ nix = { workspace = true, features = ["user", "signal"] }
 [features]
 run_on_linux = []
 drag_tabs_to_windows = ["warp/drag_tabs_to_windows"]
-skills_panel = ["warp/skills_panel"]
 # `skills_panel` is in `default` so the integration binary COMPILES the feature in and can
 # reference it. The runtime `FeatureFlag::SkillsPanel` still defaults OFF — tests exercising
 # the panel must `set_enabled(true)` explicitly (see `test/skills_panel.rs`).
-default = ["run_on_linux", "skills_panel"]
+skills_panel = ["warp/skills_panel"]
+# Compile the integration binary with the image preview pane routing so the
+# end-to-end image-open test can exercise it. NOTE: because this is in the
+# default feature set, `init_feature_flags()` force-enables the runtime
+# `ImagePreviewPane` flag at app boot for the WHOLE integration binary — image
+# files route to the image viewer pane in every test here. A test that needs
+# flag-off image behavior (svg→code editor, raster→system app) must disable the
+# flag in its own setup step.
+image_preview_pane = ["warp/image_preview_pane"]
+default = ["run_on_linux", "skills_panel", "image_preview_pane"]
