@@ -61,7 +61,7 @@ use crate::terminal::session_settings::SessionSettings;
 use crate::terminal::view::TerminalViewState;
 use crate::terminal::{CLIAgent, TerminalView};
 use crate::themes::theme::Fill as ThemeFill;
-use crate::ui_components::agent_icon::terminal_view_agent_icon_variant;
+use crate::ui_components::agent_icon::terminal_view_agent_icon_variant_respecting_tab_setting;
 use crate::ui_components::buttons::combo_inner_button;
 use crate::ui_components::icon_with_status::{render_icon_with_status, IconWithStatusVariant};
 use crate::ui_components::icons::Icon as UiIcon;
@@ -3109,7 +3109,9 @@ fn resolve_icon_with_status_variant(
         TypedPane::Terminal(terminal_pane) => {
             let terminal_view = terminal_pane.terminal_view(app);
             let terminal_view = terminal_view.as_ref(app);
-            if let Some(variant) = terminal_view_agent_icon_variant(terminal_view, app) {
+            if let Some(variant) =
+                terminal_view_agent_icon_variant_respecting_tab_setting(terminal_view, app)
+            {
                 variant
             } else {
                 // Plain terminal: use foreground color per design spec
@@ -3314,7 +3316,7 @@ impl TypedPane<'_> {
                 let terminal_view = terminal_view.as_ref(app);
                 // Route through the shared helper so summary mode agrees with
                 // `resolve_icon_with_status_variant` on what the tab represents.
-                match terminal_view_agent_icon_variant(terminal_view, app) {
+                match terminal_view_agent_icon_variant_respecting_tab_setting(terminal_view, app) {
                     Some(IconWithStatusVariant::OzAgent { is_ambient, .. }) => {
                         SummaryPaneKind::OzAgent { is_ambient }
                     }
@@ -4014,7 +4016,7 @@ impl PaneGroup {
 /// be rendered visually, matching the treatment used by vertical tabs
 /// Summary mode. For Terminal panes, distinguishes Oz vs Oz cloud vs each
 /// known CLI agent (Claude, Codex, …) by routing through
-/// `terminal_view_agent_icon_variant`; for other pane types it falls back
+/// `terminal_view_agent_icon_variant_respecting_tab_setting`; for other pane types it falls back
 /// to `TypedPane::summary_pane_kind`. Returns `None` when `pane_id` does
 /// not resolve to a pane in `pane_group` so callers can skip stale ids
 /// via `filter_map`; note this is distinct from a known pane that

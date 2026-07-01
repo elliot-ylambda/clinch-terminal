@@ -17,6 +17,7 @@ use crate::ai::agent_conversations_model::{
     AgentRunDisplayStatus,
 };
 use crate::terminal::cli_agent_sessions::CLIAgentSessionsModel;
+use crate::terminal::session_settings::SessionSettings;
 use crate::terminal::view::TerminalView;
 use crate::terminal::CLIAgent;
 use crate::ui_components::icon_with_status::IconWithStatusVariant;
@@ -87,6 +88,24 @@ pub(crate) fn terminal_view_agent_icon_variant(
             .is_some(),
     };
     agent_icon_variant_from_terminal_inputs(&inputs)
+}
+
+/// Like [`terminal_view_agent_icon_variant`], but suppresses the CLI-agent (Claude/Codex)
+/// variant when the `show_agent_status_on_tabs` setting is off, so the agent status badge
+/// is hidden on tab/pane surfaces. Non-CLI variants (Oz/ambient task runs) are unaffected.
+pub(crate) fn terminal_view_agent_icon_variant_respecting_tab_setting(
+    terminal_view: &TerminalView,
+    app: &AppContext,
+) -> Option<IconWithStatusVariant> {
+    let variant = terminal_view_agent_icon_variant(terminal_view, app)?;
+    if matches!(variant, IconWithStatusVariant::CLIAgent { .. })
+        && !SessionSettings::as_ref(app)
+            .notifications
+            .show_agent_status_on_tabs
+    {
+        return None;
+    }
+    Some(variant)
 }
 
 pub(crate) fn agent_conversation_entry_icon_variant(

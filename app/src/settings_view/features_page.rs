@@ -382,6 +382,21 @@ pub fn init_actions_from_parent_view<T: Action + Clone>(
     );
     toggle_binding_pairs.push(
         ToggleSettingActionPair::new(
+            "show agent status on tabs",
+            builder(SettingsAction::FeaturesPageToggle(
+                FeaturesPageAction::ToggleAgentStatusOnTabs,
+            )),
+            &(context.to_owned() & id!(flags::NOTIFICATIONS_CONTEXT_FLAG)),
+            flags::AGENT_STATUS_ON_TABS_FLAG,
+        )
+        .is_supported_on_current_platform(
+            SessionSettings::as_ref(app)
+                .notifications
+                .is_supported_on_current_platform(),
+        ),
+    );
+    toggle_binding_pairs.push(
+        ToggleSettingActionPair::new(
             "in-app agent notifications",
             builder(SettingsAction::FeaturesPageToggle(
                 FeaturesPageAction::ToggleAgentInAppNotifications,
@@ -778,6 +793,7 @@ pub enum FeaturesPageAction {
     ToggleAgentTaskCompletedNotifications,
     ToggleNeedsAttentionNotifications,
     ToggleNotificationSound,
+    ToggleAgentStatusOnTabs,
     SetNotificationToastDuration,
     ToggleShowWarningBeforeQuitting,
     ToggleLoginItem,
@@ -1134,6 +1150,14 @@ impl FeaturesPageAction {
                         .play_notification_sound,
                 ),
             },
+            Self::ToggleAgentStatusOnTabs => TelemetryEvent::FeaturesPageAction {
+                action: "ToggleAgentStatusOnTabs".to_string(),
+                value: to_string(
+                    SessionSettings::as_ref(ctx)
+                        .notifications
+                        .show_agent_status_on_tabs,
+                ),
+            },
             Self::ToggleShowWarningBeforeQuitting => TelemetryEvent::FeaturesPageAction {
                 action: "ToggleShowWarningBeforeQuitting".to_string(),
                 value: to_string(
@@ -1360,6 +1384,7 @@ struct MouseStateHandles {
     long_running_notifications_checkbox: MouseStateHandle,
     agent_task_completed_notifications_checkbox: MouseStateHandle,
     agent_needs_attention_notifications_checkbox: MouseStateHandle,
+    agent_status_on_tabs_checkbox: MouseStateHandle,
     agent_in_app_notifications_switch: SwitchStateHandle,
     #[cfg(target_os = "macos")]
     notification_sound_checkbox: MouseStateHandle,
@@ -1791,6 +1816,21 @@ impl TypedActionView for FeaturesPageView {
                     };
                     if let Err(e) = settings.notifications.set_value(new_settings, ctx) {
                         log::error!("Error persisting notification sound setting: {e}");
+                    }
+                });
+                ctx.notify();
+            }
+            ToggleAgentStatusOnTabs => {
+                let current_settings = SessionSettings::as_ref(ctx).notifications.value().clone();
+                let show_agent_status_on_tabs = !current_settings.show_agent_status_on_tabs;
+
+                SessionSettings::handle(ctx).update(ctx, |settings, ctx| {
+                    let new_settings = NotificationsSettings {
+                        show_agent_status_on_tabs,
+                        ..current_settings
+                    };
+                    if let Err(e) = settings.notifications.set_value(new_settings, ctx) {
+                        log::error!("Error persisting notifications setting: {e}");
                     }
                 });
                 ctx.notify();
@@ -5265,6 +5305,15 @@ impl SettingsWidget for DesktopNotificationsWidget {
                     FeaturesPageAction::ToggleNeedsAttentionNotifications,
                     view.button_mouse_states
                         .agent_needs_attention_notifications_checkbox
+                        .clone(),
+                    appearance,
+                ),
+                view.render_notification_toggle(
+                    session_settings.notifications.show_agent_status_on_tabs,
+                    "Show agent status badges on tabs",
+                    FeaturesPageAction::ToggleAgentStatusOnTabs,
+                    view.button_mouse_states
+                        .agent_status_on_tabs_checkbox
                         .clone(),
                     appearance,
                 ),

@@ -22391,6 +22391,9 @@ impl Workspace {
         if session_settings.notifications.play_notification_sound {
             context.set.insert(flags::NOTIFICATION_SOUND_FLAG);
         }
+        if session_settings.notifications.show_agent_status_on_tabs {
+            context.set.insert(flags::AGENT_STATUS_ON_TABS_FLAG);
+        }
 
         if *general_settings.link_tooltip {
             context.set.insert(flags::LINK_TOOLTIP_CONTEXT_FLAG);
