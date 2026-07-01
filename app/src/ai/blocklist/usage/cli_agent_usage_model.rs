@@ -51,6 +51,12 @@ impl CliAgentUsageModel {
     }
 
     fn on_snapshot(&mut self, snap: UsageSnapshot, ctx: &mut ModelContext<Self>) {
+        // Emit only on real change — the producer sends every ~5s forever, and an
+        // unconditional notify would wake the footer each poll even when nothing
+        // changed (and even when the chip is hidden), defeating idle-frame suppression.
+        if snap == self.latest {
+            return;
+        }
         self.latest = snap;
         ctx.emit(CliAgentUsageModelEvent::Updated);
         ctx.notify();

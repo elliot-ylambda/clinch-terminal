@@ -68,7 +68,7 @@ pub struct PlanLimits {
     pub weekly: Option<LimitWindow>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Provider {
     pub session: WindowTotals,
     pub today: WindowTotals,
@@ -77,7 +77,7 @@ pub struct Provider {
     pub plan: Option<PlanLimits>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct UsageSnapshot {
     pub claude: Provider,
     pub codex: Provider,
