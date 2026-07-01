@@ -6259,9 +6259,30 @@ impl Workspace {
                     ctx,
                 );
             }
-            LeftPanelEvent::OpenSkillFile(_path) => {
-                // TODO(skills-panel): wire this up to open the SKILL.md file in the code
-                // editor once the Skills panel is reachable (tracked in a follow-up task).
+            #[allow(unused_variables)]
+            LeftPanelEvent::OpenSkillFile(location) => {
+                #[cfg(feature = "local_fs")]
+                {
+                    if let LocalOrRemotePath::Local(path) = location {
+                        let settings = EditorSettings::as_ref(ctx);
+                        let target = resolve_file_target_with_editor_choice(
+                            path,
+                            *settings.open_file_editor,
+                            *settings.prefer_markdown_viewer,
+                            *settings.open_file_layout,
+                            None,
+                        );
+                        self.open_file_with_target(
+                            path.clone(),
+                            target,
+                            None,
+                            CodeSource::FileTree {
+                                location: location.clone(),
+                            },
+                            ctx,
+                        );
+                    }
+                }
             }
         }
     }
@@ -23044,6 +23065,9 @@ impl Workspace {
         if WarpDriveSettings::is_warp_drive_enabled(ctx) {
             views.push(ToolPanelView::WarpDrive);
         }
+        if FeatureFlag::SkillsPanel.is_enabled() {
+            views.push(ToolPanelView::Skills);
+        }
         views
     }
 
@@ -25251,6 +25275,18 @@ impl TypedActionView for Workspace {
                     self.open_left_panel_view(&LeftPanelAction::ConversationListView, ctx);
                 }
             }
+            ToggleSkillsPanel => {
+                if FeatureFlag::SkillsPanel.is_enabled() {
+                    let is_showing =
+                        self.left_panel_view.as_ref(ctx).active_view() == ToolPanelView::Skills;
+                    self.toggle_left_panel_view(&LeftPanelAction::Skills, is_showing, ctx);
+                }
+            }
+            OpenSkillsPanel => {
+                if FeatureFlag::SkillsPanel.is_enabled() {
+                    self.open_left_panel_view(&LeftPanelAction::Skills, ctx);
+                }
+            }
             ShowRewindConfirmationDialog {
                 ai_block_view_id,
                 exchange_id,
@@ -25506,6 +25542,9 @@ impl View for Workspace {
         }
         if *CodeSettings::as_ref(app).show_hidden_files {
             context.set.insert(flags::SHOW_HIDDEN_FILES);
+        }
+        if FeatureFlag::SkillsPanel.is_enabled() {
+            context.set.insert(flags::SHOW_SKILLS_PANEL);
         }
 
         if self.team_uid(app).is_some() {

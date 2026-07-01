@@ -335,6 +335,16 @@ impl LeftPanelView {
                         view.auto_expand_to_most_recent_directory(ctx);
                     }
                 });
+
+                // `directories` is already ordered most-recent-first (see
+                // `emit_directories_changed`), so its head is the active working directory for
+                // this pane group — the same source `set_active_pane_group` uses, so project
+                // skills stay in sync with live `cd`s, not just tab switches.
+                let cwd = directories.first().map(|dir| dir.path.clone());
+                me.skills_panel_view.update(ctx, |view, ctx| {
+                    view.set_working_directory(cwd, ctx);
+                });
+
                 ctx.notify();
             }
         });
