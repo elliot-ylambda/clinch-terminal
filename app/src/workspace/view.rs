@@ -638,6 +638,7 @@ pub(crate) const LEFT_PANEL_GLOBAL_SEARCH_BINDING_NAME: &str = "workspace:left_p
 pub(crate) const LEFT_PANEL_WARP_DRIVE_BINDING_NAME: &str = "workspace:left_panel_warp_drive";
 pub(crate) const LEFT_PANEL_AGENT_CONVERSATIONS_BINDING_NAME: &str =
     "workspace:left_panel_agent_conversations";
+pub(crate) const LEFT_PANEL_SKILLS_BINDING_NAME: &str = "workspace:left_panel_skills";
 
 const KEYBINDINGS_TO_CACHE: [&str; 4] = [
     ASK_AI_ASSISTANT_KEYBINDING_NAME,
@@ -4096,6 +4097,7 @@ impl Workspace {
                 },
                 LeftPanelDisplayedTab::WarpDrive => ToolPanelView::WarpDrive,
                 LeftPanelDisplayedTab::ConversationListView => ToolPanelView::ConversationListView,
+                LeftPanelDisplayedTab::Skills => ToolPanelView::Skills,
             };
             lp.restore_active_view_from_snapshot(active_view, ctx);
             lp.set_active_pane_group(pane_group.clone(), &self.working_directories_model, ctx);
@@ -6256,6 +6258,10 @@ impl Workspace {
                     },
                     ctx,
                 );
+            }
+            LeftPanelEvent::OpenSkillFile(_path) => {
+                // TODO(skills-panel): wire this up to open the SKILL.md file in the code
+                // editor once the Skills panel is reachable (tracked in a follow-up task).
             }
         }
     }
@@ -19720,6 +19726,7 @@ impl Workspace {
                         ToolPanelView::GlobalSearch { .. } => "Global search",
                         ToolPanelView::WarpDrive => "Warp Drive",
                         ToolPanelView::ConversationListView => "Agent conversations",
+                        ToolPanelView::Skills => "Skills",
                     }
                 } else {
                     "Tools panel"
@@ -19774,6 +19781,7 @@ impl Workspace {
                 ToolPanelView::GlobalSearch { .. } => "Global search",
                 ToolPanelView::WarpDrive => "Warp Drive",
                 ToolPanelView::ConversationListView => "Agent conversations",
+                ToolPanelView::Skills => "Skills",
             }
         } else {
             "Tools panel"
