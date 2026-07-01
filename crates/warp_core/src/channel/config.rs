@@ -27,6 +27,26 @@ pub struct ChannelConfig {
     pub mcp_static_config: Option<McpStaticConfig>,
 }
 
+impl ChannelConfig {
+    /// Builds a fully local, backend-free channel config: no server, telemetry, crash
+    /// reporting, autoupdate, or bundled MCP credentials. Server/Oz URLs are unroutable (see
+    /// [`WarpServerConfig::offline`]) so the app starts and runs locally without contacting or
+    /// depending on any backend. Used by the Clinch fork's `local` and `stable` channels, which
+    /// cannot use the private `warp-channel-config` generator to embed real configs.
+    pub fn no_backend(app_id: AppId, logfile_name: impl Into<Cow<'static, str>>) -> Self {
+        Self {
+            app_id,
+            logfile_name: logfile_name.into(),
+            server_config: WarpServerConfig::offline(),
+            oz_config: OzConfig::offline(),
+            telemetry_config: None,
+            autoupdate_config: None,
+            crash_reporting_config: None,
+            mcp_static_config: None,
+        }
+    }
+}
+
 /// Configuration for GCP Identity-Aware Proxy authentication, present only on staging builds.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct IapConfig {
@@ -63,6 +83,22 @@ impl WarpServerConfig {
             iap_config: None,
         }
     }
+
+    /// A backend-free server config whose URLs are parseable but unroutable, so the app never
+    /// contacts a real server. Uses TEST-NET-1 (RFC 5737) with the TCP discard port to
+    /// black-hole traffic — the same technique as the integration test runner. Note the URLs
+    /// are intentionally *not* empty strings: several call sites `Url::parse(...).unwrap()`,
+    /// which would panic on `""`. Used by fork channels that ship with no backend (see
+    /// [`ChannelConfig::no_backend`]).
+    pub fn offline() -> Self {
+        Self {
+            server_root_url: "http://192.0.2.0:9".into(),
+            rtc_server_url: "ws://192.0.2.0:9/graphql/v2".into(),
+            session_sharing_server_url: None,
+            firebase_auth_api_key: "".into(),
+            iap_config: None,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -80,6 +116,15 @@ impl OzConfig {
     pub fn production() -> Self {
         Self {
             oz_root_url: "https://oz.warp.dev".into(),
+            workload_audience_url: None,
+        }
+    }
+
+    /// A backend-free Oz config whose URL is parseable but unroutable. See
+    /// [`WarpServerConfig::offline`].
+    pub fn offline() -> Self {
+        Self {
+            oz_root_url: "http://192.0.2.0:9".into(),
             workload_audience_url: None,
         }
     }
@@ -156,3 +201,7 @@ pub struct McpOAuthProviderConfig {
     /// The OAuth client secret registered for this channel.
     pub client_secret: Cow<'static, str>,
 }
+
+#[cfg(test)]
+#[path = "config_tests.rs"]
+mod tests;
