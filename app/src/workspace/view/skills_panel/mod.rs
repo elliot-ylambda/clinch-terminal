@@ -36,6 +36,10 @@ pub struct SkillsPanel {
     /// Per-skill row mouse states, keyed by skill name, so hover feedback survives
     /// re-renders triggered by unrelated state changes (e.g. a sibling skill's row).
     row_states: HashMap<String, MouseStateHandle>,
+    /// Per-scope-group header mouse states, keyed by scope, so hover feedback on a
+    /// group header survives re-renders triggered by unrelated state changes (e.g. a
+    /// subtab switch or a `HomeSkillsChanged` event) while the mouse sits stationary.
+    header_states: HashMap<SkillScope, MouseStateHandle>,
 }
 
 #[derive(Clone, Debug)]
@@ -117,6 +121,7 @@ impl SkillsPanel {
             collapsed_scopes: HashSet::new(),
             scroll_state: ClippedScrollStateHandle::default(),
             row_states: HashMap::new(),
+            header_states: HashMap::new(),
         };
         this.sync_row_states(ctx);
         this
@@ -157,11 +162,16 @@ impl SkillsPanel {
         let skills = self.current_skills(ctx);
         for skill in &skills {
             self.row_states.entry(skill.name.clone()).or_default();
+            self.header_states.entry(skill.scope).or_default();
         }
     }
 
     fn row_state(&self, name: &str) -> MouseStateHandle {
         self.row_states.get(name).cloned().unwrap_or_default()
+    }
+
+    fn header_state(&self, scope: SkillScope) -> MouseStateHandle {
+        self.header_states.get(&scope).cloned().unwrap_or_default()
     }
 
     fn render_subtab_bar(&self) -> Box<dyn Element> {
@@ -203,7 +213,7 @@ impl SkillsPanel {
             .with_child(title.finish())
             .finish();
 
-        let header = Hoverable::new(MouseStateHandle::default(), move |mouse_state| {
+        let header = Hoverable::new(self.header_state(scope), move |mouse_state| {
             let mut container = Container::new(header_row)
                 .with_horizontal_padding(8.)
                 .with_vertical_padding(4.);
