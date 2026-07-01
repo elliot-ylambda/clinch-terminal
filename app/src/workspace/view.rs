@@ -8379,6 +8379,59 @@ impl Workspace {
         );
     }
 
+    /// Forks the Claude/Codex session in the pane owning `terminal_view_id` into a NEW tab.
+    ///
+    /// The original pane is untouched. The new tab opens in the session's original directory
+    /// and auto-runs the fork command (`claude --resume <id> --fork-session` / `codex fork <id>`)
+    /// after its shell bootstraps, reusing the agent-resume restore-replay path.
+    #[allow(dead_code)] // Wired to the Fork footer button in a later task.
+    fn fork_cli_agent_session(
+        &mut self,
+        pane_group: &ViewHandle<PaneGroup>,
+        terminal_view_id: EntityId,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let Some(fork) = pane_group.read(ctx, |pane_group, ctx| {
+            pane_group.fork_launch_for_terminal_view(terminal_view_id, ctx)
+        }) else {
+            log::warn!("fork: no forkable CLI-agent session for the focused pane");
+            return;
+        };
+
+        // Create a new tab pinned to the session's original directory (bypasses the
+        // user's working-directory setting, so `claude --resume`'s cwd-scoping holds).
+        let options = NewTerminalOptions::default()
+            .with_initial_directory_opt(fork.cwd.as_deref().map(PathBuf::from));
+        self.add_tab_with_pane_layout(
+            PanesLayout::SingleTerminal(Box::new(options)),
+            Arc::new(HashMap::new()),
+            None,
+            ctx,
+        );
+
+        // Attach the one-shot replay command to the new (now active) tab's single pane,
+        // mirroring the snapshot-restore path (pane_group/mod.rs:1672).
+        let command = fork.command;
+        #[cfg(feature = "local_tty")]
+        {
+            let manager_handle = self
+                .active_tab_pane_group()
+                .read(ctx, |pane_group, ctx| pane_group.terminal_manager(0, ctx));
+            if let Some(manager_handle) = manager_handle {
+                manager_handle.update(ctx, |terminal_manager, ctx| {
+                    if let Some(manager) = terminal_manager
+                        .as_any()
+                        .downcast_ref::<crate::terminal::local_tty::TerminalManager>()
+                    {
+                        manager.set_on_restore_command(command, ctx);
+                    }
+                });
+            }
+        }
+        #[cfg(not(feature = "local_tty"))]
+        let _ = command;
+    }
+
     #[cfg(feature = "local_fs")]
     fn open_code(
         &mut self,
