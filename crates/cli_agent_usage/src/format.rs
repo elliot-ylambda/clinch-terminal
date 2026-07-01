@@ -150,4 +150,24 @@ mod tests {
         assert_eq!(cx.pct, "—");
         assert_eq!(cx.severity, Severity::Normal);
     }
+
+    #[test]
+    fn chip_halves_shown_when_only_tokens_no_plan() {
+        // Regression guard for the "tokens-but-no-plan still counts as data" rule:
+        // neither provider has a plan; ONLY Codex has token data. The chip must still
+        // show. If `has_tokens` were ignored, this would wrongly return None and the
+        // `.expect` below would panic.
+        let mut snap = UsageSnapshot::default();
+        snap.codex.month.tokens = TokenCounts {
+            input: 10,
+            output: 0,
+            cache_read: 0,
+            cache_write: 0,
+        };
+        let [cc, cx] = chip_halves(&snap).expect("codex has token data => chip shown");
+        assert_eq!(cc.pct, "—"); // claude: no plan, no tokens
+        assert_eq!(cx.pct, "—"); // codex: no plan (tokens don't set pct)
+        assert_eq!(cc.severity, Severity::Normal);
+        assert_eq!(cx.severity, Severity::Normal);
+    }
 }
