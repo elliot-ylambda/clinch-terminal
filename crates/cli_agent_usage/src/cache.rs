@@ -128,5 +128,13 @@ mod tests {
         });
         assert_eq!(v2, 7);
         assert_eq!(calls.get(), 2);
+        // changed mtime alone (same size) -> re-parse
+        let m2 = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(5);
+        let v3 = *c.get_or_parse(p, m2, 11, |_| {
+            calls.set(calls.get() + 1);
+            13
+        });
+        assert_eq!(v3, 13);
+        assert_eq!(calls.get(), 3);
     }
 }
