@@ -42,7 +42,10 @@
 
 - [ ] **Step 1: Create the crate manifest**
 
-`crates/cli_agent_usage/Cargo.toml`:
+`crates/cli_agent_usage/Cargo.toml` — **inherit workspace deps** (they already carry the
+right features: `reqwest` workspace dep includes `blocking` + `json`; `chrono` default
+features include `clock`; `serde` includes `derive`). Only `security-framework` is not a
+workspace dep, so declare it directly:
 ```toml
 [package]
 name = "cli_agent_usage"
@@ -51,18 +54,21 @@ edition = "2021"
 publish = false
 
 [dependencies]
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-chrono = { version = "0.4", features = ["clock"] }
-walkdir = "2"
-reqwest = { version = "0.13", features = ["blocking", "json"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+walkdir = { workspace = true }
+reqwest = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "3"
-
-[dev-dependencies]
 ```
-(If `cargo` reports a different resolved major for `security-framework`/`walkdir`/`chrono` already in the lock, match the lock's major to avoid a second copy.)
+- Do NOT re-declare versions/features for the workspace deps — `workspace = true` inherits
+  the workspace's TLS backend and feature set, avoiding a duplicate/conflicting build.
+- For `security-framework`, match the major already in `Cargo.lock`
+  (`grep -A1 'name = "security-framework"' Cargo.lock`) so no second copy is pulled in.
+- No `[dev-dependencies]` needed: tests use `std` + `chrono` only (temp files via
+  `std::env::temp_dir()`).
 
 - [ ] **Step 2: Register the crate alias in the root manifest**
 
