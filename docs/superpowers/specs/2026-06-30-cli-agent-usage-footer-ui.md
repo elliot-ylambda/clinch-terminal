@@ -239,6 +239,13 @@ It is not dead code.
 
 ## 10. Integration points (verified file\:line)
 
+> **Amendment (plan revision):** the implementation plan renders the chip **directly** in
+> `render_cli_mode_footer` (always-on) rather than as an `AgentToolbarItemKind` variant.
+> `AgentToolbarItemKind` is persisted per-user, so a new default would be invisible to
+> existing users without a settings migration. Direct render is guaranteed-visible and
+> simpler; the `AgentToolbarItemKind` analysis below is retained for context. See
+> `docs/superpowers/plans/2026-06-30-cli-agent-usage-footer-ui.md` Task 5.
+
 `AgentToolbarItemKind` (`toolbar_item.rs:48`) is a **serialized settings enum** (derives
 `Serialize`/`Deserialize`/`JsonSchema`/`SettingsValue`), so a new `CliAgentUsage` variant is a
 schema addition and the compiler forces it into ~9 exhaustive `match self` arms. Mirror the
