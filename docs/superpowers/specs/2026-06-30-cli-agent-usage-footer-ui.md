@@ -36,10 +36,11 @@ Three decisions settled in brainstorming, and they drive the whole UI:
 crates/cli_agent_usage/src/lib.rs          # + scan_local(); + TokenCounts::io()  (§7)
 
 app/src/ai/blocklist/usage/
-  cli_agent_usage_model.rs   # NEW: CliAgentUsageModel singleton
-                             #   - owns an mpsc::Receiver<UsageSnapshot>
-                             #   - spawns ONE producer std::thread (the blocking work)
-                             #   - UI-thread drain timer: try_recv -> store -> cx.notify()
+  cli_agent_usage_model.rs   # NEW: CliAgentUsageModel singleton (Entity + SingletonEntity)
+                             #   - spawns ONE producer std::thread (blocking file IO + HTTP)
+                             #   - producer sends UsageSnapshot over an async_channel
+                             #   - ctx.spawn_stream_local(rx, on_item, ..) delivers each
+                             #     snapshot on the MAIN thread -> store latest + ctx.notify()
                              #   - holds `latest: UsageSnapshot`
   cli_agent_usage_format.rs  # NEW: pure formatting/label fns + unit tests
                              #   - fmt_tokens(u64) -> "8.3B" / "1.2M" / "947k" / "512"
@@ -50,12 +51,12 @@ app/src/ai/blocklist/usage/
                              #       when both providers are empty
                              #   - severity->color mapping helper (theme token per Severity)
 
-app/src/lib.rs (~1382)                       # register CliAgentUsageModel singleton
+app/src/lib.rs (~1362)                       # add_singleton_model(CliAgentUsageModel)
 app/src/ai/blocklist/agent_view/agent_input_footer/
-  toolbar_item.rs (~48)                      # + AgentToolbarItemKind::CliAgentUsage
-  mod.rs render_cli_mode_footer() (~1493)    # render chip
-  mod.rs (new fn)                            # render expanded panel popover
-  mod.rs AgentInputFooter::new() (~258)      # observe model + ctx.notify()
+  toolbar_item.rs (~48)                      # + AgentToolbarItemKind::CliAgentUsage (+ ~9 match arms, default lists)
+  mod.rs render_cli_toolbar_item() (~1442)   # render chip (+ new panel-popover fn)
+  mod.rs render_toolbar_item() (~2055)       # exhaustive: add arm (returns None; agent view)
+  mod.rs AgentInputFooter::new() (~258)      # subscribe_to_model + open-state field
 
 app/Cargo.toml                               # cli_agent_usage = { path = "crates/cli_agent_usage" }  (if not already present)
 ```
@@ -76,13 +77,15 @@ Split of responsibility:
 
 The original spec assumed `async fn refresh` on gpui timers. The final crate review proved
 `refresh()` is **blocking** and that `reqwest::blocking` **panics if constructed inside a
-Tokio/async runtime**. Clinch (a Warp fork) runs gpui atop async machinery, so we must not
-assume any gpui executor thread is Tokio-free.
+Tokio/async runtime**. This is not hypothetical here: `ctx.background_executor()` returns a
+`tokio::runtime::Runtime` (`warpui_core/src/async/native/executor.rs:129`), and both
+`ctx.spawn(future, cb)` and `background_executor().spawn(future)` run their future *on that
+Tokio runtime*. So the blocking work must **not** go through any gpui executor slot.
 
-**Robust design: one dedicated `std::thread` producer + an `mpsc` channel + a UI-thread
-drain timer.** A raw OS thread is guaranteed to have no Tokio runtime context, so
-`reqwest::blocking` cannot panic there. This is deliberately independent of whether gpui's
-background executor happens to be Tokio-backed.
+**Robust design: one dedicated `std::thread` producer + an `async_channel` + the toolkit's
+`ctx.spawn_stream_local` to consume it on the main thread.** A raw OS thread is guaranteed to
+have no Tokio runtime context, so `reqwest::blocking` cannot panic there — independent of the
+(confirmed) fact that gpui's background executor is Tokio-backed.
 
 Producer loop (pseudocode; runs on the dedicated thread):
 
@@ -103,13 +106,17 @@ loop {
     }
     snap.claude.plan = last_plan;           // apply last-good (Codex plan is already local)
 
-    if tx.send(snap).is_err() {
+    if tx.send_blocking(snap).is_err() {
         break;                              // Receiver dropped (model gone) => exit cleanly
     }
     tick = tick.wrapping_add(1);
     std::thread::sleep(FILE_POLL);          // ~5s; blocking sleep is fine on a real thread
 }
 ```
+
+`tx`/`rx` are an `async_channel` pair (small bounded capacity). `send_blocking` is the
+sync-callable send for a non-async thread; it returns `Err` once the `Receiver` is gone,
+which is our shutdown signal.
 
 - `fetch_claude_plan` = `keychain::read_claude_token` → expiry check → `fetch.fetch` →
   `http::parse_plan_limits`, returning `Option<PlanLimits>` (all already public). It is the
@@ -119,33 +126,43 @@ loop {
   If Claude was never logged in, `last_plan` stays `None` and plan-% shows `—` (correct).
 - **Codex plan-%** needs no special handling — it is local, populated fresh by `scan_local`
   every ~5s.
-- **Clean shutdown:** on model `Drop` the `Receiver` drops; the next `tx.send` returns `Err`
-  and the loop breaks. No join handle, no shutdown flag needed. (Singletons live for the app
-  lifetime, so in practice the thread runs until exit.)
+- **Clean shutdown:** when the consuming stream task is dropped (model gone) the `Receiver`
+  drops; the next `tx.send_blocking` returns `Err` and the loop breaks. No join handle, no
+  shutdown flag needed. (Singletons live for the app lifetime, so in practice the thread runs
+  until exit.)
 
-UI side (`CliAgentUsageModel`, on the main thread):
+UI side (`CliAgentUsageModel`, on the main thread — an `Entity` + `SingletonEntity`):
 
-- On construction: `Paths::detect()`; create `mpsc::channel::<UsageSnapshot>()`; spawn the
-  producer thread with the `Sender`, `Paths`, a fresh `Caches::new()`, `MacKeychain`, and
-  `ReqwestUsage`. Store the `Receiver` and `latest: UsageSnapshot::default()`.
-- A recurring UI-thread timer (gpui `Timer::after` re-armed each fire, ~1 s) calls
-  `receiver.try_recv()` in a loop; on the newest `Ok(snap)` it sets `latest = snap` and
-  `cx.notify()`. `try_recv` never blocks the UI. (Exact timer idiom taken from an existing
-  model in the codebase during planning.)
+- On construction (`new(ctx: &mut ModelContext<Self>)`): `Paths::detect()`; create an
+  `async_channel` pair; spawn the producer `std::thread` with the `Sender`, `Paths`, a fresh
+  `Caches::new()`, `MacKeychain`, and `ReqwestUsage`. Hold `latest: UsageSnapshot::default()`.
+- Consume with **`ctx.spawn_stream_local(rx, |model, snap, ctx| { model.latest = snap;
+  ctx.notify(); }, |_, _| {})`** — the toolkit's documented "receive on the main thread from
+  another thread" primitive (`warpui_core` model/view `context.rs`; used by
+  `terminal/model_events.rs`, `input_suggestions.rs`). `on_item` runs on the main thread with
+  `&mut Self`, so storing the snapshot and calling `ctx.notify()` (and/or `ctx.emit(...)` for
+  the footer subscription) is correct there. No hand-rolled timer, no `try_recv` polling.
+- The footer observes via `ctx.subscribe_to_model(&CliAgentUsageModel::handle(ctx), |_, _, _,
+  ctx| ctx.notify())`, exactly as it already does for `AIRequestUsageModel`.
 
 Cadence constants (module consts, easily tuned): `FILE_POLL = 5s`, `ENDPOINT_EVERY = 12`
-(⇒ ~60 s), UI drain `~1s`.
+(⇒ ~60 s). Delivery is push (stream), not poll.
 
-## 5. Chip (in `render_cli_mode_footer`)
+## 5. Chip
 
 - Content: a small gauge/clock icon + two halves — `cc {weekly}%w · cx {weekly}%w` — where
   each `%` is `PlanLimits.weekly.percent` rounded to an integer.
-- Color: each half is colored by its own `weekly.severity` (`Normal` → muted/neutral text,
-  `Warning` → amber, `Critical` → red), using the same theme tokens the footer's existing
-  `icon_for_context_window_usage` (`app/src/ai/blocklist/usage/mod.rs:8`) uses at its
-  warning/critical thresholds. We map the crate `Severity` **enum** (authoritative — Claude's
-  comes straight from the endpoint's `severity`, Codex's from `severity_from_percent`) rather
-  than re-deriving a color from the percent.
+- Color: each half is colored by its own `weekly.severity`, mapping the crate `Severity`
+  **enum** (authoritative — Claude's comes straight from the endpoint's `severity`, Codex's
+  from `severity_from_percent`) to theme tokens: `Normal` → `theme.main_text_color(bg)`,
+  `Warning` → `Fill::Solid(theme.ui_warning_color())` (amber), `Critical` →
+  `Fill::Solid(theme.ui_error_color())` (red). (The existing context-window chip's color lives
+  in `render_context_window_usage_icon`, `app/src/ai/blocklist/usage/mod.rs:35`, which is a
+  two-stop red-at-≥0.8 ramp; we use the three-stop semantic tokens to honor `Warning`.)
+- Because the two halves carry different colors, the chip is a small **custom element**
+  (`Flex::row` of an icon + two colored text spans) rather than a single-color stock
+  `ActionButton`; it is wrapped in a `Hoverable` (cursor + click) following the `DisplayChip`
+  interaction pattern (`app/src/context_chips/display_chip.rs`).
 - Missing data: a provider with no `weekly` limit shows `— ` for its half (stable width, no
   layout jitter). The **whole chip is hidden** only when *both* providers are entirely empty
   (no token windows and no plan) — i.e. neither tool has ever run.
@@ -153,8 +170,13 @@ Cadence constants (module consts, easily tuned): `FILE_POLL = 5s`, `ENDPOINT_EVE
 
 ## 6. Panel (popover)
 
-Two columns, **Claude Code | Codex**, using the same popover/overlay pattern an existing
-footer chip uses (identified during planning). Rows top-to-bottom:
+Two columns, **Claude Code | Codex**. The popover uses the codebase's overlay mechanism —
+**`Stack::add_positioned_overlay_child(panel_element, OffsetPositioning::offset_from_parent(
+offset, ParentOffsetBounds::WindowByPosition, parent_anchor, child_anchor))`**, added only
+when an open-state bool is set — the same pattern `DisplayChip` and the footer's FTU callout
+use (there is no gpui `PopoverMenu` in this toolkit). The open/close bool lives on
+`AgentInputFooter` (mirroring its existing `has_open_chip_menu`), toggled by a footer action
+dispatched from the chip's `on_click`. Rows top-to-bottom:
 
 | Row | Cell content | Color |
 |---|---|---|
@@ -217,21 +239,39 @@ It is not dead code.
 
 ## 10. Integration points (verified file\:line)
 
-- `app/src/ai/blocklist/agent_view/agent_input_footer/toolbar_item.rs:48` —
-  `AgentToolbarItemKind`; add `CliAgentUsage` and handle it everywhere the enum is matched.
-- `app/src/ai/blocklist/agent_view/agent_input_footer/mod.rs:1493` —
-  `render_cli_mode_footer()` (chip) and a new panel-popover fn.
-- `app/src/ai/blocklist/agent_view/agent_input_footer/mod.rs:258` —
-  `AgentInputFooter::new()` (observe the model, `ctx.notify()` on change).
-- `app/src/lib.rs:1382` — register the `CliAgentUsageModel` singleton (mirror the
-  `AIRequestUsageModel` registration at `app/src/ai/request_usage_model.rs:184`, **without**
-  the `is_logged_in()` gate that makes the stock usage models inert in this fork).
-- `app/src/ai/blocklist/usage/mod.rs:8` — `icon_for_context_window_usage` color source to
-  reuse for the `Severity` → color mapping.
+`AgentToolbarItemKind` (`toolbar_item.rs:48`) is a **serialized settings enum** (derives
+`Serialize`/`Deserialize`/`JsonSchema`/`SettingsValue`), so a new `CliAgentUsage` variant is a
+schema addition and the compiler forces it into ~9 exhaustive `match self` arms. Mirror the
+existing `ContextWindowUsage` variant (the closest analog — also a live-state usage chip):
 
-The exact warpui builder chains (chip layout, popover/overlay creation, the timer idiom,
-the singleton-entity registration call, and the theme color-token accessors) are pulled
-from these files during plan-writing and pinned into the plan as concrete code.
+- `toolbar_item.rs` — add the variant, then handle it in `available_in()` (:78),
+  `available_to_session_viewer()` (:97), `display_label()` (:117), `icon()` (:134),
+  `is_available_during_handoff_compose()` (:155); and add it to the CLI default/available
+  lists `cli_default_right()` (:280) + `all_available_for_cli_input()` (:289). (`is_available()`
+  has a `_ => true` catch-all.) For an always-on fork chip, availability returns CLI-only/true
+  rather than a `FeatureFlag` gate.
+- `.../agent_input_footer/mod.rs` — the two **exhaustive** render matches: add an arm to
+  `render_toolbar_item()` (:2055, agent view — returns `None`) and the real chip render to
+  `render_cli_toolbar_item()` (:1442). The chip render reads model state via
+  `CliAgentUsageModel::as_ref(app)` and returns `Some(element)` (or `None` to hide). The panel
+  overlay is attached here via `Stack::add_positioned_overlay_child` gated on the footer's
+  open-state bool (§6).
+- `.../agent_input_footer/mod.rs:258` — `AgentInputFooter::new()`: add the open-state field and
+  `ctx.subscribe_to_model(&CliAgentUsageModel::handle(ctx), |_, _, _, ctx| ctx.notify())`
+  (alongside the existing `AIRequestUsageModel` subscription at ~:709).
+- `app/src/lib.rs:1362` — register the singleton with
+  `ctx.add_singleton_model(|ctx| CliAgentUsageModel::new(ctx))` (next to the
+  `AIRequestUsageModel` registration). Model uses `impl Entity { type Event }` +
+  `impl SingletonEntity {}`, mirroring `request_usage_model.rs:182,659` — **without** the
+  `is_logged_in()` gate that makes the stock usage models inert in this fork.
+- Color/text tokens: `render_context_window_usage_icon` (`app/src/ai/blocklist/usage/mod.rs:35`)
+  for the reference ramp; `theme.main_text_color(bg)` / `theme.sub_text_color(bg)` /
+  `theme.ui_warning_color()` / `theme.ui_error_color()` for the Severity + dimmed mapping;
+  theme obtained in the footer via `Appearance::as_ref(app).theme()`.
+
+Exact builder chains (chip `Flex`/`Hoverable` layout, `OffsetPositioning` anchors, the
+`spawn_stream_local` call, `async_channel` construction) are pinned into the plan as concrete
+code from these files.
 
 ## 11. Security & privacy (unchanged, restated)
 
