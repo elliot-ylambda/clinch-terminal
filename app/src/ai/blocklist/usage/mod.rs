@@ -6,7 +6,7 @@ mod cli_agent_usage_model;
 pub mod conversation_usage_view;
 pub mod rollup;
 
-pub use cli_agent_usage_model::{CliAgentUsageModel, CliAgentUsageModelEvent};
+pub use cli_agent_usage_model::CliAgentUsageModel;
 
 pub fn icon_for_context_window_usage(context_window_usage: f32) -> Icon {
     // Match the context window usage to the nearest 10% icon.
