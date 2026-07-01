@@ -6852,6 +6852,7 @@ dependencies = [
  "warp_cli",
  "warp_core",
  "warp_multi_agent_api",
+ "warp_util",
  "warpui",
  "warpui_core",
  "warpui_extras",

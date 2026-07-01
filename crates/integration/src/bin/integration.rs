@@ -448,6 +448,9 @@ fn register_tests() -> HashMap<&'static str, BoxedBuilderFn> {
     register_test!(test_file_tree_nested_file_opening);
     register_test!(test_file_tree_opens_image_in_image_pane);
 
+    // Skills panel tests
+    register_test!(test_skills_panel_lists_and_filters);
+
     // Go to Line tests
     register_test!(test_goto_line_dialog_open_close);
     register_test!(test_goto_line_jumps_to_line);

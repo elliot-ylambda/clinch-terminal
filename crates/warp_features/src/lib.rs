@@ -210,6 +210,9 @@ pub enum FeatureFlag {
     /// Enables Kitty image rendering
     KittyImages,
 
+    /// Enables the read-only Skills inspector in the left panel.
+    SkillsPanel,
+
     /// Enables the in-app image preview pane (svg/png/jpg/gif/webp open as a
     /// rendered viewer pane instead of XML-source / external app).
     ImagePreviewPane,

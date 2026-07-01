@@ -55,11 +55,13 @@ use crate::workspace::view::conversation_list::view::{
 use crate::workspace::view::global_search::view::{
     Event as GlobalSearchViewEvent, GlobalSearchEntryFocus, GlobalSearchView,
 };
+use crate::workspace::view::skills_panel::{SkillsPanel, SkillsPanelEvent};
 use crate::workspace::view::{
     LEFT_PANEL_AGENT_CONVERSATIONS_BINDING_NAME, LEFT_PANEL_GLOBAL_SEARCH_BINDING_NAME,
-    LEFT_PANEL_PROJECT_EXPLORER_BINDING_NAME, LEFT_PANEL_WARP_DRIVE_BINDING_NAME,
-    OPEN_GLOBAL_SEARCH_BINDING_NAME, TOGGLE_CONVERSATION_LIST_VIEW_BINDING_NAME,
-    TOGGLE_PROJECT_EXPLORER_BINDING_NAME, TOGGLE_WARP_DRIVE_BINDING_NAME,
+    LEFT_PANEL_PROJECT_EXPLORER_BINDING_NAME, LEFT_PANEL_SKILLS_BINDING_NAME,
+    LEFT_PANEL_WARP_DRIVE_BINDING_NAME, OPEN_GLOBAL_SEARCH_BINDING_NAME,
+    TOGGLE_CONVERSATION_LIST_VIEW_BINDING_NAME, TOGGLE_PROJECT_EXPLORER_BINDING_NAME,
+    TOGGLE_WARP_DRIVE_BINDING_NAME,
 };
 use crate::workspace::WorkspaceAction;
 use crate::TelemetryEvent;
@@ -70,6 +72,7 @@ struct MouseStateHandles {
     conversation_list_view_button: MouseStateHandle,
     global_search_button: MouseStateHandle,
     warp_drive_button: MouseStateHandle,
+    skills_button: MouseStateHandle,
 }
 
 #[derive(Clone, Debug)]
@@ -78,6 +81,7 @@ pub enum LeftPanelAction {
     GlobalSearch { entry_focus: GlobalSearchEntryFocus },
     WarpDrive,
     ConversationListView,
+    Skills,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -97,6 +101,7 @@ pub enum LeftPanelEvent {
         conversation_title: String,
         terminal_view_id: Option<warpui::EntityId>,
     },
+    OpenSkillFile(LocalOrRemotePath),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -105,6 +110,7 @@ pub enum ToolPanelView {
     GlobalSearch { entry_focus: GlobalSearchEntryFocus },
     WarpDrive,
     ConversationListView,
+    Skills,
 }
 
 /// Encapsulates the active view state to enforce that all mutations go through
@@ -172,6 +178,7 @@ pub struct LeftPanelView {
     close_button_mouse_state: MouseStateHandle,
     warp_drive_view: ViewHandle<DrivePanel>,
     conversation_list_view: ViewHandle<ConversationListView>,
+    skills_panel_view: ViewHandle<SkillsPanel>,
     active_view: active_view_state::ActiveViewState,
     toolbelt_buttons: Vec<ToolbeltButtonConfig>,
     active_pane_group: Option<WeakViewHandle<PaneGroup>>,
@@ -216,6 +223,7 @@ impl LeftPanelView {
         };
         let warp_drive_view = ctx.add_typed_action_view(DrivePanel::new);
         let conversation_list_view = ctx.add_typed_action_view(ConversationListView::new);
+        let skills_panel_view = ctx.add_typed_action_view(SkillsPanel::new);
 
         ctx.subscribe_to_view(&warp_drive_view, |_me, _, event, ctx| {
             ctx.emit(LeftPanelEvent::WarpDrive(event.clone()));
@@ -235,6 +243,12 @@ impl LeftPanelView {
                     conversation_title: conversation_title.clone(),
                     terminal_view_id: *terminal_view_id,
                 });
+            }
+        });
+
+        ctx.subscribe_to_view(&skills_panel_view, |_me, _, event, ctx| match event {
+            SkillsPanelEvent::OpenSkillFile(path) => {
+                ctx.emit(LeftPanelEvent::OpenSkillFile(path.clone()));
             }
         });
 
@@ -321,6 +335,16 @@ impl LeftPanelView {
                         view.auto_expand_to_most_recent_directory(ctx);
                     }
                 });
+
+                // `directories` is already ordered most-recent-first (see
+                // `emit_directories_changed`), so its head is the active working directory for
+                // this pane group — the same source `set_active_pane_group` uses, so project
+                // skills stay in sync with live `cd`s, not just tab switches.
+                let cwd = directories.first().map(|dir| dir.path.clone());
+                me.skills_panel_view.update(ctx, |view, ctx| {
+                    view.set_working_directory(cwd, ctx);
+                });
+
                 ctx.notify();
             }
         });
@@ -331,6 +355,7 @@ impl LeftPanelView {
             close_button_mouse_state: Default::default(),
             warp_drive_view,
             conversation_list_view,
+            skills_panel_view,
             active_view: active_view_state::new(active_view),
             toolbelt_buttons,
             active_pane_group: None,
@@ -458,6 +483,18 @@ impl LeftPanelView {
                     active_icon: Some(Icon::Conversation),
                     tooltip_text: "Agent conversations".to_string(),
                     action: LeftPanelAction::ConversationListView,
+                    render_with_active_state: false,
+                    tooltip_keybinding: toolbelt_tooltip_keybinding(&tooltip_keybinding_names, ctx),
+                    tooltip_keybinding_names,
+                }
+            }
+            ToolPanelView::Skills => {
+                let tooltip_keybinding_names = vec![LEFT_PANEL_SKILLS_BINDING_NAME];
+                ToolbeltButtonConfig {
+                    icon: Icon::Stars,
+                    active_icon: Some(Icon::Stars),
+                    tooltip_text: "Skills".to_string(),
+                    action: LeftPanelAction::Skills,
                     render_with_active_state: false,
                     tooltip_keybinding: toolbelt_tooltip_keybinding(&tooltip_keybinding_names, ctx),
                     tooltip_keybinding_names,
@@ -661,6 +698,14 @@ impl LeftPanelView {
             }
         });
 
+        // `active_directories` is already ordered most-recent-first (see above), so its
+        // head is the active working directory for this pane group — the same source the
+        // file tree uses for its root directories.
+        let cwd = active_directories.first().map(|dir| dir.path.clone());
+        self.skills_panel_view.update(ctx, |view, ctx| {
+            view.set_working_directory(cwd, ctx);
+        });
+
         self.on_left_panel_visibility_changed(left_panel_open, ctx);
 
         ctx.notify();
@@ -723,6 +768,9 @@ impl LeftPanelView {
                     view.on_left_panel_focused(ctx);
                 });
             }
+            ToolPanelView::Skills => self
+                .skills_panel_view
+                .update(ctx, |v, ctx| v.on_left_panel_focused(ctx)),
         }
     }
 
@@ -889,6 +937,7 @@ impl LeftPanelView {
                 LeftPanelAction::ConversationListView => {
                     self.active_view.get() == ToolPanelView::ConversationListView
                 }
+                LeftPanelAction::Skills => self.active_view.get() == ToolPanelView::Skills,
             };
         }
     }
@@ -1030,6 +1079,9 @@ impl LeftPanelView {
                 active_view_state::set(self, ToolPanelView::ConversationListView, ctx);
                 send_telemetry_from_ctx!(TelemetryEvent::ConversationListViewOpened, ctx);
             }
+            LeftPanelAction::Skills => {
+                active_view_state::set(self, ToolPanelView::Skills, ctx);
+            }
         }
     }
 
@@ -1129,6 +1181,7 @@ impl View for LeftPanelView {
                 }
                 ToolPanelView::WarpDrive => ctx.focus(&self.warp_drive_view),
                 ToolPanelView::ConversationListView => ctx.focus(&self.conversation_list_view),
+                ToolPanelView::Skills => ctx.focus(&self.skills_panel_view),
             }
         }
     }
@@ -1143,6 +1196,7 @@ impl View for LeftPanelView {
                 .clone(),
             self.mouse_state_handles.global_search_button.clone(),
             self.mouse_state_handles.warp_drive_button.clone(),
+            self.mouse_state_handles.skills_button.clone(),
         ];
 
         // If there is only one button in the toolbelt row,
@@ -1200,6 +1254,9 @@ impl View for LeftPanelView {
             .finish(),
             ToolPanelView::ConversationListView => {
                 Shrinkable::new(1.0, ChildView::new(&self.conversation_list_view).finish()).finish()
+            }
+            ToolPanelView::Skills => {
+                Shrinkable::new(1.0, ChildView::new(&self.skills_panel_view).finish()).finish()
             }
         };
 

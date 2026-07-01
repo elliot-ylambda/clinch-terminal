@@ -325,6 +325,7 @@ pub enum LeftPanelDisplayedTab {
     GlobalSearch,
     WarpDrive,
     ConversationListView,
+    Skills,
 }
 
 impl From<ToolPanelView> for LeftPanelDisplayedTab {
@@ -334,6 +335,7 @@ impl From<ToolPanelView> for LeftPanelDisplayedTab {
             ToolPanelView::GlobalSearch { .. } => LeftPanelDisplayedTab::GlobalSearch,
             ToolPanelView::WarpDrive => LeftPanelDisplayedTab::WarpDrive,
             ToolPanelView::ConversationListView => LeftPanelDisplayedTab::ConversationListView,
+            ToolPanelView::Skills => LeftPanelDisplayedTab::Skills,
         }
     }
 }

@@ -44,6 +44,7 @@ warp_core.workspace = true
 warp-command-signatures.workspace = true
 warp_multi_agent_api.workspace = true
 warp-workflows.workspace = true
+warp_util.workspace = true
 warpui_core.workspace = true
 warpui_extras = { workspace = true, features = [
     "user_preferences-file",
@@ -66,6 +67,10 @@ nix = { workspace = true, features = ["user", "signal"] }
 [features]
 run_on_linux = []
 drag_tabs_to_windows = ["warp/drag_tabs_to_windows"]
+# `skills_panel` is in `default` so the integration binary COMPILES the feature in and can
+# reference it. The runtime `FeatureFlag::SkillsPanel` still defaults OFF — tests exercising
+# the panel must `set_enabled(true)` explicitly (see `test/skills_panel.rs`).
+skills_panel = ["warp/skills_panel"]
 # Compile the integration binary with the image preview pane routing so the
 # end-to-end image-open test can exercise it. NOTE: because this is in the
 # default feature set, `init_feature_flags()` force-enables the runtime
@@ -74,4 +79,4 @@ drag_tabs_to_windows = ["warp/drag_tabs_to_windows"]
 # flag-off image behavior (svg→code editor, raster→system app) must disable the
 # flag in its own setup step.
 image_preview_pane = ["warp/image_preview_pane"]
-default = ["run_on_linux", "image_preview_pane"]
+default = ["run_on_linux", "skills_panel", "image_preview_pane"]

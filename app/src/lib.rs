@@ -249,7 +249,7 @@ use crate::ai::llms::LLMPreferences;
 use crate::ai::mcp::{MCPGalleryManager, TemplatableMCPServerManager};
 use crate::ai::outline::RepoOutlines;
 use crate::ai::restored_conversations::RestoredAgentConversations;
-use crate::ai::skills::SkillManager;
+pub use crate::ai::skills::{SkillDescriptor, SkillManager};
 use crate::ai::AIRequestUsageModel;
 use crate::antivirus::AntivirusInfo;
 use crate::app_state::AppState;

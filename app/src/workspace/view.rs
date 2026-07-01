@@ -14,6 +14,7 @@ pub(crate) mod onboarding;
 pub(crate) mod openwarp_launch_modal;
 pub(crate) mod orchestration_launch_modal;
 pub(crate) mod right_panel;
+pub(crate) mod skills_panel;
 mod startup_directory;
 mod tab_grouping;
 #[cfg(test)]
@@ -639,6 +640,7 @@ pub(crate) const LEFT_PANEL_GLOBAL_SEARCH_BINDING_NAME: &str = "workspace:left_p
 pub(crate) const LEFT_PANEL_WARP_DRIVE_BINDING_NAME: &str = "workspace:left_panel_warp_drive";
 pub(crate) const LEFT_PANEL_AGENT_CONVERSATIONS_BINDING_NAME: &str =
     "workspace:left_panel_agent_conversations";
+pub(crate) const LEFT_PANEL_SKILLS_BINDING_NAME: &str = "workspace:left_panel_skills";
 
 const KEYBINDINGS_TO_CACHE: [&str; 4] = [
     ASK_AI_ASSISTANT_KEYBINDING_NAME,
@@ -4097,6 +4099,7 @@ impl Workspace {
                 },
                 LeftPanelDisplayedTab::WarpDrive => ToolPanelView::WarpDrive,
                 LeftPanelDisplayedTab::ConversationListView => ToolPanelView::ConversationListView,
+                LeftPanelDisplayedTab::Skills => ToolPanelView::Skills,
             };
             lp.restore_active_view_from_snapshot(active_view, ctx);
             lp.set_active_pane_group(pane_group.clone(), &self.working_directories_model, ctx);
@@ -6262,6 +6265,31 @@ impl Workspace {
                     },
                     ctx,
                 );
+            }
+            #[allow(unused_variables)]
+            LeftPanelEvent::OpenSkillFile(location) => {
+                #[cfg(feature = "local_fs")]
+                {
+                    if let LocalOrRemotePath::Local(path) = location {
+                        let settings = EditorSettings::as_ref(ctx);
+                        let target = resolve_file_target_with_editor_choice(
+                            path,
+                            *settings.open_file_editor,
+                            *settings.prefer_markdown_viewer,
+                            *settings.open_file_layout,
+                            None,
+                        );
+                        self.open_file_with_target(
+                            path.clone(),
+                            target,
+                            None,
+                            CodeSource::FileTree {
+                                location: location.clone(),
+                            },
+                            ctx,
+                        );
+                    }
+                }
             }
         }
     }
@@ -19811,6 +19839,7 @@ impl Workspace {
                         ToolPanelView::GlobalSearch { .. } => "Global search",
                         ToolPanelView::WarpDrive => "Warp Drive",
                         ToolPanelView::ConversationListView => "Agent conversations",
+                        ToolPanelView::Skills => "Skills",
                     }
                 } else {
                     "Tools panel"
@@ -19865,6 +19894,7 @@ impl Workspace {
                 ToolPanelView::GlobalSearch { .. } => "Global search",
                 ToolPanelView::WarpDrive => "Warp Drive",
                 ToolPanelView::ConversationListView => "Agent conversations",
+                ToolPanelView::Skills => "Skills",
             }
         } else {
             "Tools panel"
@@ -23130,6 +23160,9 @@ impl Workspace {
         if WarpDriveSettings::is_warp_drive_enabled(ctx) {
             views.push(ToolPanelView::WarpDrive);
         }
+        if FeatureFlag::SkillsPanel.is_enabled() {
+            views.push(ToolPanelView::Skills);
+        }
         views
     }
 
@@ -25337,6 +25370,18 @@ impl TypedActionView for Workspace {
                     self.open_left_panel_view(&LeftPanelAction::ConversationListView, ctx);
                 }
             }
+            ToggleSkillsPanel => {
+                if FeatureFlag::SkillsPanel.is_enabled() {
+                    let is_showing =
+                        self.left_panel_view.as_ref(ctx).active_view() == ToolPanelView::Skills;
+                    self.toggle_left_panel_view(&LeftPanelAction::Skills, is_showing, ctx);
+                }
+            }
+            OpenSkillsPanel => {
+                if FeatureFlag::SkillsPanel.is_enabled() {
+                    self.open_left_panel_view(&LeftPanelAction::Skills, ctx);
+                }
+            }
             ShowRewindConfirmationDialog {
                 ai_block_view_id,
                 exchange_id,
@@ -25592,6 +25637,9 @@ impl View for Workspace {
         }
         if *CodeSettings::as_ref(app).show_hidden_files {
             context.set.insert(flags::SHOW_HIDDEN_FILES);
+        }
+        if FeatureFlag::SkillsPanel.is_enabled() {
+            context.set.insert(flags::SHOW_SKILLS_PANEL);
         }
 
         if self.team_uid(app).is_some() {

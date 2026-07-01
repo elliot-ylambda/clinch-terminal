@@ -603,6 +603,7 @@ pub mod flags {
     pub const SHOW_PROJECT_EXPLORER: &str = "ShowProjectExplorer";
     pub const SHOW_GLOBAL_SEARCH: &str = "ShowGlobalSearch";
     pub const SHOW_HIDDEN_FILES: &str = "ShowHiddenFiles";
+    pub const SHOW_SKILLS_PANEL: &str = "ShowSkillsPanel";
 }
 
 pub fn init_actions_from_parent_view<T: Action + Clone>(
