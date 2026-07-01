@@ -1381,7 +1381,7 @@ pub(crate) fn initialize_app(
 
     ctx.add_singleton_model(|ctx| AIRequestUsageModel::new(ai_client, ctx));
 
-    ctx.add_singleton_model(|ctx| crate::ai::blocklist::usage::CliAgentUsageModel::new(ctx));
+    ctx.add_singleton_model(crate::ai::blocklist::usage::CliAgentUsageModel::new);
 
     ctx.add_singleton_model(|ctx| {
         UserWorkspaces::new(

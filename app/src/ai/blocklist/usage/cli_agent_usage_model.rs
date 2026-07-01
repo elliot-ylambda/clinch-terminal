@@ -9,6 +9,7 @@ use chrono::Utc;
 use cli_agent_usage::http::{FetchUsage, ReqwestUsage};
 use cli_agent_usage::keychain::{MacKeychain, ReadSecret};
 use cli_agent_usage::{fetch_claude_plan, scan_local, Caches, Paths, PlanLimits, UsageSnapshot};
+use warpui::r#async::block_on;
 use warpui::{Entity, ModelContext, SingletonEntity};
 
 /// How often the producer thread re-scans local files.
@@ -75,7 +76,7 @@ fn producer_loop(paths: Paths, tx: async_channel::Sender<UsageSnapshot>) {
     loop {
         let now = Utc::now();
         let mut snap = scan_local(&paths, &mut caches, now);
-        if tick % ENDPOINT_EVERY == 0 {
+        if tick.is_multiple_of(ENDPOINT_EVERY) {
             if let Some(fresh) = fetch_claude_plan(
                 &keychain as &dyn ReadSecret,
                 &fetch as &dyn FetchUsage,
@@ -86,7 +87,7 @@ fn producer_loop(paths: Paths, tx: async_channel::Sender<UsageSnapshot>) {
             }
         }
         snap.claude.plan = last_plan;
-        if tx.send_blocking(snap).is_err() {
+        if block_on(tx.send(snap)).is_err() {
             break; // receiver dropped (model gone) => exit cleanly
         }
         tick = tick.wrapping_add(1);

@@ -1548,9 +1548,7 @@ impl AgentInputFooter {
         let bg = appearance.theme().surface_1();
         let snapshot = CliAgentUsageModel::as_ref(app).latest().clone();
         // Hidden when neither tool has data.
-        if cli_agent_usage::format::chip_halves(&snapshot).is_none() {
-            return None;
-        }
+        cli_agent_usage::format::chip_halves(&snapshot)?;
         let panel_open = self.cli_agent_usage_panel_open;
         let snapshot_for_panel = snapshot.clone();
 
