@@ -194,6 +194,9 @@ pub fn scan(
         );
         if is_latest {
             let model = entries.last().map(|e| e.model.clone()).unwrap_or_default();
+            // Session cost prices the whole-session cumulative at the last-seen model's
+            // rate; if the session switched models this is approximate (per-window
+            // deltas above are priced per-event and remain exact).
             provider.session = WindowTotals {
                 tokens: last_total,
                 cost_usd: crate::pricing::cost(&model, &last_total),

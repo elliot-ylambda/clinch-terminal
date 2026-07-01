@@ -91,6 +91,9 @@ pub fn parse_plan_limits(json: &str) -> Option<PlanLimits> {
     Some(PlanLimits { session, weekly })
 }
 
+/// Blocking client for the usage endpoint. Uses `reqwest::blocking`, which
+/// **panics if constructed inside an async runtime** — call only from a
+/// synchronous/dedicated thread, never from within Tokio.
 pub struct ReqwestUsage;
 
 impl FetchUsage for ReqwestUsage {

@@ -166,7 +166,17 @@ impl Default for Caches {
     }
 }
 
-/// Build a full snapshot. Every source is independent and fail-soft.
+/// Build a full [`UsageSnapshot`]. Every source is independent and fail-soft:
+/// a missing dir, corrupt line, absent/expired token, or HTTP error yields
+/// empty/`None` for that slice and never panics or aborts the others.
+///
+/// **Blocking and NOT async-safe.** This does synchronous file IO and, via
+/// [`http::ReqwestUsage`], a *blocking* HTTP call. `reqwest::blocking` panics if
+/// constructed inside a Tokio/async runtime, so a footer/poller (Plan B) MUST run
+/// `refresh` on a dedicated thread (e.g. `spawn_blocking`), never on the async
+/// runtime or the UI thread. Recommended: poll local scans frequently, the usage
+/// endpoint slowly, and retain the last good `PlanLimits` across transient fetch
+/// failures so plan-% does not flicker to `None`.
 pub fn refresh(
     paths: &Paths,
     caches: &mut Caches,
@@ -305,5 +315,37 @@ mod tests {
             &Fetch(Ok(usage)),
         );
         assert!(snap.claude.plan.is_none());
+    }
+
+    #[test]
+    fn aggregate_windows_week_month_boundaries_and_dedup() {
+        use chrono::{Duration, Utc};
+        let now = Utc::now();
+        let mk = |ts, tag: &str, out: u64| Entry {
+            ts,
+            model: "claude-haiku".to_string(),
+            tokens: TokenCounts {
+                input: 0,
+                output: out,
+                cache_read: 0,
+                cache_write: 0,
+            },
+            dedup: tag.to_string(),
+        };
+        let entries = vec![
+            mk(now - Duration::days(3), "3d", 20), // in week & month
+            mk(now - Duration::days(7) + Duration::minutes(1), "wk_in", 5), // just inside 7d
+            mk(now - Duration::days(8), "8d", 40), // month only (outside week)
+            mk(now - Duration::days(40), "40d", 80), // outside all windows
+            mk(now - Duration::days(3), "3d", 20), // duplicate dedup key -> ignored
+        ];
+        let mut seen = std::collections::HashSet::new();
+        let (mut today, mut week, mut month) = Default::default();
+        aggregate_windows(&entries, now, &mut seen, &mut today, &mut week, &mut month);
+        // dup "3d" counted once; "wk_in" inside 7d; "8d"/"40d" outside week
+        assert_eq!(week.tokens.output, 20 + 5);
+        // + "8d" inside 30d; "40d" still excluded
+        assert_eq!(month.tokens.output, 20 + 5 + 40);
+        let _ = today; // `today` uses LOCAL midnight (tz-dependent) — covered via scan tests, not asserted here
     }
 }
