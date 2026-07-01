@@ -44,6 +44,7 @@ warp_core.workspace = true
 warp-command-signatures.workspace = true
 warp_multi_agent_api.workspace = true
 warp-workflows.workspace = true
+warp_util.workspace = true
 warpui_core.workspace = true
 warpui_extras = { workspace = true, features = [
     "user_preferences-file",

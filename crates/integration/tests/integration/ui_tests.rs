@@ -323,6 +323,8 @@ integration_tests! {
     test_file_tree_non_openable_files,
     test_file_tree_nested_file_opening,
 
+    test_skills_panel_lists_and_filters,
+
     // Go to Line tests
     test_goto_line_dialog_open_close,
     test_goto_line_jumps_to_line,
