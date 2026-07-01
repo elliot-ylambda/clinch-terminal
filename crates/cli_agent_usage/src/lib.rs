@@ -242,4 +242,68 @@ mod tests {
         assert!(snap.claude.plan.is_none());
         assert_eq!(snap.codex.month.tokens.total(), 0);
     }
+
+    #[test]
+    fn refresh_claude_plan_success_and_failure_branches() {
+        use crate::http::FetchUsage;
+        use crate::keychain::ReadSecret;
+
+        struct Secret(&'static str);
+        impl ReadSecret for Secret {
+            fn read(&self, _: &str, _: &str) -> Option<String> {
+                Some(self.0.to_string())
+            }
+        }
+        struct Fetch(Result<&'static str, &'static str>);
+        impl FetchUsage for Fetch {
+            fn fetch(&self, _: &str) -> Result<String, String> {
+                self.0.map(|s| s.to_string()).map_err(|e| e.to_string())
+            }
+        }
+
+        // never-expiring token blob; valid usage JSON (limits[] preferred path)
+        let blob = r#"{"claudeAiOauth":{"accessToken":"tok","expiresAt":99999999999999}}"#;
+        let usage = r#"{"limits":[{"group":"session","percent":78,"severity":"warning","resets_at":"2026-07-01T02:30:00+00:00","is_active":true},{"group":"weekly","percent":43,"severity":"normal","resets_at":"2026-07-04T15:00:00+00:00","is_active":false}]}"#;
+        let paths = Paths {
+            claude_projects: "/no/such/claude".into(),
+            codex_sessions: "/no/such/codex".into(),
+            os_account: "u".into(),
+        };
+        let now = chrono::Utc::now();
+
+        // success: valid token + valid usage -> plan populated with expected percentages
+        let mut caches = Caches::new();
+        let snap = refresh(&paths, &mut caches, now, &Secret(blob), &Fetch(Ok(usage)));
+        let plan = snap.claude.plan.expect("plan populated on success");
+        assert_eq!(plan.session.unwrap().percent, 78.0);
+        assert_eq!(plan.weekly.unwrap().percent, 43.0);
+
+        // fetch error -> plan None (fail-soft)
+        let mut caches = Caches::new();
+        let snap = refresh(&paths, &mut caches, now, &Secret(blob), &Fetch(Err("boom")));
+        assert!(snap.claude.plan.is_none());
+
+        // malformed body -> plan None (fail-soft)
+        let mut caches = Caches::new();
+        let snap = refresh(
+            &paths,
+            &mut caches,
+            now,
+            &Secret(blob),
+            &Fetch(Ok("garbage")),
+        );
+        assert!(snap.claude.plan.is_none());
+
+        // expired token -> plan None (short-circuits before fetch)
+        let expired = r#"{"claudeAiOauth":{"accessToken":"tok","expiresAt":1}}"#;
+        let mut caches = Caches::new();
+        let snap = refresh(
+            &paths,
+            &mut caches,
+            now,
+            &Secret(expired),
+            &Fetch(Ok(usage)),
+        );
+        assert!(snap.claude.plan.is_none());
+    }
 }
