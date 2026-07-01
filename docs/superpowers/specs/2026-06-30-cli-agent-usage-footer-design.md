@@ -1,8 +1,16 @@
 # CLI Agent Usage in the Clinch Footer — Design
 
 **Date:** 2026-06-30
-**Status:** Approved design, pending implementation plan
+**Status:** Approved design; data-layer crate implemented (Plan A). Footer UI now specified
+separately.
 **Author:** brainstorming session
+
+> **Superseded (footer UI):** the crate (§4–§5, §12) is built. The **threading** (§5–§6,
+> which assumed `async fn refresh` — it is actually blocking and panics inside a Tokio
+> runtime), the **cost display** (§8–§9 — cost is now omitted from the UI), and the **panel
+> metric** (§9 — now input+output headline with cache-read dimmed) are finalized in
+> `2026-06-30-cli-agent-usage-footer-ui.md`, which is authoritative for the footer. This
+> document remains the record of the overall feature and the data-source research.
 
 ## 1. Goal
 
