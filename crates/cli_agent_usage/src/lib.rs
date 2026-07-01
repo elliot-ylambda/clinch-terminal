@@ -124,6 +124,72 @@ pub fn aggregate_windows(
     }
 }
 
+use std::path::PathBuf;
+
+use crate::cache::ScanCache;
+
+pub struct Paths {
+    pub claude_projects: PathBuf,
+    pub codex_sessions: PathBuf,
+    pub os_account: String,
+}
+
+impl Paths {
+    pub fn detect() -> Option<Paths> {
+        let home = std::env::var("HOME").ok()?;
+        let os_account = std::env::var("USER").unwrap_or_default();
+        Some(Paths {
+            claude_projects: PathBuf::from(&home).join(".claude/projects"),
+            codex_sessions: PathBuf::from(&home).join(".codex/sessions"),
+            os_account,
+        })
+    }
+}
+
+pub struct Caches {
+    claude: ScanCache<Vec<Entry>>,
+    codex: ScanCache<codex::RollupFile>,
+}
+
+impl Caches {
+    pub fn new() -> Self {
+        Caches {
+            claude: ScanCache::new(),
+            codex: ScanCache::new(),
+        }
+    }
+}
+
+impl Default for Caches {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Build a full snapshot. Every source is independent and fail-soft.
+pub fn refresh(
+    paths: &Paths,
+    caches: &mut Caches,
+    now: DateTime<Utc>,
+    secret: &dyn keychain::ReadSecret,
+    fetch: &dyn http::FetchUsage,
+) -> UsageSnapshot {
+    let mut claude = claude::scan(&paths.claude_projects, &mut caches.claude, now);
+    let codex = codex::scan(&paths.codex_sessions, &mut caches.codex, now);
+
+    // Claude plan-% via Keychain token + endpoint (best-effort).
+    claude.plan = (|| {
+        let token = keychain::read_claude_token(secret, &paths.os_account)?;
+        if token.is_expired(now.timestamp_millis()) {
+            return None;
+        }
+        let body = fetch.fetch(&token.access_token).ok()?;
+        http::parse_plan_limits(&body)
+    })();
+
+    UsageSnapshot { claude, codex }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -149,5 +215,31 @@ mod tests {
     #[test]
     fn severity_default_is_normal() {
         assert_eq!(Severity::default(), Severity::Normal);
+    }
+
+    #[test]
+    fn refresh_is_fail_soft_with_no_files_and_no_token() {
+        struct NoSecret;
+        impl crate::keychain::ReadSecret for NoSecret {
+            fn read(&self, _: &str, _: &str) -> Option<String> {
+                None
+            }
+        }
+        struct NoFetch;
+        impl crate::http::FetchUsage for NoFetch {
+            fn fetch(&self, _: &str) -> Result<String, String> {
+                Err("no".into())
+            }
+        }
+        let paths = Paths {
+            claude_projects: "/no/such/claude".into(),
+            codex_sessions: "/no/such/codex".into(),
+            os_account: "nobody".into(),
+        };
+        let mut caches = Caches::new();
+        let snap = refresh(&paths, &mut caches, chrono::Utc::now(), &NoSecret, &NoFetch);
+        assert_eq!(snap.claude.month.tokens.total(), 0);
+        assert!(snap.claude.plan.is_none());
+        assert_eq!(snap.codex.month.tokens.total(), 0);
     }
 }
