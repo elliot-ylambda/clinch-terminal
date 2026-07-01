@@ -1033,9 +1033,8 @@ category = "public.app-category.developer-tools"
 copyright = "© 2025, Denver Technologies, Inc"
 identifier = "sh.clinch.Clinch"
 name = "Clinch"
-osx_frameworks = [
-    "frameworks/default/Sentry-Dynamic-WithARM64e.xcframework/macos-arm64_arm64e_x86_64/Sentry.framework",
-]
+# Clinch fork: no osx_frameworks — the stable build drops cocoa_sentry (no
+# crash reporting), so Sentry.framework must not be bundled or linked.
 resources = ["assets/onboarding"]
 short_description = "The cloud-backed terminal for individuals and teams, stable build."
 

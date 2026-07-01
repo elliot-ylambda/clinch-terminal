@@ -99,7 +99,12 @@ TARGET_ARCH=""
 DMG_NAME_SUFFIX=""
 # By default we build dev bundles.
 RELEASE_CHANNEL="dev"
-FEATURES="release_bundle,cocoa_sentry,extern_plist"
+# Clinch fork: cocoa_sentry is opt-in per channel (dev/preview below) rather
+# than a default. Clinch ships no crash reporting, and a Sentry-linked binary
+# whose bundle lacks Sentry.framework aborts at launch (dyld: Library not
+# loaded) — the `warp` bin (WarpLocal) has no osx_frameworks metadata in
+# app/Cargo.toml, so it must not link Sentry.
+FEATURES="release_bundle,extern_plist"
 REGISTER_SERVICES=true
 DEBUG=false
 ARTIFACT="app"
@@ -274,16 +279,18 @@ if [[ $RELEASE_CHANNEL = "local" ]]; then
     WARP_APP_NAME="WarpLocal"
     WARP_SCHEME_NAME="warplocal"
     FEATURES="$FEATURES,agent_mode_debug"
-    # For local builds, use different versions of our bundled frameworks (e.g.:
-    # Sentry).  This needs to be exported so it can be referenced by
-    # app/build.rs later, while running `cargo bundle`.
-    export FRAMEWORK_OVERRIDE="dev"
+    # Clinch fork: no cocoa_sentry (see the FEATURES default above), so the
+    # FRAMEWORK_OVERRIDE export upstream sets here is unused and dropped.
 elif [[ $RELEASE_CHANNEL = "dev" ]]; then
     WARP_BIN="dev"
     BUNDLE_ID="dev.warp.Warp-Dev"
     WARP_APP_NAME="WarpDev"
     WARP_SCHEME_NAME="warpdev"
     FEATURES="$FEATURES,agent_mode_debug"
+    # Upstream Warp channels ship Sentry crash reporting (the dev/preview bins
+    # bundle Sentry.framework via osx_frameworks in app/Cargo.toml); Clinch
+    # channels (local/stable) do not.
+    FEATURES="$FEATURES,cocoa_sentry"
     # Enable heap usage tracking & profiling using jemalloc through pprof.
     FEATURES="$FEATURES,jemalloc_pprof,heap_usage_tracking"
     # Enable the Warp Control CLI wrapper for local scripting/automation.
@@ -299,6 +306,8 @@ elif [[ $RELEASE_CHANNEL = "preview" ]]; then
     WARP_APP_NAME="WarpPreview"
     WARP_SCHEME_NAME="warppreview"
     FEATURES="$FEATURES,preview_channel"
+    # Upstream channel: ships Sentry crash reporting (see the dev block note).
+    FEATURES="$FEATURES,cocoa_sentry"
     # Enable heap usage tracking & profiling using jemalloc through pprof.
     FEATURES="$FEATURES,jemalloc_pprof,heap_usage_tracking"
 elif [[ $RELEASE_CHANNEL = "stable" ]]; then
@@ -314,14 +323,16 @@ elif [[ $RELEASE_CHANNEL = "stable" ]]; then
     # profiling features that bundle the Go-based pprof binary (script/prepare_bundled_pprof runs
     # `go tool -n pprof`), which would force a Go toolchain into this otherwise dependency-light,
     # "runs locally and free" ship flow. A distributed Clinch build does not need them.
+    # cocoa_sentry is likewise omitted (see the FEATURES default above): Clinch ships no crash
+    # reporting (crash_reporting_config is None), and skipping Sentry.framework keeps ~32MB of
+    # dead weight out of Clinch.app.
 elif [[ $RELEASE_CHANNEL = "oss" ]]; then
     WARP_BIN="warp-oss"
     BUNDLE_ID="dev.warp.WarpOss"
     WARP_APP_NAME="WarpOss"
     WARP_SCHEME_NAME="warposs"
-    # The OSS channel does not ship Sentry, so drop the cocoa_sentry feature
-    # (which would otherwise pull in the Sentry framework dependency).
-    FEATURES="release_bundle,extern_plist"
+    # The OSS channel does not ship Sentry; the FEATURES default already
+    # excludes cocoa_sentry, so there is nothing to drop here anymore.
 fi
 
 OUT_DIR="target/$TARGET_PROFILE_DIR/bundle/osx"
