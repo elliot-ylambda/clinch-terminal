@@ -421,6 +421,102 @@ fn get_skills_for_working_directory_name_collision_returns_both() {
 }
 
 #[test]
+fn skills_for_providers_includes_reachable_cross_provider_skill() {
+    // A skill named "foo" exists (identical content) under BOTH .agents/skills and
+    // .claude/skills in the same project dir. The deduplicated All list keeps the
+    // .agents copy (higher precedence). But Claude CAN read .claude/skills/foo, so the
+    // Claude provider-set query must still surface "foo".
+    let temp = TempDir::new().unwrap();
+    let base = dunce::canonicalize(temp.path()).unwrap();
+    let repo = base.join("repo");
+    fs::create_dir_all(&repo).unwrap();
+
+    let agents_skill_path = LocalOrRemotePath::Local(repo.join(".agents/skills/foo/SKILL.md"));
+    let claude_skill_path = LocalOrRemotePath::Local(repo.join(".claude/skills/foo/SKILL.md"));
+
+    let agents_skill = ParsedSkill {
+        name: "foo".to_string(),
+        description: "Foo skill".to_string(),
+        path: agents_skill_path.clone(),
+        content: "# foo\nshared body".to_string(),
+        line_range: None,
+        provider: SkillProvider::Agents,
+        scope: SkillScope::Project,
+    };
+    let claude_skill = ParsedSkill {
+        provider: SkillProvider::Claude,
+        path: claude_skill_path.clone(),
+        ..agents_skill.clone()
+    };
+
+    let mut directory_skills: HashMap<LocalOrRemotePath, HashSet<LocalOrRemotePath>> =
+        HashMap::new();
+    directory_skills
+        .entry(LocalOrRemotePath::Local(repo.clone()))
+        .or_default()
+        .insert(agents_skill_path.clone());
+    directory_skills
+        .entry(LocalOrRemotePath::Local(repo.clone()))
+        .or_default()
+        .insert(claude_skill_path.clone());
+
+    let mut skills_by_path: HashMap<LocalOrRemotePath, ParsedSkill> = HashMap::new();
+    skills_by_path.insert(agents_skill_path.clone(), agents_skill);
+    skills_by_path.insert(claude_skill_path.clone(), claude_skill);
+
+    App::test((), |mut app| async move {
+        app.add_singleton_model(DirectoryWatcher::new);
+        app.add_singleton_model(AISettings::new_with_defaults);
+        let repo_handle = app.add_singleton_model(|_| DetectedRepositories::default());
+        app.add_singleton_model(RepoMetadataModel::new);
+        app.add_singleton_model(HomeDirectoryWatcher::new_for_test);
+        app.add_singleton_model(WarpManagedPathsWatcher::new_for_testing);
+        let skill_manager_handle = app.add_singleton_model(SkillManager::new);
+
+        // Register the repo root so get_root_for_path returns Some.
+        let canonical_repo =
+            warp_util::standardized_path::StandardizedPath::from_local_canonicalized(&repo)
+                .unwrap();
+        repo_handle.update(&mut app, |repos, _ctx| {
+            repos.insert_test_repo_root(canonical_repo);
+        });
+
+        skill_manager_handle.update(&mut app, |manager, _ctx| {
+            manager.directory_skills = directory_skills;
+            manager.skills_by_path = skills_by_path;
+        });
+
+        let cwd = LocalOrRemotePath::Local(repo.clone());
+
+        // All: deduped -> single "foo", tagged agents (higher precedence).
+        let all = skill_manager_handle.read(&app, |manager, ctx| {
+            manager.get_skills_for_working_directory(Some(&cwd), ctx)
+        });
+        let foo_all: Vec<_> = all.iter().filter(|s| s.name == "foo").collect();
+        assert_eq!(
+            foo_all.len(),
+            1,
+            "All list should dedupe to a single foo skill"
+        );
+        assert_eq!(foo_all[0].provider, SkillProvider::Agents);
+
+        // Claude (supported providers = [Claude]) must still include "foo".
+        let claude = skill_manager_handle.read(&app, |manager, ctx| {
+            manager.skills_for_providers(Some(&cwd), &[SkillProvider::Claude], ctx)
+        });
+        assert!(
+            claude.iter().any(|s| s.name == "foo"),
+            "Claude should reach .claude/skills/foo even though All dedupes to the agents copy"
+        );
+        assert_eq!(
+            claude.iter().filter(|s| s.name == "foo").count(),
+            1,
+            "the Claude-scoped query should also dedupe to a single foo skill"
+        );
+    });
+}
+
+#[test]
 fn cloud_environment_skills_always_included() {
     // In a cloud environment, all skills should be in scope regardless of
     // the working directory—even when cwd is inside a different repo or

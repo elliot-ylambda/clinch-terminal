@@ -118,8 +118,45 @@ impl SkillManager {
     ) -> Vec<SkillDescriptor> {
         // Collect file-backed skills for one shared deduplication pass. Home skills use
         // the home directory as their dir_path; project skills use their owning directory.
-        let mut skill_paths = Vec::new();
         let mut deduplicator = SkillDeduplicator::default();
+        let skill_paths = self.collect_in_scope_skill_paths(working_directory, path_origin, ctx);
+
+        // Deduplicate skills with identical content installed under the same directory across
+        // multiple providers, keeping the skill from the highest-priority provider per
+        // [`SKILL_PROVIDER_DEFINITIONS`].
+        deduplicator.extend_paths(&skill_paths, &self.skills_by_path);
+        let mut skills = deduplicator.into_descriptors();
+
+        // Apply icon overrides for well-known skill names (e.g. partner integrations).
+        for skill in &mut skills {
+            if skill.icon_override.is_none() {
+                skill.icon_override =
+                    crate::ai::skills::skill_utils::icon_override_for_skill_name(&skill.name);
+            }
+        }
+
+        // Append bundled skills whose activation condition is met, from the
+        // catalog of the active execution host: SSH sessions see the remote
+        // daemon's catalog (empty until its snapshot arrives),
+        // never the local client's. Remote catalog descriptors are referenced
+        // by their remote paths so invocation resolves back to the same host's
+        // catalog, while direct `BundledSkillId` lookups use `path_origin`.
+        if FeatureFlag::BundledSkills.is_enabled() {
+            skills.extend(self.bundled_skills.active_descriptors(path_origin, ctx));
+        }
+
+        skills
+    }
+
+    /// Collects `(owning_dir, skill_path)` pairs for every file-backed skill in scope for
+    /// `working_directory` (home skills + ancestor project skills, honoring cloud mode).
+    fn collect_in_scope_skill_paths(
+        &self,
+        working_directory: Option<&LocalOrRemotePath>,
+        path_origin: &SkillPathOrigin,
+        ctx: &AppContext,
+    ) -> Vec<(LocalOrRemotePath, LocalOrRemotePath)> {
+        let mut skill_paths = Vec::new();
         let path_matches_location = |path: &LocalOrRemotePath| match (working_directory, path) {
             (Some(LocalOrRemotePath::Local(_)), LocalOrRemotePath::Local(_)) => true,
             (
@@ -175,13 +212,41 @@ impl SkillManager {
             }
         }
 
-        // Deduplicate skills with identical content installed under the same directory across
-        // multiple providers, keeping the skill from the highest-priority provider per
-        // [`SKILL_PROVIDER_DEFINITIONS`].
+        skill_paths
+    }
+
+    /// Returns file-backed skills in scope for `working_directory` that belong to one of
+    /// `providers`, deduplicated among those providers. Used by the Skills panel's per-agent
+    /// subtabs so a skill reachable under any of an agent's supported providers is not
+    /// under-counted by the cross-provider dedup used for the "All" list. Bundled skills are
+    /// included only when `providers` contains [`SkillProvider::Warp`].
+    pub fn skills_for_providers(
+        &self,
+        working_directory: Option<&LocalOrRemotePath>,
+        providers: &[SkillProvider],
+        ctx: &AppContext,
+    ) -> Vec<SkillDescriptor> {
+        let path_origin = match working_directory {
+            Some(LocalOrRemotePath::Remote(path)) => SkillPathOrigin::Remote {
+                host_id: path.host_id.clone(),
+            },
+            Some(LocalOrRemotePath::Local(_)) | None => SkillPathOrigin::Local,
+        };
+
+        let skill_paths: Vec<_> = self
+            .collect_in_scope_skill_paths(working_directory, &path_origin, ctx)
+            .into_iter()
+            .filter(|(_dir, path)| {
+                self.skills_by_path
+                    .get(path)
+                    .is_some_and(|skill| providers.contains(&skill.provider))
+            })
+            .collect();
+
+        let mut deduplicator = SkillDeduplicator::default();
         deduplicator.extend_paths(&skill_paths, &self.skills_by_path);
         let mut skills = deduplicator.into_descriptors();
 
-        // Apply icon overrides for well-known skill names (e.g. partner integrations).
         for skill in &mut skills {
             if skill.icon_override.is_none() {
                 skill.icon_override =
@@ -189,14 +254,8 @@ impl SkillManager {
             }
         }
 
-        // Append bundled skills whose activation condition is met, from the
-        // catalog of the active execution host: SSH sessions see the remote
-        // daemon's catalog (empty until its snapshot arrives),
-        // never the local client's. Remote catalog descriptors are referenced
-        // by their remote paths so invocation resolves back to the same host's
-        // catalog, while direct `BundledSkillId` lookups use `path_origin`.
-        if FeatureFlag::BundledSkills.is_enabled() {
-            skills.extend(self.bundled_skills.active_descriptors(path_origin, ctx));
+        if providers.contains(&SkillProvider::Warp) && FeatureFlag::BundledSkills.is_enabled() {
+            skills.extend(self.bundled_skills.active_descriptors(&path_origin, ctx));
         }
 
         skills
