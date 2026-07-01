@@ -303,9 +303,13 @@ elif [[ $RELEASE_CHANNEL = "preview" ]]; then
     FEATURES="$FEATURES,jemalloc_pprof,heap_usage_tracking"
 elif [[ $RELEASE_CHANNEL = "stable" ]]; then
     WARP_BIN="stable"
-    BUNDLE_ID="dev.warp.Warp-Stable"
-    WARP_APP_NAME="Warp"
-    WARP_SCHEME_NAME="warp"
+    # Clinch fork: distinct bundle id (reverse-DNS of clinch.sh) so the released
+    # app coexists with an installed Warp.app instead of colliding on identity /
+    # storage. The url scheme registered here MUST match Channel::Stable's
+    # url_scheme() in crates/warp_core/src/channel/state.rs ("clinch").
+    BUNDLE_ID="sh.clinch.Clinch"
+    WARP_APP_NAME="Clinch"
+    WARP_SCHEME_NAME="clinch"
     # Enable heap usage tracking & profiling using jemalloc through pprof.
     FEATURES="$FEATURES,jemalloc_pprof,heap_usage_tracking"
 elif [[ $RELEASE_CHANNEL = "oss" ]]; then
@@ -737,7 +741,7 @@ if [[ "$ARTIFACT" = app ]]; then
     local source_folder="$1"
 
     local args=(
-      --volname Warp
+      --volname "$WARP_APP_NAME"
       # For --no-internet-enable, see https://github.com/create-dmg/create-dmg/issues/179
       --no-internet-enable
       --background app/assets/resources/mac/warp_install_image.png
