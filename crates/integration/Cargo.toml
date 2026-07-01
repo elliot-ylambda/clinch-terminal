@@ -68,4 +68,7 @@ nix = { workspace = true, features = ["user", "signal"] }
 run_on_linux = []
 drag_tabs_to_windows = ["warp/drag_tabs_to_windows"]
 skills_panel = ["warp/skills_panel"]
+# `skills_panel` is in `default` so the integration binary COMPILES the feature in and can
+# reference it. The runtime `FeatureFlag::SkillsPanel` still defaults OFF — tests exercising
+# the panel must `set_enabled(true)` explicitly (see `test/skills_panel.rs`).
 default = ["run_on_linux", "skills_panel"]
