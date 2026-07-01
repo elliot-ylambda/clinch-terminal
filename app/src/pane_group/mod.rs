@@ -561,6 +561,9 @@ pub enum Event {
     },
     OpenCodeReviewPane(CodeReviewPanelArg),
     ToggleCodeReviewPane(CodeReviewPanelArg),
+    ForkCliAgentSession {
+        terminal_view_id: EntityId,
+    },
     /// Tell the workspace to run a workflow in the active tab's active session.
     RunWorkflow {
         workflow: Arc<WorkflowType>,
@@ -2246,6 +2249,20 @@ impl PaneGroup {
         self.panes_of::<TerminalPane>()
             .find(|pane| pane.session_uuid() == uuid && !self.is_pane_hidden_for_close(pane.id()))
             .map(|pane| pane.id())
+    }
+
+    /// Resolves the agent-resume "fork" launch (command + cwd) for the pane that owns
+    /// `terminal_view_id`, if that pane currently has a forkable Claude/Codex session.
+    ///
+    /// Used by the Fork footer button: the pane UUID is the agent-resume registry key.
+    pub fn fork_launch_for_terminal_view(
+        &self,
+        terminal_view_id: EntityId,
+        ctx: &AppContext,
+    ) -> Option<crate::agent_resume::ForkLaunch> {
+        let pane_id = self.find_pane_id_for_terminal_view(terminal_view_id, ctx)?;
+        let pane = self.downcast_pane_by_id::<TerminalPane>(pane_id)?;
+        crate::agent_resume::read_fork_launch(&pane.session_uuid())
     }
 
     /// Iterate over the code editors in this pane group.

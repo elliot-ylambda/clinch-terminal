@@ -1198,6 +1198,11 @@ fn handle_terminal_view_event(
             Event::ToggleCodeReviewPane(arg) => {
                 ctx.emit(pane_group::Event::ToggleCodeReviewPane(arg.clone()));
             }
+            Event::ForkCliAgentSession { terminal_view_id } => {
+                ctx.emit(pane_group::Event::ForkCliAgentSession {
+                    terminal_view_id: *terminal_view_id,
+                });
+            }
             Event::OpenShareSessionModal { open_source } => {
                 group.open_share_session_modal(terminal_pane_id, *open_source, ctx)
             }
