@@ -1,12 +1,12 @@
 use anyhow::Result;
 use warp_core::channel::{Channel, ChannelConfig, ChannelState};
-use warp_core::features;
-use warp_core::AppId;
+use warp_core::{features, AppId};
 
 fn main() -> Result<()> {
     // The Clinch fork ships with no backend, so the channel config is constructed inline (like
     // oss.rs) instead of being loaded from the private `warp-channel-config` generator.
-    let config = ChannelConfig::no_backend(AppId::new("dev", "warp", "Warp-Local"), "warp-local.log");
+    let config =
+        ChannelConfig::no_backend(AppId::new("dev", "warp", "Warp-Local"), "warp-local.log");
 
     let mut state = ChannelState::new(Channel::Local, config)
         .with_additional_features(features::DEBUG_FLAGS)
