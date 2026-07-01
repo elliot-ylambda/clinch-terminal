@@ -1,0 +1,15 @@
+[package]
+name = "cli_agent_usage"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+walkdir = { workspace = true }
+reqwest = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3"
