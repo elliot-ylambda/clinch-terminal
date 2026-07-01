@@ -8420,11 +8420,24 @@ impl Workspace {
                 manager_handle.update(ctx, |terminal_manager, ctx| {
                     if let Some(manager) = terminal_manager
                         .as_any()
-                        .downcast_ref::<crate::terminal::local_tty::TerminalManager>()
-                    {
+                        .downcast_ref::<crate::terminal::local_tty::TerminalManager>(
+                    ) {
+                        // Must be registered here, synchronously, before the new tab's async
+                        // `Bootstrapped` event fires (mirrors the snapshot-restore path,
+                        // pane_group/mod.rs:1672); otherwise the replay command is lost.
                         manager.set_on_restore_command(command, ctx);
+                    } else {
+                        log::warn!(
+                            "fork: new tab's terminal manager is not a local_tty::TerminalManager; \
+                             dropping fork command (Fork opened an empty tab)"
+                        );
                     }
                 });
+            } else {
+                log::warn!(
+                    "fork: new tab has no terminal manager at pane 0; dropping fork command \
+                     (Fork opened an empty tab)"
+                );
             }
         }
         #[cfg(not(feature = "local_tty"))]

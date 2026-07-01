@@ -38,9 +38,15 @@ fn read_command_in(dir: &Path, uuid_hex: &str) -> Option<String> {
 /// we don't know how to fork (the only forkable agents today are Claude and Codex).
 fn derive_fork_command(command: &str) -> Option<String> {
     let command = command.trim();
-    if command.starts_with("claude --resume ") {
+    if let Some(id) = command.strip_prefix("claude --resume ") {
+        if id.trim().is_empty() {
+            return None;
+        }
         Some(format!("{command} --fork-session"))
-    } else if command.starts_with("codex resume ") {
+    } else if let Some(id) = command.strip_prefix("codex resume ") {
+        if id.trim().is_empty() {
+            return None;
+        }
         Some(command.replacen("codex resume", "codex fork", 1))
     } else {
         None
