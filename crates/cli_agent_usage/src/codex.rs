@@ -178,7 +178,7 @@ pub fn scan(
         .map(|(p, _, _)| p.clone());
 
     for (path, mtime, size) in &files {
-        let parsed = cache.get_or_parse(path, *mtime, *size, |p| parse_rollout_file(p));
+        let parsed = cache.get_or_parse(path, *mtime, *size, parse_rollout_file);
         let entries = parsed.entries.clone();
         let is_latest = Some(path) == latest.as_ref();
         let last_total = parsed.last_total;
@@ -194,10 +194,10 @@ pub fn scan(
         );
         if is_latest {
             let model = entries.last().map(|e| e.model.clone()).unwrap_or_default();
-            let mut s = WindowTotals::default();
-            s.tokens = last_total;
-            s.cost_usd = crate::pricing::cost(&model, &last_total);
-            provider.session = s;
+            provider.session = WindowTotals {
+                tokens: last_total,
+                cost_usd: crate::pricing::cost(&model, &last_total),
+            };
             provider.plan = rate_limits;
         }
     }

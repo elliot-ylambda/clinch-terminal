@@ -115,7 +115,7 @@ pub fn scan(
 
     for (path, mtime, size) in &files {
         let entries = cache
-            .get_or_parse(path, *mtime, *size, |p| parse_transcript_file(p))
+            .get_or_parse(path, *mtime, *size, parse_transcript_file)
             .clone();
         aggregate_windows(
             &entries,

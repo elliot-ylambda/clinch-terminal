@@ -123,8 +123,14 @@ mod tests {
             expires_at_ms: Some(1234567890),
         };
         let debug_str = format!("{:?}", t);
-        assert!(!debug_str.contains("SECRET"), "token must be redacted in debug output");
-        assert!(debug_str.contains("<redacted>"), "should show redaction marker");
+        assert!(
+            !debug_str.contains("SECRET"),
+            "token must be redacted in debug output"
+        );
+        assert!(
+            debug_str.contains("<redacted>"),
+            "should show redaction marker"
+        );
         assert!(debug_str.contains("1234567890"), "expiry should be visible");
     }
 }
