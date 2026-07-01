@@ -47,7 +47,7 @@ use crate::terminal::shared_session::participant_avatar_view::render_participant
 use crate::terminal::shared_session::render_util::shared_session_indicator_color;
 use crate::terminal::shared_session::SharedSessionActionSource;
 use crate::terminal::{TerminalManager, TerminalView};
-use crate::ui_components::agent_icon::terminal_view_agent_icon_variant;
+use crate::ui_components::agent_icon::terminal_view_agent_icon_variant_respecting_tab_setting;
 use crate::ui_components::buttons::icon_button_with_color;
 use crate::ui_components::icon_with_status::render_icon_with_status;
 use crate::ui_components::{blended_colors, icons};
@@ -307,7 +307,8 @@ impl TerminalView {
         let pane_indicator = if should_render_ambient_agent_indicator {
             // Shared/viewed ambient session: route through the shared helper so the pane header
             // renders the same brand-color circle + cloud lobe + status as the vertical tab.
-            terminal_view_agent_icon_variant(self, app).map(render_agent_circle)
+            terminal_view_agent_icon_variant_respecting_tab_setting(self, app)
+                .map(render_agent_circle)
         } else if let Some(shared_session) = self.shared_session.as_ref() {
             if let Some(Viewer {
                 sharer: Some(sharer),
@@ -341,7 +342,8 @@ impl TerminalView {
         {
             // Conversation-bound terminal: same shared helper — produces an OzAgent variant for
             // local conversations and a CLIAgent variant for the (rare) CLI-backed terminal.
-            terminal_view_agent_icon_variant(self, app).map(render_agent_circle)
+            terminal_view_agent_icon_variant_respecting_tab_setting(self, app)
+                .map(render_agent_circle)
         } else {
             self.render_terminal_mode_indicator(app)
         };
