@@ -1,9 +1,8 @@
 mod grouping;
-pub(crate) use grouping::{group_skills_by_scope, providers_for_subtab, SkillsSubtab};
-
 use std::collections::{HashMap, HashSet};
 
 use ai::skills::SkillScope;
+pub(crate) use grouping::{group_skills_by_scope, providers_for_subtab, SkillsSubtab};
 use warp_core::ui::Icon;
 use warp_util::local_or_remote_path::LocalOrRemotePath;
 use warpui::elements::new_scrollable::{NewScrollable, ScrollableAppearance, SingleAxisConfig};
@@ -106,14 +105,15 @@ impl SkillsPanel {
 
         // Refresh when home skills change on disk. Project skills are re-read on
         // `set_working_directory` and on every render (cheap — a HashMap walk).
-        ctx.subscribe_to_model(&SkillManager::handle(ctx), |me, _model, event, ctx| {
-            match event {
+        ctx.subscribe_to_model(
+            &SkillManager::handle(ctx),
+            |me, _model, event, ctx| match event {
                 SkillManagerEvent::HomeSkillsChanged => {
                     me.sync_row_states(ctx);
                     ctx.notify();
                 }
-            }
-        });
+            },
+        );
 
         let mut this = Self {
             subtab_control,
@@ -254,7 +254,8 @@ impl SkillsPanel {
                         }
                     },
                 );
-                column = column.with_child(Container::new(row).with_horizontal_padding(8.).finish());
+                column =
+                    column.with_child(Container::new(row).with_horizontal_padding(8.).finish());
             }
         }
 
@@ -336,9 +337,13 @@ impl View for SkillsPanel {
             };
             list_column = list_column.with_child(
                 Container::new(
-                    Text::new_inline(empty_msg, appearance.ui_font_family(), appearance.ui_font_size())
-                        .with_color(theme.sub_text_color(theme.background()).into())
-                        .finish(),
+                    Text::new_inline(
+                        empty_msg,
+                        appearance.ui_font_family(),
+                        appearance.ui_font_size(),
+                    )
+                    .with_color(theme.sub_text_color(theme.background()).into())
+                    .finish(),
                 )
                 .with_horizontal_padding(12.)
                 .with_vertical_padding(8.)
