@@ -82,6 +82,7 @@ cfg-if.workspace = true
 channel_versions.workspace = true
 chrono.workspace = true
 clap.workspace = true
+cli_agent_usage.workspace = true
 cloud_object_client.workspace = true
 cloud_object_models.workspace = true
 cloud_objects.workspace = true

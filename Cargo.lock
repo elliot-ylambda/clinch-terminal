@@ -14571,6 +14571,7 @@ dependencies = [
  "channel_versions",
  "chrono",
  "clap",
+ "cli_agent_usage",
  "cloud_object_client",
  "cloud_object_models",
  "cloud_object_persistence",
