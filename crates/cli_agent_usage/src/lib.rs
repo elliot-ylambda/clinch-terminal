@@ -3,6 +3,7 @@ use chrono::{DateTime, Utc};
 pub mod cache;
 pub mod claude;
 pub mod codex;
+pub mod format;
 pub mod http;
 pub mod keychain;
 pub mod pricing;
