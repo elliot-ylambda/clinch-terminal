@@ -691,3 +691,18 @@ git commit -m "agent attention badges: verification fixes"
 **Type consistency:** `show_agent_status_on_tabs` (bool) defined in Task 3, read in Task 4 Step 3 — names match. `Indicator::CLIAgent(IconWithStatusVariant)` defined Task 4 Step 2, rendered Step 5, matched Step 6 — consistent. `active_focused_terminal_id` made `pub(crate)` (Task 5 Step 1) and called with full path (Step 2) — consistent. `is_pane_actively_focused` defined Step 2, used Step 3 — consistent.
 
 **Deviation from spec, noted:** the spec's Component 4 suggested `active_focused_terminal_id(ctx) != Some(self.view_id)` alone; Task 5 combines it with `is_navigated_away_from_window` to avoid regressing the "Clinch fully backgrounded" case (the active-window lookup returns the last-focused pane even when Clinch is in the background). This is strictly more correct and keeps the existing helper in use (no dead code). The spec's aggregation note (Blocked > InProgress > Success across split panes) is simplified to the **focused pane** in Task 4, matching the existing `agent_indicator` pattern; cross-split aggregation is a deferred refinement.
+
+## Post-review addendum (as-built)
+
+The final whole-branch review found one Important cross-task gap that was fixed after the five
+tasks: the `show_agent_status_on_tabs` setting initially gated **only** the horizontal tab strip,
+but the spec (Component 5) requires it to hide CLI-agent status on **all** tab/pane surfaces. Fix
+(commit `89c14f5b`): added `terminal_view_agent_icon_variant_respecting_tab_setting` in
+`ui_components/agent_icon.rs` — a wrapper that returns `None` only when the variant is
+`IconWithStatusVariant::CLIAgent { .. }` **and** the setting is off (Warp's own Oz/ambient icons
+pass through unconditionally) — and routed the sidebar (`vertical_tabs.rs` ×2) and pane-header
+(`pane_impl.rs` ×2) call sites through it. The agent-conversation block list
+(`ambient_agent/block/entry.rs`) is intentionally left un-gated (a different surface, not tab/pane
+chrome). Also fixed post-review: 2 rustfmt violations from the Task 4/5 fix commits; a first-run
+notification note in `tools/agent-resume/README.md` (`NotificationsMode::Unset` shows an in-app
+enable-banner before pushes work); and a regression test for `is_agent_task_indicator`.
