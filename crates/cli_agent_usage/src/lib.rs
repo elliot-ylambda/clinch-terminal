@@ -19,6 +19,12 @@ impl TokenCounts {
     pub fn total(&self) -> u64 {
         self.input + self.output + self.cache_read + self.cache_write
     }
+    /// Input + output tokens — the "work" total, excluding cache traffic.
+    /// This is the headline metric for the footer (cache-read dominates
+    /// `total()` and would mislead).
+    pub fn io(&self) -> u64 {
+        self.input + self.output
+    }
     pub fn add(&mut self, o: &TokenCounts) {
         self.input += o.input;
         self.output += o.output;
@@ -184,20 +190,38 @@ pub fn refresh(
     secret: &dyn keychain::ReadSecret,
     fetch: &dyn http::FetchUsage,
 ) -> UsageSnapshot {
-    let mut claude = claude::scan(&paths.claude_projects, &mut caches.claude, now);
+    let mut snap = scan_local(paths, caches, now);
+    snap.claude.plan = fetch_claude_plan(secret, fetch, paths, now);
+    snap
+}
+
+/// Scan both providers' local files into a snapshot. No network, no Keychain:
+/// `claude.plan` is always `None` (fetch it separately via [`fetch_claude_plan`]);
+/// `codex.plan` is populated from local rate-limit events. Fail-soft.
+pub fn scan_local(paths: &Paths, caches: &mut Caches, now: DateTime<Utc>) -> UsageSnapshot {
+    let claude = claude::scan(&paths.claude_projects, &mut caches.claude, now);
     let codex = codex::scan(&paths.codex_sessions, &mut caches.codex, now);
-
-    // Claude plan-% via Keychain token + endpoint (best-effort).
-    claude.plan = (|| {
-        let token = keychain::read_claude_token(secret, &paths.os_account)?;
-        if token.is_expired(now.timestamp_millis()) {
-            return None;
-        }
-        let body = fetch.fetch(&token.access_token).ok()?;
-        http::parse_plan_limits(&body)
-    })();
-
     UsageSnapshot { claude, codex }
+}
+
+/// The Claude plan-% half of a refresh: read the Keychain token, and if present
+/// and unexpired, fetch and parse `/api/oauth/usage`. Best-effort — any failure
+/// (no token, expired, network, parse) yields `None`.
+///
+/// **Blocking** (Keychain + a blocking HTTP call). Call only from a dedicated
+/// thread, never a Tokio/async runtime.
+pub fn fetch_claude_plan(
+    secret: &dyn keychain::ReadSecret,
+    fetch: &dyn http::FetchUsage,
+    paths: &Paths,
+    now: DateTime<Utc>,
+) -> Option<PlanLimits> {
+    let token = keychain::read_claude_token(secret, &paths.os_account)?;
+    if token.is_expired(now.timestamp_millis()) {
+        return None;
+    }
+    let body = fetch.fetch(&token.access_token).ok()?;
+    http::parse_plan_limits(&body)
 }
 
 #[cfg(test)]
@@ -315,6 +339,72 @@ mod tests {
             &Fetch(Ok(usage)),
         );
         assert!(snap.claude.plan.is_none());
+    }
+
+    #[test]
+    fn token_counts_io_is_input_plus_output_only() {
+        let t = TokenCounts {
+            input: 10,
+            output: 5,
+            cache_read: 100,
+            cache_write: 7,
+        };
+        assert_eq!(t.io(), 15);
+        // io() must NOT include cache traffic (unlike total()).
+        assert_eq!(t.total(), 122);
+    }
+
+    #[test]
+    fn scan_local_is_fail_soft_and_leaves_claude_plan_none() {
+        let paths = Paths {
+            claude_projects: "/no/such/claude".into(),
+            codex_sessions: "/no/such/codex".into(),
+            os_account: "nobody".into(),
+        };
+        let mut caches = Caches::new();
+        let snap = scan_local(&paths, &mut caches, chrono::Utc::now());
+        assert_eq!(snap.claude.month.tokens.total(), 0);
+        assert_eq!(snap.codex.month.tokens.total(), 0);
+        // scan_local never touches Keychain/HTTP, so Claude plan is always None here.
+        assert!(snap.claude.plan.is_none());
+    }
+
+    #[test]
+    fn fetch_claude_plan_none_without_token_and_some_with_valid_body() {
+        use crate::http::FetchUsage;
+        use crate::keychain::ReadSecret;
+
+        struct NoSecret;
+        impl ReadSecret for NoSecret {
+            fn read(&self, _: &str, _: &str) -> Option<String> {
+                None
+            }
+        }
+        struct Secret;
+        impl ReadSecret for Secret {
+            fn read(&self, _: &str, _: &str) -> Option<String> {
+                // Non-expired token blob (expiresAt far in the future).
+                Some(
+                    r#"{"claudeAiOauth":{"accessToken":"tok","expiresAt":95617584000000}}"#
+                        .to_string(),
+                )
+            }
+        }
+        struct Fetch;
+        impl FetchUsage for Fetch {
+            fn fetch(&self, _: &str) -> Result<String, String> {
+                Ok(r#"{"limits":[{"kind":"weekly_all","group":"weekly","percent":47,"severity":"normal","resets_at":"2026-07-04T15:00:00+00:00","is_active":true}]}"#.to_string())
+            }
+        }
+        let paths = Paths {
+            claude_projects: "/x".into(),
+            codex_sessions: "/x".into(),
+            os_account: "me".into(),
+        };
+        let now = chrono::Utc::now();
+        assert!(fetch_claude_plan(&NoSecret, &Fetch, &paths, now).is_none());
+        let plan = fetch_claude_plan(&Secret, &Fetch, &paths, now).expect("valid plan");
+        assert!(plan.weekly.is_some());
     }
 
     #[test]
