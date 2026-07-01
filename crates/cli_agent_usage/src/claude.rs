@@ -127,7 +127,11 @@ pub fn scan(
         );
         if Some(path) == latest.as_ref() {
             let mut s = WindowTotals::default();
+            let mut session_seen = std::collections::HashSet::new();
             for e in &entries {
+                if !e.dedup.is_empty() && !session_seen.insert(e.dedup.clone()) {
+                    continue;
+                }
                 s.add_entry(e);
             }
             provider.session = s;
@@ -183,7 +187,47 @@ mod tests {
         assert_eq!(entries.len(), 2);
         let mut seen = std::collections::HashSet::new();
         let (mut t, mut w, mut m) = Default::default();
-        crate::aggregate_windows(&entries, Utc::now(), &mut seen, &mut t, &mut w, &mut m);
+        crate::aggregate_windows(
+            &entries,
+            Utc.with_ymd_and_hms(2026, 6, 30, 21, 20, 0).unwrap(),
+            &mut seen,
+            &mut t,
+            &mut w,
+            &mut m,
+        );
         assert_eq!(m.tokens.total(), 6 + 218 + 29086 + 4);
+    }
+
+    #[test]
+    fn scan_session_uses_latest_file_and_dedups() {
+        use std::fs;
+        use std::time::{Duration, SystemTime};
+
+        let new_line = r#"{"type":"assistant","requestId":"req_new","timestamp":"2026-06-30T10:00:00.000Z","message":{"id":"msg_new","model":"claude-haiku","usage":{"input_tokens":1,"output_tokens":50,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}"#;
+        let old_line = r#"{"type":"assistant","requestId":"req_old","timestamp":"2026-06-29T10:00:00.000Z","message":{"id":"msg_old","model":"claude-haiku","usage":{"input_tokens":1,"output_tokens":7,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}"#;
+
+        let dir = std::env::temp_dir().join(format!("cau_claude_scan_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let older = dir.join("older.jsonl");
+        let newer = dir.join("newer.jsonl");
+        fs::write(&older, old_line).unwrap();
+        // newer file: same assistant line twice (identical dedup key) -> session must count it ONCE
+        fs::write(&newer, format!("{new_line}\n{new_line}")).unwrap();
+
+        let base = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        fs::File::open(&older).unwrap().set_modified(base).unwrap();
+        fs::File::open(&newer)
+            .unwrap()
+            .set_modified(base + Duration::from_secs(60))
+            .unwrap();
+
+        let mut cache = crate::cache::ScanCache::new();
+        let p = scan(&dir, &mut cache, chrono::Utc::now());
+
+        // session = newer file (output 50), deduped to a single copy (not 100), and not the older file (7)
+        assert_eq!(p.session.tokens.output, 50);
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }
