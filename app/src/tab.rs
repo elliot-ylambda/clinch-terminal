@@ -2121,3 +2121,33 @@ impl UiComponent for TabComponent<'_> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_agent_task_indicator_true_for_agent_indicators() {
+        assert!(TabComponent::is_agent_task_indicator(&Indicator::Agent {
+            conversation_status: None,
+        }));
+        assert!(TabComponent::is_agent_task_indicator(
+            &Indicator::AmbientAgent
+        ));
+        assert!(TabComponent::is_agent_task_indicator(
+            &Indicator::CLIAgent {
+                agent: CLIAgent::Claude,
+                status: None,
+                is_ambient: false,
+            }
+        ));
+    }
+
+    #[test]
+    fn is_agent_task_indicator_false_for_non_agent_indicators() {
+        assert!(!TabComponent::is_agent_task_indicator(&Indicator::None));
+        assert!(!TabComponent::is_agent_task_indicator(&Indicator::Shell(
+            ShellIndicatorType::Linux
+        )));
+    }
+}
