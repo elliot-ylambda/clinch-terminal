@@ -210,6 +210,9 @@ pub enum FeatureFlag {
     /// Enables Kitty image rendering
     KittyImages,
 
+    /// Enables the read-only Skills inspector in the left panel.
+    SkillsPanel,
+
     /// Enables support for Warp Packs.
     WarpPacks,
 
