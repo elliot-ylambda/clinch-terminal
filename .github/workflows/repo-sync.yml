@@ -1,10 +1,10 @@
 name: Repo Sync
 on:
   push:
-    branches: [master]
+    branches: [main]
   pull_request:
     types: [closed, opened, synchronize, edited, labeled]
-    branches: [master]
+    branches: [main]
   workflow_dispatch:
     inputs:
       action:

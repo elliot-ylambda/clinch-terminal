@@ -1,9 +1,9 @@
 on:
   push:
     branches:
-      # Potentially run this workflow whenever the master branch changes in,
+      # Potentially run this workflow whenever the main branch changes in,
       # order to update the cache if necessary.
-      - master
+      - main
     paths:
       # We only need to run this if there were changes to files that affect
       # the cache key.

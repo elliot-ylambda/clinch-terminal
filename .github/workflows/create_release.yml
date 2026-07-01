@@ -1,6 +1,6 @@
 # A reusable workflow that encapsulates all of the logic surrounding building
 # all bundles for a single release channel, either new releases (when run on the
-# `master` branch) or updated release candidates (when run within a `*_release`
+# `main` branch) or updated release candidates (when run within a `*_release`
 # branch).
 #
 # This can either be triggered:
