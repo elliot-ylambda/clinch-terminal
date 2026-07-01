@@ -130,9 +130,19 @@ mod tests {
 
     #[test]
     fn token_counts_total_and_add() {
-        let mut a = TokenCounts { input: 10, output: 5, cache_read: 1, cache_write: 2 };
+        let mut a = TokenCounts {
+            input: 10,
+            output: 5,
+            cache_read: 1,
+            cache_write: 2,
+        };
         assert_eq!(a.total(), 18);
-        a.add(&TokenCounts { input: 1, output: 1, cache_read: 0, cache_write: 0 });
+        a.add(&TokenCounts {
+            input: 1,
+            output: 1,
+            cache_read: 0,
+            cache_write: 0,
+        });
         assert_eq!(a.total(), 20);
     }
 
