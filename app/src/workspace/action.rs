@@ -134,6 +134,9 @@ pub enum WorkspaceAction {
     MoveActiveTabRight,
     MoveTabLeft(usize),
     MoveTabRight(usize),
+    /// Detaches the tab at the given index into its own window. Gated by
+    /// `FeatureFlag::DragTabsToWindows`; no-ops on single-tab windows.
+    MoveTabToNewWindow(usize),
     RenameTab(usize),
     ResetTabName(usize),
     RenamePane(PaneViewLocator),
@@ -881,6 +884,7 @@ impl WorkspaceAction {
             | MoveActiveTabRight
             | MoveTabLeft(_)
             | MoveTabRight(_)
+            | MoveTabToNewWindow(_)
             | DropTab
             | DropGroup
             | RenameTab(_)

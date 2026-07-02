@@ -208,6 +208,10 @@ pub(crate) fn initialize_app(app: &mut App) {
     app.add_singleton_model(|ctx| {
         AIRequestUsageModel::new_for_test(ServerApiProvider::as_ref(ctx).get_ai_client(), ctx)
     });
+    // The agent input footer subscribes to this singleton during construction, so
+    // it must be registered or every workspace-building test panics. The test
+    // constructor omits the keychain/HTTP producer thread.
+    app.add_singleton_model(|_| crate::ai::blocklist::usage::CliAgentUsageModel::new_for_test());
     app.add_singleton_model(OneTimeModalModel::new);
     // Register GlobalResourceHandlesProvider before ServerExperiments which depends on it
     let global_resource_handles = GlobalResourceHandles::mock(app);
@@ -2102,6 +2106,114 @@ fn test_tab_context_menu_share_session_items() {
                 .is_approximately_same_item_as(&MenuItemFields::new("Share session").into_item()));
             assert!(items[1].is_approximately_same_item_as(&MenuItem::Separator));
         });
+    });
+}
+
+fn menu_contains_item(items: &[MenuItem<WorkspaceAction>], label: &str) -> bool {
+    items
+        .iter()
+        .any(|item| item.is_approximately_same_item_as(&MenuItemFields::new(label).into_item()))
+}
+
+#[test]
+fn test_tab_context_menu_move_to_new_window_gating() {
+    let _guard = FeatureFlag::DragTabsToWindows.override_enabled(true);
+
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+
+        workspace.read(&app, |workspace, ctx| {
+            // Multi-tab window: the entry is offered.
+            let items = workspace.tabs[0].menu_items(0, 3, &workspace.tab_groups, true, true, ctx);
+            assert!(menu_contains_item(&items, "Move Tab to New Window"));
+
+            // Single-tab window: moving the only tab is pointless; hidden.
+            let items =
+                workspace.tabs[0].menu_items(0, 1, &workspace.tab_groups, false, false, ctx);
+            assert!(!menu_contains_item(&items, "Move Tab to New Window"));
+        });
+    });
+}
+
+#[test]
+fn test_tab_context_menu_move_to_new_window_hidden_when_flag_off() {
+    let _guard = FeatureFlag::DragTabsToWindows.override_enabled(false);
+
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+
+        workspace.read(&app, |workspace, ctx| {
+            let items = workspace.tabs[0].menu_items(0, 3, &workspace.tab_groups, true, true, ctx);
+            assert!(!menu_contains_item(&items, "Move Tab to New Window"));
+        });
+    });
+}
+
+#[test]
+fn test_move_tab_to_new_window_transfers_tab() {
+    let _guard = FeatureFlag::DragTabsToWindows.override_enabled(true);
+
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.add_terminal_tab(false, ctx);
+            assert_eq!(workspace.tab_count(), 2);
+            // The mock harness never seeds window bounds (real windows get them
+            // from OS move events); the transfer path bails without them, so
+            // cache a rect for the source window here.
+            let window_id = ctx.window_id();
+            ctx.update_window_bounds(
+                window_id,
+                RectF::new(vec2f(100.0, 100.0), vec2f(1200.0, 800.0)),
+            );
+        });
+        let moved_pane_group_id =
+            workspace.read(&app, |workspace, _| workspace.tabs[1].pane_group.id());
+
+        let new_window_id = workspace.update(&mut app, |workspace, ctx| {
+            workspace.move_tab_to_new_window(1, ctx)
+        });
+        let new_window_id =
+            new_window_id.expect("moving a tab out of a 2-tab window should create a window");
+
+        // Source window keeps one tab; the moved pane group is gone from it.
+        workspace.read(&app, |workspace, _| {
+            assert_eq!(workspace.tab_count(), 1);
+            assert_ne!(workspace.tabs[0].pane_group.id(), moved_pane_group_id);
+        });
+
+        // The new window's workspace adopted the transferred pane group.
+        app.read(|ctx| {
+            let new_workspace = WorkspaceRegistry::as_ref(ctx)
+                .get(new_window_id, ctx)
+                .expect("new window should have a registered workspace");
+            new_workspace.read(ctx, |new_workspace, _| {
+                assert_eq!(new_workspace.tab_count(), 1);
+                assert_eq!(new_workspace.tabs[0].pane_group.id(), moved_pane_group_id);
+            });
+        });
+    });
+}
+
+#[test]
+fn test_move_tab_to_new_window_noops_on_single_tab_window() {
+    let _guard = FeatureFlag::DragTabsToWindows.override_enabled(true);
+
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+
+        let result = workspace.update(&mut app, |workspace, ctx| {
+            assert_eq!(workspace.tab_count(), 1);
+            workspace.move_tab_to_new_window(0, ctx)
+        });
+
+        assert!(result.is_none());
+        workspace.read(&app, |workspace, _| assert_eq!(workspace.tab_count(), 1));
     });
 }
 

@@ -23307,6 +23307,9 @@ impl TypedActionView for Workspace {
             MoveActiveTabRight => self.move_tab(self.active_tab_index, TabMovement::Right, ctx),
             MoveTabLeft(index) => self.move_tab(*index, TabMovement::Left, ctx),
             MoveTabRight(index) => self.move_tab(*index, TabMovement::Right, ctx),
+            MoveTabToNewWindow(index) => {
+                self.move_tab_to_new_window(*index, ctx);
+            }
             RenameTab(index) => self.rename_tab(*index, ctx),
             ResetTabName(index) => self.clear_tab_name(*index, ctx),
             RenamePane(locator) => self.rename_pane(*locator, ctx),
@@ -27366,6 +27369,42 @@ impl Workspace {
 
     pub fn remove_tab_without_undo(&mut self, index: usize, ctx: &mut ViewContext<Self>) {
         self.remove_tab(index, false, false, ctx);
+    }
+
+    /// Moves the tab at `tab_index` into its own new window, reusing the
+    /// cross-window drag machinery's transfer path (create the target window
+    /// first, then remove the source tab — the same order as a drag handoff).
+    /// Returns the new window's id, or `None` when the move is not possible
+    /// (single-tab window or unknown window bounds).
+    pub(crate) fn move_tab_to_new_window(
+        &mut self,
+        tab_index: usize,
+        ctx: &mut ViewContext<Self>,
+    ) -> Option<WindowId> {
+        let transferred_tab = self.get_tab_transfer_info(tab_index, ctx)?;
+        let window_bounds = ctx.window_bounds(&ctx.window_id())?;
+
+        // Cascade the new window off the source so it's visibly a new window
+        // rather than appearing perfectly stacked on the old one.
+        const CASCADE_OFFSET_PX: f32 = 30.0;
+        let window_position = window_bounds.origin() + vec2f(CASCADE_OFFSET_PX, CASCADE_OFFSET_PX);
+
+        if let Some(tab) = self.tabs.get(tab_index) {
+            ctx.unsubscribe_to_view(&tab.pane_group);
+        }
+
+        let source_window_id = ctx.window_id();
+        let new_window_id = crate::root_view::create_transferred_window(
+            transferred_tab,
+            source_window_id,
+            window_bounds.size(),
+            window_position,
+            false,
+            ctx,
+        );
+        self.remove_tab_without_undo(tab_index, ctx);
+        ctx.notify();
+        Some(new_window_id)
     }
 
     /// Replaces the placeholder pane group (created by
