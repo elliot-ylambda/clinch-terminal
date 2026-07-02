@@ -643,10 +643,15 @@ fn make_new_drive_menu(ctx: &AppContext) -> Menu {
             ctx,
         ));
     }
-    items.push(updateable_custom_item_without_checkmark(
-        CustomAction::OpenAIFactCollection,
-        ctx,
-    ));
+    // AI Rules feed Warp's hosted AI agent (disabled for backendless builds) and the
+    // Knowledge settings page they open is hidden (see SettingsSection::requires_backend);
+    // omit the menu item that would otherwise navigate to it.
+    if ChannelState::has_backend() {
+        items.push(updateable_custom_item_without_checkmark(
+            CustomAction::OpenAIFactCollection,
+            ctx,
+        ));
+    }
     // MCP servers exist to feed Warp's hosted AI agent, which is disabled entirely for
     // backendless builds, and its settings page is hidden (see
     // SettingsSection::requires_backend); omit the menu item that would otherwise
