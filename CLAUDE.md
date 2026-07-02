@@ -72,15 +72,18 @@ The release channel is still `Channel::Stable`, chosen at **compile time** by
 rename is safe.
 
 ### URL scheme
-Clinch registers and uses **`clinch://`** — the Stable channel's `url_scheme()`
+Clinch registers **`clinch://`** — the Stable channel's `url_scheme()`
 in `crates/warp_core/src/channel/state.rs`, kept in sync with `WARP_SCHEME_NAME`
-in `script/macos/bundle`. This isolates deep links and the OAuth login callback
-from an installed `Warp.app` (previously both used `warp://` and collided).
+in `script/macos/bundle`. This isolates any deep links from an installed
+`Warp.app` (previously both used `warp://` and collided).
 
-> **Verify on first login:** the fork uses Warp's auth server, which receives
-> `?scheme=clinch` (`app/src/auth/auth_manager.rs`). If that server rejects
-> unknown schemes, sign-in may fail — test a real login after your first
-> `make release`. To revert, set the scheme back to `warp` in both files above.
+> **No login in Clinch:** backendless builds (stable + local, via
+> `ChannelConfig::no_backend()`) have login and onboarding fully gutted —
+> `ChannelState::has_backend()` is `false`, so `RootView` launches straight
+> into the terminal and `AuthManager::initialize_user_from_auth_payload`
+> ignores any incoming auth callback. There is no OAuth flow to verify. The
+> `?scheme=clinch` auth-server concern that used to live here no longer
+> applies. (See `docs/superpowers/specs/2026-07-01-clinch-no-backend-gut-design.md`.)
 
 ### Other follow-ups (not done)
 - **Icon** is still Warp's (`app/channels/stable/icon`); a Clinch icon is a
