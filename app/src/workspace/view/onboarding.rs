@@ -6,6 +6,7 @@ use onboarding::{ProjectOnboardingSettings, SelectedSettings};
 use warp_core::execution_mode::AppExecutionMode;
 use warpui::{SingletonEntity as _, ViewContext};
 
+use crate::channel::ChannelState;
 use crate::pane_group::{NewTerminalOptions, PanesLayout};
 use crate::settings::AISettings;
 use crate::terminal::view::{
@@ -95,6 +96,11 @@ impl Workspace {
             return;
         }
 
+        // Backendless fork builds (Clinch) have no onboarding to show.
+        if !ChannelState::has_backend() {
+            return;
+        }
+
         match tutorial {
             OnboardingTutorial::InitProject {
                 ref path,
@@ -154,6 +160,11 @@ impl Workspace {
         // Onboarding requires a real user to interact with it; skip when running
         // in a headless mode like the SDK/CLI.
         if !AppExecutionMode::as_ref(ctx).can_show_onboarding() {
+            return;
+        }
+
+        // Backendless fork builds (Clinch) have no onboarding to show.
+        if !ChannelState::has_backend() {
             return;
         }
 
@@ -257,6 +268,12 @@ impl Workspace {
         if !AppExecutionMode::as_ref(ctx).can_show_onboarding() {
             return false;
         }
+
+        // Backendless fork builds (Clinch) have no onboarding to show.
+        if !ChannelState::has_backend() {
+            return false;
+        }
+
         FeatureFlag::AgentOnboarding.is_enabled()
     }
 }

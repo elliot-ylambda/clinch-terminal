@@ -1668,7 +1668,11 @@ impl RootView {
             workspace_setting,
         };
 
-        let auth_onboarding_state = if auth_state.is_logged_in() {
+        let auth_onboarding_state = if !ChannelState::has_backend() {
+            // Backendless fork builds (Clinch): no login and no onboarding — go
+            // straight into the workspace in every window.
+            AuthOnboardingState::Terminal(workspace_args.create_workspace(ctx))
+        } else if auth_state.is_logged_in() {
             AuthOnboardingState::Terminal(workspace_args.create_workspace(ctx))
         } else {
             cfg_if! {
@@ -2039,6 +2043,11 @@ impl RootView {
 
     /// Debug method to enter the onboarding state.
     fn debug_enter_onboarding_state(&mut self, _: &(), ctx: &mut ViewContext<Self>) -> bool {
+        if !ChannelState::has_backend() {
+            log::warn!("Attempted to enter onboarding state in a backendless build");
+            return false;
+        }
+
         if !ChannelState::enable_debug_features() {
             log::warn!("Attempted to enter onboarding state in release build");
             return false;

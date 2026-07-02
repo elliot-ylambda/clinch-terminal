@@ -140,6 +140,11 @@ impl AuthManager {
         enforce_state_validation: bool,
         ctx: &mut ModelContext<Self>,
     ) {
+        if !ChannelState::has_backend() {
+            log::info!("Ignoring incoming auth deep link: this build has no backend");
+            return;
+        }
+
         let AuthRedirectPayload {
             refresh_token,
             user_uid,
