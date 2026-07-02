@@ -37,6 +37,47 @@ rm -f "$f"
 echo '{"cwd":"/tmp/repo","source":"startup"}' | "$BIN/claude-capture.sh"
 [[ ! -f "$f" ]] || { echo "FAIL: wrote with no session_id"; exit 1; }
 
+# --- Live-mode updater (UserPromptSubmit / Stop) ---
+# The payload's permission_mode is authoritative for the mode; --model still comes from
+# the live argv. `default` strips the mode flag; unknown values fall back to argv.
+
+# Toggled to bypass mid-session (entry owned by this sid): entry rewritten with the flag.
+echo '{"session_id":"sess-ddd","cwd":"/tmp/repo"}' | "$BIN/claude-capture.sh"
+echo '{"session_id":"sess-ddd","cwd":"/tmp/repo","hook_event_name":"UserPromptSubmit","permission_mode":"bypassPermissions"}' | "$BIN/claude-capture.sh"
+grep -q '"command": "warp_agent_resume_launch claude sess-ddd --dangerously-skip-permissions"' "$f" || { echo "FAIL: updater did not add bypass flag"; exit 1; }
+
+# Toggled back to default (via Stop): the mode flag must be stripped again.
+echo '{"session_id":"sess-ddd","cwd":"/tmp/repo","hook_event_name":"Stop","permission_mode":"default"}' | "$BIN/claude-capture.sh"
+grep -q '"command": "warp_agent_resume_launch claude sess-ddd"' "$f" || { echo "FAIL: default did not strip mode flag"; exit 1; }
+
+# plan maps to --permission-mode plan.
+echo '{"session_id":"sess-ddd","cwd":"/tmp/repo","hook_event_name":"UserPromptSubmit","permission_mode":"plan"}' | "$BIN/claude-capture.sh"
+grep -q '"command": "warp_agent_resume_launch claude sess-ddd --permission-mode plan"' "$f" || { echo "FAIL: plan mode not carried"; exit 1; }
+
+# Model from the live argv is kept alongside the payload mode.
+WARP_AGENT_RESUME_FAKE_ARGV="node /x/cli.js --model opus" \
+  bash -c 'echo "{\"session_id\":\"sess-ddd\",\"cwd\":\"/tmp/repo\",\"hook_event_name\":\"UserPromptSubmit\",\"permission_mode\":\"bypassPermissions\"}" | "$0"' "$BIN/claude-capture.sh"
+grep -q '"command": "warp_agent_resume_launch claude sess-ddd --dangerously-skip-permissions --model opus"' "$f" || { echo "FAIL: model not kept with payload mode"; exit 1; }
+
+# Unknown permission_mode falls back to argv-derived flags (mode + model).
+WARP_AGENT_RESUME_FAKE_ARGV="node /x/cli.js --permission-mode acceptEdits" \
+  bash -c 'echo "{\"session_id\":\"sess-ddd\",\"cwd\":\"/tmp/repo\",\"hook_event_name\":\"UserPromptSubmit\",\"permission_mode\":\"weird\"}" | "$0"' "$BIN/claude-capture.sh"
+grep -q '"command": "warp_agent_resume_launch claude sess-ddd --permission-mode acceptEdits"' "$f" || { echo "FAIL: unknown mode did not fall back to argv"; exit 1; }
+
+# Session-id guard: an updater event from a DIFFERENT session must not clobber the entry…
+echo '{"session_id":"sess-intruder","cwd":"/tmp/other","hook_event_name":"UserPromptSubmit","permission_mode":"bypassPermissions"}' | "$BIN/claude-capture.sh"
+grep -q 'sess-ddd' "$f" || { echo "FAIL: foreign session clobbered the pane entry"; exit 1; }
+
+# …but a missing entry is (re)created — this heals pre-flag registry entries.
+rm -f "$f"
+echo '{"session_id":"sess-eee","cwd":"/tmp/repo","hook_event_name":"UserPromptSubmit","permission_mode":"bypassPermissions"}' | "$BIN/claude-capture.sh"
+grep -q '"command": "warp_agent_resume_launch claude sess-eee --dangerously-skip-permissions"' "$f" || { echo "FAIL: missing entry not healed"; exit 1; }
+
+# Unknown events are ignored.
+echo '{"session_id":"sess-eee","cwd":"/tmp/repo","hook_event_name":"PreCompact","permission_mode":"default"}' | "$BIN/claude-capture.sh"
+grep -q -- '--dangerously-skip-permissions' "$f" || { echo "FAIL: unknown event must not rewrite the entry"; exit 1; }
+rm -f "$f"   # clear residue so the empty-dir check below only sees new writes
+
 # Outside a Warp pane: no-op.
 unset WARP_TERMINAL_SESSION_UUID
 echo '{"session_id":"x","cwd":"/tmp"}' | "$BIN/claude-capture.sh"
