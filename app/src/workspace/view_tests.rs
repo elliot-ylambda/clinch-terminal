@@ -2152,6 +2152,72 @@ fn test_tab_context_menu_move_to_new_window_hidden_when_flag_off() {
 }
 
 #[test]
+fn test_move_tab_to_new_window_transfers_tab() {
+    let _guard = FeatureFlag::DragTabsToWindows.override_enabled(true);
+
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.add_terminal_tab(false, ctx);
+            assert_eq!(workspace.tab_count(), 2);
+            // The mock harness never seeds window bounds (real windows get them
+            // from OS move events); the transfer path bails without them, so
+            // cache a rect for the source window here.
+            let window_id = ctx.window_id();
+            ctx.update_window_bounds(
+                window_id,
+                RectF::new(vec2f(100.0, 100.0), vec2f(1200.0, 800.0)),
+            );
+        });
+        let moved_pane_group_id =
+            workspace.read(&app, |workspace, _| workspace.tabs[1].pane_group.id());
+
+        let new_window_id = workspace.update(&mut app, |workspace, ctx| {
+            workspace.move_tab_to_new_window(1, ctx)
+        });
+        let new_window_id =
+            new_window_id.expect("moving a tab out of a 2-tab window should create a window");
+
+        // Source window keeps one tab; the moved pane group is gone from it.
+        workspace.read(&app, |workspace, _| {
+            assert_eq!(workspace.tab_count(), 1);
+            assert_ne!(workspace.tabs[0].pane_group.id(), moved_pane_group_id);
+        });
+
+        // The new window's workspace adopted the transferred pane group.
+        app.read(|ctx| {
+            let new_workspace = WorkspaceRegistry::as_ref(ctx)
+                .get(new_window_id, ctx)
+                .expect("new window should have a registered workspace");
+            new_workspace.read(ctx, |new_workspace, _| {
+                assert_eq!(new_workspace.tab_count(), 1);
+                assert_eq!(new_workspace.tabs[0].pane_group.id(), moved_pane_group_id);
+            });
+        });
+    });
+}
+
+#[test]
+fn test_move_tab_to_new_window_noops_on_single_tab_window() {
+    let _guard = FeatureFlag::DragTabsToWindows.override_enabled(true);
+
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+
+        let result = workspace.update(&mut app, |workspace, ctx| {
+            assert_eq!(workspace.tab_count(), 1);
+            workspace.move_tab_to_new_window(0, ctx)
+        });
+
+        assert!(result.is_none());
+        workspace.read(&app, |workspace, _| assert_eq!(workspace.tab_count(), 1));
+    });
+}
+
+#[test]
 fn test_view_only_session() {
     let _guard = FeatureFlag::ViewingSharedSessions.override_enabled(true);
 
