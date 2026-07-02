@@ -959,6 +959,7 @@ pub fn init(app: &mut AppContext) {
         .with_enabled(|| {
             FeatureFlag::CreatingSharedSessions.is_enabled()
                 && ContextFlag::CreateSharedSession.is_enabled()
+                && ChannelState::has_backend()
         }),
         EditableBinding::new(
             "terminal:stop_sharing_current_session",

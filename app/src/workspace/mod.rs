@@ -1420,6 +1420,9 @@ fn add_open_setting_pages_as_editable_binding(app: &mut AppContext) {
             "Open Settings: Account",
             WorkspaceAction::ShowSettingsPage(SettingsSection::Account),
         )
+        // The Account settings page needs a Warp account; it's hidden for backendless
+        // builds (see SettingsSection::requires_backend), so don't offer to open it.
+        .with_enabled(ChannelState::has_backend)
         .with_context_predicate(id!("Workspace"))
         .with_group(bindings::BindingGroup::Settings.as_str())
         .with_custom_action(CustomAction::ShowAccount),
@@ -1445,6 +1448,10 @@ fn add_open_setting_pages_as_editable_binding(app: &mut AppContext) {
                 .with_custom_description(bindings::MAC_MENUS_CONTEXT, "View Shared Blocks..."),
             WorkspaceAction::ShowSettingsPage(SettingsSection::SharedBlocks),
         )
+        // The Shared Blocks settings page needs a Warp account; it's hidden for
+        // backendless builds (see SettingsSection::requires_backend), so don't offer to
+        // open it.
+        .with_enabled(ChannelState::has_backend)
         .with_group(bindings::BindingGroup::Settings.as_str())
         .with_context_predicate(id!("Workspace"))
         .with_custom_action(CustomAction::ViewSharedBlocks),
@@ -1474,6 +1481,9 @@ fn add_open_setting_pages_as_editable_binding(app: &mut AppContext) {
                 .with_custom_description(bindings::MAC_MENUS_CONTEXT, "Open Team Settings"),
             WorkspaceAction::ShowSettingsPage(SettingsSection::Teams),
         )
+        // The Teams settings page needs a Warp account; it's hidden for backendless
+        // builds (see SettingsSection::requires_backend), so don't offer to open it.
+        .with_enabled(ChannelState::has_backend)
         .with_group(bindings::BindingGroup::Settings.as_str())
         .with_custom_action(CustomAction::OpenTeamSettings)
         .with_context_predicate(id!("Workspace")),
@@ -1497,7 +1507,9 @@ fn add_open_setting_pages_as_editable_binding(app: &mut AppContext) {
             BindingDescription::new("Open Settings: AI"),
             WorkspaceAction::ShowSettingsPage(SettingsSection::WarpAgent),
         )
-        .with_enabled(|| FeatureFlag::AgentMode.is_enabled())
+        // The AI settings page needs a Warp account; it's hidden for backendless builds
+        // (see SettingsSection::requires_backend), so don't offer to open it.
+        .with_enabled(|| FeatureFlag::AgentMode.is_enabled() && ChannelState::has_backend())
         .with_group(bindings::BindingGroup::Settings.as_str())
         .with_context_predicate(id!("Workspace")),
         EditableBinding::new(
@@ -1505,6 +1517,10 @@ fn add_open_setting_pages_as_editable_binding(app: &mut AppContext) {
             BindingDescription::new("Open Settings: Billing and usage"),
             WorkspaceAction::ShowSettingsPage(SettingsSection::BillingAndUsage),
         )
+        // The Billing and usage settings page needs a Warp account; it's hidden for
+        // backendless builds (see SettingsSection::requires_backend), so don't offer to
+        // open it.
+        .with_enabled(ChannelState::has_backend)
         .with_group(bindings::BindingGroup::Settings.as_str())
         .with_context_predicate(id!("Workspace")),
         EditableBinding::new(
@@ -1519,6 +1535,9 @@ fn add_open_setting_pages_as_editable_binding(app: &mut AppContext) {
             BindingDescription::new("Open Settings: Referrals"),
             WorkspaceAction::ShowSettingsPage(SettingsSection::Referrals),
         )
+        // The Referrals settings page needs a Warp account; it's hidden for backendless
+        // builds (see SettingsSection::requires_backend), so don't offer to open it.
+        .with_enabled(ChannelState::has_backend)
         .with_group(bindings::BindingGroup::Settings.as_str())
         .with_context_predicate(id!("Workspace")),
         EditableBinding::new(
@@ -1533,6 +1552,10 @@ fn add_open_setting_pages_as_editable_binding(app: &mut AppContext) {
             BindingDescription::new("Open Settings: MCP Servers"),
             WorkspaceAction::ShowSettingsPage(SettingsSection::MCPServers),
         )
+        // MCP servers feed Warp's hosted AI agent, which is disabled entirely for
+        // backendless builds, and the settings page is hidden (see
+        // SettingsSection::requires_backend); don't offer to open it.
+        .with_enabled(ChannelState::has_backend)
         .with_group(bindings::BindingGroup::Settings.as_str())
         .with_context_predicate(id!("Workspace")),
         EditableBinding::new(
@@ -1556,6 +1579,9 @@ fn add_overflow_menu_items_as_editable_binding(app: &mut AppContext) {
             "Invite People...",
             WorkspaceAction::ShowReferralSettingsPage,
         )
+        // Referrals need a Warp account; don't offer to open the (backendless-hidden)
+        // Referrals settings page.
+        .with_enabled(ChannelState::has_backend)
         .with_context_predicate(id!("Workspace"))
         .with_custom_action(CustomAction::ReferAFriend),
         EditableBinding::new(

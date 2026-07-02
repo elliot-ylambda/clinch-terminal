@@ -642,6 +642,14 @@ impl AuthManager {
         auth_view_variant: AuthViewVariant,
         ctx: &mut ModelContext<Self>,
     ) {
+        // Backendless builds (Clinch) have no login to require: every caller of this
+        // method reaches it because the user is anonymous/logged-out, which is the
+        // permanent state in backendless builds, so skip straight past the modal
+        // instead of prompting for a sign-in that can never succeed.
+        if !ChannelState::has_backend() {
+            return;
+        }
+
         if self.auth_state.is_anonymous_or_logged_out() {
             send_telemetry_from_ctx!(
                 TelemetryEvent::AnonymousUserAttemptLoginGatedFeature { feature },
@@ -652,6 +660,13 @@ impl AuthManager {
     }
 
     pub fn anonymous_user_hit_drive_object_limit(&self, ctx: &mut ModelContext<Self>) {
+        // Backendless builds (Clinch) have no Warp Drive object limit to hit; see
+        // attempt_login_gated_feature for why this returns early instead of prompting
+        // for a sign-in that can never succeed.
+        if !ChannelState::has_backend() {
+            return;
+        }
+
         if self.auth_state.is_anonymous_or_logged_out() {
             send_telemetry_from_ctx!(TelemetryEvent::AnonymousUserHitCloudObjectLimit, ctx);
             ctx.emit(AuthManagerEvent::AttemptedLoginGatedFeature {

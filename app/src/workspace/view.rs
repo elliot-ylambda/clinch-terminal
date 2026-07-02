@@ -9566,9 +9566,10 @@ impl Workspace {
                 .into_item(),
         );
 
-        // Clinch (skip_login) has no accounts: omit the entire user/billing section —
-        // Sign up / Upgrade / Invite a friend / Log out — and its leading separator.
-        if !cfg!(feature = "skip_login") {
+        // Clinch (skip_login and backendless builds) has no accounts: omit the entire
+        // user/billing section — Sign up / Upgrade / Invite a friend / Log out — and its
+        // leading separator.
+        if !cfg!(feature = "skip_login") && ChannelState::has_backend() {
             items.push(MenuItem::Separator);
 
             if self.auth_state.is_anonymous_or_logged_out() {
@@ -23065,6 +23066,14 @@ impl Workspace {
         entrypoint: AnonymousUserSignupEntrypoint,
         ctx: &mut ViewContext<Self>,
     ) {
+        // Backendless builds (Clinch) have no Warp account to sign up for; every caller
+        // of this method reaches it from a "Sign up" affordance shown to anonymous
+        // users, which is the permanent state in backendless builds, so no-op instead
+        // of opening a browser sign-up flow or auth modal that can never succeed.
+        if !ChannelState::has_backend() {
+            return;
+        }
+
         if self.auth_state.is_user_anonymous().unwrap_or_default() {
             // User has a Firebase anonymous account — use the linking flow.
             AuthManager::handle(ctx).update(ctx, |auth_manager, ctx| {

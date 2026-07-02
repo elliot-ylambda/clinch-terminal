@@ -12,6 +12,7 @@ use warpui::ui_components::components::UiComponent;
 use warpui::{AppContext, Element, ViewContext, ViewHandle};
 
 use super::{Event, OpenOverlay, PaneHeader, PaneHeaderAction};
+use crate::channel::ChannelState;
 use crate::drive::sharing::dialog::{SharingDialog, SharingDialogEvent};
 use crate::drive::sharing::{ContentEditability, ShareableObject};
 use crate::pane_group::BackingView;
@@ -77,8 +78,9 @@ impl<P: BackingView> PaneHeader<P> {
     }
 
     pub fn is_sharing_dialog_enabled<C: warpui::ViewAsRef>(&self, ctx: &C) -> bool {
-        // Clinch (skip_login): sharing needs the backend; disable the share button.
-        if cfg!(feature = "skip_login") {
+        // Clinch (skip_login and backendless builds): sharing needs the backend;
+        // disable the share button.
+        if cfg!(feature = "skip_login") || !ChannelState::has_backend() {
             return false;
         }
         let sharing_enabled = self.has_shareable_object(ctx);

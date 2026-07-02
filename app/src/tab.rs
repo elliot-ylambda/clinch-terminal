@@ -27,6 +27,7 @@ use warpui::{AppContext, SingletonEntity, ViewHandle};
 use crate::ai::agent::conversation::ConversationStatus;
 use crate::ai::conversation_status_ui::{render_status_element, STATUS_ELEMENT_PADDING};
 use crate::appearance::Appearance;
+use crate::channel::ChannelState;
 /// Tab module contains structures related to Tabs (such as TabData or TabComponent) that simplify
 /// the rendering and management of tabs in general.
 use crate::editor::EditorView;
@@ -279,8 +280,9 @@ impl TabData {
                             })
                             .into_item(),
                     );
-                } else if !cfg!(feature = "skip_login") {
-                    // Clinch (skip_login): sharing needs the backend; omit the item.
+                } else if !cfg!(feature = "skip_login") && ChannelState::has_backend() {
+                    // Clinch (skip_login and backendless builds): sharing needs the
+                    // backend; omit the item.
                     menu_items.push(
                         MenuItemFields::new("Share session")
                             .with_on_select_action(WorkspaceAction::OpenShareSessionModal(index))

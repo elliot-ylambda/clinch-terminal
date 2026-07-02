@@ -23,6 +23,7 @@ use super::{
 };
 use crate::appearance::Appearance;
 use crate::auth::AuthStateProvider;
+use crate::channel::ChannelState;
 use crate::drive::settings::WarpDriveSettings;
 
 #[derive(Debug, Clone)]
@@ -117,8 +118,11 @@ impl SettingsPageMeta for WarpDriveSettingsPageView {
     }
 
     fn should_render(&self, _ctx: &AppContext) -> bool {
-        // Clinch (skip_login): no backend, so hide the Warp Drive settings page.
-        !cfg!(feature = "skip_login") && FeatureFlag::OpenWarpNewSettingsModes.is_enabled()
+        // Clinch (skip_login and backendless builds): no backend, so hide the Warp
+        // Drive settings page.
+        !cfg!(feature = "skip_login")
+            && ChannelState::has_backend()
+            && FeatureFlag::OpenWarpNewSettingsModes.is_enabled()
     }
 
     fn update_filter(&mut self, query: &str, ctx: &mut ViewContext<Self>) -> MatchData {

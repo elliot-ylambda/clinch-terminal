@@ -8,6 +8,7 @@ use enclose::enclose;
 use itertools::Itertools;
 use settings::manager::SettingsManager;
 use settings::Setting as _;
+use warp_core::channel::ChannelState;
 use warp_core::context_flag::ContextFlag;
 use warp_util::path::user_friendly_path;
 use warpui::actions::StandardAction;
@@ -150,11 +151,17 @@ fn make_new_app_menu(ctx: &AppContext) -> Menu {
         ))
     }
 
-    menu_items.extend([
-        MenuItem::Separator,
-        updateable_custom_item_without_checkmark(CustomAction::ReferAFriend, ctx),
-        MenuItem::Separator,
-    ]);
+    // Referrals need a Warp account; omit the item entirely for backendless builds
+    // (keeping a single separator in its place so the surrounding groups stay apart).
+    if ChannelState::has_backend() {
+        menu_items.extend([
+            MenuItem::Separator,
+            updateable_custom_item_without_checkmark(CustomAction::ReferAFriend, ctx),
+            MenuItem::Separator,
+        ]);
+    } else {
+        menu_items.push(MenuItem::Separator);
+    }
 
     let preferences_menu_items = vec![
         updateable_custom_item_without_checkmark(CustomAction::ShowSettings, ctx),
@@ -227,22 +234,28 @@ fn make_new_app_menu(ctx: &AppContext) -> Menu {
         },
         None,
     )));
-    menu_items.push(MenuItem::Separator);
-    menu_items.push(MenuItem::Custom(CustomMenuItem::new(
-        "Log out",
-        auth::maybe_log_out,
-        move |_, ctx| {
-            let is_anonymous = AuthStateProvider::handle(ctx)
-                .as_ref(ctx)
-                .get()
-                .is_anonymous_or_logged_out();
-            MenuItemPropertyChanges {
-                disabled: Some(is_anonymous),
-                ..Default::default()
-            }
-        },
-        None,
-    )));
+    // Logging out needs a Warp account; omit the item entirely for backendless builds
+    // (there is nothing to log out of, and log_out() destructively wipes local state).
+    if ChannelState::has_backend() {
+        menu_items.push(MenuItem::Separator);
+        menu_items.push(MenuItem::Custom(CustomMenuItem::new(
+            "Log out",
+            auth::maybe_log_out,
+            move |_, ctx| {
+                let is_anonymous = AuthStateProvider::handle(ctx)
+                    .as_ref(ctx)
+                    .get()
+                    .is_anonymous_or_logged_out();
+                MenuItemPropertyChanges {
+                    disabled: Some(is_anonymous),
+                    ..Default::default()
+                }
+            },
+            None,
+        )));
+    } else {
+        menu_items.push(MenuItem::Separator);
+    }
     menu_items.push(MenuItem::Standard(StandardAction::Quit));
     Menu::new("Warp", menu_items)
 }
@@ -536,7 +549,10 @@ fn make_new_ai_menu(ctx: &AppContext) -> Menu {
         ]);
     }
 
-    if FeatureFlag::McpServer.is_enabled() && ContextFlag::ShowMCPServers.is_enabled() {
+    if FeatureFlag::McpServer.is_enabled()
+        && ContextFlag::ShowMCPServers.is_enabled()
+        && ChannelState::has_backend()
+    {
         items.push(updateable_custom_item_without_checkmark(
             CustomAction::OpenMCPServerCollection,
             ctx,
@@ -564,9 +580,15 @@ fn make_new_blocks_menu(ctx: &AppContext) -> Menu {
         ctx,
     ));
     items.push(MenuItem::Separator);
+    // Block permalinks and shared blocks are Warp Drive (backend) features; omit them
+    // entirely for backendless builds.
+    if ChannelState::has_backend() {
+        items.extend([
+            updateable_custom_item_without_checkmark(CustomAction::CreateBlockPermalink, ctx),
+            non_updateable_custom_item(CustomAction::ViewSharedBlocks, ctx),
+        ]);
+    }
     items.extend([
-        updateable_custom_item_without_checkmark(CustomAction::CreateBlockPermalink, ctx),
-        non_updateable_custom_item(CustomAction::ViewSharedBlocks, ctx),
         updateable_custom_item_without_checkmark(CustomAction::ToggleBookmarkBlock, ctx),
         updateable_custom_item_without_checkmark(CustomAction::FindWithinBlock, ctx),
         MenuItem::Separator,
@@ -594,35 +616,61 @@ fn make_new_drive_menu(ctx: &AppContext) -> Menu {
         CustomAction::NewPersonalEnvVars,
         ctx,
     ));
-    items.extend([
-        MenuItem::Separator,
-        updateable_custom_item_without_checkmark(CustomAction::NewTeamWorkflow, ctx),
-        updateable_custom_item_without_checkmark(CustomAction::NewTeamNotebook, ctx),
-        updateable_custom_item_without_checkmark(CustomAction::NewTeamAIPrompt, ctx),
-    ]);
-    items.push(updateable_custom_item_without_checkmark(
-        CustomAction::NewTeamEnvVars,
-        ctx,
-    ));
+    // Team Drive objects need a Warp account/team; omit the section for backendless builds.
+    if ChannelState::has_backend() {
+        items.extend([
+            MenuItem::Separator,
+            updateable_custom_item_without_checkmark(CustomAction::NewTeamWorkflow, ctx),
+            updateable_custom_item_without_checkmark(CustomAction::NewTeamNotebook, ctx),
+            updateable_custom_item_without_checkmark(CustomAction::NewTeamAIPrompt, ctx),
+        ]);
+        items.push(updateable_custom_item_without_checkmark(
+            CustomAction::NewTeamEnvVars,
+            ctx,
+        ));
+    }
     items.extend([
         MenuItem::Separator,
         updateable_custom_item_without_checkmark(CustomAction::ToggleWarpDrive, ctx),
         updateable_custom_item_without_checkmark(CustomAction::SearchDrive, ctx),
-        updateable_custom_item_without_checkmark(CustomAction::OpenTeamSettings, ctx),
-        updateable_custom_item_without_checkmark(CustomAction::OpenAIFactCollection, ctx),
-        updateable_custom_item_without_checkmark(CustomAction::OpenMCPServerCollection, ctx),
     ]);
-
+    // Team settings need a Warp account, and the page is hidden for backendless builds
+    // (see SettingsSection::requires_backend); omit the menu item that would otherwise
+    // navigate to it.
+    if ChannelState::has_backend() {
+        items.push(updateable_custom_item_without_checkmark(
+            CustomAction::OpenTeamSettings,
+            ctx,
+        ));
+    }
     items.push(updateable_custom_item_without_checkmark(
-        CustomAction::SharePaneContents,
+        CustomAction::OpenAIFactCollection,
         ctx,
     ));
+    // MCP servers exist to feed Warp's hosted AI agent, which is disabled entirely for
+    // backendless builds, and its settings page is hidden (see
+    // SettingsSection::requires_backend); omit the menu item that would otherwise
+    // navigate to it.
+    if ChannelState::has_backend() {
+        items.push(updateable_custom_item_without_checkmark(
+            CustomAction::OpenMCPServerCollection,
+            ctx,
+        ));
+    }
 
-    if FeatureFlag::CreatingSharedSessions.is_enabled() {
-        items.extend([
-            MenuItem::Separator,
-            updateable_custom_item_without_checkmark(CustomAction::ShareCurrentSession, ctx),
-        ])
+    // Sharing needs a Warp account; omit for backendless builds.
+    if ChannelState::has_backend() {
+        items.push(updateable_custom_item_without_checkmark(
+            CustomAction::SharePaneContents,
+            ctx,
+        ));
+
+        if FeatureFlag::CreatingSharedSessions.is_enabled() {
+            items.extend([
+                MenuItem::Separator,
+                updateable_custom_item_without_checkmark(CustomAction::ShareCurrentSession, ctx),
+            ])
+        }
     }
 
     Menu::new("Drive", items)

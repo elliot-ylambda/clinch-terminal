@@ -1,10 +1,12 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use warp_core::channel::{Channel, ChannelConfig, ChannelState};
+use warp_core::AppId;
 use warpui::{App, SingletonEntity};
 
 use super::{AuthManager, AuthManagerEvent};
-use crate::auth::auth_view_modal::AuthRedirectPayload;
+use crate::auth::auth_view_modal::{AuthRedirectPayload, AuthViewVariant};
 use crate::auth::credentials::{Credentials, RefreshToken};
 use crate::auth::user::{FirebaseAuthTokens, TEST_USER_UID};
 use crate::auth::{AuthStateProvider, UserUid};
@@ -245,5 +247,62 @@ fn test_persist_skips_when_api_key_authenticated() {
         AuthManager::handle(&app).update(&mut app, |auth_manager, ctx| {
             auth_manager.persist(ctx);
         });
+    });
+}
+
+/// Subscribes to `AuthManager` events and returns a flag that becomes `true`
+/// if an `AttemptedLoginGatedFeature` event is observed.
+fn track_login_gated_feature_attempts(app: &mut App) -> Arc<AtomicBool> {
+    let saw_attempt = Arc::new(AtomicBool::new(false));
+    let saw_attempt_for_closure = saw_attempt.clone();
+    app.update(|ctx| {
+        ctx.subscribe_to_model(&AuthManager::handle(ctx), move |_, event, _| {
+            if matches!(event, AuthManagerEvent::AttemptedLoginGatedFeature { .. }) {
+                saw_attempt_for_closure.store(true, Ordering::Relaxed);
+            }
+        });
+    });
+    saw_attempt
+}
+
+/// Backendless fork builds (Clinch) have no login to require, so
+/// `attempt_login_gated_feature` and `anonymous_user_hit_drive_object_limit` must
+/// no-op instead of prompting an anonymous user to sign in — see
+/// `Workspace::open_require_login_modal`, the only consumer of the event these
+/// methods would otherwise emit.
+#[test]
+fn test_login_gated_feature_methods_noop_when_backendless() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+
+        ChannelState::set(ChannelState::new(
+            Channel::Local,
+            ChannelConfig::no_backend(AppId::new("test", "warp", "WarpTest"), "warp-test.log"),
+        ));
+
+        // Clear the default test user so we're anonymous/logged-out, which is the
+        // permanent state in backendless builds and the precondition both methods
+        // check before (normally) emitting their event.
+        app.update(|ctx| {
+            let auth_state = AuthStateProvider::as_ref(ctx).get();
+            auth_state.set_user(None);
+            auth_state.set_credentials(None);
+        });
+
+        let saw_attempt = track_login_gated_feature_attempts(&mut app);
+
+        AuthManager::handle(&app).update(&mut app, |auth_manager, ctx| {
+            auth_manager.attempt_login_gated_feature(
+                "Share Session",
+                AuthViewVariant::ShareRequirementCloseable,
+                ctx,
+            );
+            auth_manager.anonymous_user_hit_drive_object_limit(ctx);
+        });
+
+        assert!(
+            !saw_attempt.load(Ordering::Relaxed),
+            "backendless builds must not prompt a logged-out user to sign in"
+        );
     });
 }
