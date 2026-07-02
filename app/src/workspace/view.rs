@@ -23307,6 +23307,9 @@ impl TypedActionView for Workspace {
             MoveActiveTabRight => self.move_tab(self.active_tab_index, TabMovement::Right, ctx),
             MoveTabLeft(index) => self.move_tab(*index, TabMovement::Left, ctx),
             MoveTabRight(index) => self.move_tab(*index, TabMovement::Right, ctx),
+            MoveTabToNewWindow(index) => {
+                self.move_tab_to_new_window(*index, ctx);
+            }
             RenameTab(index) => self.rename_tab(*index, ctx),
             ResetTabName(index) => self.clear_tab_name(*index, ctx),
             RenamePane(locator) => self.rename_pane(*locator, ctx),
@@ -27366,6 +27369,18 @@ impl Workspace {
 
     pub fn remove_tab_without_undo(&mut self, index: usize, ctx: &mut ViewContext<Self>) {
         self.remove_tab(index, false, false, ctx);
+    }
+
+    /// Moves the tab at `tab_index` into its own new window. Returns the new
+    /// window's id, or `None` when the move is not possible (single-tab
+    /// window or unknown window bounds). Implemented in the next commit.
+    pub(crate) fn move_tab_to_new_window(
+        &mut self,
+        tab_index: usize,
+        ctx: &mut ViewContext<Self>,
+    ) -> Option<WindowId> {
+        let _ = (tab_index, ctx);
+        None
     }
 
     /// Replaces the placeholder pane group (created by

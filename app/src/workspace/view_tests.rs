@@ -2105,6 +2105,48 @@ fn test_tab_context_menu_share_session_items() {
     });
 }
 
+fn menu_contains_item(items: &[MenuItem<WorkspaceAction>], label: &str) -> bool {
+    items
+        .iter()
+        .any(|item| item.is_approximately_same_item_as(&MenuItemFields::new(label).into_item()))
+}
+
+#[test]
+fn test_tab_context_menu_move_to_new_window_gating() {
+    let _guard = FeatureFlag::DragTabsToWindows.override_enabled(true);
+
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+
+        workspace.read(&app, |workspace, ctx| {
+            // Multi-tab window: the entry is offered.
+            let items = workspace.tabs[0].menu_items(0, 3, &workspace.tab_groups, true, true, ctx);
+            assert!(menu_contains_item(&items, "Move Tab to New Window"));
+
+            // Single-tab window: moving the only tab is pointless; hidden.
+            let items =
+                workspace.tabs[0].menu_items(0, 1, &workspace.tab_groups, false, false, ctx);
+            assert!(!menu_contains_item(&items, "Move Tab to New Window"));
+        });
+    });
+}
+
+#[test]
+fn test_tab_context_menu_move_to_new_window_hidden_when_flag_off() {
+    let _guard = FeatureFlag::DragTabsToWindows.override_enabled(false);
+
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+
+        workspace.read(&app, |workspace, ctx| {
+            let items = workspace.tabs[0].menu_items(0, 3, &workspace.tab_groups, true, true, ctx);
+            assert!(!menu_contains_item(&items, "Move Tab to New Window"));
+        });
+    });
+}
+
 #[test]
 fn test_view_only_session() {
     let _guard = FeatureFlag::ViewingSharedSessions.override_enabled(true);
