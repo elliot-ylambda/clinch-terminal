@@ -1224,6 +1224,11 @@ impl SettingsPageMeta for MainSettingsPageView {
     }
 
     fn should_render(&self, _ctx: &AppContext) -> bool {
+        // Backendless builds hide the whole Account page (this page's
+        // account/login card and plan/usage summary included) via the
+        // section-level gate in `SettingsView::should_render_page`, which
+        // consults `SettingsSection::requires_backend` before ever reaching
+        // this method.
         true
     }
 

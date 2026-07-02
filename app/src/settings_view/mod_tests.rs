@@ -144,6 +144,128 @@ fn ai_subpages_list_does_not_contain_non_subpages() {
     assert!(!subpages.contains(&SettingsSection::Code));
 }
 
+// ── requires_backend (backendless Clinch builds) ────────────────────────────
+
+#[test]
+fn requires_backend_covers_backend_only_sections() {
+    for section in [
+        SettingsSection::Account,
+        SettingsSection::Teams,
+        SettingsSection::BillingAndUsage,
+        SettingsSection::Referrals,
+        SettingsSection::SharedBlocks,
+        SettingsSection::WarpDrive,
+        SettingsSection::AI,
+    ] {
+        assert!(
+            section.requires_backend(),
+            "{section:?} should require the backend"
+        );
+    }
+    // The entire AI subpage tree, including AgentMCPServers (which has its
+    // own backing page, MCPServers), requires the backend too.
+    for section in SettingsSection::ai_subpages() {
+        assert!(
+            section.requires_backend(),
+            "{section:?} (AI subpage) should require the backend"
+        );
+    }
+}
+
+#[test]
+fn requires_backend_excludes_local_only_sections() {
+    for section in [
+        SettingsSection::Appearance,
+        SettingsSection::Features,
+        SettingsSection::Keybindings,
+        SettingsSection::Warpify,
+        SettingsSection::Privacy,
+        SettingsSection::About,
+        SettingsSection::Scripting,
+        // MCPServers is intentionally excluded: it's AgentMCPServers's
+        // backing page, but it's also a standalone, non-Agents entry point
+        // (e.g. from the Drive panel) that stays reachable directly.
+        SettingsSection::MCPServers,
+        SettingsSection::Code,
+        SettingsSection::CodeIndexing,
+        SettingsSection::EditorAndCodeReview,
+        SettingsSection::CloudEnvironments,
+        SettingsSection::OzCloudAPIKeys,
+    ] {
+        assert!(
+            !section.requires_backend(),
+            "{section:?} should not require the backend"
+        );
+    }
+}
+
+#[test]
+fn visible_section_or_fallback_redirects_backend_only_sections_when_backendless() {
+    assert_eq!(
+        visible_section_or_fallback(SettingsSection::Account, false),
+        SettingsSection::Appearance
+    );
+    assert_eq!(
+        visible_section_or_fallback(SettingsSection::WarpAgent, false),
+        SettingsSection::Appearance
+    );
+    assert_eq!(
+        visible_section_or_fallback(SettingsSection::AgentMCPServers, false),
+        SettingsSection::Appearance
+    );
+}
+
+#[test]
+fn visible_section_or_fallback_is_a_no_op_when_backend_available_or_local_only() {
+    // With a backend, backend-only sections pass through unchanged.
+    assert_eq!(
+        visible_section_or_fallback(SettingsSection::Account, true),
+        SettingsSection::Account
+    );
+    // Local-only sections pass through unchanged regardless of backend state.
+    assert_eq!(
+        visible_section_or_fallback(SettingsSection::Appearance, false),
+        SettingsSection::Appearance
+    );
+    assert_eq!(
+        visible_section_or_fallback(SettingsSection::MCPServers, false),
+        SettingsSection::MCPServers
+    );
+}
+
+#[test]
+fn arrow_nav_skips_backend_only_sections_when_backendless() {
+    let nav_items = realistic_nav_items();
+    // Mirrors the predicate `cycle_pages` combines with the search filter:
+    // when backendless, only sections that don't require Warp's backend
+    // remain reachable via arrow-key navigation.
+    let stops = build_nav_stops(&nav_items, |section| !section.requires_backend());
+
+    // Account and Teams (top-level backend-only pages) are gone.
+    assert!(!stops
+        .iter()
+        .any(|s| matches!(s, NavStop::Section(SettingsSection::Account))));
+    assert!(!stops
+        .iter()
+        .any(|s| matches!(s, NavStop::Section(SettingsSection::Teams))));
+    assert!(!stops
+        .iter()
+        .any(|s| matches!(s, NavStop::Section(SettingsSection::BillingAndUsage))));
+    // The entire Agents umbrella (nav_index 1) disappears, since every AI
+    // subpage -- including AgentMCPServers -- requires the backend.
+    assert!(stops
+        .iter()
+        .all(|s| !matches!(s, NavStop::CollapsedUmbrella { nav_index: 1, .. })));
+    // The still-visible Code / Cloud platform umbrellas remain as stops,
+    // since none of their subpages require the backend.
+    assert!(stops
+        .iter()
+        .any(|s| matches!(s, NavStop::CollapsedUmbrella { nav_index: 3, .. })));
+    assert!(stops
+        .iter()
+        .any(|s| matches!(s, NavStop::CollapsedUmbrella { nav_index: 4, .. })));
+}
+
 // ── MatchData behavior ──────────────────────────────────────────────────────
 
 #[test]

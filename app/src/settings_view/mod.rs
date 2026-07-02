@@ -368,6 +368,35 @@ impl SettingsSection {
     pub fn cloud_platform_subpages() -> &'static [Self] {
         &[Self::CloudEnvironments, Self::OzCloudAPIKeys]
     }
+
+    /// Returns true if this section requires Warp's backend (account/auth,
+    /// billing, team collaboration, cloud sync, referrals, shared blocks, or
+    /// Warp's hosted AI) and must be hidden in backendless builds — see
+    /// `ChannelState::has_backend()`.
+    ///
+    /// All five `ai_subpages()` are included here, even though most of them
+    /// share the `AI` backing page: `AgentMCPServers` has its own backing
+    /// page (`MCPServers`) that intentionally stays visible for other,
+    /// non-Agents entry points into MCP server management (e.g. from the
+    /// Drive panel), so it can't be hidden by gating the `AI`/`MCPServers`
+    /// backing pages alone and needs to be listed by section identity here.
+    pub fn requires_backend(&self) -> bool {
+        matches!(
+            self,
+            Self::Account
+                | Self::Teams
+                | Self::BillingAndUsage
+                | Self::Referrals
+                | Self::SharedBlocks
+                | Self::WarpDrive
+                | Self::AI
+                | Self::WarpAgent
+                | Self::AgentProfiles
+                | Self::AgentMCPServers
+                | Self::Knowledge
+                | Self::ThirdPartyCLIAgents
+        )
+    }
 }
 
 impl FromStr for SettingsSection {
@@ -1060,6 +1089,22 @@ fn next_stop_index(current: usize, len: usize, direction: CycleDirection) -> usi
     }
 }
 
+/// Returns `section`, or `SettingsSection::Appearance` (a page that's always
+/// visible) if `section` requires Warp's backend
+/// (`SettingsSection::requires_backend`) and `has_backend` is false.
+///
+/// Used both to pick a sane initial page when constructing a `SettingsView`
+/// and, in `set_and_refresh_current_page_internal`, to guard direct
+/// navigation (arrow keys, deep links) against landing on a page that's
+/// hidden in backendless builds.
+fn visible_section_or_fallback(section: SettingsSection, has_backend: bool) -> SettingsSection {
+    if !has_backend && section.requires_backend() {
+        SettingsSection::Appearance
+    } else {
+        section
+    }
+}
+
 macro_rules! update_page {
     ($handle:expr, $update:expr, $ctx:expr) => {
         match $handle {
@@ -1359,6 +1404,10 @@ impl SettingsView {
             Some(section) if section.is_subpage() => section,
             other => other.unwrap_or_default(),
         };
+        // Backendless builds hide backend-only sections (including the
+        // `Account` default above); fall back to a page that's actually
+        // visible instead of opening settings on a blank hidden page.
+        let initial_page = visible_section_or_fallback(initial_page, ChannelState::has_backend());
 
         // Auto-expand the umbrella if the initial page is one of its subpages.
         if initial_page.is_subpage() {
@@ -1994,6 +2043,11 @@ impl SettingsView {
             SettingsSection::Code => SettingsSection::CodeIndexing,
             other => other,
         };
+        // Backendless builds hide backend-only sections; redirect any
+        // attempt to navigate to one (e.g. a stale deep link, or arrow-key
+        // navigation) to a page that's actually visible instead of
+        // rendering a blank hidden page.
+        let section = visible_section_or_fallback(section, ChannelState::has_backend());
 
         // For AI subpages, the backing page is the AI page. Check it exists.
         let page_section = section.parent_page_section();
@@ -2085,6 +2139,13 @@ impl SettingsView {
     }
 
     fn should_render_page(&self, settings_page: &SettingsPage, app: &AppContext) -> bool {
+        // Backendless builds hide backend-only sections (account, billing,
+        // teams, referrals, shared blocks, Warp Drive, and Warp's hosted AI)
+        // regardless of what each page's own `should_render` would otherwise
+        // report; see `SettingsSection::requires_backend`.
+        if !ChannelState::has_backend() && settings_page.section.requires_backend() {
+            return false;
+        }
         match &settings_page.view_handle {
             SettingsPageViewHandle::Main(v) => v.as_ref(app).should_render(app),
             SettingsPageViewHandle::Teams(v) => v.as_ref(app).should_render(app),
@@ -2211,8 +2272,10 @@ impl SettingsView {
         // is represented as a single stop (rather than being skipped) so that
         // arrow-key navigation auto-expands it and selects its first visible
         // subpage instead of silently jumping over it.
+        let has_backend = ChannelState::has_backend();
         let stops = build_nav_stops(&self.nav_items, |section| {
-            !is_search_active || self.section_passes_search_filter(section)
+            (!is_search_active || self.section_passes_search_filter(section))
+                && (has_backend || !section.requires_backend())
         });
 
         if stops.is_empty() {
@@ -2457,6 +2520,14 @@ impl View for SettingsView {
                     // Check which subpages are visible. Use per-subpage filter
                     // if available (search active), otherwise fall back to backing page.
                     let is_subpage_visible = |section: &SettingsSection| -> bool {
+                        // Backendless builds hide backend-only subpages by section
+                        // identity: `AgentMCPServers` shares its backing page
+                        // (`MCPServers`) with a standalone, non-backend-gated entry
+                        // point elsewhere in the app, so gating the backing page's
+                        // `should_render` alone wouldn't hide this subpage's row.
+                        if !ChannelState::has_backend() && section.requires_backend() {
+                            return false;
+                        }
                         if let Some(md) = self.subpage_filter.get(section) {
                             return md.is_truthy();
                         }
@@ -2464,7 +2535,7 @@ impl View for SettingsView {
                         settings_pages.iter().any(|(p, _)| p.section == backing)
                     };
 
-                    let any_subpage_visible = umbrella.subpages.iter().any(is_subpage_visible);
+                    let any_subpage_visible = umbrella.subpages.iter().any(&is_subpage_visible);
 
                     // Only show the umbrella if at least one subpage is visible.
                     if !any_subpage_visible {
@@ -2488,6 +2559,9 @@ impl View for SettingsView {
                     if umbrella.expanded {
                         for (sub_idx, subpage_section) in umbrella.subpages.iter().enumerate() {
                             let subpage_section = *subpage_section;
+                            if !is_subpage_visible(&subpage_section) {
+                                continue;
+                            }
                             // Use per-subpage filter if available, otherwise backing page.
                             let match_data = self
                                 .subpage_filter
