@@ -14,7 +14,7 @@ REG="$HOME/.warp/agent-resume"
 mkdir -p "$BIN" "$REG"
 chmod 700 "$REG"
 
-install -m 0755 "$SRC/warp-agent-resume" "$SRC/claude-session-start.sh" \
+install -m 0755 "$SRC/warp-agent-resume" "$SRC/claude-capture.sh" \
   "$SRC/codex-session-start.sh" "$SRC/codex-session-end.sh" \
   "$SRC/install-agent-plugins.sh" "$BIN/"
 install -m 0644 "$SRC/claude.zsh" "$BIN/claude.zsh"

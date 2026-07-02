@@ -7,7 +7,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 
 # Source the hook for its functions only; sourcing must NOT run the capture body.
-source "$HERE/claude-session-start.sh"
+source "$HERE/claude-capture.sh"
 
 fail() { echo "FAIL: $1"; exit 1; }
 

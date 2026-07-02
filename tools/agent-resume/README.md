@@ -121,7 +121,7 @@ separate data dir (`~/.warp-oss`), so the two never clobber each other's session
 | File | Role |
 |---|---|
 | `warp-agent-resume` | registry CLI: `write <uuid> <cmd> <cwd>` / `remove <uuid>` |
-| `claude-session-start.sh` | Claude `SessionStart` hook — captures the live session per pane, plus its permission-mode / `--model` launch flags |
+| `claude-capture.sh` | Claude `SessionStart` hook — captures the live session per pane, plus its permission-mode / `--model` launch flags |
 | `claude.zsh` | replay functions (`warp_agent_resume_resumable` / `warp_agent_resume_launch`) |
 | `codex-session-start.sh` / `codex-session-end.sh` | Codex hooks |
 | `config.toml.snippet` | Codex hook registration (installer applies it) |
