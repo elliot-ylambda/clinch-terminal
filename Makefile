@@ -37,8 +37,9 @@ LOCAL_APP    := WarpLocal.app
 LOCAL_BUNDLE := target/release-lto-debug_assertions/bundle/osx/$(LOCAL_APP)
 
 define RELEASE_NOTES
-**Easiest install** — paste this in any terminal (curl downloads skip macOS
-quarantine, so there are no Gatekeeper warnings):
+Works on any Apple Silicon Mac (M1 or newer). **Easiest install** — paste
+this in any terminal (curl downloads skip macOS quarantine, so there are no
+Gatekeeper warnings):
 
     curl -fsSL https://clinch.sh/install | sh
 
