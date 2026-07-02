@@ -86,8 +86,6 @@ in `script/macos/bundle`. This isolates any deep links from an installed
 > applies. (See `docs/superpowers/specs/2026-07-01-clinch-no-backend-gut-design.md`.)
 
 ### Other follow-ups (not done)
-- **Icon** is still Warp's (`app/channels/stable/icon`); a Clinch icon is a
-  separate visual task.
 - **CLI command** for stable is still `oz`; renaming it is separate.
 - The copyright string in the bundle metadata is still Warp's entity.
 - `warp://cli-agent` (`app/src/terminal/cli_agent_sessions/event/mod.rs`) is an

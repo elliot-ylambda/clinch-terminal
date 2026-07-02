@@ -1035,6 +1035,13 @@ identifier = "sh.clinch.Clinch"
 name = "Clinch"
 # Clinch fork: no osx_frameworks — the stable build drops cocoa_sentry (no
 # crash reporting), so Sentry.framework must not be bundled or linked.
+# Traditional PNG/ICO icon so the bundle always has a valid icon even when
+# `script/compile_icon`'s actool step can't build the macOS 26 adaptive
+# `AppIcon.icon` bundle (older Xcode); on Xcode 26 the adaptive bundle wins.
+icon = [
+    "channels/stable/icon/no-padding/512x512.png",
+    "channels/stable/icon/no-padding/icon.ico",
+]
 resources = ["assets/onboarding"]
 short_description = "The cloud-backed terminal for individuals and teams, stable build."
 
