@@ -1,4 +1,6 @@
 use chrono::Utc;
+use warp_core::channel::{Channel, ChannelConfig, ChannelState};
+use warp_core::AppId;
 use warp_graphql::scalars::time::ServerTimestamp;
 use warpui::{App, SingletonEntity};
 
@@ -392,6 +394,42 @@ fn orchestration_is_enabled_when_ai_is_enabled() {
 
         AISettings::handle(&app).read(&app, |settings, ctx| {
             assert!(settings.is_orchestration_enabled(ctx));
+        });
+    });
+}
+
+/// Backendless fork builds (Clinch, constructed via `ChannelConfig::no_backend`)
+/// have no Warp AI, so the master switch must report disabled regardless of the
+/// stored `is_any_ai_enabled` setting value (which defaults to `true`).
+///
+/// Note: this test mutates the process-global `ChannelState` via
+/// `ChannelState::set`, relying on `cargo nextest`'s process-per-test isolation
+/// (the test runner mandated by this repo) to avoid bleeding into other tests.
+/// Do not run this test under plain `cargo test` alongside other tests that read
+/// `ChannelState`.
+#[test]
+fn is_any_ai_enabled_false_when_backendless() {
+    App::test((), |mut app| async move {
+        initialize_settings_for_tests(&mut app);
+        add_ai_enablement_dependencies_for_test(&mut app);
+
+        // Sanity check: with the default (backend-having) ChannelState, the
+        // stored setting's default value of `true` is surfaced as-is.
+        AISettings::handle(&app).read(&app, |settings, ctx| {
+            assert!(settings.is_any_ai_enabled(ctx));
+        });
+
+        ChannelState::set(ChannelState::new(
+            Channel::Local,
+            ChannelConfig::no_backend(AppId::new("test", "warp", "WarpTest"), "warp-test.log"),
+        ));
+
+        AISettings::handle(&app).read(&app, |settings, ctx| {
+            assert!(
+                !settings.is_any_ai_enabled(ctx),
+                "backendless builds must never report AI as enabled, even though the \
+                 underlying is_any_ai_enabled setting still defaults to true"
+            );
         });
     });
 }
