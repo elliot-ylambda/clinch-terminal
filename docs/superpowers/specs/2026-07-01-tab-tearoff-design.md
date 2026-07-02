@@ -68,7 +68,11 @@ path:
      single-tab windows (handler no-ops; menu gating is a UI courtesy, the
      handler revalidates).
   2. Compute new window bounds: same size as the source window, offset by a
-     small cascade (~30 px down/right, clamped to the visible screen area).
+     small cascade (30 px down/right). No screen-area clamping — the drag
+     tear-off path this mirrors positions windows in screen space without
+     clamping, and there is no clean workspace-level work-area API; the
+     worst case (a window nudged slightly off a screen corner after repeated
+     tear-offs) is minor and recoverable via normal window management.
   3. `ctx.unsubscribe_to_view(&tab.pane_group)` (NOT
      `prepare_for_transferred_tab_attach` — that also sets a
      suppress-detach-on-close flag that is never auto-restored and is only
