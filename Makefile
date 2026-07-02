@@ -82,6 +82,15 @@ install-local: _require-create-dmg ## Build the local channel and install /Appli
 
 ship: install-local release ## Update this machine AND publish a release
 
+# Keep the installed agent-resume capture layer (hooks + ~/.warp/agent-resume-bin) in
+# sync with the repo whenever we ship from this machine. Declared as a standalone
+# prerequisite line so it survives reworks of the release/update targets. Idempotent,
+# local-only, and independent of the app build.
+.PHONY: agent-resume
+release: agent-resume
+agent-resume: ## Install/refresh the agent-resume capture layer (hooks + ~/.warp/agent-resume-bin)
+	bash tools/agent-resume/install.sh
+
 _require-create-dmg:
 	@command -v create-dmg >/dev/null 2>&1 || { \
 	  echo "✗ create-dmg required by script/bundle. Install:  brew install create-dmg"; exit 1; }

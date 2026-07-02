@@ -4,7 +4,7 @@
 # tree so the walk is deterministic and free of the real session's processes.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
-source "$HERE/claude-session-start.sh"
+source "$HERE/claude-capture.sh"
 unset WARP_AGENT_RESUME_FAKE_ARGV 2>/dev/null || true
 
 TMP="$(mktemp -d)"
@@ -34,8 +34,8 @@ node() { printf '%s' "$1" > "$PSTREE_DIR/$2.args"; printf '%s' "$3" > "$PSTREE_D
 
 # Tree: hook(500) -> sh -c wrapper(400) -> claude(300) -> zsh(200) -> init(1).
 # Only the real claude carries the launch flags; the wrapper paths must not be mistaken for it.
-node "bash /opt/agent-resume/claude-session-start.sh" 500 400
-node "/bin/sh -c /opt/agent-resume/claude-session-start.sh" 400 300
+node "bash /opt/agent-resume/claude-capture.sh" 500 400
+node "/bin/sh -c /opt/agent-resume/claude-capture.sh" 400 300
 node "node /opt/claude-code/cli.js --dangerously-skip-permissions --model opus" 300 200
 node "-zsh" 200 1
 
