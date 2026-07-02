@@ -50,6 +50,7 @@ impl ChannelState {
                 autoupdate_config: None,
                 crash_reporting_config: None,
                 mcp_static_config: None,
+                has_backend: true,
             },
         }
     }
@@ -320,6 +321,14 @@ impl ChannelState {
 
     pub fn channel() -> Channel {
         CHANNEL_STATE.lock().channel
+    }
+
+    /// Returns whether this build talks to a real Warp backend. `false` for
+    /// backend-free fork channels built via [`ChannelConfig::no_backend`]; UI
+    /// gates login, onboarding, AI, and other backend-dependent surfaces on
+    /// this.
+    pub fn has_backend() -> bool {
+        CHANNEL_STATE.lock().config.has_backend
     }
 
     #[cfg(feature = "test-util")]

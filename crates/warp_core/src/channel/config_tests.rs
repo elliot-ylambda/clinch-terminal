@@ -42,4 +42,33 @@ fn no_backend_round_trips_through_serde() {
     assert_eq!(back.logfile_name, "warp-local.log");
     assert_eq!(back.server_config.server_root_url, "http://192.0.2.0:9");
     assert_eq!(back.oz_config.oz_root_url, "http://192.0.2.0:9");
+    assert!(!back.has_backend);
+}
+
+#[test]
+fn no_backend_has_backend_is_false() {
+    let config = ChannelConfig::no_backend(AppId::new("sh", "clinch", "Clinch"), "clinch.log");
+
+    assert!(!config.has_backend);
+}
+
+#[test]
+fn deserializing_config_missing_has_backend_defaults_to_true() {
+    // Upstream's generated dev/preview JSON channel configs predate the
+    // `has_backend` field, so deserializing JSON that omits it entirely must
+    // still yield `has_backend: true` (a real-backend build). Note: this test
+    // builds the JSON by string surgery, not via `serde_json::Value`, because
+    // `AppId`'s `Deserialize` impl requires a borrowed `&str` (see
+    // `AppId::deserialize`), which `Value`-based deserialization can't supply.
+    let config = ChannelConfig::no_backend(AppId::new("dev", "warp", "WarpDev"), "warp-dev.log");
+    let json = serde_json::to_string(&config).expect("serialize");
+    let without_has_backend = json.replace(r#","has_backend":false"#, "");
+    assert_ne!(
+        json, without_has_backend,
+        "expected serialized JSON to contain a `has_backend` key to strip"
+    );
+
+    let back: ChannelConfig = serde_json::from_str(&without_has_backend).expect("deserialize");
+
+    assert!(back.has_backend);
 }

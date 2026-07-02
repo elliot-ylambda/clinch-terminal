@@ -25,6 +25,16 @@ pub struct ChannelConfig {
     pub crash_reporting_config: Option<CrashReportingConfig>,
     /// Configuration for statically-bundled MCP OAuth credentials.
     pub mcp_static_config: Option<McpStaticConfig>,
+
+    /// Whether this build talks to a real Warp backend. `false` for backend-free
+    /// fork channels built via [`ChannelConfig::no_backend`]; UI gates login,
+    /// onboarding, AI, and other backend-dependent surfaces on this.
+    #[serde(default = "default_has_backend")]
+    pub has_backend: bool,
+}
+
+fn default_has_backend() -> bool {
+    true
 }
 
 impl ChannelConfig {
@@ -43,6 +53,7 @@ impl ChannelConfig {
             autoupdate_config: None,
             crash_reporting_config: None,
             mcp_static_config: None,
+            has_backend: false,
         }
     }
 }
