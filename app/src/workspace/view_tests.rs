@@ -162,6 +162,9 @@ pub(crate) fn initialize_app(app: &mut App) {
     app.add_singleton_model(crate::ai::blocklist::QueuedQueryModel::new);
     app.add_singleton_model(|ctx| OrchestrationPillBarModel::new(Default::default(), ctx));
     app.add_singleton_model(|_| CLIAgentSessionsModel::new());
+    // The agent input footer renders the CLI-agent usage chip, which reads this
+    // singleton, so it must be registered for any test that renders a workspace.
+    app.add_singleton_model(crate::ai::blocklist::usage::CliAgentUsageModel::new);
     // The blocklist controller created during terminal bootstrap subscribes to
     // OrchestrationEventService and OrchestrationEventStreamer unconditionally,
     // so both singletons must be registered before bootstrap.
@@ -1393,57 +1396,50 @@ fn test_close_tab_confirmation_dialog() {
 }
 
 #[test]
-fn test_close_active_horizontal_tab_activates_tab_to_right() {
+fn test_close_active_tab_activates_tab_above() {
+    // Tabs are locked to the vertical layout, so closing the active tab
+    // activates the tab above it (the previous index).
     let _vertical_tabs_guard = FeatureFlag::VerticalTabs.override_enabled(true);
     App::test((), |mut app| async move {
         initialize_app(&mut app);
-        app.update(|ctx| {
-            TabSettings::handle(ctx).update(ctx, |settings, ctx| {
-                report_if_error!(settings.use_vertical_tabs.set_value(false, ctx));
-            });
-        });
 
         let workspace = mock_workspace(&mut app);
 
         workspace.update(&mut app, |workspace, ctx| {
             workspace.add_terminal_tab(false, ctx);
             workspace.add_terminal_tab(false, ctx);
-            let tab_to_right_id = workspace.get_pane_group_view(2).unwrap().id();
+            let tab_above_id = workspace.get_pane_group_view(0).unwrap().id();
 
             workspace.activate_tab(1, ctx);
             workspace.close_tab(1, true, true, ctx);
 
             assert_eq!(workspace.tab_count(), 2);
-            assert_eq!(workspace.active_tab_index(), 1);
-            assert_eq!(workspace.active_tab_pane_group().id(), tab_to_right_id);
+            assert_eq!(workspace.active_tab_index(), 0);
+            assert_eq!(workspace.active_tab_pane_group().id(), tab_above_id);
         });
     });
 }
 
 #[test]
-fn test_close_last_horizontal_tab_activates_tab_to_left() {
+fn test_close_last_tab_activates_tab_above() {
+    // Closing the active last tab activates the tab above it.
     let _vertical_tabs_guard = FeatureFlag::VerticalTabs.override_enabled(true);
     App::test((), |mut app| async move {
         initialize_app(&mut app);
-        app.update(|ctx| {
-            TabSettings::handle(ctx).update(ctx, |settings, ctx| {
-                report_if_error!(settings.use_vertical_tabs.set_value(false, ctx));
-            });
-        });
 
         let workspace = mock_workspace(&mut app);
 
         workspace.update(&mut app, |workspace, ctx| {
             workspace.add_terminal_tab(false, ctx);
             workspace.add_terminal_tab(false, ctx);
-            let tab_to_left_id = workspace.get_pane_group_view(1).unwrap().id();
+            let tab_above_id = workspace.get_pane_group_view(1).unwrap().id();
 
             workspace.activate_tab(2, ctx);
             workspace.close_tab(2, true, true, ctx);
 
             assert_eq!(workspace.tab_count(), 2);
             assert_eq!(workspace.active_tab_index(), 1);
-            assert_eq!(workspace.active_tab_pane_group().id(), tab_to_left_id);
+            assert_eq!(workspace.active_tab_pane_group().id(), tab_above_id);
         });
     });
 }
@@ -2832,31 +2828,27 @@ fn test_vertical_tabs_panel_restored_open_when_show_in_restored_windows_enabled(
 #[test]
 fn test_vertical_tabs_panel_closed_when_disabled_even_if_persisted_open() {
     // Regression for #9505: when `vertical_tabs_panel_open=true` is persisted
-    // and the user then disables vertical tabs, restoring the workspace must
-    // not honor the stale snapshot — otherwise a dismiss underlay paints over
-    // the window and silently swallows every click.
-    let _vertical_tabs_guard = FeatureFlag::VerticalTabs.override_enabled(true);
+    // and vertical tabs are then unavailable, restoring the workspace must not
+    // honor the stale snapshot — otherwise a dismiss underlay paints over the
+    // window and silently swallows every click. Clinch locks the layout on, so
+    // the only remaining "off" path is the `VerticalTabs` feature-flag
+    // kill-switch, which this exercises.
     App::test((), |mut app| async move {
         initialize_app(&mut app);
 
-        // Snapshot the workspace with the panel open while vertical tabs are enabled.
-        app.update(|ctx| {
-            TabSettings::handle(ctx).update(ctx, |settings, ctx| {
-                report_if_error!(settings.use_vertical_tabs.set_value(true, ctx));
-            });
-        });
-        let workspace = mock_workspace(&mut app);
-        let open_snapshot = workspace.update(&mut app, |workspace, ctx| {
-            workspace.vertical_tabs_panel_open = true;
-            workspace.snapshot(ctx.window_id(), false, ctx)
-        });
+        // Snapshot the workspace with the panel open while vertical tabs are on.
+        let open_snapshot = {
+            let _on = FeatureFlag::VerticalTabs.override_enabled(true);
+            let workspace = mock_workspace(&mut app);
+            workspace.update(&mut app, |workspace, ctx| {
+                workspace.vertical_tabs_panel_open = true;
+                workspace.snapshot(ctx.window_id(), false, ctx)
+            })
+        };
 
-        // Disable vertical tabs, then restore. The panel must stay closed.
-        app.update(|ctx| {
-            TabSettings::handle(ctx).update(ctx, |settings, ctx| {
-                report_if_error!(settings.use_vertical_tabs.set_value(false, ctx));
-            });
-        });
+        // With vertical tabs disabled via the kill-switch, restore. The stale
+        // "panel open" snapshot must not be honored.
+        let _off = FeatureFlag::VerticalTabs.override_enabled(false);
         let restored = restored_workspace(&mut app, open_snapshot);
         restored.read(&app, |workspace, _| {
             assert!(!workspace.vertical_tabs_panel_open);
@@ -2909,65 +2901,33 @@ fn test_vertical_tabs_panel_inherits_transferred_tab_source_window_state() {
 }
 
 #[test]
-fn test_vertical_tabs_panel_auto_shows_when_setting_enabled() {
+fn test_active_tab_bar_position_id_is_locked_to_vertical_panel() {
+    // Cross-window drag hit-testing (`tab_bar_rects_for_window`) targets only
+    // the active tab presentation. Clinch locks tabs to the vertical left panel,
+    // so the panel is always the active presentation and the horizontal bar
+    // never registers as a cross-window drop zone. This also guards the old bug
+    // where the inactive horizontal bar lit up a spurious placeholder.
     let _vertical_tabs_guard = FeatureFlag::VerticalTabs.override_enabled(true);
-
     App::test((), |mut app| async move {
         initialize_app(&mut app);
 
-        let workspace = mock_workspace(&mut app);
-
-        workspace.read(&app, |workspace, _| {
-            assert!(!workspace.vertical_tabs_panel_open);
+        // The vertical panel is the drop zone from the start — no setting toggle.
+        app.read(|_ctx| {
+            assert_eq!(
+                active_tab_bar_position_id(),
+                VERTICAL_TABS_PANEL_POSITION_ID
+            );
         });
 
-        // Enabling vertical tabs should auto-open the panel.
-        workspace.update(&mut app, |_, ctx| {
-            TabSettings::handle(ctx).update(ctx, |settings, ctx| {
-                report_if_error!(settings.use_vertical_tabs.set_value(true, ctx));
-            });
-        });
-        workspace.read(&app, |workspace, _| {
-            assert!(workspace.vertical_tabs_panel_open);
-        });
-
-        // Disabling vertical tabs should auto-close the panel.
-        workspace.update(&mut app, |_, ctx| {
+        // Writing the (now vestigial) setting must not change the locked layout.
+        app.update(|ctx| {
             TabSettings::handle(ctx).update(ctx, |settings, ctx| {
                 report_if_error!(settings.use_vertical_tabs.set_value(false, ctx));
             });
         });
-        workspace.read(&app, |workspace, _| {
-            assert!(!workspace.vertical_tabs_panel_open);
-        });
-    });
-}
-
-#[test]
-fn test_active_tab_bar_position_id_tracks_layout() {
-    // Cross-window drag hit-testing (`tab_bar_rects_for_window`) targets only
-    // the active tab presentation. Regression guard for the bug where the
-    // inactive horizontal bar registered as a drop zone while vertical tabs
-    // were enabled, lighting up a spurious placeholder over the top bar.
-    let _vertical_tabs_guard = FeatureFlag::VerticalTabs.override_enabled(true);
-    App::test((), |mut app| async move {
-        initialize_app(&mut app);
-
-        // Horizontal tabs (setting off): the horizontal bar is the drop zone.
-        app.read(|ctx| {
-            assert_eq!(active_tab_bar_position_id(ctx), TAB_BAR_POSITION_ID);
-        });
-
-        // Vertical tabs (setting on): only the vertical panel is the drop zone,
-        // so the horizontal bar no longer registers as a cross-window target.
-        app.update(|ctx| {
-            TabSettings::handle(ctx).update(ctx, |settings, ctx| {
-                report_if_error!(settings.use_vertical_tabs.set_value(true, ctx));
-            });
-        });
-        app.read(|ctx| {
+        app.read(|_ctx| {
             assert_eq!(
-                active_tab_bar_position_id(ctx),
+                active_tab_bar_position_id(),
                 VERTICAL_TABS_PANEL_POSITION_ID
             );
         });
@@ -3140,29 +3100,6 @@ fn test_open_tab_config_with_params_uses_explicit_title_template() {
                     .custom_title(ctx),
                 Some("mesa-coyote".to_string())
             );
-        });
-    });
-}
-#[test]
-fn test_toggle_tab_configs_menu_does_not_change_vertical_tabs_panel_in_horizontal_mode() {
-    let _vertical_tabs_guard = FeatureFlag::VerticalTabs.override_enabled(true);
-
-    App::test((), |mut app| async move {
-        initialize_app(&mut app);
-
-        let workspace = mock_workspace(&mut app);
-
-        workspace.update(&mut app, |workspace, ctx| {
-            TabSettings::handle(ctx).update(ctx, |settings, ctx| {
-                report_if_error!(settings.use_vertical_tabs.set_value(false, ctx));
-            });
-            workspace.vertical_tabs_panel_open = true;
-            workspace.show_new_session_dropdown_menu = None;
-
-            workspace.handle_action(&WorkspaceAction::ToggleTabConfigsMenu, ctx);
-
-            assert!(workspace.vertical_tabs_panel_open);
-            assert!(workspace.show_new_session_dropdown_menu.is_some());
         });
     });
 }

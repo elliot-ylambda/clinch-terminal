@@ -64,11 +64,18 @@ const TAB_INDICATOR_HEIGHT: f32 = 14.0;
 /// Label for the tab right-click menu's "Move to group" submenu parent.
 pub const MOVE_TO_GROUP_LABEL: &str = "Move to group";
 
-/// True when the user has opted into vertical tabs and the feature flag is on.
+/// Whether tabs render in the vertical left-hand panel (as opposed to a
+/// horizontal top bar). Clinch hard-locks this on: tabs can only ever live in
+/// the left panel, never at the top or on the right. This used to also read the
+/// `use_vertical_tabs` setting, but that toggle has been removed — layout is now
+/// fixed. The `FeatureFlag::VerticalTabs` gate is kept as a global kill-switch
+/// (it is force-enabled in Clinch) and to keep the flag meaningful for the
+/// panel-support and telemetry checks that still reference it.
+///
 /// Exposed so binding-description overrides in `workspace/mod.rs` and context-
 /// menu builders here can share a single predicate.
-pub fn uses_vertical_tabs(ctx: &AppContext) -> bool {
-    FeatureFlag::VerticalTabs.is_enabled() && *TabSettings::as_ref(ctx).use_vertical_tabs
+pub fn uses_vertical_tabs() -> bool {
+    FeatureFlag::VerticalTabs.is_enabled()
 }
 
 const WARP_2_TAB_COLOR_OPACITY: Opacity = 25;
@@ -241,7 +248,7 @@ impl TabData {
                 pane_name_target,
                 ctx,
             ),
-            self.close_tab_menu_items(index, tabs_len, ctx),
+            self.close_tab_menu_items(index, tabs_len),
             Self::save_config_menu_items(index),
             self.color_option_menu_items(index, terminal_colors),
         ] {
@@ -358,7 +365,7 @@ impl TabData {
         let pane_group = self.pane_group.as_ref(ctx);
         let mut menu_items = vec![];
         let tab_title = Self::copyable_metadata_value(Some(pane_group.display_title(ctx)));
-        if !uses_vertical_tabs(ctx) {
+        if !uses_vertical_tabs() {
             Self::push_copy_metadata_menu_item(&mut menu_items, "Copy tab title", tab_title);
             return menu_items;
         }
@@ -450,7 +457,7 @@ impl TabData {
         ctx: &AppContext,
     ) -> Vec<MenuItem<WorkspaceAction>> {
         let mut menu_items = vec![];
-        let uses_vertical_tabs = uses_vertical_tabs(ctx);
+        let uses_vertical_tabs = uses_vertical_tabs();
 
         // TODO add option to show the keybinding once we figure out a nice API to retrieve
         // the actual keybinding (based on the user's preferences etc.)
@@ -543,10 +550,9 @@ impl TabData {
         &self,
         index: usize,
         tabs_len: usize,
-        ctx: &AppContext,
     ) -> Vec<MenuItem<WorkspaceAction>> {
         let mut menu_items = vec![];
-        let uses_vertical_tabs = uses_vertical_tabs(ctx);
+        let uses_vertical_tabs = uses_vertical_tabs();
 
         if ContextFlag::CloseWindow.is_enabled() || tabs_len != 1 {
             menu_items.push(

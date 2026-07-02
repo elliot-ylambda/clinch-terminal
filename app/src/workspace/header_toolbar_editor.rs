@@ -361,7 +361,9 @@ fn build_configurable_item(kind: &HeaderToolbarItemKind) -> ConfigurableItem {
         ControlItemRenderer::new_with_label_and_icon(kind.display_label().to_string(), kind.icon())
             .with_identifier(id);
     let renderer = match kind {
-        HeaderToolbarItemKind::TabsPanel => renderer.non_removable(),
+        // The tabs panel is locked to the left in Clinch: it cannot be removed
+        // and cannot be dragged out of the left zone.
+        HeaderToolbarItemKind::TabsPanel => renderer.non_removable().left_pinned(),
         _ => renderer,
     };
     ConfigurableItem::Control(renderer)

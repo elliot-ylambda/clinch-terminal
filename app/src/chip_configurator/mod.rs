@@ -79,6 +79,16 @@ impl ConfigurableItem {
         }
     }
 
+    /// Whether this chip is pinned to the left zone in a `LeftRightZones`
+    /// layout — it may be reordered within the left zone but cannot be moved
+    /// to the right zone. Used to lock the tabs-panel chip to the left.
+    pub fn is_left_pinned(&self) -> bool {
+        match self {
+            Self::ContextChip(_) => false,
+            Self::Control(r) => r.left_pinned,
+        }
+    }
+
     pub fn draggable_state(&self) -> DraggableState {
         match self {
             Self::ContextChip(r) => r.draggable_state(),
@@ -128,6 +138,10 @@ pub struct ControlItemRenderer {
     /// Used by the header toolbar editor to recover the `HeaderToolbarItemKind`.
     identifier: Option<String>,
     removable: bool,
+    /// When set (in a `LeftRightZones` layout), the chip is pinned to the left
+    /// zone: it can be reordered within the left zone but never moved to the
+    /// right zone. Used to lock the tabs-panel chip to the left.
+    left_pinned: bool,
     draggable_state: DraggableState,
     tooltip_state_handle: MouseStateHandle,
     remove_button_state_handle: MouseStateHandle,
@@ -141,6 +155,7 @@ impl ControlItemRenderer {
             custom_icon: None,
             identifier: None,
             removable: true,
+            left_pinned: false,
             draggable_state: Default::default(),
             tooltip_state_handle: Default::default(),
             remove_button_state_handle: Default::default(),
@@ -154,6 +169,7 @@ impl ControlItemRenderer {
             custom_icon: Some(icon),
             identifier: None,
             removable: true,
+            left_pinned: false,
             draggable_state: Default::default(),
             tooltip_state_handle: Default::default(),
             remove_button_state_handle: Default::default(),
@@ -171,6 +187,13 @@ impl ControlItemRenderer {
 
     pub fn non_removable(mut self) -> Self {
         self.removable = false;
+        self
+    }
+
+    /// Pin this chip to the left zone in a `LeftRightZones` layout: it may be
+    /// reordered within the left zone but can never be dragged to the right.
+    pub fn left_pinned(mut self) -> Self {
+        self.left_pinned = true;
         self
     }
 
@@ -478,6 +501,15 @@ impl ChipConfigurator {
         chips[index].is_removable()
     }
 
+    fn is_chip_at_location_left_pinned(&self, location: ChipLocation) -> bool {
+        let chips = self.chips_for_location(location);
+        let index = location.index();
+        if index >= chips.len() {
+            return false;
+        }
+        chips[index].is_left_pinned()
+    }
+
     fn chips_for_location(&self, location: ChipLocation) -> &Vec<ConfigurableItem> {
         match location {
             ChipLocation::Used { .. } => &self.used_chips,
@@ -730,6 +762,14 @@ impl ChipConfigurator {
             // Don't allow non-removable items to be dragged to the unused zone.
             if matches!(new_location, ChipLocation::Unused { .. })
                 && !self.is_chip_at_location_removable(location)
+            {
+                return;
+            }
+
+            // Don't allow left-pinned items (e.g. the tabs panel, locked to the
+            // left in Clinch) to be dragged into the right zone.
+            if matches!(new_location, ChipLocation::Right { .. })
+                && self.is_chip_at_location_left_pinned(location)
             {
                 return;
             }
