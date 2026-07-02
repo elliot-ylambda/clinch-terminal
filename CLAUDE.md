@@ -18,17 +18,20 @@ GitHub Actions secrets, no macOS runner minutes. A root `Makefile` wraps it; run
 > `Cut New Releases` GitHub Actions workflow is intentionally unused; do not
 > rely on it.
 
-### After landing changes on `master`
+### After landing changes on `main`
 - `make ship` — rebuilds/installs your personal app **and** publishes a release.
 
 ### Individual targets
 - `make release` — builds a **self-signed** `Clinch.dmg` (`./script/bundle -c
   stable --selfsign`) and publishes a GitHub Release on
-  `elliot-ylambda/clinch-terminal` with the DMG attached (`gh release create`).
+  `elliot-ylambda/clinch-terminal` with the DMG **and** `Clinch.app.zip`
+  attached (`gh release create`). The zip must always be attached: the
+  clinch.sh site's Install button downloads
+  `releases/download/<tag>/Clinch.app.zip`.
   - `make release VERSION=v0.2.0` — set the tag (default: `v0.<date>`).
   - `make release UNIVERSAL=1` — universal Intel+ARM DMG (slower; default is this
     machine's arch only).
-  - The DMG is built from your **local checkout**, so build from `master` for a
+  - The DMG is built from your **local checkout**, so build from `main` for a
     release that matches what you merged.
 - `make install-local` — builds the `local` channel and installs it as
   `/Applications/WarpLocal.app`, a standalone app that won't clobber (or be

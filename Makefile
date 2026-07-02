@@ -17,6 +17,9 @@ CLINCH_REPO ?= elliot-ylambda/clinch-terminal
 STABLE_APP         ?= Clinch
 STABLE_PROFILE_DIR := release-lto
 RELEASE_DMG        := target/$(STABLE_PROFILE_DIR)/bundle/osx/$(STABLE_APP).dmg
+# The clinch.sh site's Install button links to Clinch.app.zip on the latest
+# release, so every release must attach the zip alongside the DMG.
+RELEASE_ZIP        := target/$(STABLE_PROFILE_DIR)/bundle/osx/$(STABLE_APP).app.zip
 # Universal (Intel+ARM) is much slower; default to this machine's arch only.
 BUNDLE_ARCH_FLAG   := $(if $(UNIVERSAL),,--nouniversal)
 VERSION            ?= v0.$(shell date +%Y.%m.%d.%H%M)
@@ -35,6 +38,8 @@ LOCAL_BUNDLE := target/release-lto-debug_assertions/bundle/osx/$(LOCAL_APP)
 
 define RELEASE_NOTES
 Download **$(STABLE_APP).dmg** below, open it, and drag $(STABLE_APP) to Applications.
+($(STABLE_APP).app.zip is the same app — it's what the clinch.sh Install button
+downloads; unzip and move to Applications.)
 
 This build is self-signed (not notarized). On first launch, right-click
 $(STABLE_APP) → **Open**, or clear the quarantine flag:
@@ -52,7 +57,8 @@ help: ## List available targets
 
 release: _require-create-dmg ## Build a self-signed DMG and publish a GitHub Release (VERSION=v0.x, UNIVERSAL=1)
 	./script/bundle -c stable --selfsign $(BUNDLE_ARCH_FLAG)
-	gh release create "$(VERSION)" "$(RELEASE_DMG)" \
+	ditto -c -k --keepParent "target/$(STABLE_PROFILE_DIR)/bundle/osx/$(STABLE_APP).app" "$(RELEASE_ZIP)"
+	gh release create "$(VERSION)" "$(RELEASE_DMG)" "$(RELEASE_ZIP)" \
 	  --repo $(CLINCH_REPO) \
 	  --title "$(STABLE_APP) $(VERSION)" \
 	  --notes "$$RELEASE_NOTES"
