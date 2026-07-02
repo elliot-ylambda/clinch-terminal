@@ -47,6 +47,17 @@ impl CliAgentUsageModel {
         }
     }
 
+    /// Test-only constructor: skips the producer thread (which reads the macOS
+    /// keychain and makes a blocking HTTP call) so workspace tests that build
+    /// the footer can register and subscribe to this singleton without touching
+    /// the network or keychain. Holds a default snapshot forever.
+    #[cfg(test)]
+    pub fn new_for_test() -> Self {
+        Self {
+            latest: UsageSnapshot::default(),
+        }
+    }
+
     pub fn latest(&self) -> &UsageSnapshot {
         &self.latest
     }
