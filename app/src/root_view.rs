@@ -3719,6 +3719,13 @@ impl AuthOnboardingState {
                 // No workspace to clean up for onboarding/login slide state
             }
             AuthOnboardingState::Terminal(workspace) => {
+                if !ChannelState::has_backend() {
+                    // Backendless fork builds (Clinch): auth state was already cleared by
+                    // the caller above; there is no Auth screen to log back into, so stay
+                    // in the terminal instead of tearing down the workspace.
+                    return;
+                }
+
                 // Clean up current workspace before resetting.
                 workspace.update(ctx, |workspace, ctx| {
                     workspace.on_log_out(ctx);

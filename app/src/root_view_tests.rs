@@ -132,7 +132,10 @@ fn test_sync_noop_when_already_onboarded_on_server() {
 /// every window: no onboarding slides, no login slide, no auth screen. This
 /// must hold even if stale `AuthState` would otherwise report the user as
 /// logged in, since the backendless branch is checked first in
-/// `RootView::new`.
+/// `RootView::new`. It also must hold across `log_out` (e.g. triggered by a
+/// stale-auth-state CLI or Settings logout): `AuthOnboardingState::log_out`'s
+/// `Terminal` arm is gated the same way, so it stays in `Terminal` instead of
+/// re-entering the `Auth` screen.
 ///
 /// Note: this test mutates the process-global `ChannelState` via
 /// `ChannelState::set`, relying on `cargo nextest`'s process-per-test
@@ -181,6 +184,23 @@ fn test_backendless_build_launches_directly_into_terminal() {
                 assert!(
                     matches!(view.auth_onboarding_state, AuthOnboardingState::Terminal(_)),
                     "backendless builds must launch straight into the workspace"
+                );
+            });
+        });
+
+        // Simulate a logout (e.g. from Settings or the CLI, possibly triggered
+        // by stale AuthState) and verify it does not re-enter the Auth screen.
+        app.update(|ctx| {
+            root_view.update(ctx, |view, ctx| {
+                view.log_out(&(), ctx);
+            });
+        });
+
+        app.read(|ctx| {
+            root_view.read(ctx, |view, _ctx| {
+                assert!(
+                    matches!(view.auth_onboarding_state, AuthOnboardingState::Terminal(_)),
+                    "backendless builds must stay in the workspace after log_out"
                 );
             });
         });

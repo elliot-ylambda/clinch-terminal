@@ -295,7 +295,10 @@ impl MainSettingsPageView {
             widgets.push(Box::new(VersionInfoWidget::default()));
         }
 
-        widgets.push(Box::new(LogoutWidget::default()));
+        // Backendless fork builds (Clinch) have nothing to log out of.
+        if ChannelState::has_backend() {
+            widgets.push(Box::new(LogoutWidget::default()));
+        }
 
         let page = PageType::new_uncategorized(widgets, Some("Account"));
 

@@ -227,6 +227,11 @@ impl Workspace {
         intention: OnboardingIntention,
         ctx: &mut ViewContext<Self>,
     ) {
+        // Backendless fork builds (Clinch) have no onboarding to show.
+        if !ChannelState::has_backend() {
+            return;
+        }
+
         let Some(terminal_view_handle) = self.active_session_view(ctx) else {
             log::warn!("No active terminal view for post-setup onboarding tutorial");
             return;
