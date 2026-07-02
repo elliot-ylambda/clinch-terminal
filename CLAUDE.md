@@ -26,8 +26,9 @@ GitHub Actions secrets, no macOS runner minutes. A root `Makefile` wraps it; run
   stable --selfsign`) and publishes a GitHub Release on
   `elliot-ylambda/clinch-terminal` with the DMG **and** `Clinch.app.zip`
   attached (`gh release create`). The zip must always be attached: the
-  clinch.sh site's Install button downloads
-  `releases/download/<tag>/Clinch.app.zip`.
+  install one-liner (`curl -fsSL https://clinch.sh/install | sh`, which
+  clinch.sh redirects to `install.sh` at this repo's root) downloads
+  `releases/latest/download/Clinch.app.zip`.
   - `make release VERSION=v0.2.0` — set the tag (default: `v0.<date>`).
   - `make release UNIVERSAL=1` — universal Intel+ARM DMG (slower; default is this
     machine's arch only).
@@ -40,10 +41,16 @@ GitHub Actions secrets, no macOS runner minutes. A root `Makefile` wraps it; run
   app and the distributable `Clinch` app).
 
 ### The released app is self-signed
-It is **not** notarized, so on first launch macOS warns. The release notes tell
-users to right-click → **Open**, or run
-`xattr -dr com.apple.quarantine /Applications/Clinch.app`. To ship without
-warnings you'd need an Apple Developer ID cert + notarization (paid).
+It is **not** notarized, so macOS quarantines **browser-downloaded** copies
+and blocks them on first launch (macOS 15+ removed the right-click → **Open**
+bypass; the only escapes are System Settings → Privacy & Security → **Open
+Anyway**, or `xattr -dr com.apple.quarantine /Applications/Clinch.app`). The
+recommended install path is the `curl -fsSL https://clinch.sh/install | sh`
+one-liner (`install.sh` at this repo's root): curl downloads never get the
+quarantine flag, so Gatekeeper never runs. To ship browser downloads without
+warnings you'd need an Apple Developer ID cert + notarization (paid) — note
+`script/macos/bundle` already has the full codesign→notarize→staple pipeline
+(`--read-passwords-from-env`); it just needs your own team ID and certs.
 
 ### Prerequisites
 - `gh` authenticated with access to `elliot-ylambda/clinch-terminal`. Note `gh`

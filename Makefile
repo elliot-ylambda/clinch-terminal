@@ -37,14 +37,23 @@ LOCAL_APP    := WarpLocal.app
 LOCAL_BUNDLE := target/release-lto-debug_assertions/bundle/osx/$(LOCAL_APP)
 
 define RELEASE_NOTES
-Download **$(STABLE_APP).dmg** below, open it, and drag $(STABLE_APP) to Applications.
-($(STABLE_APP).app.zip is the same app — it's what the clinch.sh Install button
-downloads; unzip and move to Applications.)
+**Easiest install** — paste this in any terminal (curl downloads skip macOS
+quarantine, so there are no Gatekeeper warnings):
 
-This build is self-signed (not notarized). On first launch, right-click
-$(STABLE_APP) → **Open**, or clear the quarantine flag:
+    curl -fsSL https://clinch.sh/install | sh
+
+Or download **$(STABLE_APP).dmg** below, open it, and drag $(STABLE_APP) to
+Applications. ($(STABLE_APP).app.zip is the same app — it's what the install
+script downloads.)
+
+Manual downloads get quarantined because this build is self-signed (not
+notarized), and macOS 15+ removed the right-click → **Open** bypass. Either
+clear the flag once:
 
     xattr -dr com.apple.quarantine /Applications/$(STABLE_APP).app
+
+or try to open the app, then approve it under System Settings → Privacy &
+Security → **Open Anyway**.
 endef
 export RELEASE_NOTES
 
