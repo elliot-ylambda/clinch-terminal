@@ -1,5 +1,6 @@
-use super::*;
 use std::io::Write;
+
+use super::*;
 
 #[test]
 fn reads_command_from_registry_file() {
@@ -72,7 +73,10 @@ fn no_fork_command_for_unknown() {
         None
     );
     assert_eq!(derive_fork_command("warp_agent_resume_launch claude"), None);
-    assert_eq!(derive_fork_command("warp_agent_resume_launch claude "), None);
+    assert_eq!(
+        derive_fork_command("warp_agent_resume_launch claude "),
+        None
+    );
 }
 
 #[test]
