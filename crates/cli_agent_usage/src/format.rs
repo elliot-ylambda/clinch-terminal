@@ -42,6 +42,77 @@ pub fn fmt_reset(resets_at: Option<DateTime<Utc>>, now: DateTime<Utc>) -> String
     }
 }
 
+/// Map a raw model id to a short human label for the tab chip.
+/// Returns `""` for unknown / synthetic ids so callers can hide the chip.
+///
+/// Examples: `claude-opus-4-8` → `Opus 4.8`, `claude-haiku-4-5-20251001` →
+/// `Haiku 4.5`, `gpt-5-codex` → `GPT-5 Codex`, `gpt-5.5` → `GPT-5.5`.
+pub fn friendly_model_name(model: &str) -> String {
+    let m = model.trim().to_ascii_lowercase();
+    if m.is_empty() || m == "<synthetic>" || m == "unknown" {
+        return String::new();
+    }
+
+    // Anthropic families.
+    for (needle, label) in [("opus", "Opus"), ("sonnet", "Sonnet"), ("haiku", "Haiku")] {
+        if let Some(idx) = m.find(needle) {
+            let ver = version_from(&m[idx + needle.len()..]);
+            return if ver.is_empty() {
+                label.to_string()
+            } else {
+                format!("{label} {ver}")
+            };
+        }
+    }
+
+    // OpenAI / Codex.
+    if m.starts_with("gpt") || m.contains("codex") {
+        let core = m.trim_start_matches("gpt-").trim_start_matches("gpt");
+        let ver = version_from(core);
+        let mut label = String::from("GPT");
+        if !ver.is_empty() {
+            label.push('-');
+            label.push_str(&ver);
+        }
+        if m.contains("codex") {
+            label.push_str(" Codex");
+        }
+        return label;
+    }
+
+    // Fallback: title-case the dashed id.
+    m.split(['-', '_'])
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            let mut chars = s.chars();
+            match chars.next() {
+                Some(first) => first.to_ascii_uppercase().to_string() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Read a leading `major[.minor]` version from `s` (after any leading `-`/`.`),
+/// stopping at the first non-numeric token, a date-like token (len ≥ 5), or two
+/// components. `"-4-8"` → `"4.8"`, `"-4-5-20251001"` → `"4.5"`, `"5-codex"` →
+/// `"5"`, `""` → `""`.
+fn version_from(s: &str) -> String {
+    let s = s.trim_start_matches(['-', '.']);
+    let mut parts = Vec::new();
+    for token in s.split(['-', '.']) {
+        if token.is_empty() || !token.chars().all(|c| c.is_ascii_digit()) || token.len() >= 5 {
+            break;
+        }
+        parts.push(token);
+        if parts.len() == 2 {
+            break;
+        }
+    }
+    parts.join(".")
+}
+
 /// One half of the footer chip.
 pub struct ChipHalf {
     /// `"cc"` (Claude Code) or `"cx"` (Codex).
@@ -169,5 +240,27 @@ mod tests {
         assert_eq!(cx.pct, "—"); // codex: no plan (tokens don't set pct)
         assert_eq!(cc.severity, Severity::Normal);
         assert_eq!(cx.severity, Severity::Normal);
+    }
+
+    #[test]
+    fn friendly_model_name_maps_known_ids() {
+        assert_eq!(friendly_model_name("claude-opus-4-8"), "Opus 4.8");
+        assert_eq!(friendly_model_name("claude-sonnet-5"), "Sonnet 5");
+        assert_eq!(
+            friendly_model_name("claude-haiku-4-5-20251001"),
+            "Haiku 4.5"
+        );
+        assert_eq!(friendly_model_name("claude-haiku"), "Haiku");
+        assert_eq!(friendly_model_name("gpt-5-codex"), "GPT-5 Codex");
+        assert_eq!(friendly_model_name("gpt-5.5"), "GPT-5.5");
+        assert_eq!(friendly_model_name("gpt-5"), "GPT-5");
+    }
+
+    #[test]
+    fn friendly_model_name_hides_noise_and_titlecases_unknown() {
+        assert_eq!(friendly_model_name("<synthetic>"), "");
+        assert_eq!(friendly_model_name("unknown"), "");
+        assert_eq!(friendly_model_name("   "), "");
+        assert_eq!(friendly_model_name("some-new-model"), "Some New Model");
     }
 }
