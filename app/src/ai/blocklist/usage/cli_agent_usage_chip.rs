@@ -14,7 +14,7 @@ use warpui::Element;
 use crate::appearance::Appearance;
 
 /// Map a crate `Severity` to a fill against `bg` (the surface the text sits on).
-fn severity_fill(severity: Severity, theme: &WarpTheme, bg: Fill) -> Fill {
+pub(super) fn severity_fill(severity: Severity, theme: &WarpTheme, bg: Fill) -> Fill {
     match severity {
         Severity::Normal => theme.main_text_color(bg),
         Severity::Warning => Fill::Solid(theme.ui_warning_color()),
@@ -23,7 +23,11 @@ fn severity_fill(severity: Severity, theme: &WarpTheme, bg: Fill) -> Fill {
 }
 
 /// A monospace text span in a given color.
-fn span(text: impl Into<String>, color: Fill, appearance: &Appearance) -> Box<dyn Element> {
+pub(super) fn span(
+    text: impl Into<String>,
+    color: Fill,
+    appearance: &Appearance,
+) -> Box<dyn Element> {
     Text::new_inline(
         text.into(),
         appearance.monospace_font_family(),
