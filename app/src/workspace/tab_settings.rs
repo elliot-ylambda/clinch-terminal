@@ -260,18 +260,29 @@ pub enum HeaderToolbarChipSelection {
 impl HeaderToolbarChipSelection {
     pub fn left_items(&self) -> Vec<super::header_toolbar_item::HeaderToolbarItemKind> {
         use super::header_toolbar_item::HeaderToolbarItemKind;
-        match self {
+        let mut left = match self {
             Self::Default => HeaderToolbarItemKind::default_left(),
             Self::Custom { left, .. } => left.clone(),
+        };
+        // Clinch locks the tabs panel to the left zone. Guarantee the TabsPanel
+        // chip is always present on the left (at the front), regardless of any
+        // stored/customized selection — including legacy configs that placed it
+        // on the right, which `right_items` strips out below.
+        if !left.contains(&HeaderToolbarItemKind::TabsPanel) {
+            left.insert(0, HeaderToolbarItemKind::TabsPanel);
         }
+        left
     }
 
     pub fn right_items(&self) -> Vec<super::header_toolbar_item::HeaderToolbarItemKind> {
         use super::header_toolbar_item::HeaderToolbarItemKind;
-        match self {
+        let mut right = match self {
             Self::Default => HeaderToolbarItemKind::default_right(),
             Self::Custom { right, .. } => right.clone(),
-        }
+        };
+        // The tabs panel is left-locked; never surface it on the right.
+        right.retain(|item| *item != HeaderToolbarItemKind::TabsPanel);
+        right
     }
 
     pub fn contains_item(&self, item: &super::header_toolbar_item::HeaderToolbarItemKind) -> bool {

@@ -5,6 +5,7 @@ use warpui::{AppContext, SingletonEntity};
 use crate::auth::AuthStateProvider;
 use crate::features::FeatureFlag;
 use crate::settings::AISettings;
+use crate::tab::uses_vertical_tabs;
 use crate::ui_components::icons::Icon;
 use crate::workspace::tab_settings::TabSettings;
 
@@ -59,10 +60,7 @@ impl HeaderToolbarItemKind {
     /// Does not check user show/hide preferences — use `is_available` for that.
     pub fn is_supported(&self, app: &AppContext) -> bool {
         match self {
-            Self::TabsPanel => {
-                FeatureFlag::VerticalTabs.is_enabled()
-                    && *TabSettings::as_ref(app).use_vertical_tabs
-            }
+            Self::TabsPanel => uses_vertical_tabs(),
             Self::ToolsPanel => true,
             Self::AgentManagement => {
                 let is_web_anonymous_user = AuthStateProvider::as_ref(app)

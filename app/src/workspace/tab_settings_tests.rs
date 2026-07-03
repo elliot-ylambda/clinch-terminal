@@ -118,12 +118,45 @@ fn header_toolbar_chip_selection_custom_with_code_review_on_left_reports_present
 }
 
 #[test]
-fn header_toolbar_chip_selection_custom_empty_reports_all_absent() {
+fn header_toolbar_chip_selection_custom_empty_reports_only_tabs_panel_present() {
+    // The tabs panel is locked to the left, so it is always injected into the
+    // left zone even for an otherwise-empty custom config.
     let config = HeaderToolbarChipSelection::Custom {
         left: vec![],
         right: vec![],
     };
     for item in HeaderToolbarItemKind::all_items() {
-        assert!(!config.contains_item(&item));
+        if item == HeaderToolbarItemKind::TabsPanel {
+            assert!(config.contains_item(&item));
+        } else {
+            assert!(!config.contains_item(&item));
+        }
     }
+}
+
+#[test]
+fn header_toolbar_chip_selection_locks_tabs_panel_to_left() {
+    // A legacy config that placed the tabs panel on the right must be
+    // normalized: TabsPanel is forced into the left zone and stripped from the
+    // right, so the panel and its toggle button always render on the left.
+    let config = HeaderToolbarChipSelection::Custom {
+        left: vec![HeaderToolbarItemKind::ToolsPanel],
+        right: vec![
+            HeaderToolbarItemKind::TabsPanel,
+            HeaderToolbarItemKind::NotificationsMailbox,
+        ],
+    };
+    assert!(config
+        .left_items()
+        .contains(&HeaderToolbarItemKind::TabsPanel));
+    assert!(!config
+        .right_items()
+        .contains(&HeaderToolbarItemKind::TabsPanel));
+    // Other items keep their configured placement.
+    assert!(config
+        .left_items()
+        .contains(&HeaderToolbarItemKind::ToolsPanel));
+    assert!(config
+        .right_items()
+        .contains(&HeaderToolbarItemKind::NotificationsMailbox));
 }

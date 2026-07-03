@@ -749,7 +749,7 @@ pub fn init(app: &mut AppContext) {
                 .with_custom_description(bindings::MAC_MENUS_CONTEXT, "Toggle Vertical Tabs Panel"),
             WorkspaceAction::ToggleVerticalTabsPanel,
         )
-        .with_context_predicate(id!("Workspace") & id!(flags::USE_VERTICAL_TABS_FLAG))
+        .with_context_predicate(id!("Workspace"))
         .with_group(bindings::BindingGroup::Navigation.as_str())
         .with_enabled(|| FeatureFlag::VerticalTabs.is_enabled())
         .with_key_binding(cmd_or_ctrl_shift("b")),
@@ -865,7 +865,7 @@ pub fn init(app: &mut AppContext) {
         EditableBinding::new(
             "workspace:move_tab_left",
             BindingDescription::new("Move tab left")
-                .with_dynamic_override(|ctx| uses_vertical_tabs(ctx).then(|| "move tab up".into())),
+                .with_dynamic_override(|_| uses_vertical_tabs().then(|| "move tab up".into())),
             WorkspaceAction::MoveActiveTabLeft,
         )
         .with_group(bindings::BindingGroup::Navigation.as_str())
@@ -878,9 +878,8 @@ pub fn init(app: &mut AppContext) {
         .with_custom_action(CustomAction::MoveTabLeft),
         EditableBinding::new(
             "workspace:move_tab_right",
-            BindingDescription::new("Move tab right").with_dynamic_override(|ctx| {
-                uses_vertical_tabs(ctx).then(|| "move tab down".into())
-            }),
+            BindingDescription::new("Move tab right")
+                .with_dynamic_override(|_| uses_vertical_tabs().then(|| "move tab down".into())),
             WorkspaceAction::MoveActiveTabRight,
         )
         .with_group(bindings::BindingGroup::Navigation.as_str())
@@ -1000,9 +999,8 @@ pub fn init(app: &mut AppContext) {
         .with_context_predicate(id!("Workspace")),
         EditableBinding::new(
             "workspace:close_tabs_right_active_tab",
-            BindingDescription::new("Close tabs to the right").with_dynamic_override(|ctx| {
-                uses_vertical_tabs(ctx).then(|| "close tabs below".into())
-            }),
+            BindingDescription::new("Close tabs to the right")
+                .with_dynamic_override(|_| uses_vertical_tabs().then(|| "close tabs below".into())),
             WorkspaceAction::CloseTabsRightActiveTab,
         )
         .with_group(bindings::BindingGroup::Close.as_str())
