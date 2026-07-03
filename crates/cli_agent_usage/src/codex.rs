@@ -16,6 +16,8 @@ pub struct RollupFile {
     pub entries: Vec<Entry>,
     pub last_total: TokenCounts,
     pub rate_limits: Option<PlanLimits>,
+    /// Session uuid from the `session_meta` line, when present.
+    pub session_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -98,6 +100,13 @@ pub fn parse_rollout_str(content: &str) -> RollupFile {
         // Track the latest model id seen anywhere in the file.
         if let Some(m) = payload.get("model").and_then(|v| v.as_str()) {
             model = m.to_string();
+        }
+
+        // The session_meta line's payload carries the session uuid.
+        if out.session_id.is_none() {
+            if let Some(sid) = payload.get("session_id").and_then(|v| v.as_str()) {
+                out.session_id = Some(sid.to_string());
+            }
         }
 
         if payload.get("type").and_then(|v| v.as_str()) != Some("token_count") {
@@ -312,5 +321,15 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn parse_rollout_captures_session_id_from_meta() {
+        const META: &str = r#"{"timestamp":"2026-06-25T22:51:38.016Z","type":"session_meta","payload":{"session_id":"019f00fb-40b5-7192-9b79-aa6d1034fe1b","id":"019f00fb-40b5-7192-9b79-aa6d1034fe1b","model":"gpt-5-codex"}}"#;
+        let r = parse_rollout_str(META);
+        assert_eq!(
+            r.session_id.as_deref(),
+            Some("019f00fb-40b5-7192-9b79-aa6d1034fe1b")
+        );
     }
 }
