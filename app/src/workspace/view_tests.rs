@@ -1273,6 +1273,42 @@ fn test_workspace_sessions_retrieves_panes() {
     });
 }
 
+/// Regression test for a "circular view reference" crash (SIGABRT on macOS).
+///
+/// When a CLI agent (e.g. Codex) emits a `StatusChanged` event on the focused
+/// terminal, `TerminalView::handle_cli_agent_sessions_event` runs with the
+/// terminal view leased out of the views map. Its desktop-notification guard
+/// `is_pane_actively_focused` used to reach `Workspace::active_terminal_id`,
+/// which `read`s the active terminal view — the very view being leased — and
+/// panicked with "circular view reference". `active_terminal_id` must resolve
+/// the id from the view handle without reading the leased view.
+#[test]
+fn active_terminal_id_is_readable_while_terminal_view_is_leased() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+
+        let workspace = mock_workspace(&mut app);
+
+        workspace.update(&mut app, |workspace, ctx| {
+            let terminal_handle = workspace
+                .get_pane_group_view(0)
+                .and_then(|tab| {
+                    tab.read(ctx, |pane_group, ctx| pane_group.active_session_view(ctx))
+                })
+                .expect("mock workspace should have an active terminal");
+            let expected_id = terminal_handle.id();
+
+            // Lease the terminal view (as an event handler does) and read the
+            // workspace's active terminal id from inside it. Before the fix this
+            // aborted the process with "circular view reference".
+            let active_id =
+                terminal_handle.update(ctx, |_terminal, ctx| workspace.active_terminal_id(ctx));
+
+            assert_eq!(active_id, Some(expected_id));
+        });
+    });
+}
+
 fn number_of_shared_sessions_in_tab(
     workspace: &Workspace,
     index: usize,

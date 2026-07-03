@@ -7703,8 +7703,24 @@ impl Workspace {
             })
     }
 
+    /// The handle to the active tab's active terminal view, if any.
+    ///
+    /// Unlike [`Self::read_from_active_terminal_view`], this only reads the pane
+    /// group (never the terminal view itself), so it is safe to call
+    /// re-entrantly from within the active terminal view's own update/event
+    /// handler — where that view is leased out of the views map and reading it
+    /// would panic with "circular view reference".
+    fn active_terminal_view_handle(&self, ctx: &AppContext) -> Option<ViewHandle<TerminalView>> {
+        self.get_pane_group_view(self.active_tab_index)
+            .and_then(|view| view.read(ctx, |pane_group, ctx| pane_group.active_session_view(ctx)))
+    }
+
     pub fn active_terminal_id(&self, app: &AppContext) -> Option<EntityId> {
-        self.read_from_active_terminal_view(app, |terminal| terminal.id())
+        // Resolve the id from the handle rather than reading the terminal view:
+        // callers such as `TerminalView::is_pane_actively_focused` invoke this
+        // from inside a leased terminal view, so reading it would panic.
+        self.active_terminal_view_handle(app)
+            .map(|terminal_view_handle| terminal_view_handle.id())
     }
 
     /// Retrieves the entity id of the active current active input. This is needed
