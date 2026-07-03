@@ -196,7 +196,9 @@ use crate::ai::blocklist::suggested_agent_mode_workflow_modal::{
 use crate::ai::blocklist::suggested_rule_modal::{
     SuggestedRuleAndId, SuggestedRuleModal, SuggestedRuleModalEvent,
 };
-use crate::ai::blocklist::usage::CliAgentUsageModel;
+use crate::ai::blocklist::usage::{
+    render_cli_agent_usage_header, render_cli_agent_usage_panel, CliAgentUsageModel,
+};
 use crate::ai::blocklist::{
     BlocklistAIHistoryEvent, PendingAttachment, PendingQueryState, QueuedQueryOrigin,
     SerializedBlockListItem, SlashCommandRequest, FORK_PREFIX,
@@ -989,6 +991,11 @@ pub struct Workspace {
     tab_mru_order: Vec<EntityId>,
     pub(crate) hovered_tab_index: Option<TabBarHoverIndex>,
     tab_bar_hover_state: MouseStateHandle,
+    /// Whether the tab-bar Claude Code + Codex usage detail panel is expanded.
+    cli_agent_usage_panel_open: bool,
+    /// Mouse-tracking handle for the tab-bar usage widget's `Hoverable`
+    /// (created once here, cloned at render time).
+    cli_agent_usage_mouse_state: MouseStateHandle,
     tab_fixed_width: Option<f32>,
     traffic_light_mouse_states: TrafficLightMouseStates,
     /// Tab groups in this workspace, keyed by id.
@@ -2817,6 +2824,11 @@ impl Workspace {
             me.handle_referral_theme_status_event(event, ctx);
         });
 
+        ctx.subscribe_to_model(&CliAgentUsageModel::handle(ctx), |_, _, _, ctx| {
+            // Re-render the tab bar when a usage scan completes.
+            ctx.notify();
+        });
+
         let referrals_client = ServerApiProvider::as_ref(ctx).get_referrals_client();
         // On startup, check if the user has earned a referral theme by referring other users
         referral_theme_status.update(ctx, |model, ctx| {
@@ -3288,6 +3300,8 @@ impl Workspace {
             tab_mru_order: Vec::new(),
             hovered_tab_index: None,
             tab_bar_hover_state: Default::default(),
+            cli_agent_usage_panel_open: false,
+            cli_agent_usage_mouse_state: Default::default(),
             traffic_light_mouse_states: Default::default(),
             tab_groups: HashMap::new(),
             horizontal_tab_group_mouse_states: RefCell::default(),
@@ -20710,6 +20724,47 @@ impl Workspace {
             );
         }
 
+        // Claude Code + Codex usage status. Window-global: shown whenever usage
+        // data exists (not tied to a focused pane). Click toggles the detail panel.
+        {
+            let snapshot = CliAgentUsageModel::as_ref(ctx).latest().clone();
+            let bg = appearance.theme().surface_1();
+            if render_cli_agent_usage_header(&snapshot, appearance, bg).is_some() {
+                let snapshot_for_panel = snapshot.clone();
+                let hover =
+                    Hoverable::new(self.cli_agent_usage_mouse_state.clone(), move |_state| {
+                        render_cli_agent_usage_header(&snapshot, appearance, bg)
+                            .unwrap_or_else(|| Empty::new().finish())
+                    })
+                    .on_click(|ctx, _app, _position| {
+                        ctx.dispatch_typed_action(WorkspaceAction::ToggleCliAgentUsagePanel);
+                    })
+                    .with_cursor(Cursor::PointingHand)
+                    .finish();
+
+                let mut stack = Stack::new().with_child(hover);
+                if self.cli_agent_usage_panel_open {
+                    stack.add_positioned_overlay_child(
+                        render_cli_agent_usage_panel(&snapshot_for_panel, appearance),
+                        OffsetPositioning::offset_from_parent(
+                            vec2f(0., 4.),
+                            ParentOffsetBounds::WindowByPosition,
+                            ParentAnchor::BottomRight,
+                            ChildAnchor::TopRight,
+                        ),
+                    );
+                }
+
+                // Shrinkable so the widget yields width to tabs; the
+                // SizeConstraintSwitch inside picks Full/Medium/Narrow to fit.
+                target.add_child(
+                    Container::new(Shrinkable::new(1., stack.finish()).finish())
+                        .with_margin_left(TAB_BAR_PADDING_LEFT)
+                        .finish(),
+                );
+            }
+        }
+
         if FeatureFlag::AvatarInTabBar.is_enabled() {
             target.add_child(
                 Container::new(self.render_avatar_button(appearance, ctx))
@@ -24527,6 +24582,10 @@ impl TypedActionView for Workspace {
             }
             ShowHeaderToolbarContextMenu { position } => {
                 self.show_header_toolbar_context_menu(*position, ctx);
+            }
+            ToggleCliAgentUsagePanel => {
+                self.cli_agent_usage_panel_open = !self.cli_agent_usage_panel_open;
+                ctx.notify();
             }
             ReopenClosedSession => {
                 // While we could grab the UndoCloseStack singleton entity and

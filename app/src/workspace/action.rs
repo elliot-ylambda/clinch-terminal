@@ -417,6 +417,9 @@ pub enum WorkspaceAction {
     ShowHeaderToolbarContextMenu {
         position: Vector2F,
     },
+    /// Toggle the expanded Claude Code + Codex usage panel anchored under the
+    /// tab-bar usage status widget.
+    ToggleCliAgentUsagePanel,
     Reauth,
     SignupAnonymousUser,
     SignInAnonymousWebUser,
@@ -1062,6 +1065,7 @@ impl WorkspaceAction {
             | OpenCLIAgentToolbarEditor
             | OpenHeaderToolbarEditor
             | ShowHeaderToolbarContextMenu { .. }
+            | ToggleCliAgentUsagePanel
             | Reauth
             | SignupAnonymousUser
             | LogOut
