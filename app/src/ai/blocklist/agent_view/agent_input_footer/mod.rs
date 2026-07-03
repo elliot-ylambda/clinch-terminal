@@ -221,6 +221,8 @@ pub struct AgentInputFooter {
     file_explorer_button: ViewHandle<ActionButton>,
     compact_button: ViewHandle<ActionButton>,
     fork_button: ViewHandle<ActionButton>,
+    continue_button: ViewHandle<ActionButton>,
+    looks_good_button: ViewHandle<ActionButton>,
     rich_input_button: ViewHandle<ActionButton>,
     settings_button: ViewHandle<ActionButton>,
     install_plugin_button: ViewHandle<ActionButton>,
@@ -419,6 +421,26 @@ impl AgentInputFooter {
                 .with_tooltip_alignment(TooltipAlignment::Left)
                 .on_click(|ctx| {
                     ctx.dispatch_typed_action(AgentInputFooterAction::ForkSession);
+                })
+        });
+        let continue_button = ctx.add_typed_action_view(|_ctx| {
+            ActionButton::new("Continue", AgentInputButtonTheme)
+                .with_icon(Icon::Play)
+                .with_tooltip("Send \"Continue\" to the agent")
+                .with_size(cli_button_size)
+                .with_tooltip_alignment(TooltipAlignment::Left)
+                .on_click(|ctx| {
+                    ctx.dispatch_typed_action(AgentInputFooterAction::SendContinue);
+                })
+        });
+        let looks_good_button = ctx.add_typed_action_view(|_ctx| {
+            ActionButton::new("LGTM", AgentInputButtonTheme)
+                .with_icon(Icon::ThumbsUp)
+                .with_tooltip("Looks good to me, continue")
+                .with_size(cli_button_size)
+                .with_tooltip_alignment(TooltipAlignment::Left)
+                .on_click(|ctx| {
+                    ctx.dispatch_typed_action(AgentInputFooterAction::SendLooksGood);
                 })
         });
         let rich_input_button = ctx.add_typed_action_view(|ctx| {
@@ -863,6 +885,8 @@ impl AgentInputFooter {
             file_explorer_button,
             compact_button,
             fork_button,
+            continue_button,
+            looks_good_button,
             rich_input_button,
             settings_button,
             start_remote_control_button,
@@ -1475,6 +1499,12 @@ impl AgentInputFooter {
             }
             AgentToolbarItemKind::Compact => Some(ChildView::new(&self.compact_button).finish()),
             AgentToolbarItemKind::ForkSession => Some(ChildView::new(&self.fork_button).finish()),
+            AgentToolbarItemKind::ContinuePrompt => {
+                Some(ChildView::new(&self.continue_button).finish())
+            }
+            AgentToolbarItemKind::LooksGoodPrompt => {
+                Some(ChildView::new(&self.looks_good_button).finish())
+            }
             AgentToolbarItemKind::RichInput => FeatureFlag::CLIAgentRichInput
                 .is_enabled()
                 .then(|| ChildView::new(&self.rich_input_button).finish()),
@@ -2202,7 +2232,9 @@ impl AgentInputFooter {
             | AgentToolbarItemKind::RichInput
             | AgentToolbarItemKind::Settings
             | AgentToolbarItemKind::Compact
-            | AgentToolbarItemKind::ForkSession => None,
+            | AgentToolbarItemKind::ForkSession
+            | AgentToolbarItemKind::ContinuePrompt
+            | AgentToolbarItemKind::LooksGoodPrompt => None,
         }
     }
 
@@ -2474,6 +2506,10 @@ pub enum AgentInputFooterAction {
     ToggleFileExplorer,
     Compact,
     ForkSession,
+    /// Submit "Continue" to the running CLI agent.
+    SendContinue,
+    /// Submit "Looks good to me, continue" to the running CLI agent.
+    SendLooksGood,
     ToggleRichInput,
     ToggleAutodetectionSetting,
     DismissFtuModelCallout,
@@ -2561,6 +2597,24 @@ impl TypedActionView for AgentInputFooter {
             AgentInputFooterAction::ForkSession => {
                 if self.cli_agent(ctx).is_some() {
                     ctx.emit(AgentInputFooterEvent::ForkSession);
+                }
+            }
+            AgentInputFooterAction::SendContinue => {
+                // Type "Continue" + Enter into the live agent, using the
+                // per-agent submit strategy. Guard on a CLI agent being present
+                // (consistent with Compact/ForkSession) so a stray keybinding
+                // can't type into a plain shell.
+                if self.cli_agent(ctx).is_some() {
+                    ctx.emit(AgentInputFooterEvent::SubmitTextToCliAgent(
+                        "Continue".to_string(),
+                    ));
+                }
+            }
+            AgentInputFooterAction::SendLooksGood => {
+                if self.cli_agent(ctx).is_some() {
+                    ctx.emit(AgentInputFooterEvent::SubmitTextToCliAgent(
+                        "Looks good to me, continue".to_string(),
+                    ));
                 }
             }
             AgentInputFooterAction::ToggleRichInput => {
@@ -2731,6 +2785,9 @@ pub enum AgentInputFooterEvent {
     ToggleFileExplorer(CLIAgent),
     /// Fork this pane's CLI-agent session into a new tab.
     ForkSession,
+    /// Submit a fixed prompt string to this pane's live CLI agent using the
+    /// per-agent submission strategy (types the text, then presses Enter).
+    SubmitTextToCliAgent(String),
     StartRemoteControl,
     StopRemoteControl,
     OpenRichInput,

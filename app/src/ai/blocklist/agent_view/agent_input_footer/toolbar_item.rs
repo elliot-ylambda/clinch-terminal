@@ -73,6 +73,12 @@ pub enum AgentToolbarItemKind {
     // CLI agent only – forks this session into a new tab.
     ForkSession,
 
+    // CLI agent only – submits "Continue" to the running agent.
+    ContinuePrompt,
+
+    // CLI agent only – submits "Looks good to me, continue" to the running agent.
+    LooksGoodPrompt,
+
     // Agent view only – shows fast-forward (auto-approve) toggle in the footer
     FastForwardToggle,
 
@@ -95,7 +101,9 @@ impl AgentToolbarItemKind {
             | Self::RichInput
             | Self::Settings
             | Self::Compact
-            | Self::ForkSession => ToolbarAvailability::CLIAgentOnly,
+            | Self::ForkSession
+            | Self::ContinuePrompt
+            | Self::LooksGoodPrompt => ToolbarAvailability::CLIAgentOnly,
         }
     }
 
@@ -112,7 +120,9 @@ impl AgentToolbarItemKind {
             | Self::ShareSession
             | Self::FileExplorer
             | Self::Compact
-            | Self::ForkSession => !status.is_viewer(),
+            | Self::ForkSession
+            | Self::ContinuePrompt
+            | Self::LooksGoodPrompt => !status.is_viewer(),
             Self::FileAttach => !status.is_viewer() || is_cloud_mode,
             Self::FastForwardToggle => !status.is_viewer() || status.is_executor(),
             // Handoff is host-initiated; viewers cannot hand off another user's conversation.
@@ -140,6 +150,8 @@ impl AgentToolbarItemKind {
             Self::Settings => "Settings",
             Self::Compact => "Compact",
             Self::ForkSession => "Fork",
+            Self::ContinuePrompt => "Continue",
+            Self::LooksGoodPrompt => "LGTM",
             Self::FastForwardToggle => "Fast Forward",
             Self::HandoffToCloud => "Hand off to cloud",
         }
@@ -159,6 +171,8 @@ impl AgentToolbarItemKind {
             Self::Settings => Some(Icon::Settings),
             Self::Compact => Some(Icon::Minimize),
             Self::ForkSession => Some(Icon::GitBranch),
+            Self::ContinuePrompt => Some(Icon::Play),
+            Self::LooksGoodPrompt => Some(Icon::ThumbsUp),
             Self::FastForwardToggle => Some(Icon::FastForward),
             // The bundled `upload-cloud-01.svg` (cloud-with-upward-arrow) is the
             // closest fit among the existing icons for V0; design may swap it later.
@@ -184,7 +198,9 @@ impl AgentToolbarItemKind {
             | Self::RichInput
             | Self::Settings
             | Self::Compact
-            | Self::ForkSession => false,
+            | Self::ForkSession
+            | Self::ContinuePrompt
+            | Self::LooksGoodPrompt => false,
         }
     }
 
@@ -282,6 +298,8 @@ impl AgentToolbarItemKind {
         let mut items = vec![
             Self::ForkSession,
             Self::Compact,
+            Self::ContinuePrompt,
+            Self::LooksGoodPrompt,
             Self::FileAttach,
             Self::VoiceInput,
             Self::ContextChip(ContextChipKind::GitDiffStats),
@@ -320,6 +338,8 @@ impl AgentToolbarItemKind {
             Self::VoiceInput,
             Self::ForkSession,
             Self::Compact,
+            Self::ContinuePrompt,
+            Self::LooksGoodPrompt,
             Self::Settings,
         ]);
         if FeatureFlag::CreatingSharedSessions.is_enabled()
@@ -352,3 +372,7 @@ impl From<ContextChipKind> for AgentToolbarItemKind {
         Self::ContextChip(kind)
     }
 }
+
+#[cfg(test)]
+#[path = "toolbar_item_tests.rs"]
+mod tests;

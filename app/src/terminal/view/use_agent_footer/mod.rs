@@ -241,6 +241,18 @@ impl TerminalView {
             UseAgentToolbarEvent::ForkSession => {
                 self.fork_cli_agent_session(ctx);
             }
+            UseAgentToolbarEvent::SubmitTextToCliAgent(text) => {
+                // Submit the fixed quick-reply prompt to the live CLI agent using
+                // the per-agent Enter strategy. `submit_text_to_cli_agent_pty` is
+                // gated on `local_tty`; a build without a local PTY has nothing to
+                // submit to, so this is a no-op there.
+                #[cfg(feature = "local_tty")]
+                self.submit_text_to_cli_agent_pty(text.clone(), ctx);
+                #[cfg(not(feature = "local_tty"))]
+                {
+                    let _ = text;
+                }
+            }
             UseAgentToolbarEvent::StartRemoteControl { scrollback_type } => {
                 self.auto_stop_sharing_on_cli_end =
                     *scrollback_type == SharedSessionScrollbackType::None;
@@ -1180,6 +1192,9 @@ impl UseAgentToolbar {
             AgentInputFooterEvent::ForkSession => {
                 ctx.emit(UseAgentToolbarEvent::ForkSession);
             }
+            AgentInputFooterEvent::SubmitTextToCliAgent(text) => {
+                ctx.emit(UseAgentToolbarEvent::SubmitTextToCliAgent(text.clone()));
+            }
             AgentInputFooterEvent::StartRemoteControl => {
                 let scrollback_type = if self.cli_agent(ctx).is_some() {
                     SharedSessionScrollbackType::None
@@ -1286,6 +1301,9 @@ pub enum UseAgentToolbarEvent {
     ToggleFileExplorer(CLIAgent),
     /// Fork the CLI agent session in this pane into a new tab.
     ForkSession,
+    /// Submit a fixed prompt string to this pane's live CLI agent using the
+    /// per-agent submission strategy (types the text, then presses Enter).
+    SubmitTextToCliAgent(String),
     /// Start remote control (one-click share without modal).
     StartRemoteControl {
         scrollback_type: SharedSessionScrollbackType,
