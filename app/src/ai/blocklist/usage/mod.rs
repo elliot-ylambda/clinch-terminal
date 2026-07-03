@@ -9,7 +9,7 @@ pub mod conversation_usage_view;
 pub mod rollup;
 pub mod tab_model_label;
 
-pub use cli_agent_usage_chip::{render_cli_agent_usage_chip, render_cli_agent_usage_panel};
+pub use cli_agent_usage_chip::render_cli_agent_usage_panel;
 pub use cli_agent_usage_header::render_cli_agent_usage_header;
 pub use cli_agent_usage_model::CliAgentUsageModel;
 pub use tab_model_label::cli_agent_model_label;
