@@ -38,6 +38,7 @@ use warpui::{AppContext, EntityId, SingletonEntity, ViewHandle, WindowId};
 use super::{render_group_member_icon_collage, select_unique_pane_kinds};
 use crate::ai::agent::conversation::{ConversationStatus, StatusColorStyle};
 use crate::ai::agent_management::AgentNotificationsModel;
+use crate::ai::blocklist::usage::{cli_agent_model_label, CliAgentUsageModel};
 use crate::ai::cloud_environments::CloudAmbientAgentEnvironment;
 use crate::ai::conversation_status_ui::render_status_element;
 use crate::appearance::Appearance;
@@ -3196,6 +3197,18 @@ fn render_title_indicator(theme: &WarpTheme) -> Box<dyn Element> {
     .finish()
 }
 
+/// The model chip label for a terminal tab running a CLI agent, or `None`.
+fn tab_agent_model_label(app: &AppContext, view_id: EntityId) -> Option<String> {
+    let sessions = CLIAgentSessionsModel::as_ref(app);
+    let session = sessions.session(view_id)?;
+    let snapshot = CliAgentUsageModel::as_ref(app).latest();
+    cli_agent_model_label(
+        snapshot,
+        session.agent,
+        session.session_context.session_id.as_deref(),
+    )
+}
+
 fn render_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn Element> {
     let effective_subtitle = props.subtitle.clone();
     let appearance = Appearance::as_ref(app);
@@ -4181,17 +4194,40 @@ fn render_terminal_row_content(
         }
     };
 
-    let first_line_element = if has_unread_activity(&props.typed, app) {
+    let model_label = tab_agent_model_label(app, terminal_view.id());
+    let has_activity_indicator = has_unread_activity(&props.typed, app);
+
+    let first_line_element = if model_label.is_some() || has_activity_indicator {
+        let mut trailing = Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center);
+        if let Some(label) = model_label {
+            trailing.add_child(
+                Container::new(
+                    ConstrainedBox::new(
+                        Text::new_inline(label, appearance.ui_font_family(), 11.)
+                            .with_clip(ClipConfig::ellipsis())
+                            .with_color(sub_text_color.into())
+                            .finish(),
+                    )
+                    .with_max_width(96.)
+                    .finish(),
+                )
+                .with_margin_left(6.)
+                .finish(),
+            );
+        }
+        if has_activity_indicator {
+            trailing.add_child(
+                Container::new(render_title_indicator(theme))
+                    .with_margin_left(4.)
+                    .finish(),
+            );
+        }
         Flex::row()
             .with_main_axis_size(MainAxisSize::Max)
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
             .with_main_axis_alignment(MainAxisAlignment::SpaceBetween)
             .with_child(Shrinkable::new(1., first_line).finish())
-            .with_child(
-                Container::new(render_title_indicator(theme))
-                    .with_margin_left(4.)
-                    .finish(),
-            )
+            .with_child(trailing.finish())
             .finish()
     } else {
         first_line

@@ -196,6 +196,7 @@ use crate::ai::blocklist::suggested_agent_mode_workflow_modal::{
 use crate::ai::blocklist::suggested_rule_modal::{
     SuggestedRuleAndId, SuggestedRuleModal, SuggestedRuleModalEvent,
 };
+use crate::ai::blocklist::usage::CliAgentUsageModel;
 use crate::ai::blocklist::{
     BlocklistAIHistoryEvent, PendingAttachment, PendingQueryState, QueuedQueryOrigin,
     SerializedBlockListItem, SlashCommandRequest, FORK_PREFIX,
@@ -3054,6 +3055,11 @@ impl Workspace {
         );
         ctx.subscribe_to_model(&CLIAgentSessionsModel::handle(ctx), |me, _, event, ctx| {
             me.handle_cli_agent_sessions_event(event, ctx);
+        });
+
+        // Re-render tabs when a CLI-agent session's model changes.
+        ctx.subscribe_to_model(&CliAgentUsageModel::handle(ctx), |_, _, _, ctx| {
+            ctx.notify();
         });
 
         ctx.subscribe_to_model(
