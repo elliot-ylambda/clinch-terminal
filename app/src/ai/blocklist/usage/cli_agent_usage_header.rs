@@ -1,7 +1,6 @@
 use chrono::{DateTime, Utc};
 use cli_agent_usage::format::{chip_halves, fmt_pct, fmt_reset};
 use cli_agent_usage::{LimitWindow, Provider, Severity, UsageSnapshot};
-
 use warp_core::ui::theme::Fill;
 use warp_core::ui::Icon;
 use warpui::elements::{

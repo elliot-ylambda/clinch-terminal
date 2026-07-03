@@ -1,7 +1,6 @@
 use chrono::{DateTime, Utc};
 use cli_agent_usage::format::{chip_halves, fmt_pct, fmt_reset, fmt_tokens};
 use cli_agent_usage::{LimitWindow, Provider, Severity, UsageSnapshot, WindowTotals};
-
 // Element + theme imports — mirror app/src/context_chips/display_chip.rs.
 use warp_core::ui::theme::{Fill, WarpTheme};
 use warp_core::ui::Icon;
@@ -53,10 +52,14 @@ pub fn render_cli_agent_usage_chip(
     let mut row = Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center);
     row.add_child(
         Container::new(
-            ConstrainedBox::new(Icon::Clock.to_warpui_icon(theme.main_text_color(bg)).finish())
-                .with_width(icon_size)
-                .with_height(icon_size)
-                .finish(),
+            ConstrainedBox::new(
+                Icon::Clock
+                    .to_warpui_icon(theme.main_text_color(bg))
+                    .finish(),
+            )
+            .with_width(icon_size)
+            .with_height(icon_size)
+            .finish(),
         )
         .with_margin_right(4.)
         .finish(),
@@ -74,7 +77,11 @@ pub fn render_cli_agent_usage_chip(
         ));
     }
 
-    Some(Container::new(row.finish()).with_vertical_padding(4.).finish())
+    Some(
+        Container::new(row.finish())
+            .with_vertical_padding(4.)
+            .finish(),
+    )
 }
 
 /// The expanded panel: two columns (Claude | Codex) — 5h %, weekly %, then
@@ -100,13 +107,33 @@ pub fn render_cli_agent_usage_panel(
     // Plan-% rows.
     col.add_child(panel_row(
         span("5h", sub, appearance),
-        plan_cell(snapshot.claude.plan.and_then(|p| p.session), now, appearance, bg),
-        plan_cell(snapshot.codex.plan.and_then(|p| p.session), now, appearance, bg),
+        plan_cell(
+            snapshot.claude.plan.and_then(|p| p.session),
+            now,
+            appearance,
+            bg,
+        ),
+        plan_cell(
+            snapshot.codex.plan.and_then(|p| p.session),
+            now,
+            appearance,
+            bg,
+        ),
     ));
     col.add_child(panel_row(
         span("Weekly", sub, appearance),
-        plan_cell(snapshot.claude.plan.and_then(|p| p.weekly), now, appearance, bg),
-        plan_cell(snapshot.codex.plan.and_then(|p| p.weekly), now, appearance, bg),
+        plan_cell(
+            snapshot.claude.plan.and_then(|p| p.weekly),
+            now,
+            appearance,
+            bg,
+        ),
+        plan_cell(
+            snapshot.codex.plan.and_then(|p| p.weekly),
+            now,
+            appearance,
+            bg,
+        ),
     ));
 
     // Token rows.
@@ -171,7 +198,11 @@ fn plan_cell(
         None => span("—", sub, appearance),
         Some(w) => {
             let mut row = Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center);
-            row.add_child(span(fmt_pct(w.percent), severity_fill(w.severity, theme, bg), appearance));
+            row.add_child(span(
+                fmt_pct(w.percent),
+                severity_fill(w.severity, theme, bg),
+                appearance,
+            ));
             row.add_child(span(
                 format!(" · {}", fmt_reset(w.resets_at, now)),
                 sub,
