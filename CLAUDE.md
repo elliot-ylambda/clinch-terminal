@@ -34,8 +34,15 @@ GitHub Actions secrets, no macOS runner minutes. A root `Makefile` wraps it; run
   - `make release VERSION=v0.2.0` — set the tag (default: `v0.<date>`).
   - `make release UNIVERSAL=1` — universal Intel+ARM DMG (slower; default is this
     machine's arch only).
-  - The DMG is built from your **local checkout**, so build from `main` for a
-    release that matches what you merged.
+  - The DMG is built from your **local checkout**, but `make release` first runs
+    `script/require-latest-main`, which fetches `clinch/main` and
+    **fast-forwards your local `main` to it** before building — so a stale
+    checkout can't silently ship an old build (the "pushed ≠ shipped" gap). It
+    **aborts before building** if you're not on `main`, the working tree is
+    dirty, or `main` has diverged from `clinch/main`. Pass `make release
+    SKIP_SYNC=1` to bypass the guard and build the current HEAD as-is
+    (intentional feature-branch or dirty-tree test builds). `make update`
+    inherits this because it runs `make release`.
 - `make update` — runs `make release` (build + publish for everyone), then swaps
   the freshly built bundle into `/Applications/Clinch.app` and relaunches it via
   `script/update-installed-clinch`. This is the everyday "ship it and run it on

@@ -33,6 +33,12 @@ VERSION            ?= v0.$(shell date +%Y.%m.%d.%H%M)
 SKIP_DMG_APPLESCRIPT ?= 1
 export SKIP_DMG_APPLESCRIPT
 
+# Bypass the latest-main guard (require-latest-main) and build the current HEAD
+# as-is — intentional feature-branch or dirty-tree test builds. Exported so the
+# flag reaches script/require-latest-main when passed as `make release SKIP_SYNC=1`.
+SKIP_SYNC ?=
+export SKIP_SYNC
+
 define RELEASE_NOTES
 Works on any Apple Silicon Mac (M1 or newer). **Easiest install** — paste
 this in any terminal (curl downloads skip macOS quarantine, so there are no
@@ -56,13 +62,13 @@ endef
 export RELEASE_NOTES
 
 .DEFAULT_GOAL := help
-.PHONY: help release update _require-create-dmg
+.PHONY: help release update require-latest-main _require-create-dmg
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 	  | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
 
-release: _require-create-dmg ## Build a self-signed DMG and publish a GitHub Release for everyone (VERSION=v0.x, UNIVERSAL=1)
+release: require-latest-main _require-create-dmg ## Build a self-signed DMG and publish a GitHub Release for everyone (VERSION=v0.x, UNIVERSAL=1)
 	./script/bundle -c stable --selfsign $(BUNDLE_ARCH_FLAG)
 	ditto -c -k --keepParent "$(STABLE_BUNDLE)" "$(RELEASE_ZIP)"
 	gh release create "$(VERSION)" "$(RELEASE_DMG)" "$(RELEASE_ZIP)" \
@@ -87,6 +93,9 @@ update: release ## Publish a release, then update + relaunch Clinch on THIS mach
 release: agent-resume
 agent-resume: ## Install/refresh the agent-resume capture layer (hooks + ~/.warp/agent-resume-bin)
 	bash tools/agent-resume/install.sh
+
+require-latest-main: ## Fast-forward main to clinch/main before building (SKIP_SYNC=1 to bypass)
+	./script/require-latest-main
 
 _require-create-dmg:
 	@command -v create-dmg >/dev/null 2>&1 || { \

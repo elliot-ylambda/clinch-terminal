@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# Guarantee this checkout is on the latest clinch/main before a release build.
+#
+# `make release`/`make update` compile the app from whatever HEAD the checkout
+# is on. Without this guard a stale checkout silently ships an old build — the
+# "pushed != shipped" gap: work merged to clinch/main never reaches users
+# because the local branch was never fast-forwarded. This script fetches
+# clinch/main and fast-forwards the local `main` to it, or aborts with a clear
+# message when it cannot do so safely.
+#
+# Bypass with SKIP_SYNC=1 to build the current HEAD as-is (intentional
+# feature-branch builds, dirty-tree test builds, offline work).
+#
+# Usage: script/require-latest-main
+set -euo pipefail
+
+REMOTE=clinch
+BRANCH=main
+
+if [[ "${SKIP_SYNC:-0}" == "1" ]]; then
+  echo "⚠ SKIP_SYNC=1 — building from current HEAD ($(git rev-parse --short HEAD)) without syncing $REMOTE/$BRANCH"
+  exit 0
+fi
+
+current_branch="$(git rev-parse --abbrev-ref HEAD)"
+if [[ "$current_branch" != "$BRANCH" ]]; then
+  echo "✗ Not on $BRANCH (on '$current_branch'). Releases build from $BRANCH."
+  echo "  Switch to $BRANCH, or pass SKIP_SYNC=1 to build this branch anyway."
+  exit 1
+fi
+
+if [[ -n "$(git status --porcelain)" ]]; then
+  echo "✗ Working tree is dirty; refusing to auto fast-forward $BRANCH."
+  echo "  Commit or stash your changes, or pass SKIP_SYNC=1 to build as-is."
+  exit 1
+fi
+
+echo "→ Fetching ${REMOTE}/${BRANCH}…"
+if ! git fetch "$REMOTE" "$BRANCH"; then
+  echo "✗ Could not fetch $REMOTE/$BRANCH. A release needs network access to publish anyway."
+  echo "  Fix connectivity, or pass SKIP_SYNC=1 to build offline from current HEAD."
+  exit 1
+fi
+
+head_sha="$(git rev-parse HEAD)"
+remote_sha="$(git rev-parse FETCH_HEAD)"
+
+if [[ "$head_sha" == "$remote_sha" ]]; then
+  echo "✓ Already on latest $REMOTE/$BRANCH ($(git rev-parse --short HEAD))"
+  exit 0
+fi
+
+# Local ahead of remote (e.g. a committed-but-unpushed hotfix): allow, but warn
+# so it's obvious the build carries commits nobody else has yet.
+if git merge-base --is-ancestor "$remote_sha" "$head_sha"; then
+  ahead="$(git rev-list --count "${remote_sha}..${head_sha}")"
+  echo "⚠ $BRANCH is $ahead commit(s) ahead of $REMOTE/$BRANCH (unpushed); building anyway."
+  exit 0
+fi
+
+# Remote ahead of local (behind): fast-forward to it.
+if git merge-base --is-ancestor "$head_sha" "$remote_sha"; then
+  behind="$(git rev-list --count "${head_sha}..${remote_sha}")"
+  git merge --ff-only "$remote_sha"
+  echo "✓ Fast-forwarded $BRANCH +$behind → $(git rev-parse --short HEAD)"
+  exit 0
+fi
+
+# Diverged: neither ref is an ancestor of the other, so no fast-forward exists.
+echo "✗ $BRANCH and $REMOTE/$BRANCH have diverged; cannot fast-forward."
+echo "  Rebase or merge manually, or pass SKIP_SYNC=1 to build current HEAD."
+exit 1
