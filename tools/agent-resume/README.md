@@ -19,9 +19,11 @@ capture (agent SessionStart hooks)          replay (Rust, in Warp)
                                                  Bootstrapped event, run the command
 ```
 
-- **Capture is a `SessionStart` hook**, for both Claude and Codex. The hook reads the
-  *actual* live `session_id` from its payload and the pane UUID from the inherited
-  `WARP_TERMINAL_SESSION_UUID` env var. This captures the right session in every case —
+- **Capture is driven by agent hooks** — `SessionStart` for both Claude and Codex (Claude
+  additionally refreshes the entry on `UserPromptSubmit`/`Stop`, see the flags bullet
+  below). The hook reads the *actual* live `session_id` from its payload and the pane UUID
+  from the inherited `WARP_TERMINAL_SESSION_UUID` env var. This captures the right session
+  in every case —
   fresh start, `--resume <id>`, the interactive picker, and `--continue` — because the
   hook runs *after* the agent has decided which session is live. (An earlier `claude()`
   shell wrapper had to guess the id before launch, so it silently missed the picker and
@@ -37,13 +39,20 @@ capture (agent SessionStart hooks)          replay (Rust, in Warp)
   `claude --resume`/`codex resume` reject those with "No conversation found". Resumability
   is checked by locating the session file by its globally-unique id, so we never replicate
   each agent's brittle cwd→directory hashing.
-- **Launch flags are carried over** (Claude). A session started with a non-default
+- **Permission mode + model are carried over.** A session running with a non-default
   permission mode (`--dangerously-skip-permissions`, e.g. the `CA` alias, or
   `--permission-mode <mode>`) or a `--model` reopens *the same way* — those flags are
-  appended to the recorded `warp_agent_resume_launch claude <id> …` and forwarded on
-  resume. `SessionStart`'s payload doesn't include the permission mode, so the hook reads
-  it off the live `claude` process argv (the alias expands before exec), matching on the
-  flags themselves rather than the string "claude" so a plain launch carries nothing.
+  appended to the recorded `warp_agent_resume_launch <agent> <id> …` and forwarded on
+  resume.
+  - *Claude*: `SessionStart`'s payload doesn't include the permission mode, so at launch
+    the hook reads it off the live `claude` process argv (the alias expands before exec),
+    matching on the flags themselves rather than the string "claude" so a plain launch
+    carries nothing. The same script is also wired to `UserPromptSubmit` and `Stop`,
+    whose payloads *do* carry `permission_mode` — so a mode toggled mid-session
+    (shift+tab) sticks, toggling back to default strips the flag again, and entries
+    written by older flag-less installs heal on the session's next prompt.
+  - *Codex*: the `SessionStart` payload carries `permission_mode` and `model` directly;
+    `bypassPermissions` maps to `--dangerously-bypass-approvals-and-sandbox`.
 - **Warp stays agent-agnostic**: Rust only stores/replays an opaque command string.
   Adding another agent later is just another capture script — no Rust change.
 
@@ -55,9 +64,12 @@ capture (agent SessionStart hooks)          replay (Rust, in Warp)
 ```
 
 Installs the capture hooks + the registry CLI into `~/.warp/agent-resume-bin/`, and wires:
-the Claude `SessionStart` hook into `~/.claude/settings.json` (jq merge — existing settings
-are preserved), the Codex `SessionStart`/`SessionEnd` hooks into `~/.codex/config.toml`, and
-the replay functions into `~/.zshrc`. Requires `jq` (`brew install jq` if needed).
+the Claude `SessionStart`/`UserPromptSubmit`/`Stop` hooks into `~/.claude/settings.json`
+(via `wire-claude-hooks.sh`, a jq merge — existing settings are preserved, and entries from
+the pre-rename `claude-session-start.sh` are migrated), the Codex `SessionStart`/`SessionEnd`
+hooks into `~/.codex/config.toml`, and the replay functions into `~/.zshrc`. Requires `jq`
+(`brew install jq` if needed). `make release` runs this installer automatically so the
+installed copies never drift from the repo.
 
 The hooks only record when launched inside a Warp pane (`WARP_TERMINAL_SESSION_UUID` set).
 New Claude sessions are captured immediately — no shell restart needed for capture; the
@@ -115,17 +127,25 @@ separate data dir (`~/.warp-oss`), so the two never clobber each other's session
   starts a fresh agent in that pane instead. The trade-off is a (rare) false negative:
   if the resumability check can't find a conversation that actually exists, you get a
   fresh agent and can still `claude --resume <id>` by hand.
+- **Codex mode changes made mid-session are only re-captured at the next session start.**
+  Claude's per-turn hooks keep the recorded mode live, but codex is captured at
+  `SessionStart` only: the local codex does expose a `user_prompt_submit` hook event, but
+  its payload fields are unverified, and wiring it blind could rewrite a flagged entry
+  flag-less. A Claude mode toggled *after* its last prompt/turn (then quitting Warp with
+  no further activity) is similarly missed — the common toggle-then-prompt flow is
+  covered by `UserPromptSubmit`.
 
 ## Files
 
 | File | Role |
 |---|---|
 | `warp-agent-resume` | registry CLI: `write <uuid> <cmd> <cwd>` / `remove <uuid>` |
-| `claude-session-start.sh` | Claude `SessionStart` hook — captures the live session per pane, plus its permission-mode / `--model` launch flags |
+| `claude-capture.sh` | Claude `SessionStart`/`UserPromptSubmit`/`Stop` hook — captures the live session per pane and keeps its permission-mode/`--model` flags in sync with the live session |
 | `claude.zsh` | replay functions (`warp_agent_resume_resumable` / `warp_agent_resume_launch`) |
-| `codex-session-start.sh` / `codex-session-end.sh` | Codex hooks |
+| `codex-session-start.sh` / `codex-session-end.sh` | Codex hooks — session id plus bypass/model flags from the payload |
 | `config.toml.snippet` | Codex hook registration (installer applies it) |
 | `install-agent-plugins.sh` | install Warp's Claude/Codex notification plugins (emit the OSC-777 status events) |
+| `wire-claude-hooks.sh` | idempotent jq merge of the Claude hook entries into settings.json (used by `install.sh`) |
 | `install.sh` | install capture hooks + replay functions into the shell/agent config |
 | `build-app.sh` | build + brand + install the co-installable app |
 | `tests/` | self-contained shell tests for the scripts |

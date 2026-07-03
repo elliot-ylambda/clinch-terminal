@@ -1,6 +1,6 @@
 # Warp agent-resume shell integration (sourced from ~/.zshrc).
 #
-# Capture is done by Claude's SessionStart hook (claude-session-start.sh) and Codex's
+# Capture is done by Claude's hooks (claude-capture.sh) and Codex's
 # SessionStart hook -- they record the live session per pane. This file only provides the
 # *replay* side, the functions Warp invokes on restore:
 #

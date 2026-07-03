@@ -14,8 +14,10 @@ use crate::themes::theme::{RespectSystemTheme, SelectedSystemThemes, ThemeKind};
 define_settings_group!(ThemeSettings, settings: [
     theme_kind: Theme {
         type: ThemeKind,
-        // Note that for new users, we now override this default value in SettingsInitializer
-        // to set the default theme to Phenomenon.
+        // The compiled default is `ThemeKind::Dark` (the `#[default]` variant), so every fresh
+        // Clinch install lands on the dark theme. Upstream Warp overrides this for new users in
+        // SettingsInitializer (to Adeberry), but that override is gated behind the
+        // `default_adeberry_theme` cargo feature, which Clinch does not enable — so Dark stands.
         default: ThemeKind::default(),
         supported_platforms: SupportedPlatforms::ALL,
         sync_to_cloud: SyncToCloud::Globally(RespectUserSyncSetting::Yes),

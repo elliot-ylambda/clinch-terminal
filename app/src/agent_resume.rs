@@ -34,22 +34,25 @@ fn read_command_in(dir: &Path, uuid_hex: &str) -> Option<String> {
     Some(read_entry_in(dir, uuid_hex)?.command)
 }
 
-/// Turns a stored resume command into a fork command. Returns `None` for commands
-/// we don't know how to fork (the only forkable agents today are Claude and Codex).
+/// Turns a stored resume command (`warp_agent_resume_launch <agent> <id> [flags…]`) into
+/// a fork command, carrying the session's launch flags into the fork. Returns `None` for
+/// commands we don't know how to fork (the only forkable agents today are Claude and
+/// Codex).
 fn derive_fork_command(command: &str) -> Option<String> {
-    let command = command.trim();
-    if let Some(id) = command.strip_prefix("claude --resume ") {
-        if id.trim().is_empty() {
-            return None;
-        }
-        Some(format!("{command} --fork-session"))
-    } else if let Some(id) = command.strip_prefix("codex resume ") {
-        if id.trim().is_empty() {
-            return None;
-        }
-        Some(command.replacen("codex resume", "codex fork", 1))
+    let rest = command.trim().strip_prefix("warp_agent_resume_launch ")?;
+    let mut parts = rest.split_whitespace();
+    let agent = parts.next()?;
+    let id = parts.next()?;
+    let flags = parts.collect::<Vec<_>>().join(" ");
+    let flags = if flags.is_empty() {
+        String::new()
     } else {
-        None
+        format!(" {flags}")
+    };
+    match agent {
+        "claude" => Some(format!("claude --resume {id}{flags} --fork-session")),
+        "codex" => Some(format!("codex fork {id}{flags}")),
+        _ => None,
     }
 }
 
