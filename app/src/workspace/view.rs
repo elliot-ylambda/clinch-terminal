@@ -20681,6 +20681,9 @@ impl Workspace {
         appearance: &Appearance,
         ctx: &AppContext,
     ) {
+        let vertical_tabs_active =
+            FeatureFlag::VerticalTabs.is_enabled() && *TabSettings::as_ref(ctx).use_vertical_tabs;
+
         if let Some(update_pill) = self.render_tab_overflow_menu(ctx, appearance) {
             target.add_child(
                 Container::new(update_pill)
@@ -20729,12 +20732,10 @@ impl Workspace {
         {
             let snapshot = CliAgentUsageModel::as_ref(ctx).latest().clone();
             let bg = appearance.theme().surface_1();
-            if render_cli_agent_usage_header(&snapshot, appearance, bg).is_some() {
-                let snapshot_for_panel = snapshot.clone();
+            if let Some(widget) = render_cli_agent_usage_header(&snapshot, appearance, bg) {
                 let hover =
                     Hoverable::new(self.cli_agent_usage_mouse_state.clone(), move |_state| {
-                        render_cli_agent_usage_header(&snapshot, appearance, bg)
-                            .unwrap_or_else(|| Empty::new().finish())
+                        widget
                     })
                     .on_click(|ctx, _app, _position| {
                         ctx.dispatch_typed_action(WorkspaceAction::ToggleCliAgentUsagePanel);
@@ -20745,7 +20746,7 @@ impl Workspace {
                 let mut stack = Stack::new().with_child(hover);
                 if self.cli_agent_usage_panel_open {
                     stack.add_positioned_overlay_child(
-                        render_cli_agent_usage_panel(&snapshot_for_panel, appearance),
+                        render_cli_agent_usage_panel(&snapshot, appearance),
                         OffsetPositioning::offset_from_parent(
                             vec2f(0., 4.),
                             ParentOffsetBounds::WindowByPosition,
@@ -20755,10 +20756,31 @@ impl Workspace {
                     );
                 }
 
-                // Shrinkable so the widget yields width to tabs; the
-                // SizeConstraintSwitch inside picks Full/Medium/Narrow to fit.
+                // Horizontal tabs: `target` is the outer `tab_bar` flex, which is
+                // finitely constrained, so a flexible `Shrinkable` child is safe and
+                // correct here — it yields width to tabs and feeds the inner
+                // SizeConstraintSwitch a shrinking constraint so it degrades
+                // Full -> Medium -> Narrow to fit.
+                //
+                // Vertical tabs: `target` is the separate `right_controls` flex,
+                // built with `MainAxisSize::Min` and added as a non-flexible child
+                // of the outer bar, so it is laid out with an INFINITE main-axis
+                // (width) constraint. A flexible `Shrinkable` child there would be
+                // the first flexible child under an infinite constraint, which
+                // panics the flex layout's `debug_assert!` (and in release spams
+                // `log::error!` every frame while never degrading). Use a bounded,
+                // non-flexible `ConstrainedBox` instead so `right_controls` never
+                // sees a flexible child and the switch gets a finite max width.
+                let wrapped = if vertical_tabs_active {
+                    ConstrainedBox::new(stack.finish())
+                        .with_max_width(720.)
+                        .finish()
+                } else {
+                    Shrinkable::new(1., stack.finish()).finish()
+                };
+
                 target.add_child(
-                    Container::new(Shrinkable::new(1., stack.finish()).finish())
+                    Container::new(wrapped)
                         .with_margin_left(TAB_BAR_PADDING_LEFT)
                         .finish(),
                 );
