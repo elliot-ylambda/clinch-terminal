@@ -396,7 +396,7 @@ impl AgentInputFooter {
         });
 
         // CLI agent-specific buttons (only rendered when a CLI agent session is active).
-        let cli_button_size = ButtonSize::AgentInputButton;
+        let cli_button_size = ButtonSize::AgentInputButtonLarge;
         let file_explorer_button = ctx.add_typed_action_view(|ctx| {
             ActionButton::new("File explorer", AgentInputButtonTheme)
                 .with_icon(Icon::FileCopy)
@@ -1580,7 +1580,7 @@ impl AgentInputFooter {
 
     fn render_cli_mode_footer(&self, app: &AppContext) -> Box<dyn Element> {
         let appearance = Appearance::as_ref(app);
-        let cli_icon_size = ButtonSize::AgentInputButton.icon_size(appearance, app);
+        let cli_icon_size = ButtonSize::AgentInputButtonLarge.icon_size(appearance, app);
 
         // Extract everything we need from the terminal model up front and drop
         // the lock before calling into helpers like `should_use_manual_mode`
@@ -1715,7 +1715,7 @@ impl AgentInputFooter {
             })
             .finish();
 
-        Container::new(content).with_vertical_padding(4.).finish()
+        Container::new(content).with_vertical_padding(8.).finish()
     }
 
     pub fn has_open_chip_menu(&self, app: &AppContext) -> bool {
