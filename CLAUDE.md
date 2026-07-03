@@ -19,7 +19,8 @@ GitHub Actions secrets, no macOS runner minutes. A root `Makefile` wraps it; run
 > rely on it.
 
 ### After landing changes on `main`
-- `make ship` — rebuilds/installs your personal app **and** publishes a release.
+- `make update` — publishes a release **and** updates + relaunches the prod
+  `Clinch` app on this machine.
 
 ### Individual targets
 - `make release` — builds a **self-signed** `Clinch.dmg` (`./script/bundle -c
@@ -28,17 +29,27 @@ GitHub Actions secrets, no macOS runner minutes. A root `Makefile` wraps it; run
   attached (`gh release create`). The zip must always be attached: the
   install one-liner (`curl -fsSL https://clinch.sh/install | sh`, which
   clinch.sh redirects to `install.sh` at this repo's root) downloads
-  `releases/latest/download/Clinch.app.zip`.
+  `releases/latest/download/Clinch.app.zip`. This is publish-only — it does not
+  touch the app installed on this machine.
   - `make release VERSION=v0.2.0` — set the tag (default: `v0.<date>`).
   - `make release UNIVERSAL=1` — universal Intel+ARM DMG (slower; default is this
     machine's arch only).
   - The DMG is built from your **local checkout**, so build from `main` for a
     release that matches what you merged.
-- `make install-local` — builds the `local` channel and installs it as
-  `/Applications/WarpLocal.app`, a standalone app that won't clobber (or be
-  clobbered by) anything else you have installed.
-- `make ship` — `install-local` + `release` (two builds: your `WarpLocal` dev
-  app and the distributable `Clinch` app).
+- `make update` — runs `make release` (build + publish for everyone), then swaps
+  the freshly built bundle into `/Applications/Clinch.app` and relaunches it via
+  `script/update-installed-clinch`. This is the everyday "ship it and run it on
+  my machine" command: you run the same prod `Clinch` app as everyone else
+  (bundle id `sh.clinch.Clinch`), so your local sessions/history persist across
+  updates — they live in `~/Library/Application Support/sh.clinch.Clinch`, which
+  the swap never touches. The helper runs **detached**, so `make update` is safe
+  to run from inside Clinch itself: it quits the running app (checkpointing its
+  session), swaps the bundle, and relaunches.
+
+> There is no separate personal dev app anymore (the old `make install-local` /
+> `WarpLocal.app` flow was removed). For fast iterative development use
+> `cargo run`; the `local` channel still exists as a compile-time target but is
+> no longer packaged into an installable app.
 
 ### The released app is self-signed
 It is **not** notarized, so macOS quarantines **browser-downloaded** copies
