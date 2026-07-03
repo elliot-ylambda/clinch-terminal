@@ -181,6 +181,9 @@ pub enum ButtonSize {
     UDIPromptChip,
     /// Sizing for buttons in the AgentView input, e.g. when `FeatureFlag::AgentView` is enabled.
     AgentInputButton,
+    /// Sizing for the CLI-agent input footer buttons — a larger, more prominent
+    /// variant of [`ButtonSize::AgentInputButton`].
+    AgentInputButtonLarge,
 }
 
 /// Source for the keystrokes associated with an [`ActionButton`].
@@ -1324,6 +1327,10 @@ impl ButtonSize {
                 appearance.monospace_font_size(),
                 DEFAULT_UI_LINE_HEIGHT_RATIO / 1.4,
             ),
+            ButtonSize::AgentInputButtonLarge => app.font_cache().line_height(
+                appearance.monospace_font_size() + 2.0,
+                DEFAULT_UI_LINE_HEIGHT_RATIO / 1.4,
+            ),
         }
     }
 
@@ -1337,6 +1344,7 @@ impl ButtonSize {
             ButtonSize::UDIButton => appearance.monospace_font_size() - 1.0,
             ButtonSize::UDIPromptChip => appearance.monospace_font_size() - 1.0,
             ButtonSize::AgentInputButton => appearance.monospace_font_size() - 1.0,
+            ButtonSize::AgentInputButtonLarge => appearance.monospace_font_size(),
         }
     }
 
@@ -1350,6 +1358,7 @@ impl ButtonSize {
             ButtonSize::UDIButton => Properties::default(),
             ButtonSize::UDIPromptChip => Properties::default().weight(Weight::Semibold),
             ButtonSize::AgentInputButton => Properties::default(),
+            ButtonSize::AgentInputButtonLarge => Properties::default(),
         }
     }
 
@@ -1364,6 +1373,7 @@ impl ButtonSize {
             ButtonSize::UDIButton => 5.,
             ButtonSize::UDIPromptChip => 4.,
             ButtonSize::AgentInputButton => 4.,
+            ButtonSize::AgentInputButtonLarge => 4.,
         }
     }
 
@@ -1440,6 +1450,13 @@ impl ButtonSize {
                 padding: Some(Coords::default()),
                 ..Default::default()
             },
+            ButtonSize::AgentInputButtonLarge => UiComponentStyles {
+                font_size: Some(appearance.monospace_font_size() - 4.),
+                width: Some(appearance.monospace_font_size()),
+                height: Some(appearance.monospace_font_size()),
+                padding: Some(Coords::default()),
+                ..Default::default()
+            },
         }
     }
 
@@ -1472,6 +1489,15 @@ impl ButtonSize {
                     .line_height(self.font_size(appearance), appearance.line_height_ratio());
                 2. * vertical_padding + line_height
             }
+            ButtonSize::AgentInputButtonLarge => {
+                // Larger vertical padding than AgentInputButton for a more
+                // prominent footer bar.
+                let vertical_padding = 6.;
+                let line_height = app
+                    .font_cache()
+                    .line_height(self.font_size(appearance), appearance.line_height_ratio());
+                2. * vertical_padding + line_height
+            }
         }
     }
 
@@ -1486,6 +1512,7 @@ impl ButtonSize {
             ButtonSize::UDIButton => None,
             ButtonSize::UDIPromptChip => None,
             ButtonSize::AgentInputButton => None,
+            ButtonSize::AgentInputButtonLarge => None,
         }
     }
 
@@ -1501,6 +1528,7 @@ impl ButtonSize {
             ButtonSize::UDIPromptChip | ButtonSize::AgentInputButton => {
                 crate::context_chips::spacing::UDI_CHIP_HORIZONTAL_PADDING
             }
+            ButtonSize::AgentInputButtonLarge => 9.,
         }
     }
 
@@ -1515,6 +1543,7 @@ impl ButtonSize {
             ButtonSize::InputPrompt => -8.,
             ButtonSize::UDIButton => -8.,
             ButtonSize::UDIPromptChip | ButtonSize::AgentInputButton => -8.,
+            ButtonSize::AgentInputButtonLarge => -8.,
         }
     }
 
@@ -1530,6 +1559,13 @@ impl ButtonSize {
             ButtonSize::UDIPromptChip | ButtonSize::AgentInputButton => {
                 Padding::default().with_vertical(1.).with_horizontal(2.)
             }
+            ButtonSize::AgentInputButtonLarge => {
+                Padding::default().with_vertical(1.).with_horizontal(2.)
+            }
         }
     }
 }
+
+#[cfg(test)]
+#[path = "action_button_tests.rs"]
+mod tests;
