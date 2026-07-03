@@ -9,13 +9,14 @@
 //! [`render_icon_with_status`]. The pure inner functions in this module are exercised
 //! directly by the cross-surface consistency tests in `agent_icon_tests.rs`.
 use warp_cli::agent::Harness;
-use warpui::{AppContext, SingletonEntity};
+use warpui::{AppContext, EntityId, SingletonEntity};
 
 use crate::ai::agent::conversation::ConversationStatus;
 use crate::ai::agent_conversations_model::{
     AgentConversationEntry, AgentConversationProvenance, AgentConversationsModel,
     AgentRunDisplayStatus,
 };
+use crate::ai::agent_management::active_focused_terminal_id;
 use crate::terminal::cli_agent_sessions::CLIAgentSessionsModel;
 use crate::terminal::session_settings::SessionSettings;
 use crate::terminal::view::TerminalView;
@@ -87,7 +88,41 @@ pub(crate) fn terminal_view_agent_icon_variant(
             .selected_conversation_display_title(app)
             .is_some(),
     };
-    agent_icon_variant_from_terminal_inputs(&inputs)
+    let variant = agent_icon_variant_from_terminal_inputs(&inputs)?;
+    Some(apply_awaiting_user_treatment(
+        variant,
+        terminal_view.id(),
+        active_focused_terminal_id(app),
+    ))
+}
+
+/// Presentational treatment for "the agent's turn ended and it's now waiting on you."
+///
+/// When a live CLI-agent session has finished a turn (`Success`) on a terminal the user is not
+/// currently viewing, render the yellow attention glyph (via `ConversationStatus::Blocked`, which
+/// already maps to `yellow_stop_icon`) instead of the ✓ "done" glyph, so a background tab visibly
+/// signals "your turn". Presentation only — the session's real `CLIAgentSessionStatus`, the
+/// desktop-notification path, and the mailbox are untouched. Pure and focus-parameterized so it is
+/// unit-testable without an `AppContext`.
+fn apply_awaiting_user_treatment(
+    variant: IconWithStatusVariant,
+    terminal_view_id: EntityId,
+    focused_terminal_id: Option<EntityId>,
+) -> IconWithStatusVariant {
+    match variant {
+        IconWithStatusVariant::CLIAgent {
+            agent,
+            status: Some(ConversationStatus::Success),
+            is_ambient,
+        } if focused_terminal_id != Some(terminal_view_id) => IconWithStatusVariant::CLIAgent {
+            agent,
+            status: Some(ConversationStatus::Blocked {
+                blocked_action: String::new(),
+            }),
+            is_ambient,
+        },
+        other => other,
+    }
 }
 
 /// Like [`terminal_view_agent_icon_variant`], but suppresses the CLI-agent (Claude/Codex)

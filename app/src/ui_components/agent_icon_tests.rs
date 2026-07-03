@@ -439,3 +439,59 @@ fn non_ambient_entry_uses_display_harness() {
         }
     );
 }
+
+/// A completed CLI-agent turn on a terminal the user is NOT viewing is presented as the yellow
+/// attention glyph ("awaiting you"), while the focused terminal keeps the ✓ and non-`Success`
+/// states are left untouched.
+#[test]
+fn awaiting_user_treatment_marks_unfocused_completed_cli_agent() {
+    use warpui::EntityId;
+
+    let id = EntityId::new();
+    let focused_elsewhere = EntityId::new();
+
+    // Not the focused terminal: Success -> Blocked (renders yellow attention overlay).
+    let out = super::apply_awaiting_user_treatment(
+        IconWithStatusVariant::CLIAgent {
+            agent: CLIAgent::Claude,
+            status: Some(ConversationStatus::Success),
+            is_ambient: false,
+        },
+        id,
+        Some(focused_elsewhere),
+    );
+    assert!(matches!(
+        AgentIconFields::from_variant(&out).unwrap().status,
+        Some(ConversationStatus::Blocked { .. })
+    ));
+
+    // The focused terminal: unchanged (stays Success / ✓).
+    let out = super::apply_awaiting_user_treatment(
+        IconWithStatusVariant::CLIAgent {
+            agent: CLIAgent::Claude,
+            status: Some(ConversationStatus::Success),
+            is_ambient: false,
+        },
+        id,
+        Some(id),
+    );
+    assert_eq!(
+        AgentIconFields::from_variant(&out).unwrap().status,
+        Some(ConversationStatus::Success)
+    );
+
+    // A running turn is never overridden, even on an unfocused terminal.
+    let out = super::apply_awaiting_user_treatment(
+        IconWithStatusVariant::CLIAgent {
+            agent: CLIAgent::Codex,
+            status: Some(ConversationStatus::InProgress),
+            is_ambient: false,
+        },
+        id,
+        Some(focused_elsewhere),
+    );
+    assert_eq!(
+        AgentIconFields::from_variant(&out).unwrap().status,
+        Some(ConversationStatus::InProgress)
+    );
+}
