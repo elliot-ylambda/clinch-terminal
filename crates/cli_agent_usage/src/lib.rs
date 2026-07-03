@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use chrono::{DateTime, Utc};
 
 pub mod cache;
@@ -81,6 +83,17 @@ pub struct Provider {
 pub struct UsageSnapshot {
     pub claude: Provider,
     pub codex: Provider,
+    /// `session_id` → latest model id seen for that session. Built during the
+    /// same local file walk that produces `claude`/`codex`. Empty when neither
+    /// provider has local data.
+    pub models_by_session: HashMap<String, String>,
+}
+
+impl UsageSnapshot {
+    /// The latest model id recorded for `session_id`, if any.
+    pub fn model_for_session(&self, session_id: &str) -> Option<&str> {
+        self.models_by_session.get(session_id).map(String::as_str)
+    }
 }
 
 /// One billable event extracted from a transcript/rollout, timezone-normalized to UTC.
@@ -200,9 +213,24 @@ pub fn refresh(
 /// `claude.plan` is always `None` (fetch it separately via [`fetch_claude_plan`]);
 /// `codex.plan` is populated from local rate-limit events. Fail-soft.
 pub fn scan_local(paths: &Paths, caches: &mut Caches, now: DateTime<Utc>) -> UsageSnapshot {
-    let claude = claude::scan(&paths.claude_projects, &mut caches.claude, now);
-    let codex = codex::scan(&paths.codex_sessions, &mut caches.codex, now);
-    UsageSnapshot { claude, codex }
+    let mut models_by_session = HashMap::new();
+    let claude = claude::scan(
+        &paths.claude_projects,
+        &mut caches.claude,
+        now,
+        &mut models_by_session,
+    );
+    let codex = codex::scan(
+        &paths.codex_sessions,
+        &mut caches.codex,
+        now,
+        &mut models_by_session,
+    );
+    UsageSnapshot {
+        claude,
+        codex,
+        models_by_session,
+    }
 }
 
 /// The Claude plan-% half of a refresh: read the Keychain token, and if present

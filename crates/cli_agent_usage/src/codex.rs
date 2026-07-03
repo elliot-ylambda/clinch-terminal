@@ -170,6 +170,7 @@ pub fn scan(
     sessions_dir: &Path,
     cache: &mut ScanCache<RollupFile>,
     now: DateTime<Utc>,
+    models: &mut std::collections::HashMap<String, String>,
 ) -> Provider {
     let mut provider = Provider::default();
     let mut seen = std::collections::HashSet::new();
@@ -192,6 +193,13 @@ pub fn scan(
         let is_latest = Some(path) == latest.as_ref();
         let last_total = parsed.last_total;
         let rate_limits = if is_latest { parsed.rate_limits } else { None };
+
+        // Index this rollout's latest model under its session id (from meta).
+        if let Some(session_id) = parsed.session_id.clone() {
+            if let Some(model) = parsed.entries.last().map(|e| e.model.clone()) {
+                models.insert(session_id, model);
+            }
+        }
 
         aggregate_windows(
             &entries,
@@ -303,7 +311,12 @@ mod tests {
             .unwrap();
 
         let mut cache = crate::cache::ScanCache::new();
-        let p = scan(&dir, &mut cache, chrono::Utc::now());
+        let p = scan(
+            &dir,
+            &mut cache,
+            chrono::Utc::now(),
+            &mut std::collections::HashMap::new(),
+        );
 
         // plan comes from the NEWER rollout's rate_limits
         let plan = p.plan.expect("plan from latest rollout");
@@ -331,5 +344,30 @@ mod tests {
             r.session_id.as_deref(),
             Some("019f00fb-40b5-7192-9b79-aa6d1034fe1b")
         );
+    }
+
+    #[test]
+    fn scan_indexes_codex_model_by_session_id() {
+        let dir = std::env::temp_dir().join(format!("cau_codex_modelidx_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path =
+            dir.join("rollout-2026-06-25T15-51-33-019f00fb-40b5-7192-9b79-aa6d1034fe1b.jsonl");
+        let meta = r#"{"timestamp":"2026-06-25T22:51:38.016Z","type":"session_meta","payload":{"session_id":"019f00fb-40b5-7192-9b79-aa6d1034fe1b","model":"gpt-5-codex"}}"#;
+        let older = r#"{"timestamp":"2026-06-25T22:52:00.000Z","type":"event_msg","payload":{"type":"token_count","model":"gpt-5-codex","info":{"total_token_usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":5,"total_tokens":15}}}}"#;
+        let newer = r#"{"timestamp":"2026-06-25T23:10:00.000Z","type":"event_msg","payload":{"type":"token_count","model":"gpt-5.1-codex","info":{"total_token_usage":{"input_tokens":20,"cached_input_tokens":0,"output_tokens":8,"total_tokens":28}}}}"#;
+        std::fs::write(&path, format!("{meta}\n{older}\n{newer}")).unwrap();
+
+        let mut cache = crate::cache::ScanCache::new();
+        let mut models = std::collections::HashMap::new();
+        let _ = scan(&dir, &mut cache, chrono::Utc::now(), &mut models);
+
+        assert_eq!(
+            models
+                .get("019f00fb-40b5-7192-9b79-aa6d1034fe1b")
+                .map(String::as_str),
+            Some("gpt-5.1-codex")
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

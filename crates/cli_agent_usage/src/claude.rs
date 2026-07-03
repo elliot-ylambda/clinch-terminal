@@ -102,6 +102,7 @@ pub fn scan(
     projects_dir: &Path,
     cache: &mut ScanCache<Vec<Entry>>,
     now: DateTime<Utc>,
+    models: &mut std::collections::HashMap<String, String>,
 ) -> Provider {
     let mut provider = Provider::default();
     let mut seen = std::collections::HashSet::new();
@@ -117,6 +118,12 @@ pub fn scan(
         let entries = cache
             .get_or_parse(path, *mtime, *size, parse_transcript_file)
             .clone();
+        // Index this transcript's latest model under its session id (= file stem).
+        if let Some(session_id) = path.file_stem().and_then(|s| s.to_str()) {
+            if let Some(model) = entries.iter().max_by_key(|e| e.ts).map(|e| e.model.clone()) {
+                models.insert(session_id.to_string(), model);
+            }
+        }
         aggregate_windows(
             &entries,
             now,
@@ -223,11 +230,40 @@ mod tests {
             .unwrap();
 
         let mut cache = crate::cache::ScanCache::new();
-        let p = scan(&dir, &mut cache, chrono::Utc::now());
+        let p = scan(
+            &dir,
+            &mut cache,
+            chrono::Utc::now(),
+            &mut std::collections::HashMap::new(),
+        );
 
         // session = newer file (output 50), deduped to a single copy (not 100), and not the older file (7)
         assert_eq!(p.session.tokens.output, 50);
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn scan_indexes_latest_model_by_session_id() {
+        let dir = std::env::temp_dir().join(format!("cau_claude_modelidx_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // Filename stem is the session id.
+        let path = dir.join("11111111-2222-3333-4444-555555555555.jsonl");
+        let older = r#"{"type":"assistant","requestId":"r1","timestamp":"2026-06-30T10:00:00.000Z","message":{"id":"m1","model":"claude-haiku","usage":{"input_tokens":1,"output_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}"#;
+        let newer = r#"{"type":"assistant","requestId":"r2","timestamp":"2026-06-30T12:00:00.000Z","message":{"id":"m2","model":"claude-opus-4-8","usage":{"input_tokens":1,"output_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}"#;
+        std::fs::write(&path, format!("{newer}\n{older}")).unwrap();
+
+        let mut cache = crate::cache::ScanCache::new();
+        let mut models = std::collections::HashMap::new();
+        let _ = scan(&dir, &mut cache, chrono::Utc::now(), &mut models);
+
+        assert_eq!(
+            models
+                .get("11111111-2222-3333-4444-555555555555")
+                .map(String::as_str),
+            Some("claude-opus-4-8")
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
