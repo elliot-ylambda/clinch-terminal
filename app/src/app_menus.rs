@@ -63,18 +63,31 @@ const MAX_RECENT_REPOS_IN_MENU: usize = 10;
 
 /// Creates the root app menu bar
 pub fn menu_bar(ctx: &mut AppContext) -> MenuBar {
-    MenuBar::new(vec![
+    let mut menus = vec![
         make_new_app_menu(ctx),
         make_new_file_menu(ctx),
         make_new_edit_menu(ctx),
         make_new_view_menu(ctx),
         make_new_tab_menu(ctx),
         make_new_blocks_menu(ctx),
-        make_new_ai_menu(ctx),
-        make_new_drive_menu(ctx),
-        make_new_window_menu(),
-        make_new_help_menu(),
-    ])
+    ];
+
+    // The AI and Drive menus expose only Warp-backend features (Agent Mode,
+    // Warp Drive objects, MCP servers, session sharing). Their backend-gated
+    // sweep left the individual items hidden on backendless builds (Clinch) but
+    // still pushed the empty top-level menus into the macOS menu bar. AI is
+    // always off backendless (`AISettings::is_any_ai_enabled` short-circuits on
+    // `!has_backend()`) and Warp Drive needs an account, so drop both menus
+    // entirely rather than showing hollow shells.
+    if ChannelState::has_backend() {
+        menus.push(make_new_ai_menu(ctx));
+        menus.push(make_new_drive_menu(ctx));
+    }
+
+    menus.push(make_new_window_menu());
+    menus.push(make_new_help_menu());
+
+    MenuBar::new(menus)
 }
 
 // Creates the app dock menu
