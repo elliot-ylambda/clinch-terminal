@@ -65,6 +65,34 @@ pub fn read_claude_token(reader: &dyn ReadSecret, account: &str) -> Option<Claud
     parse_claude_token(&blob)
 }
 
+/// Decide whether a poller should re-read the Keychain this tick.
+///
+/// The Keychain read is exactly what triggers the macOS "allow Clinch to read
+/// Claude Code credentials" prompt, so we want to read as rarely as possible:
+/// - If we hold an unexpired cached token, never read (`false`).
+/// - Otherwise (no token, or the cached one has expired) read only if we have
+///   never read, or at least `reread_backoff_ms` has elapsed since the last
+///   read. The backoff matters when Claude Code's *stored* token is itself
+///   expired (e.g. Claude Code hasn't run lately): without it, "expired cached
+///   token" would be true every tick and we'd re-prompt every poll — the very
+///   bug we are fixing. With it, re-reads are capped to one per backoff window.
+pub fn should_read_keychain(
+    cached: Option<&ClaudeToken>,
+    last_read_ms: Option<i64>,
+    now_ms: i64,
+    reread_backoff_ms: i64,
+) -> bool {
+    if let Some(token) = cached {
+        if !token.is_expired(now_ms) {
+            return false;
+        }
+    }
+    match last_read_ms {
+        None => true,
+        Some(last) => now_ms.saturating_sub(last) >= reread_backoff_ms,
+    }
+}
+
 pub struct MacKeychain;
 
 #[cfg(target_os = "macos")]
@@ -114,6 +142,61 @@ mod tests {
     #[test]
     fn garbage_blob_is_none() {
         assert!(parse_claude_token("not json").is_none());
+    }
+
+    fn token(expires_at_ms: i64) -> ClaudeToken {
+        ClaudeToken {
+            access_token: "tok".to_string(),
+            expires_at_ms: Some(expires_at_ms),
+        }
+    }
+
+    const BACKOFF: i64 = 300_000; // 5 min
+
+    #[test]
+    fn should_read_when_no_cached_token_and_never_read() {
+        assert!(should_read_keychain(None, None, 1_000, BACKOFF));
+    }
+
+    #[test]
+    fn should_not_read_while_cached_token_is_valid() {
+        let t = token(10_000);
+        // Cached, unexpired -> never read, regardless of last_read/backoff.
+        assert!(!should_read_keychain(Some(&t), None, 5_000, BACKOFF));
+        assert!(!should_read_keychain(Some(&t), Some(0), 9_999, BACKOFF));
+    }
+
+    #[test]
+    fn expired_cached_token_reads_only_after_backoff() {
+        let t = token(1_000); // expired at now=2_000
+        let now = 2_000;
+        // Just read 1s ago -> within backoff -> don't re-read (this is what stops
+        // the every-60s re-prompt when the stored token is perpetually expired).
+        assert!(!should_read_keychain(
+            Some(&t),
+            Some(now - 1_000),
+            now,
+            BACKOFF
+        ));
+        // Backoff elapsed -> allowed to re-read.
+        assert!(should_read_keychain(
+            Some(&t),
+            Some(now - BACKOFF),
+            now,
+            BACKOFF
+        ));
+    }
+
+    #[test]
+    fn no_token_but_recent_read_respects_backoff() {
+        // read returned nothing usable a moment ago -> wait out the backoff.
+        assert!(!should_read_keychain(None, Some(1_000), 1_500, BACKOFF));
+        assert!(should_read_keychain(
+            None,
+            Some(1_000),
+            1_000 + BACKOFF,
+            BACKOFF
+        ));
     }
 
     #[test]

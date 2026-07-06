@@ -246,7 +246,26 @@ pub fn fetch_claude_plan(
     now: DateTime<Utc>,
 ) -> Option<PlanLimits> {
     let token = keychain::read_claude_token(secret, &paths.os_account)?;
-    if token.is_expired(now.timestamp_millis()) {
+    fetch_plan_for_token(fetch, &token, now.timestamp_millis())
+}
+
+/// The HTTP half of a Claude plan fetch: given an already-obtained token, fetch
+/// and parse `/api/oauth/usage`. Returns `None` if the token is expired or any
+/// step fails.
+///
+/// Split out from [`fetch_claude_plan`] so a poller can read the Keychain token
+/// **once**, cache it, and reuse it across many fetches — the Keychain read is
+/// what triggers the macOS "allow access" prompt, so re-reading it on every poll
+/// pesters the user. See `CliAgentUsageModel::producer_loop`.
+///
+/// **Blocking** (a blocking HTTP call). Call only from a dedicated thread, never
+/// a Tokio/async runtime.
+pub fn fetch_plan_for_token(
+    fetch: &dyn http::FetchUsage,
+    token: &keychain::ClaudeToken,
+    now_ms: i64,
+) -> Option<PlanLimits> {
+    if token.is_expired(now_ms) {
         return None;
     }
     let body = fetch.fetch(&token.access_token).ok()?;
@@ -368,6 +387,35 @@ mod tests {
             &Fetch(Ok(usage)),
         );
         assert!(snap.claude.plan.is_none());
+    }
+
+    #[test]
+    fn fetch_plan_for_token_uses_cached_token_and_guards_expiry() {
+        use crate::http::FetchUsage;
+        use crate::keychain::ClaudeToken;
+
+        struct Fetch(Result<&'static str, &'static str>);
+        impl FetchUsage for Fetch {
+            fn fetch(&self, _: &str) -> Result<String, String> {
+                self.0.map(|s| s.to_string()).map_err(|e| e.to_string())
+            }
+        }
+        let usage = r#"{"limits":[{"group":"session","percent":78,"severity":"warning","resets_at":"2026-07-01T02:30:00+00:00","is_active":true}]}"#;
+
+        let valid = ClaudeToken {
+            access_token: "tok".to_string(),
+            expires_at_ms: Some(10_000),
+        };
+        // Valid token + good body -> plan (no Keychain read involved).
+        let plan = fetch_plan_for_token(&Fetch(Ok(usage)), &valid, 5_000).expect("plan");
+        assert_eq!(plan.session.unwrap().percent, 78.0);
+
+        // Expired token short-circuits before the fetch.
+        assert!(fetch_plan_for_token(&Fetch(Ok(usage)), &valid, 10_000).is_none());
+
+        // Fetch error / garbage body -> None (fail-soft).
+        assert!(fetch_plan_for_token(&Fetch(Err("boom")), &valid, 5_000).is_none());
+        assert!(fetch_plan_for_token(&Fetch(Ok("garbage")), &valid, 5_000).is_none());
     }
 
     #[test]

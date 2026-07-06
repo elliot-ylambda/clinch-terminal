@@ -64,7 +64,7 @@ use crate::settings::native_preference::{NativePreferenceSettings, UserNativePre
 use crate::settings::{
     AISettingsChangedEvent, AliasExpansionEnabled, AliasExpansionSettings, AppEditorSettings,
     AtContextMenuInTerminalMode, AutocompleteSymbols, AutosuggestionKeybindingHint,
-    ChangelogSettings, CloudPreferencesSettings, CodeEditorLineNumberMode,
+    ChangelogSettings, CliAgentUsageSettings, CloudPreferencesSettings, CodeEditorLineNumberMode,
     CodeEditorLineNumberModeSetting, CodeSettings, CommandCorrections, CompletionsOpenWhileTyping,
     CopyOnSelect, CtrlTabBehavior, DefaultSessionMode, EnableSlashCommandsInTerminal,
     ErrorUnderliningEnabled, ExtraMetaKeys, GPUSettings, GlobalHotkeyMode, InputSettings,
@@ -440,6 +440,22 @@ pub fn init_actions_from_parent_view<T: Action + Clone>(
 
     toggle_binding_pairs.push(
         ToggleSettingActionPair::new(
+            "Claude Code live plan limits",
+            builder(SettingsAction::FeaturesPageToggle(
+                FeaturesPageAction::ToggleCliAgentPlanLimits,
+            )),
+            context,
+            flags::CLI_AGENT_PLAN_LIMITS_CONTEXT_FLAG,
+        )
+        .is_supported_on_current_platform(
+            CliAgentUsageSettings::as_ref(app)
+                .show_plan_limits
+                .is_supported_on_current_platform(),
+        ),
+    );
+
+    toggle_binding_pairs.push(
+        ToggleSettingActionPair::new(
             "alias expansion",
             builder(SettingsAction::FeaturesPageToggle(
                 FeaturesPageAction::ToggleAliasExpansion,
@@ -783,6 +799,7 @@ pub enum FeaturesPageAction {
     ToggleLeftMetaKey,
     ToggleRightMetaKey,
     ToggleMouseReporting,
+    ToggleCliAgentPlanLimits,
     ToggleGlobalWorkflowsInUniversalSearch,
     ToggleScrollReporting,
     ToggleFocusReporting,
@@ -1052,6 +1069,10 @@ impl FeaturesPageAction {
             Self::ToggleMouseReporting => TelemetryEvent::FeaturesPageAction {
                 action: "ToggleMouseReporting".to_string(),
                 value: to_string(*reporting_settings.mouse_reporting_enabled),
+            },
+            Self::ToggleCliAgentPlanLimits => TelemetryEvent::FeaturesPageAction {
+                action: "ToggleCliAgentPlanLimits".to_string(),
+                value: to_string(*CliAgentUsageSettings::as_ref(ctx).show_plan_limits),
             },
             Self::ToggleScrollReporting => TelemetryEvent::FeaturesPageAction {
                 action: "ToggleScrollReporting".to_string(),
@@ -1696,6 +1717,12 @@ impl TypedActionView for FeaturesPageView {
                         .mouse_reporting_enabled
                         .toggle_and_save_value(ctx)
                         .expect("MouseReportingEnabled failed to serialize");
+                });
+                ctx.notify();
+            }
+            ToggleCliAgentPlanLimits => {
+                CliAgentUsageSettings::handle(ctx).update(ctx, |settings, ctx| {
+                    report_if_error!(settings.show_plan_limits.toggle_and_save_value(ctx));
                 });
                 ctx.notify();
             }
