@@ -468,6 +468,7 @@ pub mod flags {
     pub const EXTRA_META_KEYS_RIGHT_CONTEXT_FLAG: &str = "Extra_Meta_Keys_Right";
     pub const EXTRA_META_KEYS_LEFT_CONTEXT_FLAG: &str = "Extra_Meta_Keys_Left";
     pub const MOUSE_REPORTING_CONTEXT_FLAG: &str = "Mouse_Reporting";
+    pub const CLI_AGENT_PLAN_LIMITS_CONTEXT_FLAG: &str = "CLI_Agent_Plan_Limits";
     pub const SCROLL_REPORTING_CONTEXT_FLAG: &str = "Scroll_Reporting";
     pub const FOCUS_REPORTING_CONTEXT_FLAG: &str = "Focus_Reporting";
     pub const SSH_REUSE_CONTROL_MASTER_CONTEXT_FLAG: &str = "SSH_Reuse_Control_Master";

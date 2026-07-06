@@ -337,10 +337,10 @@ use crate::settings::cloud_preferences::CloudPreferencesSettings;
 use crate::settings::{
     active_theme_kind, respect_system_theme, AISettings, AISettingsChangedEvent,
     AccessibilitySettings, AliasExpansionSettings, AppEditorSettings, BlockVisibilitySettings,
-    ChangelogSettings, CodeSettings, CodeSettingsChangedEvent, CtrlTabBehavior, CursorBlink,
-    DebugSettings, DefaultSessionMode, FontSettings, GPUSettings, InputModeSettings, InputSettings,
-    MonospaceFontSize, PaneSettings, PrivacySettings, SelectionSettings, Settings, SshSettings,
-    ThemeSettings,
+    ChangelogSettings, CliAgentUsageSettings, CodeSettings, CodeSettingsChangedEvent,
+    CtrlTabBehavior, CursorBlink, DebugSettings, DefaultSessionMode, FontSettings, GPUSettings,
+    InputModeSettings, InputSettings, MonospaceFontSize, PaneSettings, PrivacySettings,
+    SelectionSettings, Settings, SshSettings, ThemeSettings,
 };
 use crate::settings_view::environments_page::EnvironmentsPage;
 use crate::settings_view::handoff_environment_creation_modal::{
@@ -22555,6 +22555,12 @@ impl Workspace {
         }
         if *reporting_setings.mouse_reporting_enabled.value() {
             context.set.insert(flags::MOUSE_REPORTING_CONTEXT_FLAG);
+        }
+
+        if *CliAgentUsageSettings::as_ref(app).show_plan_limits {
+            context
+                .set
+                .insert(flags::CLI_AGENT_PLAN_LIMITS_CONTEXT_FLAG);
         }
 
         if *reporting_setings.focus_reporting_enabled.value() {
