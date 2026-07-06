@@ -3,12 +3,12 @@
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "image_preview_pane")]
+use warp_core::features::FeatureFlag;
 pub use warp_util::file_type::{is_binary_file, is_file_content_binary, is_markdown_file};
 
 #[cfg(feature = "local_fs")]
 use crate::util::file::external_editor::{settings::EditorChoice, Editor, EditorSettings};
-#[cfg(feature = "image_preview_pane")]
-use warp_core::features::FeatureFlag;
 
 #[derive(
     Debug,

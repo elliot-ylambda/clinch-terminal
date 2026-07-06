@@ -158,9 +158,10 @@ pub fn chip_halves(snap: &UsageSnapshot) -> Option<[ChipHalf; 2]> {
 
 #[cfg(test)]
 mod tests {
+    use chrono::{Duration, TimeZone, Utc};
+
     use super::*;
     use crate::{LimitWindow, PlanLimits, Severity, TokenCounts, UsageSnapshot};
-    use chrono::{Duration, TimeZone, Utc};
 
     #[test]
     fn fmt_tokens_boundaries() {

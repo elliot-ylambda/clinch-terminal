@@ -149,8 +149,9 @@ pub fn scan(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use chrono::{TimeZone, Utc};
+
+    use super::*;
 
     const LINE: &str = r#"{"type":"assistant","requestId":"req_1","timestamp":"2026-06-30T21:16:28.384Z","message":{"id":"msg_1","model":"claude-opus-4-8","usage":{"input_tokens":6,"output_tokens":218,"cache_creation_input_tokens":29086,"cache_read_input_tokens":4}}}"#;
 

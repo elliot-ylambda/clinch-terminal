@@ -291,24 +291,21 @@ pub fn test_file_tree_opens_image_in_image_pane() -> Builder {
         .with_step(
             new_step_with_default_assertions("Click on logo.svg in file tree")
                 .with_click_on_saved_position("file_tree_item:logo.svg")
-                .add_named_assertion(
-                    "image pane opened split to the right",
-                    |app, window_id| {
-                        let pane_group = pane_group_view(app, window_id, 0);
-                        pane_group.read(app, |pane_group, _ctx| {
-                            let count = pane_group.pane_count();
-                            let is_image = pane_group
-                                .pane_by_index(1)
-                                .map(|pane| pane.id().is_image_viewer_pane())
-                                .unwrap_or(false);
-                            async_assert!(
-                                count == 2 && is_image,
-                                "Expected 2 panes (terminal + image viewer) with an image \
+                .add_named_assertion("image pane opened split to the right", |app, window_id| {
+                    let pane_group = pane_group_view(app, window_id, 0);
+                    pane_group.read(app, |pane_group, _ctx| {
+                        let count = pane_group.pane_count();
+                        let is_image = pane_group
+                            .pane_by_index(1)
+                            .map(|pane| pane.id().is_image_viewer_pane())
+                            .unwrap_or(false);
+                        async_assert!(
+                            count == 2 && is_image,
+                            "Expected 2 panes (terminal + image viewer) with an image \
                                  pane at index 1, got count={count}, is_image={is_image}"
-                            )
-                        })
-                    },
-                ),
+                        )
+                    })
+                }),
         )
         .with_step(
             new_step_with_default_assertions("Verify image pane title is the file name")

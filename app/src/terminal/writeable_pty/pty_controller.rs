@@ -517,12 +517,7 @@ impl<T: EventLoopSender> PtyController<T> {
                     .get(session_id)
                     .map(|session| session.shell().shell_type())
                 {
-                    self.write_command(
-                        &command,
-                        shell_type,
-                        CommandExecutionSource::User,
-                        ctx,
-                    );
+                    self.write_command(&command, shell_type, CommandExecutionSource::User, ctx);
                 } else {
                     log::warn!(
                         "on_restore_command: no shell type for session {session_id:?}; skipping"

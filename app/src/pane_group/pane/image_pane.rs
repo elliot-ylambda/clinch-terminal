@@ -81,9 +81,7 @@ impl PaneContent for ImagePane {
                 ImageViewEvent::TitleUpdated => {
                     ctx.emit(crate::pane_group::Event::PaneTitleUpdated)
                 }
-                ImageViewEvent::FileLoaded => {
-                    ctx.emit(crate::pane_group::Event::AppStateChanged)
-                }
+                ImageViewEvent::FileLoaded => ctx.emit(crate::pane_group::Event::AppStateChanged),
                 ImageViewEvent::Pane(pane_event) => {
                     pane_group.handle_pane_event(pane_id, pane_event, ctx)
                 }

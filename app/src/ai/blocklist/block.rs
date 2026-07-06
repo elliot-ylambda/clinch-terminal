@@ -189,10 +189,10 @@ use crate::terminal::view::{
 use crate::terminal::{ShellLaunchData, TerminalModel, TerminalView};
 use crate::ui_components::icons::Icon;
 use crate::util::link_detection::*;
-#[cfg(feature = "local_fs")]
-use crate::util::openable_file_type::{is_supported_image_file, FileTarget};
 #[cfg(all(feature = "local_fs", feature = "image_preview_pane"))]
 use crate::util::openable_file_type::EditorLayout;
+#[cfg(feature = "local_fs")]
+use crate::util::openable_file_type::{is_supported_image_file, FileTarget};
 use crate::view_components::action_button::{
     ActionButton, ActionButtonTheme, ButtonSize, KeystrokeSource, NakedTheme, PrimaryTheme,
     SecondaryTheme,

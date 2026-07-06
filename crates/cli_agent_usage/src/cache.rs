@@ -72,9 +72,10 @@ pub fn scan_dir(root: &Path, ext: &str) -> Vec<(PathBuf, SystemTime, u64)> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::fs;
     use std::time::SystemTime;
+
+    use super::*;
 
     fn tmp() -> std::path::PathBuf {
         let p = std::env::temp_dir().join(format!("cau_cache_{}", std::process::id()));

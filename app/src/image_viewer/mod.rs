@@ -13,11 +13,11 @@ use std::sync::Arc;
 use instant::Instant;
 use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::{vec2f, Vector2F};
+use warp_core::ui::icons::ICON_DIMENSIONS;
 #[cfg(feature = "local_fs")]
 use warp_files::{FileModel, FileModelEvent};
 #[cfg(feature = "local_fs")]
 use warp_util::file::FileId;
-use warp_core::ui::icons::ICON_DIMENSIONS;
 use warpui::assets::asset_cache::{AssetCache, AssetSource};
 use warpui::elements::{
     CacheOption, Clipped, ClippedScrollStateHandle, ClippedScrollable, ConstrainedBox, Container,
@@ -179,14 +179,22 @@ pub fn init(app: &mut AppContext) {
             .with_context_predicate(id!("ImageView"))
             .with_mac_key_binding("cmd--")
             .with_linux_or_windows_key_binding("ctrl--"),
-        EditableBinding::new("imageview:zoom_100", "Zoom to 100%", ImageViewAction::Zoom100)
-            .with_context_predicate(id!("ImageView"))
-            .with_mac_key_binding("cmd-0")
-            .with_linux_or_windows_key_binding("ctrl-0"),
-        EditableBinding::new("imageview:zoom_fit", "Fit Image to Pane", ImageViewAction::ZoomFit)
-            .with_context_predicate(id!("ImageView"))
-            .with_mac_key_binding("cmd-9")
-            .with_linux_or_windows_key_binding("ctrl-9"),
+        EditableBinding::new(
+            "imageview:zoom_100",
+            "Zoom to 100%",
+            ImageViewAction::Zoom100,
+        )
+        .with_context_predicate(id!("ImageView"))
+        .with_mac_key_binding("cmd-0")
+        .with_linux_or_windows_key_binding("ctrl-0"),
+        EditableBinding::new(
+            "imageview:zoom_fit",
+            "Fit Image to Pane",
+            ImageViewAction::ZoomFit,
+        )
+        .with_context_predicate(id!("ImageView"))
+        .with_mac_key_binding("cmd-9")
+        .with_linux_or_windows_key_binding("ctrl-9"),
     ]);
 }
 
@@ -476,10 +484,7 @@ impl ImageView {
             return image.finish();
         };
 
-        let scaled = vec2f(
-            intrinsic.x() as f32 * factor,
-            intrinsic.y() as f32 * factor,
-        );
+        let scaled = vec2f(intrinsic.x() as f32 * factor, intrinsic.y() as f32 * factor);
 
         // Force the image element to the scaled size; `.contain()` then fills it
         // exactly (same aspect ratio), and the GPU scales the decoded bitmap.
@@ -537,10 +542,7 @@ impl ImageView {
         if viewport.x() <= 0.0 || viewport.y() <= 0.0 {
             return offset;
         }
-        let scaled = vec2f(
-            intrinsic.x() as f32 * factor,
-            intrinsic.y() as f32 * factor,
-        );
+        let scaled = vec2f(intrinsic.x() as f32 * factor, intrinsic.y() as f32 * factor);
         clamp_pan(offset, scaled, viewport)
     }
 
@@ -595,7 +597,13 @@ impl ImageView {
         let dark = ColorU::new(153, 153, 153, 255);
 
         let make_cell = |color: ColorU| -> Box<dyn Element> {
-            Expanded::new(1.0, Container::new(Empty::new().finish()).with_background_color(color).finish()).finish()
+            Expanded::new(
+                1.0,
+                Container::new(Empty::new().finish())
+                    .with_background_color(color)
+                    .finish(),
+            )
+            .finish()
         };
 
         let mut row1 = Flex::row()
@@ -975,18 +983,48 @@ mod tests {
         use std::path::Path;
 
         // Positive cases – animated formats
-        assert!(is_animated_ext(Path::new("anim.gif")), ".gif should be animated");
-        assert!(is_animated_ext(Path::new("anim.GIF")), ".GIF (uppercase) should be animated");
-        assert!(is_animated_ext(Path::new("anim.Gif")), ".Gif (mixed-case) should be animated");
-        assert!(is_animated_ext(Path::new("image.webp")), ".webp should be animated");
-        assert!(is_animated_ext(Path::new("image.WEBP")), ".WEBP (uppercase) should be animated");
-        assert!(is_animated_ext(Path::new("path/to/anim.gif")), "nested .gif path should work");
+        assert!(
+            is_animated_ext(Path::new("anim.gif")),
+            ".gif should be animated"
+        );
+        assert!(
+            is_animated_ext(Path::new("anim.GIF")),
+            ".GIF (uppercase) should be animated"
+        );
+        assert!(
+            is_animated_ext(Path::new("anim.Gif")),
+            ".Gif (mixed-case) should be animated"
+        );
+        assert!(
+            is_animated_ext(Path::new("image.webp")),
+            ".webp should be animated"
+        );
+        assert!(
+            is_animated_ext(Path::new("image.WEBP")),
+            ".WEBP (uppercase) should be animated"
+        );
+        assert!(
+            is_animated_ext(Path::new("path/to/anim.gif")),
+            "nested .gif path should work"
+        );
 
         // Negative cases – static or unknown formats
-        assert!(!is_animated_ext(Path::new("photo.png")), ".png is not animated");
-        assert!(!is_animated_ext(Path::new("photo.jpg")), ".jpg is not animated");
-        assert!(!is_animated_ext(Path::new("vector.svg")), ".svg is not animated");
-        assert!(!is_animated_ext(Path::new("noextension")), "no extension returns false");
+        assert!(
+            !is_animated_ext(Path::new("photo.png")),
+            ".png is not animated"
+        );
+        assert!(
+            !is_animated_ext(Path::new("photo.jpg")),
+            ".jpg is not animated"
+        );
+        assert!(
+            !is_animated_ext(Path::new("vector.svg")),
+            ".svg is not animated"
+        );
+        assert!(
+            !is_animated_ext(Path::new("noextension")),
+            "no extension returns false"
+        );
     }
 
     /// `path_is_svg` drives both `is_svg` and the source-view toggle guard; test it directly.
@@ -995,15 +1033,36 @@ mod tests {
         use std::path::Path;
 
         // Positive cases
-        assert!(path_is_svg(Path::new("icon.svg")), ".svg should be recognised");
-        assert!(path_is_svg(Path::new("ICON.SVG")), ".SVG (uppercase) should be recognised");
-        assert!(path_is_svg(Path::new("path/to/image.Svg")), "mixed-case .Svg should be recognised");
+        assert!(
+            path_is_svg(Path::new("icon.svg")),
+            ".svg should be recognised"
+        );
+        assert!(
+            path_is_svg(Path::new("ICON.SVG")),
+            ".SVG (uppercase) should be recognised"
+        );
+        assert!(
+            path_is_svg(Path::new("path/to/image.Svg")),
+            "mixed-case .Svg should be recognised"
+        );
 
         // Negative cases
-        assert!(!path_is_svg(Path::new("photo.png")), ".png should not be recognised");
-        assert!(!path_is_svg(Path::new("photo.jpg")), ".jpg should not be recognised");
-        assert!(!path_is_svg(Path::new("photo.jpeg")), ".jpeg should not be recognised");
-        assert!(!path_is_svg(Path::new("noextension")), "no extension should return false");
+        assert!(
+            !path_is_svg(Path::new("photo.png")),
+            ".png should not be recognised"
+        );
+        assert!(
+            !path_is_svg(Path::new("photo.jpg")),
+            ".jpg should not be recognised"
+        );
+        assert!(
+            !path_is_svg(Path::new("photo.jpeg")),
+            ".jpeg should not be recognised"
+        );
+        assert!(
+            !path_is_svg(Path::new("noextension")),
+            "no extension should return false"
+        );
     }
 
     #[test]

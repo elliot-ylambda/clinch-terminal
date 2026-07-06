@@ -1,9 +1,9 @@
 //! Manual end-to-end check: prints real usage for the current machine.
 //! Run: cargo run -p cli_agent_usage --example print_usage
 
-use cli_agent_usage::{
-    http::ReqwestUsage, keychain::MacKeychain, refresh, Caches, Paths, Provider,
-};
+use cli_agent_usage::http::ReqwestUsage;
+use cli_agent_usage::keychain::MacKeychain;
+use cli_agent_usage::{refresh, Caches, Paths, Provider};
 
 fn fmt_provider(name: &str, p: &Provider) {
     println!("== {name} ==");
