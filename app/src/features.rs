@@ -467,8 +467,6 @@ fn enabled_features() -> HashSet<FeatureFlag> {
         FeatureFlag::OpenCodeNotifications,
         #[cfg(feature = "cli_agent_rich_input")]
         FeatureFlag::CLIAgentRichInput,
-        #[cfg(feature = "cli_agent_quick_insert_buttons")]
-        FeatureFlag::CliAgentQuickInsertButtons,
         #[cfg(feature = "transfer_control_tool")]
         FeatureFlag::TransferControlTool,
         #[cfg(feature = "warpify_footer")]
