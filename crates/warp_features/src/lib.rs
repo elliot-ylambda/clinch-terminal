@@ -685,6 +685,9 @@ pub enum FeatureFlag {
     /// Ctrl-G intercepts the keystroke and opens Warp's input editor instead of $EDITOR.
     CLIAgentRichInput,
 
+    /// Enables user-defined quick-insert buttons in the CLI agent footer.
+    CliAgentQuickInsertButtons,
+
     /// Enables incremental (diff-based) buffer updates for auto-reload instead of full replace.
     IncrementalAutoReload,
 
@@ -968,6 +971,7 @@ pub const DOGFOOD_FLAGS: &[FeatureFlag] = &[
     FeatureFlag::PromptCacheExpiryWarning,
     FeatureFlag::PinnedTabs,
     FeatureFlag::ContextWindowUsageBreakdown,
+    FeatureFlag::CliAgentQuickInsertButtons,
 ];
 
 /// Features enabled for feature preview build users (e.g.: Friends of Warp).
