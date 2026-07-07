@@ -414,9 +414,6 @@ pub enum WorkspaceAction {
     OpenAgentToolbarEditor,
     OpenCLIAgentToolbarEditor,
     /// Opens the "Create quick-insert button" modal for the CLI-agent footer.
-    // Task 6 wires the trigger (footer "+add" button + context-menu entry) that
-    // constructs this variant; until then it is only ever matched, not built.
-    #[allow(dead_code)]
     OpenQuickInsertModal,
     OpenHeaderToolbarEditor,
     ShowHeaderToolbarContextMenu {

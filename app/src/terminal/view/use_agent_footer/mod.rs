@@ -65,6 +65,7 @@ use crate::ui_components::icons::Icon;
 use crate::view_components::action_button::{
     ActionButton, ActionButtonTheme, ButtonSize, KeystrokeSource, TooltipAlignment,
 };
+use crate::workspace::WorkspaceAction;
 
 /// Small delay inserted between separate PTY writes to CLI agents.
 /// (Used both for the mode-switch prefix split and for the `DelayedEnter`
@@ -252,6 +253,11 @@ impl TerminalView {
                 {
                     let _ = text;
                 }
+            }
+            UseAgentToolbarEvent::OpenQuickInsertModal => {
+                // Route the footer "+ Add" click up to the workspace, which owns
+                // the create-quick-insert-button modal.
+                ctx.dispatch_typed_action(&WorkspaceAction::OpenQuickInsertModal);
             }
             UseAgentToolbarEvent::StartRemoteControl { scrollback_type } => {
                 self.auto_stop_sharing_on_cli_end =
@@ -1212,6 +1218,9 @@ impl UseAgentToolbar {
             AgentInputFooterEvent::HideRichInput => {
                 ctx.emit(UseAgentToolbarEvent::HideRichInput);
             }
+            AgentInputFooterEvent::OpenQuickInsertModal => {
+                ctx.emit(UseAgentToolbarEvent::OpenQuickInsertModal);
+            }
             // Non-CLI events are handled by Input's subscription, not here.
             _ => {}
         }
@@ -1304,6 +1313,8 @@ pub enum UseAgentToolbarEvent {
     /// Submit a fixed prompt string to this pane's live CLI agent using the
     /// per-agent submission strategy (types the text, then presses Enter).
     SubmitTextToCliAgent(String),
+    /// Open the "Create quick-insert button" modal (footer "+ Add" button).
+    OpenQuickInsertModal,
     /// Start remote control (one-click share without modal).
     StartRemoteControl {
         scrollback_type: SharedSessionScrollbackType,

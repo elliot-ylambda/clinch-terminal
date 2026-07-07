@@ -1351,6 +1351,8 @@ pub enum ContextMenuAction {
     EditPrompt,
     EditAgentToolbar,
     EditCLIAgentToolbar,
+    /// Open the "Create quick-insert button" modal for the CLI-agent footer.
+    AddQuickInsertButton,
     /// Ask AI about the current context. Handled by blocklist AI if its feature flag is enabled and
     /// the AI assistant panel otherwise.
     AskAI(AskAISource),
@@ -1484,6 +1486,7 @@ impl fmt::Debug for ContextMenuAction {
             EditPrompt => f.write_str("EditPrompt"),
             EditAgentToolbar => f.write_str("EditAgentToolbar"),
             EditCLIAgentToolbar => f.write_str("EditCLIAgentToolbar"),
+            AddQuickInsertButton => f.write_str("AddQuickInsertButton"),
             AskAI(_) => f.write_str("AskAIAssistant"),
             OpenWorkflowModal => f.write_str("OpenWorkflowModal"),
             OpenShareSessionModal => f.write_str("OpenShareSessionModal"),
@@ -17335,6 +17338,18 @@ impl TerminalView {
             )
         };
 
+        // Sibling to "Edit CLI agent toolbelt": opens the modal that creates a
+        // new custom quick-insert footer button. Only for live CLI-agent panes.
+        let add_quick_insert_menu_item = (has_cli_agent_session
+            && FeatureFlag::CliAgentQuickInsertButtons.is_enabled())
+        .then(|| {
+            MenuItemFields::new("Add quick-insert button…")
+                .with_on_select_action(TerminalAction::ContextMenu(
+                    ContextMenuAction::AddQuickInsertButton,
+                ))
+                .into_item()
+        });
+
         if *SessionSettings::as_ref(ctx).honor_ps1 {
             let mut items = vec![copy_prompt];
             if self.is_rprompt_shown(&self.model.lock()) {
@@ -17349,6 +17364,9 @@ impl TerminalView {
             if let Some(edit_menu_item) = edit_menu_item {
                 items.extend([MenuItem::Separator, edit_menu_item]);
             }
+            if let Some(add_quick_insert_menu_item) = add_quick_insert_menu_item {
+                items.push(add_quick_insert_menu_item);
+            }
             items
         } else {
             let mut items = vec![copy_prompt];
@@ -17362,6 +17380,9 @@ impl TerminalView {
             }
             if let Some(edit_menu_item) = edit_menu_item {
                 items.extend([MenuItem::Separator, edit_menu_item]);
+            }
+            if let Some(add_quick_insert_menu_item) = add_quick_insert_menu_item {
+                items.push(add_quick_insert_menu_item);
             }
             items
         }
@@ -24560,6 +24581,11 @@ impl TerminalView {
             EditCLIAgentToolbar => {
                 if FeatureFlag::AgentToolbarEditor.is_enabled() {
                     ctx.emit(Event::OpenCLIAgentToolbarEditor);
+                }
+            }
+            AddQuickInsertButton => {
+                if FeatureFlag::CliAgentQuickInsertButtons.is_enabled() {
+                    ctx.dispatch_typed_action(&WorkspaceAction::OpenQuickInsertModal);
                 }
             }
             AskAI(ask_source) => {
