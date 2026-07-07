@@ -83,3 +83,26 @@ fn quick_replies_absent_from_agent_view_configurator() {
     assert!(!available.contains(&AgentToolbarItemKind::ContinuePrompt));
     assert!(!available.contains(&AgentToolbarItemKind::LooksGoodPrompt));
 }
+
+#[test]
+fn custom_insert_is_cli_only_and_host_only() {
+    let item = AgentToolbarItemKind::CustomInsert {
+        label: "Ship it".to_string(),
+        text: "/deploy".to_string(),
+    };
+    assert_eq!(item.available_in(), ToolbarAvailability::CLIAgentOnly);
+    assert!(!item.available_to_session_viewer(&SharedSessionStatus::reader(), false));
+    assert_eq!(item.display_label(), "Ship it");
+    assert_eq!(item.icon(), Some(Icon::Play));
+}
+
+#[test]
+fn custom_insert_round_trips_through_serde() {
+    let item = AgentToolbarItemKind::CustomInsert {
+        label: "Review".to_string(),
+        text: "/review".to_string(),
+    };
+    let json = serde_json::to_string(&item).unwrap();
+    let back: AgentToolbarItemKind = serde_json::from_str(&json).unwrap();
+    assert_eq!(item, back);
+}

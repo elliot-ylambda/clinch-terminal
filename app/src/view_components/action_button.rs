@@ -369,6 +369,19 @@ impl ActionButton {
         self
     }
 
+    /// Override the default (freshly-created) hover/click state handle.
+    ///
+    /// Use this when an `ActionButton` is built fresh on every render (rather
+    /// than added once via `ctx.add_typed_action_view`), e.g. for a dynamic,
+    /// data-driven list of buttons. Pass a handle cached elsewhere (keyed by
+    /// item identity) so the same handle persists across renders — per
+    /// WARP.md, a transient `MouseStateHandle::default()` recreated on every
+    /// render will silently break clicks.
+    pub fn with_mouse_state_handle(mut self, handle: MouseStateHandle) -> Self {
+        self.mouse_state_handle = handle;
+        self
+    }
+
     pub fn with_max_label_width(mut self, max_label_width: f32) -> Self {
         self.max_label_width = Some(max_label_width);
         self
