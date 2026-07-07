@@ -294,24 +294,24 @@ impl AgentToolbarItemKind {
     }
 
     /// Default left-side items for the CLI agent footer.
+    ///
+    /// `FileAttach` (+), the `GitDiffStats` (±) chip, `FileExplorer`, and
+    /// `RichInput` are intentionally omitted from the default layout — the file
+    /// explorer now lives in the header toolbar. All four remain in
+    /// `all_available_for_cli_input`, so they can be dragged back via the footer
+    /// toolbar editor.
     pub fn cli_default_left() -> Vec<Self> {
         let mut items = vec![
             Self::ForkSession,
             Self::Compact,
             Self::ContinuePrompt,
             Self::LooksGoodPrompt,
-            Self::FileAttach,
             Self::VoiceInput,
-            Self::ContextChip(ContextChipKind::GitDiffStats),
         ];
         if FeatureFlag::CreatingSharedSessions.is_enabled()
             && FeatureFlag::HOARemoteControl.is_enabled()
         {
             items.push(Self::ShareSession);
-        }
-        items.push(Self::FileExplorer);
-        if FeatureFlag::CLIAgentRichInput.is_enabled() {
-            items.push(Self::RichInput);
         }
         items
     }

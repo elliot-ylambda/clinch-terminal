@@ -4,7 +4,7 @@ use warpui::{AppContext, SingletonEntity};
 
 use crate::auth::AuthStateProvider;
 use crate::features::FeatureFlag;
-use crate::settings::AISettings;
+use crate::settings::{AISettings, CodeSettings};
 use crate::tab::uses_vertical_tabs;
 use crate::ui_components::icons::Icon;
 use crate::workspace::tab_settings::TabSettings;
@@ -28,6 +28,7 @@ use crate::workspace::tab_settings::TabSettings;
 #[schemars(rename_all = "snake_case")]
 pub enum HeaderToolbarItemKind {
     TabsPanel,
+    FileExplorer,
     ToolsPanel,
     AgentManagement,
     CodeReview,
@@ -38,6 +39,7 @@ impl HeaderToolbarItemKind {
     pub fn display_label(&self) -> &'static str {
         match self {
             Self::TabsPanel => "Tabs Panel",
+            Self::FileExplorer => "File Explorer",
             Self::ToolsPanel => "Tools Panel",
             Self::AgentManagement => "Agent Management",
             Self::CodeReview => "Code Review",
@@ -48,6 +50,7 @@ impl HeaderToolbarItemKind {
     pub fn icon(&self) -> Icon {
         match self {
             Self::TabsPanel => Icon::Menu,
+            Self::FileExplorer => Icon::Folder,
             Self::ToolsPanel => Icon::Tool2,
             Self::AgentManagement => Icon::Grid,
             Self::CodeReview => Icon::Diff,
@@ -61,6 +64,10 @@ impl HeaderToolbarItemKind {
     pub fn is_supported(&self, app: &AppContext) -> bool {
         match self {
             Self::TabsPanel => uses_vertical_tabs(),
+            // The file tree is reached through the same left (tools) panel as
+            // `ToolsPanel`, so it is supported wherever that panel is. Real
+            // availability is gated by `show_project_explorer` in `is_available`.
+            Self::FileExplorer => true,
             Self::ToolsPanel => true,
             Self::AgentManagement => {
                 let is_web_anonymous_user = AuthStateProvider::as_ref(app)
@@ -83,20 +90,31 @@ impl HeaderToolbarItemKind {
             return false;
         }
         match self {
+            Self::FileExplorer => *CodeSettings::as_ref(app).show_project_explorer,
             Self::CodeReview => *TabSettings::as_ref(app).show_code_review_button.value(),
             Self::NotificationsMailbox => *AISettings::as_ref(app).show_agent_notifications,
-            _ => true,
+            Self::TabsPanel | Self::ToolsPanel | Self::AgentManagement => true,
         }
     }
 
     /// Whether this item opens a side panel (as opposed to replacing the content
     /// area or opening a popover).
+    ///
+    /// `FileExplorer` is intentionally NOT a panel: it re-targets the shared left
+    /// (tools) panel to the file-tree view rather than owning a distinct panel,
+    /// so `ToolsPanel` remains the single renderer of `left_panel_view` (see
+    /// `render_config_panel`). Marking it a panel would double-render that view.
     pub fn is_panel(&self) -> bool {
         matches!(self, Self::TabsPanel | Self::ToolsPanel | Self::CodeReview)
     }
 
     pub fn default_left() -> Vec<Self> {
-        vec![Self::TabsPanel, Self::ToolsPanel, Self::AgentManagement]
+        vec![
+            Self::TabsPanel,
+            Self::FileExplorer,
+            Self::ToolsPanel,
+            Self::AgentManagement,
+        ]
     }
 
     pub fn default_right() -> Vec<Self> {
@@ -107,6 +125,7 @@ impl HeaderToolbarItemKind {
     pub fn all_items() -> Vec<Self> {
         vec![
             Self::TabsPanel,
+            Self::FileExplorer,
             Self::ToolsPanel,
             Self::AgentManagement,
             Self::CodeReview,
@@ -114,3 +133,7 @@ impl HeaderToolbarItemKind {
         ]
     }
 }
+
+#[cfg(test)]
+#[path = "header_toolbar_item_tests.rs"]
+mod tests;

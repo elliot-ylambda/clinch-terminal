@@ -83,3 +83,37 @@ fn quick_replies_absent_from_agent_view_configurator() {
     assert!(!available.contains(&AgentToolbarItemKind::ContinuePrompt));
     assert!(!available.contains(&AgentToolbarItemKind::LooksGoodPrompt));
 }
+
+/// Items intentionally dropped from the CLI footer default layout: the file
+/// explorer moved to the header toolbar, and the `+` attach button, `±` git
+/// diff-stats chip, and Rich Input chip were removed as clutter.
+fn removed_cli_default_kinds() -> [AgentToolbarItemKind; 4] {
+    [
+        AgentToolbarItemKind::FileAttach,
+        AgentToolbarItemKind::FileExplorer,
+        AgentToolbarItemKind::RichInput,
+        AgentToolbarItemKind::ContextChip(ContextChipKind::GitDiffStats),
+    ]
+}
+
+#[test]
+fn removed_items_absent_from_cli_default_left() {
+    let items = AgentToolbarItemKind::cli_default_left();
+    for kind in removed_cli_default_kinds() {
+        assert!(
+            !items.contains(&kind),
+            "{kind:?} should not be in the CLI footer default layout"
+        );
+    }
+}
+
+#[test]
+fn removed_items_still_available_in_cli_configurator() {
+    let available = AgentToolbarItemKind::all_available_for_cli_input();
+    for kind in removed_cli_default_kinds() {
+        assert!(
+            available.contains(&kind),
+            "{kind:?} should remain re-addable via the CLI footer toolbar editor"
+        );
+    }
+}
