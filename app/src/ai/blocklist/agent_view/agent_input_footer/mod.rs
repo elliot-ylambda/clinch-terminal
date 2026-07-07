@@ -1,6 +1,7 @@
 pub(super) mod chips;
 pub mod editor;
 mod environment_selector;
+pub mod quick_insert_modal;
 pub mod toolbar_item;
 
 use std::cell::RefCell;

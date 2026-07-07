@@ -1,11 +1,6 @@
 //! On-demand discovery of CLI-agent slash commands (Claude Code / Codex) for the
 //! quick-insert-button picker. Unlike skills, there is no live watcher — the
 //! popup scans when it opens.
-//!
-// The quick-insert modal (Task 5) is the only consumer; until it lands, the
-// public entry point and the Codex path are unreferenced. Remove this allow
-// when the modal calls `discover_commands`.
-#![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
 

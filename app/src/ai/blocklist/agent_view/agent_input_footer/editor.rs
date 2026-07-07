@@ -284,8 +284,6 @@ pub fn next_selection_with_custom_button(
 /// toolbar selection: reads the current `cli_agent_footer_chip_selection`
 /// setting, computes the next selection via `next_selection_with_custom_button`,
 /// and writes it back via the same `set_value` path `save_toolbar_selection` uses.
-// TODO: drop this `allow` once Task 5's "add custom button" modal calls this.
-#[allow(dead_code)]
 pub fn append_cli_custom_button<V: View>(label: String, text: String, ctx: &mut ViewContext<V>) {
     let current = SessionSettings::as_ref(ctx)
         .cli_agent_footer_chip_selection

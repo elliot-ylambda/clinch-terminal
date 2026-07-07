@@ -1,5 +1,6 @@
-use super::*;
 use std::fs;
+
+use super::*;
 
 // Builds a temp dir with a fake `.claude/commands` tree and returns its path.
 fn write(root: &std::path::Path, rel: &str, body: &str) {
