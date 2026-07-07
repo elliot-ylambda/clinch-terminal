@@ -15,6 +15,9 @@ f="$WARP_AGENT_RESUME_DIR/cc33.json"
 # Pin the launch-flag detection off for the plain cases so they are deterministic regardless
 # of how this test was launched (a real claude ancestor must not leak its flags in).
 export WARP_AGENT_RESUME_FAKE_ARGV=""
+# Likewise pin the bridge id off: this test may itself run inside a bridged claude session,
+# which would leak CLAUDE_CODE_BRIDGE_SESSION_ID into every capture below.
+unset CLAUDE_CODE_BRIDGE_SESSION_ID
 
 # Fresh/startup: session_id recorded via the launcher form.
 echo '{"session_id":"sess-aaa","cwd":"/tmp/repo","source":"startup"}' | "$BIN/claude-capture.sh"
@@ -76,6 +79,22 @@ grep -q '"command": "warp_agent_resume_launch claude sess-eee --dangerously-skip
 # Unknown events are ignored.
 echo '{"session_id":"sess-eee","cwd":"/tmp/repo","hook_event_name":"PreCompact","permission_mode":"default"}' | "$BIN/claude-capture.sh"
 grep -q -- '--dangerously-skip-permissions' "$f" || { echo "FAIL: unknown event must not rewrite the entry"; exit 1; }
+
+# --- Bridge id capture ---
+# A bridged session (claude.ai repl bridge) exports CLAUDE_CODE_BRIDGE_SESSION_ID to its
+# hooks; the entry records it so restore can surface the cloud-copy URL.
+CLAUDE_CODE_BRIDGE_SESSION_ID="session_01TESTBRIDGE" \
+  bash -c 'echo "{\"session_id\":\"sess-fff\",\"cwd\":\"/tmp/repo\"}" | "$0"' "$BIN/claude-capture.sh"
+grep -q '"bridge": "session_01TESTBRIDGE"' "$f" || { echo "FAIL: bridge id not recorded"; exit 1; }
+
+# Per-turn events refresh it (bridge can attach after SessionStart)…
+CLAUDE_CODE_BRIDGE_SESSION_ID="session_01LATER" \
+  bash -c 'echo "{\"session_id\":\"sess-fff\",\"cwd\":\"/tmp/repo\",\"hook_event_name\":\"Stop\",\"permission_mode\":\"default\"}" | "$0"' "$BIN/claude-capture.sh"
+grep -q '"bridge": "session_01LATER"' "$f" || { echo "FAIL: updater did not refresh bridge id"; exit 1; }
+
+# …and an un-bridged capture writes no bridge field.
+echo '{"session_id":"sess-ggg","cwd":"/tmp/repo"}' | "$BIN/claude-capture.sh"
+grep -q '"bridge"' "$f" && { echo "FAIL: bridge field written without env"; exit 1; }
 rm -f "$f"   # clear residue so the empty-dir check below only sees new writes
 
 # Outside a Warp pane: no-op.

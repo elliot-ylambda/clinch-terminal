@@ -5,15 +5,22 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 TMP="$(mktemp -d)"
 mkdir -p "$TMP/bin"
-# Fake `claude` that records the args it was called with (path baked in).
+# Fake `claude` that records the args it was called with (path baked in). Each call also
+# appends to all_args so fallback chains are assertable, and the exit code is configurable
+# via $TMP/claude_rc (defaults to 0).
 cat > "$TMP/bin/claude" <<EOF
 #!/usr/bin/env bash
 echo "\$@" > "$TMP/last_args"
-exit 0
+echo "\$@" >> "$TMP/all_args"
+exit "\$(cat "$TMP/claude_rc" 2>/dev/null || echo 0)"
 EOF
 chmod +x "$TMP/bin/claude"
 export PATH="$TMP/bin:$PATH"
 source "$HERE/claude.zsh"
+
+# Run the pre-URL cases without a pane uuid so no cloud-URL registry lookup interferes
+# (this test may itself run inside a Warp pane).
+unset WARP_TERMINAL_SESSION_UUID
 
 EHOME="$TMP/home"
 mkdir -p "$EHOME/.claude/projects/-tmp-repo"
@@ -47,5 +54,66 @@ rm -f "$TMP/last_args"
 HOME="$EHOME" warp_agent_resume_launch claude stub-1 --dangerously-skip-permissions
 grep -q -- '--resume' "$TMP/last_args"                       && { echo "FAIL: fallback must not resume"; exit 1; }
 grep -q -- '--dangerously-skip-permissions' "$TMP/last_args" || { echo "FAIL: skip-permissions not forwarded on fresh fallback"; exit 1; }
+
+# --- Bridged sessions: teleport-first (cloud copy is authoritative) ---
+export WARP_AGENT_RESUME_DIR="$TMP/reg"
+export WARP_TERMINAL_SESSION_UUID="pane99"
+mkdir -p "$WARP_AGENT_RESUME_DIR"
+printf '{ "command": "warp_agent_resume_launch claude good-1", "cwd": "/tmp/repo", "bridge": "session_01XYZ" }\n' \
+  > "$WARP_AGENT_RESUME_DIR/pane99.json"
+
+# Bridge recorded -> teleport (with launch flags forwarded), even when a local jsonl with a
+# real turn exists (a bridged session's local file is a stale husk).
+rm -f "$TMP/last_args" "$TMP/all_args" "$TMP/claude_rc"
+HOME="$EHOME" warp_agent_resume_launch claude good-1 --dangerously-skip-permissions
+grep -q -- '--teleport session_01XYZ' "$TMP/last_args"       || { echo "FAIL: bridged session should teleport"; exit 1; }
+grep -q -- '--dangerously-skip-permissions' "$TMP/last_args" || { echo "FAIL: flags not forwarded to teleport"; exit 1; }
+grep -q -- '--resume' "$TMP/all_args"                        && { echo "FAIL: successful teleport must not also resume"; exit 1; }
+
+# Teleport that fails FAST falls back to the local paths (resume here) and prints the
+# cloud URL for manual recovery.
+rm -f "$TMP/last_args" "$TMP/all_args"
+echo 1 > "$TMP/claude_rc"
+err="$(HOME="$EHOME" warp_agent_resume_launch claude good-1 2>&1 >/dev/null)" || true
+grep -q -- '--teleport session_01XYZ' "$TMP/all_args" || { echo "FAIL: teleport not attempted"; exit 1; }
+grep -q -- '--resume good-1' "$TMP/all_args"          || { echo "FAIL: fast-fail teleport should fall back to resume"; exit 1; }
+[[ "$err" == *"https://claude.ai/code/session_01XYZ"* ]] || { echo "FAIL: fallback missing cloud URL"; exit 1; }
+
+# ...and to a fresh session when nothing is locally resumable.
+rm -f "$TMP/last_args" "$TMP/all_args"
+printf '{ "command": "warp_agent_resume_launch claude stub-1", "cwd": "/tmp/repo", "bridge": "session_01XYZ" }\n' \
+  > "$WARP_AGENT_RESUME_DIR/pane99.json"
+HOME="$EHOME" warp_agent_resume_launch claude stub-1 || true
+grep -q -- '--teleport' "$TMP/last_args" && { echo "FAIL: fallback fresh launch must not re-teleport"; exit 1; }
+grep -q -- '--resume' "$TMP/last_args"   && { echo "FAIL: stub must not resume"; exit 1; }
+
+# A non-zero exit AFTER a real run is the user quitting -- no relaunch on top.
+# GRACE=-1 makes every run count as "real" without sleeping in the test.
+rm -f "$TMP/last_args" "$TMP/all_args"
+WARP_AGENT_RESUME_TELEPORT_GRACE=-1 HOME="$EHOME" warp_agent_resume_launch claude good-1 || true
+(( $(wc -l < "$TMP/all_args") == 1 )) || { echo "FAIL: long-run teleport exit must not relaunch"; exit 1; }
+echo 0 > "$TMP/claude_rc"
+
+# Malformed bridge values are ignored -> normal resume path.
+rm -f "$TMP/last_args" "$TMP/all_args"
+printf '{ "command": "warp_agent_resume_launch claude good-1", "cwd": "/tmp/repo", "bridge": "garbage value" }\n' \
+  > "$WARP_AGENT_RESUME_DIR/pane99.json"
+HOME="$EHOME" warp_agent_resume_launch claude good-1
+grep -q -- '--teleport' "$TMP/last_args"      && { echo "FAIL: malformed bridge must not teleport"; exit 1; }
+grep -q -- '--resume good-1' "$TMP/last_args" || { echo "FAIL: malformed bridge should fall back to resume"; exit 1; }
+
+# No bridge recorded -> normal resume path, no teleport.
+printf '{ "command": "warp_agent_resume_launch claude good-1", "cwd": "/tmp/repo" }\n' \
+  > "$WARP_AGENT_RESUME_DIR/pane99.json"
+rm -f "$TMP/last_args" "$TMP/all_args"
+HOME="$EHOME" warp_agent_resume_launch claude good-1
+grep -q -- '--teleport' "$TMP/last_args"      && { echo "FAIL: teleport without bridge field"; exit 1; }
+grep -q -- '--resume good-1' "$TMP/last_args" || { echo "FAIL: unbridged session should resume"; exit 1; }
+
+# Outside a pane (no WARP_TERMINAL_SESSION_UUID): no teleport, no error.
+unset WARP_TERMINAL_SESSION_UUID
+rm -f "$TMP/last_args" "$TMP/all_args"
+HOME="$EHOME" warp_agent_resume_launch claude good-1
+grep -q -- '--teleport' "$TMP/last_args" && { echo "FAIL: teleport without pane uuid"; exit 1; }
 
 echo "PASS"

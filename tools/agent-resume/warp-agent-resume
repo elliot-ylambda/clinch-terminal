@@ -10,12 +10,20 @@ json_escape() { # escape backslash and double-quote for JSON string body
 cmd="${1:-}"; shift || true
 case "$cmd" in
   write)
-    uuid="$1"; command_str="$2"; cwd="$3"
+    uuid="$1"; command_str="$2"; cwd="$3"; bridge="${4:-}"
     [[ -n "$uuid" ]] || { echo "write: empty uuid" >&2; exit 2; }
     mkdir -p "$DIR"; chmod 700 "$DIR"
     tmp="$DIR/$uuid.json.tmp.$$"
-    printf '{ "command": "%s", "cwd": "%s" }\n' \
-      "$(json_escape "$command_str")" "$(json_escape "$cwd")" > "$tmp"
+    if [[ -n "$bridge" ]]; then
+      # `bridge` is the claude.ai cloud-copy id (CLAUDE_CODE_BRIDGE_SESSION_ID). Bridged
+      # sessions keep their full conversation at https://claude.ai/code/<bridge> rather than
+      # in a local jsonl, so the replay side surfaces this URL when local resume can't help.
+      printf '{ "command": "%s", "cwd": "%s", "bridge": "%s" }\n' \
+        "$(json_escape "$command_str")" "$(json_escape "$cwd")" "$(json_escape "$bridge")" > "$tmp"
+    else
+      printf '{ "command": "%s", "cwd": "%s" }\n' \
+        "$(json_escape "$command_str")" "$(json_escape "$cwd")" > "$tmp"
+    fi
     chmod 600 "$tmp"
     mv -f "$tmp" "$DIR/$uuid.json"
     ;;
@@ -24,7 +32,7 @@ case "$cmd" in
     rm -f "$DIR/$uuid.json"
     ;;
   *)
-    echo "usage: warp-agent-resume {write <uuid> <command> <cwd>|remove <uuid>}" >&2
+    echo "usage: warp-agent-resume {write <uuid> <command> <cwd> [bridge]|remove <uuid>}" >&2
     exit 2
     ;;
 esac

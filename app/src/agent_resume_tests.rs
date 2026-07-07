@@ -21,6 +21,27 @@ fn reads_command_from_registry_file() {
 }
 
 #[test]
+fn tolerates_bridge_field_in_registry_file() {
+    // The capture hook records the claude.ai bridge id in an optional "bridge" field, which
+    // the shell replay side consumes; the Rust reader must keep parsing entries that carry it.
+    let dir = std::env::temp_dir().join(format!("agent_resume_bridge_test_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut f = std::fs::File::create(dir.join("beefcafe.json")).unwrap();
+    write!(
+        f,
+        r#"{{ "command": "warp_agent_resume_launch claude abc-123", "cwd": "/tmp", "bridge": "session_01XYZ" }}"#
+    )
+    .unwrap();
+
+    assert_eq!(
+        read_command_in(&dir, "beefcafe"),
+        Some("warp_agent_resume_launch claude abc-123".to_string())
+    );
+    let launch = read_fork_launch_in(&dir, "beefcafe").unwrap();
+    assert_eq!(launch.command, "claude --resume abc-123 --fork-session");
+}
+
+#[test]
 fn uuid_hex_is_lowercase() {
     // Must match $WARP_TERMINAL_SESSION_UUID casing.
     assert_eq!(hex::encode([0xAB, 0xCD]), "abcd");

@@ -34,15 +34,54 @@ warp_agent_resume_resumable() {
   esac
 }
 
-# Resume <agent>'s session <id> if it is resumable, otherwise start a fresh session in this
-# pane. Called by Warp on restore. Any trailing args are launch flags carried over from how the
-# session was originally started (e.g. --dangerously-skip-permissions, --model <m>); they are
-# forwarded to both the resume and the fresh-fallback path so the session reopens the same way.
-# The fresh fallback runs the agent normally (so its SessionStart hook re-captures it under this
-# pane for the next restore).
+# Print this pane's recorded claude.ai bridge id (session_<...>), if any.
+#
+# Bridged Claude sessions ("repl bridge") keep the full conversation at
+# https://claude.ai/code/<bridge> and stop updating their local jsonl the moment they bridge,
+# so the cloud copy -- not the local file -- is authoritative for them. The id is read back
+# from the pane's registry entry (written by claude-capture.sh). Only claude.ai-shaped ids
+# (session_*) are emitted; anything else a hand-edited entry might contain is ignored. The
+# value is only echoed, never evaluated.
+warp_agent_resume_bridge_id() {
+  [[ -n "${WARP_TERMINAL_SESSION_UUID:-}" ]] || return 0
+  local entry="${WARP_AGENT_RESUME_DIR:-$HOME/.warp/agent-resume}/$WARP_TERMINAL_SESSION_UUID.json"
+  [[ -f "$entry" ]] || return 0
+  local bridge
+  bridge="$(sed -nE 's/.*"bridge": "([^"]+)".*/\1/p' "$entry" 2>/dev/null)"
+  [[ "$bridge" == session_* ]] && printf '%s' "$bridge"
+  return 0
+}
+
+# Relaunch <agent>'s session <id> in this pane. Called by Warp on restore. Any trailing args
+# are launch flags carried over from how the session was originally started (e.g.
+# --dangerously-skip-permissions, --model <m>); they are forwarded on every path so the
+# session reopens the same way.
+#
+# Path order:
+# 1. Bridged claude session (bridge id recorded) -> `claude --teleport <bridge>`: the local
+#    jsonl of a bridged session is a stale husk at best (it stops updating at bridge time)
+#    and `claude --resume` on it either fails with "No conversation found" or silently
+#    resumes the husk, so the cloud copy is fetched instead. A teleport that fails *fast*
+#    (dirty tree, git lock race, API error) falls through to the local paths; a non-zero
+#    exit after a real run is the user quitting the session, so it must NOT relaunch on top
+#    (WARP_AGENT_RESUME_TELEPORT_GRACE seconds distinguishes the two, default 15).
+# 2. Local transcript with a real turn -> `claude --resume <id>` / `codex resume <id>`.
+# 3. Otherwise start fresh (the SessionStart hook re-captures the new session for next time).
 warp_agent_resume_launch() {
   local agent="$1" id="$2"
   shift 2
+  local bridge=""
+  [[ "$agent" == claude ]] && bridge="$(warp_agent_resume_bridge_id)"
+  if [[ -n "$bridge" ]]; then
+    echo "warp: teleporting bridged claude session ($bridge)." >&2
+    local _war_start=$SECONDS _war_rc
+    claude --teleport "$bridge" "$@"
+    _war_rc=$?
+    if (( _war_rc == 0 || SECONDS - _war_start > ${WARP_AGENT_RESUME_TELEPORT_GRACE:-15} )); then
+      return $_war_rc
+    fi
+    echo "warp: teleport failed -- falling back (cloud copy: https://claude.ai/code/$bridge)." >&2
+  fi
   if warp_agent_resume_resumable "$agent" "$id"; then
     case "$agent" in
       claude) claude --resume "$id" "$@" ;;
