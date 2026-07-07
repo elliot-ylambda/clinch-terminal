@@ -35,8 +35,9 @@ fn limit_texts(
     }
 }
 
-/// One provider's inline segment: `{name} 5h {pct}[· {reset}] │ wk {pct}[· {reset}]`.
-/// Percents are severity-colored; labels and resets are dimmed.
+/// One provider's inline segment: `{name} 5h {pct}[· {reset}]  wk {pct}[· {reset}]`.
+/// Percents are severity-colored; labels and resets are dimmed. The two windows are
+/// separated by whitespace — the only `│` divider in the widget sits between providers.
 fn provider_segment(
     name: &str,
     provider: &Provider,
@@ -56,7 +57,11 @@ fn provider_segment(
 
     for (idx, (label, window)) in [("5h ", session), ("wk ", weekly)].into_iter().enumerate() {
         if idx > 0 {
-            row.add_child(span(" │ ", sub, appearance));
+            row.add_child(
+                Container::new(Empty::new().finish())
+                    .with_margin_right(10.)
+                    .finish(),
+            );
         }
         let (pct, reset, severity) = limit_texts(window, now, include_resets);
         row.add_child(span(label, sub, appearance));
@@ -68,7 +73,7 @@ fn provider_segment(
     row.finish()
 }
 
-/// The full/medium inline layout: clock icon + Claude segment + gap + Codex segment.
+/// The full/medium inline layout: clock icon + Claude segment + `│` divider + Codex segment.
 fn inline_row(
     snapshot: &UsageSnapshot,
     now: DateTime<Utc>,
@@ -77,6 +82,7 @@ fn inline_row(
     bg: Fill,
 ) -> Box<dyn Element> {
     let theme = appearance.theme();
+    let sub = theme.sub_text_color(bg);
     let icon_size = appearance.monospace_font_size();
     let mut row = Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center);
     row.add_child(
@@ -102,8 +108,8 @@ fn inline_row(
         bg,
     ));
     row.add_child(
-        Container::new(Empty::new().finish())
-            .with_margin_right(12.)
+        Container::new(span("│", sub, appearance))
+            .with_horizontal_margin(12.)
             .finish(),
     );
     row.add_child(provider_segment(

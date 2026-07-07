@@ -24,8 +24,10 @@ pub fn fmt_pct(percent: f64) -> String {
     format!("{}%", percent.round() as i64)
 }
 
-/// Relative "resets" label: `"in 12m"` / `"in 3h"` / `"in 2d"`; past-or-now -> `"now"`;
-/// `None` -> `"—"`.
+/// Relative "resets" label: `"in 12m"` / `"in 1h 45m"` / `"in 3h"` / `"in 2d"`;
+/// past-or-now -> `"now"`; `None` -> `"—"`. Under a day the remaining minutes are
+/// shown alongside the hours (dropped only when they are exactly zero) so a window
+/// that resets in 1h 45m never reads as a flat "in 1h".
 pub fn fmt_reset(resets_at: Option<DateTime<Utc>>, now: DateTime<Utc>) -> String {
     let Some(target) = resets_at else {
         return "—".to_string();
@@ -36,7 +38,13 @@ pub fn fmt_reset(resets_at: Option<DateTime<Utc>>, now: DateTime<Utc>) -> String
     } else if secs < 3_600 {
         format!("in {}m", secs / 60)
     } else if secs < 86_400 {
-        format!("in {}h", secs / 3_600)
+        let hours = secs / 3_600;
+        let mins = (secs % 3_600) / 60;
+        if mins == 0 {
+            format!("in {hours}h")
+        } else {
+            format!("in {hours}h {mins}m")
+        }
     } else {
         format!("in {}d", secs / 86_400)
     }
@@ -186,6 +194,13 @@ mod tests {
         assert_eq!(fmt_reset(None, now), "—");
         assert_eq!(fmt_reset(Some(now + Duration::minutes(12)), now), "in 12m");
         assert_eq!(fmt_reset(Some(now + Duration::hours(3)), now), "in 3h");
+        assert_eq!(
+            fmt_reset(
+                Some(now + Duration::hours(1) + Duration::minutes(45)),
+                now
+            ),
+            "in 1h 45m"
+        );
         assert_eq!(fmt_reset(Some(now + Duration::days(2)), now), "in 2d");
         assert_eq!(fmt_reset(Some(now - Duration::hours(1)), now), "now");
     }
