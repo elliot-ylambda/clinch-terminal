@@ -971,7 +971,6 @@ pub const DOGFOOD_FLAGS: &[FeatureFlag] = &[
     FeatureFlag::PromptCacheExpiryWarning,
     FeatureFlag::PinnedTabs,
     FeatureFlag::ContextWindowUsageBreakdown,
-    FeatureFlag::CliAgentQuickInsertButtons,
 ];
 
 /// Features enabled for feature preview build users (e.g.: Friends of Warp).
@@ -997,6 +996,8 @@ pub const RELEASE_FLAGS: &[FeatureFlag] = &[
     FeatureFlag::SshRemoteServer,
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     FeatureFlag::DragTabsToWindows,
+    // Launched from dogfood to stable: user-defined CLI-agent footer quick-insert buttons.
+    FeatureFlag::CliAgentQuickInsertButtons,
 ];
 
 /// Flags that we want to allow to switch at runtime (assuming RuntimeFeatureFlags is set)
