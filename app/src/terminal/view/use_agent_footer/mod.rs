@@ -65,7 +65,6 @@ use crate::ui_components::icons::Icon;
 use crate::view_components::action_button::{
     ActionButton, ActionButtonTheme, ButtonSize, KeystrokeSource, TooltipAlignment,
 };
-use crate::workspace::WorkspaceAction;
 
 /// Small delay inserted between separate PTY writes to CLI agents.
 /// (Used both for the mode-switch prefix split and for the `DelayedEnter`
@@ -255,9 +254,13 @@ impl TerminalView {
                 }
             }
             UseAgentToolbarEvent::OpenQuickInsertModal => {
-                // Route the footer "+ Add" click up to the workspace, which owns
-                // the create-quick-insert-button modal.
-                ctx.dispatch_typed_action(&WorkspaceAction::OpenQuickInsertModal);
+                // Route the footer "+ Add" click up to the workspace via a queued
+                // terminal-view event, NOT a synchronous action dispatch. This
+                // handler runs while the TerminalView is borrowed; opening the modal
+                // re-borrows it (close_all_overlays -> get_active_input_view_handle),
+                // which panics with a circular view reference. Emitting defers the
+                // open until the borrow is released. Mirrors OpenAgentToolbarEditor.
+                ctx.emit(super::Event::OpenQuickInsertModal);
             }
             UseAgentToolbarEvent::StartRemoteControl { scrollback_type } => {
                 self.auto_stop_sharing_on_cli_end =

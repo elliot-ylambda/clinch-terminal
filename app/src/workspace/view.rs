@@ -15893,6 +15893,9 @@ impl Workspace {
             pane_group::Event::OpenCLIAgentToolbarEditor => {
                 self.open_agent_toolbar_editor(AgentToolbarEditorMode::CLIAgent, ctx);
             }
+            pane_group::Event::OpenQuickInsertModal => {
+                self.open_quick_insert_modal(ctx);
+            }
             pane_group::Event::OpenMCPSettingsPage { page } => {
                 // Open the MCP servers settings page to the list page
                 self.open_mcp_servers_page(page.unwrap_or_default(), None, ctx);

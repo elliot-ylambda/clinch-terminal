@@ -536,6 +536,9 @@ pub enum Event {
     OpenPromptEditor,
     OpenAgentToolbarEditor,
     OpenCLIAgentToolbarEditor,
+    /// Tell the workspace to open the "Create quick-insert button" modal for the
+    /// CLI-agent footer.
+    OpenQuickInsertModal,
     /// tell the workspace to open a file within Warp.
     OpenFileInWarp {
         /// The file path to open.

@@ -1143,6 +1143,9 @@ fn handle_terminal_view_event(
             Event::OpenCLIAgentToolbarEditor => {
                 ctx.emit(pane_group::Event::OpenCLIAgentToolbarEditor);
             }
+            Event::OpenQuickInsertModal => {
+                ctx.emit(pane_group::Event::OpenQuickInsertModal);
+            }
             Event::OpenFileInWarp { path, session } => {
                 ctx.emit(pane_group::Event::OpenFileInWarp {
                     path: LocalOrRemotePath::Local(path.clone()),

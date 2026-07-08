@@ -1700,6 +1700,7 @@ pub enum Event {
     OpenPromptEditor,
     OpenAgentToolbarEditor,
     OpenCLIAgentToolbarEditor,
+    OpenQuickInsertModal,
     SummarizationCancelDialogToggled {
         is_open: bool,
     },
@@ -24585,7 +24586,12 @@ impl TerminalView {
             }
             AddQuickInsertButton => {
                 if FeatureFlag::CliAgentQuickInsertButtons.is_enabled() {
-                    ctx.dispatch_typed_action(&WorkspaceAction::OpenQuickInsertModal);
+                    // Emit (don't synchronously dispatch to the workspace): this
+                    // handler runs while this TerminalView is borrowed, and opening
+                    // the modal re-borrows it via close_all_overlays, which panics
+                    // with a circular view reference. The queued event is handled
+                    // after the borrow is released. Mirrors OpenAgentToolbarEditor.
+                    ctx.emit(Event::OpenQuickInsertModal);
                 }
             }
             AskAI(ask_source) => {
