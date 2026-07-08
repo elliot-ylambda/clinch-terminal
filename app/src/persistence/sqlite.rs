@@ -329,6 +329,7 @@ pub(super) fn init_db(scope: &PersistenceScope) -> Result<SqliteConnection> {
 
     if matches!(scope, PersistenceScope::App) {
         migrate_old_sqlite_into_secure_container_if_needed(&db_path);
+        migrate_sqlite_off_app_group_container_if_needed(&db_path);
     }
 
     let conn = setup_database(&db_path)?;
@@ -378,6 +379,77 @@ fn migrate_old_sqlite_into_secure_container_if_needed(db_path: &Path) {
         Err(err) => {
             report_error!(anyhow::Error::new(err)
                 .context("Failed to migrate SQLite database into application container"));
+        }
+    }
+}
+
+/// Migrates the SQLite database *out of* Warp's app group container and into
+/// the per-app [`warp_core::paths::state_dir`], for builds that used to write
+/// there but no longer use the container. This is the inverse of
+/// [`migrate_old_sqlite_into_secure_container_if_needed`].
+///
+/// Self-signed forks such as Clinch used to store their database inside Warp's
+/// `2BBY89MBSN.dev.warp` group container, which triggers a recurring macOS
+/// "would like to access data from other apps" prompt on every launch. Now that
+/// such builds fall back to per-app storage (see
+/// `warp_core::paths::app_group_container_path`), move any data they left behind
+/// so sessions and history are preserved.
+///
+/// No-op unless the destination is empty (it never clobbers an existing
+/// database) and a legacy database is actually present in the container. On
+/// non-macOS, and for official Warp builds still using the container, the
+/// legacy directory equals the destination or is `None`, so this is a no-op.
+fn migrate_sqlite_off_app_group_container_if_needed(db_path: &Path) {
+    // Check the cheap, local destination first: once migrated (or on a fresh
+    // install that already writes to per-app storage), we must never touch the
+    // group container again, or an unentitled build re-triggers the macOS
+    // "access data from other apps" prompt.
+    if db_path.exists() {
+        return;
+    }
+
+    let Some(legacy_dir) = warp_core::paths::legacy_macos_app_group_state_dir() else {
+        return;
+    };
+    let old_db_path = legacy_dir.join(WARP_SQLITE_FILE_NAME);
+    if old_db_path == *db_path || !old_db_path.exists() {
+        return;
+    }
+
+    match std::fs::rename(&old_db_path, db_path) {
+        Ok(_) => {
+            safe_info!(
+                safe: ("Migrated SQLite database out of the app group container"),
+                full: ("Migrated SQLite database from `{}` to `{}`", old_db_path.display(), db_path.display())
+            );
+
+            // Also migrate the associated WAL and SHM files.
+            let old_wal = old_db_path.with_extension("sqlite-wal");
+            let old_shm = old_db_path.with_extension("sqlite-shm");
+            let new_wal = db_path.with_extension("sqlite-wal");
+            let new_shm = db_path.with_extension("sqlite-shm");
+
+            if let Err(err) = std::fs::rename(&old_wal, &new_wal) {
+                if err.kind() != std::io::ErrorKind::NotFound {
+                    report_error!(anyhow::Error::new(err)
+                        .context("Failed to migrate SQLite WAL out of the app group container"));
+                }
+            } else {
+                log::info!("Migrated SQLite WAL out of the app group container");
+            }
+
+            if let Err(err) = std::fs::rename(&old_shm, &new_shm) {
+                if err.kind() != std::io::ErrorKind::NotFound {
+                    report_error!(anyhow::Error::new(err)
+                        .context("Failed to migrate SQLite SHM out of the app group container"));
+                }
+            } else {
+                log::info!("Migrated SQLite shared memory file out of the app group container");
+            }
+        }
+        Err(err) => {
+            report_error!(anyhow::Error::new(err)
+                .context("Failed to migrate SQLite database out of the app group container"));
         }
     }
 }

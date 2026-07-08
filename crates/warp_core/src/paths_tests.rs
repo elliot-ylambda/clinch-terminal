@@ -146,3 +146,30 @@ fn test_project_path_for_oss_app_id() {
         }
     }
 }
+
+/// Only official Warp Stable/Preview builds (bundle id `dev.warp.*`, signed by
+/// Apple team `2BBY89MBSN`) are entitled to the `<APPLE_TEAM_ID>.dev.warp` app
+/// group. Self-signed forks such as Clinch (`sh.clinch.*`) must fall back to
+/// per-app storage so macOS does not prompt on every launch.
+#[cfg(target_os = "macos")]
+#[test]
+fn test_should_use_warp_app_group() {
+    let warp_stable = AppId::new("dev", "warp", "Warp-Stable");
+    let warp_preview = AppId::new("dev", "warp", "Warp-Preview");
+    let warp_oss = AppId::new("dev", "warp", "WarpOss");
+    let clinch = AppId::new("sh", "clinch", "Clinch");
+
+    // Official Warp Stable/Preview → entitled.
+    assert!(should_use_warp_app_group(&warp_stable, Channel::Stable));
+    assert!(should_use_warp_app_group(&warp_preview, Channel::Preview));
+
+    // Clinch is a self-signed fork on the Stable channel with a `sh.clinch.*`
+    // bundle id → NOT entitled, even though its channel is Stable.
+    assert!(!should_use_warp_app_group(&clinch, Channel::Stable));
+    assert!(!should_use_warp_app_group(&clinch, Channel::Preview));
+
+    // Non-Stable/Preview channels are never entitled, even for `dev.warp.*`.
+    assert!(!should_use_warp_app_group(&warp_oss, Channel::Oss));
+    assert!(!should_use_warp_app_group(&warp_stable, Channel::Local));
+    assert!(!should_use_warp_app_group(&warp_stable, Channel::Dev));
+}

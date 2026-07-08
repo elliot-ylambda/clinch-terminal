@@ -257,25 +257,39 @@ fn project_dirs_for_app_id(
     directories::ProjectDirs::from(app_id.qualifier(), app_id.organization(), &app_name)
 }
 
-/// Returns the path to the app's secure group container on macOS.
+/// Whether this build is entitled to Warp's `<APPLE_TEAM_ID>.dev.warp` app
+/// group container.
 ///
-/// Returns `None` if the container URL cannot be resolved or converted.
+/// The group is owned by Apple team `2BBY89MBSN` — the official Warp
+/// Stable/Preview builds, whose bundle ids all live under `dev.warp.*`. Any
+/// other build is not a member of that team and is not entitled to the group:
 ///
-/// See:
-/// * [Configuring app groups](https://developer.apple.com/documentation/Xcode/configuring-app-groups)
-/// * The [App Groups entitlement](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.application-groups?language=objc)
-/// * [`containerURLForSecurityApplicationGroupIdentifier`](https://developer.apple.com/documentation/foundation/filemanager/containerurl(forsecurityapplicationgroupidentifier:)?language=objc)
+/// * the `oss`/`dev`/`local` channels (local/unsigned builds), and
+/// * self-signed forks such as Clinch (bundle id `sh.clinch.*`, signed by a
+///   different Apple team, with no `application-groups` entitlement at all).
+///
+/// Reaching into the container from an unentitled build triggers a recurring
+/// macOS "would like to access data from other apps" prompt on every launch,
+/// with no persistable grant — so those builds must fall back to per-app
+/// storage instead ([`secure_state_dir`] returns `None`). The bundle-id check
+/// is a proxy for "signed by team `2BBY89MBSN`", which we can't cheaply
+/// introspect from within the process.
 #[cfg(target_os = "macos")]
-pub fn app_group_container_path() -> Option<PathBuf> {
-    // The app group `<APPLE_TEAM_ID>.dev.warp` belongs to official Warp builds
-    // (Stable/Preview, signed by that Apple team). Locally-built channels
-    // (oss/dev/local) are not entitled to it, and probing it — including the
-    // `tempfile_in` write-check below — triggers a recurring macOS "would like to
-    // access data from other apps" prompt that has no persistable grant. Skip it.
-    if !matches!(ChannelState::channel(), Channel::Stable | Channel::Preview) {
-        return None;
-    }
+fn should_use_warp_app_group(app_id: &AppId, channel: Channel) -> bool {
+    matches!(channel, Channel::Stable | Channel::Preview)
+        && app_id.qualifier() == "dev"
+        && app_id.organization() == "warp"
+}
 
+/// Resolves the on-disk path of Warp's `<APPLE_TEAM_ID>.dev.warp` app group
+/// container, or `None` if it cannot be resolved or written to.
+///
+/// This does NOT check whether the current build is entitled to the container
+/// (see [`should_use_warp_app_group`]) — callers that must gate on entitlement
+/// are responsible for doing so before calling. It is intentionally unguarded
+/// so a one-time migration *off* the container can still locate leftover data.
+#[cfg(target_os = "macos")]
+fn resolve_warp_app_group_container() -> Option<PathBuf> {
     use std::sync::LazyLock;
     static CONTAINER_PATH: LazyLock<Option<PathBuf>> = LazyLock::new(|| {
         use objc2_foundation::{NSFileManager, NSString};
@@ -300,6 +314,50 @@ pub fn app_group_container_path() -> Option<PathBuf> {
         None
     });
     LazyLock::force(&CONTAINER_PATH).clone()
+}
+
+/// Returns the path to the app's secure group container on macOS, or `None` if
+/// this build is not entitled to it (see [`should_use_warp_app_group`]) or the
+/// container URL cannot be resolved.
+///
+/// See:
+/// * [Configuring app groups](https://developer.apple.com/documentation/Xcode/configuring-app-groups)
+/// * The [App Groups entitlement](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.application-groups?language=objc)
+/// * [`containerURLForSecurityApplicationGroupIdentifier`](https://developer.apple.com/documentation/foundation/filemanager/containerurl(forsecurityapplicationgroupidentifier:)?language=objc)
+#[cfg(target_os = "macos")]
+pub fn app_group_container_path() -> Option<PathBuf> {
+    // Check entitlement before touching the container: an unentitled build
+    // (e.g. the self-signed Clinch fork) must never probe it, or macOS shows
+    // the "would like to access data from other apps" prompt on every launch.
+    if !should_use_warp_app_group(&ChannelState::app_id(), ChannelState::channel()) {
+        return None;
+    }
+
+    resolve_warp_app_group_container()
+}
+
+/// Returns the secure-state directory a build would have used *inside* Warp's
+/// app group container, regardless of whether this build is entitled to it.
+///
+/// This exists only to locate data left behind by a build that used to write to
+/// the container (e.g. before [`should_use_warp_app_group`] began excluding
+/// self-signed forks), so it can be migrated to the per-app [`state_dir`].
+/// Returns `None` off macOS or if the container can't be resolved.
+pub fn legacy_macos_app_group_state_dir() -> Option<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        let container = resolve_warp_app_group_container()?;
+        let project_dirs = project_dirs()?;
+        Some(
+            container
+                .join("Library/Application Support")
+                .join(project_dirs.project_path()),
+        )
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
 }
 
 /// Returns the path to resources included in the Warp distribution.
