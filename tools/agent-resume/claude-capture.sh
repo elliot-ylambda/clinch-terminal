@@ -136,9 +136,17 @@ _warp_agent_resume_capture_main() {
   esac
   # Call the registry CLI by absolute path (sibling of this script) so the hook does not
   # depend on the agent inheriting the shell PATH.
+  #
+  # Also record the claude.ai cloud-copy id: bridged sessions ("repl bridge") keep their
+  # full conversation at https://claude.ai/code/<bridge> instead of a local jsonl, so this
+  # is the only durable pane -> cloud-conversation link. The hook runs as a child of the
+  # owning claude process, which exports CLAUDE_CODE_BRIDGE_SESSION_ID once bridged; the
+  # per-turn events (UserPromptSubmit/Stop) keep the field fresh if the bridge attaches
+  # after SessionStart.
   BIN="$(cd "$(dirname "$0")" && pwd)"
   "$BIN/warp-agent-resume" write "$WARP_TERMINAL_SESSION_UUID" \
-    "warp_agent_resume_launch claude $sid$extra" "$cwd" >/dev/null 2>&1 || true
+    "warp_agent_resume_launch claude $sid$extra" "$cwd" \
+    "${CLAUDE_CODE_BRIDGE_SESSION_ID:-}" >/dev/null 2>&1 || true
   return 0
 }
 

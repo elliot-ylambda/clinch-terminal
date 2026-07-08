@@ -14,7 +14,8 @@ capture (agent SessionStart hooks)          replay (Rust, in Warp)
   claude hook     ─┐                          snapshot(): read registry[pane_uuid]
   codex hooks     ─┼─► ~/.warp/agent-resume/    → freeze command into the pane snapshot
                    │     <pane_uuid>.json        → persisted in SQLite (terminal_panes)
-                   │     { "command", "cwd" }            │
+                   │     { "command", "cwd",             │
+                   │       "bridge"? }                   │
                    └────────────────────────►   restore: after the shell's first
                                                  Bootstrapped event, run the command
 ```
@@ -39,6 +40,20 @@ capture (agent SessionStart hooks)          replay (Rust, in Warp)
   `claude --resume`/`codex resume` reject those with "No conversation found". Resumability
   is checked by locating the session file by its globally-unique id, so we never replicate
   each agent's brittle cwd→directory hashing.
+- **Bridged sessions teleport their cloud copy back.** Claude sessions attached to the
+  claude.ai "repl bridge" stop persisting a full local transcript (the jsonl is missing or
+  a stale husk), and `claude --resume <id>` then fails with "No conversation found" or
+  silently resumes the husk (verified on 2.1.202 — resume is local-only). The capture hook
+  records the session's `CLAUDE_CODE_BRIDGE_SESSION_ID` in the entry's optional `bridge`
+  field, and on restore `warp_agent_resume_launch` runs `claude --teleport <bridge>`
+  instead of a local resume — the cloud copy is authoritative for bridged sessions. A
+  teleport that fails fast (dirty tree, git lock race between panes sharing a repo, API
+  error) falls back to local resume, then fresh, printing
+  `https://claude.ai/code/<bridge>` for manual recovery; a non-zero exit after a real run
+  is the user quitting and does not relaunch (`WARP_AGENT_RESUME_TELEPORT_GRACE`, default
+  15s, distinguishes the two). Note teleport performs git operations (branch checkout), so
+  restore of a bridged pane can move a shared checkout's branch — worktree-per-session
+  layouts avoid this.
 - **Permission mode + model are carried over.** A session running with a non-default
   permission mode (`--dangerously-skip-permissions`, e.g. the `CA` alias, or
   `--permission-mode <mode>`) or a `--model` reopens *the same way* — those flags are
@@ -139,7 +154,7 @@ separate data dir (`~/.warp-oss`), so the two never clobber each other's session
 
 | File | Role |
 |---|---|
-| `warp-agent-resume` | registry CLI: `write <uuid> <cmd> <cwd>` / `remove <uuid>` |
+| `warp-agent-resume` | registry CLI: `write <uuid> <cmd> <cwd> [bridge]` / `remove <uuid>` |
 | `claude-capture.sh` | Claude `SessionStart`/`UserPromptSubmit`/`Stop` hook — captures the live session per pane and keeps its permission-mode/`--model` flags in sync with the live session |
 | `claude.zsh` | replay functions (`warp_agent_resume_resumable` / `warp_agent_resume_launch`) |
 | `codex-session-start.sh` / `codex-session-end.sh` | Codex hooks — session id plus bypass/model flags from the payload |
