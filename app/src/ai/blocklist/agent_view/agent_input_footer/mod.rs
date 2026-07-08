@@ -1,8 +1,11 @@
 pub(super) mod chips;
 pub mod editor;
 mod environment_selector;
+pub mod quick_insert_modal;
 pub mod toolbar_item;
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 #[cfg(not(target_family = "wasm"))]
 use std::env;
 #[cfg(not(target_family = "wasm"))]
@@ -33,9 +36,9 @@ use warp_core::ui::theme::{AnsiColorIdentifier, Fill};
 use warpui::elements::{
     Border, ChildAnchor, ChildView, Clipped, ConstrainedBox, Container, CornerRadius,
     CrossAxisAlignment, DispatchEventResult, Element, EventHandler, Expanded, Flex,
-    MainAxisAlignment, MainAxisSize, OffsetPositioning, ParentElement, PositionedElementAnchor,
-    PositionedElementOffsetBounds, Radius, Shrinkable, Stack, Text, Wrap, WrapFill,
-    WrapFillEntireRun, DEFAULT_UI_LINE_HEIGHT_RATIO,
+    MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning, ParentElement,
+    PositionedElementAnchor, PositionedElementOffsetBounds, Radius, Shrinkable, Stack, Text, Wrap,
+    WrapFill, WrapFillEntireRun, DEFAULT_UI_LINE_HEIGHT_RATIO,
 };
 use warpui::r#async::{SpawnedFutureHandle, Timer};
 use warpui::{
@@ -223,6 +226,9 @@ pub struct AgentInputFooter {
     fork_button: ViewHandle<ActionButton>,
     continue_button: ViewHandle<ActionButton>,
     looks_good_button: ViewHandle<ActionButton>,
+    /// Always-present footer control that opens the "Create quick-insert
+    /// button" modal (gated behind `CliAgentQuickInsertButtons`).
+    quick_insert_add_button: ViewHandle<ActionButton>,
     rich_input_button: ViewHandle<ActionButton>,
     settings_button: ViewHandle<ActionButton>,
     install_plugin_button: ViewHandle<ActionButton>,
@@ -230,6 +236,16 @@ pub struct AgentInputFooter {
     update_plugin_button: ViewHandle<ActionButton>,
     update_instructions_button: ViewHandle<ActionButton>,
     dismiss_plugin_chip_button: ViewHandle<ActionButton>,
+    /// Hover/click state for user-defined `CustomInsert` buttons, keyed by
+    /// (label, text) so the same handle persists across renders as long as
+    /// the button's content is unchanged. `CustomInsert` can't be a
+    /// pre-built singleton (its label/text vary per item), so its
+    /// `ActionButton` is built fresh in `render_cli_toolbar_item`; a `RefCell`
+    /// lets that `&self` render path lazily populate this cache. See
+    /// WARP.md's `MouseStateHandle` guidance: a transient
+    /// `MouseStateHandle::default()` recreated on every render would
+    /// silently break clicks.
+    custom_insert_mouse_states: RefCell<HashMap<(String, String), MouseStateHandle>>,
     plugin_operation_in_progress: bool,
     /// When `true`, the install chip is allowed to render.
     /// Starts `false` and is set to `true` after a debounce timer fires,
@@ -441,6 +457,16 @@ impl AgentInputFooter {
                 .with_tooltip_alignment(TooltipAlignment::Left)
                 .on_click(|ctx| {
                     ctx.dispatch_typed_action(AgentInputFooterAction::SendLooksGood);
+                })
+        });
+        let quick_insert_add_button = ctx.add_typed_action_view(|_ctx| {
+            ActionButton::new("Add", AgentInputButtonTheme)
+                .with_icon(Icon::Plus)
+                .with_tooltip("Add quick-insert button")
+                .with_size(cli_button_size)
+                .with_tooltip_alignment(TooltipAlignment::Left)
+                .on_click(|ctx| {
+                    ctx.dispatch_typed_action(AgentInputFooterAction::OpenQuickInsertModal);
                 })
         });
         let rich_input_button = ctx.add_typed_action_view(|ctx| {
@@ -887,6 +913,7 @@ impl AgentInputFooter {
             fork_button,
             continue_button,
             looks_good_button,
+            quick_insert_add_button,
             rich_input_button,
             settings_button,
             start_remote_control_button,
@@ -896,6 +923,7 @@ impl AgentInputFooter {
             update_plugin_button,
             update_instructions_button,
             dismiss_plugin_chip_button,
+            custom_insert_mouse_states: RefCell::new(HashMap::new()),
             plugin_operation_in_progress: false,
             plugin_chip_ready: false,
             context_window_button,
@@ -1505,6 +1533,36 @@ impl AgentInputFooter {
             AgentToolbarItemKind::LooksGoodPrompt => {
                 Some(ChildView::new(&self.looks_good_button).finish())
             }
+            AgentToolbarItemKind::CustomInsert { label, text } => {
+                if !FeatureFlag::CliAgentQuickInsertButtons.is_enabled() {
+                    return None;
+                }
+                // Can't be a pre-built singleton (label/text vary per item), so
+                // build it fresh here. `with_mouse_state_handle` reuses a handle
+                // cached by (label, text) so hover/click state survives across
+                // renders (see the field doc on `custom_insert_mouse_states`).
+                let mouse_state = self
+                    .custom_insert_mouse_states
+                    .borrow_mut()
+                    .entry((label.clone(), text.clone()))
+                    .or_default()
+                    .clone();
+                let text = text.clone();
+                Some(
+                    ActionButton::new(label.clone(), AgentInputButtonTheme)
+                        .with_icon(Icon::Play)
+                        .with_size(ButtonSize::AgentInputButtonLarge)
+                        .with_tooltip(format!("Insert: {text}"))
+                        .with_tooltip_alignment(TooltipAlignment::Left)
+                        .with_mouse_state_handle(mouse_state)
+                        .on_click(move |ctx| {
+                            ctx.dispatch_typed_action(AgentInputFooterAction::InsertCustomText(
+                                text.clone(),
+                            ));
+                        })
+                        .render(app),
+                )
+            }
             AgentToolbarItemKind::RichInput => FeatureFlag::CLIAgentRichInput
                 .is_enabled()
                 .then(|| ChildView::new(&self.rich_input_button).finish()),
@@ -1642,6 +1700,13 @@ impl AgentInputFooter {
             ) {
                 left_buttons.add_child(element);
             }
+        }
+
+        // "+ Add" quick-insert button: always rendered (not a configurable
+        // chip) when a CLI agent session is active and the feature is enabled.
+        // Opens the "Create quick-insert button" modal.
+        if FeatureFlag::CliAgentQuickInsertButtons.is_enabled() && self.cli_agent(app).is_some() {
+            left_buttons.add_child(ChildView::new(&self.quick_insert_add_button).finish());
         }
 
         let mut right_buttons = Flex::row()
@@ -2234,6 +2299,7 @@ impl AgentInputFooter {
             | AgentToolbarItemKind::Compact
             | AgentToolbarItemKind::ForkSession
             | AgentToolbarItemKind::ContinuePrompt
+            | AgentToolbarItemKind::CustomInsert { .. }
             | AgentToolbarItemKind::LooksGoodPrompt => None,
         }
     }
@@ -2502,6 +2568,10 @@ pub enum AgentInputFooterAction {
     ToggleVoiceInput,
     SelectFile,
     InsertFilePath(String),
+    /// Insert-and-send a user-defined `CustomInsert` button's saved text.
+    InsertCustomText(String),
+    /// Open the "Create quick-insert button" modal (footer "+ Add" button).
+    OpenQuickInsertModal,
     ToggleCodeReview,
     ToggleFileExplorer,
     Compact,
@@ -2573,6 +2643,20 @@ impl TypedActionView for AgentInputFooter {
                     ));
                 } else {
                     ctx.emit(AgentInputFooterEvent::WriteToPty(path_with_space));
+                }
+            }
+            AgentInputFooterAction::InsertCustomText(text) => {
+                // Insert-and-send the user's saved text, using the per-agent
+                // submit strategy. Guard on a live CLI agent (like Continue).
+                if self.cli_agent(ctx).is_some() {
+                    ctx.emit(AgentInputFooterEvent::SubmitTextToCliAgent(text.clone()));
+                }
+            }
+            AgentInputFooterAction::OpenQuickInsertModal => {
+                // Open the create-quick-insert-button modal. Guard on a live
+                // CLI agent (the button only renders while one is active).
+                if self.cli_agent(ctx).is_some() {
+                    ctx.emit(AgentInputFooterEvent::OpenQuickInsertModal);
                 }
             }
             AgentInputFooterAction::ToggleCodeReview => {
@@ -2788,6 +2872,8 @@ pub enum AgentInputFooterEvent {
     /// Submit a fixed prompt string to this pane's live CLI agent using the
     /// per-agent submission strategy (types the text, then presses Enter).
     SubmitTextToCliAgent(String),
+    /// Open the "Create quick-insert button" modal (footer "+ Add" button).
+    OpenQuickInsertModal,
     StartRemoteControl,
     StopRemoteControl,
     OpenRichInput,

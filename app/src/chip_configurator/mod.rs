@@ -219,13 +219,13 @@ impl ControlItemRenderer {
             .finish()
     }
 
-    pub(crate) fn display_label(&self) -> &str {
+    pub(crate) fn display_label(&self) -> std::borrow::Cow<'_, str> {
         if let Some(label) = &self.custom_label {
-            label
+            std::borrow::Cow::Borrowed(label.as_str())
         } else if let Some(kind) = &self.kind {
             kind.display_label()
         } else {
-            "Unknown"
+            std::borrow::Cow::Borrowed("Unknown")
         }
     }
 

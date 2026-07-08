@@ -413,6 +413,8 @@ pub enum WorkspaceAction {
     },
     OpenAgentToolbarEditor,
     OpenCLIAgentToolbarEditor,
+    /// Opens the "Create quick-insert button" modal for the CLI-agent footer.
+    OpenQuickInsertModal,
     OpenHeaderToolbarEditor,
     ShowHeaderToolbarContextMenu {
         position: Vector2F,
@@ -1148,6 +1150,7 @@ impl WorkspaceAction {
             | ShowHandoffEnvironmentCreationModal
             | ShowCloudModeV2EnvironmentCreationModal
             | OpenCreateAuthSecretModal { .. }
+            | OpenQuickInsertModal
             | OpenNetworkLogPane => false,
             #[cfg(debug_assertions)]
             ShowHoaOnboardingFlow => false,

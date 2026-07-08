@@ -179,7 +179,12 @@ use crate::ai::ambient_agents::telemetry::{CloudAgentTelemetryEvent, CloudModeEn
 use crate::ai::ambient_agents::telemetry::{HandoffEntryPoint, HandoffInjectionPath};
 use crate::ai::ambient_agents::AmbientAgentTaskId;
 use crate::ai::blocklist::agent_view::agent_input_footer::editor::AgentToolbarEditorMode;
-use crate::ai::blocklist::agent_view::editor::{AgentToolbarEditorEvent, AgentToolbarEditorModal};
+use crate::ai::blocklist::agent_view::editor::{
+    append_cli_custom_button, AgentToolbarEditorEvent, AgentToolbarEditorModal,
+};
+use crate::ai::blocklist::agent_view::quick_insert_modal::{
+    QuickInsertModal, QuickInsertModalEvent,
+};
 use crate::ai::blocklist::agent_view::AgentViewEntryOrigin;
 #[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
 use crate::ai::blocklist::handoff;
@@ -1075,6 +1080,7 @@ pub struct Workspace {
     workflow_modal: ViewHandle<WorkflowModal>,
     prompt_editor_modal: ViewHandle<PromptEditorModal>,
     agent_toolbar_editor_modal: ViewHandle<AgentToolbarEditorModal>,
+    quick_insert_modal: ViewHandle<QuickInsertModal>,
     header_toolbar_editor_modal: ViewHandle<HeaderToolbarEditorModal>,
     header_toolbar_context_menu: ViewHandle<Menu<WorkspaceAction>>,
     show_header_toolbar_context_menu: Option<Vector2F>,
@@ -1642,6 +1648,14 @@ impl Workspace {
         let modal = ctx.add_typed_action_view(AgentToolbarEditorModal::new);
         ctx.subscribe_to_view(&modal, |me, _, event, ctx| {
             me.handle_agent_toolbar_editor_modal_event(event, ctx);
+        });
+        modal
+    }
+
+    fn build_quick_insert_modal(ctx: &mut ViewContext<Self>) -> ViewHandle<QuickInsertModal> {
+        let modal = ctx.add_typed_action_view(QuickInsertModal::new);
+        ctx.subscribe_to_view(&modal, |me, _, event, ctx| {
+            me.handle_quick_insert_modal_event(event, ctx);
         });
         modal
     }
@@ -3190,6 +3204,7 @@ impl Workspace {
 
         let prompt_editor_modal = Self::build_prompt_editor_modal(ctx);
         let agent_toolbar_editor_modal = Self::build_agent_toolbar_editor_modal(ctx);
+        let quick_insert_modal = Self::build_quick_insert_modal(ctx);
 
         let import_modal = Self::build_import_modal(ctx);
 
@@ -3374,6 +3389,7 @@ impl Workspace {
             cached_keybindings,
             prompt_editor_modal,
             agent_toolbar_editor_modal,
+            quick_insert_modal,
             header_toolbar_editor_modal: Self::build_header_toolbar_editor_modal(ctx),
             header_toolbar_context_menu: Self::build_header_toolbar_context_menu(ctx),
             show_header_toolbar_context_menu: None,
@@ -5870,6 +5886,26 @@ impl Workspace {
         match event {
             AgentToolbarEditorEvent::Close => {
                 self.current_workspace_state.is_agent_toolbar_editor_open = false;
+                self.focus_active_tab(ctx);
+                ctx.notify();
+            }
+        }
+    }
+
+    fn handle_quick_insert_modal_event(
+        &mut self,
+        event: &QuickInsertModalEvent,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        match event {
+            QuickInsertModalEvent::Save { label, text } => {
+                append_cli_custom_button(label.clone(), text.clone(), ctx);
+                self.current_workspace_state.is_quick_insert_modal_open = false;
+                self.focus_active_tab(ctx);
+                ctx.notify();
+            }
+            QuickInsertModalEvent::Cancel => {
+                self.current_workspace_state.is_quick_insert_modal_open = false;
                 self.focus_active_tab(ctx);
                 ctx.notify();
             }
@@ -19199,6 +19235,33 @@ impl Workspace {
         ctx.focus(&self.agent_toolbar_editor_modal);
     }
 
+    /// The active pane group's most-recent local working directory, used to scope
+    /// the quick-insert modal's command + skill discovery.
+    fn active_quick_insert_cwd(&self, ctx: &AppContext) -> Option<PathBuf> {
+        let pane_group_id = self.active_tab_pane_group().id();
+        self.working_directories_model
+            .as_ref(ctx)
+            .most_recent_directories_for_pane_group(pane_group_id)
+            .and_then(|mut dirs| {
+                dirs.find_map(|dir| dir.path.to_local_path().map(|path| path.to_path_buf()))
+            })
+    }
+
+    fn open_quick_insert_modal(&mut self, ctx: &mut ViewContext<Self>) {
+        if !FeatureFlag::CliAgentQuickInsertButtons.is_enabled() {
+            return;
+        }
+        let cwd = self
+            .active_quick_insert_cwd(ctx)
+            .or_else(|| std::env::current_dir().ok())
+            .unwrap_or_default();
+        self.quick_insert_modal
+            .update(ctx, |modal, ctx| modal.open(cwd, ctx));
+        self.close_all_overlays(ctx);
+        self.current_workspace_state.is_quick_insert_modal_open = true;
+        ctx.focus(&self.quick_insert_modal);
+    }
+
     fn open_theme_creator_modal(&mut self, ctx: &mut ViewContext<Self>) {
         self.current_workspace_state.is_theme_creator_modal_open = true;
         ctx.focus(&self.theme_creator_modal);
@@ -24605,6 +24668,9 @@ impl TypedActionView for Workspace {
             OpenCLIAgentToolbarEditor => {
                 self.open_agent_toolbar_editor(AgentToolbarEditorMode::CLIAgent, ctx);
             }
+            OpenQuickInsertModal => {
+                self.open_quick_insert_modal(ctx);
+            }
             OpenHeaderToolbarEditor => {
                 self.open_header_toolbar_editor(ctx);
             }
@@ -26543,6 +26609,12 @@ impl View for Workspace {
             && self.current_workspace_state.is_agent_toolbar_editor_open
         {
             stack.add_child(ChildView::new(&self.agent_toolbar_editor_modal).finish());
+        }
+
+        if FeatureFlag::CliAgentQuickInsertButtons.is_enabled()
+            && self.current_workspace_state.is_quick_insert_modal_open
+        {
+            stack.add_child(ChildView::new(&self.quick_insert_modal).finish());
         }
 
         if self.current_workspace_state.is_header_toolbar_editor_open {

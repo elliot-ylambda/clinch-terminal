@@ -79,6 +79,12 @@ pub enum AgentToolbarItemKind {
     // CLI agent only – submits "Looks good to me, continue" to the running agent.
     LooksGoodPrompt,
 
+    // CLI agent only – user-defined button that inserts-and-sends saved text.
+    CustomInsert {
+        label: String,
+        text: String,
+    },
+
     // Agent view only – shows fast-forward (auto-approve) toggle in the footer
     FastForwardToggle,
 
@@ -103,6 +109,7 @@ impl AgentToolbarItemKind {
             | Self::Compact
             | Self::ForkSession
             | Self::ContinuePrompt
+            | Self::CustomInsert { .. }
             | Self::LooksGoodPrompt => ToolbarAvailability::CLIAgentOnly,
         }
     }
@@ -122,6 +129,7 @@ impl AgentToolbarItemKind {
             | Self::Compact
             | Self::ForkSession
             | Self::ContinuePrompt
+            | Self::CustomInsert { .. }
             | Self::LooksGoodPrompt => !status.is_viewer(),
             Self::FileAttach => !status.is_viewer() || is_cloud_mode,
             Self::FastForwardToggle => !status.is_viewer() || status.is_executor(),
@@ -136,24 +144,26 @@ impl AgentToolbarItemKind {
         }
     }
 
-    pub fn display_label(&self) -> &'static str {
+    pub fn display_label(&self) -> std::borrow::Cow<'static, str> {
+        use std::borrow::Cow;
         match self {
-            Self::ContextChip(_) => "Context Chip",
-            Self::ModelSelector => "Model Selector",
-            Self::NLDToggle => "Autodetection",
-            Self::VoiceInput => "Voice Input",
-            Self::FileAttach => "Attach File",
-            Self::ContextWindowUsage => "Context Usage",
-            Self::FileExplorer => "File Explorer",
-            Self::RichInput => "Rich Input",
-            Self::ShareSession => "/remote-control",
-            Self::Settings => "Settings",
-            Self::Compact => "Compact",
-            Self::ForkSession => "Fork",
-            Self::ContinuePrompt => "Continue",
-            Self::LooksGoodPrompt => "LGTM",
-            Self::FastForwardToggle => "Fast Forward",
-            Self::HandoffToCloud => "Hand off to cloud",
+            Self::ContextChip(_) => Cow::Borrowed("Context Chip"),
+            Self::ModelSelector => Cow::Borrowed("Model Selector"),
+            Self::NLDToggle => Cow::Borrowed("Autodetection"),
+            Self::VoiceInput => Cow::Borrowed("Voice Input"),
+            Self::FileAttach => Cow::Borrowed("Attach File"),
+            Self::ContextWindowUsage => Cow::Borrowed("Context Usage"),
+            Self::FileExplorer => Cow::Borrowed("File Explorer"),
+            Self::RichInput => Cow::Borrowed("Rich Input"),
+            Self::ShareSession => Cow::Borrowed("/remote-control"),
+            Self::Settings => Cow::Borrowed("Settings"),
+            Self::Compact => Cow::Borrowed("Compact"),
+            Self::ForkSession => Cow::Borrowed("Fork"),
+            Self::ContinuePrompt => Cow::Borrowed("Continue"),
+            Self::LooksGoodPrompt => Cow::Borrowed("LGTM"),
+            Self::FastForwardToggle => Cow::Borrowed("Fast Forward"),
+            Self::HandoffToCloud => Cow::Borrowed("Hand off to cloud"),
+            Self::CustomInsert { label, .. } => Cow::Owned(label.clone()),
         }
     }
 
@@ -177,6 +187,7 @@ impl AgentToolbarItemKind {
             // The bundled `upload-cloud-01.svg` (cloud-with-upward-arrow) is the
             // closest fit among the existing icons for V0; design may swap it later.
             Self::HandoffToCloud => Some(Icon::UploadCloud),
+            Self::CustomInsert { .. } => Some(Icon::Play),
         }
     }
 
@@ -200,6 +211,7 @@ impl AgentToolbarItemKind {
             | Self::Compact
             | Self::ForkSession
             | Self::ContinuePrompt
+            | Self::CustomInsert { .. }
             | Self::LooksGoodPrompt => false,
         }
     }

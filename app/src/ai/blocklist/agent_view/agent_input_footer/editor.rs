@@ -258,6 +258,44 @@ pub fn init(app: &mut AppContext) {
     )]);
 }
 
+/// Materializes `Default → Custom` (snapshotting the CLI footer's default left
+/// and right items) then appends a new `CustomInsert` button to the left list.
+///
+/// Pure so it can be unit-tested without touching global settings; the
+/// persisting wrapper `append_cli_custom_button` reads/writes the setting
+/// around this.
+pub fn next_selection_with_custom_button(
+    current: CLIAgentToolbarChipSelection,
+    label: String,
+    text: String,
+) -> CLIAgentToolbarChipSelection {
+    let (mut left, right) = match current {
+        CLIAgentToolbarChipSelection::Default => (
+            AgentToolbarItemKind::cli_default_left(),
+            AgentToolbarItemKind::cli_default_right(),
+        ),
+        CLIAgentToolbarChipSelection::Custom { left, right } => (left, right),
+    };
+    left.push(AgentToolbarItemKind::CustomInsert { label, text });
+    CLIAgentToolbarChipSelection::Custom { left, right }
+}
+
+/// Persists a new custom quick-insert button into the CLI agent footer's
+/// toolbar selection: reads the current `cli_agent_footer_chip_selection`
+/// setting, computes the next selection via `next_selection_with_custom_button`,
+/// and writes it back via the same `set_value` path `save_toolbar_selection` uses.
+pub fn append_cli_custom_button<V: View>(label: String, text: String, ctx: &mut ViewContext<V>) {
+    let current = SessionSettings::as_ref(ctx)
+        .cli_agent_footer_chip_selection
+        .clone();
+    let next = next_selection_with_custom_button(current, label, text);
+    SessionSettings::handle(ctx).update(ctx, |settings, ctx| {
+        report_if_error!(settings
+            .cli_agent_footer_chip_selection
+            .set_value(next, ctx));
+    });
+}
+
 fn save_toolbar_selection<V: View>(
     mode: AgentToolbarEditorMode,
     left: Vec<AgentToolbarItemKind>,
@@ -400,3 +438,7 @@ impl View for AgentToolbarEditorModal {
         )
     }
 }
+
+#[cfg(test)]
+#[path = "editor_tests.rs"]
+mod tests;
