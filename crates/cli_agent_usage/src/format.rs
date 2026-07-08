@@ -195,10 +195,7 @@ mod tests {
         assert_eq!(fmt_reset(Some(now + Duration::minutes(12)), now), "in 12m");
         assert_eq!(fmt_reset(Some(now + Duration::hours(3)), now), "in 3h");
         assert_eq!(
-            fmt_reset(
-                Some(now + Duration::hours(1) + Duration::minutes(45)),
-                now
-            ),
+            fmt_reset(Some(now + Duration::hours(1) + Duration::minutes(45)), now),
             "in 1h 45m"
         );
         assert_eq!(fmt_reset(Some(now + Duration::days(2)), now), "in 2d");
