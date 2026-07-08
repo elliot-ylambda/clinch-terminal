@@ -4,8 +4,9 @@
 # SessionStart hook -- they record the live session per pane. This file only provides the
 # *replay* side, the functions Warp invokes on restore:
 #
-#   warp_agent_resume_resumable() true if an agent session id has a resumable conversation
-#   warp_agent_resume_launch()    resume if possible, else start fresh
+#   warp_agent_resume_resumable()   true if an agent session id has a resumable conversation
+#   warp_agent_resume_fallback_id() newest unclaimed resumable session for a directory
+#   warp_agent_resume_launch()      resume if possible, else adopt, else start fresh
 #
 # On restore Warp replays the recorded command `warp_agent_resume_launch <agent> <id>` in
 # this (interactive) shell, so these functions are in scope. A fresh fallback calls the
@@ -32,6 +33,41 @@ warp_agent_resume_resumable() {
       ;;
     *) return 1 ;;
   esac
+}
+
+# Print the newest *unclaimed* resumable claude session whose transcript records <cwd>
+# (default $PWD) as its working directory. This is the safety net for registry rot: a
+# recorded id can go stale (its entry overwritten by a session that was never used, its
+# transcript rolled away by retention), and starting fresh in that case silently orphans
+# the pane's real conversation -- the 2026-07-08 blank-session incident. Matching by the
+# transcripts' own cwd field keeps us out of claude's brittle cwd->directory encoding;
+# only the head of each file is read, newest file first, so the common case touches a
+# handful of files.
+#
+# "Unclaimed" = not recorded in any pane's registry entry, so a pane whose id died can
+# never steal a sibling pane's live session (several panes often share one project
+# directory; at restore they all replay at once). The cost: a session claimed by a
+# zombie entry (a pane that no longer exists) is not adopted -- still strictly better
+# than before, when no dead id was ever recovered at all.
+#
+# Claude only: codex session files are named rollout-<timestamp>-<id>.jsonl, so a bare
+# filename does not yield the session id; codex panes keep the resume-or-fresh behavior.
+warp_agent_resume_fallback_id() {
+  setopt localoptions extendedglob nullglob
+  local agent="$1" cwd="${2:-$PWD}"
+  [[ "$agent" == claude ]] || return 1
+  local reg="${WARP_AGENT_RESUME_DIR:-$HOME/.warp/agent-resume}"
+  local match="\"cwd\":\"$cwd\"" f id
+  for f in "$HOME"/.claude/projects/**/*.jsonl(N.om); do
+    [[ "$f" == */subagents/* ]] && continue   # sidechain transcripts are not resumable sessions
+    head -c 131072 "$f" 2>/dev/null | grep -qF -- "$match" || continue
+    id="${${f:t}%.jsonl}"
+    warp_agent_resume_resumable "$agent" "$id" || continue
+    grep -Eqsr "warp_agent_resume_launch claude $id( |\")" "$reg" && continue
+    printf '%s' "$id"
+    return 0
+  done
+  return 1
 }
 
 # Print this pane's recorded claude.ai bridge id (session_<...>), if any.
@@ -66,7 +102,15 @@ warp_agent_resume_bridge_id() {
 #    exit after a real run is the user quitting the session, so it must NOT relaunch on top
 #    (WARP_AGENT_RESUME_TELEPORT_GRACE seconds distinguishes the two, default 15).
 # 2. Local transcript with a real turn -> `claude --resume <id>` / `codex resume <id>`.
-# 3. Otherwise start fresh (the SessionStart hook re-captures the new session for next time).
+# 3. Dead id in an unbridged claude pane -> adopt the newest unclaimed session recorded
+#    for this directory (warp_agent_resume_fallback_id): a stale registry entry must
+#    degrade into a near-miss, not silently orphan the pane's real conversation. Bridged
+#    panes skip this -- their conversation lives at claude.ai, and adopting some other
+#    local session would silently swap conversations.
+# 4. Otherwise start fresh (the SessionStart hook re-captures the new session for next
+#    time). WARP_AGENT_RESUME_STARTED_FRESH tells the capture hook the fresh session was
+#    machinery-spawned, so until its first real prompt it must not overwrite a pane entry
+#    that still points somewhere recoverable (see claude-capture.sh).
 warp_agent_resume_launch() {
   local agent="$1" id="$2"
   shift 2
@@ -87,11 +131,23 @@ warp_agent_resume_launch() {
       claude) claude --resume "$id" "$@" ;;
       codex)  codex resume "$id" "$@" ;;
     esac
-  else
-    echo "warp: no resumable $agent session ($id) -- starting fresh." >&2
-    case "$agent" in
-      claude) claude "$@" ;;
-      codex)  codex "$@" ;;
-    esac
+    return $?
   fi
+  local adopt=""
+  if [[ -z "$bridge" ]]; then
+    adopt="$(warp_agent_resume_fallback_id "$agent" "$PWD")" || adopt=""
+  fi
+  if [[ -n "$adopt" ]]; then
+    echo "warp: recorded $agent session ($id) has no conversation -- resuming newest session in this directory ($adopt) instead." >&2
+    case "$agent" in
+      claude) claude --resume "$adopt" "$@" ;;
+      codex)  codex resume "$adopt" "$@" ;;
+    esac
+    return $?
+  fi
+  echo "warp: no resumable $agent session ($id) -- starting fresh." >&2
+  case "$agent" in
+    claude) WARP_AGENT_RESUME_STARTED_FRESH=1 claude "$@" ;;
+    codex)  codex "$@" ;;
+  esac
 }

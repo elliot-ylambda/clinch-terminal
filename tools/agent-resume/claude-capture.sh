@@ -103,6 +103,28 @@ _warp_agent_resume_claude_argv() {
   return 0
 }
 
+# True if claude session <id> has a real conversation on disk -- the same test as the
+# replay side's warp_agent_resume_resumable. WARP_AGENT_RESUME_CLAUDE_PROJECTS overrides
+# the transcript root (used by the tests).
+_warp_agent_resume_has_conversation() {
+  local id="$1" f
+  [[ -n "$id" ]] || return 1
+  f="$(find "${WARP_AGENT_RESUME_CLAUDE_PROJECTS:-$HOME/.claude/projects}" -name "$id.jsonl" -print -quit 2>/dev/null)"
+  [[ -n "$f" ]] && grep -qE '"type":"(user|assistant)"' "$f"
+}
+
+# True if the pane's existing registry entry still points somewhere recoverable: a
+# claude.ai bridge id (the cloud copy is authoritative for bridged sessions, with or
+# without a local transcript) or a local session with a real conversation. Such an entry
+# is the pane's only link to that conversation.
+_warp_agent_resume_entry_protected() {
+  local entry_file="$1" old_sid
+  [[ -f "$entry_file" ]] || return 1
+  grep -q '"bridge": "session_' "$entry_file" && return 0
+  old_sid="$(sed -nE 's/.*warp_agent_resume_launch claude ([A-Za-z0-9-]+).*/\1/p' "$entry_file")"
+  _warp_agent_resume_has_conversation "$old_sid"
+}
+
 _warp_agent_resume_capture_main() {
   set -uo pipefail
   [[ -n "${WARP_TERMINAL_SESSION_UUID:-}" ]] || return 0   # only act inside a Warp pane
@@ -114,15 +136,31 @@ _warp_agent_resume_capture_main() {
   [[ -n "$sid" ]] || return 0
   case "$event" in
     SessionStart)
-      # Fresh capture: a new session in this pane takes over the entry unconditionally.
+      # Fresh capture: a new session in this pane takes over the entry -- EXCEPT when the
+      # restore machinery itself spawned it as a fresh fallback
+      # (WARP_AGENT_RESUME_STARTED_FRESH, set by warp_agent_resume_launch). Such a session
+      # has no conversation yet, and in the 2026-07-08 incident these blanks overwrote
+      # entries still pointing at recoverable conversations on every restart, cascading
+      # into data loss. Until the user actually engages (first prompt, handled below), a
+      # machinery-spawned blank must not clobber a protected entry.
+      entry_file="${WARP_AGENT_RESUME_DIR:-$HOME/.warp/agent-resume}/$WARP_TERMINAL_SESSION_UUID.json"
+      if [[ -n "${WARP_AGENT_RESUME_STARTED_FRESH:-}" ]] \
+         && ! _warp_agent_resume_has_conversation "$sid" \
+         && _warp_agent_resume_entry_protected "$entry_file"; then
+        return 0
+      fi
       extra="$(_warp_agent_resume_extract_flags "$(_warp_agent_resume_claude_argv)")"
       ;;
     UserPromptSubmit|Stop)
       # Live-mode update. Guard: only touch an entry this session owns -- a missing entry
       # is healed (pre-flag registries), but an entry recording a different session id
-      # (e.g. a nested claude run from a tool in the same pane env) is left alone.
+      # (e.g. a nested claude run from a tool in the same pane env) is left alone. The
+      # exception is a machinery-spawned fresh session (WARP_AGENT_RESUME_STARTED_FRESH):
+      # its SessionStart deliberately left a protected entry in place, so its first real
+      # activity is where it legitimately takes the pane over.
       entry_file="${WARP_AGENT_RESUME_DIR:-$HOME/.warp/agent-resume}/$WARP_TERMINAL_SESSION_UUID.json"
-      if [[ -f "$entry_file" ]] && ! grep -qE "warp_agent_resume_launch claude $sid( |\")" "$entry_file"; then
+      if [[ -z "${WARP_AGENT_RESUME_STARTED_FRESH:-}" && -f "$entry_file" ]] \
+         && ! grep -qE "warp_agent_resume_launch claude $sid( |\")" "$entry_file"; then
         return 0
       fi
       pmode="$(printf '%s' "$payload" | jq -r '.permission_mode // empty')"

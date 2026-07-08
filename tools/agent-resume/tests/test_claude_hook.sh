@@ -97,6 +97,41 @@ echo '{"session_id":"sess-ggg","cwd":"/tmp/repo"}' | "$BIN/claude-capture.sh"
 grep -q '"bridge"' "$f" && { echo "FAIL: bridge field written without env"; exit 1; }
 rm -f "$f"   # clear residue so the empty-dir check below only sees new writes
 
+# --- Machinery-spawned fresh sessions must not clobber protected entries ---
+# warp_agent_resume_launch tags its fresh fallback with WARP_AGENT_RESUME_STARTED_FRESH;
+# until the user engages, such a blank must leave an entry alone while it still points
+# somewhere recoverable (2026-07-08 incident: blank restarts destroyed live mappings).
+export WARP_AGENT_RESUME_CLAUDE_PROJECTS="$TMP/projects"
+mkdir -p "$TMP/projects/-tmp-repo"
+printf '{"type":"user","message":{}}\n' > "$TMP/projects/-tmp-repo/sess-old.jsonl"
+
+# Entry points at a session with a real conversation: the blank's SessionStart skips it…
+echo '{"session_id":"sess-old","cwd":"/tmp/repo"}' | "$BIN/claude-capture.sh"
+echo '{"session_id":"sess-blank","cwd":"/tmp/repo"}' | WARP_AGENT_RESUME_STARTED_FRESH=1 "$BIN/claude-capture.sh"
+grep -q 'sess-old' "$f" || { echo "FAIL: machinery blank clobbered a live entry"; exit 1; }
+
+# …but its first real prompt takes the pane over (marker + UserPromptSubmit).
+echo '{"session_id":"sess-blank","cwd":"/tmp/repo","hook_event_name":"UserPromptSubmit","permission_mode":"default"}' \
+  | WARP_AGENT_RESUME_STARTED_FRESH=1 "$BIN/claude-capture.sh"
+grep -q 'sess-blank' "$f" || { echo "FAIL: engaged fresh session not captured"; exit 1; }
+
+# A bridge entry is protected even when its local sid has no conversation: the cloud copy
+# is authoritative and the bridge field is the only durable link to it.
+printf '{ "command": "warp_agent_resume_launch claude sess-gone", "cwd": "/tmp/repo", "bridge": "session_01KEEP" }\n' > "$f"
+echo '{"session_id":"sess-blank2","cwd":"/tmp/repo"}' | WARP_AGENT_RESUME_STARTED_FRESH=1 "$BIN/claude-capture.sh"
+grep -q 'session_01KEEP' "$f" || { echo "FAIL: machinery blank destroyed a bridge entry"; exit 1; }
+
+# An unprotected entry (dead sid, no bridge) is still taken over by the blank.
+printf '{ "command": "warp_agent_resume_launch claude sess-gone", "cwd": "/tmp/repo" }\n' > "$f"
+echo '{"session_id":"sess-blank3","cwd":"/tmp/repo"}' | WARP_AGENT_RESUME_STARTED_FRESH=1 "$BIN/claude-capture.sh"
+grep -q 'sess-blank3' "$f" || { echo "FAIL: blank should take over a dead entry"; exit 1; }
+
+# Without the marker (user-started session), SessionStart takeover stays unconditional.
+echo '{"session_id":"sess-old","cwd":"/tmp/repo"}' | "$BIN/claude-capture.sh"
+echo '{"session_id":"sess-new","cwd":"/tmp/repo"}' | "$BIN/claude-capture.sh"
+grep -q 'sess-new' "$f" || { echo "FAIL: user-started session must still take over"; exit 1; }
+rm -f "$f"
+
 # Outside a Warp pane: no-op.
 unset WARP_TERMINAL_SESSION_UUID
 echo '{"session_id":"x","cwd":"/tmp"}' | "$BIN/claude-capture.sh"

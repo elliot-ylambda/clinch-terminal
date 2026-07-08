@@ -40,6 +40,29 @@ capture (agent SessionStart hooks)          replay (Rust, in Warp)
   `claude --resume`/`codex resume` reject those with "No conversation found". Resumability
   is checked by locating the session file by its globally-unique id, so we never replicate
   each agent's brittle cwd→directory hashing.
+- **A dead Claude id adopts the directory's newest unclaimed session before going fresh.**
+  Registry entries rot silently (overwritten by a session that was never used, transcript
+  rolled away by retention), and starting fresh on a rotted entry silently orphans the
+  pane's real conversation — the root cause of the 2026-07-08 blank-session incident. So
+  when the recorded id has no conversation, `warp_agent_resume_launch` first looks for the
+  newest resumable session whose transcript records the pane's directory as its `cwd`
+  (`warp_agent_resume_fallback_id`, reading transcript heads newest-first) and resumes
+  that instead. Only *unclaimed* sessions — recorded in no pane's registry entry — are
+  adopted, so a pane whose id died can never steal a sibling pane's live session when
+  several panes share one project directory. Bridged panes skip adoption (their
+  conversation lives at claude.ai; adopting a local session would silently swap
+  conversations), and codex keeps plain resume-or-fresh (its session filenames don't
+  yield a bare id to adopt by).
+- **Machinery-spawned blanks can't destroy a recoverable mapping.** When the launcher
+  does start fresh, it tags the session with `WARP_AGENT_RESUME_STARTED_FRESH`; the
+  capture hook then skips its usual SessionStart takeover while the pane's entry still
+  points somewhere recoverable (a local session with a real conversation, or a claude.ai
+  bridge id — the only durable link to a cloud conversation) and the new session has no
+  conversation of its own yet. The session's first real prompt claims the pane as usual.
+  In the incident above every blank restart overwrote the previous mapping at
+  SessionStart, so freeze/restore cycles amplified one stale id into total loss; with
+  this guard a protected entry survives any number of blank restarts. A user-started
+  fresh session (no marker) still takes over unconditionally.
 - **Bridged sessions teleport their cloud copy back.** Claude sessions attached to the
   claude.ai "repl bridge" stop persisting a full local transcript (the jsonl is missing or
   a stale husk), and `claude --resume <id>` then fails with "No conversation found" or
@@ -138,10 +161,21 @@ separate data dir (`~/.warp-oss`), so the two never clobber each other's session
 - **Stub / vanished sessions resume as fresh, not as an error.** A pane whose agent was
   opened but never used has no resumable conversation (0 turns), and a session file can
   also be rolled away. Rather than replaying a bare `claude --resume <id>` that errors
-  with "No conversation found", the recorded `warp_agent_resume_launch` checks first and
-  starts a fresh agent in that pane instead. The trade-off is a (rare) false negative:
-  if the resumability check can't find a conversation that actually exists, you get a
-  fresh agent and can still `claude --resume <id>` by hand.
+  with "No conversation found", the recorded `warp_agent_resume_launch` checks first,
+  tries the cwd adoption fallback (Claude only, see above), and otherwise starts a fresh
+  agent in that pane. The trade-off is a (rare) false negative: if the resumability check
+  can't find a conversation that actually exists, you get a fresh agent and can still
+  `claude --resume <id>` by hand.
+- **A session claimed by a zombie registry entry is not adopted.** The cwd fallback skips
+  sessions recorded in *any* pane's registry entry so it can never steal a live sibling
+  pane's session — at the cost of not adopting one claimed by an entry whose pane no
+  longer exists. Those stay recoverable by hand (`claude --resume <id>`), and are no
+  worse off than before the fallback existed.
+- **Nested claude runs inside a machinery-spawned fresh session** inherit
+  `WARP_AGENT_RESUME_STARTED_FRESH`, so such a nested run's first prompt event can claim
+  the pane entry (the marker relaxes the usual owner guard). This needs a machinery-spawned
+  blank *and* a nested interactive-hook claude run before the user's first prompt — rare
+  double condition, accepted.
 - **Codex mode changes made mid-session are only re-captured at the next session start.**
   Claude's per-turn hooks keep the recorded mode live, but codex is captured at
   `SessionStart` only: the local codex does expose a `user_prompt_submit` hook event, but

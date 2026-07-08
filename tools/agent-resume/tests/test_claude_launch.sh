@@ -6,12 +6,14 @@ HERE="$(cd "$(dirname "$0")/.." && pwd)"
 TMP="$(mktemp -d)"
 mkdir -p "$TMP/bin"
 # Fake `claude` that records the args it was called with (path baked in). Each call also
-# appends to all_args so fallback chains are assertable, and the exit code is configurable
-# via $TMP/claude_rc (defaults to 0).
+# appends to all_args so fallback chains are assertable, records whether the machinery
+# fresh marker (WARP_AGENT_RESUME_STARTED_FRESH) was set, and the exit code is
+# configurable via $TMP/claude_rc (defaults to 0).
 cat > "$TMP/bin/claude" <<EOF
 #!/usr/bin/env bash
 echo "\$@" > "$TMP/last_args"
 echo "\$@" >> "$TMP/all_args"
+echo "\${WARP_AGENT_RESUME_STARTED_FRESH:-}" > "$TMP/last_fresh_marker"
 exit "\$(cat "$TMP/claude_rc" 2>/dev/null || echo 0)"
 EOF
 chmod +x "$TMP/bin/claude"
@@ -115,5 +117,48 @@ unset WARP_TERMINAL_SESSION_UUID
 rm -f "$TMP/last_args" "$TMP/all_args"
 HOME="$EHOME" warp_agent_resume_launch claude good-1
 grep -q -- '--teleport' "$TMP/last_args" && { echo "FAIL: teleport without pane uuid"; exit 1; }
+
+# --- Registry-rot fallback: a dead id adopts the newest unclaimed session for this cwd ---
+export WARP_AGENT_RESUME_DIR="$TMP/reg2"
+mkdir -p "$WARP_AGENT_RESUME_DIR"
+WORK="$TMP/work"; mkdir -p "$WORK"
+PROJ="$EHOME/.claude/projects/-work"
+mkdir -p "$PROJ/subagents"
+printf '{"type":"user","cwd":"%s","message":{}}\n' "$WORK" > "$PROJ/lost-1.jsonl"
+printf '{"type":"user","cwd":"%s","message":{}}\n' "$WORK" > "$PROJ/lost-2.jsonl"
+printf '{"type":"user","cwd":"%s","message":{}}\n' "$WORK" > "$PROJ/subagents/side-1.jsonl"  # sidechain
+printf '{"type":"bridge-session","cwd":"%s"}\n'    "$WORK" > "$PROJ/stub-9.jsonl"            # stub, 0 turns
+printf '{"type":"user","cwd":"/somewhere/else","message":{}}\n' > "$PROJ/other-cwd.jsonl"
+touch -t 202607010000 "$PROJ/lost-1.jsonl"
+touch -t 202607020000 "$PROJ/lost-2.jsonl"           # newest REAL match for $WORK…
+touch -t 202607030000 "$PROJ/subagents/side-1.jsonl" # …these three are newer but must be skipped
+touch -t 202607040000 "$PROJ/stub-9.jsonl"
+touch -t 202607050000 "$PROJ/other-cwd.jsonl"
+
+# Dead id -> adopt the newest resumable session recorded for this cwd (sidechains, stubs,
+# and other directories skipped), forwarding launch flags. Adoption is a resume, so the
+# machinery fresh marker must NOT be set.
+rm -f "$TMP/last_args"
+( cd "$WORK" && HOME="$EHOME" warp_agent_resume_launch claude dead-1 --dangerously-skip-permissions )
+grep -q -- '--resume lost-2' "$TMP/last_args" || { echo "FAIL: dead id should adopt newest cwd session"; exit 1; }
+grep -q -- '--dangerously-skip-permissions' "$TMP/last_args" || { echo "FAIL: flags not forwarded on adoption"; exit 1; }
+[[ -z "$(cat "$TMP/last_fresh_marker")" ]] || { echo "FAIL: adoption must not set the fresh marker"; exit 1; }
+
+# A session claimed by another pane's registry entry is skipped -> next unclaimed wins
+# (a pane whose id died must never steal a sibling pane's live session).
+printf '{ "command": "warp_agent_resume_launch claude lost-2 --model opus", "cwd": "%s" }\n' "$WORK" \
+  > "$WARP_AGENT_RESUME_DIR/other-pane.json"
+rm -f "$TMP/last_args"
+( cd "$WORK" && HOME="$EHOME" warp_agent_resume_launch claude dead-1 )
+grep -q -- '--resume lost-1' "$TMP/last_args" || { echo "FAIL: claimed session must not be stolen"; exit 1; }
+
+# Everything for this cwd claimed -> start fresh, tagged with the machinery marker so the
+# capture hook knows this blank must not clobber a protected entry.
+printf '{ "command": "warp_agent_resume_launch claude lost-1", "cwd": "%s" }\n' "$WORK" \
+  > "$WARP_AGENT_RESUME_DIR/other-pane2.json"
+rm -f "$TMP/last_args"
+( cd "$WORK" && HOME="$EHOME" warp_agent_resume_launch claude dead-1 )
+grep -q -- '--resume' "$TMP/last_args" && { echo "FAIL: fully-claimed cwd must start fresh"; exit 1; }
+[[ "$(cat "$TMP/last_fresh_marker")" == "1" ]] || { echo "FAIL: machinery fresh launch must set the marker"; exit 1; }
 
 echo "PASS"
