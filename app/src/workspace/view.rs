@@ -20009,6 +20009,43 @@ impl Workspace {
         .finish()
     }
 
+    /// Renders the header File Explorer button, which toggles the file tree in
+    /// the left (tools) panel via `ToggleProjectExplorer`. It is highlighted
+    /// while the file tree is the visible left-panel view.
+    fn render_file_explorer_button(
+        &self,
+        appearance: &Appearance,
+        ctx: &AppContext,
+    ) -> Box<dyn Element> {
+        let is_active = self.active_tab_pane_group().as_ref(ctx).left_panel_open
+            && self.left_panel_view.as_ref(ctx).is_file_tree_active();
+
+        SavePosition::new(
+            Container::new(
+                Align::new(
+                    self.render_tab_bar_icon_button(
+                        appearance,
+                        icons::Icon::Folder,
+                        &self.mouse_states.file_explorer_icon,
+                        WorkspaceAction::ToggleProjectExplorer,
+                        "File explorer".to_string(),
+                        keybinding_name_to_display_string(
+                            TOGGLE_PROJECT_EXPLORER_BINDING_NAME,
+                            ctx,
+                        ),
+                        is_active,
+                        false,
+                    )
+                    .finish(),
+                )
+                .finish(),
+            )
+            .finish(),
+            TOGGLE_PROJECT_EXPLORER_BINDING_NAME,
+        )
+        .finish()
+    }
+
     fn should_enable_file_tree_and_global_search_for_pane_group(pane_group: &PaneGroup) -> bool {
         pane_group
             .pane_ids()
@@ -20635,6 +20672,12 @@ impl Workspace {
         let vertical_tabs_active = uses_vertical_tabs();
         let inner = match item {
             HeaderToolbarItemKind::TabsPanel => self.render_left_toggle_button(appearance, ctx),
+            HeaderToolbarItemKind::FileExplorer => {
+                if self.left_panel_views.is_empty() {
+                    return None;
+                }
+                self.render_file_explorer_button(appearance, ctx)
+            }
             HeaderToolbarItemKind::ToolsPanel => {
                 if self.left_panel_views.is_empty() {
                     return None;
@@ -22454,7 +22497,8 @@ impl Workspace {
                 }
                 Some(ChildView::new(&self.right_panel_view).finish())
             }
-            HeaderToolbarItemKind::AgentManagement
+            HeaderToolbarItemKind::FileExplorer
+            | HeaderToolbarItemKind::AgentManagement
             | HeaderToolbarItemKind::NotificationsMailbox => None,
         }
     }
