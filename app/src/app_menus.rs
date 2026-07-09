@@ -991,9 +991,12 @@ fn make_new_help_menu() -> Menu {
         "Help",
         vec![
             feedback_menu_item(),
-            link_menu_item("Warp Documentation...", links::USER_DOCS_URL.into()),
+            link_menu_item("Clinch on GitHub...", links::COMMUNITY_URL.into()),
             link_menu_item("GitHub Issues...", links::GITHUB_ISSUES_URL.into()),
-            link_menu_item("Warp Slack Community...", links::SLACK_URL.into()),
+            link_menu_item(
+                "Warp Documentation (upstream)...",
+                links::USER_DOCS_URL.into(),
+            ),
         ],
     )
 }

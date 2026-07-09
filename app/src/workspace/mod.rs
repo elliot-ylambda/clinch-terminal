@@ -1584,7 +1584,7 @@ fn add_overflow_menu_items_as_editable_binding(app: &mut AppContext) {
         .with_custom_action(CustomAction::ReferAFriend),
         EditableBinding::new(
             "workspace:link_to_slack",
-            "Join our Slack community (opens external link)",
+            "Open Clinch on GitHub (opens external link)",
             WorkspaceAction::JoinSlack,
         )
         .with_context_predicate(id!("Workspace")),

@@ -6424,7 +6424,7 @@ impl Workspace {
     }
 
     fn join_slack(&mut self, ctx: &mut ViewContext<Self>) {
-        ctx.open_url(links::SLACK_URL);
+        ctx.open_url(links::COMMUNITY_URL);
     }
 
     fn view_user_docs(&mut self, ctx: &mut ViewContext<Self>) {
@@ -9622,7 +9622,7 @@ impl Workspace {
         );
 
         items.push(
-            MenuItemFields::new("Slack")
+            MenuItemFields::new("GitHub")
                 .with_on_select_action(WorkspaceAction::JoinSlack)
                 .into_item(),
         );
