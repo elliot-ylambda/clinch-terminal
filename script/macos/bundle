@@ -710,12 +710,15 @@ if [[ $SELFSIGN = true ]]; then
   else
     echo "Found Apple Development certificate"
   fi
+  # SelfSign-Entitlements (not Debug-Entitlements): shipped bundles must not
+  # carry get-task-allow, or macOS never persists Keychain "Always Allow"
+  # grants and re-prompts on every cross-app Keychain read.
   if [[ "$ARTIFACT" == app ]]; then
     echo "Self-signing $BUNDLE_DIR/$WARP_APP_NAME.app with ${SIGNING_CERT}..."
-    codesign --force --deep --options runtime --sign "$SIGNING_CERT" "$BUNDLE_DIR/$WARP_APP_NAME.app" --entitlements script/Debug-Entitlements.plist
+    codesign --force --deep --options runtime --sign "$SIGNING_CERT" "$BUNDLE_DIR/$WARP_APP_NAME.app" --entitlements script/SelfSign-Entitlements.plist
   elif [[ "$ARTIFACT" == cli || "$ARTIFACT" == warpctrl ]]; then
     echo "Self-signing $OUT_DIR/$WARP_BIN with ${SIGNING_CERT}..."
-    codesign --force --options runtime --sign "$SIGNING_CERT" "$OUT_DIR/$WARP_BIN" --entitlements script/Debug-Entitlements.plist
+    codesign --force --options runtime --sign "$SIGNING_CERT" "$OUT_DIR/$WARP_BIN" --entitlements script/SelfSign-Entitlements.plist
   fi
 elif [[ $CODESIGN = true ]]; then
   if [[ "$ARTIFACT" == app ]]; then
