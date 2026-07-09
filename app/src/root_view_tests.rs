@@ -149,9 +149,6 @@ fn test_backendless_build_launches_directly_into_terminal() {
         // Workspace immediately in the backendless branch, which needs all of
         // the singleton models registered there.
         crate::workspace::view::tests::initialize_app(&mut app);
-        // RootView (unlike a bare Workspace) also renders the CLI agent usage
-        // footer chip, which isn't part of the Workspace-only scaffolding above.
-        app.add_singleton_model(crate::ai::blocklist::usage::CliAgentUsageModel::new);
 
         ChannelState::set(ChannelState::new(
             Channel::Local,

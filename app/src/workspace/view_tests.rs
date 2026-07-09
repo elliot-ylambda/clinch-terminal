@@ -2786,6 +2786,9 @@ fn test_vertical_tabs_panel_visibility_restores_from_window_snapshot() {
         app.update(|ctx| {
             TabSettings::handle(ctx).update(ctx, |settings, ctx| {
                 report_if_error!(settings.use_vertical_tabs.set_value(true, ctx));
+                report_if_error!(settings
+                    .show_vertical_tab_panel_in_restored_windows
+                    .set_value(false, ctx));
             });
         });
 
