@@ -63,6 +63,7 @@ mod prefix;
 mod preview_config_migration;
 mod pricing;
 mod profiling;
+mod project_window;
 mod projects;
 mod prompt;
 mod quit_warning;

@@ -3,7 +3,8 @@
 # CI, no GitHub Actions secrets, no macOS runner minutes.
 #
 #   make release                 # build a self-signed Clinch.dmg → GitHub Release (for everyone)
-#   make update                  # publish a release, then update + relaunch Clinch on THIS machine
+#   make update                  # build, update + relaunch Clinch on THIS machine right away,
+#                                # then publish the GitHub Release in the background
 #   make release VERSION=v0.2.0  # override the auto date-based tag
 #   make release UNIVERSAL=1     # build a universal (Intel+ARM) DMG (slower)
 #
@@ -63,14 +64,20 @@ endef
 export RELEASE_NOTES
 
 .DEFAULT_GOAL := help
-.PHONY: help release update require-latest-main _require-create-dmg
+.PHONY: help release update require-latest-main _require-create-dmg _bundle _publish
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 	  | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
 
-release: require-latest-main _require-create-dmg ## Build a self-signed DMG and publish a GitHub Release for everyone (VERSION=v0.x, UNIVERSAL=1)
+# Internal: build + self-sign the bundle (and its DMG). Shared by release/update.
+_bundle: require-latest-main _require-create-dmg
 	GIT_RELEASE_TAG="$(VERSION)" ./script/bundle -c stable --selfsign $(BUNDLE_ARCH_FLAG)
+
+# Internal: zip + publish the already-built bundle as a GitHub Release. Callers
+# must pin VERSION (it defaults to the current minute, so a re-expansion in a
+# sub-make would mint a different tag).
+_publish:
 	ditto -c -k --keepParent "$(STABLE_BUNDLE)" "$(RELEASE_ZIP)"
 	cd target/$(STABLE_PROFILE_DIR)/bundle/osx && shasum -a 256 "$(STABLE_APP).app.zip" > "$(STABLE_APP).app.zip.sha256"
 	gh release create "$(VERSION)" "$(RELEASE_DMG)" "$(RELEASE_ZIP)" "$(RELEASE_SHA)" \
@@ -79,20 +86,26 @@ release: require-latest-main _require-create-dmg ## Build a self-signed DMG and 
 	  --notes "$$RELEASE_NOTES"
 	@echo "✓ Published $(VERSION): https://github.com/$(CLINCH_REPO)/releases/tag/$(VERSION)"
 
-update: release ## Publish a release, then update + relaunch Clinch on THIS machine
-	@echo "→ Updating $(INSTALLED_APP) — $(STABLE_APP) will quit and relaunch on the new build…"
-	@# Run detached so the swap survives even when this command is issued from
-	@# inside Clinch itself (quitting Clinch would otherwise kill the updater).
-	@nohup ./script/update-installed-clinch "$(STABLE_APP)" "$(STABLE_BUNDLE)" \
+release: _bundle ## Build a self-signed DMG and publish a GitHub Release for everyone (VERSION=v0.x, UNIVERSAL=1)
+	@$(MAKE) _publish VERSION="$(VERSION)"
+
+update: _bundle ## Build, update + relaunch Clinch on THIS machine right away; publish finishes in the background
+	@echo "→ Updating $(INSTALLED_APP) — $(STABLE_APP) will quit and relaunch on the new build; publishing $(VERSION) continues in the background…"
+	@# One detached shell for BOTH the swap and the publish: when this command is
+	@# issued from inside Clinch, quitting Clinch kills make itself, so anything
+	@# that must still run has to live in the nohup'd shell. The swap goes first
+	@# (seconds — you're on the new build immediately); the zip + upload follow.
+	@# `;` not `&&`: publish regardless of the swap outcome, as before.
+	@nohup sh -c './script/update-installed-clinch "$(STABLE_APP)" "$(STABLE_BUNDLE)"; $(MAKE) _publish VERSION="$(VERSION)"' \
 	  >"$$HOME/Library/Logs/clinch-self-update.log" 2>&1 &
-	@echo "✓ Update running in the background (log: ~/Library/Logs/clinch-self-update.log)"
+	@echo "✓ Swap + publish running in the background (log: ~/Library/Logs/clinch-self-update.log)"
 
 # Keep the installed agent-resume capture layer (hooks + ~/.warp/agent-resume-bin) in
 # sync with the repo whenever we ship from this machine. Declared as a standalone
 # prerequisite line so it survives reworks of the release/update targets. Idempotent,
 # local-only, and independent of the app build.
 .PHONY: agent-resume
-release: agent-resume
+_bundle: agent-resume
 agent-resume: ## Install/refresh the agent-resume capture layer (hooks + ~/.warp/agent-resume-bin)
 	bash tools/agent-resume/install.sh
 
