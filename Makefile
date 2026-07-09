@@ -21,6 +21,7 @@ RELEASE_DMG        := target/$(STABLE_PROFILE_DIR)/bundle/osx/$(STABLE_APP).dmg
 # The clinch.sh site's Install button links to Clinch.app.zip on the latest
 # release, so every release must attach the zip alongside the DMG.
 RELEASE_ZIP        := target/$(STABLE_PROFILE_DIR)/bundle/osx/$(STABLE_APP).app.zip
+RELEASE_SHA        := $(RELEASE_ZIP).sha256
 # Universal (Intel+ARM) is much slower; default to this machine's arch only.
 BUNDLE_ARCH_FLAG   := $(if $(UNIVERSAL),,--nouniversal)
 VERSION            ?= v0.$(shell date +%Y.%m.%d.%H%M)
@@ -69,9 +70,10 @@ help: ## List available targets
 	  | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
 
 release: require-latest-main _require-create-dmg ## Build a self-signed DMG and publish a GitHub Release for everyone (VERSION=v0.x, UNIVERSAL=1)
-	./script/bundle -c stable --selfsign $(BUNDLE_ARCH_FLAG)
+	GIT_RELEASE_TAG="$(VERSION)" ./script/bundle -c stable --selfsign $(BUNDLE_ARCH_FLAG)
 	ditto -c -k --keepParent "$(STABLE_BUNDLE)" "$(RELEASE_ZIP)"
-	gh release create "$(VERSION)" "$(RELEASE_DMG)" "$(RELEASE_ZIP)" \
+	cd target/$(STABLE_PROFILE_DIR)/bundle/osx && shasum -a 256 "$(STABLE_APP).app.zip" > "$(STABLE_APP).app.zip.sha256"
+	gh release create "$(VERSION)" "$(RELEASE_DMG)" "$(RELEASE_ZIP)" "$(RELEASE_SHA)" \
 	  --repo $(CLINCH_REPO) \
 	  --title "$(STABLE_APP) $(VERSION)" \
 	  --notes "$$RELEASE_NOTES"

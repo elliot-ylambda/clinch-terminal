@@ -105,7 +105,6 @@ in `script/macos/bundle`. This isolates any deep links from an installed
 
 ### Other follow-ups (not done)
 - **CLI command** for stable is still `oz`; renaming it is separate.
-- The copyright string in the bundle metadata is still Warp's entity.
 - `warp://cli-agent` (`app/src/terminal/cli_agent_sessions/event/mod.rs`) is an
   internal CLI↔app OSC sentinel, **not** an OS URL scheme — intentionally left
   as `warp://` (changing it needs a matching CLI change, no OAuth benefit).
