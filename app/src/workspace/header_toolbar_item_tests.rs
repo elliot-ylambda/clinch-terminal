@@ -1,15 +1,14 @@
 use super::*;
 
 #[test]
-fn file_explorer_sits_right_after_the_collapse_button() {
+fn default_left_uses_file_explorer_without_tools_panel() {
     // The collapse (tabs) button is always leftmost; the File Explorer toggle
-    // must sit immediately to its right.
+    // sits immediately to its right without the duplicate Tools Panel toggle.
     assert_eq!(
         HeaderToolbarItemKind::default_left(),
         vec![
             HeaderToolbarItemKind::TabsPanel,
             HeaderToolbarItemKind::FileExplorer,
-            HeaderToolbarItemKind::ToolsPanel,
             HeaderToolbarItemKind::AgentManagement,
         ],
     );
@@ -18,6 +17,11 @@ fn file_explorer_sits_right_after_the_collapse_button() {
 #[test]
 fn all_items_includes_file_explorer() {
     assert!(HeaderToolbarItemKind::all_items().contains(&HeaderToolbarItemKind::FileExplorer));
+}
+
+#[test]
+fn all_items_keeps_tools_panel_available_for_customization() {
+    assert!(HeaderToolbarItemKind::all_items().contains(&HeaderToolbarItemKind::ToolsPanel));
 }
 
 #[test]
