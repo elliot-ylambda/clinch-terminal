@@ -1704,6 +1704,7 @@ pub(crate) fn initialize_app(
     #[cfg(not(target_family = "wasm"))]
     code::editor::find::view::init(ctx);
     workspace::init(ctx);
+    project_window::init(ctx);
     pane_group::init(ctx);
     terminal::init(ctx);
     input::init(ctx);

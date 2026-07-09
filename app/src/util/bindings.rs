@@ -132,6 +132,7 @@ pub enum CustomAction {
     GoToLine,
     ToggleGlobalSearch,
     ToggleConversationListView,
+    NewProject,
 }
 
 lazy_static! {
@@ -383,8 +384,10 @@ pub fn custom_tag_to_keystroke(custom: CustomTag) -> Option<Keystroke> {
             }
         }
 
-        // This is one of the app's hardcoded keybindings.
-        CustomAction::AddWindow => Keystroke::parse(cmd_or_ctrl_shift("n")).ok(),
+        CustomAction::NewProject => mac_only_keystroke("cmd-n"),
+        // Keep an explicit separate-window command after Command+N becomes
+        // the project-creation shortcut in Clinch.
+        CustomAction::AddWindow => mac_only_keystroke("cmd-shift-n"),
         CustomAction::ToggleWarpDrive => {
             if OperatingSystem::get().is_mac() {
                 Keystroke::parse("cmd-\\").ok()

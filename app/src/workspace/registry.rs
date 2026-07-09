@@ -119,9 +119,7 @@ impl WorkspaceRegistry {
             .iter()
             .flat_map(|(window_id, entry)| {
                 entry.workspaces.values().filter_map(move |weak_handle| {
-                    weak_handle
-                        .upgrade(app)
-                        .map(|handle| (*window_id, handle))
+                    weak_handle.upgrade(app).map(|handle| (*window_id, handle))
                 })
             })
             .collect()

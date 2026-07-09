@@ -266,6 +266,7 @@ pub fn init(app: &mut AppContext) {
 
     app.add_global_action("root_view:open_from_restored", open_from_restored);
     app.add_global_action("root_view:open_new", open_new);
+    app.add_global_action("root_view:open_new_project", open_new_project);
     app.add_global_action("root_view:open_new_with_shell", open_new_with_shell);
     app.add_global_action("root_view:open_new_from_path", |arg, ctx| {
         let _ = open_new_from_path(arg, ctx);
@@ -1112,6 +1113,35 @@ fn open_new(_: &(), ctx: &mut AppContext) {
     open_new_window_get_handles(None, ctx);
 }
 
+fn open_new_project(_: &(), ctx: &mut AppContext) {
+    let active_window_id = ctx.windows().active_window();
+    if let Some(window_id) = active_window_id.filter(|window_id| {
+        quake_mode_window_id().is_none_or(|quake_window_id| quake_window_id != *window_id)
+    }) {
+        if let Some(root_view) = ctx.root_view::<RootView>(window_id) {
+            let project_window = root_view
+                .as_ref(ctx)
+                .project_window()
+                .filter(|project_window| {
+                    !project_window
+                        .as_ref(ctx)
+                        .active_workspace()
+                        .as_ref(ctx)
+                        .is_tab_drag_preview()
+                });
+            if let Some(project_window) = project_window {
+                project_window.update(ctx, |project_window, ctx| {
+                    project_window.add_project(ctx);
+                });
+                ctx.windows().show_window_and_focus_app(window_id);
+                return;
+            }
+        }
+    }
+
+    open_new(&(), ctx);
+}
+
 /// Opens a new window with a specific shell
 fn open_new_with_shell(shell: &Option<AvailableShell>, ctx: &mut AppContext) {
     open_new_window_get_handles(shell.to_owned(), ctx);
@@ -1810,13 +1840,16 @@ impl RootView {
         }
     }
 
-    fn active_workspace(&self, ctx: &AppContext) -> Option<ViewHandle<Workspace>> {
+    pub(crate) fn project_window(&self) -> Option<ViewHandle<ProjectWindow>> {
         match &self.auth_onboarding_state {
-            AuthOnboardingState::Terminal(project_window) => {
-                Some(project_window.as_ref(ctx).active_workspace())
-            }
+            AuthOnboardingState::Terminal(project_window) => Some(project_window.clone()),
             _ => None,
         }
+    }
+
+    fn active_workspace(&self, ctx: &AppContext) -> Option<ViewHandle<Workspace>> {
+        self.project_window()
+            .map(|project_window| project_window.as_ref(ctx).active_workspace())
     }
 
     /// Used for integration tests and SDK entry points.

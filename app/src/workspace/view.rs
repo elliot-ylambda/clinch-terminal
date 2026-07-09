@@ -312,7 +312,7 @@ use crate::resource_center::{
     ResourceCenterEvent, ResourceCenterPage, ResourceCenterView, Tip, TipAction, TipsCompleted,
 };
 use crate::reward_view::{RewardEvent, RewardKind, RewardView};
-use crate::root_view::{quake_mode_window_id, NewWorkspaceSource, OpenLaunchConfigArg};
+use crate::root_view::{quake_mode_window_id, NewWorkspaceSource, OpenLaunchConfigArg, RootView};
 use crate::search::command_palette::view::{
     Event as CommandPaletteEvent, NavigationMode, View as CommandPalette,
 };
@@ -12157,6 +12157,16 @@ impl Workspace {
         });
     }
 
+    /// Re-establishes the physical-window state derived from this workspace
+    /// when its containing project becomes active.
+    pub(crate) fn handle_project_activated(&mut self, ctx: &mut ViewContext<Self>) {
+        self.sync_window_button_visibility(ctx);
+        self.update_window_title(ctx);
+        self.focus_active_tab(ctx);
+        self.update_active_session(ctx);
+        ctx.notify();
+    }
+
     pub fn restore_closed_tab(
         &mut self,
         tab_index: usize,
@@ -20314,6 +20324,19 @@ impl Workspace {
         .finish()
     }
 
+    fn render_project_tab_strip(
+        &self,
+        appearance: &Appearance,
+        ctx: &AppContext,
+    ) -> Option<Box<dyn Element>> {
+        let root_view: ViewHandle<RootView> = ctx.root_view(self.window_id)?;
+        let project_window = root_view.as_ref(ctx).project_window()?;
+        let project_window = project_window.as_ref(ctx);
+        project_window
+            .supports_project_tabs(ctx)
+            .then(|| project_window.render_project_tab_strip(appearance, ctx))
+    }
+
     fn render_tab_bar_contents(
         &self,
         hover_fixed_width: Option<f32>,
@@ -20452,33 +20475,49 @@ impl Workspace {
 
             let left_padding = self.compute_tab_bar_left_padding(ctx);
 
-            // The title bar search bar can be hidden via a user setting; when hidden,
-            // an empty flexible slot keeps the right-side controls aligned to the right.
-            let hide_search_bar =
-                *TabSettings::as_ref(ctx).hide_title_bar_search_bar_in_vertical_tabs;
-            let search_bar_slot = if hide_search_bar {
-                Expanded::new(1., Empty::new().finish()).finish()
-            } else {
-                Shrinkable::new(
+            // Project tabs own the center of the top header. Special windows
+            // that do not support projects retain the existing search slot.
+            let center_slot = if let Some(project_tabs) =
+                self.render_project_tab_strip(appearance, ctx)
+            {
+                Expanded::new(
                     1.,
                     Clipped::new(
-                        Container::new(
-                            Align::new(self.render_title_bar_search_bar(appearance)).finish(),
-                        )
-                        .with_padding_left(TITLE_BAR_SEARCH_BAR_SLOT_PADDING)
-                        .with_padding_right(TITLE_BAR_SEARCH_BAR_SLOT_PADDING)
-                        .finish(),
+                        Container::new(project_tabs)
+                            .with_padding_left(TITLE_BAR_SEARCH_BAR_SLOT_PADDING)
+                            .with_padding_right(TITLE_BAR_SEARCH_BAR_SLOT_PADDING)
+                            .finish(),
                     )
                     .finish(),
                 )
                 .finish()
+            } else {
+                let hide_search_bar =
+                    *TabSettings::as_ref(ctx).hide_title_bar_search_bar_in_vertical_tabs;
+                if hide_search_bar {
+                    Expanded::new(1., Empty::new().finish()).finish()
+                } else {
+                    Shrinkable::new(
+                        1.,
+                        Clipped::new(
+                            Container::new(
+                                Align::new(self.render_title_bar_search_bar(appearance)).finish(),
+                            )
+                            .with_padding_left(TITLE_BAR_SEARCH_BAR_SLOT_PADDING)
+                            .with_padding_right(TITLE_BAR_SEARCH_BAR_SLOT_PADDING)
+                            .finish(),
+                        )
+                        .finish(),
+                    )
+                    .finish()
+                }
             };
 
             let tab_bar = Flex::row()
                 .with_main_axis_size(MainAxisSize::Max)
                 .with_cross_axis_alignment(CrossAxisAlignment::Center)
                 .with_child(tab_bar.finish())
-                .with_child(search_bar_slot)
+                .with_child(center_slot)
                 .with_child(right_controls.finish())
                 .finish();
 
@@ -20994,7 +21033,10 @@ impl Workspace {
     /// the same project), falling back to the working directory itself. `None`
     /// for remote sessions or when there is no local cwd.
     fn active_header_project_dir(&self, ctx: &AppContext) -> Option<PathBuf> {
-        let tab = self.tabs.get(self.active_tab_index)?;
+        self.project_dir_for_tab(self.tabs.get(self.active_tab_index)?, ctx)
+    }
+
+    fn project_dir_for_tab(&self, tab: &TabData, ctx: &AppContext) -> Option<PathBuf> {
         let cwd = tab
             .pane_group
             .as_ref(ctx)
@@ -21005,6 +21047,46 @@ impl Workspace {
             .get_root_for_path(&cwd_key)
             .unwrap_or(cwd_key);
         root.to_local_path().map(|p| p.to_path_buf())
+    }
+
+    /// Repository label for the outer project tab. Prefer the active inner
+    /// tab, then fall back through the existing inner-tab MRU order so a
+    /// temporary non-repository surface does not erase the project's identity.
+    pub(crate) fn project_display_name(&self, ctx: &AppContext) -> String {
+        let active_id = self
+            .tabs
+            .get(self.active_tab_index)
+            .map(|tab| tab.pane_group.id());
+        let active = self.tabs.get(self.active_tab_index).into_iter();
+        let recent = self.tab_mru_order.iter().filter_map(|pane_group_id| {
+            if Some(*pane_group_id) == active_id {
+                return None;
+            }
+            self.tabs
+                .iter()
+                .find(|tab| tab.pane_group.id() == *pane_group_id)
+        });
+
+        active
+            .chain(recent)
+            .find_map(|tab| self.project_dir_for_tab(tab, ctx))
+            .and_then(|path| {
+                path.file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+            })
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| "New Project".to_string())
+    }
+
+    pub(crate) fn has_unread_project_activity(&self, ctx: &AppContext) -> bool {
+        let notifications = AgentNotificationsModel::as_ref(ctx).notifications();
+        self.tabs.iter().any(|tab| {
+            tab.pane_group
+                .as_ref(ctx)
+                .terminal_views(ctx)
+                .into_iter()
+                .any(|terminal| notifications.has_unread_for_terminal_view(terminal.id()))
+        })
     }
 
     /// Renders the tab bar contents, wrapped in hover and drag-drop behaviors.

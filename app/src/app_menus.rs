@@ -103,7 +103,7 @@ pub fn dock_menu() -> Menu {
                 ctx.dispatch_global_action("workspace:save_app", &());
             },
             no_updates,
-            Some(Keystroke::parse("cmd-n").expect("Valid keystroke")),
+            Some(Keystroke::parse("cmd-shift-n").expect("Valid keystroke")),
         ))],
     )
 }
@@ -1045,10 +1045,16 @@ fn make_new_elements_menu_items(ctx: &AppContext) -> Vec<MenuItem> {
     // shows its dedicated keystroke instead.
     let mut new_elements_menu = vec![
         MenuItem::Custom(CustomMenuItem::new(
+            "New Project",
+            open_new_project,
+            no_updates,
+            Some(Keystroke::parse("cmd-n").expect("Valid keystroke")),
+        )),
+        MenuItem::Custom(CustomMenuItem::new(
             "New Window",
             open_new_window,
             no_updates,
-            Some(Keystroke::parse("cmd-n").expect("Valid keystroke")),
+            Some(Keystroke::parse("cmd-shift-n").expect("Valid keystroke")),
         )),
         MenuItem::Custom(CustomMenuItem::new(
             "New Terminal Tab",
@@ -1172,6 +1178,11 @@ fn open_new_agent_tab_or_window(ctx: &mut AppContext) {
 /// Dispatch event to open a new Warp window
 fn open_new_window(ctx: &mut AppContext) {
     ctx.dispatch_global_action("root_view:open_new", &());
+    ctx.dispatch_global_action("workspace:save_app", &());
+}
+
+fn open_new_project(ctx: &mut AppContext) {
+    ctx.dispatch_global_action("root_view:open_new_project", &());
     ctx.dispatch_global_action("workspace:save_app", &());
 }
 
