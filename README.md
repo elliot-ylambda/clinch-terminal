@@ -12,7 +12,7 @@ Quit Clinch with Claude Code or Codex running in your tabs, reopen it, and each 
 
 ### [⬇ Download Clinch for macOS](https://github.com/elliot-ylambda/clinch-terminal/releases/latest/download/Clinch.app.zip)
 
-1. **(Recommended) Verify the download.** Each release ships a `Clinch.app.zip.sha256` — see [Is this safe?](#is-this-safe) below:
+1. **(Recommended) Verify the download.** Each release attaches a `Clinch.app.zip.sha256` (the same digest GitHub shows next to the asset on the release page):
    ```bash
    shasum -a 256 -c Clinch.app.zip.sha256
    ```
@@ -40,7 +40,7 @@ This wires `SessionStart` hooks for Claude Code and Codex (your existing setting
 Fair question — you should be skeptical of any app that asks you to clear macOS quarantine. The honest picture:
 
 - **It's open source.** Every line is in this repo under [AGPL-3.0](LICENSE-AGPL). The most trustworthy way to run Clinch is to **[build it yourself](#build-from-source)** — then you aren't trusting a binary from anyone.
-- **Verify what you downloaded.** Each release publishes a SHA-256 and a `Clinch.app.zip.sha256` file; `shasum -a 256 -c Clinch.app.zip.sha256` confirms the bytes are exactly what's published here.
+- **Verify what you downloaded.** Each release attaches a `Clinch.app.zip.sha256` file, and GitHub displays the same SHA-256 digest on the release page; `shasum -a 256 -c Clinch.app.zip.sha256` confirms the bytes are exactly what's published here.
 - **Why the `xattr` step?** Apple's notarization (the "we scanned this" stamp) requires a paid Developer account this project doesn't have. The app *is* code-signed — just not notarized — so Gatekeeper quarantines the download; the command clears that flag. It's the same reason many independent open-source Mac apps need it.
 - **No telemetry, no account, no phone-home.** Clinch never signs in, and authenticated calls to Warp's servers hard-fail by design — see [Privacy & telemetry](#privacy--telemetry) for the specifics and how to verify it yourself.
 - **`install.sh` is auditable.** The optional agent-resume installer only adds `SessionStart` hooks to `~/.claude/settings.json` (a non-destructive `jq` merge) and `~/.codex/config.toml`, and sources its replay functions from `~/.zshrc`. Read [`tools/agent-resume/install.sh`](tools/agent-resume/install.sh) before running it.
@@ -49,18 +49,20 @@ Fair question — you should be skeptical of any app that asks you to clear macO
 
 **Clinch sends no telemetry and makes zero calls to Warp's backend.** This isn't a pinky-promise — it's how the build is compiled, and every claim below is verifiable:
 
-- **No telemetry or analytics.** The build sets `telemetry_config`, `crash_reporting_config`, and `autoupdate_config` to `None` ([`app/src/bin/oss.rs`](app/src/bin/oss.rs)). No analytics write-keys or DSNs are baked in, and crash reporting (Sentry) isn't compiled into the binary at all. The telemetry code that exists upstream has no destination to send to and is gated off.
-- **No backend, no sign-in.** Built with the `skip_login` feature: there's no login screen, and *every* authenticated request to Warp's servers hard-fails by design ([`crates/warp_server_client/src/auth/session.rs`](crates/warp_server_client/src/auth/session.rs)). It cannot phone home even if something tried.
-- **Verified at runtime.** While running, the `warp-oss` process holds **zero** outbound network connections. See for yourself:
+- **No telemetry or analytics.** The released app is the `stable` binary, built from [`app/src/bin/stable.rs`](app/src/bin/stable.rs) with [`ChannelConfig::no_backend()`](crates/warp_core/src/channel/config.rs), which sets `telemetry_config`, `crash_reporting_config`, and `autoupdate_config` to `None`. No analytics write-keys or DSNs are baked in, and crash reporting (Sentry) isn't compiled into the binary at all. The telemetry code that exists upstream has no destination to send to and is gated off.
+- **No backend, no sign-in.** `no_backend()` reports `has_backend() == false` — the login and cloud surfaces never initialize — and points every server URL at `http://192.0.2.0:9`, a reserved, unroutable test address. Clinch cannot reach Warp's servers even if something tried.
+- **Verified at runtime.** The installed app's process is named `stable` (inside `Clinch.app`). While running, it holds zero outbound connections of its own:
   ```bash
-  lsof -nP -i -a -p "$(pgrep -x warp-oss | paste -sd, -)" | grep ESTABLISHED
-  # no output = no connections
+  lsof -nP -i -a -p "$(pgrep -f 'Clinch.app/Contents/MacOS/stable' | paste -sd, -)" | grep ESTABLISHED
+  # no output = no connections. (If you enable the optional plan-limit gauges,
+  # you may see one connection to api.anthropic.com — see below.)
   ```
   Or just block it: add a firewall / Little Snitch rule denying `*.warp.dev`, and Clinch keeps working — because it needs nothing from them.
 
 **What this does _not_ cover (honestly):**
 
 - **Your CLI agents talk to their own providers.** Claude Code reaches Anthropic, Codex reaches OpenAI, MCP servers reach wherever you point them. That traffic is *theirs*, not Clinch's — the terminal only hosts them. So if you watch the wire you'll see your agents' connections; you won't see Warp's.
+- **The optional plan-limit gauges query Anthropic — off by default.** If you turn on **Settings → AI → Show plan limits**, Clinch reads Claude Code's OAuth token from your macOS Keychain (macOS asks for your permission first) and calls `https://api.anthropic.com/api/oauth/usage` to show your own rate-limit usage in the tab bar. The token goes only to Anthropic — the same host Claude Code itself sends it to — and nowhere else. Leave the setting off and Clinch never touches your Keychain or Anthropic; the local cost/token stats still work by scanning `~/.claude` files.
 - **One image-only exception.** A code path exists for fetching some static assets (e.g. certain theme background images) from Warp's asset server, with bundled fallbacks. It's a *download*, never a *send*, and runtime monitoring shows it inactive — but it's the one place we won't claim "literally never contacts any Warp host."
 
 Bottom line: **Clinch itself collects nothing, reports nothing, and phones home to no one.** It's open source — audit it or watch the wire; don't take our word for it.
@@ -86,6 +88,8 @@ The only functional addition is **agent-session resume** — see [`tools/agent-r
 ```
 
 `build-app.sh` makes a release build, so the installed app is fully self-contained — you can move, rename, or delete this repo afterward and Clinch still opens. `CLINCH_NAME="…"` renames the app; `CLINCH_DEBUG=1` does a faster, source-tethered dev build.
+
+`build-app.sh` builds the `warp-oss` binary variant (compiled with the `skip_login` hard-fail); the *distributed* releases are the `stable` binary built via `./script/bundle -c stable --selfsign`, which is what the privacy section above describes. Both are no-backend builds.
 
 ## License & attribution
 
