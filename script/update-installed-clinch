@@ -14,6 +14,35 @@ app_name="${1:?usage: update-installed-clinch <AppName> <source-bundle>}"
 src_bundle="${2:?usage: update-installed-clinch <AppName> <source-bundle>}"
 dest="/Applications/${app_name}.app"
 
+# GNU Make normally skips recipes in dry-run mode, but it still executes a
+# recipe line containing a recursive $(MAKE) invocation. The detached update
+# recipe contains one so publishing can continue after Clinch quits. Refuse at
+# this script boundary as well, before replacing or relaunching anything.
+make_dry_run_enabled() {
+  local flags option_word
+
+  for flags in "${MAKEFLAGS:-}" "${MFLAGS:-}" "${GNUMAKEFLAGS:-}"; do
+    option_word="${flags%% *}"
+
+    case "$option_word" in
+      --*) ;;
+      -*) [[ "${option_word#-}" == *n* ]] && return 0 ;;
+      *) [[ "$option_word" == *n* ]] && return 0 ;;
+    esac
+
+    case " $flags " in
+      *" --dry-run "*|*" --just-print "*|*" --recon "*) return 0 ;;
+    esac
+  done
+
+  return 1
+}
+
+if make_dry_run_enabled; then
+  echo "Dry-run enabled; skipping ${app_name} installation and relaunch."
+  exit 0
+fi
+
 if [ ! -d "$src_bundle" ]; then
   echo "✗ built bundle not found: $src_bundle" >&2
   exit 1
@@ -43,5 +72,19 @@ rm -rf "$dest"
 cp -R "$src_bundle" "$dest"
 
 echo "Relaunching ${app_name}…"
-open "$dest"
+# This script normally runs under `make update`, so Make's process-control
+# variables are present in its environment. Do not let those become defaults
+# for every terminal launched by the new app (for example, MAKEFLAGS=n would
+# silently turn all later Make invocations into dry runs). SKIP_SYNC is also a
+# release-only override and should not escape into the relaunched application.
+env \
+  -u MAKEFLAGS \
+  -u MFLAGS \
+  -u GNUMAKEFLAGS \
+  -u MAKELEVEL \
+  -u MAKEOVERRIDES \
+  -u MAKE_TERMOUT \
+  -u MAKE_TERMERR \
+  -u SKIP_SYNC \
+  open "$dest"
 echo "✓ ${app_name} updated and relaunched."
