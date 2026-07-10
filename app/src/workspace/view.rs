@@ -11244,13 +11244,7 @@ impl Workspace {
                         project_id,
                         window_id,
                     } => {
-                        self.prepare_for_project_close(ctx);
-                        Self::dispatch_project_close_action(
-                            "root_view:finalize_prepared_project_close",
-                            project_id,
-                            window_id,
-                            ctx,
-                        );
+                        self.prepare_and_finalize_project_close(project_id, window_id, ctx);
                     }
                 }
                 self.current_workspace_state
@@ -11829,10 +11823,18 @@ impl Workspace {
         self.vertical_tabs_panel
             .clear_detail_sidecar_if_for_pane_group(pane_group.id());
 
-        // If this is the last tab, close the window instead of actually removing
-        // the tab.
+        // If this is the last tab, close its project when the physical window
+        // contains sibling projects. Only close the window for its sole project.
         if self.tabs.len() == 1 {
-            if ContextFlag::CloseWindow.is_enabled() {
+            if let Some(project_id) = self.project_id_with_siblings(ctx) {
+                let window_id = ctx.window_id();
+                if self.request_project_close(project_id, ctx) {
+                    // Workspace is already mutably borrowed here. Prepare it directly,
+                    // then ask ProjectWindow only to remove the prepared project; routing
+                    // through its request/commit path would re-borrow this workspace.
+                    self.prepare_and_finalize_project_close(project_id, window_id, ctx);
+                }
+            } else if ContextFlag::CloseWindow.is_enabled() {
                 ctx.close_window();
             }
             return;
@@ -11935,6 +11937,40 @@ impl Workspace {
             return;
         };
         ctx.dispatch_action_for_view(window_id, root_view_id, action, &project_id);
+    }
+
+    fn project_id_with_siblings(
+        &self,
+        ctx: &mut ViewContext<Self>,
+    ) -> Option<crate::project_window::ProjectId> {
+        let window_id = ctx.window_id();
+        let workspace_id = ctx.handle().id();
+        let root_view = ctx.root_view::<crate::root_view::RootView>(window_id)?;
+        let project_window = root_view.as_ref(ctx).project_window()?;
+        let project_window = project_window.as_ref(ctx);
+        if project_window.projects().count() <= 1 {
+            return None;
+        }
+        project_window
+            .projects()
+            .find_map(|(project_id, workspace)| {
+                (workspace.id() == workspace_id).then_some(project_id)
+            })
+    }
+
+    fn prepare_and_finalize_project_close(
+        &mut self,
+        project_id: crate::project_window::ProjectId,
+        window_id: WindowId,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        self.prepare_for_project_close(ctx);
+        Self::dispatch_project_close_action(
+            "root_view:finalize_prepared_project_close",
+            project_id,
+            window_id,
+            ctx,
+        );
     }
 
     /// Applies the same shared-session and unsaved-work protections used by
@@ -12147,7 +12183,10 @@ impl Workspace {
         ctx: &mut ViewContext<Self>,
     ) {
         let is_last_tab = self.tabs.len() == 1;
-        if !ContextFlag::CloseWindow.is_enabled() && is_last_tab {
+        if !ContextFlag::CloseWindow.is_enabled()
+            && is_last_tab
+            && self.project_id_with_siblings(ctx).is_none()
+        {
             return;
         }
 

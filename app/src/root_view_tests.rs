@@ -2,7 +2,9 @@ use warp_core::channel::{Channel, ChannelConfig, ChannelState};
 use warp_core::user_preferences::GetUserPreferences as _;
 use warp_core::AppId;
 use warpui::platform::WindowStyle;
-use warpui::{App, SingletonEntity};
+use warpui::{App, SingletonEntity, TypedActionView};
+
+use settings::Setting;
 
 use super::{
     has_completed_local_onboarding, AuthOnboardingState, GlobalResourceHandles, NewWorkspaceSource,
@@ -11,6 +13,7 @@ use super::{
 use crate::auth::auth_manager::AuthManager;
 use crate::auth::AuthStateProvider;
 use crate::server::server_api::ServerApiProvider;
+use crate::workspace::WorkspaceAction;
 
 fn initialize_app(app: &mut App) {
     app.update(crate::settings::init_and_register_user_preferences);
@@ -199,6 +202,74 @@ fn test_backendless_build_launches_directly_into_terminal() {
                     matches!(view.auth_onboarding_state, AuthOnboardingState::Terminal(_)),
                     "backendless builds must stay in the workspace after log_out"
                 );
+            });
+        });
+    });
+}
+
+#[test]
+fn test_closing_only_tab_in_project_preserves_sibling_project() {
+    App::test((), |mut app| async move {
+        crate::workspace::view::tests::initialize_app(&mut app);
+        app.update(super::init);
+
+        ChannelState::set(ChannelState::new(
+            Channel::Local,
+            ChannelConfig::no_backend(AppId::new("test", "warp", "WarpTest"), "warp-test.log"),
+        ));
+        crate::terminal::general_settings::GeneralSettings::handle(&app).update(
+            &mut app,
+            |settings, ctx| {
+                settings
+                    .show_warning_before_quitting
+                    .set_value(false, ctx)
+                    .expect("failed to disable quit warning");
+            },
+        );
+
+        let global_resource_handles = GlobalResourceHandles::mock(&mut app);
+        let active_window_id = app.read(|ctx| ctx.windows().active_window());
+        let (window_id, root_view) = app.add_window(WindowStyle::NotStealFocus, |ctx| {
+            RootView::new(
+                global_resource_handles,
+                NewWorkspaceSource::Empty {
+                    previous_active_window: active_window_id,
+                    shell: None,
+                },
+                ctx,
+            )
+        });
+        let project_window = root_view
+            .read(&app, |root_view, _| root_view.project_window())
+            .expect("backendless root view should contain a project window");
+
+        project_window.update(&mut app, |project_window, ctx| {
+            project_window.add_project(ctx);
+        });
+        let (surviving_project_id, closing_project_id, closing_workspace) =
+            project_window.read(&app, |project_window, _| {
+                let projects = project_window.projects().collect::<Vec<_>>();
+                assert_eq!(projects.len(), 2);
+                (projects[0].0, projects[1].0, projects[1].1.clone())
+            });
+
+        // This update deliberately exercises the circular-borrow boundary: the
+        // close path must not ask ProjectWindow to update this workspace again.
+        closing_workspace.update(&mut app, |workspace, ctx| {
+            assert_eq!(workspace.tab_count(), 1);
+            workspace.handle_action(&WorkspaceAction::CloseTab(0), ctx);
+        });
+
+        app.read(|ctx| {
+            assert!(ctx.is_window_open(window_id));
+            project_window.read(ctx, |project_window, _| {
+                let project_ids = project_window
+                    .projects()
+                    .map(|(project_id, _)| project_id)
+                    .collect::<Vec<_>>();
+                assert_eq!(project_ids, vec![surviving_project_id]);
+                assert!(!project_ids.contains(&closing_project_id));
+                assert_eq!(project_window.active_project_index(), 0);
             });
         });
     });
