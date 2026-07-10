@@ -25,7 +25,12 @@ RELEASE_ZIP        := target/$(STABLE_PROFILE_DIR)/bundle/osx/$(STABLE_APP).app.
 RELEASE_SHA        := $(RELEASE_ZIP).sha256
 # Universal (Intel+ARM) is much slower; default to this machine's arch only.
 BUNDLE_ARCH_FLAG   := $(if $(UNIVERSAL),,--nouniversal)
-VERSION            ?= v0.$(shell date +%Y.%m.%d.%H%M)
+# Freeze the default tag at parse time: `release` re-expands $(VERSION) after the
+# multi-minute _bundle step, and a recursively-expanded default would re-run `date`
+# there, stamping an app version that mismatches the published tag.
+ifeq ($(origin VERSION), undefined)
+VERSION            := v0.$(shell date +%Y.%m.%d.%H%M)
+endif
 
 # create-dmg formats the DMG window (background + icon layout) by scripting Finder via
 # AppleScript, which times out (-1712) in headless/automation contexts (agents, CI, no
