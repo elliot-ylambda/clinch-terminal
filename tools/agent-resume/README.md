@@ -27,8 +27,9 @@ capture (agent SessionStart hooks)          replay (Rust, in Warp)
   in every case —
   fresh start, `--resume <id>`, the interactive picker, and `--continue` — because the
   hook runs *after* the agent has decided which session is live. (An earlier `claude()`
-  shell wrapper had to guess the id before launch, so it silently missed the picker and
-  `--continue`; it was removed.)
+  shell wrapper that tried to capture the id before launch was removed because it missed
+  the picker and `--continue`; the current wrapper only scrubs inherited session identity
+  and leaves capture to the hook.)
 - **Key = the pane UUID** (`WARP_TERMINAL_SESSION_UUID`), which is stable across
   quit/restore and unique per tab — so multiple agents in the *same directory* are
   disambiguated (a directory-based scheme can't do that).
@@ -63,13 +64,13 @@ capture (agent SessionStart hooks)          replay (Rust, in Warp)
   SessionStart, so freeze/restore cycles amplified one stale id into total loss; with
   this guard a protected entry survives any number of blank restarts. A user-started
   fresh session (no marker) still takes over unconditionally.
-- **Bridged sessions teleport their cloud copy back.** Claude sessions attached to the
-  claude.ai "repl bridge" stop persisting a full local transcript (the jsonl is missing or
-  a stale husk), and `claude --resume <id>` then fails with "No conversation found" or
-  silently resumes the husk (verified on 2.1.202 — resume is local-only). The capture hook
+- **Bridged sessions teleport their cloud copy back.** A bridged session's cloud copy may
+  contain turns continued from another device, while a poisoned child launch can have no
+  usable local jsonl at all. The capture hook
   records the session's `CLAUDE_CODE_BRIDGE_SESSION_ID` in the entry's optional `bridge`
   field, and on restore `warp_agent_resume_launch` runs `claude --teleport <bridge>`
-  instead of a local resume — the cloud copy is authoritative for bridged sessions. A
+  before local resume — deliberately keeping the cloud copy authoritative even though
+  clean remote-control sessions now also write normal local transcripts. A
   teleport that fails fast (dirty tree, git lock race between panes sharing a repo, API
   error) falls back to local resume, then fresh, printing
   `https://claude.ai/code/<bridge>` for manual recovery; a non-zero exit after a real run
@@ -93,6 +94,40 @@ capture (agent SessionStart hooks)          replay (Rust, in Warp)
     `bypassPermissions` maps to `--dangerously-bypass-approvals-and-sandbox`.
 - **Warp stays agent-agnostic**: Rust only stores/replays an opaque command string.
   Adding another agent later is just another capture script — no Rust change.
+
+## Durability: journal, prompt mirror, pre-update snapshot
+
+Pane entries are single mutable files — the next session in a pane overwrites them — and
+a Claude launch poisoned by inherited child-session identity writes no local transcript at
+all. Twice (2026-07-08, 2026-07-09) an overwrite destroyed the only pointer to a live
+conversation. Launch hygiene plus three durable layers close that hole (see
+`specs/claude-transcript-durability/`):
+
+- **Launch hygiene**: the update relaunch dynamically strips all inherited
+  `CLAUDE_CODE_*` variables (plus related Claude/Make markers) before `open`; the
+  interactive `claude()` wrapper strips session identity again on every launch while
+  preserving user behavior toggles and argv exactly. Remote control remains enabled.
+
+- **Registry journal** (`~/.warp/agent-resume/journal.jsonl`): every `write`/`remove` the
+  CLI performs appends one line (`ts`, `op`, `pane`, `command`, `cwd`, `bridge`), so any
+  historically recorded (pane, session, bridge, cwd) tuple stays greppable forever —
+  `grep <sid> ~/.warp/agent-resume/journal.jsonl` recovers an overwritten pointer.
+  Fail-open: a journal append failure never fails the registry mutation. No pruning in v1
+  (~200 bytes/line).
+- **Prompt mirror** (`~/.warp/agent-resume/prompts/<sid>.jsonl`): every `UserPromptSubmit`
+  appends the prompt text (+ ts, cwd, bridge id) — so even a session that never writes a
+  jsonl leaves its prompts on disk. Mirrored *before* the pane-ownership guard, so nested
+  sessions' prompts survive too; capped at ~5 MB per session (one final
+  `"truncated":true` marker). These files are as sensitive as `~/.claude/projects`
+  transcripts: `700`/`600`, never leave the machine.
+- **Pre-quit snapshot**: `script/update-installed-clinch` copies the whole registry
+  (entries + journal + mirrors) plus any locally-present transcripts it references into
+  `~/Library/Application Support/sh.clinch.Clinch/session-recovery-<stamp>/` *before*
+  quitting the app for a swap. Auto-snapshots carry a `.auto-snapshot` marker and only the
+  newest 15 are kept; hand-made recovery dirs (no marker) are never pruned.
+- **Discovery**: `warp-agent-resume list [--cwd <dir>]` prints a newest-first table of
+  every conversation the journal + mirror know about — start time, short sid, cwd,
+  `https://claude.ai/code/<bridge>` or `local`, and the first prompt.
 
 ## Install (capture layer)
 
@@ -188,9 +223,9 @@ separate data dir (`~/.warp-oss`), so the two never clobber each other's session
 
 | File | Role |
 |---|---|
-| `warp-agent-resume` | registry CLI: `write <uuid> <cmd> <cwd> [bridge]` / `remove <uuid>` |
-| `claude-capture.sh` | Claude `SessionStart`/`UserPromptSubmit`/`Stop` hook — captures the live session per pane and keeps its permission-mode/`--model` flags in sync with the live session |
-| `claude.zsh` | replay functions (`warp_agent_resume_resumable` / `warp_agent_resume_launch`) |
+| `warp-agent-resume` | registry CLI: `write <uuid> <cmd> <cwd> [bridge]` / `remove <uuid>` / `list [--cwd <dir>]`; journals every mutation to `journal.jsonl` |
+| `claude-capture.sh` | Claude `SessionStart`/`UserPromptSubmit`/`Stop` hook — captures the live session per pane, keeps its permission-mode/`--model` flags in sync with the live session, and mirrors every prompt to `prompts/<sid>.jsonl` |
+| `claude.zsh` | Claude launch-identity scrub + replay functions (`warp_agent_resume_resumable` / `warp_agent_resume_launch`) |
 | `codex-session-start.sh` / `codex-session-end.sh` | Codex hooks — session id plus bypass/model flags from the payload |
 | `config.toml.snippet` | Codex hook registration (installer applies it) |
 | `install-agent-plugins.sh` | install Warp's Claude/Codex notification plugins (emit the OSC-777 status events) |

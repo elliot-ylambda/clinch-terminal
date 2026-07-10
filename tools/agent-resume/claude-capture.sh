@@ -125,6 +125,46 @@ _warp_agent_resume_entry_protected() {
   _warp_agent_resume_has_conversation "$old_sid"
 }
 
+# Mirror a user prompt to $DIR/prompts/<sid>.jsonl -- append-only, keyed by session id.
+# A session launched with leaked Claude child identity can write NO local transcript at
+# all, so without this mirror the prompt text of a lost conversation is unrecoverable from
+# disk (the 2026-07-09 incident survived only as truncated OSC log lines). The launch paths
+# now scrub that identity, but the mirror deliberately remains unconditional: local-jsonl
+# sessions cost only a few KB of redundancy, and this stays cheap corruption insurance for
+# nested sessions and any future transcript-persistence failure. See
+# specs/claude-transcript-durability.
+#
+# These files hold the same class of sensitive content as ~/.claude/projects transcripts:
+# 700 dir / 600 files, never shipped off-machine. Failure must not fail the hook.
+_warp_agent_resume_mirror_prompt() {
+  local payload="$1" sid="$2" cwd="$3"
+  local dir="${WARP_AGENT_RESUME_DIR:-$HOME/.warp/agent-resume}/prompts"
+  local f="$dir/$sid.jsonl" ts size line
+  # Only a non-empty .prompt is worth a line (Stop events never reach here; odd payloads may).
+  printf '%s' "$payload" | jq -e '(.prompt // "") != ""' >/dev/null 2>&1 || return 0
+  mkdir -p "$dir" 2>/dev/null || return 0
+  chmod 700 "$dir" 2>/dev/null || true
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  # Cap per session: a runaway agent loop must not fill the disk. Past ~5 MB the file gets
+  # ONE final truncation marker and nothing further -- the marker itself must not become
+  # the new runaway, hence the last-line check before appending it. That check is a [[ ]]
+  # on a substitution, NOT `tail | grep -q`: under pipefail a huge last line makes tail
+  # die of SIGPIPE when grep exits early, the check would "fail", and the marker would be
+  # re-appended on every prompt -- the exact runaway this branch exists to prevent.
+  size="$(stat -f %z "$f" 2>/dev/null || echo 0)"
+  if (( size > 5242880 )); then
+    [[ "$(tail -n 1 "$f" 2>/dev/null)" == *'"truncated":true'* ]] && return 0
+    ( umask 077; printf '{"ts":"%s","truncated":true}\n' "$ts" >> "$f" ) 2>/dev/null || true
+    return 0
+  fi
+  # jq builds the line so arbitrary prompt text (quotes, newlines, unicode) stays valid JSON.
+  line="$(printf '%s' "$payload" | jq -c --arg ts "$ts" --arg cwd "$cwd" \
+    --arg bridge "${CLAUDE_CODE_BRIDGE_SESSION_ID:-}" \
+    '{ts: $ts, cwd: $cwd, bridge: $bridge, prompt: .prompt}' 2>/dev/null)" || return 0
+  ( umask 077; printf '%s\n' "$line" >> "$f" ) 2>/dev/null || true
+  return 0
+}
+
 _warp_agent_resume_capture_main() {
   set -uo pipefail
   [[ -n "${WARP_TERMINAL_SESSION_UUID:-}" ]] || return 0   # only act inside a Warp pane
@@ -152,6 +192,13 @@ _warp_agent_resume_capture_main() {
       extra="$(_warp_agent_resume_extract_flags "$(_warp_agent_resume_claude_argv)")"
       ;;
     UserPromptSubmit|Stop)
+      # Mirror the prompt BEFORE the pane-ownership guard below: the mirror is keyed by
+      # session id (no clobber risk), and a nested claude run's prompts -- exactly the
+      # sessions the guard exists to keep out of the pane registry -- deserve durability
+      # too. Only the registry write stays behind the guard.
+      if [[ "$event" == UserPromptSubmit ]]; then
+        _warp_agent_resume_mirror_prompt "$payload" "$sid" "$cwd"
+      fi
       # Live-mode update. Guard: only touch an entry this session owns -- a missing entry
       # is healed (pre-flag registries), but an entry recording a different session id
       # (e.g. a nested claude run from a tool in the same pane env) is left alone. The
@@ -175,9 +222,9 @@ _warp_agent_resume_capture_main() {
   # Call the registry CLI by absolute path (sibling of this script) so the hook does not
   # depend on the agent inheriting the shell PATH.
   #
-  # Also record the claude.ai cloud-copy id: bridged sessions ("repl bridge") keep their
-  # full conversation at https://claude.ai/code/<bridge> instead of a local jsonl, so this
-  # is the only durable pane -> cloud-conversation link. The hook runs as a child of the
+  # Also record the claude.ai cloud-copy id. Its cloud copy can include remotely continued
+  # turns and is the only durable pane -> cloud-conversation link if the local jsonl is
+  # missing or stale. The hook runs as a child of the
   # owning claude process, which exports CLAUDE_CODE_BRIDGE_SESSION_ID once bridged; the
   # per-turn events (UserPromptSubmit/Stop) keep the field fresh if the bridge attaches
   # after SessionStart.

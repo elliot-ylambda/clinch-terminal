@@ -12,6 +12,27 @@
 # this (interactive) shell, so these functions are in scope. A fresh fallback calls the
 # agent normally, so its SessionStart hook re-captures it for next time.
 
+# A pane shell must never launch Claude with another session's identity in its environment.
+# A `make update` launched from inside Claude once leaked stale child/bridge ids through the
+# app relaunch; every later session then behaved as a child and skipped its local transcript
+# entirely (2026-07-09, see specs/claude-transcript-durability). `env` resolves the real
+# executable through PATH, bypassing this function, and "$@" preserves every launch arg.
+#
+# Scrub identity/implementation markers only. User-selected behavior such as
+# CLAUDE_EFFORT and CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING must continue to pass through.
+claude() {
+  env \
+    -u CLAUDE_CODE_SESSION_ID \
+    -u CLAUDE_CODE_BRIDGE_SESSION_ID \
+    -u CLAUDE_CODE_REMOTE_SESSION_ID \
+    -u CLAUDE_CODE_CHILD_SESSION \
+    -u CLAUDECODE \
+    -u CLAUDE_CODE_ENTRYPOINT \
+    -u CLAUDE_CODE_EXECPATH \
+    -u AI_AGENT \
+    claude "$@"
+}
+
 # Returns 0 if <agent>'s session <id> has a *resumable* conversation on disk.
 #
 # Resumable means a session file exists AND contains at least one real turn. We locate the
@@ -94,10 +115,10 @@ warp_agent_resume_bridge_id() {
 # session reopens the same way.
 #
 # Path order:
-# 1. Bridged claude session (bridge id recorded) -> `claude --teleport <bridge>`: the local
-#    jsonl of a bridged session is a stale husk at best (it stops updating at bridge time)
-#    and `claude --resume` on it either fails with "No conversation found" or silently
-#    resumes the husk, so the cloud copy is fetched instead. A teleport that fails *fast*
+# 1. Bridged claude session (bridge id recorded) -> `claude --teleport <bridge>`. Clean
+#    Clinch launches now keep a local jsonl even with remote control enabled, but teleport
+#    deliberately stays first: the cloud copy can contain turns continued from another
+#    device and remains authoritative for a bridged session. A teleport that fails *fast*
 #    (dirty tree, git lock race, API error) falls through to the local paths; a non-zero
 #    exit after a real run is the user quitting the session, so it must NOT relaunch on top
 #    (WARP_AGENT_RESUME_TELEPORT_GRACE seconds distinguishes the two, default 15).

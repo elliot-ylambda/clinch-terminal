@@ -23,8 +23,10 @@ grep -q '"command": "warp_agent_resume_launch codex sess-99 --model gpt-5.3-code
 echo '{"session_id":"sess-77","cwd":"/tmp/repo"}' | bash "$HERE/codex-session-end.sh"
 [[ ! -f "$f" ]] || { echo "FAIL: end did not remove"; exit 1; }
 
-# No-op outside a Warp pane.
+# No-op outside a Warp pane. (The registry dir legitimately holds journal.jsonl from the
+# writes above, so assert on pane entries, not an empty dir.)
 unset WARP_TERMINAL_SESSION_UUID
 echo '{"session_id":"x","cwd":"/tmp"}' | bash "$HERE/codex-session-start.sh"
-[[ -z "$(ls -A "$WARP_AGENT_RESUME_DIR" 2>/dev/null)" ]] || { echo "FAIL: wrote outside pane"; exit 1; }
+entries="$(find "$WARP_AGENT_RESUME_DIR" -name '*.json' 2>/dev/null)"
+[[ -z "$entries" ]] || { echo "FAIL: wrote outside pane"; exit 1; }
 echo "PASS"

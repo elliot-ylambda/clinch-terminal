@@ -5,20 +5,48 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 TMP="$(mktemp -d)"
 mkdir -p "$TMP/bin"
-# Fake `claude` that records the args it was called with (path baked in). Each call also
-# appends to all_args so fallback chains are assertable, records whether the machinery
-# fresh marker (WARP_AGENT_RESUME_STARTED_FRESH) was set, and the exit code is
+# Fake `claude` that records the args and environment it was called with (path baked in).
+# Each call also appends to all_args so fallback chains are assertable, records whether the
+# machinery fresh marker (WARP_AGENT_RESUME_STARTED_FRESH) was set, and the exit code is
 # configurable via $TMP/claude_rc (defaults to 0).
 cat > "$TMP/bin/claude" <<EOF
 #!/usr/bin/env bash
 echo "\$@" > "$TMP/last_args"
 echo "\$@" >> "$TMP/all_args"
+printf '%s\n' "\$@" > "$TMP/last_argv"
+env > "$TMP/last_env"
 echo "\${WARP_AGENT_RESUME_STARTED_FRESH:-}" > "$TMP/last_fresh_marker"
 exit "\$(cat "$TMP/claude_rc" 2>/dev/null || echo 0)"
 EOF
 chmod +x "$TMP/bin/claude"
 export PATH="$TMP/bin:$PATH"
 source "$HERE/claude.zsh"
+
+# The interactive-shell wrapper strips only inherited Claude session identity, while
+# preserving exact argv boundaries and user-selected behavior/unrelated environment.
+export CLAUDE_CODE_SESSION_ID="stale-session"
+export CLAUDE_CODE_BRIDGE_SESSION_ID="session_01STALE"
+export CLAUDE_CODE_REMOTE_SESSION_ID="remote-stale"
+export CLAUDE_CODE_CHILD_SESSION=1
+export CLAUDECODE=1
+export CLAUDE_CODE_ENTRYPOINT=child
+export CLAUDE_CODE_EXECPATH=/tmp/stale-claude
+export AI_AGENT=claude-code_stale
+export CLAUDE_EFFORT=high
+export WARP_AGENT_RESUME_TEST_UNRELATED=preserved
+claude --teleport session_01WRAPPER --model "two words" 'literal*'
+[[ "$(< "$TMP/last_argv")" == $'--teleport\nsession_01WRAPPER\n--model\ntwo words\nliteral*' ]] \
+  || { echo "FAIL: claude wrapper changed argv boundaries"; exit 1; }
+for name in CLAUDE_CODE_SESSION_ID CLAUDE_CODE_BRIDGE_SESSION_ID \
+  CLAUDE_CODE_REMOTE_SESSION_ID CLAUDE_CODE_CHILD_SESSION CLAUDECODE \
+  CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_EXECPATH AI_AGENT; do
+  grep -q "^${name}=" "$TMP/last_env" \
+    && { echo "FAIL: claude wrapper leaked $name"; exit 1; }
+done
+grep -q '^CLAUDE_EFFORT=high$' "$TMP/last_env" \
+  || { echo "FAIL: claude wrapper stripped user behavior"; exit 1; }
+grep -q '^WARP_AGENT_RESUME_TEST_UNRELATED=preserved$' "$TMP/last_env" \
+  || { echo "FAIL: claude wrapper stripped unrelated env"; exit 1; }
 
 # Run the pre-URL cases without a pane uuid so no cloud-URL registry lookup interferes
 # (this test may itself run inside a Warp pane).

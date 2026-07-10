@@ -132,9 +132,59 @@ echo '{"session_id":"sess-new","cwd":"/tmp/repo"}' | "$BIN/claude-capture.sh"
 grep -q 'sess-new' "$f" || { echo "FAIL: user-started session must still take over"; exit 1; }
 rm -f "$f"
 
-# Outside a Warp pane: no-op.
+# --- Prompt mirror ---
+# Every UserPromptSubmit appends the prompt to prompts/<sid>.jsonl so prompt text
+# survives locally even for poisoned/child sessions that never write a transcript.
+P="$WARP_AGENT_RESUME_DIR/prompts"
+
+# The prompt text round-trips exactly through JSON escaping (quotes, backslash, newline).
+prompt_in='say "hi" \ and
+a second line'
+jq -cn --arg p "$prompt_in" \
+  '{session_id:"sess-mm", cwd:"/tmp/repo", hook_event_name:"UserPromptSubmit", permission_mode:"default", prompt:$p}' \
+  | "$BIN/claude-capture.sh"
+mf="$P/sess-mm.jsonl"
+[[ -f "$mf" ]] || { echo "FAIL: prompt not mirrored"; exit 1; }
+[[ "$(jq -r '.prompt' "$mf")" == "$prompt_in" ]] || { echo "FAIL: mirrored prompt text mangled"; exit 1; }
+[[ "$(jq -r '.cwd' "$mf")" == "/tmp/repo" ]] || { echo "FAIL: mirror cwd wrong"; exit 1; }
+jq -e '.ts | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T")' "$mf" >/dev/null || { echo "FAIL: mirror ts not ISO8601"; exit 1; }
+perms="$(stat -f '%Lp' "$mf")"; [[ "$perms" == "600" ]] || { echo "FAIL: mirror perms $perms"; exit 1; }
+dperms="$(stat -f '%Lp' "$P")"; [[ "$dperms" == "700" ]] || { echo "FAIL: prompts dir perms $dperms"; exit 1; }
+
+# Stop events and empty prompts mirror nothing.
+echo '{"session_id":"sess-mm","cwd":"/tmp/repo","hook_event_name":"Stop","permission_mode":"default"}' | "$BIN/claude-capture.sh"
+echo '{"session_id":"sess-mm","cwd":"/tmp/repo","hook_event_name":"UserPromptSubmit","permission_mode":"default","prompt":""}' | "$BIN/claude-capture.sh"
+[[ "$(wc -l < "$mf")" -eq 1 ]] || { echo "FAIL: Stop/empty prompt must not mirror"; exit 1; }
+
+# The mirror runs BEFORE the pane-ownership guard: a nested session's prompt is mirrored
+# under its own sid even though the pane registry entry is left alone.
+echo '{"session_id":"sess-own","cwd":"/tmp/repo"}' | "$BIN/claude-capture.sh"
+echo '{"session_id":"sess-nested","cwd":"/tmp/repo","hook_event_name":"UserPromptSubmit","permission_mode":"default","prompt":"nested prompt"}' | "$BIN/claude-capture.sh"
+grep -q 'sess-own' "$f" || { echo "FAIL: nested session clobbered the pane entry"; exit 1; }
+grep -q 'nested prompt' "$P/sess-nested.jsonl" || { echo "FAIL: nested session prompt not mirrored"; exit 1; }
+
+# A bridged session records its bridge id in each mirror line.
+CLAUDE_CODE_BRIDGE_SESSION_ID="session_01MIRROR" \
+  bash -c 'echo "{\"session_id\":\"sess-mm\",\"cwd\":\"/tmp/repo\",\"hook_event_name\":\"UserPromptSubmit\",\"permission_mode\":\"default\",\"prompt\":\"second\"}" | "$0"' "$BIN/claude-capture.sh"
+[[ "$(tail -n 1 "$mf" | jq -r '.bridge')" == "session_01MIRROR" ]] || { echo "FAIL: bridge id not in mirror line"; exit 1; }
+
+# Size cap: past ~5 MB the file gets ONE truncation marker and nothing further.
+# (awk, not `yes | head`: a producer killed by SIGPIPE fails the test under pipefail.)
+big="$P/sess-big.jsonl"
+awk 'BEGIN { for (i = 0; i < 60000; i++) printf "%0100d\n", i }' > "$big"   # ~6 MB of full lines
+echo '{"session_id":"sess-big","cwd":"/tmp/repo","hook_event_name":"UserPromptSubmit","permission_mode":"default","prompt":"over cap"}' | "$BIN/claude-capture.sh"
+tail -n 1 "$big" | grep -q '"truncated":true' || { echo "FAIL: cap did not append truncation marker"; exit 1; }
+size1="$(stat -f %z "$big")"
+echo '{"session_id":"sess-big","cwd":"/tmp/repo","hook_event_name":"UserPromptSubmit","permission_mode":"default","prompt":"still over"}' | "$BIN/claude-capture.sh"
+[[ "$(stat -f %z "$big")" -eq "$size1" ]] || { echo "FAIL: capped file kept growing"; exit 1; }
+rm -f "$f"
+
+# Outside a Warp pane: no-op -- no pane entry, no journal growth, no prompt mirror.
 unset WARP_TERMINAL_SESSION_UUID
-echo '{"session_id":"x","cwd":"/tmp"}' | "$BIN/claude-capture.sh"
-[[ -z "$(ls -A "$WARP_AGENT_RESUME_DIR" 2>/dev/null)" ]] || { echo "FAIL: wrote outside pane"; exit 1; }
+J="$WARP_AGENT_RESUME_DIR/journal.jsonl"
+before="$(find "$WARP_AGENT_RESUME_DIR" | sort); $(wc -l < "$J")"
+echo '{"session_id":"sess-outside","cwd":"/tmp","hook_event_name":"UserPromptSubmit","prompt":"outside"}' | "$BIN/claude-capture.sh"
+after="$(find "$WARP_AGENT_RESUME_DIR" | sort); $(wc -l < "$J")"
+[[ "$before" == "$after" ]] || { echo "FAIL: wrote outside pane"; exit 1; }
 
 echo "PASS"

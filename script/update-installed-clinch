@@ -10,38 +10,148 @@
 # Usage: script/update-installed-clinch <AppName> <source-bundle>
 set -euo pipefail
 
-app_name="${1:?usage: update-installed-clinch <AppName> <source-bundle>}"
-src_bundle="${2:?usage: update-installed-clinch <AppName> <source-bundle>}"
-dest="/Applications/${app_name}.app"
+# GNU Make normally skips recipes in dry-run mode, but recursive/detached release flows
+# can still reach this script. Refuse at this boundary as well, before replacing or
+# relaunching anything.
+make_dry_run_enabled() {
+  local flags option_word
 
-if [ ! -d "$src_bundle" ]; then
-  echo "✗ built bundle not found: $src_bundle" >&2
-  exit 1
-fi
+  for flags in "${MAKEFLAGS:-}" "${MFLAGS:-}" "${GNUMAKEFLAGS:-}"; do
+    option_word="${flags%% *}"
 
-# Match the running process by its executable path so we don't depend on the
-# binary's name (the stable channel's executable is "stable", not "Clinch").
-running() { pgrep -f "${dest}/Contents/MacOS/" >/dev/null 2>&1; }
+    case "$option_word" in
+      --*) ;;
+      -*) [[ "${option_word#-}" == *n* ]] && return 0 ;;
+      *) [[ "$option_word" == *n* ]] && return 0 ;;
+    esac
 
-if running; then
-  echo "Quitting running ${app_name}…"
-  osascript -e "tell application \"${app_name}\" to quit" || true
-  # Wait up to ~20s for it to flush state and exit before swapping the bundle.
-  for _ in $(seq 1 40); do
-    running || break
-    sleep 0.5
+    case " $flags " in
+      *" --dry-run "*|*" --just-print "*|*" --recon "*) return 0 ;;
+    esac
   done
-  if running; then
-    echo "⚠ ${app_name} did not quit; forcing…" >&2
-    pkill -f "${dest}/Contents/MacOS/" || true
-    sleep 1
+
+  return 1
+}
+
+# Snapshot the agent-resume registry (entries + journal + prompt mirrors) and any local
+# transcripts it references BEFORE quitting the running app. Quit + swap is exactly when
+# pane pointers have historically been lost (2026-07-09: an active conversation's registry
+# entry and bridge id vanished across a `make update`; the recovery dir that incident left
+# behind was made BY HAND, 18 minutes too late). Best-effort by design: a failed snapshot
+# must never block the update. See specs/claude-transcript-durability.
+snapshot_session_state() (
+  set +e
+  reg="$HOME/.warp/agent-resume"
+  [ -d "$reg" ] || return 0
+  support="$HOME/Library/Application Support/sh.clinch.Clinch"
+  snap="$support/session-recovery-$(date +%Y%m%d-%H%M%S)"
+  mkdir -p "$snap" || return 0
+  # Marker distinguishes automatic snapshots from hand-made recovery dirs, so the pruning
+  # below can never delete something a human curated.
+  : > "$snap/.auto-snapshot"
+  cp -R "$reg" "$snap/agent-resume" 2>/dev/null
+  # Local transcripts for the claude sessions the registry references -- cheap insurance
+  # for any poisoned/child session that may have no local jsonl. Missing files are expected.
+  sed -nE 's/.*warp_agent_resume_launch claude ([A-Za-z0-9-]+).*/\1/p' "$reg"/*.json 2>/dev/null \
+    | sort -u | while read -r sid; do
+        [ -n "$sid" ] || continue
+        f="$(find "$HOME/.claude/projects" -name "$sid.jsonl" -print -quit 2>/dev/null)"
+        if [ -n "$f" ]; then cp "$f" "$snap/" 2>/dev/null; fi
+      done
+  echo "Snapshotted agent-resume state → $snap"
+  # Keep the newest 15 automatic snapshots (`make update` runs often); dirs without the
+  # marker are never touched.
+  ls -dt "$support"/session-recovery-*/ 2>/dev/null | {
+    n=0
+    while read -r d; do
+      [ -f "$d/.auto-snapshot" ] || continue
+      n=$((n + 1))
+      if [ "$n" -gt 15 ]; then rm -rf "$d"; fi
+    done
+  }
+  return 0
+)
+
+# Relaunch with a Dock-like environment. `open` empirically forwards its caller's
+# environment into the launched app. On 2026-07-09, `make update` ran inside Claude and
+# leaked that session's identity through the detached updater into Clinch; every pane then
+# inherited stale child/bridge ids and new Claude sessions skipped their local transcripts.
+# Enumerate CLAUDE_CODE_* dynamically because Claude adds names over time. This is a full
+# app reset, so Claude-wide markers/tuning are removed here too; the pane-level wrapper in
+# tools/agent-resume/claude.zsh is intentionally narrower.
+#
+# Make's process-control variables must also stay out of the app (MAKEFLAGS=n would make
+# later Make invocations dry-runs), as must the release-only SKIP_SYNC override.
+# CLINCH_OPEN_BIN is a test seam; production always resolves the normal `open` executable.
+clinch_scrubbed_open() {
+  local bundle="$1" name
+  local -a scrub_args=(
+    -u MAKEFLAGS
+    -u MFLAGS
+    -u GNUMAKEFLAGS
+    -u MAKELEVEL
+    -u MAKEOVERRIDES
+    -u MAKE_TERMOUT
+    -u MAKE_TERMERR
+    -u SKIP_SYNC
+  )
+  while IFS= read -r name; do
+    case "$name" in
+      CLAUDE_CODE_*|CLAUDECODE|CLAUDE_EFFORT|AI_AGENT)
+        scrub_args+=( -u "$name" )
+        ;;
+    esac
+  done < <(compgen -e)
+
+  env "${scrub_args[@]}" "${CLINCH_OPEN_BIN:-open}" "$bundle"
+}
+
+clinch_update_main() {
+  local app_name="${1:?usage: update-installed-clinch <AppName> <source-bundle>}"
+  local src_bundle="${2:?usage: update-installed-clinch <AppName> <source-bundle>}"
+  local dest="/Applications/${app_name}.app"
+
+  if make_dry_run_enabled; then
+    echo "Dry-run enabled; skipping ${app_name} installation and relaunch."
+    return 0
   fi
+
+  if [ ! -d "$src_bundle" ]; then
+    echo "✗ built bundle not found: $src_bundle" >&2
+    return 1
+  fi
+
+  snapshot_session_state || true
+
+  # Match the running process by its executable path so we don't depend on the
+  # binary's name (the stable channel's executable is "stable", not "Clinch").
+  running() { pgrep -f "${dest}/Contents/MacOS/" >/dev/null 2>&1; }
+
+  if running; then
+    echo "Quitting running ${app_name}…"
+    osascript -e "tell application \"${app_name}\" to quit" || true
+    # Wait up to ~20s for it to flush state and exit before swapping the bundle.
+    for _ in $(seq 1 40); do
+      running || break
+      sleep 0.5
+    done
+    if running; then
+      echo "⚠ ${app_name} did not quit; forcing…" >&2
+      pkill -f "${dest}/Contents/MacOS/" || true
+      sleep 1
+    fi
+  fi
+
+  echo "Installing ${src_bundle} → ${dest}…"
+  rm -rf "$dest"
+  cp -R "$src_bundle" "$dest"
+
+  echo "Relaunching ${app_name}…"
+  clinch_scrubbed_open "$dest"
+  echo "✓ ${app_name} updated and relaunched."
+}
+
+# Sourcing is side-effect-free so the relaunch boundary can be regression-tested.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  clinch_update_main "$@"
 fi
-
-echo "Installing ${src_bundle} → ${dest}…"
-rm -rf "$dest"
-cp -R "$src_bundle" "$dest"
-
-echo "Relaunching ${app_name}…"
-open "$dest"
-echo "✓ ${app_name} updated and relaunched."
