@@ -530,21 +530,26 @@ fn active_workspace(ctx: &mut AppContext) -> Option<ViewHandle<Workspace>> {
 }
 
 fn open_launch_config(arg: &OpenLaunchConfigArg, ctx: &mut AppContext) {
+    let active_window_id = ctx.windows().active_window();
     let active_window_workspace = active_workspace(ctx);
+    let opened_in_active_window = arg.open_in_active_window
+        && arg.launch_config.windows.len() == 1
+        && active_window_id
+            .zip(active_window_workspace.as_ref())
+            .is_some_and(|(window_id, workspace)| {
+                open_launch_config_in_active_window(
+                    &arg.launch_config.windows[0],
+                    window_id,
+                    workspace,
+                    ctx,
+                )
+            });
+
     if arg.launch_config.windows.is_empty() {
         open_new(&(), ctx);
-    } else if arg.open_in_active_window
-        && arg.launch_config.windows.len() == 1
-        && active_window_workspace.is_some()
-    {
-        active_window_workspace
-            .expect("already checked if there is a workspace for the active window")
-            .update(ctx, |workspace, ctx| {
-                workspace.open_launch_config_window(arg.launch_config.windows[0].clone(), ctx)
-            });
-    } else {
+    } else if !opened_in_active_window {
         let mut active_index = None;
-        for (idx, window_template) in arg.launch_config.windows.iter().enumerate() {
+        for (idx, project_window_template) in arg.launch_config.windows.iter().enumerate() {
             if arg
                 .launch_config
                 .active_window_index
@@ -553,28 +558,17 @@ fn open_launch_config(arg: &OpenLaunchConfigArg, ctx: &mut AppContext) {
             {
                 active_index = Some(idx);
             } else {
-                open_new_with_workspace_source(
-                    NewWorkspaceSource::FromTemplate {
-                        window_template: window_template.clone(),
-                    },
-                    ctx,
-                );
+                open_new_with_project_window_template(project_window_template.clone(), ctx);
             }
         }
 
         if let Some(idx) = active_index {
-            let window_template = arg
+            let project_window_template = arg
                 .launch_config
                 .windows
                 .get(idx)
                 .expect("Window should exist at idx");
-
-            open_new_with_workspace_source(
-                NewWorkspaceSource::FromTemplate {
-                    window_template: window_template.clone(),
-                },
-                ctx,
-            );
+            open_new_with_project_window_template(project_window_template.clone(), ctx);
         }
     }
 
@@ -585,6 +579,72 @@ fn open_launch_config(arg: &OpenLaunchConfigArg, ctx: &mut AppContext) {
         },
         ctx
     );
+}
+
+fn open_launch_config_in_active_window(
+    project_window_template: &launch_config::ProjectWindowTemplate,
+    window_id: WindowId,
+    active_workspace: &ViewHandle<Workspace>,
+    ctx: &mut AppContext,
+) -> bool {
+    let Some(first_project) = project_window_template.projects().first().cloned() else {
+        return false;
+    };
+    let Some(root_view) = ctx.root_view::<RootView>(window_id) else {
+        return false;
+    };
+    let Some(project_window) = root_view.as_ref(ctx).project_window() else {
+        return false;
+    };
+    let active_workspace_id = active_workspace.id();
+    let Some(first_project_id) =
+        project_window
+            .as_ref(ctx)
+            .projects()
+            .find_map(|(project_id, workspace)| {
+                (workspace.id() == active_workspace_id).then_some(project_id)
+            })
+    else {
+        return false;
+    };
+
+    active_workspace.update(ctx, |workspace, ctx| {
+        workspace.open_launch_config_window(first_project, ctx);
+    });
+
+    let remaining_projects = project_window_template
+        .projects()
+        .iter()
+        .skip(1)
+        .cloned()
+        .collect::<Vec<_>>();
+    let active_project_index = project_window_template.active_project_index();
+    project_window.update(ctx, |project_window, ctx| {
+        let mut project_ids = vec![first_project_id];
+        project_ids.extend(remaining_projects.into_iter().map(|window_template| {
+            project_window
+                .add_project_from_source(NewWorkspaceSource::FromTemplate { window_template }, ctx)
+        }));
+        if let Some(project_id) = project_ids.get(active_project_index) {
+            project_window.activate_project(*project_id, ctx);
+        }
+    });
+    true
+}
+
+fn open_new_with_project_window_template(
+    project_window_template: launch_config::ProjectWindowTemplate,
+    ctx: &mut AppContext,
+) {
+    let active_project_index = project_window_template.active_project_index();
+    let workspace_sources = project_window_template
+        .into_projects()
+        .into_iter()
+        .map(|window_template| NewWorkspaceSource::FromTemplate { window_template })
+        .collect::<Vec<_>>();
+    if !workspace_sources.is_empty() {
+        open_new_with_workspace_sources(workspace_sources, active_project_index, ctx);
+    }
 }
 
 fn send_feedback(_: &(), ctx: &mut AppContext) {
@@ -874,11 +934,25 @@ pub(crate) fn open_new_with_workspace_source(
     source: NewWorkspaceSource,
     ctx: &mut AppContext,
 ) -> (WindowId, ViewHandle<RootView>) {
+    open_new_with_workspace_sources(vec![source], 0, ctx)
+}
+
+fn open_new_with_workspace_sources(
+    sources: Vec<NewWorkspaceSource>,
+    active_project_index: usize,
+    ctx: &mut AppContext,
+) -> (WindowId, ViewHandle<RootView>) {
+    debug_assert!(!sources.is_empty());
     let global_resource_handles = GlobalResourceHandlesProvider::as_ref(ctx).get().clone();
     let window_settings = WindowSettings::as_ref(ctx);
     let options = default_window_options(window_settings, ctx);
     ctx.add_window(options, |ctx| {
-        let mut view = RootView::new(global_resource_handles, source, ctx);
+        let mut view = RootView::new_with_project_sources(
+            global_resource_handles,
+            sources,
+            active_project_index,
+            ctx,
+        );
         view.focus(ctx);
         view
     })

@@ -3796,15 +3796,15 @@ impl Workspace {
         }
     }
 
-    /// Opens a launch config window into the workspace.
+    /// Opens one project from a launch config into the workspace.
     pub fn open_launch_config_window(
         &mut self,
-        window: WindowTemplate,
+        project: WindowTemplate,
         ctx: &mut ViewContext<Self>,
     ) {
         let start_index = self.tabs.len();
 
-        window
+        project
             .tabs
             .iter()
             .enumerate()
@@ -3820,10 +3820,10 @@ impl Workspace {
                     .map_or(SelectedTabColor::Unset, SelectedTabColor::Color);
             });
 
-        if !window.tabs.is_empty() {
+        if !project.tabs.is_empty() {
             // Focus the active tab from the launch config.
 
-            let mut index = start_index + window.active_tab_index.unwrap_or_default();
+            let mut index = start_index + project.active_tab_index.unwrap_or_default();
 
             if index >= self.tab_count() {
                 index = start_index;

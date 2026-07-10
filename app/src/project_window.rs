@@ -348,14 +348,25 @@ impl ProjectWindow {
     }
 
     pub(crate) fn add_project(&mut self, ctx: &mut ViewContext<Self>) -> ProjectId {
+        self.add_project_from_source(
+            NewWorkspaceSource::Empty {
+                previous_active_window: Some(self.window_id),
+                shell: None,
+            },
+            ctx,
+        )
+    }
+
+    pub(crate) fn add_project_from_source(
+        &mut self,
+        source: NewWorkspaceSource,
+        ctx: &mut ViewContext<Self>,
+    ) -> ProjectId {
         let workspace = ctx.add_typed_action_view(|ctx| {
             Workspace::new(
                 self.global_resource_handles.clone(),
                 self.server_time.clone(),
-                NewWorkspaceSource::Empty {
-                    previous_active_window: Some(self.window_id),
-                    shell: None,
-                },
+                source,
                 ctx,
             )
         });

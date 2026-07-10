@@ -88,7 +88,11 @@ fn test_find_matching_configs_special_chars() {
 fn add_mock_config_with_name(name: &str, configs: &mut Vec<LaunchConfig>) {
     let mut new_config = make_mock_single_window_launch_config();
     new_config.name = name.to_string();
-    new_config.windows[0].tabs[0].title = Some(String::from("First tab from config ") + name);
+    new_config.windows[0]
+        .active_project_mut()
+        .expect("mock launch config should contain a project")
+        .tabs[0]
+        .title = Some(String::from("First tab from config ") + name);
     configs.push(new_config);
 }
 

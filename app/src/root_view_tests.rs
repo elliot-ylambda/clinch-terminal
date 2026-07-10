@@ -1,10 +1,11 @@
+use std::path::PathBuf;
+
+use settings::Setting;
 use warp_core::channel::{Channel, ChannelConfig, ChannelState};
 use warp_core::user_preferences::GetUserPreferences as _;
 use warp_core::AppId;
 use warpui::platform::WindowStyle;
 use warpui::{App, SingletonEntity, TypedActionView};
-
-use settings::Setting;
 
 use super::{
     has_completed_local_onboarding, AuthOnboardingState, GlobalResourceHandles, NewWorkspaceSource,
@@ -12,7 +13,11 @@ use super::{
 };
 use crate::auth::auth_manager::AuthManager;
 use crate::auth::AuthStateProvider;
+use crate::launch_configs::launch_config::{
+    LaunchConfig, PaneMode, PaneTemplateType, ProjectWindowTemplate, TabTemplate, WindowTemplate,
+};
 use crate::server::server_api::ServerApiProvider;
+use crate::server::telemetry::LaunchConfigUiLocation;
 use crate::workspace::WorkspaceAction;
 
 fn initialize_app(app: &mut App) {
@@ -271,6 +276,127 @@ fn test_closing_only_tab_in_project_preserves_sibling_project() {
                 assert!(!project_ids.contains(&closing_project_id));
                 assert_eq!(project_window.active_project_index(), 0);
             });
+        });
+    });
+}
+
+fn launch_project_template(cwd: &str) -> WindowTemplate {
+    WindowTemplate {
+        active_tab_index: Some(0),
+        tabs: vec![TabTemplate {
+            title: None,
+            layout: PaneTemplateType::PaneTemplate {
+                cwd: PathBuf::from(cwd),
+                commands: Vec::new(),
+                is_focused: Some(true),
+                pane_mode: PaneMode::Terminal,
+                shell: None,
+            },
+            color: None,
+        }],
+    }
+}
+
+fn grouped_launch_config() -> LaunchConfig {
+    LaunchConfig {
+        name: "Grouped".to_string(),
+        active_window_index: Some(0),
+        windows: vec![ProjectWindowTemplate::grouped(
+            vec![
+                launch_project_template("/project/one"),
+                launch_project_template("/project/two"),
+            ],
+            Some(1),
+        )],
+    }
+}
+
+fn initialize_backendless_workspace_app(app: &mut App) {
+    crate::workspace::view::tests::initialize_app(app);
+    app.update(super::init);
+    ChannelState::set(ChannelState::new(
+        Channel::Local,
+        ChannelConfig::no_backend(AppId::new("test", "warp", "WarpTest"), "warp-test.log"),
+    ));
+}
+
+#[test]
+fn grouped_launch_config_opens_projects_in_one_window() {
+    App::test((), |mut app| async move {
+        initialize_backendless_workspace_app(&mut app);
+
+        app.update(|ctx| {
+            super::open_launch_config(
+                &super::OpenLaunchConfigArg {
+                    launch_config: grouped_launch_config(),
+                    ui_location: LaunchConfigUiLocation::Uri,
+                    open_in_active_window: false,
+                },
+                ctx,
+            );
+        });
+
+        app.read(|ctx| {
+            let window_ids = ctx.window_ids().collect::<Vec<_>>();
+            assert_eq!(window_ids.len(), 1);
+            let root_view = ctx
+                .root_view::<RootView>(window_ids[0])
+                .expect("launch config window should have a root view");
+            let project_window = root_view
+                .as_ref(ctx)
+                .project_window()
+                .expect("launch config window should have projects");
+            let project_window = project_window.as_ref(ctx);
+            assert_eq!(project_window.projects().count(), 2);
+            assert_eq!(project_window.active_project_index(), 1);
+        });
+    });
+}
+
+#[test]
+fn grouped_launch_config_can_open_in_active_window() {
+    App::test((), |mut app| async move {
+        initialize_backendless_workspace_app(&mut app);
+
+        let global_resource_handles = GlobalResourceHandles::mock(&mut app);
+        let active_window_id = app.read(|ctx| ctx.windows().active_window());
+        let (window_id, root_view) = app.add_window(WindowStyle::NotStealFocus, |ctx| {
+            RootView::new(
+                global_resource_handles,
+                NewWorkspaceSource::Empty {
+                    previous_active_window: active_window_id,
+                    shell: None,
+                },
+                ctx,
+            )
+        });
+        let active_workspace = root_view
+            .read(&app, |root_view, ctx| root_view.workspace_view(ctx))
+            .expect("root view should contain an active workspace");
+        let launch_config = grouped_launch_config();
+
+        app.update(|ctx| {
+            assert!(super::open_launch_config_in_active_window(
+                &launch_config.windows[0],
+                window_id,
+                &active_workspace,
+                ctx,
+            ));
+        });
+
+        app.read(|ctx| {
+            let window_ids = ctx.window_ids().collect::<Vec<_>>();
+            assert_eq!(window_ids.len(), 1);
+            let root_view = ctx
+                .root_view::<RootView>(window_ids[0])
+                .expect("active window should have a root view");
+            let project_window = root_view
+                .as_ref(ctx)
+                .project_window()
+                .expect("active window should have projects");
+            let project_window = project_window.as_ref(ctx);
+            assert_eq!(project_window.projects().count(), 2);
+            assert_eq!(project_window.active_project_index(), 1);
         });
     });
 }
