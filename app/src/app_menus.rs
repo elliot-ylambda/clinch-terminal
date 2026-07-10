@@ -103,7 +103,7 @@ pub fn dock_menu() -> Menu {
                 ctx.dispatch_global_action("workspace:save_app", &());
             },
             no_updates,
-            Some(Keystroke::parse("cmd-shift-n").expect("Valid keystroke")),
+            Some(Keystroke::parse("cmd-shift-N").expect("Valid keystroke")),
         ))],
     )
 }
@@ -810,6 +810,19 @@ fn make_new_window_menu() -> Menu {
             MenuItem::Standard(StandardAction::Zoom),
             MenuItem::Standard(StandardAction::ToggleFullScreen),
             MenuItem::Separator,
+            MenuItem::Custom(CustomMenuItem::new(
+                "Previous Project",
+                |ctx| ctx.dispatch_global_action("root_view:activate_previous_project", &()),
+                no_updates,
+                Some(Keystroke::parse("cmd-{").expect("Valid keystroke")),
+            )),
+            MenuItem::Custom(CustomMenuItem::new(
+                "Next Project",
+                |ctx| ctx.dispatch_global_action("root_view:activate_next_project", &()),
+                no_updates,
+                Some(Keystroke::parse("cmd-}").expect("Valid keystroke")),
+            )),
+            MenuItem::Separator,
             MenuItem::Standard(StandardAction::BringAllToFront),
         ],
     )
@@ -1054,7 +1067,7 @@ fn make_new_elements_menu_items(ctx: &AppContext) -> Vec<MenuItem> {
             "New Window",
             open_new_window,
             no_updates,
-            Some(Keystroke::parse("cmd-shift-n").expect("Valid keystroke")),
+            Some(Keystroke::parse("cmd-shift-N").expect("Valid keystroke")),
         )),
         MenuItem::Custom(CustomMenuItem::new(
             "New Terminal Tab",

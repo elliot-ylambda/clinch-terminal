@@ -34,7 +34,7 @@ Figma: none provided. The interaction should follow the familiar behavior of Chr
 
 3. Projects render as a dedicated horizontal strip in the top window header. Project tabs never render in the vertical tabs panel and are never interleaved with inner tabs.
 
-4. In vertical-inner-tab mode, the project strip is the top header and the existing vertical panel continues to list only the active project's inner tabs. In horizontal-inner-tab mode, the project strip remains the top header and the active project's inner-tab strip renders as a distinct row immediately beneath it.
+4. Clinch's existing vertical panel continues to list only the active project's inner tabs. The project strip remains a separate horizontal surface in the top header and does not change the fixed vertical-inner-tab layout.
 
 5. The active project is visually distinct using Clinch's existing active/inactive surface and text tokens. Inactive projects remain visible and selectable. The project strip follows the existing window-header visibility behavior in fullscreen or zen modes.
 
@@ -48,7 +48,7 @@ Figma: none provided. The interaction should follow the familiar behavior of Chr
 
 10. Repository labels are presentation only: changing a label because the active inner tab changes does not merge, split, reorder, or otherwise alter projects.
 
-11. Long project labels truncate with an ellipsis while retaining the repository name in a tooltip and accessibility label. Duplicate repository labels are allowed; their project order and contents remain distinct.
+11. Long project labels truncate with an ellipsis. The complete ordered project list remains available to accessibility output with each repository label, position, selected state, and unread state. Duplicate repository labels are allowed; their project order and contents remain distinct.
 
 12. A project tab shows a small notification dot whenever any inner terminal or agent session in that project has unread activity in Clinch's notification model. The dot uses the existing accent/notification token and does not replace or duplicate the detailed notification mailbox.
 
@@ -84,7 +84,7 @@ Figma: none provided. The interaction should follow the familiar behavior of Chr
 
 28. When project tabs exceed the available header width, tabs shrink to a usable minimum and then become horizontally scrollable or use Clinch's standard overflow affordance. The active project is always scrolled into view, and toolbar/window controls never become inaccessible.
 
-29. Project tab interactions are keyboard and accessibility navigable. Each tab exposes its label, selected state, position in the project list, unread state, close action, and drag/reorder semantics to assistive technologies; focus remains in the active project's content after mouse or shortcut switching unless the user explicitly keyboard-navigates the tab strip.
+29. Project switching is keyboard navigable through the project shortcuts. Close and left/right reorder actions are exposed through command-palette/keybinding actions, and accessibility output describes every project's label, selected state, position, and unread state while announcing project actions. Focus remains in the active project's content after mouse or shortcut switching.
 
 30. Window-level visual state follows the active project where it is currently derived from the active workspace, including the repository-based header tint and OS window title. Switching projects must not allow a background project to overwrite those active-window values.
 

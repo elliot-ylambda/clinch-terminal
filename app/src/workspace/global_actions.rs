@@ -11,13 +11,14 @@ use crate::ai::agent::AIAgentExchangeId;
 use crate::app_state::get_app_state;
 use crate::network::NetworkStatus;
 use crate::persistence::ModelEvent;
+use crate::project_window::ProjectWindow;
 use crate::root_view::OpenPath;
 use crate::server::server_api::ServerApiProvider;
 use crate::terminal::alt_screen_reporting::AltScreenReporting;
 use crate::terminal::general_settings::GeneralSettings;
 use crate::undo_close::UndoCloseStack;
 use crate::workspace::cross_window_tab_drag::CrossWindowTabDrag;
-use crate::workspace::{Workspace, WorkspaceAction};
+use crate::workspace::{WorkspaceAction, WorkspaceRegistry};
 use crate::{auth, GlobalResourceHandlesProvider};
 
 /// Specifies where a forked conversation should be opened.
@@ -128,15 +129,13 @@ fn save_app(_: &(), ctx: &mut AppContext) {
         return;
     }
 
-    // While a cross-window tab drag is active, the dragged tab's pane group
-    // is in flight between source and preview windows and `get_app_state`
-    // would produce a snapshot with zero windows. Persisting that snapshot
-    // wipes the on-disk session via `save_app_state`'s delete-then-insert
-    // transaction. `save_app` fires from window move / focus / resize /
-    // close callbacks (see `app_callbacks` in `lib.rs`), all of which run
-    // during a drag, so we have to short-circuit at this boundary. The
-    // first save after the drag finalizes will rewrite the snapshot.
-    if CrossWindowTabDrag::as_ref(ctx).is_active() {
+    // While a cross-window tab or project drag is active, the dragged content
+    // may be between committed owners or a temporary target window may exist.
+    // Persisting that intermediate snapshot can lose the source arrangement
+    // or record a duplicate placeholder. Window move / focus / resize / close
+    // callbacks all save, so suppress them at this boundary; drag finalization
+    // performs the first save of the committed arrangement.
+    if CrossWindowTabDrag::as_ref(ctx).is_active() || ProjectWindow::is_any_drag_active(ctx) {
         return;
     }
 
@@ -197,12 +196,10 @@ fn trigger_maybe_log_out(_: &(), ctx: &mut AppContext) {
 /// Dispatches an action to the active workspace, if one exists.
 fn dispatch_to_active_workspace(ctx: &mut AppContext, action: WorkspaceAction) {
     if let Some(window_id) = WindowManager::as_ref(ctx).active_window() {
-        if let Some(workspaces) = ctx.views_of_type::<Workspace>(window_id) {
-            if let Some(workspace) = workspaces.into_iter().next() {
-                workspace.update(ctx, |workspace, ctx| {
-                    workspace.handle_action(&action, ctx);
-                });
-            }
+        if let Some(workspace) = WorkspaceRegistry::as_ref(ctx).get(window_id, ctx) {
+            workspace.update(ctx, |workspace, ctx| {
+                workspace.handle_action(&action, ctx);
+            });
         }
     }
 }

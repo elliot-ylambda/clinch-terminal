@@ -11,10 +11,12 @@ use warpui::ui_components::components::{Coords, UiComponent, UiComponentStyles};
 use warpui::ui_components::text::Span;
 use warpui::{
     AppContext, Element, Entity, EntityId, SingletonEntity, TypedActionView, View, ViewContext,
+    WindowId,
 };
 
 use crate::appearance::Appearance;
 use crate::pane_group::PaneId;
+use crate::project_window::ProjectId;
 use crate::ui_components::dialog::{dialog_styles, Dialog};
 use crate::workspace::TabMovement;
 
@@ -35,6 +37,11 @@ pub enum OpenDialogSource {
     CloseTabsDirection {
         tab_index: usize,
         direction: TabMovement,
+    },
+    /// Close every inner tab owned by one outer project.
+    CloseProject {
+        project_id: ProjectId,
+        window_id: WindowId,
     },
 }
 

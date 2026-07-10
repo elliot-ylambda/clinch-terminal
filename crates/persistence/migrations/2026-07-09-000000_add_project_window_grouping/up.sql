@@ -1,0 +1,3 @@
+ALTER TABLE windows ADD COLUMN project_window_id TEXT;
+ALTER TABLE windows ADD COLUMN project_index INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE windows ADD COLUMN is_active_project BOOLEAN NOT NULL DEFAULT TRUE;

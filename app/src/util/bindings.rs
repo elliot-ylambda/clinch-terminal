@@ -387,7 +387,7 @@ pub fn custom_tag_to_keystroke(custom: CustomTag) -> Option<Keystroke> {
         CustomAction::NewProject => mac_only_keystroke("cmd-n"),
         // Keep an explicit separate-window command after Command+N becomes
         // the project-creation shortcut in Clinch.
-        CustomAction::AddWindow => mac_only_keystroke("cmd-shift-n"),
+        CustomAction::AddWindow => mac_only_keystroke("cmd-shift-N"),
         CustomAction::ToggleWarpDrive => {
             if OperatingSystem::get().is_mac() {
                 Keystroke::parse("cmd-\\").ok()

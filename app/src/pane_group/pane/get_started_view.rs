@@ -24,7 +24,7 @@ use crate::pane_group::{BackingView, PaneConfiguration, PaneEvent};
 use crate::terminal::TerminalView;
 use crate::util::bindings::{keybinding_name_to_display_string, BindingGroup, CustomAction};
 use crate::view_components::DismissibleToast;
-use crate::workspace::{ToastStack, Workspace, WorkspaceAction};
+use crate::workspace::{ToastStack, WorkspaceAction, WorkspaceRegistry};
 use crate::{send_telemetry_from_ctx, TelemetryEvent};
 
 pub fn init(app: &mut AppContext) {
@@ -374,16 +374,14 @@ where
     F: FnOnce(&mut TerminalView, &mut ViewContext<TerminalView>) -> S,
 {
     let window_id = ctx.window_id();
-    if let Some(workspaces) = ctx.views_of_type::<Workspace>(window_id) {
-        if let Some(workspace) = workspaces.into_iter().next() {
-            workspace.update(ctx, |workspace, ctx| {
-                let pane_group = workspace.active_tab_pane_group();
-                pane_group.update(ctx, |pane_group, ctx| {
-                    if let Some(active_terminal) = pane_group.active_session_view(ctx) {
-                        active_terminal.update(ctx, func);
-                    }
-                });
+    if let Some(workspace) = WorkspaceRegistry::as_ref(ctx).get(window_id, ctx) {
+        workspace.update(ctx, |workspace, ctx| {
+            let pane_group = workspace.active_tab_pane_group();
+            pane_group.update(ctx, |pane_group, ctx| {
+                if let Some(active_terminal) = pane_group.active_session_view(ctx) {
+                    active_terminal.update(ctx, func);
+                }
             });
-        }
+        });
     }
 }

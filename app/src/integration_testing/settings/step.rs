@@ -7,22 +7,23 @@ use crate::integration_testing::step::new_step_with_default_assertions;
 use crate::integration_testing::view_getters::theme_chooser_view;
 use crate::settings_view::SettingsAction;
 use crate::window_settings::WindowSettings;
-use crate::workspace::{Workspace, WorkspaceAction};
+use crate::workspace::{WorkspaceAction, WorkspaceRegistry};
 
 /// Builds a step that will toggle a setting by [`SettingsAction`]. This can
 /// only update settings with a corresponding action on the settings view.
 pub fn toggle_setting(action: SettingsAction) -> TestStep {
     new_step_with_default_assertions(&format!("Toggle setting: {action:?}")).with_action(
         move |app, _, _| {
-            let window_id = app.read(|ctx| {
-                WindowManager::as_ref(ctx)
+            let (window_id, workspace_view_id) = app.read(|ctx| {
+                let window_id = WindowManager::as_ref(ctx)
                     .active_window()
-                    .expect("no active window")
+                    .expect("no active window");
+                let workspace_view_id = WorkspaceRegistry::as_ref(ctx)
+                    .get(window_id, ctx)
+                    .expect("no workspace view")
+                    .id();
+                (window_id, workspace_view_id)
             });
-            let workspace_view_id = app
-                .views_of_type::<Workspace>(window_id)
-                .and_then(|views| views.first().map(|view| view.id()))
-                .expect("no workspace view");
             app.dispatch_typed_action(
                 window_id,
                 &[workspace_view_id],

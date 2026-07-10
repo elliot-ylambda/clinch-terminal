@@ -28,7 +28,10 @@ impl LaunchConfig {
             windows: app_state
                 .windows
                 .iter()
-                .filter_map(|window| (!window.quake_mode).then_some(window.clone().into()))
+                .filter_map(|window| {
+                    let project = window.active_project()?;
+                    (!project.quake_mode).then(|| project.clone().into())
+                })
                 .collect::<Vec<WindowTemplate>>(),
         }
     }

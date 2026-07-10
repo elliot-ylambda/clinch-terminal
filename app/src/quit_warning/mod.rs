@@ -10,7 +10,7 @@ use crate::pane_group::{CodePane, PaneGroup, PaneId, TerminalPane};
 use crate::server::telemetry::CloseTarget;
 use crate::session_management::{RunningSessionSummary, SessionNavigationData};
 use crate::terminal::general_settings::GeneralSettings;
-use crate::workspace::Workspace;
+use crate::workspace::WorkspaceRegistry;
 use crate::{report_if_error, send_telemetry_from_app_ctx, TelemetryEvent};
 
 /// Scope of what's being quit/closed.
@@ -474,9 +474,7 @@ impl<'a> QuitWarningDialog<'a> {
                 .or_else(|| session_summary.windows_running().iter().next().copied());
             if let Some(window_id_to_focus) = window_id_to_focus {
                 ctx.windows().show_window_and_focus_app(window_id_to_focus);
-                if let Some(workspace) = ctx
-                    .views_of_type::<Workspace>(window_id_to_focus)
-                    .and_then(|workspaces| workspaces.first().cloned())
+                if let Some(workspace) = WorkspaceRegistry::as_ref(ctx).get(window_id_to_focus, ctx)
                 {
                     workspace.update(ctx, |view, ctx| {
                         view.show_native_modal(dialog, ctx);

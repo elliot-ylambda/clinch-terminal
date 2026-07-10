@@ -15,7 +15,7 @@ use crate::drive::settings::WarpDriveSettings;
 use crate::search::command_palette::FilterChipRenderer;
 use crate::search::QueryFilter;
 use crate::settings::AISettings;
-use crate::workspace::Workspace;
+use crate::workspace::WorkspaceRegistry;
 
 /// A zero-state view for the command palette.
 pub struct ZeroState {
@@ -98,9 +98,8 @@ impl ZeroState {
 
         // Don't show Files filter if the user is a viewer of a shared session
         if FeatureFlag::CommandPaletteFileSearch.is_enabled() {
-            let is_shared_session_viewer_focused = app
-                .views_of_type::<Workspace>(window_id)
-                .and_then(|workspaces| workspaces.first().cloned())
+            let is_shared_session_viewer_focused = WorkspaceRegistry::as_ref(app)
+                .get(window_id, app)
                 .is_some_and(|workspace| {
                     workspace.as_ref(app).is_shared_session_viewer_focused(app)
                 });

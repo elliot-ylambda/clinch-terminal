@@ -8,7 +8,7 @@ use crate::pane_group::PaneId;
 use crate::terminal::TerminalView;
 use crate::window_settings::WindowSettings;
 use crate::workspace::tab_group::TabGroupId;
-use crate::workspace::Workspace;
+use crate::workspace::WorkspaceRegistry;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 /// What composes a pane (i.e. the pane group and the pane itself).
@@ -318,7 +318,8 @@ pub enum TerminalSessionFallbackBehavior {
     OpenIfNeeded,
 }
 
-/// Given a [`WindowId`], see if its [`Workspace`] contains an active [`TerminalView`] and return
+/// Given a [`WindowId`], see if its [`crate::workspace::Workspace`] contains an active
+/// [`TerminalView`] and return
 /// that.
 ///
 /// Note that "active" is not the same as "focused" in Warp's pane management.
@@ -330,9 +331,8 @@ pub fn active_terminal_in_window<T, F>(
 where
     F: FnOnce(&mut TerminalView, &mut ViewContext<TerminalView>) -> T,
 {
-    ctx.views_of_type::<Workspace>(window_id)
-        .as_ref()
-        .and_then(|v| v.first())
+    WorkspaceRegistry::as_ref(ctx)
+        .get(window_id, ctx)
         .and_then(|handle| {
             handle.update(ctx, |workspace, w_ctx| {
                 workspace
@@ -360,10 +360,7 @@ pub fn is_terminal_view_in_same_tab(
     let Some(active_window) = app.windows().active_window() else {
         return false;
     };
-    let Some(workspace) = app
-        .views_of_type::<Workspace>(active_window)
-        .and_then(|views| views.first().cloned())
-    else {
+    let Some(workspace) = WorkspaceRegistry::as_ref(app).get(active_window, app) else {
         return false;
     };
     let workspace = workspace.as_ref(app);
@@ -382,9 +379,8 @@ pub fn get_context_target_terminal_view(
     window_id: WindowId,
     ctx: &AppContext,
 ) -> Option<ViewHandle<TerminalView>> {
-    ctx.views_of_type::<Workspace>(window_id)
-        .as_ref()
-        .and_then(|v| v.first())
+    WorkspaceRegistry::as_ref(ctx)
+        .get(window_id, ctx)
         .and_then(|handle| {
             handle.read(ctx, |workspace, w_ctx| {
                 workspace

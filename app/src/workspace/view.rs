@@ -24,7 +24,7 @@ mod vertical_tabs;
 #[cfg(target_family = "wasm")]
 mod wasm_view;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 #[cfg(feature = "local_fs")]
@@ -1155,6 +1155,8 @@ pub struct Workspace {
     /// transferred to another window aren't torn down when this window closes
     /// via `TerminationMode::ContentTransferred`.
     suppress_detach_panes_on_window_close: bool,
+    suppress_notification_reads_during_project_activation: Cell<bool>,
+    skip_next_notification_read_interaction: Cell<bool>,
     /// True while this workspace is acting as the temporary preview window
     /// for a multi-tab cross-window drag. Reduces chrome (e.g. hides traffic
     /// lights). Cleared when the preview is promoted or hands off its tab.
@@ -3444,6 +3446,8 @@ impl Workspace {
             hoa_vtabs_callout_pinned_position: None,
             pending_pane_group_transfer: false,
             suppress_detach_panes_on_window_close: false,
+            suppress_notification_reads_during_project_activation: Cell::new(false),
+            skip_next_notification_read_interaction: Cell::new(false),
             is_tab_drag_preview: false,
             new_session_sidecar_menu,
             show_new_session_sidecar: false,
@@ -3510,6 +3514,7 @@ impl Workspace {
             .windows()
             .active_window()
             .is_none_or(|id| id != ctx.window_id())
+            || !WorkspaceRegistry::as_ref(ctx).is_active(ctx.window_id(), ctx.handle().id())
         {
             return;
         }
@@ -5291,6 +5296,9 @@ impl Workspace {
         ambient_agent_task_id: Option<AmbientAgentTaskId>,
         ctx: &mut ViewContext<Self>,
     ) {
+        if !WorkspaceRegistry::as_ref(ctx).is_active(ctx.window_id(), ctx.handle().id()) {
+            return;
+        }
         let window_id = ctx.window_id();
         ActiveAgentViewsModel::handle(ctx).update(ctx, |model, ctx| {
             model.handle_pane_focus_change(
@@ -5302,7 +5310,11 @@ impl Workspace {
         });
         if let Some(terminal_view_id) = focused_terminal_view_id {
             let is_active_window = ctx.windows().active_window() == Some(ctx.window_id());
-            if is_active_window {
+            if is_active_window
+                && !self
+                    .suppress_notification_reads_during_project_activation
+                    .get()
+            {
                 AgentNotificationsModel::handle(ctx).update(ctx, |model, ctx| {
                     model.mark_items_from_terminal_view_read(terminal_view_id, ctx);
                 });
@@ -5374,6 +5386,9 @@ impl Workspace {
     }
 
     fn update_window_title(&self, ctx: &mut ViewContext<Self>) {
+        if !WorkspaceRegistry::as_ref(ctx).is_active(ctx.window_id(), ctx.handle().id()) {
+            return;
+        }
         let Some(tab) = self.tabs.get(self.active_tab_index) else {
             log::warn!(
                 "Tried to update window title but active tab index ({}) was out of range 0..{}",
@@ -5758,11 +5773,11 @@ impl Workspace {
         terminal_view_id: EntityId,
         ctx: &mut ViewContext<Self>,
     ) {
-        let current_window = ctx.window_id();
+        let current_workspace_id = ctx.handle().id();
         let result = WorkspaceRegistry::as_ref(ctx)
             .all_workspaces(ctx)
             .iter()
-            .filter(|(win_id, _)| *win_id != current_window)
+            .filter(|(_, workspace)| workspace.id() != current_workspace_id)
             .find_map(|(win_id, workspace)| {
                 workspace.as_ref(ctx).tab_views().find_map(|pane_group| {
                     let pane_id = pane_group
@@ -11225,6 +11240,18 @@ impl Workspace {
                     OpenDialogSource::CloseOtherTabs { tab_index } => {
                         self.close_other_tabs(tab_index, true, ctx);
                     }
+                    OpenDialogSource::CloseProject {
+                        project_id,
+                        window_id,
+                    } => {
+                        self.prepare_for_project_close(ctx);
+                        Self::dispatch_project_close_action(
+                            "root_view:finalize_prepared_project_close",
+                            project_id,
+                            window_id,
+                            ctx,
+                        );
+                    }
                 }
                 self.current_workspace_state
                     .is_close_session_confirmation_dialog_open = false;
@@ -11885,6 +11912,127 @@ impl Workspace {
             && *SessionSettings::as_ref(ctx).should_confirm_close_session
     }
 
+    fn dispatch_project_close_commit(
+        project_id: crate::project_window::ProjectId,
+        window_id: WindowId,
+        ctx: &mut AppContext,
+    ) {
+        Self::dispatch_project_close_action(
+            "root_view:commit_close_project",
+            project_id,
+            window_id,
+            ctx,
+        );
+    }
+
+    fn dispatch_project_close_action(
+        action: &'static str,
+        project_id: crate::project_window::ProjectId,
+        window_id: WindowId,
+        ctx: &mut AppContext,
+    ) {
+        let Some(root_view_id) = ctx.root_view_id(window_id) else {
+            return;
+        };
+        ctx.dispatch_action_for_view(window_id, root_view_id, action, &project_id);
+    }
+
+    /// Applies the same shared-session and unsaved-work protections used by
+    /// inner-tab closing, but commits the operation at the project container.
+    pub(crate) fn request_project_close(
+        &mut self,
+        project_id: crate::project_window::ProjectId,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        let window_id = ctx.window_id();
+        let should_confirm_shared_session = FeatureFlag::CreatingSharedSessions.is_enabled()
+            && ContextFlag::CreateSharedSession.is_enabled()
+            && *SessionSettings::as_ref(ctx).should_confirm_close_session;
+        if should_confirm_shared_session
+            && self
+                .tab_views()
+                .any(|view| view.as_ref(ctx).is_terminal_pane_being_shared(ctx))
+        {
+            self.show_close_session_confirmation_dialog(
+                OpenDialogSource::CloseProject {
+                    project_id,
+                    window_id,
+                },
+                ctx,
+            );
+            return false;
+        }
+
+        let tabs = self
+            .tab_views()
+            .map(|pane_group| pane_group.downgrade())
+            .collect_vec();
+        let summary = UnsavedStateSummary::for_tabs(tabs, ctx);
+        if summary.should_display_warning(ctx) {
+            let confirm_project = project_id;
+            let navigate_self = ctx.handle();
+            let dialog = summary
+                .dialog()
+                .on_confirm(move |ctx| {
+                    Self::dispatch_project_close_commit(confirm_project, window_id, ctx);
+                })
+                .on_cancel(|_ctx| {})
+                .on_show_processes(move |ctx| {
+                    if let Some(workspace) = navigate_self.upgrade(ctx) {
+                        workspace.update(ctx, |workspace, ctx| {
+                            workspace.open_palette_action(
+                                PaletteMode::Navigation,
+                                PaletteSource::QuitModal,
+                                Some("running"),
+                                ctx,
+                            );
+                        });
+                    }
+                })
+                .build();
+
+            send_telemetry_from_ctx!(
+                TelemetryEvent::QuitModalShown {
+                    running_processes: summary.total_long_running_commands as u32,
+                    shared_sessions: summary.shared_sessions as u32,
+                    modal_for: CloseTarget::Window,
+                },
+                ctx
+            );
+
+            if cfg!(all(not(target_family = "wasm"), target_os = "macos")) {
+                AppContext::show_native_platform_modal(ctx, dialog);
+                return false;
+            } else if cfg!(all(
+                not(target_family = "wasm"),
+                any(target_os = "linux", windows)
+            )) {
+                self.show_native_modal(dialog, ctx);
+                return false;
+            }
+        }
+
+        true
+    }
+
+    /// Tears down every live pane in this workspace without invoking the
+    /// physical-window close path. The outer project container drops the
+    /// workspace immediately after this call.
+    pub(crate) fn prepare_for_project_close(&mut self, ctx: &mut ViewContext<Self>) {
+        let working_directories_model = self.working_directories_model.clone();
+        for pane_group in self.tab_views().collect_vec() {
+            pane_group.update(ctx, |pane_group, ctx| {
+                pane_group.shutdown_long_running_panes_for_close(ctx);
+                pane_group.detach_panes_for_close(&working_directories_model, ctx);
+            });
+        }
+        let window_id = ctx.window_id();
+        let workspace_id = ctx.handle().id();
+        WorkspaceRegistry::handle(ctx).update(ctx, |registry, _| {
+            registry.unregister_workspace(window_id, workspace_id);
+        });
+    }
+
     /// Checks if the provided tab indices need to be confirmed before closing, unless skip_confirmation is true.
     /// If none of them need confirmation (or the confirm setting is turned off), we close all the provided tabs.
     /// Returns true iff all of the tabs were closed.
@@ -12160,11 +12308,29 @@ impl Workspace {
     /// Re-establishes the physical-window state derived from this workspace
     /// when its containing project becomes active.
     pub(crate) fn handle_project_activated(&mut self, ctx: &mut ViewContext<Self>) {
+        self.suppress_notification_reads_during_project_activation
+            .set(true);
+        self.skip_next_notification_read_interaction.set(false);
         self.sync_window_button_visibility(ctx);
+        self.update_titlebar_height(ctx);
         self.update_window_title(ctx);
         self.focus_active_tab(ctx);
         self.update_active_session(ctx);
         ctx.notify();
+    }
+
+    pub(crate) fn allow_notification_reads_after_project_activation(&mut self) {
+        self.suppress_notification_reads_during_project_activation
+            .set(false);
+        self.skip_next_notification_read_interaction.set(false);
+    }
+
+    /// Mouse/key dispatch computes its final responder chain after an action
+    /// runs. If that action switched projects, the switching event itself can
+    /// therefore reach the newly focused workspace. Skip only that event; the
+    /// next real interaction resumes the existing notification-read behavior.
+    pub(crate) fn skip_next_notification_read_interaction(&self) {
+        self.skip_next_notification_read_interaction.set(true);
     }
 
     pub fn restore_closed_tab(
@@ -13945,6 +14111,9 @@ impl Workspace {
     #[cfg(target_os = "macos")]
     pub fn sync_window_button_visibility(&self, ctx: &mut ViewContext<Self>) {
         use warpui::platform::mac::WindowExt;
+        if !WorkspaceRegistry::as_ref(ctx).is_active(ctx.window_id(), ctx.handle().id()) {
+            return;
+        }
         let show = if FeatureFlag::FullScreenZenMode.is_enabled()
             && TabSettings::as_ref(ctx)
                 .workspace_decoration_visibility
@@ -13969,6 +14138,9 @@ impl Workspace {
 
     /// Updates the titlebar height to match the scaled tab bar height.
     pub fn update_titlebar_height(&self, ctx: &mut ViewContext<Self>) {
+        if !WorkspaceRegistry::as_ref(ctx).is_active(ctx.window_id(), ctx.handle().id()) {
+            return;
+        }
         let zoom_factor = WindowSettings::as_ref(ctx).zoom_level.as_zoom_factor();
         let scaled_tab_bar_height = (TOTAL_TAB_BAR_HEIGHT * zoom_factor) as f64;
 
@@ -17138,6 +17310,8 @@ impl Workspace {
 
     /// Update the active session model state.
     fn update_active_session(&mut self, ctx: &mut ViewContext<Self>) {
+        let is_active_project =
+            WorkspaceRegistry::as_ref(ctx).is_active(ctx.window_id(), ctx.handle().id());
         let pane_group_handle = self.active_tab_pane_group();
         let file_tree_and_global_search_are_enabled = {
             #[cfg(feature = "local_fs")]
@@ -17187,23 +17361,25 @@ impl Workspace {
                 )
             });
 
-            let window_id = ctx.window_id();
-            let working_directory_clone = path_if_local.clone();
-            ActiveSession::handle(ctx).update(ctx, |active_session, ctx| {
-                active_session.set_session_state(
-                    window_id,
-                    session,
-                    pwd_location,
-                    Some(terminal_handle.id()),
-                    ctx,
-                );
-            });
+            if is_active_project {
+                let window_id = ctx.window_id();
+                let working_directory_clone = path_if_local.clone();
+                ActiveSession::handle(ctx).update(ctx, |active_session, ctx| {
+                    active_session.set_session_state(
+                        window_id,
+                        session,
+                        pwd_location,
+                        Some(terminal_handle.id()),
+                        ctx,
+                    );
+                });
 
-            CodebaseIndexManager::handle(ctx).update(ctx, |manager, _ctx| {
-                if let Some(working_directory) = working_directory_clone {
-                    manager.handle_active_session_changed(working_directory.as_path());
-                }
-            });
+                CodebaseIndexManager::handle(ctx).update(ctx, |manager, _ctx| {
+                    if let Some(working_directory) = working_directory_clone {
+                        manager.handle_active_session_changed(working_directory.as_path());
+                    }
+                });
+            }
 
             let is_remote = matches!(is_local, Some(false));
             let is_unsupported_session = is_wsl_session;
@@ -21049,6 +21225,23 @@ impl Workspace {
         root.to_local_path().map(|p| p.to_path_buf())
     }
 
+    /// Returns only a detected repository root for project-tab naming. Unlike
+    /// `project_dir_for_tab`, this deliberately does not fall back to the
+    /// session working directory: a shell in `$HOME` should remain
+    /// "New Project" (or retain an MRU repository label), not become a
+    /// project named after the home directory.
+    fn repository_root_for_tab(&self, tab: &TabData, ctx: &AppContext) -> Option<PathBuf> {
+        let cwd = tab
+            .pane_group
+            .as_ref(ctx)
+            .active_session_view(ctx)
+            .and_then(|tv| tv.as_ref(ctx).canonical_session_pwd_if_local(ctx))?;
+        DetectedRepositories::as_ref(ctx)
+            .get_root_for_path(&LocalOrRemotePath::Local(cwd.as_path().to_path_buf()))?
+            .to_local_path()
+            .map(Path::to_path_buf)
+    }
+
     /// Repository label for the outer project tab. Prefer the active inner
     /// tab, then fall back through the existing inner-tab MRU order so a
     /// temporary non-repository surface does not erase the project's identity.
@@ -21069,13 +21262,19 @@ impl Workspace {
 
         active
             .chain(recent)
-            .find_map(|tab| self.project_dir_for_tab(tab, ctx))
+            .find_map(|tab| self.repository_root_for_tab(tab, ctx))
             .and_then(|path| {
                 path.file_name()
                     .map(|name| name.to_string_lossy().into_owned())
             })
             .filter(|name| !name.is_empty())
             .unwrap_or_else(|| "New Project".to_string())
+    }
+
+    pub(crate) fn contains_pane_group(&self, pane_group_id: EntityId) -> bool {
+        self.tabs
+            .iter()
+            .any(|tab| tab.pane_group.id() == pane_group_id)
     }
 
     pub(crate) fn has_unread_project_activity(&self, ctx: &AppContext) -> bool {
@@ -25049,32 +25248,16 @@ impl TypedActionView for Workspace {
                             ctx,
                         );
                     }
-                } else if let Some((window_id, tab_index, terminal_view_id)) = self
+                } else if let Some((window_id, _tab_index, terminal_view_id)) = self
                     .agent_toast_stack
                     .as_ref(ctx)
                     .get_latest_toast_navigation_data()
                 {
                     ctx.windows().show_window_and_focus_app(window_id);
-
-                    self.activate_tab(tab_index, ctx);
-
-                    // Focus the terminal view using the existing FocusTerminalViewInWorkspace logic
-                    for (tab_idx, tab) in self.tabs.iter().enumerate() {
-                        let pane_group_handle = &tab.pane_group;
-                        let pane_group = pane_group_handle.as_ref(ctx);
-                        if let Some(pane_id) =
-                            pane_group.find_pane_id_for_terminal_view(terminal_view_id, ctx)
-                        {
-                            let locator = PaneViewLocator {
-                                pane_group_id: pane_group_handle.id(),
-                                pane_id,
-                            };
-                            if tab_idx == tab_index {
-                                self.focus_pane(locator, ctx);
-                                break;
-                            }
-                        }
-                    }
+                    self.handle_action(
+                        &WorkspaceAction::FocusTerminalViewInWorkspace { terminal_view_id },
+                        ctx,
+                    );
 
                     // Dismiss any currently visible toasts for this conversation
                     if let Some(latest_uuid) =
@@ -25853,6 +26036,24 @@ impl View for Workspace {
     }
 
     fn self_or_child_interacted_with(&self, ctx: &mut ViewContext<Self>) {
+        let skip_notification_read = self.skip_next_notification_read_interaction.replace(false);
+        self.suppress_notification_reads_during_project_activation
+            .set(false);
+        if !skip_notification_read
+            && ctx.windows().active_window() == Some(ctx.window_id())
+            && WorkspaceRegistry::as_ref(ctx).is_active(ctx.window_id(), ctx.handle().id())
+        {
+            let focused_terminal_view_id = self
+                .active_tab_pane_group()
+                .as_ref(ctx)
+                .focused_session_view(ctx)
+                .map(|terminal| terminal.id());
+            if let Some(terminal_view_id) = focused_terminal_view_id {
+                AgentNotificationsModel::handle(ctx).update(ctx, |model, ctx| {
+                    model.mark_items_from_terminal_view_read(terminal_view_id, ctx);
+                });
+            }
+        }
         self.sync_window_button_visibility(ctx);
     }
 
@@ -27267,6 +27468,21 @@ impl View for Workspace {
         }
 
         event_handler.finish()
+    }
+
+    fn on_window_transferred(
+        &mut self,
+        source_window_id: WindowId,
+        target_window_id: WindowId,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        self.window_id = target_window_id;
+        let workspace_id = ctx.handle().id();
+        let weak_handle = ctx.handle();
+        WorkspaceRegistry::handle(ctx).update(ctx, |registry, _| {
+            registry.unregister_workspace(source_window_id, workspace_id);
+            registry.register(target_window_id, weak_handle);
+        });
     }
 
     fn on_focus(&mut self, focus_ctx: &FocusContext, ctx: &mut ViewContext<Self>) {

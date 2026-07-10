@@ -10,6 +10,7 @@ use crate::terminal::available_shells::AvailableShell;
 use crate::terminal::available_shells::AvailableShells;
 use crate::terminal::session_settings::{NewSessionSource, SessionSettings};
 use crate::terminal::ShellLaunchData;
+use crate::workspace::WorkspaceRegistry;
 
 impl Workspace {
     /// Helper function to compute the initial directory for a new session
@@ -57,15 +58,30 @@ impl Workspace {
         let active_session_info = match previous_session_window_id {
             // If the previous window is the one hosting this workspace, don't
             // do any indirection through AppContext.
-            Some(window_id) if window_id == ctx.window_id() => Some((
-                self.initial_directory_from_active_session(ctx),
-                self.shell_launch_info_from_active_session(ctx),
-            )),
+            Some(window_id) if window_id == ctx.window_id() => {
+                let prior_workspace = WorkspaceRegistry::as_ref(ctx)
+                    .get(window_id, ctx)
+                    .filter(|workspace| workspace.id() != ctx.handle().id());
+                prior_workspace.map_or_else(
+                    || {
+                        Some((
+                            self.initial_directory_from_active_session(ctx),
+                            self.shell_launch_info_from_active_session(ctx),
+                        ))
+                    },
+                    |workspace| {
+                        Some(workspace.read(ctx, |workspace, ctx| {
+                            (
+                                workspace.initial_directory_from_active_session(ctx),
+                                workspace.shell_launch_info_from_active_session(ctx),
+                            )
+                        }))
+                    },
+                )
+            }
             // Otherwise, lookup the Workspace in that window and query it.
             Some(window_id) => {
-                let workspace_handle = ctx
-                    .views_of_type::<Workspace>(window_id)
-                    .and_then(|views| views.first().cloned());
+                let workspace_handle = WorkspaceRegistry::as_ref(ctx).get(window_id, ctx);
                 workspace_handle.map(|workspace| {
                     workspace.read(ctx, |workspace, ctx| {
                         (

@@ -17,7 +17,7 @@ use super::{
 };
 use crate::app_state::{
     AppState, CodePaneSnapShot, CodePaneTabSnapshot, LeafContents, LeafSnapshot, PaneNodeSnapshot,
-    TabGroupSnapshot, TabSnapshot, TerminalPaneSnapshot, WindowSnapshot,
+    ProjectWindowSnapshot, TabGroupSnapshot, TabSnapshot, TerminalPaneSnapshot, WindowSnapshot,
 };
 use crate::cloud_object::{CloudObjectPermissions, Owner};
 use crate::code::editor_management::CodeSource;
@@ -30,6 +30,10 @@ use crate::terminal::model::block::SerializedBlock;
 use crate::terminal::ShellLaunchData;
 use crate::themes::theme::AnsiColorIdentifier;
 use crate::workspace::tab_group::TabGroupId;
+
+fn project_window(project: WindowSnapshot) -> ProjectWindowSnapshot {
+    ProjectWindowSnapshot::singleton(project)
+}
 
 #[test]
 fn app_scope_database_path_matches_app_database_path() {
@@ -107,7 +111,7 @@ fn sqlite_read_restores_app_state_and_codebase_metadata() {
     let mut conn = setup_database(&database_path).expect("database should initialize");
 
     let app_state = AppState {
-        windows: vec![test_terminal_window_snapshot(false)],
+        windows: vec![project_window(test_terminal_window_snapshot(false))],
         active_window_index: Some(0),
         block_lists: Default::default(),
         running_mcp_servers: Default::default(),
@@ -311,8 +315,8 @@ fn test_sqlite_round_trips_vertical_tabs_panel_open() {
 
     let app_state = AppState {
         windows: vec![
-            test_terminal_window_snapshot(false),
-            test_terminal_window_snapshot(true),
+            project_window(test_terminal_window_snapshot(false)),
+            project_window(test_terminal_window_snapshot(true)),
         ],
         active_window_index: Some(1),
         block_lists: Default::default(),
@@ -330,10 +334,82 @@ fn test_sqlite_round_trips_vertical_tabs_panel_open() {
         restored
             .windows
             .iter()
-            .map(|window| window.vertical_tabs_panel_open)
+            .map(|window| {
+                window
+                    .active_project()
+                    .expect("project window should contain a project")
+                    .vertical_tabs_panel_open
+            })
             .collect::<Vec<_>>(),
         vec![false, true]
     );
+}
+
+#[test]
+fn test_sqlite_round_trips_projects_in_one_physical_window() {
+    let tempdir = tempfile::tempdir().expect("tempdir should be created");
+    let database_path = tempdir.path().join("warp.sqlite");
+    let mut conn = setup_database(&database_path).expect("database should initialize");
+
+    let first = test_terminal_window_snapshot(false);
+    let second = test_terminal_window_snapshot(true);
+    let app_state = AppState {
+        windows: vec![ProjectWindowSnapshot {
+            projects: vec![first, second],
+            active_project_index: 1,
+        }],
+        active_window_index: Some(0),
+        block_lists: Default::default(),
+        running_mcp_servers: Default::default(),
+    };
+
+    save_app_state(&mut conn, &app_state).expect("app state should save");
+    let restored = read_sqlite_data(&mut conn, None)
+        .expect("app state should load")
+        .app_state;
+
+    assert_eq!(restored.windows.len(), 1);
+    assert_eq!(restored.windows[0].projects.len(), 2);
+    assert_eq!(restored.windows[0].active_project_index, 1);
+    assert_eq!(restored.active_window_index, Some(0));
+    assert_eq!(
+        restored.windows[0]
+            .projects
+            .iter()
+            .map(|project| project.vertical_tabs_panel_open)
+            .collect::<Vec<_>>(),
+        vec![false, true]
+    );
+}
+
+#[test]
+fn test_sqlite_restores_legacy_window_row_as_single_project() {
+    use diesel::prelude::*;
+
+    use crate::persistence::schema::windows;
+
+    let tempdir = tempfile::tempdir().expect("tempdir should be created");
+    let database_path = tempdir.path().join("warp.sqlite");
+    let mut conn = setup_database(&database_path).expect("database should initialize");
+    let app_state = AppState {
+        windows: vec![project_window(test_terminal_window_snapshot(false))],
+        active_window_index: Some(0),
+        block_lists: Default::default(),
+        running_mcp_servers: Default::default(),
+    };
+    save_app_state(&mut conn, &app_state).expect("app state should save");
+
+    diesel::update(windows::dsl::windows)
+        .set(windows::columns::project_window_id.eq::<Option<String>>(None))
+        .execute(&mut conn)
+        .expect("group id should clear to simulate a legacy row");
+
+    let restored = read_sqlite_data(&mut conn, None)
+        .expect("legacy app state should load")
+        .app_state;
+    assert_eq!(restored.windows.len(), 1);
+    assert_eq!(restored.windows[0].projects.len(), 1);
+    assert_eq!(restored.windows[0].active_project_index, 0);
 }
 
 #[test]
@@ -343,7 +419,7 @@ fn test_sqlite_round_trips_custom_vertical_tabs_title() {
     let mut conn = setup_database(&database_path).expect("database should initialize");
 
     let app_state = AppState {
-        windows: vec![WindowSnapshot {
+        windows: vec![project_window(WindowSnapshot {
             tabs: vec![TabSnapshot {
                 custom_title: None,
                 root: PaneNodeSnapshot::Leaf(LeafSnapshot {
@@ -387,7 +463,7 @@ fn test_sqlite_round_trips_custom_vertical_tabs_title() {
             right_panel_width: None,
             agent_management_filters: None,
             tab_groups: vec![],
-        }],
+        })],
         active_window_index: Some(0),
         block_lists: Default::default(),
         running_mcp_servers: Default::default(),
@@ -402,7 +478,7 @@ fn test_sqlite_round_trips_custom_vertical_tabs_title() {
     let PaneNodeSnapshot::Leaf(LeafSnapshot {
         custom_vertical_tabs_title,
         ..
-    }) = &restored.windows[0].tabs[0].root
+    }) = &restored.windows[0].projects[0].tabs[0].root
     else {
         panic!("Expected terminal pane leaf");
     };
@@ -419,7 +495,7 @@ fn test_sqlite_round_trips_code_pane_with_multiple_tabs() {
     let mut conn = setup_database(&database_path).expect("database should initialize");
 
     let app_state = AppState {
-        windows: vec![WindowSnapshot {
+        windows: vec![project_window(WindowSnapshot {
             tabs: vec![TabSnapshot {
                 custom_title: None,
                 root: PaneNodeSnapshot::Leaf(LeafSnapshot {
@@ -464,7 +540,7 @@ fn test_sqlite_round_trips_code_pane_with_multiple_tabs() {
             right_panel_width: None,
             agent_management_filters: None,
             tab_groups: vec![],
-        }],
+        })],
         active_window_index: Some(0),
         block_lists: Default::default(),
         running_mcp_servers: Default::default(),
@@ -477,7 +553,7 @@ fn test_sqlite_round_trips_code_pane_with_multiple_tabs() {
         .app_state;
 
     assert_eq!(restored.windows.len(), 1);
-    let restored_tab = &restored.windows[0].tabs[0];
+    let restored_tab = &restored.windows[0].projects[0].tabs[0];
     let PaneNodeSnapshot::Leaf(LeafSnapshot {
         contents:
             LeafContents::Code(CodePaneSnapShot::Local {
@@ -567,7 +643,7 @@ fn test_sqlite_round_trips_tab_groups() {
     };
 
     let app_state = AppState {
-        windows: vec![WindowSnapshot {
+        windows: vec![project_window(WindowSnapshot {
             tabs: vec![tab_in_group, tab_outside_group],
             active_tab_index: 0,
             bounds: None,
@@ -589,7 +665,7 @@ fn test_sqlite_round_trips_tab_groups() {
                 collapsed: true,
                 pinned: false,
             }],
-        }],
+        })],
         active_window_index: Some(0),
         block_lists: Default::default(),
         running_mcp_servers: Default::default(),
@@ -602,7 +678,9 @@ fn test_sqlite_round_trips_tab_groups() {
         .app_state;
 
     assert_eq!(restored.windows.len(), 1);
-    let restored_window = &restored.windows[0];
+    let restored_window = restored.windows[0]
+        .active_project()
+        .expect("project window should contain a project");
     assert_eq!(restored_window.tab_groups.len(), 1);
     let restored_group = &restored_window.tab_groups[0];
     assert_eq!(restored_group.name.as_deref(), Some("Backend"));
@@ -720,7 +798,7 @@ fn test_sqlite_round_trips_pinned_state() {
     };
 
     let app_state = AppState {
-        windows: vec![WindowSnapshot {
+        windows: vec![project_window(WindowSnapshot {
             tabs: vec![pinned_tab, tab_in_pinned_group, unpinned_tab],
             active_tab_index: 0,
             bounds: None,
@@ -751,7 +829,7 @@ fn test_sqlite_round_trips_pinned_state() {
                     pinned: false,
                 },
             ],
-        }],
+        })],
         active_window_index: Some(0),
         block_lists: Default::default(),
         running_mcp_servers: Default::default(),
@@ -764,7 +842,9 @@ fn test_sqlite_round_trips_pinned_state() {
         .app_state;
 
     assert_eq!(restored.windows.len(), 1);
-    let restored_window = &restored.windows[0];
+    let restored_window = restored.windows[0]
+        .active_project()
+        .expect("project window should contain a project");
 
     // Tabs come back in insertion order; pinned flag should match what we saved.
     assert_eq!(restored_window.tabs.len(), 3);
@@ -883,7 +963,7 @@ fn test_sqlite_drops_too_small_bounds_on_save() {
     ));
 
     let app_state = AppState {
-        windows: vec![snapshot],
+        windows: vec![project_window(snapshot)],
         active_window_index: Some(0),
         block_lists: Default::default(),
         running_mcp_servers: Default::default(),
@@ -922,7 +1002,7 @@ fn test_sqlite_drops_too_small_bounds_on_read() {
     // Save with no bounds so a row exists, then corrupt it directly to bypass
     // the save-path guard and simulate a pre-existing bad row.
     let app_state = AppState {
-        windows: vec![test_terminal_window_snapshot(false)],
+        windows: vec![project_window(test_terminal_window_snapshot(false))],
         active_window_index: Some(0),
         block_lists: Default::default(),
         running_mcp_servers: Default::default(),
@@ -942,7 +1022,11 @@ fn test_sqlite_drops_too_small_bounds_on_read() {
 
     assert_eq!(restored.windows.len(), 1);
     assert!(
-        restored.windows[0].bounds.is_none(),
+        restored.windows[0]
+            .active_project()
+            .expect("project window should contain a project")
+            .bounds
+            .is_none(),
         "tiny persisted bounds must be discarded on read so users recover from a corrupt DB"
     );
 }

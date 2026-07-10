@@ -72,7 +72,7 @@ use crate::modal::{Modal, ModalEvent};
 use crate::notebooks::manager::NotebookSource;
 use crate::pane_group::{NewTerminalOptions, PanesLayout};
 use crate::persistence::ModelEvent;
-use crate::project_window::ProjectWindow;
+use crate::project_window::{ProjectId, ProjectWindow};
 use crate::server::cloud_objects::update_manager::UpdateManager;
 use crate::server::ids::SyncId;
 use crate::server::server_api::auth::UserAuthenticationError;
@@ -267,6 +267,11 @@ pub fn init(app: &mut AppContext) {
     app.add_global_action("root_view:open_from_restored", open_from_restored);
     app.add_global_action("root_view:open_new", open_new);
     app.add_global_action("root_view:open_new_project", open_new_project);
+    app.add_global_action(
+        "root_view:activate_previous_project",
+        activate_previous_project,
+    );
+    app.add_global_action("root_view:activate_next_project", activate_next_project);
     app.add_global_action("root_view:open_new_with_shell", open_new_with_shell);
     app.add_global_action("root_view:open_new_from_path", |arg, ctx| {
         let _ = open_new_from_path(arg, ctx);
@@ -327,6 +332,19 @@ pub fn init(app: &mut AppContext) {
         RootView::activate_tab_by_pane_group_id,
     );
     app.add_action("root_view:close_window", RootView::close_window);
+    app.add_action("root_view:activate_project", RootView::activate_project);
+    app.add_action(
+        "root_view:request_close_project",
+        RootView::request_close_project,
+    );
+    app.add_action(
+        "root_view:commit_close_project",
+        RootView::commit_close_project,
+    );
+    app.add_action(
+        "root_view:finalize_prepared_project_close",
+        RootView::finalize_prepared_project_close,
+    );
     app.add_action("root_view:minimize_window", RootView::minimize_window);
     app.add_action(
         "root_view:toggle_maximize_window",
@@ -685,8 +703,20 @@ fn open_from_restored(arg: &OpenFromRestoredArg, ctx: &mut AppContext) {
             let mut active_index = None;
             let mut normal_window_count = 0;
             for (idx, window) in app_state.windows.iter().enumerate() {
+                let Some(active_project) = window.active_project() else {
+                    continue;
+                };
+                let workspace_sources = window
+                    .projects
+                    .iter()
+                    .cloned()
+                    .map(|window_snapshot| NewWorkspaceSource::Restored {
+                        window_snapshot,
+                        block_lists: app_state.block_lists.clone(),
+                    })
+                    .collect::<Vec<_>>();
                 // If this window is a quake window, hide it by default.
-                if window.quake_mode {
+                if active_project.quake_mode {
                     // If this is Windows, skip restoring the quake window. Creating a hidden window
                     // is not supported on Windows. We can't have the quake window visible on
                     // startup or else it will get mistaken for a normal window.
@@ -706,7 +736,7 @@ fn open_from_restored(arg: &OpenFromRestoredArg, ctx: &mut AppContext) {
                             window_style: WindowStyle::Pin,
                             window_bounds: WindowBounds::ExactPosition(frame_args.window_bounds),
                             title: Some("Clinch".to_owned()),
-                            fullscreen_state: window.fullscreen_state,
+                            fullscreen_state: active_project.fullscreen_state,
                             background_blur_radius_pixels,
                             background_blur_texture,
                             // Don't use the quake window for positioning new windows.
@@ -716,12 +746,10 @@ fn open_from_restored(arg: &OpenFromRestoredArg, ctx: &mut AppContext) {
                             window_instance: Some(ChannelState::app_id().to_string() + "-hotkey"),
                         },
                         |ctx| {
-                            let mut view = RootView::new(
+                            let mut view = RootView::new_with_project_sources(
                                 global_resource_handles.clone(),
-                                NewWorkspaceSource::Restored {
-                                    window_snapshot: window.clone(),
-                                    block_lists: app_state.block_lists.clone(),
-                                },
+                                workspace_sources,
+                                window.active_project_index,
                                 ctx,
                             );
                             view.focus(ctx);
@@ -747,21 +775,19 @@ fn open_from_restored(arg: &OpenFromRestoredArg, ctx: &mut AppContext) {
                     } else {
                         ctx.add_window(
                             AddWindowOptions {
-                                window_bounds: WindowBounds::new(window.bounds),
+                                window_bounds: WindowBounds::new(active_project.bounds),
                                 title: Some("Clinch".to_owned()),
-                                fullscreen_state: window.fullscreen_state,
+                                fullscreen_state: active_project.fullscreen_state,
                                 background_blur_radius_pixels,
                                 background_blur_texture,
                                 on_gpu_driver_selected: on_gpu_driver_selected_callback(),
                                 ..Default::default()
                             },
                             |ctx| {
-                                let mut view = RootView::new(
+                                let mut view = RootView::new_with_project_sources(
                                     global_resource_handles.clone(),
-                                    NewWorkspaceSource::Restored {
-                                        window_snapshot: window.clone(),
-                                        block_lists: app_state.block_lists.clone(),
-                                    },
+                                    workspace_sources,
+                                    window.active_project_index,
                                     ctx,
                                 );
                                 view.focus(ctx);
@@ -797,23 +823,33 @@ fn open_from_restored(arg: &OpenFromRestoredArg, ctx: &mut AppContext) {
                     .windows
                     .get(idx)
                     .expect("Window should exist at idx");
+                let active_project = window
+                    .active_project()
+                    .expect("restored project window should not be empty");
+                let workspace_sources = window
+                    .projects
+                    .iter()
+                    .cloned()
+                    .map(|window_snapshot| NewWorkspaceSource::Restored {
+                        window_snapshot,
+                        block_lists: app_state.block_lists.clone(),
+                    })
+                    .collect::<Vec<_>>();
                 ctx.add_window(
                     AddWindowOptions {
-                        window_bounds: WindowBounds::new(window.bounds),
+                        window_bounds: WindowBounds::new(active_project.bounds),
                         title: Some("Clinch".to_owned()),
-                        fullscreen_state: window.fullscreen_state,
+                        fullscreen_state: active_project.fullscreen_state,
                         background_blur_radius_pixels,
                         background_blur_texture,
                         on_gpu_driver_selected: on_gpu_driver_selected_callback(),
                         ..Default::default()
                     },
                     |ctx| {
-                        let mut view = RootView::new(
+                        let mut view = RootView::new_with_project_sources(
                             global_resource_handles,
-                            NewWorkspaceSource::Restored {
-                                window_snapshot: window.clone(),
-                                block_lists: app_state.block_lists.clone(),
-                            },
+                            workspace_sources,
+                            window.active_project_index,
                             ctx,
                         );
                         view.focus(ctx);
@@ -1122,13 +1158,7 @@ fn open_new_project(_: &(), ctx: &mut AppContext) {
             let project_window = root_view
                 .as_ref(ctx)
                 .project_window()
-                .filter(|project_window| {
-                    !project_window
-                        .as_ref(ctx)
-                        .active_workspace()
-                        .as_ref(ctx)
-                        .is_tab_drag_preview()
-                });
+                .filter(|project_window| project_window.as_ref(ctx).supports_project_tabs(ctx));
             if let Some(project_window) = project_window {
                 project_window.update(ctx, |project_window, ctx| {
                     project_window.add_project(ctx);
@@ -1140,6 +1170,34 @@ fn open_new_project(_: &(), ctx: &mut AppContext) {
     }
 
     open_new(&(), ctx);
+}
+
+fn update_active_project_window(
+    ctx: &mut AppContext,
+    update: impl FnOnce(&mut ProjectWindow, &mut ViewContext<ProjectWindow>),
+) {
+    let Some(window_id) = ctx.windows().active_window() else {
+        return;
+    };
+    let Some(root_view) = ctx.root_view::<RootView>(window_id) else {
+        return;
+    };
+    let Some(project_window) = root_view.as_ref(ctx).project_window() else {
+        return;
+    };
+    project_window.update(ctx, update);
+}
+
+fn activate_previous_project(_: &(), ctx: &mut AppContext) {
+    update_active_project_window(ctx, |project_window, ctx| {
+        project_window.activate_previous_project(ctx);
+    });
+}
+
+fn activate_next_project(_: &(), ctx: &mut AppContext) {
+    update_active_project_window(ctx, |project_window, ctx| {
+        project_window.activate_next_project(ctx);
+    });
 }
 
 /// Opens a new window with a specific shell
@@ -1569,7 +1627,8 @@ impl NewWorkspaceSource {
 struct WorkspaceArgs {
     global_resource_handles: GlobalResourceHandles,
     server_time: Option<Arc<ServerTime>>,
-    workspace_setting: NewWorkspaceSource,
+    workspace_settings: Vec<NewWorkspaceSource>,
+    active_project_index: usize,
 }
 
 // Some onboarding states can either contain a ref to an existing terminal view
@@ -1657,6 +1716,15 @@ impl RootView {
         workspace_setting: NewWorkspaceSource,
         ctx: &mut ViewContext<Self>,
     ) -> Self {
+        Self::new_with_project_sources(global_resource_handles, vec![workspace_setting], 0, ctx)
+    }
+
+    fn new_with_project_sources(
+        global_resource_handles: GlobalResourceHandles,
+        workspace_settings: Vec<NewWorkspaceSource>,
+        active_project_index: usize,
+        ctx: &mut ViewContext<Self>,
+    ) -> Self {
         let server_api_provider = ServerApiProvider::as_ref(ctx);
         let server_api = server_api_provider.get();
         let auth_state = AuthStateProvider::as_ref(ctx).get().clone();
@@ -1684,7 +1752,8 @@ impl RootView {
         let workspace_args = WorkspaceArgs {
             global_resource_handles,
             server_time: None,
-            workspace_setting,
+            workspace_settings,
+            active_project_index,
         };
 
         let auth_onboarding_state = if !ChannelState::has_backend() {
@@ -2585,6 +2654,58 @@ impl RootView {
         true
     }
 
+    fn activate_project(&mut self, project_id: &ProjectId, ctx: &mut ViewContext<Self>) -> bool {
+        let Some(project_window) = self.project_window() else {
+            return false;
+        };
+        project_window.update(ctx, |project_window, ctx| {
+            project_window.activate_project(*project_id, ctx);
+        });
+        true
+    }
+
+    fn request_close_project(
+        &mut self,
+        project_id: &ProjectId,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        let Some(project_window) = self.project_window() else {
+            return false;
+        };
+        project_window.update(ctx, |project_window, ctx| {
+            project_window.request_close_project(*project_id, ctx);
+        });
+        true
+    }
+
+    fn commit_close_project(
+        &mut self,
+        project_id: &ProjectId,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        let Some(project_window) = self.project_window() else {
+            return false;
+        };
+        project_window.update(ctx, |project_window, ctx| {
+            project_window.commit_close_project(*project_id, ctx);
+        });
+        true
+    }
+
+    fn finalize_prepared_project_close(
+        &mut self,
+        project_id: &ProjectId,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        let Some(project_window) = self.project_window() else {
+            return false;
+        };
+        project_window.update(ctx, |project_window, ctx| {
+            project_window.finalize_prepared_project_close(*project_id, ctx);
+        });
+        true
+    }
+
     fn focus_pane(
         &mut self,
         pane_view_locator: &PaneViewLocator,
@@ -2603,9 +2724,18 @@ impl RootView {
 
         ctx.windows().show_window_and_focus_app(window_id);
 
-        // Focus the appropriate tab/pane.
-        if let Some(workspace) = self.active_workspace(ctx) {
+        // Resolve the pane by identity across every project before focusing it.
+        // Notification clicks and command-palette navigation can target an
+        // inactive project in this physical window.
+        let workspace = self.project_window().and_then(|project_window| {
+            project_window.update(ctx, |project_window, ctx| {
+                project_window
+                    .activate_project_containing_pane_group(pane_view_locator.pane_group_id, ctx)
+            })
+        });
+        if let Some(workspace) = workspace.or_else(|| self.active_workspace(ctx)) {
             workspace.update(ctx, |view, ctx| {
+                view.allow_notification_reads_after_project_activation();
                 view.focus_pane(*pane_view_locator, ctx);
             });
         }
@@ -2618,8 +2748,14 @@ impl RootView {
         ctx: &mut ViewContext<Self>,
     ) -> bool {
         ctx.windows().show_window_and_focus_app(ctx.window_id());
-        if let Some(workspace) = self.active_workspace(ctx) {
+        let workspace = self.project_window().and_then(|project_window| {
+            project_window.update(ctx, |project_window, ctx| {
+                project_window.activate_project_containing_pane_group(*pane_group_id, ctx)
+            })
+        });
+        if let Some(workspace) = workspace.or_else(|| self.active_workspace(ctx)) {
             workspace.update(ctx, |view, ctx| {
+                view.allow_notification_reads_after_project_activation();
                 view.activate_tab_by_pane_group_id(*pane_group_id, ctx);
             });
         }
@@ -3602,10 +3738,11 @@ impl TypedActionView for RootView {
 impl WorkspaceArgs {
     fn create_project_window(self, ctx: &mut ViewContext<RootView>) -> ViewHandle<ProjectWindow> {
         ctx.add_typed_action_view(|ctx| {
-            ProjectWindow::singleton(
+            ProjectWindow::new(
                 self.global_resource_handles,
                 self.server_time,
-                self.workspace_setting,
+                self.workspace_settings,
+                self.active_project_index,
                 ctx,
             )
         })
@@ -3788,7 +3925,8 @@ impl AuthOnboardingState {
                 let workspace_args = WorkspaceArgs {
                     global_resource_handles,
                     server_time: None,
-                    workspace_setting,
+                    workspace_settings: vec![workspace_setting],
+                    active_project_index: 0,
                 };
 
                 // Auth no longer holds the original workspace view handle

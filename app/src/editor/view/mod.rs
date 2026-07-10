@@ -129,7 +129,7 @@ use crate::view_components::DismissibleToast;
 #[cfg(feature = "voice_input")]
 use crate::view_components::FeaturePopup;
 use crate::vim_registers::{RegisterContent, VimRegisters};
-use crate::workspace::{ToastStack, Workspace};
+use crate::workspace::{ToastStack, WorkspaceRegistry};
 use crate::BlocklistAIHistoryModel;
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
@@ -4316,11 +4316,9 @@ impl EditorView {
             .windows()
             .active_window()
             .and_then(|active_window| {
-                ctx
-                    // Need to get the workspace info since we don't have access to the terminal view
-                    // from the ClearBuffer action.
-                    .views_of_type::<Workspace>(active_window)
-                    .and_then(|views| views.first().cloned())
+                // Need to get the workspace info since we don't have access to the terminal view
+                // from the ClearBuffer action.
+                WorkspaceRegistry::as_ref(ctx).get(active_window, ctx)
             })
             .and_then(|workspace| {
                 workspace

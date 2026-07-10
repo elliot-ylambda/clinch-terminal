@@ -19,7 +19,7 @@ use crate::notebooks::{CloudNotebook, CloudNotebookModel, NotebookId};
 use crate::server::ids::SyncId;
 use crate::workflows::workflow::Workflow;
 use crate::workflows::{CloudWorkflow, CloudWorkflowModel, WorkflowId};
-use crate::workspace::ToastStack;
+use crate::workspace::{ToastStack, WorkspaceRegistry};
 use crate::workspaces::user_workspaces::UserWorkspaces;
 
 struct ExportTest {
@@ -102,6 +102,9 @@ fn initialize_app(app: &mut App) {
     app.add_singleton_model(ExportManager::new);
     app.add_singleton_model(UserWorkspaces::default_mock);
     app.add_singleton_model(|_| ToastStack);
+    // active_terminal_in_window resolves the workspace through the registry; an empty
+    // one reproduces the "window has no workspace" case these tests ran under before.
+    app.add_singleton_model(|_| WorkspaceRegistry::new());
 }
 
 /// Add a mocked workflow.

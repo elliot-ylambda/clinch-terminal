@@ -19,9 +19,8 @@ use warpui::{
 
 use crate::appearance::Appearance;
 use crate::settings_view::keybindings::{KeybindingChangedEvent, KeybindingChangedNotifier};
-use crate::terminal::view::TerminalAction;
 use crate::util::bindings::keybinding_name_to_keystroke;
-use crate::workspace::{Workspace, WorkspaceAction};
+use crate::workspace::WorkspaceAction;
 
 const AGENT_TOAST_WIDTH: f32 = 260.;
 const AGENT_TOAST_PADDING: f32 = 12.;
@@ -209,34 +208,13 @@ impl TypedActionView for AgentToastStack {
                 self.start_dismissal_timeout(*uuid, ctx);
             }
             AgentToastAction::ClickToastBody(uuid) => {
-                if let Some((window_id, tab_id, terminal_view_id)) = self
+                if let Some(window_id) = self
                     .toasts
                     .iter()
                     .find(|toast| toast.uuid == *uuid)
-                    .map(|toast| {
-                        (
-                            toast.toast.window_id,
-                            toast.toast.tab_index,
-                            toast.toast.terminal_view_id,
-                        )
-                    })
+                    .map(|toast| toast.toast.window_id)
                 {
                     ctx.windows().show_window_and_focus_app(window_id);
-
-                    if let Some(workspaces) = ctx.views_of_type::<Workspace>(window_id) {
-                        if let Some(handle) = workspaces.first() {
-                            ctx.dispatch_typed_action_for_view(
-                                window_id,
-                                handle.id(),
-                                &WorkspaceAction::ActivateTab(tab_id),
-                            );
-                        }
-                    }
-                    ctx.dispatch_typed_action_for_view(
-                        window_id,
-                        terminal_view_id,
-                        &TerminalAction::Focus,
-                    );
                 }
                 self.dismiss_toast_by_uuid(uuid, ctx);
             }

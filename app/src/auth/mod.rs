@@ -47,7 +47,7 @@ use crate::settings::{
 use crate::terminal::general_settings::GeneralSettings;
 use crate::terminal::shared_session::manager::Manager as SharedSessionManager;
 use crate::workflows::manager::WorkflowManager;
-use crate::workspace::{Workspace, WorkspaceAction};
+use crate::workspace::{WorkspaceAction, WorkspaceRegistry};
 use crate::workspaces::update_manager::TeamUpdateManager;
 use crate::{
     focus_running_window_and_show_native_modal, persistence, report_if_error,
@@ -122,18 +122,16 @@ pub fn maybe_log_out(app: &mut AppContext) {
                     return;
                 };
 
-                if let Some(workspaces) = ctx.views_of_type::<Workspace>(window_id) {
-                    if let Some(handle) = workspaces.first() {
-                        ctx.dispatch_typed_action_for_view(
-                            window_id,
-                            handle.id(),
-                            &WorkspaceAction::OpenPalette {
-                                mode: PaletteMode::Navigation,
-                                source: PaletteSource::LogOutModal,
-                                query: Some("running".to_owned()),
-                            },
-                        );
-                    }
+                if let Some(handle) = WorkspaceRegistry::as_ref(ctx).get(window_id, ctx) {
+                    ctx.dispatch_typed_action_for_view(
+                        window_id,
+                        handle.id(),
+                        &WorkspaceAction::OpenPalette {
+                            mode: PaletteMode::Navigation,
+                            source: PaletteSource::LogOutModal,
+                            query: Some("running".to_owned()),
+                        },
+                    );
                 }
             }))
         }

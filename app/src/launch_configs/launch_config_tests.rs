@@ -3,14 +3,15 @@ use std::path::PathBuf;
 use super::{LaunchConfig, PaneMode, PaneTemplateType};
 use crate::app_state::{
     AppState, BranchSnapshot, LeafContents, LeafSnapshot, NotebookPaneSnapshot, PaneFlex,
-    PaneNodeSnapshot, SplitDirection, TabSnapshot, TerminalPaneSnapshot, WindowSnapshot,
+    PaneNodeSnapshot, ProjectWindowSnapshot, SplitDirection, TabSnapshot, TerminalPaneSnapshot,
+    WindowSnapshot,
 };
 use crate::drive::OpenWarpDriveObjectSettings;
 use crate::tab::SelectedTabColor;
 
 fn single_tab_snapshot(root: PaneNodeSnapshot) -> AppState {
     AppState {
-        windows: vec![WindowSnapshot {
+        windows: vec![ProjectWindowSnapshot::singleton(WindowSnapshot {
             tabs: vec![TabSnapshot {
                 custom_title: None,
                 default_directory_color: None,
@@ -35,7 +36,7 @@ fn single_tab_snapshot(root: PaneNodeSnapshot) -> AppState {
             right_panel_width: None,
             agent_management_filters: None,
             tab_groups: vec![],
-        }],
+        })],
         active_window_index: Some(0),
         block_lists: Default::default(),
         running_mcp_servers: Default::default(),
@@ -44,7 +45,7 @@ fn single_tab_snapshot(root: PaneNodeSnapshot) -> AppState {
 
 fn multi_tab_snapshot(active_tab_index: usize, tabs: Vec<TabSnapshot>) -> AppState {
     AppState {
-        windows: vec![WindowSnapshot {
+        windows: vec![ProjectWindowSnapshot::singleton(WindowSnapshot {
             tabs,
             active_tab_index,
             bounds: None,
@@ -60,7 +61,7 @@ fn multi_tab_snapshot(active_tab_index: usize, tabs: Vec<TabSnapshot>) -> AppSta
             right_panel_width: None,
             agent_management_filters: None,
             tab_groups: vec![],
-        }],
+        })],
         active_window_index: Some(0),
         block_lists: Default::default(),
         running_mcp_servers: Default::default(),
