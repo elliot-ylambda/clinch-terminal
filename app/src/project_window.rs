@@ -1232,16 +1232,28 @@ impl TypedActionView for ProjectWindow {
                 }
             }
             ProjectWindowAction::Activate(id) => {
-                let previous_active_id = self.projects[self.active_project_index].id;
+                // .get(): the action can arrive while `projects` is empty (e.g. queued
+                // against a drained window awaiting its deferred close).
+                let previous_active_id = self
+                    .projects
+                    .get(self.active_project_index)
+                    .map(|project| project.id);
                 self.activate_project(*id, ctx);
-                if previous_active_id != self.projects[self.active_project_index].id {
+                let new_active_id = self
+                    .projects
+                    .get(self.active_project_index)
+                    .map(|project| project.id);
+                if previous_active_id.is_some() && previous_active_id != new_active_id {
                     self.skip_next_notification_read_interaction(ctx);
                 }
             }
             ProjectWindowAction::RequestClose(id) => {
-                let previous_active_id = self.projects[self.active_project_index].id;
+                let previous_active_id = self
+                    .projects
+                    .get(self.active_project_index)
+                    .map(|project| project.id);
                 self.request_close_project(*id, ctx);
-                if previous_active_id != *id
+                if previous_active_id != Some(*id)
                     && self
                         .projects
                         .get(self.active_project_index)
