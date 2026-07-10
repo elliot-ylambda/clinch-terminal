@@ -11973,6 +11973,76 @@ impl Workspace {
         );
     }
 
+    fn close_target_for_dialog_source(dialog_source: OpenDialogSource) -> CloseTarget {
+        match dialog_source {
+            OpenDialogSource::ClosePane { .. } => CloseTarget::Pane,
+            OpenDialogSource::CloseTab { .. }
+            | OpenDialogSource::CloseOtherTabs { .. }
+            | OpenDialogSource::CloseTabsDirection { .. } => CloseTarget::Tab,
+            OpenDialogSource::CloseProject { .. } => CloseTarget::Window,
+        }
+    }
+
+    /// Shows the unsaved-state warning for a tab or project close when needed.
+    /// Returns true iff the close must pause for a displayed dialog.
+    fn show_unsaved_state_close_confirmation<F>(
+        &mut self,
+        tabs: Vec<WeakViewHandle<PaneGroup>>,
+        dialog_source: OpenDialogSource,
+        on_confirm: F,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool
+    where
+        F: FnOnce(&mut AppContext) + 'static,
+    {
+        let summary = UnsavedStateSummary::for_tabs(tabs, ctx);
+        if !summary.should_display_warning(ctx) {
+            return false;
+        }
+
+        let navigate_self = ctx.handle();
+        let dialog = summary
+            .dialog()
+            .on_confirm(on_confirm)
+            .on_cancel(|_ctx| { /* No action needed besides dismissing the dialog. */ })
+            .on_show_processes(move |ctx| {
+                if let Some(workspace) = navigate_self.upgrade(ctx) {
+                    workspace.update(ctx, |workspace, ctx| {
+                        // TODO(ben): Ideally, this would filter to the relevant tabs.
+                        workspace.open_palette_action(
+                            PaletteMode::Navigation,
+                            PaletteSource::QuitModal,
+                            Some("running"),
+                            ctx,
+                        );
+                    })
+                }
+            })
+            .build();
+
+        send_telemetry_from_ctx!(
+            TelemetryEvent::QuitModalShown {
+                running_processes: summary.total_long_running_commands as u32,
+                shared_sessions: summary.shared_sessions as u32,
+                modal_for: Self::close_target_for_dialog_source(dialog_source),
+            },
+            ctx
+        );
+
+        if cfg!(all(not(target_family = "wasm"), target_os = "macos")) {
+            AppContext::show_native_platform_modal(ctx, dialog);
+            true
+        } else if cfg!(all(
+            not(target_family = "wasm"),
+            any(target_os = "linux", windows)
+        )) {
+            self.show_native_modal(dialog, ctx);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Applies the same shared-session and unsaved-work protections used by
     /// inner-tab closing, but commits the operation at the project container.
     pub(crate) fn request_project_close(
@@ -11981,6 +12051,10 @@ impl Workspace {
         ctx: &mut ViewContext<Self>,
     ) -> bool {
         let window_id = ctx.window_id();
+        let dialog_source = OpenDialogSource::CloseProject {
+            project_id,
+            window_id,
+        };
         let should_confirm_shared_session = FeatureFlag::CreatingSharedSessions.is_enabled()
             && ContextFlag::CreateSharedSession.is_enabled()
             && *SessionSettings::as_ref(ctx).should_confirm_close_session;
@@ -11989,13 +12063,7 @@ impl Workspace {
                 .tab_views()
                 .any(|view| view.as_ref(ctx).is_terminal_pane_being_shared(ctx))
         {
-            self.show_close_session_confirmation_dialog(
-                OpenDialogSource::CloseProject {
-                    project_id,
-                    window_id,
-                },
-                ctx,
-            );
+            self.show_close_session_confirmation_dialog(dialog_source, ctx);
             return false;
         }
 
@@ -12003,49 +12071,15 @@ impl Workspace {
             .tab_views()
             .map(|pane_group| pane_group.downgrade())
             .collect_vec();
-        let summary = UnsavedStateSummary::for_tabs(tabs, ctx);
-        if summary.should_display_warning(ctx) {
-            let confirm_project = project_id;
-            let navigate_self = ctx.handle();
-            let dialog = summary
-                .dialog()
-                .on_confirm(move |ctx| {
-                    Self::dispatch_project_close_commit(confirm_project, window_id, ctx);
-                })
-                .on_cancel(|_ctx| {})
-                .on_show_processes(move |ctx| {
-                    if let Some(workspace) = navigate_self.upgrade(ctx) {
-                        workspace.update(ctx, |workspace, ctx| {
-                            workspace.open_palette_action(
-                                PaletteMode::Navigation,
-                                PaletteSource::QuitModal,
-                                Some("running"),
-                                ctx,
-                            );
-                        });
-                    }
-                })
-                .build();
-
-            send_telemetry_from_ctx!(
-                TelemetryEvent::QuitModalShown {
-                    running_processes: summary.total_long_running_commands as u32,
-                    shared_sessions: summary.shared_sessions as u32,
-                    modal_for: CloseTarget::Window,
-                },
-                ctx
-            );
-
-            if cfg!(all(not(target_family = "wasm"), target_os = "macos")) {
-                AppContext::show_native_platform_modal(ctx, dialog);
-                return false;
-            } else if cfg!(all(
-                not(target_family = "wasm"),
-                any(target_os = "linux", windows)
-            )) {
-                self.show_native_modal(dialog, ctx);
-                return false;
-            }
+        if self.show_unsaved_state_close_confirmation(
+            tabs,
+            dialog_source,
+            move |ctx| {
+                Self::dispatch_project_close_commit(project_id, window_id, ctx);
+            },
+            ctx,
+        ) {
+            return false;
         }
 
         true
@@ -12100,65 +12134,30 @@ impl Workspace {
                 .filter_map(|i| self.get_pane_group_view(*i))
                 .map(|tab| tab.downgrade())
                 .collect_vec();
-            let summary = UnsavedStateSummary::for_tabs(tabs, ctx);
-
-            if summary.should_display_warning(ctx) {
-                // The quit-warning dialog uses app-scoped callbacks (ironically, because that's
-                // what Self::show_native_modal expects). That means we need a handle to the
-                // current workspace here.
-                let confirm_self = ctx.handle();
-                let navigate_self = ctx.handle();
-                let confirm_tabs = tab_indices_vec.clone();
-                let dialog = summary
-                    .dialog()
-                    .on_confirm(move |ctx| {
-                        if let Some(workspace) = confirm_self.upgrade(ctx) {
-                            workspace.update(ctx, |workspace, ctx| {
-                                workspace.close_tabs(
-                                    confirm_tabs.into_iter(),
-                                    dialog_source,
-                                    true,
-                                    add_to_undo_stack,
-                                    ctx,
-                                );
-                            });
-                        }
-                    })
-                    .on_cancel(|_ctx| { /* No action needed besides dismissing the dialog. */ })
-                    .on_show_processes(move |ctx| {
-                        if let Some(workspace) = navigate_self.upgrade(ctx) {
-                            workspace.update(ctx, |workspace, ctx| {
-                                // TODO(ben): Ideally, this would filter to the relevant tabs.
-                                workspace.open_palette_action(
-                                    PaletteMode::Navigation,
-                                    PaletteSource::QuitModal,
-                                    Some("running"),
-                                    ctx,
-                                );
-                            })
-                        }
-                    })
-                    .build();
-
-                send_telemetry_from_ctx!(
-                    TelemetryEvent::QuitModalShown {
-                        running_processes: summary.total_long_running_commands as u32,
-                        shared_sessions: summary.shared_sessions as u32,
-                        modal_for: CloseTarget::Tab,
-                    },
-                    ctx
-                );
-
-                if cfg!(all(not(target_family = "wasm"), target_os = "macos")) {
-                    AppContext::show_native_platform_modal(ctx, dialog);
-                    return false;
-                } else if cfg!(all(
-                    not(target_family = "wasm"),
-                    any(target_os = "linux", windows)
-                )) {
-                    self.show_native_modal(dialog, ctx);
-                    return false;
-                }
+            // The quit-warning dialog uses app-scoped callbacks (ironically, because that's
+            // what Self::show_native_modal expects). That means we need a handle to the
+            // current workspace here.
+            let confirm_self = ctx.handle();
+            let confirm_tabs = tab_indices_vec.clone();
+            if self.show_unsaved_state_close_confirmation(
+                tabs,
+                dialog_source,
+                move |ctx| {
+                    if let Some(workspace) = confirm_self.upgrade(ctx) {
+                        workspace.update(ctx, |workspace, ctx| {
+                            workspace.close_tabs(
+                                confirm_tabs.into_iter(),
+                                dialog_source,
+                                true,
+                                add_to_undo_stack,
+                                ctx,
+                            );
+                        });
+                    }
+                },
+                ctx,
+            ) {
+                return false;
             }
         }
 

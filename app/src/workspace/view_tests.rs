@@ -1429,6 +1429,45 @@ fn test_close_tab_confirmation_dialog() {
 }
 
 #[test]
+fn test_close_tabs_with_long_running_process_waits_for_unsaved_state_confirmation() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+
+        let workspace = mock_workspace(&mut app);
+        let long_running_terminal = workspace.update(&mut app, |workspace, ctx| {
+            workspace.add_terminal_tab(false, ctx);
+            workspace
+                .get_pane_group_view(1)
+                .expect("second tab should exist")
+                .as_ref(ctx)
+                .focused_session_view(ctx)
+                .expect("second tab should contain a terminal")
+        });
+        long_running_terminal
+            .read(&app, |terminal, _| terminal.model.clone())
+            .lock()
+            .simulate_long_running_block("sleep 10", "running");
+
+        workspace.update(&mut app, |workspace, ctx| {
+            assert!(matches!(
+                Workspace::close_target_for_dialog_source(OpenDialogSource::CloseTab {
+                    tab_index: 1,
+                }),
+                CloseTarget::Tab
+            ));
+            assert!(!workspace.close_tabs(
+                std::iter::once(1),
+                OpenDialogSource::CloseTab { tab_index: 1 },
+                false,
+                true,
+                ctx,
+            ));
+            assert_eq!(workspace.tab_count(), 2);
+        });
+    });
+}
+
+#[test]
 fn test_close_active_tab_activates_tab_above() {
     // Tabs are locked to the vertical layout, so closing the active tab
     // activates the tab above it (the previous index).
