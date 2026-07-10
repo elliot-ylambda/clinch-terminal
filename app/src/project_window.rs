@@ -45,7 +45,7 @@ pub(crate) fn init(app: &mut AppContext) {
         )
         .with_group(bindings::BindingGroup::Navigation.as_str())
         .with_context_predicate(id!(ProjectWindow::ui_name()))
-        .with_mac_key_binding("cmd-{"),
+        .with_mac_key_binding("ctrl-cmd-["),
         EditableBinding::new(
             "project_window:activate_next_project",
             "Activate next project",
@@ -53,7 +53,7 @@ pub(crate) fn init(app: &mut AppContext) {
         )
         .with_group(bindings::BindingGroup::Navigation.as_str())
         .with_context_predicate(id!(ProjectWindow::ui_name()))
-        .with_mac_key_binding("cmd-}"),
+        .with_mac_key_binding("ctrl-cmd-]"),
         EditableBinding::new(
             "project_window:cancel_project_drag",
             "Cancel project drag",
