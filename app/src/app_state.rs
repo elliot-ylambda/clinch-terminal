@@ -413,9 +413,10 @@ pub fn get_app_state(app: &AppContext) -> AppState {
             continue;
         }
 
-        let projects = project_window
+        let kept_projects = project_window
             .projects()
-            .filter_map(|(_, workspace)| {
+            .enumerate()
+            .filter_map(|(original_index, (_, workspace))| {
                 let workspace = workspace.as_ref(app);
                 if workspace.is_tab_drag_preview() {
                     return None;
@@ -425,19 +426,38 @@ pub fn get_app_state(app: &AppContext) -> AppState {
                     quake_mode_id.is_some_and(|id| id == window_id),
                     app,
                 );
-                (!snapshot.tabs.is_empty()).then_some(snapshot)
+                (!snapshot.tabs.is_empty()).then_some((original_index, snapshot))
             })
             .collect::<Vec<_>>();
-        if projects.is_empty() {
+        if kept_projects.is_empty() {
             continue;
         }
+
+        // The saved index must address the FILTERED list: drag previews and empty
+        // snapshots were dropped above, so the in-memory active index may not survive
+        // as-is. If the active project itself was dropped, fall back to its nearest
+        // surviving predecessor.
+        let active_project_index = project_window.active_project_index();
+        let saved_active_index = kept_projects
+            .iter()
+            .position(|(original_index, _)| *original_index == active_project_index)
+            .unwrap_or_else(|| {
+                kept_projects
+                    .iter()
+                    .take_while(|(original_index, _)| *original_index < active_project_index)
+                    .count()
+                    .saturating_sub(1)
+            });
 
         if active_window_id == Some(window_id) {
             active_window_index = Some(windows.len());
         }
         windows.push(ProjectWindowSnapshot {
-            projects,
-            active_project_index: project_window.active_project_index(),
+            projects: kept_projects
+                .into_iter()
+                .map(|(_, snapshot)| snapshot)
+                .collect(),
+            active_project_index: saved_active_index,
         });
     }
 
