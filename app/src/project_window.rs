@@ -153,6 +153,24 @@ fn active_index_after_removal(
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CloseProjectDecision {
+    NotFound,
+    CloseWindow,
+    Project(usize),
+}
+
+fn close_project_decision(
+    project_count: usize,
+    project_index: Option<usize>,
+) -> CloseProjectDecision {
+    match project_index {
+        None => CloseProjectDecision::NotFound,
+        Some(_) if project_count == 1 => CloseProjectDecision::CloseWindow,
+        Some(index) => CloseProjectDecision::Project(index),
+    }
+}
+
 /// Owns all of the project workspaces hosted by one physical Clinch window.
 ///
 /// Only the active workspace is rendered, but inactive workspace handles stay
@@ -450,13 +468,9 @@ impl ProjectWindow {
     }
 
     pub(crate) fn request_close_project(&mut self, id: ProjectId, ctx: &mut ViewContext<Self>) {
-        let Some(index) = self.projects.iter().position(|project| project.id == id) else {
+        let Some(index) = self.project_index_for_close(id, ctx) else {
             return;
         };
-        if self.projects.len() == 1 {
-            ctx.close_window();
-            return;
-        }
 
         // Prompts are owned by Workspace, so make the project visible before
         // asking it to show shared-session or unsaved-work confirmation.
@@ -472,13 +486,9 @@ impl ProjectWindow {
     }
 
     pub(crate) fn commit_close_project(&mut self, id: ProjectId, ctx: &mut ViewContext<Self>) {
-        let Some(index) = self.projects.iter().position(|project| project.id == id) else {
+        let Some(index) = self.project_index_for_close(id, ctx) else {
             return;
         };
-        if self.projects.len() == 1 {
-            ctx.close_window();
-            return;
-        }
 
         let workspace = self.projects[index].workspace.clone();
         workspace.update(ctx, |workspace, ctx| {
@@ -492,19 +502,29 @@ impl ProjectWindow {
         id: ProjectId,
         ctx: &mut ViewContext<Self>,
     ) {
-        let Some(index) = self.projects.iter().position(|project| project.id == id) else {
+        let Some(index) = self.project_index_for_close(id, ctx) else {
             return;
         };
-        if self.projects.len() == 1 {
-            ctx.close_window();
-            return;
-        }
         self.projects.remove(index);
 
         self.active_project_index =
             active_index_after_removal(self.active_project_index, index, self.projects.len())
                 .expect("closing one of multiple projects leaves a project");
         self.activate_project_index(self.active_project_index, ctx);
+    }
+
+    fn project_index_for_close(&self, id: ProjectId, ctx: &mut ViewContext<Self>) -> Option<usize> {
+        match close_project_decision(
+            self.projects.len(),
+            self.projects.iter().position(|project| project.id == id),
+        ) {
+            CloseProjectDecision::NotFound => None,
+            CloseProjectDecision::CloseWindow => {
+                ctx.close_window();
+                None
+            }
+            CloseProjectDecision::Project(index) => Some(index),
+        }
     }
 
     fn reorder_project_from_drag(
@@ -788,19 +808,9 @@ impl ProjectWindow {
         ctx.reparent_view(self.window_id, project.workspace.id(), project_window_id);
         let insertion_index = insertion_index.min(self.projects.len());
         self.projects.insert(insertion_index, project);
-        self.active_project_index = insertion_index;
-        self.project_tab_scroll_state
-            .scroll_to_position(ScrollTarget {
-                position_id: project_tab_position_id(self.projects[insertion_index].id),
-                mode: ScrollToPositionMode::FullyIntoView,
-            });
-        self.register_active_workspace(ctx);
-        let workspace = self.active_workspace();
-        workspace.update(ctx, |workspace, ctx| {
-            workspace.handle_project_activated(ctx);
-        });
-        ctx.focus(&workspace);
-        self.notify_project_header(ctx);
+        if self.set_active_project_index(insertion_index, ctx) {
+            self.notify_project_header(ctx);
+        }
     }
 
     fn replace_placeholder_with_transferred_project(
@@ -958,8 +968,15 @@ impl ProjectWindow {
     }
 
     fn activate_project_index(&mut self, index: usize, ctx: &mut ViewContext<Self>) {
+        if self.set_active_project_index(index, ctx) {
+            ctx.dispatch_global_action("workspace:save_app", ());
+            ctx.notify();
+        }
+    }
+
+    fn set_active_project_index(&mut self, index: usize, ctx: &mut ViewContext<Self>) -> bool {
         if index >= self.projects.len() {
-            return;
+            return false;
         }
         self.active_project_index = index;
         self.project_tab_scroll_state
@@ -973,8 +990,7 @@ impl ProjectWindow {
             workspace.handle_project_activated(ctx);
         });
         ctx.focus(&workspace);
-        ctx.dispatch_global_action("workspace:save_app", ());
-        ctx.notify();
+        true
     }
 
     pub(crate) fn supports_project_tabs(&self, app: &AppContext) -> bool {
