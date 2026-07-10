@@ -19,7 +19,7 @@ use crate::terminal::cli_agent_sessions::{
 };
 use crate::terminal::{CLIAgent, TerminalView};
 use crate::workspace::util::is_terminal_view_in_same_tab;
-use crate::workspace::{Workspace, WorkspaceRegistry};
+use crate::workspace::WorkspaceRegistry;
 use crate::BlocklistAIHistoryModel;
 
 /// Singleton model responsible for triggering in-app notifications on blocking conversation
@@ -589,9 +589,7 @@ fn find_terminal_view_by_id(
 
 pub(crate) fn active_focused_terminal_id(app: &AppContext) -> Option<EntityId> {
     let active_window = app.windows().active_window()?;
-    let workspace = app
-        .views_of_type::<Workspace>(active_window)
-        .and_then(|views| views.first().cloned())?;
+    let workspace = WorkspaceRegistry::as_ref(app).get(active_window, app)?;
 
     let workspace = workspace.as_ref(app);
     workspace.active_terminal_id(app)

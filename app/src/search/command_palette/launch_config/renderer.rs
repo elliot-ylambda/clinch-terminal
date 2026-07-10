@@ -112,7 +112,12 @@ impl LaunchConfig {
 
     fn render_config_description(&self, appearance: &Appearance) -> Box<dyn Element> {
         let num_windows = self.windows.len();
-        let num_tabs: usize = self.windows.iter().map(|window| window.tabs.len()).sum();
+        let num_tabs: usize = self
+            .windows
+            .iter()
+            .flat_map(|window| window.projects())
+            .map(|project| project.tabs.len())
+            .sum();
         let mut windows_str = num_windows.to_string();
         match num_windows {
             1 => windows_str.push_str(" window "),

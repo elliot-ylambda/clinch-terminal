@@ -615,10 +615,8 @@ impl WindowActivationFallbackBehavior {
                 {
                     return Some(primary_window_id);
                 }
-                if let Some(view_handle) = ctx
-                    .views_of_type::<Workspace>(primary_window_id)
-                    .filter(|views| !views.is_empty())
-                    .map(|mut views| views.swap_remove(0))
+                if let Some(view_handle) =
+                    WorkspaceRegistry::as_ref(ctx).get(primary_window_id, ctx)
                 {
                     view_handle.update(ctx, |_, ctx| {
                         ctx.send_desktop_notification(
@@ -949,19 +947,13 @@ impl Action {
                     return;
                 };
 
-                let Some(mut workspaces) = ctx.views_of_type::<Workspace>(window_id) else {
+                let Some(workspace) = WorkspaceRegistry::as_ref(ctx).get(window_id, ctx) else {
                     log::warn!("no workspace found in window {window_id} for open repo action");
                     return;
                 };
-
-                if let Some(workspace) = workspaces.pop() {
-                    workspace.update(ctx, |workspace, ctx| {
-                        workspace
-                            .handle_action(&WorkspaceAction::OpenRepository { path: None }, ctx);
-                    });
-                } else {
-                    log::warn!("no workspace views in window {window_id} for open repo action");
-                }
+                workspace.update(ctx, |workspace, ctx| {
+                    workspace.handle_action(&WorkspaceAction::OpenRepository { path: None }, ctx);
+                });
             }
             Action::CloudAgentSetup => {
                 let window_id =
@@ -972,22 +964,16 @@ impl Action {
                     return;
                 };
 
-                let Some(mut workspaces) = ctx.views_of_type::<Workspace>(window_id) else {
+                let Some(workspace) = WorkspaceRegistry::as_ref(ctx).get(window_id, ctx) else {
                     log::warn!(
                         "no workspace found in window {window_id} for cloud agent setup action"
                     );
                     return;
                 };
 
-                if let Some(workspace) = workspaces.pop() {
-                    workspace.update(ctx, |workspace, ctx| {
-                        workspace.handle_action(&WorkspaceAction::OpenCloudAgentSetupGuide, ctx);
-                    });
-                } else {
-                    log::warn!(
-                        "no workspace views in window {window_id} for cloud agent setup action"
-                    );
-                }
+                workspace.update(ctx, |workspace, ctx| {
+                    workspace.handle_action(&WorkspaceAction::OpenCloudAgentSetupGuide, ctx);
+                });
             }
             Action::NewCloudAgentConversation => {
                 let Some(window_id) = primary_window_id else {
@@ -995,22 +981,16 @@ impl Action {
                     return;
                 };
 
-                let Some(mut workspaces) = ctx.views_of_type::<Workspace>(window_id) else {
+                let Some(workspace) = WorkspaceRegistry::as_ref(ctx).get(window_id, ctx) else {
                     log::warn!(
                         "no workspace found in window {window_id} for new cloud agent conversation action"
                     );
                     return;
                 };
 
-                if let Some(workspace) = workspaces.pop() {
-                    workspace.update(ctx, |workspace, ctx| {
-                        workspace.handle_action(&WorkspaceAction::AddAmbientAgentTab, ctx);
-                    });
-                } else {
-                    log::warn!(
-                        "no workspace views in window {window_id} for new cloud agent conversation action"
-                    );
-                }
+                workspace.update(ctx, |workspace, ctx| {
+                    workspace.handle_action(&WorkspaceAction::AddAmbientAgentTab, ctx);
+                });
             }
             Action::NewAgentConversation => {
                 let window_id =
@@ -1086,7 +1066,17 @@ impl Action {
                         find_workspace_for_terminal_view(terminal_view_id, ctx)
                     {
                         ctx.windows().show_window_and_focus_app(window_id);
+                        if let Some(project_window) = ctx
+                            .root_view::<crate::root_view::RootView>(window_id)
+                            .and_then(|root_view| root_view.as_ref(ctx).project_window())
+                        {
+                            project_window.update(ctx, |project_window, ctx| {
+                                project_window
+                                    .activate_project_containing_workspace(workspace.id(), ctx);
+                            });
+                        }
                         workspace.update(ctx, |workspace, ctx| {
+                            workspace.allow_notification_reads_after_project_activation();
                             workspace.handle_action(
                                 &WorkspaceAction::FocusTerminalViewInWorkspace { terminal_view_id },
                                 ctx,
@@ -1293,13 +1283,11 @@ fn open_file(window_id: Option<WindowId>, path: PathBuf, ctx: &mut AppContext) {
 
             ctx.windows().show_window_and_focus_app(window_id);
 
-            if let Some(workspaces) = ctx.views_of_type::<Workspace>(window_id) {
-                if let Some(workspace) = workspaces.into_iter().next() {
-                    workspace.update(ctx, |workspace, ctx| {
-                        let source = CodeSource::Finder { path: path.clone() };
-                        workspace.open_file_with_target(path, target, None, source, ctx);
-                    });
-                }
+            if let Some(workspace) = WorkspaceRegistry::as_ref(ctx).get(window_id, ctx) {
+                workspace.update(ctx, |workspace, ctx| {
+                    let source = CodeSource::Finder { path: path.clone() };
+                    workspace.open_file_with_target(path, target, None, source, ctx);
+                });
             }
         }
     } else {
@@ -1387,17 +1375,15 @@ fn open_file_editor(
 
         ctx.windows().show_window_and_focus_app(window_id);
 
-        if let Some(workspaces) = ctx.views_of_type::<Workspace>(window_id) {
-            if let Some(workspace) = workspaces.into_iter().next() {
-                workspace.update(ctx, |workspace, ctx| {
-                    let source = CodeSource::Link {
-                        path: path.clone(),
-                        range_start: line_col,
-                        range_end: None,
-                    };
-                    workspace.open_file_with_target(path, target, line_col, source, ctx);
-                });
-            }
+        if let Some(workspace) = WorkspaceRegistry::as_ref(ctx).get(window_id, ctx) {
+            workspace.update(ctx, |workspace, ctx| {
+                let source = CodeSource::Link {
+                    path: path.clone(),
+                    range_start: line_col,
+                    range_end: None,
+                };
+                workspace.open_file_with_target(path, target, line_col, source, ctx);
+            });
         }
     }
 }
@@ -1459,8 +1445,7 @@ fn find_workspace_for_terminal_view(
 }
 
 fn active_terminal_view_id_in_window(window_id: WindowId, ctx: &AppContext) -> Option<EntityId> {
-    let workspaces = ctx.views_of_type::<Workspace>(window_id)?;
-    let workspace = workspaces.first()?;
+    let workspace = WorkspaceRegistry::as_ref(ctx).get(window_id, ctx)?;
     workspace.read(ctx, |workspace, w_ctx| {
         let pane_group = workspace.active_tab_pane_group().as_ref(w_ctx);
         pane_group

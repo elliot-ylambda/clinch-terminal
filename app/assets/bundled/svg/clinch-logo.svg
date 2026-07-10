@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <clipPath id="squircle">
+      <rect x="0" y="0" width="1024" height="1024" rx="228" ry="228"/>
+    </clipPath>
+    <radialGradient id="bg" cx="45%" cy="36%" r="82%">
+      <stop offset="0%" stop-color="#131a3a"/>
+      <stop offset="55%" stop-color="#0b0f24"/>
+      <stop offset="100%" stop-color="#050712"/>
+    </radialGradient>
+    <linearGradient id="prompt" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#9bffd6"/>
+      <stop offset="60%" stop-color="#34d399"/>
+      <stop offset="100%" stop-color="#059669"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="white" stop-opacity="0.06"/>
+      <stop offset="100%" stop-color="white" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="30" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="softGlow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="80"/>
+    </filter>
+  </defs>
+
+  <g clip-path="url(#squircle)">
+    <rect x="0" y="0" width="1024" height="1024" fill="url(#bg)"/>
+    <circle cx="460" cy="480" r="300" fill="#34d399" opacity="0.30" filter="url(#softGlow)"/>
+    <circle cx="640" cy="620" r="220" fill="#10b981" opacity="0.24" filter="url(#softGlow)"/>
+
+    <!-- oversized prompt chevron -->
+    <g filter="url(#glow)">
+      <path d="M 300 276 L 604 512 L 300 748" fill="none" stroke="url(#prompt)"
+            stroke-width="104" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+    <!-- cursor block, bright mint accent for color+depth contrast -->
+    <g filter="url(#glow)">
+      <rect x="616" y="660" width="176" height="88" rx="20" fill="#5eead4"/>
+    </g>
+
+    <rect x="0" y="0" width="1024" height="440" fill="url(#sheen)"/>
+  </g>
+</svg>

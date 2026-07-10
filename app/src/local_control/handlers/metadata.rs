@@ -22,7 +22,7 @@ use crate::local_control::LocalControlBridge;
 use crate::pane_group::{PaneGroup, PaneId};
 use crate::settings::{AISettings, CodeSettings};
 use crate::tab::uses_vertical_tabs;
-use crate::workspace::Workspace;
+use crate::workspace::{Workspace, WorkspaceRegistry};
 
 #[derive(Serialize)]
 struct InstanceResponse<'a> {
@@ -928,20 +928,8 @@ fn workspace_for_window(
     action: ActionKind,
     ctx: &mut ModelContext<LocalControlBridge>,
 ) -> Result<Option<ViewHandle<Workspace>>, ControlError> {
-    match ctx.views_of_type::<Workspace>(window_id) {
-        None => Ok(None),
-        Some(workspaces) => match workspaces.as_slice() {
-            [] => Ok(None),
-            [workspace] => Ok(Some(workspace.clone())),
-            _ => Err(ControlError::new(
-                ErrorCode::AmbiguousTarget,
-                format!(
-                    "{} resolved multiple workspaces in one window",
-                    action.as_str()
-                ),
-            )),
-        },
-    }
+    let _ = action;
+    Ok(WorkspaceRegistry::as_ref(ctx).get(window_id, ctx))
 }
 
 fn explicit_matches<T>(

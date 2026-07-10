@@ -156,6 +156,7 @@ impl ConversationNavigationData {
         let active_window_id = app.windows().active_window();
         let registry = WorkspaceRegistry::as_ref(app);
         for (window_id, workspace_handle) in registry.all_workspaces(app) {
+            let is_active_workspace = registry.is_active(window_id, workspace_handle.id());
             let workspace = workspace_handle.as_ref(app);
             let active_tab_pane_group_id = workspace.active_tab_pane_group().id();
 
@@ -237,6 +238,7 @@ impl ConversationNavigationData {
                                     // Check if the conversation is in the active pane, tab, and window
                                     // to determine if its pane is currently focused.
                                     Some(window_id) == active_window_id
+                                        && is_active_workspace
                                         && pane_group_handle.id() == active_tab_pane_group_id
                                         && pane_group.focused_pane_id(app) == pane_id,
                                     is_closed,

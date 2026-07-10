@@ -1031,7 +1031,7 @@ short_description = "The open-source, cloud-backed terminal for individuals and 
 
 [package.metadata.bundle.bin.stable]
 category = "public.app-category.developer-tools"
-copyright = "© 2025, Denver Technologies, Inc"
+copyright = "© 2026 Clinch contributors. Based on Warp © Denver Technologies, Inc. Not affiliated with Warp. AGPL-3.0."
 identifier = "sh.clinch.Clinch"
 name = "Clinch"
 # Clinch fork: no osx_frameworks — the stable build drops cocoa_sentry (no

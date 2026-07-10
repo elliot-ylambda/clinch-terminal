@@ -103,7 +103,7 @@ pub fn dock_menu() -> Menu {
                 ctx.dispatch_global_action("workspace:save_app", &());
             },
             no_updates,
-            Some(Keystroke::parse("cmd-n").expect("Valid keystroke")),
+            Some(Keystroke::parse("cmd-shift-N").expect("Valid keystroke")),
         ))],
     )
 }
@@ -229,7 +229,7 @@ fn make_new_app_menu(ctx: &AppContext) -> Menu {
     menu_items.push(MenuItem::Standard(StandardAction::ShowAllApps));
     menu_items.push(MenuItem::Separator);
     menu_items.push(MenuItem::Custom(CustomMenuItem::new(
-        "Set Warp as Default Terminal",
+        "Set Clinch as Default Terminal",
         move |ctx| {
             DefaultTerminal::handle(ctx).update(ctx, |default_terminal, ctx| {
                 default_terminal.make_warp_default(ctx)
@@ -270,7 +270,7 @@ fn make_new_app_menu(ctx: &AppContext) -> Menu {
         menu_items.push(MenuItem::Separator);
     }
     menu_items.push(MenuItem::Standard(StandardAction::Quit));
-    Menu::new("Warp", menu_items)
+    Menu::new("Clinch", menu_items)
 }
 
 fn make_new_file_menu(ctx: &AppContext) -> Menu {
@@ -326,7 +326,7 @@ fn make_new_edit_menu(ctx: &AppContext) -> Menu {
     ];
     let group_5 = vec![
         MenuItem::Custom(CustomMenuItem::new(
-            "Use Warp's Prompt",
+            "Use Clinch's Prompt",
             move |ctx| ctx.dispatch_global_action("app:toggle_user_ps1", &()),
             move |_props, ctx| MenuItemPropertyChanges {
                 checked: Some(
@@ -810,6 +810,19 @@ fn make_new_window_menu() -> Menu {
             MenuItem::Standard(StandardAction::Zoom),
             MenuItem::Standard(StandardAction::ToggleFullScreen),
             MenuItem::Separator,
+            MenuItem::Custom(CustomMenuItem::new(
+                "Previous Project",
+                |ctx| ctx.dispatch_global_action("root_view:activate_previous_project", &()),
+                no_updates,
+                Some(Keystroke::parse("ctrl-cmd-[").expect("Valid keystroke")),
+            )),
+            MenuItem::Custom(CustomMenuItem::new(
+                "Next Project",
+                |ctx| ctx.dispatch_global_action("root_view:activate_next_project", &()),
+                no_updates,
+                Some(Keystroke::parse("ctrl-cmd-]").expect("Valid keystroke")),
+            )),
+            MenuItem::Separator,
             MenuItem::Standard(StandardAction::BringAllToFront),
         ],
     )
@@ -991,9 +1004,12 @@ fn make_new_help_menu() -> Menu {
         "Help",
         vec![
             feedback_menu_item(),
-            link_menu_item("Warp Documentation...", links::USER_DOCS_URL.into()),
+            link_menu_item("Clinch on GitHub...", links::COMMUNITY_URL.into()),
             link_menu_item("GitHub Issues...", links::GITHUB_ISSUES_URL.into()),
-            link_menu_item("Warp Slack Community...", links::SLACK_URL.into()),
+            link_menu_item(
+                "Warp Documentation (upstream)...",
+                links::USER_DOCS_URL.into(),
+            ),
         ],
     )
 }
@@ -1042,10 +1058,16 @@ fn make_new_elements_menu_items(ctx: &AppContext) -> Vec<MenuItem> {
     // shows its dedicated keystroke instead.
     let mut new_elements_menu = vec![
         MenuItem::Custom(CustomMenuItem::new(
+            "New Project",
+            open_new_project,
+            no_updates,
+            Some(Keystroke::parse("cmd-n").expect("Valid keystroke")),
+        )),
+        MenuItem::Custom(CustomMenuItem::new(
             "New Window",
             open_new_window,
             no_updates,
-            Some(Keystroke::parse("cmd-n").expect("Valid keystroke")),
+            Some(Keystroke::parse("cmd-shift-N").expect("Valid keystroke")),
         )),
         MenuItem::Custom(CustomMenuItem::new(
             "New Terminal Tab",
@@ -1169,6 +1191,11 @@ fn open_new_agent_tab_or_window(ctx: &mut AppContext) {
 /// Dispatch event to open a new Warp window
 fn open_new_window(ctx: &mut AppContext) {
     ctx.dispatch_global_action("root_view:open_new", &());
+    ctx.dispatch_global_action("workspace:save_app", &());
+}
+
+fn open_new_project(ctx: &mut AppContext) {
+    ctx.dispatch_global_action("root_view:open_new_project", &());
     ctx.dispatch_global_action("workspace:save_app", &());
 }
 

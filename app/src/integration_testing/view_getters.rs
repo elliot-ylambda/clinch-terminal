@@ -217,8 +217,8 @@ pub fn ai_assistant_panel_view(app: &App, window_id: WindowId) -> ViewHandle<AIA
 
 /// Panics if there isn't a single workspace view in the view hierarchy.
 pub fn workspace_view(app: &App, window_id: WindowId) -> ViewHandle<Workspace> {
-    root_view(app, window_id).read(app, |root_view, _ctx| {
-        root_view.workspace_view().cloned().unwrap_or_else(|| {
+    root_view(app, window_id).read(app, |root_view, ctx| {
+        root_view.workspace_view(ctx).unwrap_or_else(|| {
             panic!("root_view should have a workspace view for window_id={window_id}")
         })
     })

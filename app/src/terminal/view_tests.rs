@@ -65,7 +65,7 @@ use crate::terminal::model::block::AgentViewVisibility;
 use crate::terminal::model::blocks::{insert_block, TotalIndex};
 use crate::terminal::model::grid::Dimensions as _;
 use crate::terminal::model::terminal_model::WithinBlock;
-use crate::terminal::session_settings::AgentToolbarChipSelection;
+use crate::terminal::session_settings::{AgentToolbarChipSelection, CLIAgentToolbarChipSelection};
 use crate::terminal::shared_session::shared_handlers::{
     apply_cli_agent_state_update, RemoteUpdateGuard,
 };
@@ -6463,6 +6463,15 @@ fn status_blocked_auto_closes_rich_input() {
         let _agent_view = FeatureFlag::AgentView.override_enabled(true);
         let _cli_rich = FeatureFlag::CLIAgentRichInput.override_enabled(true);
         // auto_toggle_rich_input defaults to true.
+        SessionSettings::handle(&app).update(&mut app, |settings, ctx| {
+            let _ = settings.cli_agent_footer_chip_selection.set_value(
+                CLIAgentToolbarChipSelection::Custom {
+                    left: vec![AgentToolbarItemKind::RichInput],
+                    right: vec![],
+                },
+                ctx,
+            );
+        });
 
         let terminal = add_window_with_terminal(&mut app, None);
 
@@ -6522,9 +6531,11 @@ fn status_blocked_auto_closes_rich_input() {
 
         // The StatusChanged event is delivered to the terminal view, which
         // auto-closes rich input because the agent is blocked.
-        terminal.read(&app, |view, ctx| {
-            assert!(!view.has_active_cli_agent_input_session(ctx));
-        });
+        assert_eventually!(
+            terminal.read(&app, |view, ctx| !view
+                .has_active_cli_agent_input_session(ctx)),
+            "Rich input should close after the agent becomes blocked"
+        );
 
         // should_auto_toggle_input is preserved so auto-open can fire later.
         terminal.read(&app, |_view, ctx| {
@@ -6540,6 +6551,15 @@ fn status_in_progress_auto_opens_rich_input_after_blocked() {
         initialize_app_for_terminal_view(&mut app);
         let _agent_view = FeatureFlag::AgentView.override_enabled(true);
         let _cli_rich = FeatureFlag::CLIAgentRichInput.override_enabled(true);
+        SessionSettings::handle(&app).update(&mut app, |settings, ctx| {
+            let _ = settings.cli_agent_footer_chip_selection.set_value(
+                CLIAgentToolbarChipSelection::Custom {
+                    left: vec![AgentToolbarItemKind::RichInput],
+                    right: vec![],
+                },
+                ctx,
+            );
+        });
 
         let terminal = add_window_with_terminal(&mut app, None);
 
@@ -6596,9 +6616,11 @@ fn status_in_progress_auto_opens_rich_input_after_blocked() {
         });
 
         // Rich input should be auto-closed from the blocked status.
-        terminal.read(&app, |view, ctx| {
-            assert!(!view.has_active_cli_agent_input_session(ctx));
-        });
+        assert_eventually!(
+            terminal.read(&app, |view, ctx| !view
+                .has_active_cli_agent_input_session(ctx)),
+            "Rich input should close after the agent becomes blocked"
+        );
 
         // Simulate permission replied → status transitions back to InProgress.
         terminal.update(&mut app, |view, ctx| {
@@ -6621,9 +6643,11 @@ fn status_in_progress_auto_opens_rich_input_after_blocked() {
         });
 
         // Rich input should auto-open because should_auto_toggle_input was preserved.
-        terminal.read(&app, |view, ctx| {
-            assert!(view.has_active_cli_agent_input_session(ctx));
-        });
+        assert_eventually!(
+            terminal.read(&app, |view, ctx| view
+                .has_active_cli_agent_input_session(ctx)),
+            "Rich input should reopen after the agent resumes"
+        );
     })
 }
 

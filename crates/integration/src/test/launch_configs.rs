@@ -159,7 +159,8 @@ pub fn test_open_launch_config_from_add_tab_menu_legacy() -> Builder {
 
 pub fn test_launch_config_single_child_branch() -> Builder {
     use warp::launch_configs::launch_config::{
-        LaunchConfig, PaneMode, PaneTemplateType, SplitDirection, TabTemplate, WindowTemplate,
+        LaunchConfig, PaneMode, PaneTemplateType, ProjectWindowTemplate, SplitDirection,
+        TabTemplate, WindowTemplate,
     };
     use warpui_core::actions::StandardAction;
 
@@ -168,7 +169,7 @@ pub fn test_launch_config_single_child_branch() -> Builder {
         LaunchConfig {
             name: "Mocked config".to_owned(),
             active_window_index: Some(0),
-            windows: vec![WindowTemplate {
+            windows: vec![ProjectWindowTemplate::singleton(WindowTemplate {
                 active_tab_index: Some(0),
                 tabs: vec![TabTemplate {
                     title: Some("First tab".to_owned()),
@@ -184,7 +185,7 @@ pub fn test_launch_config_single_child_branch() -> Builder {
                     },
                     color: None,
                 }],
-            }],
+            })],
         }
     }
 
@@ -289,14 +290,15 @@ pub fn test_open_launch_config_in_active_window() -> Builder {
 
 pub fn test_with_launch_config_with_active_tab_index() -> Builder {
     use warp::launch_configs::launch_config::{
-        LaunchConfig, PaneMode, PaneTemplateType, SplitDirection, TabTemplate, WindowTemplate,
+        LaunchConfig, PaneMode, PaneTemplateType, ProjectWindowTemplate, SplitDirection,
+        TabTemplate, WindowTemplate,
     };
 
     fn create_launch_config() -> LaunchConfig {
         LaunchConfig {
             name: "Mocked config".to_owned(),
             active_window_index: Some(0),
-            windows: vec![WindowTemplate {
+            windows: vec![ProjectWindowTemplate::singleton(WindowTemplate {
                 active_tab_index: Some(1),
                 tabs: vec![
                     TabTemplate {
@@ -315,7 +317,7 @@ pub fn test_with_launch_config_with_active_tab_index() -> Builder {
                     };
                     3
                 ],
-            }],
+            })],
         }
     }
 
@@ -348,14 +350,15 @@ pub fn test_with_launch_config_with_active_tab_index() -> Builder {
 
 pub fn test_with_launch_config_with_active_pane() -> Builder {
     use warp::launch_configs::launch_config::{
-        LaunchConfig, PaneMode, PaneTemplateType, SplitDirection, TabTemplate, WindowTemplate,
+        LaunchConfig, PaneMode, PaneTemplateType, ProjectWindowTemplate, SplitDirection,
+        TabTemplate, WindowTemplate,
     };
 
     fn create_launch_config() -> LaunchConfig {
         LaunchConfig {
             name: "Mocked config".to_owned(),
             active_window_index: Some(0),
-            windows: vec![WindowTemplate {
+            windows: vec![ProjectWindowTemplate::singleton(WindowTemplate {
                 active_tab_index: Some(0),
                 tabs: vec![TabTemplate {
                     title: None,
@@ -392,7 +395,7 @@ pub fn test_with_launch_config_with_active_pane() -> Builder {
                     },
                     color: None,
                 }],
-            }],
+            })],
         }
     }
 
@@ -426,14 +429,15 @@ pub fn test_with_launch_config_with_active_pane() -> Builder {
 
 pub fn test_with_launch_config_with_no_active_pane() -> Builder {
     use warp::launch_configs::launch_config::{
-        LaunchConfig, PaneMode, PaneTemplateType, SplitDirection, TabTemplate, WindowTemplate,
+        LaunchConfig, PaneMode, PaneTemplateType, ProjectWindowTemplate, SplitDirection,
+        TabTemplate, WindowTemplate,
     };
 
     fn create_launch_config() -> LaunchConfig {
         LaunchConfig {
             name: "Mocked config".to_owned(),
             active_window_index: Some(0),
-            windows: vec![WindowTemplate {
+            windows: vec![ProjectWindowTemplate::singleton(WindowTemplate {
                 active_tab_index: Some(0),
                 tabs: vec![TabTemplate {
                     title: None,
@@ -470,7 +474,7 @@ pub fn test_with_launch_config_with_no_active_pane() -> Builder {
                     },
                     color: None,
                 }],
-            }],
+            })],
         }
     }
 

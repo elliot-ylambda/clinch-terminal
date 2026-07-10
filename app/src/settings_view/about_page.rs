@@ -13,7 +13,6 @@ use super::settings_page::{
 use super::SettingsSection;
 use crate::appearance::Appearance;
 use crate::channel::ChannelState;
-use crate::themes::theme::ColorScheme;
 use crate::workspace::WorkspaceAction;
 
 pub struct AboutPageView {
@@ -51,7 +50,7 @@ impl SettingsWidget for AboutPageWidget {
     type View = AboutPageView;
 
     fn search_terms(&self) -> &str {
-        "about warp version"
+        "about clinch warp version license"
     }
 
     fn render(
@@ -60,14 +59,9 @@ impl SettingsWidget for AboutPageWidget {
         appearance: &Appearance,
         _app: &AppContext,
     ) -> Box<dyn Element> {
-        let theme = appearance.theme();
         let ui_builder = appearance.ui_builder();
 
-        let image_path = if theme.inferred_color_scheme() == ColorScheme::LightOnDark {
-            "bundled/svg/warp-logo-with-light-title.svg"
-        } else {
-            "bundled/svg/warp-logo-with-dark-title.svg"
-        };
+        let image_path = "bundled/svg/clinch-logo.svg";
 
         let version = ChannelState::app_version().unwrap_or("v#.##.###");
 
@@ -109,15 +103,30 @@ impl SettingsWidget for AboutPageWidget {
                         .finish(),
                     )
                     .with_max_height(100.)
-                    .with_max_width(350.)
+                    .with_max_width(100.)
                     .finish(),
+                )
+                .with_child(
+                    ui_builder
+                        .span("Clinch")
+                        .build()
+                        .with_margin_top(12.)
+                        .finish(),
                 )
                 .with_child(version_row.finish())
                 .with_child(
                     ui_builder
-                        .span("Copyright 2026 Warp")
+                        .span("© 2026 Clinch contributors — AGPL-3.0")
                         .build()
                         .with_margin_top(16.)
+                        .finish(),
+                )
+                .with_child(
+                    ui_builder
+                        .span("Based on Warp © Denver Technologies, Inc. Not affiliated with Warp.")
+                        .with_soft_wrap()
+                        .build()
+                        .with_margin_top(4.)
                         .finish(),
                 )
                 .finish(),

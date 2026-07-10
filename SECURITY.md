@@ -1,14 +1,20 @@
 # Security Policy
 
-We take security seriously at Warp and appreciate the efforts of security researchers who help keep our users safe.
+Clinch is an independent fork of [warpdotdev/warp](https://github.com/warpdotdev/warp).
+**Please do not report Clinch issues to Warp** — Warp does not maintain this project.
 
 ## Reporting a Vulnerability
 
-If you believe you've found a security vulnerability, please follow responsible disclosure practices and **do not** open a public GitHub issue or pull request, as this could expose the vulnerability before a fix is available.
+If you believe you've found a security vulnerability, please follow responsible
+disclosure practices and **do not** open a public GitHub issue or pull request.
 
-Instead, please report it through one of the following channels:
+Report it through one of these channels:
 
-- **Email:** [security@warp.dev](mailto:security@warp.dev)
-- **GitHub Security Advisory:** [Open a private advisory](https://github.com/warpdotdev/Warp/security/advisories/new)
+- **GitHub Security Advisory (preferred):** [Open a private advisory](https://github.com/elliot-ylambda/clinch-terminal/security/advisories/new)
+- **Email:** [contact@ylambda.com](mailto:contact@ylambda.com)
 
-We will acknowledge your report promptly and work with you to understand and resolve the issue as quickly as possible.
+This is a solo-maintained project; you'll get an acknowledgment as quickly as
+possible, usually within a few days.
+
+If the vulnerability also affects upstream Warp, please additionally report it
+to Warp per [their security policy](https://github.com/warpdotdev/warp/blob/main/SECURITY.md).

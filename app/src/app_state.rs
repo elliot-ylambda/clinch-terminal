@@ -5,7 +5,7 @@ use std::sync::Arc;
 use pathfinder_geometry::rect::RectF;
 use serde::{Deserialize, Serialize};
 use warpui::platform::FullscreenState;
-use warpui::{AppContext, SingletonEntity as _};
+use warpui::AppContext;
 
 use crate::ai::agent::conversation::AIConversationId;
 use crate::ai::agent_conversations_model::AgentManagementFilters;
@@ -13,7 +13,7 @@ use crate::ai::ambient_agents::AmbientAgentTaskId;
 use crate::ai::blocklist::{InputConfig, SerializedBlockListItem};
 use crate::code::editor_management::CodeSource;
 use crate::drive::OpenWarpDriveObjectSettings;
-use crate::root_view::quake_mode_window_id;
+use crate::root_view::{quake_mode_window_id, RootView};
 use crate::server::ids::SyncId;
 use crate::settings_view::environments_page::EnvironmentsPage;
 use crate::settings_view::SettingsSection;
@@ -22,14 +22,36 @@ use crate::terminal::ShellLaunchData;
 use crate::themes::theme::AnsiColorIdentifier;
 use crate::workspace::tab_group::TabGroupId;
 use crate::workspace::view::left_panel::ToolPanelView;
-use crate::workspace::WorkspaceRegistry;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AppState {
-    pub windows: Vec<WindowSnapshot>,
+    pub windows: Vec<ProjectWindowSnapshot>,
     pub active_window_index: Option<usize>,
     pub block_lists: Arc<HashMap<PaneUuid, Vec<SerializedBlockListItem>>>,
     pub running_mcp_servers: Vec<uuid::Uuid>,
+}
+
+/// Snapshot of one physical window and the ordered project workspaces it
+/// contains. `WindowSnapshot` remains the snapshot of one project workspace.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProjectWindowSnapshot {
+    pub projects: Vec<WindowSnapshot>,
+    pub active_project_index: usize,
+}
+
+impl ProjectWindowSnapshot {
+    pub fn singleton(project: WindowSnapshot) -> Self {
+        Self {
+            projects: vec![project],
+            active_project_index: 0,
+        }
+    }
+
+    pub fn active_project(&self) -> Option<&WindowSnapshot> {
+        self.projects
+            .get(self.active_project_index)
+            .or_else(|| self.projects.first())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -372,33 +394,71 @@ pub fn get_app_state(app: &AppContext) -> AppState {
 
     let mut windows = vec![];
 
-    for (index, window_id) in app.window_ids().enumerate() {
-        // Determine index of active window
-        if let Some(active_window_id) = active_window_id {
-            if active_window_id == window_id {
-                active_window_index = Some(index);
-            }
+    for window_id in app.window_ids() {
+        let Some(root_view) = app.root_view::<RootView>(window_id) else {
+            continue;
+        };
+        let Some(project_window) = root_view.as_ref(app).project_window() else {
+            continue;
+        };
+        let project_window = project_window.as_ref(app);
+        if project_window.is_empty() {
+            continue;
+        }
+        if project_window
+            .active_workspace()
+            .as_ref(app)
+            .is_tab_drag_preview()
+        {
+            continue;
         }
 
-        if let Some(workspace) = WorkspaceRegistry::as_ref(app).get(window_id, app) {
-            let ws = workspace.as_ref(app);
-            // Transient drag-preview windows are not real user-visible
-            // workspaces; skip them so they never end up in the persisted
-            // session. (Persistence is also short-circuited entirely while a
-            // cross-window drag is active; see `save_app` in
-            // `workspace/global_actions.rs`.)
-            if ws.is_tab_drag_preview() {
-                continue;
-            }
-            let snapshot = ws.snapshot(
-                window_id,
-                quake_mode_id.map(|id| id == window_id).unwrap_or(false),
-                app,
-            );
-            if !snapshot.tabs.is_empty() {
-                windows.push(snapshot);
-            }
+        let kept_projects = project_window
+            .projects()
+            .enumerate()
+            .filter_map(|(original_index, (_, workspace))| {
+                let workspace = workspace.as_ref(app);
+                if workspace.is_tab_drag_preview() {
+                    return None;
+                }
+                let snapshot = workspace.snapshot(
+                    window_id,
+                    quake_mode_id.is_some_and(|id| id == window_id),
+                    app,
+                );
+                (!snapshot.tabs.is_empty()).then_some((original_index, snapshot))
+            })
+            .collect::<Vec<_>>();
+        if kept_projects.is_empty() {
+            continue;
         }
+
+        // The saved index must address the FILTERED list: drag previews and empty
+        // snapshots were dropped above, so the in-memory active index may not survive
+        // as-is. If the active project itself was dropped, fall back to its nearest
+        // surviving predecessor.
+        let active_project_index = project_window.active_project_index();
+        let saved_active_index = kept_projects
+            .iter()
+            .position(|(original_index, _)| *original_index == active_project_index)
+            .unwrap_or_else(|| {
+                kept_projects
+                    .iter()
+                    .take_while(|(original_index, _)| *original_index < active_project_index)
+                    .count()
+                    .saturating_sub(1)
+            });
+
+        if active_window_id == Some(window_id) {
+            active_window_index = Some(windows.len());
+        }
+        windows.push(ProjectWindowSnapshot {
+            projects: kept_projects
+                .into_iter()
+                .map(|(_, snapshot)| snapshot)
+                .collect(),
+            active_project_index: saved_active_index,
+        });
     }
 
     AppState {

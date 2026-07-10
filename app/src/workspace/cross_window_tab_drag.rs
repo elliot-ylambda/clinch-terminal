@@ -1899,10 +1899,13 @@ fn cross_window_attach_target(
         }
     }
 
-    for (window_id, workspace) in WorkspaceRegistry::as_ref(ctx).all_workspaces(ctx) {
+    for window_id in ctx.window_ids() {
         if window_id == preview_window_id || window_id == source_window_id {
             continue;
         }
+        let Some(workspace) = WorkspaceRegistry::as_ref(ctx).get(window_id, ctx) else {
+            continue;
+        };
 
         let Some(window_bounds) = ctx.window_bounds(&window_id) else {
             continue;

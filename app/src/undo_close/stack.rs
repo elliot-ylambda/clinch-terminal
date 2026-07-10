@@ -10,10 +10,11 @@ use super::UndoCloseSettings;
 use crate::ai::active_agent_views_model::ActiveAgentViewsModel;
 use crate::ai::blocklist::BlocklistAIHistoryModel;
 use crate::pane_group::{PaneGroup, PaneId};
+use crate::root_view::RootView;
 use crate::send_telemetry_from_app_ctx;
 use crate::server::telemetry::{TelemetryEvent, UndoCloseItemType};
 use crate::tab::TabData;
-use crate::workspace::Workspace;
+use crate::workspace::{Workspace, WorkspaceRegistry};
 
 /// A unique identifier for an item in the undo close stack.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -76,7 +77,7 @@ impl ClosedItem {
                 ActiveAgentViewsModel::handle(ctx).update(ctx, |model, ctx| {
                     model.remove_focused_state_for_window(window_id, ctx);
                 });
-                if let Some(workspace) = window_workspace(window_id, ctx) {
+                for workspace in window_workspaces(window_id, ctx) {
                     workspace.update(ctx, |workspace, ctx| {
                         for pane_group in workspace.tab_views() {
                             // Mark conversations from all terminal panes in each tab
@@ -261,10 +262,17 @@ impl UndoCloseStack {
                 let window_id = data.window_id;
                 ctx.reopen_closed_window(*data);
 
-                if let Some(workspace) = window_workspace(window_id, ctx) {
-                    workspace.update(ctx, |workspace, ctx| {
-                        workspace.handle_reopen(ctx);
+                if let Some(project_window) = ctx
+                    .root_view::<RootView>(window_id)
+                    .and_then(|root_view| root_view.as_ref(ctx).project_window())
+                {
+                    project_window.update(ctx, |project_window, ctx| {
+                        project_window.handle_reopen(ctx);
                     });
+                } else {
+                    for workspace in window_workspaces(window_id, ctx) {
+                        workspace.update(ctx, |workspace, ctx| workspace.handle_reopen(ctx));
+                    }
                 }
 
                 // Make sure we update our session restoration state now that the
@@ -277,6 +285,9 @@ impl UndoCloseStack {
                 data,
             } => {
                 if let Some(workspace) = workspace.upgrade(ctx) {
+                    let window_id = workspace.window_id(ctx);
+                    let pane_group_id = data.pane_group.id();
+                    let pane_id = data.pane_group.as_ref(ctx).focused_pane_id(ctx);
                     send_telemetry_from_app_ctx!(
                         TelemetryEvent::UndoClose {
                             item_type: UndoCloseItemType::Tab,
@@ -286,8 +297,7 @@ impl UndoCloseStack {
                     workspace.update(ctx, |workspace, ctx| {
                         workspace.restore_closed_tab(tab_index, data, ctx);
                     });
-                    ctx.windows()
-                        .show_window_and_focus_app(workspace.window_id(ctx));
+                    focus_pane_in_project(window_id, pane_group_id, pane_id, ctx);
                 }
                 // Make sure we update our session restoration state now that the
                 // tab has been reopened.
@@ -314,15 +324,7 @@ impl UndoCloseStack {
                         ctx.windows().show_window_and_focus_app(window_id);
 
                         // Now properly focus the restored pane by activating its tab and focusing the pane
-                        if let Some(workspace) = window_workspace(window_id, ctx) {
-                            workspace.update(ctx, |workspace, ctx| {
-                                let locator = crate::workspace::PaneViewLocator {
-                                    pane_group_id,
-                                    pane_id,
-                                };
-                                workspace.focus_pane(locator, ctx);
-                            });
-                        }
+                        focus_pane_in_project(window_id, pane_group_id, pane_id, ctx);
 
                         ctx.dispatch_global_action("workspace:save_app", &());
                     }
@@ -387,10 +389,35 @@ impl UndoCloseStack {
     }
 }
 
-/// Find the root [`Workspace`] view for a window.
-fn window_workspace(window_id: WindowId, ctx: &mut AppContext) -> Option<ViewHandle<Workspace>> {
-    ctx.views_of_type::<Workspace>(window_id)
-        .and_then(|views| views.first().cloned())
+fn window_workspaces(window_id: WindowId, ctx: &AppContext) -> Vec<ViewHandle<Workspace>> {
+    let registered = WorkspaceRegistry::as_ref(ctx).get_all(window_id, ctx);
+    if registered.is_empty() {
+        ctx.views_of_type::<Workspace>(window_id)
+            .unwrap_or_default()
+    } else {
+        registered
+    }
+}
+
+fn focus_pane_in_project(
+    window_id: WindowId,
+    pane_group_id: EntityId,
+    pane_id: PaneId,
+    ctx: &mut AppContext,
+) {
+    ctx.windows().show_window_and_focus_app(window_id);
+    if let Some(root_view_id) = ctx.root_view_id(window_id) {
+        let locator = crate::workspace::PaneViewLocator {
+            pane_group_id,
+            pane_id,
+        };
+        ctx.dispatch_action_for_view(
+            window_id,
+            root_view_id,
+            "root_view:handle_pane_navigation_event",
+            &locator,
+        );
+    }
 }
 
 impl Entity for UndoCloseStack {

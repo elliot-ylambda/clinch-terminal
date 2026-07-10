@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use itertools::Itertools;
-use warpui::{AppContext, Entity};
+use warpui::{AppContext, Entity, SingletonEntity};
 
 use crate::ai::agent::conversation::{AIConversation, AIConversationId};
 use crate::ai::conversation_navigation::ConversationNavigationData;
@@ -16,7 +16,7 @@ use crate::search::command_palette::separator_search_item::SeparatorSearchItem;
 use crate::search::data_source::{DataSourceSearchError, Query, QueryResult};
 use crate::search::mixer::DataSourceRunErrorWrapper;
 use crate::search::SyncDataSource;
-use crate::workspace::Workspace;
+use crate::workspace::WorkspaceRegistry;
 
 /// Sections for grouping conversations in the command palette.
 #[derive(Debug, PartialEq, Eq, Hash)]
@@ -122,8 +122,8 @@ impl DataSource {
 /// Get the selected conversation in the focused pane.
 fn selected_conversation_in_focused_pane(app: &AppContext) -> Option<&AIConversation> {
     app.windows().active_window().and_then(|window_id| {
-        app.views_of_type::<Workspace>(window_id)
-            .and_then(|views| views.first().cloned())
+        WorkspaceRegistry::as_ref(app)
+            .get(window_id, app)
             .and_then(|workspace| {
                 workspace.read(app, |workspace, workspace_ctx| {
                     workspace.active_tab_pane_group().read(

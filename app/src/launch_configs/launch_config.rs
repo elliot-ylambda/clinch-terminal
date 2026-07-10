@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::app_state::{
-    AppState, LeafContents, PaneNodeSnapshot, SplitDirection as StateSplitDirection, TabSnapshot,
-    WindowSnapshot,
+    AppState, LeafContents, PaneNodeSnapshot, ProjectWindowSnapshot,
+    SplitDirection as StateSplitDirection, TabSnapshot, WindowSnapshot,
 };
 use crate::themes::theme::AnsiColorIdentifier;
 
@@ -17,19 +17,133 @@ pub struct LaunchConfig {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub active_window_index: Option<usize>,
-    pub windows: Vec<WindowTemplate>,
+    pub windows: Vec<ProjectWindowTemplate>,
 }
 
 impl LaunchConfig {
     pub fn from_snapshot(name: String, app_state: &AppState) -> Self {
+        let mut active_window_index = None;
+        let mut windows = Vec::new();
+        for (original_index, window) in app_state.windows.iter().enumerate() {
+            if let Some(window) = ProjectWindowTemplate::from_snapshot(window) {
+                if app_state.active_window_index == Some(original_index) {
+                    active_window_index = Some(windows.len());
+                }
+                windows.push(window);
+            }
+        }
+
         Self {
             name,
-            active_window_index: app_state.active_window_index,
-            windows: app_state
-                .windows
-                .iter()
-                .filter_map(|window| (!window.quake_mode).then_some(window.clone().into()))
-                .collect::<Vec<WindowTemplate>>(),
+            active_window_index,
+            windows,
+        }
+    }
+}
+
+/// A physical window in a launch configuration.
+///
+/// The legacy representation stored one [`WindowTemplate`] directly in each
+/// `windows` entry. The untagged `Legacy` variant keeps those files readable,
+/// while newly saved configurations use `Grouped` to preserve project order.
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum ProjectWindowTemplate {
+    Grouped {
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        active_project_index: Option<usize>,
+        projects: Vec<WindowTemplate>,
+    },
+    Legacy(WindowTemplate),
+}
+
+impl ProjectWindowTemplate {
+    pub fn grouped(projects: Vec<WindowTemplate>, active_project_index: Option<usize>) -> Self {
+        Self::Grouped {
+            active_project_index,
+            projects,
+        }
+    }
+
+    pub fn singleton(project: WindowTemplate) -> Self {
+        Self::Legacy(project)
+    }
+
+    fn from_snapshot(snapshot: &ProjectWindowSnapshot) -> Option<Self> {
+        let kept_projects = snapshot
+            .projects
+            .iter()
+            .enumerate()
+            .filter(|(_, project)| !project.quake_mode)
+            .map(|(original_index, project)| (original_index, project.clone().into()))
+            .collect::<Vec<_>>();
+        if kept_projects.is_empty() {
+            return None;
+        }
+
+        let active_project_index = kept_projects
+            .iter()
+            .position(|(original_index, _)| *original_index == snapshot.active_project_index)
+            .unwrap_or_else(|| {
+                kept_projects
+                    .iter()
+                    .take_while(|(original_index, _)| {
+                        *original_index < snapshot.active_project_index
+                    })
+                    .count()
+                    .saturating_sub(1)
+            });
+        Some(Self::Grouped {
+            active_project_index: Some(active_project_index),
+            projects: kept_projects
+                .into_iter()
+                .map(|(_, project)| project)
+                .collect(),
+        })
+    }
+
+    pub fn projects(&self) -> &[WindowTemplate] {
+        match self {
+            Self::Grouped { projects, .. } => projects,
+            Self::Legacy(project) => std::slice::from_ref(project),
+        }
+    }
+
+    pub fn into_projects(self) -> Vec<WindowTemplate> {
+        match self {
+            Self::Grouped { projects, .. } => projects,
+            Self::Legacy(project) => vec![project],
+        }
+    }
+
+    pub fn active_project_index(&self) -> usize {
+        match self {
+            Self::Grouped {
+                active_project_index,
+                projects,
+            } => active_project_index
+                .unwrap_or_default()
+                .min(projects.len().saturating_sub(1)),
+            Self::Legacy(_) => 0,
+        }
+    }
+
+    pub fn active_project(&self) -> Option<&WindowTemplate> {
+        self.projects().get(self.active_project_index())
+    }
+
+    pub fn active_project_mut(&mut self) -> Option<&mut WindowTemplate> {
+        match self {
+            Self::Grouped {
+                active_project_index,
+                projects,
+            } => {
+                let index = active_project_index
+                    .unwrap_or_default()
+                    .min(projects.len().saturating_sub(1));
+                projects.get_mut(index)
+            }
+            Self::Legacy(project) => Some(project),
         }
     }
 }
@@ -234,7 +348,7 @@ pub fn make_mock_single_window_launch_config() -> LaunchConfig {
     LaunchConfig {
         name: "Mocked Config".to_string(),
         active_window_index: Some(0),
-        windows: vec![WindowTemplate {
+        windows: vec![ProjectWindowTemplate::singleton(WindowTemplate {
             active_tab_index: Some(0),
             tabs: vec![
                 TabTemplate {
@@ -260,6 +374,6 @@ pub fn make_mock_single_window_launch_config() -> LaunchConfig {
                     color: None,
                 },
             ],
-        }],
+        })],
     }
 }

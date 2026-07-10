@@ -149,7 +149,7 @@ use crate::view_components::action_button::{
 use crate::view_components::find::{Event as FindViewEvent, Find, FindEvent, FindWithinBlockState};
 use crate::view_components::DismissibleToast;
 use crate::workspace::view::right_panel::{ReviewDestination, ReviewSubmissionResult};
-use crate::workspace::{ToastStack, Workspace, WorkspaceAction};
+use crate::workspace::{ToastStack, WorkspaceAction, WorkspaceRegistry};
 #[cfg(feature = "local_fs")]
 use crate::TelemetryEvent;
 
@@ -7617,10 +7617,7 @@ impl BackingView for CodeReviewView {
                 )
             )) {
                 // Find the workspace to show the Warp-native modal
-                if let Some(workspace) = ctx
-                    .views_of_type::<Workspace>(ctx.window_id())
-                    .and_then(|workspaces| workspaces.first().cloned())
-                {
+                if let Some(workspace) = WorkspaceRegistry::as_ref(ctx).get(ctx.window_id(), ctx) {
                     workspace.update(ctx, |view, ctx| {
                         view.show_native_modal(dialog, ctx);
                     });

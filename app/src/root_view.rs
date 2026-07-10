@@ -72,6 +72,7 @@ use crate::modal::{Modal, ModalEvent};
 use crate::notebooks::manager::NotebookSource;
 use crate::pane_group::{NewTerminalOptions, PanesLayout};
 use crate::persistence::ModelEvent;
+use crate::project_window::{ProjectId, ProjectWindow};
 use crate::server::cloud_objects::update_manager::UpdateManager;
 use crate::server::ids::SyncId;
 use crate::server::server_api::auth::UserAuthenticationError;
@@ -108,7 +109,7 @@ use crate::{
     GlobalResourceHandles, GlobalResourceHandlesProvider, UpdateQuakeModeEventArg,
 };
 
-const WINDOW_TITLE: &str = "Warp";
+const WINDOW_TITLE: &str = "Clinch";
 
 lazy_static! {
     static ref FALLBACK_WINDOW_SIZE: Vector2F = vec2f(800.0, 600.0);
@@ -265,6 +266,12 @@ pub fn init(app: &mut AppContext) {
 
     app.add_global_action("root_view:open_from_restored", open_from_restored);
     app.add_global_action("root_view:open_new", open_new);
+    app.add_global_action("root_view:open_new_project", open_new_project);
+    app.add_global_action(
+        "root_view:activate_previous_project",
+        activate_previous_project,
+    );
+    app.add_global_action("root_view:activate_next_project", activate_next_project);
     app.add_global_action("root_view:open_new_with_shell", open_new_with_shell);
     app.add_global_action("root_view:open_new_from_path", |arg, ctx| {
         let _ = open_new_from_path(arg, ctx);
@@ -325,6 +332,19 @@ pub fn init(app: &mut AppContext) {
         RootView::activate_tab_by_pane_group_id,
     );
     app.add_action("root_view:close_window", RootView::close_window);
+    app.add_action("root_view:activate_project", RootView::activate_project);
+    app.add_action(
+        "root_view:request_close_project",
+        RootView::request_close_project,
+    );
+    app.add_action(
+        "root_view:commit_close_project",
+        RootView::commit_close_project,
+    );
+    app.add_action(
+        "root_view:finalize_prepared_project_close",
+        RootView::finalize_prepared_project_close,
+    );
     app.add_action("root_view:minimize_window", RootView::minimize_window);
     app.add_action(
         "root_view:toggle_maximize_window",
@@ -510,21 +530,26 @@ fn active_workspace(ctx: &mut AppContext) -> Option<ViewHandle<Workspace>> {
 }
 
 fn open_launch_config(arg: &OpenLaunchConfigArg, ctx: &mut AppContext) {
+    let active_window_id = ctx.windows().active_window();
     let active_window_workspace = active_workspace(ctx);
+    let opened_in_active_window = arg.open_in_active_window
+        && arg.launch_config.windows.len() == 1
+        && active_window_id
+            .zip(active_window_workspace.as_ref())
+            .is_some_and(|(window_id, workspace)| {
+                open_launch_config_in_active_window(
+                    &arg.launch_config.windows[0],
+                    window_id,
+                    workspace,
+                    ctx,
+                )
+            });
+
     if arg.launch_config.windows.is_empty() {
         open_new(&(), ctx);
-    } else if arg.open_in_active_window
-        && arg.launch_config.windows.len() == 1
-        && active_window_workspace.is_some()
-    {
-        active_window_workspace
-            .expect("already checked if there is a workspace for the active window")
-            .update(ctx, |workspace, ctx| {
-                workspace.open_launch_config_window(arg.launch_config.windows[0].clone(), ctx)
-            });
-    } else {
+    } else if !opened_in_active_window {
         let mut active_index = None;
-        for (idx, window_template) in arg.launch_config.windows.iter().enumerate() {
+        for (idx, project_window_template) in arg.launch_config.windows.iter().enumerate() {
             if arg
                 .launch_config
                 .active_window_index
@@ -533,28 +558,17 @@ fn open_launch_config(arg: &OpenLaunchConfigArg, ctx: &mut AppContext) {
             {
                 active_index = Some(idx);
             } else {
-                open_new_with_workspace_source(
-                    NewWorkspaceSource::FromTemplate {
-                        window_template: window_template.clone(),
-                    },
-                    ctx,
-                );
+                open_new_with_project_window_template(project_window_template.clone(), ctx);
             }
         }
 
         if let Some(idx) = active_index {
-            let window_template = arg
+            let project_window_template = arg
                 .launch_config
                 .windows
                 .get(idx)
                 .expect("Window should exist at idx");
-
-            open_new_with_workspace_source(
-                NewWorkspaceSource::FromTemplate {
-                    window_template: window_template.clone(),
-                },
-                ctx,
-            );
+            open_new_with_project_window_template(project_window_template.clone(), ctx);
         }
     }
 
@@ -565,6 +579,72 @@ fn open_launch_config(arg: &OpenLaunchConfigArg, ctx: &mut AppContext) {
         },
         ctx
     );
+}
+
+fn open_launch_config_in_active_window(
+    project_window_template: &launch_config::ProjectWindowTemplate,
+    window_id: WindowId,
+    active_workspace: &ViewHandle<Workspace>,
+    ctx: &mut AppContext,
+) -> bool {
+    let Some(first_project) = project_window_template.projects().first().cloned() else {
+        return false;
+    };
+    let Some(root_view) = ctx.root_view::<RootView>(window_id) else {
+        return false;
+    };
+    let Some(project_window) = root_view.as_ref(ctx).project_window() else {
+        return false;
+    };
+    let active_workspace_id = active_workspace.id();
+    let Some(first_project_id) =
+        project_window
+            .as_ref(ctx)
+            .projects()
+            .find_map(|(project_id, workspace)| {
+                (workspace.id() == active_workspace_id).then_some(project_id)
+            })
+    else {
+        return false;
+    };
+
+    active_workspace.update(ctx, |workspace, ctx| {
+        workspace.open_launch_config_window(first_project, ctx);
+    });
+
+    let remaining_projects = project_window_template
+        .projects()
+        .iter()
+        .skip(1)
+        .cloned()
+        .collect::<Vec<_>>();
+    let active_project_index = project_window_template.active_project_index();
+    project_window.update(ctx, |project_window, ctx| {
+        let mut project_ids = vec![first_project_id];
+        project_ids.extend(remaining_projects.into_iter().map(|window_template| {
+            project_window
+                .add_project_from_source(NewWorkspaceSource::FromTemplate { window_template }, ctx)
+        }));
+        if let Some(project_id) = project_ids.get(active_project_index) {
+            project_window.activate_project(*project_id, ctx);
+        }
+    });
+    true
+}
+
+fn open_new_with_project_window_template(
+    project_window_template: launch_config::ProjectWindowTemplate,
+    ctx: &mut AppContext,
+) {
+    let active_project_index = project_window_template.active_project_index();
+    let workspace_sources = project_window_template
+        .into_projects()
+        .into_iter()
+        .map(|window_template| NewWorkspaceSource::FromTemplate { window_template })
+        .collect::<Vec<_>>();
+    if !workspace_sources.is_empty() {
+        open_new_with_workspace_sources(workspace_sources, active_project_index, ctx);
+    }
 }
 
 fn send_feedback(_: &(), ctx: &mut AppContext) {
@@ -683,8 +763,20 @@ fn open_from_restored(arg: &OpenFromRestoredArg, ctx: &mut AppContext) {
             let mut active_index = None;
             let mut normal_window_count = 0;
             for (idx, window) in app_state.windows.iter().enumerate() {
+                let Some(active_project) = window.active_project() else {
+                    continue;
+                };
+                let workspace_sources = window
+                    .projects
+                    .iter()
+                    .cloned()
+                    .map(|window_snapshot| NewWorkspaceSource::Restored {
+                        window_snapshot,
+                        block_lists: app_state.block_lists.clone(),
+                    })
+                    .collect::<Vec<_>>();
                 // If this window is a quake window, hide it by default.
-                if window.quake_mode {
+                if active_project.quake_mode {
                     // If this is Windows, skip restoring the quake window. Creating a hidden window
                     // is not supported on Windows. We can't have the quake window visible on
                     // startup or else it will get mistaken for a normal window.
@@ -703,8 +795,8 @@ fn open_from_restored(arg: &OpenFromRestoredArg, ctx: &mut AppContext) {
                         AddWindowOptions {
                             window_style: WindowStyle::Pin,
                             window_bounds: WindowBounds::ExactPosition(frame_args.window_bounds),
-                            title: Some("Warp".to_owned()),
-                            fullscreen_state: window.fullscreen_state,
+                            title: Some("Clinch".to_owned()),
+                            fullscreen_state: active_project.fullscreen_state,
                             background_blur_radius_pixels,
                             background_blur_texture,
                             // Don't use the quake window for positioning new windows.
@@ -714,12 +806,10 @@ fn open_from_restored(arg: &OpenFromRestoredArg, ctx: &mut AppContext) {
                             window_instance: Some(ChannelState::app_id().to_string() + "-hotkey"),
                         },
                         |ctx| {
-                            let mut view = RootView::new(
+                            let mut view = RootView::new_with_project_sources(
                                 global_resource_handles.clone(),
-                                NewWorkspaceSource::Restored {
-                                    window_snapshot: window.clone(),
-                                    block_lists: app_state.block_lists.clone(),
-                                },
+                                workspace_sources,
+                                window.active_project_index,
                                 ctx,
                             );
                             view.focus(ctx);
@@ -745,21 +835,19 @@ fn open_from_restored(arg: &OpenFromRestoredArg, ctx: &mut AppContext) {
                     } else {
                         ctx.add_window(
                             AddWindowOptions {
-                                window_bounds: WindowBounds::new(window.bounds),
-                                title: Some("Warp".to_owned()),
-                                fullscreen_state: window.fullscreen_state,
+                                window_bounds: WindowBounds::new(active_project.bounds),
+                                title: Some("Clinch".to_owned()),
+                                fullscreen_state: active_project.fullscreen_state,
                                 background_blur_radius_pixels,
                                 background_blur_texture,
                                 on_gpu_driver_selected: on_gpu_driver_selected_callback(),
                                 ..Default::default()
                             },
                             |ctx| {
-                                let mut view = RootView::new(
+                                let mut view = RootView::new_with_project_sources(
                                     global_resource_handles.clone(),
-                                    NewWorkspaceSource::Restored {
-                                        window_snapshot: window.clone(),
-                                        block_lists: app_state.block_lists.clone(),
-                                    },
+                                    workspace_sources,
+                                    window.active_project_index,
                                     ctx,
                                 );
                                 view.focus(ctx);
@@ -795,23 +883,33 @@ fn open_from_restored(arg: &OpenFromRestoredArg, ctx: &mut AppContext) {
                     .windows
                     .get(idx)
                     .expect("Window should exist at idx");
+                let active_project = window
+                    .active_project()
+                    .expect("restored project window should not be empty");
+                let workspace_sources = window
+                    .projects
+                    .iter()
+                    .cloned()
+                    .map(|window_snapshot| NewWorkspaceSource::Restored {
+                        window_snapshot,
+                        block_lists: app_state.block_lists.clone(),
+                    })
+                    .collect::<Vec<_>>();
                 ctx.add_window(
                     AddWindowOptions {
-                        window_bounds: WindowBounds::new(window.bounds),
-                        title: Some("Warp".to_owned()),
-                        fullscreen_state: window.fullscreen_state,
+                        window_bounds: WindowBounds::new(active_project.bounds),
+                        title: Some("Clinch".to_owned()),
+                        fullscreen_state: active_project.fullscreen_state,
                         background_blur_radius_pixels,
                         background_blur_texture,
                         on_gpu_driver_selected: on_gpu_driver_selected_callback(),
                         ..Default::default()
                     },
                     |ctx| {
-                        let mut view = RootView::new(
+                        let mut view = RootView::new_with_project_sources(
                             global_resource_handles,
-                            NewWorkspaceSource::Restored {
-                                window_snapshot: window.clone(),
-                                block_lists: app_state.block_lists.clone(),
-                            },
+                            workspace_sources,
+                            window.active_project_index,
                             ctx,
                         );
                         view.focus(ctx);
@@ -836,11 +934,25 @@ pub(crate) fn open_new_with_workspace_source(
     source: NewWorkspaceSource,
     ctx: &mut AppContext,
 ) -> (WindowId, ViewHandle<RootView>) {
+    open_new_with_workspace_sources(vec![source], 0, ctx)
+}
+
+fn open_new_with_workspace_sources(
+    sources: Vec<NewWorkspaceSource>,
+    active_project_index: usize,
+    ctx: &mut AppContext,
+) -> (WindowId, ViewHandle<RootView>) {
+    debug_assert!(!sources.is_empty());
     let global_resource_handles = GlobalResourceHandlesProvider::as_ref(ctx).get().clone();
     let window_settings = WindowSettings::as_ref(ctx);
     let options = default_window_options(window_settings, ctx);
     ctx.add_window(options, |ctx| {
-        let mut view = RootView::new(global_resource_handles, source, ctx);
+        let mut view = RootView::new_with_project_sources(
+            global_resource_handles,
+            sources,
+            active_project_index,
+            ctx,
+        );
         view.focus(ctx);
         view
     })
@@ -895,7 +1007,7 @@ fn create_environment(arg: &CreateEnvironmentArg, ctx: &mut AppContext) {
     );
 
     root_handle.update(ctx, |root_view, ctx| {
-        if let AuthOnboardingState::Terminal(workspace_handle) = &root_view.auth_onboarding_state {
+        if let Some(workspace_handle) = root_view.active_workspace(ctx) {
             workspace_handle.update(ctx, |workspace, ctx| {
                 workspace
                     .active_tab_pane_group()
@@ -928,7 +1040,7 @@ fn create_environment_and_run(arg: &CreateEnvironmentArg, ctx: &mut AppContext) 
     );
 
     root_handle.update(ctx, |root_view, ctx| {
-        if let AuthOnboardingState::Terminal(workspace_handle) = &root_view.auth_onboarding_state {
+        if let Some(workspace_handle) = root_view.active_workspace(ctx) {
             workspace_handle.update(ctx, |workspace, ctx| {
                 workspace
                     .active_tab_pane_group()
@@ -955,9 +1067,7 @@ fn open_team_settings_with_email_invite_in_new_window(
 ) {
     let root_handle = open_new_window_get_handles(None, ctx).1;
     root_handle.update(ctx, |root_view, ctx| {
-        if let AuthOnboardingState::Terminal(workspace_view_handle) =
-            &root_view.auth_onboarding_state
-        {
+        if let Some(workspace_view_handle) = root_view.active_workspace(ctx) {
             let initial_load_complete = UpdateManager::as_ref(ctx).initial_load_complete();
             let email_invite = arg.invite_email.clone();
             workspace_view_handle.update(ctx, |_, ctx| {
@@ -972,9 +1082,7 @@ fn open_team_settings_with_email_invite_in_new_window(
 fn open_settings_page_in_new_window(section: &SettingsSection, ctx: &mut AppContext) {
     let root_handle = open_new_window_get_handles(None, ctx).1;
     root_handle.update(ctx, |root_view, ctx| {
-        if let AuthOnboardingState::Terminal(workspace_view_handle) =
-            &root_view.auth_onboarding_state
-        {
+        if let Some(workspace_view_handle) = root_view.active_workspace(ctx) {
             let window_id = ctx.window_id();
             ctx.dispatch_typed_action_for_view(
                 window_id,
@@ -991,9 +1099,7 @@ fn open_mcp_settings_in_new_window(args: &OpenMCPSettingsArgs, ctx: &mut AppCont
     let autoinstall = args.autoinstall.clone();
     let root_handle = open_new_window_get_handles(None, ctx).1;
     root_handle.update(ctx, |root_view, ctx| {
-        if let AuthOnboardingState::Terminal(workspace_view_handle) =
-            &root_view.auth_onboarding_state
-        {
+        if let Some(workspace_view_handle) = root_view.active_workspace(ctx) {
             let initial_load_complete = UpdateManager::as_ref(ctx).initial_load_complete();
             workspace_view_handle.update(ctx, |_, ctx| {
                 let _ = ctx.spawn(initial_load_complete, move |workspace, _, ctx| {
@@ -1012,9 +1118,7 @@ fn open_mcp_settings_in_new_window(args: &OpenMCPSettingsArgs, ctx: &mut AppCont
 fn open_codex_in_new_window(_: &(), ctx: &mut AppContext) {
     let root_handle = open_new_window_get_handles(None, ctx).1;
     root_handle.update(ctx, |root_view, ctx| {
-        if let AuthOnboardingState::Terminal(workspace_view_handle) =
-            &root_view.auth_onboarding_state
-        {
+        if let Some(workspace_view_handle) = root_view.active_workspace(ctx) {
             let initial_load_complete = UpdateManager::as_ref(ctx).initial_load_complete();
             workspace_view_handle.update(ctx, |_, ctx| {
                 let _ = ctx.spawn(initial_load_complete, move |workspace, _, ctx| {
@@ -1030,9 +1134,7 @@ fn open_linear_issue_work_in_new_window(args: &LinearIssueWork, ctx: &mut AppCon
     let (_, root_handle) = open_new_window_get_handles(None, ctx);
     let args = args.clone();
     root_handle.update(ctx, |root_view, ctx| {
-        if let AuthOnboardingState::Terminal(workspace_view_handle) =
-            &root_view.auth_onboarding_state
-        {
+        if let Some(workspace_view_handle) = root_view.active_workspace(ctx) {
             workspace_view_handle.update(ctx, |workspace, ctx| {
                 workspace.open_linear_issue_work(&args, ctx);
             });
@@ -1121,6 +1223,57 @@ fn open_new(_: &(), ctx: &mut AppContext) {
     open_new_window_get_handles(None, ctx);
 }
 
+fn open_new_project(_: &(), ctx: &mut AppContext) {
+    let active_window_id = ctx.windows().active_window();
+    if let Some(window_id) = active_window_id.filter(|window_id| {
+        quake_mode_window_id().is_none_or(|quake_window_id| quake_window_id != *window_id)
+    }) {
+        if let Some(root_view) = ctx.root_view::<RootView>(window_id) {
+            let project_window = root_view
+                .as_ref(ctx)
+                .project_window()
+                .filter(|project_window| project_window.as_ref(ctx).supports_project_tabs(ctx));
+            if let Some(project_window) = project_window {
+                project_window.update(ctx, |project_window, ctx| {
+                    project_window.add_project(ctx);
+                });
+                ctx.windows().show_window_and_focus_app(window_id);
+                return;
+            }
+        }
+    }
+
+    open_new(&(), ctx);
+}
+
+fn update_active_project_window(
+    ctx: &mut AppContext,
+    update: impl FnOnce(&mut ProjectWindow, &mut ViewContext<ProjectWindow>),
+) {
+    let Some(window_id) = ctx.windows().active_window() else {
+        return;
+    };
+    let Some(root_view) = ctx.root_view::<RootView>(window_id) else {
+        return;
+    };
+    let Some(project_window) = root_view.as_ref(ctx).project_window() else {
+        return;
+    };
+    project_window.update(ctx, update);
+}
+
+fn activate_previous_project(_: &(), ctx: &mut AppContext) {
+    update_active_project_window(ctx, |project_window, ctx| {
+        project_window.activate_previous_project(ctx);
+    });
+}
+
+fn activate_next_project(_: &(), ctx: &mut AppContext) {
+    update_active_project_window(ctx, |project_window, ctx| {
+        project_window.activate_next_project(ctx);
+    });
+}
+
 /// Opens a new window with a specific shell
 fn open_new_with_shell(shell: &Option<AvailableShell>, ctx: &mut AppContext) {
     open_new_window_get_handles(shell.to_owned(), ctx);
@@ -1143,9 +1296,7 @@ fn open_new_tab_insert_subshell_command_and_bootstrap_if_supported(
     let root_view_handle = match root_view_handle {
         Some(root_view_handle) => {
             root_view_handle.update(ctx, |root_view, ctx| {
-                if let AuthOnboardingState::Terminal(workspace_view_handle) =
-                    &root_view.auth_onboarding_state
-                {
+                if let Some(workspace_view_handle) = root_view.active_workspace(ctx) {
                     workspace_view_handle.update(ctx, |workspace, ctx| {
                         workspace.add_terminal_tab(false /* hide_homepage */, ctx);
                     });
@@ -1170,7 +1321,7 @@ fn default_window_options(window_settings: &WindowSettings, ctx: &AppContext) ->
     AddWindowOptions {
         window_style,
         window_bounds: next_bounds,
-        title: Some("Warp".to_owned()),
+        title: Some("Clinch".to_owned()),
         background_blur_radius_pixels: Some(*window_settings.background_blur_radius),
         background_blur_texture: *window_settings.background_blur_texture,
         on_gpu_driver_selected: on_gpu_driver_selected_callback(),
@@ -1355,7 +1506,7 @@ fn toggle_quake_mode_window(global_resource_handles: &GlobalResourceHandles, ctx
                 AddWindowOptions {
                     window_style: WindowStyle::Pin,
                     window_bounds: WindowBounds::ExactPosition(config.window_bounds),
-                    title: Some("Warp".to_owned()),
+                    title: Some("Clinch".to_owned()),
                     background_blur_radius_pixels: Some(*window_settings.background_blur_radius),
                     background_blur_texture: *window_settings.background_blur_texture,
                     // Ignore the quake window for positioning the next window
@@ -1550,7 +1701,8 @@ impl NewWorkspaceSource {
 struct WorkspaceArgs {
     global_resource_handles: GlobalResourceHandles,
     server_time: Option<Arc<ServerTime>>,
-    workspace_setting: NewWorkspaceSource,
+    workspace_settings: Vec<NewWorkspaceSource>,
+    active_project_index: usize,
 }
 
 // Some onboarding states can either contain a ref to an existing terminal view
@@ -1558,7 +1710,7 @@ struct WorkspaceArgs {
 #[derive(Clone)]
 enum AuthOnboardingTarget {
     Workspace(Box<WorkspaceArgs>),
-    Terminal(ViewHandle<Workspace>),
+    Terminal(ViewHandle<ProjectWindow>),
 }
 
 /// User preferences key to track whether the user has completed the onboarding slides locally
@@ -1601,7 +1753,7 @@ enum AuthOnboardingState {
         onboarding_view: ViewHandle<AgentOnboardingView>,
         target: AuthOnboardingTarget,
     },
-    Terminal(ViewHandle<Workspace>),
+    Terminal(ViewHandle<ProjectWindow>),
 }
 
 pub struct RootView {
@@ -1638,6 +1790,15 @@ impl RootView {
         workspace_setting: NewWorkspaceSource,
         ctx: &mut ViewContext<Self>,
     ) -> Self {
+        Self::new_with_project_sources(global_resource_handles, vec![workspace_setting], 0, ctx)
+    }
+
+    fn new_with_project_sources(
+        global_resource_handles: GlobalResourceHandles,
+        workspace_settings: Vec<NewWorkspaceSource>,
+        active_project_index: usize,
+        ctx: &mut ViewContext<Self>,
+    ) -> Self {
         let server_api_provider = ServerApiProvider::as_ref(ctx);
         let server_api = server_api_provider.get();
         let auth_state = AuthStateProvider::as_ref(ctx).get().clone();
@@ -1665,15 +1826,16 @@ impl RootView {
         let workspace_args = WorkspaceArgs {
             global_resource_handles,
             server_time: None,
-            workspace_setting,
+            workspace_settings,
+            active_project_index,
         };
 
         let auth_onboarding_state = if !ChannelState::has_backend() {
             // Backendless fork builds (Clinch): no login and no onboarding — go
             // straight into the workspace in every window.
-            AuthOnboardingState::Terminal(workspace_args.create_workspace(ctx))
+            AuthOnboardingState::Terminal(workspace_args.create_project_window(ctx))
         } else if auth_state.is_logged_in() {
-            AuthOnboardingState::Terminal(workspace_args.create_workspace(ctx))
+            AuthOnboardingState::Terminal(workspace_args.create_project_window(ctx))
         } else {
             cfg_if! {
                 if #[cfg(target_family = "wasm")] {
@@ -1702,7 +1864,7 @@ impl RootView {
                     } else if FeatureFlag::SkipFirebaseAnonymousUser.is_enabled() {
                         // When SkipFirebaseAnonymousUser is enabled, skip the login screen
                         // entirely and go directly into the workspace.
-                        AuthOnboardingState::Terminal(workspace_args.create_workspace(ctx))
+                        AuthOnboardingState::Terminal(workspace_args.create_project_window(ctx))
                     } else {
                         AuthOnboardingState::Auth(workspace_args.into())
                     }
@@ -1739,8 +1901,11 @@ impl RootView {
         };
 
         match &root_view.auth_onboarding_state {
-            AuthOnboardingState::Terminal(workspace) if FeatureFlag::Changelog.is_enabled() => {
+            AuthOnboardingState::Terminal(project_window)
+                if FeatureFlag::Changelog.is_enabled() =>
+            {
                 // Only show the changelog if we aren't about to launch the authentication flow
+                let workspace = project_window.as_ref(ctx).active_workspace();
                 workspace.update(ctx, |workspace, ctx| {
                     workspace.check_for_changelog(ChangelogRequestType::WindowLaunch, ctx);
                 })
@@ -1818,12 +1983,21 @@ impl RootView {
         }
     }
 
-    /// Used for integration tests.
-    pub fn workspace_view(&self) -> Option<&ViewHandle<Workspace>> {
+    pub(crate) fn project_window(&self) -> Option<ViewHandle<ProjectWindow>> {
         match &self.auth_onboarding_state {
-            AuthOnboardingState::Terminal(workspace) => Some(workspace),
+            AuthOnboardingState::Terminal(project_window) => Some(project_window.clone()),
             _ => None,
         }
+    }
+
+    fn active_workspace(&self, ctx: &AppContext) -> Option<ViewHandle<Workspace>> {
+        self.project_window()
+            .map(|project_window| project_window.as_ref(ctx).active_workspace())
+    }
+
+    /// Used for integration tests and SDK entry points.
+    pub fn workspace_view(&self, ctx: &AppContext) -> Option<ViewHandle<Workspace>> {
+        self.active_workspace(ctx)
     }
 
     fn polling_update_check_complete(
@@ -1856,11 +2030,19 @@ impl RootView {
             let server_time = Arc::new(server_time);
             self.server_time = Some(server_time.clone());
 
-            if let AuthOnboardingState::Terminal(workspace) = &self.auth_onboarding_state {
-                workspace.update(ctx, |workspace, ctx| {
-                    workspace.set_server_time(server_time);
-                    ctx.notify();
-                })
+            if let AuthOnboardingState::Terminal(project_window) = &self.auth_onboarding_state {
+                let workspaces = project_window
+                    .as_ref(ctx)
+                    .projects()
+                    .map(|(_, workspace)| workspace.clone())
+                    .collect::<Vec<_>>();
+                for workspace in workspaces {
+                    let server_time = server_time.clone();
+                    workspace.update(ctx, |workspace, ctx| {
+                        workspace.set_server_time(server_time);
+                        ctx.notify();
+                    });
+                }
             }
         } else {
             log::error!("Error fetching server time {:?}", server_time.err());
@@ -2101,12 +2283,12 @@ impl RootView {
                 else {
                     return;
                 };
-                let workspace = target.to_workspace(ctx);
+                let project_window = target.to_project_window(ctx);
                 // User opted out of login: apply locally (no cloud race).
                 if let Some(selected_settings) = self.pending_post_auth_onboarding_settings.take() {
                     apply_onboarding_settings(&selected_settings, ctx);
                 }
-                self.auth_onboarding_state = AuthOnboardingState::Terminal(workspace);
+                self.auth_onboarding_state = AuthOnboardingState::Terminal(project_window);
                 ctx.emit(RootViewEvent::AuthOnboardingStateChanged);
                 self.start_pending_tutorial(ctx);
                 self.start_autoupdate_polling(ctx);
@@ -2228,10 +2410,10 @@ impl RootView {
                         .update(ctx, |model, ctx| model.set_user_onboarded(ctx));
                 }
 
-                let workspace = target.to_workspace(ctx);
+                let project_window = target.to_project_window(ctx);
                 let tutorial = OnboardingTutorial::from(selected_settings.clone());
                 self.pending_tutorial = Some(tutorial);
-                self.auth_onboarding_state = AuthOnboardingState::Terminal(workspace);
+                self.auth_onboarding_state = AuthOnboardingState::Terminal(project_window);
                 ctx.emit(RootViewEvent::AuthOnboardingStateChanged);
                 self.start_pending_tutorial(ctx);
                 self.start_autoupdate_polling(ctx);
@@ -2253,8 +2435,8 @@ impl RootView {
                         .update(ctx, |model, ctx| model.set_user_onboarded(ctx));
                 }
 
-                let workspace = target.to_workspace(ctx);
-                self.auth_onboarding_state = AuthOnboardingState::Terminal(workspace);
+                let project_window = target.to_project_window(ctx);
+                self.auth_onboarding_state = AuthOnboardingState::Terminal(project_window);
                 ctx.emit(RootViewEvent::AuthOnboardingStateChanged);
                 self.start_autoupdate_polling(ctx);
                 ctx.notify();
@@ -2546,6 +2728,58 @@ impl RootView {
         true
     }
 
+    fn activate_project(&mut self, project_id: &ProjectId, ctx: &mut ViewContext<Self>) -> bool {
+        let Some(project_window) = self.project_window() else {
+            return false;
+        };
+        project_window.update(ctx, |project_window, ctx| {
+            project_window.activate_project(*project_id, ctx);
+        });
+        true
+    }
+
+    fn request_close_project(
+        &mut self,
+        project_id: &ProjectId,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        let Some(project_window) = self.project_window() else {
+            return false;
+        };
+        project_window.update(ctx, |project_window, ctx| {
+            project_window.request_close_project(*project_id, ctx);
+        });
+        true
+    }
+
+    fn commit_close_project(
+        &mut self,
+        project_id: &ProjectId,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        let Some(project_window) = self.project_window() else {
+            return false;
+        };
+        project_window.update(ctx, |project_window, ctx| {
+            project_window.commit_close_project(*project_id, ctx);
+        });
+        true
+    }
+
+    fn finalize_prepared_project_close(
+        &mut self,
+        project_id: &ProjectId,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        let Some(project_window) = self.project_window() else {
+            return false;
+        };
+        project_window.update(ctx, |project_window, ctx| {
+            project_window.finalize_prepared_project_close(*project_id, ctx);
+        });
+        true
+    }
+
     fn focus_pane(
         &mut self,
         pane_view_locator: &PaneViewLocator,
@@ -2564,9 +2798,18 @@ impl RootView {
 
         ctx.windows().show_window_and_focus_app(window_id);
 
-        // Focus the appropriate tab/pane.
-        if let AuthOnboardingState::Terminal(workspace) = &self.auth_onboarding_state {
+        // Resolve the pane by identity across every project before focusing it.
+        // Notification clicks and command-palette navigation can target an
+        // inactive project in this physical window.
+        let workspace = self.project_window().and_then(|project_window| {
+            project_window.update(ctx, |project_window, ctx| {
+                project_window
+                    .activate_project_containing_pane_group(pane_view_locator.pane_group_id, ctx)
+            })
+        });
+        if let Some(workspace) = workspace.or_else(|| self.active_workspace(ctx)) {
             workspace.update(ctx, |view, ctx| {
+                view.allow_notification_reads_after_project_activation();
                 view.focus_pane(*pane_view_locator, ctx);
             });
         }
@@ -2579,8 +2822,14 @@ impl RootView {
         ctx: &mut ViewContext<Self>,
     ) -> bool {
         ctx.windows().show_window_and_focus_app(ctx.window_id());
-        if let AuthOnboardingState::Terminal(workspace) = &self.auth_onboarding_state {
+        let workspace = self.project_window().and_then(|project_window| {
+            project_window.update(ctx, |project_window, ctx| {
+                project_window.activate_project_containing_pane_group(*pane_group_id, ctx)
+            })
+        });
+        if let Some(workspace) = workspace.or_else(|| self.active_workspace(ctx)) {
             workspace.update(ctx, |view, ctx| {
+                view.allow_notification_reads_after_project_activation();
                 view.activate_tab_by_pane_group_id(*pane_group_id, ctx);
             });
         }
@@ -2624,7 +2873,7 @@ impl RootView {
     #[allow(clippy::ptr_arg)]
     fn add_session_at_path(&mut self, path: &PathBuf, ctx: &mut ViewContext<Self>) -> bool {
         let window_id = ctx.window_id();
-        if let AuthOnboardingState::Terminal(handle) = &self.auth_onboarding_state {
+        if let Some(handle) = self.active_workspace(ctx) {
             handle.update(ctx, |view, ctx| {
                 view.add_tab_with_pane_layout(
                     PanesLayout::SingleTerminal(Box::new(
@@ -2649,7 +2898,7 @@ impl RootView {
         arg: &OpenTeamsSettingsModalArgs,
         ctx: &mut ViewContext<Self>,
     ) -> bool {
-        if let AuthOnboardingState::Terminal(handle) = &self.auth_onboarding_state {
+        if let Some(handle) = self.active_workspace(ctx) {
             handle.update(ctx, |workspace, ctx| {
                 workspace.show_team_settings_page_with_email_invite(arg.invite_email.as_ref(), ctx)
             });
@@ -2665,7 +2914,7 @@ impl RootView {
         arg: &OpenWarpDriveObjectArgs,
         ctx: &mut ViewContext<Self>,
     ) -> bool {
-        if let AuthOnboardingState::Terminal(handle) = &self.auth_onboarding_state {
+        if let Some(handle) = self.active_workspace(ctx) {
             let cloud_model = CloudModel::as_ref(ctx);
 
             match arg.object_type {
@@ -2757,7 +3006,7 @@ impl RootView {
         session_id: &SessionId,
         ctx: &mut ViewContext<Self>,
     ) -> bool {
-        if let AuthOnboardingState::Terminal(handle) = &self.auth_onboarding_state {
+        if let Some(handle) = self.active_workspace(ctx) {
             handle.update(ctx, |workspace, ctx| {
                 workspace.add_tab_for_joining_shared_session(*session_id, ctx);
             });
@@ -2779,7 +3028,7 @@ impl RootView {
         conversation_id: &ServerConversationToken,
         ctx: &mut ViewContext<Self>,
     ) -> bool {
-        if let AuthOnboardingState::Terminal(handle) = &self.auth_onboarding_state {
+        if let Some(handle) = self.active_workspace(ctx) {
             handle.update(ctx, |workspace, ctx| {
                 workspace.open_cloud_conversation_from_server_token(conversation_id.clone(), ctx);
             });
@@ -2799,7 +3048,7 @@ impl RootView {
         arg: &CreateEnvironmentArg,
         ctx: &mut ViewContext<Self>,
     ) -> bool {
-        if let AuthOnboardingState::Terminal(handle) = &self.auth_onboarding_state {
+        if let Some(handle) = self.active_workspace(ctx) {
             let repos = arg.repos.clone();
 
             handle.update(ctx, |workspace, ctx| {
@@ -2840,7 +3089,7 @@ impl RootView {
         arg: &CreateEnvironmentArg,
         ctx: &mut ViewContext<Self>,
     ) -> bool {
-        let AuthOnboardingState::Terminal(handle) = &self.auth_onboarding_state else {
+        let Some(handle) = self.active_workspace(ctx) else {
             log::warn!("Auth not complete before trying to create environment");
             return false;
         };
@@ -2879,7 +3128,7 @@ impl RootView {
     }
 
     pub fn add_file_pane(&mut self, path: &PathBuf, ctx: &mut ViewContext<Self>) -> bool {
-        if let AuthOnboardingState::Terminal(handle) = &self.auth_onboarding_state {
+        if let Some(handle) = self.active_workspace(ctx) {
             handle.update(ctx, |workspace, ctx| {
                 workspace.add_tab_for_file_notebook(Some(path.to_owned()), ctx);
             });
@@ -2901,7 +3150,7 @@ impl RootView {
         ctx: &mut ViewContext<Self>,
     ) -> bool {
         let window_id = ctx.window_id();
-        if let AuthOnboardingState::Terminal(handle) = &self.auth_onboarding_state {
+        if let Some(handle) = self.active_workspace(ctx) {
             handle.update(ctx, |workspace, ctx| {
                 workspace.insert_subshell_command_and_bootstrap_if_supported(
                     &arg.command,
@@ -2921,7 +3170,7 @@ impl RootView {
     pub fn handle_team_intent_link_action(&mut self, _: &(), ctx: &mut ViewContext<Self>) -> bool {
         // Force-open warp drive.
         let window_id = ctx.window_id();
-        if let AuthOnboardingState::Terminal(handle) = &self.auth_onboarding_state {
+        if let Some(handle) = self.active_workspace(ctx) {
             ctx.dispatch_typed_action_for_view(
                 window_id,
                 handle.id(),
@@ -2941,7 +3190,7 @@ impl RootView {
 
     pub fn open_team_settings_page(&mut self, _: &(), ctx: &mut ViewContext<Self>) -> bool {
         let window_id = ctx.window_id();
-        if let AuthOnboardingState::Terminal(handle) = &self.auth_onboarding_state {
+        if let Some(handle) = self.active_workspace(ctx) {
             ctx.dispatch_typed_action_for_view(
                 window_id,
                 handle.id(),
@@ -2960,7 +3209,7 @@ impl RootView {
         ctx: &mut ViewContext<Self>,
     ) -> bool {
         let window_id = ctx.window_id();
-        if let AuthOnboardingState::Terminal(handle) = &self.auth_onboarding_state {
+        if let Some(handle) = self.active_workspace(ctx) {
             ctx.dispatch_typed_action_for_view(
                 window_id,
                 handle.id(),
@@ -2980,7 +3229,7 @@ impl RootView {
         args: &OpenMCPSettingsArgs,
         ctx: &mut ViewContext<Self>,
     ) -> bool {
-        if let AuthOnboardingState::Terminal(handle) = &self.auth_onboarding_state {
+        if let Some(handle) = self.active_workspace(ctx) {
             let autoinstall = args.autoinstall.clone();
             let initial_load_complete = UpdateManager::as_ref(ctx).initial_load_complete();
             handle.update(ctx, |_, ctx| {
@@ -3003,7 +3252,7 @@ impl RootView {
     /// Opens the Codex modal in an existing window.
     pub fn open_codex_in_existing_window(&mut self, _: &(), ctx: &mut ViewContext<Self>) -> bool {
         let window_id = ctx.window_id();
-        if let AuthOnboardingState::Terminal(handle) = &self.auth_onboarding_state {
+        if let Some(handle) = self.active_workspace(ctx) {
             handle.update(ctx, |workspace, ctx| {
                 workspace.open_codex_modal(ctx);
             });
@@ -3021,7 +3270,7 @@ impl RootView {
         ctx: &mut ViewContext<Self>,
     ) -> bool {
         let window_id = ctx.window_id();
-        if let AuthOnboardingState::Terminal(handle) = &self.auth_onboarding_state {
+        if let Some(handle) = self.active_workspace(ctx) {
             let args = args.clone();
             handle.update(ctx, |workspace, ctx| {
                 workspace.open_linear_issue_work(&args, ctx);
@@ -3145,13 +3394,13 @@ impl RootView {
                 } else if let AuthOnboardingState::LoginSlide { target, .. } =
                     &self.auth_onboarding_state
                 {
-                    let workspace = target.to_workspace(ctx);
+                    let project_window = target.to_project_window(ctx);
                     if let Some(selected_settings) =
                         self.pending_post_auth_onboarding_settings.take()
                     {
                         apply_onboarding_settings(&selected_settings, ctx);
                     }
-                    self.auth_onboarding_state = AuthOnboardingState::Terminal(workspace);
+                    self.auth_onboarding_state = AuthOnboardingState::Terminal(project_window);
                     ctx.emit(RootViewEvent::AuthOnboardingStateChanged);
                     self.start_pending_tutorial(ctx);
                 }
@@ -3364,7 +3613,7 @@ impl RootView {
             return;
         };
 
-        let AuthOnboardingState::Terminal(workspace) = &self.auth_onboarding_state else {
+        let Some(workspace) = self.active_workspace(ctx) else {
             return;
         };
 
@@ -3561,12 +3810,13 @@ impl TypedActionView for RootView {
 }
 
 impl WorkspaceArgs {
-    fn create_workspace(self, ctx: &mut ViewContext<RootView>) -> ViewHandle<Workspace> {
+    fn create_project_window(self, ctx: &mut ViewContext<RootView>) -> ViewHandle<ProjectWindow> {
         ctx.add_typed_action_view(|ctx| {
-            Workspace::new(
+            ProjectWindow::new(
                 self.global_resource_handles,
                 self.server_time,
-                self.workspace_setting,
+                self.workspace_settings,
+                self.active_project_index,
                 ctx,
             )
         })
@@ -3597,12 +3847,12 @@ impl AuthOnboardingState {
         match self {
             AuthOnboardingState::Auth(ref args)
             | AuthOnboardingState::ConfirmIncomingAuth(ref args) => {
-                let workspace = args.clone().create_workspace(ctx);
-                *self = AuthOnboardingState::Terminal(workspace);
+                let project_window = args.clone().create_project_window(ctx);
+                *self = AuthOnboardingState::Terminal(project_window);
             }
             AuthOnboardingState::LoginSlide { ref target, .. } => {
-                let workspace = target.to_workspace(ctx);
-                *self = AuthOnboardingState::Terminal(workspace);
+                let project_window = target.to_project_window(ctx);
+                *self = AuthOnboardingState::Terminal(project_window);
             }
             _ => {}
         };
@@ -3635,7 +3885,7 @@ impl AuthOnboardingState {
 
     fn complete_sso_link(&mut self, ctx: &mut ViewContext<RootView>) {
         if let AuthOnboardingState::NeedsSsoLink(needs_sso_link_mode) = self {
-            *self = AuthOnboardingState::Terminal(needs_sso_link_mode.to_workspace(ctx));
+            *self = AuthOnboardingState::Terminal(needs_sso_link_mode.to_project_window(ctx));
             ctx.emit(RootViewEvent::AuthOnboardingStateChanged);
         }
     }
@@ -3664,7 +3914,7 @@ impl AuthOnboardingState {
     #[cfg(target_family = "wasm")]
     fn complete_web_import(&mut self, ctx: &mut ViewContext<RootView>) {
         if let AuthOnboardingState::WebImport(target) = self {
-            *self = AuthOnboardingState::Terminal(target.to_workspace(ctx));
+            *self = AuthOnboardingState::Terminal(target.to_project_window(ctx));
             ctx.emit(RootViewEvent::AuthOnboardingStateChanged);
         }
     }
@@ -3718,7 +3968,7 @@ impl AuthOnboardingState {
             AuthOnboardingState::Onboarding { .. } | AuthOnboardingState::LoginSlide { .. } => {
                 // No workspace to clean up for onboarding/login slide state
             }
-            AuthOnboardingState::Terminal(workspace) => {
+            AuthOnboardingState::Terminal(project_window) => {
                 if !ChannelState::has_backend() {
                     // Backendless fork builds (Clinch): auth state was already cleared by
                     // the caller above; there is no Auth screen to log back into, so stay
@@ -3726,10 +3976,17 @@ impl AuthOnboardingState {
                     return;
                 }
 
-                // Clean up current workspace before resetting.
-                workspace.update(ctx, |workspace, ctx| {
-                    workspace.on_log_out(ctx);
-                });
+                // Clean up every live project workspace before resetting.
+                let workspaces = project_window
+                    .as_ref(ctx)
+                    .projects()
+                    .map(|(_, workspace)| workspace.clone())
+                    .collect::<Vec<_>>();
+                for workspace in workspaces {
+                    workspace.update(ctx, |workspace, ctx| {
+                        workspace.on_log_out(ctx);
+                    });
+                }
 
                 let global_resource_handles =
                     GlobalResourceHandlesProvider::as_ref(ctx).get().clone();
@@ -3742,7 +3999,8 @@ impl AuthOnboardingState {
                 let workspace_args = WorkspaceArgs {
                     global_resource_handles,
                     server_time: None,
-                    workspace_setting,
+                    workspace_settings: vec![workspace_setting],
+                    active_project_index: 0,
                 };
 
                 // Auth no longer holds the original workspace view handle
@@ -3756,10 +4014,10 @@ impl AuthOnboardingState {
 }
 
 impl AuthOnboardingTarget {
-    fn to_workspace(&self, ctx: &mut ViewContext<RootView>) -> ViewHandle<Workspace> {
+    fn to_project_window(&self, ctx: &mut ViewContext<RootView>) -> ViewHandle<ProjectWindow> {
         match self {
-            AuthOnboardingTarget::Terminal(workspace) => workspace.clone(),
-            AuthOnboardingTarget::Workspace(args) => args.clone().create_workspace(ctx),
+            AuthOnboardingTarget::Terminal(project_window) => project_window.clone(),
+            AuthOnboardingTarget::Workspace(args) => args.clone().create_project_window(ctx),
         }
     }
 }

@@ -922,6 +922,61 @@ fn test_transfer_view_tree_moves_child_view_ids_owned_views() {
 }
 
 #[test]
+fn test_reparent_view_updates_structural_and_render_parent_graphs() {
+    #[derive(Default)]
+    struct TestView;
+
+    impl Entity for TestView {
+        type Event = ();
+    }
+
+    impl View for TestView {
+        fn render(&self, _: &AppContext) -> Box<dyn Element> {
+            Empty::new().finish()
+        }
+
+        fn ui_name() -> &'static str {
+            "TestView"
+        }
+    }
+
+    impl TypedActionView for TestView {
+        type Action = ();
+    }
+
+    App::test((), |mut app| async move {
+        let (source_window_id, source_root) =
+            app.add_window(WindowStyle::NotStealFocus, |_| TestView);
+        let (target_window_id, target_root) =
+            app.add_window(WindowStyle::NotStealFocus, |_| TestView);
+        let (third_window_id, _) = app.add_window(WindowStyle::NotStealFocus, |_| TestView);
+        let source_parent =
+            source_root.update(&mut app, |_, ctx| ctx.add_typed_action_view(|_| TestView));
+        let target_parent =
+            target_root.update(&mut app, |_, ctx| ctx.add_typed_action_view(|_| TestView));
+        let child =
+            source_parent.update(&mut app, |_, ctx| ctx.add_typed_action_view(|_| TestView));
+
+        app.update(|ctx| {
+            ctx.transfer_view_tree_to_window(child.id(), source_window_id, target_window_id);
+            ctx.reparent_view(target_window_id, child.id(), target_parent.id());
+        });
+
+        let old_parent_transfer = app.update(|ctx| {
+            ctx.transfer_view_tree_to_window(source_parent.id(), source_window_id, third_window_id)
+        });
+        assert!(!old_parent_transfer.contains(&child.id()));
+        app.read(|ctx| assert_eq!(child.window_id(ctx), target_window_id));
+
+        let new_parent_transfer = app.update(|ctx| {
+            ctx.transfer_view_tree_to_window(target_parent.id(), target_window_id, third_window_id)
+        });
+        assert!(new_parent_transfer.contains(&child.id()));
+        app.read(|ctx| assert_eq!(child.window_id(ctx), third_window_id));
+    });
+}
+
+#[test]
 fn test_transfer_view_tree_reconciles_views_known_only_to_target_presenter() {
     // Reproduces the cross-window tab "put-back" panic. The forward walk seeds
     // its subtree from the *source* window's presenter, so a render-time

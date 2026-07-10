@@ -43,15 +43,19 @@ GitHub Actions secrets, no macOS runner minutes. A root `Makefile` wraps it; run
     SKIP_SYNC=1` to bypass the guard and build the current HEAD as-is
     (intentional feature-branch or dirty-tree test builds). `make update`
     inherits this because it runs `make release`.
-- `make update` — runs `make release` (build + publish for everyone), then swaps
-  the freshly built bundle into `/Applications/Clinch.app` and relaunches it via
-  `script/update-installed-clinch`. This is the everyday "ship it and run it on
-  my machine" command: you run the same prod `Clinch` app as everyone else
-  (bundle id `sh.clinch.Clinch`), so your local sessions/history persist across
-  updates — they live in `~/Library/Application Support/sh.clinch.Clinch`, which
-  the swap never touches. The helper runs **detached**, so `make update` is safe
-  to run from inside Clinch itself: it quits the running app (checkpointing its
-  session), swaps the bundle, and relaunches.
+- `make update` — same build as `make release`, but optimized for getting YOU
+  on the new build fast: as soon as the bundle is signed it swaps it into
+  `/Applications/Clinch.app` and relaunches via `script/update-installed-clinch`,
+  then the zip + GitHub Release publish finish **in the background** (log:
+  `~/Library/Logs/clinch-self-update.log` — check it if a release ever seems
+  missing; the swap can succeed while the publish fails). This is the everyday
+  "ship it and run it on my machine" command: you run the same prod `Clinch`
+  app as everyone else (bundle id `sh.clinch.Clinch`), so your local
+  sessions/history persist across updates — they live in
+  `~/Library/Application Support/sh.clinch.Clinch`, which the swap never
+  touches. The swap **and** the publish run in one detached shell, so
+  `make update` is safe to run from inside Clinch itself: quitting Clinch
+  kills `make`, but the detached tail still swaps, relaunches, and publishes.
 
 > There is no separate personal dev app anymore (the old `make install-local` /
 > `WarpLocal.app` flow was removed). For fast iterative development use
@@ -105,7 +109,6 @@ in `script/macos/bundle`. This isolates any deep links from an installed
 
 ### Other follow-ups (not done)
 - **CLI command** for stable is still `oz`; renaming it is separate.
-- The copyright string in the bundle metadata is still Warp's entity.
 - `warp://cli-agent` (`app/src/terminal/cli_agent_sessions/event/mod.rs`) is an
   internal CLI↔app OSC sentinel, **not** an OS URL scheme — intentionally left
   as `warp://` (changing it needs a matching CLI change, no OAuth benefit).

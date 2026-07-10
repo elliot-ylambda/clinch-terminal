@@ -188,7 +188,7 @@ fn create_terminal_view(
 
     root_view
         .as_ref(ctx)
-        .workspace_view()
+        .workspace_view(ctx)
         .ok_or(AgentDriverError::TerminalUnavailable)?
         .as_ref(ctx)
         .active_tab_pane_group()

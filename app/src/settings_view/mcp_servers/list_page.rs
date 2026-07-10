@@ -65,7 +65,7 @@ use crate::util::truncation::truncate_from_end;
 use crate::view_components::action_button::{ActionButton, NakedTheme};
 use crate::view_components::DismissibleToast;
 use crate::workflows::local_workflows::tail_command_for_shell;
-use crate::workspace::Workspace;
+use crate::workspace::WorkspaceRegistry;
 use crate::workspaces::user_workspaces::UserWorkspaces;
 use crate::ToastStack;
 
@@ -605,10 +605,7 @@ impl MCPServersListPageView {
 
     fn open_logs_for_server(&self, log_file_path: &PathBuf, ctx: &mut ViewContext<Self>) {
         let window_id = ctx.window_id();
-        let Some(workspace_view_handle) = ctx
-            .views_of_type::<Workspace>(window_id)
-            .and_then(|views| views.first().cloned())
-        else {
+        let Some(workspace_view_handle) = WorkspaceRegistry::as_ref(ctx).get(window_id, ctx) else {
             log::error!("Could not find workspace when attempting to open MCP logs.");
             return;
         };

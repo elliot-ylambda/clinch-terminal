@@ -109,12 +109,7 @@ impl HeaderToolbarItemKind {
     }
 
     pub fn default_left() -> Vec<Self> {
-        vec![
-            Self::TabsPanel,
-            Self::FileExplorer,
-            Self::ToolsPanel,
-            Self::AgentManagement,
-        ]
+        vec![Self::TabsPanel, Self::FileExplorer, Self::AgentManagement]
     }
 
     pub fn default_right() -> Vec<Self> {

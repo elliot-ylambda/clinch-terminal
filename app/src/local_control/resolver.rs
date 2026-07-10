@@ -7,12 +7,12 @@ use ::local_control::protocol::{
     ThemeNameParams, WindowTarget,
 };
 use ::local_control::{ActionKind, ControlError, ErrorCode, TargetScope};
-use warpui::{AppContext, ModelContext, TypedActionView, ViewHandle, WindowId};
+use warpui::{AppContext, ModelContext, SingletonEntity, TypedActionView, ViewHandle, WindowId};
 
 use crate::local_control::handlers::metadata::action_metadata_for_name;
 use crate::local_control::LocalControlBridge;
 use crate::pane_group::{ActivationReason, PaneGroup, PaneGroupAction, PaneId};
-use crate::workspace::{Workspace, WorkspaceAction};
+use crate::workspace::{Workspace, WorkspaceAction, WorkspaceRegistry};
 
 pub(crate) fn validate_tab_create_target(target: &TargetSelector) -> Result<(), ControlError> {
     if target.tab.is_some() || target.pane.is_some() || target.session.is_some() {
@@ -230,8 +230,8 @@ pub(crate) fn workspace_for_window(
     action: ActionKind,
     ctx: &mut ModelContext<LocalControlBridge>,
 ) -> Result<ViewHandle<Workspace>, ControlError> {
-    ctx.views_of_type::<Workspace>(window_id)
-        .and_then(|workspaces| workspaces.into_iter().next())
+    WorkspaceRegistry::as_ref(ctx)
+        .get(window_id, ctx)
         .ok_or_else(|| {
             ControlError::new(
                 ErrorCode::MissingTarget,
