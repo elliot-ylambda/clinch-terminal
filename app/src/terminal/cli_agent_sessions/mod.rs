@@ -1,3 +1,6 @@
+#[cfg(not(target_family = "wasm"))]
+#[cfg_attr(not(feature = "local_tty"), allow(dead_code))]
+pub mod codex_host_check;
 pub mod event;
 pub mod listener;
 #[cfg(not(target_family = "wasm"))]

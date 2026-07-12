@@ -13138,6 +13138,13 @@ impl TerminalView {
                 ctx,
             );
         });
+        // Every Codex session start funnels through this registration
+        // (plugin SessionStart, command detection, mid-session install), so
+        // it's the single choke point for the sidecar preflight check.
+        #[cfg(all(not(target_family = "wasm"), feature = "local_tty"))]
+        if agent == CLIAgent::Codex {
+            self.preflight_codex_code_mode_host(ctx);
+        }
         true
     }
 
@@ -13176,6 +13183,62 @@ impl TerminalView {
         if self.register_cli_agent_listener_from_event(&notification, ctx) {
             self.maybe_auto_open_cli_agent_rich_input(ctx);
         }
+    }
+
+    /// Verifies that the `codex-code-mode-host` sidecar binary the Codex CLI
+    /// spawns for every tool call is reachable, warning once per app run when
+    /// it is not.
+    ///
+    /// `brew upgrade --cask codex` is known to remove the sidecar while
+    /// leaving `codex` itself working, which makes every tool call fail with
+    /// "failed to spawn code-mode host". The check only stats the filesystem
+    /// and runs on a background task, so it never delays session start.
+    #[cfg(all(not(target_family = "wasm"), feature = "local_tty"))]
+    fn preflight_codex_code_mode_host(&mut self, ctx: &mut ViewContext<Self>) {
+        use blocking::unblock;
+        use warpui::r#async::FutureExt as _;
+
+        use crate::terminal::cli_agent_sessions::codex_host_check::{
+            check_codex_host, missing_host_message, search_path, CodexHostHealth,
+            CODEX_HOST_WARN_ONCE,
+        };
+        use crate::terminal::local_shell::LocalShellState;
+
+        // The warning can only ever show once per app run, so skip the work
+        // entirely once it has been claimed.
+        if CODEX_HOST_WARN_ONCE.claimed() {
+            return;
+        }
+
+        // Resolve against the interactive login-shell PATH, matching how the
+        // user's shell finds `codex` (the GUI app's own PATH is minimal).
+        let path_future = LocalShellState::handle(ctx).update(ctx, |shell_state, ctx| {
+            shell_state.get_interactive_path_env_var(ctx)
+        });
+        ctx.spawn(
+            async move {
+                // Bound the interactive PATH capture: it sources the user's
+                // rc files and can hang on a misbehaving startup script. On
+                // timeout, `search_path` falls back to the process PATH.
+                const PATH_CAPTURE_TIMEOUT: Duration = Duration::from_secs(10);
+                let interactive_path = path_future
+                    .with_timeout(PATH_CAPTURE_TIMEOUT)
+                    .await
+                    .unwrap_or(None);
+                unblock(move || check_codex_host(&search_path(interactive_path))).await
+            },
+            move |me, health, ctx| match health {
+                CodexHostHealth::CodexNotFound | CodexHostHealth::Healthy => {}
+                CodexHostHealth::CodeModeHostMissing => {
+                    if !CODEX_HOST_WARN_ONCE.claim() {
+                        return;
+                    }
+                    let message = missing_host_message();
+                    log::warn!("{message}");
+                    me.show_persistent_toast(message, ToastFlavor::Error, ctx);
+                }
+            },
+        );
     }
 
     fn child_conversation_id_for_cli_status_updates(
