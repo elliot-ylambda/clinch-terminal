@@ -127,6 +127,7 @@ use super::action::{
     InitContent, NewSessionMenuAnchor, RestoreConversationLayout, TabContextMenuAnchor,
     VerticalTabsPaneContextMenuTarget, WorkspaceAction,
 };
+use super::agent_attention;
 #[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
 use super::auto_handoff::AutoCloudHandoffController;
 pub(crate) use super::close_session_confirmation_dialog::OpenDialogSource;
@@ -157,7 +158,7 @@ use super::util::{
 use super::{util, ActiveSession, TabBarDropTargetData, TabBarLocation, WorkspaceRegistry};
 use crate::ai::active_agent_views_model::ActiveAgentViewsModel;
 use crate::ai::agent::api::ServerConversationToken;
-use crate::ai::agent::conversation::{AIConversation, AIConversationId};
+use crate::ai::agent::conversation::{AIConversation, AIConversationId, ConversationStatus};
 #[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
 use crate::ai::agent::CancellationReason;
 use crate::ai::agent::{AIAgentInput, EntrypointType};
@@ -434,8 +435,10 @@ use crate::themes::theme_chooser::{ThemeChooser, ThemeChooserEvent, ThemeChooser
 use crate::themes::theme_creator_modal::{ThemeCreatorModal, ThemeCreatorModalEvent};
 use crate::themes::theme_deletion_modal::{ThemeDeletionModal, ThemeDeletionModalEvent};
 use crate::tips::{TipsEvent, TipsView};
+use crate::ui_components::agent_icon::terminal_view_agent_icon_variant;
 use crate::ui_components::avatar::{Avatar, AvatarContent, StatusElementTypes};
 use crate::ui_components::buttons::{combo_inner_button, icon_button_with_color};
+use crate::ui_components::icon_with_status::IconWithStatusVariant;
 use crate::ui_components::red_notification_dot::RedNotificationDot;
 use crate::ui_components::window_focus_dimming::WindowFocusDimming;
 use crate::ui_components::{blended_colors, icons};
@@ -623,6 +626,8 @@ pub const TOGGLE_COMMAND_PALETTE_KEYBINDING_NAME: &str = "workspace:toggle_comma
 const USER_AVATAR_BUTTON_POSITION_ID: &str = "workspace:user_avatar_button";
 const NOTIFICATIONS_MAILBOX_POSITION_ID: &str = "workspace:notifications_mailbox";
 pub(crate) const JUMP_TO_LATEST_TOAST_BINDING_NAME: &str = "workspace:jump_to_latest_toast";
+pub(crate) const FOCUS_NEXT_AGENT_ATTENTION_BINDING_NAME: &str =
+    "workspace:focus_next_agent_attention";
 pub(crate) const TOGGLE_NOTIFICATION_MAILBOX_BINDING_NAME: &str =
     "workspace:toggle_notification_mailbox";
 
@@ -11759,6 +11764,51 @@ impl Workspace {
         if self.tabs.len() > 1 {
             let target_index = self.tabs.len() - 1;
             self.activate_tab(target_index, ctx);
+        }
+    }
+
+    /// Indices (in stable tab order) of tabs whose focused pane's agent is waiting on the user,
+    /// per the same attention-badge derivation the tab rows render. Shared by the cycling action
+    /// and the vertical-tabs "N waiting" chip so the two surfaces can't drift.
+    pub(crate) fn agent_attention_tab_indices(&self, ctx: &AppContext) -> Vec<usize> {
+        agent_attention::attention_tab_indices(
+            self.tabs
+                .iter()
+                .map(|tab| Self::tab_needs_agent_attention(tab, ctx)),
+        )
+    }
+
+    /// Whether the tab's focused pane currently derives the yellow "needs your attention" badge:
+    /// an agent status of `Blocked`, which `terminal_view_agent_icon_variant` also applies to a
+    /// CLI-agent turn that finished on an unfocused terminal (see `apply_awaiting_user_treatment`
+    /// in `agent_icon.rs`). Reuses the badge derivation directly rather than tracking a second
+    /// "needs input" state.
+    fn tab_needs_agent_attention(tab: &TabData, ctx: &AppContext) -> bool {
+        let Some(view) = tab.pane_group.as_ref(ctx).focused_session_view(ctx) else {
+            return false;
+        };
+        let Some(variant) = terminal_view_agent_icon_variant(view.as_ref(ctx), ctx) else {
+            return false;
+        };
+        match variant {
+            IconWithStatusVariant::CLIAgent { status, .. }
+            | IconWithStatusVariant::OzAgent { status, .. } => {
+                matches!(status, Some(ConversationStatus::Blocked { .. }))
+            }
+            IconWithStatusVariant::Neutral { .. }
+            | IconWithStatusVariant::NeutralElement { .. }
+            | IconWithStatusVariant::CustomAvatar { .. } => false,
+        }
+    }
+
+    /// Moves focus to the next tab whose agent is waiting for input, starting after the active
+    /// tab and wrapping around. No-op when no agent is waiting.
+    pub fn focus_next_agent_attention(&mut self, ctx: &mut ViewContext<Self>) {
+        let waiting = self.agent_attention_tab_indices(ctx);
+        if let Some(index) =
+            agent_attention::next_attention_tab_index(&waiting, self.active_tab_index)
+        {
+            self.activate_tab(index, ctx);
         }
     }
 
@@ -23801,6 +23851,7 @@ impl TypedActionView for Workspace {
             ActivateLastTab => self.activate_last_tab(ctx),
             CyclePrevSession => self.cycle_prev_session(ctx),
             CycleNextSession => self.cycle_next_session(ctx),
+            FocusNextAgentAttention => self.focus_next_agent_attention(ctx),
             MoveActiveTabLeft => self.move_tab(self.active_tab_index, TabMovement::Left, ctx),
             MoveActiveTabRight => self.move_tab(self.active_tab_index, TabMovement::Right, ctx),
             MoveTabLeft(index) => self.move_tab(*index, TabMovement::Left, ctx),

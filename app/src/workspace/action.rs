@@ -677,6 +677,10 @@ pub enum WorkspaceAction {
     NewCodeFile,
     NavigatePrevPaneOrPanel,
     NavigateNextPaneOrPanel,
+    /// Moves focus to the next tab (in stable tab order, wrapping) whose agent is waiting for
+    /// user input, per the same derivation as the yellow attention badge. No-op when no agent
+    /// is waiting.
+    FocusNextAgentAttention,
     ToggleProjectExplorer,
     OpenProjectExplorer,
     ToggleGlobalSearch,
@@ -885,6 +889,7 @@ impl WorkspaceAction {
             | ActivateLastTab
             | CyclePrevSession
             | CycleNextSession
+            | FocusNextAgentAttention
             | MoveActiveTabLeft
             | MoveActiveTabRight
             | MoveTabLeft(_)
