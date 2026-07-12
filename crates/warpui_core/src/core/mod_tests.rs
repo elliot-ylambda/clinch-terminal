@@ -1888,8 +1888,8 @@ fn test_ui_and_window_updates() {
 
         // Ensure that registering for UI updates after mutating the app still gives us all the
         // updates. Views added via `add_view` are never mounted in the root's element tree, so
-        // their notifications are queued rather than delivered eagerly; a notification for a
-        // painted view (the root, painted by the eager frames during setup) flushes them.
+        // their notifications are set aside rather than delivered eagerly; they drain with the
+        // next deliverable invalidation — a removal, or a notification for a mounted view.
 
         let window_invalidations = Rc::new(RefCell::new(Vec::new()));
         let window_invalidations_ = window_invalidations.clone();
@@ -1906,17 +1906,14 @@ fn test_ui_and_window_updates() {
             drop(view_2);
         });
 
-        // Neither the updated nor the removed view was on screen, so no redraw is delivered yet.
-        assert!(window_invalidations.borrow().is_empty());
-
-        root.update(&mut app, |_, ctx| ctx.notify());
+        // Removals always deliver (so the presenter frees the dropped view's cached element),
+        // and the set-aside creation notifications of view_1 and view_2 drain along with the
+        // removal; view_2 appears in both `updated` and `removed`, which `Presenter::invalidate`
+        // resolves in favor of the removal.
         let invalidation = window_invalidations.borrow_mut().drain(..).next().unwrap();
-        // The queued creation notifications of view_1 and view_2 drain along with
-        // the root's; view_2 appears in both `updated` and `removed`, which
-        // `Presenter::invalidate` resolves in favor of the removal.
-        assert_eq!(invalidation.updated.len(), 3);
-        assert!(invalidation.updated.contains(&root.id()));
+        assert_eq!(invalidation.updated.len(), 2);
         assert!(invalidation.updated.contains(&view_1.id()));
+        assert!(invalidation.updated.contains(&view_2_id));
         assert_eq!(invalidation.removed.len(), 1);
         assert!(invalidation.removed.contains(&view_2_id));
 
@@ -2871,7 +2868,7 @@ fn test_view_subscribe_then_unsubscribe_to_model_inside_callback_drops_new_subsc
 /// A root view that mounts or unmounts its child depending on `show_child`,
 /// logging every `render` call. Shared by the unmounted-view invalidation tests.
 struct ConditionalParent {
-    child: ViewHandle<RenderLoggingChild>,
+    child: Option<ViewHandle<RenderLoggingChild>>,
     show_child: bool,
     render_log: Rc<RefCell<Vec<&'static str>>>,
 }
@@ -2883,10 +2880,9 @@ impl Entity for ConditionalParent {
 impl View for ConditionalParent {
     fn render<'a>(&self, _: &AppContext) -> Box<dyn Element> {
         self.render_log.borrow_mut().push("parent");
-        if self.show_child {
-            ChildView::new(&self.child).finish()
-        } else {
-            Empty::new().finish()
+        match &self.child {
+            Some(child) if self.show_child => ChildView::new(child).finish(),
+            Some(_) | None => Empty::new().finish(),
         }
     }
 
@@ -2942,13 +2938,13 @@ fn test_notify_of_unmounted_view_does_not_trigger_redraw() {
                     render_log: render_log.clone(),
                 });
                 ConditionalParent {
-                    child,
+                    child: Some(child),
                     show_child: true,
                     render_log,
                 }
             })
         };
-        let child = parent.read(app, |parent, _| parent.child.clone());
+        let child = parent.read(app, |parent, _| parent.child.clone().unwrap());
 
         // Window creation does not notify the root view in the test harness,
         // so drive the first real frame explicitly. This also exercises the
@@ -3021,13 +3017,13 @@ fn test_unmounted_view_render_is_deferred_until_remount() {
                     render_log: render_log.clone(),
                 });
                 ConditionalParent {
-                    child,
+                    child: Some(child),
                     show_child: true,
                     render_log,
                 }
             })
         };
-        let child = parent.read(app, |parent, _| parent.child.clone());
+        let child = parent.read(app, |parent, _| parent.child.clone().unwrap());
 
         // First frame: parent and child both render and paint.
         parent.update(app, |_, ctx| ctx.notify());
@@ -3070,6 +3066,116 @@ fn test_unmounted_view_render_is_deferred_until_remount() {
             rendered_generations.borrow().as_slice(),
             &[3],
             "the remounted child must render with the state from the deferred notify"
+        );
+    });
+}
+
+#[test]
+fn test_gated_invalidations_are_not_reported_as_pending() {
+    App::test((), |mut app| async move {
+        let app = &mut app;
+        let render_log: Rc<RefCell<Vec<&'static str>>> = Rc::new(RefCell::new(vec![]));
+        let rendered_generations: Rc<RefCell<Vec<usize>>> = Rc::new(RefCell::new(vec![]));
+
+        let (window_id, parent) = {
+            let render_log = render_log.clone();
+            let rendered_generations = rendered_generations.clone();
+            app.add_window(WindowStyle::NotStealFocus, |ctx| {
+                let child = ctx.add_view(|_| RenderLoggingChild {
+                    generation: 0,
+                    rendered_generations,
+                    render_log: render_log.clone(),
+                });
+                ConditionalParent {
+                    child: Some(child),
+                    show_child: true,
+                    render_log,
+                }
+            })
+        };
+        let child = parent.read(app, |parent, _| parent.child.clone().unwrap());
+
+        parent.update(app, |_, ctx| ctx.notify());
+        parent.update(app, |parent, ctx| {
+            parent.show_child = false;
+            ctx.notify();
+        });
+
+        // A gated invalidation must not be reported as pending: consumers such
+        // as the integration-test frame waiter treat pending invalidations as
+        // "a frame is coming" and wait for it.
+        child.update(app, |_, ctx| ctx.notify());
+        let has_pending = app.update(|ctx| ctx.has_window_invalidations(window_id));
+        assert!(
+            !has_pending,
+            "an invalidation deferred by the redraw gate must not look like a pending frame"
+        );
+
+        // The deferred invalidation still drains with the remount frame.
+        rendered_generations.borrow_mut().clear();
+        child.update(app, |child, _| child.generation = 7);
+        parent.update(app, |parent, ctx| {
+            parent.show_child = true;
+            ctx.notify();
+        });
+        assert_eq!(rendered_generations.borrow().last(), Some(&7));
+    });
+}
+
+#[test]
+fn test_removing_an_unmounted_view_still_drains_invalidations() {
+    App::test((), |mut app| async move {
+        let app = &mut app;
+        let render_log: Rc<RefCell<Vec<&'static str>>> = Rc::new(RefCell::new(vec![]));
+        let rendered_generations: Rc<RefCell<Vec<usize>>> = Rc::new(RefCell::new(vec![]));
+
+        let (window_id, parent) = {
+            let render_log = render_log.clone();
+            let rendered_generations = rendered_generations.clone();
+            app.add_window(WindowStyle::NotStealFocus, |ctx| {
+                let child = ctx.add_view(|_| RenderLoggingChild {
+                    generation: 0,
+                    rendered_generations,
+                    render_log: render_log.clone(),
+                });
+                ConditionalParent {
+                    child: Some(child),
+                    show_child: true,
+                    render_log,
+                }
+            })
+        };
+
+        parent.update(app, |_, ctx| ctx.notify());
+        parent.update(app, |parent, ctx| {
+            parent.show_child = false;
+            ctx.notify();
+        });
+
+        let frames_before = app.update(|ctx| {
+            ctx.presenter(window_id)
+                .expect("window should have a presenter")
+                .borrow()
+                .frame_count()
+        });
+
+        // Dropping the unmounted child queues a removal; removals must always
+        // drain promptly, otherwise the presenter retains the dropped view's
+        // cached element tree until an unrelated frame happens.
+        parent.update(app, |parent, _| {
+            parent.child = None;
+        });
+
+        let frames_after = app.update(|ctx| {
+            ctx.presenter(window_id)
+                .expect("window should have a presenter")
+                .borrow()
+                .frame_count()
+        });
+        assert!(
+            frames_after > frames_before,
+            "removing a view must schedule a frame so its cached element is dropped \
+             (before: {frames_before}, after: {frames_after})"
         );
     });
 }
