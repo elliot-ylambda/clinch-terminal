@@ -50,6 +50,15 @@ pub fn fmt_reset(resets_at: Option<DateTime<Utc>>, now: DateTime<Utc>) -> String
     }
 }
 
+/// Compact reset countdown for exhausted-window chip labels: `"42m"`,
+/// `"1h 45m"`, `"2d"`; past-or-now -> `"now"`. Same bucketing as
+/// [`fmt_reset`] minus the `"in "` prefix — the chip supplies its own
+/// `"resets "` prefix, so `"resets in 42m"` would read doubly-prefixed.
+pub fn fmt_reset_short(resets_at: DateTime<Utc>, now: DateTime<Utc>) -> String {
+    let long = fmt_reset(Some(resets_at), now);
+    long.strip_prefix("in ").map(str::to_owned).unwrap_or(long)
+}
+
 /// Map a raw model id to a short human label for the tab chip.
 /// Returns `""` for unknown / synthetic ids so callers can hide the chip.
 ///
@@ -200,6 +209,19 @@ mod tests {
         );
         assert_eq!(fmt_reset(Some(now + Duration::days(2)), now), "in 2d");
         assert_eq!(fmt_reset(Some(now - Duration::hours(1)), now), "now");
+    }
+
+    #[test]
+    fn fmt_reset_short_drops_the_in_prefix_and_keeps_now() {
+        let now = Utc.with_ymd_and_hms(2026, 6, 30, 12, 0, 0).unwrap();
+        assert_eq!(fmt_reset_short(now + Duration::minutes(42), now), "42m");
+        assert_eq!(
+            fmt_reset_short(now + Duration::hours(1) + Duration::minutes(45), now),
+            "1h 45m"
+        );
+        assert_eq!(fmt_reset_short(now + Duration::hours(3), now), "3h");
+        assert_eq!(fmt_reset_short(now + Duration::days(2), now), "2d");
+        assert_eq!(fmt_reset_short(now - Duration::minutes(1), now), "now");
     }
 
     #[test]

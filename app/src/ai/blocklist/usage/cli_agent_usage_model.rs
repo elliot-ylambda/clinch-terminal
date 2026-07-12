@@ -101,7 +101,18 @@ impl CliAgentUsageModel {
         // Emit only on real change — the producer sends every ~5s forever, and an
         // unconditional notify would wake the footer each poll even when nothing
         // changed (and even when the chip is hidden), defeating idle-frame suppression.
-        if snap == self.latest {
+        //
+        // Exception: while the widget is enabled and a plan window is exhausted,
+        // the chip shows a live "resets …" countdown computed from `Utc::now()`
+        // at render time. An identical snapshot would freeze that label, so keep
+        // emitting on every producer tick until the exhaustion clears. Gated on
+        // the setting so a disabled widget stays fully idle.
+        let countdown_is_live = *CliAgentUsageSettings::as_ref(ctx).show_plan_limits
+            && [snap.claude.plan, snap.codex.plan]
+                .into_iter()
+                .flatten()
+                .any(|plan| plan.exhausted_until().is_some());
+        if snap == self.latest && !countdown_is_live {
             return;
         }
         self.latest = snap;
