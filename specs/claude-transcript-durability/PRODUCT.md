@@ -62,7 +62,7 @@ Before this work there was also **no automated pre-update snapshot**: the
 3. Overwriting a pane's registry entry never destroys information: every registry write (including the overwrite and `remove`) is journaled, so any historically recorded (pane, session, bridge, cwd) tuple remains recoverable.
 
 ### Restore & update safety
-4. After Clinch quits (user quit, crash, or self-update) and relaunches, every pane's conversation is re-openable: bridged sessions via `claude --teleport <bridge>`, local sessions via `claude --resume <id>` — same behavior as today's `warp_agent_resume_launch`, but the pointer it needs can no longer be lost.
+4. After Clinch quits (user quit, crash, or self-update) and relaunches, every pane's conversation is re-openable: bridged sessions via `claude --teleport <bridge>`, local sessions via `claude --resume <id>` — same behavior as today's `clinch_agent_resume_launch`, but the pointer it needs can no longer be lost.
 5. `make update` snapshots the registry (and journal) **before** quitting the running Clinch, not after relaunch. A conversation active at update time is findable after the update from the journal alone.
 
 ### Discovery

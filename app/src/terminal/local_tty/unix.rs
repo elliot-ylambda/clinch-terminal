@@ -3,7 +3,7 @@
 
 //! TTY related functionality.
 use std::collections::HashMap;
-use std::ffi::{CStr, OsString};
+use std::ffi::{CStr, OsStr, OsString};
 use std::fs::{DirBuilder, File};
 use std::mem::MaybeUninit;
 use std::os::unix::fs::DirBuilderExt;
@@ -41,6 +41,25 @@ use crate::terminal::shell::ShellType;
 use crate::{report_if_error, ASSETS};
 
 const BASH_HISTORY_SIZE_SENTINEL: &str = "57265949261";
+
+/// Agent CLIs export implementation/session identity to their child processes. If Clinch is
+/// launched or updated from inside one of those children, inheriting that identity into a new
+/// top-level pane can make a fresh Claude process behave like a nested/bridged child and skip
+/// its local transcript entirely. Strip current and future `CLAUDE_CODE_*` identity fields at
+/// the PTY boundary, plus the two known non-prefixed markers. User behavior settings such as
+/// `CLAUDE_EFFORT` remain intact.
+fn is_cli_agent_identity_env(key: &OsStr) -> bool {
+    let key = key.to_string_lossy();
+    key.starts_with("CLAUDE_CODE_") || key == "CLAUDECODE" || key == "AI_AGENT"
+}
+
+fn cli_agent_identity_env_keys(overrides: &HashMap<OsString, OsString>) -> Vec<OsString> {
+    std::env::vars_os()
+        .map(|(key, _)| key)
+        .chain(overrides.keys().cloned())
+        .filter(|key| is_cli_agent_identity_env(key))
+        .collect()
+}
 
 /// Get raw fds for leader/follower ends of a new PTY.
 fn make_pty(size: winsize) -> Result<(RawFd, RawFd)> {
@@ -377,9 +396,15 @@ fn build_host_shell_command(
         builder.env("WARP_INITIAL_WORKING_DIR", start_dir);
     }
 
-    // Apply any caller-provided environment overrides last, so they win.
+    let agent_identity_env_keys = cli_agent_identity_env_keys(&env_vars);
+
+    // Apply any caller-provided environment overrides last, so they win unless they attempt
+    // to reintroduce a parent agent's process/session identity.
     for (key, value) in env_vars {
         builder.env(key, value);
+    }
+    for key in agent_identity_env_keys {
+        builder.env_remove(key);
     }
 
     // Set the initial working directory to the user's home directory.  If
@@ -846,9 +871,15 @@ fn build_docker_sandbox_command(
     // the container's init script cds into the sandbox home dir, not
     // the host's startup dir.
 
-    // Apply any caller-provided environment overrides last, so they win.
+    let agent_identity_env_keys = cli_agent_identity_env_keys(&env_vars);
+
+    // Apply any caller-provided environment overrides last, then enforce the same top-level
+    // agent identity boundary as host shells.
     for (key, value) in env_vars {
         builder.env(key, value);
+    }
+    for key in agent_identity_env_keys {
+        builder.env_remove(key);
     }
 
     builder.current_dir(home_dir);

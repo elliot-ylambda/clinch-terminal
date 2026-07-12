@@ -10,9 +10,9 @@ See `PRODUCT.md` for user-visible behavior and incident history.
   `Stop` hooks to `~/.warp/agent-resume-bin/claude-capture.sh` (source:
   `tools/agent-resume/claude-capture.sh`). The hook reads `session_id`, `cwd`, event,
   permission mode, and prompt text; reconstructs launch flags from the live process argv;
-  and writes one mutable pane entry through `warp-agent-resume`.
+  and writes one mutable pane entry through `clinch-agent-resume`.
 - **Replay**: `tools/agent-resume/claude.zsh` supplies
-  `warp_agent_resume_launch`. It tries a recorded cloud bridge first, then a resumable
+  `clinch_agent_resume_launch`. It tries a recorded cloud bridge first, then a resumable
   local id, then the newest unclaimed local session for the cwd, then a guarded fresh
   launch.
 - **Fork UI**: `app/src/agent_resume.rs` reads the same registry. This feature does not
@@ -47,7 +47,7 @@ The investigation gate is resolved:
 
 ### 1. Append-only registry journal
 
-`tools/agent-resume/warp-agent-resume` appends one JSON line to
+`tools/agent-resume/clinch-agent-resume` appends one JSON line to
 `$DIR/journal.jsonl` after every successful `write` and before every effective `remove`:
 
 ```json
@@ -111,7 +111,7 @@ device, so its cloud copy remains authoritative; local resume is the fast-failur
 
 ### 5. Discovery command
 
-`warp-agent-resume list [--cwd <dir>]` joins journal and prompt-mirror records and prints a
+`clinch-agent-resume list [--cwd <dir>]` joins journal and prompt-mirror records and prints a
 newest-first line per known conversation:
 
 `<start-ts>  <sid-short>  <cwd>  <bridge-url-or-local>  "<first prompt>"`

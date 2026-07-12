@@ -62,6 +62,37 @@ else
   echo "Warning: No bundled directory found at $RESOURCES_SRC/bundled" >&2
 fi
 
+# Clinch's macOS distribution carries the complete local agent-resume runtime. The GUI runs
+# its installer idempotently on launch, and Resources/bin is appended to every local shell's
+# PATH, so pane replay works before the user has touched an rcfile or restarted a shell.
+if [ "$(uname -s)" = "Darwin" ]; then
+  AGENT_RESUME_SRC="$REPO_ROOT/tools/agent-resume"
+  AGENT_RESUME_DEST="$DEST_DIR/agent-resume"
+  echo "Copying Clinch agent-resume runtime to $AGENT_RESUME_DEST"
+  rm -rf "$AGENT_RESUME_DEST"
+  mkdir -p "$AGENT_RESUME_DEST" "$DEST_DIR/bin"
+  install -m 0755 \
+    "$AGENT_RESUME_SRC/agent-json" \
+    "$AGENT_RESUME_SRC/clinch-agent-resume" \
+    "$AGENT_RESUME_SRC/warp-agent-resume" \
+    "$AGENT_RESUME_SRC/clinch_agent_resume_launch" \
+    "$AGENT_RESUME_SRC/claude-capture.sh" \
+    "$AGENT_RESUME_SRC/codex-session-start.sh" \
+    "$AGENT_RESUME_SRC/codex-session-end.sh" \
+    "$AGENT_RESUME_SRC/install-agent-plugins.sh" \
+    "$AGENT_RESUME_SRC/wire-claude-hooks.sh" \
+    "$AGENT_RESUME_SRC/install.sh" \
+    "$AGENT_RESUME_DEST/"
+  install -m 0644 \
+    "$AGENT_RESUME_SRC/agent-json.js" \
+    "$AGENT_RESUME_SRC/claude.zsh" \
+    "$AGENT_RESUME_DEST/"
+  install -m 0755 "$AGENT_RESUME_SRC/clinch_agent_resume_launch" \
+    "$DEST_DIR/bin/clinch_agent_resume_launch"
+  install -m 0755 "$AGENT_RESUME_SRC/clinch_agent_resume_launch" \
+    "$DEST_DIR/bin/warp_agent_resume_launch"
+fi
+
 if [ -n "$GIT_RELEASE_TAG" ]; then
   VERSION_METADATA_DIR="$DEST_DIR/bundled/metadata"
   VERSION_METADATA_PATH="$VERSION_METADATA_DIR/version.json"

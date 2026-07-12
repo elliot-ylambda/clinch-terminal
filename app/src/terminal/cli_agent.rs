@@ -364,7 +364,7 @@ impl CLIAgent {
             })
             .unwrap_or(Cow::Borrowed(trimmed));
 
-        // Clinch's agent-resume replays `warp_agent_resume_launch <agent> <id> [flags]` when a
+        // Clinch's agent-resume replays `clinch_agent_resume_launch <agent> <id> [flags]` when a
         // pane is restored. Strip that wrapper so detection sees the underlying `<agent> ...`
         // command and a restored pane gets the same agent icon/toolbar as a fresh launch.
         let resolved_command = Self::unwrap_agent_resume_launch(resolved_command, escape_char);
@@ -384,19 +384,23 @@ impl CLIAgent {
             })
     }
 
-    /// Strips Clinch's `warp_agent_resume_launch <agent> ...` restore wrapper, returning the
+    /// Strips Clinch's `clinch_agent_resume_launch <agent> ...` restore wrapper, returning the
     /// underlying `<agent> ...` command. Used so a restored pane is detected as its agent rather
-    /// than as the wrapper function. Returns `command` unchanged when it isn't the wrapper.
+    /// than as the wrapper function. The old Warp-prefixed wrapper remains accepted for saved
+    /// sessions created before the rebrand. Returns `command` unchanged for any other command.
     fn unwrap_agent_resume_launch<'a>(
         command: Cow<'a, str>,
         escape_char: Option<EscapeChar>,
     ) -> Cow<'a, str> {
-        const WRAPPER: &str = "warp_agent_resume_launch";
-        if Self::extract_first_command(&command, escape_char).as_deref() != Some(WRAPPER) {
-            return command;
-        }
+        const CLINCH_WRAPPER: &str = "clinch_agent_resume_launch";
+        const LEGACY_WARP_WRAPPER: &str = "warp_agent_resume_launch";
+        let wrapper = match Self::extract_first_command(&command, escape_char).as_deref() {
+            Some(CLINCH_WRAPPER) => CLINCH_WRAPPER,
+            Some(LEGACY_WARP_WRAPPER) => LEGACY_WARP_WRAPPER,
+            _ => return command,
+        };
         // First word is exactly the wrapper; drop it and the remainder begins with the agent.
-        match command.trim_start().strip_prefix(WRAPPER) {
+        match command.trim_start().strip_prefix(wrapper) {
             Some(rest) => Cow::Owned(rest.trim_start().to_string()),
             None => command,
         }

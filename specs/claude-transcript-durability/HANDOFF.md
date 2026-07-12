@@ -10,12 +10,12 @@ authorized shipping this scoped change directly to `clinch/main` without a PR:
 
 | Change | Implementation | State |
 |---|---|---|
-| Append-only registry journal | `tools/agent-resume/warp-agent-resume` journals every effective write/remove and provides `list [--cwd]` | done |
+| Append-only registry journal | `tools/agent-resume/clinch-agent-resume` journals every effective write/remove and provides `list [--cwd]` | done |
 | Prompt mirror | `tools/agent-resume/claude-capture.sh` mirrors non-empty prompts before the pane-ownership guard, private and capped | done |
 | Pre-quit snapshot | `script/update-installed-clinch` snapshots registry/mirrors/journal/referenced transcripts and marker-prunes to 15 | done |
 | App relaunch scrub | sourceable `clinch_scrubbed_open` dynamically removes every exported `CLAUDE_CODE_*` plus related Claude/Make variables before `open` | done |
 | Interactive launch scrub | `tools/agent-resume/claude.zsh` wraps `claude` and removes only stale identity/implementation markers while preserving argv and behavior flags | done |
-| Discovery | `warp-agent-resume list [--cwd <dir>]`, newest first with bridge URL/local marker and first prompt | done |
+| Discovery | `clinch-agent-resume list [--cwd <dir>]`, newest first with bridge URL/local marker and first prompt | done |
 | Docs/spec alignment | `PRODUCT.md`, `TECH.md`, and `tools/agent-resume/README.md` now describe leaked child identity—not bridging itself—as the cause | done |
 
 Two post-root-fix decisions required by TECH are explicit in code comments:
@@ -108,7 +108,7 @@ dirty Rust/project-tabs changes. The direct-main commit must be based on **`clin
 
 - `script/update-installed-clinch`
 - `tools/agent-resume/README.md`
-- `tools/agent-resume/warp-agent-resume`
+- `tools/agent-resume/clinch-agent-resume`
 - `tools/agent-resume/claude-capture.sh`
 - `tools/agent-resume/claude.zsh`
 - `tools/agent-resume/tests/test_registry_journal.sh`

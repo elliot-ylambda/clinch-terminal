@@ -39,16 +39,16 @@ node "/bin/sh -c /opt/agent-resume/claude-capture.sh" 400 300
 node "node /opt/claude-code/cli.js --dangerously-skip-permissions --model opus" 300 200
 node "-zsh" 200 1
 
-argv="$(_warp_agent_resume_claude_argv 500)"
+argv="$(_clinch_agent_resume_claude_argv 500)"
 [[ "$argv" == *"--dangerously-skip-permissions"* && "$argv" == *"--model opus"* ]] \
   || fail "walk did not find the flag-bearing claude ancestor (got: '$argv')"
-flags="$(_warp_agent_resume_extract_flags "$argv")"
+flags="$(_clinch_agent_resume_extract_flags "$argv")"
 [[ "$flags" == *"--dangerously-skip-permissions"* && "$flags" == *"--model opus"* ]] \
   || fail "extracted flags wrong (got: '$flags')"
 
 # A plain claude launch (no carry-over flags anywhere) yields empty -> resume stays plain.
 node "node /opt/claude-code/cli.js" 300 200
-argv="$(_warp_agent_resume_claude_argv 500)"
+argv="$(_clinch_agent_resume_claude_argv 500)"
 [[ -z "$argv" ]] || fail "expected empty walk for plain launch (got: '$argv')"
 
 echo "PASS"

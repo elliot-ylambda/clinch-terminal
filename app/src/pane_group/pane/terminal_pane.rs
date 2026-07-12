@@ -87,7 +87,7 @@ pub struct RestartSpec {
     /// Working directory to spawn the fresh shell in (from `pwd_if_local`).
     pub cwd: Option<String>,
     /// Agent resume command to replay after the fresh shell bootstraps
-    /// (e.g. `warp_agent_resume_launch claude <id>`). `None` for non-agent
+    /// (e.g. `clinch_agent_resume_launch claude <id>`). `None` for non-agent
     /// long-running processes — those just respawn as a usable shell.
     pub on_restore_command: Option<String>,
 }

@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+exec /usr/bin/osascript -l JavaScript "$SCRIPT_DIR/agent-json.js" "$@"

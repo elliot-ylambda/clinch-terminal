@@ -1,0 +1,17 @@
+#!/bin/zsh
+# Standalone replay entrypoint placed in Clinch.app/Contents/Resources/bin.
+# Clinch adds that directory to every local shell's PATH, so restored panes can
+# resume without a ~/.zshrc edit or a shell restart.
+set -u
+
+script_dir="${0:A:h}"
+if [[ -r "$script_dir/claude.zsh" ]]; then
+  source "$script_dir/claude.zsh"
+elif [[ -r "$script_dir/../agent-resume/claude.zsh" ]]; then
+  source "$script_dir/../agent-resume/claude.zsh"
+else
+  print -u2 "clinch: bundled agent-resume runtime is missing; reinstall Clinch."
+  exit 1
+fi
+
+clinch_agent_resume_launch "$@"

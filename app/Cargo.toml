@@ -312,7 +312,7 @@ inquire = "0.9.1"
 diesel = { workspace = true, features = ["sqlite", "chrono"] }
 diesel_migrations = { version = "2.2.0", features = ["sqlite"] }
 env_logger.workspace = true
-git2 = { version = "0.20.4", default-features = false, features = [
+git2 = { version = "0.21", default-features = false, features = [
     "vendored-libgit2",
 ] }
 http_server.workspace = true
@@ -557,6 +557,7 @@ default = [
     "tabbed_editor_view",
     "allow_opening_file_links_using_editor_env",
     "read_image_files",
+    "image_preview_pane",
     "selection_as_context",
     "undo_closed_panes",
     "revert_diff_hunk",
@@ -606,6 +607,7 @@ default = [
     "global_search",
     "cloud_conversations",
     "list_skills",
+    "skills_panel",
     "ask_user_question",
     "bundled_skills",
     "ambient_agents_rtc",

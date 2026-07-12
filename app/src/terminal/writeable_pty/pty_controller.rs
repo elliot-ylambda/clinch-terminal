@@ -531,7 +531,11 @@ impl<T: EventLoopSender> PtyController<T> {
     /// bootstrapping. Used by the restore path to replay a captured agent-resume
     /// command in a restored pane once its shell is ready.
     pub fn set_on_restore_command(&mut self, command: String) {
-        self.pending_on_restore_command = Some(command);
+        // Snapshots persisted by older Clinch builds may still carry the Warp-prefixed
+        // launcher. Normalize here as the final execution boundary so even those panes show
+        // and run the Clinch-branded restore command on their first post-update launch.
+        self.pending_on_restore_command =
+            Some(crate::agent_resume::normalize_restore_command(command));
     }
 
     /// Converts the given `command` into a byte array and writes its corresponding bytes to the PTY.

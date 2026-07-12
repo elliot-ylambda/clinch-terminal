@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# Reproducible source gate used by both the local release flow and Clinch CI.
+set -euo pipefail
+
+# A release invoked from inside an older Make/agent process can inherit stale recursive-Make
+# flags or a previously exported release-note blob. Keep build scripts independent of that
+# parent environment; the current Makefile exports its own notes only for the publish command.
+unset RELEASE_NOTES MAKEFLAGS MFLAGS MAKELEVEL MAKEOVERRIDES
+
+for tool in cargo cargo-nextest cargo-deny; do
+  command -v "$tool" >/dev/null 2>&1 || {
+    echo "error: $tool is required for the launch gate" >&2
+    echo "run ./script/bootstrap and ./script/install_cargo_test_deps first" >&2
+    exit 1
+  }
+done
+
+echo "==> Formatting"
+./script/format --check
+
+echo "==> Installer and agent-runtime syntax"
+sh -n install.sh
+bash -n \
+  script/launch-check \
+  script/macos/bundle \
+  script/prepare_bundled_resources \
+  script/update-installed-clinch \
+  script/update_plist \
+  script/verify-clinch-release
+bash -n tools/agent-resume/*.sh \
+  tools/agent-resume/clinch-agent-resume \
+  tools/agent-resume/warp-agent-resume
+zsh -n tools/agent-resume/claude.zsh \
+  tools/agent-resume/clinch_agent_resume_launch
+
+echo "==> Agent capture, durability, install, and replay tests"
+for test in tools/agent-resume/tests/test_*.sh; do
+  echo "running $test"
+  if [[ "$(head -n 1 "$test")" == *zsh* ]]; then
+    zsh "$test"
+  else
+    bash "$test"
+  fi
+done
+
+echo "==> Stable Clinch build configuration"
+cargo check --locked --bin stable
+
+echo "==> Shipped component tests"
+cargo nextest run --locked -p warp -p warpui -p cli_agent_usage
+
+echo "==> Shipped component lints"
+# Do not select the inherited dev/preview binaries: they require Warp's private channel config
+# and are not Clinch artifacts. The stable binary, library, and test targets are the launch set.
+cargo clippy --locked -p warp --lib --bin stable --tests --all-features -- -D warnings
+cargo clippy --locked -p cli_agent_usage --all-targets --all-features -- -D warnings
+
+echo "==> Dependency advisories"
+ADVISORY_METADATA_DIR="$(mktemp -d -t clinch-advisories)"
+trap 'rm -rf "$ADVISORY_METADATA_DIR"' EXIT
+for target in aarch64-apple-darwin x86_64-apple-darwin; do
+  cargo metadata --locked --format-version 1 --filter-platform "$target" \
+    > "$ADVISORY_METADATA_DIR/$target.json"
+  cargo deny check advisories --metadata-path "$ADVISORY_METADATA_DIR/$target.json"
+done
+rm -rf "$ADVISORY_METADATA_DIR"
+trap - EXIT
+
+echo "✓ Clinch source launch gate passed"

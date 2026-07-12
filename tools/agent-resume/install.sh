@@ -1,78 +1,117 @@
 #!/usr/bin/env bash
-# Installs the agent-resume capture layer (claude wrapper + codex hooks + registry CLI)
-# into your shell so that running `claude`/`codex` inside Warp records a resumable
-# session per pane. The Rust side of Warp reads ~/.warp/agent-resume/<pane_uuid>.json
-# on restore and re-runs the captured command.
+# Installs Clinch's local agent-resume capture layer and wires Claude Code / Codex hooks.
 #
-# Safe to re-run (idempotent). macOS, zsh.
+# This script is bundled inside Clinch.app and is run idempotently on GUI launch. It uses
+# only macOS system tools: no repository clone, jq/Homebrew dependency, shell rc edit, or
+# shell restart is required. It is also safe to run directly while developing.
 set -euo pipefail
+
+QUIET=0
+INSTALL_PLUGINS=0
+for arg in "$@"; do
+  case "$arg" in
+    --quiet) QUIET=1 ;;
+    --plugins) INSTALL_PLUGINS=1 ;;
+    --help|-h)
+      echo "usage: install.sh [--quiet] [--plugins]"
+      exit 0
+      ;;
+    *) echo "error: unknown option: $arg" >&2; exit 2 ;;
+  esac
+done
+
+log() { (( QUIET )) || printf '%s\n' "$*"; }
+warn() { printf 'clinch agent setup warning: %s\n' "$*" >&2; }
 
 SRC="$(cd "$(dirname "$0")" && pwd)"
 BIN="$HOME/.warp/agent-resume-bin"
 REG="$HOME/.warp/agent-resume"
 
 mkdir -p "$BIN" "$REG"
-chmod 700 "$REG"
+chmod 700 "$BIN" "$REG"
 
-install -m 0755 "$SRC/warp-agent-resume" "$SRC/claude-capture.sh" \
-  "$SRC/codex-session-start.sh" "$SRC/codex-session-end.sh" \
-  "$SRC/install-agent-plugins.sh" "$BIN/"
-install -m 0644 "$SRC/claude.zsh" "$BIN/claude.zsh"
+install -m 0755 \
+  "$SRC/agent-json" \
+  "$SRC/clinch-agent-resume" \
+  "$SRC/warp-agent-resume" \
+  "$SRC/clinch_agent_resume_launch" \
+  "$SRC/claude-capture.sh" \
+  "$SRC/codex-session-start.sh" \
+  "$SRC/codex-session-end.sh" \
+  "$SRC/install-agent-plugins.sh" \
+  "$SRC/wire-claude-hooks.sh" \
+  "$BIN/"
+install -m 0644 "$SRC/agent-json.js" "$SRC/claude.zsh" "$BIN/"
 
-# Remove the pre-rename capture script so a stale settings.json entry can't run it.
+# An external compatibility entrypoint covers commands persisted by older builds even when
+# the user's ~/.zshrc never sourced the old function definitions.
+install -m 0755 "$SRC/clinch_agent_resume_launch" "$BIN/warp_agent_resume_launch"
+
+# Remove the pre-rename capture script so a stale settings.json entry cannot run it.
 rm -f "$BIN/claude-session-start.sh"
 
-# Wire ~/.zshrc (PATH for the CLI + source the replay functions) once.
-marker="# >>> warp agent-resume >>>"
-if ! grep -qF "$marker" "$HOME/.zshrc" 2>/dev/null; then
-  {
-    echo ""
-    echo "$marker"
-    echo "export PATH=\"\$HOME/.warp/agent-resume-bin:\$PATH\""
-    echo "source \"\$HOME/.warp/agent-resume-bin/claude.zsh\""
-    echo "# <<< warp agent-resume <<<"
-  } >> "$HOME/.zshrc"
-  echo "Added agent-resume block to ~/.zshrc"
+wire_codex_hooks() {
+  local cfg="$HOME/.codex/config.toml" tmp mode
+  mkdir -p "$(dirname "$cfg")"
+  tmp="$(mktemp "$(dirname "$cfg")/.clinch-codex.XXXXXX")"
+
+  if [[ -f "$cfg" ]]; then
+    mode="$(stat -f '%Lp' "$cfg" 2>/dev/null || echo 600)"
+    # Replace both Clinch and legacy Warp managed blocks. Everything outside those exact
+    # markers is copied byte-for-line and remains user-owned.
+    awk '
+      function flush_blanks() {
+        for (i = 0; i < pending_blanks; i++) print ""
+        pending_blanks = 0
+      }
+      /^# >>> (clinch|warp) agent-resume >>>$/ { managed = 1; next }
+      /^# <<< (clinch|warp) agent-resume <<<$/{ managed = 0; next }
+      !managed && $0 == "" { pending_blanks++; next }
+      !managed { flush_blanks(); print }
+    ' "$cfg" > "$tmp"
+  else
+    mode=600
+    : > "$tmp"
+  fi
+
+  # A leading newline safely separates this table array from any preceding TOML value.
+  printf '\n# >>> clinch agent-resume >>>\n' >> "$tmp"
+  printf '[[hooks.SessionStart]]\n' >> "$tmp"
+  printf 'matcher = "startup|resume"\n' >> "$tmp"
+  printf '[[hooks.SessionStart.hooks]]\n' >> "$tmp"
+  printf 'type = "command"\n' >> "$tmp"
+  printf 'command = "%s/codex-session-start.sh"\n\n' "$BIN" >> "$tmp"
+  printf '[[hooks.SessionEnd]]\n' >> "$tmp"
+  printf '[[hooks.SessionEnd.hooks]]\n' >> "$tmp"
+  printf 'type = "command"\n' >> "$tmp"
+  printf 'command = "%s/codex-session-end.sh"\n' "$BIN" >> "$tmp"
+  printf '# <<< clinch agent-resume <<<\n' >> "$tmp"
+
+  chmod "$mode" "$tmp"
+  if [[ -f "$cfg" ]] && cmp -s "$tmp" "$cfg"; then
+    rm -f "$tmp"
+  else
+    mv "$tmp" "$cfg"
+  fi
+}
+
+wire_codex_hooks
+log "Wired Codex capture hooks (SessionStart, SessionEnd)"
+
+# Structural JSON merge: preserves unrelated Claude settings/hooks, removes stale managed
+# entries, and leaves exactly one current hook on each supported lifecycle event.
+if "$SRC/wire-claude-hooks.sh" "$HOME/.claude/settings.json" "$BIN"; then
+  log "Wired Claude capture hooks (SessionStart, UserPromptSubmit, Stop)"
 else
-  echo "~/.zshrc already wired (skipping)"
+  warn "could not update ~/.claude/settings.json; fix invalid JSON and relaunch Clinch"
 fi
 
-# Wire ~/.codex/config.toml hooks once (paths point at the installed bin).
-CODEX_CFG="$HOME/.codex/config.toml"
-if [[ -f "$CODEX_CFG" ]] && grep -qF "agent-resume-bin/codex-session-start.sh" "$CODEX_CFG"; then
-  echo "~/.codex/config.toml already wired (skipping)"
-else
-  mkdir -p "$HOME/.codex"
-  cat >> "$CODEX_CFG" <<EOF
-
-# >>> warp agent-resume >>>
-[[hooks.SessionStart]]
-matcher = "startup|resume"
-[[hooks.SessionStart.hooks]]
-type = "command"
-command = "$BIN/codex-session-start.sh"
-
-[[hooks.SessionEnd]]
-[[hooks.SessionEnd.hooks]]
-type = "command"
-command = "$BIN/codex-session-end.sh"
-# <<< warp agent-resume <<<
-EOF
-  echo "Added agent-resume hooks to ~/.codex/config.toml"
+# Notification plugins are optional because their marketplace commands can need network
+# access. The app's built-in plugin manager also offers this as a one-click install/update.
+if (( INSTALL_PLUGINS )); then
+  source "$SRC/install-agent-plugins.sh" 2>/dev/null \
+    && warp_install_agent_notification_plugins \
+    || true
 fi
 
-# Wire the Claude capture hooks into ~/.claude/settings.json (SessionStart +
-# UserPromptSubmit + Stop; migrates entries from the pre-rename script).
-"$SRC/wire-claude-hooks.sh" "$HOME/.claude/settings.json" "$BIN"
-echo "Wired Claude capture hooks (SessionStart, UserPromptSubmit, Stop)"
-
-# Install the CLI-agent notification plugins (best-effort) so Claude/Codex emit the
-# status events that drive tab badges + desktop notifications in Clinch.
-source "$SRC/install-agent-plugins.sh" 2>/dev/null && warp_install_agent_notification_plugins || true
-
-echo ""
-echo "Done. Requirements: jq, uuidgen (uuidgen is preinstalled on macOS; 'brew install jq' if missing)."
-echo "Restart your shell (or 'source ~/.zshrc') so the replay functions load."
-echo "Capture is via Claude hooks (SessionStart/UserPromptSubmit/Stop) and Codex's SessionStart"
-echo "hook; they only record inside a Warp pane (WARP_TERMINAL_SESSION_UUID set)."
-echo "New Claude sessions are captured immediately; no restart needed for that."
+log "Agent resume is ready. New Claude and Codex sessions are captured immediately."

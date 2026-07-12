@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# Verifies the exact app/zip/DMG that the Makefile is about to publish.
+set -euo pipefail
+
+APP="${1:?usage: verify-clinch-release <app> <zip> <sha256> <dmg> <version>}"
+ZIP="${2:?missing zip}"
+SHA_FILE="${3:?missing checksum sidecar}"
+DMG="${4:?missing dmg}"
+VERSION="${5:?missing version}"
+
+fail() { echo "release verification failed: $*" >&2; exit 1; }
+for path in "$APP" "$ZIP" "$SHA_FILE" "$DMG"; do
+  [[ -e "$path" ]] || fail "missing $path"
+done
+
+PLIST="$APP/Contents/Info.plist"
+[[ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$PLIST")" == "sh.clinch.Clinch" ]] \
+  || fail "bundle identifier is not sh.clinch.Clinch"
+[[ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleName' "$PLIST")" == "Clinch" ]] \
+  || fail "bundle name is not Clinch"
+[[ "$(/usr/libexec/PlistBuddy -c 'Print WarpVersion' "$PLIST")" == "$VERSION" ]] \
+  || fail "bundle version does not match $VERSION"
+
+codesign --verify --deep --strict "$APP" || fail "app code signature is invalid"
+entitlements="$(codesign -d --entitlements :- "$APP" 2>/dev/null || true)"
+[[ "$entitlements" != *"get-task-allow"* ]] \
+  || fail "release carries the development-only get-task-allow entitlement"
+
+MAIN_BINARY="$APP/Contents/MacOS/stable"
+[[ -x "$MAIN_BINARY" ]] || fail "bundle omitted its stable executable"
+if [[ "${REQUIRE_UNIVERSAL:-1}" == "1" ]]; then
+  lipo "$MAIN_BINARY" -verify_arch x86_64 arm64 >/dev/null \
+    || fail "public release is not universal (x86_64 + arm64)"
+fi
+
+for file in \
+  "$APP/Contents/Resources/agent-resume/install.sh" \
+  "$APP/Contents/Resources/agent-resume/agent-json" \
+  "$APP/Contents/Resources/agent-resume/agent-json.js" \
+  "$APP/Contents/Resources/bin/clinch_agent_resume_launch" \
+  "$APP/Contents/Resources/bin/warp_agent_resume_launch"; do
+  [[ -f "$file" ]] || fail "bundle omitted ${file#"$APP/"}"
+done
+[[ -x "$APP/Contents/Resources/agent-resume/install.sh" ]] \
+  || fail "bundled installer is not executable"
+[[ -x "$APP/Contents/Resources/bin/clinch_agent_resume_launch" ]] \
+  || fail "bundled resume launcher is not executable"
+
+expected="$(awk 'NF { print $1; exit }' "$SHA_FILE" | tr 'A-F' 'a-f')"
+actual="$(shasum -a 256 "$ZIP" | awk '{ print $1 }')"
+[[ "$expected" == "$actual" ]] || fail "zip checksum sidecar does not match"
+
+TMP="$(mktemp -d -t clinch-release-verify)"
+trap 'rm -rf "$TMP"' EXIT
+ditto -x -k "$ZIP" "$TMP/unzipped"
+ZIPPED_APP="$TMP/unzipped/Clinch.app"
+[[ -d "$ZIPPED_APP" ]] || fail "zip does not contain Clinch.app at its root"
+codesign --verify --deep --strict "$ZIPPED_APP" \
+  || fail "zip round-trip invalidated the app signature"
+if [[ "${REQUIRE_UNIVERSAL:-1}" == "1" ]]; then
+  lipo "$ZIPPED_APP/Contents/MacOS/stable" -verify_arch x86_64 arm64 >/dev/null \
+    || fail "zip round-trip lost a required architecture"
+fi
+
+# Exercise the same clean-account setup users receive, with no third-party tools on PATH.
+mkdir -p "$TMP/home"
+HOME="$TMP/home" PATH="/usr/bin:/bin" \
+  /bin/bash "$ZIPPED_APP/Contents/Resources/agent-resume/install.sh" --quiet
+[[ -f "$TMP/home/.claude/settings.json" ]] || fail "first-run Claude setup did not land"
+[[ -f "$TMP/home/.codex/config.toml" ]] || fail "first-run Codex setup did not land"
+
+hdiutil verify "$DMG" >/dev/null || fail "DMG verification failed"
+
+if [[ "${REQUIRE_NOTARIZATION:-0}" == "1" ]]; then
+  spctl --assess --type execute --verbose=2 "$APP" \
+    || fail "Gatekeeper rejected the app"
+  xcrun stapler validate "$DMG" \
+    || fail "DMG has no valid stapled notarization ticket"
+fi
+
+echo "✓ Release artifacts verified for $VERSION"

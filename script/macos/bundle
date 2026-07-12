@@ -65,15 +65,28 @@ DEFAULT_ARCH="$(rustc --print cfg | grep target_arch)"
 cleanup_dmg_files() {
     local target_dir="$1"
     if [ -d "$target_dir" ]; then
+        # APFS images on recent macOS releases are mounted through a synthesized
+        # device (for example disk9 -> disk10). Detach by the image path instead
+        # of guessing a /Volumes name or assuming the first partition is the
+        # mounted one. This also cleans up an interrupted create-dmg invocation.
+        local target_abs
+        target_abs="$(cd "$target_dir" && pwd -P)"
+        local mounted_disks
+        mounted_disks="$(hdiutil info | awk -v prefix="$target_abs/" '
+          /^image-path[[:space:]]*:/ { active = index($0, prefix) > 0; next }
+          active && $1 ~ /^\/dev\/disk[0-9]+$/ { print $1; active = 0 }
+        ')"
+        while IFS= read -r disk; do
+            if [ -n "$disk" ]; then
+                echo "Unmounting disk image: $disk"
+                hdiutil detach "$disk" -force || true
+            fi
+        done <<< "$mounted_disks"
+
         echo "Cleaning up temporary DMG files in $target_dir"
         find "$target_dir" -name "*.dmg" -type f -delete
         find "$target_dir" -name "rw.*.dmg" -type f -delete
     fi
-    # Also check if any volumes are mounted and unmount them
-    hdiutil info | grep "/Volumes/Warp.*" | awk '{print $1}' | while read -r disk; do
-        echo "Unmounting disk image: $disk"
-        hdiutil detach "$disk" -force || true
-    done
 }
 
 # Clean up the temporary codesigning keychain.
@@ -90,6 +103,16 @@ trap 'cleanup_dmg_files "$DMG_DIR"; cleanup_codesign_keychain' EXIT
 # Define a helper function that uses Python to compute a relative path.
 function relpath() {
   python -c "import os,sys;print(os.path.relpath(*(sys.argv[1:])))" "$@";
+}
+
+function add_framework_rpath_if_missing() {
+  local binary="$1"
+  if otool -l "$binary" | grep -A2 -F "cmd LC_RPATH" \
+    | grep -Fq "path @executable_path/../Frameworks"; then
+    echo "Framework rpath already present in $binary"
+  else
+    install_name_tool -add_rpath "@executable_path/../Frameworks" "$binary"
+  fi
 }
 
 # Defaults for command-line flags.
@@ -420,7 +443,7 @@ if [[ "$ARTIFACT" == "app" ]]; then
   popd > /dev/null
 
   echo "Adding rpath to support mac frameworks (e.g. Sentry)"
-  install_name_tool -add_rpath "@executable_path/../Frameworks" "$BUNDLE_DIR/$WARP_APP_NAME.app/Contents/MacOS/$WARP_BIN"
+  add_framework_rpath_if_missing "$BUNDLE_DIR/$WARP_APP_NAME.app/Contents/MacOS/$WARP_BIN"
 
   export WARP_SCHEME_NAME
   export WARP_PLIST_PATH="$BUNDLE_DIR/$WARP_APP_NAME.app/Contents/Info.plist"
@@ -494,8 +517,8 @@ if [[ "$ARTIFACT" == "app" ]]; then
       tmp_bundle_dir=$(mktemp -d -t ci-XXXXXXXXXX)
 
       echo "Adding rpath to both binaries for universal executable"
-      install_name_tool -add_rpath "@executable_path/../Frameworks" "target/$INTEL_TARGET/$TARGET_PROFILE_DIR/$WARP_BIN"
-      install_name_tool -add_rpath "@executable_path/../Frameworks"  "target/$ARM_TARGET/$TARGET_PROFILE_DIR/$WARP_BIN"
+      add_framework_rpath_if_missing "target/$INTEL_TARGET/$TARGET_PROFILE_DIR/$WARP_BIN"
+      add_framework_rpath_if_missing "target/$ARM_TARGET/$TARGET_PROFILE_DIR/$WARP_BIN"
 
       echo "Building universal binary using lipo."
       lipo -create -output "$tmp_bundle_dir/$WARP_BIN" \
@@ -761,6 +784,30 @@ if [[ "$ARTIFACT" = app ]]; then
     rm "$DMG_DIR/$DMG_NAME" || true
     local source_folder="$1"
 
+    # The public/local ship flow deliberately skips Finder styling. Build that
+    # functional DMG directly with hdiutil: create-dmg 1.2/1.3 cannot discover
+    # APFS synthesized mount devices on macOS 26 and leaves a mounted staging
+    # image behind. A temporary source directory also guarantees that the DMG
+    # never includes its own output directory.
+    if [[ "${RUNNER_NAME:-}" == nsc-* || "${SKIP_DMG_APPLESCRIPT:-}" == 1 ]]; then
+      local staging_dir
+      staging_dir="$(mktemp -d -t "${WARP_APP_NAME}-dmg")"
+      ditto "$source_folder/$WARP_APP_NAME.app" "$staging_dir/$WARP_APP_NAME.app"
+      ln -s /Applications "$staging_dir/Applications"
+
+      if ! hdiutil create -quiet \
+        -srcfolder "$staging_dir" \
+        -volname "$WARP_APP_NAME" \
+        -fs APFS \
+        -format ULFO \
+        -ov "$DMG_DIR/$DMG_NAME"; then
+        rm -rf "$staging_dir"
+        return 1
+      fi
+      rm -rf "$staging_dir"
+      return 0
+    fi
+
     local args=(
       --volname "$WARP_APP_NAME"
       # For --no-internet-enable, see https://github.com/create-dmg/create-dmg/issues/179
@@ -779,16 +826,6 @@ if [[ "$ARTIFACT" = app ]]; then
       # See: https://developer.apple.com/documentation/macos-release-notes/macos-26_4-release-notes#External-Media
       --filesystem APFS
     )
-
-    # Skip the AppleScript that formats the DMG window (background + icon layout) whenever it
-    # can't work: on Namespace CI runners (RUNNER_NAME nsc-*), and whenever SKIP_DMG_APPLESCRIPT=1
-    # is set — e.g. the local `make` ship flow or any headless/automation context, where scripting
-    # Finder times out (-1712). The resulting DMG is fully functional, just without the custom
-    # background/icon arrangement.
-    # See https://github.com/create-dmg/create-dmg/issues/72
-    if [[ "${RUNNER_NAME:-}" == nsc-* || "${SKIP_DMG_APPLESCRIPT:-}" == 1 ]]; then
-      args+=(--skip-jenkins)
-    fi
 
     args+=("$DMG_DIR/$DMG_NAME" "$source_folder")
 

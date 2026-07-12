@@ -77,7 +77,7 @@ runs:
         key: ${{ inputs.cache_key != '' && inputs.cache_key || inputs.target_os }}
         # Only cache runs on the master branch (caches on feature branches
         # are not reusable).
-        save-if: ${{ github.ref == 'refs/heads/master' }}
+        save-if: ${{ github.ref == 'refs/heads/main' }}
 
     - name: Set up Namespace cache
       if: ${{ startsWith(runner.name, 'nsc-runner') }}
