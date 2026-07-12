@@ -55,18 +55,21 @@ case "$cmd" in
     # "Find my conversation": newest-first table of every conversation the journal and
     # the prompt mirror (claude-capture.sh, $DIR/prompts/<sid>.jsonl) know about:
     #   <start-ts>  <sid-short>  <cwd>  <bridge-url-or-local>  "<first prompt>"
-    # --cwd <dir> filters to conversations recorded in that directory.
+    # --cwd <dir> filters to conversations recorded in that directory. --json emits
+    # the same newest-first aggregation as a stable machine-readable array.
     cwd_filter=""
+    output_format="human"
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --cwd) cwd_filter="${2:?list --cwd needs a directory}"; shift 2 ;;
-        *) echo "usage: clinch-agent-resume list [--cwd <dir>]" >&2; exit 2 ;;
+        --json) output_format="json"; shift ;;
+        *) echo "usage: clinch-agent-resume list [--cwd <dir>] [--json]" >&2; exit 2 ;;
       esac
     done
-    "$BIN/agent-json" list "$DIR" "$cwd_filter"
+    "$BIN/agent-json" list "$DIR" "$cwd_filter" "$output_format"
     ;;
   *)
-    echo "usage: clinch-agent-resume {write <uuid> <command> <cwd> [bridge]|remove <uuid>|list [--cwd <dir>]}" >&2
+    echo "usage: clinch-agent-resume {write <uuid> <command> <cwd> [bridge]|remove <uuid>|list [--cwd <dir>] [--json]}" >&2
     exit 2
     ;;
 esac

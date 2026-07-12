@@ -1435,62 +1435,69 @@ fn render_agent_attention_chip(
         keybinding_name_to_display_string(super::FOCUS_NEXT_AGENT_ATTENTION_BINDING_NAME, app);
 
     Some(
-        Hoverable::new(state.attention_chip_mouse_state.clone(), move |hover_state| {
-            let icon = ConstrainedBox::new(yellow_stop_icon(appearance).finish())
-                .with_width(SEARCH_ICON_SIZE)
-                .with_height(SEARCH_ICON_SIZE)
-                .finish();
-            let label = render_text_line(
-                &format!("{waiting_count} waiting"),
-                sub_text,
-                ClipConfig::ellipsis(),
-                appearance,
-            );
-
-            let background = if hover_state.is_hovered() {
-                internal_colors::fg_overlay_2(theme)
-            } else {
-                ThemeFill::Solid(ColorU::transparent_black())
-            };
-            let chip = Container::new(
-                Flex::row()
-                    .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                    .with_spacing(4.)
-                    .with_child(icon)
-                    .with_child(label)
-                    .finish(),
-            )
-            .with_padding(Padding::uniform(2.).with_left(4.).with_right(4.))
-            .with_background(background)
-            .with_corner_radius(CornerRadius::with_all(CONTROL_BAR_BUTTON_RADIUS))
-            .finish();
-
-            if hover_state.is_hovered() {
-                let noun = if waiting_count == 1 { "agent" } else { "agents" };
-                let tooltip_text = format!("{waiting_count} {noun} waiting — focus next");
-                let tooltip = if let Some(sublabel) = cycle_keybinding.clone() {
-                    ui_builder
-                        .tool_tip_with_sublabel(tooltip_text, sublabel)
-                        .build()
-                        .finish()
-                } else {
-                    ui_builder.tool_tip(tooltip_text).build().finish()
-                };
-                let mut stack = Stack::new().with_child(chip);
-                stack.add_positioned_overlay_child(
-                    tooltip,
-                    OffsetPositioning::offset_from_parent(
-                        vec2f(0., 4.),
-                        ParentOffsetBounds::WindowByPosition,
-                        ParentAnchor::BottomMiddle,
-                        ChildAnchor::TopMiddle,
-                    ),
+        Hoverable::new(
+            state.attention_chip_mouse_state.clone(),
+            move |hover_state| {
+                let icon = ConstrainedBox::new(yellow_stop_icon(appearance).finish())
+                    .with_width(SEARCH_ICON_SIZE)
+                    .with_height(SEARCH_ICON_SIZE)
+                    .finish();
+                let label = render_text_line(
+                    &format!("{waiting_count} waiting"),
+                    sub_text,
+                    ClipConfig::ellipsis(),
+                    appearance,
                 );
-                stack.finish()
-            } else {
-                chip
-            }
-        })
+
+                let background = if hover_state.is_hovered() {
+                    internal_colors::fg_overlay_2(theme)
+                } else {
+                    ThemeFill::Solid(ColorU::transparent_black())
+                };
+                let chip = Container::new(
+                    Flex::row()
+                        .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                        .with_spacing(4.)
+                        .with_child(icon)
+                        .with_child(label)
+                        .finish(),
+                )
+                .with_padding(Padding::uniform(2.).with_left(4.).with_right(4.))
+                .with_background(background)
+                .with_corner_radius(CornerRadius::with_all(CONTROL_BAR_BUTTON_RADIUS))
+                .finish();
+
+                if hover_state.is_hovered() {
+                    let noun = if waiting_count == 1 {
+                        "agent"
+                    } else {
+                        "agents"
+                    };
+                    let tooltip_text = format!("{waiting_count} {noun} waiting — focus next");
+                    let tooltip = if let Some(sublabel) = cycle_keybinding.clone() {
+                        ui_builder
+                            .tool_tip_with_sublabel(tooltip_text, sublabel)
+                            .build()
+                            .finish()
+                    } else {
+                        ui_builder.tool_tip(tooltip_text).build().finish()
+                    };
+                    let mut stack = Stack::new().with_child(chip);
+                    stack.add_positioned_overlay_child(
+                        tooltip,
+                        OffsetPositioning::offset_from_parent(
+                            vec2f(0., 4.),
+                            ParentOffsetBounds::WindowByPosition,
+                            ParentAnchor::BottomMiddle,
+                            ChildAnchor::TopMiddle,
+                        ),
+                    );
+                    stack.finish()
+                } else {
+                    chip
+                }
+            },
+        )
         .with_cursor(Cursor::PointingHand)
         .on_click(|ctx, _, _| {
             ctx.dispatch_typed_action(WorkspaceAction::FocusNextAgentAttention);

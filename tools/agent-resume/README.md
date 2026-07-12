@@ -127,9 +127,10 @@ conversation. Launch hygiene plus three durable layers close that hole (see
   `~/Library/Application Support/sh.clinch.Clinch/session-recovery-<stamp>/` *before*
   quitting the app for a swap. Auto-snapshots carry a `.auto-snapshot` marker and only the
   newest 15 are kept; hand-made recovery dirs (no marker) are never pruned.
-- **Discovery**: `clinch-agent-resume list [--cwd <dir>]` prints a newest-first table of
+- **Discovery**: `clinch-agent-resume list [--cwd <dir>] [--json]` prints a newest-first table of
   every conversation the journal + mirror know about — start time, short sid, cwd,
-  `https://claude.ai/code/<bridge>` or `local`, and the first prompt.
+  `https://claude.ai/code/<bridge>` or `local`, and the first prompt. `--json` returns the
+  same aggregation with full session IDs and exact prompt text for machine consumers.
 
 ## Install (capture layer)
 
@@ -229,7 +230,7 @@ separate data dir (`~/.warp-oss`), so the two never clobber each other's session
 | File | Role |
 |---|---|
 | `agent-json` / `agent-json.js` | native macOS JSON parsing, encoding, settings merge, and conversation listing without third-party runtimes |
-| `clinch-agent-resume` | registry CLI: `write <uuid> <cmd> <cwd> [bridge]` / `remove <uuid>` / `list [--cwd <dir>]`; journals every mutation to `journal.jsonl` |
+| `clinch-agent-resume` | registry CLI: `write <uuid> <cmd> <cwd> [bridge]` / `remove <uuid>` / `list [--cwd <dir>] [--json]`; journals every mutation to `journal.jsonl` |
 | `claude-capture.sh` | Claude `SessionStart`/`UserPromptSubmit`/`Stop` hook — captures the live session per pane, keeps its permission-mode/`--model` flags in sync with the live session, and mirrors every prompt to `prompts/<sid>.jsonl` |
 | `claude.zsh` | Claude launch-identity scrub + replay functions (`clinch_agent_resume_resumable` / `clinch_agent_resume_launch`) loaded by the standalone launcher |
 | `clinch_agent_resume_launch` | executable replay entrypoint bundled in `Clinch.app/Contents/Resources/bin`; works without an rcfile edit |

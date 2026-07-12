@@ -6,7 +6,7 @@ use warp_core::features::FeatureFlag;
 use warpui::keymap::BindingId;
 use warpui::{AppContext, Entity, ModelContext, ModelHandle, SingletonEntity};
 
-use super::{conversations, warp_drive};
+use super::{agent_conversations, conversations, warp_drive};
 use crate::drive::settings::WarpDriveSettings;
 use crate::search::action::CommandBindingDataSource;
 use crate::search::binding_source::BindingSource;
@@ -29,6 +29,7 @@ pub struct DataSourceStore {
     launch_config_data_source: ModelHandle<launch_config::DataSource>,
     new_session_data_source: Option<ModelHandle<NewSessionDataSource>>,
     all_conversation_data_source: ModelHandle<conversations::DataSource>,
+    agent_conversations_data_source: ModelHandle<agent_conversations::DataSource>,
     repo_data_source: ModelHandle<RepoDataSource>,
     tabs_data_source: Option<ModelHandle<tabs::DataSource>>,
 }
@@ -56,6 +57,9 @@ impl DataSourceStore {
         let all_conversation_data_source: ModelHandle<conversations::DataSource> =
             ctx.add_model(|_| conversations::DataSource::new());
 
+        let agent_conversations_data_source =
+            ctx.add_model(|_| agent_conversations::DataSource::default());
+
         let repo_data_source = ctx.add_model(|_| RepoDataSource::new());
 
         Self {
@@ -65,6 +69,7 @@ impl DataSourceStore {
             launch_config_data_source,
             new_session_data_source,
             all_conversation_data_source,
+            agent_conversations_data_source,
             repo_data_source,
             tabs_data_source: None,
         }
@@ -77,6 +82,12 @@ impl DataSourceStore {
         is_shared_session_viewer: bool,
         ctx: &mut ModelContext<Self>,
     ) {
+        // Re-read the agent-resume journal here (this runs on every palette open) so the
+        // picker reflects conversations recorded since the last open, while keystrokes
+        // only filter the in-memory list.
+        self.agent_conversations_data_source
+            .update(ctx, |source, _| source.refresh());
+
         mixer.update(ctx, |mixer, ctx| {
             mixer.reset(ctx);
 
@@ -148,6 +159,11 @@ impl DataSourceStore {
                     HashSet::from([QueryFilter::Conversations]),
                 );
             }
+
+            mixer.add_sync_source(
+                self.agent_conversations_data_source.clone(),
+                HashSet::from([QueryFilter::AgentConversations]),
+            );
 
             mixer.add_sync_source(
                 self.repo_data_source.clone(),

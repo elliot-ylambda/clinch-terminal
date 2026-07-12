@@ -593,6 +593,14 @@ pub enum WorkspaceAction {
     ContinueConversationLocally {
         conversation_id: AIConversationId,
     },
+    /// Reopen a past CLI-agent (Claude/Codex) conversation, picked in the command
+    /// palette, in a NEW tab: open a shell at `cwd` and auto-run `command` (the
+    /// conversation's `claude --teleport`/`claude --resume`/`codex resume` command)
+    /// once the shell bootstraps.
+    ReopenAgentConversation {
+        command: String,
+        cwd: Option<String>,
+    },
     /// Insert the /fork slash command into the active terminal's input.
     InsertForkSlashCommand,
     /// Open a local-to-cloud handoff pane next to the active conversation
@@ -952,6 +960,7 @@ impl WorkspaceAction {
             | RestoreOrNavigateToConversation { .. }
             | NewCodeFile
             | ForkAIConversation { .. }
+            | ReopenAgentConversation { .. }
             | SummarizeAIConversation { .. }
             | OpenRepository { .. }
             | SelectTabConfig(_)

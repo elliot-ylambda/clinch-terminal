@@ -69,8 +69,7 @@ pub use toast_stack::ToastStack;
 use crate::workspace::view::{
     FOCUS_NEXT_AGENT_ATTENTION_BINDING_NAME, LEFT_PANEL_AGENT_CONVERSATIONS_BINDING_NAME,
     LEFT_PANEL_GLOBAL_SEARCH_BINDING_NAME, LEFT_PANEL_PROJECT_EXPLORER_BINDING_NAME,
-    LEFT_PANEL_SKILLS_BINDING_NAME,
-    LEFT_PANEL_WARP_DRIVE_BINDING_NAME, NEW_AGENT_TAB_BINDING_NAME,
+    LEFT_PANEL_SKILLS_BINDING_NAME, LEFT_PANEL_WARP_DRIVE_BINDING_NAME, NEW_AGENT_TAB_BINDING_NAME,
     NEW_AMBIENT_AGENT_TAB_BINDING_NAME, NEW_TAB_BINDING_NAME, NEW_TERMINAL_TAB_BINDING_NAME,
     OPEN_GLOBAL_SEARCH_BINDING_NAME, TOGGLE_CONVERSATION_LIST_VIEW_BINDING_NAME,
     TOGGLE_NOTIFICATION_MAILBOX_BINDING_NAME, TOGGLE_PROJECT_EXPLORER_BINDING_NAME,
@@ -1057,6 +1056,15 @@ pub fn init(app: &mut AppContext) {
         )
         .with_context_predicate(id!("Workspace") & !id!("Workspace_ViewOnlySharedSession"))
         .with_custom_action(CustomAction::FilesPalette),
+        EditableBinding::new(
+            "workspace:toggle_agent_conversations_palette",
+            "Reopen agent conversation",
+            WorkspaceAction::TogglePalette {
+                mode: PaletteMode::AgentConversations,
+                source: PaletteSource::Keybinding,
+            },
+        )
+        .with_context_predicate(id!("Workspace")),
         EditableBinding::new(
             "workspace:open_launch_config_save_modal",
             "Save new launch configuration",

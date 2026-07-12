@@ -164,6 +164,7 @@ function parseJsonLines(text, callback) {
 function listConversations(argv) {
     const directory = argv[0];
     const cwdFilter = asString(argv[1], "");
+    const outputFormat = asString(argv[2], "human");
     if (!directory) {
         throw new Error("list requires a registry directory");
     }
@@ -233,14 +234,35 @@ function listConversations(argv) {
         });
     });
 
-    return Object.keys(sessions)
+    const conversations = Object.keys(sessions)
         .map(function (id) { return sessions[id]; })
         .filter(function (session) {
             return session.start && (!cwdFilter || session.cwd === cwdFilter);
         })
         .sort(function (a, b) {
             return a.start < b.start ? 1 : (a.start > b.start ? -1 : 0);
-        })
+        });
+
+    if (outputFormat === "json") {
+        return JSON.stringify(conversations.map(function (session) {
+            const url = session.bridge
+                ? "https://claude.ai/code/" + session.bridge
+                : null;
+            return {
+                ts: session.start,
+                session_id: session.id,
+                cwd: session.cwd,
+                bridge: session.bridge || null,
+                url: url,
+                first_prompt: session.prompt || null,
+            };
+        }), null, 2);
+    }
+    if (outputFormat !== "human") {
+        throw new Error("unknown list output format: " + outputFormat);
+    }
+
+    return conversations
         .map(function (session) {
             const location = session.bridge
                 ? "https://claude.ai/code/" + session.bridge
