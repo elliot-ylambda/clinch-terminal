@@ -70,6 +70,30 @@ pub struct PlanLimits {
     pub weekly: Option<LimitWindow>,
 }
 
+/// A usage window counts as exhausted only at (or above) full utilization.
+/// Near-limit states (severity `Warning`/`Critical`) intentionally do NOT
+/// qualify: exhaustion drives the chip's reset countdown and the
+/// auto-continue scheduler, both of which must react only to a hard stop.
+const EXHAUSTED_PERCENT: f64 = 100.0;
+
+impl PlanLimits {
+    /// When at least one window is exhausted (percent >= 100), returns the
+    /// instant at which *every* exhausted window will have reset (the latest
+    /// of their reset times). Returns `None` when no window is exhausted, or
+    /// when any exhausted window's reset time is unknown — callers must treat
+    /// "don't know when" as "not schedulable" rather than guessing.
+    pub fn exhausted_until(&self) -> Option<DateTime<Utc>> {
+        let mut latest: Option<DateTime<Utc>> = None;
+        for window in [self.session, self.weekly].into_iter().flatten() {
+            if window.percent >= EXHAUSTED_PERCENT {
+                let resets_at = window.resets_at?;
+                latest = Some(latest.map_or(resets_at, |current| current.max(resets_at)));
+            }
+        }
+        latest
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Provider {
     pub session: WindowTotals,
@@ -297,6 +321,78 @@ mod tests {
     #[test]
     fn severity_default_is_normal() {
         assert_eq!(Severity::default(), Severity::Normal);
+    }
+
+    #[test]
+    fn exhausted_until_none_when_no_window_is_full() {
+        use chrono::{Duration, Utc};
+        let reset = Utc::now() + Duration::hours(1);
+        let window = |percent| LimitWindow {
+            percent,
+            resets_at: Some(reset),
+            severity: Severity::Critical,
+        };
+        // Near-limit (even Critical severity) is NOT exhausted.
+        let plan = PlanLimits {
+            session: Some(window(99.9)),
+            weekly: Some(window(95.0)),
+        };
+        assert_eq!(plan.exhausted_until(), None);
+        assert_eq!(PlanLimits::default().exhausted_until(), None);
+    }
+
+    #[test]
+    fn exhausted_until_uses_the_latest_reset_of_all_exhausted_windows() {
+        use chrono::{Duration, Utc};
+        let now = Utc::now();
+        let session_reset = now + Duration::hours(2);
+        let weekly_reset = now + Duration::days(3);
+        let window = |percent, resets_at| LimitWindow {
+            percent,
+            resets_at,
+            severity: Severity::Critical,
+        };
+
+        // Only the session window exhausted -> its reset.
+        let plan = PlanLimits {
+            session: Some(window(100.0, Some(session_reset))),
+            weekly: Some(window(60.0, Some(weekly_reset))),
+        };
+        assert_eq!(plan.exhausted_until(), Some(session_reset));
+
+        // Both exhausted -> the later (weekly) reset: continuing before it
+        // would still be blocked.
+        let plan = PlanLimits {
+            session: Some(window(101.0, Some(session_reset))),
+            weekly: Some(window(100.0, Some(weekly_reset))),
+        };
+        assert_eq!(plan.exhausted_until(), Some(weekly_reset));
+    }
+
+    #[test]
+    fn exhausted_until_none_when_any_exhausted_window_lacks_a_reset_time() {
+        use chrono::{Duration, Utc};
+        let reset = Utc::now() + Duration::hours(2);
+        let window = |percent, resets_at| LimitWindow {
+            percent,
+            resets_at,
+            severity: Severity::Critical,
+        };
+
+        // The only exhausted window has no reset time -> unknowable.
+        let plan = PlanLimits {
+            session: Some(window(100.0, None)),
+            weekly: Some(window(40.0, Some(reset))),
+        };
+        assert_eq!(plan.exhausted_until(), None);
+
+        // One exhausted window is known but another is not -> still None
+        // (we cannot know when usage actually becomes available again).
+        let plan = PlanLimits {
+            session: Some(window(100.0, Some(reset))),
+            weekly: Some(window(100.0, None)),
+        };
+        assert_eq!(plan.exhausted_until(), None);
     }
 
     #[test]

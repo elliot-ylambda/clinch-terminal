@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use cli_agent_usage::format::{chip_halves, fmt_pct, fmt_reset, fmt_tokens};
+use cli_agent_usage::format::{chip_halves, fmt_pct, fmt_reset, fmt_reset_short, fmt_tokens};
 use cli_agent_usage::{LimitWindow, Provider, Severity, UsageSnapshot, WindowTotals};
 // Element + theme imports — mirror app/src/context_chips/display_chip.rs.
 use warp_core::ui::theme::{Fill, WarpTheme};
@@ -65,7 +65,11 @@ pub fn render_cli_agent_usage_chip(
         .finish(),
     );
 
-    for (i, half) in halves.iter().enumerate() {
+    let now = Utc::now();
+    // Aligned with `halves` ([claude, codex]) so each half can surface its
+    // provider's exhausted-window reset countdown.
+    let plans = [snapshot.claude.plan, snapshot.codex.plan];
+    for (i, (half, plan)) in halves.iter().zip(plans).enumerate() {
         if i > 0 {
             row.add_child(span(" · ", neutral, appearance));
         }
@@ -75,6 +79,16 @@ pub fn render_cli_agent_usage_chip(
             severity_fill(half.severity, theme, bg),
             appearance,
         ));
+        // A window is fully exhausted: append a compact countdown to its
+        // reset (e.g. "resets 42m"). Only at hard exhaustion — the chip
+        // deliberately shows no near-limit warnings.
+        if let Some(until) = plan.and_then(|p| p.exhausted_until()) {
+            row.add_child(span(
+                format!(" resets {}", fmt_reset_short(until, now)),
+                neutral,
+                appearance,
+            ));
+        }
     }
 
     Some(

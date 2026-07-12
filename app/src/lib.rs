@@ -1872,6 +1872,11 @@ pub(crate) fn initialize_app(
     });
     ctx.add_singleton_model(move |_| RestoredAgentConversations::new(multi_agent_conversations));
     ctx.add_singleton_model(|_| CLIAgentSessionsModel::new());
+    // Must come after CLIAgentSessionsModel: it subscribes to session events
+    // to arm/cancel per-pane rate-limit auto-continues.
+    ctx.add_singleton_model(
+        crate::terminal::cli_agent_sessions::auto_continue::AutoContinueModel::new,
+    );
     // ActiveAgentViewsModel is used to track active agent conversations and notify listeners when they change.
     ctx.add_singleton_model(|_| ActiveAgentViewsModel::new());
     ctx.add_singleton_model(AgentNotificationsModel::new);

@@ -1,3 +1,4 @@
+pub mod auto_continue;
 #[cfg(not(target_family = "wasm"))]
 #[cfg_attr(not(feature = "local_tty"), allow(dead_code))]
 pub mod codex_host_check;
