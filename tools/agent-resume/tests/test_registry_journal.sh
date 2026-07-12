@@ -73,4 +73,42 @@ out="$("$CLI" list --cwd /tmp/projB)"
 [[ "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" == "1" ]] || { echo "FAIL: --cwd filter row count"; echo "$out"; exit 1; }
 printf '%s\n' "$out" | grep -q 'sid-brid' || { echo "FAIL: --cwd kept wrong row"; echo "$out"; exit 1; }
 
+# --- list --json ---
+# Machine-readable variant of the same aggregation. A fourth, mirror-only session with a
+# newline + quotes in its prompt proves first_prompt round-trips exactly (the human
+# format truncates and flattens; JSON must not).
+printf '{"ts":"2026-07-09T13:00:00Z","cwd":"/tmp/projD","bridge":"","prompt":"line1\\nline2 \\"quoted\\""}\n' > "$P/sid-tricky-ddd.jsonl"
+
+out="$("$CLI" list --json)"
+printf '%s' "$out" | jq -e 'type == "array" and length == 4' >/dev/null \
+  || { echo "FAIL: --json must emit a 4-element array"; echo "$out"; exit 1; }
+# Newest-first with FULL session ids: tricky (13:00) > nested (12:00) > bridged (11:00) > oldest (10:00).
+[[ "$(printf '%s' "$out" | jq -r '.[0].session_id')" == "sid-tricky-ddd" ]] || { echo "FAIL: --json not newest-first"; echo "$out"; exit 1; }
+[[ "$(printf '%s' "$out" | jq -r '.[3].session_id')" == "sid-oldest-aaa" ]] || { echo "FAIL: --json oldest not last"; echo "$out"; exit 1; }
+# The bridged row carries every field: start ts, cwd, bridge id, cloud URL, first prompt.
+row="$(printf '%s' "$out" | jq -c '.[2]')"
+[[ "$(printf '%s' "$row" | jq -r '.ts')" == "2026-07-09T11:00:00Z" ]] || { echo "FAIL: --json ts wrong"; echo "$row"; exit 1; }
+[[ "$(printf '%s' "$row" | jq -r '.cwd')" == "/tmp/projB" ]] || { echo "FAIL: --json cwd wrong"; echo "$row"; exit 1; }
+[[ "$(printf '%s' "$row" | jq -r '.bridge')" == "session_01LISTBRIDGE" ]] || { echo "FAIL: --json bridge wrong"; echo "$row"; exit 1; }
+[[ "$(printf '%s' "$row" | jq -r '.url')" == "https://claude.ai/code/session_01LISTBRIDGE" ]] || { echo "FAIL: --json url wrong"; echo "$row"; exit 1; }
+[[ "$(printf '%s' "$row" | jq -r '.first_prompt')" == "fix the flaky test in ci" ]] || { echo "FAIL: --json first_prompt wrong"; echo "$row"; exit 1; }
+# Unbridged rows have null bridge/url; a session with no mirror has null first_prompt.
+[[ "$(printf '%s' "$out" | jq -r '.[3].bridge')" == "null" ]] || { echo "FAIL: --json unbridged bridge must be null"; echo "$out"; exit 1; }
+[[ "$(printf '%s' "$out" | jq -r '.[3].url')" == "null" ]] || { echo "FAIL: --json unbridged url must be null"; echo "$out"; exit 1; }
+[[ "$(printf '%s' "$out" | jq -r '.[3].first_prompt')" == "null" ]] || { echo "FAIL: --json missing mirror must be null prompt"; echo "$out"; exit 1; }
+# first_prompt is the exact text -- newline and quotes intact, no 80-char flattening.
+[[ "$(printf '%s' "$out" | jq -r '.[0].first_prompt')" == $'line1\nline2 "quoted"' ]] \
+  || { echo "FAIL: --json first_prompt must round-trip exactly"; echo "$out"; exit 1; }
+# --cwd composes with --json.
+out="$("$CLI" list --json --cwd /tmp/projB)"
+printf '%s' "$out" | jq -e 'length == 1 and .[0].session_id == "sid-bridged-bbb"' >/dev/null \
+  || { echo "FAIL: --json --cwd filter wrong"; echo "$out"; exit 1; }
+# An empty/missing registry emits an empty array, not an error.
+out="$(WARP_AGENT_RESUME_DIR="$(mktemp -d)/never-created" "$CLI" list --json)"
+[[ "$(printf '%s' "$out" | jq -c .)" == "[]" ]] || { echo "FAIL: --json empty registry must emit []"; echo "$out"; exit 1; }
+# Human output is unchanged by the --json work (still short sid + quoted prompt).
+out="$("$CLI" list)"
+printf '%s\n' "$out" | grep -q 'sid-brid.*https://claude.ai/code/session_01LISTBRIDGE.*"fix the flaky test in ci"' \
+  || { echo "FAIL: human list output regressed"; echo "$out"; exit 1; }
+
 echo "PASS"

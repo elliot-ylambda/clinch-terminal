@@ -59,57 +59,88 @@ case "$cmd" in
     # "Find my conversation": newest-first table of every conversation the journal and
     # the prompt mirror (claude-capture.sh, $DIR/prompts/<sid>.jsonl) know about:
     #   <start-ts>  <sid-short>  <cwd>  <bridge-url-or-local>  "<first prompt>"
-    # --cwd <dir> filters to conversations recorded in that directory. Read-only; jq is
-    # required here (it already is for the capture layer) but write/remove stay jq-free.
+    # --cwd <dir> filters to conversations recorded in that directory. --json emits the
+    # same conversations as a stable JSON array for machine consumers (one object per
+    # conversation: ts, session_id, cwd, bridge, url, first_prompt -- bridge/url/
+    # first_prompt are null when absent, and first_prompt is the exact untruncated
+    # text). Read-only; jq is required here (it already is for the capture layer) but
+    # write/remove stay jq-free.
     cwd_filter=""
+    json=0
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --cwd) cwd_filter="${2:?list --cwd needs a directory}"; shift 2 ;;
-        *) echo "usage: warp-agent-resume list [--cwd <dir>]" >&2; exit 2 ;;
+        --json) json=1; shift ;;
+        *) echo "usage: warp-agent-resume list [--cwd <dir>] [--json]" >&2; exit 2 ;;
       esac
     done
     command -v jq >/dev/null 2>&1 || { echo "list requires jq (brew install jq)" >&2; exit 2; }
     TAB="$(printf '\t')"
-    {
-      # Journal rows (ts, sid, cwd, bridge). capture()? drops lines whose command is not
-      # a warp_agent_resume_launch form instead of erroring on them.
-      if [[ -f "$DIR/journal.jsonl" ]]; then
-        jq -r 'select(.op == "write")
-          | (.command | capture("warp_agent_resume_launch [a-z]+ (?<sid>[A-Za-z0-9-]+)")?) as $m
-          | [.ts, $m.sid, .cwd, (.bridge // "")] | @tsv' "$DIR/journal.jsonl" 2>/dev/null || true
-      fi
-      # Prompt-mirror rows cover sessions the registry never recorded (e.g. a nested
-      # claude run inside a pane: its prompts are mirrored, but the pane-ownership guard
-      # keeps it out of the registry -- and therefore out of the journal).
-      for pf in "$DIR"/prompts/*.jsonl; do
-        [[ -f "$pf" ]] || continue
-        sid="$(basename "$pf" .jsonl)"
-        jq -r --arg sid "$sid" 'select(.prompt != null)
-          | [.ts, $sid, (.cwd // ""), (.bridge // "")] | @tsv' "$pf" 2>/dev/null || true
+    # Aggregated rows, newest conversation first: <start-ts> TAB <sid> TAB <cwd> TAB <bridge>.
+    # Start ts is the conversation's first sighting; the latest non-empty cwd/bridge win.
+    list_rows() {
+      {
+        # Journal rows (ts, sid, cwd, bridge). capture()? drops lines whose command is not
+        # a warp_agent_resume_launch form instead of erroring on them.
+        if [[ -f "$DIR/journal.jsonl" ]]; then
+          jq -r 'select(.op == "write")
+            | (.command | capture("warp_agent_resume_launch [a-z]+ (?<sid>[A-Za-z0-9-]+)")?) as $m
+            | [.ts, $m.sid, .cwd, (.bridge // "")] | @tsv' "$DIR/journal.jsonl" 2>/dev/null || true
+        fi
+        # Prompt-mirror rows cover sessions the registry never recorded (e.g. a nested
+        # claude run inside a pane: its prompts are mirrored, but the pane-ownership guard
+        # keeps it out of the registry -- and therefore out of the journal).
+        for pf in "$DIR"/prompts/*.jsonl; do
+          [[ -f "$pf" ]] || continue
+          sid="$(basename "$pf" .jsonl)"
+          jq -r --arg sid "$sid" 'select(.prompt != null)
+            | [.ts, $sid, (.cwd // ""), (.bridge // "")] | @tsv' "$pf" 2>/dev/null || true
+        done
+      } | sort -t "$TAB" -k1,1 | awk -F '\t' '
+          !($2 in start) { start[$2] = $1; order[++n] = $2 }
+          $3 != "" { cwd[$2] = $3 }
+          $4 != "" { bridge[$2] = $4 }
+          END {
+            for (i = n; i >= 1; i--) {
+              s = order[i]
+              print start[s] "\t" s "\t" cwd[s] "\t" bridge[s]
+            }
+          }'
+    }
+    if [[ "$json" == 1 ]]; then
+      list_rows | while IFS="$TAB" read -r ts sid cwd bridge; do
+        if [[ -n "$cwd_filter" && "$cwd" != "$cwd_filter" ]]; then continue; fi
+        url=""
+        if [[ -n "$bridge" ]]; then url="https://claude.ai/code/$bridge"; fi
+        prompt=""
+        pf="$DIR/prompts/$sid.jsonl"
+        if [[ -f "$pf" ]]; then
+          # Exact text (jq re-escapes it below); only the human format truncates.
+          prompt="$(head -n 1 "$pf" | jq -r '.prompt // empty' 2>/dev/null)" || prompt=""
+        fi
+        jq -cn --arg ts "$ts" --arg sid "$sid" --arg cwd "$cwd" \
+          --arg bridge "$bridge" --arg url "$url" --arg prompt "$prompt" \
+          '{ts: $ts, session_id: $sid, cwd: $cwd,
+            bridge: (if $bridge == "" then null else $bridge end),
+            url: (if $url == "" then null else $url end),
+            first_prompt: (if $prompt == "" then null else $prompt end)}'
+      done | jq -s .
+    else
+      list_rows | while IFS="$TAB" read -r ts sid cwd bridge; do
+        if [[ -n "$cwd_filter" && "$cwd" != "$cwd_filter" ]]; then continue; fi
+        loc="local"
+        if [[ -n "$bridge" ]]; then loc="https://claude.ai/code/$bridge"; fi
+        prompt=""
+        pf="$DIR/prompts/$sid.jsonl"
+        if [[ -f "$pf" ]]; then
+          prompt="$(head -n 1 "$pf" | jq -r '.prompt // empty' 2>/dev/null | tr '\n\t' '  ' | cut -c 1-80 | sed -e 's/[[:space:]]*$//')" || prompt=""
+        fi
+        printf '%s  %.8s  %s  %s  "%s"\n' "$ts" "$sid" "$cwd" "$loc" "$prompt"
       done
-    } | sort -t "$TAB" -k1,1 | awk -F '\t' '
-        !($2 in start) { start[$2] = $1; order[++n] = $2 }
-        $3 != "" { cwd[$2] = $3 }
-        $4 != "" { bridge[$2] = $4 }
-        END {
-          for (i = n; i >= 1; i--) {
-            s = order[i]
-            print start[s] "\t" s "\t" cwd[s] "\t" bridge[s]
-          }
-        }' | while IFS="$TAB" read -r ts sid cwd bridge; do
-      if [[ -n "$cwd_filter" && "$cwd" != "$cwd_filter" ]]; then continue; fi
-      loc="local"
-      if [[ -n "$bridge" ]]; then loc="https://claude.ai/code/$bridge"; fi
-      prompt=""
-      pf="$DIR/prompts/$sid.jsonl"
-      if [[ -f "$pf" ]]; then
-        prompt="$(head -n 1 "$pf" | jq -r '.prompt // empty' 2>/dev/null | tr '\n\t' '  ' | cut -c 1-80 | sed -e 's/[[:space:]]*$//')" || prompt=""
-      fi
-      printf '%s  %.8s  %s  %s  "%s"\n' "$ts" "$sid" "$cwd" "$loc" "$prompt"
-    done
+    fi
     ;;
   *)
-    echo "usage: warp-agent-resume {write <uuid> <command> <cwd> [bridge]|remove <uuid>|list [--cwd <dir>]}" >&2
+    echo "usage: warp-agent-resume {write <uuid> <command> <cwd> [bridge]|remove <uuid>|list [--cwd <dir>] [--json]}" >&2
     exit 2
     ;;
 esac
