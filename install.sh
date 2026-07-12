@@ -5,14 +5,14 @@
 # Usage:
 #   curl -fsSL https://clinch.sh/install | sh
 #
-# What this does (and all it does):
+# What this does:
 #   1. Downloads Clinch.app.zip from the latest GitHub Release of
 #      https://github.com/elliot-ylambda/clinch-terminal
-#   2. Prints its SHA-256 so you can compare against the digest GitHub
-#      shows on the release page
-#   3. Extracts it and moves Clinch.app into /Applications
+#   2. Downloads the release's SHA-256 sidecar and refuses a mismatch
+#   3. Verifies the app's complete code-signature structure
+#   4. Extracts it and moves Clinch.app into /Applications
 #      (or ~/Applications if /Applications isn't writable)
-#   4. Opens Clinch
+#   5. Pre-configures local Claude/Codex session capture, then opens Clinch
 #
 # Because the download happens via curl (not a browser), macOS never sets
 # the com.apple.quarantine flag, so Gatekeeper doesn't block the app.
@@ -24,7 +24,9 @@ set -eu
 REPO="elliot-ylambda/clinch-terminal"
 APP_NAME="Clinch"
 ASSET="Clinch.app.zip"
+CHECKSUM_ASSET="$ASSET.sha256"
 DOWNLOAD_URL="https://github.com/$REPO/releases/latest/download/$ASSET"
+CHECKSUM_URL="https://github.com/$REPO/releases/latest/download/$CHECKSUM_ASSET"
 
 say() { printf '%s\n' "$*"; }
 fail() {
@@ -57,14 +59,31 @@ main() {
         || fail "download failed. Check your connection, or grab the DMG from
            https://github.com/$REPO/releases/latest"
 
-    say "SHA-256 (compare with the digest on the release page if you like):"
-    say "  $(shasum -a 256 "$TMP_DIR/$ASSET" | awk '{print $1}')"
+    curl --proto '=https' -fL --retry 3 --silent --show-error \
+        -o "$TMP_DIR/$CHECKSUM_ASSET" "$CHECKSUM_URL" \
+        || fail "release checksum is missing. Refusing an unverifiable install."
+    EXPECTED_SHA="$(awk 'NF { print $1; exit }' "$TMP_DIR/$CHECKSUM_ASSET")"
+    ACTUAL_SHA="$(shasum -a 256 "$TMP_DIR/$ASSET" | awk '{print $1}')"
+    case "$EXPECTED_SHA" in
+        *[!0-9a-fA-F]*|'') fail "release checksum has an invalid format." ;;
+    esac
+    [ "${#EXPECTED_SHA}" -eq 64 ] || fail "release checksum has an invalid length."
+    [ "$(printf '%s' "$EXPECTED_SHA" | tr 'A-F' 'a-f')" = "$ACTUAL_SHA" ] \
+        || fail "SHA-256 mismatch. The download was not installed."
+    say "Verified SHA-256: $ACTUAL_SHA"
 
     # ditto preserves symlinks, permissions, and extended attributes that
     # unzip can mangle inside .app bundles.
     ditto -x -k "$TMP_DIR/$ASSET" "$TMP_DIR/extracted"
     APP_PATH="$TMP_DIR/extracted/$APP_NAME.app"
     [ -d "$APP_PATH" ] || fail "unexpected archive layout: $APP_NAME.app not found in $ASSET."
+
+    BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' \
+        "$APP_PATH/Contents/Info.plist" 2>/dev/null || true)"
+    [ "$BUNDLE_ID" = "sh.clinch.Clinch" ] \
+        || fail "unexpected app identity '$BUNDLE_ID' in the downloaded bundle."
+    codesign --verify --deep --strict "$APP_PATH" 2>/dev/null \
+        || fail "the downloaded app's code signature is invalid."
 
     # Arch check via `file` (always present, unlike lipo which needs the
     # Xcode Command Line Tools). Universal binaries list every slice.
@@ -106,8 +125,15 @@ main() {
     # case this zip was ever staged through a browser or AirDrop.
     xattr -dr com.apple.quarantine "$DEST" 2>/dev/null || true
 
+    AGENT_INSTALLER="$DEST/Contents/Resources/agent-resume/install.sh"
+    [ -f "$AGENT_INSTALLER" ] \
+        || fail "the app bundle is missing its pre-configured agent integration."
+    say "Configuring Claude and Codex session resume..."
+    /bin/bash "$AGENT_INSTALLER" --quiet --plugins \
+        || fail "agent integration setup failed. Reinstalling Clinch is safe."
+
     say ""
-    say "✓ $APP_NAME${VERSION:+ $VERSION} installed to $DEST"
+    say "✓ $APP_NAME${VERSION:+ $VERSION} installed and configured at $DEST"
     open "$DEST"
 }
 

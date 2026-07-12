@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Claude Code capture hook: record the *actual* live session for this Warp pane so it
+# Claude Code capture hook: record the *actual* live session for this Clinch pane so it
 # can be resumed on restore. Wired to SessionStart (fresh start, `claude --resume <id>`,
 # the interactive picker, and `claude --continue` -- in every case the stdin payload
 # carries the real session_id) and to UserPromptSubmit + Stop for live-mode updates.
 #
 # Keyed by the pane UUID, so multiple agents in the same directory stay disambiguated.
 # No removal on exit: the entry is overwritten by the next session in this pane, which keeps
-# it present when Warp snapshots at quit (see README "Graceful-exit behavior").
+# it present when Clinch snapshots at quit (see README "Graceful-exit behavior").
 #
 # Beyond the session id we also carry forward *how* the session is running -- the permission
 # mode (--dangerously-skip-permissions / --permission-mode <mode>) and the --model -- so a
@@ -20,10 +20,27 @@
 # Functions are defined unconditionally; the capture body only runs when this file is executed
 # (not when sourced by the tests), so the parsing helpers can be unit-tested in isolation.
 
+_clinch_agent_resume_json() {
+  local bin
+  bin="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  "$bin/agent-json" "$@"
+}
+
+_clinch_agent_resume_decode() {
+  printf '%s' "$1" | /usr/bin/base64 -D 2>/dev/null
+}
+
+# Values below are persisted into a command Clinch later executes in a shell.
+# Agent mode/model identifiers are token-like; rejecting shell syntax here keeps
+# a malformed or hostile hook payload from turning into a restore-time command.
+_clinch_agent_resume_safe_token() {
+  [[ "${1:-}" =~ ^[A-Za-z0-9._:/-]+$ ]]
+}
+
 # Carry forward the permission mode + model from a flattened `claude` argv string. Pure: takes
 # the argv string, prints the extra flags to append to the resume command (leading space, or
 # empty). Only mode + model are carried; everything else (incl. a stale --resume) is dropped.
-_warp_agent_resume_extract_flags() {
+_clinch_agent_resume_extract_flags() {
   local argv="${1:-}"
   local -a toks=()
   read -ra toks <<<"$argv"
@@ -35,19 +52,27 @@ _warp_agent_resume_extract_flags() {
     ((i + 1 < n)) && next="${toks[i + 1]}"
     case "$tok" in
       --dangerously-skip-permissions) out+=" --dangerously-skip-permissions" ;;
-      --permission-mode)   [[ -n "$next" ]] && { out+=" --permission-mode $next"; i=$((i + 1)); } ;;
-      --permission-mode=*) out+=" --permission-mode ${tok#*=}" ;;
-      --model)             [[ -n "$next" ]] && { out+=" --model $next"; i=$((i + 1)); } ;;
-      --model=*)           out+=" --model ${tok#*=}" ;;
+      --permission-mode)
+        _clinch_agent_resume_safe_token "$next" && { out+=" --permission-mode $next"; i=$((i + 1)); }
+        ;;
+      --permission-mode=*)
+        next="${tok#*=}"; _clinch_agent_resume_safe_token "$next" && out+=" --permission-mode $next"
+        ;;
+      --model)
+        _clinch_agent_resume_safe_token "$next" && { out+=" --model $next"; i=$((i + 1)); }
+        ;;
+      --model=*)
+        next="${tok#*=}"; _clinch_agent_resume_safe_token "$next" && out+=" --model $next"
+        ;;
     esac
     i=$((i + 1))
   done
   printf '%s' "$out"
 }
 
-# Like _warp_agent_resume_extract_flags but carries only --model. Used when a hook
+# Like _clinch_agent_resume_extract_flags but carries only --model. Used when a hook
 # payload already provides the authoritative permission mode.
-_warp_agent_resume_extract_model() {
+_clinch_agent_resume_extract_model() {
   local argv="${1:-}"
   local -a toks=()
   read -ra toks <<<"$argv"
@@ -58,8 +83,12 @@ _warp_agent_resume_extract_model() {
     next=""
     ((i + 1 < n)) && next="${toks[i + 1]}"
     case "$tok" in
-      --model)   [[ -n "$next" ]] && { out+=" --model $next"; i=$((i + 1)); } ;;
-      --model=*) out+=" --model ${tok#*=}" ;;
+      --model)
+        _clinch_agent_resume_safe_token "$next" && { out+=" --model $next"; i=$((i + 1)); }
+        ;;
+      --model=*)
+        next="${tok#*=}"; _clinch_agent_resume_safe_token "$next" && out+=" --model $next"
+        ;;
     esac
     i=$((i + 1))
   done
@@ -69,7 +98,7 @@ _warp_agent_resume_extract_model() {
 # Maps a hook payload permission_mode to resume-command flags. Prints the flag tokens
 # (leading space; empty for `default`, which must strip a previously-carried mode).
 # Returns 1 for empty/unknown values so the caller can fall back to argv detection.
-_warp_agent_resume_mode_flags_from_payload() {
+_clinch_agent_resume_mode_flags_from_payload() {
   case "${1:-}" in
     bypassPermissions) printf ' --dangerously-skip-permissions' ;;
     plan|acceptEdits)  printf ' --permission-mode %s' "$1" ;;
@@ -85,7 +114,7 @@ _warp_agent_resume_mode_flags_from_payload() {
 # fail-safe (a plain `claude` launch matches nothing, so the resume command stays plain).
 # Returns empty if none is found. `WARP_AGENT_RESUME_FAKE_ARGV` (set, even to empty) overrides
 # the walk -- used by the tests for determinism.
-_warp_agent_resume_claude_argv() {
+_clinch_agent_resume_claude_argv() {
   if [[ -n "${WARP_AGENT_RESUME_FAKE_ARGV+x}" ]]; then
     printf '%s' "$WARP_AGENT_RESUME_FAKE_ARGV"
     return 0
@@ -104,9 +133,9 @@ _warp_agent_resume_claude_argv() {
 }
 
 # True if claude session <id> has a real conversation on disk -- the same test as the
-# replay side's warp_agent_resume_resumable. WARP_AGENT_RESUME_CLAUDE_PROJECTS overrides
+# replay side's clinch_agent_resume_resumable. WARP_AGENT_RESUME_CLAUDE_PROJECTS overrides
 # the transcript root (used by the tests).
-_warp_agent_resume_has_conversation() {
+_clinch_agent_resume_has_conversation() {
   local id="$1" f
   [[ -n "$id" ]] || return 1
   f="$(find "${WARP_AGENT_RESUME_CLAUDE_PROJECTS:-$HOME/.claude/projects}" -name "$id.jsonl" -print -quit 2>/dev/null)"
@@ -117,12 +146,12 @@ _warp_agent_resume_has_conversation() {
 # claude.ai bridge id (the cloud copy is authoritative for bridged sessions, with or
 # without a local transcript) or a local session with a real conversation. Such an entry
 # is the pane's only link to that conversation.
-_warp_agent_resume_entry_protected() {
+_clinch_agent_resume_entry_protected() {
   local entry_file="$1" old_sid
   [[ -f "$entry_file" ]] || return 1
   grep -q '"bridge": "session_' "$entry_file" && return 0
-  old_sid="$(sed -nE 's/.*warp_agent_resume_launch claude ([A-Za-z0-9-]+).*/\1/p' "$entry_file")"
-  _warp_agent_resume_has_conversation "$old_sid"
+  old_sid="$(sed -nE 's/.*(clinch|warp)_agent_resume_launch claude ([A-Za-z0-9-]+).*/\2/p' "$entry_file")"
+  _clinch_agent_resume_has_conversation "$old_sid"
 }
 
 # Mirror a user prompt to $DIR/prompts/<sid>.jsonl -- append-only, keyed by session id.
@@ -136,15 +165,18 @@ _warp_agent_resume_entry_protected() {
 #
 # These files hold the same class of sensitive content as ~/.claude/projects transcripts:
 # 700 dir / 600 files, never shipped off-machine. Failure must not fail the hook.
-_warp_agent_resume_mirror_prompt() {
+_clinch_agent_resume_mirror_prompt() {
   local payload="$1" sid="$2" cwd="$3"
   local dir="${WARP_AGENT_RESUME_DIR:-$HOME/.warp/agent-resume}/prompts"
   local f="$dir/$sid.jsonl" ts size line
   # Only a non-empty .prompt is worth a line (Stop events never reach here; odd payloads may).
-  printf '%s' "$payload" | jq -e '(.prompt // "") != ""' >/dev/null 2>&1 || return 0
+  # agent-json uses macOS's built-in JXA runtime, so capture has no jq/Homebrew dependency.
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  line="$(printf '%s' "$payload" | _clinch_agent_resume_json prompt-line "$ts" "$cwd" \
+    "${CLAUDE_CODE_BRIDGE_SESSION_ID:-}" 2>/dev/null)" || return 0
+  [[ -n "$line" ]] || return 0
   mkdir -p "$dir" 2>/dev/null || return 0
   chmod 700 "$dir" 2>/dev/null || true
-  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   # Cap per session: a runaway agent loop must not fill the disk. Past ~5 MB the file gets
   # ONE final truncation marker and nothing further -- the marker itself must not become
   # the new runaway, hence the last-line check before appending it. That check is a [[ ]]
@@ -157,39 +189,39 @@ _warp_agent_resume_mirror_prompt() {
     ( umask 077; printf '{"ts":"%s","truncated":true}\n' "$ts" >> "$f" ) 2>/dev/null || true
     return 0
   fi
-  # jq builds the line so arbitrary prompt text (quotes, newlines, unicode) stays valid JSON.
-  line="$(printf '%s' "$payload" | jq -c --arg ts "$ts" --arg cwd "$cwd" \
-    --arg bridge "${CLAUDE_CODE_BRIDGE_SESSION_ID:-}" \
-    '{ts: $ts, cwd: $cwd, bridge: $bridge, prompt: .prompt}' 2>/dev/null)" || return 0
   ( umask 077; printf '%s\n' "$line" >> "$f" ) 2>/dev/null || true
   return 0
 }
 
-_warp_agent_resume_capture_main() {
+_clinch_agent_resume_capture_main() {
   set -uo pipefail
-  [[ -n "${WARP_TERMINAL_SESSION_UUID:-}" ]] || return 0   # only act inside a Warp pane
-  local payload sid cwd event pmode extra mode_part entry_file BIN
+  [[ -n "${WARP_TERMINAL_SESSION_UUID:-}" ]] || return 0   # only act inside a Clinch pane
+  local payload fields sid64 cwd64 event64 pmode64 model64
+  local sid cwd event pmode extra mode_part entry_file BIN
   payload="$(cat)"
-  sid="$(printf '%s' "$payload" | jq -r '.session_id // empty')"
-  cwd="$(printf '%s' "$payload" | jq -r '.cwd // empty')"
-  event="$(printf '%s' "$payload" | jq -r '.hook_event_name // "SessionStart"')"
-  [[ -n "$sid" ]] || return 0
+  fields="$(printf '%s' "$payload" | _clinch_agent_resume_json hook-fields 2>/dev/null)" || return 0
+  IFS='|' read -r sid64 cwd64 event64 pmode64 model64 <<<"$fields"
+  sid="$(_clinch_agent_resume_decode "$sid64")" || return 0
+  cwd="$(_clinch_agent_resume_decode "$cwd64")" || return 0
+  event="$(_clinch_agent_resume_decode "$event64")" || return 0
+  pmode="$(_clinch_agent_resume_decode "$pmode64")" || return 0
+  [[ "$sid" =~ ^[A-Za-z0-9-]+$ ]] || return 0
   case "$event" in
     SessionStart)
       # Fresh capture: a new session in this pane takes over the entry -- EXCEPT when the
       # restore machinery itself spawned it as a fresh fallback
-      # (WARP_AGENT_RESUME_STARTED_FRESH, set by warp_agent_resume_launch). Such a session
+      # (WARP_AGENT_RESUME_STARTED_FRESH, set by clinch_agent_resume_launch). Such a session
       # has no conversation yet, and in the 2026-07-08 incident these blanks overwrote
       # entries still pointing at recoverable conversations on every restart, cascading
       # into data loss. Until the user actually engages (first prompt, handled below), a
       # machinery-spawned blank must not clobber a protected entry.
       entry_file="${WARP_AGENT_RESUME_DIR:-$HOME/.warp/agent-resume}/$WARP_TERMINAL_SESSION_UUID.json"
       if [[ -n "${WARP_AGENT_RESUME_STARTED_FRESH:-}" ]] \
-         && ! _warp_agent_resume_has_conversation "$sid" \
-         && _warp_agent_resume_entry_protected "$entry_file"; then
+         && ! _clinch_agent_resume_has_conversation "$sid" \
+         && _clinch_agent_resume_entry_protected "$entry_file"; then
         return 0
       fi
-      extra="$(_warp_agent_resume_extract_flags "$(_warp_agent_resume_claude_argv)")"
+      extra="$(_clinch_agent_resume_extract_flags "$(_clinch_agent_resume_claude_argv)")"
       ;;
     UserPromptSubmit|Stop)
       # Mirror the prompt BEFORE the pane-ownership guard below: the mirror is keyed by
@@ -197,7 +229,7 @@ _warp_agent_resume_capture_main() {
       # sessions the guard exists to keep out of the pane registry -- deserve durability
       # too. Only the registry write stays behind the guard.
       if [[ "$event" == UserPromptSubmit ]]; then
-        _warp_agent_resume_mirror_prompt "$payload" "$sid" "$cwd"
+        _clinch_agent_resume_mirror_prompt "$payload" "$sid" "$cwd"
       fi
       # Live-mode update. Guard: only touch an entry this session owns -- a missing entry
       # is healed (pre-flag registries), but an entry recording a different session id
@@ -207,14 +239,13 @@ _warp_agent_resume_capture_main() {
       # activity is where it legitimately takes the pane over.
       entry_file="${WARP_AGENT_RESUME_DIR:-$HOME/.warp/agent-resume}/$WARP_TERMINAL_SESSION_UUID.json"
       if [[ -z "${WARP_AGENT_RESUME_STARTED_FRESH:-}" && -f "$entry_file" ]] \
-         && ! grep -qE "warp_agent_resume_launch claude $sid( |\")" "$entry_file"; then
+         && ! grep -qE "(clinch|warp)_agent_resume_launch claude $sid( |\")" "$entry_file"; then
         return 0
       fi
-      pmode="$(printf '%s' "$payload" | jq -r '.permission_mode // empty')"
-      if mode_part="$(_warp_agent_resume_mode_flags_from_payload "$pmode")"; then
-        extra="${mode_part}$(_warp_agent_resume_extract_model "$(_warp_agent_resume_claude_argv)")"
+      if mode_part="$(_clinch_agent_resume_mode_flags_from_payload "$pmode")"; then
+        extra="${mode_part}$(_clinch_agent_resume_extract_model "$(_clinch_agent_resume_claude_argv)")"
       else
-        extra="$(_warp_agent_resume_extract_flags "$(_warp_agent_resume_claude_argv)")"
+        extra="$(_clinch_agent_resume_extract_flags "$(_clinch_agent_resume_claude_argv)")"
       fi
       ;;
     *) return 0 ;;
@@ -229,13 +260,13 @@ _warp_agent_resume_capture_main() {
   # per-turn events (UserPromptSubmit/Stop) keep the field fresh if the bridge attaches
   # after SessionStart.
   BIN="$(cd "$(dirname "$0")" && pwd)"
-  "$BIN/warp-agent-resume" write "$WARP_TERMINAL_SESSION_UUID" \
-    "warp_agent_resume_launch claude $sid$extra" "$cwd" \
+  "$BIN/clinch-agent-resume" write "$WARP_TERMINAL_SESSION_UUID" \
+    "clinch_agent_resume_launch claude $sid$extra" "$cwd" \
     "${CLAUDE_CODE_BRIDGE_SESSION_ID:-}" >/dev/null 2>&1 || true
   return 0
 }
 
 # Run the capture only when executed directly; sourcing (tests) just loads the functions.
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-  _warp_agent_resume_capture_main "$@"
+  _clinch_agent_resume_capture_main "$@"
 fi

@@ -9,14 +9,9 @@ ignore = [
     { id = "RUSTSEC-2024-0384", reason = "instant is unmaintained; we should migrate to web-time." },
     { id = "RUSTSEC-2020-0077", reason = "memmap is unmaintained; we should migrate to memmap2." },
     { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained; this is a dependency of metal, which we should eliminate by moving to the objc2 family of crates."},
-    { id = "RUSTSEC-2023-0081", reason = "safemem is unmaintained; this is a dependency of plist." },
-    # Deferred until post-launch dependency work — all four need 0.x semver-major bumps:
-    "RUSTSEC-2026-0183", # git2: Remote::list() UB — fixed in 0.21 (API-breaking bump)
-    "RUSTSEC-2026-0184", # git2: BlameHunk Signature UB — same bump
-    "RUSTSEC-2026-0194", # quick-xml: quadratic dup-attribute check — transitive, needs parent bump
-    "RUSTSEC-2026-0195", # quick-xml: NsReader memory-exhaustion DoS — same
     # Newly published and transitive through the font stack; no safe upgrade exists:
     "RUSTSEC-2026-0192", # ttf-parser is unmaintained; migrate the parent font crates post-launch
+    { id = "RUSTSEC-2026-0206", reason = "rustybuzz is an unmaintained transitive dependency of the latest resvg/usvg release; the advisory reports no vulnerability and no safe upgrade. Migrate when resvg adopts harfrust." },
 ]
 
 [licenses]

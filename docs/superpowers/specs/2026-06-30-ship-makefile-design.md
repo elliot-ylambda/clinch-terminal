@@ -42,7 +42,8 @@ Self-documenting via `make help`. Overridable vars with `?=`.
 | `ship` | `install-local` then `release` | Full post-merge flow |
 
 Key vars: `CLINCH_REPO ?= elliot-ylambda/clinch-terminal`, `STABLE_APP ?= Clinch`,
-`VERSION ?= v0.<date>`, `UNIVERSAL` (unset → `--nouniversal` arm64-only; set → universal).
+`VERSION ?= v0.<date>`, `UNIVERSAL` (defaults to `1` for a public Intel + Apple Silicon
+artifact; set `UNIVERSAL=0` only for a faster current-machine developer artifact).
 Release notes (a `define`d, `export`ed var) document the self-signed "right-click →
 Open / `xattr -dr com.apple.quarantine`" step. `install-local` guards on
 `create-dmg` (`brew install create-dmg`).

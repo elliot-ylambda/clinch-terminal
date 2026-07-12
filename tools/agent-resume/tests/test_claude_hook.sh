@@ -5,9 +5,11 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 TMP="$(mktemp -d)"
 export WARP_AGENT_RESUME_DIR="$TMP/reg"
-# The hook calls warp-agent-resume as a sibling; put both in one bin and run from there.
+# The hook calls clinch-agent-resume as a sibling; put both in one bin and run from there.
 BIN="$TMP/bin"; mkdir -p "$BIN"
-install -m 0755 "$HERE/warp-agent-resume" "$HERE/claude-capture.sh" "$BIN/"
+install -m 0755 "$HERE/agent-json" "$HERE/clinch-agent-resume" \
+  "$HERE/claude-capture.sh" "$BIN/"
+install -m 0644 "$HERE/agent-json.js" "$BIN/"
 
 export WARP_TERMINAL_SESSION_UUID="cc33"
 f="$WARP_AGENT_RESUME_DIR/cc33.json"
@@ -21,18 +23,18 @@ unset CLAUDE_CODE_BRIDGE_SESSION_ID
 
 # Fresh/startup: session_id recorded via the launcher form.
 echo '{"session_id":"sess-aaa","cwd":"/tmp/repo","source":"startup"}' | "$BIN/claude-capture.sh"
-grep -q '"command": "warp_agent_resume_launch claude sess-aaa"' "$f" || { echo "FAIL: startup not recorded"; exit 1; }
+grep -q '"command": "clinch_agent_resume_launch claude sess-aaa"' "$f" || { echo "FAIL: startup not recorded"; exit 1; }
 grep -q '"cwd": "/tmp/repo"' "$f" || { echo "FAIL: cwd"; exit 1; }
 
 # Resume/picker: the resumed id must OVERWRITE the pane entry (this is the bug being fixed).
 echo '{"session_id":"sess-bbb","cwd":"/tmp/repo","source":"resume"}' | "$BIN/claude-capture.sh"
-grep -q '"command": "warp_agent_resume_launch claude sess-bbb"' "$f" || { echo "FAIL: resume did not overwrite stale entry"; exit 1; }
+grep -q '"command": "clinch_agent_resume_launch claude sess-bbb"' "$f" || { echo "FAIL: resume did not overwrite stale entry"; exit 1; }
 
 # Launched in bypass mode with a model override (e.g. the `CA` alias): the recorded resume
 # command carries those flags through so restore reopens the session the same way.
 WARP_AGENT_RESUME_FAKE_ARGV="node /x/claude-code/cli.js --dangerously-skip-permissions --model opus" \
   bash -c 'echo "{\"session_id\":\"sess-ccc\",\"cwd\":\"/tmp/repo\"}" | "$0"' "$BIN/claude-capture.sh"
-grep -q '"command": "warp_agent_resume_launch claude sess-ccc --dangerously-skip-permissions --model opus"' "$f" \
+grep -q '"command": "clinch_agent_resume_launch claude sess-ccc --dangerously-skip-permissions --model opus"' "$f" \
   || { echo "FAIL: launch flags not carried into resume command"; exit 1; }
 
 # Missing session_id: no-op (don't write garbage).
@@ -47,25 +49,25 @@ echo '{"cwd":"/tmp/repo","source":"startup"}' | "$BIN/claude-capture.sh"
 # Toggled to bypass mid-session (entry owned by this sid): entry rewritten with the flag.
 echo '{"session_id":"sess-ddd","cwd":"/tmp/repo"}' | "$BIN/claude-capture.sh"
 echo '{"session_id":"sess-ddd","cwd":"/tmp/repo","hook_event_name":"UserPromptSubmit","permission_mode":"bypassPermissions"}' | "$BIN/claude-capture.sh"
-grep -q '"command": "warp_agent_resume_launch claude sess-ddd --dangerously-skip-permissions"' "$f" || { echo "FAIL: updater did not add bypass flag"; exit 1; }
+grep -q '"command": "clinch_agent_resume_launch claude sess-ddd --dangerously-skip-permissions"' "$f" || { echo "FAIL: updater did not add bypass flag"; exit 1; }
 
 # Toggled back to default (via Stop): the mode flag must be stripped again.
 echo '{"session_id":"sess-ddd","cwd":"/tmp/repo","hook_event_name":"Stop","permission_mode":"default"}' | "$BIN/claude-capture.sh"
-grep -q '"command": "warp_agent_resume_launch claude sess-ddd"' "$f" || { echo "FAIL: default did not strip mode flag"; exit 1; }
+grep -q '"command": "clinch_agent_resume_launch claude sess-ddd"' "$f" || { echo "FAIL: default did not strip mode flag"; exit 1; }
 
 # plan maps to --permission-mode plan.
 echo '{"session_id":"sess-ddd","cwd":"/tmp/repo","hook_event_name":"UserPromptSubmit","permission_mode":"plan"}' | "$BIN/claude-capture.sh"
-grep -q '"command": "warp_agent_resume_launch claude sess-ddd --permission-mode plan"' "$f" || { echo "FAIL: plan mode not carried"; exit 1; }
+grep -q '"command": "clinch_agent_resume_launch claude sess-ddd --permission-mode plan"' "$f" || { echo "FAIL: plan mode not carried"; exit 1; }
 
 # Model from the live argv is kept alongside the payload mode.
 WARP_AGENT_RESUME_FAKE_ARGV="node /x/cli.js --model opus" \
   bash -c 'echo "{\"session_id\":\"sess-ddd\",\"cwd\":\"/tmp/repo\",\"hook_event_name\":\"UserPromptSubmit\",\"permission_mode\":\"bypassPermissions\"}" | "$0"' "$BIN/claude-capture.sh"
-grep -q '"command": "warp_agent_resume_launch claude sess-ddd --dangerously-skip-permissions --model opus"' "$f" || { echo "FAIL: model not kept with payload mode"; exit 1; }
+grep -q '"command": "clinch_agent_resume_launch claude sess-ddd --dangerously-skip-permissions --model opus"' "$f" || { echo "FAIL: model not kept with payload mode"; exit 1; }
 
 # Unknown permission_mode falls back to argv-derived flags (mode + model).
 WARP_AGENT_RESUME_FAKE_ARGV="node /x/cli.js --permission-mode acceptEdits" \
   bash -c 'echo "{\"session_id\":\"sess-ddd\",\"cwd\":\"/tmp/repo\",\"hook_event_name\":\"UserPromptSubmit\",\"permission_mode\":\"weird\"}" | "$0"' "$BIN/claude-capture.sh"
-grep -q '"command": "warp_agent_resume_launch claude sess-ddd --permission-mode acceptEdits"' "$f" || { echo "FAIL: unknown mode did not fall back to argv"; exit 1; }
+grep -q '"command": "clinch_agent_resume_launch claude sess-ddd --permission-mode acceptEdits"' "$f" || { echo "FAIL: unknown mode did not fall back to argv"; exit 1; }
 
 # Session-id guard: an updater event from a DIFFERENT session must not clobber the entry…
 echo '{"session_id":"sess-intruder","cwd":"/tmp/other","hook_event_name":"UserPromptSubmit","permission_mode":"bypassPermissions"}' | "$BIN/claude-capture.sh"
@@ -74,7 +76,7 @@ grep -q 'sess-ddd' "$f" || { echo "FAIL: foreign session clobbered the pane entr
 # …but a missing entry is (re)created — this heals pre-flag registry entries.
 rm -f "$f"
 echo '{"session_id":"sess-eee","cwd":"/tmp/repo","hook_event_name":"UserPromptSubmit","permission_mode":"bypassPermissions"}' | "$BIN/claude-capture.sh"
-grep -q '"command": "warp_agent_resume_launch claude sess-eee --dangerously-skip-permissions"' "$f" || { echo "FAIL: missing entry not healed"; exit 1; }
+grep -q '"command": "clinch_agent_resume_launch claude sess-eee --dangerously-skip-permissions"' "$f" || { echo "FAIL: missing entry not healed"; exit 1; }
 
 # Unknown events are ignored.
 echo '{"session_id":"sess-eee","cwd":"/tmp/repo","hook_event_name":"PreCompact","permission_mode":"default"}' | "$BIN/claude-capture.sh"
@@ -98,7 +100,7 @@ grep -q '"bridge"' "$f" && { echo "FAIL: bridge field written without env"; exit
 rm -f "$f"   # clear residue so the empty-dir check below only sees new writes
 
 # --- Machinery-spawned fresh sessions must not clobber protected entries ---
-# warp_agent_resume_launch tags its fresh fallback with WARP_AGENT_RESUME_STARTED_FRESH;
+# clinch_agent_resume_launch tags its fresh fallback with WARP_AGENT_RESUME_STARTED_FRESH;
 # until the user engages, such a blank must leave an entry alone while it still points
 # somewhere recoverable (2026-07-08 incident: blank restarts destroyed live mappings).
 export WARP_AGENT_RESUME_CLAUDE_PROJECTS="$TMP/projects"
@@ -117,12 +119,12 @@ grep -q 'sess-blank' "$f" || { echo "FAIL: engaged fresh session not captured"; 
 
 # A bridge entry is protected even when its local sid has no conversation: the cloud copy
 # is authoritative and the bridge field is the only durable link to it.
-printf '{ "command": "warp_agent_resume_launch claude sess-gone", "cwd": "/tmp/repo", "bridge": "session_01KEEP" }\n' > "$f"
+printf '{ "command": "clinch_agent_resume_launch claude sess-gone", "cwd": "/tmp/repo", "bridge": "session_01KEEP" }\n' > "$f"
 echo '{"session_id":"sess-blank2","cwd":"/tmp/repo"}' | WARP_AGENT_RESUME_STARTED_FRESH=1 "$BIN/claude-capture.sh"
 grep -q 'session_01KEEP' "$f" || { echo "FAIL: machinery blank destroyed a bridge entry"; exit 1; }
 
 # An unprotected entry (dead sid, no bridge) is still taken over by the blank.
-printf '{ "command": "warp_agent_resume_launch claude sess-gone", "cwd": "/tmp/repo" }\n' > "$f"
+printf '{ "command": "clinch_agent_resume_launch claude sess-gone", "cwd": "/tmp/repo" }\n' > "$f"
 echo '{"session_id":"sess-blank3","cwd":"/tmp/repo"}' | WARP_AGENT_RESUME_STARTED_FRESH=1 "$BIN/claude-capture.sh"
 grep -q 'sess-blank3' "$f" || { echo "FAIL: blank should take over a dead entry"; exit 1; }
 
@@ -179,7 +181,7 @@ echo '{"session_id":"sess-big","cwd":"/tmp/repo","hook_event_name":"UserPromptSu
 [[ "$(stat -f %z "$big")" -eq "$size1" ]] || { echo "FAIL: capped file kept growing"; exit 1; }
 rm -f "$f"
 
-# Outside a Warp pane: no-op -- no pane entry, no journal growth, no prompt mirror.
+# Outside a Clinch pane: no-op -- no pane entry, no journal growth, no prompt mirror.
 unset WARP_TERMINAL_SESSION_UUID
 J="$WARP_AGENT_RESUME_DIR/journal.jsonl"
 before="$(find "$WARP_AGENT_RESUME_DIR" | sort); $(wc -l < "$J")"

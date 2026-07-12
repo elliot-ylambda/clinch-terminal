@@ -1,19 +1,22 @@
 #!/usr/bin/env bash
-# Codex SessionStart hook: record the live session for this Warp pane so it can be
+# Codex SessionStart hook: record the live session for this Clinch pane so it can be
 # resumed on restore. The payload also carries permission_mode and model, so the
 # recorded resume command reopens the session the way it is currently running.
 # Unknown or absent fields degrade to a plain resume (fail-safe).
 set -euo pipefail
 [[ -n "${WARP_TERMINAL_SESSION_UUID:-}" ]] || exit 0
 payload="$(cat)"
-sid="$(printf '%s' "$payload" | jq -r '.session_id // empty')"
-cwd="$(printf '%s' "$payload" | jq -r '.cwd // empty')"
-pmode="$(printf '%s' "$payload" | jq -r '.permission_mode // empty')"
-model="$(printf '%s' "$payload" | jq -r '.model // empty')"
-[[ -n "$sid" ]] || exit 0
-extra=""
-[[ "$pmode" == "bypassPermissions" ]] && extra+=" --dangerously-bypass-approvals-and-sandbox"
-[[ -n "$model" ]] && extra+=" --model $model"
 # Absolute sibling path: hooks do not reliably inherit the shell PATH.
 BIN="$(cd "$(dirname "$0")" && pwd)"
-"$BIN/warp-agent-resume" write "$WARP_TERMINAL_SESSION_UUID" "warp_agent_resume_launch codex $sid$extra" "$cwd"
+fields="$(printf '%s' "$payload" | "$BIN/agent-json" hook-fields 2>/dev/null)" || exit 0
+IFS='|' read -r sid64 cwd64 _event64 pmode64 model64 <<<"$fields"
+decode() { printf '%s' "$1" | /usr/bin/base64 -D 2>/dev/null; }
+sid="$(decode "$sid64")" || exit 0
+cwd="$(decode "$cwd64")" || exit 0
+pmode="$(decode "$pmode64")" || exit 0
+model="$(decode "$model64")" || exit 0
+[[ "$sid" =~ ^[A-Za-z0-9-]+$ ]] || exit 0
+extra=""
+[[ "$pmode" == "bypassPermissions" ]] && extra+=" --dangerously-bypass-approvals-and-sandbox"
+[[ "$model" =~ ^[A-Za-z0-9._:/-]+$ ]] && extra+=" --model $model"
+"$BIN/clinch-agent-resume" write "$WARP_TERMINAL_SESSION_UUID" "clinch_agent_resume_launch codex $sid$extra" "$cwd"

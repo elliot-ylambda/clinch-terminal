@@ -52,7 +52,7 @@ snapshot_session_state() (
   cp -R "$reg" "$snap/agent-resume" 2>/dev/null
   # Local transcripts for the claude sessions the registry references -- cheap insurance
   # for any poisoned/child session that may have no local jsonl. Missing files are expected.
-  sed -nE 's/.*warp_agent_resume_launch claude ([A-Za-z0-9-]+).*/\1/p' "$reg"/*.json 2>/dev/null \
+  sed -nE 's/.*(clinch|warp)_agent_resume_launch claude ([A-Za-z0-9-]+).*/\2/p' "$reg"/*.json 2>/dev/null \
     | sort -u | while read -r sid; do
         [ -n "$sid" ] || continue
         f="$(find "$HOME/.claude/projects" -name "$sid.jsonl" -print -quit 2>/dev/null)"

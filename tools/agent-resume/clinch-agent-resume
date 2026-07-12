@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DIR="${WARP_AGENT_RESUME_DIR:-$HOME/.warp/agent-resume}"
+BIN="$(cd "$(dirname "$0")" && pwd)"
+
+now_utc() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+# Append one line to the registry journal ($DIR/journal.jsonl). Pane entries are single
+# mutable files -- the next session in a pane overwrites them -- so the journal is the
+# append-only history that keeps every (pane, session, bridge, cwd) tuple ever recorded
+# recoverable. Twice (2026-07-08, 2026-07-09) an overwritten entry was the only pointer
+# to a live conversation; grepping this file would have recovered both. See
+# specs/claude-transcript-durability. No pruning in v1: ~200 bytes/line grows MBs/year.
+#
+# Failure must never fail the mutation itself: losing one journal line beats losing the
+# registry write (same fail-open posture as the capture hooks). The subshell umask keeps
+# the file 600 on creation without a chmod per append.
+journal_append() {
+  ( umask 077; printf '%s\n' "$1" >> "$DIR/journal.jsonl" ) 2>/dev/null || true
+}
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  write)
+    uuid="$1"; command_str="$2"; cwd="$3"; bridge="${4:-}"
+    [[ "$uuid" =~ ^[A-Za-z0-9-]+$ ]] \
+      || { echo "write: invalid pane uuid" >&2; exit 2; }
+    mkdir -p "$DIR"; chmod 700 "$DIR"
+    tmp="$DIR/$uuid.json.tmp.$$"
+    # `bridge` is the claude.ai cloud-copy id (CLAUDE_CODE_BRIDGE_SESSION_ID). The cloud
+    # copy can contain remotely continued turns and remains the authority for bridged
+    # sessions, so replay surfaces this URL when local resume cannot help. agent-json
+    # performs complete escaping using macOS's built-in JXA runtime.
+    "$BIN/agent-json" registry-entry "$command_str" "$cwd" "$bridge" > "$tmp"
+    printf '\n' >> "$tmp"
+    chmod 600 "$tmp"
+    mv -f "$tmp" "$DIR/$uuid.json"
+    # Journal after the entry lands so the journal never claims a write that failed.
+    # `bridge` is always present (empty string when unbridged) to keep lines uniform.
+    journal_append "$("$BIN/agent-json" journal-write "$(now_utc)" "$uuid" "$command_str" "$cwd" "$bridge")"
+    ;;
+  remove)
+    uuid="$1"
+    [[ "$uuid" =~ ^[A-Za-z0-9-]+$ ]] \
+      || { echo "remove: invalid pane uuid" >&2; exit 2; }
+    # Journal before deleting (a remove that dies mid-way must still be on record), but
+    # only when the entry exists: idempotent re-removes should not spam the journal.
+    if [[ -f "$DIR/$uuid.json" ]]; then
+      journal_append "$("$BIN/agent-json" journal-remove "$(now_utc)" "$uuid")"
+    fi
+    rm -f "$DIR/$uuid.json"
+    ;;
+  list)
+    # "Find my conversation": newest-first table of every conversation the journal and
+    # the prompt mirror (claude-capture.sh, $DIR/prompts/<sid>.jsonl) know about:
+    #   <start-ts>  <sid-short>  <cwd>  <bridge-url-or-local>  "<first prompt>"
+    # --cwd <dir> filters to conversations recorded in that directory.
+    cwd_filter=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --cwd) cwd_filter="${2:?list --cwd needs a directory}"; shift 2 ;;
+        *) echo "usage: clinch-agent-resume list [--cwd <dir>]" >&2; exit 2 ;;
+      esac
+    done
+    "$BIN/agent-json" list "$DIR" "$cwd_filter"
+    ;;
+  *)
+    echo "usage: clinch-agent-resume {write <uuid> <command> <cwd> [bridge]|remove <uuid>|list [--cwd <dir>]}" >&2
+    exit 2
+    ;;
+esac

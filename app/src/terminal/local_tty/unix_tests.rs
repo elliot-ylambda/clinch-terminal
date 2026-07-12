@@ -64,6 +64,46 @@ fn host_non_bash_command_does_not_set_history_size_sentinels() {
 }
 
 #[test]
+fn host_shell_scrubs_parent_agent_identity_after_overrides() {
+    let mut overrides = HashMap::new();
+    overrides.insert("CLAUDE_CODE_SESSION_ID".into(), "stale-session".into());
+    overrides.insert("CLAUDE_CODE_FUTURE_ID".into(), "future-marker".into());
+    overrides.insert("CLAUDECODE".into(), "1".into());
+    overrides.insert("AI_AGENT".into(), "claude-code".into());
+    overrides.insert("CLAUDE_EFFORT".into(), "high".into());
+    overrides.insert("CLINCH_UNRELATED".into(), "preserved".into());
+
+    let command = build_host_shell_command(
+        shell_starter(ShellType::Zsh, "/bin/zsh"),
+        None,
+        overrides,
+        None,
+        false,
+        false,
+        false,
+        false,
+        true,
+    );
+
+    for key in [
+        "CLAUDE_CODE_SESSION_ID",
+        "CLAUDE_CODE_FUTURE_ID",
+        "CLAUDECODE",
+        "AI_AGENT",
+    ] {
+        assert_eq!(env_value(&command, key), Some(None), "{key} leaked");
+    }
+    assert_eq!(
+        env_value(&command, "CLAUDE_EFFORT"),
+        Some(Some("high".to_owned()))
+    );
+    assert_eq!(
+        env_value(&command, "CLINCH_UNRELATED"),
+        Some(Some("preserved".to_owned()))
+    );
+}
+
+#[test]
 fn docker_sandbox_command_sets_history_size_sentinels() {
     let docker_starter =
         DockerSandboxShellStarter::new(shell_starter(ShellType::Bash, "sbx"), None);

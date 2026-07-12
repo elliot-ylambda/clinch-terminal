@@ -2,7 +2,8 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 export WARP_AGENT_RESUME_DIR="$(mktemp -d)/agent-resume"
-CLI="$HERE/warp-agent-resume"
+CLI="$HERE/clinch-agent-resume"
+LEGACY_CLI="$HERE/warp-agent-resume"
 
 "$CLI" write deadbeef "claude --resume abc-123" "/tmp/proj"
 f="$WARP_AGENT_RESUME_DIR/deadbeef.json"
@@ -25,4 +26,5 @@ grep -q '"bridge"' "$f" && { echo "FAIL: omitted bridge must not write field"; e
 "$CLI" remove deadbeef
 [[ ! -f "$f" ]] || { echo "FAIL: file not removed"; exit 1; }
 "$CLI" remove deadbeef   # must be idempotent / no error
+"$LEGACY_CLI" remove deadbeef # compatibility shim for pre-rebrand scripts
 echo "PASS"

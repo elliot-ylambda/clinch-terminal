@@ -1,14 +1,15 @@
-# Warp agent-resume shell integration (sourced from ~/.zshrc).
+# Clinch agent-resume shell integration (loaded by the bundled standalone launcher; older
+# installs may also source it from ~/.zshrc).
 #
 # Capture is done by Claude's hooks (claude-capture.sh) and Codex's
 # SessionStart hook -- they record the live session per pane. This file only provides the
-# *replay* side, the functions Warp invokes on restore:
+# *replay* side, the functions Clinch invokes on restore:
 #
-#   warp_agent_resume_resumable()   true if an agent session id has a resumable conversation
-#   warp_agent_resume_fallback_id() newest unclaimed resumable session for a directory
-#   warp_agent_resume_launch()      resume if possible, else adopt, else start fresh
+#   clinch_agent_resume_resumable()   true if an agent session id has a resumable conversation
+#   clinch_agent_resume_fallback_id() newest unclaimed resumable session for a directory
+#   clinch_agent_resume_launch()      resume if possible, else adopt, else start fresh
 #
-# On restore Warp replays the recorded command `warp_agent_resume_launch <agent> <id>` in
+# On restore Clinch replays the recorded command `clinch_agent_resume_launch <agent> <id>` in
 # this (interactive) shell, so these functions are in scope. A fresh fallback calls the
 # agent normally, so its SessionStart hook re-captures it for next time.
 
@@ -40,7 +41,7 @@ claude() {
 # cwd->directory hashing). A session that was opened but never used has only a stub/metadata
 # line and no real turn -- that is exactly the case `<agent> resume <id>` rejects with
 # "No conversation found", so we must treat it as not-resumable and start fresh instead.
-warp_agent_resume_resumable() {
+clinch_agent_resume_resumable() {
   local agent="$1" id="$2" f
   [[ -n "$id" ]] || return 1
   case "$agent" in
@@ -73,7 +74,7 @@ warp_agent_resume_resumable() {
 #
 # Claude only: codex session files are named rollout-<timestamp>-<id>.jsonl, so a bare
 # filename does not yield the session id; codex panes keep the resume-or-fresh behavior.
-warp_agent_resume_fallback_id() {
+clinch_agent_resume_fallback_id() {
   setopt localoptions extendedglob nullglob
   local agent="$1" cwd="${2:-$PWD}"
   [[ "$agent" == claude ]] || return 1
@@ -83,8 +84,8 @@ warp_agent_resume_fallback_id() {
     [[ "$f" == */subagents/* ]] && continue   # sidechain transcripts are not resumable sessions
     head -c 131072 "$f" 2>/dev/null | grep -qF -- "$match" || continue
     id="${${f:t}%.jsonl}"
-    warp_agent_resume_resumable "$agent" "$id" || continue
-    grep -Eqsr "warp_agent_resume_launch claude $id( |\")" "$reg" && continue
+    clinch_agent_resume_resumable "$agent" "$id" || continue
+    grep -Eqsr "(clinch|warp)_agent_resume_launch claude $id( |\")" "$reg" && continue
     printf '%s' "$id"
     return 0
   done
@@ -99,7 +100,7 @@ warp_agent_resume_fallback_id() {
 # from the pane's registry entry (written by claude-capture.sh). Only claude.ai-shaped ids
 # (session_*) are emitted; anything else a hand-edited entry might contain is ignored. The
 # value is only echoed, never evaluated.
-warp_agent_resume_bridge_id() {
+clinch_agent_resume_bridge_id() {
   [[ -n "${WARP_TERMINAL_SESSION_UUID:-}" ]] || return 0
   local entry="${WARP_AGENT_RESUME_DIR:-$HOME/.warp/agent-resume}/$WARP_TERMINAL_SESSION_UUID.json"
   [[ -f "$entry" ]] || return 0
@@ -109,7 +110,7 @@ warp_agent_resume_bridge_id() {
   return 0
 }
 
-# Relaunch <agent>'s session <id> in this pane. Called by Warp on restore. Any trailing args
+# Relaunch <agent>'s session <id> in this pane. Called by Clinch on restore. Any trailing args
 # are launch flags carried over from how the session was originally started (e.g.
 # --dangerously-skip-permissions, --model <m>); they are forwarded on every path so the
 # session reopens the same way.
@@ -124,7 +125,7 @@ warp_agent_resume_bridge_id() {
 #    (WARP_AGENT_RESUME_TELEPORT_GRACE seconds distinguishes the two, default 15).
 # 2. Local transcript with a real turn -> `claude --resume <id>` / `codex resume <id>`.
 # 3. Dead id in an unbridged claude pane -> adopt the newest unclaimed session recorded
-#    for this directory (warp_agent_resume_fallback_id): a stale registry entry must
+#    for this directory (clinch_agent_resume_fallback_id): a stale registry entry must
 #    degrade into a near-miss, not silently orphan the pane's real conversation. Bridged
 #    panes skip this -- their conversation lives at claude.ai, and adopting some other
 #    local session would silently swap conversations.
@@ -132,22 +133,22 @@ warp_agent_resume_bridge_id() {
 #    time). WARP_AGENT_RESUME_STARTED_FRESH tells the capture hook the fresh session was
 #    machinery-spawned, so until its first real prompt it must not overwrite a pane entry
 #    that still points somewhere recoverable (see claude-capture.sh).
-warp_agent_resume_launch() {
+clinch_agent_resume_launch() {
   local agent="$1" id="$2"
   shift 2
   local bridge=""
-  [[ "$agent" == claude ]] && bridge="$(warp_agent_resume_bridge_id)"
+  [[ "$agent" == claude ]] && bridge="$(clinch_agent_resume_bridge_id)"
   if [[ -n "$bridge" ]]; then
-    echo "warp: teleporting bridged claude session ($bridge)." >&2
-    local _war_start=$SECONDS _war_rc
+    echo "clinch: teleporting bridged claude session ($bridge)." >&2
+    local _clinch_start=$SECONDS _clinch_rc
     claude --teleport "$bridge" "$@"
-    _war_rc=$?
-    if (( _war_rc == 0 || SECONDS - _war_start > ${WARP_AGENT_RESUME_TELEPORT_GRACE:-15} )); then
-      return $_war_rc
+    _clinch_rc=$?
+    if (( _clinch_rc == 0 || SECONDS - _clinch_start > ${WARP_AGENT_RESUME_TELEPORT_GRACE:-15} )); then
+      return $_clinch_rc
     fi
-    echo "warp: teleport failed -- falling back (cloud copy: https://claude.ai/code/$bridge)." >&2
+    echo "clinch: teleport failed -- falling back (cloud copy: https://claude.ai/code/$bridge)." >&2
   fi
-  if warp_agent_resume_resumable "$agent" "$id"; then
+  if clinch_agent_resume_resumable "$agent" "$id"; then
     case "$agent" in
       claude) claude --resume "$id" "$@" ;;
       codex)  codex resume "$id" "$@" ;;
@@ -156,19 +157,26 @@ warp_agent_resume_launch() {
   fi
   local adopt=""
   if [[ -z "$bridge" ]]; then
-    adopt="$(warp_agent_resume_fallback_id "$agent" "$PWD")" || adopt=""
+    adopt="$(clinch_agent_resume_fallback_id "$agent" "$PWD")" || adopt=""
   fi
   if [[ -n "$adopt" ]]; then
-    echo "warp: recorded $agent session ($id) has no conversation -- resuming newest session in this directory ($adopt) instead." >&2
+    echo "clinch: recorded $agent session ($id) has no conversation -- resuming newest session in this directory ($adopt) instead." >&2
     case "$agent" in
       claude) claude --resume "$adopt" "$@" ;;
       codex)  codex resume "$adopt" "$@" ;;
     esac
     return $?
   fi
-  echo "warp: no resumable $agent session ($id) -- starting fresh." >&2
+  echo "clinch: no resumable $agent session ($id) -- starting fresh." >&2
   case "$agent" in
     claude) WARP_AGENT_RESUME_STARTED_FRESH=1 claude "$@" ;;
     codex)  codex "$@" ;;
   esac
+}
+
+# Compatibility for registry entries captured by older Clinch builds. New captures and
+# restore reads use the Clinch-branded command, so this alias should disappear naturally
+# once every persisted pane entry has been refreshed.
+warp_agent_resume_launch() {
+  clinch_agent_resume_launch "$@"
 }
