@@ -28,6 +28,10 @@ pub struct Presenter {
     window_id: WindowId,
     scene: Option<Rc<Scene>>,
     rendered_views: HashMap<EntityId, Box<dyn Element>>,
+    /// View ids painted in the most recent frame; `None` until the first
+    /// frame is painted. Views absent from this set are not on screen, so
+    /// invalidations touching only them cannot change the rendered output.
+    views_painted_last_frame: Option<HashSet<EntityId>>,
     text_layout_cache: LayoutCache,
     position_cache: PositionCache,
     highlighted_view: Option<EntityId>,
@@ -305,11 +309,18 @@ impl Presenter {
             frame_count: 0,
             window_id,
             rendered_views: HashMap::new(),
+            views_painted_last_frame: None,
             scene: None,
             text_layout_cache: LayoutCache::new(),
             position_cache: PositionCache::default(),
             highlighted_view: None,
         }
+    }
+
+    /// View ids painted in the most recent frame, or `None` if this presenter
+    /// has not painted a frame yet.
+    pub fn views_painted_last_frame(&self) -> Option<&HashSet<EntityId>> {
+        self.views_painted_last_frame.as_ref()
     }
 
     pub fn invalidate(&mut self, invalidation: WindowInvalidation, app: &AppContext) {
@@ -420,6 +431,7 @@ impl Presenter {
         let mut scene = Scene::new(scale_factor, ctx.rendering_config());
         let mut repaint_at = None;
         let mut pending_assets = HashSet::new();
+        let mut views_painted = HashSet::new();
 
         if let Some(root_view_id) = ctx.root_view_id(self.window_id) {
             let mut paint_ctx = PaintContext {
@@ -441,14 +453,17 @@ impl Presenter {
             repaint_at = paint_ctx.repaint_at;
             pending_assets.extend(paint_ctx.pending_assets);
 
+            views_painted = paint_ctx.views_painted;
+
             // If the cursor shape had been changed by a view and that view is no longer being
             // rendered, reset the cursor.
             if let Some((window_id, view_id)) = ctx.cursor_updated_for_view {
-                if self.window_id == window_id && !paint_ctx.views_painted.contains(&view_id) {
+                if self.window_id == window_id && !views_painted.contains(&view_id) {
                     ctx.reset_cursor();
                 }
             }
         }
+        self.views_painted_last_frame = Some(views_painted);
 
         // If there is a highlighted view, draw a box over the entire scene with
         // the same bounds as the highlighted view.  This ensures that views

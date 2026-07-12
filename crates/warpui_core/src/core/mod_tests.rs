@@ -1882,12 +1882,14 @@ fn test_ui_and_window_updates() {
     }
 
     App::test((), |mut app| async move {
-        let (window_id, _) = app.add_window(WindowStyle::NotStealFocus, |_| View { count: 3 });
+        let (window_id, root) = app.add_window(WindowStyle::NotStealFocus, |_| View { count: 3 });
         let view_1 = app.add_view(window_id, |_| View { count: 1 });
         let view_2 = app.add_view(window_id, |_| View { count: 2 });
 
         // Ensure that registering for UI updates after mutating the app still gives us all the
-        // updates.
+        // updates. Views added via `add_view` are never mounted in the root's element tree, so
+        // their notifications are queued rather than delivered eagerly; a notification for a
+        // painted view (the root, painted by the eager frames during setup) flushes them.
 
         let window_invalidations = Rc::new(RefCell::new(Vec::new()));
         let window_invalidations_ = window_invalidations.clone();
@@ -1904,16 +1906,27 @@ fn test_ui_and_window_updates() {
             drop(view_2);
         });
 
+        // Neither the updated nor the removed view was on screen, so no redraw is delivered yet.
+        assert!(window_invalidations.borrow().is_empty());
+
+        root.update(&mut app, |_, ctx| ctx.notify());
         let invalidation = window_invalidations.borrow_mut().drain(..).next().unwrap();
-        assert_eq!(invalidation.updated.len(), 1);
+        // The queued creation notifications of view_1 and view_2 drain along with
+        // the root's; view_2 appears in both `updated` and `removed`, which
+        // `Presenter::invalidate` resolves in favor of the removal.
+        assert_eq!(invalidation.updated.len(), 3);
+        assert!(invalidation.updated.contains(&root.id()));
         assert!(invalidation.updated.contains(&view_1.id()));
         assert_eq!(invalidation.removed.len(), 1);
         assert!(invalidation.removed.contains(&view_2_id));
 
         let view_3 = view_1.update(&mut app, |_, ctx| ctx.add_view(|_| View { count: 8 }));
+        assert!(window_invalidations.borrow().is_empty());
 
+        root.update(&mut app, |_, ctx| ctx.notify());
         let invalidation = window_invalidations.borrow_mut().drain(..).next().unwrap();
-        assert_eq!(invalidation.updated.len(), 1);
+        assert_eq!(invalidation.updated.len(), 2);
+        assert!(invalidation.updated.contains(&root.id()));
         assert!(invalidation.updated.contains(&view_3.id()));
         assert!(invalidation.removed.is_empty());
 
@@ -1928,8 +1941,11 @@ fn test_ui_and_window_updates() {
 
         rx.await.unwrap();
 
+        assert!(window_invalidations.borrow().is_empty());
+        root.update(&mut app, |_, ctx| ctx.notify());
         let invalidation = window_invalidations.borrow_mut().drain(..).next().unwrap();
-        assert_eq!(invalidation.updated.len(), 1);
+        assert_eq!(invalidation.updated.len(), 2);
+        assert!(invalidation.updated.contains(&root.id()));
         assert!(invalidation.updated.contains(&view_3.id()));
         assert!(invalidation.removed.is_empty());
     });
@@ -2849,5 +2865,139 @@ fn test_view_subscribe_then_unsubscribe_to_model_inside_callback_drops_new_subsc
                 "The new subscription should be removed when subscribe-then-unsubscribe happens in a callback."
             );
         });
+    });
+}
+
+#[test]
+fn test_notify_of_unmounted_view_does_not_trigger_redraw() {
+    struct ConditionalParent {
+        child: ViewHandle<RenderLoggingChild>,
+        show_child: bool,
+        render_log: Rc<RefCell<Vec<&'static str>>>,
+    }
+
+    impl Entity for ConditionalParent {
+        type Event = ();
+    }
+
+    impl super::View for ConditionalParent {
+        fn render<'a>(&self, _: &AppContext) -> Box<dyn Element> {
+            self.render_log.borrow_mut().push("parent");
+            if self.show_child {
+                ChildView::new(&self.child).finish()
+            } else {
+                Empty::new().finish()
+            }
+        }
+
+        fn ui_name() -> &'static str {
+            "ConditionalParent"
+        }
+    }
+
+    impl TypedActionView for ConditionalParent {
+        type Action = ();
+    }
+
+    struct RenderLoggingChild {
+        generation: usize,
+        rendered_generations: Rc<RefCell<Vec<usize>>>,
+        render_log: Rc<RefCell<Vec<&'static str>>>,
+    }
+
+    impl Entity for RenderLoggingChild {
+        type Event = ();
+    }
+
+    impl super::View for RenderLoggingChild {
+        fn render<'a>(&self, _: &AppContext) -> Box<dyn Element> {
+            self.render_log.borrow_mut().push("child");
+            self.rendered_generations.borrow_mut().push(self.generation);
+            Empty::new().finish()
+        }
+
+        fn ui_name() -> &'static str {
+            "RenderLoggingChild"
+        }
+    }
+
+    impl TypedActionView for RenderLoggingChild {
+        type Action = ();
+    }
+
+    App::test((), |mut app| async move {
+        let app = &mut app;
+        let render_log: Rc<RefCell<Vec<&'static str>>> = Rc::new(RefCell::new(vec![]));
+        let rendered_generations: Rc<RefCell<Vec<usize>>> = Rc::new(RefCell::new(vec![]));
+
+        let (_, parent) = {
+            let render_log = render_log.clone();
+            let rendered_generations = rendered_generations.clone();
+            app.add_window(WindowStyle::NotStealFocus, |ctx| {
+                let child = ctx.add_view(|_| RenderLoggingChild {
+                    generation: 0,
+                    rendered_generations,
+                    render_log: render_log.clone(),
+                });
+                ConditionalParent {
+                    child,
+                    show_child: true,
+                    render_log,
+                }
+            })
+        };
+        let child = parent.read(app, |parent, _| parent.child.clone());
+
+        // Window creation does not notify the root view in the test harness,
+        // so drive the first real frame explicitly. This also exercises the
+        // bootstrap rule: an invalidation arriving while nothing has been
+        // painted yet must always schedule a frame.
+        parent.update(app, |_, ctx| ctx.notify());
+        assert!(render_log.borrow().contains(&"parent"));
+        render_log.borrow_mut().clear();
+
+        // While the child is mounted, notifying it re-renders it.
+        child.update(app, |child, ctx| {
+            child.generation = 1;
+            ctx.notify();
+        });
+        assert!(render_log.borrow().contains(&"child"));
+        render_log.borrow_mut().clear();
+
+        // Unmount the child by re-rendering the parent without it.
+        parent.update(app, |parent, ctx| {
+            parent.show_child = false;
+            ctx.notify();
+        });
+        assert!(render_log.borrow().contains(&"parent"));
+        render_log.borrow_mut().clear();
+        rendered_generations.borrow_mut().clear();
+
+        // Notifying the unmounted child must not schedule a redraw or eagerly
+        // re-render it: its output cannot appear in the window. The
+        // invalidation stays queued until a frame happens for another reason.
+        child.update(app, |child, ctx| {
+            child.generation = 2;
+            ctx.notify();
+        });
+        assert_eq!(
+            *render_log.borrow(),
+            Vec::<&'static str>::new(),
+            "notifying a view that was not painted last frame must not trigger a render"
+        );
+
+        // Remounting the child drains the queued invalidation and re-renders it
+        // with its current state, so nothing stale is shown.
+        parent.update(app, |parent, ctx| {
+            parent.show_child = true;
+            ctx.notify();
+        });
+        assert!(render_log.borrow().contains(&"parent"));
+        assert!(render_log.borrow().contains(&"child"));
+        assert_eq!(
+            rendered_generations.borrow().last(),
+            Some(&2),
+            "the remounted child must render with the state from the notify that was deferred"
+        );
     });
 }

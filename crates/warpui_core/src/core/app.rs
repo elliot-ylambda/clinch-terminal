@@ -3492,19 +3492,63 @@ impl AppContext {
     }
 
     fn update_windows(&mut self) {
+        let autotracked_window_ids = autotracking::windows_with_invalidations();
         let invalidated_window_ids = self
             .window_invalidations
             .keys()
-            .chain(autotracking::windows_with_invalidations().iter())
+            .chain(autotracked_window_ids.iter())
             .unique()
             .cloned()
             .collect_vec();
         for window_id in invalidated_window_ids {
+            // Autotracked invalidations are recorded only for views that read
+            // tracked state while rendering, so they always warrant a redraw.
+            // Manual invalidations touching only views that are not on screen
+            // are left queued instead: they drain with the next frame that a
+            // painted view (or an explicit redraw request) schedules. Without
+            // this, a busy view in an unmounted subtree — e.g. a terminal in a
+            // background tab — schedules full-window repaints of an identical
+            // scene at up to display refresh rate.
+            if !autotracked_window_ids.contains(&window_id)
+                && !self.invalidations_can_change_window_output(window_id)
+            {
+                continue;
+            }
             if let Some(mut callback) = self.invalidation_callbacks.remove(&window_id) {
                 callback(window_id, self);
                 self.invalidation_callbacks.insert(window_id, callback);
             }
         }
+    }
+
+    /// Whether the window's pending manual invalidations can change what is on
+    /// screen, i.e. whether they touch at least one view painted in the last
+    /// frame. Defaults to `true` whenever that cannot be determined (no
+    /// presenter, no painted frame yet, an empty last frame, or a presenter
+    /// that is currently borrowed): a spurious redraw is safe, a missed one is
+    /// not.
+    fn invalidations_can_change_window_output(&self, window_id: WindowId) -> bool {
+        let Some(invalidation) = self.window_invalidations.get(&window_id) else {
+            return true;
+        };
+        if invalidation.redraw_requested {
+            return true;
+        }
+        let Some(presenter) = self.presenter(window_id) else {
+            return true;
+        };
+        let Ok(presenter) = presenter.try_borrow() else {
+            return true;
+        };
+        let Some(painted) = presenter.views_painted_last_frame() else {
+            return true;
+        };
+        // An empty painted frame means nothing is on screen yet; the next
+        // invalidation may be the one that mounts the first content.
+        if painted.is_empty() {
+            return true;
+        }
+        !invalidation.updated.is_disjoint(painted) || !invalidation.removed.is_disjoint(painted)
     }
 
     #[cfg(any(test, feature = "test-util"))]
