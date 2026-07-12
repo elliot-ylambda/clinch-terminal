@@ -24,3 +24,7 @@ define_settings_group!(CliAgentUsageSettings, settings: [
                       token and cost stats work without it.",
     }
 ]);
+
+#[cfg(test)]
+#[path = "cli_agent_usage_tests.rs"]
+mod tests;
