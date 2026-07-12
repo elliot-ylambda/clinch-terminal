@@ -75,17 +75,30 @@ clinch_agent_resume_resumable() {
 # Claude only: codex session files are named rollout-<timestamp>-<id>.jsonl, so a bare
 # filename does not yield the session id; codex panes keep the resume-or-fresh behavior.
 clinch_agent_resume_fallback_id() {
-  setopt localoptions extendedglob nullglob
+  setopt localoptions extendedglob nullglob noclobber
   local agent="$1" cwd="${2:-$PWD}"
   [[ "$agent" == claude ]] || return 1
   local reg="${WARP_AGENT_RESUME_DIR:-$HOME/.warp/agent-resume}"
-  local match="\"cwd\":\"$cwd\"" f id
+  local match="\"cwd\":\"$cwd\"" f id claim mtime now ttl
   for f in "$HOME"/.claude/projects/**/*.jsonl(N.om); do
     [[ "$f" == */subagents/* ]] && continue   # sidechain transcripts are not resumable sessions
     head -c 131072 "$f" 2>/dev/null | grep -qF -- "$match" || continue
     id="${${f:t}%.jsonl}"
     clinch_agent_resume_resumable "$agent" "$id" || continue
     grep -Eqsr "(clinch|warp)_agent_resume_launch claude $id( |\")" "$reg" && continue
+    # At restore, panes race this scan before an adopted session's SessionStart hook can
+    # record the new owner. Claim the fallback atomically so two panes cannot adopt the
+    # same conversation. A claim older than the configurable TTL is treated as abandoned.
+    mkdir -p "$reg" 2>/dev/null
+    claim="$reg/.adopt-claim-$id"
+    if ! ( : > "$claim" ) 2>/dev/null; then
+      ttl="${WARP_AGENT_RESUME_CLAIM_TTL:-120}"
+      mtime="$(stat -f '%m' "$claim" 2>/dev/null || printf 0)"
+      now="$(date +%s)"
+      (( now - mtime < ttl )) && continue
+      rm -f "$claim"
+      ( : > "$claim" ) 2>/dev/null || continue
+    fi
     printf '%s' "$id"
     return 0
   done

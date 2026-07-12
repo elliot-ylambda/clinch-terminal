@@ -51,6 +51,28 @@ case "$cmd" in
     fi
     rm -f "$DIR/$uuid.json"
     ;;
+  scrub-bridge)
+    # Cleanup for registry entries poisoned by the 2026-07-09 inherited-bridge leak.
+    # The native JSON helper matches and rewrites structurally, preserving arbitrary
+    # escaped command/cwd text. Journal the old bridge explicitly before each rewrite.
+    bridge="${1:-}"
+    [[ -n "$bridge" ]] || { echo "scrub-bridge: empty bridge id" >&2; exit 2; }
+    shopt -s nullglob
+    n=0
+    for f in "$DIR"/*.json; do
+      rewritten="$("$BIN/agent-json" scrub-bridge-entry "$f" "$bridge")"
+      [[ -n "$rewritten" ]] || continue
+      uuid="$(basename "${f%.json}")"
+      journal="$("$BIN/agent-json" journal-scrub "$(now_utc)" "$uuid" "$f" "$bridge")"
+      [[ -n "$journal" ]] && journal_append "$journal"
+      tmp="$f.tmp.$$"
+      printf '%s\n' "$rewritten" > "$tmp"
+      chmod 600 "$tmp"
+      mv -f "$tmp" "$f"
+      n=$((n+1))
+    done
+    echo "scrubbed bridge from $n entries"
+    ;;
   list)
     # "Find my conversation": newest-first table of every conversation the journal and
     # the prompt mirror (claude-capture.sh, $DIR/prompts/<sid>.jsonl) know about:
@@ -69,7 +91,7 @@ case "$cmd" in
     "$BIN/agent-json" list "$DIR" "$cwd_filter" "$output_format"
     ;;
   *)
-    echo "usage: clinch-agent-resume {write <uuid> <command> <cwd> [bridge]|remove <uuid>|list [--cwd <dir>] [--json]}" >&2
+    echo "usage: clinch-agent-resume {write <uuid> <command> <cwd> [bridge]|remove <uuid>|scrub-bridge <bridge-id>|list [--cwd <dir>] [--json]}" >&2
     exit 2
     ;;
 esac

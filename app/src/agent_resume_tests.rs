@@ -273,6 +273,31 @@ fn recent_conversations_aggregates_journal_and_mirror() {
 }
 
 #[test]
+fn recent_conversations_honors_explicit_bridge_scrub() {
+    let dir = std::env::temp_dir().join(format!("agent_resume_scrub_test_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("journal.jsonl"),
+        concat!(
+            r#"{"ts":"2026-07-09T10:00:00Z","op":"write","pane":"pane-a","command":"clinch_agent_resume_launch claude sid-a","cwd":"/tmp/proj","bridge":"session_01LEAK"}"#,
+            "\n",
+            r#"{"ts":"2026-07-09T10:01:00Z","op":"scrub-bridge","pane":"pane-a","command":"clinch_agent_resume_launch claude sid-a","cwd":"/tmp/proj","bridge":"session_01LEAK"}"#,
+            "\n",
+        ),
+    )
+    .unwrap();
+
+    let conversations = recent_conversations_in(&dir, 50);
+    assert_eq!(conversations.len(), 1);
+    assert_eq!(conversations[0].session_id, "sid-a");
+    assert_eq!(conversations[0].bridge, None);
+    assert_eq!(
+        conversations[0].reopen_command().as_deref(),
+        Some("claude --resume sid-a")
+    );
+}
+
+#[test]
 fn single_line_excerpt_collapses_and_caps() {
     assert_eq!(single_line_excerpt("plain prompt", 160), "plain prompt");
     assert_eq!(

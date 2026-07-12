@@ -98,6 +98,42 @@ function journalLine(operation, argv) {
     return JSON.stringify(row);
 }
 
+function scrubBridgeEntry(argv) {
+    const path = argv[0];
+    const bridge = asString(argv[1], "");
+    if (!path || !bridge) {
+        throw new Error("scrub-bridge-entry requires a file and bridge id");
+    }
+    const entry = parseObject(readFile(path), "registry entry");
+    if (asString(entry.bridge, "") !== bridge) {
+        return "";
+    }
+    delete entry.bridge;
+    return JSON.stringify(entry);
+}
+
+function journalScrub(argv) {
+    const ts = asString(argv[0], "");
+    const pane = asString(argv[1], "");
+    const path = argv[2];
+    const bridge = asString(argv[3], "");
+    if (!path || !bridge) {
+        throw new Error("journal-scrub requires a file and bridge id");
+    }
+    const entry = parseObject(readFile(path), "registry entry");
+    if (asString(entry.bridge, "") !== bridge) {
+        return "";
+    }
+    return JSON.stringify({
+        ts: ts,
+        op: "scrub-bridge",
+        pane: pane,
+        command: asString(entry.command, ""),
+        cwd: asString(entry.cwd, ""),
+        bridge: bridge,
+    });
+}
+
 function wireClaude(argv) {
     const oldCommand = argv[0];
     const captureCommand = argv[1];
@@ -205,15 +241,31 @@ function listConversations(argv) {
         }
         return session;
     }
+    function clearBridge(id, ts, bridge) {
+        bridge = asString(bridge, "");
+        if (!id || !bridge) {
+            return;
+        }
+        const session = sessionFor(id);
+        ts = asString(ts, "");
+        if (session.bridge === bridge && (!session.bridgeTs || !ts || ts >= session.bridgeTs)) {
+            session.bridge = "";
+            session.bridgeTs = ts;
+        }
+    }
 
     const journalPath = directory + "/journal.jsonl";
     parseJsonLines(readFile(journalPath), function (row) {
-        if (!row || row.op !== "write" || typeof row.command !== "string") {
+        if (!row || (row.op !== "write" && row.op !== "scrub-bridge") ||
+                typeof row.command !== "string") {
             return;
         }
         const match = row.command.match(/(?:clinch|warp)_agent_resume_launch\s+[a-z]+\s+([A-Za-z0-9-]+)/);
         if (match) {
             observe(match[1], row.ts, row.cwd, row.bridge);
+            if (row.op === "scrub-bridge") {
+                clearBridge(match[1], row.ts, row.bridge);
+            }
         }
     });
 
@@ -292,6 +344,10 @@ function run(argv) {
         return journalLine("write", argv);
     case "journal-remove":
         return journalLine("remove", argv);
+    case "scrub-bridge-entry":
+        return scrubBridgeEntry(argv);
+    case "journal-scrub":
+        return journalScrub(argv);
     case "list":
         return listConversations(argv);
     default:

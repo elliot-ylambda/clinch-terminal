@@ -196,4 +196,22 @@ rm -f "$TMP/last_args"
 grep -q -- '--resume' "$TMP/last_args" && { echo "FAIL: fully-claimed cwd must start fresh"; exit 1; }
 [[ "$(cat "$TMP/last_fresh_marker")" == "1" ]] || { echo "FAIL: machinery fresh launch must set the marker"; exit 1; }
 
+# --- Adoption claims: simultaneous restores must not adopt the same session twice ---
+# The fake claude never runs the SessionStart hook, so nothing re-captures the adopted id
+# into the registry; only the atomic claim file can close that real restore-time race.
+export WARP_AGENT_RESUME_DIR="$TMP/reg3"
+mkdir -p "$WARP_AGENT_RESUME_DIR"
+rm -f "$TMP/last_args"
+( cd "$WORK" && HOME="$EHOME" clinch_agent_resume_launch claude dead-A )
+grep -q -- '--resume lost-2' "$TMP/last_args" || { echo "FAIL: first pane should adopt newest"; exit 1; }
+rm -f "$TMP/last_args"
+( cd "$WORK" && HOME="$EHOME" clinch_agent_resume_launch claude dead-B )
+grep -q -- '--resume lost-1' "$TMP/last_args" || { echo "FAIL: claimed session adopted twice"; exit 1; }
+
+# A stale claim is reclaimable so a crashed restorer cannot block adoption forever.
+rm -f "$TMP/last_args" "$WARP_AGENT_RESUME_DIR/.adopt-claim-lost-1"
+touch -t 202601010000 "$WARP_AGENT_RESUME_DIR/.adopt-claim-lost-2"
+( cd "$WORK" && HOME="$EHOME" clinch_agent_resume_launch claude dead-C )
+grep -q -- '--resume lost-2' "$TMP/last_args" || { echo "FAIL: stale claim should be reclaimable"; exit 1; }
+
 echo "PASS"

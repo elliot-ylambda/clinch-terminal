@@ -52,7 +52,9 @@ capture (agent SessionStart hooks)          replay (Rust, in Clinch)
   (`clinch_agent_resume_fallback_id`, reading transcript heads newest-first) and resumes
   that instead. Only *unclaimed* sessions — recorded in no pane's registry entry — are
   adopted, so a pane whose id died can never steal a sibling pane's live session when
-  several panes share one project directory. Bridged panes skip adoption (their
+  several panes share one project directory. An atomic `.adopt-claim-<session>` file also
+  closes the restore-time race before the adopted session's hook can write its registry entry;
+  abandoned claims expire after 120 seconds. Bridged panes skip adoption (their
   conversation lives at claude.ai; adopting a local session would silently swap
   conversations), and codex keeps plain resume-or-fresh (its session filenames don't
   yield a bare id to adopt by).
@@ -131,6 +133,9 @@ conversation. Launch hygiene plus three durable layers close that hole (see
   every conversation the journal + mirror know about — start time, short sid, cwd,
   `https://claude.ai/code/<bridge>` or `local`, and the first prompt. `--json` returns the
   same aggregation with full session IDs and exact prompt text for machine consumers.
+- **Bridge cleanup**: `clinch-agent-resume scrub-bridge <bridge-id>` structurally removes an
+  inherited/leaked bridge from matching pane entries and journals the clear so discovery does
+  not resurrect the poisoned cloud URL.
 
 ## Install (capture layer)
 
@@ -230,7 +235,7 @@ separate data dir (`~/.warp-oss`), so the two never clobber each other's session
 | File | Role |
 |---|---|
 | `agent-json` / `agent-json.js` | native macOS JSON parsing, encoding, settings merge, and conversation listing without third-party runtimes |
-| `clinch-agent-resume` | registry CLI: `write <uuid> <cmd> <cwd> [bridge]` / `remove <uuid>` / `list [--cwd <dir>] [--json]`; journals every mutation to `journal.jsonl` |
+| `clinch-agent-resume` | registry CLI: `write`, `remove`, `scrub-bridge`, and `list [--cwd <dir>] [--json]`; journals every mutation to `journal.jsonl` |
 | `claude-capture.sh` | Claude `SessionStart`/`UserPromptSubmit`/`Stop` hook — captures the live session per pane, keeps its permission-mode/`--model` flags in sync with the live session, and mirrors every prompt to `prompts/<sid>.jsonl` |
 | `claude.zsh` | Claude launch-identity scrub + replay functions (`clinch_agent_resume_resumable` / `clinch_agent_resume_launch`) loaded by the standalone launcher |
 | `clinch_agent_resume_launch` | executable replay entrypoint bundled in `Clinch.app/Contents/Resources/bin`; works without an rcfile edit |

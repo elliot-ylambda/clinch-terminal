@@ -243,6 +243,7 @@ struct ConversationSighting {
     agent: Option<String>,
     cwd: Option<String>,
     bridge: Option<String>,
+    clear_bridge: Option<String>,
     flags: Option<String>,
 }
 
@@ -267,18 +268,25 @@ fn recent_conversations_in(dir: &Path, limit: usize) -> Vec<AgentConversation> {
             let Ok(record) = serde_json::from_str::<JournalRecord>(line) else {
                 continue;
             };
-            if record.op != "write" {
+            if record.op != "write" && record.op != "scrub-bridge" {
                 continue;
             }
             let Some(launch) = record.command.as_deref().and_then(parse_launch_command) else {
                 continue;
+            };
+            let recorded_bridge = record.bridge.filter(|bridge| !bridge.is_empty());
+            let (bridge, clear_bridge) = if record.op == "write" {
+                (recorded_bridge, None)
+            } else {
+                (None, recorded_bridge)
             };
             sightings.push(ConversationSighting {
                 ts: record.ts,
                 session_id: launch.id.to_string(),
                 agent: Some(launch.agent.to_string()),
                 cwd: record.cwd.filter(|cwd| !cwd.is_empty()),
-                bridge: record.bridge.filter(|bridge| !bridge.is_empty()),
+                bridge,
+                clear_bridge,
                 flags: Some(launch.flags),
             });
         }
@@ -315,6 +323,7 @@ fn recent_conversations_in(dir: &Path, limit: usize) -> Vec<AgentConversation> {
                 agent: None,
                 cwd: record.cwd.filter(|cwd| !cwd.is_empty()),
                 bridge: record.bridge.filter(|bridge| !bridge.is_empty()),
+                clear_bridge: None,
                 flags: None,
             });
         }
@@ -350,6 +359,11 @@ fn recent_conversations_in(dir: &Path, limit: usize) -> Vec<AgentConversation> {
         }
         if let Some(bridge) = sighting.bridge {
             conversation.bridge = Some(bridge);
+        }
+        if let Some(clear_bridge) = sighting.clear_bridge {
+            if conversation.bridge.as_deref() == Some(clear_bridge.as_str()) {
+                conversation.bridge = None;
+            }
         }
         if let Some(flags) = sighting.flags {
             conversation.flags = flags;
