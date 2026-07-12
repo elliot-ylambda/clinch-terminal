@@ -74,8 +74,8 @@ use crate::settings::{
     SelectionSettings, ShowAutosuggestionIgnoreButton, ShowChangelogAfterUpdate,
     ShowCliAgentPlanLimits, ShowTerminalInputMessageBar, SshSettings, SyntaxHighlighting,
     TabBehavior, UserNativeRedirectPreference, VimModeEnabled, VimStatusBar,
-    VimUnnamedSystemClipboard,
-    DEFAULT_QUAKE_MODE_SIZE_PERCENTAGES, QUAKE_WINDOW_AUTOHIDE_SUPPORTED,
+    VimUnnamedSystemClipboard, DEFAULT_QUAKE_MODE_SIZE_PERCENTAGES,
+    QUAKE_WINDOW_AUTOHIDE_SUPPORTED,
 };
 use crate::terminal::alt_screen_reporting::{
     AltScreenReporting, FocusReportingEnabled, MouseReportingEnabled, ScrollReportingEnabled,
