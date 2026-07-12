@@ -37,6 +37,7 @@ use warpui::{AppContext, EntityId, SingletonEntity, ViewHandle, WindowId};
 
 use super::{render_group_member_icon_collage, select_unique_pane_kinds};
 use crate::ai::agent::conversation::{ConversationStatus, StatusColorStyle};
+use crate::ai::agent::icons::yellow_stop_icon;
 use crate::ai::agent_management::AgentNotificationsModel;
 use crate::ai::blocklist::usage::{cli_agent_model_label, CliAgentUsageModel};
 use crate::ai::cloud_environments::CloudAmbientAgentEnvironment;
@@ -717,6 +718,7 @@ pub(super) struct VerticalTabsPanelState {
     show_diff_stats_mouse_state: MouseStateHandle,
     show_details_on_hover_mouse_state: MouseStateHandle,
     panel_right_click_mouse_state: MouseStateHandle,
+    attention_chip_mouse_state: MouseStateHandle,
     pub(super) show_settings_popup: bool,
 }
 
@@ -754,6 +756,7 @@ impl Default for VerticalTabsPanelState {
             show_diff_stats_mouse_state: Default::default(),
             show_details_on_hover_mouse_state: Default::default(),
             panel_right_click_mouse_state: Default::default(),
+            attention_chip_mouse_state: Default::default(),
             show_settings_popup: false,
         }
     }
@@ -1409,6 +1412,93 @@ fn render_repo_header(workspace: &Workspace, app: &AppContext) -> Option<Box<dyn
     )
 }
 
+/// Compact "N waiting" chip for the vertical-tabs control bar: the number of tabs whose agent
+/// is currently waiting on the user, per the same derivation as the yellow attention badge on
+/// tab rows (`Workspace::agent_attention_tab_indices`). Returns `None` when no agent is
+/// waiting so the control bar renders unchanged. Clicking dispatches
+/// [`WorkspaceAction::FocusNextAgentAttention`], the same cycling action as its keybinding.
+fn render_agent_attention_chip(
+    state: &VerticalTabsPanelState,
+    workspace: &Workspace,
+    app: &AppContext,
+) -> Option<Box<dyn Element>> {
+    let waiting_count = workspace.agent_attention_tab_indices(app).len();
+    if waiting_count == 0 {
+        return None;
+    }
+
+    let appearance = Appearance::as_ref(app);
+    let theme = appearance.theme();
+    let sub_text = theme.sub_text_color(theme.background());
+    let ui_builder = appearance.ui_builder().clone();
+    let cycle_keybinding =
+        keybinding_name_to_display_string(super::FOCUS_NEXT_AGENT_ATTENTION_BINDING_NAME, app);
+
+    Some(
+        Hoverable::new(state.attention_chip_mouse_state.clone(), move |hover_state| {
+            let icon = ConstrainedBox::new(yellow_stop_icon(appearance).finish())
+                .with_width(SEARCH_ICON_SIZE)
+                .with_height(SEARCH_ICON_SIZE)
+                .finish();
+            let label = render_text_line(
+                &format!("{waiting_count} waiting"),
+                sub_text,
+                ClipConfig::ellipsis(),
+                appearance,
+            );
+
+            let background = if hover_state.is_hovered() {
+                internal_colors::fg_overlay_2(theme)
+            } else {
+                ThemeFill::Solid(ColorU::transparent_black())
+            };
+            let chip = Container::new(
+                Flex::row()
+                    .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                    .with_spacing(4.)
+                    .with_child(icon)
+                    .with_child(label)
+                    .finish(),
+            )
+            .with_padding(Padding::uniform(2.).with_left(4.).with_right(4.))
+            .with_background(background)
+            .with_corner_radius(CornerRadius::with_all(CONTROL_BAR_BUTTON_RADIUS))
+            .finish();
+
+            if hover_state.is_hovered() {
+                let noun = if waiting_count == 1 { "agent" } else { "agents" };
+                let tooltip_text = format!("{waiting_count} {noun} waiting — focus next");
+                let tooltip = if let Some(sublabel) = cycle_keybinding.clone() {
+                    ui_builder
+                        .tool_tip_with_sublabel(tooltip_text, sublabel)
+                        .build()
+                        .finish()
+                } else {
+                    ui_builder.tool_tip(tooltip_text).build().finish()
+                };
+                let mut stack = Stack::new().with_child(chip);
+                stack.add_positioned_overlay_child(
+                    tooltip,
+                    OffsetPositioning::offset_from_parent(
+                        vec2f(0., 4.),
+                        ParentOffsetBounds::WindowByPosition,
+                        ParentAnchor::BottomMiddle,
+                        ChildAnchor::TopMiddle,
+                    ),
+                );
+                stack.finish()
+            } else {
+                chip
+            }
+        })
+        .with_cursor(Cursor::PointingHand)
+        .on_click(|ctx, _, _| {
+            ctx.dispatch_typed_action(WorkspaceAction::FocusNextAgentAttention);
+        })
+        .finish(),
+    )
+}
+
 fn render_control_bar(
     state: &VerticalTabsPanelState,
     workspace: &Workspace,
@@ -1445,12 +1535,18 @@ fn render_control_bar(
     let settings_button = render_settings_button(state, appearance);
     let new_tab_button = render_new_tab_button(state, workspace, appearance, app);
 
+    let mut control_row = Flex::row()
+        .with_main_axis_size(MainAxisSize::Max)
+        .with_cross_axis_alignment(CrossAxisAlignment::Center)
+        .with_spacing(CONTROL_BAR_SPACING)
+        .with_child(Shrinkable::new(1., search_bar).finish());
+    // "N waiting" agent-attention chip; absent when no agent is waiting on the user.
+    if let Some(attention_chip) = render_agent_attention_chip(state, workspace, app) {
+        control_row = control_row.with_child(attention_chip);
+    }
+
     Container::new(
-        Flex::row()
-            .with_main_axis_size(MainAxisSize::Max)
-            .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_spacing(CONTROL_BAR_SPACING)
-            .with_child(Shrinkable::new(1., search_bar).finish())
+        control_row
             .with_child(settings_button)
             .with_child(new_tab_button)
             .finish(),

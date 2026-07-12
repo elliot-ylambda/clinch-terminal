@@ -1,5 +1,6 @@
 mod action;
 mod active_session;
+mod agent_attention;
 pub(crate) mod auto_handoff;
 pub mod bonus_grant_notification_model;
 #[cfg(target_os = "macos")]
@@ -66,8 +67,9 @@ pub use registry::WorkspaceRegistry;
 pub use toast_stack::ToastStack;
 
 use crate::workspace::view::{
-    LEFT_PANEL_AGENT_CONVERSATIONS_BINDING_NAME, LEFT_PANEL_GLOBAL_SEARCH_BINDING_NAME,
-    LEFT_PANEL_PROJECT_EXPLORER_BINDING_NAME, LEFT_PANEL_SKILLS_BINDING_NAME,
+    FOCUS_NEXT_AGENT_ATTENTION_BINDING_NAME, LEFT_PANEL_AGENT_CONVERSATIONS_BINDING_NAME,
+    LEFT_PANEL_GLOBAL_SEARCH_BINDING_NAME, LEFT_PANEL_PROJECT_EXPLORER_BINDING_NAME,
+    LEFT_PANEL_SKILLS_BINDING_NAME,
     LEFT_PANEL_WARP_DRIVE_BINDING_NAME, NEW_AGENT_TAB_BINDING_NAME,
     NEW_AMBIENT_AGENT_TAB_BINDING_NAME, NEW_TAB_BINDING_NAME, NEW_TERMINAL_TAB_BINDING_NAME,
     OPEN_GLOBAL_SEARCH_BINDING_NAME, TOGGLE_CONVERSATION_LIST_VIEW_BINDING_NAME,
@@ -1372,6 +1374,16 @@ pub fn init(app: &mut AppContext) {
     .with_mac_key_binding("cmd-shift-G")
     .with_linux_or_windows_key_binding("ctrl-shift-G")
     .with_group(bindings::BindingGroup::WarpAi.as_str())]);
+
+    app.register_editable_bindings([EditableBinding::new(
+        FOCUS_NEXT_AGENT_ATTENTION_BINDING_NAME,
+        "Focus next agent needing attention",
+        WorkspaceAction::FocusNextAgentAttention,
+    )
+    .with_context_predicate(id!("Workspace"))
+    .with_mac_key_binding("cmd-alt-a")
+    .with_linux_or_windows_key_binding("ctrl-alt-a")
+    .with_group(bindings::BindingGroup::Navigation.as_str())]);
 
     app.register_editable_bindings([EditableBinding::new(
         TOGGLE_NOTIFICATION_MAILBOX_BINDING_NAME,
