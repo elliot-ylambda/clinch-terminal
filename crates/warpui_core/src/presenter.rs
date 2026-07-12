@@ -32,13 +32,19 @@ pub struct Presenter {
     /// frame is painted. Views absent from this set are not on screen, so
     /// invalidations touching only them cannot change the rendered output.
     views_painted_last_frame: Option<HashSet<EntityId>>,
+    /// Views that were invalidated while not on screen. Their cached element
+    /// is out of date, but re-rendering is deferred to the layout pass of the
+    /// frame that mounts them again.
+    stale_views: HashSet<EntityId>,
     text_layout_cache: LayoutCache,
     position_cache: PositionCache,
     highlighted_view: Option<EntityId>,
 }
 
 pub struct LayoutContext<'a> {
+    window_id: WindowId,
     rendered_views: &'a mut HashMap<EntityId, Box<dyn Element>>,
+    stale_views: &'a mut HashSet<EntityId>,
     parents: &'a mut HashMap<EntityId, EntityId>,
     pub text_layout_cache: &'a LayoutCache,
     view_stack: Vec<EntityId>,
@@ -310,6 +316,7 @@ impl Presenter {
             window_id,
             rendered_views: HashMap::new(),
             views_painted_last_frame: None,
+            stale_views: HashSet::new(),
             scene: None,
             text_layout_cache: LayoutCache::new(),
             position_cache: PositionCache::default(),
@@ -326,15 +333,31 @@ impl Presenter {
     pub fn invalidate(&mut self, invalidation: WindowInvalidation, app: &AppContext) {
         // Don't try to update views that were also removed
         for &view_id in invalidation.updated.difference(&invalidation.removed) {
+            // A cached view that was not painted last frame is not on screen:
+            // defer its re-render to the layout pass of the frame that mounts
+            // it again, instead of paying for it on every frame it stays
+            // hidden. Views without a cached element still render eagerly —
+            // that first element is what lets a parent mount them at all.
+            let is_unmounted = self
+                .views_painted_last_frame
+                .as_ref()
+                .is_some_and(|painted| !painted.contains(&view_id))
+                && self.rendered_views.contains_key(&view_id);
+            if is_unmounted {
+                self.stale_views.insert(view_id);
+                continue;
+            }
             match app.render_view(self.window_id, view_id) {
                 Ok(element) => {
                     self.rendered_views.insert(view_id, element);
+                    self.stale_views.remove(&view_id);
                 }
                 Err(e) => log::warn!("View was not rendered, error: {e:?}"),
             };
         }
         for view_id in invalidation.removed {
             self.rendered_views.remove(&view_id);
+            self.stale_views.remove(&view_id);
         }
     }
 
@@ -396,7 +419,9 @@ impl Presenter {
     ) {
         if let Some(root_view_id) = app.root_view_id(self.window_id) {
             let mut layout_ctx = LayoutContext {
+                window_id: self.window_id,
                 rendered_views: &mut self.rendered_views,
+                stale_views: &mut self.stale_views,
                 parents,
                 text_layout_cache: &self.text_layout_cache,
                 view_stack: Vec::new(),
@@ -567,6 +592,17 @@ impl LayoutContext<'_> {
         constraint: SizeConstraint,
         app: &AppContext,
     ) -> Vector2F {
+        // A stale view was invalidated while unmounted and its re-render
+        // deferred; it is being mounted now, so bring its element up to date
+        // before laying it out.
+        if self.stale_views.remove(&view_id) {
+            match app.render_view(self.window_id, view_id) {
+                Ok(element) => {
+                    self.rendered_views.insert(view_id, element);
+                }
+                Err(e) => log::warn!("View was not rendered, error: {e:?}"),
+            }
+        }
         let Some(mut rendered_view) = self.rendered_views.remove(&view_id) else {
             return vec2f(0., 0.);
         };

@@ -2,9 +2,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use super::*;
-use crate::elements::Empty;
+use crate::elements::*;
 use crate::platform::WindowStyle;
-use crate::{App, AppContext, Element, Entity, ModelHandle, TypedActionView, View};
+use crate::{App, AppContext, Element, Entity, ModelHandle, TypedActionView, View, ViewHandle};
 
 #[derive(Default)]
 struct Model {
@@ -247,21 +247,57 @@ fn test_model_updates_multiple_views() {
         }
     }
 
+    /// Mounts both tracked views so their dependency-driven re-renders are
+    /// observable: re-renders of views that are not on screen are deferred
+    /// until they are mounted again.
+    struct PairRoot {
+        first: ViewHandle<TestView>,
+        second: ViewHandle<OtherView>,
+    }
+
+    impl Entity for PairRoot {
+        type Event = ();
+    }
+
+    impl View for PairRoot {
+        fn ui_name() -> &'static str {
+            "PairRoot"
+        }
+
+        fn render(&self, _: &AppContext) -> Box<dyn Element> {
+            Flex::row()
+                .with_children([
+                    ChildView::new(&self.first).finish(),
+                    ChildView::new(&self.second).finish(),
+                ])
+                .finish()
+        }
+    }
+
+    impl TypedActionView for PairRoot {
+        type Action = ();
+    }
+
     App::test((), |mut app| async move {
         let model_handle = app.add_model(|_| Model::default());
 
         let first_render_counter = Arc::new(AtomicUsize::new(0));
-        let (window_id, first_view) = app.add_window(WindowStyle::NotStealFocus, |_| {
-            TestView::new(model_handle.clone(), first_render_counter.clone())
-        });
-
         let second_render_counter = Arc::new(AtomicUsize::new(0));
-        let _second_view = app.add_view(window_id, |_| {
-            OtherView::new(model_handle.clone(), second_render_counter.clone())
-        });
+        let (_, root) = {
+            let model_handle = model_handle.clone();
+            let first_render_counter = first_render_counter.clone();
+            let second_render_counter = second_render_counter.clone();
+            app.add_window(WindowStyle::NotStealFocus, |ctx| {
+                let first =
+                    ctx.add_view(|_| TestView::new(model_handle.clone(), first_render_counter));
+                let second =
+                    ctx.add_view(|_| OtherView::new(model_handle.clone(), second_render_counter));
+                PairRoot { first, second }
+            })
+        };
 
         // Force the window to be rendered the first time
-        first_view.update(&mut app, |_, _| {});
+        root.update(&mut app, |_, _| {});
         assert_eq!(first_render_counter.load(Ordering::Relaxed), 1);
         assert_eq!(second_render_counter.load(Ordering::Relaxed), 1);
 

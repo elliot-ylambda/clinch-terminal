@@ -2868,63 +2868,65 @@ fn test_view_subscribe_then_unsubscribe_to_model_inside_callback_drops_new_subsc
     });
 }
 
-#[test]
-fn test_notify_of_unmounted_view_does_not_trigger_redraw() {
-    struct ConditionalParent {
-        child: ViewHandle<RenderLoggingChild>,
-        show_child: bool,
-        render_log: Rc<RefCell<Vec<&'static str>>>,
-    }
+/// A root view that mounts or unmounts its child depending on `show_child`,
+/// logging every `render` call. Shared by the unmounted-view invalidation tests.
+struct ConditionalParent {
+    child: ViewHandle<RenderLoggingChild>,
+    show_child: bool,
+    render_log: Rc<RefCell<Vec<&'static str>>>,
+}
 
-    impl Entity for ConditionalParent {
-        type Event = ();
-    }
+impl Entity for ConditionalParent {
+    type Event = ();
+}
 
-    impl super::View for ConditionalParent {
-        fn render<'a>(&self, _: &AppContext) -> Box<dyn Element> {
-            self.render_log.borrow_mut().push("parent");
-            if self.show_child {
-                ChildView::new(&self.child).finish()
-            } else {
-                Empty::new().finish()
-            }
-        }
-
-        fn ui_name() -> &'static str {
-            "ConditionalParent"
-        }
-    }
-
-    impl TypedActionView for ConditionalParent {
-        type Action = ();
-    }
-
-    struct RenderLoggingChild {
-        generation: usize,
-        rendered_generations: Rc<RefCell<Vec<usize>>>,
-        render_log: Rc<RefCell<Vec<&'static str>>>,
-    }
-
-    impl Entity for RenderLoggingChild {
-        type Event = ();
-    }
-
-    impl super::View for RenderLoggingChild {
-        fn render<'a>(&self, _: &AppContext) -> Box<dyn Element> {
-            self.render_log.borrow_mut().push("child");
-            self.rendered_generations.borrow_mut().push(self.generation);
+impl View for ConditionalParent {
+    fn render<'a>(&self, _: &AppContext) -> Box<dyn Element> {
+        self.render_log.borrow_mut().push("parent");
+        if self.show_child {
+            ChildView::new(&self.child).finish()
+        } else {
             Empty::new().finish()
         }
-
-        fn ui_name() -> &'static str {
-            "RenderLoggingChild"
-        }
     }
 
-    impl TypedActionView for RenderLoggingChild {
-        type Action = ();
+    fn ui_name() -> &'static str {
+        "ConditionalParent"
+    }
+}
+
+impl TypedActionView for ConditionalParent {
+    type Action = ();
+}
+
+struct RenderLoggingChild {
+    generation: usize,
+    rendered_generations: Rc<RefCell<Vec<usize>>>,
+    render_log: Rc<RefCell<Vec<&'static str>>>,
+}
+
+impl Entity for RenderLoggingChild {
+    type Event = ();
+}
+
+impl View for RenderLoggingChild {
+    fn render<'a>(&self, _: &AppContext) -> Box<dyn Element> {
+        self.render_log.borrow_mut().push("child");
+        self.rendered_generations.borrow_mut().push(self.generation);
+        Empty::new().finish()
     }
 
+    fn ui_name() -> &'static str {
+        "RenderLoggingChild"
+    }
+}
+
+impl TypedActionView for RenderLoggingChild {
+    type Action = ();
+}
+
+#[test]
+fn test_notify_of_unmounted_view_does_not_trigger_redraw() {
     App::test((), |mut app| async move {
         let app = &mut app;
         let render_log: Rc<RefCell<Vec<&'static str>>> = Rc::new(RefCell::new(vec![]));
@@ -2998,6 +3000,76 @@ fn test_notify_of_unmounted_view_does_not_trigger_redraw() {
             rendered_generations.borrow().last(),
             Some(&2),
             "the remounted child must render with the state from the notify that was deferred"
+        );
+    });
+}
+
+#[test]
+fn test_unmounted_view_render_is_deferred_until_remount() {
+    App::test((), |mut app| async move {
+        let app = &mut app;
+        let render_log: Rc<RefCell<Vec<&'static str>>> = Rc::new(RefCell::new(vec![]));
+        let rendered_generations: Rc<RefCell<Vec<usize>>> = Rc::new(RefCell::new(vec![]));
+
+        let (_, parent) = {
+            let render_log = render_log.clone();
+            let rendered_generations = rendered_generations.clone();
+            app.add_window(WindowStyle::NotStealFocus, |ctx| {
+                let child = ctx.add_view(|_| RenderLoggingChild {
+                    generation: 0,
+                    rendered_generations,
+                    render_log: render_log.clone(),
+                });
+                ConditionalParent {
+                    child,
+                    show_child: true,
+                    render_log,
+                }
+            })
+        };
+        let child = parent.read(app, |parent, _| parent.child.clone());
+
+        // First frame: parent and child both render and paint.
+        parent.update(app, |_, ctx| ctx.notify());
+
+        // Unmount the child.
+        parent.update(app, |parent, ctx| {
+            parent.show_child = false;
+            ctx.notify();
+        });
+        render_log.borrow_mut().clear();
+        rendered_generations.borrow_mut().clear();
+
+        // Dirty the unmounted child (queued by the redraw gate), then trigger a
+        // frame via the painted parent. The frame drains the child's queued
+        // invalidation, but the child stays unmounted: re-rendering it would be
+        // wasted work since its output cannot appear on screen.
+        child.update(app, |child, ctx| {
+            child.generation = 3;
+            ctx.notify();
+        });
+        parent.update(app, |_, ctx| ctx.notify());
+        assert_eq!(
+            *render_log.borrow(),
+            vec!["parent"],
+            "a frame must not eagerly re-render a view that stays unmounted"
+        );
+
+        // Remounting must render the child exactly once, with its current state.
+        render_log.borrow_mut().clear();
+        parent.update(app, |parent, ctx| {
+            parent.show_child = true;
+            ctx.notify();
+        });
+        assert_eq!(
+            *render_log.borrow(),
+            vec!["parent", "child"],
+            "the remount frame must render the deferred child exactly once"
+        );
+        assert_eq!(
+            rendered_generations.borrow().as_slice(),
+            &[3],
+            "the remounted child must render with the state from the deferred notify"
         );
     });
 }
