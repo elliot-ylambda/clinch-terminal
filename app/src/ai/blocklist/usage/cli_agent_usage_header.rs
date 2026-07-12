@@ -35,12 +35,28 @@ fn limit_texts(
     }
 }
 
+fn provider_windows(
+    provider: &Provider,
+    include_fable: bool,
+) -> Vec<(&'static str, Option<LimitWindow>)> {
+    let mut windows = vec![
+        ("5h ", provider.plan.and_then(|plan| plan.session)),
+        ("wk ", provider.plan.and_then(|plan| plan.weekly)),
+    ];
+    if include_fable {
+        windows.push(("Fable ", provider.plan.and_then(|plan| plan.fable_weekly)));
+    }
+    windows
+}
+
 /// One provider's inline segment: `{name} 5h {pct}[· {reset}]  wk {pct}[· {reset}]`.
-/// Percents are severity-colored; labels and resets are dimmed. The two windows are
-/// separated by whitespace — the only `│` divider in the widget sits between providers.
+/// Claude also includes its model-scoped `Fable {pct}[· {reset}]` window. Percents
+/// are severity-colored; labels and resets are dimmed. The windows are separated
+/// by whitespace — the only `│` divider in the widget sits between providers.
 fn provider_segment(
     name: &str,
     provider: &Provider,
+    include_fable: bool,
     now: DateTime<Utc>,
     include_resets: bool,
     appearance: &Appearance,
@@ -49,13 +65,14 @@ fn provider_segment(
     let theme = appearance.theme();
     let main = theme.main_text_color(bg);
     let sub = theme.sub_text_color(bg);
-    let session = provider.plan.and_then(|p| p.session);
-    let weekly = provider.plan.and_then(|p| p.weekly);
 
     let mut row = Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center);
     row.add_child(span(format!("{name} "), main, appearance));
 
-    for (idx, (label, window)) in [("5h ", session), ("wk ", weekly)].into_iter().enumerate() {
+    for (idx, (label, window)) in provider_windows(provider, include_fable)
+        .into_iter()
+        .enumerate()
+    {
         if idx > 0 {
             row.add_child(
                 Container::new(Empty::new().finish())
@@ -73,7 +90,8 @@ fn provider_segment(
     row.finish()
 }
 
-/// The full/medium inline layout: clock icon + Claude segment + `│` divider + Codex segment.
+/// The full/medium inline layout: clock icon + Claude/Fable segment + `│`
+/// divider + Codex segment.
 fn inline_row(
     snapshot: &UsageSnapshot,
     now: DateTime<Utc>,
@@ -102,6 +120,7 @@ fn inline_row(
     row.add_child(provider_segment(
         "Claude",
         &snapshot.claude,
+        true,
         now,
         include_resets,
         appearance,
@@ -115,6 +134,7 @@ fn inline_row(
     row.add_child(provider_segment(
         "Codex",
         &snapshot.codex,
+        false,
         now,
         include_resets,
         appearance,

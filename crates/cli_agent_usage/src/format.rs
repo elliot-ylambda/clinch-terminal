@@ -240,6 +240,7 @@ mod tests {
                 resets_at: None,
                 severity: Severity::Warning,
             }),
+            fable_weekly: None,
         });
         // Codex: token data but no plan -> "—" half, still shown.
         snap.codex.month.tokens = TokenCounts {

@@ -37,8 +37,9 @@ pub(super) fn span(
     .finish()
 }
 
-/// The footer chip: `[clock] cc 47%w · cx 55%w`, each %-half colored by its severity.
-/// `None` when neither tool has data (chip hidden).
+/// The footer chip: `[clock] cc 47%w · fb 32%w · cx 55%w`, with the Fable
+/// segment omitted when its scoped limit is unavailable. Each percentage is
+/// colored by its severity. `None` when neither tool has data (chip hidden).
 pub fn render_cli_agent_usage_chip(
     snapshot: &UsageSnapshot,
     appearance: &Appearance,
@@ -89,6 +90,19 @@ pub fn render_cli_agent_usage_chip(
                 appearance,
             ));
         }
+        // Fable has its own model-scoped weekly allowance. Keep it visually
+        // separate from Claude's account-wide weekly percentage even in the
+        // compact variant.
+        if i == 0 {
+            if let Some(fable) = snapshot.claude.plan.and_then(|p| p.fable_weekly) {
+                row.add_child(span(" · fb ", neutral, appearance));
+                row.add_child(span(
+                    format!("{}w", fmt_pct(fable.percent)),
+                    severity_fill(fable.severity, theme, bg),
+                    appearance,
+                ));
+            }
+        }
     }
 
     Some(
@@ -98,8 +112,9 @@ pub fn render_cli_agent_usage_chip(
     )
 }
 
-/// The expanded panel: two columns (Claude | Codex) — 5h %, weekly %, then
-/// session/today/week/month input+output tokens (cache-read dimmed). No cost.
+/// The expanded panel: two columns (Claude | Codex) — 5h %, weekly %, Claude's
+/// Fable %, then session/today/week/month input+output tokens (cache-read
+/// dimmed). No cost.
 pub fn render_cli_agent_usage_panel(
     snapshot: &UsageSnapshot,
     appearance: &Appearance,
@@ -148,6 +163,16 @@ pub fn render_cli_agent_usage_panel(
             appearance,
             bg,
         ),
+    ));
+    col.add_child(panel_row(
+        span("Fable wk", sub, appearance),
+        plan_cell(
+            snapshot.claude.plan.and_then(|p| p.fable_weekly),
+            now,
+            appearance,
+            bg,
+        ),
+        span("—", sub, appearance),
     ));
 
     // Token rows.

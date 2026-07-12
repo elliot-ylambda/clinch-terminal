@@ -1,7 +1,7 @@
 use chrono::{Duration, TimeZone, Utc};
-use cli_agent_usage::{LimitWindow, Severity};
+use cli_agent_usage::{LimitWindow, PlanLimits, Provider, Severity};
 
-use super::limit_texts;
+use super::{limit_texts, provider_windows};
 
 #[test]
 fn limit_texts_none_is_dash() {
@@ -37,4 +37,30 @@ fn limit_texts_without_reset_omits_countdown() {
     let (pct, reset, _sev) = limit_texts(Some(w), now, false);
     assert_eq!(pct, "8%");
     assert_eq!(reset, None);
+}
+
+#[test]
+fn claude_provider_windows_include_fable_as_a_separate_limit() {
+    let window = |percent| LimitWindow {
+        percent,
+        resets_at: None,
+        severity: Severity::Normal,
+    };
+    let provider = Provider {
+        plan: Some(PlanLimits {
+            session: Some(window(12.0)),
+            weekly: Some(window(34.0)),
+            fable_weekly: Some(window(56.0)),
+        }),
+        ..Provider::default()
+    };
+
+    let windows = provider_windows(&provider, true);
+    assert_eq!(windows.len(), 3);
+    assert_eq!(windows[0], ("5h ", Some(window(12.0))));
+    assert_eq!(windows[1], ("wk ", Some(window(34.0))));
+    assert_eq!(windows[2], ("Fable ", Some(window(56.0))));
+
+    let codex_windows = provider_windows(&provider, false);
+    assert_eq!(codex_windows.len(), 2);
 }

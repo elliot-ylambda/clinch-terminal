@@ -68,6 +68,8 @@ pub struct LimitWindow {
 pub struct PlanLimits {
     pub session: Option<LimitWindow>,
     pub weekly: Option<LimitWindow>,
+    /// Fable's model-scoped weekly limit, when reported by Claude's usage API.
+    pub fable_weekly: Option<LimitWindow>,
 }
 
 /// A usage window counts as exhausted only at (or above) full utilization.
@@ -77,11 +79,13 @@ pub struct PlanLimits {
 const EXHAUSTED_PERCENT: f64 = 100.0;
 
 impl PlanLimits {
-    /// When at least one window is exhausted (percent >= 100), returns the
-    /// instant at which *every* exhausted window will have reset (the latest
-    /// of their reset times). Returns `None` when no window is exhausted, or
-    /// when any exhausted window's reset time is unknown — callers must treat
-    /// "don't know when" as "not schedulable" rather than guessing.
+    /// When at least one provider-wide window is exhausted (percent >= 100),
+    /// returns the instant at which *every* exhausted window will have reset
+    /// (the latest of their reset times). Returns `None` when no window is
+    /// exhausted, or when any exhausted window's reset time is unknown —
+    /// callers must treat "don't know when" as "not schedulable" rather than
+    /// guessing. Model-scoped limits such as Fable are intentionally excluded:
+    /// exhausting one must not pause sessions using another Claude model.
     pub fn exhausted_until(&self) -> Option<DateTime<Utc>> {
         let mut latest: Option<DateTime<Utc>> = None;
         for window in [self.session, self.weekly].into_iter().flatten() {
@@ -336,6 +340,7 @@ mod tests {
         let plan = PlanLimits {
             session: Some(window(99.9)),
             weekly: Some(window(95.0)),
+            fable_weekly: None,
         };
         assert_eq!(plan.exhausted_until(), None);
         assert_eq!(PlanLimits::default().exhausted_until(), None);
@@ -357,6 +362,7 @@ mod tests {
         let plan = PlanLimits {
             session: Some(window(100.0, Some(session_reset))),
             weekly: Some(window(60.0, Some(weekly_reset))),
+            fable_weekly: None,
         };
         assert_eq!(plan.exhausted_until(), Some(session_reset));
 
@@ -365,6 +371,7 @@ mod tests {
         let plan = PlanLimits {
             session: Some(window(101.0, Some(session_reset))),
             weekly: Some(window(100.0, Some(weekly_reset))),
+            fable_weekly: None,
         };
         assert_eq!(plan.exhausted_until(), Some(weekly_reset));
     }
@@ -383,6 +390,7 @@ mod tests {
         let plan = PlanLimits {
             session: Some(window(100.0, None)),
             weekly: Some(window(40.0, Some(reset))),
+            fable_weekly: None,
         };
         assert_eq!(plan.exhausted_until(), None);
 
@@ -391,7 +399,25 @@ mod tests {
         let plan = PlanLimits {
             session: Some(window(100.0, Some(reset))),
             weekly: Some(window(100.0, None)),
+            fable_weekly: None,
         };
+        assert_eq!(plan.exhausted_until(), None);
+    }
+
+    #[test]
+    fn exhausted_until_ignores_model_scoped_fable_limit() {
+        use chrono::{Duration, Utc};
+        let reset = Utc::now() + Duration::days(3);
+        let plan = PlanLimits {
+            session: None,
+            weekly: None,
+            fable_weekly: Some(LimitWindow {
+                percent: 100.0,
+                resets_at: Some(reset),
+                severity: Severity::Critical,
+            }),
+        };
+
         assert_eq!(plan.exhausted_until(), None);
     }
 

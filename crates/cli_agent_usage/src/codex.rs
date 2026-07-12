@@ -16,8 +16,17 @@ pub struct RollupFile {
     pub entries: Vec<Entry>,
     pub last_total: TokenCounts,
     pub rate_limits: Option<PlanLimits>,
+    /// Latest canonical observation for each independently-updated window.
+    pub session_rate_limit: Option<TimedLimitWindow>,
+    pub weekly_rate_limit: Option<TimedLimitWindow>,
     /// Session uuid from the `session_meta` line, when present.
     pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TimedLimitWindow {
+    pub window: LimitWindow,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Deserialize)]
@@ -41,15 +50,28 @@ struct TotalUsage {
 #[derive(Deserialize)]
 struct Window {
     #[serde(default)]
-    used_percent: f64,
+    used_percent: Option<f64>,
+    #[serde(default)]
+    window_minutes: Option<u64>,
     #[serde(default)]
     resets_at: Option<i64>,
 }
 
 #[derive(Deserialize)]
 struct RateLimits {
+    #[serde(default)]
+    limit_id: Option<String>,
     primary: Option<Window>,
     secondary: Option<Window>,
+}
+
+impl RateLimits {
+    fn is_canonical_codex(&self) -> bool {
+        // Older rollout records predate `limit_id`; continue accepting them.
+        // Newer model-scoped limits (for example `codex_bengalfox`) must not
+        // replace the account's canonical Codex windows.
+        matches!(self.limit_id.as_deref(), None | Some("codex"))
+    }
 }
 
 pub fn severity_from_percent(p: f64) -> Severity {
@@ -62,11 +84,54 @@ pub fn severity_from_percent(p: f64) -> Severity {
     }
 }
 
-fn window_to_limit(w: &Window) -> LimitWindow {
-    LimitWindow {
-        percent: w.used_percent,
+fn window_to_limit(w: &Window) -> Option<LimitWindow> {
+    let percent = w.used_percent?;
+    Some(LimitWindow {
+        percent,
         resets_at: w.resets_at.and_then(|s| Utc.timestamp_opt(s, 0).single()),
-        severity: severity_from_percent(w.used_percent),
+        severity: severity_from_percent(percent),
+    })
+}
+
+#[derive(Clone, Copy)]
+enum WindowKind {
+    Session,
+    Weekly,
+}
+
+fn window_kind(window: &Window, legacy_position: WindowKind) -> Option<WindowKind> {
+    match window.window_minutes {
+        Some(300) => Some(WindowKind::Session),
+        Some(10_080) => Some(WindowKind::Weekly),
+        Some(_) => None,
+        // Legacy records omitted the duration and consistently used
+        // primary=session, secondary=weekly.
+        None => Some(legacy_position),
+    }
+}
+
+fn update_limit(
+    slot: &mut Option<TimedLimitWindow>,
+    window: LimitWindow,
+    updated_at: DateTime<Utc>,
+) {
+    if slot
+        .as_ref()
+        .is_none_or(|current| updated_at >= current.updated_at)
+    {
+        *slot = Some(TimedLimitWindow { window, updated_at });
+    }
+}
+
+fn merge_limit(slot: &mut Option<TimedLimitWindow>, candidate: Option<TimedLimitWindow>) {
+    let Some(candidate) = candidate else {
+        return;
+    };
+    if slot
+        .as_ref()
+        .is_none_or(|current| candidate.updated_at > current.updated_at)
+    {
+        *slot = Some(candidate);
     }
 }
 
@@ -150,11 +215,38 @@ pub fn parse_rollout_str(content: &str) -> RollupFile {
             .get("rate_limits")
             .and_then(|v| serde_json::from_value::<RateLimits>(v.clone()).ok())
         {
-            out.rate_limits = Some(PlanLimits {
-                session: rl.primary.as_ref().map(window_to_limit),
-                weekly: rl.secondary.as_ref().map(window_to_limit),
-            });
+            if rl.is_canonical_codex() {
+                for (raw_window, legacy_position) in [
+                    (rl.primary.as_ref(), WindowKind::Session),
+                    (rl.secondary.as_ref(), WindowKind::Weekly),
+                ] {
+                    let Some(raw_window) = raw_window else {
+                        continue;
+                    };
+                    let (Some(kind), Some(window)) = (
+                        window_kind(raw_window, legacy_position),
+                        window_to_limit(raw_window),
+                    ) else {
+                        continue;
+                    };
+                    match kind {
+                        WindowKind::Session => {
+                            update_limit(&mut out.session_rate_limit, window, ts)
+                        }
+                        WindowKind::Weekly => update_limit(&mut out.weekly_rate_limit, window, ts),
+                    }
+                }
+            }
         }
+    }
+    let session = out.session_rate_limit.map(|limit| limit.window);
+    let weekly = out.weekly_rate_limit.map(|limit| limit.window);
+    if session.is_some() || weekly.is_some() {
+        out.rate_limits = Some(PlanLimits {
+            session,
+            weekly,
+            fable_weekly: None,
+        });
     }
     out
 }
@@ -186,13 +278,17 @@ pub fn scan(
         .iter()
         .max_by_key(|(_, mtime, _)| *mtime)
         .map(|(p, _, _)| p.clone());
+    let mut latest_session_limit = None;
+    let mut latest_weekly_limit = None;
 
     for (path, mtime, size) in &files {
         let parsed = cache.get_or_parse(path, *mtime, *size, parse_rollout_file);
         let entries = parsed.entries.clone();
         let is_latest = Some(path) == latest.as_ref();
         let last_total = parsed.last_total;
-        let rate_limits = if is_latest { parsed.rate_limits } else { None };
+
+        merge_limit(&mut latest_session_limit, parsed.session_rate_limit);
+        merge_limit(&mut latest_weekly_limit, parsed.weekly_rate_limit);
 
         // Index this rollout's latest model under its session id (from meta).
         if let Some(session_id) = parsed.session_id.clone() {
@@ -218,8 +314,16 @@ pub fn scan(
                 tokens: last_total,
                 cost_usd: crate::pricing::cost(&model, &last_total),
             };
-            provider.plan = rate_limits;
         }
+    }
+    let session = latest_session_limit.map(|limit| limit.window);
+    let weekly = latest_weekly_limit.map(|limit| limit.window);
+    if session.is_some() || weekly.is_some() {
+        provider.plan = Some(PlanLimits {
+            session,
+            weekly,
+            fable_weekly: None,
+        });
     }
     provider
 }
@@ -277,7 +381,84 @@ mod tests {
         let plan = r.rate_limits.unwrap();
         assert_eq!(plan.session.unwrap().percent, 9.0);
         assert_eq!(plan.weekly.unwrap().percent, 18.0);
+        assert_eq!(plan.fable_weekly, None);
         assert_eq!(plan.session.unwrap().severity, Severity::Normal);
+        assert_eq!(
+            r.session_rate_limit.map(|limit| limit.updated_at),
+            Some(
+                DateTime::parse_from_rfc3339("2026-06-30T10:00:00.000Z")
+                    .unwrap()
+                    .with_timezone(&Utc)
+            )
+        );
+    }
+
+    #[test]
+    fn model_scoped_rate_limit_does_not_replace_canonical_codex_limit() {
+        let canonical = r#"{"timestamp":"2026-07-12T18:20:00Z","payload":{"type":"token_count","rate_limits":{"limit_id":"codex","primary":{"used_percent":68},"secondary":{"used_percent":42}}}}"#;
+        let spark = r#"{"timestamp":"2026-07-12T18:21:00Z","payload":{"type":"token_count","rate_limits":{"limit_id":"codex_bengalfox","limit_name":"GPT-5.3-Codex-Spark","primary":{"used_percent":0},"secondary":{"used_percent":0}}}}"#;
+
+        let parsed = parse_rollout_str(&format!("{canonical}\n{spark}"));
+        let plan = parsed.rate_limits.expect("canonical Codex limit");
+        assert_eq!(plan.session.unwrap().percent, 68.0);
+        assert_eq!(plan.weekly.unwrap().percent, 42.0);
+
+        let scoped_only = parse_rollout_str(spark);
+        assert_eq!(scoped_only.rate_limits, None);
+        assert_eq!(scoped_only.session_rate_limit, None);
+        assert_eq!(scoped_only.weekly_rate_limit, None);
+    }
+
+    #[test]
+    fn classifies_partial_windows_by_duration_and_preserves_other_window() {
+        let session = r#"{"timestamp":"2026-07-12T18:20:00Z","payload":{"type":"token_count","rate_limits":{"limit_id":"codex","primary":{"used_percent":78,"window_minutes":300},"secondary":null}}}"#;
+        // A current Codex payload can put the weekly-only window in `primary`.
+        let weekly = r#"{"timestamp":"2026-07-12T18:21:00Z","payload":{"type":"token_count","rate_limits":{"limit_id":"codex","primary":{"used_percent":46,"window_minutes":10080},"secondary":null}}}"#;
+
+        let parsed = parse_rollout_str(&format!("{session}\n{weekly}"));
+        let plan = parsed.rate_limits.expect("merged partial limits");
+        assert_eq!(plan.session.unwrap().percent, 78.0);
+        assert_eq!(plan.weekly.unwrap().percent, 46.0);
+        assert_eq!(
+            parsed
+                .session_rate_limit
+                .expect("session observation")
+                .updated_at,
+            DateTime::parse_from_rfc3339("2026-07-12T18:20:00Z")
+                .unwrap()
+                .with_timezone(&Utc)
+        );
+        assert_eq!(
+            parsed
+                .weekly_rate_limit
+                .expect("weekly observation")
+                .updated_at,
+            DateTime::parse_from_rfc3339("2026-07-12T18:21:00Z")
+                .unwrap()
+                .with_timezone(&Utc)
+        );
+    }
+
+    #[test]
+    fn missing_used_percent_does_not_fabricate_zero_percent() {
+        let valid = r#"{"timestamp":"2026-07-12T18:20:00Z","payload":{"type":"token_count","rate_limits":{"limit_id":"codex","primary":{"used_percent":78,"window_minutes":300}}}}"#;
+        let missing = r#"{"timestamp":"2026-07-12T18:21:00Z","payload":{"type":"token_count","rate_limits":{"limit_id":"codex","primary":{"window_minutes":300}}}}"#;
+
+        let parsed = parse_rollout_str(&format!("{valid}\n{missing}"));
+        assert_eq!(
+            parsed
+                .rate_limits
+                .expect("valid limit retained")
+                .session
+                .unwrap()
+                .percent,
+            78.0
+        );
+        assert_eq!(
+            parse_rollout_str(missing).rate_limits,
+            None,
+            "a missing percentage must not deserialize as 0%"
+        );
     }
 
     #[test]
@@ -332,6 +513,65 @@ mod tests {
                 cache_write: 0
             }
         );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn scan_uses_latest_canonical_event_instead_of_latest_file() {
+        use std::fs;
+        use std::time::{Duration, SystemTime};
+
+        // These files have the newest canonical observations, despite having
+        // older mtimes. Each current event contains only one window.
+        let current_session = r#"{"timestamp":"2026-07-12T18:20:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"output_tokens":10}},"rate_limits":{"limit_id":"codex","primary":{"used_percent":68,"window_minutes":300},"secondary":null}}}"#;
+        let current_weekly = r#"{"timestamp":"2026-07-12T18:19:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":120,"output_tokens":12}},"rate_limits":{"limit_id":"codex","primary":{"used_percent":42,"window_minutes":10080},"secondary":null}}}"#;
+
+        // An actively-written Spark rollout has the newest mtime. It contains
+        // a stale canonical event followed by a model-scoped 0/0 event; neither
+        // should displace the fresher canonical event above.
+        let stale_canonical = r#"{"timestamp":"2026-07-10T18:20:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":200,"output_tokens":20}},"rate_limits":{"limit_id":"codex","primary":{"used_percent":50,"window_minutes":300},"secondary":{"used_percent":40,"window_minutes":10080}}}}"#;
+        let spark = r#"{"timestamp":"2026-07-12T18:21:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":300,"output_tokens":30}},"rate_limits":{"limit_id":"codex_bengalfox","primary":{"used_percent":0,"window_minutes":10080},"secondary":null}}}"#;
+
+        let dir =
+            std::env::temp_dir().join(format!("cau_codex_canonical_scan_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let session_file = dir.join("rollout-session.jsonl");
+        let weekly_file = dir.join("rollout-weekly.jsonl");
+        let spark_file = dir.join("rollout-spark.jsonl");
+        fs::write(&session_file, current_session).unwrap();
+        fs::write(&weekly_file, current_weekly).unwrap();
+        fs::write(&spark_file, format!("{stale_canonical}\n{spark}")).unwrap();
+
+        let base = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        fs::File::open(&session_file)
+            .unwrap()
+            .set_modified(base)
+            .unwrap();
+        fs::File::open(&weekly_file)
+            .unwrap()
+            .set_modified(base + Duration::from_secs(30))
+            .unwrap();
+        fs::File::open(&spark_file)
+            .unwrap()
+            .set_modified(base + Duration::from_secs(60))
+            .unwrap();
+
+        let mut cache = crate::cache::ScanCache::new();
+        let provider = scan(
+            &dir,
+            &mut cache,
+            chrono::Utc::now(),
+            &mut std::collections::HashMap::new(),
+        );
+
+        let plan = provider.plan.expect("latest canonical plan");
+        assert_eq!(plan.session.unwrap().percent, 68.0);
+        assert_eq!(plan.weekly.unwrap().percent, 42.0);
+        // Session totals still come from the newest-mtime active rollout.
+        assert_eq!(provider.session.tokens.input, 300);
+        assert_eq!(provider.session.tokens.output, 30);
 
         let _ = fs::remove_dir_all(&dir);
     }

@@ -31,6 +31,8 @@ struct RawWindow {
 #[derive(Deserialize)]
 struct RawLimit {
     #[serde(default)]
+    kind: String,
+    #[serde(default)]
     group: String,
     #[serde(default)]
     percent: f64,
@@ -38,6 +40,32 @@ struct RawLimit {
     severity: String,
     #[serde(default)]
     resets_at: Option<String>,
+    #[serde(default)]
+    scope: Option<RawScope>,
+}
+
+#[derive(Deserialize)]
+struct RawScope {
+    #[serde(default)]
+    model: Option<RawModelScope>,
+}
+
+#[derive(Deserialize)]
+struct RawModelScope {
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    display_name: Option<String>,
+}
+
+fn is_fable_model(model: &RawModelScope) -> bool {
+    [model.id.as_deref(), model.display_name.as_deref()]
+        .into_iter()
+        .flatten()
+        .any(|name| {
+            let name = name.trim().to_ascii_lowercase();
+            name == "fable" || name.starts_with("fable ") || name.starts_with("fable-")
+        })
 }
 
 fn parse_ts(s: &Option<String>) -> Option<DateTime<Utc>> {
@@ -60,20 +88,46 @@ pub fn parse_plan_limits(json: &str) -> Option<PlanLimits> {
 
     // Prefer the normalized limits[] array.
     if !resp.limits.is_empty() {
-        let pick = |group: &str| -> Option<LimitWindow> {
+        let to_window = |limit: &RawLimit| LimitWindow {
+            percent: limit.percent,
+            resets_at: parse_ts(&limit.resets_at),
+            severity: severity_str(&limit.severity),
+        };
+
+        // `group` is not unique: both the account-wide and model-scoped
+        // windows use "weekly". Prefer the explicit kinds and only use a
+        // group-only entry as a compatibility fallback for older payloads.
+        let pick = |kind: &str, legacy_group: &str| {
             resp.limits
                 .iter()
-                .find(|l| l.group == group)
-                .map(|l| LimitWindow {
-                    percent: l.percent,
-                    resets_at: parse_ts(&l.resets_at),
-                    severity: severity_str(&l.severity),
+                .find(|limit| limit.kind == kind)
+                .or_else(|| {
+                    resp.limits
+                        .iter()
+                        .find(|limit| limit.kind.is_empty() && limit.group == legacy_group)
                 })
+                .map(to_window)
         };
-        let session = pick("session");
-        let weekly = pick("weekly");
-        if session.is_some() || weekly.is_some() {
-            return Some(PlanLimits { session, weekly });
+        let session = pick("session", "session");
+        let weekly = pick("weekly_all", "weekly");
+        let fable_weekly = resp
+            .limits
+            .iter()
+            .find(|limit| {
+                limit.kind == "weekly_scoped"
+                    && limit
+                        .scope
+                        .as_ref()
+                        .and_then(|scope| scope.model.as_ref())
+                        .is_some_and(is_fable_model)
+            })
+            .map(to_window);
+        if session.is_some() || weekly.is_some() || fable_weekly.is_some() {
+            return Some(PlanLimits {
+                session,
+                weekly,
+                fable_weekly,
+            });
         }
     }
 
@@ -88,7 +142,11 @@ pub fn parse_plan_limits(json: &str) -> Option<PlanLimits> {
     if session.is_none() && weekly.is_none() {
         return None;
     }
-    Some(PlanLimits { session, weekly })
+    Some(PlanLimits {
+        session,
+        weekly,
+        fable_weekly: None,
+    })
 }
 
 /// Blocking client for the usage endpoint. Uses `reqwest::blocking`, which
@@ -129,6 +187,7 @@ mod tests {
       "seven_day": {"utilization": 43.0, "resets_at": "2026-07-04T15:00:00.49+00:00"},
       "limits": [
         {"kind":"session","group":"session","percent":78,"severity":"warning","resets_at":"2026-07-01T02:30:00.49+00:00","is_active":true},
+        {"kind":"weekly_scoped","group":"weekly","percent":61,"severity":"warning","resets_at":"2026-07-05T15:00:00.49+00:00","scope":{"model":{"id":null,"display_name":"Fable"},"surface":null},"is_active":true},
         {"kind":"weekly_all","group":"weekly","percent":43,"severity":"normal","resets_at":"2026-07-04T15:00:00.49+00:00","is_active":false}
       ]
     }"#;
@@ -139,7 +198,33 @@ mod tests {
         assert_eq!(p.session.unwrap().percent, 78.0);
         assert_eq!(p.session.unwrap().severity, Severity::Warning);
         assert_eq!(p.weekly.unwrap().percent, 43.0);
+        assert_eq!(p.fable_weekly.unwrap().percent, 61.0);
+        assert_eq!(p.fable_weekly.unwrap().severity, Severity::Warning);
         assert!(p.session.unwrap().resets_at.is_some());
+    }
+
+    #[test]
+    fn weekly_all_is_not_confused_with_other_scoped_limits() {
+        let resp = r#"{"limits":[
+          {"kind":"weekly_scoped","group":"weekly","percent":88,"scope":{"model":{"display_name":"Other"}}},
+          {"kind":"weekly_all","group":"weekly","percent":34},
+          {"kind":"weekly_scoped","group":"weekly","percent":55,"scope":{"model":{"display_name":"Fable 5"}}}
+        ]}"#;
+        let p = parse_plan_limits(resp).unwrap();
+        assert_eq!(p.weekly.unwrap().percent, 34.0);
+        assert_eq!(p.fable_weekly.unwrap().percent, 55.0);
+    }
+
+    #[test]
+    fn legacy_group_only_limits_are_still_supported() {
+        let resp = r#"{"limits":[
+          {"group":"session","percent":12},
+          {"group":"weekly","percent":34}
+        ]}"#;
+        let p = parse_plan_limits(resp).unwrap();
+        assert_eq!(p.session.unwrap().percent, 12.0);
+        assert_eq!(p.weekly.unwrap().percent, 34.0);
+        assert_eq!(p.fable_weekly, None);
     }
 
     #[test]
@@ -148,6 +233,7 @@ mod tests {
         let p = parse_plan_limits(resp).unwrap();
         assert_eq!(p.session.unwrap().percent, 12.0);
         assert_eq!(p.weekly.unwrap().percent, 34.0);
+        assert_eq!(p.fable_weekly, None);
         // severity derived from percent when not provided
         assert_eq!(p.session.unwrap().severity, Severity::Normal);
     }
