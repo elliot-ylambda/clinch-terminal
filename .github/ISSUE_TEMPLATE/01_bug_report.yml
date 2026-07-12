@@ -1,5 +1,5 @@
 name: Bug Report
-description: "Found a bug? Please search through our open issues and docs, to make sure it isn't already submitted. If you have an SSH related issue, please use the SSH Template below"
+description: "Found a bug? Please search through our open issues first, to make sure it isn't already submitted."
 labels: ["bug"]
 body:
   - type: checkboxes
@@ -41,23 +41,11 @@ body:
       description: "If applicable, add screenshots/videos/logs to help us understand your problem. While optional, these help expedite the time in which your bug is addressed."
     validations:
       required: false
-  - type: dropdown
-    id: "os"
-    attributes:
-      label: "Operating system (OS)"
-      multiple: false
-      options:
-        - "Select an OS"
-        - macOS
-        - Linux
-        - Windows
-    validations:
-      required: true
   - type: input
     id: "os-version"
     attributes:
-      label: "Operating system and version"
-      description: "For example: Debian 11.2"
+      label: "macOS version"
+      description: "For example: macOS 15.5. Clinch is macOS-only."
     validations:
       required: true
   - type: input
@@ -68,65 +56,56 @@ body:
     validations:
       required: false
   - type: input
-    id: "warp-version"
+    id: "clinch-version"
     attributes:
-      label: "Current Warp version"
-      description: "Open the Settings Dialog (CMD-,) using the Command Palette or by clicking the three dots > Settings > Account. Once you're on the Account page click the copy icon that's to the right of the version number. `v0.2047.04.07.47.47.stable_47`"
+      label: "Current Clinch version"
+      description: "Open Settings (CMD-,), go to the About page, and click the copy icon next to the version number. For example: `v0.2026.07.08.1540`"
     validations:
       required: false
   - type: dropdown
     id: "regression"
     attributes:
       label: "Regression"
-      description: "Is this a regression (used to work in a previous Warp version)?"
+      description: "Is this a regression (used to work in a previous Clinch version)?"
       multiple: false
       options:
-        - "No, this bug or issue has existed throughout my experience using Warp"
-        - "Yes, this bug started recently or with an X Warp version"
+        - "No, this bug or issue has existed throughout my experience using Clinch"
+        - "Yes, this bug started recently or with a specific Clinch version"
     validations:
       required: true
   - type: input
-    id: "warp-version-regression-date"
+    id: "clinch-version-regression"
     attributes:
-      label: "Recent working Warp date"
-      description: "Most recent date that Warp worked as expected"
+      label: "Most recent working Clinch version"
+      description: "The last Clinch version (or date) that worked as expected"
     validations:
       required: false
   - type: textarea
     id: "additional-context"
     attributes:
       label: "Additional context"
-      description: "Add any other context about the problem here. If using Warp on Linux, tell us if you're using X11 or Wayland. If the issue is graphical, run Warp with the following command `RUST_LOG=wgpu_core=info,wgpu_hal=info MESA_DEBUG=1 EGL_LOG_LEVEL=debug warp-terminal` attach logs and tell us the result of `eglinfo`."
+      description: "Add any other context about the problem here."
     validations:
       required: false
   - type: dropdown
     id: "blocker"
     attributes:
-      label: "Does this block you from using Warp daily?"
+      label: "Does this block you from using Clinch daily?"
       description: "All feedback will be reviewed, even if you select 'No'."
       multiple: false
       options:
         - "No"
-        - "Yes, this issue prevents me from using Warp daily."
+        - "Yes, this issue prevents me from using Clinch daily."
     validations:
       required: true
   - type: dropdown
     id: "terminals"
     attributes:
-      label: "Is this an issue only in Warp?"
+      label: "Is this an issue only in Clinch?"
       description: "Verifying this issue doesn't happen in other terminals helps us to prioritize the fix"
       multiple: false
       options:
-        - "Yes, I confirmed that this only happens in Warp, not other terminals."
-        - "No, this issue happens in Warp and other terminals."
+        - "Yes, I confirmed that this only happens in Clinch, not other terminals."
+        - "No, this issue happens in Clinch and other terminals."
     validations:
       required: true
-  - type: dropdown
-    id: "linear-label-bug"
-    attributes:
-      label: "Warp Internal (ignore): linear-label:b9d78064-c89e-4973-b153-5178a31ee54e"
-      multiple: false
-      options:
-        - Ignore
-    validations:
-      required: false
