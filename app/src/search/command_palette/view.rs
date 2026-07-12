@@ -381,6 +381,10 @@ impl View {
                 | (PaletteMode::LaunchConfig, QueryFilter::LaunchConfigurations)
                 | (PaletteMode::Files, QueryFilter::Files)
                 | (PaletteMode::Conversations, QueryFilter::Conversations)
+                | (
+                    PaletteMode::AgentConversations,
+                    QueryFilter::AgentConversations
+                )
                 | (PaletteMode::WarpDrive, QueryFilter::Drive)
         )
     }
@@ -766,6 +770,14 @@ impl View {
                         return;
                     }
                     Some(WorkspaceAction::TogglePalette {
+                        mode: PaletteMode::AgentConversations,
+                        source: _,
+                    }) => {
+                        self.reset(ctx);
+                        self.set_active_query_filter(QueryFilter::AgentConversations, ctx);
+                        return;
+                    }
+                    Some(WorkspaceAction::TogglePalette {
                         mode: PaletteMode::Command,
                         source: _,
                     }) => {
@@ -855,6 +867,12 @@ impl View {
                     restore_layout: None,
                 });
                 send_telemetry_from_app_ctx!(TelemetryEvent::SelectNavigationPaletteItem, ctx);
+            }
+            CommandPaletteItemAction::ReopenAgentConversation { command, cwd } => {
+                ctx.dispatch_typed_action(&WorkspaceAction::ReopenAgentConversation {
+                    command,
+                    cwd,
+                });
             }
             CommandPaletteItemAction::ForkConversation { conversation_id } => {
                 ctx.dispatch_typed_action(&WorkspaceAction::ForkAIConversation {

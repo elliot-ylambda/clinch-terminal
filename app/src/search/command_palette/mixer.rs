@@ -54,6 +54,12 @@ pub enum CommandPaletteItemAction {
     ForkConversation {
         conversation_id: AIConversationId,
     },
+    /// Reopen a past CLI-agent (Claude/Codex) conversation in a new tab: run `command`
+    /// (its resume/teleport command) in a fresh shell at `cwd`.
+    ReopenAgentConversation {
+        command: String,
+        cwd: Option<String>,
+    },
     OpenLaunchConfiguration {
         config: Arc<LaunchConfig>,
         /// See [`OpenLaunchConfigArg::open_in_active_window`].
@@ -110,6 +116,11 @@ impl CommandPaletteItemAction {
                 id: *conversation_id,
             },
             CommandPaletteItemAction::ForkConversation { .. } => ItemSummary::ForkConversation,
+            CommandPaletteItemAction::ReopenAgentConversation { .. } => {
+                // Reopening is specific to the agent-conversations filter; like
+                // ForkConversation it should not surface in the recent-items section.
+                ItemSummary::NoOp
+            }
             CommandPaletteItemAction::NewSession { source } => ItemSummary::NewSession {
                 id: source.id().clone(),
             },

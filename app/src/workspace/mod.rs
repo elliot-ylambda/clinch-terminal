@@ -1056,6 +1056,15 @@ pub fn init(app: &mut AppContext) {
         .with_context_predicate(id!("Workspace") & !id!("Workspace_ViewOnlySharedSession"))
         .with_custom_action(CustomAction::FilesPalette),
         EditableBinding::new(
+            "workspace:toggle_agent_conversations_palette",
+            "Reopen agent conversation",
+            WorkspaceAction::TogglePalette {
+                mode: PaletteMode::AgentConversations,
+                source: PaletteSource::Keybinding,
+            },
+        )
+        .with_context_predicate(id!("Workspace")),
+        EditableBinding::new(
             "workspace:open_launch_config_save_modal",
             "Save new launch configuration",
             WorkspaceAction::OpenLaunchConfigSaveModal,

@@ -100,6 +100,173 @@ fn no_fork_command_for_unknown() {
     );
 }
 
+fn conversation(
+    agent: &str,
+    session_id: &str,
+    bridge: Option<&str>,
+    flags: &str,
+) -> AgentConversation {
+    AgentConversation {
+        agent: agent.to_string(),
+        session_id: session_id.to_string(),
+        cwd: None,
+        bridge: bridge.map(str::to_string),
+        start_ts: "2026-07-09T10:00:00Z".to_string(),
+        first_prompt: None,
+        flags: flags.to_string(),
+    }
+}
+
+#[test]
+fn reopen_command_teleports_bridged_claude_sessions() {
+    // Mirrors pane restore's priority: the cloud copy is authoritative for a bridged
+    // session, and launch flags are forwarded.
+    assert_eq!(
+        conversation("claude", "abc-123", Some("session_01XYZ"), "").reopen_command(),
+        Some("claude --teleport session_01XYZ".to_string())
+    );
+    assert_eq!(
+        conversation("claude", "abc-123", Some("session_01XYZ"), " --model opus").reopen_command(),
+        Some("claude --teleport session_01XYZ --model opus".to_string())
+    );
+}
+
+#[test]
+fn reopen_command_resumes_local_claude_sessions() {
+    assert_eq!(
+        conversation("claude", "abc-123", None, "").reopen_command(),
+        Some("claude --resume abc-123".to_string())
+    );
+    // A bridge that is not claude.ai-shaped (session_*) is not teleported — same guard
+    // as the shell replay side.
+    assert_eq!(
+        conversation("claude", "abc-123", Some("garbage"), "").reopen_command(),
+        Some("claude --resume abc-123".to_string())
+    );
+    assert_eq!(
+        conversation("claude", "abc-123", None, " --dangerously-skip-permissions").reopen_command(),
+        Some("claude --resume abc-123 --dangerously-skip-permissions".to_string())
+    );
+}
+
+#[test]
+fn reopen_command_resumes_codex_sessions_and_rejects_unknown_agents() {
+    assert_eq!(
+        conversation(
+            "codex",
+            "xyz-9",
+            None,
+            " --dangerously-bypass-approvals-and-sandbox"
+        )
+        .reopen_command(),
+        Some("codex resume xyz-9 --dangerously-bypass-approvals-and-sandbox".to_string())
+    );
+    assert_eq!(
+        conversation("gemini", "abc", None, "").reopen_command(),
+        None
+    );
+}
+
+#[test]
+fn recent_conversations_aggregates_journal_and_mirror() {
+    let dir = std::env::temp_dir().join(format!("agent_resume_recent_test_{}", std::process::id()));
+    let prompts = dir.join("prompts");
+    std::fs::create_dir_all(&prompts).unwrap();
+
+    // Same fixture shape as tools/agent-resume/tests/test_registry_journal.sh: an
+    // unbridged conversation, a conversation that bridges (and gains flags) on a later
+    // write, a remove (ignored), a malformed line and a non-launch command (skipped),
+    // plus a mirror-only nested session.
+    std::fs::write(
+        dir.join("journal.jsonl"),
+        concat!(
+            r#"{"ts":"2026-07-09T10:00:00Z","op":"write","pane":"pane-a","command":"warp_agent_resume_launch claude sid-oldest-aaa","cwd":"/tmp/projA","bridge":""}"#,
+            "\n",
+            r#"{"ts":"2026-07-09T11:00:00Z","op":"write","pane":"pane-b","command":"warp_agent_resume_launch claude sid-bridged-bbb","cwd":"/tmp/projB","bridge":""}"#,
+            "\n",
+            r#"{"ts":"2026-07-09T11:30:00Z","op":"write","pane":"pane-b","command":"warp_agent_resume_launch claude sid-bridged-bbb --model opus","cwd":"/tmp/projB","bridge":"session_01LISTBRIDGE"}"#,
+            "\n",
+            r#"{"ts":"2026-07-09T11:45:00Z","op":"remove","pane":"pane-a"}"#,
+            "\n",
+            r#"{"ts":"2026-07-09T11:50:00Z","op":"write","pane":"pane-x","command":"vim","cwd":"/tmp","bridge":""}"#,
+            "\n",
+            "not json at all\n",
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        prompts.join("sid-bridged-bbb.jsonl"),
+        "{\"ts\":\"2026-07-09T11:00:05Z\",\"cwd\":\"/tmp/projB\",\"bridge\":\"\",\"prompt\":\"fix the flaky test in ci\"}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        prompts.join("sid-nested-ccc.jsonl"),
+        "{\"ts\":\"2026-07-09T12:00:00Z\",\"cwd\":\"/tmp/projC\",\"bridge\":\"\",\"prompt\":\"nested run\\nprompt\"}\n",
+    )
+    .unwrap();
+
+    let conversations = recent_conversations_in(&dir, 50);
+    assert_eq!(
+        conversations
+            .iter()
+            .map(|c| c.session_id.as_str())
+            .collect::<Vec<_>>(),
+        // Newest first by first sighting: nested (12:00) > bridged (11:00) > oldest (10:00).
+        vec!["sid-nested-ccc", "sid-bridged-bbb", "sid-oldest-aaa"]
+    );
+
+    let bridged = &conversations[1];
+    assert_eq!(bridged.agent, "claude");
+    assert_eq!(bridged.start_ts, "2026-07-09T11:00:00Z");
+    assert_eq!(bridged.cwd.as_deref(), Some("/tmp/projB"));
+    // Latest write wins for bridge + flags.
+    assert_eq!(bridged.bridge.as_deref(), Some("session_01LISTBRIDGE"));
+    assert_eq!(bridged.flags, " --model opus");
+    assert_eq!(
+        bridged.first_prompt.as_deref(),
+        Some("fix the flaky test in ci")
+    );
+
+    // Mirror-only sessions default to claude and collapse multi-line prompts.
+    let nested = &conversations[0];
+    assert_eq!(nested.agent, "claude");
+    assert_eq!(nested.cwd.as_deref(), Some("/tmp/projC"));
+    assert_eq!(nested.bridge, None);
+    assert_eq!(nested.first_prompt.as_deref(), Some("nested run prompt"));
+
+    let oldest = &conversations[2];
+    assert_eq!(oldest.bridge, None);
+    assert_eq!(oldest.first_prompt, None);
+    assert_eq!(oldest.flags, "");
+
+    // The limit keeps the newest conversations.
+    let capped = recent_conversations_in(&dir, 2);
+    assert_eq!(
+        capped
+            .iter()
+            .map(|c| c.session_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["sid-nested-ccc", "sid-bridged-bbb"]
+    );
+
+    // A missing registry directory yields an empty list, not an error.
+    assert!(recent_conversations_in(&dir.join("does-not-exist"), 50).is_empty());
+}
+
+#[test]
+fn single_line_excerpt_collapses_and_caps() {
+    assert_eq!(single_line_excerpt("plain prompt", 160), "plain prompt");
+    assert_eq!(
+        single_line_excerpt("line1\nline2\t \tline3", 160),
+        "line1 line2 line3"
+    );
+    let long = "word ".repeat(100);
+    let excerpt = single_line_excerpt(&long, 12);
+    assert_eq!(excerpt, "word word wo…");
+    // Cap counts characters, not bytes (no panic on multi-byte boundaries).
+    assert_eq!(single_line_excerpt("ééééé", 3), "ééé…");
+}
+
 #[test]
 fn read_fork_launch_reads_derived_command_and_cwd() {
     let dir = std::env::temp_dir().join(format!("agent_resume_fork_test_{}", std::process::id()));

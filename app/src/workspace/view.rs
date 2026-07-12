@@ -8501,10 +8501,40 @@ impl Workspace {
             return;
         };
 
+        self.launch_cli_agent_in_new_tab(fork.command, fork.cwd, ctx);
+    }
+
+    /// Reopens a past CLI-agent conversation (picked in the "Reopen agent conversation"
+    /// palette) in a NEW tab that auto-runs its resume command. Reuses the same launch
+    /// path as the Fork footer button. Opening a conversation never touches other panes'
+    /// agent-resume registry entries: the new pane has a fresh UUID, and the session's
+    /// own capture hook claims that pane once the agent starts.
+    fn reopen_agent_conversation(
+        &mut self,
+        command: String,
+        cwd: Option<String>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        // A recorded directory can vanish (worktree pruned, checkout moved); fall back
+        // to the default new-tab directory rather than failing to spawn the shell —
+        // `claude --teleport`/`--resume` locate the conversation by id, not by cwd.
+        let cwd = cwd.filter(|cwd| Path::new(cwd).is_dir());
+        self.launch_cli_agent_in_new_tab(command, cwd, ctx);
+    }
+
+    /// Opens a NEW tab at `cwd` and auto-runs `command` once its shell bootstraps,
+    /// reusing the agent-resume restore-replay path. Shared by the Fork footer button
+    /// and the "Reopen agent conversation" palette command.
+    fn launch_cli_agent_in_new_tab(
+        &mut self,
+        command: String,
+        cwd: Option<String>,
+        ctx: &mut ViewContext<Self>,
+    ) {
         // Create a new tab pinned to the session's original directory (bypasses the
         // user's working-directory setting, so `claude --resume`'s cwd-scoping holds).
         let options = NewTerminalOptions::default()
-            .with_initial_directory_opt(fork.cwd.as_deref().map(PathBuf::from));
+            .with_initial_directory_opt(cwd.as_deref().map(PathBuf::from));
         self.add_tab_with_pane_layout(
             PanesLayout::SingleTerminal(Box::new(options)),
             Arc::new(HashMap::new()),
@@ -8514,7 +8544,6 @@ impl Workspace {
 
         // Attach the one-shot replay command to the new (now active) tab's single pane,
         // mirroring the snapshot-restore path (pane_group/mod.rs:1672).
-        let command = fork.command;
         #[cfg(feature = "local_tty")]
         {
             let manager_handle = self
@@ -8532,15 +8561,16 @@ impl Workspace {
                         manager.set_on_restore_command(command, ctx);
                     } else {
                         log::warn!(
-                            "fork: new tab's terminal manager is not a local_tty::TerminalManager; \
-                             dropping fork command (Fork opened an empty tab)"
+                            "agent launch: new tab's terminal manager is not a \
+                             local_tty::TerminalManager; dropping agent command (opened an \
+                             empty tab)"
                         );
                     }
                 });
             } else {
                 log::warn!(
-                    "fork: new tab has no terminal manager at pane 0; dropping fork command \
-                     (Fork opened an empty tab)"
+                    "agent launch: new tab has no terminal manager at pane 0; dropping agent \
+                     command (opened an empty tab)"
                 );
             }
         }
@@ -14326,6 +14356,15 @@ impl Workspace {
         ctx.notify();
     }
 
+    fn open_agent_conversations_palette(&mut self, ctx: &mut ViewContext<Self>) {
+        self.palette.update(ctx, |view, ctx| {
+            view.reset(ctx);
+            view.set_active_query_filter(QueryFilter::AgentConversations, ctx);
+            view.set_initial_selection_offset(0, ctx);
+        });
+        ctx.notify();
+    }
+
     fn open_ctrl_tab_palette(
         &mut self,
         query_filter: QueryFilter,
@@ -14562,6 +14601,7 @@ impl Workspace {
             PaletteMode::WarpDrive => self.open_warp_drive_palette(ctx),
             PaletteMode::Files => self.open_files_palette(ctx),
             PaletteMode::Conversations => self.open_conversations_palette(ctx),
+            PaletteMode::AgentConversations => self.open_agent_conversations_palette(ctx),
         }
 
         ctx.focus(&self.palette);
@@ -25438,6 +25478,9 @@ impl TypedActionView for Workspace {
                     ForkedConversationDestination::SplitPane,
                     ctx,
                 );
+            }
+            ReopenAgentConversation { command, cwd } => {
+                self.reopen_agent_conversation(command.clone(), cwd.clone(), ctx);
             }
             SummarizeAIConversation {
                 prompt,
