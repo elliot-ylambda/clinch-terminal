@@ -27,10 +27,11 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 90
     steps:
-      - name: Checkout sources and LFS assets
+      # No `lfs: true`: this fork's LFS store has no objects, and shipped
+      # builds compile from the committed LFS pointer files (see
+      # .github/actions/prepare_environment/action.yml).
+      - name: Checkout sources
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          lfs: true
 
       - name: Prepare public macOS build environment
         uses: ./.github/actions/prepare_environment
