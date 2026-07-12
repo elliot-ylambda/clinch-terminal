@@ -34,6 +34,30 @@ tens of gigabytes behind.
   dirty worktree, a worktree with an open/unmerged PR, or a worktree owned by
   another live session. Leave it in place and report why cleanup is blocked.
 
+## Cargo build artifact cleanup
+
+Cargo's per-checkout `target/` directory is disposable and can grow extremely
+large in this repository: it recently reached 149 GiB and 259,391 files. Do not
+leave finished build artifacts consuming disk indefinitely.
+
+- After final validation and pushing the task's changes, run `cargo clean` in
+  each checkout that will remain on disk, including the main checkout or an
+  unmerged worktree that cannot yet be removed:
+
+  ```sh
+  cargo clean
+  ```
+
+- Before cleaning, confirm no agent, `cargo`, `rustc`, `nextest`, `make`, test,
+  build, or release process is using that checkout. Never clean a shared
+  checkout while another session is building from it.
+- `cargo clean` removes only generated Cargo artifacts; it does not change
+  source files or Git state. The next build will be a full cold rebuild, so run
+  it only after all builds, tests, and releases for the task have finished.
+- If a finished worktree is being removed immediately, `git worktree remove`
+  deletes that worktree's local `target/` with it, so a separate `cargo clean`
+  is unnecessary. Do not use `git clean` or manual `rm -rf` for Cargo cleanup.
+
 ## Releasing & updating locally
 
 Clinch ships as a **GitHub Release with a downloadable DMG** — users download
