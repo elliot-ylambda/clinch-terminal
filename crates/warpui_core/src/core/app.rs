@@ -615,6 +615,13 @@ pub struct AppContext {
     /// O(N²) tombstone scanning. The unsubscribes are processed at the end of event emission.
     pub(super) pending_unsubscribes: Option<PendingUnsubscribes>,
     window_invalidations: HashMap<WindowId, WindowInvalidation>,
+    /// Invalidations the redraw gate has set aside because they cannot change
+    /// the window's rendered output (they touch only unmounted views). They
+    /// are merged back into the next `take_all_invalidations_for_window`
+    /// drain, so the frame that remounts a view also brings it up to date.
+    /// Kept out of `window_invalidations` so `has_window_invalidations`
+    /// continues to mean "a frame is coming".
+    deferred_window_invalidations: HashMap<WindowId, WindowInvalidation>,
     invalidation_callbacks: HashMap<WindowId, Box<InvalidationCallback>>,
     disabled_key_bindings_windows: HashSet<WindowId>,
     window_bounds: HashMap<WindowId, Option<RectF>>,
@@ -788,6 +795,7 @@ impl AppContext {
             observations: Default::default(),
             pending_unsubscribes: None,
             window_invalidations: Default::default(),
+            deferred_window_invalidations: Default::default(),
             invalidation_callbacks: Default::default(),
             window_bounds: Default::default(),
             window_last_mouse_moved_event: Default::default(),
@@ -1007,6 +1015,11 @@ impl AppContext {
             .window_invalidations
             .remove(&window_id)
             .unwrap_or_default();
+        // Deferred entries only ever carry view updates (update_windows
+        // asserts this when it sets them aside).
+        if let Some(deferred) = self.deferred_window_invalidations.remove(&window_id) {
+            invalidations.updated.extend(deferred.updated);
+        }
         invalidations
             .updated
             .extend(autotracking::take_invalidations_for_window(window_id));
@@ -2755,6 +2768,7 @@ impl AppContext {
         self.drop_window_presentation(window_id);
         self.invalidation_callbacks.remove(&window_id);
         self.window_invalidations.remove(&window_id);
+        self.deferred_window_invalidations.remove(&window_id);
         self.last_observed_active_cursor_positions
             .remove(&window_id);
         self.view_parents.remove(&window_id);
@@ -2927,7 +2941,14 @@ impl AppContext {
 
             {
                 let mut presenter = presenter.borrow_mut();
-                presenter.invalidate(invalidation, self);
+                let deferred_views = presenter.invalidate(invalidation, self);
+                // A deferred view keeps its last-rendered element, and with it
+                // the tracked-dependency registrations from that render. Clear
+                // them so tracked writes stop scheduling frames for a view
+                // that is not on screen; the remount render re-registers them.
+                for view_id in deferred_views {
+                    autotracking::remove_view(window_id, view_id);
+                }
 
                 // Skip rendering if a dimension is 0. This must happen after
                 // invalidation to ensure the proper views are still invalidated.
@@ -3492,19 +3513,78 @@ impl AppContext {
     }
 
     fn update_windows(&mut self) {
+        let autotracked_window_ids = autotracking::windows_with_invalidations();
         let invalidated_window_ids = self
             .window_invalidations
             .keys()
-            .chain(autotracking::windows_with_invalidations().iter())
+            .chain(autotracked_window_ids.iter())
             .unique()
             .cloned()
             .collect_vec();
         for window_id in invalidated_window_ids {
+            // Autotracked invalidations are recorded only for views that read
+            // tracked state while rendering, so they always warrant a redraw.
+            // Manual invalidations touching only views that are not mounted
+            // are set aside instead: they drain with the next frame that a
+            // mounted view (or an explicit redraw request) schedules. Without
+            // this, a busy view in an unmounted subtree — e.g. a terminal in a
+            // background tab — schedules full-window repaints of an identical
+            // scene at up to display refresh rate.
+            if !autotracked_window_ids.contains(&window_id)
+                && !self.invalidations_can_change_window_output(window_id)
+            {
+                if let Some(invalidation) = self.window_invalidations.remove(&window_id) {
+                    // The gate passes whenever an invalidation carries
+                    // removals or an explicit redraw request, so only view
+                    // updates can reach the deferred queue.
+                    debug_assert!(
+                        invalidation.removed.is_empty() && !invalidation.redraw_requested,
+                        "only view-update invalidations may be deferred"
+                    );
+                    self.deferred_window_invalidations
+                        .entry(window_id)
+                        .or_default()
+                        .updated
+                        .extend(invalidation.updated);
+                }
+                continue;
+            }
             if let Some(mut callback) = self.invalidation_callbacks.remove(&window_id) {
                 callback(window_id, self);
                 self.invalidation_callbacks.insert(window_id, callback);
             }
         }
+    }
+
+    /// Whether the window's pending manual invalidations can change what is on
+    /// screen, i.e. whether they touch at least one view mounted in the last
+    /// laid-out frame or remove any view (removals must drain promptly so the
+    /// presenter frees the dropped views' cached elements). Defaults to `true`
+    /// whenever that cannot be determined (no presenter, no frame laid out
+    /// yet, an empty frame, or a presenter that is currently borrowed): a
+    /// spurious redraw is safe, a missed one is not.
+    fn invalidations_can_change_window_output(&self, window_id: WindowId) -> bool {
+        let Some(invalidation) = self.window_invalidations.get(&window_id) else {
+            return true;
+        };
+        if invalidation.redraw_requested || !invalidation.removed.is_empty() {
+            return true;
+        }
+        let Some(presenter) = self.presenter(window_id) else {
+            return true;
+        };
+        let Ok(presenter) = presenter.try_borrow() else {
+            return true;
+        };
+        let Some(mounted) = presenter.mounted_views_last_frame() else {
+            return true;
+        };
+        // An empty frame means nothing is on screen yet; the next invalidation
+        // may be the one that mounts the first content.
+        if mounted.is_empty() {
+            return true;
+        }
+        !invalidation.updated.is_disjoint(mounted)
     }
 
     #[cfg(any(test, feature = "test-util"))]

@@ -28,6 +28,18 @@ pub struct Presenter {
     window_id: WindowId,
     scene: Option<Rc<Scene>>,
     rendered_views: HashMap<EntityId, Box<dyn Element>>,
+    /// View ids reached by the most recent layout pass; `None` until the
+    /// first frame is laid out. This deliberately includes views that layout
+    /// visits but paint later culls (e.g. scrolled out of a clip rect): their
+    /// sizes still shape on-screen geometry, so they must keep re-rendering
+    /// eagerly. Views absent from this set are not mounted anywhere in the
+    /// element tree, so invalidations touching only them cannot change the
+    /// rendered output.
+    mounted_views_last_frame: Option<HashSet<EntityId>>,
+    /// Views that were invalidated while unmounted. Their cached element is
+    /// out of date, but re-rendering is deferred to the layout pass of the
+    /// frame that mounts them again.
+    stale_views: HashSet<EntityId>,
     text_layout_cache: LayoutCache,
     position_cache: PositionCache,
     highlighted_view: Option<EntityId>,
@@ -35,6 +47,8 @@ pub struct Presenter {
 
 pub struct LayoutContext<'a> {
     rendered_views: &'a mut HashMap<EntityId, Box<dyn Element>>,
+    stale_views: &'a HashSet<EntityId>,
+    views_laid_out: &'a mut HashSet<EntityId>,
     parents: &'a mut HashMap<EntityId, EntityId>,
     pub text_layout_cache: &'a LayoutCache,
     view_stack: Vec<EntityId>,
@@ -305,6 +319,8 @@ impl Presenter {
             frame_count: 0,
             window_id,
             rendered_views: HashMap::new(),
+            mounted_views_last_frame: None,
+            stale_views: HashSet::new(),
             scene: None,
             text_layout_cache: LayoutCache::new(),
             position_cache: PositionCache::default(),
@@ -312,19 +328,52 @@ impl Presenter {
         }
     }
 
-    pub fn invalidate(&mut self, invalidation: WindowInvalidation, app: &AppContext) {
+    /// View ids reached by the most recent layout pass (mounted views,
+    /// including any that paint later culls), or `None` if this presenter has
+    /// not laid out a frame yet.
+    pub fn mounted_views_last_frame(&self) -> Option<&HashSet<EntityId>> {
+        self.mounted_views_last_frame.as_ref()
+    }
+
+    /// Applies the invalidation, re-rendering the affected views' elements.
+    ///
+    /// Returns the views whose re-render was deferred instead: a cached view
+    /// that was not mounted last frame cannot appear on screen, so its
+    /// re-render is postponed to the layout pass of the frame that mounts it
+    /// again, instead of being paid on every frame it stays hidden. Views
+    /// without a cached element still render eagerly — that first element is
+    /// what lets a parent mount them at all.
+    pub fn invalidate(
+        &mut self,
+        invalidation: WindowInvalidation,
+        app: &AppContext,
+    ) -> HashSet<EntityId> {
+        let mut deferred = HashSet::new();
         // Don't try to update views that were also removed
         for &view_id in invalidation.updated.difference(&invalidation.removed) {
+            let is_unmounted = self
+                .mounted_views_last_frame
+                .as_ref()
+                .is_some_and(|mounted| !mounted.contains(&view_id))
+                && self.rendered_views.contains_key(&view_id);
+            if is_unmounted {
+                self.stale_views.insert(view_id);
+                deferred.insert(view_id);
+                continue;
+            }
             match app.render_view(self.window_id, view_id) {
                 Ok(element) => {
                     self.rendered_views.insert(view_id, element);
+                    self.stale_views.remove(&view_id);
                 }
                 Err(e) => log::warn!("View was not rendered, error: {e:?}"),
             };
         }
         for view_id in invalidation.removed {
             self.rendered_views.remove(&view_id);
+            self.stale_views.remove(&view_id);
         }
+        deferred
     }
 
     pub fn build_scene(
@@ -349,6 +398,47 @@ impl Presenter {
         // (Reported as a batch because the layout walk itself only has `&AppContext`.)
         let mut view_embeddings = HashMap::new();
         self.layout(zoomed_window_size, &mut view_embeddings, ctx);
+        // Layout may have reached views whose re-render was deferred while
+        // they were unmounted (`stale_views`); their cached elements are out
+        // of date. Re-render them here — between layout passes, where no
+        // element code (which may hold locks such as the terminal model's) is
+        // on the stack — and lay out again until the mounted tree is fresh.
+        // Each pass drains stale views the previous pass reached and nothing
+        // re-inserts them, so this terminates; frames that mount nothing
+        // stale take a single pass.
+        loop {
+            let stale_mounted = match &self.mounted_views_last_frame {
+                Some(mounted) => self
+                    .stale_views
+                    .intersection(mounted)
+                    .cloned()
+                    .collect::<Vec<_>>(),
+                None => Vec::new(),
+            };
+            if stale_mounted.is_empty() {
+                break;
+            }
+            for view_id in stale_mounted {
+                self.stale_views.remove(&view_id);
+                match ctx.render_view(self.window_id, view_id) {
+                    Ok(element) => {
+                        self.rendered_views.insert(view_id, element);
+                    }
+                    Err(e) => {
+                        // The view's autotracking registrations were cleared
+                        // when it was deferred, so nothing would ever refresh
+                        // its outdated element again: evict it rather than
+                        // keep showing frozen content. The view re-renders
+                        // eagerly (uncached views always do) on its next
+                        // invalidation.
+                        self.rendered_views.remove(&view_id);
+                        log::warn!("View was not rendered, error: {e:?}");
+                    }
+                }
+            }
+            view_embeddings.clear();
+            self.layout(zoomed_window_size, &mut view_embeddings, ctx);
+        }
         ctx.report_view_embeddings(self.window_id, view_embeddings);
         // In theory, after_layout would be a good place for Elements to update app state with the
         // results of layout (for example, if a View stored the heights of its children to
@@ -384,8 +474,14 @@ impl Presenter {
         app: &AppContext,
     ) {
         if let Some(root_view_id) = app.root_view_id(self.window_id) {
+            // Reuse the previous frame's allocation: this runs on every frame
+            // (and once per pass on remount frames).
+            let mut views_laid_out = self.mounted_views_last_frame.take().unwrap_or_default();
+            views_laid_out.clear();
             let mut layout_ctx = LayoutContext {
                 rendered_views: &mut self.rendered_views,
+                stale_views: &self.stale_views,
+                views_laid_out: &mut views_laid_out,
                 parents,
                 text_layout_cache: &self.text_layout_cache,
                 view_stack: Vec::new(),
@@ -397,6 +493,7 @@ impl Presenter {
                 SizeConstraint::new(Vector2F::zero(), window_size),
                 app,
             );
+            self.mounted_views_last_frame = Some(views_laid_out);
         }
     }
 
@@ -552,6 +649,22 @@ impl LayoutContext<'_> {
         constraint: SizeConstraint,
         app: &AppContext,
     ) -> Vector2F {
+        // Record every view layout reaches — including ones without a cached
+        // element yet — as mounted: they are wanted on screen, so their
+        // invalidations must keep scheduling frames.
+        self.views_laid_out.insert(view_id);
+
+        // A view reached here whose re-render was deferred (`stale_views`) is
+        // re-rendered between layout passes in `build_scene`, never from
+        // inside layout: element code may hold locks (e.g. the terminal
+        // model's) that view renders also take. Its outdated element must not
+        // be laid out either — its layout code may dereference app state that
+        // has changed since it was rendered — so it occupies no space in this
+        // discovery pass; the follow-up pass lays out the fresh element.
+        if self.stale_views.contains(&view_id) {
+            return vec2f(0., 0.);
+        }
+
         let Some(mut rendered_view) = self.rendered_views.remove(&view_id) else {
             return vec2f(0., 0.);
         };
