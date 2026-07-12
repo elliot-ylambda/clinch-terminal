@@ -2921,30 +2921,56 @@ impl TypedActionView for RenderLoggingChild {
     type Action = ();
 }
 
+/// Shared fixture for the redraw-gate tests: a window whose root
+/// (`ConditionalParent`) mounts a single `RenderLoggingChild`.
+struct GateFixture {
+    window_id: WindowId,
+    parent: ViewHandle<ConditionalParent>,
+    child: ViewHandle<RenderLoggingChild>,
+    render_log: Rc<RefCell<Vec<&'static str>>>,
+    rendered_generations: Rc<RefCell<Vec<usize>>>,
+}
+
+fn gate_fixture(app: &mut App) -> GateFixture {
+    let render_log: Rc<RefCell<Vec<&'static str>>> = Rc::new(RefCell::new(vec![]));
+    let rendered_generations: Rc<RefCell<Vec<usize>>> = Rc::new(RefCell::new(vec![]));
+    let (window_id, parent) = {
+        let render_log = render_log.clone();
+        let rendered_generations = rendered_generations.clone();
+        app.add_window(WindowStyle::NotStealFocus, |ctx| {
+            let child = ctx.add_view(|_| RenderLoggingChild {
+                generation: 0,
+                rendered_generations,
+                render_log: render_log.clone(),
+            });
+            ConditionalParent {
+                child: Some(child),
+                show_child: true,
+                render_log,
+            }
+        })
+    };
+    let child = parent.read(app, |parent, _| parent.child.clone().unwrap());
+    GateFixture {
+        window_id,
+        parent,
+        child,
+        render_log,
+        rendered_generations,
+    }
+}
+
 #[test]
 fn test_notify_of_unmounted_view_does_not_trigger_redraw() {
     App::test((), |mut app| async move {
         let app = &mut app;
-        let render_log: Rc<RefCell<Vec<&'static str>>> = Rc::new(RefCell::new(vec![]));
-        let rendered_generations: Rc<RefCell<Vec<usize>>> = Rc::new(RefCell::new(vec![]));
-
-        let (_, parent) = {
-            let render_log = render_log.clone();
-            let rendered_generations = rendered_generations.clone();
-            app.add_window(WindowStyle::NotStealFocus, |ctx| {
-                let child = ctx.add_view(|_| RenderLoggingChild {
-                    generation: 0,
-                    rendered_generations,
-                    render_log: render_log.clone(),
-                });
-                ConditionalParent {
-                    child: Some(child),
-                    show_child: true,
-                    render_log,
-                }
-            })
-        };
-        let child = parent.read(app, |parent, _| parent.child.clone().unwrap());
+        let GateFixture {
+            window_id: _,
+            parent,
+            child,
+            render_log,
+            rendered_generations,
+        } = gate_fixture(app);
 
         // Window creation does not notify the root view in the test harness,
         // so drive the first real frame explicitly. This also exercises the
@@ -3004,26 +3030,13 @@ fn test_notify_of_unmounted_view_does_not_trigger_redraw() {
 fn test_unmounted_view_render_is_deferred_until_remount() {
     App::test((), |mut app| async move {
         let app = &mut app;
-        let render_log: Rc<RefCell<Vec<&'static str>>> = Rc::new(RefCell::new(vec![]));
-        let rendered_generations: Rc<RefCell<Vec<usize>>> = Rc::new(RefCell::new(vec![]));
-
-        let (_, parent) = {
-            let render_log = render_log.clone();
-            let rendered_generations = rendered_generations.clone();
-            app.add_window(WindowStyle::NotStealFocus, |ctx| {
-                let child = ctx.add_view(|_| RenderLoggingChild {
-                    generation: 0,
-                    rendered_generations,
-                    render_log: render_log.clone(),
-                });
-                ConditionalParent {
-                    child: Some(child),
-                    show_child: true,
-                    render_log,
-                }
-            })
-        };
-        let child = parent.read(app, |parent, _| parent.child.clone().unwrap());
+        let GateFixture {
+            window_id: _,
+            parent,
+            child,
+            render_log,
+            rendered_generations,
+        } = gate_fixture(app);
 
         // First frame: parent and child both render and paint.
         parent.update(app, |_, ctx| ctx.notify());
@@ -3074,26 +3087,13 @@ fn test_unmounted_view_render_is_deferred_until_remount() {
 fn test_gated_invalidations_are_not_reported_as_pending() {
     App::test((), |mut app| async move {
         let app = &mut app;
-        let render_log: Rc<RefCell<Vec<&'static str>>> = Rc::new(RefCell::new(vec![]));
-        let rendered_generations: Rc<RefCell<Vec<usize>>> = Rc::new(RefCell::new(vec![]));
-
-        let (window_id, parent) = {
-            let render_log = render_log.clone();
-            let rendered_generations = rendered_generations.clone();
-            app.add_window(WindowStyle::NotStealFocus, |ctx| {
-                let child = ctx.add_view(|_| RenderLoggingChild {
-                    generation: 0,
-                    rendered_generations,
-                    render_log: render_log.clone(),
-                });
-                ConditionalParent {
-                    child: Some(child),
-                    show_child: true,
-                    render_log,
-                }
-            })
-        };
-        let child = parent.read(app, |parent, _| parent.child.clone().unwrap());
+        let GateFixture {
+            window_id,
+            parent,
+            child,
+            render_log: _,
+            rendered_generations,
+        } = gate_fixture(app);
 
         parent.update(app, |_, ctx| ctx.notify());
         parent.update(app, |parent, ctx| {
@@ -3126,25 +3126,13 @@ fn test_gated_invalidations_are_not_reported_as_pending() {
 fn test_removing_an_unmounted_view_still_drains_invalidations() {
     App::test((), |mut app| async move {
         let app = &mut app;
-        let render_log: Rc<RefCell<Vec<&'static str>>> = Rc::new(RefCell::new(vec![]));
-        let rendered_generations: Rc<RefCell<Vec<usize>>> = Rc::new(RefCell::new(vec![]));
-
-        let (window_id, parent) = {
-            let render_log = render_log.clone();
-            let rendered_generations = rendered_generations.clone();
-            app.add_window(WindowStyle::NotStealFocus, |ctx| {
-                let child = ctx.add_view(|_| RenderLoggingChild {
-                    generation: 0,
-                    rendered_generations,
-                    render_log: render_log.clone(),
-                });
-                ConditionalParent {
-                    child: Some(child),
-                    show_child: true,
-                    render_log,
-                }
-            })
-        };
+        let GateFixture {
+            window_id,
+            parent,
+            child: _,
+            render_log: _,
+            rendered_generations: _,
+        } = gate_fixture(app);
 
         parent.update(app, |_, ctx| ctx.notify());
         parent.update(app, |parent, ctx| {

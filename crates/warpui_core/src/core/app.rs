@@ -1015,10 +1015,10 @@ impl AppContext {
             .window_invalidations
             .remove(&window_id)
             .unwrap_or_default();
+        // Deferred entries only ever carry view updates (update_windows
+        // asserts this when it sets them aside).
         if let Some(deferred) = self.deferred_window_invalidations.remove(&window_id) {
             invalidations.updated.extend(deferred.updated);
-            invalidations.removed.extend(deferred.removed);
-            invalidations.redraw_requested |= deferred.redraw_requested;
         }
         invalidations
             .updated
@@ -3534,13 +3534,18 @@ impl AppContext {
                 && !self.invalidations_can_change_window_output(window_id)
             {
                 if let Some(invalidation) = self.window_invalidations.remove(&window_id) {
-                    let deferred = self
-                        .deferred_window_invalidations
+                    // The gate passes whenever an invalidation carries
+                    // removals or an explicit redraw request, so only view
+                    // updates can reach the deferred queue.
+                    debug_assert!(
+                        invalidation.removed.is_empty() && !invalidation.redraw_requested,
+                        "only view-update invalidations may be deferred"
+                    );
+                    self.deferred_window_invalidations
                         .entry(window_id)
-                        .or_default();
-                    deferred.updated.extend(invalidation.updated);
-                    deferred.removed.extend(invalidation.removed);
-                    deferred.redraw_requested |= invalidation.redraw_requested;
+                        .or_default()
+                        .updated
+                        .extend(invalidation.updated);
                 }
                 continue;
             }

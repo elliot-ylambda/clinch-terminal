@@ -47,6 +47,7 @@ pub struct Presenter {
 
 pub struct LayoutContext<'a> {
     rendered_views: &'a mut HashMap<EntityId, Box<dyn Element>>,
+    stale_views: &'a HashSet<EntityId>,
     views_laid_out: &'a mut HashSet<EntityId>,
     parents: &'a mut HashMap<EntityId, EntityId>,
     pub text_layout_cache: &'a LayoutCache,
@@ -423,7 +424,16 @@ impl Presenter {
                     Ok(element) => {
                         self.rendered_views.insert(view_id, element);
                     }
-                    Err(e) => log::warn!("View was not rendered, error: {e:?}"),
+                    Err(e) => {
+                        // The view's autotracking registrations were cleared
+                        // when it was deferred, so nothing would ever refresh
+                        // its outdated element again: evict it rather than
+                        // keep showing frozen content. The view re-renders
+                        // eagerly (uncached views always do) on its next
+                        // invalidation.
+                        self.rendered_views.remove(&view_id);
+                        log::warn!("View was not rendered, error: {e:?}");
+                    }
                 }
             }
             view_embeddings.clear();
@@ -464,9 +474,13 @@ impl Presenter {
         app: &AppContext,
     ) {
         if let Some(root_view_id) = app.root_view_id(self.window_id) {
-            let mut views_laid_out = HashSet::new();
+            // Reuse the previous frame's allocation: this runs on every frame
+            // (and once per pass on remount frames).
+            let mut views_laid_out = self.mounted_views_last_frame.take().unwrap_or_default();
+            views_laid_out.clear();
             let mut layout_ctx = LayoutContext {
                 rendered_views: &mut self.rendered_views,
+                stale_views: &self.stale_views,
                 views_laid_out: &mut views_laid_out,
                 parents,
                 text_layout_cache: &self.text_layout_cache,
@@ -637,12 +651,19 @@ impl LayoutContext<'_> {
     ) -> Vector2F {
         // Record every view layout reaches — including ones without a cached
         // element yet — as mounted: they are wanted on screen, so their
-        // invalidations must keep scheduling frames. Views reached here whose
-        // re-render was deferred (`Presenter::stale_views`) are re-rendered
-        // between layout passes in `build_scene`, never from inside layout:
-        // element code may hold locks (e.g. the terminal model's) that view
-        // renders also take.
+        // invalidations must keep scheduling frames.
         self.views_laid_out.insert(view_id);
+
+        // A view reached here whose re-render was deferred (`stale_views`) is
+        // re-rendered between layout passes in `build_scene`, never from
+        // inside layout: element code may hold locks (e.g. the terminal
+        // model's) that view renders also take. Its outdated element must not
+        // be laid out either — its layout code may dereference app state that
+        // has changed since it was rendered — so it occupies no space in this
+        // discovery pass; the follow-up pass lays out the fresh element.
+        if self.stale_views.contains(&view_id) {
+            return vec2f(0., 0.);
+        }
 
         let Some(mut rendered_view) = self.rendered_views.remove(&view_id) else {
             return vec2f(0., 0.);
