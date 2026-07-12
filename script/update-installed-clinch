@@ -97,6 +97,7 @@ clinch_scrubbed_open() {
     -u MAKEOVERRIDES
     -u MAKE_TERMOUT
     -u MAKE_TERMERR
+    -u RELEASE_NOTES
     -u SKIP_SYNC
   )
   while IFS= read -r name; do
@@ -110,10 +111,110 @@ clinch_scrubbed_open() {
   env "${scrub_args[@]}" "${CLINCH_OPEN_BIN:-open}" "$bundle"
 }
 
+clinch_running_asn() {
+  local bundle_id="$1"
+  "${CLINCH_LSAPPINFO_BIN:-/usr/bin/lsappinfo}" find "bundleID=$bundle_id" 2>/dev/null
+}
+
+clinch_running_path_pids() {
+  local dest="$1" pid command
+  "${CLINCH_PS_BIN:-/bin/ps}" -axo pid=,command= 2>/dev/null \
+    | while read -r pid command; do
+        case "$command" in
+          "$dest/Contents/MacOS/"*) printf '%s\n' "$pid" ;;
+        esac
+      done
+}
+
+clinch_app_is_running() {
+  local bundle_id="$1" dest="$2"
+  [[ -n "$(clinch_running_asn "$bundle_id")" ]] \
+    || [[ -n "$(clinch_running_path_pids "$dest")" ]]
+}
+
+clinch_running_pids() {
+  local bundle_id="$1" dest="$2" asn
+  asn="$(clinch_running_asn "$bundle_id")"
+  if [[ -n "$asn" ]]; then
+    "${CLINCH_LSAPPINFO_BIN:-/usr/bin/lsappinfo}" info -only pid "$asn" 2>/dev/null \
+      | sed -nE 's/.*"pid"=([0-9]+).*/\1/p'
+  fi
+  clinch_running_path_pids "$dest"
+}
+
+# Fail closed: never remove/copy an application bundle while any process is executing from
+# it. LaunchServices is authoritative for GUI identity; the path scan is a second guard for
+# abnormal processes LaunchServices no longer reports (the July 2026 pgrep failure).
+clinch_quit_running_app() {
+  local app_name="$1" bundle_id="$2" dest="$3" pid
+  clinch_app_is_running "$bundle_id" "$dest" || return 0
+  echo "Quitting running ${app_name}…"
+  "${CLINCH_OSASCRIPT_BIN:-/usr/bin/osascript}" \
+    -e "tell application id \"${bundle_id}\" to quit" || true
+  for _ in $(seq 1 "${CLINCH_QUIT_WAIT_ATTEMPTS:-40}"); do
+    clinch_app_is_running "$bundle_id" "$dest" || return 0
+    "${CLINCH_SLEEP_BIN:-/bin/sleep}" 0.5
+  done
+
+  echo "⚠ ${app_name} did not quit; terminating its exact bundle processes…" >&2
+  for pid in $(clinch_running_pids "$bundle_id" "$dest" | sort -u); do
+    "${CLINCH_KILL_BIN:-/bin/kill}" -TERM "$pid" 2>/dev/null || true
+  done
+  for _ in $(seq 1 "${CLINCH_FORCE_WAIT_ATTEMPTS:-10}"); do
+    clinch_app_is_running "$bundle_id" "$dest" || return 0
+    "${CLINCH_SLEEP_BIN:-/bin/sleep}" 0.2
+  done
+  for pid in $(clinch_running_pids "$bundle_id" "$dest" | sort -u); do
+    "${CLINCH_KILL_BIN:-/bin/kill}" -KILL "$pid" 2>/dev/null || true
+  done
+  "${CLINCH_SLEEP_BIN:-/bin/sleep}" 0.2
+  if clinch_app_is_running "$bundle_id" "$dest"; then
+    echo "✗ ${app_name} is still running; refusing to replace its bundle." >&2
+    return 1
+  fi
+}
+
+refresh_active_pane_manifest() {
+  local bundle_id="$1"
+  local db="$HOME/Library/Application Support/$bundle_id/warp.sqlite"
+  local reg="$HOME/.warp/agent-resume" tmp
+  [[ -f "$db" && -d "$reg" ]] || return 0
+  tmp="$reg/.active-panes.tmp.$$"
+  if ! "${CLINCH_SQLITE_BIN:-/usr/bin/sqlite3}" -readonly "$db" \
+      'SELECT lower(hex(uuid)) FROM terminal_panes ORDER BY id;' > "$tmp"; then
+    rm -f "$tmp"
+    echo "✗ Could not snapshot active Clinch pane identities; refusing unsafe update." >&2
+    return 1
+  fi
+  chmod 600 "$tmp"
+  mv -f "$tmp" "$reg/active-panes"
+}
+
+repair_live_agent_registry() {
+  local cli="$HOME/.warp/agent-resume-bin/clinch-agent-resume"
+  [[ -x "$cli" ]] || return 0
+  "$cli" repair-live
+}
+
+mark_app_terminating() {
+  local bundle_id="$1" dest="$2" reg="$HOME/.warp/agent-resume" pids tmp
+  pids="$(clinch_running_pids "$bundle_id" "$dest" | sort -u)"
+  if [[ -z "$pids" ]]; then
+    echo "✗ Could not identify the running Clinch process; refusing unsafe update." >&2
+    return 1
+  fi
+  mkdir -p "$reg"
+  chmod 700 "$reg"
+  tmp="$reg/.app-terminating.tmp.$$"
+  ( umask 077; printf '%s\n' "$pids" > "$tmp" )
+  mv -f "$tmp" "$reg/.app-terminating"
+}
+
 clinch_update_main() {
   local app_name="${1:?usage: update-installed-clinch <AppName> <source-bundle>}"
   local src_bundle="${2:?usage: update-installed-clinch <AppName> <source-bundle>}"
   local dest="/Applications/${app_name}.app"
+  local bundle_id
 
   if make_dry_run_enabled; then
     echo "Dry-run enabled; skipping ${app_name} installation and relaunch."
@@ -125,25 +226,30 @@ clinch_update_main() {
     return 1
   fi
 
-  snapshot_session_state || true
+  bundle_id="$("${CLINCH_PLISTBUDDY_BIN:-/usr/libexec/PlistBuddy}" \
+    -c 'Print :CFBundleIdentifier' "$src_bundle/Contents/Info.plist" 2>/dev/null || true)"
+  if [[ "$bundle_id" != "sh.clinch.Clinch" ]]; then
+    echo "✗ built bundle has unexpected CFBundleIdentifier '$bundle_id': $src_bundle" >&2
+    return 1
+  fi
 
-  # Match the running process by its executable path so we don't depend on the
-  # binary's name (the stable channel's executable is "stable", not "Clinch").
-  running() { pgrep -f "${dest}/Contents/MacOS/" >/dev/null 2>&1; }
-
-  if running; then
-    echo "Quitting running ${app_name}…"
-    osascript -e "tell application \"${app_name}\" to quit" || true
-    # Wait up to ~20s for it to flush state and exit before swapping the bundle.
-    for _ in $(seq 1 40); do
-      running || break
-      sleep 0.5
-    done
-    if running; then
-      echo "⚠ ${app_name} did not quit; forcing…" >&2
-      pkill -f "${dest}/Contents/MacOS/" || true
-      sleep 1
+  if clinch_app_is_running "$bundle_id" "$dest"; then
+    # The source checkout installed the matching repair runtime before bundling. Reconcile
+    # nested-agent takeovers and stale exited-agent entries while process ancestry still
+    # tells us which provider visibly owns each pane.
+    refresh_active_pane_manifest "$bundle_id"
+    snapshot_session_state || true
+    repair_live_agent_registry
+    mark_app_terminating "$bundle_id" "$dest"
+    if ! clinch_quit_running_app "$app_name" "$bundle_id" "$dest"; then
+      rm -f "$HOME/.warp/agent-resume/.app-terminating"
+      return 1
     fi
+    # No agent hooks remain once the old app process is gone. Avoid leaving a global marker
+    # behind if copying or relaunching the new bundle fails later.
+    rm -f "$HOME/.warp/agent-resume/.app-terminating"
+  else
+    snapshot_session_state || true
   fi
 
   echo "Installing ${src_bundle} → ${dest}…"

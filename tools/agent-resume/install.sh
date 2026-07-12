@@ -101,7 +101,7 @@ log "Wired Codex capture hooks (SessionStart, SessionEnd)"
 # Structural JSON merge: preserves unrelated Claude settings/hooks, removes stale managed
 # entries, and leaves exactly one current hook on each supported lifecycle event.
 if "$SRC/wire-claude-hooks.sh" "$HOME/.claude/settings.json" "$BIN"; then
-  log "Wired Claude capture hooks (SessionStart, UserPromptSubmit, Stop)"
+  log "Wired Claude capture hooks (SessionStart, UserPromptSubmit, Stop, SessionEnd)"
 else
   warn "could not update ~/.claude/settings.json; fix invalid JSON and relaunch Clinch"
 fi

@@ -2,11 +2,13 @@
 # Claude Code capture hook: record the *actual* live session for this Clinch pane so it
 # can be resumed on restore. Wired to SessionStart (fresh start, `claude --resume <id>`,
 # the interactive picker, and `claude --continue` -- in every case the stdin payload
-# carries the real session_id) and to UserPromptSubmit + Stop for live-mode updates.
+# carries the real session_id), UserPromptSubmit + Stop for live-mode updates, and
+# SessionEnd so an agent the user exited is not resurrected on the next app launch.
 #
 # Keyed by the pane UUID, so multiple agents in the same directory stay disambiguated.
-# No removal on exit: the entry is overwritten by the next session in this pane, which keeps
-# it present when Clinch snapshots at quit (see README "Graceful-exit behavior").
+# Nested Claude/Codex processes inherit the same pane UUID. The registry CLI walks process
+# ancestry and lets only the outermost CLI own the pane; nested prompts are still mirrored.
+# During app shutdown a marker preserves the outer entry until the final snapshot is durable.
 #
 # Beyond the session id we also carry forward *how* the session is running -- the permission
 # mode (--dangerously-skip-permissions / --permission-mode <mode>) and the --model -- so a
@@ -197,7 +199,8 @@ _clinch_agent_resume_capture_main() {
   set -uo pipefail
   [[ -n "${WARP_TERMINAL_SESSION_UUID:-}" ]] || return 0   # only act inside a Clinch pane
   local payload fields sid64 cwd64 event64 pmode64 model64
-  local sid cwd event pmode extra mode_part entry_file BIN
+  local sid cwd event pmode extra mode_part entry_file BIN nested=0
+  local owner_fields owner_pid owner_tty64 owner_tty
   payload="$(cat)"
   fields="$(printf '%s' "$payload" | _clinch_agent_resume_json hook-fields 2>/dev/null)" || return 0
   IFS='|' read -r sid64 cwd64 event64 pmode64 model64 <<<"$fields"
@@ -206,8 +209,19 @@ _clinch_agent_resume_capture_main() {
   event="$(_clinch_agent_resume_decode "$event64")" || return 0
   pmode="$(_clinch_agent_resume_decode "$pmode64")" || return 0
   [[ "$sid" =~ ^[A-Za-z0-9-]+$ ]] || return 0
+  BIN="$(cd "$(dirname "$0")" && pwd)"
+  if owner_fields="$("$BIN/clinch-agent-resume" hook-owner-fields 2>/dev/null)"; then
+    IFS='|' read -r owner_pid owner_tty64 <<<"$owner_fields"
+    owner_tty="$(_clinch_agent_resume_decode "$owner_tty64")" || return 0
+  else
+    nested=1
+  fi
   case "$event" in
     SessionStart)
+      # The hook process has one Claude ancestor for a normal top-level session. Two agent
+      # ancestors means a Claude/Codex tool launched this session inside the pane; it gets
+      # prompt durability but must never replace the visible outer agent's restore target.
+      (( nested )) && return 0
       # Fresh capture: a new session in this pane takes over the entry -- EXCEPT when the
       # restore machinery itself spawned it as a fresh fallback
       # (WARP_AGENT_RESUME_STARTED_FRESH, set by clinch_agent_resume_launch). Such a session
@@ -231,22 +245,24 @@ _clinch_agent_resume_capture_main() {
       if [[ "$event" == UserPromptSubmit ]]; then
         _clinch_agent_resume_mirror_prompt "$payload" "$sid" "$cwd"
       fi
-      # Live-mode update. Guard: only touch an entry this session owns -- a missing entry
-      # is healed (pre-flag registries), but an entry recording a different session id
-      # (e.g. a nested claude run from a tool in the same pane env) is left alone. The
-      # exception is a machinery-spawned fresh session (WARP_AGENT_RESUME_STARTED_FRESH):
-      # its SessionStart deliberately left a protected entry in place, so its first real
-      # activity is where it legitimately takes the pane over.
-      entry_file="${WARP_AGENT_RESUME_DIR:-$HOME/.warp/agent-resume}/$WARP_TERMINAL_SESSION_UUID.json"
-      if [[ -z "${WARP_AGENT_RESUME_STARTED_FRESH:-}" && -f "$entry_file" ]] \
-         && ! grep -qE "(clinch|warp)_agent_resume_launch claude $sid( |\")" "$entry_file"; then
-        return 0
-      fi
+      (( nested )) && return 0
+      # An outer session is authoritative even if a hook from an older build let a nested
+      # child clobber the entry. Its next prompt/Stop event repairs that mapping in place.
       if mode_part="$(_clinch_agent_resume_mode_flags_from_payload "$pmode")"; then
         extra="${mode_part}$(_clinch_agent_resume_extract_model "$(_clinch_agent_resume_claude_argv)")"
       else
         extra="$(_clinch_agent_resume_extract_flags "$(_clinch_agent_resume_claude_argv)")"
       fi
+      ;;
+    SessionEnd)
+      (( nested )) && return 0
+      # Graceful app shutdown snapshots before tearing down PTYs. Preserve registry entries
+      # across that teardown so restored sibling panes remain claimed during replay; normal
+      # user exits have no marker and remove only the session that still owns this pane.
+      "$BIN/clinch-agent-resume" app-terminating >/dev/null 2>&1 && return 0
+      "$BIN/clinch-agent-resume" remove-if-matches \
+        "$WARP_TERMINAL_SESSION_UUID" claude "$sid" >/dev/null 2>&1 || true
+      return 0
       ;;
     *) return 0 ;;
   esac
@@ -259,10 +275,10 @@ _clinch_agent_resume_capture_main() {
   # owning claude process, which exports CLAUDE_CODE_BRIDGE_SESSION_ID once bridged; the
   # per-turn events (UserPromptSubmit/Stop) keep the field fresh if the bridge attaches
   # after SessionStart.
-  BIN="$(cd "$(dirname "$0")" && pwd)"
   "$BIN/clinch-agent-resume" write "$WARP_TERMINAL_SESSION_UUID" \
     "clinch_agent_resume_launch claude $sid$extra" "$cwd" \
-    "${CLAUDE_CODE_BRIDGE_SESSION_ID:-}" >/dev/null 2>&1 || true
+    "${CLAUDE_CODE_BRIDGE_SESSION_ID:-}" "$owner_pid" "$owner_tty" \
+    >/dev/null 2>&1 || true
   return 0
 }
 

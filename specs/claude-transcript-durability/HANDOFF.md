@@ -1,5 +1,10 @@
 # Claude Transcript Durability — Handoff
 
+> Superseded on 2026-07-12 by the durable recovery work described in `PRODUCT.md` and
+> `TECH.md`: nested-agent ownership, conditional SessionEnd, active-pane manifests, final
+> shutdown snapshots, registry/SQLite reconciliation, live updater repair, and fail-closed
+> LaunchServices bundle replacement are now automated and covered by regression tests.
+
 Status as of 2026-07-09 19:30 PT. Read `PRODUCT.md` and `TECH.md` first; they now describe
 the proved root cause and the implementation that is actually in the working tree.
 

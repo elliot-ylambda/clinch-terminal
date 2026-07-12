@@ -57,6 +57,30 @@ clinch_agent_resume_resumable() {
   esac
 }
 
+# True when one of the *currently restored/live* panes owns a Claude session. Older builds
+# left hundreds of zombie `<pane>.json` files behind, and the append-only journal is history,
+# not ownership; neither may permanently block recovery. Clinch atomically maintains the
+# active-pane manifest whenever it snapshots app state. Legacy installs without a manifest
+# fall back to scanning current entry files only (never journal.jsonl or prompt mirrors).
+clinch_agent_resume_session_claimed() {
+  setopt localoptions nullglob
+  local id="$1" reg="${WARP_AGENT_RESUME_DIR:-$HOME/.warp/agent-resume}"
+  local active="${WARP_AGENT_RESUME_ACTIVE_PANES_FILE:-$reg/active-panes}" pane entry
+  if [[ -r "$active" ]]; then
+    while IFS= read -r pane; do
+      case "$pane" in ""|*[!A-Za-z0-9-]*) continue ;; esac
+      entry="$reg/$pane.json"
+      [[ -f "$entry" ]] || continue
+      grep -Eq "(clinch|warp)_agent_resume_launch claude $id( |\")" "$entry" && return 0
+    done < "$active"
+    return 1
+  fi
+  for entry in "$reg"/*.json(N); do
+    grep -Eq "(clinch|warp)_agent_resume_launch claude $id( |\")" "$entry" && return 0
+  done
+  return 1
+}
+
 # Print the newest *unclaimed* resumable claude session whose transcript records <cwd>
 # (default $PWD) as its working directory. This is the safety net for registry rot: a
 # recorded id can go stale (its entry overwritten by a session that was never used, its
@@ -85,7 +109,7 @@ clinch_agent_resume_fallback_id() {
     head -c 131072 "$f" 2>/dev/null | grep -qF -- "$match" || continue
     id="${${f:t}%.jsonl}"
     clinch_agent_resume_resumable "$agent" "$id" || continue
-    grep -Eqsr "(clinch|warp)_agent_resume_launch claude $id( |\")" "$reg" && continue
+    clinch_agent_resume_session_claimed "$id" && continue
     # At restore, panes race this scan before an adopted session's SessionStart hook can
     # record the new owner. Claim the fallback atomically so two panes cannot adopt the
     # same conversation. A claim older than the configurable TTL is treated as abandoned.

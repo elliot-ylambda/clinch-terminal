@@ -1,3 +1,5 @@
+use std::fs;
+
 use settings::{RespectUserSyncSetting, SyncToCloud};
 use warp::features::FeatureFlag;
 use warp::integration_testing::notebook::{
@@ -69,6 +71,57 @@ pub fn test_session_restoration() -> Builder {
                     AssertionOutcome::Success
                 },
             ),
+        )
+}
+
+/// A capture hook can update the pane registry after the last SQLite save. Startup must
+/// reconcile that newer source before replay so a stale snapshot cannot launch the wrong
+/// provider/session (or miss a newly started agent entirely).
+pub fn test_agent_resume_registry_reconciles_stale_snapshot() -> Builder {
+    new_builder()
+        .with_setup(|utils| {
+            utils.set_env("CLINCH_AGENT_RESUME_ENABLE", Some("1".to_string()));
+            integration_testing::create_file_from_assets(
+                TEST_ONLY_ASSETS,
+                "three_tabs.sqlite",
+                &integration_testing::persistence::database_file_path_for_scope(
+                    &integration_testing::persistence::PersistenceScope::App,
+                ),
+            );
+
+            let registry = utils.test_dir().join(".warp/agent-resume");
+            fs::create_dir_all(&registry).expect("create agent-resume registry");
+            let marker = utils.test_dir().join("agent-resume-restored");
+            let entry = serde_json::json!({
+                "command": format!("printf durable-agent-restore > {}", marker.display()),
+                "cwd": utils.test_dir(),
+            });
+            fs::write(
+                registry.join("fbc093172fe844d590d159d109af7438.json"),
+                format!("{entry}\n"),
+            )
+            .expect("write newer pane registry entry");
+        })
+        .with_step(wait_until_bootstrapped_single_pane_for_tab(0))
+        .with_step(
+            TestStep::new("Verify the newer registry command ran after restore")
+                .add_named_assertion("restore marker exists", |_app, _window_id| {
+                    let marker = std::path::PathBuf::from(
+                        std::env::var("HOME").expect("integration HOME should be set"),
+                    )
+                    .join("agent-resume-restored");
+                    match fs::read_to_string(marker) {
+                        Ok(contents) if contents == "durable-agent-restore" => {
+                            AssertionOutcome::Success
+                        }
+                        Ok(contents) => AssertionOutcome::failure(format!(
+                            "unexpected restore marker contents: {contents:?}"
+                        )),
+                        Err(_) => AssertionOutcome::failure(
+                            "restore marker has not been created yet".to_string(),
+                        ),
+                    }
+                }),
         )
 }
 

@@ -121,6 +121,13 @@ fn toggle_focus_reporting(_: &(), ctx: &mut AppContext) {
 }
 
 fn save_app(_: &(), ctx: &mut AppContext) {
+    enqueue_app_state_snapshot(ctx);
+}
+
+/// Queue a fresh, full app snapshot. This is also called synchronously from the app's
+/// termination callback before the persistence writer receives `Terminate`, guaranteeing
+/// that agent mappings captured since the last UI action reach SQLite in FIFO order.
+pub(crate) fn enqueue_app_state_snapshot(ctx: &mut AppContext) {
     if !AppExecutionMode::as_ref(ctx).can_save_session() {
         return;
     }
@@ -149,6 +156,7 @@ fn save_app(_: &(), ctx: &mut AppContext) {
 
     // Only compute the app state if we're definitely going to use it.
     let app_state = get_app_state(ctx);
+    crate::agent_resume::write_active_pane_manifest(&app_state);
     let event = ModelEvent::Snapshot(app_state);
 
     if let Err(err) = model_event_sender.send(event) {

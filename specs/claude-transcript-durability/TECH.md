@@ -6,8 +6,8 @@ See `PRODUCT.md` for user-visible behavior and incident history.
 
 ### Existing capture/replay architecture
 
-- **Capture**: `~/.claude/settings.json` wires `SessionStart`, `UserPromptSubmit`, and
-  `Stop` hooks to `~/.warp/agent-resume-bin/claude-capture.sh` (source:
+- **Capture**: `~/.claude/settings.json` wires `SessionStart`, `UserPromptSubmit`, `Stop`,
+  and `SessionEnd` hooks to `~/.warp/agent-resume-bin/claude-capture.sh` (source:
   `tools/agent-resume/claude-capture.sh`). The hook reads `session_id`, `cwd`, event,
   permission mode, and prompt text; reconstructs launch flags from the live process argv;
   and writes one mutable pane entry through `clinch-agent-resume`.
@@ -15,8 +15,10 @@ See `PRODUCT.md` for user-visible behavior and incident history.
   `clinch_agent_resume_launch`. It tries a recorded cloud bridge first, then a resumable
   local id, then the newest unclaimed local session for the cwd, then a guarded fresh
   launch.
-- **Fork UI**: `app/src/agent_resume.rs` reads the same registry. This feature does not
-  change the Rust side.
+- **Rust persistence/replay**: `app/src/agent_resume.rs` reads the same registry for fork
+  UI, publishes the active-pane manifest, and reconciles mutable registry state with the
+  persisted command at restore. App shutdown enqueues one final snapshot before joining
+  the SQLite writer.
 - **Install**: `tools/agent-resume/install.sh` installs the scripts and wires shell/hook
   configuration; the `agent-resume` Make target runs before bundling.
 
@@ -98,12 +100,12 @@ Two boundaries prevent a stale Claude identity from becoming a new top-level ses
   every `CLAUDE_CODE_*` variable plus `CLAUDECODE`, `CLAUDE_EFFORT`, and `AI_AGENT`. It
   also retains the existing Make/SKIP_SYNC scrub. This path is a full application reset,
   so no Claude session-shaped environment is intentionally preserved.
-- **Interactive launch**: `tools/agent-resume/claude.zsh` defines a thin `claude()` wrapper
-  that removes only identity/implementation markers (`CLAUDE_CODE_SESSION_ID`, bridge and
-  remote ids, child marker, entrypoint/execpath, `CLAUDECODE`, and `AI_AGENT`) before
-  resolving the real executable through `env`. It forwards `"$@"` verbatim and preserves
-  legitimate user behavior controls such as `CLAUDE_EFFORT` and adaptive-thinking flags.
-  Claude tool shells are non-interactive and do not source this wrapper.
+- **PTY creation**: `app/src/terminal/local_tty/unix.rs` removes current and future
+  `CLAUDE_CODE_*` names plus `CLAUDECODE` and `AI_AGENT` after applying shell environment
+  overrides. Every new local pane therefore starts clean without an rcfile edit, while
+  legitimate user behavior controls such as `CLAUDE_EFFORT` remain intact. The standalone
+  replay executable also sources `claude.zsh`, whose thin wrapper applies the same narrow
+  identity scrub before it invokes the provider and forwards `"$@"` verbatim.
 
 Remote control stays enabled. Teleport also deliberately remains the first restore path
 when a valid bridge id is recorded: a cloud session may have turns continued from another
@@ -118,6 +120,70 @@ newest-first line per known conversation:
 
 Nested sessions known only to the prompt mirror are included. The command is read-only.
 
+### 6. Root ownership and conditional exit cleanup
+
+Claude and Codex hook processes call the registry CLI's ownership check (`hook-owner-fields`
+for capture and `is-nested-agent` for exit), which walks at most 32 process ancestors. One
+provider ancestor is the CLI that invoked the hook; more than one means this agent was
+launched beneath another agent and cannot own the pane.
+Accepted writes also store the root CLI's PID and tty. A detached/reparented tool that has
+lost its outer agent from ancestry still cannot replace a different recorded owner while
+that owner PID remains an agent on the recorded tty. Nested Claude prompts are still
+mirrored before the ownership return.
+
+Both providers remove an entry on `SessionEnd` through `remove-if-matches`, so a late hook
+cannot delete a newer owner's mapping. Before deletion, the CLI atomically writes a private
+`tombstones/<pane>` file; a new owner clears it only after its registry entry lands. The
+append-only journal remains fail-open without weakening exit semantics. During app teardown,
+`.app-terminating` contains the live Clinch PID; SessionEnd preserves entries only while one
+marked PID is alive. A dead marker self-cleans, preventing a previous crash/quit from
+suppressing unrelated future exits.
+
+### 7. Active pane set, final snapshot, and restore reconciliation
+
+Every full `AppState` traversal collects terminal pane UUIDs across every physical window,
+project workspace, inner tab, and split leaf. The sorted/deduplicated set is atomically
+written to `~/.warp/agent-resume/active-panes` whenever app state is loaded or snapshotted.
+Fallback ownership scans only those pane entries; legacy installs without a manifest scan
+current `*.json` entries, never the journal.
+
+`on_will_terminate` marks shutdown, builds a fresh full app state, sends
+`ModelEvent::Snapshot`, then sends `ModelEvent::Terminate`. The synchronous writer join and
+channel FIFO guarantee that SQLite commits the final window/project/tab layout and newest
+agent commands before termination returns.
+
+During pane restore, `resolve_on_restore_command` applies this precedence:
+
+1. current per-pane registry command;
+2. no command when a per-pane removal tombstone exists;
+3. no command when the latest journal operation is `remove` (compatibility with builds
+   predating tombstones);
+4. normalized command from the SQLite snapshot.
+
+This covers both directions of skew: a hook write newer than the last UI save and a normal
+agent exit newer than an older persisted command.
+
+### 8. Fail-closed update and live migration repair
+
+`script/update-installed-clinch` identifies the GUI by `CFBundleIdentifier` through
+LaunchServices and independently scans exact executable paths. It requests quit by bundle
+id, waits, sends TERM/KILL only to resolved bundle PIDs, and refuses `rm -rf`/copy if either
+check still reports a running app. The public curl installer uses the same LaunchServices
+plus path detection and tells the user to quit before replacement.
+
+Before quit, the updater refreshes the active-pane manifest from SQLite, takes the bounded
+forensic recovery snapshot, and runs `repair-live`. The repair maps the oldest outer root
+Claude/Codex process for each pane, using ancestry, pane UUID, and process cwd. It then:
+
+- restores cross-provider and same-provider nested takeovers from newest durable pane history;
+- removes active-pane entries whose agent has actually exited; and
+- removes a duplicated bridge from every active copy, then assigns it only to the copy
+  whose local transcript proves ownership.
+
+Only after repair does the updater begin shutdown; Clinch's final snapshot then persists the
+repaired entries. The relaunch environment also removes `RELEASE_NOTES`, whose arbitrary
+bytes must never reach Rust dependency build scripts or the relaunched app.
+
 ## Testing
 
 The shell suite under `tools/agent-resume/tests/` covers:
@@ -131,14 +197,24 @@ The shell suite under `tools/agent-resume/tests/` covers:
 - update relaunch scrubbing for current and future `CLAUDE_CODE_*` names, Make/update
   variables, unrelated-environment preservation, and exact bundle argv;
 - existing Claude flags, hooks, Codex hooks, installer wiring, and registry behavior.
+- root/nested ownership for both providers, matching/mismatching SessionEnd, and live-PID
+  shutdown marker expiry;
+- tombstone persistence when the journal is unwritable and clearing after a new owner lands;
+- same-provider/cross-provider live repair, stale shell entries, and duplicate bridges;
+- LaunchServices detection, exact-PID escalation, public-installer refusal, and fail-closed
+  bundle replacement;
+- Rust unit coverage for active-pane traversal/atomic publication, registry-vs-SQLite
+  precedence, and final Snapshot-before-Terminate persistence, plus an integration test
+  that executes a newer registry command from a restored pane whose SQLite snapshot is stale.
 
 Manual acceptance is the `yo-durability-probe` flow in `PRODUCT.md`, including one update
 started while a conversation is active and verification of the pre-quit snapshot.
 
 ## Rollout
 
-Run `bash tools/agent-resume/install.sh` to activate the journal, mirror, CLI, capture hook,
-and launch wrapper. Existing shells must source `~/.zshrc` (or be reopened) for the wrapper;
-capture changes take effect immediately. The currently running Clinch app must then receive
-one clean relaunch (Dock/Finder, or the fixed update path) to remove any already-inherited
-poisoned environment.
+Public downloads bundle these changes and Clinch runs the installer idempotently before its
+first GUI pane opens. Source builds run the same installer as the `_bundle` prerequisite, so
+the pre-quit updater uses the matching repair runtime even when upgrading from an older app.
+No shell rc edit or shell restart is required; installed hook paths update in place, and new
+local PTYs apply launch hygiene in Rust. One clean app relaunch removes any identity already
+inherited by the old process.

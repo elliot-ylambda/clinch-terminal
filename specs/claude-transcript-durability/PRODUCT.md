@@ -6,8 +6,9 @@ local machine — findable, greppable, and re-openable — even when Claude remo
 bridges the session to claude.ai. A 2026-07-09 update leaked one Claude session's identity
 into the relaunched app, causing later sessions to behave as children and write **no local
 transcript at all**. The pane registry's single mutable cloud pointer was then overwritten,
-so conversations could silently vanish from disk. This feature fixes the launch leak and
-adds append-only records so no future overwrite can erase every local recovery clue.
+so conversations could silently vanish from disk. This feature fixes the launch leak,
+prevents nested agents from taking ownership of their outer pane, and makes app/update
+shutdown persist and reconcile the newest recoverable mapping before replay.
 
 ## Problem
 
@@ -62,23 +63,38 @@ Before this work there was also **no automated pre-update snapshot**: the
 3. Overwriting a pane's registry entry never destroys information: every registry write (including the overwrite and `remove`) is journaled, so any historically recorded (pane, session, bridge, cwd) tuple remains recoverable.
 
 ### Restore & update safety
-4. After Clinch quits (user quit, crash, or self-update) and relaunches, every pane's conversation is re-openable: bridged sessions via `claude --teleport <bridge>`, local sessions via `claude --resume <id>` — same behavior as today's `clinch_agent_resume_launch`, but the pointer it needs can no longer be lost.
-5. `make update` snapshots the registry (and journal) **before** quitting the running Clinch, not after relaunch. A conversation active at update time is findable after the update from the journal alone.
+4. Only the outermost Claude/Codex process owns a pane. A nested agent may keep its own
+   prompt history, but it cannot replace the outer session that should reopen with the tab.
+5. A normal agent exit removes its mapping only when the exiting session still owns the
+   pane. App shutdown preserves live mappings, queues a final full app snapshot, and waits
+   for SQLite to commit it before process teardown completes.
+6. On restore, the current registry wins over an older SQLite command; an explicit
+   per-pane removal tombstone wins over SQLite even if the best-effort journal was
+   unwritable. An active-pane manifest prevents closed/zombie panes and append-only history
+   from claiming live sessions during fallback.
+7. After Clinch quits (user quit, crash, or self-update) and relaunches, every captured
+   pane conversation is re-openable: bridged Claude sessions via teleport and local
+   Claude/Codex sessions via resume.
+8. `make update` snapshots the registry and journal **before** quitting, repairs legacy
+   nested/stale/duplicate mappings while live process ancestry is still available, and
+   refuses to replace the bundle unless LaunchServices and exact-path checks both confirm
+   that the old app has exited. A failed quit leaves the installed bundle untouched.
 
 ### Discovery
-6. A user who remembers only "I had a conversation about X earlier" can find it locally:
+9. A user who remembers only "I had a conversation about X earlier" can find it locally:
    a single command lists recent conversations (newest first, filterable by directory)
    showing session id, bridge URL if any, and the first prompt text.
 
 ### Non-regression
-7. Sessions launched from stock Warp, and codex sessions, are unaffected.
-8. The existing fresh-session guard (a machinery-spawned blank session must not clobber a protected entry before its first real prompt) keeps working.
-9. The capture hooks stay silent and fast: no user-visible output, no measurable prompt latency (the journal/mirror writes are single appends).
+10. Sessions launched from stock Warp are unaffected. Codex keeps its existing replay
+    syntax while gaining the same outer-owner and conditional SessionEnd semantics.
+11. The existing fresh-session guard (a machinery-spawned blank session must not clobber a protected entry before its first real prompt) keeps working.
+12. The capture hooks stay silent and fast: no user-visible output, no measurable prompt latency (the journal/mirror writes are single appends).
 
 ### Root fix
-10. Updating/relaunching Clinch strips all inherited Claude session identity before
-    invoking `open`, and interactive shells strip identity again whenever they launch
-    `claude`. Clean sessions therefore write their normal local jsonl again. Remote
+13. Updating/relaunching Clinch strips all inherited Claude session identity before
+    invoking `open`, and every new local pane strips identity again at its PTY boundary.
+    Clean sessions therefore write their normal local jsonl again. Remote
     control remains enabled: phone access and cloud teleport are wanted behavior and were
     proved innocent of the loss.
 
@@ -89,10 +105,15 @@ The hi/yo test, formalized:
    `grep -rw "yo-durability-probe" ~/.warp/agent-resume/` finds the mirrored prompt, and
    the journal line for that session includes its bridge id (if the session bridged).
 3. Reopen Clinch: the pane restores the conversation (teleport or resume).
-4. Run `make update` with an active conversation; after relaunch, the journal contains that conversation's pointer and the pane restores it.
+4. With nested Claude and Codex tools active, verify their SessionStart/SessionEnd hooks do
+   not change the outer pane entries.
+5. Run `make update` with several windows/projects/tabs and active conversations; after
+   relaunch, the same physical windows contain the same ordered project tabs and inner tabs,
+   and each captured outer agent resumes in its original pane.
+6. Simulate an app that ignores quit and verify the updater aborts before replacing its bundle.
 
 ## Out of scope
 - Recovering conversations already lost before this ships (the 2026-07-09 auth conversation is only findable by browsing https://claude.ai/code for a session started ~1:44 PM PT that day).
 - Mirroring **assistant** output into the durability store (prompts only; Claude's normal
   jsonl and the cloud copy remain the full-content records).
-- Any change to codex capture/resume.
+- Preserving the original agent process itself; relaunch resumes the conversation in a new process.

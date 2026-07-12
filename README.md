@@ -119,8 +119,11 @@ app has no Warp telemetry or authenticated Warp backend path.
 ## Agent-resume implementation
 
 Capture hooks read the actual provider session ID after the provider has chosen it and write a
-per-pane registry entry. Clinch freezes that entry into its normal pane snapshot. After the restored
-shell reports that it is bootstrapped, Clinch executes the bundled replay launcher.
+per-pane registry entry. Only the outermost Claude/Codex process may own the pane; nested agents
+retain prompt history without replacing that entry. Clinch publishes the active pane set and freezes
+the newest registry state into a final full window/project/tab snapshot on shutdown. On restore it
+reconciles the live registry and explicit exit tombstones with SQLite before executing the bundled
+replay launcher after the shell bootstraps.
 
 The public app runs its bundled installer idempotently before the first GUI pane can open. The JSON
 merge/parser uses macOS's built-in JavaScript for Automation runtime, and the replay executable is
@@ -136,7 +139,9 @@ Clinch has no background updater. Re-run the install command to fetch and verify
 curl -fsSL https://clinch.sh/install | sh
 ```
 
-The installer replaces the app bundle without deleting local application or recovery data.
+The installer replaces the app bundle without deleting local application or recovery data. It
+checks LaunchServices plus the exact executable path and refuses replacement while Clinch is still
+running, so it cannot swap a bundle out from under a live app.
 
 ## Build and verify from source
 

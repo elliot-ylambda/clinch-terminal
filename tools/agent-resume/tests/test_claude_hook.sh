@@ -12,6 +12,7 @@ install -m 0755 "$HERE/agent-json" "$HERE/clinch-agent-resume" \
 install -m 0644 "$HERE/agent-json.js" "$BIN/"
 
 export WARP_TERMINAL_SESSION_UUID="cc33"
+export WARP_AGENT_RESUME_FAKE_ANCESTRY="claude"
 f="$WARP_AGENT_RESUME_DIR/cc33.json"
 
 # Pin the launch-flag detection off for the plain cases so they are deterministic regardless
@@ -69,9 +70,25 @@ WARP_AGENT_RESUME_FAKE_ARGV="node /x/cli.js --permission-mode acceptEdits" \
   bash -c 'echo "{\"session_id\":\"sess-ddd\",\"cwd\":\"/tmp/repo\",\"hook_event_name\":\"UserPromptSubmit\",\"permission_mode\":\"weird\"}" | "$0"' "$BIN/claude-capture.sh"
 grep -q '"command": "clinch_agent_resume_launch claude sess-ddd --permission-mode acceptEdits"' "$f" || { echo "FAIL: unknown mode did not fall back to argv"; exit 1; }
 
-# Session-id guard: an updater event from a DIFFERENT session must not clobber the entry…
-echo '{"session_id":"sess-intruder","cwd":"/tmp/other","hook_event_name":"UserPromptSubmit","permission_mode":"bypassPermissions"}' | "$BIN/claude-capture.sh"
+# A nested session's updater event must not clobber the outer entry…
+echo '{"session_id":"sess-intruder","cwd":"/tmp/other","hook_event_name":"UserPromptSubmit","permission_mode":"bypassPermissions"}' \
+  | WARP_AGENT_RESUME_FAKE_ANCESTRY="claude,zsh,claude" "$BIN/claude-capture.sh"
 grep -q 'sess-ddd' "$f" || { echo "FAIL: foreign session clobbered the pane entry"; exit 1; }
+
+# …and nested SessionStart is equally non-owning (the production incident happened here).
+echo '{"session_id":"sess-nested-start","cwd":"/private/tmp","hook_event_name":"SessionStart"}' \
+  | WARP_AGENT_RESUME_FAKE_ANCESTRY="claude,zsh,claude" "$BIN/claude-capture.sh"
+grep -q 'sess-ddd' "$f" || { echo "FAIL: nested SessionStart clobbered the pane entry"; exit 1; }
+
+# A detached nested tool may be reparented and lose the outer agent from its ancestry.
+# The live owner PID/tty still prevents a different process from taking over the pane.
+echo '{"session_id":"sess-detached-root","cwd":"/tmp/repo","hook_event_name":"SessionStart"}' \
+  | WARP_AGENT_RESUME_FAKE_OWNER_PID=1111 "$BIN/claude-capture.sh"
+grep -q '"owner_pid": "1111"' "$f" || { echo "FAIL: root owner metadata not recorded"; exit 1; }
+echo '{"session_id":"sess-detached-child","cwd":"/tmp/child","hook_event_name":"SessionStart"}' \
+  | WARP_AGENT_RESUME_FAKE_OWNER_PID=2222 WARP_AGENT_RESUME_FAKE_RECORDED_OWNER_ACTIVE=1 \
+    "$BIN/claude-capture.sh"
+grep -q 'sess-detached-root' "$f" || { echo "FAIL: detached nested agent replaced live owner"; exit 1; }
 
 # …but a missing entry is (re)created — this heals pre-flag registry entries.
 rm -f "$f"
@@ -132,6 +149,17 @@ grep -q 'sess-blank3' "$f" || { echo "FAIL: blank should take over a dead entry"
 echo '{"session_id":"sess-old","cwd":"/tmp/repo"}' | "$BIN/claude-capture.sh"
 echo '{"session_id":"sess-new","cwd":"/tmp/repo"}' | "$BIN/claude-capture.sh"
 grep -q 'sess-new' "$f" || { echo "FAIL: user-started session must still take over"; exit 1; }
+
+# SessionEnd removes only its own root entry, so exited agents do not resurrect. A stale
+# nested/mismatched end and app-shutdown teardown both preserve the outer mapping.
+echo '{"session_id":"sess-other","cwd":"/tmp/repo","hook_event_name":"SessionEnd"}' | "$BIN/claude-capture.sh"
+grep -q 'sess-new' "$f" || { echo "FAIL: mismatched SessionEnd removed outer entry"; exit 1; }
+mkdir -p "$WARP_AGENT_RESUME_DIR"; printf '%s\n' "$$" > "$WARP_AGENT_RESUME_DIR/.app-terminating"
+echo '{"session_id":"sess-new","cwd":"/tmp/repo","hook_event_name":"SessionEnd"}' | "$BIN/claude-capture.sh"
+grep -q 'sess-new' "$f" || { echo "FAIL: app shutdown removed restorable entry"; exit 1; }
+rm -f "$WARP_AGENT_RESUME_DIR/.app-terminating"
+echo '{"session_id":"sess-new","cwd":"/tmp/repo","hook_event_name":"SessionEnd"}' | "$BIN/claude-capture.sh"
+[[ ! -f "$f" ]] || { echo "FAIL: user SessionEnd did not remove owned entry"; exit 1; }
 rm -f "$f"
 
 # --- Prompt mirror ---
@@ -161,7 +189,8 @@ echo '{"session_id":"sess-mm","cwd":"/tmp/repo","hook_event_name":"UserPromptSub
 # The mirror runs BEFORE the pane-ownership guard: a nested session's prompt is mirrored
 # under its own sid even though the pane registry entry is left alone.
 echo '{"session_id":"sess-own","cwd":"/tmp/repo"}' | "$BIN/claude-capture.sh"
-echo '{"session_id":"sess-nested","cwd":"/tmp/repo","hook_event_name":"UserPromptSubmit","permission_mode":"default","prompt":"nested prompt"}' | "$BIN/claude-capture.sh"
+echo '{"session_id":"sess-nested","cwd":"/tmp/repo","hook_event_name":"UserPromptSubmit","permission_mode":"default","prompt":"nested prompt"}' \
+  | WARP_AGENT_RESUME_FAKE_ANCESTRY="claude,zsh,claude" "$BIN/claude-capture.sh"
 grep -q 'sess-own' "$f" || { echo "FAIL: nested session clobbered the pane entry"; exit 1; }
 grep -q 'nested prompt' "$P/sess-nested.jsonl" || { echo "FAIL: nested session prompt not mirrored"; exit 1; }
 

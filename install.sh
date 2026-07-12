@@ -27,6 +27,7 @@ ASSET="Clinch.app.zip"
 CHECKSUM_ASSET="$ASSET.sha256"
 DOWNLOAD_URL="https://github.com/$REPO/releases/latest/download/$ASSET"
 CHECKSUM_URL="https://github.com/$REPO/releases/latest/download/$CHECKSUM_ASSET"
+EXPECTED_BUNDLE_ID="sh.clinch.Clinch"
 
 say() { printf '%s\n' "$*"; }
 fail() {
@@ -34,12 +35,21 @@ fail() {
     exit 1
 }
 
+app_is_running() {
+    [ -n "$("${CLINCH_LSAPPINFO_BIN:-/usr/bin/lsappinfo}" \
+        find "bundleID=$EXPECTED_BUNDLE_ID" 2>/dev/null)" ] && return 0
+    # LaunchServices is authoritative, but retain a path fallback for an abnormal process
+    # it no longer reports. The bracketed grep pattern cannot match the grep process itself.
+    "${CLINCH_PS_BIN:-/bin/ps}" -axo command= 2>/dev/null \
+        | /usr/bin/grep -q '/[C]linch\.app/Contents/MacOS/'
+}
+
 main() {
     [ "$(uname -s)" = "Darwin" ] || fail "$APP_NAME only runs on macOS."
 
     # Refuse to clobber a running app: replacing the bundle under a live
     # process leads to crashes on relaunch.
-    if pgrep -qf "$APP_NAME.app/Contents/MacOS" 2>/dev/null; then
+    if app_is_running; then
         fail "$APP_NAME is currently running. Quit it, then re-run this installer."
     fi
 
@@ -80,7 +90,7 @@ main() {
 
     BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' \
         "$APP_PATH/Contents/Info.plist" 2>/dev/null || true)"
-    [ "$BUNDLE_ID" = "sh.clinch.Clinch" ] \
+    [ "$BUNDLE_ID" = "$EXPECTED_BUNDLE_ID" ] \
         || fail "unexpected app identity '$BUNDLE_ID' in the downloaded bundle."
     codesign --verify --deep --strict "$APP_PATH" 2>/dev/null \
         || fail "the downloaded app's code signature is invalid."

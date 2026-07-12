@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
+use crate::channel::ChannelState;
+
 #[derive(Deserialize)]
 struct RegistryEntry {
     command: String,
@@ -18,6 +20,11 @@ struct RegistryEntry {
 
 const CLINCH_RESUME_LAUNCHER: &str = "clinch_agent_resume_launch";
 const LEGACY_WARP_RESUME_LAUNCHER: &str = "warp_agent_resume_launch";
+
+fn runtime_enabled() -> bool {
+    ChannelState::app_id().to_string() == "sh.clinch.Clinch"
+        || std::env::var_os("CLINCH_AGENT_RESUME_ENABLE").is_some()
+}
 
 /// Installs/refreshes the capture hooks shipped inside the Clinch app bundle.
 ///
@@ -29,6 +36,10 @@ pub fn install_bundled_capture_layer() {
     use std::process::Stdio;
 
     use command::blocking::Command;
+
+    // A graceful previous shutdown intentionally left this marker while PTYs emitted
+    // SessionEnd. It must be gone before the first restored/new agent can exit.
+    clear_app_terminating_marker();
 
     let Some(resources_dir) = warp_core::paths::bundled_resources_dir() else {
         return;
@@ -57,6 +68,8 @@ pub fn install_bundled_capture_layer() {
 struct JournalRecord {
     ts: String,
     op: String,
+    #[serde(default)]
+    pane: Option<String>,
     #[serde(default)]
     command: Option<String>,
     #[serde(default)]
@@ -90,6 +103,78 @@ pub struct ForkLaunch {
 fn registry_dir() -> Option<PathBuf> {
     let home = std::env::var_os("HOME")?;
     Some(Path::new(&home).join(".warp").join("agent-resume"))
+}
+
+const ACTIVE_PANES_FILE: &str = "active-panes";
+const APP_TERMINATING_FILE: &str = ".app-terminating";
+const TOMBSTONES_DIR: &str = "tombstones";
+
+/// Atomically publish the pane UUIDs in the snapshot Clinch is about to persist. Replay
+/// consults this manifest instead of treating every historical registry file as a live
+/// ownership claim.
+pub fn write_active_pane_manifest(app_state: &crate::app_state::AppState) {
+    if !runtime_enabled() {
+        return;
+    }
+    let Some(dir) = registry_dir() else { return };
+    if let Err(err) = write_active_pane_manifest_in(&dir, &app_state.terminal_pane_uuids()) {
+        log::warn!("could not update agent-resume active pane manifest: {err}");
+    }
+}
+
+fn write_active_pane_manifest_in(dir: &Path, uuids: &[Vec<u8>]) -> std::io::Result<()> {
+    let mut pane_ids = uuids.iter().map(hex::encode).collect::<Vec<_>>();
+    pane_ids.sort_unstable();
+    pane_ids.dedup();
+    let contents = if pane_ids.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n", pane_ids.join("\n"))
+    };
+    write_private_atomic(dir, ACTIVE_PANES_FILE, contents.as_bytes())
+}
+
+fn write_private_atomic(dir: &Path, name: &str, contents: &[u8]) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    let temp = dir.join(format!(".{name}.tmp.{}", std::process::id()));
+    std::fs::write(&temp, contents)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o600))?;
+    }
+    std::fs::rename(temp, dir.join(name))
+}
+
+/// Preserve live registry entries while graceful app shutdown sends SIGHUP to agent PTYs.
+/// SessionEnd hooks remove entries for normal user exits, but skip removal while this marker
+/// exists. The next Clinch launch clears it before any pane can start.
+pub fn mark_app_terminating() {
+    if !runtime_enabled() {
+        return;
+    }
+    let Some(dir) = registry_dir() else { return };
+    if let Err(err) = write_private_atomic(
+        &dir,
+        APP_TERMINATING_FILE,
+        format!("{}\n", std::process::id()).as_bytes(),
+    ) {
+        log::warn!("could not mark agent-resume app shutdown: {err}");
+    }
+}
+
+fn clear_app_terminating_marker() {
+    let Some(dir) = registry_dir() else { return };
+    match std::fs::remove_file(dir.join(APP_TERMINATING_FILE)) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => log::warn!("could not clear agent-resume app shutdown marker: {err}"),
+    }
 }
 
 fn read_entry_in(dir: &Path, uuid_hex: &str) -> Option<RegistryEntry> {
@@ -171,6 +256,48 @@ fn read_fork_launch_in(dir: &Path, uuid_hex: &str) -> Option<ForkLaunch> {
 pub fn read_on_restore_command(uuid: &[u8]) -> Option<String> {
     let dir = registry_dir()?;
     read_command_in(&dir, &hex::encode(uuid))
+}
+
+/// Reconcile a persisted command with the mutable registry at launch. The registry may be
+/// newer than SQLite when an agent starts immediately before quit, while an explicit journaled
+/// remove means an older SQLite command must not resurrect an agent the user already exited.
+pub fn resolve_on_restore_command(
+    uuid: &[u8],
+    persisted_command: Option<String>,
+) -> Option<String> {
+    if !runtime_enabled() {
+        return persisted_command.map(normalize_restore_command);
+    }
+    let Some(dir) = registry_dir() else {
+        return persisted_command.map(normalize_restore_command);
+    };
+    let uuid_hex = hex::encode(uuid);
+    resolve_on_restore_command_in(&dir, &uuid_hex, persisted_command)
+}
+
+fn resolve_on_restore_command_in(
+    dir: &Path,
+    uuid_hex: &str,
+    persisted_command: Option<String>,
+) -> Option<String> {
+    if let Some(command) = read_command_in(dir, uuid_hex) {
+        return Some(command);
+    }
+    if dir.join(TOMBSTONES_DIR).join(uuid_hex).is_file() {
+        return None;
+    }
+    if latest_journal_op_for_pane(dir, uuid_hex).as_deref() == Some("remove") {
+        return None;
+    }
+    persisted_command.map(normalize_restore_command)
+}
+
+fn latest_journal_op_for_pane(dir: &Path, uuid_hex: &str) -> Option<String> {
+    let contents = std::fs::read_to_string(dir.join("journal.jsonl")).ok()?;
+    contents.lines().rev().find_map(|line| {
+        let record = serde_json::from_str::<JournalRecord>(line).ok()?;
+        (record.pane.as_deref() == Some(uuid_hex)).then_some(record.op)
+    })
 }
 
 /// Returns the fork launch (command + cwd) for `uuid`, if the pane has a forkable

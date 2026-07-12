@@ -5,7 +5,8 @@ set -euo pipefail
 # A release invoked from inside an older Make/agent process can inherit stale recursive-Make
 # flags or a previously exported release-note blob. Keep build scripts independent of that
 # parent environment; the current Makefile exports its own notes only for the publish command.
-unset RELEASE_NOTES MAKEFLAGS MFLAGS MAKELEVEL MAKEOVERRIDES
+unset RELEASE_NOTES MAKEFLAGS MFLAGS GNUMAKEFLAGS MAKELEVEL MAKEOVERRIDES \
+  MAKE_TERMOUT MAKE_TERMERR
 
 for tool in cargo cargo-nextest cargo-deny; do
   command -v "$tool" >/dev/null 2>&1 || {

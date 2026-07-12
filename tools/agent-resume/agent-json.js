@@ -72,6 +72,8 @@ function registryEntry(argv) {
     const command = asString(argv[0], "");
     const cwd = asString(argv[1], "");
     const bridge = asString(argv[2], "");
+    const ownerPid = asString(argv[3], "");
+    const ownerTty = asString(argv[4], "");
     // Retain the human-readable spacing used by existing registry files while
     // delegating complete string escaping to JSON.stringify.
     const fields = [
@@ -81,7 +83,28 @@ function registryEntry(argv) {
     if (bridge) {
         fields.push("\"bridge\": " + JSON.stringify(bridge));
     }
+    if (ownerPid) {
+        fields.push("\"owner_pid\": " + JSON.stringify(ownerPid));
+    }
+    if (ownerTty) {
+        fields.push("\"owner_tty\": " + JSON.stringify(ownerTty));
+    }
     return "{ " + fields.join(", ") + " }";
+}
+
+function registryFields(argv) {
+    const path = argv[0];
+    if (!path) {
+        throw new Error("registry-fields requires a registry entry path");
+    }
+    const entry = parseObject(readFile(path), "registry entry");
+    return [
+        base64(asString(entry.command, "")),
+        base64(asString(entry.cwd, "")),
+        base64(asString(entry.bridge, "")),
+        base64(asString(entry.owner_pid, "")),
+        base64(asString(entry.owner_tty, "")),
+    ].join("|");
 }
 
 function journalLine(operation, argv) {
@@ -171,7 +194,7 @@ function wireClaude(argv) {
         });
     });
 
-    ["SessionStart", "UserPromptSubmit", "Stop"].forEach(function (eventName) {
+    ["SessionStart", "UserPromptSubmit", "Stop", "SessionEnd"].forEach(function (eventName) {
         if (!Array.isArray(settings.hooks[eventName])) {
             settings.hooks[eventName] = [];
         }
@@ -181,6 +204,62 @@ function wireClaude(argv) {
     });
 
     return JSON.stringify(settings, null, 2) + "\n";
+}
+
+// Return one pane's journaled writes newest-first. Fields are base64 encoded and
+// pipe-delimited so Bash 3.2 can consume arbitrary cwd/flag text without jq. A later
+// scrub-bridge record clears that bridge from older candidates, while a still-later
+// write may legitimately add it again.
+function paneHistory(argv) {
+    const directory = argv[0];
+    const pane = asString(argv[1], "");
+    const agent = asString(argv[2], "");
+    if (!directory || !pane || !agent) {
+        throw new Error("pane-history requires directory, pane, and agent");
+    }
+
+    const writes = [];
+    const clearedAt = {};
+    let sequence = 0;
+    parseJsonLines(readFile(directory + "/journal.jsonl"), function (row) {
+        sequence += 1;
+        if (!row || row.pane !== pane || typeof row.command !== "string") {
+            return;
+        }
+        const match = row.command.match(
+            /(?:clinch|warp)_agent_resume_launch\s+(claude|codex)\s+([A-Za-z0-9-]+)/,
+        );
+        if (!match || match[1] !== agent) {
+            return;
+        }
+        const bridge = asString(row.bridge, "");
+        const key = match[2] + "\u0000" + bridge;
+        if (row.op === "scrub-bridge" && bridge) {
+            clearedAt[key] = sequence;
+            return;
+        }
+        if (row.op === "write") {
+            writes.push({
+                sequence: sequence,
+                command: row.command,
+                cwd: asString(row.cwd, ""),
+                bridge: bridge,
+                key: key,
+            });
+        }
+    });
+
+    writes.sort(function (a, b) {
+        return b.sequence - a.sequence;
+    });
+    return writes.map(function (row) {
+        const cleared = row.bridge && clearedAt[row.key] > row.sequence;
+        return [
+            base64(row.command),
+            base64(row.cwd),
+            base64(cleared ? "" : row.bridge),
+        ].join("|");
+    }).join("\n");
 }
 
 function parseJsonLines(text, callback) {
@@ -340,6 +419,8 @@ function run(argv) {
         return wireClaude(argv);
     case "registry-entry":
         return registryEntry(argv);
+    case "registry-fields":
+        return registryFields(argv);
     case "journal-write":
         return journalLine("write", argv);
     case "journal-remove":
@@ -350,6 +431,8 @@ function run(argv) {
         return journalScrub(argv);
     case "list":
         return listConversations(argv);
+    case "pane-history":
+        return paneHistory(argv);
     default:
         throw new Error("unknown agent-json command: " + (command || "<empty>"));
     }

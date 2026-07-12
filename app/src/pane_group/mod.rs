@@ -1589,6 +1589,11 @@ impl PaneGroup {
             LeafContents::Terminal(terminal_snapshot) => {
                 let uuid = PaneUuid(terminal_snapshot.uuid.clone());
                 let block_list = block_lists.get(&uuid);
+                #[cfg(feature = "local_tty")]
+                let on_restore_command = crate::agent_resume::resolve_on_restore_command(
+                    &uuid.0,
+                    terminal_snapshot.on_restore_command.clone(),
+                );
 
                 let chosen_shell = terminal_snapshot
                     .shell_launch_data
@@ -1676,7 +1681,7 @@ impl PaneGroup {
                 // `claude --resume <id>`) once the restored shell finishes bootstrapping.
                 #[cfg(feature = "local_tty")]
                 {
-                    if let Some(on_restore_command) = terminal_snapshot.on_restore_command.clone() {
+                    if let Some(on_restore_command) = on_restore_command {
                         let manager_handle = pane_data.terminal_manager(ctx);
                         manager_handle.update(ctx, |terminal_manager, ctx| {
                             if let Some(manager) = terminal_manager
