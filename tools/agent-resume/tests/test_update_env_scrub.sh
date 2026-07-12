@@ -24,6 +24,7 @@ export CLAUDE_CODE_FUTURE_ID="future-name-proves-dynamic-scrub"
 export CLAUDECODE=1
 export CLAUDE_EFFORT=xhigh
 export AI_AGENT=claude-code_stale
+export WARP_AGENT_RESUME_STARTED_FRESH=1
 export MAKEFLAGS=n
 export MFLAGS=-n
 export MAKELEVEL=2
@@ -34,7 +35,7 @@ clinch_scrubbed_open "/Applications/Fake App.app"
 
 for name in CLAUDE_CODE_SESSION_ID CLAUDE_CODE_BRIDGE_SESSION_ID \
   CLAUDE_CODE_FUTURE_ID CLAUDECODE CLAUDE_EFFORT AI_AGENT \
-  MAKEFLAGS MFLAGS MAKELEVEL SKIP_SYNC; do
+  WARP_AGENT_RESUME_STARTED_FRESH MAKEFLAGS MFLAGS MAKELEVEL SKIP_SYNC; do
   grep -q "^${name}=" "$TMP/captured_env" \
     && { echo "FAIL: relaunch leaked $name"; exit 1; }
 done

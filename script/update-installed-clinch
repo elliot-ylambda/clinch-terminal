@@ -79,6 +79,9 @@ snapshot_session_state() (
 # Enumerate CLAUDE_CODE_* dynamically because Claude adds names over time. This is a full
 # app reset, so Claude-wide markers/tuning are removed here too; the pane-level wrapper in
 # tools/agent-resume/claude.zsh is intentionally narrower.
+# `WARP_AGENT_RESUME_STARTED_FRESH` is also per-launch identity: if it leaked from the
+# calling Claude session, restored panes could incorrectly bypass the registry ownership
+# guard on their first prompt.
 #
 # Make's process-control variables must also stay out of the app (MAKEFLAGS=n would make
 # later Make invocations dry-runs), as must the release-only SKIP_SYNC override.
@@ -86,6 +89,7 @@ snapshot_session_state() (
 clinch_scrubbed_open() {
   local bundle="$1" name
   local -a scrub_args=(
+    -u WARP_AGENT_RESUME_STARTED_FRESH
     -u MAKEFLAGS
     -u MFLAGS
     -u GNUMAKEFLAGS
