@@ -53,21 +53,10 @@ runs:
           echo "is-workspace-root=false" >> $GITHUB_OUTPUT
         fi
 
-    # Materialize Git LFS objects
-    - name: Fetch Git LFS objects
-      shell: bash
-      run: |
-        cd "${{ steps.repo-root.outputs.path }}"
-        git lfs install --local
-        git lfs pull
-
-    # Print a per-file listing of the LFS payloads in debug mode
-    - name: Verify LFS payloads
-      if: ${{ runner.debug == '1' }}
-      shell: bash
-      run: |
-        cd "${{ steps.repo-root.outputs.path }}"
-        git lfs ls-files --size
+    # No Git LFS materialization: this fork's LFS store has no objects (the
+    # upstream *.pdb / input_classifier onnx payloads were never pushed to it),
+    # so `git lfs pull` fails, and every shipped Clinch build compiles from the
+    # committed pointer files anyway. CI must match that proven state.
 
     - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       if: ${{ inputs.is_self_hosted != 'true' && !startsWith(runner.name, 'nsc-runner') }}
