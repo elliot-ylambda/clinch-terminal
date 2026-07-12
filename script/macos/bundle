@@ -712,7 +712,12 @@ if [[ $SELFSIGN = true ]]; then
   fi
   # SelfSign-Entitlements (not Debug-Entitlements): shipped bundles must not
   # carry get-task-allow, or macOS never persists Keychain "Always Allow"
-  # grants and re-prompts on every cross-app Keychain read.
+  # grants and re-prompts on every cross-app Keychain read. They also must not
+  # carry cs.disable-library-validation (the other debug-only relaxation, kept
+  # for dev builds so freshly compiled artifacts load): the shipped bundle
+  # contains no dylibs or frameworks — only system libraries, which always
+  # pass library validation — and disabling validation would let unsigned
+  # code be injected into a process holding Keychain access.
   if [[ "$ARTIFACT" == app ]]; then
     echo "Self-signing $BUNDLE_DIR/$WARP_APP_NAME.app with ${SIGNING_CERT}..."
     codesign --force --deep --options runtime --sign "$SIGNING_CERT" "$BUNDLE_DIR/$WARP_APP_NAME.app" --entitlements script/SelfSign-Entitlements.plist
