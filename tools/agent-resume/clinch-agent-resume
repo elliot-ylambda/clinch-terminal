@@ -6,6 +6,203 @@ BIN="$(cd "$(dirname "$0")" && pwd)"
 
 now_utc() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
+decode64() { printf '%s' "$1" | /usr/bin/base64 -D 2>/dev/null; }
+
+valid_uuid() { [[ "${1:-}" =~ ^[A-Za-z0-9-]+$ ]]; }
+valid_agent() { [[ "${1:-}" == "claude" || "${1:-}" == "codex" ]]; }
+
+entry_fields() {
+  [[ -f "$1" ]] || return 1
+  "$BIN/agent-json" registry-fields "$1" 2>/dev/null
+}
+
+parse_launch_command() {
+  local command_str="$1"
+  if [[ "$command_str" =~ ^(clinch|warp)_agent_resume_launch[[:space:]]+(claude|codex)[[:space:]]+([A-Za-z0-9-]+)($|[[:space:]]) ]]; then
+    PARSED_AGENT="${BASH_REMATCH[2]}"
+    PARSED_SESSION="${BASH_REMATCH[3]}"
+    return 0
+  fi
+  return 1
+}
+
+session_resumable() {
+  local agent="$1" sid="$2" f=""
+  case "$agent" in
+    claude)
+      f="$(find "${WARP_AGENT_RESUME_CLAUDE_PROJECTS:-$HOME/.claude/projects}" \
+        -name "$sid.jsonl" -print -quit 2>/dev/null)"
+      [[ -n "$f" ]] && grep -Eq '"type":"(user|assistant)"' "$f"
+      ;;
+    codex)
+      f="$(find "${WARP_AGENT_RESUME_CODEX_SESSIONS:-$HOME/.codex/sessions}" \
+        -name "*-$sid.jsonl" -print -quit 2>/dev/null)"
+      [[ -n "$f" ]] && grep -Eq '"role":"(user|assistant)"' "$f"
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+agent_comm() {
+  local name="${1##*/}"
+  name="${name#-}"
+  [[ "$name" == "claude" || "$name" == "codex" ]]
+}
+
+# Print the nearest owning agent PID and tty. Hooks are children of the owning CLI, so one
+# Claude/Codex ancestor is expected; two means this CLI was launched beneath another agent.
+# The persisted owner also closes the detached-child gap: a reparented tool can lose its
+# agent ancestor, but it still cannot displace a different live owner recorded for the pane.
+hook_owner_fields() {
+  local pid ppid comm tty hops=0 count=0 owner_pid=""
+  if [[ -n "${WARP_AGENT_RESUME_FAKE_ANCESTRY+x}" ]]; then
+    local part
+    IFS=',' read -ra parts <<<"$WARP_AGENT_RESUME_FAKE_ANCESTRY"
+    for part in "${parts[@]}"; do
+      agent_comm "$part" && count=$((count + 1))
+    done
+    (( count == 1 )) || return 1
+    owner_pid="${WARP_AGENT_RESUME_FAKE_OWNER_PID:-$PPID}"
+    tty="${WARP_AGENT_RESUME_FAKE_TTY:-ttys-test}"
+  else
+    pid="$PPID"
+    while [[ -n "$pid" && "$pid" -gt 1 && "$hops" -lt 32 ]]; do
+      comm="$(/bin/ps -o comm= -p "$pid" 2>/dev/null | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+      if agent_comm "$comm"; then
+        count=$((count + 1))
+        [[ -n "$owner_pid" ]] || owner_pid="$pid"
+      fi
+      (( count > 1 )) && return 1
+      ppid="$(/bin/ps -o ppid= -p "$pid" 2>/dev/null | tr -d '[:space:]')"
+      [[ -n "$ppid" && "$ppid" != "$pid" ]] || break
+      pid="$ppid"
+      hops=$((hops + 1))
+    done
+    [[ "$count" -eq 1 && "$owner_pid" =~ ^[0-9]+$ ]] || return 1
+    tty="$(/bin/ps -o tty= -p "$owner_pid" 2>/dev/null | tr -d '[:space:]')"
+  fi
+
+  local pane="${WARP_TERMINAL_SESSION_UUID:-}" fields command64 cwd64 bridge64
+  local recorded_pid64 recorded_tty64 recorded_pid recorded_tty recorded_comm actual_tty
+  if valid_uuid "$pane" && fields="$(entry_fields "$DIR/$pane.json")"; then
+    IFS='|' read -r command64 cwd64 bridge64 recorded_pid64 recorded_tty64 <<<"$fields"
+    recorded_pid="$(decode64 "${recorded_pid64:-}")"
+    recorded_tty="$(decode64 "${recorded_tty64:-}")"
+    if [[ "$recorded_pid" =~ ^[0-9]+$ && "$recorded_pid" != "$owner_pid" && -n "$recorded_tty" ]]; then
+      if [[ "${WARP_AGENT_RESUME_FAKE_RECORDED_OWNER_ACTIVE:-}" == "1" ]]; then
+        return 1
+      fi
+      recorded_comm="$(
+        /bin/ps -o comm= -p "$recorded_pid" 2>/dev/null \
+          | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' || true
+      )"
+      actual_tty="$(/bin/ps -o tty= -p "$recorded_pid" 2>/dev/null | tr -d '[:space:]' || true)"
+      if agent_comm "$recorded_comm" && [[ "$actual_tty" == "$recorded_tty" ]]; then
+        return 1
+      fi
+    fi
+  fi
+
+  printf '%s|%s\n' "$owner_pid" "$(printf '%s' "$tty" | /usr/bin/base64 | tr -d '\n')"
+}
+
+is_nested_hook() {
+  ! hook_owner_fields >/dev/null
+}
+
+process_has_agent_ancestor() {
+  local pid="$1" ppid comm hops=0
+  ppid="$(/bin/ps -o ppid= -p "$pid" 2>/dev/null | tr -d '[:space:]')"
+  while [[ -n "$ppid" && "$ppid" -gt 1 && "$hops" -lt 32 ]]; do
+    comm="$(/bin/ps -o comm= -p "$ppid" 2>/dev/null | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    agent_comm "$comm" && return 0
+    pid="$ppid"
+    ppid="$(/bin/ps -o ppid= -p "$pid" 2>/dev/null | tr -d '[:space:]')"
+    hops=$((hops + 1))
+  done
+  return 1
+}
+
+elapsed_seconds() {
+  local value="$1" days=0 hours=0 minutes=0 seconds=0
+  if [[ "$value" == *-* ]]; then
+    days="${value%%-*}"
+    value="${value#*-}"
+  fi
+  local -a parts
+  IFS=: read -ra parts <<<"$value"
+  case "${#parts[@]}" in
+    3) hours="${parts[0]}"; minutes="${parts[1]}"; seconds="${parts[2]}" ;;
+    2) minutes="${parts[0]}"; seconds="${parts[1]}" ;;
+    *) seconds="${parts[0]:-0}" ;;
+  esac
+  printf '%s\n' "$((10#$days * 86400 + 10#$hours * 3600 + 10#$minutes * 60 + 10#$seconds))"
+}
+
+same_directory() {
+  local left="$1" right="$2" left_real right_real
+  [[ -n "$left" && -n "$right" ]] || return 1
+  [[ "$left" == "$right" ]] && return 0
+  [[ -d "$left" && -d "$right" ]] || return 1
+  left_real="$(cd "$left" 2>/dev/null && pwd -P)" || return 1
+  right_real="$(cd "$right" 2>/dev/null && pwd -P)" || return 1
+  [[ "$left_real" == "$right_real" ]]
+}
+
+app_termination_active() {
+  local marker="$DIR/.app-terminating" pid active=1
+  [[ -f "$marker" ]] || return 1
+  while read -r pid; do
+    [[ "$pid" =~ ^[0-9]+$ ]] || continue
+    if /bin/kill -0 "$pid" 2>/dev/null; then
+      active=0
+      break
+    fi
+  done < "$marker"
+  if (( active )); then
+    # A marker left by a crashed/fully-exited Clinch must not suppress normal SessionEnd
+    # cleanup in another terminal. The next app launch also clears it proactively.
+    rm -f "$marker"
+  fi
+  return "$active"
+}
+
+build_live_map() {
+  local out="$1" processes candidates pid elapsed comm provider uuid cwd cwd64 age
+  if [[ -n "${WARP_AGENT_RESUME_LIVE_MAP:-}" ]]; then
+    cp "$WARP_AGENT_RESUME_LIVE_MAP" "$out"
+    return
+  fi
+  processes="${out}.processes"
+  candidates="${out}.candidates"
+  /bin/ps -axo pid=,etime=,comm= > "$processes" || return 1
+  : > "$candidates"
+  while read -r pid elapsed comm; do
+    comm="${comm##*/}"
+    comm="${comm#-}"
+    case "$comm" in claude|codex) provider="$comm" ;; *) continue ;; esac
+    process_has_agent_ancestor "$pid" && continue
+    uuid="$(/bin/ps eww -p "$pid" -o command= 2>/dev/null \
+      | tr ' ' '\n' \
+      | sed -nE 's/^WARP_TERMINAL_SESSION_UUID=([A-Za-z0-9-]+)$/\1/p' \
+      | head -1 || true)"
+    valid_uuid "$uuid" || continue
+    cwd="$("${WARP_AGENT_RESUME_LSOF_BIN:-/usr/sbin/lsof}" \
+      -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1 || true)"
+    cwd64="$(printf '%s' "$cwd" | /usr/bin/base64 | tr -d '\n')"
+    age="$(elapsed_seconds "$elapsed")"
+    printf '%s\t%s\t%s\t%s\n' "$uuid" "$provider" "$cwd64" "$age" >> "$candidates"
+  done < "$processes"
+  # Detached agent tools can inherit the pane UUID yet have their own PTY, so ancestry
+  # alone is insufficient. The visible outer CLI is the oldest surviving root process for
+  # that pane; a later detached child cannot displace it.
+  awk -F '\t' \
+    '!($1 in age) || $4 > age[$1] { age[$1] = $4; row[$1] = $1 FS $2 FS $3 }
+     END { for (pane in row) print row[pane] }' \
+    "$candidates" > "$out"
+  rm -f "$processes" "$candidates"
+}
+
 # Append one line to the registry journal ($DIR/journal.jsonl). Pane entries are single
 # mutable files -- the next session in a pane overwrites them -- so the journal is the
 # append-only history that keeps every (pane, session, bridge, cwd) tuple ever recorded
@@ -20,36 +217,229 @@ journal_append() {
   ( umask 077; printf '%s\n' "$1" >> "$DIR/journal.jsonl" ) 2>/dev/null || true
 }
 
+write_entry() {
+  local uuid="$1" command_str="$2" cwd="$3" bridge="${4:-}"
+  local owner_pid="${5:-}" owner_tty="${6:-}"
+  mkdir -p "$DIR"; chmod 700 "$DIR"
+  local tmp="$DIR/$uuid.json.tmp.$$"
+  "$BIN/agent-json" registry-entry \
+    "$command_str" "$cwd" "$bridge" "$owner_pid" "$owner_tty" > "$tmp"
+  printf '\n' >> "$tmp"
+  chmod 600 "$tmp"
+  mv -f "$tmp" "$DIR/$uuid.json"
+  rm -f "$DIR/tombstones/$uuid"
+  journal_append "$("$BIN/agent-json" journal-write "$(now_utc)" "$uuid" "$command_str" "$cwd" "$bridge")"
+}
+
+write_removal_tombstone() {
+  local uuid="$1" tombstones="$DIR/tombstones" tmp
+  mkdir -p "$tombstones"; chmod 700 "$tombstones"
+  tmp="$tombstones/$uuid.tmp.$$"
+  ( umask 077; printf '%s\n' "$(now_utc)" > "$tmp" )
+  chmod 600 "$tmp"
+  mv -f "$tmp" "$tombstones/$uuid"
+}
+
+remove_entry() {
+  local uuid="$1"
+  if [[ -f "$DIR/$uuid.json" ]]; then
+    # The append-only journal is deliberately fail-open, so it cannot be the only signal
+    # that suppresses an older SQLite command. Publish a required per-pane tombstone first;
+    # a failed tombstone leaves the entry intact instead of risking resurrection.
+    write_removal_tombstone "$uuid"
+    journal_append "$("$BIN/agent-json" journal-remove "$(now_utc)" "$uuid")"
+    rm -f "$DIR/$uuid.json"
+  fi
+}
+
+entry_matches() {
+  local file="$1" agent="$2" sid="$3" fields command64 ignored
+  fields="$(entry_fields "$file")" || return 1
+  IFS='|' read -r command64 ignored <<<"$fields"
+  parse_launch_command "$(decode64 "$command64")" || return 1
+  [[ "$PARSED_AGENT" == "$agent" && "$PARSED_SESSION" == "$sid" ]]
+}
+
+entry_owner_alive() {
+  local file="$1" fields command64 cwd64 bridge64 owner_pid64 owner_tty64
+  local owner_pid owner_tty actual_tty
+  fields="$(entry_fields "$file")" || return 1
+  IFS='|' read -r command64 cwd64 bridge64 owner_pid64 owner_tty64 <<<"$fields"
+  owner_pid="$(decode64 "${owner_pid64:-}")"
+  owner_tty="$(decode64 "${owner_tty64:-}")"
+  [[ "$owner_pid" =~ ^[0-9]+$ && -n "$owner_tty" ]] || return 1
+  /bin/kill -0 "$owner_pid" 2>/dev/null || return 1
+  actual_tty="$(/bin/ps -o tty= -p "$owner_pid" 2>/dev/null | tr -d '[:space:]' || true)"
+  [[ "$actual_tty" == "$owner_tty" ]]
+}
+
+scrub_pane_bridge() {
+  local uuid="$1" bridge="$2" f="$DIR/$uuid.json" rewritten journal tmp
+  [[ -f "$f" ]] || return 0
+  rewritten="$("$BIN/agent-json" scrub-bridge-entry "$f" "$bridge")"
+  [[ -n "$rewritten" ]] || return 0
+  journal="$("$BIN/agent-json" journal-scrub "$(now_utc)" "$uuid" "$f" "$bridge")"
+  [[ -n "$journal" ]] && journal_append "$journal"
+  tmp="$f.tmp.$$"
+  printf '%s\n' "$rewritten" > "$tmp"
+  chmod 600 "$tmp"
+  mv -f "$tmp" "$f"
+}
+
+repair_duplicate_bridges() {
+  local active_file="$1" rows bridges uuid fields command64 cwd64 bridge64 command_str cwd bridge
+  local owner_pid64 owner_tty64
+  local owner owner_uuid owner_command64 owner_cwd64 owner_owner_pid64 owner_owner_tty64
+  local row agent sid
+  rows="$(mktemp "$DIR/.repair-rows.XXXXXX")"
+  bridges="$(mktemp "$DIR/.repair-bridges.XXXXXX")"
+  while read -r uuid; do
+    valid_uuid "$uuid" || continue
+    fields="$(entry_fields "$DIR/$uuid.json")" || continue
+    IFS='|' read -r command64 cwd64 bridge64 owner_pid64 owner_tty64 <<<"$fields"
+    bridge="$(decode64 "$bridge64")"
+    [[ "$bridge" == session_* ]] || continue
+    command_str="$(decode64 "$command64")"
+    parse_launch_command "$command_str" || continue
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$uuid" "$bridge64" "$PARSED_AGENT" "$PARSED_SESSION" \
+      "$command64" "$cwd64" "$owner_pid64" "$owner_tty64" >> "$rows"
+  done < "$active_file"
+
+  cut -f2 "$rows" | sort | uniq -d > "$bridges"
+  while read -r bridge64; do
+    [[ -n "$bridge64" ]] || continue
+    owner=""
+    while IFS=$'\t' read -r uuid row agent sid command64 cwd64 owner_pid64 owner_tty64; do
+      [[ "$row" == "$bridge64" ]] || continue
+      if session_resumable "$agent" "$sid"; then
+        owner="$uuid"$'\t'"$command64"$'\t'"$cwd64"$'\t'"$owner_pid64"$'\t'"$owner_tty64"
+        break
+      fi
+    done < "$rows"
+    [[ -n "$owner" ]] || continue
+    bridge="$(decode64 "$bridge64")"
+    while IFS=$'\t' read -r uuid row agent sid command64 cwd64 owner_pid64 owner_tty64; do
+      [[ "$row" == "$bridge64" ]] || continue
+      scrub_pane_bridge "$uuid" "$bridge"
+    done < "$rows"
+    IFS=$'\t' read -r owner_uuid owner_command64 owner_cwd64 owner_owner_pid64 owner_owner_tty64 <<<"$owner"
+    write_entry "$owner_uuid" "$(decode64 "$owner_command64")" \
+      "$(decode64 "$owner_cwd64")" "$bridge" \
+      "$(decode64 "${owner_owner_pid64:-}")" "$(decode64 "${owner_owner_tty64:-}")"
+  done < "$bridges"
+  rm -f "$rows" "$bridges"
+}
+
+repair_live_registry() {
+  local active_file="${WARP_AGENT_RESUME_ACTIVE_PANES_FILE:-$DIR/active-panes}"
+  [[ -f "$active_file" ]] || { echo "repair-live: active pane manifest missing" >&2; return 1; }
+  mkdir -p "$DIR"; chmod 700 "$DIR"
+  local live_map
+  live_map="$(mktemp "$DIR/.repair-live.XXXXXX")"
+  build_live_map "$live_map" || { rm -f "$live_map"; echo "repair-live: process scan failed" >&2; return 1; }
+
+  repair_duplicate_bridges "$active_file"
+
+  local uuid expected expected_cwd64 expected_cwd fields command64 cwd64 bridge64
+  local owner_pid64 owner_tty64
+  local command_str current_agent current_sid current_cwd provider_matches cwd_matches
+  local history command cwd bridge candidate_agent candidate_sid repaired=0 removed=0
+  while read -r uuid; do
+    valid_uuid "$uuid" || continue
+    IFS=$'\t' read -r expected expected_cwd64 <<<"$(
+      awk -F '\t' -v pane="$uuid" '$1 == pane { print $2 "\t" $3; exit }' "$live_map"
+    )"
+    if [[ -z "$expected" ]]; then
+      if [[ -f "$DIR/$uuid.json" ]]; then
+        # A provider rename or transient process-scan race must not erase a mapping whose
+        # hook-recorded owner PID is still alive on the same tty.
+        entry_owner_alive "$DIR/$uuid.json" && continue
+        remove_entry "$uuid"
+        removed=$((removed + 1))
+      fi
+      continue
+    fi
+    valid_agent "$expected" || continue
+    fields="$(entry_fields "$DIR/$uuid.json")" || continue
+    IFS='|' read -r command64 cwd64 bridge64 owner_pid64 owner_tty64 <<<"$fields"
+    command_str="$(decode64 "$command64")"
+    parse_launch_command "$command_str" || continue
+    current_agent="$PARSED_AGENT"; current_sid="$PARSED_SESSION"
+    current_cwd="$(decode64 "$cwd64")"
+    expected_cwd="$(decode64 "${expected_cwd64:-}")"
+    provider_matches=0; cwd_matches=0
+    [[ "$current_agent" == "$expected" ]] && provider_matches=1
+    if [[ -z "$expected_cwd" ]] || same_directory "$current_cwd" "$expected_cwd"; then
+      cwd_matches=1
+    fi
+    (( provider_matches && cwd_matches )) && continue
+
+    history="$("$BIN/agent-json" pane-history "$DIR" "$uuid" "$expected" 2>/dev/null)"
+    while IFS='|' read -r command64 cwd64 bridge64; do
+      [[ -n "$command64" ]] || continue
+      command="$(decode64 "$command64")"
+      cwd="$(decode64 "$cwd64")"
+      bridge="$(decode64 "$bridge64")"
+      parse_launch_command "$command" || continue
+      candidate_agent="$PARSED_AGENT"; candidate_sid="$PARSED_SESSION"
+      [[ "$candidate_agent" == "$expected" ]] || continue
+      if [[ -n "$expected_cwd" ]] && ! same_directory "$cwd" "$expected_cwd"; then
+        continue
+      fi
+      if session_resumable "$candidate_agent" "$candidate_sid" || [[ "$bridge" == session_* ]]; then
+        write_entry "$uuid" "$command" "$cwd" "$bridge"
+        repaired=$((repaired + 1))
+        break
+      fi
+    done <<<"$history"
+  done < "$active_file"
+  rm -f "$live_map"
+  echo "repaired $repaired pane mappings; removed $removed inactive mappings"
+}
+
 cmd="${1:-}"; shift || true
 case "$cmd" in
   write)
     uuid="$1"; command_str="$2"; cwd="$3"; bridge="${4:-}"
-    [[ "$uuid" =~ ^[A-Za-z0-9-]+$ ]] \
+    owner_pid="${5:-}"; owner_tty="${6:-}"
+    valid_uuid "$uuid" \
       || { echo "write: invalid pane uuid" >&2; exit 2; }
-    mkdir -p "$DIR"; chmod 700 "$DIR"
-    tmp="$DIR/$uuid.json.tmp.$$"
+    [[ -z "$owner_pid" || "$owner_pid" =~ ^[0-9]+$ ]] \
+      || { echo "write: invalid owner pid" >&2; exit 2; }
     # `bridge` is the claude.ai cloud-copy id (CLAUDE_CODE_BRIDGE_SESSION_ID). The cloud
     # copy can contain remotely continued turns and remains the authority for bridged
     # sessions, so replay surfaces this URL when local resume cannot help. agent-json
     # performs complete escaping using macOS's built-in JXA runtime.
-    "$BIN/agent-json" registry-entry "$command_str" "$cwd" "$bridge" > "$tmp"
-    printf '\n' >> "$tmp"
-    chmod 600 "$tmp"
-    mv -f "$tmp" "$DIR/$uuid.json"
-    # Journal after the entry lands so the journal never claims a write that failed.
-    # `bridge` is always present (empty string when unbridged) to keep lines uniform.
-    journal_append "$("$BIN/agent-json" journal-write "$(now_utc)" "$uuid" "$command_str" "$cwd" "$bridge")"
+    write_entry "$uuid" "$command_str" "$cwd" "$bridge" "$owner_pid" "$owner_tty"
     ;;
   remove)
     uuid="$1"
-    [[ "$uuid" =~ ^[A-Za-z0-9-]+$ ]] \
+    valid_uuid "$uuid" \
       || { echo "remove: invalid pane uuid" >&2; exit 2; }
     # Journal before deleting (a remove that dies mid-way must still be on record), but
     # only when the entry exists: idempotent re-removes should not spam the journal.
-    if [[ -f "$DIR/$uuid.json" ]]; then
-      journal_append "$("$BIN/agent-json" journal-remove "$(now_utc)" "$uuid")"
+    remove_entry "$uuid"
+    ;;
+  remove-if-matches)
+    uuid="$1"; agent="$2"; sid="$3"
+    valid_uuid "$uuid" && valid_agent "$agent" && [[ "$sid" =~ ^[A-Za-z0-9-]+$ ]] \
+      || { echo "remove-if-matches: invalid arguments" >&2; exit 2; }
+    if entry_matches "$DIR/$uuid.json" "$agent" "$sid"; then
+      remove_entry "$uuid"
     fi
-    rm -f "$DIR/$uuid.json"
+    ;;
+  is-nested-agent)
+    is_nested_hook
+    ;;
+  hook-owner-fields)
+    hook_owner_fields
+    ;;
+  app-terminating)
+    app_termination_active
+    ;;
+  repair-live)
+    repair_live_registry
     ;;
   scrub-bridge)
     # Cleanup for registry entries poisoned by the 2026-07-09 inherited-bridge leak.
@@ -60,16 +450,11 @@ case "$cmd" in
     shopt -s nullglob
     n=0
     for f in "$DIR"/*.json; do
-      rewritten="$("$BIN/agent-json" scrub-bridge-entry "$f" "$bridge")"
-      [[ -n "$rewritten" ]] || continue
       uuid="$(basename "${f%.json}")"
-      journal="$("$BIN/agent-json" journal-scrub "$(now_utc)" "$uuid" "$f" "$bridge")"
-      [[ -n "$journal" ]] && journal_append "$journal"
-      tmp="$f.tmp.$$"
-      printf '%s\n' "$rewritten" > "$tmp"
-      chmod 600 "$tmp"
-      mv -f "$tmp" "$f"
-      n=$((n+1))
+      if [[ "$("$BIN/agent-json" scrub-bridge-entry "$f" "$bridge")" != "" ]]; then
+        scrub_pane_bridge "$uuid" "$bridge"
+        n=$((n+1))
+      fi
     done
     echo "scrubbed bridge from $n entries"
     ;;
@@ -91,7 +476,7 @@ case "$cmd" in
     "$BIN/agent-json" list "$DIR" "$cwd_filter" "$output_format"
     ;;
   *)
-    echo "usage: clinch-agent-resume {write <uuid> <command> <cwd> [bridge]|remove <uuid>|scrub-bridge <bridge-id>|list [--cwd <dir>] [--json]}" >&2
+    echo "usage: clinch-agent-resume {write <uuid> <command> <cwd> [bridge [owner-pid owner-tty]]|remove <uuid>|remove-if-matches <uuid> <agent> <id>|is-nested-agent|hook-owner-fields|app-terminating|repair-live|scrub-bridge <bridge-id>|list [--cwd <dir>] [--json]}" >&2
     exit 2
     ;;
 esac

@@ -31,6 +31,23 @@ pub struct AppState {
     pub running_mcp_servers: Vec<uuid::Uuid>,
 }
 
+impl AppState {
+    /// Stable pane UUIDs that participate in this restorable snapshot. Agent-resume uses
+    /// this set as its ownership boundary so append-only history and registry files left by
+    /// closed panes cannot block a live pane from recovering its conversation.
+    pub(crate) fn terminal_pane_uuids(&self) -> Vec<Vec<u8>> {
+        let mut uuids = Vec::new();
+        for window in &self.windows {
+            for project in &window.projects {
+                for tab in &project.tabs {
+                    tab.root.collect_terminal_pane_uuids(&mut uuids);
+                }
+            }
+        }
+        uuids
+    }
+}
+
 /// Snapshot of one physical window and the ordered project workspaces it
 /// contains. `WindowSnapshot` remains the snapshot of one project workspace.
 #[derive(Clone, Debug, PartialEq)]
@@ -137,6 +154,21 @@ impl PaneNodeSnapshot {
                         .iter()
                         .any(|(_, child)| child.has_horizontal_split())
             }
+        }
+    }
+
+    fn collect_terminal_pane_uuids(&self, uuids: &mut Vec<Vec<u8>>) {
+        match self {
+            PaneNodeSnapshot::Branch(branch) => {
+                for (_, child) in &branch.children {
+                    child.collect_terminal_pane_uuids(uuids);
+                }
+            }
+            PaneNodeSnapshot::Leaf(LeafSnapshot {
+                contents: LeafContents::Terminal(terminal),
+                ..
+            }) => uuids.push(terminal.uuid.clone()),
+            PaneNodeSnapshot::Leaf(_) => {}
         }
     }
 }

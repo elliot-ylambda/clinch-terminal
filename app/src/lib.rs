@@ -1384,6 +1384,10 @@ pub(crate) fn initialize_app(
         mcp_servers_to_restore = Default::default();
     }
 
+    if let Some(app_state) = app_state.as_ref() {
+        agent_resume::write_active_pane_manifest(app_state);
+    }
+
     // Initialize a global model to track server-side experiment state.
     // This depends on the [`GlobalResourceHandlesProvider`] and so it must
     // be initialized after it.
@@ -2242,6 +2246,12 @@ pub(crate) fn app_callbacks(
             );
         })),
         on_will_terminate: Some(Box::new(move |ctx| {
+            // Freeze the newest pane/agent ownership before the writer's FIFO termination
+            // event. The marker keeps SessionEnd hooks from deleting those registry entries
+            // while PTYs are torn down later in shutdown.
+            agent_resume::mark_app_terminating();
+            workspace::global_actions::enqueue_app_state_snapshot(ctx);
+
             NotebookManager::handle(ctx).update(ctx, |manager, ctx| {
                 // Notebooks are only saved periodically, so ensure that any pending changes have
                 // been sent to the writer thread before terminating.

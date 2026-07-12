@@ -342,3 +342,134 @@ fn read_fork_launch_reads_derived_command_and_cwd() {
 
     assert!(read_fork_launch_in(&dir, "missing").is_none());
 }
+
+#[test]
+fn active_pane_manifest_is_atomic_sorted_and_deduplicated() {
+    let dir = std::env::temp_dir().join(format!(
+        "agent_resume_manifest_test_{}",
+        uuid::Uuid::new_v4()
+    ));
+    write_active_pane_manifest_in(
+        &dir,
+        &[vec![0xbb], vec![0xaa], vec![0xbb], vec![0x00, 0xff]],
+    )
+    .unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(dir.join(ACTIVE_PANES_FILE)).unwrap(),
+        "00ff\naa\nbb\n"
+    );
+    assert!(std::fs::read_dir(&dir).unwrap().all(|entry| !entry
+        .unwrap()
+        .file_name()
+        .to_string_lossy()
+        .contains(".tmp.")));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(dir.join(ACTIVE_PANES_FILE))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn restore_prefers_newer_registry_command_over_sqlite_snapshot() {
+    let dir = std::env::temp_dir().join(format!(
+        "agent_resume_reconcile_test_{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("aabb.json"),
+        r#"{"command":"clinch_agent_resume_launch claude current","cwd":"/tmp"}"#,
+    )
+    .unwrap();
+
+    assert_eq!(
+        resolve_on_restore_command_in(
+            &dir,
+            "aabb",
+            Some("clinch_agent_resume_launch codex stale".to_string()),
+        )
+        .as_deref(),
+        Some("clinch_agent_resume_launch claude current")
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn journaled_remove_prevents_stale_sqlite_agent_resurrection() {
+    let dir =
+        std::env::temp_dir().join(format!("agent_resume_remove_test_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("journal.jsonl"),
+        concat!(
+            "{\"ts\":\"2026-07-12T12:00:00Z\",\"op\":\"write\",\"pane\":\"aabb\",",
+            "\"command\":\"clinch_agent_resume_launch claude old\",\"cwd\":\"/tmp\",\"bridge\":\"\"}\n",
+            "{\"ts\":\"2026-07-12T12:01:00Z\",\"op\":\"remove\",\"pane\":\"aabb\"}\n"
+        ),
+    )
+    .unwrap();
+
+    assert_eq!(
+        resolve_on_restore_command_in(
+            &dir,
+            "aabb",
+            Some("clinch_agent_resume_launch claude old".to_string()),
+        ),
+        None
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn removal_tombstone_prevents_resurrection_when_journal_is_unavailable() {
+    let dir = std::env::temp_dir().join(format!(
+        "agent_resume_tombstone_test_{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(dir.join(TOMBSTONES_DIR)).unwrap();
+    std::fs::write(
+        dir.join(TOMBSTONES_DIR).join("aabb"),
+        "2026-07-12T12:00:00Z\n",
+    )
+    .unwrap();
+
+    assert_eq!(
+        resolve_on_restore_command_in(
+            &dir,
+            "aabb",
+            Some("clinch_agent_resume_launch claude old".to_string()),
+        ),
+        None
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn persisted_command_survives_without_a_removal_tombstone() {
+    let dir = std::env::temp_dir().join(format!(
+        "agent_resume_persisted_test_{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+
+    assert_eq!(
+        resolve_on_restore_command_in(
+            &dir,
+            "aabb",
+            Some("warp_agent_resume_launch claude old".to_string()),
+        )
+        .as_deref(),
+        Some("clinch_agent_resume_launch claude old")
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}

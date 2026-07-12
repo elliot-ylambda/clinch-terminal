@@ -56,6 +56,7 @@ integration_tests! {
     test_find_bar_autoselects_text,
     test_disabling_action_dispatching,
     test_session_restoration,
+    test_agent_resume_registry_reconciles_stale_snapshot,
     test_restored_blocks_on_different_hosts,
     test_restore_snapshot_with_deleted_cwd,
     test_session_restoration_with_multiple_shells,

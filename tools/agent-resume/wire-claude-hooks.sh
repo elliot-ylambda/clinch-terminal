@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Wires the Claude capture hook (claude-capture.sh) into a Claude settings.json:
 # SessionStart captures the live session; UserPromptSubmit and Stop keep the entry's
-# permission-mode flags in sync with the session's live mode. Also removes entries left
+# permission-mode flags in sync; SessionEnd removes sessions users actually exited. Also removes entries left
 # by the pre-rename install (claude-session-start.sh). Structural merge only -- never clobbers
 # unrelated settings or hooks. Idempotent.
 #

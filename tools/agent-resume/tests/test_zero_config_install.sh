@@ -40,7 +40,7 @@ grep -q '"model": "opus"' "$HOME/.claude/settings.json" \
   || { echo "FAIL: unrelated Claude setting was lost"; exit 1; }
 grep -q '"command": "/keep/me.sh"' "$HOME/.claude/settings.json" \
   || { echo "FAIL: unrelated Claude hook was lost"; exit 1; }
-[[ "$(grep -c 'agent-resume-bin/claude-capture.sh' "$HOME/.claude/settings.json")" -eq 3 ]] \
+[[ "$(grep -c 'agent-resume-bin/claude-capture.sh' "$HOME/.claude/settings.json")" -eq 4 ]] \
   || { echo "FAIL: Claude managed hooks missing or duplicated"; exit 1; }
 grep -q '^model = "gpt-5"$' "$HOME/.codex/config.toml" \
   || { echo "FAIL: unrelated Codex setting was lost"; exit 1; }

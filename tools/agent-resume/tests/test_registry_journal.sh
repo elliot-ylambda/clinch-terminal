@@ -33,11 +33,31 @@ n="$(wc -l < "$J")"
 "$CLI" remove pane-1
 [[ "$(wc -l < "$J")" -eq "$n" ]] || { echo "FAIL: re-remove of missing entry must not journal"; exit 1; }
 
+# Shutdown suppression is process-scoped. It is active while the marked app PID lives,
+# then self-cleans instead of suppressing SessionEnd indefinitely after a crash/quit.
+printf '%s\n' "$$" > "$WARP_AGENT_RESUME_DIR/.app-terminating"
+"$CLI" app-terminating || { echo "FAIL: live app-termination marker was ignored"; exit 1; }
+printf '%s\n' 999999999 > "$WARP_AGENT_RESUME_DIR/.app-terminating"
+if "$CLI" app-terminating; then
+  echo "FAIL: dead app-termination marker remained active"
+  exit 1
+fi
+[[ ! -e "$WARP_AGENT_RESUME_DIR/.app-terminating" ]] \
+  || { echo "FAIL: stale app-termination marker was not removed"; exit 1; }
+
 # Journal write failure must not fail the CLI: the entry still lands (fail-open).
 chmod 000 "$J"
 "$CLI" write pane-2 "clinch_agent_resume_launch claude sid-x" "/tmp/projB" || { echo "FAIL: write failed when journal unwritable"; exit 1; }
 [[ -f "$WARP_AGENT_RESUME_DIR/pane-2.json" ]] || { echo "FAIL: entry missing after journal failure"; exit 1; }
+"$CLI" remove pane-2 || { echo "FAIL: remove failed when journal unwritable"; exit 1; }
+[[ -f "$WARP_AGENT_RESUME_DIR/tombstones/pane-2" ]] \
+  || { echo "FAIL: durable removal tombstone missing after journal failure"; exit 1; }
+[[ "$(stat -f '%Lp' "$WARP_AGENT_RESUME_DIR/tombstones/pane-2")" == "600" ]] \
+  || { echo "FAIL: removal tombstone is not private"; exit 1; }
 chmod 600 "$J"
+"$CLI" write pane-2 "clinch_agent_resume_launch claude sid-new" "/tmp/projB"
+[[ ! -e "$WARP_AGENT_RESUME_DIR/tombstones/pane-2" ]] \
+  || { echo "FAIL: new owner did not clear old removal tombstone"; exit 1; }
 
 # Quotes/backslashes in fields stay valid JSON in the journal.
 "$CLI" write pane-3 'clinch_agent_resume_launch claude sid-q' '/tmp/we"ird\path'

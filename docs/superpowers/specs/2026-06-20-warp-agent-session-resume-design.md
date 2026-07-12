@@ -1,5 +1,9 @@
 # Auto-resume agent sessions on pane restore
 
+> Historical design. The durability/reconciliation rules in
+> `specs/claude-transcript-durability/PRODUCT.md` and `TECH.md` supersede its lifecycle,
+> shutdown, and registry-precedence details.
+
 **Status:** Design — pending review
 **Date:** 2026-06-20
 **Author:** Elliot (personal build)

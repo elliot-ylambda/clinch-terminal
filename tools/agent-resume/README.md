@@ -20,16 +20,23 @@ capture (agent SessionStart hooks)          replay (Rust, in Clinch)
                                                  Bootstrapped event, run the command
 ```
 
-- **Capture is driven by agent hooks** — `SessionStart` for both Claude and Codex (Claude
-  additionally refreshes the entry on `UserPromptSubmit`/`Stop`, see the flags bullet
+- **Capture is driven by agent hooks** — `SessionStart` and conditional `SessionEnd` for
+  both Claude and Codex (Claude additionally refreshes the entry on
+  `UserPromptSubmit`/`Stop`, see the flags bullet
   below). The hook reads the *actual* live `session_id` from its payload and the pane UUID
   from the inherited `WARP_TERMINAL_SESSION_UUID` env var. This captures the right session
   in every case —
   fresh start, `--resume <id>`, the interactive picker, and `--continue` — because the
   hook runs *after* the agent has decided which session is live. (An earlier `claude()`
   shell wrapper that tried to capture the id before launch was removed because it missed
-  the picker and `--continue`; the current wrapper only scrubs inherited session identity
-  and leaves capture to the hook.)
+  the picker and `--continue`; normal pane creation now scrubs inherited session identity,
+  while the standalone replay wrapper handles replay launches.)
+- **Only the outermost agent owns the pane.** Hooks combine Claude/Codex process ancestry
+  with the recorded root PID/tty, so even a detached/reparented nested tool cannot replace
+  a different live owner. Nested tools still receive their own prompt mirror, but cannot
+  overwrite or remove the visible outer session's entry. `SessionEnd` removes only a
+  matching owner. During app shutdown a live-PID marker preserves mappings while PTYs exit,
+  and a stale marker self-cleans after the app is gone.
 - **Key = the pane UUID** (`WARP_TERMINAL_SESSION_UUID`), which is stable across
   quit/restore and unique per tab — so multiple agents in the *same directory* are
   disambiguated (a directory-based scheme can't do that).
@@ -68,6 +75,13 @@ capture (agent SessionStart hooks)          replay (Rust, in Clinch)
   SessionStart, so freeze/restore cycles amplified one stale id into total loss; with
   this guard a protected entry survives any number of blank restarts. A user-started
   fresh session (no marker) still takes over unconditionally.
+- **Restore reconciles mutable capture with persisted layout.** Clinch atomically publishes
+  the pane UUIDs from every physical window, project, inner tab, and split. Closed/zombie
+  entries cannot claim fallback sessions. At replay, a newer registry command wins over
+  SQLite, while a required per-pane removal tombstone prevents an older snapshot from
+  resurrecting an agent the user exited even if the best-effort journal was unwritable.
+  Graceful app termination queues one final complete snapshot before the SQLite writer is
+  synchronously joined.
 - **Bridged sessions teleport their cloud copy back.** A bridged session's cloud copy may
   contain turns continued from another device, while a poisoned child launch can have no
   usable local jsonl at all. The capture hook
@@ -108,9 +122,10 @@ conversation. Launch hygiene plus three durable layers close that hole (see
 `specs/claude-transcript-durability/`):
 
 - **Launch hygiene**: the update relaunch dynamically strips all inherited
-  `CLAUDE_CODE_*` variables (plus related Claude/Make markers) before `open`; the
-  interactive `claude()` wrapper strips session identity again on every launch while
-  preserving user behavior toggles and argv exactly. Remote control remains enabled.
+  `CLAUDE_CODE_*` variables (plus related Claude/Make markers) before `open`; local PTY
+  creation strips identity again after environment overrides, with no rcfile edit, while
+  preserving user behavior toggles. The standalone replay wrapper also preserves argv
+  exactly. Remote control remains enabled.
 
 - **Registry journal** (`~/.warp/agent-resume/journal.jsonl`): every `write`/`remove` the
   CLI performs appends one line (`ts`, `op`, `pane`, `command`, `cwd`, `bridge`), so any
@@ -129,6 +144,12 @@ conversation. Launch hygiene plus three durable layers close that hole (see
   `~/Library/Application Support/sh.clinch.Clinch/session-recovery-<stamp>/` *before*
   quitting the app for a swap. Auto-snapshots carry a `.auto-snapshot` marker and only the
   newest 15 are kept; hand-made recovery dirs (no marker) are never pruned.
+- **Live update repair + fail-closed swap**: before quitting, the source updater correlates
+  active pane UUIDs with outer Claude/Codex process ancestry and cwd. It repairs legacy
+  nested takeovers, removes stale shell mappings, and resolves duplicated bridge ownership
+  from durable history. LaunchServices and exact-path process checks must both report the
+  old app gone before its bundle can be replaced; TERM/KILL escalation targets only resolved
+  bundle PIDs. The public installer applies the same running-app guard.
 - **Discovery**: `clinch-agent-resume list [--cwd <dir>] [--json]` prints a newest-first table of
   every conversation the journal + mirror know about — start time, short sid, cwd,
   `https://claude.ai/code/<bridge>` or `local`, and the first prompt. `--json` returns the
@@ -147,7 +168,7 @@ first GUI pane opens, and the curl installer runs it once before opening the app
 ```
 
 Installs the capture hooks + the registry CLI into `~/.warp/agent-resume-bin/`, and wires:
-the Claude `SessionStart`/`UserPromptSubmit`/`Stop` hooks into `~/.claude/settings.json`
+the Claude `SessionStart`/`UserPromptSubmit`/`Stop`/`SessionEnd` hooks into `~/.claude/settings.json`
 (via `wire-claude-hooks.sh`, a structural JSON merge — existing settings are preserved, and entries from
 the pre-rename `claude-session-start.sh` are migrated), the Codex `SessionStart`/`SessionEnd`
 hooks into a managed block in `~/.codex/config.toml`, and standalone replay executables into

@@ -196,6 +196,21 @@ rm -f "$TMP/last_args"
 grep -q -- '--resume' "$TMP/last_args" && { echo "FAIL: fully-claimed cwd must start fresh"; exit 1; }
 [[ "$(cat "$TMP/last_fresh_marker")" == "1" ]] || { echo "FAIL: machinery fresh launch must set the marker"; exit 1; }
 
+# Append-only history and closed-pane registry files are recovery evidence, not live
+# ownership. The active-pane manifest must let a dead pane adopt a parent session even when
+# both the journal and a zombie entry mention it (the July nested-Haiku failure).
+export WARP_AGENT_RESUME_DIR="$TMP/reg-manifest"
+mkdir -p "$WARP_AGENT_RESUME_DIR"
+printf '%s\n' current-pane > "$WARP_AGENT_RESUME_DIR/active-panes"
+printf '{ "command": "clinch_agent_resume_launch claude lost-2", "cwd": "%s" }\n' "$WORK" \
+  > "$WARP_AGENT_RESUME_DIR/zombie-pane.json"
+printf '%s\n' '{"ts":"2026-07-09T10:00:00Z","op":"write","pane":"old-pane","command":"clinch_agent_resume_launch claude lost-2","cwd":"/old","bridge":""}' \
+  > "$WARP_AGENT_RESUME_DIR/journal.jsonl"
+rm -f "$TMP/last_args"
+( cd "$WORK" && HOME="$EHOME" clinch_agent_resume_launch claude dead-manifest )
+grep -q -- '--resume lost-2' "$TMP/last_args" \
+  || { echo "FAIL: history/zombie entries blocked active-pane recovery"; exit 1; }
+
 # --- Adoption claims: simultaneous restores must not adopt the same session twice ---
 # The fake claude never runs the SessionStart hook, so nothing re-captures the adopted id
 # into the registry; only the atomic claim file can close that real restore-time race.

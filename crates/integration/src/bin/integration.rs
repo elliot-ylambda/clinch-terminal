@@ -189,6 +189,7 @@ fn register_tests() -> HashMap<&'static str, BoxedBuilderFn> {
     register_test!(test_find_bar_autoselects_text);
     register_test!(test_disabling_action_dispatching);
     register_test!(test_session_restoration);
+    register_test!(test_agent_resume_registry_reconciles_stale_snapshot);
     register_test!(test_restored_blocks_on_different_hosts);
     register_test!(test_restore_snapshot_with_deleted_cwd);
     register_test!(test_session_restoration_with_multiple_shells);

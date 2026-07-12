@@ -27,7 +27,12 @@ export AI_AGENT=claude-code_stale
 export WARP_AGENT_RESUME_STARTED_FRESH=1
 export MAKEFLAGS=n
 export MFLAGS=-n
+export GNUMAKEFLAGS=-n
 export MAKELEVEL=2
+export MAKEOVERRIDES=stale
+export MAKE_TERMOUT=/tmp/stale-out
+export MAKE_TERMERR=/tmp/stale-err
+export RELEASE_NOTES='release-only text'
 export SKIP_SYNC=1
 export CLINCH_SCRUB_TEST_UNRELATED=preserved
 
@@ -35,7 +40,8 @@ clinch_scrubbed_open "/Applications/Fake App.app"
 
 for name in CLAUDE_CODE_SESSION_ID CLAUDE_CODE_BRIDGE_SESSION_ID \
   CLAUDE_CODE_FUTURE_ID CLAUDECODE CLAUDE_EFFORT AI_AGENT \
-  WARP_AGENT_RESUME_STARTED_FRESH MAKEFLAGS MFLAGS MAKELEVEL SKIP_SYNC; do
+  WARP_AGENT_RESUME_STARTED_FRESH MAKEFLAGS MFLAGS GNUMAKEFLAGS MAKELEVEL \
+  MAKEOVERRIDES MAKE_TERMOUT MAKE_TERMERR RELEASE_NOTES SKIP_SYNC; do
   grep -q "^${name}=" "$TMP/captured_env" \
     && { echo "FAIL: relaunch leaked $name"; exit 1; }
 done

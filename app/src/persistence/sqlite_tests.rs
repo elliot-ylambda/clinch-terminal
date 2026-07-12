@@ -169,6 +169,38 @@ fn sqlite_writer_reuses_codebase_index_metadata_events() {
     let restored = get_all_codebase_index_metadata(&mut conn).expect("metadata should load");
     assert!(restored.is_empty());
 }
+
+#[test]
+fn sqlite_writer_commits_final_snapshot_before_terminate() {
+    let tempdir = tempfile::tempdir().expect("tempdir should be created");
+    let database_path = tempdir.path().join("warp.sqlite");
+    let conn = setup_database(&database_path).expect("database should initialize");
+    let writer = start_writer(conn, database_path.clone()).expect("writer should start");
+    let snapshot = AppState {
+        windows: vec![project_window(test_terminal_window_snapshot(true))],
+        active_window_index: Some(0),
+        block_lists: Default::default(),
+        running_mcp_servers: Default::default(),
+    };
+
+    writer
+        .sender
+        .send(ModelEvent::Snapshot(snapshot.clone()))
+        .expect("final snapshot should send");
+    writer
+        .sender
+        .send(ModelEvent::Terminate)
+        .expect("terminate event should send");
+    writer.handle.join().expect("writer should terminate");
+
+    let mut conn = setup_database(&database_path).expect("database should reopen");
+    let restored = read_sqlite_data(&mut conn, None)
+        .expect("final snapshot should load")
+        .app_state;
+    assert_eq!(restored.windows, snapshot.windows);
+    assert_eq!(restored.active_window_index, snapshot.active_window_index);
+}
+
 #[test]
 fn test_deduplicate_snapshots() {
     let local_notebook = CloudNotebook::new_local(
