@@ -168,6 +168,11 @@ fn initialize_app(app: &mut App) {
         )
     });
     app.add_singleton_model(|_| CLIAgentSessionsModel::new());
+    // TerminalView construction subscribes to the auto-continue singleton,
+    // which itself subscribes to CLIAgentSessionsModel (register it after).
+    app.add_singleton_model(
+        crate::terminal::cli_agent_sessions::auto_continue::AutoContinueModel::new,
+    );
     // The CLI agent usage footer, constructed during terminal view creation,
     // subscribes to this singleton; production registers it at startup.
     app.add_singleton_model(|_| crate::ai::blocklist::usage::CliAgentUsageModel::new_for_test());

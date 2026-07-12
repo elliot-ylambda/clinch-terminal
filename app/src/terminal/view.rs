@@ -1,6 +1,7 @@
 mod action;
 mod agent_view;
 pub mod ambient_agent;
+mod auto_continue;
 mod block_banner;
 pub mod block_onboarding;
 pub(crate) mod blocklist_filter;
@@ -358,10 +359,10 @@ use crate::settings::import::model::ImportedConfigModel;
 use crate::settings::import::view::{SettingsImportEvent, SettingsImportView};
 use crate::settings::{
     AISettings, AISettingsChangedEvent, AliasExpansionSettings, AppEditorSettings,
-    BlockVisibilitySettings, BlockVisibilitySettingsChangedEvent, CodeSettings, DebugSettings,
-    DebugSettingsChangedEvent, EmacsBindingsSettings, FontSettings, FontSettingsChangedEvent,
-    InputModeSettings, InputModeSettingsChangedEvent, InputSettings, PaneSettings,
-    PaneSettingsChangedEvent, PrivacySettings, PrivacySettingsChangedEvent,
+    BlockVisibilitySettings, BlockVisibilitySettingsChangedEvent, CliAgentUsageSettings,
+    CodeSettings, DebugSettings, DebugSettingsChangedEvent, EmacsBindingsSettings, FontSettings,
+    FontSettingsChangedEvent, InputModeSettings, InputModeSettingsChangedEvent, InputSettings,
+    PaneSettings, PaneSettingsChangedEvent, PrivacySettings, PrivacySettingsChangedEvent,
     PrivacySettingsSnapshot, SelectionSettings, VimBannerSettings,
 };
 use crate::settings_view::keybindings::KeybindingChangedNotifier;
@@ -384,6 +385,7 @@ use crate::terminal::block_list_viewport::{
     ScrollState, ViewportState,
 };
 use crate::terminal::bootstrap::init_subshell_command;
+use crate::terminal::cli_agent_sessions::auto_continue::AutoContinueModel;
 use crate::terminal::cli_agent_sessions::event::{
     parse_event, CLIAgentEvent, CLIAgentEventPayload, CLIAgentEventSource, CLIAgentEventType,
     CLI_AGENT_NOTIFICATION_SENTINEL,
@@ -4419,6 +4421,7 @@ impl TerminalView {
             active_viewer_driven_size: None,
         };
         terminal_view.register_subscriptions_for_use_agent_footer(ctx);
+        terminal_view.register_subscriptions_for_auto_continue(ctx);
 
         // Forward RemoteServerManager setup events into the terminal event stream
         // so the ModelEventDispatcher can gate session initialization on them.
@@ -9208,6 +9211,12 @@ impl TerminalView {
                     .mark_received_user_input();
             }
         }
+
+        // Any user-initiated write into the pane cancels a pending rate-limit
+        // auto-continue (the user has taken over). The auto-continue's own
+        // send also lands here, but only after its armed state was consumed,
+        // so this is a no-op for that path.
+        self.cancel_auto_continue_on_user_input(ctx);
 
         let bytes = data.into();
         let bytes_vec = bytes.to_vec();
@@ -26186,6 +26195,7 @@ impl TypedActionView for TerminalView {
             | CycleNextOrchestrationChildAgent
             | ToggleCLIAgentRichInput
             | ToggleSessionRecording
+            | ToggleAutoContinueOnLimitReset
             | Osc52AllowBlockedClipboardOperation => Empty,
         }
     }
@@ -26628,6 +26638,9 @@ impl TypedActionView for TerminalView {
             }
             DragAndDropFiles(paths) => {
                 self.drag_and_drop_files(paths, ctx);
+            }
+            ToggleAutoContinueOnLimitReset => {
+                self.toggle_auto_continue_on_limit_reset(ctx);
             }
             SetInputModeAgent => {
                 // Guard: when a CLI agent session is active, block mode
@@ -28012,6 +28025,20 @@ impl View for TerminalView {
             // (e.g., the CLI agent has paused waiting for user input). See #9916.
             if CLIAgentSessionsModel::as_ref(app).is_input_open(self.view_id) {
                 context.set.insert(flags::CLI_AGENT_RICH_INPUT_OPEN);
+            }
+
+            // Rate-limit auto-continue Command Palette pair: available only
+            // for Claude sessions while the usage widget is enabled; the
+            // "enabled" flag picks the Enable vs Disable palette entry (see
+            // the pair registration in terminal/view/init.rs).
+            let is_claude_session = CLIAgentSessionsModel::as_ref(app)
+                .session(self.view_id)
+                .is_some_and(|session| session.agent == CLIAgent::Claude);
+            if is_claude_session && *CliAgentUsageSettings::as_ref(app).show_plan_limits {
+                context.set.insert(init::CLAUDE_AUTO_CONTINUE_AVAILABLE_KEY);
+                if AutoContinueModel::as_ref(app).is_enabled(self.view_id) {
+                    context.set.insert(init::CLAUDE_AUTO_CONTINUE_ENABLED_KEY);
+                }
             }
         }
 

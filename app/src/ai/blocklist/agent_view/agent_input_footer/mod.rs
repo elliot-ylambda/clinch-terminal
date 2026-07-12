@@ -74,9 +74,11 @@ use crate::server::server_api::TranscribeError;
 use crate::server::telemetry::PluginChipTelemetryAction;
 use crate::server::telemetry::{PluginChipTelemetryKind, TelemetryEvent};
 use crate::settings::{
-    AISettings, AISettingsChangedEvent, PrivacySettings, PrivacySettingsChangedEvent,
+    AISettings, AISettingsChangedEvent, CliAgentUsageSettings, PrivacySettings,
+    PrivacySettingsChangedEvent,
 };
 use crate::settings_view::SettingsSection;
+use crate::terminal::cli_agent_sessions::auto_continue::{AutoContinueModel, AUTO_CONTINUE_PROMPT};
 #[cfg(not(target_family = "wasm"))]
 use crate::terminal::cli_agent_sessions::plugin_manager::{
     compare_versions, plugin_manager_for, plugin_manager_for_with_shell, CliAgentPluginManager,
@@ -246,6 +248,10 @@ pub struct AgentInputFooter {
     /// `MouseStateHandle::default()` recreated on every render would
     /// silently break clicks.
     custom_insert_mouse_states: RefCell<HashMap<(String, String), MouseStateHandle>>,
+    /// Hover/click state for the rate-limit auto-continue toggle. Like
+    /// `CustomInsert`, the button is built fresh in render (its label
+    /// reflects live arm state), so the handle must persist here.
+    auto_continue_mouse_state: MouseStateHandle,
     plugin_operation_in_progress: bool,
     /// When `true`, the install chip is allowed to render.
     /// Starts `false` and is set to `true` after a debounce timer fires,
@@ -924,6 +930,7 @@ impl AgentInputFooter {
             update_instructions_button,
             dismiss_plugin_chip_button,
             custom_insert_mouse_states: RefCell::new(HashMap::new()),
+            auto_continue_mouse_state: MouseStateHandle::default(),
             plugin_operation_in_progress: false,
             plugin_chip_ready: false,
             context_window_button,
@@ -1604,6 +1611,56 @@ impl AgentInputFooter {
         }
     }
 
+    /// The per-pane "auto-continue when the rate limit resets" toggle.
+    /// Three states: off, on (waiting for a limit stop), and armed (shows the
+    /// scheduled send time so the send is never a surprise). One click always
+    /// flips the opt-in — clicking an armed toggle disarms it. Built fresh
+    /// each render because the label reflects live state; the persistent
+    /// `MouseStateHandle` lives on `self` (see `custom_insert_mouse_states`).
+    fn render_auto_continue_toggle(&self, app: &AppContext) -> Box<dyn Element> {
+        let model = AutoContinueModel::as_ref(app);
+        let enabled = model.is_enabled(self.terminal_view_id);
+        let armed_fire_at = model.armed_fire_at(self.terminal_view_id);
+
+        let (label, tooltip) = match (enabled, armed_fire_at) {
+            (true, Some(fire_at)) => {
+                let at = fire_at.with_timezone(&Local).format("%H:%M");
+                (
+                    format!("Auto-continue at {at}"),
+                    format!(
+                        "Will send \"{AUTO_CONTINUE_PROMPT}\" to this Claude session at {at}, \
+                         just after its rate limit resets. Click to cancel."
+                    ),
+                )
+            }
+            (true, None) => (
+                "Auto-continue: on".to_string(),
+                format!(
+                    "If this Claude session stops at its rate limit, \"{AUTO_CONTINUE_PROMPT}\" \
+                     is sent once the limit resets. Click to turn off."
+                ),
+            ),
+            (false, Some(_)) | (false, None) => (
+                "Auto-continue: off".to_string(),
+                format!(
+                    "Auto-send \"{AUTO_CONTINUE_PROMPT}\" when a rate-limited Claude session's \
+                     usage window resets. Click to turn on (this pane only)."
+                ),
+            ),
+        };
+
+        ActionButton::new(label, AgentInputButtonTheme)
+            .with_icon(Icon::Clock)
+            .with_size(ButtonSize::AgentInputButtonLarge)
+            .with_tooltip(tooltip)
+            .with_tooltip_alignment(TooltipAlignment::Left)
+            .with_mouse_state_handle(self.auto_continue_mouse_state.clone())
+            .on_click(|ctx| {
+                ctx.dispatch_typed_action(AgentInputFooterAction::ToggleAutoContinue);
+            })
+            .render(app)
+    }
+
     fn render_cli_mode_footer(&self, app: &AppContext) -> Box<dyn Element> {
         let appearance = Appearance::as_ref(app);
         let cli_icon_size = ButtonSize::AgentInputButtonLarge.icon_size(appearance, app);
@@ -1707,6 +1764,16 @@ impl AgentInputFooter {
         // Opens the "Create quick-insert button" modal.
         if FeatureFlag::CliAgentQuickInsertButtons.is_enabled() && self.cli_agent(app).is_some() {
             left_buttons.add_child(ChildView::new(&self.quick_insert_add_button).finish());
+        }
+
+        // Rate-limit auto-continue toggle: Claude sessions only, hidden from
+        // shared-session viewers, and hidden (fully inert) when the usage
+        // widget is disabled — its poller is what supplies the reset times.
+        if self.cli_agent(app) == Some(CLIAgent::Claude)
+            && !shared_status.is_viewer()
+            && *CliAgentUsageSettings::as_ref(app).show_plan_limits
+        {
+            left_buttons.add_child(self.render_auto_continue_toggle(app));
         }
 
         let mut right_buttons = Flex::row()
@@ -2580,6 +2647,8 @@ pub enum AgentInputFooterAction {
     SendContinue,
     /// Submit "Looks good to me, continue" to the running CLI agent.
     SendLooksGood,
+    /// Toggle this pane's "auto-continue when Claude's rate limit resets" opt-in.
+    ToggleAutoContinue,
     ToggleRichInput,
     ToggleAutodetectionSetting,
     DismissFtuModelCallout,
@@ -2699,6 +2768,19 @@ impl TypedActionView for AgentInputFooter {
                     ctx.emit(AgentInputFooterEvent::SubmitTextToCliAgent(
                         "Looks good to me, continue".to_string(),
                     ));
+                }
+            }
+            AgentInputFooterAction::ToggleAutoContinue => {
+                // The opt-in lives on the AutoContinueModel singleton so the
+                // footer button and the Command Palette pair flip one state.
+                // Updating a model from here is safe (unlike a synchronous
+                // action dispatch that could re-borrow this pane's views).
+                // Guard on a live Claude session, matching the button's
+                // visibility condition.
+                if self.cli_agent(ctx) == Some(CLIAgent::Claude) {
+                    let terminal_view_id = self.terminal_view_id;
+                    AutoContinueModel::handle(ctx)
+                        .update(ctx, |model, ctx| model.toggle(terminal_view_id, ctx));
                 }
             }
             AgentInputFooterAction::ToggleRichInput => {

@@ -162,6 +162,11 @@ pub(crate) fn initialize_app(app: &mut App) {
     app.add_singleton_model(crate::ai::blocklist::QueuedQueryModel::new);
     app.add_singleton_model(|ctx| OrchestrationPillBarModel::new(Default::default(), ctx));
     app.add_singleton_model(|_| CLIAgentSessionsModel::new());
+    // TerminalView construction subscribes to the auto-continue singleton,
+    // which itself subscribes to CLIAgentSessionsModel (register it after).
+    app.add_singleton_model(
+        crate::terminal::cli_agent_sessions::auto_continue::AutoContinueModel::new,
+    );
     // The blocklist controller created during terminal bootstrap subscribes to
     // OrchestrationEventService and OrchestrationEventStreamer unconditionally,
     // so both singletons must be registered before bootstrap.

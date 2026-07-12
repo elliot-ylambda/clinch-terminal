@@ -11,6 +11,7 @@ use crate::ai::agent::ImageContext;
 use crate::ai::blocklist::agent_view::agent_input_footer::{
     AgentInputFooter, AgentInputFooterEvent,
 };
+use crate::terminal::cli_agent_sessions::auto_continue::AutoContinueModel;
 use crate::terminal::cli_agent_sessions::{CLIAgentInputEntrypoint, CLIAgentSessionsModel};
 use crate::terminal::shared_session::{
     SharedSessionActionSource, SharedSessionScrollbackType, SharedSessionSource,
@@ -1160,6 +1161,17 @@ impl UseAgentToolbar {
         // from the plugin, session started/ended).
         let cli_agent_sessions = CLIAgentSessionsModel::handle(ctx);
         ctx.subscribe_to_model(&cli_agent_sessions, move |me, _, event, ctx| {
+            if event.terminal_view_id() != terminal_view_id {
+                return;
+            }
+            me.notify_and_notify_children(ctx);
+        });
+
+        // Re-render when this pane's rate-limit auto-continue state changes
+        // (toggle flipped, a continue armed, or a pending continue cancelled),
+        // so the footer toggle's label tracks live state.
+        let auto_continue_model = AutoContinueModel::handle(ctx);
+        ctx.subscribe_to_model(&auto_continue_model, move |me, _, event, ctx| {
             if event.terminal_view_id() != terminal_view_id {
                 return;
             }

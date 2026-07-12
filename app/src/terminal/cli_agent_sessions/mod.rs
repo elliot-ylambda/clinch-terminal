@@ -1,3 +1,4 @@
+pub mod auto_continue;
 pub mod event;
 pub mod listener;
 #[cfg(not(target_family = "wasm"))]
