@@ -3,8 +3,36 @@
 Guidance for Claude Code when working in this repository.
 
 See @WARP.md for architecture, build, test, lint, and feature-flag guidance.
-This file covers only the **release & local-update flow**, which is not in
-`WARP.md`.
+This file covers **repository hygiene and the release & local-update flow**,
+which are not in `WARP.md`.
+
+## Git worktree cleanup
+
+Task worktrees are temporary. Cleaning up a worktree is part of finishing its
+task once the pull request has merged; otherwise Rust build artifacts can leave
+tens of gigabytes behind.
+
+- At the beginning and end of a task, audit linked worktrees with `git worktree
+  list`. Pay particular attention to `.claude/worktrees/`.
+- Before removing one, fetch `clinch/main`, verify its PR is merged, confirm
+  `git -C <worktree> status --short` is empty, and make sure no agent, shell,
+  test, build, release, or other process is still using the directory. Also
+  confirm the worktree has no local commits added after the merged PR. If there
+  was no PR, only treat it as finished when `git merge-base --is-ancestor HEAD
+  clinch/main` succeeds from that worktree.
+- Run cleanup from the main checkout or another directory, never from inside
+  the worktree being removed:
+
+  ```sh
+  git worktree remove <worktree-path>
+  git branch -d <branch> # when there is a local branch and this succeeds safely
+  git worktree prune
+  ```
+
+- Never use `git worktree remove --force`, `git branch -D`, `git clean`, or
+  manual `rm -rf` to make cleanup succeed. Do not remove the main checkout, a
+  dirty worktree, a worktree with an open/unmerged PR, or a worktree owned by
+  another live session. Leave it in place and report why cleanup is blocked.
 
 ## Releasing & updating locally
 
