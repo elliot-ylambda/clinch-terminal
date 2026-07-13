@@ -84,9 +84,8 @@ Build `ProjectTab` from existing tab primitives where their interaction/shape fi
 
 Project tab metadata is derived as follows:
 
-- Ask each workspace for the repository-root basename of its active inner tab.
-- If that tab has no repository but has a working directory, display its current path, abbreviated relative to the user's home directory for local sessions and qualified by host for remote sessions.
-- If that tab has neither a repository nor a working directory, walk the workspace's existing tab MRU order and use the first resolvable repository basename.
+- Ask each workspace for the same active project directory used by the former vertical-tabs folder header and the header tint: the detected repository root, otherwise the active local working directory.
+- Display that directory's basename in the project tab and remove the separate folder header from the vertical inner-tab panel.
 - Fall back to `New Project`.
 - Determine unread state by collecting the workspace's terminal view IDs and querying `AgentNotificationsModel` for any unread item.
 

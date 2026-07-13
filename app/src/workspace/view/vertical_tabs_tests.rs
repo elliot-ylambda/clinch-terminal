@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use pathfinder_geometry::rect::RectF;
 use pathfinder_geometry::vector::Vector2F;
@@ -10,7 +10,7 @@ use super::{
     compact_branch_subtitle_display, detail_sidecar_width_and_bounds,
     detail_target_for_hovered_row, non_terminal_search_text_fragments,
     pane_ids_for_display_granularity, pane_search_text_fragments, preferred_agent_tab_titles,
-    push_normalized_unique_summary_label, repo_label_for_path, search_fragments_contain_query,
+    push_normalized_unique_summary_label, search_fragments_contain_query,
     select_summary_pane_kind_icons, should_keep_detail_sidecar_visible_for_mouse_position,
     sort_summary_primary_labels_status_first, summary_overflow_count,
     summary_search_text_fragments, terminal_command_status, terminal_kind_badge_label,
@@ -1152,30 +1152,4 @@ fn summary_search_fragments_include_hidden_overflow_values() {
     assert!(search_fragments_contain_query(&fragments, "#789"));
     assert!(search_fragments_contain_query(&fragments, "+2"));
     assert!(search_fragments_contain_query(&fragments, "-3"));
-}
-
-#[test]
-fn repo_label_is_final_path_component() {
-    assert_eq!(
-        repo_label_for_path(Path::new("/Users/me/projects/clinch-terminal")),
-        Some("clinch-terminal".to_string())
-    );
-}
-
-#[test]
-fn repo_label_ignores_trailing_separator() {
-    assert_eq!(
-        repo_label_for_path(Path::new("/Users/me/projects/clinch-terminal/")),
-        Some("clinch-terminal".to_string())
-    );
-}
-
-#[test]
-fn repo_label_is_none_for_root() {
-    assert_eq!(repo_label_for_path(Path::new("/")), None);
-}
-
-#[test]
-fn repo_label_is_none_for_empty_path() {
-    assert_eq!(repo_label_for_path(Path::new("")), None);
 }

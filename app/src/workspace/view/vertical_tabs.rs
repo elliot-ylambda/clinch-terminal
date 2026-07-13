@@ -1369,56 +1369,6 @@ fn add_vertical_tab_insertion_target_overlay(
     );
 }
 
-/// The display name for a project directory: its final path component — the git
-/// repo folder when in a repo, or the working-directory folder when not.
-/// `None` for a path with no final component (e.g. `/` or an empty path), so the
-/// caller can omit the header rather than render an empty label.
-fn repo_label_for_path(path: &Path) -> Option<String> {
-    path.file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-}
-
-/// The repo/project name shown at the very top of the vertical tabs panel, above
-/// the search control bar, so a window's project is identifiable at a glance when
-/// flipping between windows. Follows the active tab — the same source as the
-/// per-project header tint (`Workspace::active_header_project_dir`) — so the name
-/// and the header color always agree. Returns `None` (no header row) when there
-/// is no local working directory (e.g. a remote session) or the path has no final
-/// component. Re-resolves for free on every render, so it tracks tab switches and
-/// `cd` without any extra state or subscription.
-fn render_repo_header(workspace: &Workspace, app: &AppContext) -> Option<Box<dyn Element>> {
-    let name = repo_label_for_path(&workspace.active_header_project_dir(app)?)?;
-
-    let appearance = Appearance::as_ref(app);
-    let theme = appearance.theme();
-    let sub_text = theme.sub_text_color(theme.background());
-
-    let icon = ConstrainedBox::new(WarpIcon::Folder.to_warpui_icon(sub_text).finish())
-        .with_width(SEARCH_ICON_SIZE)
-        .with_height(SEARCH_ICON_SIZE)
-        .finish();
-
-    let label = render_text_line(&name, sub_text, ClipConfig::ellipsis(), appearance);
-
-    Some(
-        Container::new(
-            Flex::row()
-                .with_main_axis_size(MainAxisSize::Max)
-                .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                .with_spacing(6.)
-                .with_child(icon)
-                .with_child(Shrinkable::new(1., label).finish())
-                .finish(),
-        )
-        .with_padding(
-            Padding::uniform(CONTROL_BAR_VERTICAL_PADDING)
-                .with_left(GROUP_HORIZONTAL_PADDING)
-                .with_right(GROUP_HORIZONTAL_PADDING),
-        )
-        .finish(),
-    )
-}
-
 /// Compact "N waiting" chip for the vertical-tabs control bar: the number of tabs whose agent
 /// is currently waiting on the user, per the same derivation as the yellow attention badge on
 /// tab rows (`Workspace::agent_attention_tab_indices`). Returns `None` when no agent is
@@ -1804,15 +1754,9 @@ fn render_vertical_tabs_panel(
     .with_overlayed_scrollbar()
     .finish();
 
-    let mut panel_content = Flex::column()
+    let panel_content = Flex::column()
         .with_main_axis_size(MainAxisSize::Max)
-        .with_cross_axis_alignment(CrossAxisAlignment::Stretch);
-    // Repo name header, above the search/control bar, so the window's project is
-    // identifiable at a glance. Absent when there is no local cwd (e.g. remote).
-    if let Some(repo_header) = render_repo_header(workspace, app) {
-        panel_content = panel_content.with_child(repo_header);
-    }
-    let panel_content = panel_content
+        .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
         .with_child(render_control_bar(
             state,
             workspace,

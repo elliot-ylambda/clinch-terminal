@@ -108,50 +108,37 @@ fn query_for_rewind_prefill_uses_custom_display_query_inputs() {
 }
 
 #[test]
-fn project_display_name_prefers_the_active_repository_name() {
-    let active_repo = PathBuf::from("repositories").join("active-repo");
-    let active_cwd = "elsewhere/working-directory".to_string();
-
+fn project_display_name_is_the_final_project_directory_component() {
     assert_eq!(
-        Workspace::project_display_name_from_paths(
-            Some(active_repo),
-            Some(active_cwd),
-            [PathBuf::from("repositories").join("recent-repo")],
-        ),
-        "active-repo"
+        Workspace::project_display_name_from_dir(Some(Path::new(
+            "/Users/me/projects/clinch-terminal"
+        ))),
+        "clinch-terminal"
     );
 }
 
 #[test]
-fn project_display_name_uses_the_active_path_outside_a_repository() {
-    let active_cwd = "workspace/current-directory".to_string();
-
+fn project_display_name_ignores_a_trailing_separator() {
     assert_eq!(
-        Workspace::project_display_name_from_paths(
-            None,
-            Some(active_cwd.clone()),
-            [PathBuf::from("repositories").join("recent-repo")],
-        ),
-        active_cwd
+        Workspace::project_display_name_from_dir(Some(Path::new(
+            "/Users/me/projects/clinch-terminal/"
+        ))),
+        "clinch-terminal"
     );
 }
 
 #[test]
-fn project_display_name_uses_a_recent_repository_when_the_active_path_is_unavailable() {
+fn project_display_name_falls_back_for_a_root_path() {
     assert_eq!(
-        Workspace::project_display_name_from_paths(
-            None,
-            None,
-            [PathBuf::from("repositories").join("recent-repo")],
-        ),
-        "recent-repo"
+        Workspace::project_display_name_from_dir(Some(Path::new("/"))),
+        "New Project"
     );
 }
 
 #[test]
-fn project_display_name_falls_back_when_no_path_is_available() {
+fn project_display_name_falls_back_when_no_project_directory_is_available() {
     assert_eq!(
-        Workspace::project_display_name_from_paths(None, None, []),
+        Workspace::project_display_name_from_dir(None),
         "New Project"
     );
 }

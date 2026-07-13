@@ -21458,73 +21458,19 @@ impl Workspace {
         root.to_local_path().map(|p| p.to_path_buf())
     }
 
-    /// Returns only a detected repository root for project-tab naming. Unlike
-    /// `project_dir_for_tab`, this deliberately does not fall back to the
-    /// session working directory: a shell in `$HOME` should remain
-    /// "New Project" (or retain an MRU repository label), not become a
-    /// project named after the home directory.
-    fn repository_root_for_tab(&self, tab: &TabData, ctx: &AppContext) -> Option<PathBuf> {
-        let cwd = tab
-            .pane_group
-            .as_ref(ctx)
-            .active_session_view(ctx)
-            .and_then(|tv| tv.as_ref(ctx).canonical_session_pwd_if_local(ctx))?;
-        DetectedRepositories::as_ref(ctx)
-            .get_root_for_path(&LocalOrRemotePath::Local(cwd.as_path().to_path_buf()))?
-            .to_local_path()
-            .map(Path::to_path_buf)
-    }
-
-    fn project_display_name_from_paths(
-        active_repository_root: Option<PathBuf>,
-        active_working_directory_label: Option<String>,
-        recent_repository_roots: impl IntoIterator<Item = PathBuf>,
-    ) -> String {
-        let repository_name = |path: &Path| {
-            path.file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .filter(|name| !name.is_empty())
-        };
-
-        active_repository_root
-            .as_deref()
-            .and_then(repository_name)
-            .or_else(|| active_working_directory_label.filter(|path| !path.is_empty()))
-            .or_else(|| {
-                recent_repository_roots
-                    .into_iter()
-                    .find_map(|path| repository_name(&path))
-            })
+    fn project_display_name_from_dir(project_dir: Option<&Path>) -> String {
+        project_dir
+            .and_then(Path::file_name)
+            .map(|name| name.to_string_lossy().into_owned())
+            .filter(|name| !name.is_empty())
             .unwrap_or_else(|| "New Project".to_string())
     }
 
-    /// Label for the outer project tab. Prefer the active inner tab's
-    /// repository name, then its current path. Only consult repository history
-    /// when the active tab has no working path to display.
+    /// Label for the outer project tab, using the same project-directory name
+    /// that previously appeared above the vertical inner-tab list.
     pub(crate) fn project_display_name(&self, ctx: &AppContext) -> String {
-        let active_tab = self.tabs.get(self.active_tab_index);
-        let active_id = active_tab.map(|tab| tab.pane_group.id());
-        let active_repository_root =
-            active_tab.and_then(|tab| self.repository_root_for_tab(tab, ctx));
-        let active_working_directory = active_tab
-            .and_then(|tab| tab.pane_group.as_ref(ctx).active_session_view(ctx))
-            .and_then(|terminal| terminal.as_ref(ctx).pwd_as_local_or_remote(ctx))
-            .map(|path| crate::util::path::display_path_with_host(&path, true, ctx));
-        let recent_repository_roots = self.tab_mru_order.iter().filter_map(|pane_group_id| {
-            if Some(*pane_group_id) == active_id {
-                return None;
-            }
-            self.tabs
-                .iter()
-                .find(|tab| tab.pane_group.id() == *pane_group_id)
-                .and_then(|tab| self.repository_root_for_tab(tab, ctx))
-        });
-
-        Self::project_display_name_from_paths(
-            active_repository_root,
-            active_working_directory,
-            recent_repository_roots,
-        )
+        let project_dir = self.active_header_project_dir(ctx);
+        Self::project_display_name_from_dir(project_dir.as_deref())
     }
 
     pub(crate) fn contains_pane_group(&self, pane_group_id: EntityId) -> bool {

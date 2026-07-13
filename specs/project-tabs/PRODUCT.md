@@ -42,9 +42,9 @@ Figma: none provided. The interaction should follow the familiar behavior of Chr
 
 7. Inactive projects remain live. Terminal processes, Claude Code sessions, Codex sessions, and other agents continue running and may produce notifications while another project is active.
 
-8. A project tab's label is the basename of the repository root associated with that project's active inner tab. If the active inner tab is not in a repository, the label is its current working path, abbreviated relative to the user's home directory for local sessions and qualified by host for remote sessions. The label updates when the user activates a different inner tab or when the active session changes repository or working directory.
+8. A project tab's label is the same project-directory name formerly shown above the vertical inner-tab list: the basename of the active inner tab's repository root when detected, otherwise the basename of its current local working directory. The label updates when the user activates a different inner tab or when the active session changes repository or working directory. The vertical inner-tab list no longer renders a separate folder header.
 
-9. If the active inner tab has neither a resolvable repository nor a working path, the project keeps the most recently resolved repository label from one of its previously active inner tabs. A project with no repository history or working path is labeled `New Project` until path context is resolved.
+9. If the active inner tab has no resolvable local project directory, the project is labeled `New Project` until path context is resolved.
 
 10. Repository labels are presentation only: changing a label because the active inner tab changes does not merge, split, reorder, or otherwise alter projects.
 

@@ -7,10 +7,9 @@ use warp_core::ui::theme::Fill;
 use warpui::accessibility::{AccessibilityContent, ActionAccessibilityContent, WarpA11yRole};
 use warpui::elements::{
     Align, Border, ChildAnchor, ClippedScrollStateHandle, ClippedScrollable, ConstrainedBox,
-    Container, CornerRadius, CrossAxisAlignment, Draggable, DraggableState, Empty, Flex, Hoverable,
-    MainAxisSize, MouseStateHandle, OffsetPositioning, ParentAnchor, ParentElement,
-    ParentOffsetBounds, Radius, Rect, SavePosition, ScrollTarget, ScrollToPositionMode,
-    ScrollbarWidth, Shrinkable, Stack, Text,
+    Container, CornerRadius, CrossAxisAlignment, Draggable, DraggableState, Empty, Expanded, Flex,
+    Hoverable, MainAxisSize, MouseStateHandle, ParentAnchor, ParentElement, Radius, Rect,
+    SavePosition, ScrollTarget, ScrollToPositionMode, ScrollbarWidth, Shrinkable, Text,
 };
 use warpui::keymap::{BindingDescription, EditableBinding};
 use warpui::platform::{Cursor, TerminationMode};
@@ -131,6 +130,9 @@ fn project_tab_position_id(id: ProjectId) -> String {
 const PROJECT_TAB_STRIP_POSITION_ID: &str = "project-window:tab-strip";
 const PROJECT_TAB_CLOSE_BUTTON_SIZE: f32 = 16.;
 const PROJECT_TAB_CLOSE_BUTTON_GAP: f32 = 6.;
+// Preserve enough label space after the symmetric close-button reservation and
+// tab chrome so short directory names do not collapse into an empty clip.
+const PROJECT_TAB_MIN_WIDTH: f32 = 96.;
 const PROJECT_TAB_VERTICAL_NUDGE: f32 = 2.;
 
 fn previous_project_index(active_index: usize, project_count: usize) -> Option<usize> {
@@ -1087,58 +1089,54 @@ impl ProjectWindow {
                     .finish(),
                 );
 
-                // Keep the label centered independently of the close button. The
-                // symmetric padding reserves the close-button slot on both sides,
-                // so long labels truncate before they can overlap the button.
-                let centered_label = Align::new(
-                    Container::new(label.finish())
-                        .with_horizontal_padding(
-                            PROJECT_TAB_CLOSE_BUTTON_SIZE + PROJECT_TAB_CLOSE_BUTTON_GAP,
+                let close_button = if is_active || mouse_state.is_hovered() {
+                    Hoverable::new(close_mouse_state.clone(), move |close_state| {
+                        let icon = ConstrainedBox::new(
+                            Icon::X
+                                .to_warpui_icon(Fill::Solid(text_color.into()))
+                                .finish(),
                         )
-                        .finish(),
-                )
-                .finish();
-                let mut contents = Stack::new().with_child(centered_label);
-
-                if is_active || mouse_state.is_hovered() {
-                    let close_button =
-                        Hoverable::new(close_mouse_state.clone(), move |close_state| {
-                            let icon = ConstrainedBox::new(
-                                Icon::X
-                                    .to_warpui_icon(Fill::Solid(text_color.into()))
-                                    .finish(),
-                            )
-                            .with_width(14.)
-                            .with_height(14.)
-                            .finish();
-                            let button = Container::new(icon)
-                                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(3.)));
-                            if close_state.is_hovered() {
-                                button.with_background(hover_background).finish()
-                            } else {
-                                button.finish()
-                            }
-                        })
-                        .with_cursor(Cursor::PointingHand)
-                        .on_click(move |ctx, _, _| {
-                            ctx.dispatch_typed_action(ProjectWindowAction::RequestClose(
-                                project_id,
-                            ));
-                        })
+                        .with_width(14.)
+                        .with_height(14.)
                         .finish();
-                    contents.add_positioned_child(
-                        ConstrainedBox::new(Align::new(close_button).finish())
-                            .with_width(PROJECT_TAB_CLOSE_BUTTON_SIZE)
+                        let button = Container::new(icon)
+                            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(3.)));
+                        if close_state.is_hovered() {
+                            button.with_background(hover_background).finish()
+                        } else {
+                            button.finish()
+                        }
+                    })
+                    .with_cursor(Cursor::PointingHand)
+                    .on_click(move |ctx, _, _| {
+                        ctx.dispatch_typed_action(ProjectWindowAction::RequestClose(project_id));
+                    })
+                    .finish()
+                } else {
+                    Empty::new().finish()
+                };
+
+                // Give the label a real flex allocation instead of painting it as a
+                // stack layer. Equal fixed-width side slots keep the text centered
+                // while guaranteeing room for short labels such as a home folder.
+                let side_slot_width = PROJECT_TAB_CLOSE_BUTTON_SIZE + PROJECT_TAB_CLOSE_BUTTON_GAP;
+                let contents = Flex::row()
+                    .with_main_axis_size(MainAxisSize::Max)
+                    .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                    .with_child(
+                        ConstrainedBox::new(Empty::new().finish())
+                            .with_width(side_slot_width)
                             .with_height(PROJECT_TAB_CLOSE_BUTTON_SIZE)
                             .finish(),
-                        OffsetPositioning::offset_from_parent(
-                            vec2f(0., 0.),
-                            ParentOffsetBounds::ParentByPosition,
-                            ParentAnchor::MiddleRight,
-                            ChildAnchor::MiddleRight,
-                        ),
-                    );
-                }
+                    )
+                    .with_child(Expanded::new(1., Align::new(label.finish()).finish()).finish())
+                    .with_child(
+                        ConstrainedBox::new(Align::new(close_button).right().finish())
+                            .with_width(side_slot_width)
+                            .with_height(PROJECT_TAB_CLOSE_BUTTON_SIZE)
+                            .finish(),
+                    )
+                    .finish();
 
                 let background = if is_active {
                     active_background
@@ -1155,7 +1153,7 @@ impl ProjectWindow {
                     inactive_background
                 };
                 ConstrainedBox::new(
-                    Container::new(contents.finish())
+                    Container::new(contents)
                         .with_background(background)
                         .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
                         .with_border(Border::all(1.).with_border_fill(border_fill))
@@ -1164,7 +1162,7 @@ impl ProjectWindow {
                         .with_margin_right(2.)
                         .finish(),
                 )
-                .with_min_width(84.)
+                .with_min_width(PROJECT_TAB_MIN_WIDTH)
                 .with_max_width(180.)
                 .finish()
             })
@@ -1225,6 +1223,14 @@ impl ProjectWindow {
         .with_cursor(Cursor::PointingHand)
         .on_click(|ctx, _, _| ctx.dispatch_typed_action(ProjectWindowAction::Add))
         .finish();
+        let add_button = appearance.ui_builder().tool_tip_on_element(
+            "Add Project".to_string(),
+            self.new_project_mouse_state.clone(),
+            add_button,
+            ParentAnchor::BottomMiddle,
+            ChildAnchor::TopMiddle,
+            vec2f(0., 4.),
+        );
 
         Container::new(
             Flex::row()
