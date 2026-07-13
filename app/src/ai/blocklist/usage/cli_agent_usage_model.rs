@@ -12,7 +12,9 @@ use cli_agent_usage::http::{FetchUsage, ReqwestUsage};
 use cli_agent_usage::keychain::{
     read_claude_token, should_read_keychain, ClaudeToken, MacKeychain, ReadSecret,
 };
-use cli_agent_usage::{fetch_plan_for_token, scan_local, Caches, Paths, PlanLimits, UsageSnapshot};
+use cli_agent_usage::{
+    fetch_plan_for_token, scan_local, snapshot_cache, Caches, Paths, PlanLimits, UsageSnapshot,
+};
 use warpui::r#async::block_on;
 use warpui::{Entity, ModelContext, SingletonEntity};
 
@@ -138,6 +140,23 @@ fn producer_loop(paths: Paths, tx: async_channel::Sender<UsageSnapshot>, enabled
     let mut last_read_ms: Option<i64> = None;
     let mut was_enabled = false;
     let mut tick: u64 = 0;
+
+    // Stale-while-revalidate: the widget hides until a snapshot has data, and
+    // the first cold scan of the transcript dirs can take tens of seconds, so
+    // surface the previous run's snapshot immediately. The first live scan
+    // below replaces it. `last_stored` doubles as the store-on-change guard.
+    let mut last_stored = snapshot_cache::load(&paths.snapshot_cache, Utc::now());
+    if let Some(mut cached) = last_stored.clone() {
+        if !enabled.load(Ordering::Relaxed) {
+            // The cache may predate disabling the plan gauges; never preview
+            // plan data the current setting forbids fetching.
+            cached.claude.plan = None;
+        }
+        if block_on(tx.send(cached)).is_err() {
+            return;
+        }
+    }
+
     loop {
         let now = Utc::now();
         let now_ms = now.timestamp_millis();
@@ -179,6 +198,10 @@ fn producer_loop(paths: Paths, tx: async_channel::Sender<UsageSnapshot>, enabled
         }
 
         snap.claude.plan = last_plan;
+        if last_stored.as_ref() != Some(&snap) {
+            snapshot_cache::store(&paths.snapshot_cache, &snap, now);
+            last_stored = Some(snap.clone());
+        }
         if block_on(tx.send(snap)).is_err() {
             break; // receiver dropped (model gone) => exit cleanly
         }

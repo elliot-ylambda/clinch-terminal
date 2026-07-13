@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 pub mod cache;
 pub mod claude;
@@ -9,8 +10,9 @@ pub mod format;
 pub mod http;
 pub mod keychain;
 pub mod pricing;
+pub mod snapshot_cache;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TokenCounts {
     pub input: u64,
     pub output: u64,
@@ -36,7 +38,7 @@ impl TokenCounts {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct WindowTotals {
     pub tokens: TokenCounts,
     pub cost_usd: f64,
@@ -49,7 +51,7 @@ impl WindowTotals {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Severity {
     #[default]
     Normal,
@@ -57,14 +59,14 @@ pub enum Severity {
     Critical,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct LimitWindow {
     pub percent: f64,
     pub resets_at: Option<DateTime<Utc>>,
     pub severity: Severity,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct PlanLimits {
     pub session: Option<LimitWindow>,
     pub weekly: Option<LimitWindow>,
@@ -98,7 +100,7 @@ impl PlanLimits {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Provider {
     pub session: WindowTotals,
     pub today: WindowTotals,
@@ -107,7 +109,7 @@ pub struct Provider {
     pub plan: Option<PlanLimits>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct UsageSnapshot {
     pub claude: Provider,
     pub codex: Provider,
@@ -180,6 +182,11 @@ pub struct Paths {
     pub claude_projects: PathBuf,
     pub codex_sessions: PathBuf,
     pub os_account: String,
+    /// Where the last emitted snapshot is cached across launches (see
+    /// [`snapshot_cache`]). Deliberately channel-agnostic (`~/.warp`): the
+    /// scanned transcript dirs are per-`$HOME`, not per-channel, so a dev
+    /// build's first launch can reuse the prod build's cache and vice versa.
+    pub snapshot_cache: PathBuf,
 }
 
 impl Paths {
@@ -190,6 +197,7 @@ impl Paths {
             claude_projects: PathBuf::from(&home).join(".claude/projects"),
             codex_sessions: PathBuf::from(&home).join(".codex/sessions"),
             os_account,
+            snapshot_cache: PathBuf::from(&home).join(".warp/cli-agent-usage-snapshot.json"),
         })
     }
 }
@@ -439,6 +447,7 @@ mod tests {
             claude_projects: "/no/such/claude".into(),
             codex_sessions: "/no/such/codex".into(),
             os_account: "nobody".into(),
+            snapshot_cache: "/no/such/snapshot.json".into(),
         };
         let mut caches = Caches::new();
         let snap = refresh(&paths, &mut caches, chrono::Utc::now(), &NoSecret, &NoFetch);
@@ -472,6 +481,7 @@ mod tests {
             claude_projects: "/no/such/claude".into(),
             codex_sessions: "/no/such/codex".into(),
             os_account: "u".into(),
+            snapshot_cache: "/no/such/snapshot.json".into(),
         };
         let now = chrono::Utc::now();
 
@@ -559,6 +569,7 @@ mod tests {
             claude_projects: "/no/such/claude".into(),
             codex_sessions: "/no/such/codex".into(),
             os_account: "nobody".into(),
+            snapshot_cache: "/no/such/snapshot.json".into(),
         };
         let mut caches = Caches::new();
         let snap = scan_local(&paths, &mut caches, chrono::Utc::now());
@@ -599,6 +610,7 @@ mod tests {
             claude_projects: "/x".into(),
             codex_sessions: "/x".into(),
             os_account: "me".into(),
+            snapshot_cache: "/no/such/snapshot.json".into(),
         };
         let now = chrono::Utc::now();
         assert!(fetch_claude_plan(&NoSecret, &Fetch, &paths, now).is_none());
