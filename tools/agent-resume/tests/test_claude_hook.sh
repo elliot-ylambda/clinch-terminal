@@ -157,7 +157,26 @@ grep -q 'sess-new' "$f" || { echo "FAIL: mismatched SessionEnd removed outer ent
 mkdir -p "$WARP_AGENT_RESUME_DIR"; printf '%s\n' "$$" > "$WARP_AGENT_RESUME_DIR/.app-terminating"
 echo '{"session_id":"sess-new","cwd":"/tmp/repo","hook_event_name":"SessionEnd"}' | "$BIN/claude-capture.sh"
 grep -q 'sess-new' "$f" || { echo "FAIL: app shutdown removed restorable entry"; exit 1; }
-rm -f "$WARP_AGENT_RESUME_DIR/.app-terminating"
+
+# The production shape: the app has ALREADY exited when late SessionEnd hooks run, so the
+# marker's recorded PID is dead — a fresh marker must still suppress removal (the
+# 2026-07-13 Clinch Dev regression: dead PID was treated as stale and wiped every entry).
+/bin/sleep 0 & dead_pid=$!; wait "$dead_pid" 2>/dev/null || true
+printf '%s\n' "$dead_pid" > "$WARP_AGENT_RESUME_DIR/.app-terminating"
+echo '{"session_id":"sess-new","cwd":"/tmp/repo","hook_event_name":"SessionEnd"}' | "$BIN/claude-capture.sh"
+grep -q 'sess-new' "$f" || { echo "FAIL: fresh marker with dead app PID removed restorable entry"; exit 1; }
+[[ -f "$WARP_AGENT_RESUME_DIR/.app-terminating" ]] \
+  || { echo "FAIL: fresh marker with dead app PID was deleted"; exit 1; }
+
+# A marker past the grace window (crashed/abandoned shutdown) stops suppressing
+# cleanup and is expired by the first hook that inspects it.
+/usr/bin/touch -t 202601010000 "$WARP_AGENT_RESUME_DIR/.app-terminating"
+echo '{"session_id":"sess-new","cwd":"/tmp/repo","hook_event_name":"SessionEnd"}' | "$BIN/claude-capture.sh"
+[[ ! -f "$f" ]] || { echo "FAIL: expired marker still suppressed SessionEnd cleanup"; exit 1; }
+[[ ! -f "$WARP_AGENT_RESUME_DIR/.app-terminating" ]] \
+  || { echo "FAIL: expired marker was not self-removed"; exit 1; }
+
+echo '{"session_id":"sess-new","cwd":"/tmp/repo"}' | "$BIN/claude-capture.sh"
 echo '{"session_id":"sess-new","cwd":"/tmp/repo","hook_event_name":"SessionEnd"}' | "$BIN/claude-capture.sh"
 [[ ! -f "$f" ]] || { echo "FAIL: user SessionEnd did not remove owned entry"; exit 1; }
 rm -f "$f"

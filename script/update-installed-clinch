@@ -245,9 +245,10 @@ clinch_update_main() {
       rm -f "$HOME/.warp/agent-resume/.app-terminating"
       return 1
     fi
-    # No agent hooks remain once the old app process is gone. Avoid leaving a global marker
-    # behind if copying or relaunching the new bundle fails later.
-    rm -f "$HOME/.warp/agent-resume/.app-terminating"
+    # Do NOT delete the marker here: agents notice the PTY teardown asynchronously, so
+    # their SessionEnd hooks run seconds AFTER the app process is gone and must still see
+    # it (deleting it here wiped every entry on each update). The hooks self-expire the
+    # marker after a short grace window, and the relaunched app clears it at startup.
   else
     snapshot_session_state || true
   fi

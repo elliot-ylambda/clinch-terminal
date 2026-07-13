@@ -33,13 +33,20 @@ n="$(wc -l < "$J")"
 "$CLI" remove pane-1
 [[ "$(wc -l < "$J")" -eq "$n" ]] || { echo "FAIL: re-remove of missing entry must not journal"; exit 1; }
 
-# Shutdown suppression is process-scoped. It is active while the marked app PID lives,
-# then self-cleans instead of suppressing SessionEnd indefinitely after a crash/quit.
+# Shutdown suppression is active while the marked app PID lives, and — because the app
+# exits before late SessionEnd hooks run — for a grace window after it dies. Only past
+# that window does it self-clean instead of suppressing SessionEnd indefinitely after a
+# crash/quit.
 printf '%s\n' "$$" > "$WARP_AGENT_RESUME_DIR/.app-terminating"
 "$CLI" app-terminating || { echo "FAIL: live app-termination marker was ignored"; exit 1; }
 printf '%s\n' 999999999 > "$WARP_AGENT_RESUME_DIR/.app-terminating"
+"$CLI" app-terminating \
+  || { echo "FAIL: fresh marker with a dead app PID must stay active"; exit 1; }
+[[ -e "$WARP_AGENT_RESUME_DIR/.app-terminating" ]] \
+  || { echo "FAIL: fresh dead-PID marker was removed"; exit 1; }
+/usr/bin/touch -t 202601010000 "$WARP_AGENT_RESUME_DIR/.app-terminating"
 if "$CLI" app-terminating; then
-  echo "FAIL: dead app-termination marker remained active"
+  echo "FAIL: expired app-termination marker remained active"
   exit 1
 fi
 [[ ! -e "$WARP_AGENT_RESUME_DIR/.app-terminating" ]] \

@@ -150,7 +150,7 @@ same_directory() {
 }
 
 app_termination_active() {
-  local marker="$DIR/.app-terminating" pid active=1
+  local marker="$DIR/.app-terminating" pid active=1 now mtime age
   [[ -f "$marker" ]] || return 1
   while read -r pid; do
     [[ "$pid" =~ ^[0-9]+$ ]] || continue
@@ -160,8 +160,20 @@ app_termination_active() {
     fi
   done < "$marker"
   if (( active )); then
-    # A marker left by a crashed/fully-exited Clinch must not suppress normal SessionEnd
-    # cleanup in another terminal. The next app launch also clears it proactively.
+    # The app process exits BEFORE late SessionEnd hooks run (agents notice the PTY
+    # teardown asynchronously), so dead recorded PIDs alone do not prove the marker is
+    # stale — treating them that way deleted every live entry on each quit (2026-07-13
+    # Clinch Dev repro). Honor the marker for a grace window past app exit; only one old
+    # enough to be from a crashed/abandoned shutdown stops suppressing normal SessionEnd
+    # cleanup. The next app launch still clears it proactively.
+    now="$(/bin/date +%s)"
+    mtime="$(/usr/bin/stat -f %m "$marker" 2>/dev/null || echo 0)"
+    age=$(( now - mtime ))
+    if (( age >= 0 && age <= ${WARP_AGENT_RESUME_TERMINATING_GRACE:-120} )); then
+      active=0
+    fi
+  fi
+  if (( active )); then
     rm -f "$marker"
   fi
   return "$active"
