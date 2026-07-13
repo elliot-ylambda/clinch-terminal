@@ -329,6 +329,29 @@ fn transferred_tab_workspace(
 }
 
 #[test]
+fn test_manual_update_check_feedback_covers_every_result() {
+    let update_available = Ok(UpdateReady::CanDownload {
+        new_version: channel_versions::VersionInfo::new("v2".to_owned()),
+        update_id: "update-id".to_owned(),
+    });
+    assert_eq!(
+        manual_update_check_feedback(&update_available),
+        ("A Clinch update is available", ToastFlavor::Default)
+    );
+
+    assert_eq!(
+        manual_update_check_feedback(&Ok(UpdateReady::No)),
+        ("Clinch is up to date", ToastFlavor::Success)
+    );
+
+    let failure = Err(anyhow::anyhow!("release metadata is unavailable"));
+    assert_eq!(
+        manual_update_check_feedback(&failure),
+        ("Unable to check for updates", ToastFlavor::Error)
+    );
+}
+
+#[test]
 fn test_tab_bar_traffic_light_space_regression_for_resource_center_overlap() {
     // Regression for #10139: the Resource Center/right panel can be open on
     // Windows/Linux, but vertical-tabs and right-panel state should not decide
@@ -372,6 +395,29 @@ fn test_theme_chooser_does_not_suppress_tab_bar_traffic_light_padding() {
                 closed_padding,
                 "Open tools panel should still reserve tab bar traffic light padding"
             );
+        });
+    });
+}
+
+#[test]
+fn test_default_file_explorer_renders_the_open_shared_left_panel() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+
+        let workspace = mock_workspace(&mut app);
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.open_left_panel(ctx);
+
+            let config = HeaderToolbarChipSelection::Default;
+            let pane_group = workspace.active_tab_pane_group().as_ref(ctx);
+            assert!(workspace
+                .render_config_panel(
+                    &HeaderToolbarItemKind::FileExplorer,
+                    pane_group,
+                    &config,
+                    ctx,
+                )
+                .is_some());
         });
     });
 }

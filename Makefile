@@ -134,8 +134,10 @@ update: _bundle ## Build, update + relaunch Clinch on THIS machine right away; p
 	@# issued from inside Clinch, quitting Clinch kills make itself, so anything
 	@# that must still run has to live in the nohup'd shell. The swap goes first
 	@# (seconds — you're on the new build immediately); the zip + upload follow.
+	@# Clinch terminates its terminal process group with SIGTERM while quitting;
+	@# nohup only ignores SIGHUP, so explicitly ignore both signals here.
 	@# `;` not `&&`: publish regardless of the swap outcome, as before.
-	@nohup sh -c './script/update-installed-clinch "$(STABLE_APP)" "$(STABLE_BUNDLE)"; $(MAKE) _publish VERSION="$(VERSION)" UPDATE_SEQUENCE="$(UPDATE_SEQUENCE)"' \
+	@nohup sh -c 'trap "" HUP TERM; ./script/update-installed-clinch "$(STABLE_APP)" "$(STABLE_BUNDLE)"; $(MAKE) _publish VERSION="$(VERSION)" UPDATE_SEQUENCE="$(UPDATE_SEQUENCE)"' \
 	  >"$$HOME/Library/Logs/clinch-self-update.log" 2>&1 &
 	@echo "✓ Swap + publish running in the background (log: ~/Library/Logs/clinch-self-update.log)"
 

@@ -6,10 +6,11 @@ use uuid::Uuid;
 use warp_core::ui::theme::Fill;
 use warpui::accessibility::{AccessibilityContent, ActionAccessibilityContent, WarpA11yRole};
 use warpui::elements::{
-    Border, ClippedScrollStateHandle, ClippedScrollable, ConstrainedBox, Container, CornerRadius,
-    CrossAxisAlignment, Draggable, DraggableState, Empty, Flex, Hoverable, MainAxisSize,
-    MouseStateHandle, ParentElement, Radius, Rect, SavePosition, ScrollTarget,
-    ScrollToPositionMode, ScrollbarWidth, Shrinkable, Text,
+    Align, Border, ChildAnchor, ClippedScrollStateHandle, ClippedScrollable, ConstrainedBox,
+    Container, CornerRadius, CrossAxisAlignment, Draggable, DraggableState, Empty, Flex, Hoverable,
+    MainAxisSize, MouseStateHandle, OffsetPositioning, ParentAnchor, ParentElement,
+    ParentOffsetBounds, Radius, Rect, SavePosition, ScrollTarget, ScrollToPositionMode,
+    ScrollbarWidth, Shrinkable, Stack, Text,
 };
 use warpui::keymap::{BindingDescription, EditableBinding};
 use warpui::platform::{Cursor, TerminationMode};
@@ -128,6 +129,8 @@ fn project_tab_position_id(id: ProjectId) -> String {
 }
 
 const PROJECT_TAB_STRIP_POSITION_ID: &str = "project-window:tab-strip";
+const PROJECT_TAB_CLOSE_BUTTON_SIZE: f32 = 16.;
+const PROJECT_TAB_CLOSE_BUTTON_GAP: f32 = 6.;
 
 fn previous_project_index(active_index: usize, project_count: usize) -> Option<usize> {
     (project_count > 1).then(|| active_index.checked_sub(1).unwrap_or(project_count - 1))
@@ -1044,16 +1047,17 @@ impl ProjectWindow {
             let font_family = appearance.ui_font_family();
             let font_size = appearance.ui_font_size();
             let accent = theme.accent();
+            let outline = theme.outline();
             let active_background = theme.surface_2();
             let inactive_background = theme.background();
             let hover_background = theme.surface_3();
 
             let tab = Hoverable::new(project.mouse_state.clone(), move |mouse_state| {
-                let mut contents = Flex::row()
-                    .with_main_axis_size(MainAxisSize::Max)
+                let mut label = Flex::row()
+                    .with_main_axis_size(MainAxisSize::Min)
                     .with_cross_axis_alignment(CrossAxisAlignment::Center);
                 if has_unread {
-                    contents.add_child(
+                    label.add_child(
                         Container::new(
                             ConstrainedBox::new(
                                 Rect::new()
@@ -1071,7 +1075,7 @@ impl ProjectWindow {
                         .finish(),
                     );
                 }
-                contents.add_child(
+                label.add_child(
                     Shrinkable::new(
                         1.,
                         Text::new_inline(title.clone(), font_family, font_size)
@@ -1082,42 +1086,58 @@ impl ProjectWindow {
                     .finish(),
                 );
 
-                let close_slot = if is_active || mouse_state.is_hovered() {
-                    Hoverable::new(close_mouse_state.clone(), move |close_state| {
-                        let icon = ConstrainedBox::new(
-                            Icon::X
-                                .to_warpui_icon(Fill::Solid(text_color.into()))
-                                .finish(),
+                // Keep the label centered independently of the close button. The
+                // symmetric padding reserves the close-button slot on both sides,
+                // so long labels truncate before they can overlap the button.
+                let centered_label = Align::new(
+                    Container::new(label.finish())
+                        .with_horizontal_padding(
+                            PROJECT_TAB_CLOSE_BUTTON_SIZE + PROJECT_TAB_CLOSE_BUTTON_GAP,
                         )
-                        .with_width(14.)
-                        .with_height(14.)
+                        .finish(),
+                )
+                .finish();
+                let mut contents = Stack::new().with_child(centered_label);
+
+                if is_active || mouse_state.is_hovered() {
+                    let close_button =
+                        Hoverable::new(close_mouse_state.clone(), move |close_state| {
+                            let icon = ConstrainedBox::new(
+                                Icon::X
+                                    .to_warpui_icon(Fill::Solid(text_color.into()))
+                                    .finish(),
+                            )
+                            .with_width(14.)
+                            .with_height(14.)
+                            .finish();
+                            let button = Container::new(icon)
+                                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(3.)));
+                            if close_state.is_hovered() {
+                                button.with_background(hover_background).finish()
+                            } else {
+                                button.finish()
+                            }
+                        })
+                        .with_cursor(Cursor::PointingHand)
+                        .on_click(move |ctx, _, _| {
+                            ctx.dispatch_typed_action(ProjectWindowAction::RequestClose(
+                                project_id,
+                            ));
+                        })
                         .finish();
-                        let button = Container::new(icon)
-                            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(3.)));
-                        if close_state.is_hovered() {
-                            button.with_background(hover_background).finish()
-                        } else {
-                            button.finish()
-                        }
-                    })
-                    .with_cursor(Cursor::PointingHand)
-                    .on_click(move |ctx, _, _| {
-                        ctx.dispatch_typed_action(ProjectWindowAction::RequestClose(project_id));
-                    })
-                    .finish()
-                } else {
-                    Empty::new().finish()
-                };
-                contents.add_child(
-                    Container::new(
-                        ConstrainedBox::new(close_slot)
-                            .with_width(16.)
-                            .with_height(16.)
+                    contents.add_positioned_child(
+                        ConstrainedBox::new(Align::new(close_button).finish())
+                            .with_width(PROJECT_TAB_CLOSE_BUTTON_SIZE)
+                            .with_height(PROJECT_TAB_CLOSE_BUTTON_SIZE)
                             .finish(),
-                    )
-                    .with_margin_left(6.)
-                    .finish(),
-                );
+                        OffsetPositioning::offset_from_parent(
+                            vec2f(0., 0.),
+                            ParentOffsetBounds::ParentByPosition,
+                            ParentAnchor::MiddleRight,
+                            ChildAnchor::MiddleRight,
+                        ),
+                    );
+                }
 
                 let background = if is_active {
                     active_background
@@ -1126,10 +1146,18 @@ impl ProjectWindow {
                 } else {
                     inactive_background
                 };
+                let border_fill = if is_active {
+                    accent
+                } else if mouse_state.is_hovered() {
+                    outline
+                } else {
+                    inactive_background
+                };
                 ConstrainedBox::new(
                     Container::new(contents.finish())
                         .with_background(background)
                         .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+                        .with_border(Border::all(1.).with_border_fill(border_fill))
                         .with_horizontal_padding(12.)
                         .with_vertical_padding(6.)
                         .with_margin_right(2.)

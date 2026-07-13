@@ -135,6 +135,17 @@ fn merge_limit(slot: &mut Option<TimedLimitWindow>, candidate: Option<TimedLimit
     }
 }
 
+/// Return the latest observed window only while it can still describe the
+/// current rate-limit period. Codex may stop reporting one window after it
+/// resets (for example, continuing to report only the weekly window). Without
+/// this check, the most recent pre-reset observation is carried forward
+/// indefinitely and the header appears stuck.
+fn current_window(limit: Option<TimedLimitWindow>, now: DateTime<Utc>) -> Option<LimitWindow> {
+    limit
+        .map(|limit| limit.window)
+        .filter(|window| window.resets_at.is_none_or(|resets_at| resets_at > now))
+}
+
 /// `total_token_usage` is cumulative per session: split into uncached input vs cache_read.
 fn split(total: &TotalUsage) -> TokenCounts {
     TokenCounts {
@@ -316,8 +327,8 @@ pub fn scan(
             };
         }
     }
-    let session = latest_session_limit.map(|limit| limit.window);
-    let weekly = latest_weekly_limit.map(|limit| limit.window);
+    let session = current_window(latest_session_limit, now);
+    let weekly = current_window(latest_weekly_limit, now);
     if session.is_some() || weekly.is_some() {
         provider.plan = Some(PlanLimits {
             session,
@@ -462,6 +473,42 @@ mod tests {
     }
 
     #[test]
+    fn scan_drops_a_window_after_its_reported_reset() {
+        use std::fs;
+
+        let now = DateTime::parse_from_rfc3339("2026-07-13T03:20:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let expired_session = r#"{"timestamp":"2026-07-13T02:29:10Z","payload":{"type":"token_count","rate_limits":{"limit_id":"codex","primary":{"used_percent":75,"window_minutes":300,"resets_at":1783722697},"secondary":null}}}"#;
+        let current_weekly = r#"{"timestamp":"2026-07-13T03:19:00Z","payload":{"type":"token_count","rate_limits":{"limit_id":"codex","primary":{"used_percent":64,"window_minutes":10080,"resets_at":1784487567},"secondary":null}}}"#;
+
+        let dir = std::env::temp_dir().join(format!(
+            "cau_codex_expired_limit_scan_{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("rollout-limits.jsonl"),
+            format!("{expired_session}\n{current_weekly}"),
+        )
+        .unwrap();
+
+        let provider = scan(
+            &dir,
+            &mut crate::cache::ScanCache::new(),
+            now,
+            &mut std::collections::HashMap::new(),
+        );
+
+        let plan = provider.plan.expect("current weekly limit");
+        assert_eq!(plan.session, None, "expired session limit must be cleared");
+        assert_eq!(plan.weekly.unwrap().percent, 64.0);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn empty_or_malformed_is_empty() {
         let r = parse_rollout_str("garbage\n\n{}");
         assert!(r.entries.is_empty());
@@ -473,8 +520,8 @@ mod tests {
         use std::fs;
         use std::time::{Duration, SystemTime};
 
-        let older = r#"{"timestamp":"2026-06-29T10:00:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":500,"cached_input_tokens":0,"output_tokens":10,"reasoning_output_tokens":0,"total_tokens":510}},"rate_limits":{"primary":{"used_percent":5.0,"window_minutes":300,"resets_at":1782425344},"secondary":{"used_percent":6.0,"window_minutes":10080,"resets_at":1782421135}}}}"#;
-        let newer = r#"{"timestamp":"2026-06-30T10:00:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":2000,"cached_input_tokens":800,"output_tokens":100,"reasoning_output_tokens":10,"total_tokens":2100}},"rate_limits":{"primary":{"used_percent":42.0,"window_minutes":300,"resets_at":1782461677},"secondary":{"used_percent":19.0,"window_minutes":10080,"resets_at":1783028371}}}}"#;
+        let older = r#"{"timestamp":"2026-06-29T10:00:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":500,"cached_input_tokens":0,"output_tokens":10,"reasoning_output_tokens":0,"total_tokens":510}},"rate_limits":{"primary":{"used_percent":5.0,"window_minutes":300,"resets_at":1782745200},"secondary":{"used_percent":6.0,"window_minutes":10080,"resets_at":1783245600}}}}"#;
+        let newer = r#"{"timestamp":"2026-06-30T10:00:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":2000,"cached_input_tokens":800,"output_tokens":100,"reasoning_output_tokens":10,"total_tokens":2100}},"rate_limits":{"primary":{"used_percent":42.0,"window_minutes":300,"resets_at":1782831600},"secondary":{"used_percent":19.0,"window_minutes":10080,"resets_at":1783332000}}}}"#;
 
         let dir = std::env::temp_dir().join(format!("cau_codex_scan_{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
@@ -492,12 +539,10 @@ mod tests {
             .unwrap();
 
         let mut cache = crate::cache::ScanCache::new();
-        let p = scan(
-            &dir,
-            &mut cache,
-            chrono::Utc::now(),
-            &mut std::collections::HashMap::new(),
-        );
+        let now = DateTime::parse_from_rfc3339("2026-06-30T10:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let p = scan(&dir, &mut cache, now, &mut std::collections::HashMap::new());
 
         // plan comes from the NEWER rollout's rate_limits
         let plan = p.plan.expect("plan from latest rollout");

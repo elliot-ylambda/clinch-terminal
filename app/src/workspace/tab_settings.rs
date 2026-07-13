@@ -288,6 +288,26 @@ impl HeaderToolbarChipSelection {
     pub fn contains_item(&self, item: &super::header_toolbar_item::HeaderToolbarItemKind) -> bool {
         self.left_items().contains(item) || self.right_items().contains(item)
     }
+
+    /// Returns whether `item` should render the shared left-panel view.
+    ///
+    /// File Explorer can stand in for the Tools Panel as the panel owner. If a
+    /// user configures both buttons, the dedicated Tools Panel remains the
+    /// single owner so the same view is not mounted twice.
+    pub fn is_shared_left_panel_owner(
+        &self,
+        item: &super::header_toolbar_item::HeaderToolbarItemKind,
+    ) -> bool {
+        use super::header_toolbar_item::HeaderToolbarItemKind;
+
+        match item {
+            HeaderToolbarItemKind::ToolsPanel => self.contains_item(item),
+            HeaderToolbarItemKind::FileExplorer => {
+                self.contains_item(item) && !self.contains_item(&HeaderToolbarItemKind::ToolsPanel)
+            }
+            _ => false,
+        }
+    }
 }
 
 settings::macros::implement_setting_for_enum!(

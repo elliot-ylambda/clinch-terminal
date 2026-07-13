@@ -240,6 +240,7 @@ use crate::auth::auth_view_modal::{AuthRedirectPayload, AuthView, AuthViewEvent,
 use crate::auth::AuthStateProvider;
 use crate::autoupdate::{
     is_incoming_version_past_current, AutoupdateState, AutoupdateStateEvent, RelaunchModel,
+    RequestType, UpdateReady,
 };
 use crate::banner::BannerState;
 use crate::billing::shared_objects_creation_denied_modal::{
@@ -475,7 +476,7 @@ use crate::view_components::callout_bubble::{
     render_callout_bubble, CalloutArrowDirection, CalloutArrowPosition, CalloutBubbleConfig,
 };
 use crate::view_components::{
-    AgentToast, AgentToastStack, DismissibleToast, DismissibleToastStack, ToastLink,
+    AgentToast, AgentToastStack, DismissibleToast, DismissibleToastStack, ToastFlavor, ToastLink,
 };
 #[cfg(target_family = "wasm")]
 use crate::wasm_nux_dialog::WasmNUXDialog;
@@ -574,6 +575,16 @@ const PILL_FONT_SIZE: f32 = 12.;
 const UPDATE_READY_TEXT: &str = "Update Warp";
 
 const TAB_BAR_OVERFLOW_MENU_WIDTH: f32 = 300.;
+
+fn manual_update_check_feedback(result: &Result<UpdateReady>) -> (&'static str, ToastFlavor) {
+    match result {
+        Ok(UpdateReady::Yes { .. } | UpdateReady::CanDownload { .. }) => {
+            ("A Clinch update is available", ToastFlavor::Default)
+        }
+        Ok(UpdateReady::No) => ("Clinch is up to date", ToastFlavor::Success),
+        Err(_) => ("Unable to check for updates", ToastFlavor::Error),
+    }
+}
 
 #[cfg(not(target_family = "wasm"))]
 const RESOURCE_CENTER_WIDTH: f32 = 361.;
@@ -1078,6 +1089,7 @@ pub struct Workspace {
     command_search_view: ViewHandle<CommandSearchView>,
     autoupdate_unable_to_update_banner_dismissed: bool,
     autoupdate_unable_to_launch_new_version: bool,
+    manual_update_check_pending: bool,
     reauth_banner_dismissed: bool,
     settings_file_error: Option<crate::settings::SettingsFileError>,
     settings_error_banner_dismissed: bool,
@@ -3080,9 +3092,22 @@ impl Workspace {
         ctx.observe(&tips_completed, Workspace::on_tips_model_changed);
 
         let autoupdate_handle = AutoupdateState::handle(ctx);
-        ctx.subscribe_to_model(&autoupdate_handle, |_view, _handle, evt, ctx| match evt {
+        ctx.subscribe_to_model(&autoupdate_handle, |view, _handle, evt, ctx| match evt {
             AutoupdateStateEvent::UpdateAvailable => ctx.notify(),
             AutoupdateStateEvent::InstallReady => autoupdate::initiate_relaunch_for_update(ctx),
+            AutoupdateStateEvent::CheckComplete {
+                result,
+                request_type: RequestType::ManualCheck,
+            } if view.manual_update_check_pending => {
+                view.manual_update_check_pending = false;
+                let (message, flavor) = manual_update_check_feedback(result);
+                view.toast_stack.update(ctx, |toast_stack, ctx| {
+                    toast_stack.add_ephemeral_toast(
+                        DismissibleToast::new(message.to_owned(), flavor),
+                        ctx,
+                    );
+                });
+            }
             AutoupdateStateEvent::CheckComplete { .. } => {}
         });
 
@@ -3380,6 +3405,7 @@ impl Workspace {
             command_search_view,
             autoupdate_unable_to_update_banner_dismissed: false,
             autoupdate_unable_to_launch_new_version: false,
+            manual_update_check_pending: false,
             reauth_banner_dismissed: false,
             settings_file_error,
             settings_error_banner_dismissed: false,
@@ -15000,7 +15026,8 @@ impl Workspace {
         }
     }
 
-    fn manual_check_for_update(&self, ctx: &mut ViewContext<Self>) {
+    fn manual_check_for_update(&mut self, ctx: &mut ViewContext<Self>) {
+        self.manual_update_check_pending = true;
         AutoupdateState::handle(ctx).update(ctx, |autoupdate_state, ctx| {
             autoupdate_state.manually_check_for_update(ctx);
         });
@@ -22215,7 +22242,7 @@ impl Workspace {
                 Self::add_panel_with_separator(
                     &mut main_content,
                     &mut prev_panel_added,
-                    self.render_config_panel(&item, pane_group, app),
+                    self.render_config_panel(&item, pane_group, &config, app),
                     app,
                 );
             }
@@ -22233,7 +22260,7 @@ impl Workspace {
                 Self::add_panel_with_separator(
                     &mut main_content,
                     &mut prev_panel_added,
-                    self.render_config_panel(&item, pane_group, app),
+                    self.render_config_panel(&item, pane_group, &config, app),
                     app,
                 );
             }
@@ -22249,7 +22276,12 @@ impl Workspace {
                 Self::add_panel_with_separator(
                     &mut main_content,
                     &mut prev_panel_added,
-                    self.render_config_panel(&HeaderToolbarItemKind::CodeReview, pane_group, app),
+                    self.render_config_panel(
+                        &HeaderToolbarItemKind::CodeReview,
+                        pane_group,
+                        &config,
+                        app,
+                    ),
                     app,
                 );
             }
@@ -22829,7 +22861,7 @@ impl Workspace {
                 Self::add_panel_with_separator(
                     &mut panels_view,
                     &mut prev_panel_added,
-                    self.render_config_panel(&item, pane_group, app),
+                    self.render_config_panel(&item, pane_group, &config, app),
                     app,
                 );
             }
@@ -22869,7 +22901,7 @@ impl Workspace {
                 Self::add_panel_with_separator(
                     &mut panels_view,
                     &mut prev_panel_added,
-                    self.render_config_panel(&item, pane_group, app),
+                    self.render_config_panel(&item, pane_group, &config, app),
                     app,
                 );
             }
@@ -22885,7 +22917,12 @@ impl Workspace {
                 Self::add_panel_with_separator(
                     &mut panels_view,
                     &mut prev_panel_added,
-                    self.render_config_panel(&HeaderToolbarItemKind::CodeReview, pane_group, app),
+                    self.render_config_panel(
+                        &HeaderToolbarItemKind::CodeReview,
+                        pane_group,
+                        &config,
+                        app,
+                    ),
                     app,
                 );
             }
@@ -22942,6 +22979,7 @@ impl Workspace {
         &self,
         item: &HeaderToolbarItemKind,
         pane_group: &PaneGroup,
+        config: &HeaderToolbarChipSelection,
         app: &AppContext,
     ) -> Option<Box<dyn Element>> {
         if !item.is_supported(app) || !item.is_panel() {
@@ -22960,8 +22998,11 @@ impl Workspace {
                     .finish(),
                 )
             }
-            HeaderToolbarItemKind::ToolsPanel => {
-                if !pane_group.left_panel_open || warpui::platform::is_mobile_device() {
+            HeaderToolbarItemKind::FileExplorer | HeaderToolbarItemKind::ToolsPanel => {
+                if !config.is_shared_left_panel_owner(item)
+                    || !pane_group.left_panel_open
+                    || warpui::platform::is_mobile_device()
+                {
                     return None;
                 }
                 Some(ChildView::new(&self.left_panel_view).finish())
@@ -22975,8 +23016,7 @@ impl Workspace {
                 }
                 Some(ChildView::new(&self.right_panel_view).finish())
             }
-            HeaderToolbarItemKind::FileExplorer
-            | HeaderToolbarItemKind::AgentManagement
+            HeaderToolbarItemKind::AgentManagement
             | HeaderToolbarItemKind::NotificationsMailbox => None,
         }
     }

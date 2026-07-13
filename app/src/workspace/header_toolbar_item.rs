@@ -100,12 +100,14 @@ impl HeaderToolbarItemKind {
     /// Whether this item opens a side panel (as opposed to replacing the content
     /// area or opening a popover).
     ///
-    /// `FileExplorer` is intentionally NOT a panel: it re-targets the shared left
-    /// (tools) panel to the file-tree view rather than owning a distinct panel,
-    /// so `ToolsPanel` remains the single renderer of `left_panel_view` (see
-    /// `render_config_panel`). Marking it a panel would double-render that view.
+    /// `FileExplorer` and `ToolsPanel` share the same left-panel view. When both
+    /// are configured, `ToolsPanel` owns the renderer; see
+    /// `HeaderToolbarChipSelection::is_shared_left_panel_owner`.
     pub fn is_panel(&self) -> bool {
-        matches!(self, Self::TabsPanel | Self::ToolsPanel | Self::CodeReview)
+        matches!(
+            self,
+            Self::TabsPanel | Self::FileExplorer | Self::ToolsPanel | Self::CodeReview
+        )
     }
 
     pub fn default_left() -> Vec<Self> {

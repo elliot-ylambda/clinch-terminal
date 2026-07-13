@@ -25,11 +25,10 @@ fn all_items_keeps_tools_panel_available_for_customization() {
 }
 
 #[test]
-fn file_explorer_is_not_a_panel_owner() {
-    // It re-targets the shared tools panel rather than owning its own panel, so
-    // it must not be a panel type — otherwise `render_config_panel` would
-    // double-render `left_panel_view`.
-    assert!(!HeaderToolbarItemKind::FileExplorer.is_panel());
+fn file_explorer_is_a_panel_item() {
+    // It renders the shared left panel when the dedicated Tools Panel item is
+    // absent from the toolbar configuration.
+    assert!(HeaderToolbarItemKind::FileExplorer.is_panel());
 }
 
 #[test]

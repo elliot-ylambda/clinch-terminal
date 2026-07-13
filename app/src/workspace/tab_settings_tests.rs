@@ -93,6 +93,28 @@ fn header_toolbar_chip_selection_default_contains_code_review() {
 }
 
 #[test]
+fn default_file_explorer_owns_the_shared_left_panel() {
+    let config = HeaderToolbarChipSelection::Default;
+
+    assert!(config.is_shared_left_panel_owner(&HeaderToolbarItemKind::FileExplorer));
+    assert!(!config.is_shared_left_panel_owner(&HeaderToolbarItemKind::ToolsPanel));
+}
+
+#[test]
+fn tools_panel_takes_shared_left_panel_ownership_when_both_items_are_configured() {
+    let config = HeaderToolbarChipSelection::Custom {
+        left: vec![
+            HeaderToolbarItemKind::FileExplorer,
+            HeaderToolbarItemKind::ToolsPanel,
+        ],
+        right: vec![],
+    };
+
+    assert!(!config.is_shared_left_panel_owner(&HeaderToolbarItemKind::FileExplorer));
+    assert!(config.is_shared_left_panel_owner(&HeaderToolbarItemKind::ToolsPanel));
+}
+
+#[test]
 fn header_toolbar_chip_selection_custom_without_code_review_reports_absent() {
     let config = HeaderToolbarChipSelection::Custom {
         left: vec![
