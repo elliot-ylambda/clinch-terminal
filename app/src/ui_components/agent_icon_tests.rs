@@ -92,6 +92,11 @@ enum CanonicalRunState {
     LocalClaudePluginBlocked,
     /// Local Claude CLI session detected via command matching only (no listener, no rich status).
     LocalClaudeCommandDetected,
+    /// Local Codex CLI session with its OSC 9 fallback listener but no rich status yet.
+    LocalCodexFallbackInProgress,
+    /// Local Codex fallback after an opaque completion notification. The completion status is
+    /// intentionally withheld because the fallback cannot report the full lifecycle.
+    LocalCodexFallbackCompleted,
 }
 
 impl CanonicalRunState {
@@ -107,6 +112,8 @@ impl CanonicalRunState {
             LocalClaudePluginInProgress,
             LocalClaudePluginBlocked,
             LocalClaudeCommandDetected,
+            LocalCodexFallbackInProgress,
+            LocalCodexFallbackCompleted,
         ]
     }
 
@@ -163,6 +170,18 @@ impl CanonicalRunState {
             LocalClaudeCommandDetected => Some(AgentIconFields {
                 is_cli: true,
                 cli_agent: Some(CLIAgent::Claude),
+                status: Some(ConversationStatus::InProgress),
+                is_ambient: false,
+            }),
+            LocalCodexFallbackInProgress => Some(AgentIconFields {
+                is_cli: true,
+                cli_agent: Some(CLIAgent::Codex),
+                status: Some(ConversationStatus::InProgress),
+                is_ambient: false,
+            }),
+            LocalCodexFallbackCompleted => Some(AgentIconFields {
+                is_cli: true,
+                cli_agent: Some(CLIAgent::Codex),
                 status: None,
                 is_ambient: false,
             }),
@@ -255,6 +274,30 @@ impl CanonicalRunState {
                 selected_conversation_status: None,
                 has_selected_conversation: false,
             },
+            LocalCodexFallbackInProgress => TerminalIconInputs {
+                is_ambient: false,
+                cli_session: Some(CLISessionInputs {
+                    agent: CLIAgent::Codex,
+                    has_listener: true,
+                    status: ConversationStatus::InProgress,
+                    supports_rich_status: false,
+                }),
+                selected_third_party_cli_agent: None,
+                selected_conversation_status: None,
+                has_selected_conversation: false,
+            },
+            LocalCodexFallbackCompleted => TerminalIconInputs {
+                is_ambient: false,
+                cli_session: Some(CLISessionInputs {
+                    agent: CLIAgent::Codex,
+                    has_listener: true,
+                    status: ConversationStatus::Success,
+                    supports_rich_status: false,
+                }),
+                selected_third_party_cli_agent: None,
+                selected_conversation_status: None,
+                has_selected_conversation: false,
+            },
         }
     }
 
@@ -274,7 +317,9 @@ impl CanonicalRunState {
             | LocalOzInProgress
             | LocalClaudePluginInProgress
             | LocalClaudePluginBlocked
-            | LocalClaudeCommandDetected => None,
+            | LocalClaudeCommandDetected
+            | LocalCodexFallbackInProgress
+            | LocalCodexFallbackCompleted => None,
         }
     }
 }

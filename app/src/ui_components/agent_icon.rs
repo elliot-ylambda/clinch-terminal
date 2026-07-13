@@ -17,7 +17,7 @@ use crate::ai::agent_conversations_model::{
     AgentRunDisplayStatus,
 };
 use crate::ai::agent_management::active_focused_terminal_id;
-use crate::terminal::cli_agent_sessions::CLIAgentSessionsModel;
+use crate::terminal::cli_agent_sessions::{CLIAgentSession, CLIAgentSessionsModel};
 use crate::terminal::session_settings::SessionSettings;
 use crate::terminal::view::TerminalView;
 use crate::terminal::CLIAgent;
@@ -143,6 +143,22 @@ pub(crate) fn terminal_view_agent_icon_variant_respecting_tab_setting(
     Some(variant)
 }
 
+/// Returns the CLI-agent status that tab chrome can safely display.
+///
+/// Rich plugin sessions expose their full lifecycle. Command-detected sessions and Codex's
+/// native OSC 9 fallback can also reliably expose their initial `InProgress` state because the
+/// session is created only after the command is observed running, but their completed states are
+/// withheld because those fallback notifications do not describe the full lifecycle.
+pub(crate) fn cli_agent_session_status_for_display(
+    session: &CLIAgentSession,
+) -> Option<ConversationStatus> {
+    cli_session_status_for_display(
+        &session.status.to_conversation_status(),
+        session.listener.is_some(),
+        session.supports_rich_status(),
+    )
+}
+
 pub(crate) fn agent_conversation_entry_icon_variant(
     entry: &AgentConversationEntry,
 ) -> IconWithStatusVariant {
@@ -179,7 +195,9 @@ struct CLISessionInputs {
     has_listener: bool,
     status: ConversationStatus,
     /// Whether the agent's session handler exposes rich status (plugin-backed handlers report
-    /// rich status; Codex's OSC 9 handler does not).
+    /// rich status; Codex's OSC 9 handler does not). A non-rich session can still reliably
+    /// report its initial in-progress state because it is created only after the CLI command is
+    /// observed running; only its completed states are withheld from the icon.
     supports_rich_status: bool,
 }
 
@@ -188,15 +206,21 @@ struct CLISessionInputs {
 fn agent_icon_variant_from_terminal_inputs(
     inputs: &TerminalIconInputs,
 ) -> Option<IconWithStatusVariant> {
-    // 1. CLI session with a known (non-Unknown) agent wins. Status is only meaningful when
-    //    the session is plugin-backed and the handler exposes rich status.
+    // 1. CLI session with a known (non-Unknown) agent wins. Rich handlers surface every status.
+    //    Command-detected sessions and Codex's OSC 9 fallback still surface InProgress: that
+    //    state is trustworthy because the session is created only after its command is observed
+    //    running. Their completed states remain hidden because the fallback notifications are
+    //    not rich enough to distinguish the full lifecycle.
     if let Some(session) = inputs
         .cli_session
         .as_ref()
         .filter(|s| !matches!(s.agent, CLIAgent::Unknown))
     {
-        let status =
-            (session.has_listener && session.supports_rich_status).then(|| session.status.clone());
+        let status = cli_session_status_for_display(
+            &session.status,
+            session.has_listener,
+            session.supports_rich_status,
+        );
         return Some(IconWithStatusVariant::CLIAgent {
             agent: session.agent,
             status,
@@ -229,6 +253,15 @@ fn agent_icon_variant_from_terminal_inputs(
     }
 
     None
+}
+
+fn cli_session_status_for_display(
+    status: &ConversationStatus,
+    has_listener: bool,
+    supports_rich_status: bool,
+) -> Option<ConversationStatus> {
+    ((has_listener && supports_rich_status) || matches!(status, ConversationStatus::InProgress))
+        .then(|| status.clone())
 }
 
 /// Pure run-card logic: maps a [`Harness`], status, and ambient flag into an

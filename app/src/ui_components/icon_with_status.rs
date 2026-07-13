@@ -125,6 +125,9 @@ pub(crate) enum IconWithStatusVariant {
     Neutral {
         icon: WarpIcon,
         icon_color: WarpThemeFill,
+        /// Optional status overlay. Plain neutral icons retain their full-size treatment; when a
+        /// status is present the circle uses the same badge geometry as agent icons.
+        status: Option<ConversationStatus>,
     },
     /// A pre-built icon element on an overlay background.
     NeutralElement { icon_element: Box<dyn Element> },
@@ -190,11 +193,36 @@ pub(crate) fn render_icon_with_status_with_badge_style(
     let sub_text = theme.sub_text_color(theme.background());
 
     match variant {
-        IconWithStatusVariant::Neutral { icon, icon_color } => render_neutral_circle(
-            icon.to_warpui_icon(icon_color).finish(),
-            internal_colors::fg_overlay_2(theme),
-            total_size,
-        ),
+        IconWithStatusVariant::Neutral {
+            icon,
+            icon_color,
+            status,
+        } => {
+            let icon_element = icon.to_warpui_icon(icon_color).finish();
+            if let Some(status) = status.as_ref() {
+                let circle = render_circle(
+                    icon_element,
+                    internal_colors::fg_overlay_2(theme),
+                    total_size,
+                );
+                attach_status_overlay(
+                    circle,
+                    Some(status),
+                    false,
+                    total_size,
+                    overlay_extra_overhang_ratio,
+                    badge_style,
+                    theme,
+                    status_container_background,
+                )
+            } else {
+                render_neutral_circle(
+                    icon_element,
+                    internal_colors::fg_overlay_2(theme),
+                    total_size,
+                )
+            }
+        }
         IconWithStatusVariant::NeutralElement { icon_element } => render_neutral_circle(
             icon_element,
             internal_colors::fg_overlay_2(theme),

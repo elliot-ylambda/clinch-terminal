@@ -13,8 +13,8 @@ use super::{
     push_normalized_unique_summary_label, repo_label_for_path, search_fragments_contain_query,
     select_summary_pane_kind_icons, should_keep_detail_sidecar_visible_for_mouse_position,
     sort_summary_primary_labels_status_first, summary_overflow_count,
-    summary_search_text_fragments, terminal_kind_badge_label, terminal_primary_line_data,
-    terminal_pull_request_badge_label, terminal_search_text_fragments,
+    summary_search_text_fragments, terminal_command_status, terminal_kind_badge_label,
+    terminal_primary_line_data, terminal_pull_request_badge_label, terminal_search_text_fragments,
     terminal_title_fallback_font, uses_outer_group_container, visible_pane_ids_for_detail_target,
     vtab_diff_stats_text, AgentTabTextPreference, SummaryPaneKind, SummaryPaneKindIcons,
     TerminalAgentText, TerminalPrimaryLineData, TerminalPrimaryLineFont, VerticalTabsDetailTarget,
@@ -26,6 +26,7 @@ use crate::context_chips::display_chip::GitLineChanges;
 use crate::pane_group::pane::IPaneType;
 use crate::pane_group::{PaneId, TerminalPaneId};
 use crate::safe_triangle::SafeTriangle;
+use crate::terminal::view::TerminalViewState;
 use crate::terminal::CLIAgent;
 use crate::workspace::tab_settings::VerticalTabsDisplayGranularity;
 
@@ -43,6 +44,16 @@ fn code_summary_kind(title: &str) -> SummaryPaneKind {
     SummaryPaneKind::Code {
         title: title.to_string(),
     }
+}
+
+#[test]
+fn terminal_command_status_is_in_progress_only_while_command_is_running() {
+    assert_eq!(
+        terminal_command_status(TerminalViewState::LongRunning),
+        Some(ConversationStatus::InProgress)
+    );
+    assert_eq!(terminal_command_status(TerminalViewState::Normal), None);
+    assert_eq!(terminal_command_status(TerminalViewState::Errored), None);
 }
 
 #[test]

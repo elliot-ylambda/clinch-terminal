@@ -63,7 +63,9 @@ use crate::terminal::session_settings::SessionSettings;
 use crate::terminal::view::TerminalViewState;
 use crate::terminal::{CLIAgent, TerminalView};
 use crate::themes::theme::Fill as ThemeFill;
-use crate::ui_components::agent_icon::terminal_view_agent_icon_variant_respecting_tab_setting;
+use crate::ui_components::agent_icon::{
+    cli_agent_session_status_for_display, terminal_view_agent_icon_variant_respecting_tab_setting,
+};
 use crate::ui_components::buttons::combo_inner_button;
 use crate::ui_components::icon_with_status::{render_icon_with_status, IconWithStatusVariant};
 use crate::ui_components::icons::Icon as UiIcon;
@@ -1049,11 +1051,12 @@ fn summary_conversation_status_for_terminal(
     app: &AppContext,
 ) -> Option<ConversationStatus> {
     let cli_agent_session = CLIAgentSessionsModel::as_ref(app).session(terminal_view.id());
-    if let Some(session) = cli_agent_session
-        .filter(|s| s.supports_rich_status())
-        .filter(|s| !matches!(s.agent, CLIAgent::Unknown))
-    {
-        return Some(session.status.to_conversation_status());
+    if let Some(session) = cli_agent_session.filter(|s| !matches!(s.agent, CLIAgent::Unknown)) {
+        return cli_agent_session_status_for_display(session);
+    }
+
+    if let Some(status) = terminal_command_status(terminal_view.current_state().state) {
+        return Some(status);
     }
 
     let is_ambient = terminal_view.is_ambient_agent_session(app);
@@ -1063,6 +1066,10 @@ fn summary_conversation_status_for_terminal(
     (has_conversation || is_ambient)
         .then(|| terminal_view.selected_conversation_status_for_display(app))
         .flatten()
+}
+
+fn terminal_command_status(state: TerminalViewState) -> Option<ConversationStatus> {
+    matches!(state, TerminalViewState::LongRunning).then_some(ConversationStatus::InProgress)
 }
 
 fn coalesce_summary_branch_entries(
@@ -3278,6 +3285,7 @@ fn resolve_icon_with_status_variant(
                 IconWithStatusVariant::Neutral {
                     icon: WarpIcon::Terminal,
                     icon_color: main_text,
+                    status: terminal_command_status(terminal_view.current_state().state),
                 }
             }
         }
@@ -3288,6 +3296,7 @@ fn resolve_icon_with_status_variant(
                 IconWithStatusVariant::Neutral {
                     icon: WarpIcon::Code2,
                     icon_color: sub_text,
+                    status: None,
                 }
             }
         }
@@ -3295,6 +3304,7 @@ fn resolve_icon_with_status_variant(
         TypedPane::Settings | TypedPane::EnvironmentManagement => IconWithStatusVariant::Neutral {
             icon: typed.icon(),
             icon_color: main_text,
+            status: None,
         },
         // Warp Drive object types use their established index colors
         TypedPane::Notebook { is_plan } => IconWithStatusVariant::Neutral {
@@ -3302,29 +3312,35 @@ fn resolve_icon_with_status_variant(
             icon_color: drive_color(DriveObjectType::Notebook {
                 is_ai_document: *is_plan,
             }),
+            status: None,
         },
         TypedPane::Workflow { is_ai_prompt: true } => IconWithStatusVariant::Neutral {
             icon: typed.icon(),
             icon_color: drive_color(DriveObjectType::AgentModeWorkflow),
+            status: None,
         },
         TypedPane::Workflow {
             is_ai_prompt: false,
         } => IconWithStatusVariant::Neutral {
             icon: typed.icon(),
             icon_color: drive_color(DriveObjectType::Workflow),
+            status: None,
         },
         TypedPane::EnvVarCollection => IconWithStatusVariant::Neutral {
             icon: typed.icon(),
             icon_color: drive_color(DriveObjectType::EnvVarCollection),
+            status: None,
         },
         TypedPane::AIFact => IconWithStatusVariant::Neutral {
             icon: typed.icon(),
             icon_color: drive_color(DriveObjectType::AIFact),
+            status: None,
         },
         // Other pane types use sub-text color
         other => IconWithStatusVariant::Neutral {
             icon: other.icon(),
             icon_color: sub_text,
+            status: None,
         },
     }
 }
@@ -6641,8 +6657,12 @@ fn render_terminal_detail_section(
     let (conversation_display_title, cli_agent_title) =
         preferred_agent_tab_titles(&agent_text, agent_tab_text_preference(app));
     let kind_label = terminal_kind_badge_label(agent_text.is_oz_agent, agent_text.cli_agent);
-    let status = if let Some(session) = cli_agent_session.filter(|s| s.supports_rich_status()) {
-        Some(session.status.to_conversation_status())
+    let status = if let Some(session) =
+        cli_agent_session.filter(|s| !matches!(s.agent, CLIAgent::Unknown))
+    {
+        cli_agent_session_status_for_display(session)
+    } else if let Some(status) = terminal_command_status(terminal_view.current_state().state) {
+        Some(status)
     } else if agent_text.is_oz_agent {
         terminal_view.selected_conversation_status_for_display(app)
     } else {
