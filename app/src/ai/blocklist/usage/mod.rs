@@ -63,29 +63,6 @@ impl CliAgentUsageProvider {
     }
 }
 
-#[cfg(test)]
-mod cli_agent_usage_provider_tests {
-    use super::{CliAgentUsageProvider, CLAUDE_USAGE_URL, CODEX_USAGE_URL};
-
-    #[test]
-    fn clicking_a_provider_toggles_only_its_panel() {
-        let claude = CliAgentUsageProvider::Claude;
-        let codex = CliAgentUsageProvider::Codex;
-
-        assert_eq!(claude.toggle_panel(None), Some(claude));
-        assert_eq!(claude.toggle_panel(Some(claude)), None);
-        assert_eq!(codex.toggle_panel(Some(claude)), Some(codex));
-    }
-
-    #[test]
-    fn providers_link_to_their_authoritative_usage_pages() {
-        assert_eq!(CliAgentUsageProvider::Claude.usage_url(), CLAUDE_USAGE_URL);
-        assert_eq!(CliAgentUsageProvider::Codex.usage_url(), CODEX_USAGE_URL);
-        assert_eq!(CLAUDE_USAGE_URL, "https://claude.ai/new#settings/usage");
-        assert_eq!(CODEX_USAGE_URL, "https://chatgpt.com/#settings/Usage");
-    }
-}
-
 pub fn icon_for_context_window_usage(context_window_usage: f32) -> Icon {
     // Match the context window usage to the nearest 10% icon.
     if context_window_usage >= 0.95 {
@@ -127,4 +104,27 @@ pub fn render_context_window_usage_icon(
     };
 
     icon.to_warpui_icon(fill).finish()
+}
+
+#[cfg(test)]
+mod cli_agent_usage_provider_tests {
+    use super::{CliAgentUsageProvider, CLAUDE_USAGE_URL, CODEX_USAGE_URL};
+
+    #[test]
+    fn clicking_a_provider_toggles_only_its_panel() {
+        let claude = CliAgentUsageProvider::Claude;
+        let codex = CliAgentUsageProvider::Codex;
+
+        assert_eq!(claude.toggle_panel(None), Some(claude));
+        assert_eq!(claude.toggle_panel(Some(claude)), None);
+        assert_eq!(codex.toggle_panel(Some(claude)), Some(codex));
+    }
+
+    #[test]
+    fn providers_link_to_their_authoritative_usage_pages() {
+        assert_eq!(CliAgentUsageProvider::Claude.usage_url(), CLAUDE_USAGE_URL);
+        assert_eq!(CliAgentUsageProvider::Codex.usage_url(), CODEX_USAGE_URL);
+        assert_eq!(CLAUDE_USAGE_URL, "https://claude.ai/new#settings/usage");
+        assert_eq!(CODEX_USAGE_URL, "https://chatgpt.com/#settings/Usage");
+    }
 }
