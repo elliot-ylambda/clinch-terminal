@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod cache;
 pub mod claude;
+pub mod claude_plan_cache;
 pub mod codex;
 pub mod format;
 pub mod http;

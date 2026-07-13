@@ -1111,6 +1111,12 @@ fn visible_section_or_fallback(section: SettingsSection, has_backend: bool) -> S
     }
 }
 
+/// Clinch Settings is a standalone, single-page surface. Every other section
+/// belongs to the inherited Warp settings surface.
+fn sections_share_settings_surface(current: SettingsSection, candidate: SettingsSection) -> bool {
+    (current == SettingsSection::Clinch) == (candidate == SettingsSection::Clinch)
+}
+
 macro_rules! update_page {
     ($handle:expr, $update:expr, $ctx:expr) => {
         match $handle {
@@ -1359,7 +1365,6 @@ impl SettingsView {
         // Build sidebar nav items. AI page is presented as an "Agents" umbrella
         // with subpages; the actual AI SettingsPage is hidden from direct sidebar listing.
         let mut nav_items = vec![
-            SettingsNavItem::Page(SettingsSection::Clinch),
             SettingsNavItem::Page(SettingsSection::Account),
             SettingsNavItem::Umbrella(SettingsUmbrella::new(
                 "Agents",
@@ -1480,7 +1485,11 @@ impl SettingsView {
     }
 
     pub fn focus(&mut self, ctx: &mut ViewContext<Self>) {
-        ctx.focus(&self.search_editor);
+        if self.current_settings_page == SettingsSection::Clinch {
+            ctx.focus_self();
+        } else {
+            ctx.focus(&self.search_editor);
+        }
         ctx.emit(SettingsViewEvent::Pane(PaneEvent::FocusSelf));
     }
 
@@ -1492,8 +1501,10 @@ impl SettingsView {
             .iter()
             .zip(self.pages_filter.iter())
             .filter_map(move |(page, match_data)| {
-                (self.should_render_page(page, app) && match_data.is_truthy())
-                    .then_some((page, *match_data))
+                (sections_share_settings_surface(self.current_settings_page, page.section)
+                    && self.should_render_page(page, app)
+                    && match_data.is_truthy())
+                .then_some((page, *match_data))
             })
     }
 
@@ -2656,12 +2667,20 @@ impl View for SettingsView {
         .with_width(sidebar_width())
         .finish();
 
-        let row = Flex::row()
-            .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
-            .with_main_axis_size(MainAxisSize::Max)
-            .with_child(Shrinkable::new(1., sidebar).finish())
-            .with_child(Shrinkable::new(1., page).finish())
-            .finish();
+        let row = if self.current_settings_page == SettingsSection::Clinch {
+            Flex::row()
+                .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .with_main_axis_size(MainAxisSize::Max)
+                .with_child(Shrinkable::new(1., page).finish())
+                .finish()
+        } else {
+            Flex::row()
+                .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .with_main_axis_size(MainAxisSize::Max)
+                .with_child(Shrinkable::new(1., sidebar).finish())
+                .with_child(Shrinkable::new(1., page).finish())
+                .finish()
+        };
 
         let mut stack = Stack::new().with_child(
             EventHandler::new(
@@ -2878,7 +2897,11 @@ impl BackingView for SettingsView {
     }
 
     fn focus_contents(&mut self, ctx: &mut warpui::ViewContext<Self>) {
-        ctx.focus(&self.search_editor)
+        if self.current_settings_page == SettingsSection::Clinch {
+            ctx.focus_self();
+        } else {
+            ctx.focus(&self.search_editor)
+        }
     }
 
     fn render_header_content(
@@ -2886,7 +2909,12 @@ impl BackingView for SettingsView {
         _ctx: &view::HeaderRenderContext<'_>,
         _app: &AppContext,
     ) -> view::HeaderContent {
-        view::HeaderContent::simple("Settings")
+        let title = if self.current_settings_page == SettingsSection::Clinch {
+            "Clinch Settings"
+        } else {
+            "Settings"
+        };
+        view::HeaderContent::simple(title)
     }
 
     fn set_focus_handle(&mut self, focus_handle: PaneFocusHandle, _ctx: &mut ViewContext<Self>) {

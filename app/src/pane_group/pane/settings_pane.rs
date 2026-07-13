@@ -76,8 +76,9 @@ impl PaneContent for SettingsPane {
 
         let pane_group_id = ctx.view_id();
         let window_id = ctx.window_id();
+        let settings_view_id = self.settings_view(ctx).id();
         SettingsPaneManager::handle(ctx).update(ctx, |manager, ctx| {
-            manager.register_pane(self, pane_group_id, window_id, ctx);
+            manager.register_pane(settings_view_id, self, pane_group_id, window_id, ctx);
         });
     }
 
@@ -93,12 +94,12 @@ impl PaneContent for SettingsPane {
         ctx.unsubscribe_to_view(&self.view);
 
         // Always deregister from SettingsPaneManager - it will be re-registered on attach if restored.
-        // Only clear the locator if this is the currently registered settings pane for the window.
-        let window_id = ctx.window_id();
+        // Only clear the locator if this is the registered pane for this settings view.
         let pane_group_id = ctx.view_id();
         let pane_id = self.id();
+        let settings_view_id = settings_view.id();
         SettingsPaneManager::handle(ctx).update(ctx, |manager, ctx| {
-            manager.deregister_pane(&window_id, pane_group_id, pane_id, ctx);
+            manager.deregister_pane(settings_view_id, pane_group_id, pane_id, ctx);
         });
     }
 

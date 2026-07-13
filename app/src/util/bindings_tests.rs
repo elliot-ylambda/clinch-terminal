@@ -3,7 +3,9 @@ use warpui::platform::OperatingSystem;
 use warpui::App;
 
 use crate::terminal;
-use crate::util::bindings::{keybinding_name_to_display_string, trigger_to_keystroke};
+use crate::util::bindings::{
+    custom_tag_to_keystroke, keybinding_name_to_display_string, trigger_to_keystroke, CustomAction,
+};
 use crate::workspace::WorkspaceAction;
 
 #[test]
@@ -71,6 +73,18 @@ fn test_keybinding_name_to_display_string() {
             );
         });
     });
+}
+
+#[test]
+fn test_settings_menu_shortcuts() {
+    assert_eq!(
+        custom_tag_to_keystroke(CustomAction::ShowSettings.into()),
+        Keystroke::parse("cmdorctrl-,").ok()
+    );
+    assert_eq!(
+        custom_tag_to_keystroke(CustomAction::ShowWarpSettings.into()),
+        None
+    );
 }
 
 #[test]

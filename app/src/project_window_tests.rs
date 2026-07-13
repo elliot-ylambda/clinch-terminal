@@ -1,8 +1,62 @@
+use warpui::keymap::Keystroke;
+use warpui::platform::OperatingSystem;
+use warpui::App;
+
 use super::{
     active_index_after_removal, close_project_decision, next_project_index, previous_project_index,
-    CloseProjectDecision, PROJECT_TAB_BORDER_WIDTH, PROJECT_TAB_VERTICAL_NUDGE,
-    PROJECT_TAB_VERTICAL_PADDING,
+    CloseProjectDecision, ACTIVATE_NEXT_PROJECT_MAC_KEY_BINDING,
+    ACTIVATE_PREVIOUS_PROJECT_MAC_KEY_BINDING, PROJECT_TAB_BORDER_WIDTH,
+    PROJECT_TAB_VERTICAL_NUDGE, PROJECT_TAB_VERTICAL_PADDING,
 };
+use crate::util::bindings::{custom_tag_to_keystroke, trigger_to_keystroke, CustomAction};
+
+#[test]
+fn project_navigation_owns_command_brackets_on_mac() {
+    App::test((), |mut app| async move {
+        app.update(super::init);
+
+        app.update(|ctx| {
+            let previous = ctx
+                .editable_bindings()
+                .find(|binding| binding.name == "project_window:activate_previous_project")
+                .and_then(|binding| trigger_to_keystroke(binding.trigger));
+            let next = ctx
+                .editable_bindings()
+                .find(|binding| binding.name == "project_window:activate_next_project")
+                .and_then(|binding| trigger_to_keystroke(binding.trigger));
+
+            if OperatingSystem::get().is_mac() {
+                assert_eq!(
+                    previous,
+                    Keystroke::parse(ACTIVATE_PREVIOUS_PROJECT_MAC_KEY_BINDING).ok()
+                );
+                assert_eq!(
+                    next,
+                    Keystroke::parse(ACTIVATE_NEXT_PROJECT_MAC_KEY_BINDING).ok()
+                );
+                assert_eq!(
+                    custom_tag_to_keystroke(CustomAction::ActivatePreviousPane.into()),
+                    None
+                );
+                assert_eq!(
+                    custom_tag_to_keystroke(CustomAction::ActivateNextPane.into()),
+                    None
+                );
+            } else {
+                assert_eq!(previous, None);
+                assert_eq!(next, None);
+                assert_eq!(
+                    custom_tag_to_keystroke(CustomAction::ActivatePreviousPane.into()),
+                    Keystroke::parse("ctrl-shift-{").ok()
+                );
+                assert_eq!(
+                    custom_tag_to_keystroke(CustomAction::ActivateNextPane.into()),
+                    Keystroke::parse("ctrl-shift-}").ok()
+                );
+            }
+        });
+    });
+}
 
 #[test]
 fn project_navigation_wraps_and_singletons_are_noops() {

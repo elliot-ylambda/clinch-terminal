@@ -21,9 +21,10 @@
     },
     "create-pr": {
       "source": "warpdotdev/common-skills",
+      "ref": "oz/skills-migration",
       "sourceType": "github",
       "skillPath": ".agents/skills/create-pr/SKILL.md",
-      "computedHash": "d9f06f0219b3d402cf1ff3b0ee3a4d6d38f259a0dcf6103a99b1815c2b81d95b"
+      "computedHash": "0e9559f98305b6c4c3e49e979f91bdb5d5b88a0b8b4360dd94c59f7f172f531a"
     },
     "cross-critique": {
       "source": "warpdotdev/common-skills",

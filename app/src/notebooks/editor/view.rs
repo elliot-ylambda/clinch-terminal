@@ -176,12 +176,6 @@ pub fn init(app: &mut AppContext) {
             text_entry.clone(),
         ),
         FixedBinding::new("end", EditorViewAction::MoveToLineEnd, text_entry.clone()),
-        FixedBinding::new("cmdorctrl-]", EditorViewAction::Indent, text_entry.clone()),
-        FixedBinding::new(
-            "cmdorctrl-[",
-            EditorViewAction::Unindent,
-            text_entry.clone(),
-        ),
         FixedBinding::new("tab", EditorViewAction::Tab, text_entry.clone()),
         FixedBinding::new("shift-tab", EditorViewAction::ShiftTab, text_entry.clone()),
         // Also create the word movement shortcuts with `meta` in place of `alt`, to accommodate
@@ -294,6 +288,15 @@ pub fn init(app: &mut AppContext) {
             id!("RichTextEditorView") & !id!("IMEOpen"),
         ),
     ]);
+
+    // Command+[ and Command+] are reserved for project navigation on macOS.
+    // Keep the existing rich-text indentation bindings on other platforms.
+    if !OperatingSystem::get().is_mac() {
+        app.register_fixed_bindings([
+            FixedBinding::new("ctrl-]", EditorViewAction::Indent, text_entry.clone()),
+            FixedBinding::new("ctrl-[", EditorViewAction::Unindent, text_entry.clone()),
+        ]);
+    }
 
     // Editable command-selection bindings.
     app.register_editable_bindings([

@@ -2,6 +2,8 @@
 //! used for the apps design (our buttons with styling, headers and panels etc.) as well definition
 //! of colors (aka blended colors from the figma designs derived from Warp theme) and icons used
 //! within the app.
+use pathfinder_color::ColorU;
+
 pub(crate) mod agent_icon;
 pub(crate) mod avatar;
 pub(crate) mod blended_colors;
@@ -18,5 +20,13 @@ pub mod tab_selector;
 pub(crate) mod window_focus_dimming;
 
 pub use warp_core::ui::icons;
+
+/// Green used by the stable Clinch app icon's glyph and cursor.
+pub(crate) const CLINCH_LOGO_GREEN: ColorU = ColorU {
+    r: 0xBF,
+    g: 0xFF,
+    b: 0x00,
+    a: 0xFF,
+};
 
 const BORDER_RADIUS: f32 = 4.;

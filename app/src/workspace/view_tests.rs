@@ -78,6 +78,7 @@ use crate::test_util::settings::initialize_settings_for_tests;
 use crate::undo_close::UndoCloseSettings;
 #[cfg(feature = "local_fs")]
 use crate::user_config::tab_configs_dir;
+use crate::util::bindings::CustomAction;
 #[cfg(windows)]
 use crate::util::traffic_lights::windows::RendererState;
 use crate::warp_managed_paths_watcher::WarpManagedPathsWatcher;
@@ -198,8 +199,12 @@ pub(crate) fn initialize_app(app: &mut App) {
     app.add_singleton_model(crate::ai::blocklist::QueuedQueryModel::new);
     app.add_singleton_model(|ctx| OrchestrationPillBarModel::new(Default::default(), ctx));
     app.add_singleton_model(|_| CLIAgentSessionsModel::new());
+    // AutoContinueModel observes fresh usage snapshots as well as session
+    // events, so both dependencies must be registered first. The test
+    // constructor omits the keychain/HTTP producer thread.
+    app.add_singleton_model(|_| crate::ai::blocklist::usage::CliAgentUsageModel::new_for_test());
     // TerminalView construction subscribes to the auto-continue singleton,
-    // which itself subscribes to CLIAgentSessionsModel (register it after).
+    // which itself subscribes to the session and usage models.
     app.add_singleton_model(
         crate::terminal::cli_agent_sessions::auto_continue::AutoContinueModel::new,
     );
@@ -249,10 +254,6 @@ pub(crate) fn initialize_app(app: &mut App) {
     app.add_singleton_model(|ctx| {
         AIRequestUsageModel::new_for_test(ServerApiProvider::as_ref(ctx).get_ai_client(), ctx)
     });
-    // The agent input footer subscribes to this singleton during construction, so
-    // it must be registered or every workspace-building test panics. The test
-    // constructor omits the keychain/HTTP producer thread.
-    app.add_singleton_model(|_| crate::ai::blocklist::usage::CliAgentUsageModel::new_for_test());
     app.add_singleton_model(OneTimeModalModel::new);
     // Register GlobalResourceHandlesProvider before ServerExperiments which depends on it
     let global_resource_handles = GlobalResourceHandles::mock(app);
@@ -319,6 +320,125 @@ pub(crate) fn mock_workspace(app: &mut App) -> ViewHandle<Workspace> {
         )
     });
     workspace
+}
+
+#[test]
+fn clinch_settings_keeps_native_settings_actions_dispatchable() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+        let window_id = app.read(|ctx| workspace.window_id(ctx));
+        app.update(|ctx| {
+            WindowManager::handle(ctx).update(ctx, |state, _| {
+                state.overwrite_for_test(ApplicationStage::Active, Some(window_id));
+            });
+        });
+
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.focus_active_tab(ctx);
+            workspace.handle_action(&WorkspaceAction::ShowSettings, ctx);
+        });
+
+        workspace.read(&app, |workspace, ctx| {
+            assert_eq!(
+                workspace
+                    .settings_pane
+                    .as_ref(ctx)
+                    .current_settings_section(),
+                SettingsSection::Clinch
+            );
+        });
+
+        app.read(|ctx| {
+            assert!(
+                ctx.default_binding_for_custom_action(CustomAction::ShowWarpSettings.into())
+                    .is_some(),
+                "the macOS menu action should have a registered binding"
+            );
+        });
+
+        app.update(|ctx| {
+            crate::app_menus::dispatch_workspace_action_for_test(
+                &WorkspaceAction::ShowSettingsPage(SettingsSection::Appearance),
+                ctx,
+            );
+        });
+
+        workspace.read(&app, |workspace, ctx| {
+            assert_eq!(
+                workspace
+                    .settings_pane
+                    .as_ref(ctx)
+                    .current_settings_section(),
+                SettingsSection::Appearance
+            );
+        });
+    });
+}
+
+#[test]
+fn project_workspaces_in_one_window_open_independent_settings_panes() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let first_workspace = mock_workspace(&mut app);
+        let window_id = app.read(|ctx| first_workspace.window_id(ctx));
+        let global_resource_handles = GlobalResourceHandles::mock(&mut app);
+        let second_workspace = app.add_typed_action_view(window_id, |ctx| {
+            Workspace::new(
+                global_resource_handles,
+                None,
+                NewWorkspaceSource::Empty {
+                    previous_active_window: Some(window_id),
+                    shell: None,
+                },
+                ctx,
+            )
+        });
+
+        let first_initial_tab_count =
+            first_workspace.read(&app, |workspace, _| workspace.tab_count());
+        let second_initial_tab_count =
+            second_workspace.read(&app, |workspace, _| workspace.tab_count());
+
+        first_workspace.update(&mut app, |workspace, ctx| {
+            workspace.handle_action(&WorkspaceAction::ShowSettings, ctx);
+        });
+        second_workspace.update(&mut app, |workspace, ctx| {
+            workspace.handle_action(&WorkspaceAction::ShowSettings, ctx);
+        });
+
+        first_workspace.read(&app, |workspace, ctx| {
+            assert_eq!(workspace.tab_count(), first_initial_tab_count + 1);
+            assert_eq!(
+                workspace
+                    .settings_pane
+                    .as_ref(ctx)
+                    .current_settings_section(),
+                SettingsSection::Clinch
+            );
+        });
+        second_workspace.read(&app, |workspace, ctx| {
+            assert_eq!(workspace.tab_count(), second_initial_tab_count + 1);
+            assert_eq!(
+                workspace
+                    .settings_pane
+                    .as_ref(ctx)
+                    .current_settings_section(),
+                SettingsSection::Clinch
+            );
+        });
+
+        app.read(|ctx| {
+            let manager = SettingsPaneManager::as_ref(ctx);
+            let first_locator = manager
+                .find_pane(first_workspace.as_ref(ctx).settings_pane.id())
+                .expect("first project should register its settings pane");
+            let second_locator = manager
+                .find_pane(second_workspace.as_ref(ctx).settings_pane.id())
+                .expect("second project should register its settings pane");
+            assert_ne!(first_locator, second_locator);
+        });
+    });
 }
 
 fn restored_workspace(

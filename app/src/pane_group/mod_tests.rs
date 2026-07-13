@@ -168,14 +168,14 @@ fn initialize_app(app: &mut App) {
         )
     });
     app.add_singleton_model(|_| CLIAgentSessionsModel::new());
+    // AutoContinueModel observes fresh usage snapshots as well as session
+    // events, so both dependencies must be registered first.
+    app.add_singleton_model(|_| crate::ai::blocklist::usage::CliAgentUsageModel::new_for_test());
     // TerminalView construction subscribes to the auto-continue singleton,
-    // which itself subscribes to CLIAgentSessionsModel (register it after).
+    // which itself subscribes to the session and usage models.
     app.add_singleton_model(
         crate::terminal::cli_agent_sessions::auto_continue::AutoContinueModel::new,
     );
-    // The CLI agent usage footer, constructed during terminal view creation,
-    // subscribes to this singleton; production registers it at startup.
-    app.add_singleton_model(|_| crate::ai::blocklist::usage::CliAgentUsageModel::new_for_test());
     app.add_singleton_model(OrchestrationEventService::new);
     app.add_singleton_model(LocalAgentTaskSyncModel::new);
     app.add_singleton_model(OrchestrationEventStreamer::new);

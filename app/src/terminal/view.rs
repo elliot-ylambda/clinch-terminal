@@ -385,7 +385,9 @@ use crate::terminal::block_list_viewport::{
     ScrollState, ViewportState,
 };
 use crate::terminal::bootstrap::init_subshell_command;
-use crate::terminal::cli_agent_sessions::auto_continue::AutoContinueModel;
+use crate::terminal::cli_agent_sessions::auto_continue::{
+    is_auto_continue_available, AutoContinueModel,
+};
 use crate::terminal::cli_agent_sessions::event::{
     parse_event, CLIAgentEvent, CLIAgentEventPayload, CLIAgentEventSource, CLIAgentEventType,
     CLI_AGENT_NOTIFICATION_SENTINEL,
@@ -21674,6 +21676,9 @@ impl TerminalView {
                 block_id,
                 operations,
             } => {
+                // Editing the rich input means the user has taken over this
+                // stopped pane, just like typing directly into its PTY.
+                self.cancel_auto_continue_on_user_input(ctx);
                 ctx.emit(Event::InputEditorUpdated {
                     block_id: block_id.clone(),
                     operations: operations.clone(),
@@ -24370,7 +24375,13 @@ impl TerminalView {
             scrollable
         };
 
-        Stack::new().with_child(gap_element)
+        let mut column = Flex::column()
+            .with_child(Shrinkable::new(1., gap_element).finish());
+        if self.should_render_sticky_cli_agent_footer(model, app) {
+            column.add_child(ChildView::new(&self.use_agent_footer).finish());
+        }
+
+        Stack::new().with_child(column.finish())
     }
 
     // In the case of waterfall mode with no gap, we need to handle left and right (for the context menu) clicks
@@ -27542,11 +27553,25 @@ impl View for TerminalView {
                         self.render_block_list_element(&model, input_mode, true, app)
                     };
 
+                    let should_render_sticky_cli_footer =
+                        self.should_render_sticky_cli_agent_footer(&model, app);
+                    let should_render_alt_screen_footer = model.is_alt_screen_active()
+                        && !should_render_sticky_cli_footer
+                        && self.should_render_use_agent_footer(&model, app);
+
+                    // A reversed pinned-to-top column lays its first child out at the bottom.
+                    // Add the sticky toolbelt before the output in that mode so it remains a
+                    // true bottom footer rather than moving above the composer.
+                    if should_render_sticky_cli_footer
+                        && matches!(input_mode, InputMode::PinnedToTop)
+                    {
+                        column.add_child(ChildView::new(&self.use_agent_footer).finish());
+                    }
+
                     column.add_child(Shrinkable::new(1., output_area).finish());
 
-                    if model.is_alt_screen_active()
-                        && self.should_render_use_agent_footer(&model, app)
-                    {
+                    // Preserve the existing alt-screen placement for non-CLI footer variants.
+                    if should_render_alt_screen_footer {
                         column.add_child(ChildView::new(&self.use_agent_footer).finish());
                     }
 
@@ -27558,6 +27583,14 @@ impl View for TerminalView {
                         column.add_child(
                             self.render_remote_server_loading_footer(&model, appearance, app),
                         );
+                    }
+
+                    // In the normal column direction, the last child owns the bottom edge. Keep
+                    // the CLI toolbelt outside both the scrollable block list and the composer.
+                    if should_render_sticky_cli_footer
+                        && !matches!(input_mode, InputMode::PinnedToTop)
+                    {
+                        column.add_child(ChildView::new(&self.use_agent_footer).finish());
                     }
 
                     let stack = Stack::new()
@@ -28095,17 +28128,26 @@ impl View for TerminalView {
                 context.set.insert(flags::CLI_AGENT_RICH_INPUT_OPEN);
             }
 
-            // Rate-limit auto-continue Command Palette pair: available only
-            // for Claude sessions while the usage widget is enabled; the
-            // "enabled" flag picks the Enable vs Disable palette entry (see
-            // the pair registration in terminal/view/init.rs).
-            let is_claude_session = CLIAgentSessionsModel::as_ref(app)
+            // Rate-limit auto-continue Command Palette pair. The "enabled"
+            // flag picks the Enable vs Disable palette entry (see the pair
+            // registration in terminal/view/init.rs).
+            let auto_continue_available = CLIAgentSessionsModel::as_ref(app)
                 .session(self.view_id)
-                .is_some_and(|session| session.agent == CLIAgent::Claude);
-            if is_claude_session && *CliAgentUsageSettings::as_ref(app).show_plan_limits {
-                context.set.insert(init::CLAUDE_AUTO_CONTINUE_AVAILABLE_KEY);
+                .is_some_and(|session| {
+                    is_auto_continue_available(
+                        session.agent,
+                        *CliAgentUsageSettings::as_ref(app).show_plan_limits,
+                        model_lock.shared_session_status().is_viewer(),
+                    )
+                });
+            if auto_continue_available {
+                context
+                    .set
+                    .insert(init::CLI_AGENT_AUTO_CONTINUE_AVAILABLE_KEY);
                 if AutoContinueModel::as_ref(app).is_enabled(self.view_id) {
-                    context.set.insert(init::CLAUDE_AUTO_CONTINUE_ENABLED_KEY);
+                    context
+                        .set
+                        .insert(init::CLI_AGENT_AUTO_CONTINUE_ENABLED_KEY);
                 }
             }
         }

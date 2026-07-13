@@ -1,8 +1,9 @@
 //! Footer bar for "Use agent" functionality during long-running commands.
 //!
-//! This module provides a footer that appears at the bottom of active long running blocks,
-//! offering users the option to bring in the agent. For CLI agent commands (e.g., Claude Code,
-//! Gemini CLI, Codex), it displays a specialized footer with additional functionality.
+//! For regular commands, the footer appears at the bottom of the active long-running block and
+//! offers users the option to bring in the agent. For CLI agent commands (e.g., Claude Code,
+//! Gemini CLI, Codex), the specialized toolbelt is rendered outside the scrollable agent UI and
+//! remains pinned to the terminal layout.
 
 use base64::Engine;
 use warpui::clipboard::{ClipboardContent, ImageData};
@@ -38,7 +39,8 @@ use warp_core::{report_error, send_telemetry_from_ctx};
 use warp_terminal::model::escape_sequences::{BRACKETED_PASTE_END, BRACKETED_PASTE_START};
 use warpify_footer::{WarpifyFooterView, WarpifyFooterViewEvent};
 use warpui::elements::{
-    ChildView, Container, CrossAxisAlignment, Empty, Expanded, Flex, MainAxisSize, ParentElement,
+    Border, ChildView, Container, CrossAxisAlignment, Empty, Expanded, Flex, MainAxisSize,
+    ParentElement,
 };
 use warpui::keymap::Keystroke;
 use warpui::r#async::Timer;
@@ -63,6 +65,7 @@ pub use crate::terminal::CLIAgent;
 use crate::terminal::TerminalModel;
 use crate::ui_components::blended_colors;
 use crate::ui_components::icons::Icon;
+use crate::ui_components::CLINCH_LOGO_GREEN;
 use crate::view_components::action_button::{
     ActionButton, ActionButtonTheme, ButtonSize, KeystrokeSource, TooltipAlignment,
 };
@@ -367,6 +370,19 @@ impl TerminalView {
                 || active_block.is_eligible_for_agent_handoff())
     }
 
+    /// Whether the CLI agent toolbelt should be rendered as a persistent
+    /// terminal-layout sibling instead of rich content inside the block list.
+    pub(super) fn should_render_sticky_cli_agent_footer(
+        &self,
+        model: &TerminalModel,
+        app: &AppContext,
+    ) -> bool {
+        CLIAgentSessionsModel::as_ref(app)
+            .session(self.view_id)
+            .is_some()
+            && self.should_render_use_agent_footer(model, app)
+    }
+
     /// Returns the detected CLI agent for the active block's command, if any.
     ///
     /// This method resolves aliases before detecting the CLI agent. For example,
@@ -523,22 +539,23 @@ impl TerminalView {
         // This is a bit of a hack- but it ensures we never show more than one footer in the
         // blocklist.
         self.hide_use_agent_footer_in_blocklist(ctx);
-        let (should_render_footer, is_alt_screen_active) = {
+        let (should_render_footer, is_alt_screen_active, cli_agent) = {
             let model = self.model.lock();
             (
                 self.should_render_use_agent_footer(&model, ctx),
                 model.is_alt_screen_active(),
+                CLIAgentSessionsModel::as_ref(ctx)
+                    .session(self.view_id)
+                    .map(|session| session.agent),
             )
         };
-        if is_alt_screen_active || !should_render_footer {
+        if !should_render_footer {
             return;
         }
 
-        let should_insert_after_block = !InputModeSettings::as_ref(ctx).is_pinned_to_top();
-
         // Send telemetry when showing CLI agent footer
-        if let Some(session) = CLIAgentSessionsModel::as_ref(ctx).session(self.view_id) {
-            let cli_agent_type: CLIAgentType = session.agent.into();
+        if let Some(cli_agent) = cli_agent {
+            let cli_agent_type: CLIAgentType = cli_agent.into();
             send_telemetry_from_ctx!(
                 TelemetryEvent::CLIAgentToolbarShown {
                     cli_agent: cli_agent_type,
@@ -546,6 +563,15 @@ impl TerminalView {
                 ctx
             );
         }
+
+        // CLI toolbelts are persistent terminal-layout children. Keeping them
+        // out of the block list prevents them from scrolling with the embedded
+        // agent UI. Alt-screen footers are also rendered by TerminalView.
+        if cli_agent.is_some() || is_alt_screen_active {
+            return;
+        }
+
+        let should_insert_after_block = !InputModeSettings::as_ref(ctx).is_pinned_to_top();
 
         self.insert_rich_content(
             None,
@@ -1052,11 +1078,12 @@ impl TerminalView {
     }
 }
 
-/// Footer rendered at the bottom of the active long running block or alt screen element.
+/// Footer rendered at the bottom of the active long-running block or terminal layout.
 ///
 /// For regular commands, displays a 'Use agent' keystroke button to enter agent mode.
 /// For CLI agent commands (e.g., Claude Code, Gemini CLI, Codex), displays a specialized
-/// footer with image attachment, voice input, file explorer, view changes, and share buttons.
+/// sticky toolbelt with image attachment, voice input, file explorer, view changes, and share
+/// buttons.
 pub struct UseAgentToolbar {
     terminal_view_id: EntityId,
     terminal_model: Arc<FairMutex<TerminalModel>>,
@@ -1361,18 +1388,17 @@ impl View for UseAgentToolbar {
             return ChildView::new(&self.warpify_footer_view).finish();
         }
 
-        // Hide the toolbar entirely when CLI rich input is open,
-        // since the Input view renders its own footer in that state.
-        if CLIAgentSessionsModel::as_ref(app).is_input_open(self.terminal_view_id) {
-            return Empty::new().finish();
-        }
-
         // If a CLI agent is detected, delegate rendering to the CLI agent footer view.
         // Wrap with horizontal padding matching the terminal view padding so the footer
-        // aligns consistently with the input context (which inherits terminal padding).
+        // aligns consistently with the input context (which inherits terminal padding). The
+        // subtle logo-green top rule separates this persistent toolbelt from the agent UI.
         if self.cli_agent(app).is_some() {
             let mut container = Container::new(ChildView::new(&self.agent_input_footer).finish())
-                .with_horizontal_padding(*super::PADDING_LEFT);
+                .with_horizontal_padding(*super::PADDING_LEFT)
+                .with_border(
+                    Border::top(1.)
+                        .with_border_fill(ThemeFill::Solid(CLINCH_LOGO_GREEN).with_opacity(50)),
+                );
 
             // Apply the alt screen background on this outer container so it covers
             // the horizontal padding area as well, preventing a visible color mismatch

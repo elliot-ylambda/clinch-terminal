@@ -335,14 +335,16 @@ pub fn custom_tag_to_keystroke(custom: CustomTag) -> Option<Keystroke> {
         }
         CustomAction::ActivateNextPane => {
             if OperatingSystem::get().is_mac() {
-                Keystroke::parse("cmd-]").ok()
+                // Reserved for next-project navigation.
+                None
             } else {
                 Keystroke::parse("ctrl-shift-}").ok()
             }
         }
         CustomAction::ActivatePreviousPane => {
             if OperatingSystem::get().is_mac() {
-                Keystroke::parse("cmd-[").ok()
+                // Reserved for previous-project navigation.
+                None
             } else {
                 Keystroke::parse("ctrl-shift-{").ok()
             }

@@ -36,7 +36,7 @@ Figma: none provided. The interaction should follow the familiar behavior of Chr
 
 4. Clinch's existing vertical panel continues to list only the active project's inner tabs. The project strip remains a separate horizontal surface in the top header and does not change the fixed vertical-inner-tab layout.
 
-5. The active project is visually distinct using Clinch's existing active/inactive surface and text tokens. Inactive projects remain visible and selectable. The project strip follows the existing window-header visibility behavior in fullscreen or zen modes.
+5. The active project is visually distinct with an outline matching the Clinch logo green (`#BFFF00`), while its surface and text continue to use Clinch's existing active/inactive tokens. Inactive projects remain visible and selectable. The project strip follows the existing window-header visibility behavior in fullscreen or zen modes.
 
 6. Clicking an inactive project tab activates it without recreating its contents. The newly active project restores exactly the inner tab, pane focus, panels, scroll positions, inputs, and transient session state it had when last active.
 
@@ -62,9 +62,9 @@ Figma: none provided. The interaction should follow the familiar behavior of Chr
 
 17. The application menu labels the `Command+N` action as **New Project**. An explicit **New Window** command remains available for users and system integrations that require a separate OS window; it creates one window containing one project.
 
-18. `Command+}` activates the next project and `Command+{` activates the previous project. Navigation wraps from the last project to the first and from the first to the last. With only one project, both commands are no-ops.
+18. `Command+]` activates the next project and `Command+[` activates the previous project. Navigation wraps from the last project to the first and from the first to the last. With only one project, both commands are no-ops.
 
-19. Project switching shortcuts are separate from and do not change the existing inner-tab shortcuts (`Shift+Command+}` and `Shift+Command+{`) or pane-navigation shortcuts. Project shortcuts are discoverable in menus/keybinding settings and may be customized through the existing keybinding system.
+19. Project switching does not change the existing inner-tab shortcuts (`Shift+Command+}` and `Shift+Command+{`). On macOS, the project shortcuts replace the previous `Command+[` / `Command+]` pane-navigation and rich-text indentation defaults so the project action always owns those chords. Pane navigation remains customizable through keybinding settings. Project shortcuts are discoverable in menus/keybinding settings and may be customized through the existing keybinding system.
 
 20. Project tabs can be reordered within a window by dragging horizontally. Reordering preserves the active project, all project contents, unread state, and most-recently-used state.
 

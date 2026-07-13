@@ -13,7 +13,8 @@ use cli_agent_usage::keychain::{
     read_claude_token, should_read_keychain, ClaudeToken, MacKeychain, ReadSecret,
 };
 use cli_agent_usage::{
-    fetch_plan_for_token, scan_local, snapshot_cache, Caches, Paths, PlanLimits, UsageSnapshot,
+    claude_plan_cache, fetch_plan_for_token, scan_local, snapshot_cache, Caches, Paths, PlanLimits,
+    UsageSnapshot,
 };
 use warpui::r#async::block_on;
 use warpui::{Entity, ModelContext, SingletonEntity};
@@ -22,8 +23,6 @@ use crate::settings::CliAgentUsageSettings;
 
 /// How often the producer thread re-scans local files.
 const FILE_POLL: Duration = Duration::from_secs(5);
-/// Fetch the Claude usage endpoint every Nth tick (~60s at FILE_POLL = 5s).
-const ENDPOINT_EVERY: u64 = 12;
 /// While we lack a fresh, valid Keychain token, re-read the Keychain at most
 /// this often. Reading the Keychain is what triggers the macOS credential
 /// prompt, so this bounds prompts to ~one per 5 min in the worst case (Claude
@@ -95,6 +94,17 @@ impl CliAgentUsageModel {
         }
     }
 
+    /// Delivers a snapshot through the real notification path without
+    /// starting the filesystem/HTTP producer thread.
+    #[cfg(test)]
+    pub(crate) fn update_snapshot_for_test(
+        &mut self,
+        snapshot: UsageSnapshot,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        self.on_snapshot(snapshot, ctx);
+    }
+
     pub fn latest(&self) -> &UsageSnapshot {
         &self.latest
     }
@@ -123,9 +133,10 @@ impl CliAgentUsageModel {
     }
 }
 
-/// Runs on the dedicated thread. Split cadence: local scans every `FILE_POLL`,
-/// the Claude usage endpoint every `ENDPOINT_EVERY` ticks, retaining the last good
-/// `PlanLimits` across transient failures. Exits when the receiver is dropped.
+/// Runs on the dedicated thread. Local scans run every `FILE_POLL`; the shared
+/// Claude plan cache independently throttles endpoint requests by wall-clock
+/// time, retaining the last good `PlanLimits` across transient failures and
+/// coordinating Stable/Dev processes. Exits when the receiver is dropped.
 ///
 /// The Claude OAuth token is cached in `cached_token`: the Keychain (which
 /// triggers the macOS credential prompt) is read only when we lack a usable
@@ -135,19 +146,23 @@ fn producer_loop(paths: Paths, tx: async_channel::Sender<UsageSnapshot>, enabled
     let mut caches = Caches::new();
     let keychain = MacKeychain;
     let fetch = ReqwestUsage;
-    let mut last_plan: Option<PlanLimits> = None;
     let mut cached_token: Option<ClaudeToken> = None;
     let mut last_read_ms: Option<i64> = None;
-    let mut was_enabled = false;
-    let mut tick: u64 = 0;
 
     // Stale-while-revalidate: the widget hides until a snapshot has data, and
     // the first cold scan of the transcript dirs can take tens of seconds, so
     // surface the previous run's snapshot immediately. The first live scan
-    // below replaces it. `last_stored` doubles as the store-on-change guard.
+    // below replaces it. Seed `last_plan` from the same snapshot so a transient
+    // first fetch cannot immediately erase a good cached result.
     let mut last_stored = snapshot_cache::load(&paths.snapshot_cache, Utc::now());
+    let initially_enabled = enabled.load(Ordering::Relaxed);
+    let mut last_plan: Option<PlanLimits> = if initially_enabled {
+        last_stored.as_ref().and_then(|cached| cached.claude.plan)
+    } else {
+        None
+    };
     if let Some(mut cached) = last_stored.clone() {
-        if !enabled.load(Ordering::Relaxed) {
+        if !initially_enabled {
             // The cache may predate disabling the plan gauges; never preview
             // plan data the current setting forbids fetching.
             cached.claude.plan = None;
@@ -160,15 +175,8 @@ fn producer_loop(paths: Paths, tx: async_channel::Sender<UsageSnapshot>, enabled
     loop {
         let now = Utc::now();
         let now_ms = now.timestamp_millis();
-        let mut snap = scan_local(&paths, &mut caches, now);
-
-        // Enabling mid-cycle (the widget's "Turn on" affordance or the Settings
-        // switch) must not wait out the remainder of the ~60s endpoint cadence:
-        // the user expects the Keychain prompt right away, so fetch on the
-        // enable transition too.
         let enabled_now = enabled.load(Ordering::Relaxed);
-        let just_enabled = enabled_now && !was_enabled;
-        was_enabled = enabled_now;
+        let previous_plan = last_plan;
 
         if !enabled_now {
             // Gauge disabled: never touch the Keychain. Drop any cached token and
@@ -177,26 +185,40 @@ fn producer_loop(paths: Paths, tx: async_channel::Sender<UsageSnapshot>, enabled
             cached_token = None;
             last_read_ms = None;
             last_plan = None;
-        } else if just_enabled || tick.is_multiple_of(ENDPOINT_EVERY) {
-            // Read the Keychain (the prompt-triggering call) only when we lack a
-            // usable token; otherwise reuse the cached one.
-            if should_read_keychain(
-                cached_token.as_ref(),
-                last_read_ms,
-                now_ms,
-                REREAD_BACKOFF_MS,
-            ) {
-                cached_token = read_claude_token(&keychain as &dyn ReadSecret, &paths.os_account);
-                last_read_ms = Some(now_ms);
-            }
-            if let Some(token) = &cached_token {
-                if let Some(fresh) = fetch_plan_for_token(&fetch as &dyn FetchUsage, token, now_ms)
-                {
-                    last_plan = Some(fresh); // overwrite only on success => last-good retained
+        } else if let Some(shared_plan) =
+            claude_plan_cache::refresh_shared(&paths.snapshot_cache, now, || {
+                // Read the Keychain (the prompt-triggering call) only when we
+                // lack a usable token; otherwise reuse the cached one.
+                if should_read_keychain(
+                    cached_token.as_ref(),
+                    last_read_ms,
+                    now_ms,
+                    REREAD_BACKOFF_MS,
+                ) {
+                    cached_token =
+                        read_claude_token(&keychain as &dyn ReadSecret, &paths.os_account);
+                    last_read_ms = Some(now_ms);
                 }
+                cached_token.as_ref().and_then(|token| {
+                    fetch_plan_for_token(&fetch as &dyn FetchUsage, token, now_ms)
+                })
+            })
+        {
+            last_plan = Some(shared_plan);
+        }
+
+        // Plan refreshes should not sit behind a 10s+ recursive transcript
+        // scan. Push the new plan with the last local snapshot immediately;
+        // the live scan below replaces the local totals on the same loop.
+        if last_plan != previous_plan {
+            let mut preview = last_stored.clone().unwrap_or_default();
+            preview.claude.plan = last_plan;
+            if block_on(tx.send(preview)).is_err() {
+                return;
             }
         }
 
+        let mut snap = scan_local(&paths, &mut caches, now);
         snap.claude.plan = last_plan;
         if last_stored.as_ref() != Some(&snap) {
             snapshot_cache::store(&paths.snapshot_cache, &snap, now);
@@ -205,7 +227,6 @@ fn producer_loop(paths: Paths, tx: async_channel::Sender<UsageSnapshot>, enabled
         if block_on(tx.send(snap)).is_err() {
             break; // receiver dropped (model gone) => exit cleanly
         }
-        tick = tick.wrapping_add(1);
         std::thread::sleep(FILE_POLL);
     }
 }

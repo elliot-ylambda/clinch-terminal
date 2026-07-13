@@ -477,10 +477,7 @@ pub fn test_open_and_close_settings() -> Builder {
 
                     let settings_view = settings_views.first().expect("Settings view must exist");
                     settings_view.read(app, |view, _| {
-                        async_assert_eq!(
-                            view.current_settings_section(),
-                            SettingsSection::Clinch
-                        )
+                        async_assert_eq!(view.current_settings_section(), SettingsSection::Clinch)
                     })
                 }),
         )

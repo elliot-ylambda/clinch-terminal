@@ -78,7 +78,9 @@ use crate::settings::{
     PrivacySettingsChangedEvent,
 };
 use crate::settings_view::SettingsSection;
-use crate::terminal::cli_agent_sessions::auto_continue::{AutoContinueModel, AUTO_CONTINUE_PROMPT};
+use crate::terminal::cli_agent_sessions::auto_continue::{
+    is_auto_continue_available, AutoContinueModel, AUTO_CONTINUE_PROMPT,
+};
 #[cfg(not(target_family = "wasm"))]
 use crate::terminal::cli_agent_sessions::plugin_manager::{
     compare_versions, plugin_manager_for, plugin_manager_for_with_shell, CliAgentPluginManager,
@@ -1621,6 +1623,10 @@ impl AgentInputFooter {
         let model = AutoContinueModel::as_ref(app);
         let enabled = model.is_enabled(self.terminal_view_id);
         let armed_fire_at = model.armed_fire_at(self.terminal_view_id);
+        let agent_name = self
+            .cli_agent(app)
+            .map(|agent| agent.display_name())
+            .unwrap_or("CLI agent");
 
         let (label, tooltip) = match (enabled, armed_fire_at) {
             (true, Some(fire_at)) => {
@@ -1628,7 +1634,7 @@ impl AgentInputFooter {
                 (
                     format!("Auto-continue at {at}"),
                     format!(
-                        "Will send \"{AUTO_CONTINUE_PROMPT}\" to this Claude session at {at}, \
+                        "Will send \"{AUTO_CONTINUE_PROMPT}\" to this {agent_name} session at {at}, \
                          just after its rate limit resets. Click to cancel."
                     ),
                 )
@@ -1636,15 +1642,15 @@ impl AgentInputFooter {
             (true, None) => (
                 "Auto-continue: on".to_string(),
                 format!(
-                    "If this Claude session stops at its rate limit, \"{AUTO_CONTINUE_PROMPT}\" \
+                    "If this {agent_name} session stops at its rate limit, \"{AUTO_CONTINUE_PROMPT}\" \
                      is sent once the limit resets. Click to turn off."
                 ),
             ),
             (false, Some(_)) | (false, None) => (
                 "Auto-continue: off".to_string(),
                 format!(
-                    "Auto-send \"{AUTO_CONTINUE_PROMPT}\" when a rate-limited Claude session's \
-                     usage window resets. Click to turn on (this pane only)."
+                    "Auto-send \"{AUTO_CONTINUE_PROMPT}\" when this {agent_name} session's rate \
+                     limit resets. Click to turn on (this pane only)."
                 ),
             ),
         };
@@ -1766,13 +1772,17 @@ impl AgentInputFooter {
             left_buttons.add_child(ChildView::new(&self.quick_insert_add_button).finish());
         }
 
-        // Rate-limit auto-continue toggle: Claude sessions only, hidden from
-        // shared-session viewers, and hidden (fully inert) when the usage
-        // widget is disabled — its poller is what supplies the reset times.
-        if self.cli_agent(app) == Some(CLIAgent::Claude)
-            && !shared_status.is_viewer()
-            && *CliAgentUsageSettings::as_ref(app).show_plan_limits
-        {
+        // Rate-limit auto-continue toggle. Use the same availability predicate
+        // as the Command Palette and action handlers so hidden controls cannot
+        // remain reachable through another entry point.
+        let auto_continue_available = self.cli_agent(app).is_some_and(|agent| {
+            is_auto_continue_available(
+                agent,
+                *CliAgentUsageSettings::as_ref(app).show_plan_limits,
+                shared_status.is_viewer(),
+            )
+        });
+        if auto_continue_available {
             left_buttons.add_child(self.render_auto_continue_toggle(app));
         }
 
@@ -2647,7 +2657,7 @@ pub enum AgentInputFooterAction {
     SendContinue,
     /// Submit "Looks good to me, continue" to the running CLI agent.
     SendLooksGood,
-    /// Toggle this pane's "auto-continue when Claude's rate limit resets" opt-in.
+    /// Toggle this pane's "auto-continue when the CLI agent's rate limit resets" opt-in.
     ToggleAutoContinue,
     ToggleRichInput,
     ToggleAutodetectionSetting,
@@ -2775,13 +2785,26 @@ impl TypedActionView for AgentInputFooter {
                 // footer button and the Command Palette pair flip one state.
                 // Updating a model from here is safe (unlike a synchronous
                 // action dispatch that could re-borrow this pane's views).
-                // Guard on a live Claude session, matching the button's
-                // visibility condition.
-                if self.cli_agent(ctx) == Some(CLIAgent::Claude) {
-                    let terminal_view_id = self.terminal_view_id;
-                    AutoContinueModel::handle(ctx)
-                        .update(ctx, |model, ctx| model.toggle(terminal_view_id, ctx));
-                }
+                let is_shared_session_viewer = self
+                    .terminal_model
+                    .lock()
+                    .shared_session_status()
+                    .is_viewer();
+                let is_available = self.cli_agent(ctx).is_some_and(|agent| {
+                    is_auto_continue_available(
+                        agent,
+                        *CliAgentUsageSettings::as_ref(ctx).show_plan_limits,
+                        is_shared_session_viewer,
+                    )
+                });
+                let terminal_view_id = self.terminal_view_id;
+                AutoContinueModel::handle(ctx).update(ctx, |model, ctx| {
+                    if is_available {
+                        model.toggle(terminal_view_id, ctx);
+                    } else {
+                        model.disable(terminal_view_id, ctx);
+                    }
+                });
             }
             AgentInputFooterAction::ToggleRichInput => {
                 if self.has_active_cli_agent_input_session(ctx) {

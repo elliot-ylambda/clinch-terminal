@@ -24,7 +24,7 @@ Persistence currently mirrors the one-to-one relationship:
 - [`get_app_state`](https://github.com/warpdotdev/warp/blob/8a9025e3a181f71712424009c33285950a54624c/app/src/app_state.rs#L367-L410) takes the one registered workspace for each `WindowId`.
 - [`save_app_state`](https://github.com/warpdotdev/warp/blob/8a9025e3a181f71712424009c33285950a54624c/app/src/persistence/sqlite.rs#L916-L1080) writes one `windows` row and its tabs, and [`read_sqlite_data`](https://github.com/warpdotdev/warp/blob/8a9025e3a181f71712424009c33285950a54624c/app/src/persistence/sqlite.rs#L2480-L2705) reconstructs the same flat list.
 
-Finally, macOS `Command+N` is currently hard-coded as **New Window** in the app menu, while inner project-like tab cycling already uses `Shift+Command+{` and `Shift+Command+}` through [`CustomAction` key mapping](https://github.com/warpdotdev/warp/blob/8a9025e3a181f71712424009c33285950a54624c/app/src/util/bindings.rs#L250-L342). The requested `Command+{` and `Command+}` bindings are therefore available and semantically distinct.
+Finally, macOS `Command+N` is currently hard-coded as **New Window** in the app menu, while inner project-like tab cycling already uses `Shift+Command+{` and `Shift+Command+}` through [`CustomAction` key mapping](https://github.com/warpdotdev/warp/blob/8a9025e3a181f71712424009c33285950a54624c/app/src/util/bindings.rs#L250-L342). The requested `Command+[` and `Command+]` project bindings replace the existing pane-navigation and rich-text indentation defaults that previously owned those chords on macOS.
 
 ## Proposed changes
 
@@ -80,7 +80,7 @@ Clinch uses the fixed vertical inner-tab layout, so the existing `Workspace` hea
 
 `ProjectWindow::render` retains a non-vertical fallback that can place the project header above the active workspace, but the shipped Clinch configuration keeps inner tabs vertical. Projects and inner tabs use distinct action types and are never placed in the same list.
 
-Build `ProjectTab` from existing tab primitives where their interaction/shape fits, but keep project state/actions separate from `WorkspaceAction`. Use the active theme's existing foreground, overlay, outline, accent, hover, focus, and corner-radius tokens. Do not introduce feature-specific hard-coded colors or modify shared button themes.
+Build `ProjectTab` from existing tab primitives where their interaction/shape fits, but keep project state/actions separate from `WorkspaceAction`. Use the active theme's existing foreground, overlay, outline, accent, hover, focus, and corner-radius tokens. The selected project's outline is the intentional exception: use a named constant matching the stable Clinch logo green (`#BFFF00`). Do not modify shared button themes.
 
 Project tab metadata is derived as follows:
 
@@ -97,7 +97,7 @@ Layout guardrail: the title bar's height budget is tight and a single-line `Text
 
 Add `ProjectWindowAction` variants for adding, activating, closing, left/right movement, previous/next navigation, and drag reorder/finish/cancel. The implemented variants are `Add`, `Activate`, `RequestClose`, `CloseActive`, `MoveActiveLeft`, `MoveActiveRight`, `ActivatePrevious`, `ActivateNext`, `Reorder`, `FinishDrag`, and `CancelDrag`.
 
-Register editable `Command+{` and `Command+}` bindings on the project-window/root context. They wrap and no-op for a singleton (PRODUCT 18–19).
+Register editable `Command+[` and `Command+]` bindings on the project-window/root context. They wrap and no-op for a singleton. Remove the macOS `Command+[` / `Command+]` defaults from the pane-navigation custom actions and rich-text notebook editor while preserving the non-macOS `Control+[` / `Control+]` indentation bindings (PRODUCT 18–19).
 
 Add `CustomAction::NewProject` and make the macOS File/app menu's `Command+N` item dispatch it. The dispatcher targets the active compatible `ProjectWindow`; if there is none, it calls the existing `root_view:open_new` path. Keep an explicit **New Window** menu/global action using the existing `open_new` implementation, without reinterpreting unrelated URI, Dock, CLI, or OS “new window” requests as projects (PRODUCT 15–17).
 
@@ -171,7 +171,7 @@ For notification navigation, terminal identity resolves to a workspace/project, 
 
 ### Automated coverage
 
-- `project_window_tests.rs` covers previous/next wrapping and singleton no-ops, close-neighbor selection, and preserving active-project identity when an inactive project is removed.
+- `project_window_tests.rs` covers macOS shortcut ownership, previous/next wrapping and singleton no-ops, close-neighbor selection, and preserving active-project identity when an inactive project is removed.
 - SQLite tests cover a multi-project physical-window round trip and migration of legacy rows with no project grouping into singleton project windows.
 - `warpui_core` transfer tests cover reparenting a live view between project containers so later responder-chain traversal and subtree transfer follow the new owner.
 - Compile validation covers the project-aware workspace registry, active-project routing, menus/keybindings, notification identity routing, close confirmation, persistence models, and live cross-window transfer paths.

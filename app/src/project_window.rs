@@ -25,10 +25,13 @@ use warpui::{
 use crate::appearance::Appearance;
 use crate::root_view::NewWorkspaceSource;
 use crate::server::server_api::ServerTime;
-use crate::ui_components::icons::Icon;
+use crate::ui_components::{icons::Icon, CLINCH_LOGO_GREEN};
 use crate::util::bindings::{self, CustomAction};
 use crate::workspace::{Workspace, WorkspaceEvent, WorkspaceRegistry};
 use crate::GlobalResourceHandles;
+
+pub(crate) const ACTIVATE_PREVIOUS_PROJECT_MAC_KEY_BINDING: &str = "cmd-[";
+pub(crate) const ACTIVATE_NEXT_PROJECT_MAC_KEY_BINDING: &str = "cmd-]";
 
 pub(crate) fn init(app: &mut AppContext) {
     app.register_editable_bindings([
@@ -46,7 +49,7 @@ pub(crate) fn init(app: &mut AppContext) {
         )
         .with_group(bindings::BindingGroup::Navigation.as_str())
         .with_context_predicate(id!(ProjectWindow::ui_name()))
-        .with_mac_key_binding("ctrl-cmd-["),
+        .with_mac_key_binding(ACTIVATE_PREVIOUS_PROJECT_MAC_KEY_BINDING),
         EditableBinding::new(
             "project_window:activate_next_project",
             "Activate next project",
@@ -54,7 +57,7 @@ pub(crate) fn init(app: &mut AppContext) {
         )
         .with_group(bindings::BindingGroup::Navigation.as_str())
         .with_context_predicate(id!(ProjectWindow::ui_name()))
-        .with_mac_key_binding("ctrl-cmd-]"),
+        .with_mac_key_binding(ACTIVATE_NEXT_PROJECT_MAC_KEY_BINDING),
         EditableBinding::new(
             "project_window:cancel_project_drag",
             "Cancel project drag",
@@ -137,7 +140,6 @@ const PROJECT_TAB_MIN_WIDTH: f32 = 96.;
 const PROJECT_TAB_VERTICAL_NUDGE: f32 = 2.;
 const PROJECT_TAB_VERTICAL_PADDING: f32 = 6.;
 const PROJECT_TAB_BORDER_WIDTH: f32 = 1.;
-
 fn previous_project_index(active_index: usize, project_count: usize) -> Option<usize> {
     (project_count > 1).then(|| active_index.checked_sub(1).unwrap_or(project_count - 1))
 }
@@ -1186,7 +1188,7 @@ impl ProjectWindow {
                     inactive_background
                 };
                 let border_fill = if is_active {
-                    accent
+                    Fill::Solid(CLINCH_LOGO_GREEN)
                 } else if mouse_state.is_hovered() {
                     outline
                 } else {

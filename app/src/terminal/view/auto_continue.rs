@@ -16,11 +16,11 @@ use warpui::r#async::Timer;
 use warpui::{SingletonEntity, ViewContext};
 
 use super::TerminalView;
+use crate::settings::CliAgentUsageSettings;
 use crate::terminal::cli_agent_sessions::auto_continue::{
-    AutoContinueModel, AutoContinueModelEvent,
+    is_auto_continue_available, AutoContinueModel, AutoContinueModelEvent,
 };
 use crate::terminal::cli_agent_sessions::{CLIAgentSessionStatus, CLIAgentSessionsModel};
-use crate::terminal::CLIAgent;
 
 impl TerminalView {
     pub(super) fn register_subscriptions_for_auto_continue(&mut self, ctx: &mut ViewContext<Self>) {
@@ -46,7 +46,23 @@ impl TerminalView {
     /// Palette enable/disable pair.
     pub(super) fn toggle_auto_continue_on_limit_reset(&mut self, ctx: &mut ViewContext<Self>) {
         let view_id = self.view_id;
-        AutoContinueModel::handle(ctx).update(ctx, |model, ctx| model.toggle(view_id, ctx));
+        let is_shared_session_viewer = self.model.lock().shared_session_status().is_viewer();
+        let is_available = CLIAgentSessionsModel::as_ref(ctx)
+            .session(view_id)
+            .is_some_and(|session| {
+                is_auto_continue_available(
+                    session.agent,
+                    *CliAgentUsageSettings::as_ref(ctx).show_plan_limits,
+                    is_shared_session_viewer,
+                )
+            });
+        AutoContinueModel::handle(ctx).update(ctx, |model, ctx| {
+            if is_available {
+                model.toggle(view_id, ctx);
+            } else {
+                model.disable(view_id, ctx);
+            }
+        });
     }
 
     /// Called on every user-initiated PTY write (typed keys, pastes, footer
@@ -54,7 +70,7 @@ impl TerminalView {
     /// Cheap read-first so the per-keystroke cost is a singleton lookup.
     pub(super) fn cancel_auto_continue_on_user_input(&mut self, ctx: &mut ViewContext<Self>) {
         let view_id = self.view_id;
-        if !AutoContinueModel::as_ref(ctx).is_armed(view_id) {
+        if !AutoContinueModel::as_ref(ctx).has_pending_continue(view_id) {
             return;
         }
         AutoContinueModel::handle(ctx)
@@ -78,6 +94,24 @@ impl TerminalView {
 
     fn fire_auto_continue_if_still_armed(&mut self, generation: u64, ctx: &mut ViewContext<Self>) {
         let view_id = self.view_id;
+        // Recheck availability at the last responsible moment. This protects
+        // against a settings or shared-session transition racing the timer,
+        // even though both normal transitions proactively disarm the pane.
+        let is_shared_session_viewer = self.model.lock().shared_session_status().is_viewer();
+        let is_available = CLIAgentSessionsModel::as_ref(ctx)
+            .session(view_id)
+            .is_some_and(|session| {
+                is_auto_continue_available(
+                    session.agent,
+                    *CliAgentUsageSettings::as_ref(ctx).show_plan_limits,
+                    is_shared_session_viewer,
+                )
+            });
+        if !is_available {
+            AutoContinueModel::handle(ctx).update(ctx, |model, ctx| model.disable(view_id, ctx));
+            return;
+        }
+
         // Consuming the armed state (exactly-once) BEFORE any send; a stale
         // generation or an intervening disarm yields `None`.
         let Some(armed) = AutoContinueModel::handle(ctx).update(ctx, |model, ctx| {
@@ -86,16 +120,15 @@ impl TerminalView {
             return;
         };
 
-        // The pane must still host the exact Claude session that hit the
-        // limit, and it must still be stopped — anything in progress means
-        // something else already woke it.
+        // The pane must still host the exact agent session that hit the limit,
+        // and it must still be stopped — anything in progress means something
+        // else already woke it.
         let session_matches = CLIAgentSessionsModel::as_ref(ctx)
             .session(view_id)
             .is_some_and(|session| {
-                session.agent == CLIAgent::Claude
+                session.agent == armed.agent
                     && matches!(session.status, CLIAgentSessionStatus::Success)
-                    && session.session_context.session_id.as_deref()
-                        == Some(armed.session_id.as_str())
+                    && session.session_context.session_id.as_deref() == armed.session_id.as_deref()
             });
         if !session_matches {
             return;

@@ -11,5 +11,8 @@ chrono = { workspace = true }
 walkdir = { workspace = true }
 reqwest = { workspace = true }
 
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 command = { workspace = true }

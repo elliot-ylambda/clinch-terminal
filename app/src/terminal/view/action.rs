@@ -318,7 +318,7 @@ pub enum TerminalAction {
     /// it if possible.
     SelectAIAttachedBlock(BlockIndex),
     DragAndDropFiles(Vec<String>),
-    /// Toggles this pane's "auto-continue when Claude's rate limit resets"
+    /// Toggles this pane's "auto-continue when the CLI agent's rate limit resets"
     /// opt-in (footer toggle and Command Palette enable/disable pair).
     ToggleAutoContinueOnLimitReset,
     /// Sets the input mode to Agent Mode

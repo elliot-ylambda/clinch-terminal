@@ -17,17 +17,21 @@ use warpui::platform::menu::{
     CustomMenuItem, Menu, MenuBar, MenuItem, MenuItemProperties, MenuItemPropertyChanges,
 };
 use warpui::windowing::WindowManager;
-use warpui::{AppContext, SingletonEntity};
+use warpui::{AppContext, EntityId, SingletonEntity, WindowId};
 
 use crate::ai::persisted_workspace::PersistedWorkspace;
 use crate::auth::AuthStateProvider;
 use crate::default_terminal::DefaultTerminal;
 use crate::features::{runtime_flags_menu_items, FeatureFlag};
+use crate::project_window::{
+    ACTIVATE_NEXT_PROJECT_MAC_KEY_BINDING, ACTIVATE_PREVIOUS_PROJECT_MAC_KEY_BINDING,
+};
 use crate::root_view::OpenLaunchConfigArg;
 use crate::server::telemetry::LaunchConfigUiLocation;
 use crate::settings::{
     AISettings, BlockVisibilitySettings, DebugSettings, DefaultSessionMode, SelectionSettings,
 };
+use crate::settings_view::SettingsSection;
 use crate::terminal::alt_screen_reporting::AltScreenReporting;
 use crate::terminal::session_settings::SessionSettings;
 use crate::terminal::settings::{SpacingMode, TerminalSettings};
@@ -36,6 +40,7 @@ use crate::user_config::WarpConfig;
 use crate::util::bindings::{self, trigger_to_keystroke, CustomAction};
 use crate::util::links;
 use crate::workspace::sync_inputs::SyncedInputState;
+use crate::workspace::{WorkspaceAction, WorkspaceRegistry};
 use crate::{auth, report_if_error};
 
 type CheckmarkStatusGetter = dyn 'static + Fn(&mut AppContext) -> bool;
@@ -151,6 +156,19 @@ fn updateable_custom_item_without_checkmark(action: CustomAction, ctx: &AppConte
     updateable_custom_item_with_checkmark(action, ctx, Box::new(|_| false))
 }
 
+fn workspace_settings_menu_item(
+    custom_action: CustomAction,
+    workspace_action: WorkspaceAction,
+    ctx: &AppContext,
+) -> MenuItem {
+    MenuItem::Custom(CustomMenuItem::new(
+        &default_name(custom_action, ctx),
+        workspace_action_dispatcher(workspace_action),
+        workspace_action_updater(custom_action),
+        custom_shortcut(custom_action),
+    ))
+}
+
 fn make_new_app_menu(ctx: &AppContext) -> Menu {
     let mut menu_items = vec![updateable_custom_item_without_checkmark(
         CustomAction::ShowAboutWarp,
@@ -177,8 +195,16 @@ fn make_new_app_menu(ctx: &AppContext) -> Menu {
     }
 
     let preferences_menu_items = vec![
-        updateable_custom_item_without_checkmark(CustomAction::ShowSettings, ctx),
-        updateable_custom_item_without_checkmark(CustomAction::ShowWarpSettings, ctx),
+        workspace_settings_menu_item(
+            CustomAction::ShowSettings,
+            WorkspaceAction::ShowSettings,
+            ctx,
+        ),
+        workspace_settings_menu_item(
+            CustomAction::ShowWarpSettings,
+            WorkspaceAction::ShowSettingsPage(SettingsSection::Appearance),
+            ctx,
+        ),
         MenuItem::Separator,
         updateable_custom_item_without_checkmark(CustomAction::ToggleKeybindingsPage, ctx),
         updateable_custom_item_without_checkmark(CustomAction::ConfigureKeybindings, ctx),
@@ -825,13 +851,19 @@ fn make_new_window_menu() -> Menu {
                 "Previous Project",
                 |ctx| ctx.dispatch_global_action("root_view:activate_previous_project", &()),
                 no_updates,
-                Some(Keystroke::parse("ctrl-cmd-[").expect("Valid keystroke")),
+                Some(
+                    Keystroke::parse(ACTIVATE_PREVIOUS_PROJECT_MAC_KEY_BINDING)
+                        .expect("Valid keystroke"),
+                ),
             )),
             MenuItem::Custom(CustomMenuItem::new(
                 "Next Project",
                 |ctx| ctx.dispatch_global_action("root_view:activate_next_project", &()),
                 no_updates,
-                Some(Keystroke::parse("ctrl-cmd-]").expect("Valid keystroke")),
+                Some(
+                    Keystroke::parse(ACTIVATE_NEXT_PROJECT_MAC_KEY_BINDING)
+                        .expect("Valid keystroke"),
+                ),
             )),
             MenuItem::Separator,
             MenuItem::Standard(StandardAction::BringAllToFront),
@@ -1176,6 +1208,54 @@ fn custom_action_dispatcher(action: CustomAction) -> impl Fn(&mut AppContext) + 
         if let Some(wid) = WindowManager::handle(ctx).as_ref(ctx).active_window() {
             ctx.dispatch_custom_action(action, wid)
         }
+    }
+}
+
+fn active_workspace_target(ctx: &AppContext) -> Option<(WindowId, EntityId)> {
+    let window_manager = WindowManager::handle(ctx);
+    let window_manager = window_manager.as_ref(ctx);
+    let window_id = window_manager
+        .active_window()
+        .or_else(|| window_manager.frontmost_window_id())?;
+    let workspace_id = WorkspaceRegistry::as_ref(ctx).get(window_id, ctx)?.id();
+    Some((window_id, workspace_id))
+}
+
+fn workspace_action_dispatcher(action: WorkspaceAction) -> impl Fn(&mut AppContext) + 'static {
+    move |ctx| dispatch_workspace_action(&action, ctx)
+}
+
+fn dispatch_workspace_action(action: &WorkspaceAction, ctx: &mut AppContext) {
+    if let Some((window_id, workspace_id)) = active_workspace_target(ctx) {
+        ctx.dispatch_typed_action_for_view(window_id, workspace_id, action);
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn dispatch_workspace_action_for_test(action: &WorkspaceAction, ctx: &mut AppContext) {
+    dispatch_workspace_action(action, ctx);
+}
+
+fn workspace_action_updater(
+    action: CustomAction,
+) -> impl Fn(&MenuItemProperties, &mut AppContext) -> MenuItemPropertyChanges + 'static {
+    move |_props, ctx| {
+        let mut changes = MenuItemPropertyChanges::default();
+        let mut has_binding = false;
+        if let Some(binding) = ctx.default_binding_for_custom_action(action.into()) {
+            has_binding = true;
+            if let Some(description) = binding.description {
+                changes.name = Some(
+                    description
+                        .resolve(ctx, bindings::MAC_MENUS_CONTEXT)
+                        .into_owned(),
+                );
+            }
+            changes.keystroke = Some(bindings::trigger_to_keystroke(binding.trigger));
+        }
+        changes.disabled = Some(!has_binding || active_workspace_target(ctx).is_none());
+        changes.checked = Some(false);
+        changes
     }
 }
 

@@ -378,12 +378,16 @@ fn cli_agent_footer_renders_for_viewer_of_shared_cloud_agent_session() {
                 view.should_render_use_agent_footer(&model, ctx),
                 "footer should render for viewer of shared cloud agent session with CLI agent",
             );
+            assert!(
+                view.should_render_sticky_cli_agent_footer(&model, ctx),
+                "CLI agent footer should render as a persistent terminal-layout child",
+            );
             let active_block_index = model.block_list().active_block_index();
             let rendered_footer_view_id = model
                 .block_list()
                 .last_non_hidden_rich_content_block_after_block(Some(active_block_index))
                 .map(|(_, item)| item.view_id);
-            assert_eq!(rendered_footer_view_id, Some(view.use_agent_footer.id()));
+            assert_eq!(rendered_footer_view_id, None);
         });
     })
 }

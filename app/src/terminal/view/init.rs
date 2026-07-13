@@ -56,11 +56,11 @@ pub const INPUT_BOX_VISIBLE_KEY: &str = "InputVisible";
 pub const KEYBOARD_PROTOCOL_ENABLED_KEY: &str = "KeyboardProtocolEnabled";
 pub const CLI_AGENT_SESSION_ACTIVE_KEY: &str = "CLIAgentSessionActive";
 /// Set on the focused pane when rate-limit auto-continue can be offered:
-/// the pane runs a Claude session and the usage widget is enabled.
-pub const CLAUDE_AUTO_CONTINUE_AVAILABLE_KEY: &str = "ClaudeAutoContinueAvailable";
+/// the pane runs a supported Claude Code or Codex session with provider usage data available.
+pub const CLI_AGENT_AUTO_CONTINUE_AVAILABLE_KEY: &str = "CliAgentAutoContinueAvailable";
 /// Set when the focused pane's rate-limit auto-continue opt-in is ON
 /// (selects the Disable palette entry over the Enable one).
-pub const CLAUDE_AUTO_CONTINUE_ENABLED_KEY: &str = "ClaudeAutoContinueEnabled";
+pub const CLI_AGENT_AUTO_CONTINUE_ENABLED_KEY: &str = "CliAgentAutoContinueEnabled";
 pub const ROOT_CLOUD_MODE_PANE_KEY: &str = "RootCloudModePane";
 pub const CAN_SHOW_CONVERSATION_DETAILS_KEY: &str = "CanShowConversationDetails";
 
@@ -95,15 +95,15 @@ pub fn init(app: &mut AppContext) {
 
     // Command Palette enable/disable pair for the per-pane rate-limit
     // auto-continue opt-in (WARP.md convention for toggleable behavior).
-    // Visible only while the focused pane runs a Claude session and the
-    // usage widget is enabled — both flags come from
-    // `TerminalView::keymap_context`.
+    // Visible only while the focused, non-viewer pane runs a supported Claude
+    // Code or Codex session with its usage source available; the flags come
+    // from `TerminalView::keymap_context`.
     ToggleSettingActionPair::add_toggle_setting_action_pairs_as_bindings(
         vec![ToggleSettingActionPair::new(
-            "auto-continue when Claude's rate limit resets",
+            "auto-continue when the CLI agent's rate limit resets",
             TerminalAction::ToggleAutoContinueOnLimitReset,
-            &(id!("Terminal") & id!(CLAUDE_AUTO_CONTINUE_AVAILABLE_KEY)),
-            CLAUDE_AUTO_CONTINUE_ENABLED_KEY,
+            &(id!("Terminal") & id!(CLI_AGENT_AUTO_CONTINUE_AVAILABLE_KEY)),
+            CLI_AGENT_AUTO_CONTINUE_ENABLED_KEY,
         )],
         app,
     );

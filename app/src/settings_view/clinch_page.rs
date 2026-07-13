@@ -5,12 +5,10 @@ use ::settings::{Setting, ToggleableSetting};
 use warpui::elements::{Element, MouseStateHandle};
 use warpui::ui_components::components::UiComponent;
 use warpui::ui_components::switch::SwitchStateHandle;
-use warpui::{
-    AppContext, Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle,
-};
+use warpui::{AppContext, Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle};
 
 use super::settings_page::{
-    render_body_item, LocalOnlyIconState, MatchData, PageType, SettingsPageMeta,
+    render_body_item, Category, LocalOnlyIconState, MatchData, PageType, SettingsPageMeta,
     SettingsPageViewHandle, SettingsWidget,
 };
 use super::{SettingsSection, ToggleState};
@@ -37,17 +35,23 @@ impl ClinchSettingsPageView {
             ctx.notify()
         });
 
-        let mut widgets: Vec<Box<dyn SettingsWidget<View = Self>>> =
+        let agent_widgets: Vec<Box<dyn SettingsWidget<View = Self>>> =
             vec![Box::new(AgentStatusBadgesWidget::default())];
+        let mut usage_widgets: Vec<Box<dyn SettingsWidget<View = Self>>> = vec![];
         if CliAgentUsageSettings::as_ref(ctx)
             .show_plan_limits
             .is_supported_on_current_platform()
         {
-            widgets.push(Box::new(CliAgentPlanLimitsWidget::default()));
+            usage_widgets.push(Box::new(CliAgentPlanLimitsWidget::default()));
+        }
+
+        let mut categories = vec![Category::new("Agents", agent_widgets)];
+        if !usage_widgets.is_empty() {
+            categories.push(Category::new("Usage", usage_widgets));
         }
 
         Self {
-            page: PageType::new_uncategorized(widgets, Some("Clinch Settings")),
+            page: PageType::new_categorized(categories, Some("Clinch Settings")),
             local_only_icon_tooltip_states: RefCell::new(HashMap::new()),
         }
     }
@@ -154,9 +158,7 @@ impl SettingsWidget for AgentStatusBadgesWidget {
                 .check(enabled)
                 .build()
                 .on_click(|ctx, _, _| {
-                    ctx.dispatch_typed_action(
-                        ClinchSettingsPageAction::ToggleAgentStatusOnTabs,
-                    );
+                    ctx.dispatch_typed_action(ClinchSettingsPageAction::ToggleAgentStatusOnTabs);
                 })
                 .finish(),
             Some(
@@ -204,9 +206,7 @@ impl SettingsWidget for CliAgentPlanLimitsWidget {
                 .check(show_plan_limits)
                 .build()
                 .on_click(|ctx, _, _| {
-                    ctx.dispatch_typed_action(
-                        ClinchSettingsPageAction::ToggleCliAgentPlanLimits,
-                    );
+                    ctx.dispatch_typed_action(ClinchSettingsPageAction::ToggleCliAgentPlanLimits);
                 })
                 .finish(),
             Some(

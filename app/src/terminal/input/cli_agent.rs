@@ -24,7 +24,11 @@ use crate::terminal::cli_agent_sessions::CLIAgentSessionsModel;
 use crate::terminal::view::TerminalAction;
 
 impl Input {
-    /// Renders the CLI rich input (editor + CLI agent footer).
+    /// Renders the CLI rich-input composer.
+    ///
+    /// The CLI agent toolbelt is rendered by `TerminalView` as a separate,
+    /// persistent footer so it does not scroll with the embedded agent UI or
+    /// move inside this composer while rich input is open.
     pub(super) fn render_cli_agent_input(&self, app: &AppContext) -> Box<dyn Element> {
         let appearance = Appearance::as_ref(app);
         let menu_positioning = self.menu_positioning(app);
@@ -74,19 +78,12 @@ impl Input {
         }
 
         column.add_child(editor_element);
-        column.add_child(
-            SavePosition::new(
-                Container::new(ChildView::new(&self.agent_input_footer).finish())
-                    .with_padding_right(*TERMINAL_VIEW_PADDING_LEFT)
-                    .finish(),
-                &self.prompt_save_position_id(),
-            )
-            .finish(),
-        );
+
+        let composer = SavePosition::new(column.finish(), &self.prompt_save_position_id()).finish();
 
         stack.add_child(wrap_input_with_terminal_padding_and_focus_handler(
             self.is_active_session(app),
-            column.finish(),
+            composer,
             false,
         ));
 

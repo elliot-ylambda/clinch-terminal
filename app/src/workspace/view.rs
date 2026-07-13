@@ -8392,9 +8392,16 @@ impl Workspace {
         search_query: Option<&str>,
         ctx: &mut ViewContext<Self>,
     ) {
-        // Ensure there is only one settings pane per window
+        // Each project workspace owns one settings surface, even when several
+        // projects share the same physical window.
         let settings_pane_manager = SettingsPaneManager::handle(ctx);
-        if let Some(locator) = settings_pane_manager.as_ref(ctx).find_pane(ctx.window_id()) {
+        let window_id = ctx.window_id();
+        let settings_view_id = self.settings_pane.id();
+        let existing_pane = settings_pane_manager.update(ctx, |manager, _| {
+            manager.activate_view(window_id, settings_view_id);
+            manager.find_pane(settings_view_id)
+        });
+        if let Some(locator) = existing_pane {
             // Update to new page if specified
             if let Some(page) = page {
                 self.settings_pane.update(ctx, |settings_pane, ctx| {
@@ -12250,6 +12257,9 @@ impl Workspace {
         let workspace_id = ctx.handle().id();
         WorkspaceRegistry::handle(ctx).update(ctx, |registry, _| {
             registry.unregister_workspace(window_id, workspace_id);
+        });
+        SettingsPaneManager::handle(ctx).update(ctx, |manager, _| {
+            manager.unregister_view(self.settings_pane.id());
         });
     }
 
@@ -27827,6 +27837,9 @@ impl View for Workspace {
             registry.unregister_workspace(source_window_id, workspace_id);
             registry.register(target_window_id, weak_handle);
         });
+        SettingsPaneManager::handle(ctx).update(ctx, |manager, _| {
+            manager.move_view(self.settings_pane.id(), source_window_id, target_window_id);
+        });
     }
 
     fn on_focus(&mut self, focus_ctx: &FocusContext, ctx: &mut ViewContext<Self>) {
@@ -27849,6 +27862,9 @@ impl View for Workspace {
 
         WorkspaceRegistry::handle(ctx).update(ctx, |registry, _| {
             registry.unregister(window_id);
+        });
+        SettingsPaneManager::handle(ctx).update(ctx, |manager, _| {
+            manager.unregister_view(self.settings_pane.id());
         });
 
         // If this workspace's close was registered as part of a tab-drag

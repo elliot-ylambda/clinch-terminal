@@ -1591,11 +1591,13 @@ pub(crate) fn initialize_app(
             });
 
             for window_id in ctx.window_ids().collect_vec() {
-                SettingsPaneManager::handle(ctx)
-                    .read(ctx, |model, _| model.settings_view(window_id))
-                    .update(ctx, |settings, ctx| {
+                let settings_views = SettingsPaneManager::handle(ctx)
+                    .read(ctx, |model, _| model.settings_views(window_id));
+                for settings_view in settings_views {
+                    settings_view.update(ctx, |settings, ctx| {
                         settings.refresh_preferred_graphics_backend_dropdown(ctx);
-                    })
+                    });
+                }
             }
 
             send_telemetry_from_app_ctx!(event, ctx);
@@ -1883,8 +1885,9 @@ pub(crate) fn initialize_app(
     });
     ctx.add_singleton_model(move |_| RestoredAgentConversations::new(multi_agent_conversations));
     ctx.add_singleton_model(|_| CLIAgentSessionsModel::new());
-    // Must come after CLIAgentSessionsModel: it subscribes to session events
-    // to arm/cancel per-pane rate-limit auto-continues.
+    // Must come after CLIAgentSessionsModel and CliAgentUsageModel: it observes
+    // both session events and late usage snapshots to arm/cancel per-pane
+    // rate-limit auto-continues.
     ctx.add_singleton_model(
         crate::terminal::cli_agent_sessions::auto_continue::AutoContinueModel::new,
     );
