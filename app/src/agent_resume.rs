@@ -1,7 +1,5 @@
 //! Reads the per-pane agent-resume registry written by the claude wrapper / codex hooks,
-//! plus the append-only journal and prompt mirror they maintain (see
-//! specs/claude-transcript-durability/ and
-//! docs/superpowers/specs/2026-06-20-warp-agent-session-resume-design.md).
+//! plus the append-only journal and prompt mirror they maintain.
 
 use std::collections::{HashMap, HashSet};
 use std::io::BufRead;

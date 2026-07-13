@@ -89,9 +89,6 @@ Clinch uses its own bundle ID and data domain, so it can be installed alongside 
 - File Explorer toggle in the window header.
 - In-app previews for SVG, PNG, JPEG, GIF, and WebP files.
 
-The complete homepage-ready inventory and launch FAQ are in
-[`docs/LAUNCH_FEATURES.md`](docs/LAUNCH_FEATURES.md).
-
 ## Privacy and network behavior
 
 Clinch's shipped `stable` binary uses

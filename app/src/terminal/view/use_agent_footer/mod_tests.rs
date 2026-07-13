@@ -330,9 +330,9 @@ fn use_agent_footer_hidden_during_cloud_agent_setup_lrc() {
 }
 
 /// When viewing a shared cloud-agent (ambient agent) session whose sharer is
-/// running a CLI agent, the CLI agent footer should still render.
+/// running a CLI agent, the CLI agent footer should remain outside the block list.
 #[test]
-fn cli_agent_footer_renders_for_viewer_of_shared_cloud_agent_session() {
+fn cli_agent_footer_is_sticky_for_viewer_of_shared_cloud_agent_session() {
     App::test((), |mut app| async move {
         initialize_app_for_terminal_view(&mut app);
 

@@ -23,8 +23,8 @@ PRs are welcome and reviewed on a best-effort basis. Before opening one:
 2. `cargo clippy --workspace --all-targets --all-features --tests -- -D warnings`
 3. `cargo nextest run --no-fail-fast --workspace --exclude command-signatures-v2`
 
-Architecture, build, and test guidance lives in [WARP.md](WARP.md); the
-release flow is documented in [CLAUDE.md](CLAUDE.md).
+Build-from-source and verification commands are documented in the
+[README](README.md#build-and-verify-from-source).
 
 ## Code of conduct
 

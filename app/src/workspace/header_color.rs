@@ -3,8 +3,7 @@
 //!
 //! Maps a project directory to one of the shared tab palette colors
 //! ([`TAB_COLOR_OPTIONS`]) with a stable hash, so the same project always gets
-//! the same hue across restarts. See
-//! `docs/superpowers/specs/2026-06-30-window-header-project-colors-design.md`.
+//! the same hue across restarts.
 
 use std::path::Path;
 

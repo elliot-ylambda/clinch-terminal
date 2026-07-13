@@ -1,15 +1,14 @@
 #!/bin/bash
 #
-# Cross-platform entrypoint for running a local Warp build.
+# Cross-platform entrypoint for running a local Clinch build.
 #
 # On macOS this delegates to `./script/macos/run`, which builds and runs Warp
 # as a real `.app` bundle (with code signing, plist updates, etc.). On Linux
 # and Windows it invokes `cargo run` directly for the appropriate binary.
 #
-# This script owns all cross-platform setup (running install_channel_config,
-# detecting internal vs OSS builds, and mapping legacy `--features` entries
-# to environment variables), so platform-specific scripts can assume those
-# values are already provided via environment variables.
+# This script owns cross-platform setup and maps legacy `--features` entries
+# to environment variables, so platform-specific scripts can assume those
+# values are already provided.
 
 set -e
 
@@ -19,21 +18,8 @@ cd "${REPO_ROOT}"
 OS_TYPE="$(uname -s)"
 
 FEATURES="gui"
-INSTALL_COMMON_SKILLS=1
-FORCE_COMMON_SKILLS=0
-COMMON_SKILLS_TARGET="${WARP_COMMON_SKILLS_INSTALL_TARGET:-}"
-
-./script/install_channel_config || echo "Skipping internal channel config installation (no repo access)."
-
-
-# If warp_channel_config is on PATH, build the Local channel binary; otherwise build the OSS channel.
-if command -v warp-channel-config &>/dev/null; then
-    WARP_BIN_NAME="warp"
-    WARP_CHANNEL="local"
-else
-    WARP_BIN_NAME="warp-oss"
-    WARP_CHANNEL="oss"
-fi
+WARP_BIN_NAME="warp"
+WARP_CHANNEL="local"
 
 # Shared argument parsing. macOS-specific flags (--dont-open,
 # --open_with_launchd, --generate-schema) are forwarded through MAC_ARGS and
@@ -67,10 +53,6 @@ while (( "$#" )); do
         exit 1
       fi
       ;;
-    --install-common-skills)
-      FORCE_COMMON_SKILLS=1
-      shift
-      ;;
     --release)
       CARGO_PARAMS+=("$1")
       MAC_ARGS+=("$1")
@@ -95,36 +77,8 @@ while (( "$#" )); do
   esac
 done
 
-install_common_skills_or_continue() {
-  if ! ./script/resolve_common_skills install_common_skills -- --repo-root "${REPO_ROOT}" "$@"; then
-    echo "error: unable to install common skills; continuing without them." >&2
-  fi
-}
-if [[ "$INSTALL_COMMON_SKILLS" -eq 1 ]]; then
-  COMMON_SKILLS_ARGS=()
-  if [[ "${COMMON_SKILLS_TARGET}" = "project" || "${COMMON_SKILLS_TARGET}" = "global" ]]; then
-    COMMON_SKILLS_ARGS=("--${COMMON_SKILLS_TARGET}")
-  fi
-  if [[ "${WARP_SKIP_COMMON_SKILLS_INSTALL:-}" = "1" ]]; then
-    :
-  elif [[ "$FORCE_COMMON_SKILLS" -eq 1 ]]; then
-    if [[ "${#COMMON_SKILLS_ARGS[@]}" -gt 0 ]]; then
-      install_common_skills_or_continue "${COMMON_SKILLS_ARGS[@]}" --force
-    else
-      install_common_skills_or_continue --force --prompt-for-target
-    fi
-  else
-    if [[ "${#COMMON_SKILLS_ARGS[@]}" -gt 0 ]]; then
-      install_common_skills_or_continue "${COMMON_SKILLS_ARGS[@]}" --if-needed --quiet
-    else
-      install_common_skills_or_continue --if-needed --prompt-for-target --quiet
-    fi
-  fi
-fi
-
-# These cargo features were removed and replaced by environment variables read
-# by warp-channel-config. Intercept them here so that existing --features
-# invocations keep working.
+# These cargo features were removed and replaced by environment variables.
+# Intercept them here so that existing --features invocations keep working.
 for mapping in \
     "with_local_server:WITH_LOCAL_SERVER" \
     "with_local_session_sharing_server:WITH_LOCAL_SESSION_SHARING_SERVER" \

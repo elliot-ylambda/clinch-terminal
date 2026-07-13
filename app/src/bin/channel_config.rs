@@ -71,9 +71,9 @@ pub fn load_config_from_generator(channel: &str) -> ChannelConfig {
             if err.kind() == std::io::ErrorKind::NotFound {
                 panic!(
                     "\n\n'{CONFIG_BIN_NAME}' was not found on PATH.\n\n\
-                     To build internal channels, run:\n\
-                     \n\
-                     \x20 ./script/install_channel_config\n\n"
+                     Private Warp channels require an internal config generator that is not \
+                     included in the public Clinch repository. Use `cargo run --bin warp` for \
+                     a local Clinch build.\n\n"
                 )
             }
             panic!("Failed to execute '{CONFIG_BIN_NAME}': {err}")

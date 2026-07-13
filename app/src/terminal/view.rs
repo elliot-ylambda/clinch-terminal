@@ -155,10 +155,10 @@ use warpui::elements::{
     get_rich_content_position_id, Align, Border, ChildAnchor, ChildView, Clipped,
     ClippedScrollStateHandle, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment,
     DispatchEventResult, DropTarget, DropTargetData, Empty, EventHandler, Expanded, Fill, Flex,
-    Hoverable, Icon, LiveElement, MouseStateHandle, NewScrollable, OffsetPositioning, ParentAnchor,
-    ParentElement, ParentOffsetBounds, PositionedElementAnchor, PositionedElementOffsetBounds,
-    Radius, Rect, SavePosition, ScrollStateHandle, Scrollable, ScrollableElement, ScrollbarWidth,
-    Shrinkable, Stack, Text,
+    Hoverable, Icon, LiveElement, MainAxisSize, MouseStateHandle, NewScrollable, OffsetPositioning,
+    ParentAnchor, ParentElement, ParentOffsetBounds, PositionedElementAnchor,
+    PositionedElementOffsetBounds, Radius, Rect, SavePosition, ScrollStateHandle, Scrollable,
+    ScrollableElement, ScrollbarWidth, Shrinkable, Stack, Text,
 };
 use warpui::event::ModifiersState;
 use warpui::fonts::{Cache as FontCache, FamilyId, Properties};
@@ -16294,11 +16294,16 @@ impl TerminalView {
                 let last_frame_input_height = ctx
                     .element_position_by_id(self.input.as_ref(ctx).save_position_id())
                     .map_or(Pixels::zero(), |r| r.height().into_pixels());
+                let waterfall_viewport_height = ctx
+                    .element_position_by_id(self.waterfall_gap_viewport_position_id())
+                    .map_or(self.size_info.pane_height_px(), |r| {
+                        r.height().into_pixels()
+                    });
 
                 // If there is already a gap in waterfall mode, we can't use the block list element's size
                 // to figure out the next gap and so we have to do some math to figure out
                 // the space available for the clear.
-                self.size_info.pane_height_px() - last_frame_input_height
+                waterfall_viewport_height - last_frame_input_height
             }
             (_, _, _) => {
                 // If there is no gap, then the height of the next gap is just the
@@ -24340,6 +24345,13 @@ impl TerminalView {
             )
             .finish()
         };
+        let waterfall_viewport_height = element_size_at_last_frame(
+            &self.waterfall_gap_viewport_position_id(),
+            self.window_id,
+            app,
+        )
+        .map(|size| Pixels::new(size.y()))
+        .unwrap_or(self.size_info.pane_height_px());
         let waterfall_gap_element = WaterfallGapElement::new(
             self.render_block_list_element(model, InputMode::Waterfall, false, app),
             input_element,
@@ -24354,7 +24366,7 @@ impl TerminalView {
             ),
             self.size_info.cell_height_px(),
             viewport.scroll_top_in_pixels(),
-            self.size_info.pane_height_px(),
+            waterfall_viewport_height,
             self.inline_menu_positioner.clone(),
         );
 
@@ -24374,14 +24386,22 @@ impl TerminalView {
         } else {
             scrollable
         };
+        let gap_element =
+            SavePosition::new(gap_element, &self.waterfall_gap_viewport_position_id()).finish();
 
         let mut column = Flex::column()
+            .with_main_axis_size(MainAxisSize::Max)
+            .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
             .with_child(Shrinkable::new(1., gap_element).finish());
         if self.should_render_sticky_cli_agent_footer(model, app) {
             column.add_child(ChildView::new(&self.use_agent_footer).finish());
         }
 
         Stack::new().with_child(column.finish())
+    }
+
+    fn waterfall_gap_viewport_position_id(&self) -> String {
+        format!("waterfall_gap_viewport__{}", self.view_id)
     }
 
     // In the case of waterfall mode with no gap, we need to handle left and right (for the context menu) clicks

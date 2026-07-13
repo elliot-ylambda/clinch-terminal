@@ -30,6 +30,25 @@ script/font_fallback/downloaded_fonts
 script/windows/Output
 .aider*
 
+# Don't send local AI assistant, editor, or planning state to Docker builds.
+**/.agents/
+**/.claude/
+**/.codex/
+**/.cursor/
+**/.mcp.json
+**/.remember/
+**/.superpowers/
+**/.warp/
+**/.warpindexingignore
+**/.vscode/
+**/AGENTS.md
+**/CLAUDE.md
+**/WARP.md
+/command-signatures-v2/
+/docker/agent-dev/
+/docs/
+/skills-lock.json
+
 # temporary vim files. Source: https://github.com/github/gitignore/blob/main/Global/Vim.gitignore
 *~
 [._]*.s[a-v][a-z]

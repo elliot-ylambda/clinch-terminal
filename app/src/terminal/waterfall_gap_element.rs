@@ -164,10 +164,13 @@ impl Element for WaterfallGapElement {
             - self.gap_size_px.y().into_pixels()
             - blocklist_inset_accounting_for_inline_menu.unwrap_or_default();
 
-        // Calculate the max height it could take up, which is a function of the pane height
-        // and input size.
+        // Calculate the max height it could take up from the pane height and the
+        // actual constraint supplied by its parent. The latter can be smaller
+        // when persistent terminal chrome (such as the CLI agent toolbelt)
+        // reserves space outside this scrollable.
+        let available_height_px = self.pane_height_px.min(constraint.max.y().into_pixels());
         let max_height_for_blocklist_element_px =
-            self.pane_height_px - input_size.y().into_pixels();
+            available_height_px - input_size.y().into_pixels();
 
         let block_list_height_constraint_px = visible_block_list_height_px
             .max(Pixels::zero())
