@@ -317,17 +317,22 @@ pub fn init(app: &mut AppContext) {
 }
 
 #[cfg(feature = "local_fs")]
+fn detected_file_path_target_override(absolute_path: &Path) -> Option<FileTarget> {
+    if is_supported_image_file(absolute_path) {
+        #[cfg(feature = "image_preview_pane")]
+        if FeatureFlag::ImagePreviewPane.is_enabled() {
+            return Some(FileTarget::ImageViewer(EditorLayout::SplitPane));
+        }
+        Some(FileTarget::SystemGeneric)
+    } else {
+        None
+    }
+}
+
+#[cfg(feature = "local_fs")]
 impl AIBlock {
     fn detected_file_path_target_override(&self, absolute_path: &Path) -> Option<FileTarget> {
-        if is_supported_image_file(absolute_path) {
-            #[cfg(feature = "image_preview_pane")]
-            if FeatureFlag::ImagePreviewPane.is_enabled() {
-                return Some(FileTarget::ImageViewer(EditorLayout::NewTab));
-            }
-            Some(FileTarget::SystemGeneric)
-        } else {
-            None
-        }
+        detected_file_path_target_override(absolute_path)
     }
 }
 

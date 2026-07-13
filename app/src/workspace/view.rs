@@ -205,6 +205,7 @@ use crate::ai::blocklist::suggested_rule_modal::{
 };
 use crate::ai::blocklist::usage::{
     render_cli_agent_usage_header, render_cli_agent_usage_panel, CliAgentUsageModel,
+    CliAgentUsageProvider,
 };
 use crate::ai::blocklist::{
     BlocklistAIHistoryEvent, PendingAttachment, PendingQueryState, QueuedQueryOrigin,
@@ -1002,11 +1003,13 @@ pub struct Workspace {
     tab_mru_order: Vec<EntityId>,
     pub(crate) hovered_tab_index: Option<TabBarHoverIndex>,
     tab_bar_hover_state: MouseStateHandle,
-    /// Whether the tab-bar Claude Code + Codex usage detail panel is expanded.
-    cli_agent_usage_panel_open: bool,
-    /// Mouse-tracking handle for the tab-bar usage widget's `Hoverable`
-    /// (created once here, cloned at render time).
-    cli_agent_usage_mouse_state: MouseStateHandle,
+    /// The CLI-agent provider whose focused tab-bar usage panel is expanded.
+    cli_agent_usage_panel_provider: Option<CliAgentUsageProvider>,
+    /// Mouse-tracking handles are created once and reused by the responsive
+    /// header variants and the external usage link.
+    cli_agent_usage_claude_mouse_state: MouseStateHandle,
+    cli_agent_usage_codex_mouse_state: MouseStateHandle,
+    cli_agent_usage_link_mouse_state: MouseStateHandle,
     tab_fixed_width: Option<f32>,
     traffic_light_mouse_states: TrafficLightMouseStates,
     /// Tab groups in this workspace, keyed by id.
@@ -3323,8 +3326,10 @@ impl Workspace {
             tab_mru_order: Vec::new(),
             hovered_tab_index: None,
             tab_bar_hover_state: Default::default(),
-            cli_agent_usage_panel_open: false,
-            cli_agent_usage_mouse_state: Default::default(),
+            cli_agent_usage_panel_provider: None,
+            cli_agent_usage_claude_mouse_state: Default::default(),
+            cli_agent_usage_codex_mouse_state: Default::default(),
+            cli_agent_usage_link_mouse_state: Default::default(),
             traffic_light_mouse_states: Default::default(),
             tab_groups: HashMap::new(),
             horizontal_tab_group_mouse_states: RefCell::default(),
@@ -21229,30 +21234,40 @@ impl Workspace {
         }
 
         // Claude Code + Codex usage status. Window-global: shown whenever usage
-        // data exists (not tied to a focused pane). Click toggles the detail panel.
+        // data exists (not tied to a focused pane). Each provider owns a focused
+        // click target and detail panel.
         {
             let snapshot = CliAgentUsageModel::as_ref(ctx).latest().clone();
             let bg = appearance.theme().surface_1();
-            if let Some(widget) = render_cli_agent_usage_header(&snapshot, appearance, bg) {
-                let hover =
-                    Hoverable::new(self.cli_agent_usage_mouse_state.clone(), move |_state| {
-                        widget
-                    })
-                    .on_click(|ctx, _app, _position| {
-                        ctx.dispatch_typed_action(WorkspaceAction::ToggleCliAgentUsagePanel);
-                    })
-                    .with_cursor(Cursor::PointingHand)
-                    .finish();
-
-                let mut stack = Stack::new().with_child(hover);
-                if self.cli_agent_usage_panel_open {
+            let provider_mouse_states = [
+                self.cli_agent_usage_claude_mouse_state.clone(),
+                self.cli_agent_usage_codex_mouse_state.clone(),
+            ];
+            if let Some(widget) =
+                render_cli_agent_usage_header(&snapshot, appearance, bg, &provider_mouse_states)
+            {
+                let mut stack = Stack::new().with_child(widget);
+                if let Some(provider) = self.cli_agent_usage_panel_provider {
+                    let (parent_anchor, child_anchor) = match provider {
+                        CliAgentUsageProvider::Claude => {
+                            (ParentAnchor::BottomLeft, ChildAnchor::TopLeft)
+                        }
+                        CliAgentUsageProvider::Codex => {
+                            (ParentAnchor::BottomRight, ChildAnchor::TopRight)
+                        }
+                    };
                     stack.add_positioned_overlay_child(
-                        render_cli_agent_usage_panel(&snapshot, appearance),
+                        render_cli_agent_usage_panel(
+                            &snapshot,
+                            appearance,
+                            provider,
+                            self.cli_agent_usage_link_mouse_state.clone(),
+                        ),
                         OffsetPositioning::offset_from_parent(
                             vec2f(0., 4.),
                             ParentOffsetBounds::WindowByPosition,
-                            ParentAnchor::BottomRight,
-                            ChildAnchor::TopRight,
+                            parent_anchor,
+                            child_anchor,
                         ),
                     );
                 }
@@ -25185,8 +25200,9 @@ impl TypedActionView for Workspace {
             ShowHeaderToolbarContextMenu { position } => {
                 self.show_header_toolbar_context_menu(*position, ctx);
             }
-            ToggleCliAgentUsagePanel => {
-                self.cli_agent_usage_panel_open = !self.cli_agent_usage_panel_open;
+            ToggleCliAgentUsagePanel(provider) => {
+                self.cli_agent_usage_panel_provider =
+                    provider.toggle_panel(self.cli_agent_usage_panel_provider);
                 ctx.notify();
             }
             ReopenClosedSession => {

@@ -1,15 +1,17 @@
 use chrono::{DateTime, Utc};
-use cli_agent_usage::format::{chip_halves, fmt_pct, fmt_reset, fmt_reset_short, fmt_tokens};
+use cli_agent_usage::format::{fmt_pct, fmt_reset, fmt_tokens};
 use cli_agent_usage::{LimitWindow, Provider, Severity, UsageSnapshot, WindowTotals};
 // Element + theme imports — mirror app/src/context_chips/display_chip.rs.
 use warp_core::ui::theme::{Fill, WarpTheme};
 use warp_core::ui::Icon;
 use warpui::elements::{
-    Border, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Flex, ParentElement,
-    Radius, Text,
+    Border, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Flex, Hoverable,
+    MouseStateHandle, ParentElement, Radius, Text,
 };
+use warpui::platform::Cursor;
 use warpui::Element;
 
+use super::CliAgentUsageProvider;
 use crate::appearance::Appearance;
 
 /// Map a crate `Severity` to a fill against `bg` (the surface the text sits on).
@@ -37,143 +39,49 @@ pub(super) fn span(
     .finish()
 }
 
-/// The footer chip: `[clock] cc 47%w · fb 32%w · cx 55%w`, with the Fable
-/// segment omitted when its scoped limit is unavailable. Each percentage is
-/// colored by its severity. `None` when neither tool has data (chip hidden).
-pub fn render_cli_agent_usage_chip(
-    snapshot: &UsageSnapshot,
-    appearance: &Appearance,
-    bg: Fill,
-) -> Option<Box<dyn Element>> {
-    let halves = chip_halves(snapshot)?;
-    let theme = appearance.theme();
-    let neutral = theme.sub_text_color(bg);
-    let icon_size = appearance.monospace_font_size();
-
-    let mut row = Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center);
-    row.add_child(
-        Container::new(
-            ConstrainedBox::new(
-                Icon::Clock
-                    .to_warpui_icon(theme.main_text_color(bg))
-                    .finish(),
-            )
-            .with_width(icon_size)
-            .with_height(icon_size)
-            .finish(),
-        )
-        .with_margin_right(4.)
-        .finish(),
-    );
-
-    let now = Utc::now();
-    // Aligned with `halves` ([claude, codex]) so each half can surface its
-    // provider's exhausted-window reset countdown.
-    let plans = [snapshot.claude.plan, snapshot.codex.plan];
-    for (i, (half, plan)) in halves.iter().zip(plans).enumerate() {
-        if i > 0 {
-            row.add_child(span(" · ", neutral, appearance));
-        }
-        row.add_child(span(format!("{} ", half.label), neutral, appearance));
-        row.add_child(span(
-            half.pct.clone(),
-            severity_fill(half.severity, theme, bg),
-            appearance,
-        ));
-        // A window is fully exhausted: append a compact countdown to its
-        // reset (e.g. "resets 42m"). Only at hard exhaustion — the chip
-        // deliberately shows no near-limit warnings.
-        if let Some(until) = plan.and_then(|p| p.exhausted_until()) {
-            row.add_child(span(
-                format!(" resets {}", fmt_reset_short(until, now)),
-                neutral,
-                appearance,
-            ));
-        }
-        // Fable has its own model-scoped weekly allowance. Keep it visually
-        // separate from Claude's account-wide weekly percentage even in the
-        // compact variant.
-        if i == 0 {
-            if let Some(fable) = snapshot.claude.plan.and_then(|p| p.fable_weekly) {
-                row.add_child(span(" · fb ", neutral, appearance));
-                row.add_child(span(
-                    format!("{}w", fmt_pct(fable.percent)),
-                    severity_fill(fable.severity, theme, bg),
-                    appearance,
-                ));
-            }
-        }
-    }
-
-    Some(
-        Container::new(row.finish())
-            .with_vertical_padding(4.)
-            .finish(),
-    )
-}
-
-/// The expanded panel: two columns (Claude | Codex) — 5h %, weekly %, Claude's
-/// Fable %, then session/today/week/month input+output tokens (cache-read
-/// dimmed). No cost.
+/// A focused provider panel: plan limits, local token totals, and a link to the
+/// provider's authoritative web usage page.
 pub fn render_cli_agent_usage_panel(
     snapshot: &UsageSnapshot,
     appearance: &Appearance,
+    kind: CliAgentUsageProvider,
+    link_mouse_state: MouseStateHandle,
 ) -> Box<dyn Element> {
     let theme = appearance.theme();
     let bg = theme.surface_2();
     let main = theme.main_text_color(bg);
     let sub = theme.sub_text_color(bg);
     let now = Utc::now();
+    let provider = kind.data(snapshot);
 
     // Header row.
     let mut col = Flex::column().with_spacing(4.);
-    col.add_child(panel_row(
-        span("", sub, appearance),
-        span("Claude Code", main, appearance),
-        span("Codex", main, appearance),
+    col.add_child(span(
+        format!("{} usage", kind.display_name()),
+        main,
+        appearance,
     ));
 
     // Plan-% rows.
     col.add_child(panel_row(
         span("5h", sub, appearance),
-        plan_cell(
-            snapshot.claude.plan.and_then(|p| p.session),
-            now,
-            appearance,
-            bg,
-        ),
-        plan_cell(
-            snapshot.codex.plan.and_then(|p| p.session),
-            now,
-            appearance,
-            bg,
-        ),
+        plan_cell(provider.plan.and_then(|p| p.session), now, appearance, bg),
     ));
     col.add_child(panel_row(
         span("Weekly", sub, appearance),
-        plan_cell(
-            snapshot.claude.plan.and_then(|p| p.weekly),
-            now,
-            appearance,
-            bg,
-        ),
-        plan_cell(
-            snapshot.codex.plan.and_then(|p| p.weekly),
-            now,
-            appearance,
-            bg,
-        ),
+        plan_cell(provider.plan.and_then(|p| p.weekly), now, appearance, bg),
     ));
-    col.add_child(panel_row(
-        span("Fable wk", sub, appearance),
-        plan_cell(
-            snapshot.claude.plan.and_then(|p| p.fable_weekly),
-            now,
-            appearance,
-            bg,
-        ),
-        span("—", sub, appearance),
-    ));
+    if kind == CliAgentUsageProvider::Claude {
+        col.add_child(panel_row(
+            span("Fable wk", sub, appearance),
+            plan_cell(
+                provider.plan.and_then(|p| p.fable_weekly),
+                now,
+                appearance,
+                bg,
+            ),
+        ));
+    }
 
     // Token rows.
     for (label, pick) in [
@@ -184,10 +92,15 @@ pub fn render_cli_agent_usage_panel(
     ] {
         col.add_child(panel_row(
             span(label, sub, appearance),
-            token_cell(window(&snapshot.claude, pick), appearance, main, sub),
-            token_cell(window(&snapshot.codex, pick), appearance, main, sub),
+            token_cell(window(provider, pick), appearance, main, sub),
         ));
     }
+
+    col.add_child(
+        Container::new(usage_link(kind, appearance, bg, link_mouse_state))
+            .with_margin_top(6.)
+            .finish(),
+    );
 
     ConstrainedBox::new(
         Container::new(col.finish())
@@ -198,7 +111,7 @@ pub fn render_cli_agent_usage_panel(
             .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
             .finish(),
     )
-    .with_width(320.)
+    .with_width(276.)
     .finish()
 }
 
@@ -211,17 +124,50 @@ fn window(p: &Provider, pick: u8) -> &WindowTotals {
     }
 }
 
-/// A three-cell row: fixed-width label, then two equal provider columns.
-fn panel_row(
-    label: Box<dyn Element>,
-    claude: Box<dyn Element>,
-    codex: Box<dyn Element>,
-) -> Box<dyn Element> {
+/// A two-cell row: fixed-width label followed by the selected provider's value.
+fn panel_row(label: Box<dyn Element>, value: Box<dyn Element>) -> Box<dyn Element> {
     let mut row = Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center);
     row.add_child(ConstrainedBox::new(label).with_width(84.).finish());
-    row.add_child(ConstrainedBox::new(claude).with_width(108.).finish());
-    row.add_child(ConstrainedBox::new(codex).with_width(108.).finish());
+    row.add_child(ConstrainedBox::new(value).with_width(160.).finish());
     row.finish()
+}
+
+fn usage_link(
+    kind: CliAgentUsageProvider,
+    appearance: &Appearance,
+    bg: Fill,
+    mouse_state: MouseStateHandle,
+) -> Box<dyn Element> {
+    let theme = appearance.theme();
+    let label = kind.usage_link_label();
+    let url = kind.usage_url();
+    let icon_size = appearance.monospace_font_size();
+
+    Hoverable::new(mouse_state, move |state| {
+        let color = if state.is_hovered() {
+            theme.main_text_color(bg)
+        } else {
+            theme.accent()
+        };
+        let content = Flex::row()
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_spacing(4.)
+            .with_child(span(label, color, appearance))
+            .with_child(
+                ConstrainedBox::new(Icon::LinkExternal.to_warpui_icon(color).finish())
+                    .with_width(icon_size)
+                    .with_height(icon_size)
+                    .finish(),
+            )
+            .finish();
+        Container::new(content)
+            .with_vertical_padding(2.)
+            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .finish()
+    })
+    .on_click(move |_ctx, app, _position| app.open_url(url))
+    .with_cursor(Cursor::PointingHand)
+    .finish()
 }
 
 /// `{pct}% · resets {when}` colored by severity, or `—` when absent.

@@ -21,6 +21,7 @@ use crate::ai::agent::api::ServerConversationToken;
 use crate::ai::agent::conversation::AIConversationId;
 use crate::ai::agent::AIAgentExchangeId;
 use crate::ai::ambient_agents::AmbientAgentTaskId;
+use crate::ai::blocklist::usage::CliAgentUsageProvider;
 use crate::ai::blocklist::PendingAttachment;
 use crate::ai::document::ai_document_model::{AIDocumentId, AIDocumentVersion};
 use crate::auth::auth_manager::LoginGatedFeature;
@@ -419,9 +420,9 @@ pub enum WorkspaceAction {
     ShowHeaderToolbarContextMenu {
         position: Vector2F,
     },
-    /// Toggle the expanded Claude Code + Codex usage panel anchored under the
-    /// tab-bar usage status widget.
-    ToggleCliAgentUsagePanel,
+    /// Toggle the focused usage panel for one CLI-agent provider, anchored
+    /// under the tab-bar usage status widget.
+    ToggleCliAgentUsagePanel(CliAgentUsageProvider),
     Reauth,
     SignupAnonymousUser,
     SignInAnonymousWebUser,
@@ -1081,7 +1082,7 @@ impl WorkspaceAction {
             | OpenCLIAgentToolbarEditor
             | OpenHeaderToolbarEditor
             | ShowHeaderToolbarContextMenu { .. }
-            | ToggleCliAgentUsagePanel
+            | ToggleCliAgentUsagePanel(_)
             | Reauth
             | SignupAnonymousUser
             | LogOut

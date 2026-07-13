@@ -23,6 +23,24 @@ use crate::test_util::settings::initialize_settings_for_tests;
 use crate::workspaces::user_profiles::{UserProfileWithUID, UserProfiles};
 
 #[test]
+#[cfg(all(feature = "local_fs", feature = "image_preview_pane"))]
+fn detected_svg_link_opens_image_preview_in_right_split() {
+    use std::path::Path;
+
+    use warp_core::features::FeatureFlag;
+
+    use super::detected_file_path_target_override;
+    use crate::util::openable_file_type::{EditorLayout, FileTarget};
+
+    let _image_preview = FeatureFlag::ImagePreviewPane.override_enabled(true);
+
+    assert_eq!(
+        detected_file_path_target_override(Path::new("/tmp/logo.SVG")),
+        Some(FileTarget::ImageViewer(EditorLayout::SplitPane))
+    );
+}
+
+#[test]
 fn reasoning_auto_collapses_when_user_has_not_manually_toggled() {
     App::test((), |mut app| async move {
         initialize_settings_for_tests(&mut app);
