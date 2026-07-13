@@ -1,39 +1,28 @@
 {
-  "fill-specializations" : [
-    {
-      "value" : {
-        "linear-gradient" : [
-          "gray:0.19068,1.00000",
-          "gray:0.08158,1.00000"
-        ]
-      }
-    },
-    {
-      "appearance" : "dark",
-      "value" : {
-        "linear-gradient" : [
-          "gray:0.08342,1.00000",
-          "gray:0.00000,1.00000"
-        ]
-      }
-    }
-  ],
   "groups" : [
     {
+      "blend-mode" : "normal",
+      "hidden" : false,
       "layers" : [
         {
           "blend-mode" : "normal",
-          "glass" : true,
-          "image-name" : "warp-glyph 3.svg",
-          "name" : "warp-glyph 3"
+          "fill" : "none",
+          "glass" : false,
+          "hidden" : false,
+          "image-name" : "clinch-dev.svg",
+          "name" : "clinch-dev",
+          "opacity" : 1
         }
       ],
+      "lighting" : "individual",
+      "opacity" : 1,
       "shadow" : {
         "kind" : "neutral",
-        "opacity" : 0.5
+        "opacity" : 0
       },
+      "specular" : false,
       "translucency" : {
-        "enabled" : true,
+        "enabled" : false,
         "value" : 0.5
       }
     }

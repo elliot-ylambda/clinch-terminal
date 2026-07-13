@@ -1073,11 +1073,15 @@ short_description = "The cloud-backed terminal for individuals and teams, develo
 
 [package.metadata.bundle.bin.warp]
 category = "public.app-category.developer-tools"
-copyright = "© 2025, Denver Technologies, Inc"
-identifier = "dev.warp.Warp-Local"
-name = "WarpLocal"
+copyright = "© 2026 Clinch contributors. Based on Warp © Denver Technologies, Inc. Not affiliated with Warp. AGPL-3.0."
+identifier = "sh.clinch.ClinchDev"
+name = "ClinchDev"
+icon = [
+    "channels/local/icon/no-padding/512x512.png",
+    "channels/local/icon/no-padding/icon.ico",
+]
 resources = ["assets/onboarding"]
-short_description = "The cloud-backed terminal for individuals and teams, developer build."
+short_description = "The isolated, incremental development build of Clinch."
 
 [package.metadata.cargo-udeps.ignore]
 normal = ["embed_plist"]

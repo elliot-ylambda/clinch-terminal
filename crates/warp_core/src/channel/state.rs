@@ -418,7 +418,9 @@ impl ChannelState {
             Channel::Dev => "warpdev",
             // Dummy value--integration tests shouldn't support URL schemes.
             Channel::Integration => "warpintegration",
-            Channel::Local => "warplocal",
+            // Clinch Dev is a distinct Local-channel application so deep links
+            // cannot activate production Clinch or an installed Warp build.
+            Channel::Local => "clinchdev",
             Channel::Oss => "warposs",
         }
     }

@@ -101,8 +101,11 @@ pub struct ForkLaunch {
 }
 
 fn registry_dir() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    Some(Path::new(&home).join(".warp").join("agent-resume"))
+    if let Some(override_dir) = std::env::var_os("WARP_AGENT_RESUME_DIR") {
+        return Some(PathBuf::from(override_dir));
+    }
+
+    warp_core::paths::warp_home_config_dir().map(|dir| dir.join("agent-resume"))
 }
 
 const ACTIVE_PANES_FILE: &str = "active-panes";

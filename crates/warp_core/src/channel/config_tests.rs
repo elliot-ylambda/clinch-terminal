@@ -33,13 +33,13 @@ fn no_backend_urls_parse_and_are_unroutable() {
 #[test]
 fn no_backend_round_trips_through_serde() {
     let config =
-        ChannelConfig::no_backend(AppId::new("dev", "warp", "Warp-Local"), "warp-local.log");
+        ChannelConfig::no_backend(AppId::new("sh", "clinch", "ClinchDev"), "clinch-dev.log");
 
     let json = serde_json::to_string(&config).expect("serialize");
     let back: ChannelConfig = serde_json::from_str(&json).expect("deserialize");
 
-    assert_eq!(back.app_id.to_string(), "dev.warp.Warp-Local");
-    assert_eq!(back.logfile_name, "warp-local.log");
+    assert_eq!(back.app_id.to_string(), "sh.clinch.ClinchDev");
+    assert_eq!(back.logfile_name, "clinch-dev.log");
     assert_eq!(back.server_config.server_root_url, "http://192.0.2.0:9");
     assert_eq!(back.oz_config.oz_root_url, "http://192.0.2.0:9");
     assert!(!back.has_backend);

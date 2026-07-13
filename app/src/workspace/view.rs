@@ -1021,6 +1021,10 @@ pub struct Workspace {
     cli_agent_usage_claude_mouse_state: MouseStateHandle,
     cli_agent_usage_codex_mouse_state: MouseStateHandle,
     cli_agent_usage_link_mouse_state: MouseStateHandle,
+    /// The gauges' "Turn on" affordance gets separate handles for the header
+    /// and the panel — both can be visible at once and must hover independently.
+    cli_agent_usage_turn_on_header_mouse_state: MouseStateHandle,
+    cli_agent_usage_turn_on_panel_mouse_state: MouseStateHandle,
     tab_fixed_width: Option<f32>,
     traffic_light_mouse_states: TrafficLightMouseStates,
     /// Tab groups in this workspace, keyed by id.
@@ -3355,6 +3359,8 @@ impl Workspace {
             cli_agent_usage_claude_mouse_state: Default::default(),
             cli_agent_usage_codex_mouse_state: Default::default(),
             cli_agent_usage_link_mouse_state: Default::default(),
+            cli_agent_usage_turn_on_header_mouse_state: Default::default(),
+            cli_agent_usage_turn_on_panel_mouse_state: Default::default(),
             traffic_light_mouse_states: Default::default(),
             tab_groups: HashMap::new(),
             horizontal_tab_group_mouse_states: RefCell::default(),
@@ -21265,14 +21271,20 @@ impl Workspace {
         // click target and detail panel.
         {
             let snapshot = CliAgentUsageModel::as_ref(ctx).latest().clone();
+            let plan_limits_enabled = *CliAgentUsageSettings::as_ref(ctx).show_plan_limits;
             let bg = appearance.theme().surface_1();
             let provider_mouse_states = [
                 self.cli_agent_usage_claude_mouse_state.clone(),
                 self.cli_agent_usage_codex_mouse_state.clone(),
             ];
-            if let Some(widget) =
-                render_cli_agent_usage_header(&snapshot, appearance, bg, &provider_mouse_states)
-            {
+            if let Some(widget) = render_cli_agent_usage_header(
+                &snapshot,
+                plan_limits_enabled,
+                appearance,
+                bg,
+                &provider_mouse_states,
+                &self.cli_agent_usage_turn_on_header_mouse_state,
+            ) {
                 let mut stack = Stack::new().with_child(widget);
                 if let Some(provider) = self.cli_agent_usage_panel_provider {
                     let (parent_anchor, child_anchor) = match provider {
@@ -21288,7 +21300,9 @@ impl Workspace {
                             &snapshot,
                             appearance,
                             provider,
+                            plan_limits_enabled,
                             self.cli_agent_usage_link_mouse_state.clone(),
+                            self.cli_agent_usage_turn_on_panel_mouse_state.clone(),
                         ),
                         OffsetPositioning::offset_from_parent(
                             vec2f(0., 4.),
@@ -25243,6 +25257,14 @@ impl TypedActionView for Workspace {
             ToggleCliAgentUsagePanel(provider) => {
                 self.cli_agent_usage_panel_provider =
                     provider.toggle_panel(self.cli_agent_usage_panel_provider);
+                ctx.notify();
+            }
+            EnableCliAgentPlanLimits => {
+                CliAgentUsageSettings::handle(ctx).update(ctx, |settings, ctx| {
+                    if !*settings.show_plan_limits {
+                        report_if_error!(settings.show_plan_limits.toggle_and_save_value(ctx));
+                    }
+                });
                 ctx.notify();
             }
             ReopenClosedSession => {

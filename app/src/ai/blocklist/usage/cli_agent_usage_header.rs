@@ -10,7 +10,7 @@ use warpui::elements::{
 use warpui::platform::Cursor;
 use warpui::Element;
 
-use super::cli_agent_usage_chip::{severity_fill, span};
+use super::cli_agent_usage_chip::{severity_fill, span, turn_on_plan_limits};
 use super::CliAgentUsageProvider;
 use crate::appearance::Appearance;
 use crate::workspace::WorkspaceAction;
@@ -56,12 +56,15 @@ fn provider_windows(
 /// Claude also includes its model-scoped `Fable {pct}[· {reset}]` window. Percents
 /// are severity-colored; labels and resets are dimmed. The windows are separated
 /// by whitespace — the only `│` divider in the widget sits between providers.
+/// A `turn_on` mouse state replaces the windows with the gauges' enable
+/// affordance (Claude while `show_plan_limits` is off).
 fn provider_segment(
     name: &str,
     provider: &Provider,
     include_fable: bool,
     now: DateTime<Utc>,
     include_resets: bool,
+    turn_on: Option<MouseStateHandle>,
     appearance: &Appearance,
     bg: Fill,
 ) -> Box<dyn Element> {
@@ -71,6 +74,12 @@ fn provider_segment(
 
     let mut row = Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center);
     row.add_child(span(format!("{name} "), main, appearance));
+
+    if let Some(mouse_state) = turn_on {
+        row.add_child(span("limits ", sub, appearance));
+        row.add_child(turn_on_plan_limits(appearance, bg, mouse_state));
+        return row.finish();
+    }
 
     for (idx, (label, window)) in provider_windows(provider, include_fable)
         .into_iter()
@@ -115,6 +124,9 @@ fn clickable_provider(
     .on_click(move |ctx, _app, _position| {
         ctx.dispatch_typed_action(WorkspaceAction::ToggleCliAgentUsagePanel(provider));
     })
+    // The nested "Turn on" affordance owns its click; without deferring, the
+    // same click would also toggle this provider's panel.
+    .with_defer_events_to_children()
     .with_cursor(Cursor::PointingHand)
     .finish()
 }
@@ -125,9 +137,11 @@ fn inline_row(
     snapshot: &UsageSnapshot,
     now: DateTime<Utc>,
     include_resets: bool,
+    plan_limits_enabled: bool,
     appearance: &Appearance,
     bg: Fill,
     mouse_states: &[MouseStateHandle; 2],
+    turn_on_mouse_state: &MouseStateHandle,
 ) -> Box<dyn Element> {
     let theme = appearance.theme();
     let sub = theme.sub_text_color(bg);
@@ -155,6 +169,9 @@ fn inline_row(
             true,
             now,
             include_resets,
+            CliAgentUsageProvider::Claude
+                .shows_plan_limits_turn_on(plan_limits_enabled)
+                .then(|| turn_on_mouse_state.clone()),
             appearance,
             bg,
         ),
@@ -174,6 +191,7 @@ fn inline_row(
             false,
             now,
             include_resets,
+            None,
             appearance,
             bg,
         ),
@@ -188,6 +206,7 @@ fn compact_provider_segment(
     half: &ChipHalf,
     provider: &Provider,
     now: DateTime<Utc>,
+    turn_on: Option<MouseStateHandle>,
     appearance: &Appearance,
     bg: Fill,
 ) -> Box<dyn Element> {
@@ -195,6 +214,12 @@ fn compact_provider_segment(
     let neutral = theme.sub_text_color(bg);
     let mut row = Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center);
     row.add_child(span(format!("{} ", half.label), neutral, appearance));
+
+    if let Some(mouse_state) = turn_on {
+        row.add_child(turn_on_plan_limits(appearance, bg, mouse_state));
+        return row.finish();
+    }
+
     row.add_child(span(
         half.pct.clone(),
         severity_fill(half.severity, theme, bg),
@@ -227,9 +252,11 @@ fn compact_row(
     snapshot: &UsageSnapshot,
     halves: &[ChipHalf; 2],
     now: DateTime<Utc>,
+    plan_limits_enabled: bool,
     appearance: &Appearance,
     bg: Fill,
     mouse_states: &[MouseStateHandle; 2],
+    turn_on_mouse_state: &MouseStateHandle,
 ) -> Box<dyn Element> {
     let theme = appearance.theme();
     let neutral = theme.sub_text_color(bg);
@@ -260,7 +287,16 @@ fn compact_row(
         }
         row.add_child(clickable_provider(
             kind,
-            compact_provider_segment(kind, half, kind.data(snapshot), now, appearance, bg),
+            compact_provider_segment(
+                kind,
+                half,
+                kind.data(snapshot),
+                now,
+                kind.shows_plan_limits_turn_on(plan_limits_enabled)
+                    .then(|| turn_on_mouse_state.clone()),
+                appearance,
+                bg,
+            ),
             mouse_states[index].clone(),
             appearance,
         ));
@@ -273,17 +309,46 @@ fn compact_row(
 /// `SizeConstraintSwitch`; `None` when neither provider has data (widget hidden).
 pub fn render_cli_agent_usage_header(
     snapshot: &UsageSnapshot,
+    plan_limits_enabled: bool,
     appearance: &Appearance,
     bg: Fill,
     mouse_states: &[MouseStateHandle; 2],
+    turn_on_mouse_state: &MouseStateHandle,
 ) -> Option<Box<dyn Element>> {
     // Hidden when neither tool has data — same rule as the footer chip.
     let halves = chip_halves(snapshot)?;
     let now = Utc::now();
 
-    let full = inline_row(snapshot, now, true, appearance, bg, mouse_states);
-    let medium = inline_row(snapshot, now, false, appearance, bg, mouse_states);
-    let narrow = compact_row(snapshot, &halves, now, appearance, bg, mouse_states);
+    let full = inline_row(
+        snapshot,
+        now,
+        true,
+        plan_limits_enabled,
+        appearance,
+        bg,
+        mouse_states,
+        turn_on_mouse_state,
+    );
+    let medium = inline_row(
+        snapshot,
+        now,
+        false,
+        plan_limits_enabled,
+        appearance,
+        bg,
+        mouse_states,
+        turn_on_mouse_state,
+    );
+    let narrow = compact_row(
+        snapshot,
+        &halves,
+        now,
+        plan_limits_enabled,
+        appearance,
+        bg,
+        mouse_states,
+        turn_on_mouse_state,
+    );
 
     // Conditions are checked in order; the narrower condition must come first so
     // it wins when both are satisfied. `full` is the default (widest) child.

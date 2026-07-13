@@ -136,20 +136,29 @@ fn producer_loop(paths: Paths, tx: async_channel::Sender<UsageSnapshot>, enabled
     let mut last_plan: Option<PlanLimits> = None;
     let mut cached_token: Option<ClaudeToken> = None;
     let mut last_read_ms: Option<i64> = None;
+    let mut was_enabled = false;
     let mut tick: u64 = 0;
     loop {
         let now = Utc::now();
         let now_ms = now.timestamp_millis();
         let mut snap = scan_local(&paths, &mut caches, now);
 
-        if !enabled.load(Ordering::Relaxed) {
+        // Enabling mid-cycle (the widget's "Turn on" affordance or the Settings
+        // switch) must not wait out the remainder of the ~60s endpoint cadence:
+        // the user expects the Keychain prompt right away, so fetch on the
+        // enable transition too.
+        let enabled_now = enabled.load(Ordering::Relaxed);
+        let just_enabled = enabled_now && !was_enabled;
+        was_enabled = enabled_now;
+
+        if !enabled_now {
             // Gauge disabled: never touch the Keychain. Drop any cached token and
             // last-good plan so the gauges clear immediately and re-enabling
             // forces a fresh read.
             cached_token = None;
             last_read_ms = None;
             last_plan = None;
-        } else if tick.is_multiple_of(ENDPOINT_EVERY) {
+        } else if just_enabled || tick.is_multiple_of(ENDPOINT_EVERY) {
             // Read the Keychain (the prompt-triggering call) only when we lack a
             // usable token; otherwise reuse the cached one.
             if should_read_keychain(

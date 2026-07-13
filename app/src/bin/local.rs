@@ -6,7 +6,7 @@ fn main() -> Result<()> {
     // The Clinch fork ships with no backend, so the channel config is constructed inline (like
     // oss.rs) instead of being loaded from the private `warp-channel-config` generator.
     let config =
-        ChannelConfig::no_backend(AppId::new("dev", "warp", "Warp-Local"), "warp-local.log");
+        ChannelConfig::no_backend(AppId::new("sh", "clinch", "ClinchDev"), "clinch-dev.log");
 
     let mut state = ChannelState::new(Channel::Local, config)
         .with_additional_features(features::DEBUG_FLAGS)
@@ -34,15 +34,15 @@ embed_plist::embed_info_plist_bytes!(r#"
     <key>CFBundleDevelopmentRegion</key>
     <string>English</string>
     <key>CFBundleDisplayName</key>
-    <string>WarpLocal</string>
+    <string>Clinch Dev</string>
     <key>CFBundleExecutable</key>
     <string>warp</string>
     <key>CFBundleIdentifier</key>
-    <string>dev.warp.Warp-Local</string>
+    <string>sh.clinch.ClinchDev</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>WarpLocal</string>
+    <string>ClinchDev</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
@@ -54,9 +54,9 @@ embed_plist::embed_info_plist_bytes!(r#"
     <key>UIDesignRequiresCompatibility</key>
     <true/>
     <key>CFBundleURLTypes</key>
-    <array><dict><key>CFBundleURLName</key><string>Custom App</string><key>CFBundleURLSchemes</key><array><string>warplocal</string></array></dict></array>
+    <array><dict><key>CFBundleURLName</key><string>Clinch Dev</string><key>CFBundleURLSchemes</key><array><string>clinchdev</string></array></dict></array>
     <key>NSHumanReadableCopyright</key>
-    <string>© 2026, Denver Technologies, Inc</string>
+    <string>© 2026 Clinch contributors. Based on Warp © Denver Technologies, Inc. Not affiliated with Warp. AGPL-3.0.</string>
     </dict>
     </plist>
 "#.as_bytes());

@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
 
-use super::{add_session_focus_env_vars, FOCUS_URL_ENV, TERMINAL_SESSION_UUID_ENV};
+use super::{
+    add_session_focus_env_vars, AGENT_RESUME_DIR_ENV, FOCUS_URL_ENV, TERMINAL_SESSION_UUID_ENV,
+};
 use crate::channel::ChannelState;
 
 #[test]
@@ -25,5 +27,13 @@ fn focus_env_vars_point_at_session_deeplink() {
             "{}://session/{expected_hex}",
             ChannelState::url_scheme()
         )))
+    );
+    let expected_agent_resume_dir = std::env::var_os(AGENT_RESUME_DIR_ENV).or_else(|| {
+        warp_core::paths::warp_home_config_dir()
+            .map(|dir| dir.join("agent-resume").into_os_string())
+    });
+    assert_eq!(
+        env_vars.get(&OsString::from(AGENT_RESUME_DIR_ENV)),
+        expected_agent_resume_dir.as_ref()
     );
 }

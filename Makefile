@@ -6,6 +6,9 @@
 #   make release                 # launch gate → build → verify → GitHub Release
 #   make update                  # build, update + relaunch Clinch on THIS machine right away,
 #                                # then publish the GitHub Release in the background
+#   make dev                     # incrementally build + run isolated Clinch Dev in this terminal
+#   make dev-app                 # incrementally build ClinchDev.app without launching it
+#   make dev-open                # rebuild + launch Clinch Dev through macOS LaunchServices
 #   make release VERSION=v0.2.0  # override the auto date-based tag
 #   make release UNIVERSAL=0     # opt into a current-machine-only developer artifact
 #
@@ -82,12 +85,24 @@ endef
 export RELEASE_NOTES
 
 .DEFAULT_GOAL := help
-.PHONY: help candidate release update release-check require-latest-main \
+.PHONY: help dev dev-app dev-open candidate release update release-check require-latest-main \
 	_require-create-dmg _bundle _package _verify _publish
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 	  | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
+
+# Fast, isolated development lane. These targets deliberately bypass the release gate,
+# ThinLTO, universal compilation, DMG creation, verification, and publishing. The app
+# uses its own bundle identity/state and never reads from or writes to /Applications/Clinch.app.
+dev: ## Incrementally build + run Clinch Dev in this terminal (Ctrl-C to stop)
+	./script/clinch-dev run
+
+dev-app: ## Incrementally build isolated target/debug/bundle/osx/ClinchDev.app
+	./script/clinch-dev build
+
+dev-open: ## Rebuild + launch Clinch Dev through macOS LaunchServices
+	./script/clinch-dev open
 
 # Internal: build + self-sign the bundle (and its DMG). Shared by candidate/release/update.
 _bundle: release-check require-latest-main _require-create-dmg

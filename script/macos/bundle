@@ -125,7 +125,7 @@ RELEASE_CHANNEL="dev"
 # Clinch fork: cocoa_sentry is opt-in per channel (dev/preview below) rather
 # than a default. Clinch ships no crash reporting, and a Sentry-linked binary
 # whose bundle lacks Sentry.framework aborts at launch (dyld: Library not
-# loaded) — the `warp` bin (WarpLocal) has no osx_frameworks metadata in
+# loaded) — the `warp` bin (ClinchDev) has no osx_frameworks metadata in
 # app/Cargo.toml, so it must not link Sentry.
 FEATURES="release_bundle,extern_plist"
 REGISTER_SERVICES=true
@@ -298,9 +298,10 @@ fi
 
 if [[ $RELEASE_CHANNEL = "local" ]]; then
     WARP_BIN="warp"
-    BUNDLE_ID="dev.warp.Warp-Local"
-    WARP_APP_NAME="WarpLocal"
-    WARP_SCHEME_NAME="warplocal"
+    BUNDLE_ID="sh.clinch.ClinchDev"
+    WARP_APP_NAME="ClinchDev"
+    WARP_DISPLAY_NAME="Clinch Dev"
+    WARP_SCHEME_NAME="clinchdev"
     FEATURES="$FEATURES,agent_mode_debug"
     # Clinch fork: no cocoa_sentry (see the FEATURES default above), so the
     # FRAMEWORK_OVERRIDE export upstream sets here is unused and dropped.
@@ -308,6 +309,7 @@ elif [[ $RELEASE_CHANNEL = "dev" ]]; then
     WARP_BIN="dev"
     BUNDLE_ID="dev.warp.Warp-Dev"
     WARP_APP_NAME="WarpDev"
+    WARP_DISPLAY_NAME="$WARP_APP_NAME"
     WARP_SCHEME_NAME="warpdev"
     FEATURES="$FEATURES,agent_mode_debug"
     # Upstream Warp channels ship Sentry crash reporting (the dev/preview bins
@@ -327,6 +329,7 @@ elif [[ $RELEASE_CHANNEL = "preview" ]]; then
     WARP_BIN="preview"
     BUNDLE_ID="dev.warp.Warp-Preview"
     WARP_APP_NAME="WarpPreview"
+    WARP_DISPLAY_NAME="$WARP_APP_NAME"
     WARP_SCHEME_NAME="warppreview"
     FEATURES="$FEATURES,preview_channel"
     # Upstream channel: ships Sentry crash reporting (see the dev block note).
@@ -341,6 +344,7 @@ elif [[ $RELEASE_CHANNEL = "stable" ]]; then
     # url_scheme() in crates/warp_core/src/channel/state.rs ("clinch").
     BUNDLE_ID="sh.clinch.Clinch"
     WARP_APP_NAME="Clinch"
+    WARP_DISPLAY_NAME="$WARP_APP_NAME"
     WARP_SCHEME_NAME="clinch"
     # Clinch fork: intentionally omit jemalloc_pprof/heap_usage_tracking. They are Warp-internal
     # profiling features that bundle the Go-based pprof binary (script/prepare_bundled_pprof runs
@@ -353,6 +357,7 @@ elif [[ $RELEASE_CHANNEL = "oss" ]]; then
     WARP_BIN="warp-oss"
     BUNDLE_ID="dev.warp.WarpOss"
     WARP_APP_NAME="WarpOss"
+    WARP_DISPLAY_NAME="$WARP_APP_NAME"
     WARP_SCHEME_NAME="warposs"
     # The OSS channel does not ship Sentry; the FEATURES default already
     # excludes cocoa_sentry, so there is nothing to drop here anymore.
@@ -441,6 +446,9 @@ if [[ "$ARTIFACT" == "app" ]]; then
   echo "Building and bundling $DEFAULT_TARGET for channel $RELEASE_CHANNEL and bundle id $BUNDLE_ID with profile $CARGO_PROFILE"
   cargo bundle --profile "$CARGO_PROFILE" --bin "$WARP_BIN" --target "$DEFAULT_TARGET" --features "$FEATURES"
   popd > /dev/null
+
+  /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName $WARP_DISPLAY_NAME" \
+    "$BUNDLE_DIR/$WARP_APP_NAME.app/Contents/Info.plist"
 
   echo "Adding rpath to support mac frameworks (e.g. Sentry)"
   add_framework_rpath_if_missing "$BUNDLE_DIR/$WARP_APP_NAME.app/Contents/MacOS/$WARP_BIN"

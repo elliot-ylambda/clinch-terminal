@@ -23,6 +23,7 @@ fn safe_browser_open_url_accepts_warp_channel_urls() {
         "warppreview",
         "warpdev",
         "warplocal",
+        "clinchdev",
         "warposs",
         "warpintegration",
     ] {

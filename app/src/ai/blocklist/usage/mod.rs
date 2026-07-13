@@ -61,6 +61,16 @@ impl CliAgentUsageProvider {
             Some(self)
         }
     }
+
+    /// Whether this provider's gauge area shows the "Turn on" affordance
+    /// instead of limit windows. Claude's plan gauges come from the opt-in
+    /// Keychain + usage-endpoint poller (`show_plan_limits`), so while that
+    /// setting is off they would otherwise render as permanent dashes that
+    /// read as "broken". Codex limits come from local files and ignore the
+    /// setting.
+    fn shows_plan_limits_turn_on(self, plan_limits_enabled: bool) -> bool {
+        self == Self::Claude && !plan_limits_enabled
+    }
 }
 
 pub fn icon_for_context_window_usage(context_window_usage: f32) -> Icon {
@@ -118,6 +128,17 @@ mod cli_agent_usage_provider_tests {
         assert_eq!(claude.toggle_panel(None), Some(claude));
         assert_eq!(claude.toggle_panel(Some(claude)), None);
         assert_eq!(codex.toggle_panel(Some(claude)), Some(codex));
+    }
+
+    #[test]
+    fn turn_on_affordance_is_claude_only_and_only_while_disabled() {
+        let claude = CliAgentUsageProvider::Claude;
+        let codex = CliAgentUsageProvider::Codex;
+
+        assert!(claude.shows_plan_limits_turn_on(false));
+        assert!(!claude.shows_plan_limits_turn_on(true));
+        assert!(!codex.shows_plan_limits_turn_on(false));
+        assert!(!codex.shows_plan_limits_turn_on(true));
     }
 
     #[test]

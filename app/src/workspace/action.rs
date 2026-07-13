@@ -423,6 +423,10 @@ pub enum WorkspaceAction {
     /// Toggle the focused usage panel for one CLI-agent provider, anchored
     /// under the tab-bar usage status widget.
     ToggleCliAgentUsagePanel(CliAgentUsageProvider),
+    /// Enable the Claude plan-limit gauges from the usage widget's "Turn on"
+    /// affordance. Flips the `show_plan_limits` setting; the usage poller's
+    /// next fetch reads the Keychain, raising the macOS credential prompt.
+    EnableCliAgentPlanLimits,
     Reauth,
     SignupAnonymousUser,
     SignInAnonymousWebUser,
@@ -1083,6 +1087,7 @@ impl WorkspaceAction {
             | OpenHeaderToolbarEditor
             | ShowHeaderToolbarContextMenu { .. }
             | ToggleCliAgentUsagePanel(_)
+            | EnableCliAgentPlanLimits
             | Reauth
             | SignupAnonymousUser
             | LogOut

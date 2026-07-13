@@ -1,0 +1,73 @@
+#!/bin/bash
+# Fast, isolated macOS build/launch wrapper for Clinch Dev.
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+
+if [[ "$(uname -s)" != "Darwin" ]]; then
+  echo "Clinch Dev's .app workflow currently requires macOS." >&2
+  exit 1
+fi
+
+mode="${1:-run}"
+case "$mode" in
+  run|build|open) ;;
+  *)
+    echo "usage: $0 {run|build|open}" >&2
+    exit 2
+    ;;
+esac
+
+target_dir="$(cargo metadata --no-deps --format-version 1 | jq -r .target_directory)"
+if [[ -z "$target_dir" || "$target_dir" == "null" ]]; then
+  target_dir="$REPO_ROOT/target"
+fi
+
+app_path="$target_dir/debug/bundle/osx/ClinchDev.app"
+executable_path="$app_path/Contents/MacOS/warp"
+export WARP_AGENT_RESUME_DIR="${WARP_AGENT_RESUME_DIR:-$HOME/.warp-local/agent-resume}"
+export WARP_BIN_NAME="warp"
+export WARP_CHANNEL="local"
+export FEATURES="${CLINCH_DEV_FEATURES:-gui}"
+
+mkdir -p "$WARP_AGENT_RESUME_DIR"
+chmod 700 "$WARP_AGENT_RESUME_DIR"
+
+stop_existing_dev_app() {
+  # LaunchServices and direct-run development processes are both scoped to the
+  # Clinch Dev identity/path, so production Clinch is never signaled here.
+  /usr/bin/osascript -e 'tell application id "sh.clinch.ClinchDev" to quit' \
+    >/dev/null 2>&1 || true
+
+  local pids
+  pids="$(pgrep -f "$executable_path" 2>/dev/null || true)"
+  if [[ -n "$pids" ]]; then
+    kill $pids 2>/dev/null || true
+    for _ in {1..20}; do
+      pids="$(pgrep -f "$executable_path" 2>/dev/null || true)"
+      [[ -z "$pids" ]] && return
+      sleep 0.1
+    done
+    kill -KILL $pids 2>/dev/null || true
+  fi
+}
+
+stop_existing_dev_app
+
+case "$mode" in
+  run)
+    exec ./script/macos/run
+    ;;
+  build)
+    ./script/macos/run --dont-open
+    echo "Clinch Dev ready: $app_path"
+    ;;
+  open)
+    ./script/macos/run --dont-open
+    /usr/bin/open "$app_path"
+    echo "Opened Clinch Dev: $app_path"
+    echo "Logs: ~/Library/Logs/clinch-dev.log"
+    ;;
+esac

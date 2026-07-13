@@ -13,6 +13,7 @@ use warpui::Element;
 
 use super::CliAgentUsageProvider;
 use crate::appearance::Appearance;
+use crate::workspace::WorkspaceAction;
 
 /// Map a crate `Severity` to a fill against `bg` (the surface the text sits on).
 pub(super) fn severity_fill(severity: Severity, theme: &WarpTheme, bg: Fill) -> Fill {
@@ -39,13 +40,39 @@ pub(super) fn span(
     .finish()
 }
 
+/// The plan gauges' enable affordance: accent "Turn on" text that flips the
+/// `show_plan_limits` setting. The poller's first fetch after enabling reads
+/// Claude Code's Keychain login, so macOS raises its password prompt then.
+pub(super) fn turn_on_plan_limits(
+    appearance: &Appearance,
+    bg: Fill,
+    mouse_state: MouseStateHandle,
+) -> Box<dyn Element> {
+    let theme = appearance.theme();
+    Hoverable::new(mouse_state, move |state| {
+        let color = if state.is_hovered() {
+            theme.main_text_color(bg)
+        } else {
+            theme.accent()
+        };
+        span("Turn on", color, appearance)
+    })
+    .on_click(move |ctx, _app, _position| {
+        ctx.dispatch_typed_action(WorkspaceAction::EnableCliAgentPlanLimits);
+    })
+    .with_cursor(Cursor::PointingHand)
+    .finish()
+}
+
 /// A focused provider panel: plan limits, local token totals, and a link to the
 /// provider's authoritative web usage page.
 pub fn render_cli_agent_usage_panel(
     snapshot: &UsageSnapshot,
     appearance: &Appearance,
     kind: CliAgentUsageProvider,
+    plan_limits_enabled: bool,
     link_mouse_state: MouseStateHandle,
+    turn_on_mouse_state: MouseStateHandle,
 ) -> Box<dyn Element> {
     let theme = appearance.theme();
     let bg = theme.surface_2();
@@ -62,25 +89,32 @@ pub fn render_cli_agent_usage_panel(
         appearance,
     ));
 
-    // Plan-% rows.
-    col.add_child(panel_row(
-        span("5h", sub, appearance),
-        plan_cell(provider.plan.and_then(|p| p.session), now, appearance, bg),
-    ));
-    col.add_child(panel_row(
-        span("Weekly", sub, appearance),
-        plan_cell(provider.plan.and_then(|p| p.weekly), now, appearance, bg),
-    ));
-    if kind == CliAgentUsageProvider::Claude {
+    // Plan-% rows, or the enable affordance while the gauges are opt-out.
+    if kind.shows_plan_limits_turn_on(plan_limits_enabled) {
         col.add_child(panel_row(
-            span("Fable wk", sub, appearance),
-            plan_cell(
-                provider.plan.and_then(|p| p.fable_weekly),
-                now,
-                appearance,
-                bg,
-            ),
+            span("Limits", sub, appearance),
+            turn_on_plan_limits(appearance, bg, turn_on_mouse_state),
         ));
+    } else {
+        col.add_child(panel_row(
+            span("5h", sub, appearance),
+            plan_cell(provider.plan.and_then(|p| p.session), now, appearance, bg),
+        ));
+        col.add_child(panel_row(
+            span("Weekly", sub, appearance),
+            plan_cell(provider.plan.and_then(|p| p.weekly), now, appearance, bg),
+        ));
+        if kind == CliAgentUsageProvider::Claude {
+            col.add_child(panel_row(
+                span("Fable wk", sub, appearance),
+                plan_cell(
+                    provider.plan.and_then(|p| p.fable_weekly),
+                    now,
+                    appearance,
+                    bg,
+                ),
+            ));
+        }
     }
 
     // Token rows.

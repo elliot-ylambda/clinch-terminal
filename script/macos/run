@@ -30,11 +30,13 @@ if [ -z "$TARGET_DIR" ] || [ "$TARGET_DIR" = "null" ]; then
 fi
 
 if [ "$WARP_CHANNEL" = "local" ]; then
-    WARP_APP_PATH="${TARGET_DIR}/debug/bundle/osx/WarpLocal.app"
-    WARP_SCHEME_NAME="warplocal"
+    WARP_APP_PATH="${TARGET_DIR}/debug/bundle/osx/ClinchDev.app"
+    WARP_SCHEME_NAME="clinchdev"
+    WARP_DISPLAY_NAME="Clinch Dev"
 else
     WARP_APP_PATH="${TARGET_DIR}/debug/bundle/osx/WarpOss.app"
     WARP_SCHEME_NAME="warposs"
+    WARP_DISPLAY_NAME="WarpOss"
 fi
 DONT_OPEN=false
 # Launches the binary with "open", meaning the Warp process is
@@ -68,7 +70,7 @@ while (( "$#" )); do
     --release)
       echo "Detected release build, pointing at release bundle under ${TARGET_DIR}/release/bundle"
       if [ "$WARP_CHANNEL" = "local" ]; then
-          WARP_APP_PATH="${TARGET_DIR}/release/bundle/osx/WarpLocal.app"
+          WARP_APP_PATH="${TARGET_DIR}/release/bundle/osx/ClinchDev.app"
       else
           WARP_APP_PATH="${TARGET_DIR}/release/bundle/osx/WarpOss.app"
       fi
@@ -79,7 +81,7 @@ while (( "$#" )); do
       PROFILE="$2"
       shift 2
       if [ "$WARP_CHANNEL" = "local" ]; then
-          WARP_APP_PATH="${TARGET_DIR}/${PROFILE}/bundle/osx/WarpLocal.app"
+          WARP_APP_PATH="${TARGET_DIR}/${PROFILE}/bundle/osx/ClinchDev.app"
       else
           WARP_APP_PATH="${TARGET_DIR}/${PROFILE}/bundle/osx/WarpOss.app"
       fi
@@ -107,6 +109,11 @@ echo "Bundling app (bin: $WARP_BIN_NAME)..."
 cargo bundle --bin "$WARP_BIN_NAME" --features "$FEATURES" $PARAMS
 echo "Successfully bundled..."
 popd > /dev/null
+
+# Keep a filesystem-safe bundle name while showing a human-readable app name
+# throughout macOS. The bundle ID remains the persistence/LaunchServices identity.
+/usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName $WARP_DISPLAY_NAME" \
+  "$WARP_APP_PATH/Contents/Info.plist"
 
 if [[ ",$FEATURES," =~ ",cocoa_sentry," ]]; then
   echo "Copying Sentry framework into app bundle..."
@@ -152,7 +159,7 @@ if [ "$DONT_OPEN" = false ] ; then
         echo "Launching with MacOS application launcher"
         PATH="" /usr/bin/open "$WARP_APP_PATH"
         if [ "$WARP_CHANNEL" = "local" ]; then
-            LOG_FILE=~/Library/Logs/warp_local.log
+            LOG_FILE=~/Library/Logs/clinch-dev.log
         elif [ "$WARP_CHANNEL" = "oss" ]; then
             LOG_FILE=~/Library/Logs/warp-oss.log
         else
