@@ -34,7 +34,6 @@ use crate::ui_components::menu_button::{
     highlight_icon_button_with_context_menu_drive, icon_button_with_context_menu_drive,
     MenuDirection,
 };
-use crate::workspace::header_toolbar_item::HeaderToolbarItemKind;
 use crate::workspace::tab_settings::TabSettings;
 use crate::workspaces::user_profiles::UserProfiles;
 use crate::workspaces::user_workspaces::UserWorkspaces;
@@ -43,10 +42,7 @@ pub(crate) fn tools_panel_menu_direction(app: &AppContext) -> MenuDirection {
     let config = TabSettings::as_ref(app)
         .header_toolbar_chip_selection
         .clone();
-    if config
-        .left_items()
-        .contains(&HeaderToolbarItemKind::ToolsPanel)
-    {
+    if config.is_shared_left_panel_on_left() {
         MenuDirection::Right
     } else {
         MenuDirection::Left

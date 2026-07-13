@@ -12,4 +12,4 @@ walkdir = { workspace = true }
 reqwest = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-security-framework = "3"
+command = { workspace = true }

@@ -30,6 +30,7 @@ use super::about_page::AboutPageView;
 use super::ai_page::{AISettingsPageAction, AISettingsPageView};
 use super::appearance_page::AppearanceSettingsPageView;
 use super::billing_and_usage_dispatch::BillingAndUsageDispatchView;
+use super::clinch_page::ClinchSettingsPageView;
 use super::code_page::CodeSettingsPageView;
 use super::environments_page::EnvironmentsPageView;
 use super::features_page::FeaturesPageView;
@@ -101,6 +102,7 @@ pub trait SettingsPageMeta {
 #[derive(Clone)]
 pub enum SettingsPageViewHandle {
     Main(ViewHandle<MainSettingsPageView>),
+    Clinch(ViewHandle<ClinchSettingsPageView>),
     Appearance(ViewHandle<AppearanceSettingsPageView>),
     Features(ViewHandle<FeaturesPageView>),
     SharedBlocks(ViewHandle<ShowBlocksView>),
@@ -125,6 +127,7 @@ impl SettingsPageViewHandle {
         use SettingsPageViewHandle::*;
         match self {
             Main(view_handle) => ChildView::new(view_handle).finish(),
+            Clinch(view_handle) => ChildView::new(view_handle).finish(),
             Appearance(view_handle) => ChildView::new(view_handle).finish(),
             Features(view_handle) => ChildView::new(view_handle).finish(),
             SharedBlocks(view_handle) => ChildView::new(view_handle).finish(),

@@ -37,7 +37,7 @@ pub use global_actions::{
 use serde::{Deserialize, Serialize};
 pub use util::{active_terminal_in_window, PaneViewLocator, TabMovement};
 pub use view::{
-    Workspace, NEW_SESSION_MENU_BUTTON_POSITION_ID, NEW_TAB_BUTTON_POSITION_ID,
+    Workspace, WorkspaceEvent, NEW_SESSION_MENU_BUTTON_POSITION_ID, NEW_TAB_BUTTON_POSITION_ID,
     PANEL_HEADER_HEIGHT, TAB_BAR_HEIGHT, TOTAL_TAB_BAR_HEIGHT, WORKSPACE_PADDING,
 };
 use warp_core::context_flag::ContextFlag;
@@ -71,10 +71,11 @@ use crate::workspace::view::{
     LEFT_PANEL_GLOBAL_SEARCH_BINDING_NAME, LEFT_PANEL_PROJECT_EXPLORER_BINDING_NAME,
     LEFT_PANEL_SKILLS_BINDING_NAME, LEFT_PANEL_WARP_DRIVE_BINDING_NAME, NEW_AGENT_TAB_BINDING_NAME,
     NEW_AMBIENT_AGENT_TAB_BINDING_NAME, NEW_TAB_BINDING_NAME, NEW_TERMINAL_TAB_BINDING_NAME,
-    OPEN_GLOBAL_SEARCH_BINDING_NAME, TOGGLE_CONVERSATION_LIST_VIEW_BINDING_NAME,
-    TOGGLE_NOTIFICATION_MAILBOX_BINDING_NAME, TOGGLE_PROJECT_EXPLORER_BINDING_NAME,
-    TOGGLE_RIGHT_PANEL_BINDING_NAME, TOGGLE_TAB_CONFIGS_MENU_BINDING_NAME,
-    TOGGLE_VERTICAL_TABS_PANEL_BINDING_NAME, TOGGLE_WARP_DRIVE_BINDING_NAME,
+    OPEN_GLOBAL_SEARCH_BINDING_NAME, TOGGLE_AGENT_CONVERSATIONS_PALETTE_BINDING_NAME,
+    TOGGLE_CONVERSATION_LIST_VIEW_BINDING_NAME, TOGGLE_NOTIFICATION_MAILBOX_BINDING_NAME,
+    TOGGLE_PROJECT_EXPLORER_BINDING_NAME, TOGGLE_RIGHT_PANEL_BINDING_NAME,
+    TOGGLE_TAB_CONFIGS_MENU_BINDING_NAME, TOGGLE_VERTICAL_TABS_PANEL_BINDING_NAME,
+    TOGGLE_WARP_DRIVE_BINDING_NAME,
 };
 
 pub fn init(app: &mut AppContext) {
@@ -1057,7 +1058,7 @@ pub fn init(app: &mut AppContext) {
         .with_context_predicate(id!("Workspace") & !id!("Workspace_ViewOnlySharedSession"))
         .with_custom_action(CustomAction::FilesPalette),
         EditableBinding::new(
-            "workspace:toggle_agent_conversations_palette",
+            TOGGLE_AGENT_CONVERSATIONS_PALETTE_BINDING_NAME,
             "Reopen agent conversation",
             WorkspaceAction::TogglePalette {
                 mode: PaletteMode::AgentConversations,
@@ -1427,13 +1428,22 @@ fn add_open_setting_pages_as_editable_binding(app: &mut AppContext) {
     app.register_editable_bindings([
         EditableBinding::new(
             "workspace:show_settings",
-            BindingDescription::new("Open Settings")
-                .with_custom_description(bindings::MAC_MENUS_CONTEXT, "Settings"),
+            BindingDescription::new("Open Clinch Settings")
+                .with_custom_description(bindings::MAC_MENUS_CONTEXT, "Clinch Settings..."),
             WorkspaceAction::ShowSettings,
         )
         .with_context_predicate(id!("Workspace"))
         .with_group(bindings::BindingGroup::Settings.as_str())
         .with_custom_action(CustomAction::ShowSettings),
+        EditableBinding::new(
+            "workspace:show_warp_settings",
+            BindingDescription::new("Open Warp Settings")
+                .with_custom_description(bindings::MAC_MENUS_CONTEXT, "Warp Settings..."),
+            WorkspaceAction::ShowSettingsPage(SettingsSection::Appearance),
+        )
+        .with_context_predicate(id!("Workspace"))
+        .with_group(bindings::BindingGroup::Settings.as_str())
+        .with_custom_action(CustomAction::ShowWarpSettings),
         EditableBinding::new(
             "workspace:show_settings_account_page",
             "Open Settings: Account",

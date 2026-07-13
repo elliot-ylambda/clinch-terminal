@@ -1,0 +1,50 @@
+use settings::Setting as _;
+use warpui::platform::WindowStyle;
+use warpui::{App, SingletonEntity, TypedActionView};
+
+use super::{ClinchSettingsPageAction, ClinchSettingsPageView};
+use crate::settings::CliAgentUsageSettings;
+use crate::terminal::session_settings::SessionSettings;
+use crate::test_util::settings::initialize_settings_for_tests;
+
+#[test]
+fn agent_status_action_toggles_only_the_clinch_badge_setting() {
+    App::test((), |mut app| async move {
+        initialize_settings_for_tests(&mut app);
+        let before = SessionSettings::as_ref(&app).notifications.value().clone();
+        let (_, view) = app.add_window(WindowStyle::NotStealFocus, ClinchSettingsPageView::new);
+
+        view.update(&mut app, |view, ctx| {
+            view.handle_action(
+                &ClinchSettingsPageAction::ToggleAgentStatusOnTabs,
+                ctx,
+            );
+        });
+
+        let after = SessionSettings::as_ref(&app).notifications.value().clone();
+        let mut expected = before;
+        expected.show_agent_status_on_tabs = !expected.show_agent_status_on_tabs;
+        assert_eq!(after, expected);
+    });
+}
+
+#[test]
+fn plan_limits_action_toggles_the_existing_opt_in_setting() {
+    App::test((), |mut app| async move {
+        initialize_settings_for_tests(&mut app);
+        let before = *CliAgentUsageSettings::as_ref(&app).show_plan_limits;
+        let (_, view) = app.add_window(WindowStyle::NotStealFocus, ClinchSettingsPageView::new);
+
+        view.update(&mut app, |view, ctx| {
+            view.handle_action(
+                &ClinchSettingsPageAction::ToggleCliAgentPlanLimits,
+                ctx,
+            );
+        });
+
+        assert_eq!(
+            *CliAgentUsageSettings::as_ref(&app).show_plan_limits,
+            !before
+        );
+    });
+}

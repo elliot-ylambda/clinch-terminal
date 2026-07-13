@@ -72,10 +72,9 @@ use crate::settings::{
     MouseScrollMultiplier, OutlineCodebaseSymbolsForAtContextMenu, PreferLowPowerGPU,
     PreferredGraphicsBackend, QuakeModeSettings, ScrollSettings, ScrollSettingsChangedEvent,
     SelectionSettings, ShowAutosuggestionIgnoreButton, ShowChangelogAfterUpdate,
-    ShowCliAgentPlanLimits, ShowTerminalInputMessageBar, SshSettings, SyntaxHighlighting,
-    TabBehavior, UserNativeRedirectPreference, VimModeEnabled, VimStatusBar,
-    VimUnnamedSystemClipboard, DEFAULT_QUAKE_MODE_SIZE_PERCENTAGES,
-    QUAKE_WINDOW_AUTOHIDE_SUPPORTED,
+    ShowTerminalInputMessageBar, SshSettings, SyntaxHighlighting, TabBehavior,
+    UserNativeRedirectPreference, VimModeEnabled, VimStatusBar, VimUnnamedSystemClipboard,
+    DEFAULT_QUAKE_MODE_SIZE_PERCENTAGES, QUAKE_WINDOW_AUTOHIDE_SUPPORTED,
 };
 use crate::terminal::alt_screen_reporting::{
     AltScreenReporting, FocusReportingEnabled, MouseReportingEnabled, ScrollReportingEnabled,
@@ -1406,7 +1405,6 @@ struct MouseStateHandles {
     long_running_notifications_checkbox: MouseStateHandle,
     agent_task_completed_notifications_checkbox: MouseStateHandle,
     agent_needs_attention_notifications_checkbox: MouseStateHandle,
-    agent_status_on_tabs_checkbox: MouseStateHandle,
     agent_in_app_notifications_switch: SwitchStateHandle,
     #[cfg(target_os = "macos")]
     notification_sound_checkbox: MouseStateHandle,
@@ -3028,13 +3026,6 @@ impl FeaturesPageView {
         terminal_widgets.push(Box::new(CopyOnSelectWidget::default()));
         terminal_widgets.push(Box::new(Osc52ClipboardAccessWidget::default()));
         terminal_widgets.push(Box::new(NewTabPlacementWidget::default()));
-
-        if CliAgentUsageSettings::as_ref(ctx)
-            .show_plan_limits
-            .is_supported_on_current_platform()
-        {
-            terminal_widgets.push(Box::new(CliAgentPlanLimitsWidget::default()));
-        }
 
         let mut system_widgets: Vec<Box<dyn SettingsWidget<View = Self>>> = vec![];
         let selection_settings = SelectionSettings::as_ref(ctx);
@@ -5343,15 +5334,6 @@ impl SettingsWidget for DesktopNotificationsWidget {
                         .clone(),
                     appearance,
                 ),
-                view.render_notification_toggle(
-                    session_settings.notifications.show_agent_status_on_tabs,
-                    "Show agent status badges on tabs",
-                    FeaturesPageAction::ToggleAgentStatusOnTabs,
-                    view.button_mouse_states
-                        .agent_status_on_tabs_checkbox
-                        .clone(),
-                    appearance,
-                ),
                 // Add notification sound toggle only on macOS
                 #[cfg(target_os = "macos")]
                 {
@@ -7268,59 +7250,6 @@ impl SettingsWidget for CopyOnSelectWidget {
                 })
                 .finish(),
             None,
-        )
-    }
-}
-
-#[derive(Default)]
-struct CliAgentPlanLimitsWidget {
-    switch_state: SwitchStateHandle,
-}
-
-impl SettingsWidget for CliAgentPlanLimitsWidget {
-    type View = FeaturesPageView;
-
-    fn search_terms(&self) -> &str {
-        "claude code live plan limits usage keychain anthropic rate limit gauges"
-    }
-
-    fn render(
-        &self,
-        view: &Self::View,
-        appearance: &Appearance,
-        app: &AppContext,
-    ) -> Box<dyn Element> {
-        let ui_builder = appearance.ui_builder();
-        let show_plan_limits = *CliAgentUsageSettings::as_ref(app).show_plan_limits;
-        render_body_item::<FeaturesPageAction>(
-            "Show Claude Code live plan limits".into(),
-            None,
-            LocalOnlyIconState::for_setting(
-                ShowCliAgentPlanLimits::storage_key(),
-                ShowCliAgentPlanLimits::sync_to_cloud(),
-                &mut view
-                    .button_mouse_states
-                    .local_only_icon_tooltip_states
-                    .borrow_mut(),
-                app,
-            ),
-            ToggleState::Enabled,
-            appearance,
-            ui_builder
-                .switch(self.switch_state.clone())
-                .check(show_plan_limits)
-                .build()
-                .on_click(move |ctx, _, _| {
-                    ctx.dispatch_typed_action(FeaturesPageAction::ToggleCliAgentPlanLimits);
-                })
-                .finish(),
-            Some(
-                "Show live rate-limit gauges in the tab-bar usage widget. When enabled, \
-                 Clinch reads Claude Code's OAuth token from the macOS Keychain and queries \
-                 Anthropic's usage endpoint. Off by default; the local token and cost stats \
-                 work without it."
-                    .into(),
-            ),
         )
     }
 }

@@ -95,11 +95,33 @@ pub fn should_read_keychain(
 
 pub struct MacKeychain;
 
+/// Decode `security find-generic-password -w` stdout: the secret followed by
+/// one trailing newline of CLI framing.
+#[cfg(target_os = "macos")]
+fn secret_from_security_stdout(stdout: Vec<u8>) -> Option<String> {
+    let raw = String::from_utf8(stdout).ok()?;
+    let secret = raw.strip_suffix('\n').unwrap_or(&raw);
+    (!secret.is_empty()).then(|| secret.to_string())
+}
+
 #[cfg(target_os = "macos")]
 impl ReadSecret for MacKeychain {
+    /// Read via the Apple-signed `security` CLI rather than an in-process
+    /// Security-framework call. Claude Code writes this item through the same
+    /// CLI, so the item's ACL already trusts /usr/bin/security and the read
+    /// completes without any per-app Keychain prompt. An in-process
+    /// SecItemCopyMatching authorizes per app instead — and for debug bundles
+    /// signed with get-task-allow, securityd refuses to persist "Always
+    /// Allow", so that prompt reappeared on every read, forever.
     fn read(&self, service: &str, account: &str) -> Option<String> {
-        let pw = security_framework::passwords::get_generic_password(service, account).ok()?;
-        String::from_utf8(pw).ok()
+        let output = command::blocking::Command::new("/usr/bin/security")
+            .args(["find-generic-password", "-s", service, "-a", account, "-w"])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        secret_from_security_stdout(output.stdout)
     }
 }
 
@@ -197,6 +219,36 @@ mod tests {
             1_000 + BACKOFF,
             BACKOFF
         ));
+    }
+
+    #[cfg(target_os = "macos")]
+    mod security_stdout {
+        use super::super::secret_from_security_stdout;
+
+        #[test]
+        fn trims_single_trailing_newline_only() {
+            assert_eq!(
+                secret_from_security_stdout(b"{\"k\":1}\n".to_vec()).as_deref(),
+                Some("{\"k\":1}")
+            );
+            // No trailing newline is also valid output.
+            assert_eq!(
+                secret_from_security_stdout(b"{\"k\":1}".to_vec()).as_deref(),
+                Some("{\"k\":1}")
+            );
+            // Only the final newline is CLI framing; inner ones belong to the secret.
+            assert_eq!(
+                secret_from_security_stdout(b"a\nb\n".to_vec()).as_deref(),
+                Some("a\nb")
+            );
+        }
+
+        #[test]
+        fn empty_or_invalid_output_is_none() {
+            assert!(secret_from_security_stdout(Vec::new()).is_none());
+            assert!(secret_from_security_stdout(b"\n".to_vec()).is_none());
+            assert!(secret_from_security_stdout(vec![0xff, 0xfe]).is_none());
+        }
     }
 
     #[test]

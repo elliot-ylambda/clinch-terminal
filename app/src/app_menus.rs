@@ -178,6 +178,7 @@ fn make_new_app_menu(ctx: &AppContext) -> Menu {
 
     let preferences_menu_items = vec![
         updateable_custom_item_without_checkmark(CustomAction::ShowSettings, ctx),
+        updateable_custom_item_without_checkmark(CustomAction::ShowWarpSettings, ctx),
         MenuItem::Separator,
         updateable_custom_item_without_checkmark(CustomAction::ToggleKeybindingsPage, ctx),
         updateable_custom_item_without_checkmark(CustomAction::ConfigureKeybindings, ctx),

@@ -45,7 +45,6 @@ use crate::server::telemetry::SharingDialogSource;
 use crate::view_components::action_button::{ActionButton, ButtonSize, SecondaryTheme};
 use crate::view_components::DismissibleToast;
 use crate::workspace::global_actions::ForkedConversationDestination;
-use crate::workspace::header_toolbar_item::HeaderToolbarItemKind;
 use crate::workspace::tab_settings::TabSettings;
 use crate::workspace::view::conversation_list::item::{
     render_item, render_static_item, ItemProps, ItemState, OverflowMenuDisplay, StaticItemProps,
@@ -1336,8 +1335,7 @@ impl View for ConversationListView {
             let list_position_id = self.get_position_id();
             let tooltip_opens_right = TabSettings::as_ref(app)
                 .header_toolbar_chip_selection
-                .left_items()
-                .contains(&HeaderToolbarItemKind::ToolsPanel);
+                .is_shared_left_panel_on_left();
 
             let list = UniformList::new(
                 self.state_handles.list_state.clone(),

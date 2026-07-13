@@ -175,6 +175,7 @@ fn requires_backend_covers_backend_only_sections() {
 #[test]
 fn requires_backend_excludes_local_only_sections() {
     for section in [
+        SettingsSection::Clinch,
         SettingsSection::Appearance,
         SettingsSection::Features,
         SettingsSection::Keybindings,
@@ -224,6 +225,10 @@ fn visible_section_or_fallback_is_a_no_op_when_backend_available_or_local_only()
     );
     // Local-only sections pass through unchanged regardless of backend state.
     assert_eq!(
+        visible_section_or_fallback(SettingsSection::Clinch, false),
+        SettingsSection::Clinch
+    );
+    assert_eq!(
         visible_section_or_fallback(SettingsSection::Appearance, false),
         SettingsSection::Appearance
     );
@@ -251,19 +256,23 @@ fn arrow_nav_skips_backend_only_sections_when_backendless() {
     assert!(!stops
         .iter()
         .any(|s| matches!(s, NavStop::Section(SettingsSection::BillingAndUsage))));
-    // The entire Agents umbrella (nav_index 1) disappears, since every AI
+    // Clinch remains the first local-only settings destination.
+    assert!(stops
+        .iter()
+        .any(|s| matches!(s, NavStop::Section(SettingsSection::Clinch))));
+    // The entire Agents umbrella (nav_index 2) disappears, since every AI
     // subpage -- including AgentMCPServers -- requires the backend.
     assert!(stops
         .iter()
-        .all(|s| !matches!(s, NavStop::CollapsedUmbrella { nav_index: 1, .. })));
+        .all(|s| !matches!(s, NavStop::CollapsedUmbrella { nav_index: 2, .. })));
     // The still-visible Code / Cloud platform umbrellas remain as stops,
     // since none of their subpages require the backend.
     assert!(stops
         .iter()
-        .any(|s| matches!(s, NavStop::CollapsedUmbrella { nav_index: 3, .. })));
+        .any(|s| matches!(s, NavStop::CollapsedUmbrella { nav_index: 4, .. })));
     assert!(stops
         .iter()
-        .any(|s| matches!(s, NavStop::CollapsedUmbrella { nav_index: 4, .. })));
+        .any(|s| matches!(s, NavStop::CollapsedUmbrella { nav_index: 5, .. })));
 }
 
 // ── MatchData behavior ──────────────────────────────────────────────────────
@@ -293,6 +302,7 @@ fn match_data_countable_zero_is_not_truthy() {
 
 #[test]
 fn subpage_display_names_are_correct() {
+    assert_eq!(SettingsSection::Clinch.to_string(), "Clinch");
     assert_eq!(SettingsSection::WarpAgent.to_string(), "Warp Agent");
     assert_eq!(SettingsSection::AgentProfiles.to_string(), "Profiles");
     assert_eq!(SettingsSection::AgentMCPServers.to_string(), "MCP servers");
@@ -321,6 +331,10 @@ fn subpage_display_names_are_correct() {
 
 #[test]
 fn subpage_from_str_parses_display_names() {
+    assert_eq!(
+        SettingsSection::from_str("Clinch Settings"),
+        Ok(SettingsSection::Clinch)
+    );
     // Both the legacy "Oz" name and the new "Warp Agent" display name must
     // resolve to SettingsSection::WarpAgent so existing deep links, persisted
     // telemetry strings, and external callers continue to work after the
@@ -758,6 +772,7 @@ use nav::{SettingsNavItem, SettingsUmbrella};
 /// sidebar ordering so tests exercise realistic nav orders.
 fn realistic_nav_items() -> Vec<SettingsNavItem> {
     vec![
+        SettingsNavItem::Page(SettingsSection::Clinch),
         SettingsNavItem::Page(SettingsSection::Account),
         SettingsNavItem::Umbrella(SettingsUmbrella::new(
             "Agents",
@@ -791,49 +806,53 @@ fn collapsed_umbrella_is_a_single_nav_stop() {
     // All umbrellas default to collapsed.
     let stops = build_nav_stops(&nav_items, |_| true);
 
-    // Expect: Account, <Agents umbrella>, BillingAndUsage, <Code umbrella>,
+    // Expect: Clinch, Account, <Agents umbrella>, BillingAndUsage, <Code umbrella>,
     // <Cloud platform umbrella>, Teams.
-    assert_eq!(stops.len(), 6);
+    assert_eq!(stops.len(), 7);
     assert!(matches!(
         stops[0],
-        NavStop::Section(SettingsSection::Account)
+        NavStop::Section(SettingsSection::Clinch)
     ));
     assert!(matches!(
         stops[1],
+        NavStop::Section(SettingsSection::Account)
+    ));
+    assert!(matches!(
+        stops[2],
         NavStop::CollapsedUmbrella {
-            nav_index: 1,
+            nav_index: 2,
             first_subpage: SettingsSection::WarpAgent,
             last_subpage: SettingsSection::ThirdPartyCLIAgents,
         }
     ));
     assert!(matches!(
-        stops[2],
-        NavStop::Section(SettingsSection::BillingAndUsage)
-    ));
-    assert!(matches!(
         stops[3],
-        NavStop::CollapsedUmbrella {
-            nav_index: 3,
-            first_subpage: SettingsSection::CodeIndexing,
-            last_subpage: SettingsSection::EditorAndCodeReview,
-        }
+        NavStop::Section(SettingsSection::BillingAndUsage)
     ));
     assert!(matches!(
         stops[4],
         NavStop::CollapsedUmbrella {
             nav_index: 4,
+            first_subpage: SettingsSection::CodeIndexing,
+            last_subpage: SettingsSection::EditorAndCodeReview,
+        }
+    ));
+    assert!(matches!(
+        stops[5],
+        NavStop::CollapsedUmbrella {
+            nav_index: 5,
             first_subpage: SettingsSection::CloudEnvironments,
             last_subpage: SettingsSection::OzCloudAPIKeys,
         }
     ));
-    assert!(matches!(stops[5], NavStop::Section(SettingsSection::Teams)));
+    assert!(matches!(stops[6], NavStop::Section(SettingsSection::Teams)));
 }
 
 #[test]
 fn expanded_umbrella_produces_section_stop_per_subpage() {
     let mut nav_items = realistic_nav_items();
     // Expand the Agents umbrella so each of its subpages becomes a nav stop.
-    set_expanded(&mut nav_items, 1, true);
+    set_expanded(&mut nav_items, 2, true);
 
     let stops = build_nav_stops(&nav_items, |_| true);
 
@@ -877,7 +896,7 @@ fn collapsed_umbrella_with_filtered_subpages_uses_first_visible_subpage() {
 
     let agents_stop = stops
         .iter()
-        .find(|s| matches!(s, NavStop::CollapsedUmbrella { nav_index: 1, .. }))
+        .find(|s| matches!(s, NavStop::CollapsedUmbrella { nav_index: 2, .. }))
         .expect("Agents umbrella should still be a collapsed stop");
 
     match agents_stop {
@@ -912,16 +931,16 @@ fn umbrella_with_no_visible_subpages_is_skipped_entirely() {
     assert!(
         stops
             .iter()
-            .all(|s| !matches!(s, NavStop::CollapsedUmbrella { nav_index: 1, .. })),
+            .all(|s| !matches!(s, NavStop::CollapsedUmbrella { nav_index: 2, .. })),
         "Agents umbrella should not appear when none of its subpages are visible"
     );
     // The still-visible Code / Cloud platform umbrellas remain as stops.
     assert!(stops
         .iter()
-        .any(|s| matches!(s, NavStop::CollapsedUmbrella { nav_index: 3, .. })));
+        .any(|s| matches!(s, NavStop::CollapsedUmbrella { nav_index: 4, .. })));
     assert!(stops
         .iter()
-        .any(|s| matches!(s, NavStop::CollapsedUmbrella { nav_index: 4, .. })));
+        .any(|s| matches!(s, NavStop::CollapsedUmbrella { nav_index: 5, .. })));
 }
 
 #[test]
@@ -1091,7 +1110,7 @@ fn arrow_up_into_collapsed_umbrella_respects_search_filter_for_last_subpage() {
 #[test]
 fn arrow_down_from_expanded_last_subpage_leaves_umbrella() {
     let mut nav_items = realistic_nav_items();
-    set_expanded(&mut nav_items, 1, true); // expand Agents
+    set_expanded(&mut nav_items, 2, true); // expand Agents
     let stops = build_nav_stops(&nav_items, |_| true);
 
     // ThirdPartyCLIAgents is the last Agents subpage; Down should move to

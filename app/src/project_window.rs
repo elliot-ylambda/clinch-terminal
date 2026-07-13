@@ -7,9 +7,10 @@ use warp_core::ui::theme::Fill;
 use warpui::accessibility::{AccessibilityContent, ActionAccessibilityContent, WarpA11yRole};
 use warpui::elements::{
     Align, Border, ChildAnchor, ClippedScrollStateHandle, ClippedScrollable, ConstrainedBox,
-    Container, CornerRadius, CrossAxisAlignment, Draggable, DraggableState, Empty, Expanded, Flex,
-    Hoverable, MainAxisSize, MouseStateHandle, ParentAnchor, ParentElement, Radius, Rect,
-    SavePosition, ScrollTarget, ScrollToPositionMode, ScrollbarWidth, Shrinkable, Text,
+    Container, CornerRadius, CrossAxisAlignment, Draggable, DraggableState, Empty, Flex, Hoverable,
+    MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning, ParentAnchor,
+    ParentElement, ParentOffsetBounds, Radius, Rect, SavePosition, ScrollTarget,
+    ScrollToPositionMode, ScrollbarWidth, Shrinkable, Stack, Text,
 };
 use warpui::keymap::{BindingDescription, EditableBinding};
 use warpui::platform::{Cursor, TerminationMode};
@@ -26,7 +27,7 @@ use crate::root_view::NewWorkspaceSource;
 use crate::server::server_api::ServerTime;
 use crate::ui_components::icons::Icon;
 use crate::util::bindings::{self, CustomAction};
-use crate::workspace::{Workspace, WorkspaceRegistry};
+use crate::workspace::{Workspace, WorkspaceEvent, WorkspaceRegistry};
 use crate::GlobalResourceHandles;
 
 pub(crate) fn init(app: &mut AppContext) {
@@ -134,6 +135,8 @@ const PROJECT_TAB_CLOSE_BUTTON_GAP: f32 = 6.;
 // tab chrome so short directory names do not collapse into an empty clip.
 const PROJECT_TAB_MIN_WIDTH: f32 = 96.;
 const PROJECT_TAB_VERTICAL_NUDGE: f32 = 2.;
+const PROJECT_TAB_VERTICAL_PADDING: f32 = 6.;
+const PROJECT_TAB_BORDER_WIDTH: f32 = 1.;
 
 fn previous_project_index(active_index: usize, project_count: usize) -> Option<usize> {
     (project_count > 1).then(|| active_index.checked_sub(1).unwrap_or(project_count - 1))
@@ -194,6 +197,25 @@ pub(crate) struct ProjectWindow {
 }
 
 impl ProjectWindow {
+    fn subscribe_to_workspace_metadata(
+        workspace: &ViewHandle<Workspace>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        ctx.subscribe_to_view(workspace, |me: &mut Self, _, event, ctx| match event {
+            WorkspaceEvent::ProjectMetadataChanged => {
+                // The strip is mounted in ProjectWindow's own render for the
+                // horizontal header, but inside the *active* workspace's tab
+                // bar for vertical tabs. A background project's change must
+                // invalidate the active workspace too, or its pill stays
+                // stale until something else redraws the header.
+                ctx.notify();
+                if let Some(active) = me.projects.get(me.active_project_index) {
+                    active.workspace.update(ctx, |_, ctx| ctx.notify());
+                }
+            }
+        });
+    }
+
     pub(crate) fn new(
         global_resource_handles: GlobalResourceHandles,
         server_time: Option<Arc<ServerTime>>,
@@ -214,6 +236,7 @@ impl ProjectWindow {
                         ctx,
                     )
                 });
+                Self::subscribe_to_workspace_metadata(&workspace, ctx);
                 Project {
                     id: ProjectId::new(),
                     workspace,
@@ -394,6 +417,7 @@ impl ProjectWindow {
                 ctx,
             )
         });
+        Self::subscribe_to_workspace_metadata(&workspace, ctx);
         let id = ProjectId::new();
         self.projects.push(Project {
             id,
@@ -511,7 +535,8 @@ impl ProjectWindow {
         let Some(index) = self.project_index_for_close(id, ctx) else {
             return;
         };
-        self.projects.remove(index);
+        let removed_project = self.projects.remove(index);
+        ctx.unsubscribe_to_view(&removed_project.workspace);
 
         self.active_project_index =
             active_index_after_removal(self.active_project_index, index, self.projects.len())
@@ -780,9 +805,14 @@ impl ProjectWindow {
         None
     }
 
-    fn take_project_for_transfer(&mut self, id: ProjectId) -> Option<Project> {
+    fn take_project_for_transfer(
+        &mut self,
+        id: ProjectId,
+        ctx: &mut ViewContext<Self>,
+    ) -> Option<Project> {
         let index = self.projects.iter().position(|project| project.id == id)?;
         let project = self.projects.remove(index);
+        ctx.unsubscribe_to_view(&project.workspace);
         self.active_project_index =
             active_index_after_removal(self.active_project_index, index, self.projects.len())
                 .unwrap_or(0);
@@ -812,6 +842,7 @@ impl ProjectWindow {
         self.incoming_drag_insertion_index = None;
         let project_window_id = ctx.handle().id();
         ctx.reparent_view(self.window_id, project.workspace.id(), project_window_id);
+        Self::subscribe_to_workspace_metadata(&project.workspace, ctx);
         let insertion_index = insertion_index.min(self.projects.len());
         self.projects.insert(insertion_index, project);
         if self.set_active_project_index(insertion_index, ctx) {
@@ -826,6 +857,7 @@ impl ProjectWindow {
     ) {
         let placeholders = std::mem::take(&mut self.projects);
         for placeholder in placeholders {
+            ctx.unsubscribe_to_view(&placeholder.workspace);
             placeholder.workspace.update(ctx, |workspace, ctx| {
                 workspace.prepare_for_project_close(ctx);
             });
@@ -852,7 +884,7 @@ impl ProjectWindow {
             .projects
             .get(self.active_project_index)
             .map(|project| project.id);
-        let Some(project) = self.take_project_for_transfer(id) else {
+        let Some(project) = self.take_project_for_transfer(id, ctx) else {
             return false;
         };
         project.draggable_state.cancel_drag();
@@ -864,6 +896,7 @@ impl ProjectWindow {
                 ctx.transfer_view_to_window(view_id, target.window_id, self.window_id);
             }
             let source_index = source_index.min(self.projects.len());
+            Self::subscribe_to_workspace_metadata(&project.workspace, ctx);
             self.projects.insert(source_index, project);
             if let Some(source_active_id) = source_active_id {
                 self.active_project_index = self
@@ -1089,7 +1122,7 @@ impl ProjectWindow {
                     .finish(),
                 );
 
-                let close_button = if is_active || mouse_state.is_hovered() {
+                let close_button = (is_active || mouse_state.is_hovered()).then(|| {
                     Hoverable::new(close_mouse_state.clone(), move |close_state| {
                         let icon = ConstrainedBox::new(
                             Icon::X
@@ -1112,31 +1145,38 @@ impl ProjectWindow {
                         ctx.dispatch_typed_action(ProjectWindowAction::RequestClose(project_id));
                     })
                     .finish()
-                } else {
-                    Empty::new().finish()
-                };
+                });
 
-                // Give the label a real flex allocation instead of painting it as a
-                // stack layer. Equal fixed-width side slots keep the text centered
-                // while guaranteeing room for short labels such as a home folder.
+                // Match the proven horizontal-tab layout: the label is the Stack's
+                // in-flow child, while the close button is a positioned overlay.
+                // Symmetric inner padding keeps the label centered and reserves its
+                // full allocation even while the close button is hidden.
                 let side_slot_width = PROJECT_TAB_CLOSE_BUTTON_SIZE + PROJECT_TAB_CLOSE_BUTTON_GAP;
-                let contents = Flex::row()
+                let label_row = Flex::row()
                     .with_main_axis_size(MainAxisSize::Max)
+                    .with_main_axis_alignment(MainAxisAlignment::Center)
                     .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                    .with_child(
-                        ConstrainedBox::new(Empty::new().finish())
-                            .with_width(side_slot_width)
-                            .with_height(PROJECT_TAB_CLOSE_BUTTON_SIZE)
-                            .finish(),
-                    )
-                    .with_child(Expanded::new(1., Align::new(label.finish()).finish()).finish())
-                    .with_child(
-                        ConstrainedBox::new(Align::new(close_button).right().finish())
-                            .with_width(side_slot_width)
-                            .with_height(PROJECT_TAB_CLOSE_BUTTON_SIZE)
-                            .finish(),
-                    )
+                    .with_child(Shrinkable::new(1., label.finish()).finish())
                     .finish();
+                let mut contents = Stack::new().with_child(
+                    Container::new(label_row)
+                        .with_horizontal_padding(side_slot_width)
+                        .finish(),
+                );
+                if let Some(close_button) = close_button {
+                    contents.add_positioned_child(
+                        ConstrainedBox::new(Align::new(close_button).finish())
+                            .with_width(PROJECT_TAB_CLOSE_BUTTON_SIZE)
+                            .with_height(PROJECT_TAB_CLOSE_BUTTON_SIZE)
+                            .finish(),
+                        OffsetPositioning::offset_from_parent(
+                            vec2f(0., 0.),
+                            ParentOffsetBounds::ParentByPosition,
+                            ParentAnchor::MiddleRight,
+                            ChildAnchor::MiddleRight,
+                        ),
+                    )
+                }
 
                 let background = if is_active {
                     active_background
@@ -1153,12 +1193,14 @@ impl ProjectWindow {
                     inactive_background
                 };
                 ConstrainedBox::new(
-                    Container::new(contents)
+                    Container::new(contents.finish())
                         .with_background(background)
                         .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
-                        .with_border(Border::all(1.).with_border_fill(border_fill))
+                        .with_border(
+                            Border::all(PROJECT_TAB_BORDER_WIDTH).with_border_fill(border_fill),
+                        )
                         .with_horizontal_padding(12.)
-                        .with_vertical_padding(6.)
+                        .with_vertical_padding(PROJECT_TAB_VERTICAL_PADDING)
                         .with_margin_right(2.)
                         .finish(),
                 )
@@ -1200,6 +1242,12 @@ impl ProjectWindow {
             Fill::Solid(theme.active_ui_text_color().into()).into(),
             Fill::Solid(theme.background().into()).into(),
         )
+        // Scrollable reserves 4px of cross-axis gutter for a scrollbar even
+        // with ScrollbarWidth::None. The title bar's height budget is tight:
+        // losing those 4px leaves the tab label less than one line height and
+        // Text then drops the line entirely (blank pills).
+        .with_padding_start(0.)
+        .with_padding_end(0.)
         .finish();
         let scrollable = SavePosition::new(scrollable, PROJECT_TAB_STRIP_POSITION_ID).finish();
         let add_button = Hoverable::new(self.new_project_mouse_state.clone(), move |mouse_state| {
@@ -1223,7 +1271,7 @@ impl ProjectWindow {
         .with_cursor(Cursor::PointingHand)
         .on_click(|ctx, _, _| ctx.dispatch_typed_action(ProjectWindowAction::Add))
         .finish();
-        let add_button = appearance.ui_builder().tool_tip_on_element(
+        let add_button = appearance.ui_builder().overlay_tool_tip_on_element(
             "Add Project".to_string(),
             self.new_project_mouse_state.clone(),
             add_button,

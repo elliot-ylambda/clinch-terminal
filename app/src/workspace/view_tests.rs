@@ -484,6 +484,28 @@ fn test_default_file_explorer_renders_the_open_shared_left_panel() {
     });
 }
 
+#[test]
+fn test_skills_renders_the_open_shared_left_panel_without_another_owner() {
+    let _skills_panel_guard = FeatureFlag::SkillsPanel.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+
+        let workspace = mock_workspace(&mut app);
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.open_left_panel(ctx);
+
+            let config = HeaderToolbarChipSelection::Custom {
+                left: vec![HeaderToolbarItemKind::Skills],
+                right: vec![],
+            };
+            let pane_group = workspace.active_tab_pane_group().as_ref(ctx);
+            assert!(workspace
+                .render_config_panel(&HeaderToolbarItemKind::Skills, pane_group, &config, ctx,)
+                .is_some());
+        });
+    });
+}
+
 fn assert_vertical_tabs_tools_panel_preserves_padding(config: HeaderToolbarChipSelection) {
     App::test((), |mut app| async move {
         initialize_app(&mut app);

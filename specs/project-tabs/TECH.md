@@ -89,7 +89,9 @@ Project tab metadata is derived as follows:
 - Fall back to `New Project`.
 - Determine unread state by collecting the workspace's terminal view IDs and querying `AgentNotificationsModel` for any unread item.
 
-Because render reads the workspace and notification models, existing `ctx.notify()`/model notifications invalidate the header without maintaining a duplicate title or unread cache. Clamp labels and expose full text/unread/position through accessibility content (PRODUCT 8–13, 28, and 29).
+`Workspace` emits `WorkspaceEvent::ProjectMetadataChanged` when its active inner tab, active terminal session, working directory, or detected repository changes (each workspace also subscribes to `DetectedRepositories`, since repo detection completes asynchronously after a pwd change). `ProjectWindow` subscribes to that event for every owned workspace (and maintains the subscription across live project transfers). Because the strip is mounted inside the *active* workspace's tab bar in vertical-tabs mode, the `ProjectWindow` handler invalidates both itself (horizontal-header placement) and the active workspace, so a background project's metadata change refreshes the strip wherever it renders. This keeps both header placements current without maintaining a duplicate title cache. Clamp labels and expose full text/unread/position through accessibility content (PRODUCT 8–13, 28, and 29).
+
+Layout guardrail: the title bar's height budget is tight and a single-line `Text` whose line height exceeds its max-height constraint is dropped entirely, not clipped. The strip's `ClippedScrollable` must therefore keep zero scrollbar gutter padding (`with_padding_start(0.)`/`with_padding_end(0.)` — the default reserves 4px even with `ScrollbarWidth::None`), and `project_window_tests::project_tab_label_height_budget_fits_one_ui_line` asserts the pill's vertical chrome leaves at least one UI line for the label.
 
 ### 4. Add project actions and keybindings
 

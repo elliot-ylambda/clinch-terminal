@@ -479,7 +479,7 @@ pub fn test_open_and_close_settings() -> Builder {
                     settings_view.read(app, |view, _| {
                         async_assert_eq!(
                             view.current_settings_section(),
-                            SettingsSection::default()
+                            SettingsSection::Clinch
                         )
                     })
                 }),

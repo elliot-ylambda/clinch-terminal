@@ -439,7 +439,7 @@ use crate::terminal::model::grid::grid_handler::{FragmentBoundary, TermMode};
 use crate::terminal::model::index::{Point, Side};
 use crate::terminal::model::mouse::MouseState;
 use crate::terminal::model::selection::{SelectAction, SelectionDirection};
-use crate::terminal::model::session::active_session::ActiveSession;
+use crate::terminal::model::session::active_session::{ActiveSession, ActiveSessionEvent};
 use crate::terminal::model::session::{
     BootstrapSessionType, Session, SessionId, SessionType, Sessions, SessionsEvent,
 };
@@ -3134,6 +3134,11 @@ impl TerminalView {
         let terminal_view_id = ctx.view_id();
         let active_session = ctx.add_model(|ctx| {
             ActiveSession::new(sessions.clone(), model_events_handle.clone(), ctx)
+        });
+        ctx.subscribe_to_model(&active_session, |_, _, event, ctx| match event {
+            ActiveSessionEvent::UpdatedPwd | ActiveSessionEvent::Bootstrapped => {
+                ctx.emit(Event::TerminalViewStateChanged);
+            }
         });
         let ambient_agent_view_model = is_cloud_mode.then(|| {
             ctx.add_model(|ctx| ambient_agent::AmbientAgentViewModel::new(terminal_view_id, ctx))

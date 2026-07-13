@@ -11,9 +11,8 @@ use crate::workspace::tab_settings::TabSettings;
 
 /// A configurable item in the vertical tabs header toolbar.
 ///
-/// Each variant represents a panel toggle button that can be placed on either
-/// the left or right side of the toolbar. The side determines which side of the
-/// main content area the panel opens on.
+/// Each variant represents a control that can be placed on either the left or
+/// right side of the toolbar. Panel controls open on the configured side.
 #[derive(
     Clone,
     Debug,
@@ -29,6 +28,8 @@ use crate::workspace::tab_settings::TabSettings;
 pub enum HeaderToolbarItemKind {
     TabsPanel,
     FileExplorer,
+    Skills,
+    ConversationFinder,
     ToolsPanel,
     AgentManagement,
     CodeReview,
@@ -40,6 +41,8 @@ impl HeaderToolbarItemKind {
         match self {
             Self::TabsPanel => "Tabs Panel",
             Self::FileExplorer => "File Explorer",
+            Self::Skills => "Skills",
+            Self::ConversationFinder => "Conversation Finder",
             Self::ToolsPanel => "Tools Panel",
             Self::AgentManagement => "Agent Management",
             Self::CodeReview => "Code Review",
@@ -51,6 +54,8 @@ impl HeaderToolbarItemKind {
         match self {
             Self::TabsPanel => Icon::Menu,
             Self::FileExplorer => Icon::Folder,
+            Self::Skills => Icon::Stars,
+            Self::ConversationFinder => Icon::Conversation,
             Self::ToolsPanel => Icon::Tool2,
             Self::AgentManagement => Icon::Grid,
             Self::CodeReview => Icon::Diff,
@@ -68,6 +73,8 @@ impl HeaderToolbarItemKind {
             // `ToolsPanel`, so it is supported wherever that panel is. Real
             // availability is gated by `show_project_explorer` in `is_available`.
             Self::FileExplorer => true,
+            Self::Skills => FeatureFlag::SkillsPanel.is_enabled(),
+            Self::ConversationFinder => true,
             Self::ToolsPanel => true,
             Self::AgentManagement => {
                 let is_web_anonymous_user = AuthStateProvider::as_ref(app)
@@ -93,25 +100,39 @@ impl HeaderToolbarItemKind {
             Self::FileExplorer => *CodeSettings::as_ref(app).show_project_explorer,
             Self::CodeReview => *TabSettings::as_ref(app).show_code_review_button.value(),
             Self::NotificationsMailbox => *AISettings::as_ref(app).show_agent_notifications,
-            Self::TabsPanel | Self::ToolsPanel | Self::AgentManagement => true,
+            Self::TabsPanel
+            | Self::Skills
+            | Self::ConversationFinder
+            | Self::ToolsPanel
+            | Self::AgentManagement => true,
         }
     }
 
     /// Whether this item opens a side panel (as opposed to replacing the content
     /// area or opening a popover).
     ///
-    /// `FileExplorer` and `ToolsPanel` share the same left-panel view. When both
-    /// are configured, `ToolsPanel` owns the renderer; see
+    /// `FileExplorer`, `Skills`, and `ToolsPanel` share the same left-panel
+    /// view. When several are configured, one owns the renderer; see
     /// `HeaderToolbarChipSelection::is_shared_left_panel_owner`.
     pub fn is_panel(&self) -> bool {
         matches!(
             self,
-            Self::TabsPanel | Self::FileExplorer | Self::ToolsPanel | Self::CodeReview
+            Self::TabsPanel
+                | Self::FileExplorer
+                | Self::Skills
+                | Self::ToolsPanel
+                | Self::CodeReview
         )
     }
 
     pub fn default_left() -> Vec<Self> {
-        vec![Self::TabsPanel, Self::FileExplorer, Self::AgentManagement]
+        vec![
+            Self::TabsPanel,
+            Self::FileExplorer,
+            Self::Skills,
+            Self::ConversationFinder,
+            Self::AgentManagement,
+        ]
     }
 
     pub fn default_right() -> Vec<Self> {
@@ -123,6 +144,8 @@ impl HeaderToolbarItemKind {
         vec![
             Self::TabsPanel,
             Self::FileExplorer,
+            Self::Skills,
+            Self::ConversationFinder,
             Self::ToolsPanel,
             Self::AgentManagement,
             Self::CodeReview,

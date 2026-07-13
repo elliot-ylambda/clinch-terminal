@@ -291,9 +291,9 @@ impl HeaderToolbarChipSelection {
 
     /// Returns whether `item` should render the shared left-panel view.
     ///
-    /// File Explorer can stand in for the Tools Panel as the panel owner. If a
-    /// user configures both buttons, the dedicated Tools Panel remains the
-    /// single owner so the same view is not mounted twice.
+    /// Dedicated left-panel buttons can stand in for the Tools Panel as the
+    /// shared view's owner. Prefer Tools Panel, then File Explorer, then Skills
+    /// so the same view is never mounted more than once.
     pub fn is_shared_left_panel_owner(
         &self,
         item: &super::header_toolbar_item::HeaderToolbarItemKind,
@@ -305,8 +305,21 @@ impl HeaderToolbarChipSelection {
             HeaderToolbarItemKind::FileExplorer => {
                 self.contains_item(item) && !self.contains_item(&HeaderToolbarItemKind::ToolsPanel)
             }
+            HeaderToolbarItemKind::Skills => {
+                self.contains_item(item)
+                    && !self.contains_item(&HeaderToolbarItemKind::ToolsPanel)
+                    && !self.contains_item(&HeaderToolbarItemKind::FileExplorer)
+            }
             _ => false,
         }
+    }
+
+    /// Whether the single shared left-panel view is configured on the left
+    /// side of the workspace.
+    pub fn is_shared_left_panel_on_left(&self) -> bool {
+        self.left_items()
+            .iter()
+            .any(|item| self.is_shared_left_panel_owner(item))
     }
 }
 

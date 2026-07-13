@@ -115,6 +115,45 @@ fn tools_panel_takes_shared_left_panel_ownership_when_both_items_are_configured(
 }
 
 #[test]
+fn skills_owns_shared_left_panel_when_it_is_the_only_direct_panel_button() {
+    let config = HeaderToolbarChipSelection::Custom {
+        left: vec![HeaderToolbarItemKind::Skills],
+        right: vec![],
+    };
+
+    assert!(config.is_shared_left_panel_owner(&HeaderToolbarItemKind::Skills));
+}
+
+#[test]
+fn file_explorer_takes_shared_left_panel_ownership_from_skills() {
+    let config = HeaderToolbarChipSelection::Custom {
+        left: vec![
+            HeaderToolbarItemKind::FileExplorer,
+            HeaderToolbarItemKind::Skills,
+        ],
+        right: vec![],
+    };
+
+    assert!(config.is_shared_left_panel_owner(&HeaderToolbarItemKind::FileExplorer));
+    assert!(!config.is_shared_left_panel_owner(&HeaderToolbarItemKind::Skills));
+}
+
+#[test]
+fn shared_left_panel_side_follows_its_actual_owner() {
+    let left_skills = HeaderToolbarChipSelection::Custom {
+        left: vec![HeaderToolbarItemKind::Skills],
+        right: vec![],
+    };
+    assert!(left_skills.is_shared_left_panel_on_left());
+
+    let right_tools_with_left_file_explorer = HeaderToolbarChipSelection::Custom {
+        left: vec![HeaderToolbarItemKind::FileExplorer],
+        right: vec![HeaderToolbarItemKind::ToolsPanel],
+    };
+    assert!(!right_tools_with_left_file_explorer.is_shared_left_panel_on_left());
+}
+
+#[test]
 fn header_toolbar_chip_selection_custom_without_code_review_reports_absent() {
     let config = HeaderToolbarChipSelection::Custom {
         left: vec![

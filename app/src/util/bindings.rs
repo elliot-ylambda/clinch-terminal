@@ -29,6 +29,7 @@ pub enum CustomAction {
     NewFile,
     ShowAboutWarp,
     ShowSettings,
+    ShowWarpSettings,
     ConfigureKeybindings,
     ShowAccount,
     ShowAppearance,
@@ -443,6 +444,7 @@ pub fn custom_tag_to_keystroke(custom: CustomTag) -> Option<Keystroke> {
         CustomAction::NewTerminalTab
         | CustomAction::NewFile
         | CustomAction::ShowAboutWarp
+        | CustomAction::ShowWarpSettings
         | CustomAction::SplitPaneLeft
         | CustomAction::SelectAllBlocks
         | CustomAction::SplitPaneUp

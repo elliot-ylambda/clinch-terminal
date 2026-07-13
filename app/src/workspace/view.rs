@@ -653,6 +653,8 @@ pub(crate) const TOGGLE_VERTICAL_TABS_PANEL_BINDING_NAME: &str =
 pub(crate) const OPEN_GLOBAL_SEARCH_BINDING_NAME: &str = "workspace:open_global_search";
 pub(crate) const TOGGLE_CONVERSATION_LIST_VIEW_BINDING_NAME: &str =
     "workspace:toggle_conversation_list_view";
+pub(crate) const TOGGLE_AGENT_CONVERSATIONS_PALETTE_BINDING_NAME: &str =
+    "workspace:toggle_agent_conversations_palette";
 pub(crate) const NEW_TAB_BINDING_NAME: &str = "workspace:new_tab";
 pub(crate) const NEW_TERMINAL_TAB_BINDING_NAME: &str = "workspace:new_terminal_tab";
 pub(crate) const NEW_AGENT_TAB_BINDING_NAME: &str = "workspace:new_agent_tab";
@@ -1003,6 +1005,12 @@ enum TabBarSlot {
         first_index: usize,
         run_len: usize,
     },
+}
+
+/// Changes that affect metadata rendered by the containing project tab.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WorkspaceEvent {
+    ProjectMetadataChanged,
 }
 
 pub struct Workspace {
@@ -3126,6 +3134,13 @@ impl Workspace {
         // Re-render tabs when a CLI-agent session's model changes.
         ctx.subscribe_to_model(&CliAgentUsageModel::handle(ctx), |_, _, _, ctx| {
             ctx.notify();
+        });
+
+        // Repo detection completes asynchronously after a pwd change, so the
+        // project tab label/header tint rendered from the bare cwd must be
+        // refreshed once the repository root is known.
+        ctx.subscribe_to_model(&DetectedRepositories::handle(ctx), |me, _, _, ctx| {
+            me.notify_project_metadata_changed(ctx);
         });
 
         ctx.subscribe_to_model(
@@ -5426,6 +5441,15 @@ impl Workspace {
         self.notify_terminal_focus_change(focused_terminal_view_id, ambient_agent_task_id, ctx);
 
         self.update_active_session(ctx);
+        self.notify_project_metadata_changed(ctx);
+    }
+
+    fn notify_project_metadata_changed(&self, ctx: &mut ViewContext<Self>) {
+        // Vertical project tabs are rendered by Workspace, while horizontal
+        // project tabs are rendered by ProjectWindow. Invalidate this view and
+        // notify the owner so both placements pick up the same metadata change.
+        ctx.notify();
+        ctx.emit(WorkspaceEvent::ProjectMetadataChanged);
     }
 
     fn update_window_title(&self, ctx: &mut ViewContext<Self>) {
@@ -6024,7 +6048,7 @@ impl Workspace {
             .header_toolbar_chip_selection
             .clone();
         let left_items = config.left_items();
-        let tools_position = if left_items.contains(&HeaderToolbarItemKind::ToolsPanel) {
+        let tools_position = if config.is_shared_left_panel_on_left() {
             PanelPosition::Left
         } else {
             PanelPosition::Right
@@ -9690,8 +9714,13 @@ impl Workspace {
             MenuItemFields::new("What's new")
                 .with_on_select_action(WorkspaceAction::ViewLatestChangelog)
                 .into_item(),
-            MenuItemFields::new("Settings")
+            MenuItemFields::new("Clinch settings")
                 .with_on_select_action(WorkspaceAction::ShowSettings)
+                .into_item(),
+            MenuItemFields::new("Warp settings")
+                .with_on_select_action(WorkspaceAction::ShowSettingsPage(
+                    SettingsSection::Appearance,
+                ))
                 .into_item(),
             MenuItemFields::new("Keyboard shortcuts")
                 .with_on_select_action(WorkspaceAction::ToggleKeybindingsPage)
@@ -16088,10 +16117,11 @@ impl Workspace {
                         Self::sync_codebase_tab_color(tab, ctx);
                     }
                 }
+                self.notify_project_metadata_changed(ctx);
             }
             pane_group::Event::ActiveSessionChanged => {
                 self.update_active_session(ctx);
-                // ctx.notify();
+                self.notify_project_metadata_changed(ctx);
             }
             pane_group::Event::Escape => {
                 if self.current_workspace_state.is_resource_center_open {
@@ -16192,7 +16222,7 @@ impl Workspace {
             }
             pane_group::Event::TerminalViewStateChanged => {
                 self.update_active_session(ctx);
-                ctx.notify();
+                self.notify_project_metadata_changed(ctx);
             }
             pane_group::Event::OnboardingTutorialCompleted => {
                 self.pending_session_config_tab_config_chip = false;
@@ -16606,6 +16636,7 @@ impl Workspace {
                         Self::sync_codebase_tab_color(tab, ctx);
                     }
                 }
+                self.notify_project_metadata_changed(ctx);
             }
             #[cfg(feature = "local_fs")]
             pane_group::Event::RemoteRepoNavigated { remote_path } => {
@@ -18700,7 +18731,7 @@ impl Workspace {
     }
 
     fn show_settings(&mut self, ctx: &mut ViewContext<Self>) {
-        self.show_settings_with_section(None, ctx);
+        self.show_settings_with_section(Some(SettingsSection::Clinch), ctx);
     }
 
     fn show_settings_with_section(
@@ -20450,6 +20481,77 @@ impl Workspace {
         .finish()
     }
 
+    /// Renders the header Skills button, which toggles the skills view in the
+    /// shared left panel and highlights while that view is visible.
+    fn render_skills_button(&self, appearance: &Appearance, ctx: &AppContext) -> Box<dyn Element> {
+        let is_active = self.active_tab_pane_group().as_ref(ctx).left_panel_open
+            && self.left_panel_view.as_ref(ctx).active_view() == ToolPanelView::Skills;
+
+        SavePosition::new(
+            Container::new(
+                Align::new(
+                    self.render_tab_bar_icon_button(
+                        appearance,
+                        icons::Icon::Stars,
+                        &self.mouse_states.skills_icon,
+                        WorkspaceAction::ToggleSkillsPanel,
+                        "Skills".to_string(),
+                        keybinding_name_to_display_string(LEFT_PANEL_SKILLS_BINDING_NAME, ctx),
+                        is_active,
+                        false,
+                    )
+                    .finish(),
+                )
+                .finish(),
+            )
+            .finish(),
+            LEFT_PANEL_SKILLS_BINDING_NAME,
+        )
+        .finish()
+    }
+
+    /// Renders the header Conversation Finder button, which toggles the
+    /// CLI-agent conversation picker palette.
+    fn render_conversation_finder_button(
+        &self,
+        appearance: &Appearance,
+        ctx: &AppContext,
+    ) -> Box<dyn Element> {
+        let is_active = self.current_workspace_state.is_palette_open
+            && self
+                .palette
+                .as_ref(ctx)
+                .is_mode_enabled(PaletteMode::AgentConversations, ctx);
+
+        SavePosition::new(
+            Container::new(
+                Align::new(
+                    self.render_tab_bar_icon_button(
+                        appearance,
+                        icons::Icon::Conversation,
+                        &self.mouse_states.conversation_finder_icon,
+                        WorkspaceAction::TogglePalette {
+                            mode: PaletteMode::AgentConversations,
+                            source: PaletteSource::PaneHeader,
+                        },
+                        "Conversation finder".to_string(),
+                        keybinding_name_to_display_string(
+                            TOGGLE_AGENT_CONVERSATIONS_PALETTE_BINDING_NAME,
+                            ctx,
+                        ),
+                        is_active,
+                        false,
+                    )
+                    .finish(),
+                )
+                .finish(),
+            )
+            .finish(),
+            TOGGLE_AGENT_CONVERSATIONS_PALETTE_BINDING_NAME,
+        )
+        .finish()
+    }
+
     fn should_enable_file_tree_and_global_search_for_pane_group(pane_group: &PaneGroup) -> bool {
         pane_group
             .pane_ids()
@@ -21110,6 +21212,15 @@ impl Workspace {
                     return None;
                 }
                 self.render_file_explorer_button(appearance, ctx)
+            }
+            HeaderToolbarItemKind::Skills => {
+                if !self.left_panel_views.contains(&ToolPanelView::Skills) {
+                    return None;
+                }
+                self.render_skills_button(appearance, ctx)
+            }
+            HeaderToolbarItemKind::ConversationFinder => {
+                self.render_conversation_finder_button(appearance, ctx)
             }
             HeaderToolbarItemKind::ToolsPanel => {
                 if self.left_panel_views.is_empty() {
@@ -21878,7 +21989,7 @@ impl Workspace {
                 icons::Icon::Gear,
                 &self.mouse_states.settings_icon,
                 WorkspaceAction::ShowSettings,
-                "Settings".to_string(),
+                "Clinch settings".to_string(),
                 self.cached_keybindings[SHOW_SETTINGS_KEYBINDING_NAME].clone(),
                 false,
                 false,
@@ -22981,7 +23092,9 @@ impl Workspace {
                     .finish(),
                 )
             }
-            HeaderToolbarItemKind::FileExplorer | HeaderToolbarItemKind::ToolsPanel => {
+            HeaderToolbarItemKind::FileExplorer
+            | HeaderToolbarItemKind::Skills
+            | HeaderToolbarItemKind::ToolsPanel => {
                 if !config.is_shared_left_panel_owner(item)
                     || !pane_group.left_panel_open
                     || warpui::platform::is_mobile_device()
@@ -23000,6 +23113,7 @@ impl Workspace {
                 Some(ChildView::new(&self.right_panel_view).finish())
             }
             HeaderToolbarItemKind::AgentManagement
+            | HeaderToolbarItemKind::ConversationFinder
             | HeaderToolbarItemKind::NotificationsMailbox => None,
         }
     }
@@ -23934,7 +24048,7 @@ impl Workspace {
 }
 
 impl Entity for Workspace {
-    type Event = ();
+    type Event = WorkspaceEvent;
 }
 
 impl TypedActionView for Workspace {

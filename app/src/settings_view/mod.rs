@@ -7,6 +7,7 @@ use ai_page::{AISettingsPageAction, AISettingsPageEvent, AISettingsPageView, AIS
 use appearance_page::{AppearancePageAction, AppearanceSettingsPageView};
 use billing_and_usage_dispatch::BillingAndUsageDispatchView;
 use billing_and_usage_page::BillingAndUsagePageEvent;
+use clinch_page::ClinchSettingsPageView;
 use code_page::{CodeSettingsPageAction, CodeSettingsPageEvent, CodeSubpage};
 use environments_page::EnvironmentsPageView;
 use features_page::{FeaturesPageView, FeaturesSettingsPageEvent};
@@ -80,6 +81,7 @@ mod billing_and_usage;
 mod billing_and_usage_dispatch;
 mod billing_and_usage_page;
 mod billing_and_usage_page_v2;
+mod clinch_page;
 mod code_page;
 pub(crate) mod custom_inference_modal;
 mod delete_environment_confirmation_dialog;
@@ -242,6 +244,7 @@ pub enum SettingsSection {
     About,
     #[default]
     Account,
+    Clinch,
     MCPServers,
     BillingAndUsage,
     Appearance,
@@ -286,6 +289,7 @@ impl Display for SettingsSection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SettingsSection::BillingAndUsage => write!(f, "Billing and usage"),
+            SettingsSection::Clinch => write!(f, "Clinch"),
             SettingsSection::Keybindings => write!(f, "Keyboard shortcuts"),
             SettingsSection::SharedBlocks => write!(f, "Shared blocks"),
             SettingsSection::MCPServers => write!(f, "MCP Servers"),
@@ -407,6 +411,7 @@ impl FromStr for SettingsSection {
         match s {
             "About" => Ok(Self::About),
             "Account" => Ok(Self::Account),
+            "Clinch" | "Clinch Settings" => Ok(Self::Clinch),
             "AI" => Ok(Self::AI),
             "MCP Servers" => Ok(Self::MCPServers),
             "Billing and usage" => Ok(Self::BillingAndUsage),
@@ -1110,6 +1115,7 @@ macro_rules! update_page {
     ($handle:expr, $update:expr, $ctx:expr) => {
         match $handle {
             SettingsPageViewHandle::Main(handle) => $ctx.update_view(handle, $update),
+            SettingsPageViewHandle::Clinch(handle) => $ctx.update_view(handle, $update),
             SettingsPageViewHandle::Appearance(handle) => $ctx.update_view(handle, $update),
             SettingsPageViewHandle::Features(handle) => $ctx.update_view(handle, $update),
             SettingsPageViewHandle::SharedBlocks(handle) => $ctx.update_view(handle, $update),
@@ -1169,6 +1175,8 @@ impl SettingsView {
         let pane_configuration = ctx.add_model(|_ctx| PaneConfiguration::new("Settings"));
 
         let global_resource_handles = GlobalResourceHandlesProvider::as_ref(ctx).get().clone();
+        let clinch_page_handle = ctx.add_typed_action_view(ClinchSettingsPageView::new);
+
         // Main settings page with accounts info
         let main_page_handle = ctx.add_typed_action_view(MainSettingsPageView::new);
         ctx.subscribe_to_view(&main_page_handle, |me, _, event, ctx| {
@@ -1321,6 +1329,7 @@ impl SettingsView {
         });
 
         let mut settings_pages = vec![
+            SettingsPage::new(clinch_page_handle),
             SettingsPage::new(main_page_handle),
             SettingsPage::new(ai_page_handle),
             billing_and_usage_page,
@@ -1350,6 +1359,7 @@ impl SettingsView {
         // Build sidebar nav items. AI page is presented as an "Agents" umbrella
         // with subpages; the actual AI SettingsPage is hidden from direct sidebar listing.
         let mut nav_items = vec![
+            SettingsNavItem::Page(SettingsSection::Clinch),
             SettingsNavItem::Page(SettingsSection::Account),
             SettingsNavItem::Umbrella(SettingsUmbrella::new(
                 "Agents",
@@ -2150,6 +2160,7 @@ impl SettingsView {
         }
         match &settings_page.view_handle {
             SettingsPageViewHandle::Main(v) => v.as_ref(app).should_render(app),
+            SettingsPageViewHandle::Clinch(v) => v.as_ref(app).should_render(app),
             SettingsPageViewHandle::Teams(v) => v.as_ref(app).should_render(app),
             SettingsPageViewHandle::SharedBlocks(v) => v.as_ref(app).should_render(app),
             SettingsPageViewHandle::Keybindings(v) => v.as_ref(app).should_render(app),

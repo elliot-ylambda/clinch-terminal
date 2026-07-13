@@ -42,6 +42,8 @@ pub(super) struct WorkspaceMouseStates {
     pub(super) session_config_tab_config_chip_close: MouseStateHandle,
     pub(super) tools_panel_icon: MouseStateHandle,
     pub(super) file_explorer_icon: MouseStateHandle,
+    pub(super) skills_icon: MouseStateHandle,
+    pub(super) conversation_finder_icon: MouseStateHandle,
     pub(super) title_bar_search_bar: MouseStateHandle,
     #[cfg(target_family = "wasm")]
     pub(super) warp_logo: MouseStateHandle,
