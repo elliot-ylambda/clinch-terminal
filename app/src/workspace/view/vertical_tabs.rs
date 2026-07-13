@@ -1042,10 +1042,10 @@ fn normalize_summary_text(text: &str) -> Option<String> {
     (!normalized.is_empty()).then_some(normalized)
 }
 
-/// Returns the conversation status for a terminal pane, used to render the per-line status
-/// pill prefix in Summary mode. Mirrors the status sources used by `render_detail_status_pill`
-/// in the detail sidecar — CLI agent sessions with rich status, Oz agent conversations, or
-/// ambient agent sessions. Returns `None` for plain terminals or conversations without status.
+/// Returns the activity status for a terminal pane, used to render the per-line status pill
+/// prefix in Summary mode. Mirrors the status sources used by `render_detail_status_pill` in the
+/// detail sidecar: CLI agent sessions, foreground commands, Oz conversations, or ambient runs.
+/// Returns `None` when the terminal is idle and no conversation has a displayable status.
 fn summary_conversation_status_for_terminal(
     terminal_view: &TerminalView,
     app: &AppContext,
