@@ -1,8 +1,7 @@
+use cli_agent_usage::{Provider, UsageSnapshot};
 use warp_core::ui::theme::{Fill, WarpTheme};
 use warp_core::ui::Icon;
 use warpui::Element;
-
-use cli_agent_usage::{Provider, UsageSnapshot};
 
 mod cli_agent_usage_chip;
 mod cli_agent_usage_header;
