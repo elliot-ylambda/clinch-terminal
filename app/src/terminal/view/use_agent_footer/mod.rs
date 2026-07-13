@@ -63,9 +63,8 @@ use crate::terminal::cli_agent_sessions::CLIAgentRichInputCloseReason;
 use crate::terminal::model_events::{ModelEvent, ModelEventDispatcher};
 pub use crate::terminal::CLIAgent;
 use crate::terminal::TerminalModel;
-use crate::ui_components::blended_colors;
 use crate::ui_components::icons::Icon;
-use crate::ui_components::CLINCH_LOGO_GREEN;
+use crate::ui_components::{blended_colors, CLINCH_LOGO_GREEN};
 use crate::view_components::action_button::{
     ActionButton, ActionButtonTheme, ButtonSize, KeystrokeSource, TooltipAlignment,
 };

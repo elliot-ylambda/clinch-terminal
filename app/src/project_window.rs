@@ -25,7 +25,8 @@ use warpui::{
 use crate::appearance::Appearance;
 use crate::root_view::NewWorkspaceSource;
 use crate::server::server_api::ServerTime;
-use crate::ui_components::{icons::Icon, CLINCH_LOGO_GREEN};
+use crate::ui_components::icons::Icon;
+use crate::ui_components::CLINCH_LOGO_GREEN;
 use crate::util::bindings::{self, CustomAction};
 use crate::workspace::{Workspace, WorkspaceEvent, WorkspaceRegistry};
 use crate::GlobalResourceHandles;
