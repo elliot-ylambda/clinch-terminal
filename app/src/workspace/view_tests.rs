@@ -352,6 +352,32 @@ fn test_manual_update_check_feedback_covers_every_result() {
 }
 
 #[test]
+fn test_manual_update_check_feedback_only_appears_in_initiating_workspace() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let initiating_workspace = mock_workspace(&mut app);
+        let other_workspace = mock_workspace(&mut app);
+
+        initiating_workspace.update(&mut app, |workspace, _| {
+            workspace.manual_update_check_pending = true;
+        });
+        AutoupdateState::handle(&app).update(&mut app, |_, ctx| {
+            ctx.emit(AutoupdateStateEvent::CheckComplete {
+                result: Ok(UpdateReady::No),
+                request_type: RequestType::ManualCheck,
+            });
+        });
+
+        initiating_workspace.read(&app, |workspace, ctx| {
+            assert!(workspace.toast_stack.as_ref(ctx).has_toasts());
+        });
+        other_workspace.read(&app, |workspace, ctx| {
+            assert!(!workspace.toast_stack.as_ref(ctx).has_toasts());
+        });
+    });
+}
+
+#[test]
 fn test_tab_bar_traffic_light_space_regression_for_resource_center_overlap() {
     // Regression for #10139: the Resource Center/right panel can be open on
     // Windows/Linux, but vertical-tabs and right-panel state should not decide
