@@ -52,30 +52,50 @@ fn provider_windows(
     windows
 }
 
+/// Whether Claude's opt-in plan gauges are on, plus the shared mouse handle
+/// for the "Turn on" affordance rendered in their place while they're off.
+struct PlanLimitsGate<'a> {
+    enabled: bool,
+    turn_on_mouse_state: &'a MouseStateHandle,
+}
+
+impl PlanLimitsGate<'_> {
+    /// The affordance's mouse handle, when `kind`'s gauge area should show
+    /// "Turn on" instead of limit windows.
+    fn turn_on(&self, kind: CliAgentUsageProvider) -> Option<MouseStateHandle> {
+        kind.shows_plan_limits_turn_on(self.enabled)
+            .then(|| self.turn_on_mouse_state.clone())
+    }
+}
+
 /// One provider's inline segment: `{name} 5h {pct}[· {reset}]  wk {pct}[· {reset}]`.
 /// Claude also includes its model-scoped `Fable {pct}[· {reset}]` window. Percents
 /// are severity-colored; labels and resets are dimmed. The windows are separated
 /// by whitespace — the only `│` divider in the widget sits between providers.
-/// A `turn_on` mouse state replaces the windows with the gauges' enable
-/// affordance (Claude while `show_plan_limits` is off).
+/// While the gate keeps `kind`'s gauges off, the windows give way to the
+/// "Turn on" affordance.
 fn provider_segment(
-    name: &str,
+    kind: CliAgentUsageProvider,
     provider: &Provider,
-    include_fable: bool,
     now: DateTime<Utc>,
     include_resets: bool,
-    turn_on: Option<MouseStateHandle>,
+    gate: &PlanLimitsGate<'_>,
     appearance: &Appearance,
     bg: Fill,
 ) -> Box<dyn Element> {
     let theme = appearance.theme();
     let main = theme.main_text_color(bg);
     let sub = theme.sub_text_color(bg);
+    let name = match kind {
+        CliAgentUsageProvider::Claude => "Claude",
+        CliAgentUsageProvider::Codex => "Codex",
+    };
+    let include_fable = kind == CliAgentUsageProvider::Claude;
 
     let mut row = Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center);
     row.add_child(span(format!("{name} "), main, appearance));
 
-    if let Some(mouse_state) = turn_on {
+    if let Some(mouse_state) = gate.turn_on(kind) {
         row.add_child(span("limits ", sub, appearance));
         row.add_child(turn_on_plan_limits(appearance, bg, mouse_state));
         return row.finish();
@@ -137,11 +157,10 @@ fn inline_row(
     snapshot: &UsageSnapshot,
     now: DateTime<Utc>,
     include_resets: bool,
-    plan_limits_enabled: bool,
+    gate: &PlanLimitsGate<'_>,
     appearance: &Appearance,
     bg: Fill,
     mouse_states: &[MouseStateHandle; 2],
-    turn_on_mouse_state: &MouseStateHandle,
 ) -> Box<dyn Element> {
     let theme = appearance.theme();
     let sub = theme.sub_text_color(bg);
@@ -164,14 +183,11 @@ fn inline_row(
     row.add_child(clickable_provider(
         CliAgentUsageProvider::Claude,
         provider_segment(
-            "Claude",
+            CliAgentUsageProvider::Claude,
             &snapshot.claude,
-            true,
             now,
             include_resets,
-            CliAgentUsageProvider::Claude
-                .shows_plan_limits_turn_on(plan_limits_enabled)
-                .then(|| turn_on_mouse_state.clone()),
+            gate,
             appearance,
             bg,
         ),
@@ -186,12 +202,11 @@ fn inline_row(
     row.add_child(clickable_provider(
         CliAgentUsageProvider::Codex,
         provider_segment(
-            "Codex",
+            CliAgentUsageProvider::Codex,
             &snapshot.codex,
-            false,
             now,
             include_resets,
-            None,
+            gate,
             appearance,
             bg,
         ),
@@ -252,11 +267,10 @@ fn compact_row(
     snapshot: &UsageSnapshot,
     halves: &[ChipHalf; 2],
     now: DateTime<Utc>,
-    plan_limits_enabled: bool,
+    gate: &PlanLimitsGate<'_>,
     appearance: &Appearance,
     bg: Fill,
     mouse_states: &[MouseStateHandle; 2],
-    turn_on_mouse_state: &MouseStateHandle,
 ) -> Box<dyn Element> {
     let theme = appearance.theme();
     let neutral = theme.sub_text_color(bg);
@@ -292,8 +306,7 @@ fn compact_row(
                 half,
                 kind.data(snapshot),
                 now,
-                kind.shows_plan_limits_turn_on(plan_limits_enabled)
-                    .then(|| turn_on_mouse_state.clone()),
+                gate.turn_on(kind),
                 appearance,
                 bg,
             ),
@@ -318,37 +331,14 @@ pub fn render_cli_agent_usage_header(
     // Hidden when neither tool has data — same rule as the footer chip.
     let halves = chip_halves(snapshot)?;
     let now = Utc::now();
+    let gate = PlanLimitsGate {
+        enabled: plan_limits_enabled,
+        turn_on_mouse_state,
+    };
 
-    let full = inline_row(
-        snapshot,
-        now,
-        true,
-        plan_limits_enabled,
-        appearance,
-        bg,
-        mouse_states,
-        turn_on_mouse_state,
-    );
-    let medium = inline_row(
-        snapshot,
-        now,
-        false,
-        plan_limits_enabled,
-        appearance,
-        bg,
-        mouse_states,
-        turn_on_mouse_state,
-    );
-    let narrow = compact_row(
-        snapshot,
-        &halves,
-        now,
-        plan_limits_enabled,
-        appearance,
-        bg,
-        mouse_states,
-        turn_on_mouse_state,
-    );
+    let full = inline_row(snapshot, now, true, &gate, appearance, bg, mouse_states);
+    let medium = inline_row(snapshot, now, false, &gate, appearance, bg, mouse_states);
+    let narrow = compact_row(snapshot, &halves, now, &gate, appearance, bg, mouse_states);
 
     // Conditions are checked in order; the narrower condition must come first so
     // it wins when both are satisfied. `full` is the default (widest) child.

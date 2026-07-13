@@ -131,6 +131,7 @@ fn project_tab_position_id(id: ProjectId) -> String {
 const PROJECT_TAB_STRIP_POSITION_ID: &str = "project-window:tab-strip";
 const PROJECT_TAB_CLOSE_BUTTON_SIZE: f32 = 16.;
 const PROJECT_TAB_CLOSE_BUTTON_GAP: f32 = 6.;
+const PROJECT_TAB_VERTICAL_NUDGE: f32 = 2.;
 
 fn previous_project_index(active_index: usize, project_count: usize) -> Option<usize> {
     (project_count > 1).then(|| active_index.checked_sub(1).unwrap_or(project_count - 1))
@@ -1225,12 +1226,18 @@ impl ProjectWindow {
         .on_click(|ctx, _, _| ctx.dispatch_typed_action(ProjectWindowAction::Add))
         .finish();
 
-        Flex::row()
-            .with_main_axis_size(MainAxisSize::Max)
-            .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_child(Shrinkable::new(1., scrollable).finish())
-            .with_child(Container::new(add_button).with_margin_left(4.).finish())
-            .finish()
+        Container::new(
+            Flex::row()
+                .with_main_axis_size(MainAxisSize::Max)
+                .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                .with_child(Shrinkable::new(1., scrollable).finish())
+                .with_child(Container::new(add_button).with_margin_left(4.).finish())
+                .finish(),
+        )
+        // The strip is geometrically centered, but its pills read slightly high
+        // beside the surrounding title-bar controls. Nudge the whole strip down.
+        .with_margin_top(PROJECT_TAB_VERTICAL_NUDGE)
+        .finish()
     }
 
     fn render_horizontal_project_header(&self, app: &AppContext) -> Box<dyn Element> {

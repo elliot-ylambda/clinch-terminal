@@ -21,8 +21,12 @@ struct RegistryEntry {
 const CLINCH_RESUME_LAUNCHER: &str = "clinch_agent_resume_launch";
 const LEGACY_WARP_RESUME_LAUNCHER: &str = "warp_agent_resume_launch";
 
+fn app_id_enables_runtime(app_id: &str) -> bool {
+    matches!(app_id, "sh.clinch.Clinch" | "sh.clinch.ClinchDev")
+}
+
 fn runtime_enabled() -> bool {
-    ChannelState::app_id().to_string() == "sh.clinch.Clinch"
+    app_id_enables_runtime(&ChannelState::app_id().to_string())
         || std::env::var_os("CLINCH_AGENT_RESUME_ENABLE").is_some()
 }
 

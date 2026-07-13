@@ -3,6 +3,14 @@ use std::io::Write;
 use super::*;
 
 #[test]
+fn production_and_dev_clinch_enable_agent_resume_runtime() {
+    assert!(app_id_enables_runtime("sh.clinch.Clinch"));
+    assert!(app_id_enables_runtime("sh.clinch.ClinchDev"));
+    assert!(!app_id_enables_runtime("dev.warp.Warp-Local"));
+    assert!(!app_id_enables_runtime("dev.warp.WarpOss"));
+}
+
+#[test]
 fn reads_command_from_registry_file() {
     let dir = std::env::temp_dir().join(format!("agent_resume_test_{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
