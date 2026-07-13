@@ -25,9 +25,11 @@ bash -n \
   script/launch-check \
   script/macos/bundle \
   script/prepare_bundled_resources \
+  script/clinch-update-manifest \
   script/update-installed-clinch \
   script/update_plist \
   script/verify-clinch-release
+bash -n resources/update/clinch-update-helper
 bash -n tools/agent-resume/*.sh \
   tools/agent-resume/clinch-agent-resume \
   tools/agent-resume/warp-agent-resume

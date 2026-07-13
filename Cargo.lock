@@ -14686,6 +14686,7 @@ dependencies = [
  "remote_server",
  "repo_metadata",
  "reqwest",
+ "ring",
  "rmcp",
  "rquickjs",
  "rust-embed 8.7.2",

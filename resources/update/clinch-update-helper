@@ -1,0 +1,304 @@
+#!/usr/bin/env bash
+# Narrow, fail-closed installer for a bundle already authenticated and staged by Clinch.
+set -euo pipefail
+
+BUNDLE_ID="sh.clinch.Clinch"
+
+test_mode() {
+  [[ "${CLINCH_UPDATE_HELPER_TEST:-0}" == "1" && "$EUID" -ne 0 ]]
+}
+
+helper_sleep() {
+  local duration="$1"
+  if test_mode && [[ -n "${CLINCH_UPDATE_HELPER_SLEEP:-}" ]]; then
+    duration="$CLINCH_UPDATE_HELPER_SLEEP"
+  fi
+  /bin/sleep "$duration"
+}
+
+fail() {
+  echo "clinch updater: $*" >&2
+  exit 1
+}
+
+require_absolute_path() {
+  [[ "$1" == /* && "$1" != *$'\n'* && "$1" != *$'\r'* ]] \
+    || fail "unsafe path"
+}
+
+bundle_value() {
+  /usr/libexec/PlistBuddy -c "Print :$2" "$1/Contents/Info.plist" 2>/dev/null || true
+}
+
+verify_bundle() {
+  local bundle="$1" version="$2" sequence="$3"
+  [[ -d "$bundle" ]] || fail "staged app is missing"
+  [[ "$(bundle_value "$bundle" CFBundleIdentifier)" == "$BUNDLE_ID" ]] \
+    || fail "staged app has the wrong bundle identifier"
+  [[ "$(bundle_value "$bundle" WarpVersion)" == "$version" ]] \
+    || fail "staged app version does not match authenticated metadata"
+  [[ "$(bundle_value "$bundle" ClinchUpdateSequence)" == "$sequence" ]] \
+    || fail "staged app sequence does not match authenticated metadata"
+  /usr/bin/codesign --verify --deep --strict "$bundle" \
+    || fail "staged app code signature is invalid"
+}
+
+snapshot_session_state() (
+  set +e
+  local home="$1" support="$2" reg snap sid transcript
+  reg="$home/.warp/agent-resume"
+  [[ -d "$reg" ]] || return 0
+  snap="$support/session-recovery-$(date +%Y%m%d-%H%M%S)"
+  mkdir -p "$snap" || return 0
+  : > "$snap/.auto-snapshot"
+  cp -R "$reg" "$snap/agent-resume" 2>/dev/null
+  sed -nE 's/.*(clinch|warp)_agent_resume_launch claude ([A-Za-z0-9-]+).*/\2/p' \
+      "$reg"/*.json 2>/dev/null | sort -u | while read -r sid; do
+    [[ -n "$sid" ]] || continue
+    transcript="$(find "$home/.claude/projects" -name "$sid.jsonl" -print -quit 2>/dev/null)"
+    [[ -n "$transcript" ]] && cp "$transcript" "$snap/" 2>/dev/null
+  done
+  ls -dt "$support"/session-recovery-*/ 2>/dev/null | {
+    local count=0 dir
+    while read -r dir; do
+      [[ -f "$dir/.auto-snapshot" ]] || continue
+      count=$((count + 1))
+      [[ "$count" -le 15 ]] || rm -rf "$dir"
+    done
+  }
+  return 0
+)
+
+preflight() {
+  [[ $# -eq 2 ]] || fail "usage: preflight <home> <support-dir>"
+  local home="$1" support="$2" reg db tmp cli
+  reg="$home/.warp/agent-resume"
+  db="$support/warp.sqlite"
+  require_absolute_path "$home"
+  require_absolute_path "$support"
+  [[ "$support" == "$home/Library/Application Support/$BUNDLE_ID" ]] \
+    || fail "unexpected support directory"
+
+  if [[ -f "$db" && -d "$reg" ]]; then
+    tmp="$reg/.active-panes.tmp.$$"
+    /usr/bin/sqlite3 -readonly "$db" \
+      'SELECT lower(hex(uuid)) FROM terminal_panes ORDER BY id;' > "$tmp" \
+      || fail "could not refresh active pane identities"
+    chmod 600 "$tmp"
+    mv -f "$tmp" "$reg/active-panes"
+  fi
+
+  cli="$home/.warp/agent-resume-bin/clinch-agent-resume"
+  if [[ -x "$cli" ]]; then
+    HOME="$home" "$cli" repair-live >/dev/null \
+      || fail "could not reconcile live Claude/Codex ownership"
+  fi
+  mkdir -p "$support"
+  snapshot_session_state "$home" "$support"
+}
+
+pid_runs_bundle() {
+  local pid="$1" destination="$2" command
+  command="$(/bin/ps -p "$pid" -o command= 2>/dev/null || true)"
+  [[ "$command" == "$destination/Contents/MacOS/"* ]]
+}
+
+bundle_is_running() {
+  local destination="$1" command
+  if ! test_mode && [[ -n "$(/usr/bin/lsappinfo find "bundleID=$BUNDLE_ID" 2>/dev/null)" ]]; then
+    return 0
+  fi
+  while IFS= read -r command; do
+    [[ "$command" == "$destination/Contents/MacOS/"* ]] && return 0
+  done < <(/bin/ps -axo command= 2>/dev/null)
+  return 1
+}
+
+launch_as_user() {
+  local uid="$1" home="$2" destination="$3" success_marker="${4:-}" finish="${5:-1}"
+  local -a environment=(/usr/bin/env -i "HOME=$home" "PATH=/usr/bin:/bin:/usr/sbin:/sbin")
+  [[ -z "$success_marker" ]] || environment+=("CLINCH_UPDATE_SUCCESS_MARKER=$success_marker")
+  local -a launch=(/usr/bin/open -n "$destination")
+  [[ "$finish" == "1" ]] && launch+=(--args --finish-update)
+  if test_mode && [[ -n "${CLINCH_UPDATE_OPEN_BIN:-}" ]]; then
+    "$CLINCH_UPDATE_OPEN_BIN" "$destination" "$success_marker" "$finish"
+    return
+  fi
+  if [[ "$EUID" -eq 0 ]]; then
+    /bin/launchctl asuser "$uid" /usr/bin/sudo -u "#$uid" "${environment[@]}" "${launch[@]}"
+  else
+    "${environment[@]}" "${launch[@]}"
+  fi
+}
+
+quit_bundle() {
+  test_mode && return 0
+  /usr/bin/osascript -e "tell application id \"$BUNDLE_ID\" to quit" >/dev/null 2>&1 || true
+}
+
+rollback_bundle() {
+  local uid="$1" home="$2" destination="$3" backup="$4" failed="$5"
+  quit_bundle
+  local waited=0
+  while bundle_is_running "$destination"; do
+    helper_sleep 0.2
+    waited=$((waited + 1))
+    [[ "$waited" -lt 50 ]] \
+      || fail "new Clinch is still running; previous bundle preserved at $backup"
+  done
+  mv "$destination" "$failed" || fail "could not preserve the failed Clinch bundle"
+  if ! mv "$backup" "$destination"; then
+    mv "$failed" "$destination" 2>/dev/null || true
+    fail "could not restore the previous Clinch bundle"
+  fi
+  rm -f "$home/.warp/agent-resume/.app-terminating"
+  launch_as_user "$uid" "$home" "$destination" "" 0 \
+    || fail "previous Clinch was restored but could not be relaunched"
+  rm -rf "$failed"
+}
+
+install_update() {
+  [[ $# -eq 13 ]] \
+    || fail "usage: install <archive> <destination> <old-pid> <uid> <home> <id> <version> <sequence> <sha256> <size> <ready> <cancel> <success>"
+  local archive="$1" destination="$2" old_pid="$3" uid="$4" home="$5"
+  local update_id="$6" version="$7" sequence="$8" sha256="$9" size="${10}"
+  local ready="${11}" cancel="${12}" success="${13}"
+  local support="$home/Library/Application Support/$BUNDLE_ID"
+  local update_dir="$support/autoupdate/$update_id" parent transaction protected_archive
+  local extracted candidate backup failed log actual_sha256 actual_size
+
+  for path in "$archive" "$destination" "$home" "$ready" "$cancel" "$success"; do
+    require_absolute_path "$path"
+  done
+  [[ "$old_pid" =~ ^[1-9][0-9]*$ && "$uid" =~ ^[0-9]+$ ]] || fail "invalid process identity"
+  [[ "$update_id" =~ ^[A-Za-z0-9_-]{4,64}$ ]] || fail "invalid update identifier"
+  [[ "$version" =~ ^v[0-9A-Za-z._-]+$ ]] || fail "invalid update version"
+  [[ "$sequence" =~ ^[0-9]+$ ]] || fail "invalid update sequence"
+  [[ "$sha256" =~ ^[0-9a-f]{64}$ && "$size" =~ ^[1-9][0-9]*$ ]] \
+    || fail "invalid authenticated archive identity"
+  [[ "$archive" == "$update_dir/Clinch.app.zip" ]] \
+    || fail "archive is outside the update directory"
+  [[ "$ready" == "$update_dir/"* && "$cancel" == "$update_dir/"* ]] \
+    || fail "control marker is outside the update directory"
+  [[ "$success" == "$support/update-success-$update_id" ]] || fail "invalid success marker"
+  [[ "$(basename "$destination")" == "Clinch.app" ]] || fail "unexpected destination name"
+  [[ -d "$destination" ]] || fail "installed Clinch bundle is missing"
+  [[ "$(bundle_value "$destination" CFBundleIdentifier)" == "$BUNDLE_ID" ]] \
+    || fail "destination is not Clinch"
+  /usr/bin/codesign --verify --deep --strict "$destination" \
+    || fail "installed Clinch code signature is invalid"
+  pid_runs_bundle "$old_pid" "$destination" || fail "old PID does not belong to the destination"
+
+  parent="$(dirname "$destination")"
+  transaction="$parent/.Clinch.app.transaction-$update_id"
+  protected_archive="$transaction/Clinch.app.zip"
+  extracted="$transaction/extracted"
+  candidate="$parent/.Clinch.app.update-$update_id"
+  backup="$parent/.Clinch.app.previous-$update_id"
+  failed="$parent/.Clinch.app.failed-$update_id"
+  log="$support/update-$update_id.log"
+  [[ ! -e "$transaction" && ! -e "$candidate" && ! -e "$backup" && ! -e "$failed" ]] \
+    || fail "stale update transaction paths exist"
+  local preinstall_cleanup=1
+  trap 'if [[ "${preinstall_cleanup:-0}" == "1" ]]; then /bin/rm -rf -- "${transaction:-}" "${candidate:-}"; fi' EXIT
+
+  # First copy the archive into a private directory beside the destination, then authenticate that
+  # protected copy before extracting it. For /Applications updates this closes the user-writable
+  # staging race at the privilege boundary. Candidate and destination also share a filesystem, so
+  # the final rename transaction remains atomic and fast.
+  /bin/mkdir -m 700 "$transaction"
+  /usr/bin/ditto "$archive" "$protected_archive"
+  actual_size="$(/usr/bin/stat -f %z "$protected_archive")"
+  actual_sha256="$(/usr/bin/shasum -a 256 "$protected_archive" | /usr/bin/awk '{print $1}')"
+  [[ "$actual_size" == "$size" && "$actual_sha256" == "$sha256" ]] \
+    || fail "protected update archive failed authenticated size or SHA-256 verification"
+  /bin/mkdir -m 700 "$extracted"
+  /usr/bin/ditto -x -k "$protected_archive" "$extracted"
+  [[ -d "$extracted/Clinch.app" ]] || fail "authenticated archive did not contain Clinch.app"
+  /bin/mv "$extracted/Clinch.app" "$candidate"
+  verify_bundle "$candidate" "$version" "$sequence"
+  /bin/rm -rf "$transaction"
+  mkdir -p "$update_dir" "$support"
+  : > "$ready"
+  [[ "$EUID" -eq 0 ]] && /usr/sbin/chown "$uid" "$ready" 2>/dev/null || true
+
+  local waited=0
+  while /bin/kill -0 "$old_pid" 2>/dev/null; do
+    if [[ -e "$cancel" ]]; then
+      rm -rf "$candidate"
+      rm -f "$ready"
+      exit 0
+    fi
+    helper_sleep 0.2
+    waited=$((waited + 1))
+    if [[ "$waited" -ge 3000 ]]; then
+      rm -rf "$candidate"
+      rm -f "$ready"
+      fail "timed out waiting for Clinch to quit"
+    fi
+  done
+
+  waited=0
+  while bundle_is_running "$destination"; do
+    helper_sleep 0.2
+    waited=$((waited + 1))
+    [[ "$waited" -lt 50 ]] \
+      || fail "another Clinch process is still running; refusing to replace its bundle"
+  done
+
+  preinstall_cleanup=0
+  trap - EXIT
+  rm -f "$home/.warp/agent-resume/.app-terminating" "$success"
+  {
+    echo "Installing authenticated Clinch $version"
+    if ! mv "$destination" "$backup"; then
+      rm -rf "$candidate"
+      launch_as_user "$uid" "$home" "$destination" "" 0 || true
+      fail "could not preserve the installed Clinch bundle"
+    fi
+    if ! mv "$candidate" "$destination"; then
+      mv "$backup" "$destination" || true
+      launch_as_user "$uid" "$home" "$destination" "" 0 || true
+      fail "could not move the staged bundle into place"
+    fi
+    /usr/bin/xattr -dr com.apple.quarantine "$destination" 2>/dev/null || true
+    if ! launch_as_user "$uid" "$home" "$destination" "$success" 1; then
+      rollback_bundle "$uid" "$home" "$destination" "$backup" "$failed"
+      rm -rf "$update_dir"
+      fail "new Clinch could not be launched; restored the previous bundle"
+    fi
+
+    waited=0
+    local success_attempts=240
+    if test_mode; then
+      success_attempts="${CLINCH_UPDATE_SUCCESS_ATTEMPTS:-240}"
+    fi
+    while [[ ! -f "$success" ]]; do
+      helper_sleep 0.25
+      waited=$((waited + 1))
+      [[ "$waited" -lt "$success_attempts" ]] || break
+    done
+    if [[ -f "$success" ]]; then
+      rm -rf "$backup" "$update_dir"
+      echo "Clinch $version launched successfully"
+      exit 0
+    fi
+
+    echo "New Clinch did not acknowledge startup; rolling back" >&2
+    rollback_bundle "$uid" "$home" "$destination" "$backup" "$failed"
+    rm -rf "$update_dir"
+    exit 1
+  } >> "$log" 2>&1
+}
+
+clinch_update_helper_main() {
+  case "${1:-}" in
+    preflight) shift; preflight "$@" ;;
+    install) shift; install_update "$@" ;;
+    *) fail "expected preflight or install" ;;
+  esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  clinch_update_helper_main "$@"
+fi

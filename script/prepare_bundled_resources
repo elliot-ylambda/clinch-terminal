@@ -91,6 +91,19 @@ if [ "$(uname -s)" = "Darwin" ]; then
     "$DEST_DIR/bin/clinch_agent_resume_launch"
   install -m 0755 "$AGENT_RESUME_SRC/clinch_agent_resume_launch" \
     "$DEST_DIR/bin/warp_agent_resume_launch"
+
+  if [ "$CHANNEL" = "stable" ]; then
+    UPDATE_SRC="$REPO_ROOT/resources/update"
+    UPDATE_DEST="$DEST_DIR/update"
+    echo "Copying Clinch update trust root and helper to $UPDATE_DEST"
+    rm -rf "$UPDATE_DEST"
+    mkdir -p "$UPDATE_DEST"
+    install -m 0644 \
+      "$UPDATE_SRC/clinch-update-public-key.json" \
+      "$UPDATE_SRC/clinch-update-authorizer.applescript" \
+      "$UPDATE_DEST/"
+    install -m 0755 "$UPDATE_SRC/clinch-update-helper" "$UPDATE_DEST/"
+  fi
 fi
 
 if [ -n "$GIT_RELEASE_TAG" ]; then

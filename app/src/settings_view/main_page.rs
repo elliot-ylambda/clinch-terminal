@@ -153,6 +153,7 @@ impl From<&MainPageAction> for LoginGatedFeature {
 #[derive(Clone, Copy)]
 pub enum MainSettingsPageEvent {
     CheckForUpdate,
+    ApplyUpdate,
     #[allow(dead_code)]
     OpenWarpDrive,
     SignupAnonymousUser,
@@ -189,7 +190,11 @@ impl TypedActionView for MainSettingsPageView {
 
         match action {
             MainPageAction::Relaunch => {
-                autoupdate::initiate_relaunch_for_update(ctx);
+                if autoupdate::clinch_update_prompt(ctx).is_some() {
+                    ctx.emit(MainSettingsPageEvent::ApplyUpdate);
+                } else {
+                    autoupdate::initiate_relaunch_for_update(ctx);
+                }
             }
             MainPageAction::DownloadUpdate => {
                 autoupdate::manually_download_new_version(ctx);
@@ -872,13 +877,33 @@ impl VersionInfoWidget {
                         }),
                         None,
                     ),
+                    AutoupdateStage::UnableToCheckForUpdate => (
+                        Some(StatusContent {
+                            text: "Unable to check for updates",
+                            color: ansi_red,
+                        }),
+                        Some(CallToActionContent {
+                            text: "Try again",
+                            action: MainPageAction::CheckForUpdate,
+                        }),
+                    ),
+                    AutoupdateStage::UpdateAvailable { .. } => (
+                        Some(StatusContent {
+                            text: "Update available",
+                            color: ansi_red,
+                        }),
+                        Some(CallToActionContent {
+                            text: "Review and install",
+                            action: MainPageAction::Relaunch,
+                        }),
+                    ),
                     AutoupdateStage::UpdateReady { .. } => (
                         Some(StatusContent {
                             text: "Update available",
                             color: ansi_red,
                         }),
                         Some(CallToActionContent {
-                            text: "Relaunch Warp",
+                            text: "Relaunch app",
                             action: MainPageAction::Relaunch,
                         }),
                     ),
@@ -895,7 +920,7 @@ impl VersionInfoWidget {
                             color: faded_text_color,
                         }),
                         Some(CallToActionContent {
-                            text: "Relaunch Warp",
+                            text: "Relaunch app",
                             action: MainPageAction::Relaunch,
                         }),
                     ),

@@ -217,6 +217,7 @@ pub enum SettingsViewEvent {
     Pane(PaneEvent),
     StartResize,
     CheckForUpdate,
+    ApplyUpdate,
     LaunchNetworkLogging,
     OpenWarpDrive,
     SignupAnonymousUser,
@@ -1775,6 +1776,7 @@ impl SettingsView {
     ) {
         match event {
             MainSettingsPageEvent::CheckForUpdate => ctx.emit(SettingsViewEvent::CheckForUpdate),
+            MainSettingsPageEvent::ApplyUpdate => ctx.emit(SettingsViewEvent::ApplyUpdate),
             MainSettingsPageEvent::SignupAnonymousUser => {
                 ctx.emit(SettingsViewEvent::SignupAnonymousUser)
             }

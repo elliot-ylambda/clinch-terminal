@@ -1,10 +1,12 @@
 #![allow(deprecated)]
 
 use std::ffi::{CString, OsString};
+use std::fs::OpenOptions;
 use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::io::AsRawFd as _;
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::time::Duration;
 use std::{env, fs, str};
 
@@ -19,6 +21,7 @@ use nix::errno::Errno;
 use nix::unistd::{fchown, getgid, getuid};
 use warp_core::macos::get_bundle_path;
 use warp_core::safe_error;
+use warpui::r#async::Timer;
 use warpui::{AppContext, ModelContext, SingletonEntity};
 
 use super::{release_assets_directory_url, DownloadReady};
@@ -103,14 +106,26 @@ where
                 update_id,
             } => {
                 let update_id_clone = update_id.clone();
+                let uses_clinch_updater = ChannelState::uses_clinch_updater();
+                let clinch_archive = autoupdate_state
+                    .available_clinch_release
+                    .as_ref()
+                    .filter(|release| release.version_info().version == new_version.version)
+                    .map(|release| (release.archive_sha256().to_owned(), release.archive_size()));
                 // Apply the update in a background thread.
                 ctx.spawn(
                     async move {
-                        let result =
-                            apply_update(ChannelState::channel(), &new_version, &update_id)
-                                .await
-                                .map(|_| Some(new_version));
-                        cleanup(&update_id).await;
+                        let result = apply_update(
+                            ChannelState::channel(),
+                            &new_version,
+                            &update_id,
+                            clinch_archive,
+                        )
+                        .await
+                        .map(|_| Some(new_version));
+                        if !uses_clinch_updater {
+                            cleanup(&update_id).await;
+                        }
                         result
                     },
                     move |autoupdate_state, result, ctx| {
@@ -118,7 +133,9 @@ where
                             // Reset app icon to previously selected app icon
                             AppearanceManager::as_ref(ctx).set_app_icon(ctx);
                         }
-                        autoupdate_state.clear_downloaded_update(&update_id_clone, ctx);
+                        if result.is_ok() || !uses_clinch_updater {
+                            autoupdate_state.clear_downloaded_update(&update_id_clone, ctx);
+                        }
                         callback(autoupdate_state, result, ctx);
                     },
                 );
@@ -346,7 +363,23 @@ pub(super) async fn download_update_and_cleanup(
 /// Apply the downloaded update.
 ///
 /// This is async and should be run in a background task.
-async fn apply_update(channel: Channel, version_info: &VersionInfo, update_id: &str) -> Result<()> {
+async fn apply_update(
+    channel: Channel,
+    version_info: &VersionInfo,
+    update_id: &str,
+    clinch_archive: Option<(String, u64)>,
+) -> Result<()> {
+    if ChannelState::uses_clinch_updater() {
+        let (archive_sha256, archive_size) =
+            clinch_archive.context("authenticated Clinch archive metadata is unavailable")?;
+        return prepare_clinch_external_update(
+            version_info,
+            update_id,
+            &archive_sha256,
+            archive_size,
+        )
+        .await;
+    }
     let update_start = Instant::now();
 
     let bundle_path = PathBuf::from(get_bundle_path()?);
@@ -431,6 +464,123 @@ async fn apply_update(channel: Channel, version_info: &VersionInfo, update_id: &
     log::info!("Applied update in {:?}", update_start.elapsed());
 
     Ok(())
+}
+
+async fn prepare_clinch_external_update(
+    version_info: &VersionInfo,
+    update_id: &str,
+    archive_sha256: &str,
+    archive_size: u64,
+) -> Result<()> {
+    let bundle_path = PathBuf::from(get_bundle_path()?);
+    let staged = super::clinch::staged_bundle_path(update_id);
+    ensure!(
+        staged.is_dir(),
+        "verified Clinch update is no longer staged"
+    );
+    let resources = warp_core::paths::bundled_resources_dir()
+        .context("Clinch bundle resources directory is unavailable")?;
+    let helper = resources.join("update/clinch-update-helper");
+    let authorizer = resources.join("update/clinch-update-authorizer.applescript");
+    ensure!(helper.is_file(), "Clinch update helper is missing");
+    ensure!(authorizer.is_file(), "Clinch update authorizer is missing");
+
+    let directory = super::clinch::update_dir(update_id);
+    let archive = super::clinch::archive_path(update_id);
+    ensure!(archive.is_file(), "authenticated Clinch archive is missing");
+
+    let home = env::var("HOME").context("HOME is unavailable for Clinch update")?;
+    let support = warp_core::paths::state_dir();
+    let preflight = Command::new(&helper)
+        .arg("preflight")
+        .arg(&home)
+        .arg(&support)
+        .output()
+        .await?;
+    ensure!(
+        preflight.status.success(),
+        "Clinch update recovery preflight failed: {}",
+        String::from_utf8_lossy(&preflight.stderr)
+    );
+
+    let ready = directory.join("helper-ready");
+    let cancel = directory.join("helper-cancelled");
+    let success = support.join(format!("update-success-{update_id}"));
+    for marker in [&ready, &cancel, &success] {
+        match async_fs::remove_file(marker).await {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    let uid = getuid().as_raw().to_string();
+    let pid = std::process::id().to_string();
+    let sequence = super::clinch::staged_bundle_sequence(update_id)?.to_string();
+    let arguments = [
+        OsString::from("install"),
+        archive.as_os_str().to_owned(),
+        bundle_path.as_os_str().to_owned(),
+        OsString::from(pid),
+        OsString::from(uid),
+        OsString::from(&home),
+        OsString::from(update_id),
+        OsString::from(&version_info.version),
+        OsString::from(sequence),
+        OsString::from(archive_sha256),
+        OsString::from(archive_size.to_string()),
+        ready.as_os_str().to_owned(),
+        cancel.as_os_str().to_owned(),
+        success.as_os_str().to_owned(),
+    ];
+    let authorization_required = needs_authorization(&bundle_path).await.unwrap_or(true);
+    let log_path = support.join(format!("update-{update_id}.log"));
+    let log = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)?;
+    let mut process = if authorization_required {
+        let mut command = blocking::Command::new("/usr/bin/osascript");
+        command.arg(&authorizer).arg(&helper).args(&arguments);
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(log.try_clone()?))
+            .stderr(Stdio::from(log))
+            .spawn()
+            .context("could not request administrator authorization for Clinch update")?
+    } else {
+        let mut command = blocking::Command::new(&helper);
+        command.args(&arguments);
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(log.try_clone()?))
+            .stderr(Stdio::from(log))
+            .spawn()
+            .context("could not launch Clinch update helper")?
+    };
+
+    // The helper copies and re-verifies the same-filesystem candidate before signalling ready.
+    // A cancelled authorization prompt exits without the marker, leaving the app untouched.
+    for _ in 0..1500 {
+        if ready.is_file() {
+            return Ok(());
+        }
+        if let Some(status) = process.try_wait()? {
+            bail!(
+                "Clinch update helper exited before it was ready ({status}); see {}",
+                log_path.display()
+            );
+        }
+        Timer::after(Duration::from_millis(200)).await;
+    }
+    let _ = fs::write(&cancel, b"cancelled\n");
+    bail!("timed out waiting for Clinch update authorization")
+}
+
+pub(super) fn cancel_clinch_update(update_id: &str) {
+    let cancel = super::clinch::update_dir(update_id).join("helper-cancelled");
+    if let Err(error) = fs::write(&cancel, b"cancelled\n") {
+        log::warn!("could not cancel Clinch update helper: {error}");
+    }
 }
 
 /// The staged app bundle that we're about to install. It's copied out of the `.dmg` file into a

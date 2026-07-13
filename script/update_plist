@@ -44,6 +44,15 @@ if [[ -n "$GIT_RELEASE_TAG" ]]; then
   fi
 fi
 
+if [[ -n "${CLINCH_UPDATE_SEQUENCE:-}" ]]; then
+  [[ "$CLINCH_UPDATE_SEQUENCE" =~ ^[0-9]+$ ]] || {
+    echo "CLINCH_UPDATE_SEQUENCE must be numeric" >&2
+    exit 1
+  }
+  echo "Updating plist Clinch update sequence to $CLINCH_UPDATE_SEQUENCE"
+  plutil -insert ClinchUpdateSequence -string "$CLINCH_UPDATE_SEQUENCE" "$WARP_PLIST_PATH"
+fi
+
 if [[ -n "$WARP_SCHEME_NAME" ]]; then
   echo "Updating plist to support a custom url scheme"
   # Update the plist that cargo bundle creates to add support for custom URL schemes. Unfortunately, cargo bundle does not support

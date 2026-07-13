@@ -4,6 +4,7 @@ use warpui::{App, AssetProvider, View, ViewHandle, WindowId};
 
 pub mod agent_mode;
 pub mod assertions;
+pub mod autoupdate;
 pub mod block;
 pub mod block_filtering;
 pub mod clipboard;

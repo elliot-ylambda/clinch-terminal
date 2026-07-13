@@ -133,6 +133,7 @@ pub enum CustomAction {
     ToggleGlobalSearch,
     ToggleConversationListView,
     NewProject,
+    CheckForUpdates,
 }
 
 lazy_static! {
@@ -385,6 +386,7 @@ pub fn custom_tag_to_keystroke(custom: CustomTag) -> Option<Keystroke> {
         }
 
         CustomAction::NewProject => mac_only_keystroke("cmd-n"),
+        CustomAction::CheckForUpdates => None,
         // Keep an explicit separate-window command after Command+N becomes
         // the project-creation shortcut in Clinch. Only macOS was remapped:
         // other platforms keep their pre-project-window New Window shortcut.

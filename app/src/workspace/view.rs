@@ -100,7 +100,7 @@ use warpui::elements::{
 use warpui::fonts::{Properties, Weight};
 use warpui::geometry::vector::{vec2f, Vector2F};
 use warpui::keymap::Context;
-use warpui::modals::{AlertDialogWithCallbacks, AppModalCallback};
+use warpui::modals::{AlertDialogWithCallbacks, AppModalCallback, ModalButton};
 use warpui::notification::{NotificationSendError, RequestPermissionsOutcome, UserNotification};
 use warpui::platform::{
     Cursor, FilePickerConfiguration, FullscreenState, SystemTheme, TerminationMode,
@@ -3077,10 +3077,10 @@ impl Workspace {
         ctx.observe(&tips_completed, Workspace::on_tips_model_changed);
 
         let autoupdate_handle = AutoupdateState::handle(ctx);
-        ctx.subscribe_to_model(&autoupdate_handle, |_view, _handle, evt, ctx| {
-            if let AutoupdateStateEvent::UpdateAvailable = evt {
-                ctx.notify();
-            }
+        ctx.subscribe_to_model(&autoupdate_handle, |_view, _handle, evt, ctx| match evt {
+            AutoupdateStateEvent::UpdateAvailable => ctx.notify(),
+            AutoupdateStateEvent::InstallReady => autoupdate::initiate_relaunch_for_update(ctx),
+            AutoupdateStateEvent::CheckComplete { .. } => {}
         });
 
         ctx.subscribe_to_model(
@@ -7725,7 +7725,8 @@ impl Workspace {
                         .into_item(),
                 );
                 match autoupdate::get_update_state(ctx) {
-                    AutoupdateStage::UpdateReady { new_version, .. }
+                    AutoupdateStage::UpdateAvailable { new_version, .. }
+                    | AutoupdateStage::UpdateReady { new_version, .. }
                     | AutoupdateStage::UpdatedPendingRestart { new_version } => menu_items.push(
                         MenuItemFields::new(format!("Install update ({})", new_version.version))
                             .with_on_select_action(WorkspaceAction::ApplyUpdate)
@@ -7744,6 +7745,7 @@ impl Workspace {
                     AutoupdateStage::NoUpdateAvailable
                     | AutoupdateStage::CheckingForUpdate
                     | AutoupdateStage::DownloadingUpdate
+                    | AutoupdateStage::UnableToCheckForUpdate
                     | AutoupdateStage::UnableToLaunchNewVersion { .. } => {}
                 }
             }
@@ -9606,7 +9608,8 @@ impl Workspace {
             && ChannelState::show_autoupdate_menu_items()
         {
             match autoupdate::get_update_state(app) {
-                AutoupdateStage::UpdateReady { new_version, .. }
+                AutoupdateStage::UpdateAvailable { new_version, .. }
+                | AutoupdateStage::UpdateReady { new_version, .. }
                 | AutoupdateStage::UpdatedPendingRestart { new_version }
                     if !is_incoming_version_past_current(
                         new_version.last_prominent_update.as_deref(),
@@ -15047,6 +15050,7 @@ impl Workspace {
             SettingsViewEvent::CheckForUpdate => {
                 self.manual_check_for_update(ctx);
             }
+            SettingsViewEvent::ApplyUpdate => self.apply_update(ctx),
             SettingsViewEvent::LaunchNetworkLogging => {
                 self.open_network_log_pane(ctx);
             }
@@ -18491,6 +18495,50 @@ impl Workspace {
     }
 
     fn apply_update(&mut self, ctx: &mut ViewContext<Self>) {
+        if let Some(prompt) = autoupdate::clinch_update_prompt(ctx) {
+            let information = format!(
+                "Clinch will update from {} to {}.\n\n{}\n\nRelease: {}",
+                prompt.current_version,
+                prompt.new_version,
+                prompt.release_notes.trim(),
+                prompt.release_url
+            );
+            #[cfg(feature = "integration_tests")]
+            {
+                let dialog = AlertDialogWithCallbacks::for_app(
+                    format!("Install Clinch {}?", prompt.new_version),
+                    information.clone(),
+                    vec![
+                        ModalButton::for_app("Download and Install", |ctx| {
+                            if let Err(error) = autoupdate::approve_clinch_update(ctx) {
+                                log::error!("Could not start Clinch update: {error:#}");
+                            }
+                        }),
+                        ModalButton::for_app("Later", |_| {}),
+                    ],
+                    |_| {},
+                );
+                self.show_native_modal(dialog, ctx);
+            }
+            #[cfg(not(feature = "integration_tests"))]
+            let dialog = AlertDialogWithCallbacks::for_view(
+                format!("Install Clinch {}?", prompt.new_version),
+                information,
+                vec![
+                    ModalButton::for_view("Download and Install", |_workspace, ctx| {
+                        if let Err(error) = autoupdate::approve_clinch_update(ctx) {
+                            log::error!("Could not start Clinch update: {error:#}");
+                        }
+                    }),
+                    ModalButton::for_view("Later", |_, _| {}),
+                ],
+                |_, _| {},
+            );
+            #[cfg(not(feature = "integration_tests"))]
+            ctx.show_native_platform_modal(dialog);
+            self.close_tab_bar_overflow_menu(ctx);
+            return;
+        }
         if let Ok(autoupdate::ReadyForRelaunch::Yes) = autoupdate::apply_update(self, ctx) {
             autoupdate::initiate_relaunch_for_update(ctx);
         }
@@ -22363,7 +22411,8 @@ impl Workspace {
                         }),
                     })
                 }
-                AutoupdateStage::UpdateReady { new_version, .. }
+                AutoupdateStage::UpdateAvailable { new_version, .. }
+                | AutoupdateStage::UpdateReady { new_version, .. }
                 | AutoupdateStage::UpdatedPendingRestart { new_version } => {
                     if is_incoming_version_past_current(new_version.soft_cutoff.as_deref()) {
                         Some(WorkspaceBannerFields {
@@ -22407,6 +22456,7 @@ impl Workspace {
                 AutoupdateStage::NoUpdateAvailable
                 | AutoupdateStage::CheckingForUpdate
                 | AutoupdateStage::DownloadingUpdate
+                | AutoupdateStage::UnableToCheckForUpdate
                 | AutoupdateStage::Updating { .. }
                 | AutoupdateStage::UnableToUpdateToNewVersion { .. }
                 | AutoupdateStage::UnableToLaunchNewVersion { .. } => None,

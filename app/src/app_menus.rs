@@ -201,6 +201,16 @@ fn make_new_app_menu(ctx: &AppContext) -> Menu {
         ));
     }
 
+    if FeatureFlag::Autoupdate.is_enabled()
+        && ChannelState::uses_clinch_updater()
+        && ChannelState::show_autoupdate_menu_items()
+    {
+        menu_items.push(updateable_custom_item_without_checkmark(
+            CustomAction::CheckForUpdates,
+            ctx,
+        ));
+    }
+
     #[cfg(target_os = "macos")]
     {
         menu_items.push(MenuItem::Services);

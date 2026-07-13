@@ -24,6 +24,8 @@ RELEASE_DMG        := target/$(STABLE_PROFILE_DIR)/bundle/osx/$(STABLE_APP).dmg
 # release, so every release must attach the zip alongside the DMG.
 RELEASE_ZIP        := target/$(STABLE_PROFILE_DIR)/bundle/osx/$(STABLE_APP).app.zip
 RELEASE_SHA        := $(RELEASE_ZIP).sha256
+RELEASE_MANIFEST   := target/$(STABLE_PROFILE_DIR)/bundle/osx/$(STABLE_APP).update.json
+RELEASE_SIGNATURE  := target/$(STABLE_PROFILE_DIR)/bundle/osx/$(STABLE_APP).update.sig
 # Public candidates/releases support both Intel and Apple Silicon by default.
 # UNIVERSAL=0 remains available for a faster, non-public developer artifact.
 UNIVERSAL          ?= 1
@@ -34,6 +36,13 @@ BUNDLE_ARCH_FLAG   := $(if $(filter 1 true yes,$(UNIVERSAL)),,--nouniversal)
 ifeq ($(origin VERSION), undefined)
 VERSION            := v0.$(shell date +%Y.%m.%d.%H%M)
 endif
+ifeq ($(origin UPDATE_SEQUENCE), undefined)
+UPDATE_SEQUENCE    := $(shell date +%s)
+endif
+
+# The private update key stays outside the checkout. Candidate/release packaging fails closed when
+# it is missing; only the corresponding public key is committed and bundled.
+CLINCH_UPDATE_SIGNING_KEY ?= $(HOME)/.config/clinch/update-signing-key.pem
 
 # create-dmg formats the DMG window (background + icon layout) by scripting Finder via
 # AppleScript, which times out (-1712) in headless/automation contexts (agents, CI, no
@@ -82,36 +91,42 @@ help: ## List available targets
 
 # Internal: build + self-sign the bundle (and its DMG). Shared by candidate/release/update.
 _bundle: release-check require-latest-main _require-create-dmg
-	GIT_RELEASE_TAG="$(VERSION)" ./script/bundle -c stable --selfsign $(BUNDLE_ARCH_FLAG)
+	GIT_RELEASE_TAG="$(VERSION)" CLINCH_UPDATE_SEQUENCE="$(UPDATE_SEQUENCE)" \
+	  ./script/bundle -c stable --selfsign $(BUNDLE_ARCH_FLAG)
 
 # Internal: package and verify the exact bytes users will download.
 _package:
 	ditto -c -k --keepParent "$(STABLE_BUNDLE)" "$(RELEASE_ZIP)"
 	cd target/$(STABLE_PROFILE_DIR)/bundle/osx && shasum -a 256 "$(STABLE_APP).app.zip" > "$(STABLE_APP).app.zip.sha256"
+	CLINCH_UPDATE_SIGNING_KEY="$(CLINCH_UPDATE_SIGNING_KEY)" \
+	  ./script/clinch-update-manifest generate "$(STABLE_BUNDLE)" "$(RELEASE_ZIP)" \
+	  "$(VERSION)" "$(UPDATE_SEQUENCE)" "$(RELEASE_MANIFEST)" "$(RELEASE_SIGNATURE)"
 
 _verify:
 	REQUIRE_NOTARIZATION="$(REQUIRE_NOTARIZATION)" REQUIRE_UNIVERSAL="$(UNIVERSAL)" \
 	  ./script/verify-clinch-release \
-	  "$(STABLE_BUNDLE)" "$(RELEASE_ZIP)" "$(RELEASE_SHA)" "$(RELEASE_DMG)" "$(VERSION)"
+	  "$(STABLE_BUNDLE)" "$(RELEASE_ZIP)" "$(RELEASE_SHA)" "$(RELEASE_DMG)" "$(VERSION)" \
+	  "$(RELEASE_MANIFEST)" "$(RELEASE_SIGNATURE)" "$(UPDATE_SEQUENCE)"
 
 # Internal: package, verify, then publish. Callers pin VERSION because its default is
 # time-based and must remain identical across every sub-make.
 _publish:
-	@$(MAKE) _package VERSION="$(VERSION)"
-	@$(MAKE) _verify VERSION="$(VERSION)" REQUIRE_NOTARIZATION="$(REQUIRE_NOTARIZATION)"
+	@$(MAKE) _package VERSION="$(VERSION)" UPDATE_SEQUENCE="$(UPDATE_SEQUENCE)"
+	@$(MAKE) _verify VERSION="$(VERSION)" UPDATE_SEQUENCE="$(UPDATE_SEQUENCE)" REQUIRE_NOTARIZATION="$(REQUIRE_NOTARIZATION)"
 	gh release create "$(VERSION)" "$(RELEASE_DMG)" "$(RELEASE_ZIP)" "$(RELEASE_SHA)" \
+	  "$(RELEASE_MANIFEST)" "$(RELEASE_SIGNATURE)" \
 	  --repo $(CLINCH_REPO) \
 	  --title "$(STABLE_APP) $(VERSION)" \
 	  --notes "$$RELEASE_NOTES"
 	@echo "✓ Published $(VERSION): https://github.com/$(CLINCH_REPO)/releases/tag/$(VERSION)"
 
 candidate: _bundle ## Build and verify universal launch artifacts without publishing (VERSION=v0.x)
-	@$(MAKE) _package VERSION="$(VERSION)"
-	@$(MAKE) _verify VERSION="$(VERSION)" REQUIRE_NOTARIZATION="$(REQUIRE_NOTARIZATION)"
+	@$(MAKE) _package VERSION="$(VERSION)" UPDATE_SEQUENCE="$(UPDATE_SEQUENCE)"
+	@$(MAKE) _verify VERSION="$(VERSION)" UPDATE_SEQUENCE="$(UPDATE_SEQUENCE)" REQUIRE_NOTARIZATION="$(REQUIRE_NOTARIZATION)"
 	@echo "✓ Candidate ready: $(RELEASE_DMG), $(RELEASE_ZIP), $(RELEASE_SHA)"
 
 release: _bundle ## Run the launch gate, verify artifacts, and publish a GitHub Release
-	@$(MAKE) _publish VERSION="$(VERSION)"
+	@$(MAKE) _publish VERSION="$(VERSION)" UPDATE_SEQUENCE="$(UPDATE_SEQUENCE)"
 
 update: _bundle ## Build, update + relaunch Clinch on THIS machine right away; publish finishes in the background
 	@echo "→ Updating $(INSTALLED_APP) — $(STABLE_APP) will quit and relaunch on the new build; publishing $(VERSION) continues in the background…"
@@ -120,7 +135,7 @@ update: _bundle ## Build, update + relaunch Clinch on THIS machine right away; p
 	@# that must still run has to live in the nohup'd shell. The swap goes first
 	@# (seconds — you're on the new build immediately); the zip + upload follow.
 	@# `;` not `&&`: publish regardless of the swap outcome, as before.
-	@nohup sh -c './script/update-installed-clinch "$(STABLE_APP)" "$(STABLE_BUNDLE)"; $(MAKE) _publish VERSION="$(VERSION)"' \
+	@nohup sh -c './script/update-installed-clinch "$(STABLE_APP)" "$(STABLE_BUNDLE)"; $(MAKE) _publish VERSION="$(VERSION)" UPDATE_SEQUENCE="$(UPDATE_SEQUENCE)"' \
 	  >"$$HOME/Library/Logs/clinch-self-update.log" 2>&1 &
 	@echo "✓ Swap + publish running in the background (log: ~/Library/Logs/clinch-self-update.log)"
 

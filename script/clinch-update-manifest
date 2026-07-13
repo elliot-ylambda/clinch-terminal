@@ -1,0 +1,154 @@
+#!/usr/bin/env bash
+# Generate and sign the authenticated metadata consumed by Clinch's in-app updater.
+set -euo pipefail
+
+usage() {
+  echo "usage: $0 generate <app> <zip> <version> <sequence> <manifest> <signature>" >&2
+  echo "       $0 verify <manifest> <signature> <public-key-json>" >&2
+  exit 2
+}
+
+find_openssl3() {
+  local candidate
+  for candidate in "${CLINCH_OPENSSL_BIN:-}" "$(command -v openssl 2>/dev/null || true)" \
+      /opt/homebrew/opt/openssl@3/bin/openssl /usr/local/opt/openssl@3/bin/openssl; do
+    [[ -n "$candidate" && -x "$candidate" ]] || continue
+    if "$candidate" version 2>/dev/null | grep -q '^OpenSSL 3\.'; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  echo "Clinch release signing requires OpenSSL 3 (brew install openssl@3)." >&2
+  return 1
+}
+
+generate() {
+  [[ $# -eq 6 ]] || usage
+  local app="$1" archive="$2" version="$3" sequence="$4" manifest="$5" signature="$6"
+  local key="${CLINCH_UPDATE_SIGNING_KEY:-}"
+  local public_key_json="${CLINCH_UPDATE_PUBLIC_KEY_JSON:-resources/update/clinch-update-public-key.json}"
+  local openssl3 raw_public expected_public
+
+  [[ -d "$app" ]] || { echo "Missing app bundle: $app" >&2; exit 1; }
+  [[ -f "$archive" ]] || { echo "Missing update archive: $archive" >&2; exit 1; }
+  [[ -n "$key" && -f "$key" ]] || {
+    echo "CLINCH_UPDATE_SIGNING_KEY must name the Ed25519 private release key." >&2
+    exit 1
+  }
+  [[ "$sequence" =~ ^[0-9]+$ ]] || { echo "Update sequence must be numeric." >&2; exit 1; }
+  [[ "$version" =~ ^v[0-9A-Za-z._-]+$ ]] || { echo "Unsafe release tag: $version" >&2; exit 1; }
+
+  openssl3="$(find_openssl3)"
+  raw_public="$($openssl3 pkey -in "$key" -pubout -outform DER | tail -c 32 | base64 | tr -d '\n')"
+  expected_public="$(/usr/bin/python3 - "$public_key_json" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as source:
+    print(json.load(source)["ed25519_public_key"])
+PY
+)"
+  [[ "$raw_public" == "$expected_public" ]] || {
+    echo "The release private key does not match $public_key_json." >&2
+    exit 1
+  }
+
+  /usr/bin/python3 - "$app" "$archive" "$version" "$sequence" "$manifest" \
+      "$public_key_json" <<'PY'
+import hashlib
+import json
+import os
+import pathlib
+import plistlib
+import sys
+
+app = pathlib.Path(sys.argv[1])
+archive = pathlib.Path(sys.argv[2])
+version = sys.argv[3]
+sequence = int(sys.argv[4])
+manifest_path = pathlib.Path(sys.argv[5])
+public_key_path = pathlib.Path(sys.argv[6])
+
+with (app / "Contents" / "Info.plist").open("rb") as source:
+    info = plistlib.load(source)
+with public_key_path.open(encoding="utf-8") as source:
+    public_key = json.load(source)
+
+digest = hashlib.sha256()
+with archive.open("rb") as source:
+    for chunk in iter(lambda: source.read(1024 * 1024), b""):
+        digest.update(chunk)
+
+next_key = os.environ.get("CLINCH_UPDATE_NEXT_PUBLIC_KEY")
+if info.get("ClinchUpdateSequence") != str(sequence):
+    raise SystemExit("app bundle update sequence does not match the manifest sequence")
+manifest = {
+    "archive": {
+        "name": archive.name,
+        "sha256": digest.hexdigest(),
+        "size": archive.stat().st_size,
+        "url": f"https://github.com/elliot-ylambda/clinch-terminal/releases/download/{version}/{archive.name}",
+    },
+    "bundle_id": info["CFBundleIdentifier"],
+    "minimum_macos_version": info.get("LSMinimumSystemVersion", "13.0"),
+    "release_notes": os.environ.get("RELEASE_NOTES", "Clinch stability and recovery improvements."),
+    "release_url": f"https://github.com/elliot-ylambda/clinch-terminal/releases/tag/{version}",
+    "rollback": os.environ.get("CLINCH_UPDATE_ROLLBACK", "0").lower() in {"1", "true", "yes"},
+    "schema_version": 1,
+    "sequence": sequence,
+    "signing_key_id": public_key["key_id"],
+    "version": version,
+}
+if next_key:
+    key_id, separator, encoded = next_key.partition(":")
+    if not separator or not key_id or not encoded:
+        raise SystemExit("CLINCH_UPDATE_NEXT_PUBLIC_KEY must be <key-id>:<base64-public-key>")
+    manifest["next_public_key"] = {
+        "key_id": key_id,
+        "ed25519_public_key": encoded,
+    }
+
+manifest_path.parent.mkdir(parents=True, exist_ok=True)
+with manifest_path.open("w", encoding="utf-8", newline="\n") as output:
+    json.dump(manifest, output, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    output.write("\n")
+PY
+
+  local signature_bin="${signature}.bin.$$"
+  trap 'rm -f "${signature_bin:-}"' EXIT
+  "$openssl3" pkeyutl -sign -rawin -inkey "$key" -in "$manifest" -out "$signature_bin"
+  base64 < "$signature_bin" | tr -d '\n' > "$signature"
+  printf '\n' >> "$signature"
+  rm -f "$signature_bin"
+  trap - EXIT
+  "$0" verify "$manifest" "$signature" "$public_key_json"
+}
+
+verify() {
+  [[ $# -eq 3 ]] || usage
+  local manifest="$1" signature="$2" public_key_json="$3"
+  local openssl3 temp_dir raw_public
+  openssl3="$(find_openssl3)"
+  temp_dir="$(mktemp -d -t clinch-update-verify)"
+  trap 'rm -rf "${temp_dir:-}"' EXIT
+
+  raw_public="$(/usr/bin/python3 - "$public_key_json" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as source:
+    print(json.load(source)["ed25519_public_key"])
+PY
+)"
+  printf '%s' "$raw_public" | base64 -D > "$temp_dir/public.raw"
+  # SubjectPublicKeyInfo prefix for a raw Ed25519 public key (RFC 8410).
+  printf '302a300506032b6570032100' | xxd -r -p > "$temp_dir/public.der"
+  cat "$temp_dir/public.raw" >> "$temp_dir/public.der"
+  "$openssl3" pkey -pubin -inform DER -in "$temp_dir/public.der" -out "$temp_dir/public.pem" >/dev/null
+  tr -d '\r\n' < "$signature" | base64 -D > "$temp_dir/signature.bin"
+  "$openssl3" pkeyutl -verify -pubin -rawin -inkey "$temp_dir/public.pem" \
+    -in "$manifest" -sigfile "$temp_dir/signature.bin" >/dev/null
+  echo "Verified signed Clinch update manifest: $manifest"
+}
+
+case "${1:-}" in
+  generate) shift; generate "$@" ;;
+  verify) shift; verify "$@" ;;
+  *) usage ;;
+esac

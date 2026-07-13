@@ -7,8 +7,8 @@ use url::{Origin, ParseError, Url};
 
 use super::Channel;
 use crate::channel::config::{
-    ChannelConfig, IapConfig, McpOAuthProviderConfig, OzConfig, RudderStackDestination,
-    WarpServerConfig,
+    AutoupdateProvider, ChannelConfig, IapConfig, McpOAuthProviderConfig, OzConfig,
+    RudderStackDestination, WarpServerConfig,
 };
 use crate::features::FeatureFlag;
 use crate::AppId;
@@ -206,6 +206,24 @@ impl ChannelState {
             .as_ref()
             .map(|ac| ac.releases_base_url.clone())
             .unwrap_or_default()
+    }
+
+    pub fn autoupdate_provider() -> Option<AutoupdateProvider> {
+        CHANNEL_STATE
+            .lock()
+            .config
+            .autoupdate_config
+            .as_ref()
+            .map(|config| config.provider)
+    }
+
+    pub fn uses_clinch_updater() -> bool {
+        Self::autoupdate_provider() == Some(AutoupdateProvider::ClinchGithub)
+    }
+
+    /// Monotonic release sequence embedded alongside `GIT_RELEASE_TAG` in public Clinch builds.
+    pub fn app_update_sequence() -> Option<u64> {
+        option_env!("CLINCH_UPDATE_SEQUENCE").and_then(|value| value.parse().ok())
     }
 
     pub fn firebase_api_key() -> Cow<'static, str> {

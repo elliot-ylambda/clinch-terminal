@@ -7,6 +7,81 @@ use crate::auth::{AuthManager, AuthStateProvider};
 use crate::server::server_api::ServerApiProvider;
 use crate::server::telemetry::context_provider::AppTelemetryContextProvider;
 
+#[test]
+fn clinch_release_notes_are_safe_for_native_dialogs() {
+    let notes = format!("hello\0world\n{}", "x".repeat(10_000));
+    let sanitized = sanitize_release_notes(&notes);
+
+    assert!(!sanitized.contains('\0'));
+    assert!(sanitized.contains('\n'));
+    assert_eq!(sanitized.chars().count(), 8_000);
+}
+
+#[test]
+fn clinch_records_every_successful_automatic_check_as_the_daily_check() {
+    assert!(should_record_daily_success(
+        RequestType::Poll,
+        false,
+        true,
+        true
+    ));
+    assert!(!should_record_daily_success(
+        RequestType::ManualCheck,
+        true,
+        true,
+        true
+    ));
+    assert!(!should_record_daily_success(
+        RequestType::Poll,
+        false,
+        false,
+        true
+    ));
+    assert!(should_record_daily_success(
+        RequestType::DailyCheck,
+        true,
+        false,
+        true
+    ));
+    assert!(!should_record_daily_success(
+        RequestType::Poll,
+        true,
+        true,
+        false
+    ));
+}
+
+#[test]
+fn clinch_pre_quit_install_failure_keeps_the_verified_update_retryable() {
+    App::test((), |mut app| async move {
+        app.add_singleton_model(|ctx| AppExecutionMode::new(ExecutionMode::App, false, ctx));
+        app.add_singleton_model(|_| RelaunchModel::new());
+        let autoupdate_state = initialize_app(&mut app);
+        let version = VersionInfo::new("v0.2099.01.02.0002".to_owned());
+
+        app.update_model(&autoupdate_state, |autoupdate, ctx| {
+            autoupdate.downloaded_update = Some(DownloadedUpdate {
+                version: version.clone(),
+                update_id: "retryable-update".to_owned(),
+            });
+            autoupdate.stage = AutoupdateStage::Updating {
+                new_version: version.clone(),
+                update_id: "retryable-update".to_owned(),
+            };
+            autoupdate.clinch_install_failed(ctx);
+
+            assert_eq!(
+                autoupdate.stage,
+                AutoupdateStage::UpdateReady {
+                    new_version: version,
+                    update_id: "retryable-update".to_owned(),
+                }
+            );
+            assert!(autoupdate.downloaded_update.is_some());
+        });
+    });
+}
+
 fn initialize_app(app: &mut App) -> ModelHandle<AutoupdateState> {
     let server_api_provider = app.add_singleton_model(|_| ServerApiProvider::new_for_test());
     app.add_singleton_model(|_| AuthStateProvider::new_for_test());

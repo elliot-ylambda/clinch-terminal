@@ -4,6 +4,7 @@
 
 mod agent_mode;
 mod ai_assistant;
+mod autoupdate;
 mod block_filtering;
 mod bootstrapping;
 mod code_review;
@@ -46,6 +47,7 @@ use std::time::Duration;
 pub use agent_mode::*;
 pub use ai_assistant::*;
 use anyhow::{anyhow, Result};
+pub use autoupdate::*;
 pub use block_filtering::*;
 pub use bootstrapping::*;
 pub use code_review::*;

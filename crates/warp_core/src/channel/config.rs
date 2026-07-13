@@ -56,6 +56,19 @@ impl ChannelConfig {
             has_backend: false,
         }
     }
+
+    /// Builds the backend-free public Clinch channel while enabling its independently hosted,
+    /// signed GitHub release feed. This does not enable any Warp backend service.
+    pub fn clinch(app_id: AppId, logfile_name: impl Into<Cow<'static, str>>) -> Self {
+        let mut config = Self::no_backend(app_id, logfile_name);
+        config.autoupdate_config = Some(AutoupdateConfig {
+            releases_base_url:
+                "https://api.github.com/repos/elliot-ylambda/clinch-terminal/releases".into(),
+            show_autoupdate_menu_items: true,
+            provider: AutoupdateProvider::ClinchGithub,
+        });
+        config
+    }
 }
 
 /// Configuration for GCP Identity-Aware Proxy authentication, present only on staging builds.
@@ -184,6 +197,18 @@ pub struct AutoupdateConfig {
     pub releases_base_url: Cow<'static, str>,
     /// Whether or not to display menu items relating to autoupdate.
     pub show_autoupdate_menu_items: bool,
+    /// Release metadata and artifact protocol. Existing generated Warp configs omit this field and
+    /// therefore retain the original Warp backend/GCP updater.
+    #[serde(default)]
+    pub provider: AutoupdateProvider,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoupdateProvider {
+    #[default]
+    Warp,
+    ClinchGithub,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

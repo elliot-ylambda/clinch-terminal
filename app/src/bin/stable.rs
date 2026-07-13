@@ -12,7 +12,7 @@ use warp_core::AppId;
 fn main() -> Result<()> {
     ChannelState::set(ChannelState::new(
         Channel::Stable,
-        ChannelConfig::no_backend(AppId::new("sh", "clinch", "Clinch"), "clinch.log"),
+        ChannelConfig::clinch(AppId::new("sh", "clinch", "Clinch"), "clinch.log"),
     ));
 
     warp::run()

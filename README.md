@@ -133,7 +133,14 @@ limitations.
 
 ## Update
 
-Clinch has no background updater. Re-run the install command to fetch and verify the latest release:
+Updater-enabled releases check authenticated GitHub release metadata once per active day. No app
+archive is downloaded until the user chooses **Clinch → Check for Updates…** (or the equivalent
+Settings action), reviews the release, and approves **Download and Install**. Clinch then verifies
+the signed manifest, archive hash, bundle identity/version/architecture, and complete code
+signature before saving its final recovery snapshot and relaunching through the rollback-capable
+external helper.
+
+Builds installed before the in-app updater require one final manual update. Quit Clinch and run:
 
 ```bash
 curl -fsSL https://clinch.sh/install | sh
@@ -141,7 +148,8 @@ curl -fsSL https://clinch.sh/install | sh
 
 The installer replaces the app bundle without deleting local application or recovery data. It
 checks LaunchServices plus the exact executable path and refuses replacement while Clinch is still
-running, so it cannot swap a bundle out from under a live app.
+running, so it cannot swap a bundle out from under a live app. This remains the bootstrap and
+manual-recovery path after in-app updates are available.
 
 ## Build and verify from source
 
@@ -152,10 +160,11 @@ running, so it cannot swap a bundle out from under a live app.
 make candidate SKIP_SYNC=1
 ```
 
-`script/launch-check` runs formatting, agent-runtime tests, the stable build check, shipped-component
-tests, Clippy, and the dependency advisory gate. `make candidate` builds the app/zip/DMG without
-publishing and then checks bundle identity/version, signatures, entitlements, bundled agent setup,
-checksum, zip round-trip, and DMG integrity.
+`script/launch-check` runs formatting, agent/update-runtime tests, the stable build check,
+shipped-component tests, Clippy, and the dependency advisory gate. `make candidate` builds the
+app/zip/DMG and signed update manifest without publishing, then checks bundle identity/version,
+release sequence, signatures, entitlements, bundled setup, checksum, zip round-trip, and DMG
+integrity.
 
 To install a developer build directly:
 

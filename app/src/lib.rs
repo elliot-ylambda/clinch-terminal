@@ -1553,6 +1553,7 @@ pub(crate) fn initialize_app(
     });
 
     let user_is_logged_in = auth_state.is_logged_in();
+    let from_update_relaunch = launch_mode.args().finish_update;
 
     if user_is_logged_in {
         // Skip refresh_user for CLI mode — the CLI handles auth refresh in
@@ -1567,8 +1568,11 @@ pub(crate) fn initialize_app(
         // Set the first frame callback to record the app's startup time.
         // This is only sent for logged-in users so that new users don't skew performance metrics.
         let is_screen_reader_enabled = ctx.is_screen_reader_enabled();
-        let from_relaunch = launch_mode.args().finish_update;
+        let from_relaunch = from_update_relaunch;
         ctx.on_first_frame_drawn(move |ctx| {
+            if from_relaunch {
+                autoupdate::acknowledge_clinch_update_startup();
+            }
             let timing_data = IntervalTimer::handle(ctx).update(ctx, |timer, _| {
                 timer.mark_interval_end("FIRST_FRAME_DRAWN");
                 timer.compute_stats()
@@ -1604,6 +1608,9 @@ pub(crate) fn initialize_app(
             });
         })
     } else {
+        if from_update_relaunch {
+            ctx.on_first_frame_drawn(|_| autoupdate::acknowledge_clinch_update_startup());
+        }
         // If the app was opened while logged out, record an event for measuring new users.
         // This is sent immediately in case they quit the app on the signup screen.
         send_telemetry_sync_from_app_ctx!(TelemetryEvent::LoggedOutStartup, ctx);

@@ -65,10 +65,9 @@ and install it themselves. Everything is built **locally and free**: no CI, no
 GitHub Actions secrets, no macOS runner minutes. A root `Makefile` wraps it; run
 `make help` for the list.
 
-> This fork is **not** wired to Warp's release/auto-update backend (no signing
-> certs, GCS buckets, Sentry, or `channel-versions` dispatch). The upstream
-> `Cut New Releases` GitHub Actions workflow is intentionally unused; do not
-> rely on it.
+> This fork does **not** use Warp's release backend. Clinch's stable channel checks
+> authenticated metadata and assets on its own GitHub Releases page. The upstream `Cut New
+> Releases` workflow, GCS buckets, and `channel-versions` dispatch remain intentionally unused.
 
 ### After landing changes on `main`
 - `make update` — publishes a release **and** updates + relaunches the prod
@@ -77,8 +76,8 @@ GitHub Actions secrets, no macOS runner minutes. A root `Makefile` wraps it; run
 ### Individual targets
 - `make release` — builds a **self-signed** `Clinch.dmg` (`./script/bundle -c
   stable --selfsign`) and publishes a GitHub Release on
-  `elliot-ylambda/clinch-terminal` with the DMG **and** `Clinch.app.zip`
-  attached (`gh release create`). The zip must always be attached: the
+  `elliot-ylambda/clinch-terminal` with the DMG, `Clinch.app.zip`, checksum, signed
+  `Clinch.update.json`, and `Clinch.update.sig` attached (`gh release create`). The zip must always be attached: the
   install one-liner (`curl -fsSL https://clinch.sh/install | sh`, which
   clinch.sh redirects to `install.sh` at this repo's root) downloads
   `releases/latest/download/Clinch.app.zip`. This is publish-only — it does not
@@ -95,6 +94,12 @@ GitHub Actions secrets, no macOS runner minutes. A root `Makefile` wraps it; run
     SKIP_SYNC=1` to bypass the guard and build the current HEAD as-is
     (intentional feature-branch or dirty-tree test builds). `make update`
     inherits this because it runs `make release`.
+  - Release signing uses the Ed25519 private key named by
+    `CLINCH_UPDATE_SIGNING_KEY` (default:
+    `~/.config/clinch/update-signing-key.pem`) and OpenSSL 3. The private key must never be
+    committed. Back it up securely: losing it prevents installed clients from trusting a new key.
+    To rotate deliberately, publish a release signed by the current key with
+    `CLINCH_UPDATE_NEXT_PUBLIC_KEY=<key-id>:<base64-raw-public-key>` before switching keys.
 - `make update` — same build as `make release`, but optimized for getting YOU
   on the new build fast: as soon as the bundle is signed it swaps it into
   `/Applications/Clinch.app` and relaunches via `script/update-installed-clinch`,

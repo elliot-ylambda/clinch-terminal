@@ -1105,6 +1105,7 @@ pub fn init(app: &mut AppContext) {
             )
             .with_group(bindings::BindingGroup::AutoUpdate.as_str())
             .with_context_predicate(id!("Workspace") & !id!("AutoupdateState_UpdateReady"))
+            .with_custom_action(CustomAction::CheckForUpdates)
             .with_enabled(|| ContextFlag::PromptForVersionUpdates.is_enabled()),
         ]);
     }

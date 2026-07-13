@@ -178,6 +178,7 @@ rayon.workspace = true
 regex-automata = "0.4.6"
 regex.workspace = true
 reqwest.workspace = true
+ring = "0.17.13"
 rust-embed.workspace = true
 sentry-log = { workspace = true, optional = true }
 inventory = "0.3"

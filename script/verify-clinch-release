@@ -2,14 +2,17 @@
 # Verifies the exact app/zip/DMG that the Makefile is about to publish.
 set -euo pipefail
 
-APP="${1:?usage: verify-clinch-release <app> <zip> <sha256> <dmg> <version>}"
+APP="${1:?usage: verify-clinch-release <app> <zip> <sha256> <dmg> <version> <manifest> <signature> <sequence>}"
 ZIP="${2:?missing zip}"
 SHA_FILE="${3:?missing checksum sidecar}"
 DMG="${4:?missing dmg}"
 VERSION="${5:?missing version}"
+MANIFEST="${6:?missing update manifest}"
+SIGNATURE="${7:?missing update signature}"
+UPDATE_SEQUENCE="${8:?missing update sequence}"
 
 fail() { echo "release verification failed: $*" >&2; exit 1; }
-for path in "$APP" "$ZIP" "$SHA_FILE" "$DMG"; do
+for path in "$APP" "$ZIP" "$SHA_FILE" "$DMG" "$MANIFEST" "$SIGNATURE"; do
   [[ -e "$path" ]] || fail "missing $path"
 done
 
@@ -20,6 +23,8 @@ PLIST="$APP/Contents/Info.plist"
   || fail "bundle name is not Clinch"
 [[ "$(/usr/libexec/PlistBuddy -c 'Print WarpVersion' "$PLIST")" == "$VERSION" ]] \
   || fail "bundle version does not match $VERSION"
+[[ "$(/usr/libexec/PlistBuddy -c 'Print ClinchUpdateSequence' "$PLIST")" == "$UPDATE_SEQUENCE" ]] \
+  || fail "bundle update sequence does not match $UPDATE_SEQUENCE"
 
 codesign --verify --deep --strict "$APP" || fail "app code signature is invalid"
 entitlements="$(codesign -d --entitlements :- "$APP" 2>/dev/null || true)"
@@ -38,7 +43,10 @@ for file in \
   "$APP/Contents/Resources/agent-resume/agent-json" \
   "$APP/Contents/Resources/agent-resume/agent-json.js" \
   "$APP/Contents/Resources/bin/clinch_agent_resume_launch" \
-  "$APP/Contents/Resources/bin/warp_agent_resume_launch"; do
+  "$APP/Contents/Resources/bin/warp_agent_resume_launch" \
+  "$APP/Contents/Resources/update/clinch-update-public-key.json" \
+  "$APP/Contents/Resources/update/clinch-update-helper" \
+  "$APP/Contents/Resources/update/clinch-update-authorizer.applescript"; do
   [[ -f "$file" ]] || fail "bundle omitted ${file#"$APP/"}"
 done
 [[ -x "$APP/Contents/Resources/agent-resume/install.sh" ]] \
@@ -49,6 +57,30 @@ done
 expected="$(awk 'NF { print $1; exit }' "$SHA_FILE" | tr 'A-F' 'a-f')"
 actual="$(shasum -a 256 "$ZIP" | awk '{ print $1 }')"
 [[ "$expected" == "$actual" ]] || fail "zip checksum sidecar does not match"
+
+./script/clinch-update-manifest verify "$MANIFEST" "$SIGNATURE" \
+  resources/update/clinch-update-public-key.json || fail "update manifest signature is invalid"
+/usr/bin/python3 - "$MANIFEST" "$ZIP" "$VERSION" "$UPDATE_SEQUENCE" <<'PY' || exit 1
+import hashlib, json, pathlib, sys
+manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+archive = pathlib.Path(sys.argv[2])
+expected = {
+    "schema_version": 1,
+    "version": sys.argv[3],
+    "sequence": int(sys.argv[4]),
+    "bundle_id": "sh.clinch.Clinch",
+}
+for key, value in expected.items():
+    if manifest.get(key) != value:
+        raise SystemExit(f"release verification failed: manifest {key} mismatch")
+if manifest.get("archive", {}).get("name") != "Clinch.app.zip":
+    raise SystemExit("release verification failed: unexpected manifest archive name")
+if manifest["archive"].get("size") != archive.stat().st_size:
+    raise SystemExit("release verification failed: manifest archive size mismatch")
+digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+if manifest["archive"].get("sha256") != digest:
+    raise SystemExit("release verification failed: manifest archive hash mismatch")
+PY
 
 TMP="$(mktemp -d -t clinch-release-verify)"
 trap 'rm -rf "$TMP"' EXIT
