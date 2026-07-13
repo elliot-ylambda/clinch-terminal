@@ -107,6 +107,55 @@ fn query_for_rewind_prefill_uses_custom_display_query_inputs() {
     );
 }
 
+#[test]
+fn project_display_name_prefers_the_active_repository_name() {
+    let active_repo = PathBuf::from("repositories").join("active-repo");
+    let active_cwd = "elsewhere/working-directory".to_string();
+
+    assert_eq!(
+        Workspace::project_display_name_from_paths(
+            Some(active_repo),
+            Some(active_cwd),
+            [PathBuf::from("repositories").join("recent-repo")],
+        ),
+        "active-repo"
+    );
+}
+
+#[test]
+fn project_display_name_uses_the_active_path_outside_a_repository() {
+    let active_cwd = "workspace/current-directory".to_string();
+
+    assert_eq!(
+        Workspace::project_display_name_from_paths(
+            None,
+            Some(active_cwd.clone()),
+            [PathBuf::from("repositories").join("recent-repo")],
+        ),
+        active_cwd
+    );
+}
+
+#[test]
+fn project_display_name_uses_a_recent_repository_when_the_active_path_is_unavailable() {
+    assert_eq!(
+        Workspace::project_display_name_from_paths(
+            None,
+            None,
+            [PathBuf::from("repositories").join("recent-repo")],
+        ),
+        "recent-repo"
+    );
+}
+
+#[test]
+fn project_display_name_falls_back_when_no_path_is_available() {
+    assert_eq!(
+        Workspace::project_display_name_from_paths(None, None, []),
+        "New Project"
+    );
+}
+
 pub(crate) fn initialize_app(app: &mut App) {
     initialize_settings_for_tests(app);
 

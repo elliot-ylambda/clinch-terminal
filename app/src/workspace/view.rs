@@ -21475,33 +21475,56 @@ impl Workspace {
             .map(Path::to_path_buf)
     }
 
-    /// Repository label for the outer project tab. Prefer the active inner
-    /// tab, then fall back through the existing inner-tab MRU order so a
-    /// temporary non-repository surface does not erase the project's identity.
+    fn project_display_name_from_paths(
+        active_repository_root: Option<PathBuf>,
+        active_working_directory_label: Option<String>,
+        recent_repository_roots: impl IntoIterator<Item = PathBuf>,
+    ) -> String {
+        let repository_name = |path: &Path| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .filter(|name| !name.is_empty())
+        };
+
+        active_repository_root
+            .as_deref()
+            .and_then(repository_name)
+            .or_else(|| active_working_directory_label.filter(|path| !path.is_empty()))
+            .or_else(|| {
+                recent_repository_roots
+                    .into_iter()
+                    .find_map(|path| repository_name(&path))
+            })
+            .unwrap_or_else(|| "New Project".to_string())
+    }
+
+    /// Label for the outer project tab. Prefer the active inner tab's
+    /// repository name, then its current path. Only consult repository history
+    /// when the active tab has no working path to display.
     pub(crate) fn project_display_name(&self, ctx: &AppContext) -> String {
-        let active_id = self
-            .tabs
-            .get(self.active_tab_index)
-            .map(|tab| tab.pane_group.id());
-        let active = self.tabs.get(self.active_tab_index).into_iter();
-        let recent = self.tab_mru_order.iter().filter_map(|pane_group_id| {
+        let active_tab = self.tabs.get(self.active_tab_index);
+        let active_id = active_tab.map(|tab| tab.pane_group.id());
+        let active_repository_root =
+            active_tab.and_then(|tab| self.repository_root_for_tab(tab, ctx));
+        let active_working_directory = active_tab
+            .and_then(|tab| tab.pane_group.as_ref(ctx).active_session_view(ctx))
+            .and_then(|terminal| terminal.as_ref(ctx).pwd_as_local_or_remote(ctx))
+            .map(|path| crate::util::path::display_path_with_host(&path, true, ctx));
+        let recent_repository_roots = self.tab_mru_order.iter().filter_map(|pane_group_id| {
             if Some(*pane_group_id) == active_id {
                 return None;
             }
             self.tabs
                 .iter()
                 .find(|tab| tab.pane_group.id() == *pane_group_id)
+                .and_then(|tab| self.repository_root_for_tab(tab, ctx))
         });
 
-        active
-            .chain(recent)
-            .find_map(|tab| self.repository_root_for_tab(tab, ctx))
-            .and_then(|path| {
-                path.file_name()
-                    .map(|name| name.to_string_lossy().into_owned())
-            })
-            .filter(|name| !name.is_empty())
-            .unwrap_or_else(|| "New Project".to_string())
+        Self::project_display_name_from_paths(
+            active_repository_root,
+            active_working_directory,
+            recent_repository_roots,
+        )
     }
 
     pub(crate) fn contains_pane_group(&self, pane_group_id: EntityId) -> bool {
