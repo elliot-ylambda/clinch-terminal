@@ -6,7 +6,6 @@ use warp::features::FeatureFlag;
 use warp::integration_testing::step::new_step_with_default_assertions;
 use warp::integration_testing::terminal::wait_until_bootstrapped_single_pane_for_tab;
 use warp::integration_testing::view_getters::workspace_view;
-use warp::terminal::cli_agent::CLIAgent;
 use warp::workspace::WorkspaceAction;
 use warp::{SkillDescriptor, SkillManager};
 use warp_util::local_or_remote_path::LocalOrRemotePath;
@@ -47,9 +46,9 @@ fn write_skill(dir: &std::path::Path, relative_path: &str, name: &str) {
 
 /// Verifies the Skills panel (Phase 1) end-to-end: enabling the feature flag and dispatching
 /// `WorkspaceAction::OpenSkillsPanel` opens the left panel, and the data layer the panel renders
-/// (`SkillManager`) lists a project skill regardless of which supported provider directory it's
-/// under (`.agents/skills` vs `.claude/skills`), while a per-agent filter still reaches a skill
-/// that lives only under a provider Claude supports (the reachability property).
+/// (`SkillManager`) keeps every source variant for hierarchy inspection. The fixture includes
+/// Codex's `.agents/skills`, Claude's `.claude/skills`, and a nested Claude project skill so the
+/// opened panel exercises all three discovery paths while rendering.
 pub fn test_skills_panel_lists_and_filters() -> Builder {
     FeatureFlag::SkillsPanel.set_enabled(true);
 
@@ -60,7 +59,7 @@ pub fn test_skills_panel_lists_and_filters() -> Builder {
     let test_dir_cell: Rc<RefCell<Option<PathBuf>>> = Rc::new(RefCell::new(None));
     let test_dir_for_setup = test_dir_cell.clone();
     let test_dir_for_all_assertion = test_dir_cell.clone();
-    let test_dir_for_claude_assertion = test_dir_cell.clone();
+    let test_dir_for_variants_assertion = test_dir_cell.clone();
 
     new_builder()
         .with_setup(move |utils| {
@@ -75,6 +74,11 @@ pub fn test_skills_panel_lists_and_filters() -> Builder {
             write_skill(&test_dir, ".agents/skills/foo/SKILL.md", "foo");
             write_skill(&test_dir, ".claude/skills/foo/SKILL.md", "foo");
             write_skill(&test_dir, ".agents/skills/bar/SKILL.md", "bar");
+            write_skill(
+                &test_dir,
+                "packages/web/.claude/skills/web-only/SKILL.md",
+                "web-only",
+            );
 
             let canonical_dir = std::fs::canonicalize(&test_dir).unwrap_or(test_dir);
             *test_dir_for_setup.borrow_mut() = Some(canonical_dir);
@@ -88,12 +92,18 @@ pub fn test_skills_panel_lists_and_filters() -> Builder {
             new_step_with_default_assertions(
                 "Skills panel is open and SkillManager surfaces both skills",
             )
-            .add_named_assertion("left panel is open after OpenSkillsPanel", |app, window_id| {
-                let workspace = workspace_view(app, window_id);
-                let is_open =
-                    workspace.read(app, |workspace, ctx| workspace.is_left_panel_open(ctx));
-                async_assert!(is_open, "expected left panel to be open after OpenSkillsPanel")
-            })
+            .add_named_assertion(
+                "left panel is open after OpenSkillsPanel",
+                |app, window_id| {
+                    let workspace = workspace_view(app, window_id);
+                    let is_open =
+                        workspace.read(app, |workspace, ctx| workspace.is_left_panel_open(ctx));
+                    async_assert!(
+                        is_open,
+                        "expected left panel to be open after OpenSkillsPanel"
+                    )
+                },
+            )
             .add_named_assertion(
                 "SkillManager lists foo and bar for the working directory",
                 move |app, _window_id| {
@@ -114,22 +124,29 @@ pub fn test_skills_panel_lists_and_filters() -> Builder {
                 },
             )
             .add_named_assertion(
-                "Claude's supported providers still reach foo (reachability property)",
+                "hierarchy inspector retains both foo source variants",
                 move |app, _window_id| {
-                    let test_dir = test_dir_for_claude_assertion
+                    let test_dir = test_dir_for_variants_assertion
                         .borrow()
                         .clone()
                         .expect("setup should run before any test step");
                     app.read(|ctx| {
                         let manager = SkillManager::as_ref(ctx);
                         let cwd = LocalOrRemotePath::Local(test_dir);
-                        let providers = CLIAgent::Claude.supported_skill_providers();
-                        let claude_visible = manager.skills_for_providers(Some(&cwd), providers, ctx);
-                        let has_foo = claude_visible.iter().any(|s| s.name == "foo");
+                        let foo_variants: Vec<_> = manager
+                            .file_skill_variants_for_working_directory(Some(&cwd), ctx)
+                            .into_iter()
+                            .filter(|skill| skill.name == "foo")
+                            .collect();
                         async_assert!(
-                            has_foo,
-                            "expected foo to be reachable via Claude's supported skill providers, got {:?}",
-                            claude_visible.iter().map(|s| s.name.as_str()).collect::<Vec<_>>()
+                            foo_variants.len() == 2
+                                && foo_variants
+                                    .iter()
+                                    .any(|skill| skill.provider.to_string() == "Agents")
+                                && foo_variants
+                                    .iter()
+                                    .any(|skill| skill.provider.to_string() == "Claude"),
+                            "expected separate Agents and Claude variants, got {foo_variants:?}"
                         )
                     })
                 },

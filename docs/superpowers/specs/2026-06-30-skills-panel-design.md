@@ -10,10 +10,10 @@ Add a first-party **Skills inspector** to Clinch that makes the otherwise-invisi
 skill layer visible, in two complementary halves:
 
 1. **Skills panel** — a toggleable entry in the existing left side panel that shows
-   every skill on disk, grouped by **scope** (Home → Project → Bundled) and tagged by
-   **provider** (Claude, Codex, Agents, Warp, …), with **All / Claude / Codex** subtabs
-   that filter to *what that agent can actually read in the current directory*
-   (access-based, not folder-literal).
+   every discovered skill source, grouped by its real hierarchy (Personal, each Project
+   ancestor, Contextual descendants, Plugins, Managed/Admin/System, Bundled), with
+   **All / Claude / Codex** subtabs that apply each agent's own discovery and precedence
+   rules rather than a shared provider filter.
 2. **Live skill-read signal** — when an agent reads a skill mid-session, Clinch shows a
    brief **inline banner** in the terminal (`[Claude] read skill → brainstorming`) **and**
    elevates that skill into a **"Used this session"** group at the top of the panel.
@@ -22,6 +22,27 @@ The defining property: both halves read from the **same `SkillManager`** that al
 indexes and live-watches skills, so the panel is always fresh and the live event merely
 *annotates* entries the panel already knows about. This is overwhelmingly a new **view**
 over existing, already-maintained data — not a new subsystem.
+
+## Hierarchy fidelity update (2026-07-13)
+
+The original design's shared `CLIAgent::supported_skill_providers()` filter was not a faithful
+model of either agent and caused the panel to hide valid skills. Phase 1 now uses a read-only
+catalog projection over `SkillManager` plus agent-owned local registries. Agent execution still
+uses the existing deduplicated manager API and is unchanged.
+
+| Agent | Discovery shown by the panel | Same-name behavior |
+|---|---|---|
+| Claude Code | Enterprise-managed `skills/`; personal `~/.claude/skills` and legacy `~/.claude/commands`; project `.claude/skills` and `.claude/commands` from the active CWD through the repo root; directory-qualified contextual skills below the CWD; installed plugin skills/commands; documented bundled skills | Enterprise > personal > project > bundled. A skill beats a legacy command. Plugin names are namespaced and do not collide. Nested variants remain separately invocable. |
+| Codex | Project `.agents/skills` from the active CWD through the repo root; personal `~/.agents/skills` and direct legacy installs under `~/.codex/skills`; `/etc/codex/skills`; installed plugin skills; nested Codex system/runtime bundles | Same-name skills are not merged or shadowed; every source remains visible. `~/.codex/config.toml` can disable an individual path. |
+
+Claude rows also reflect `enabledPlugins`, `skillOverrides`, `disableBundledSkills`, the
+`DISABLE_DOCTOR_COMMAND` exception, and file-based `strictPluginOnlyCustomization` policy.
+Disabled and shadowed definitions stay visible with an explanation. This behavior follows the
+current [Claude Code skills](https://code.claude.com/docs/en/slash-commands),
+[Claude commands reference](https://code.claude.com/docs/en/commands),
+[Claude Code settings](https://code.claude.com/docs/en/settings),
+[Claude plugin reference](https://code.claude.com/docs/en/plugins-reference), and
+[Codex skills](https://developers.openai.com/codex/skills) documentation.
 
 ## Goals
 
@@ -77,21 +98,19 @@ activity-bar icon strip, open/close state, drag-to-resize, and SQLite persistenc
 - The activity-bar strip only renders when ≥2 tool views are active, which is already the
   case in normal configs; the Skills icon joins the existing row.
 
-### 2. Data source — reuse `get_skills_for_working_directory`
+### 2. Data source — an inspector projection over `SkillManager`
 
-The panel owns **no new model**. On render (and on watcher events) it calls
-`SkillManager::get_skills_for_working_directory(active_cwd, ctx) -> Vec<SkillDescriptor>`
-for the active session's working directory, then groups/filters for display. It subscribes
-to `SkillManagerEvent` (watcher-driven) to refresh automatically when skills change on disk.
+The panel owns **no mutable discovery model**. On render (and on watcher events) it requests the
+raw file-backed variants from `SkillManager`, without cross-provider content deduplication, then
+augments that read-only list with sources owned by the local agent installations: Claude legacy
+commands, plugins, managed/bundled skills, and nested contextual project skills; Codex
+admin/system/plugin skills. This is intentionally separate from
+`get_skills_for_working_directory`, whose deduplicated result remains the execution-facing API.
 
-**Active working directory tracking (must handle):** the left panel is workspace-level,
-but `get_skills_for_working_directory` is cwd-relative (project + ancestor skills depend on
-which directory the focused session is in). The panel must therefore resolve the *active
-tab's active pane cwd* and refresh when the active tab/pane or its cwd changes. The file
-tree already solves exactly this via `working_directories_model`
-(`left_panel.rs` `get_or_create_file_tree_view_for_pane_group`); the Skills panel reads the
-same source for the active session's cwd and re-queries on change. Home and Bundled skills
-are cwd-independent and always present; only Project-scope groups vary by cwd.
+**Active working directory tracking:** the file tree intentionally collapses terminal CWDs to
+repository display roots, but skill hierarchy is CWD-sensitive. The panel therefore reads the raw
+focused terminal CWD and refreshes when focus or CWD changes. Project ancestor and contextual
+groups update without changing the file explorer's root behavior.
 
 `SkillDescriptor` already carries everything a row needs: `name`, `description`, `scope`,
 `provider`, `icon_override`, and a `reference` (`SkillReference::Path | BundledSkillId`).
@@ -101,33 +120,15 @@ For the detail view's full body/path, resolve `reference → ParsedSkill` via
 
 ### 3. Grouping and the All / Claude / Codex subtabs
 
-- **All** subtab: show the deduplicated descriptor list grouped by `SkillScope`
-  (Home → Project → Bundled). Dedup-by-precedence (the function's default) is correct here —
-  we don't want to show the same skill twice.
-- **Claude / Codex** subtabs: **access-based** — show what that agent can actually read,
-  computed from `CLIAgent::<agent>.supported_skill_providers()`. Each inherited skill is
-  tagged with its source provider (e.g. under the Codex tab, an `.agents` skill is shown
-  tagged `agents (inherited)`).
+- **All:** union of the agent-specific catalogs plus other Warp-indexed providers. Only identical
+  file references are collapsed; same-name definitions at different paths remain visible.
+- **Claude:** groups in documented hierarchy order and annotates entries as active, contextual,
+  limited, shadowed, or disabled. Plugin scope (personal/project) and namespace are explicit.
+- **Codex:** groups personal, each active project ancestor, plugins, admin, and system/runtime
+  sources. Duplicate names remain separate because Codex documents that it does not merge them.
 
-  **Correctness note (must handle):** `get_skills_for_working_directory` deduplicates
-  identical skills across providers in the same directory, keeping the *highest-precedence*
-  provider's copy. So a skill present in both `.agents/skills` and `.claude/skills` survives
-  tagged `agents`. A naive "filter the All list where `provider == Claude`" would then
-  *under-count* Claude's access (it can read the `.claude` copy). The per-agent filter must
-  therefore test **reachability** — include a skill if *any* on-disk copy lives under a
-  provider in the agent's supported set — not just the surviving descriptor's tag.
-  Implementation options to resolve during planning:
-  (a) compute per-agent lists from the pre-dedup provider set, or
-  (b) extend `SkillManager` with a helper that answers "is this skill reachable by provider
-  set P in dir D" (the building blocks `skill_exists_for_any_provider` /
-  `best_supported_provider` already exist at `skill_manager.rs:272,297`).
-  Preference: (b) — keep the reachability logic in `SkillManager`, next to the existing
-  helpers, so the panel stays a thin view.
-
-- Subtab set is derived from agents Clinch knows about; for v1 we surface **All, Claude,
-  Codex** explicitly (the two the user named). The design leaves room to add more
-  (`Gemini`, `Agents`, …) later without structural change, since they're all `CLIAgent`
-  variants with `supported_skill_providers()`.
+Every row shows its concrete source path. Project group labels include the owning directory, so a
+monorepo root skill and a package-local skill cannot be mistaken for the same scope.
 
 ### 4. Skill row + detail view
 
@@ -235,22 +236,23 @@ Gate everything behind a new flag, following the repo's two-layer pattern (the
 
 ## Testing
 
-- **Unit (Rust):** the per-agent reachability filter (the dedup/inheritance edge case
-  from §3 — a skill in both `.agents` and `.claude` must appear under both All and the
-  Claude subtab); scope grouping; "Available to" inversion. Mirror
-  `app/src/ai/skills/skill_manager_tests.rs`.
+- **Unit (Rust):** retain cross-provider source variants; raw-CWD ancestor scoping; Claude
+  personal/project/enterprise precedence; skill-vs-command precedence; plugin namespace and
+  enabled state; `skillOverrides`; bundled controls; nested contextual discovery; recursive Codex
+  system discovery; disabled Codex paths.
 - **Integration:** mirror `crates/integration/src/test/file_tree.rs` — enable
   `FeatureFlag::SkillsPanel`, write skills into `.agents/skills` and `.claude/skills`,
-  toggle the panel, assert the tree groups/tags, switch subtabs, assert access-based
-  filtering. For Phase 2, feed a synthetic `tool_name == "Skill"` event and assert the
+  toggle the panel, assert every source variant remains available to the catalog, and include a
+  nested Claude project fixture. For Phase 2, feed a synthetic `tool_name == "Skill"` event and assert the
   banner + "Used this session" entry appear.
 - **Degraded path:** assert the panel renders with zero live events and with no
   marketplace plugin installed.
 
 ## Cleanup / dead-code review
 
-- `SkillDescriptor` (`listed_skill.rs`) is **live and widely used** (slash commands,
-  agent conversation, API conversion) — **reuse it; introduce no parallel row type.**
+- `SkillDescriptor` (`listed_skill.rs`) remains the underlying identity. `CatalogSkill` is a
+  display-only wrapper for source group, kind, and effective status; it never enters execution or
+  replaces the descriptor in existing consumers.
 - Skill telemetry types (`SkillOpenOrigin`, `SkillTelemetryEvent`) exist; the panel should
   emit through them (add a `SkillOpenOrigin::SkillsPanel`-style origin) rather than add new
   telemetry plumbing.

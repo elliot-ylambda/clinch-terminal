@@ -1,8 +1,10 @@
+mod catalog;
 mod grouping;
 use std::collections::{HashMap, HashSet};
 
-use ai::skills::SkillScope;
-pub(crate) use grouping::{group_skills_by_scope, providers_for_subtab, SkillsSubtab};
+use catalog::{catalog_for_subtab, group_catalog_skills, CatalogGroup, CatalogSkill};
+pub(crate) use grouping::{group_skills_by_scope, SkillsSubtab};
+use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::Icon;
 use warp_util::local_or_remote_path::LocalOrRemotePath;
 use warpui::elements::new_scrollable::{NewScrollable, ScrollableAppearance, SingleAxisConfig};
@@ -12,15 +14,14 @@ use warpui::elements::{
     ParentElement, Radius, ScrollbarWidth, Shrinkable, Text,
 };
 use warpui::platform::Cursor;
+use warpui::text_layout::ClipConfig;
 use warpui::ui_components::components::{Coords, UiComponentStyles};
 use warpui::ui_components::segmented_control::{
     LabelConfig, RenderableOptionConfig, SegmentedControl, SegmentedControlEvent,
 };
 use warpui::{AppContext, Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle};
 
-use crate::ai::skills::{
-    render_skill_button, SkillDescriptor, SkillManager, SkillManagerEvent, SkillReference,
-};
+use crate::ai::skills::{SkillManager, SkillManagerEvent};
 use crate::appearance::Appearance;
 
 /// Read-only skills inspector shown as a left-panel tool view.
@@ -29,16 +30,16 @@ pub struct SkillsPanel {
     subtab_control: ViewHandle<SegmentedControl<SkillsSubtab>>,
     /// Working directory of the active session; drives project-scope skills.
     working_directory: Option<LocalOrRemotePath>,
-    /// Scope groups (Home/Project/Bundled) the user has collapsed.
-    collapsed_scopes: HashSet<SkillScope>,
+    /// Source/hierarchy groups the user has collapsed.
+    collapsed_groups: HashSet<String>,
     scroll_state: ClippedScrollStateHandle,
     /// Per-skill row mouse states, keyed by skill name, so hover feedback survives
     /// re-renders triggered by unrelated state changes (e.g. a sibling skill's row).
     row_states: HashMap<String, MouseStateHandle>,
-    /// Per-scope-group header mouse states, keyed by scope, so hover feedback on a
+    /// Per-group header mouse states, keyed by stable catalog group ID, so hover feedback on a
     /// group header survives re-renders triggered by unrelated state changes (e.g. a
     /// subtab switch or a `HomeSkillsChanged` event) while the mouse sits stationary.
-    header_states: HashMap<SkillScope, MouseStateHandle>,
+    header_states: HashMap<String, MouseStateHandle>,
 }
 
 #[derive(Clone, Debug)]
@@ -53,8 +54,8 @@ pub enum SkillsPanelEvent {
 /// emit events via `ViewContext`. No keyboard actions in Phase 1.
 #[derive(Clone, Debug)]
 pub enum SkillsPanelAction {
-    /// Toggles whether a scope group (Home/Project/Bundled) is collapsed.
-    ToggleScope(SkillScope),
+    /// Toggles whether a source/hierarchy group is collapsed.
+    ToggleGroup(String),
     /// A skill row's open affordance was clicked.
     OpenSkillFile {
         path: LocalOrRemotePath,
@@ -103,12 +104,13 @@ impl SkillsPanel {
             ctx.notify();
         });
 
-        // Refresh when home skills change on disk. Project skills are re-read on
-        // `set_working_directory` and on every render (cheap — a HashMap walk).
+        // Refresh when any indexed skill changes on disk. Commands and plugin registries are
+        // also re-read on every render, so reopening or repainting the panel reflects their
+        // current state without changing the execution catalog.
         ctx.subscribe_to_model(
             &SkillManager::handle(ctx),
             |me, _model, event, ctx| match event {
-                SkillManagerEvent::HomeSkillsChanged => {
+                SkillManagerEvent::HomeSkillsChanged | SkillManagerEvent::SkillsChanged => {
                     me.sync_row_states(ctx);
                     ctx.notify();
                 }
@@ -118,7 +120,7 @@ impl SkillsPanel {
         let mut this = Self {
             subtab_control,
             working_directory: None,
-            collapsed_scopes: HashSet::new(),
+            collapsed_groups: HashSet::new(),
             scroll_state: ClippedScrollStateHandle::default(),
             row_states: HashMap::new(),
             header_states: HashMap::new(),
@@ -146,32 +148,38 @@ impl SkillsPanel {
         self.subtab_control.as_ref(app).selected_option()
     }
 
-    /// Fetch + filter skills for the active subtab and working directory.
-    fn current_skills(&self, app: &AppContext) -> Vec<SkillDescriptor> {
+    /// Build the inspector catalog for the active agent and working directory.
+    fn current_catalog(&self, app: &AppContext) -> Vec<CatalogSkill> {
         let manager = SkillManager::as_ref(app);
-        let cwd = self.working_directory.as_ref();
-        match providers_for_subtab(self.active_subtab(app)) {
-            None => manager.get_skills_for_working_directory(cwd, app),
-            Some(providers) => manager.skills_for_providers(cwd, providers, app),
-        }
+        catalog_for_subtab(
+            manager,
+            self.active_subtab(app),
+            self.working_directory.as_ref(),
+            app,
+        )
     }
 
     /// Ensures every skill currently in scope has a persistent mouse-state handle, so hover
     /// feedback on a row survives a re-render triggered by something else changing.
     fn sync_row_states(&mut self, ctx: &mut ViewContext<Self>) {
-        let skills = self.current_skills(ctx);
+        let skills = self.current_catalog(ctx);
         for skill in &skills {
-            self.row_states.entry(skill.name.clone()).or_default();
-            self.header_states.entry(skill.scope).or_default();
+            self.row_states.entry(skill.stable_id()).or_default();
+            self.header_states
+                .entry(skill.group.id.clone())
+                .or_default();
         }
     }
 
-    fn row_state(&self, name: &str) -> MouseStateHandle {
-        self.row_states.get(name).cloned().unwrap_or_default()
+    fn row_state(&self, id: &str) -> MouseStateHandle {
+        self.row_states.get(id).cloned().unwrap_or_default()
     }
 
-    fn header_state(&self, scope: SkillScope) -> MouseStateHandle {
-        self.header_states.get(&scope).cloned().unwrap_or_default()
+    fn header_state(&self, group_id: &str) -> MouseStateHandle {
+        self.header_states
+            .get(group_id)
+            .cloned()
+            .unwrap_or_default()
     }
 
     fn render_subtab_bar(&self) -> Box<dyn Element> {
@@ -181,14 +189,41 @@ impl SkillsPanel {
             .finish()
     }
 
-    fn render_group(
+    fn render_hierarchy_summary(
         &self,
-        scope: SkillScope,
-        skills: &[SkillDescriptor],
+        subtab: SkillsSubtab,
         appearance: &Appearance,
     ) -> Box<dyn Element> {
         let theme = appearance.theme();
-        let is_collapsed = self.collapsed_scopes.contains(&scope);
+        let summary = match subtab {
+            SkillsSubtab::All => {
+                "Every discovered source is shown. Choose Claude or Codex for agent-specific scope and precedence."
+            }
+            SkillsSubtab::Claude => {
+                "Claude precedence: enterprise → personal → project → bundled. Plugin skills are namespaced; nested project skills are contextual."
+            }
+            SkillsSubtab::Codex => {
+                "Codex scans .agents/skills from the active folder up to the repo root, plus personal, admin, system, and enabled plugin skills. Duplicate names remain separate."
+            }
+        };
+        Container::new(
+            Text::new(summary, appearance.ui_font_family(), 10.)
+                .with_color(theme.sub_text_color(theme.background()).into())
+                .finish(),
+        )
+        .with_horizontal_padding(10.)
+        .with_padding_bottom(6.)
+        .finish()
+    }
+
+    fn render_group(
+        &self,
+        group: &CatalogGroup,
+        skills: &[CatalogSkill],
+        appearance: &Appearance,
+    ) -> Box<dyn Element> {
+        let theme = appearance.theme();
+        let is_collapsed = self.collapsed_groups.contains(&group.id);
 
         let chevron_icon = if is_collapsed {
             Icon::ChevronRight
@@ -203,8 +238,12 @@ impl SkillsPanel {
         .with_width(12.)
         .with_height(12.);
 
-        let title = Text::new_inline(scope_header_label(scope), appearance.ui_font_family(), 11.)
-            .with_color(theme.sub_text_color(theme.background()).into());
+        let title = Text::new_inline(
+            format!("{}  {}", group.label, skills.len()),
+            appearance.ui_font_family(),
+            11.,
+        )
+        .with_color(theme.sub_text_color(theme.background()).into());
 
         let header_row = Flex::row()
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
@@ -213,7 +252,8 @@ impl SkillsPanel {
             .with_child(title.finish())
             .finish();
 
-        let header = Hoverable::new(self.header_state(scope), move |mouse_state| {
+        let group_id = group.id.clone();
+        let header = Hoverable::new(self.header_state(&group.id), move |mouse_state| {
             let mut container = Container::new(header_row)
                 .with_horizontal_padding(8.)
                 .with_vertical_padding(4.);
@@ -224,7 +264,7 @@ impl SkillsPanel {
         })
         .with_cursor(Cursor::PointingHand)
         .on_click(move |ctx, _, _| {
-            ctx.dispatch_typed_action(SkillsPanelAction::ToggleScope(scope));
+            ctx.dispatch_typed_action(SkillsPanelAction::ToggleGroup(group_id.clone()));
         })
         .finish();
 
@@ -233,41 +273,83 @@ impl SkillsPanel {
 
         if !is_collapsed {
             for skill in skills {
-                let button_handle = self.row_state(&skill.name);
-                let action_mouse_state = button_handle.clone();
-                let path = match &skill.reference {
-                    SkillReference::Path(p) => Some(p.clone()),
-                    SkillReference::BundledSkillId(_) => None,
-                };
-                let row = render_skill_button(
-                    &skill.name,
-                    button_handle,
-                    appearance,
-                    skill.provider,
-                    skill.icon_override,
-                    move |ctx| {
-                        if let Some(path) = path.clone() {
-                            ctx.dispatch_typed_action(SkillsPanelAction::OpenSkillFile {
-                                path,
-                                mouse_state: action_mouse_state.clone(),
-                            });
-                        }
-                    },
-                );
-                column =
-                    column.with_child(Container::new(row).with_horizontal_padding(8.).finish());
+                column = column.with_child(self.render_catalog_row(skill, appearance));
             }
         }
 
         column.finish()
     }
-}
 
-fn scope_header_label(scope: SkillScope) -> &'static str {
-    match scope {
-        SkillScope::Home => "Home",
-        SkillScope::Project => "Project",
-        SkillScope::Bundled => "Bundled",
+    fn render_catalog_row(
+        &self,
+        skill: &CatalogSkill,
+        appearance: &Appearance,
+    ) -> Box<dyn Element> {
+        let theme = appearance.theme();
+        let mouse_state = self.row_state(&skill.stable_id());
+        let action_mouse_state = mouse_state.clone();
+        let icon = skill
+            .descriptor
+            .icon_override
+            .unwrap_or_else(|| skill.descriptor.provider.icon());
+        let fallback_fill = internal_colors::fg_overlay_6(theme);
+        let icon_fill = if skill.descriptor.icon_override.is_some() {
+            fallback_fill
+        } else {
+            skill.descriptor.provider.icon_fill(fallback_fill)
+        };
+        let icon = ConstrainedBox::new(icon.to_warpui_icon(icon_fill).finish())
+            .with_width(14.)
+            .with_height(14.)
+            .finish();
+        let name = Text::new_inline(
+            skill.display_name.clone(),
+            appearance.ui_font_family(),
+            appearance.ui_font_size(),
+        )
+        .with_clip(ClipConfig::ellipsis())
+        .with_color(theme.main_text_color(theme.background()).into())
+        .finish();
+        let subtitle = Text::new_inline(skill.subtitle(), appearance.ui_font_family(), 10.)
+            .with_clip(ClipConfig::ellipsis())
+            .with_color(theme.sub_text_color(theme.background()).into())
+            .finish();
+        let text = Flex::column()
+            .with_main_axis_size(MainAxisSize::Min)
+            .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .with_spacing(1.)
+            .with_child(name)
+            .with_child(subtitle)
+            .finish();
+        let content = Flex::row()
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_spacing(6.)
+            .with_child(icon)
+            .with_child(Shrinkable::new(1.0, text).finish())
+            .finish();
+
+        let mut row = Hoverable::new(mouse_state, move |state| {
+            let mut container = Container::new(content)
+                .with_horizontal_padding(8.)
+                .with_vertical_padding(5.);
+            if state.is_hovered() {
+                container = container.with_background(theme.surface_overlay_1());
+            }
+            container.finish()
+        });
+        if let Some(path) = skill.path() {
+            row = row
+                .with_cursor(Cursor::PointingHand)
+                .on_click(move |ctx, _, _| {
+                    ctx.dispatch_typed_action(SkillsPanelAction::OpenSkillFile {
+                        path: path.clone(),
+                        mouse_state: action_mouse_state.clone(),
+                    });
+                });
+        }
+        Container::new(row.finish())
+            .with_horizontal_padding(8.)
+            .finish()
     }
 }
 
@@ -297,9 +379,9 @@ impl TypedActionView for SkillsPanel {
 
     fn handle_action(&mut self, action: &Self::Action, ctx: &mut ViewContext<Self>) {
         match action {
-            SkillsPanelAction::ToggleScope(scope) => {
-                if !self.collapsed_scopes.remove(scope) {
-                    self.collapsed_scopes.insert(*scope);
+            SkillsPanelAction::ToggleGroup(group_id) => {
+                if !self.collapsed_groups.remove(group_id) {
+                    self.collapsed_groups.insert(group_id.clone());
                 }
                 ctx.notify();
             }
@@ -325,8 +407,8 @@ impl View for SkillsPanel {
         let theme = appearance.theme();
         let active_subtab = self.active_subtab(app);
 
-        let skills = self.current_skills(app);
-        let grouped = group_skills_by_scope(skills);
+        let skills = self.current_catalog(app);
+        let grouped = group_catalog_skills(skills);
 
         let mut list_column = Flex::column().with_cross_axis_alignment(CrossAxisAlignment::Stretch);
 
@@ -350,8 +432,8 @@ impl View for SkillsPanel {
                 .finish(),
             );
         } else {
-            for (scope, group) in &grouped {
-                list_column = list_column.with_child(self.render_group(*scope, group, appearance));
+            for (group, skills) in &grouped {
+                list_column = list_column.with_child(self.render_group(group, skills, appearance));
             }
         }
 
@@ -372,6 +454,7 @@ impl View for SkillsPanel {
             .with_main_axis_size(MainAxisSize::Max)
             .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
             .with_child(self.render_subtab_bar())
+            .with_child(self.render_hierarchy_summary(active_subtab, appearance))
             .with_child(Shrinkable::new(1.0, scrollable).finish())
             .finish()
     }

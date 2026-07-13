@@ -261,6 +261,88 @@ impl SkillManager {
         skills
     }
 
+    /// Returns every file-backed skill variant in scope without cross-provider
+    /// deduplication.
+    ///
+    /// Agent execution should continue to use [`Self::get_skills_for_working_directory`].
+    /// This raw view exists for inspectors that need to explain where each copy came from
+    /// and whether another copy shadows it.
+    pub fn file_skill_variants_for_working_directory(
+        &self,
+        working_directory: Option<&LocalOrRemotePath>,
+        ctx: &AppContext,
+    ) -> Vec<SkillDescriptor> {
+        let path_origin = match working_directory {
+            Some(LocalOrRemotePath::Remote(path)) => SkillPathOrigin::Remote {
+                host_id: path.host_id.clone(),
+            },
+            Some(LocalOrRemotePath::Local(_)) | None => SkillPathOrigin::Local,
+        };
+
+        self.descriptors_for_paths(
+            self.collect_in_scope_skill_paths(working_directory, &path_origin, ctx)
+                .into_iter()
+                .map(|(_, path)| path),
+        )
+    }
+
+    /// Returns project skills below `working_directory` for `provider`.
+    ///
+    /// Claude discovers nested `.claude/skills` directories on demand as it works in
+    /// their subtrees. Those skills are not active ancestors of the current CWD, so they
+    /// are intentionally exposed separately for the Skills panel to label as contextual.
+    pub fn descendant_file_skill_variants_for_provider(
+        &self,
+        working_directory: &LocalOrRemotePath,
+        provider: SkillProvider,
+        ctx: &AppContext,
+    ) -> Vec<SkillDescriptor> {
+        let repo_root = repo_metadata::repositories::DetectedRepositories::as_ref(ctx)
+            .get_root_for_path(working_directory);
+
+        let paths = self
+            .directory_skills
+            .iter()
+            .filter(|(dir, _)| {
+                !self.is_home_directory(dir)
+                    && dir.starts_with(working_directory)
+                    && *dir != working_directory
+                    && repo_root.as_ref().is_none_or(|root| dir.starts_with(root))
+            })
+            .flat_map(|(_, paths)| paths)
+            .filter(|path| {
+                self.skills_by_path
+                    .get(*path)
+                    .is_some_and(|skill| skill.provider == provider)
+            })
+            .cloned();
+
+        self.descriptors_for_paths(paths)
+    }
+
+    fn descriptors_for_paths(
+        &self,
+        paths: impl IntoIterator<Item = LocalOrRemotePath>,
+    ) -> Vec<SkillDescriptor> {
+        let mut descriptors: Vec<_> = paths
+            .into_iter()
+            .filter_map(|path| self.skills_by_path.get(&path))
+            .cloned()
+            .map(SkillDescriptor::from)
+            .collect();
+        for descriptor in &mut descriptors {
+            descriptor.icon_override =
+                crate::ai::skills::skill_utils::icon_override_for_skill_name(&descriptor.name);
+        }
+        descriptors.sort_by(|a, b| {
+            a.name
+                .to_lowercase()
+                .cmp(&b.name.to_lowercase())
+                .then_with(|| a.reference.to_string().cmp(&b.reference.to_string()))
+        });
+        descriptors
+    }
+
     /// Returns the currently-known home skill file paths.
     pub fn home_skill_paths(&self) -> Vec<LocalOrRemotePath> {
         let Some(home_dir) = self.home_directory_for_origin(&SkillPathOrigin::Local) else {
@@ -609,6 +691,7 @@ impl SkillManager {
                 self.handle_skills_deleted(paths);
             }
         }
+        ctx.emit(SkillManagerEvent::SkillsChanged);
         if home_skills_changed {
             ctx.emit(SkillManagerEvent::HomeSkillsChanged);
         }

@@ -690,6 +690,7 @@ impl ServerModel {
                 SkillManagerEvent::HomeSkillsChanged => {
                     me.refresh_remote_agent_context_snapshot(ctx);
                 }
+                SkillManagerEvent::SkillsChanged => {}
             });
         }
         {

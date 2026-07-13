@@ -204,6 +204,17 @@ fn toolbelt_tooltip_keybinding(binding_names: &[&'static str], app: &AppContext)
     (!parts.is_empty()).then(|| parts.join(", "))
 }
 
+fn skills_working_directory(
+    pane_group: &ViewHandle<PaneGroup>,
+    app: &AppContext,
+) -> Option<LocalOrRemotePath> {
+    let pane_group = pane_group.as_ref(app);
+    pane_group
+        .focused_session_view(app)
+        .or_else(|| pane_group.active_session_view(app))
+        .and_then(|terminal| terminal.as_ref(app).pwd_as_local_or_remote(app))
+}
+
 impl LeftPanelView {
     pub fn new(
         working_directories_model: ModelHandle<WorkingDirectoriesModel>,
@@ -273,6 +284,23 @@ impl LeftPanelView {
         );
 
         ctx.subscribe_to_model(&working_directories_model, |me, _, event, ctx| {
+            if let WorkingDirectoriesEvent::FocusedRepoChanged { pane_group_id, .. } = event {
+                let Some(active_pane_group) = me
+                    .active_pane_group
+                    .as_ref()
+                    .and_then(|pane_group| pane_group.upgrade(ctx))
+                else {
+                    return;
+                };
+                if active_pane_group.id() != *pane_group_id {
+                    return;
+                }
+                let cwd = skills_working_directory(&active_pane_group, ctx);
+                me.skills_panel_view.update(ctx, |view, ctx| {
+                    view.set_working_directory(cwd, ctx);
+                });
+                return;
+            }
             if let WorkingDirectoriesEvent::DirectoriesChanged {
                 pane_group_id,
                 directories,
@@ -336,11 +364,10 @@ impl LeftPanelView {
                     }
                 });
 
-                // `directories` is already ordered most-recent-first (see
-                // `emit_directories_changed`), so its head is the active working directory for
-                // this pane group — the same source `set_active_pane_group` uses, so project
-                // skills stay in sync with live `cd`s, not just tab switches.
-                let cwd = directories.first().map(|dir| dir.path.clone());
+                // The directories model intentionally collapses terminal CWDs to repository
+                // display roots for the file tree. Skill hierarchy is CWD-sensitive, so read the
+                // raw focused/active terminal CWD instead.
+                let cwd = skills_working_directory(&active_pane_group, ctx);
                 me.skills_panel_view.update(ctx, |view, ctx| {
                     view.set_working_directory(cwd, ctx);
                 });
@@ -698,10 +725,9 @@ impl LeftPanelView {
             }
         });
 
-        // `active_directories` is already ordered most-recent-first (see above), so its
-        // head is the active working directory for this pane group — the same source the
-        // file tree uses for its root directories.
-        let cwd = active_directories.first().map(|dir| dir.path.clone());
+        // File-tree roots are repository-collapsed; skill discovery must use the raw terminal
+        // CWD so folder-local `.agents/skills` and `.claude/skills` are represented correctly.
+        let cwd = skills_working_directory(&pane_group, ctx);
         self.skills_panel_view.update(ctx, |view, ctx| {
             view.set_working_directory(cwd, ctx);
         });

@@ -1,6 +1,7 @@
 use fuzzy_match::{match_indices_case_insensitive, FuzzyMatchResult};
 use warpui::{AppContext, Entity};
 
+use super::provider_display_name;
 use crate::agent_resume::{self, AgentConversation};
 use crate::search::command_palette::agent_conversations::search_item::AgentConversationSearchItem;
 use crate::search::command_palette::mixer::CommandPaletteItemAction;
@@ -14,7 +15,8 @@ use crate::search::SyncDataSource;
 const MAX_RECENT_CONVERSATIONS: usize = 50;
 
 /// Data source for the "Reopen agent conversation" picker: recent CLI-agent
-/// (Claude/Codex) conversations read from the agent-resume journal + prompt mirror.
+/// (Claude/Codex) conversations registered to Clinch panes, with titles enriched
+/// from matching prompt mirrors or native agent transcripts.
 #[derive(Default)]
 pub struct DataSource {
     conversations: Vec<AgentConversation>,
@@ -54,12 +56,7 @@ impl SyncDataSource for DataSource {
             let match_result = if needle.is_empty() {
                 FuzzyMatchResult::no_match()
             } else {
-                let haystack = format!(
-                    "{} {} {}",
-                    conversation.first_prompt.as_deref().unwrap_or(""),
-                    conversation.cwd.as_deref().unwrap_or(""),
-                    conversation.session_id
-                );
+                let haystack = searchable_text(conversation);
                 match match_indices_case_insensitive(&haystack, &needle) {
                     Some(match_result) => match_result,
                     None => continue,
@@ -85,6 +82,21 @@ impl SyncDataSource for DataSource {
     }
 }
 
+fn searchable_text(conversation: &AgentConversation) -> String {
+    format!(
+        "{} {} {} {} {}",
+        conversation.first_prompt.as_deref().unwrap_or(""),
+        conversation.cwd.as_deref().unwrap_or(""),
+        conversation.session_id,
+        conversation.agent,
+        provider_display_name(&conversation.agent),
+    )
+}
+
 impl Entity for DataSource {
     type Event = ();
 }
+
+#[cfg(test)]
+#[path = "data_source_tests.rs"]
+mod tests;

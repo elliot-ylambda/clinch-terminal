@@ -26,6 +26,11 @@ pub use ai::skills::SkillReference;
 #[cfg_attr(target_family = "wasm", allow(dead_code))]
 pub enum SkillManagerEvent {
     HomeSkillsChanged,
+    /// Any file-backed skill changed, including project-scoped skills.
+    ///
+    /// Consumers that only publish home-skill snapshots should continue to listen to
+    /// `HomeSkillsChanged`; inspectors should listen to both events.
+    SkillsChanged,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -96,7 +101,8 @@ cfg_if::cfg_if! {
     if #[cfg(feature = "local_fs")] {
         mod skill_manager;
         pub use skill_manager::{
-            read_skills_from_directories, SkillManager, SkillWatcher,
+            extract_skill_parent_directory, read_skills_from_directories, SkillManager,
+            SkillWatcher,
         };
     }
 }

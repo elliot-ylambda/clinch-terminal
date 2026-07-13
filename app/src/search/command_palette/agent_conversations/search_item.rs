@@ -3,8 +3,10 @@ use fuzzy_match::FuzzyMatchResult;
 use ordered_float::OrderedFloat;
 use warpui::elements::{Container, Expanded, Flex, MainAxisSize, ParentElement, Text};
 use warpui::fonts::{Properties, Weight};
+use warpui::text_layout::ClipConfig;
 use warpui::{AppContext, Element, SingletonEntity};
 
+use super::{cli_agent_for_resume_provider, provider_display_name};
 use crate::agent_resume::AgentConversation;
 use crate::appearance::Appearance;
 use crate::search::command_palette::mixer::CommandPaletteItemAction;
@@ -15,8 +17,8 @@ use crate::search::SearchItem;
 use crate::ui_components::icons::Icon;
 use crate::util::time_format::format_approx_duration_from_now_utc;
 
-/// Search item for one reopenable CLI-agent conversation: first prompt as the title,
-/// directory + bridged/local as the subtitle, relative start time on the right.
+/// Search item for one reopenable CLI-agent conversation: opening user prompt as the
+/// title, directory + bridged/local as the subtitle, relative start time on the right.
 #[derive(Debug)]
 pub struct AgentConversationSearchItem {
     conversation: AgentConversation,
@@ -44,8 +46,9 @@ impl AgentConversationSearchItem {
         }
     }
 
-    /// The first mirrored prompt; sessions without a mirror (e.g. codex) fall back to
-    /// an agent + short-id label so the row is still recognizable.
+    /// The first user prompt recovered from the capture mirror or native transcript.
+    /// Sessions without either fall back to an agent + short-id label so the row remains
+    /// recognizable.
     fn title(&self) -> String {
         match self.conversation.first_prompt.as_deref() {
             Some(prompt) => prompt.to_string(),
@@ -56,7 +59,10 @@ impl AgentConversationSearchItem {
                     .chars()
                     .take(8)
                     .collect::<String>();
-                format!("{} session {short_id}", self.conversation.agent)
+                format!(
+                    "{} session {short_id}",
+                    provider_display_name(&self.conversation.agent)
+                )
             }
         }
     }
@@ -69,9 +75,10 @@ impl AgentConversationSearchItem {
         } else {
             "local"
         };
+        let provider = provider_display_name(&self.conversation.agent);
         match self.conversation.cwd.as_deref() {
-            Some(cwd) => format!("{cwd} · {location}"),
-            None => location.to_string(),
+            Some(cwd) => format!("{cwd} · {provider} · {location}"),
+            None => format!("{provider} · {location}"),
         }
     }
 }
@@ -88,12 +95,14 @@ impl SearchItem for AgentConversationSearchItem {
         highlight_state: ItemHighlightState,
         appearance: &Appearance,
     ) -> Box<dyn Element> {
-        render_search_item_icon(
-            appearance,
-            Icon::Conversation,
-            appearance.theme().foreground().into_solid(),
-            highlight_state,
-        )
+        let agent = cli_agent_for_resume_provider(&self.conversation.agent);
+        let icon = agent
+            .and_then(|agent| agent.icon())
+            .unwrap_or(Icon::Conversation);
+        let color = agent
+            .and_then(|agent| agent.brand_color())
+            .unwrap_or_else(|| appearance.theme().foreground().into_solid());
+        render_search_item_icon(appearance, icon, color, highlight_state)
     }
 
     fn icon_location(&self, appearance: &Appearance) -> IconLocation {
@@ -119,6 +128,7 @@ impl SearchItem for AgentConversationSearchItem {
         )
         .with_color(highlight_state.sub_text_fill(appearance).into_solid())
         .with_style(Properties::default().weight(Weight::Bold))
+        .with_clip(ClipConfig::ellipsis())
         .finish();
 
         let subtitle_element = Text::new_inline(
@@ -127,6 +137,7 @@ impl SearchItem for AgentConversationSearchItem {
             sub_text_font_size,
         )
         .with_color(highlight_state.sub_text_fill(appearance).into_solid())
+        .with_clip(ClipConfig::ellipsis())
         .finish();
 
         let left_container = Flex::column()
@@ -170,10 +181,18 @@ impl SearchItem for AgentConversationSearchItem {
     }
 
     fn accessibility_label(&self) -> String {
-        format!("Agent conversation: {}", self.title())
+        format!(
+            "{} conversation: {}",
+            provider_display_name(&self.conversation.agent),
+            self.title()
+        )
     }
 
     fn accessibility_help_message(&self) -> Option<String> {
         Some("Press enter to reopen this conversation in a new tab.".into())
     }
 }
+
+#[cfg(test)]
+#[path = "search_item_tests.rs"]
+mod tests;

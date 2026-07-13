@@ -3,11 +3,13 @@
 //! specs/claude-transcript-durability/ and
 //! docs/superpowers/specs/2026-06-20-warp-agent-session-resume-design.md).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
+use serde_json::Value;
+use walkdir::WalkDir;
 
 use crate::channel::ChannelState;
 
@@ -314,14 +316,12 @@ pub fn read_fork_launch(uuid: &[u8]) -> Option<ForkLaunch> {
     read_fork_launch_in(&dir, &hex::encode(uuid))
 }
 
-/// A past CLI-agent conversation, aggregated from the append-only registry journal and
-/// the prompt mirror. This is the Rust equivalent of `clinch-agent-resume list`: the
-/// journal keeps every (pane, session, bridge, cwd) tuple ever recorded, and the mirror
-/// covers sessions the registry never saw (e.g. nested claude runs).
+/// A past CLI-agent conversation registered to a Clinch pane. The append-only journal
+/// provides session identity and provider, while prompt mirrors and native agent
+/// transcripts enrich matching sessions with their first prompt.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AgentConversation {
-    /// `claude` or `codex` (mirror-only sessions are always claude — codex has no
-    /// prompt mirror).
+    /// `claude` or `codex`, as recorded by the Clinch registry journal.
     pub agent: String,
     pub session_id: String,
     /// The conversation's recorded working directory, if any sighting carried one.
@@ -331,7 +331,8 @@ pub struct AgentConversation {
     /// ISO-8601 UTC timestamp of the conversation's first sighting (journal write or
     /// first mirrored prompt, whichever is earlier).
     pub start_ts: String,
-    /// Single-line excerpt of the first mirrored prompt, if the session has a mirror.
+    /// Single-line excerpt of the first user prompt, if it can be recovered from a prompt
+    /// mirror or the agent's native transcript.
     pub first_prompt: Option<String>,
     /// Launch flags recorded with the latest journal write (leading space when
     /// non-empty), e.g. ` --dangerously-skip-permissions --model opus`.
@@ -393,6 +394,7 @@ pub fn recent_conversations(limit: usize) -> Vec<AgentConversation> {
 
 fn recent_conversations_in(dir: &Path, limit: usize) -> Vec<AgentConversation> {
     let mut sightings = Vec::new();
+    let mut journal_claude_session_ids = HashSet::new();
 
     // Journal writes: session id + flags come from the recorded launch command; lines
     // whose command is not a Clinch/legacy resume-launch form (or that are malformed)
@@ -408,6 +410,9 @@ fn recent_conversations_in(dir: &Path, limit: usize) -> Vec<AgentConversation> {
             let Some(launch) = record.command.as_deref().and_then(parse_launch_command) else {
                 continue;
             };
+            if launch.agent == "claude" {
+                journal_claude_session_ids.insert(launch.id.to_string());
+            }
             let recorded_bridge = record.bridge.filter(|bridge| !bridge.is_empty());
             let (bridge, clear_bridge) = if record.op == "write" {
                 (recorded_bridge, None)
@@ -426,9 +431,11 @@ fn recent_conversations_in(dir: &Path, limit: usize) -> Vec<AgentConversation> {
         }
     }
 
-    // Prompt-mirror files: cover sessions the registry never recorded, and provide the
-    // first-prompt excerpt. Only the first line is read — it is the session's earliest
-    // prompt (files are append-only), and mirror files can grow to ~5 MB.
+    // Prompt-mirror files enrich journal-backed Claude sessions with their first-prompt
+    // excerpt and earliest timestamp. Mirror-only sessions are deliberately excluded:
+    // the global Claude hook also sees nested/background helpers that were never owned
+    // by a Clinch pane, and those entries otherwise swamp the in-app finder. Only the
+    // first line is read because mirror files are append-only and can grow to ~5 MB.
     let mut first_prompts = HashMap::new();
     if let Ok(entries) = std::fs::read_dir(dir.join("prompts")) {
         for entry in entries.flatten() {
@@ -441,6 +448,9 @@ fn recent_conversations_in(dir: &Path, limit: usize) -> Vec<AgentConversation> {
             else {
                 continue;
             };
+            if !journal_claude_session_ids.contains(&session_id) {
+                continue;
+            }
             let Some(line) = read_first_line(&path) else {
                 continue;
             };
@@ -504,7 +514,7 @@ fn recent_conversations_in(dir: &Path, limit: usize) -> Vec<AgentConversation> {
         }
     }
 
-    order
+    let mut conversations: Vec<_> = order
         .into_iter()
         .rev()
         .take(limit)
@@ -513,7 +523,211 @@ fn recent_conversations_in(dir: &Path, limit: usize) -> Vec<AgentConversation> {
             conversation.first_prompt = first_prompts.remove(&session_id);
             Some(conversation)
         })
-        .collect()
+        .collect();
+    enrich_missing_first_prompts_from_transcripts(&mut conversations, &agent_transcript_roots());
+    conversations
+}
+
+#[derive(Default)]
+struct AgentTranscriptRoots {
+    claude_projects: Option<PathBuf>,
+    codex_sessions: Option<PathBuf>,
+}
+
+fn agent_transcript_roots() -> AgentTranscriptRoots {
+    let home = dirs::home_dir();
+    let claude_config = std::env::var_os("CLAUDE_CONFIG_DIR")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| home.as_ref().map(|home| home.join(".claude")));
+    let codex_home = std::env::var_os("CODEX_HOME")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| home.map(|home| home.join(".codex")));
+    AgentTranscriptRoots {
+        claude_projects: claude_config.map(|root| root.join("projects")),
+        codex_sessions: codex_home.map(|root| root.join("sessions")),
+    }
+}
+
+/// Prompt mirrors are the cheapest and most precise source, but older Claude sessions and
+/// Codex sessions may not have one. Fill only those gaps from the agents' native transcripts.
+/// This runs once when the picker opens and scans each transcript tree at most once.
+fn enrich_missing_first_prompts_from_transcripts(
+    conversations: &mut [AgentConversation],
+    roots: &AgentTranscriptRoots,
+) {
+    for (agent, root) in [
+        ("claude", roots.claude_projects.as_deref()),
+        ("codex", roots.codex_sessions.as_deref()),
+    ] {
+        let session_ids: HashSet<_> = conversations
+            .iter()
+            .filter(|conversation| {
+                conversation.agent == agent && conversation.first_prompt.is_none()
+            })
+            .map(|conversation| conversation.session_id.clone())
+            .collect();
+        let Some(root) = root.filter(|root| !session_ids.is_empty() && root.is_dir()) else {
+            continue;
+        };
+        let first_prompts = discover_first_prompts(root, agent, session_ids);
+        for conversation in conversations.iter_mut().filter(|conversation| {
+            conversation.agent == agent && conversation.first_prompt.is_none()
+        }) {
+            conversation.first_prompt = first_prompts.get(&conversation.session_id).cloned();
+        }
+    }
+}
+
+fn discover_first_prompts(
+    root: &Path,
+    agent: &str,
+    mut remaining_session_ids: HashSet<String>,
+) -> HashMap<String, String> {
+    let mut first_prompts = HashMap::new();
+    for entry in WalkDir::new(root)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_file())
+    {
+        if remaining_session_ids.is_empty() {
+            break;
+        }
+        let path = entry.path();
+        let Some(session_id) = transcript_session_id(path, agent, &remaining_session_ids) else {
+            continue;
+        };
+        let prompt = match agent {
+            "claude" => first_prompt_from_claude_transcript(path),
+            "codex" => first_prompt_from_codex_transcript(path),
+            _ => None,
+        };
+        let Some(prompt) = prompt else { continue };
+        remaining_session_ids.remove(&session_id);
+        first_prompts.insert(session_id, prompt);
+    }
+    first_prompts
+}
+
+fn transcript_session_id(
+    path: &Path,
+    agent: &str,
+    remaining_session_ids: &HashSet<String>,
+) -> Option<String> {
+    let file_name = path.file_name()?.to_str()?;
+    let stem = file_name.strip_suffix(".jsonl")?;
+    match agent {
+        "claude" => {
+            if path
+                .components()
+                .any(|component| component.as_os_str() == "subagents")
+            {
+                return None;
+            }
+            remaining_session_ids
+                .contains(stem)
+                .then(|| stem.to_string())
+        }
+        "codex" if file_name.starts_with("rollout-") => remaining_session_ids
+            .iter()
+            .find(|session_id| stem.ends_with(&format!("-{session_id}")))
+            .cloned(),
+        _ => None,
+    }
+}
+
+fn first_prompt_from_claude_transcript(path: &Path) -> Option<String> {
+    let file = std::fs::File::open(path).ok()?;
+    for line in std::io::BufReader::new(file).lines().map_while(Result::ok) {
+        let Ok(record) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if record.get("type").and_then(Value::as_str) != Some("user")
+            || record.get("isMeta").and_then(Value::as_bool) == Some(true)
+        {
+            continue;
+        }
+        let Some(text) = user_content_text(record.pointer("/message/content"), "text") else {
+            continue;
+        };
+        if let Some(preview) = non_empty_prompt_excerpt(&text) {
+            return Some(preview);
+        }
+    }
+    None
+}
+
+fn first_prompt_from_codex_transcript(path: &Path) -> Option<String> {
+    let file = std::fs::File::open(path).ok()?;
+    let mut response_item_fallback = None;
+    for line in std::io::BufReader::new(file).lines().map_while(Result::ok) {
+        let Ok(record) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if record.get("type").and_then(Value::as_str) == Some("event_msg")
+            && record.pointer("/payload/type").and_then(Value::as_str) == Some("user_message")
+        {
+            if let Some(preview) = record
+                .pointer("/payload/message")
+                .and_then(Value::as_str)
+                .and_then(non_empty_prompt_excerpt)
+            {
+                return Some(preview);
+            }
+        }
+
+        if response_item_fallback.is_none()
+            && record.get("type").and_then(Value::as_str) == Some("response_item")
+            && record.pointer("/payload/type").and_then(Value::as_str) == Some("message")
+            && record.pointer("/payload/role").and_then(Value::as_str) == Some("user")
+        {
+            let Some(text) = user_content_text(record.pointer("/payload/content"), "input_text")
+            else {
+                continue;
+            };
+            if !is_generated_codex_context(&text) {
+                response_item_fallback = non_empty_prompt_excerpt(&text);
+            }
+        }
+    }
+    response_item_fallback
+}
+
+fn user_content_text(content: Option<&Value>, text_block_type: &str) -> Option<String> {
+    match content? {
+        Value::String(text) => Some(text.clone()),
+        Value::Array(blocks) => {
+            let text = blocks
+                .iter()
+                .filter(|block| block.get("type").and_then(Value::as_str) == Some(text_block_type))
+                .filter_map(|block| block.get("text").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("\n");
+            (!text.is_empty()).then_some(text)
+        }
+        _ => None,
+    }
+}
+
+fn is_generated_codex_context(text: &str) -> bool {
+    let text = text.trim_start();
+    [
+        "<environment_context>",
+        "<permissions instructions>",
+        "<collaboration_mode>",
+        "<skills_instructions>",
+        "<apps_instructions>",
+        "<plugins_instructions>",
+    ]
+    .iter()
+    .any(|prefix| text.starts_with(prefix))
+}
+
+fn non_empty_prompt_excerpt(text: &str) -> Option<String> {
+    let excerpt = single_line_excerpt(text, 160);
+    (!excerpt.is_empty()).then_some(excerpt)
 }
 
 fn read_first_line(path: &Path) -> Option<String> {

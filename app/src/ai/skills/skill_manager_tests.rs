@@ -160,6 +160,22 @@ fn get_skills_for_working_directory_scopes_subdirectory_skills() {
             !names_from_root.contains(&"frontend-skill"),
             "Frontend skill should NOT be visible from repo root"
         );
+
+        // Inspectors can separately show descendant skills that Claude discovers on demand.
+        let descendant_skills = skill_manager_handle.read(&app, |manager, ctx| {
+            manager.descendant_file_skill_variants_for_provider(
+                &LocalOrRemotePath::Local(repo.clone()),
+                SkillProvider::Agents,
+                ctx,
+            )
+        });
+        assert_eq!(
+            descendant_skills
+                .iter()
+                .map(|skill| skill.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["frontend-skill"]
+        );
     });
 }
 
@@ -499,6 +515,20 @@ fn skills_for_providers_includes_reachable_cross_provider_skill() {
             "All list should dedupe to a single foo skill"
         );
         assert_eq!(foo_all[0].provider, SkillProvider::Agents);
+
+        // The inspector catalog intentionally retains both source variants so it can explain
+        // the hierarchy instead of hiding the lower-ranked copy.
+        let variants = skill_manager_handle.read(&app, |manager, ctx| {
+            manager.file_skill_variants_for_working_directory(Some(&cwd), ctx)
+        });
+        assert_eq!(variants.len(), 2);
+        assert_eq!(
+            variants
+                .iter()
+                .map(|skill| skill.provider)
+                .collect::<HashSet<_>>(),
+            HashSet::from([SkillProvider::Agents, SkillProvider::Claude])
+        );
 
         // Claude (supported providers = [Claude]) must still include "foo".
         let claude = skill_manager_handle.read(&app, |manager, ctx| {

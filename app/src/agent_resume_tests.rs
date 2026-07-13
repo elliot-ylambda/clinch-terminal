@@ -202,11 +202,14 @@ fn recent_conversations_aggregates_journal_and_mirror() {
 
     // Same fixture shape as tools/agent-resume/tests/test_registry_journal.sh: an
     // unbridged conversation, a conversation that bridges (and gains flags) on a later
-    // write, a remove (ignored), a malformed line and a non-launch command (skipped),
-    // plus a mirror-only nested session.
+    // write, a Codex conversation, a remove (ignored), a malformed line and a non-launch
+    // command (skipped), plus a mirror-only nested session that must not leak into the
+    // in-app finder.
     std::fs::write(
         dir.join("journal.jsonl"),
         concat!(
+            r#"{"ts":"2026-07-09T09:00:00Z","op":"write","pane":"pane-c","command":"warp_agent_resume_launch codex sid-codex-ddd","cwd":"/tmp/projD","bridge":""}"#,
+            "\n",
             r#"{"ts":"2026-07-09T10:00:00Z","op":"write","pane":"pane-a","command":"warp_agent_resume_launch claude sid-oldest-aaa","cwd":"/tmp/projA","bridge":""}"#,
             "\n",
             r#"{"ts":"2026-07-09T11:00:00Z","op":"write","pane":"pane-b","command":"warp_agent_resume_launch claude sid-bridged-bbb","cwd":"/tmp/projB","bridge":""}"#,
@@ -231,6 +234,11 @@ fn recent_conversations_aggregates_journal_and_mirror() {
         "{\"ts\":\"2026-07-09T12:00:00Z\",\"cwd\":\"/tmp/projC\",\"bridge\":\"\",\"prompt\":\"nested run\\nprompt\"}\n",
     )
     .unwrap();
+    std::fs::write(
+        prompts.join("sid-codex-ddd.jsonl"),
+        "{\"ts\":\"2026-07-09T09:00:05Z\",\"cwd\":\"/tmp/projD\",\"bridge\":\"\",\"prompt\":\"must not enrich a Codex session\"}\n",
+    )
+    .unwrap();
 
     let conversations = recent_conversations_in(&dir, 50);
     assert_eq!(
@@ -238,11 +246,11 @@ fn recent_conversations_aggregates_journal_and_mirror() {
             .iter()
             .map(|c| c.session_id.as_str())
             .collect::<Vec<_>>(),
-        // Newest first by first sighting: nested (12:00) > bridged (11:00) > oldest (10:00).
-        vec!["sid-nested-ccc", "sid-bridged-bbb", "sid-oldest-aaa"]
+        // Only journal-backed Clinch sessions are listed, newest first.
+        vec!["sid-bridged-bbb", "sid-oldest-aaa", "sid-codex-ddd"]
     );
 
-    let bridged = &conversations[1];
+    let bridged = &conversations[0];
     assert_eq!(bridged.agent, "claude");
     assert_eq!(bridged.start_ts, "2026-07-09T11:00:00Z");
     assert_eq!(bridged.cwd.as_deref(), Some("/tmp/projB"));
@@ -254,30 +262,126 @@ fn recent_conversations_aggregates_journal_and_mirror() {
         Some("fix the flaky test in ci")
     );
 
-    // Mirror-only sessions default to claude and collapse multi-line prompts.
-    let nested = &conversations[0];
-    assert_eq!(nested.agent, "claude");
-    assert_eq!(nested.cwd.as_deref(), Some("/tmp/projC"));
-    assert_eq!(nested.bridge, None);
-    assert_eq!(nested.first_prompt.as_deref(), Some("nested run prompt"));
+    assert_eq!(
+        conversations
+            .iter()
+            .find(|conversation| conversation.session_id == "sid-nested-ccc"),
+        None,
+        "mirror-only background sessions must stay out of the in-app finder"
+    );
 
-    let oldest = &conversations[2];
+    let oldest = &conversations[1];
     assert_eq!(oldest.bridge, None);
     assert_eq!(oldest.first_prompt, None);
     assert_eq!(oldest.flags, "");
 
+    let codex = &conversations[2];
+    assert_eq!(codex.agent, "codex");
+    assert_eq!(codex.first_prompt, None);
+
     // The limit keeps the newest conversations.
-    let capped = recent_conversations_in(&dir, 2);
+    let capped = recent_conversations_in(&dir, 1);
     assert_eq!(
         capped
             .iter()
             .map(|c| c.session_id.as_str())
             .collect::<Vec<_>>(),
-        vec!["sid-nested-ccc", "sid-bridged-bbb"]
+        vec!["sid-bridged-bbb"]
     );
 
     // A missing registry directory yields an empty list, not an error.
     assert!(recent_conversations_in(&dir.join("does-not-exist"), 50).is_empty());
+}
+
+#[test]
+fn native_transcripts_backfill_claude_and_codex_first_prompts() {
+    let dir = std::env::temp_dir().join(format!(
+        "agent_resume_transcript_prompt_test_{}",
+        uuid::Uuid::new_v4()
+    ));
+    let claude_projects = dir.join("claude-projects/project");
+    let codex_sessions = dir.join("codex-sessions/2026/07/13");
+    std::fs::create_dir_all(&claude_projects).unwrap();
+    std::fs::create_dir_all(&codex_sessions).unwrap();
+
+    std::fs::write(
+        claude_projects.join("claude-session.jsonl"),
+        concat!(
+            "not json\n",
+            r#"{"type":"user","isMeta":true,"message":{"role":"user","content":"generated metadata"}}"#,
+            "\n",
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"not the prompt"}]}}"#,
+            "\n",
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Claude opening question.\nMore detail"}]}}"#,
+            "\n",
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        codex_sessions.join("rollout-test-codex-session.jsonl"),
+        concat!(
+            r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>generated</environment_context>"}]}}"#,
+            "\n",
+            r#"{"type":"event_msg","payload":{"type":"user_message","message":"Codex opening question.\nMore detail"}}"#,
+            "\n",
+        ),
+    )
+    .unwrap();
+
+    let mut mirrored = conversation("claude", "mirrored-session", None, "");
+    mirrored.first_prompt = Some("Captured mirror wins".to_string());
+    let mut conversations = vec![
+        conversation("claude", "claude-session", None, ""),
+        conversation("codex", "codex-session", None, ""),
+        mirrored,
+    ];
+    enrich_missing_first_prompts_from_transcripts(
+        &mut conversations,
+        &AgentTranscriptRoots {
+            claude_projects: Some(dir.join("claude-projects")),
+            codex_sessions: Some(dir.join("codex-sessions")),
+        },
+    );
+
+    assert_eq!(
+        conversations[0].first_prompt.as_deref(),
+        Some("Claude opening question. More detail")
+    );
+    assert_eq!(
+        conversations[1].first_prompt.as_deref(),
+        Some("Codex opening question. More detail")
+    );
+    assert_eq!(
+        conversations[2].first_prompt.as_deref(),
+        Some("Captured mirror wins")
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn codex_transcript_uses_meaningful_user_response_when_event_is_absent() {
+    let dir = std::env::temp_dir().join(format!(
+        "agent_resume_codex_prompt_fallback_test_{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("rollout-test-session.jsonl");
+    std::fs::write(
+        &path,
+        concat!(
+            r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<permissions instructions>generated</permissions instructions>"}]}}"#,
+            "\n",
+            r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Explain this failure"}]}}"#,
+            "\n",
+        ),
+    )
+    .unwrap();
+
+    assert_eq!(
+        first_prompt_from_codex_transcript(&path).as_deref(),
+        Some("Explain this failure")
+    );
+    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
