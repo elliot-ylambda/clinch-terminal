@@ -75,7 +75,10 @@ run_transaction() {
   if [[ "$tamper" == "1" ]]; then
     printf 'tampered after authentication\n' >> "$archive"
   fi
-  "$destination/Contents/MacOS/stable" 120 &
+  # Execute the system sleep binary while presenting the exact app executable path as argv[0].
+  # GitHub's macOS runner kills copied system Mach-O binaries launched from ad-hoc-signed fixture
+  # bundles, but the helper's PID ownership check intentionally operates on the process command.
+  /bin/bash -c 'exec -a "$1" /bin/sleep 120' _ "$destination/Contents/MacOS/stable" &
   old_pid=$!
 
   set +e
