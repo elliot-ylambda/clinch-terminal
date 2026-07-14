@@ -3,7 +3,7 @@
 use settings::Setting as _;
 use warp_core::context_flag::ContextFlag;
 use warpui::elements::{
-    ConstrainedBox, CrossAxisAlignment, Empty, Flex, MainAxisAlignment, MainAxisSize,
+    ConstrainedBox, CrossAxisAlignment, Empty, Expanded, Flex, MainAxisAlignment, MainAxisSize,
     ParentElement, Shrinkable, Text,
 };
 use warpui::prelude::{ChildView, Container};
@@ -634,7 +634,7 @@ impl TerminalView {
                     )
                 })
                 .is_some_and(|session| {
-                    session.prompt_count() > 0
+                    session.prompt_count() >= 2
                         || matches!(
                             session.prompt_history_load_state,
                             crate::terminal::cli_agent_sessions::PromptHistoryLoadState::Loading {
@@ -648,53 +648,19 @@ impl TerminalView {
         if !self.should_render_cli_agent_context_header(app) {
             return None;
         }
-        let session = CLIAgentSessionsModel::as_ref(app).session(self.view_id)?;
         let appearance = Appearance::as_ref(app);
         let theme = appearance.theme();
-        let font_family = appearance.ui_font_family();
-        let font_size = appearance.ui_font_size() - 1.;
-        let text_color = theme.sub_text_color(theme.background());
 
-        let render_preview = |label: &str, message: &str| {
-            let preview = message.split_whitespace().collect::<Vec<_>>().join(" ");
-            let tooltip_text = message.to_owned();
-            let ui_builder = appearance.ui_builder().clone();
-            let label = Text::new_inline(format!("{label}  {preview}"), font_family, font_size)
-                .with_clip(ClipConfig::ellipsis())
-                .with_color(text_color.into())
-                .finish();
-            Shrinkable::new(
-                1.,
-                appearance
-                    .ui_builder()
-                    .button(ButtonVariant::Text, Default::default())
-                    .with_custom_label(label)
-                    .with_tooltip(move || {
-                        ui_builder.tool_tip(tooltip_text.clone()).build().finish()
-                    })
-                    .build()
-                    .finish(),
-            )
-            .finish()
-        };
-
-        let mut row = Flex::row()
+        let row = Flex::row()
             .with_main_axis_size(MainAxisSize::Max)
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_spacing(12.);
-        match (session.first_prompt(), session.latest_prompt()) {
-            (Some(first), Some(_latest)) if session.prompt_count() == 1 => {
-                row.add_child(render_preview("Started with · Latest", &first.text));
-            }
-            (Some(first), Some(latest)) => {
-                row.add_child(render_preview("Started with", &first.text));
-                row.add_child(render_preview("Latest", &latest.text));
-            }
-            _ => {
-                row.add_child(render_preview("Restoring", "message history…"));
-            }
-        }
-        row.add_child(ChildView::new(&self.cli_agent_message_history_dropdown).finish());
+            .with_child(
+                Expanded::new(
+                    1.,
+                    ChildView::new(&self.cli_agent_message_history_dropdown).finish(),
+                )
+                .finish(),
+            );
 
         Some(
             Container::new(

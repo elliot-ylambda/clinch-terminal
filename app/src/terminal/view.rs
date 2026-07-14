@@ -3883,11 +3883,11 @@ impl TerminalView {
 
         let cli_agent_message_history_dropdown = ctx.add_typed_action_view(|ctx| {
             let mut dropdown = Dropdown::<()>::new(ctx).with_drop_shadow();
-            dropdown.set_main_axis_size(MainAxisSize::Min, ctx);
-            dropdown.set_top_bar_max_width(190.);
+            dropdown.set_main_axis_size(MainAxisSize::Max, ctx);
+            dropdown.set_top_bar_max_width(f32::MAX);
             dropdown.set_top_bar_height(26., ctx);
             dropdown.set_vertical_margin(0., ctx);
-            dropdown.set_menu_width(480., ctx);
+            dropdown.set_match_menu_width_to_top_bar(true, ctx);
             dropdown.set_menu_max_height(360., ctx);
             dropdown
         });
@@ -13496,23 +13496,38 @@ impl TerminalView {
             return;
         };
 
-        let mut items: Vec<MenuItem<DropdownAction>> = history
-            .prompts
-            .iter()
-            .enumerate()
-            .map(|(index, prompt)| {
-                let timestamp = prompt
-                    .timestamp
-                    .as_deref()
-                    .map(|timestamp| format!(" · {timestamp}"))
-                    .unwrap_or_default();
-                MenuItemFields::new_multiline(
-                    format!("{}.{}\n{}", index + 1, timestamp, prompt.text),
-                    1_000,
-                )
-                .into_item()
-            })
-            .collect();
+        let is_loading = history.prompts.is_empty()
+            && matches!(load_state, PromptHistoryLoadState::Loading { .. });
+        let label = if is_loading {
+            "Message history (loading)".to_owned()
+        } else {
+            format!("Message history ({})", history.prompts.len())
+        };
+        let mut items: Vec<MenuItem<DropdownAction>> = vec![MenuItemFields::new(label.clone())
+            .with_disabled(true)
+            .into_item()];
+        items.extend(
+            history
+                .prompts
+                .iter()
+                .enumerate()
+                .rev()
+                .map(|(index, prompt)| {
+                    let ordinal = index + 1;
+                    let label =
+                        crate::agent_resume::format_prompt_time_full(prompt.timestamp.as_deref())
+                            .map(|timestamp| format!("{ordinal} · {timestamp}\n{}", prompt.text))
+                            .unwrap_or_else(|| format!("{ordinal}\n{}", prompt.text));
+                    MenuItemFields::new_multiline(label, 1_000).into_item()
+                }),
+        );
+        if is_loading {
+            items.push(
+                MenuItemFields::new("Restoring message history…")
+                    .with_disabled(true)
+                    .into_item(),
+            );
+        }
         if history.is_partial {
             items.push(
                 MenuItemFields::new("Earlier messages may be unavailable")
@@ -13520,26 +13535,29 @@ impl TerminalView {
                     .into_item(),
             );
         }
-        if items.is_empty() && matches!(load_state, PromptHistoryLoadState::Loading { .. }) {
-            items.push(
-                MenuItemFields::new("Restoring message history…")
-                    .with_disabled(true)
-                    .into_item(),
-            );
-        }
 
-        let label = if history.prompts.is_empty()
-            && matches!(load_state, PromptHistoryLoadState::Loading { .. })
-        {
-            "Message history (loading)".to_owned()
-        } else {
-            format!("Message history ({})", history.prompts.len())
-        };
+        let trigger = history
+            .prompts
+            .last()
+            .map(|latest| {
+                let latest_text = latest.text.split_whitespace().collect::<Vec<_>>().join(" ");
+                crate::agent_resume::format_prompt_time_short(latest.timestamp.as_deref())
+                    .map(|timestamp| format!("Latest · {timestamp}  {latest_text}"))
+                    .unwrap_or_else(|| format!("Latest  {latest_text}"))
+            })
+            .unwrap_or_else(|| {
+                if is_loading {
+                    "Restoring message history…".to_owned()
+                } else {
+                    label
+                }
+            });
+        let selected_index = usize::from(!history.prompts.is_empty());
         self.cli_agent_message_history_dropdown
             .update(ctx, move |dropdown, ctx| {
                 dropdown.set_rich_items(items, ctx);
-                dropdown.set_menu_header_text_override(move |_| label.clone());
-                dropdown.set_selected_by_index(0, ctx);
+                dropdown.set_menu_header_text_override(move |_| trigger.clone());
+                dropdown.set_selected_by_index(selected_index, ctx);
             });
     }
 
