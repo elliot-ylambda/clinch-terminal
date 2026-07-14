@@ -3,6 +3,30 @@ use std::io::Write;
 use super::*;
 
 #[test]
+fn prompt_title_prefers_the_first_sentence_within_the_limit() {
+    assert_eq!(
+        prompt_title("  Fix the failing test. Then update the docs.  "),
+        Some("Fix the failing test.".to_owned())
+    );
+}
+
+#[test]
+fn prompt_title_collapses_whitespace_and_truncates_at_graphemes() {
+    let long = format!("{} tail", "🧑🏽‍💻".repeat(80));
+    let title = prompt_title(&long).unwrap();
+    assert_eq!(
+        UnicodeSegmentation::graphemes(title.trim_end_matches('…'), true).count(),
+        80
+    );
+    assert!(title.ends_with('…'));
+    assert_eq!(
+        prompt_title("  first\n\nsecond  "),
+        Some("first second".to_owned())
+    );
+    assert_eq!(prompt_title(" \n "), None);
+}
+
+#[test]
 fn production_and_dev_clinch_are_the_only_supported_agent_resume_apps() {
     assert!(app_id_enables_runtime("sh.clinch.Clinch"));
     assert!(app_id_enables_runtime("sh.clinch.ClinchDev"));

@@ -7,9 +7,89 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 use serde_json::Value;
+use unicode_segmentation::UnicodeSegmentation;
 use walkdir::WalkDir;
 
 use crate::channel::ChannelState;
+
+/// A CLI-agent provider whose sessions Clinch can restore and inspect locally.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum AgentResumeProvider {
+    Claude,
+    Codex,
+}
+
+impl AgentResumeProvider {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Codex => "codex",
+        }
+    }
+
+    pub fn from_agent_name(agent: &str) -> Option<Self> {
+        match agent {
+            "claude" => Some(Self::Claude),
+            "codex" => Some(Self::Codex),
+            _ => None,
+        }
+    }
+}
+
+/// One exact user-authored prompt recovered for a provider session.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentPrompt {
+    pub timestamp: Option<String>,
+    pub text: String,
+}
+
+/// Ordered prompt history for one provider session.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AgentPromptHistory {
+    pub prompts: Vec<AgentPrompt>,
+    /// True when the durable source reports that capture stopped at its safety cap.
+    pub is_partial: bool,
+}
+
+/// Creates the stable, one-line title used for a CLI-agent session.
+pub fn prompt_title(text: &str) -> Option<String> {
+    const MAX_GRAPHEMES: usize = 80;
+
+    let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.is_empty() {
+        return None;
+    }
+
+    let graphemes = UnicodeSegmentation::graphemes(collapsed.as_str(), true).collect::<Vec<_>>();
+    let visible_prefix_len = graphemes.len().min(MAX_GRAPHEMES);
+    if let Some(sentence_end) = graphemes[..visible_prefix_len]
+        .iter()
+        .position(|grapheme| matches!(*grapheme, "." | "!" | "?" | "。" | "！" | "？"))
+    {
+        return Some(graphemes[..=sentence_end].concat());
+    }
+
+    if graphemes.len() <= MAX_GRAPHEMES {
+        Some(collapsed)
+    } else {
+        Some(format!(
+            "{}…",
+            graphemes[..MAX_GRAPHEMES].concat().trim_end()
+        ))
+    }
+}
+
+/// Reads the best locally available prompt history for a provider session.
+///
+/// The implementation is intentionally synchronous so callers can place it on the repository's
+/// blocking worker pool. Rendering paths must never call it directly.
+pub fn read_prompt_history(
+    _provider: AgentResumeProvider,
+    _session_id: &str,
+    _transcript_path: Option<&Path>,
+) -> AgentPromptHistory {
+    AgentPromptHistory::default()
+}
 
 #[derive(Deserialize)]
 struct RegistryEntry {
