@@ -3,7 +3,7 @@
 use settings::Setting as _;
 use warp_core::context_flag::ContextFlag;
 use warpui::elements::{
-    ConstrainedBox, CrossAxisAlignment, Empty, Flex, MainAxisAlignment, MainAxisSize,
+    ConstrainedBox, CrossAxisAlignment, Empty, Expanded, Flex, MainAxisAlignment, MainAxisSize,
     ParentElement, Shrinkable,
 };
 use warpui::prelude::{ChildView, Container};
@@ -299,6 +299,42 @@ impl TerminalView {
             ClipConfig::start()
         };
 
+        let pane_indicator = self.render_header_title_indicator(app);
+
+        let is_pane_dragging = header_ctx.draggable_state.is_dragging();
+        let mut center_row = Flex::row()
+            .with_main_axis_alignment(MainAxisAlignment::Center)
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_main_axis_size(MainAxisSize::Min);
+        if let Some(indicator) = pane_indicator {
+            center_row.add_child(Container::new(indicator).with_margin_right(4.).finish());
+        }
+        let title_text = render_pane_header_title_text(title, appearance, clip_config);
+        if is_pane_dragging {
+            // During drag, all children must be non-flex to avoid panics
+            // from infinite constraints on flex children.
+            center_row.add_child(title_text);
+        } else {
+            let title_element =
+                if is_fullscreen_agent_view && self.is_using_conversation_for_pane_header_title {
+                    Shrinkable::new(
+                        1.0,
+                        ConstrainedBox::new(title_text)
+                            .with_max_width(400.0)
+                            .finish(),
+                    )
+                    .finish()
+                } else {
+                    Shrinkable::new(1.0, title_text).finish()
+                };
+            center_row.add_child(title_element);
+        }
+
+        center_row.finish()
+    }
+
+    fn render_header_title_indicator(&self, app: &AppContext) -> Option<Box<dyn Element>> {
+        let appearance = Appearance::as_ref(app);
         let should_render_ambient_agent_indicator =
             self.ambient_agent_task_id_for_details_panel(app).is_some()
                 || self.model.lock().is_shared_ambient_agent_session();
@@ -312,7 +348,7 @@ impl TerminalView {
                 theme.background(),
             )
         };
-        let pane_indicator = if should_render_ambient_agent_indicator {
+        if should_render_ambient_agent_indicator {
             // Shared/viewed ambient session: route through the shared helper so the pane header
             // renders the same brand-color circle + cloud lobe + status as the vertical tab.
             terminal_view_agent_icon_variant_respecting_tab_setting(self, app)
@@ -354,37 +390,31 @@ impl TerminalView {
                 .map(render_agent_circle)
         } else {
             self.render_terminal_mode_indicator(app)
-        };
+        }
+    }
 
-        let is_pane_dragging = header_ctx.draggable_state.is_dragging();
+    fn render_cli_agent_history_header_center(
+        &self,
+        header_ctx: &view::HeaderRenderContext,
+        app: &AppContext,
+    ) -> Box<dyn Element> {
+        if header_ctx.draggable_state.is_dragging() {
+            return self.render_header_title(false, header_ctx, app);
+        }
+
         let mut center_row = Flex::row()
-            .with_main_axis_alignment(MainAxisAlignment::Center)
-            .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_main_axis_size(MainAxisSize::Min);
-        if let Some(indicator) = pane_indicator {
+            .with_main_axis_size(MainAxisSize::Max)
+            .with_cross_axis_alignment(CrossAxisAlignment::Center);
+        if let Some(indicator) = self.render_header_title_indicator(app) {
             center_row.add_child(Container::new(indicator).with_margin_right(4.).finish());
         }
-        let title_text = render_pane_header_title_text(title, appearance, clip_config);
-        if is_pane_dragging {
-            // During drag, all children must be non-flex to avoid panics
-            // from infinite constraints on flex children.
-            center_row.add_child(title_text);
-        } else {
-            let title_element =
-                if is_fullscreen_agent_view && self.is_using_conversation_for_pane_header_title {
-                    Shrinkable::new(
-                        1.0,
-                        ConstrainedBox::new(title_text)
-                            .with_max_width(400.0)
-                            .finish(),
-                    )
-                    .finish()
-                } else {
-                    Shrinkable::new(1.0, title_text).finish()
-                };
-            center_row.add_child(title_element);
-        }
-
+        center_row.add_child(
+            Expanded::new(
+                1.,
+                ChildView::new(&self.cli_agent_message_history_dropdown).finish(),
+            )
+            .finish(),
+        );
         center_row.finish()
     }
 
@@ -572,7 +602,11 @@ impl TerminalView {
         let parent_conversation_header_card = self.render_parent_conversation_header_card(app);
 
         let left = self.maybe_render_header_back_button(app);
-        let center = self.render_header_title(is_fullscreen_agent_view, header_ctx, app);
+        let center = if self.should_use_cli_agent_history_header(app) {
+            self.render_cli_agent_history_header_center(header_ctx, app)
+        } else {
+            self.render_header_title(is_fullscreen_agent_view, header_ctx, app)
+        };
         let (right, min_actions_width) = self.render_header_actions(header_ctx, app);
 
         let header = render_three_column_header(
