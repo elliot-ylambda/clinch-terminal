@@ -4049,9 +4049,8 @@ fn terminal_agent_text(terminal_view: &TerminalView, app: &AppContext) -> Termin
     let cli_agent_session = CLIAgentSessionsModel::as_ref(app).session(terminal_view.id());
     let is_plugin_backed = cli_agent_session.is_some_and(|session| session.listener.is_some());
     let has_clinch_session_context = session_context_enabled()
-        && cli_agent_session.is_some_and(|session| {
-            matches!(session.agent, CLIAgent::Claude | CLIAgent::Codex)
-        });
+        && cli_agent_session
+            .is_some_and(|session| matches!(session.agent, CLIAgent::Claude | CLIAgent::Codex));
     let is_ambient_agent = terminal_view.is_ambient_agent_session(app);
 
     let mut agent_text = TerminalAgentText {
@@ -4073,11 +4072,7 @@ fn terminal_agent_text(terminal_view: &TerminalView, app: &AppContext) -> Termin
     if let Some(session) = cli_agent_session {
         if has_clinch_session_context {
             agent_text.cli_agent_title = session.title_for_tab(false);
-            agent_text.cli_agent_latest_user_prompt = session
-                .latest_prompt()
-                .map(|prompt| prompt.text.trim().to_owned())
-                .filter(|prompt| !prompt.is_empty())
-                .or_else(|| session.session_context.latest_user_prompt());
+            agent_text.cli_agent_latest_user_prompt = session.latest_user_prompt_for_chrome();
         } else {
             agent_text.cli_agent_title = session.session_context.title_like_text();
             agent_text.cli_agent_latest_user_prompt = session.session_context.latest_user_prompt();

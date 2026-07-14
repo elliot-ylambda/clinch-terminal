@@ -122,8 +122,7 @@ impl TerminalView {
         let is_ambient_agent = self.is_ambient_agent_session(ctx);
         let selected_conversation_title = self.selected_conversation_display_title(ctx);
         let selected_cli_agent_title = self.selected_cli_agent_title_for_chrome(ctx);
-        let selected_cli_agent_uses_prompt_title =
-            self.selected_cli_agent_title_uses_prompt(ctx);
+        let selected_cli_agent_uses_prompt_title = self.selected_cli_agent_title_uses_prompt(ctx);
 
         // Prefer CLI agent session text before the terminal title,
         // matching the vertical-tab behavior in terminal_primary_line_data().
@@ -660,14 +659,10 @@ impl TerminalView {
             let preview = message.split_whitespace().collect::<Vec<_>>().join(" ");
             let tooltip_text = message.to_owned();
             let ui_builder = appearance.ui_builder().clone();
-            let label = Text::new_inline(
-                format!("{label}  {preview}"),
-                font_family,
-                font_size,
-            )
-            .with_clip(ClipConfig::ellipsis())
-            .with_color(text_color.into())
-            .finish();
+            let label = Text::new_inline(format!("{label}  {preview}"), font_family, font_size)
+                .with_clip(ClipConfig::ellipsis())
+                .with_color(text_color.into())
+                .finish();
             Shrinkable::new(
                 1.,
                 appearance
@@ -675,10 +670,7 @@ impl TerminalView {
                     .button(ButtonVariant::Text, Default::default())
                     .with_custom_label(label)
                     .with_tooltip(move || {
-                        ui_builder
-                            .tool_tip(tooltip_text.clone())
-                            .build()
-                            .finish()
+                        ui_builder.tool_tip(tooltip_text.clone()).build().finish()
                     })
                     .build()
                     .finish(),
@@ -710,10 +702,10 @@ impl TerminalView {
                     .with_height(CLI_AGENT_CONTEXT_HEADER_HEIGHT)
                     .finish(),
             )
-                .with_padding_left(8.)
-                .with_padding_right(8.)
-                .with_background(theme.surface_2())
-                .finish(),
+            .with_padding_left(8.)
+            .with_padding_right(8.)
+            .with_background(theme.surface_2())
+            .finish(),
         )
     }
 }
@@ -1190,11 +1182,13 @@ impl TerminalView {
     }
 
     fn selected_cli_agent_title_for_chrome(&self, ctx: &AppContext) -> Option<String> {
-        let session = CLIAgentSessionsModel::as_ref(ctx)
-            .session(self.view_id)?;
+        let session = CLIAgentSessionsModel::as_ref(ctx).session(self.view_id)?;
 
         let supports_session_context = session_context_enabled()
-            && matches!(session.agent, crate::terminal::CLIAgent::Claude | crate::terminal::CLIAgent::Codex);
+            && matches!(
+                session.agent,
+                crate::terminal::CLIAgent::Claude | crate::terminal::CLIAgent::Codex
+            );
         if !supports_session_context && session.listener.is_none() {
             return None;
         }
@@ -1227,9 +1221,7 @@ impl TerminalView {
         }
 
         if *TabSettings::as_ref(ctx).use_latest_user_prompt_as_conversation_title_in_tab_names {
-            session.latest_prompt().is_some()
-                || session.session_context.latest_user_prompt().is_some()
-                || session.first_prompt().is_some()
+            session.latest_user_prompt_for_chrome().is_some() || session.first_prompt().is_some()
         } else {
             session.first_prompt().is_some()
         }

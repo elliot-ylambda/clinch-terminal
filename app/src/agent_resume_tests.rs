@@ -677,17 +677,15 @@ fn explicit_transcript_must_stay_inside_matching_provider_root() {
             .text,
         "safe"
     );
-    assert!(
-        read_prompt_history_in(
-            AgentResumeProvider::Claude,
-            "escape-id",
-            Some(&escaped),
-            None,
-            &roots,
-        )
-        .prompts
-        .is_empty()
-    );
+    assert!(read_prompt_history_in(
+        AgentResumeProvider::Claude,
+        "escape-id",
+        Some(&escaped),
+        None,
+        &roots,
+    )
+    .prompts
+    .is_empty());
     std::fs::remove_dir_all(dir).unwrap();
 }
 

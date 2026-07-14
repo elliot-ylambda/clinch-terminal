@@ -188,6 +188,12 @@ history can verify that the provider/session is still the outer owner for that p
 async results and nested-agent events that do not match the current owner. A new session ID resets
 the visible history; the same resumed session ID reuses it.
 
+For continuously running command-detected sessions, also consult that pane registry on session
+start/status lifecycle events. This supplies native Codex's durable ID even when its fallback OSC 9
+notification is intentionally treated as opaque. Upgrade an existing same-provider model entry in
+place so its PTY listener, status, input state, and draft survive; reset only history associated
+with a different identity. Defer the model mutation outside the current model-emission callback.
+
 ### 5. Resolve stable tab titles from the initial prompt
 
 Change CLI-agent chrome resolution to:
@@ -231,11 +237,11 @@ The context strip should have a bounded height and responsive flex behavior: shr
 message previews first, never the history trigger; collapse identical first/latest content into one
 labeled preview. It must not alter terminal focus on render or pane selection.
 
-Implement a dedicated `CLIAgentMessageHistoryPopover` rather than forcing multiline prompts into
-single-line dropdown items. Anchor it with the existing `SavePosition`/positioned overlay pattern.
-Use a bounded scroll container, chronological rows, selectable text, optional timestamps, focus
-trapping while open, Escape/outside-click close, and focus restoration to the terminal. Keep the
-overlay outside the draggable region and outside the header's clip bounds.
+Use the existing anchored `Dropdown` overlay with rich multiline items rather than flattening
+prompts into single-line labels. Give the menu a bounded height, chronological rows, complete text,
+optional timestamps, keyboard scrolling, Escape/outside-click close, and focus restoration to the
+terminal. Keep the overlay outside the draggable region and outside the header's clip bounds. A
+separate selectable-text/export surface is a non-goal for the first version.
 
 Use a Clinch-specific channel/capability check for the title resolver, restore hydration, and header
 gate. Keep that separate from capture consent: a Clinch session can show trusted live prompts while
@@ -277,7 +283,7 @@ Map tests directly to PRODUCT behavior:
   manual override, summary/terminal fallback, end clipping independent of status-indicator setting,
   split focus, tooltip full text, and unchanged project-tab label.
 - **Header/popover tests (Behavior 10–21):** header gating, loading, one-message collapse, multiple
-  previews/count, narrow layout, variable custom-header height, scroll bounds, selection/copy,
+  previews/count, narrow layout, variable custom-header height, scroll bounds, full multiline text,
   keyboard open/close, outside click, focus restoration, and no terminal input dispatch.
 - **Capture shell tests (Behavior 24, 28–31):** verified Codex payload fixture, exact JSON escaping,
   multiline prompt, provider paths, legacy reads, private modes, cap/one marker, disable/enable/purge,

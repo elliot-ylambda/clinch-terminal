@@ -3891,14 +3891,11 @@ impl TerminalView {
             dropdown.set_menu_max_height(360., ctx);
             dropdown
         });
-        ctx.subscribe_to_view(
-            &cli_agent_message_history_dropdown,
-            |me, _, event, ctx| {
-                if matches!(event, DropdownEvent::Close) {
-                    me.redetermine_global_focus(ctx);
-                }
-            },
-        );
+        ctx.subscribe_to_view(&cli_agent_message_history_dropdown, |me, _, event, ctx| {
+            if matches!(event, DropdownEvent::Close) {
+                me.redetermine_global_focus(ctx);
+            }
+        });
 
         let slow_bootstrap_banner = ctx.add_typed_action_view(|_| {
             Banner::<TerminalAction>::new_with_buttons(

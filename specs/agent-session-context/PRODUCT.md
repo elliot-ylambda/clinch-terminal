@@ -108,8 +108,9 @@ Figma: none provided.
 18. Each history entry shows its turn number, full message text with original line breaks, and its
     submission time when that time is available. Repeated messages remain separate turns.
 
-19. Message text in the popover is selectable and copyable. Long histories scroll within a bounded
-    popover instead of resizing the terminal or window.
+19. Message text is shown in full, including original line breaks. Long histories scroll within a
+    bounded popover instead of resizing the terminal or window. A dedicated selectable-text,
+    export, or search surface is outside the first version.
 
 20. The history button is keyboard accessible. Enter or Space opens it, arrow-key navigation and
     normal scrolling can inspect its contents, and Escape closes it and returns focus to the
@@ -149,9 +150,9 @@ Figma: none provided.
     are simply omitted.
 
 29. Missing, malformed, truncated, or temporarily unreadable history never prevents the pane from
-    opening or the agent from resuming. Clinch keeps the normal fallback title, shows an unobtrusive
-    unavailable/partial state in the history control when appropriate, and continues capturing new
-    messages.
+    opening or the agent from resuming. Clinch keeps the normal fallback title when no messages can
+    be recovered, shows an unobtrusive partial state in the history control when some recovered
+    history may be incomplete, and continues capturing new messages.
 
 30. Empty or whitespace-only submissions are ignored. Arbitrarily long or multi-line messages are
     retained up to the same bounded local-history safety limit used by Clinch's existing agent

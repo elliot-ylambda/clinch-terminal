@@ -840,6 +840,89 @@ fn listener_events_cannot_replace_the_outer_session_identity() {
 }
 
 #[test]
+fn durable_identity_seed_preserves_live_session_state_and_invalidates_old_history() {
+    let mut session = CLIAgentSession {
+        agent: CLIAgent::Codex,
+        status: CLIAgentSessionStatus::Success,
+        session_context: CLIAgentSessionContext {
+            session_id: None,
+            query: Some("opaque fallback text".to_owned()),
+            ..Default::default()
+        },
+        input_state: CLIAgentInputState::Closed,
+        should_auto_toggle_input: true,
+        listener: None,
+        plugin_version: None,
+        draft_text: Some("unfinished follow-up".to_owned()),
+        remote_host: None,
+        custom_command_prefix: None,
+        received_rich_notification: false,
+        prompt_history: AgentPromptHistory {
+            prompts: vec![AgentPrompt {
+                timestamp: None,
+                text: "stale prompt".to_owned(),
+            }],
+            is_partial: false,
+        },
+        prompt_history_load_state: PromptHistoryLoadState::Ready,
+        prompt_history_generation: 4,
+    };
+
+    assert!(session.seed_session_identity(CLIAgent::Codex, "durable-id".to_owned()));
+    assert_eq!(session.status, CLIAgentSessionStatus::Success);
+    assert!(session.should_auto_toggle_input);
+    assert_eq!(session.draft_text.as_deref(), Some("unfinished follow-up"));
+    assert_eq!(
+        session.session_context.session_id.as_deref(),
+        Some("durable-id")
+    );
+    assert_eq!(session.prompt_count(), 0);
+    assert_eq!(
+        session.prompt_history_load_state,
+        PromptHistoryLoadState::NotRequested
+    );
+    assert_eq!(session.prompt_history_generation, 5);
+
+    assert!(!session.seed_session_identity(CLIAgent::Claude, "other-id".to_owned()));
+    assert_eq!(
+        session.session_context.session_id.as_deref(),
+        Some("durable-id")
+    );
+}
+
+#[test]
+fn native_codex_osc9_query_is_not_used_as_a_prompt_title() {
+    let mut session = CLIAgentSession {
+        agent: CLIAgent::Codex,
+        status: CLIAgentSessionStatus::Success,
+        session_context: CLIAgentSessionContext {
+            query: Some("opaque completion notice".to_owned()),
+            ..Default::default()
+        },
+        input_state: CLIAgentInputState::Closed,
+        should_auto_toggle_input: false,
+        listener: None,
+        plugin_version: None,
+        draft_text: None,
+        remote_host: None,
+        custom_command_prefix: None,
+        received_rich_notification: false,
+        prompt_history: AgentPromptHistory::default(),
+        prompt_history_load_state: PromptHistoryLoadState::Unavailable,
+        prompt_history_generation: 1,
+    };
+
+    assert_eq!(session.latest_user_prompt_for_chrome(), None);
+    assert_eq!(session.title_for_tab(true), None);
+
+    session.received_rich_notification = true;
+    assert_eq!(
+        session.latest_user_prompt_for_chrome().as_deref(),
+        Some("opaque completion notice")
+    );
+}
+
+#[test]
 fn default_title_is_stable_first_prompt_and_explicit_preference_uses_latest() {
     let mut session = CLIAgentSession {
         agent: CLIAgent::Claude,

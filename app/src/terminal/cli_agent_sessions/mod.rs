@@ -219,6 +219,20 @@ impl CLIAgentSession {
         self.prompt_history.prompts.len()
     }
 
+    /// Returns the newest text that is safe to present as a user prompt in session chrome.
+    /// Native Codex OSC 9 bodies are opaque completion notices, even though the legacy status
+    /// context stores them in `query`, so they are excluded until structured events are active.
+    pub fn latest_user_prompt_for_chrome(&self) -> Option<String> {
+        self.latest_prompt()
+            .map(|prompt| prompt.text.trim().to_owned())
+            .filter(|prompt| !prompt.is_empty())
+            .or_else(|| {
+                (self.agent != CLIAgent::Codex || self.received_rich_notification)
+                    .then(|| self.session_context.latest_user_prompt())
+                    .flatten()
+            })
+    }
+
     pub fn initial_prompt_title(&self) -> Option<String> {
         self.first_prompt()
             .and_then(|prompt| prompt_title(&prompt.text))
@@ -226,10 +240,7 @@ impl CLIAgentSession {
 
     pub fn title_for_tab(&self, use_latest_prompt: bool) -> Option<String> {
         if use_latest_prompt {
-            self.latest_prompt()
-                .map(|prompt| prompt.text.trim().to_owned())
-                .filter(|prompt| !prompt.is_empty())
-                .or_else(|| self.session_context.latest_user_prompt())
+            self.latest_user_prompt_for_chrome()
                 .or_else(|| self.initial_prompt_title())
                 .or_else(|| self.session_context.title_like_text())
         } else {
@@ -251,6 +262,20 @@ impl CLIAgentSession {
         self.prompt_history = AgentPromptHistory::default();
         self.prompt_history_load_state = PromptHistoryLoadState::NotRequested;
         self.prompt_history_generation = self.prompt_history_generation.wrapping_add(1);
+    }
+
+    /// Applies a durable provider identity discovered outside the PTY event stream.
+    /// Existing listener and status state stay attached to the pane; only history keyed to the
+    /// previous identity is invalidated.
+    fn seed_session_identity(&mut self, agent: CLIAgent, session_id: String) -> bool {
+        if self.agent != agent {
+            return false;
+        }
+        if self.session_context.session_id.as_deref() != Some(session_id.as_str()) {
+            self.reset_prompt_history();
+            self.session_context.session_id = Some(session_id);
+        }
+        true
     }
 
     /// Enforces that listener events belong to the outer session. Identity changes are accepted
@@ -522,11 +547,11 @@ impl CLIAgentSessionsModel {
 
         let session_id = session_id.trim().to_owned();
         let agent = agent_for_provider(provider);
-        let already_seeded = self.sessions.get(&terminal_view_id).is_some_and(|session| {
-            session.agent == agent
-                && session.session_context.session_id.as_deref() == Some(session_id.as_str())
-        });
-        if !already_seeded {
+        let upgraded_existing = self
+            .sessions
+            .get_mut(&terminal_view_id)
+            .is_some_and(|session| session.seed_session_identity(agent, session_id.clone()));
+        if !upgraded_existing {
             self.set_session(
                 terminal_view_id,
                 CLIAgentSession {
