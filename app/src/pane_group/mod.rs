@@ -118,6 +118,8 @@ use crate::shell_indicator::ShellIndicatorType;
 use crate::terminal::available_shells::{AvailableShell, AvailableShells};
 #[cfg(not(target_family = "wasm"))]
 use crate::terminal::cli_agent_sessions::plugin_manager::PluginModalKind;
+#[cfg(feature = "local_tty")]
+use crate::terminal::cli_agent_sessions::CLIAgentSessionsModel;
 use crate::terminal::focus_env::add_session_focus_env_vars;
 use crate::terminal::general_settings::{GeneralSettings, GeneralSettingsChangedEvent};
 #[cfg(feature = "local_tty")]
@@ -1594,6 +1596,10 @@ impl PaneGroup {
                     &uuid.0,
                     terminal_snapshot.on_restore_command.clone(),
                 );
+                #[cfg(feature = "local_tty")]
+                let agent_session_seed = on_restore_command
+                    .as_deref()
+                    .and_then(crate::agent_resume::agent_session_seed_from_restore_command);
 
                 let chosen_shell = terminal_snapshot
                     .shell_launch_data
@@ -1667,6 +1673,13 @@ impl PaneGroup {
                 );
 
                 let terminal_view_id = terminal_view.id();
+
+                #[cfg(feature = "local_tty")]
+                if let Some((provider, session_id)) = agent_session_seed {
+                    CLIAgentSessionsModel::handle(ctx).update(ctx, |model, ctx| {
+                        model.seed_resumed_session(terminal_view_id, provider, session_id, ctx);
+                    });
+                }
 
                 let pane_data = TerminalPane::new(
                     uuid.0,
@@ -7519,6 +7532,12 @@ impl PaneGroup {
         spec: RestartSpec,
         ctx: &mut ViewContext<Self>,
     ) {
+        #[cfg(feature = "local_tty")]
+        let agent_session_seed = spec
+            .on_restore_command
+            .as_deref()
+            .and_then(crate::agent_resume::agent_session_seed_from_restore_command);
+
         let Some(uuid) = self
             .panes_of::<TerminalPane>()
             .find(|pane| pane.id() == dead_pane_id)
@@ -7555,6 +7574,15 @@ impl PaneGroup {
             None, // initial_input_config
             ctx,
         );
+        #[cfg(feature = "local_tty")]
+        let terminal_view_id = view.id();
+
+        #[cfg(feature = "local_tty")]
+        if let Some((provider, session_id)) = agent_session_seed {
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |model, ctx| {
+                model.seed_resumed_session(terminal_view_id, provider, session_id, ctx);
+            });
+        }
 
         let pane_data = TerminalPane::new(
             uuid,

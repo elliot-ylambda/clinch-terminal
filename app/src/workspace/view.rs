@@ -8607,6 +8607,10 @@ impl Workspace {
         cwd: Option<String>,
         ctx: &mut ViewContext<Self>,
     ) {
+        #[cfg(feature = "local_tty")]
+        let agent_session_seed =
+            crate::agent_resume::agent_session_seed_from_restore_command(&command);
+
         // Create a new tab pinned to the session's original directory (bypasses the
         // user's working-directory setting, so `claude --resume`'s cwd-scoping holds).
         let options = NewTerminalOptions::default()
@@ -8617,6 +8621,15 @@ impl Workspace {
             None,
             ctx,
         );
+
+        #[cfg(feature = "local_tty")]
+        if let (Some((provider, session_id)), Some(terminal_view)) =
+            (agent_session_seed, self.active_session_view(ctx))
+        {
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |model, ctx| {
+                model.seed_resumed_session(terminal_view.id(), provider, session_id, ctx);
+            });
+        }
 
         // Attach the one-shot replay command to the new (now active) tab's single pane,
         // mirroring the snapshot-restore path (pane_group/mod.rs:1672).
