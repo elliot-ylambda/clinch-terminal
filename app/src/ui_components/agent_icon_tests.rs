@@ -170,13 +170,13 @@ impl CanonicalRunState {
             LocalClaudeCommandDetected => Some(AgentIconFields {
                 is_cli: true,
                 cli_agent: Some(CLIAgent::Claude),
-                status: Some(ConversationStatus::InProgress),
+                status: None,
                 is_ambient: false,
             }),
             LocalCodexFallbackInProgress => Some(AgentIconFields {
                 is_cli: true,
                 cli_agent: Some(CLIAgent::Codex),
-                status: Some(ConversationStatus::InProgress),
+                status: None,
                 is_ambient: false,
             }),
             LocalCodexFallbackCompleted => Some(AgentIconFields {
@@ -243,6 +243,7 @@ impl CanonicalRunState {
                     has_listener: true,
                     status: ConversationStatus::InProgress,
                     supports_rich_status: true,
+                    has_observed_turn_activity: true,
                 }),
                 selected_third_party_cli_agent: None,
                 selected_conversation_status: None,
@@ -257,6 +258,7 @@ impl CanonicalRunState {
                         blocked_action: String::new(),
                     },
                     supports_rich_status: true,
+                    has_observed_turn_activity: true,
                 }),
                 selected_third_party_cli_agent: None,
                 selected_conversation_status: None,
@@ -269,6 +271,7 @@ impl CanonicalRunState {
                     has_listener: false,
                     status: ConversationStatus::InProgress,
                     supports_rich_status: false,
+                    has_observed_turn_activity: false,
                 }),
                 selected_third_party_cli_agent: None,
                 selected_conversation_status: None,
@@ -281,6 +284,7 @@ impl CanonicalRunState {
                     has_listener: true,
                     status: ConversationStatus::InProgress,
                     supports_rich_status: false,
+                    has_observed_turn_activity: false,
                 }),
                 selected_third_party_cli_agent: None,
                 selected_conversation_status: None,
@@ -293,6 +297,7 @@ impl CanonicalRunState {
                     has_listener: true,
                     status: ConversationStatus::Success,
                     supports_rich_status: false,
+                    has_observed_turn_activity: true,
                 }),
                 selected_third_party_cli_agent: None,
                 selected_conversation_status: None,
@@ -370,6 +375,30 @@ fn terminal_is_ambient_matches_inputs_for_every_state() {
             fields.is_ambient, inputs.is_ambient,
             "is_ambient drifted for {state:?}"
         );
+    }
+}
+
+#[test]
+fn idle_rich_cli_sessions_keep_branding_without_an_in_progress_status() {
+    for agent in [CLIAgent::Claude, CLIAgent::Codex] {
+        let inputs = TerminalIconInputs {
+            is_ambient: false,
+            cli_session: Some(CLISessionInputs {
+                agent,
+                has_listener: true,
+                status: ConversationStatus::InProgress,
+                supports_rich_status: true,
+                has_observed_turn_activity: false,
+            }),
+            selected_third_party_cli_agent: None,
+            selected_conversation_status: None,
+            has_selected_conversation: false,
+        };
+
+        let variant = agent_icon_variant_from_terminal_inputs(&inputs).unwrap();
+        let fields = AgentIconFields::from_variant(&variant).unwrap();
+        assert_eq!(fields.cli_agent, Some(agent));
+        assert_eq!(fields.status, None);
     }
 }
 

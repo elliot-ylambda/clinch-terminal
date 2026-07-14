@@ -79,6 +79,7 @@ pub(crate) fn terminal_view_agent_icon_variant(
             has_listener: session.listener.is_some(),
             status: session.status.to_conversation_status(),
             supports_rich_status: session.supports_rich_status(),
+            has_observed_turn_activity: session.has_observed_turn_activity,
         }),
         selected_third_party_cli_agent: terminal_view
             .ambient_agent_view_model()
@@ -145,10 +146,10 @@ pub(crate) fn terminal_view_agent_icon_variant_respecting_tab_setting(
 
 /// Returns the CLI-agent status that tab chrome can safely display.
 ///
-/// Rich plugin sessions expose their full lifecycle. Command-detected sessions and Codex's
-/// native OSC 9 fallback can also reliably expose their initial `InProgress` state because the
-/// session is created only after the command is observed running, but their completed states are
-/// withheld because those fallback notifications do not describe the full lifecycle.
+/// Rich plugin sessions expose their lifecycle after a turn event is observed. Session creation
+/// and `SessionStart` only prove that the interactive CLI is open, so their bootstrap
+/// `InProgress` value is intentionally withheld. Command-detected sessions and Codex's native
+/// OSC 9 fallback do not describe enough of the lifecycle to display a status.
 pub(crate) fn cli_agent_session_status_for_display(
     session: &CLIAgentSession,
 ) -> Option<ConversationStatus> {
@@ -156,6 +157,7 @@ pub(crate) fn cli_agent_session_status_for_display(
         &session.status.to_conversation_status(),
         session.listener.is_some(),
         session.supports_rich_status(),
+        session.has_observed_turn_activity,
     )
 }
 
@@ -195,10 +197,10 @@ struct CLISessionInputs {
     has_listener: bool,
     status: ConversationStatus,
     /// Whether the agent's session handler exposes rich status (plugin-backed handlers report
-    /// rich status; Codex's OSC 9 handler does not). A non-rich session can still reliably
-    /// report its initial in-progress state because it is created only after the CLI command is
-    /// observed running; only its completed states are withheld from the icon.
+    /// rich status; Codex's OSC 9 handler does not).
     supports_rich_status: bool,
+    /// Whether a lifecycle event beyond session startup proves that a turn has run.
+    has_observed_turn_activity: bool,
 }
 
 /// Pure waterfall from primitive inputs to an [`IconWithStatusVariant`]. Mirrors the
@@ -206,11 +208,9 @@ struct CLISessionInputs {
 fn agent_icon_variant_from_terminal_inputs(
     inputs: &TerminalIconInputs,
 ) -> Option<IconWithStatusVariant> {
-    // 1. CLI session with a known (non-Unknown) agent wins. Rich handlers surface every status.
-    //    Command-detected sessions and Codex's OSC 9 fallback still surface InProgress: that
-    //    state is trustworthy because the session is created only after its command is observed
-    //    running. Their completed states remain hidden because the fallback notifications are
-    //    not rich enough to distinguish the full lifecycle.
+    // 1. CLI session with a known (non-Unknown) agent wins. Surface status only after a rich
+    //    lifecycle event proves a turn has run. An open interactive agent process remains a
+    //    long-running foreground command while idle, so session creation is not activity proof.
     if let Some(session) = inputs
         .cli_session
         .as_ref()
@@ -220,6 +220,7 @@ fn agent_icon_variant_from_terminal_inputs(
             &session.status,
             session.has_listener,
             session.supports_rich_status,
+            session.has_observed_turn_activity,
         );
         return Some(IconWithStatusVariant::CLIAgent {
             agent: session.agent,
@@ -259,9 +260,9 @@ fn cli_session_status_for_display(
     status: &ConversationStatus,
     has_listener: bool,
     supports_rich_status: bool,
+    has_observed_turn_activity: bool,
 ) -> Option<ConversationStatus> {
-    ((has_listener && supports_rich_status) || matches!(status, ConversationStatus::InProgress))
-        .then(|| status.clone())
+    (has_observed_turn_activity && has_listener && supports_rich_status).then(|| status.clone())
 }
 
 /// Pure run-card logic: maps a [`Harness`], status, and ambient flag into an

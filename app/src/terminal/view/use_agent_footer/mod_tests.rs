@@ -365,6 +365,7 @@ fn cli_agent_footer_is_sticky_for_viewer_of_shared_cloud_agent_session() {
                         draft_text: None,
                         custom_command_prefix: None,
                         received_rich_notification: false,
+                        has_observed_turn_activity: false,
                         prompt_history: Default::default(),
                         prompt_history_load_state: Default::default(),
                         prompt_history_generation: 0,

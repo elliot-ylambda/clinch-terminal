@@ -195,6 +195,10 @@ pub struct CLIAgentSession {
     /// notification. Codex's OSC 9 fallback never sets it, so this is the
     /// single source of truth for whether the session is plugin-backed.
     pub received_rich_notification: bool,
+    /// Set once an event proves that an agent turn has started or reached a terminal state.
+    /// Session creation and `SessionStart` only prove that the interactive CLI is open; they do
+    /// not mean the agent is actively working.
+    pub has_observed_turn_activity: bool,
     /// Exact user-authored messages. Kept out of `session_context` so status events do not clone it.
     pub prompt_history: AgentPromptHistory,
     pub prompt_history_load_state: PromptHistoryLoadState,
@@ -253,21 +257,22 @@ impl CLIAgentSession {
         })
     }
 
-    fn reset_prompt_history(&mut self) {
+    fn reset_identity_scoped_state(&mut self) {
         self.prompt_history = AgentPromptHistory::default();
         self.prompt_history_load_state = PromptHistoryLoadState::NotRequested;
         self.prompt_history_generation = self.prompt_history_generation.wrapping_add(1);
+        self.has_observed_turn_activity = false;
     }
 
     /// Applies a durable provider identity discovered outside the PTY event stream.
-    /// Existing listener and status state stay attached to the pane; only history keyed to the
-    /// previous identity is invalidated.
+    /// Existing listener and status state stay attached to the pane; history and observed-turn
+    /// activity keyed to the previous identity are invalidated.
     fn seed_session_identity(&mut self, agent: CLIAgent, session_id: String) -> bool {
         if self.agent != agent {
             return false;
         }
         if self.session_context.session_id.as_deref() != Some(session_id.as_str()) {
-            self.reset_prompt_history();
+            self.reset_identity_scoped_state();
             self.session_context.session_id = Some(session_id);
         }
         true
@@ -304,6 +309,15 @@ impl CLIAgentSession {
         self.received_rich_notification
     }
 
+    /// Whether the session has emitted evidence that an agent turn is actively running.
+    ///
+    /// An interactive Claude Code or Codex process remains a long-running foreground command
+    /// while it waits at its prompt, so session existence and terminal command state are not
+    /// sufficient activity signals.
+    pub fn is_actively_working(&self) -> bool {
+        self.has_observed_turn_activity && matches!(self.status, CLIAgentSessionStatus::InProgress)
+    }
+
     /// Clears state populated by `PermissionRequest`. Called whenever the
     /// session leaves the permission flow (the user replied, a new prompt
     /// is submitted, or the session ends successfully) so the permission
@@ -335,6 +349,7 @@ impl CLIAgentSession {
 
         let new_status = match &event.event {
             CLIAgentEventType::PromptSubmit => {
+                self.has_observed_turn_activity = true;
                 self.session_context.query = event.payload.query.clone();
                 self.session_context.response = None;
                 self.clear_permission_scoped_state();
@@ -344,15 +359,18 @@ impl CLIAgentSession {
                 if !matches!(self.status, CLIAgentSessionStatus::Blocked { .. }) {
                     return None;
                 }
+                self.has_observed_turn_activity = true;
                 CLIAgentSessionStatus::InProgress
             }
             CLIAgentEventType::Stop => {
+                self.has_observed_turn_activity = true;
                 self.session_context.query = event.payload.query.clone();
                 self.session_context.response = event.payload.response.clone();
                 self.clear_permission_scoped_state();
                 CLIAgentSessionStatus::Success
             }
             CLIAgentEventType::PermissionRequest => {
+                self.has_observed_turn_activity = true;
                 self.session_context.summary = event.payload.summary.clone();
                 self.session_context.tool_name = event.payload.tool_name.clone();
                 self.session_context.tool_input_preview = event.payload.tool_input_preview.clone();
@@ -360,23 +378,35 @@ impl CLIAgentSession {
                     message: event.payload.summary.clone(),
                 }
             }
-            CLIAgentEventType::QuestionAsked => CLIAgentSessionStatus::Blocked {
-                message: event
-                    .payload
-                    .summary
-                    .clone()
-                    .or_else(|| Some("Waiting for your answer".to_owned())),
-            },
+            CLIAgentEventType::QuestionAsked => {
+                self.has_observed_turn_activity = true;
+                CLIAgentSessionStatus::Blocked {
+                    message: event
+                        .payload
+                        .summary
+                        .clone()
+                        .or_else(|| Some("Waiting for your answer".to_owned())),
+                }
+            }
             CLIAgentEventType::PermissionReplied => {
                 if !matches!(self.status, CLIAgentSessionStatus::Blocked { .. }) {
                     return None;
                 }
+                self.has_observed_turn_activity = true;
                 self.clear_permission_scoped_state();
                 CLIAgentSessionStatus::InProgress
             }
-            // IdlePrompt means the agent is sitting at its prompt waiting for input.
-            // This should not affect status — otherwise it would override Success after a Stop event.
-            CLIAgentEventType::IdlePrompt => return None,
+            // IdlePrompt means the agent is sitting at its prompt waiting for input. Treat it as
+            // a completion fallback only after turn activity was observed; the initial idle
+            // prompt after launching an interactive CLI must not look like a completed task.
+            CLIAgentEventType::IdlePrompt => {
+                if !self.has_observed_turn_activity
+                    || !matches!(self.status, CLIAgentSessionStatus::InProgress)
+                {
+                    return None;
+                }
+                CLIAgentSessionStatus::Success
+            }
             CLIAgentEventType::SessionStart => {
                 self.plugin_version = event.payload.plugin_version.clone();
                 return None;
@@ -564,6 +594,7 @@ impl CLIAgentSessionsModel {
                     draft_text: None,
                     custom_command_prefix: None,
                     received_rich_notification: false,
+                    has_observed_turn_activity: false,
                     prompt_history: AgentPromptHistory::default(),
                     prompt_history_load_state: PromptHistoryLoadState::NotRequested,
                     prompt_history_generation: 0,
@@ -699,8 +730,9 @@ impl CLIAgentSessionsModel {
             .get_mut(&terminal_view_id)
             .filter(|s| s.agent == agent)
         {
-            // Upgrade existing session with plugin context.
-            session.status = CLIAgentSessionStatus::InProgress;
+            // Upgrade the existing session with plugin context without rewriting its lifecycle.
+            // Command-detected sessions already start as InProgress, while a late plugin
+            // registration must not turn a completed/idle session back into active work.
             session.listener = Some(listener);
             session.plugin_version = plugin_version;
             session.remote_host = remote_host;
@@ -708,7 +740,8 @@ impl CLIAgentSessionsModel {
             session.session_context.cwd = cwd.or(session.session_context.cwd.take());
             session.session_context.project = project.or(session.session_context.project.take());
             if session_id.is_some() && session_id != session.session_context.session_id {
-                session.reset_prompt_history();
+                session.reset_identity_scoped_state();
+                session.status = CLIAgentSessionStatus::InProgress;
             }
             session.session_context.session_id =
                 session_id.or(session.session_context.session_id.take());
@@ -735,6 +768,7 @@ impl CLIAgentSessionsModel {
                 draft_text: None,
                 custom_command_prefix: None,
                 received_rich_notification: false,
+                has_observed_turn_activity: false,
                 prompt_history: AgentPromptHistory::default(),
                 prompt_history_load_state: PromptHistoryLoadState::NotRequested,
                 prompt_history_generation: 0,

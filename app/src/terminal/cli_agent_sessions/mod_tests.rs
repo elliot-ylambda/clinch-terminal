@@ -240,6 +240,94 @@ fn parse_pi_stop_notification() {
     assert_eq!(notif.payload.response.as_deref(), Some("Memory is safe"));
 }
 
+fn idle_test_session(agent: CLIAgent) -> CLIAgentSession {
+    CLIAgentSession {
+        agent,
+        status: CLIAgentSessionStatus::InProgress,
+        session_context: CLIAgentSessionContext::default(),
+        input_state: CLIAgentInputState::Closed,
+        should_auto_toggle_input: false,
+        listener: None,
+        remote_host: None,
+        plugin_version: None,
+        draft_text: None,
+        custom_command_prefix: None,
+        received_rich_notification: true,
+        has_observed_turn_activity: false,
+        prompt_history: Default::default(),
+        prompt_history_load_state: Default::default(),
+        prompt_history_generation: 0,
+    }
+}
+
+fn activity_event(agent: CLIAgent, event: CLIAgentEventType) -> CLIAgentEvent {
+    CLIAgentEvent {
+        source: CLIAgentEventSource::RichPlugin,
+        v: 1,
+        agent,
+        event,
+        session_id: Some("session-id".to_owned()),
+        cwd: None,
+        project: None,
+        payload: CLIAgentEventPayload {
+            query: Some("fix the bug".to_owned()),
+            ..Default::default()
+        },
+    }
+}
+
+#[test]
+fn open_claude_and_codex_sessions_are_not_active_turns() {
+    for agent in [CLIAgent::Claude, CLIAgent::Codex] {
+        let session = idle_test_session(agent);
+        assert!(matches!(session.status, CLIAgentSessionStatus::InProgress));
+        assert!(!session.is_actively_working());
+    }
+}
+
+#[test]
+fn prompt_submit_is_active_until_stop() {
+    for agent in [CLIAgent::Claude, CLIAgent::Codex] {
+        let mut session = idle_test_session(agent);
+
+        session.apply_event(&activity_event(agent, CLIAgentEventType::PromptSubmit));
+        assert!(session.is_actively_working());
+
+        session.apply_event(&activity_event(agent, CLIAgentEventType::Stop));
+        assert!(matches!(session.status, CLIAgentSessionStatus::Success));
+        assert!(!session.is_actively_working());
+    }
+}
+
+#[test]
+fn idle_prompt_only_completes_an_observed_turn() {
+    let mut session = idle_test_session(CLIAgent::Claude);
+
+    assert_eq!(
+        session.apply_event(&activity_event(
+            CLIAgent::Claude,
+            CLIAgentEventType::IdlePrompt,
+        )),
+        None
+    );
+    assert!(!session.is_actively_working());
+
+    session.apply_event(&activity_event(
+        CLIAgent::Claude,
+        CLIAgentEventType::PromptSubmit,
+    ));
+    assert!(session.is_actively_working());
+
+    assert_eq!(
+        session.apply_event(&activity_event(
+            CLIAgent::Claude,
+            CLIAgentEventType::IdlePrompt,
+        )),
+        Some(CLIAgentSessionStatus::Success)
+    );
+    assert!(!session.is_actively_working());
+}
+
 #[test]
 fn apply_event_preserves_input_session() {
     let input_state = CLIAgentInputState::Open {
@@ -262,6 +350,7 @@ fn apply_event_preserves_input_session() {
         draft_text: None,
         custom_command_prefix: None,
         received_rich_notification: false,
+        has_observed_turn_activity: false,
         prompt_history: Default::default(),
         prompt_history_load_state: Default::default(),
         prompt_history_generation: 0,
@@ -300,6 +389,7 @@ fn is_remote_returns_true_when_remote_host_is_set() {
         remote_host: Some("user@devbox".to_owned()),
         custom_command_prefix: None,
         received_rich_notification: false,
+        has_observed_turn_activity: false,
         prompt_history: Default::default(),
         prompt_history_load_state: Default::default(),
         prompt_history_generation: 0,
@@ -321,6 +411,7 @@ fn is_remote_returns_false_when_remote_host_is_none() {
         draft_text: None,
         custom_command_prefix: None,
         received_rich_notification: false,
+        has_observed_turn_activity: false,
         prompt_history: Default::default(),
         prompt_history_load_state: Default::default(),
         prompt_history_generation: 0,
@@ -393,6 +484,7 @@ fn session_start_sets_plugin_version() {
         remote_host: None,
         custom_command_prefix: None,
         received_rich_notification: false,
+        has_observed_turn_activity: false,
         prompt_history: Default::default(),
         prompt_history_load_state: Default::default(),
         prompt_history_generation: 0,
@@ -430,6 +522,7 @@ fn session_start_without_plugin_version_leaves_none() {
         remote_host: None,
         custom_command_prefix: None,
         received_rich_notification: false,
+        has_observed_turn_activity: false,
         prompt_history: Default::default(),
         prompt_history_load_state: Default::default(),
         prompt_history_generation: 0,
@@ -466,6 +559,7 @@ fn codex_session_not_rich_until_rich_notification() {
         draft_text: None,
         custom_command_prefix: None,
         received_rich_notification: false,
+        has_observed_turn_activity: false,
         prompt_history: Default::default(),
         prompt_history_load_state: Default::default(),
         prompt_history_generation: 0,
@@ -491,6 +585,7 @@ fn non_codex_session_rich_after_rich_notification() {
         draft_text: None,
         custom_command_prefix: None,
         received_rich_notification: false,
+        has_observed_turn_activity: false,
         prompt_history: Default::default(),
         prompt_history_load_state: Default::default(),
         prompt_history_generation: 0,
@@ -525,6 +620,7 @@ fn blocked_claude_session_with_permission_state() -> CLIAgentSession {
         remote_host: None,
         custom_command_prefix: None,
         received_rich_notification: false,
+        has_observed_turn_activity: false,
         prompt_history: Default::default(),
         prompt_history_load_state: Default::default(),
         prompt_history_generation: 0,
@@ -647,6 +743,7 @@ fn permission_request_still_populates_summary_and_tool_fields() {
         remote_host: None,
         custom_command_prefix: None,
         received_rich_notification: false,
+        has_observed_turn_activity: false,
         prompt_history: Default::default(),
         prompt_history_load_state: Default::default(),
         prompt_history_generation: 0,
@@ -800,6 +897,7 @@ fn listener_events_cannot_replace_the_outer_session_identity() {
         remote_host: None,
         custom_command_prefix: None,
         received_rich_notification: true,
+        has_observed_turn_activity: true,
         prompt_history: AgentPromptHistory {
             prompts: vec![AgentPrompt {
                 timestamp: None,
@@ -830,7 +928,7 @@ fn listener_events_cannot_replace_the_outer_session_identity() {
     assert_eq!(session.prompt_history_generation, 3);
 
     // Explicit registration/seeding owns identity changes and resets the old context.
-    session.reset_prompt_history();
+    session.reset_identity_scoped_state();
     assert_eq!(session.prompt_count(), 0);
     assert_eq!(
         session.prompt_history_load_state,
@@ -857,6 +955,7 @@ fn durable_identity_seed_preserves_live_session_state_and_invalidates_old_histor
         remote_host: None,
         custom_command_prefix: None,
         received_rich_notification: false,
+        has_observed_turn_activity: false,
         prompt_history: AgentPromptHistory {
             prompts: vec![AgentPrompt {
                 timestamp: None,
@@ -907,6 +1006,7 @@ fn native_codex_osc9_query_is_not_used_as_a_prompt_title() {
         remote_host: None,
         custom_command_prefix: None,
         received_rich_notification: false,
+        has_observed_turn_activity: false,
         prompt_history: AgentPromptHistory::default(),
         prompt_history_load_state: PromptHistoryLoadState::Unavailable,
         prompt_history_generation: 1,
@@ -940,6 +1040,7 @@ fn default_title_is_stable_first_prompt_and_explicit_preference_uses_latest() {
         remote_host: None,
         custom_command_prefix: None,
         received_rich_notification: true,
+        has_observed_turn_activity: true,
         prompt_history: AgentPromptHistory::default(),
         prompt_history_load_state: PromptHistoryLoadState::Ready,
         prompt_history_generation: 1,

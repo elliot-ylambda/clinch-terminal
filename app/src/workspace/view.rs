@@ -388,9 +388,7 @@ use crate::terminal::block_list_viewport::InputMode;
 use crate::terminal::cli_agent_sessions::plugin_manager::{plugin_manager_for, PluginModalKind};
 #[cfg(feature = "local_tty")]
 use crate::terminal::cli_agent_sessions::session_context_enabled;
-use crate::terminal::cli_agent_sessions::{
-    CLIAgentSessionStatus, CLIAgentSessionsModel, CLIAgentSessionsModelEvent,
-};
+use crate::terminal::cli_agent_sessions::{CLIAgentSessionsModel, CLIAgentSessionsModelEvent};
 use crate::terminal::enable_auto_reload_modal::{
     EnableAutoReloadModal, EnableAutoReloadModalEvent,
 };
@@ -1226,9 +1224,8 @@ pub struct Workspace {
     create_auth_secret_modal: Option<ViewHandle<Modal<AuthSecretFtuxView>>>,
 }
 
-fn is_in_progress_project_agent(agent: CLIAgent, status: &CLIAgentSessionStatus) -> bool {
-    matches!(agent, CLIAgent::Claude | CLIAgent::Codex)
-        && matches!(status, CLIAgentSessionStatus::InProgress)
+fn is_in_progress_project_agent(agent: CLIAgent, is_actively_working: bool) -> bool {
+    matches!(agent, CLIAgent::Claude | CLIAgent::Codex) && is_actively_working
 }
 
 impl Workspace {
@@ -21729,7 +21726,7 @@ impl Workspace {
             .flat_map(|tab| tab.pane_group.as_ref(ctx).terminal_views(ctx))
             .filter(|terminal| {
                 sessions.session(terminal.id()).is_some_and(|session| {
-                    is_in_progress_project_agent(session.agent, &session.status)
+                    is_in_progress_project_agent(session.agent, session.is_actively_working())
                 })
             })
             .count()
