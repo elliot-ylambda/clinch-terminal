@@ -386,6 +386,8 @@ use crate::terminal::available_shells::AvailableShells;
 use crate::terminal::block_list_viewport::InputMode;
 #[cfg(not(target_family = "wasm"))]
 use crate::terminal::cli_agent_sessions::plugin_manager::{plugin_manager_for, PluginModalKind};
+#[cfg(feature = "local_tty")]
+use crate::terminal::cli_agent_sessions::session_context_enabled;
 use crate::terminal::cli_agent_sessions::{CLIAgentSessionsModel, CLIAgentSessionsModelEvent};
 use crate::terminal::enable_auto_reload_modal::{
     EnableAutoReloadModal, EnableAutoReloadModalEvent,
@@ -3699,6 +3701,19 @@ impl Workspace {
         })
     }
 
+    #[cfg(feature = "local_tty")]
+    fn agent_session_seed_for_terminal_view(
+        &self,
+        terminal_view_id: EntityId,
+        ctx: &AppContext,
+    ) -> Option<(crate::agent_resume::AgentResumeProvider, String)> {
+        self.tabs.iter().find_map(|tab| {
+            tab.pane_group
+                .as_ref(ctx)
+                .agent_session_seed_for_terminal_view(terminal_view_id, ctx)
+        })
+    }
+
     fn agent_conversation_event_affects_vertical_tabs(
         &self,
         event: &BlocklistAIHistoryEvent,
@@ -3726,13 +3741,40 @@ impl Workspace {
         event: &CLIAgentSessionsModelEvent,
         ctx: &mut ViewContext<Self>,
     ) {
+        let terminal_view_id = event.terminal_view_id();
+        let belongs_to_workspace = self.workspace_contains_terminal_view(terminal_view_id, ctx);
+
+        // Provider SessionStart hooks write the durable identity to the pane registry. Native
+        // Codex sessions otherwise expose only an ID-less OSC 9 notification, so discover that
+        // identity on lifecycle events and let the model hydrate the private prompt mirror. The
+        // update is deferred because this callback is itself running inside a model emission.
+        #[cfg(feature = "local_tty")]
+        if session_context_enabled()
+            && belongs_to_workspace
+            && matches!(
+                event,
+                CLIAgentSessionsModelEvent::Started { .. }
+                    | CLIAgentSessionsModelEvent::StatusChanged { .. }
+            )
+        {
+            if let Some((provider, session_id)) =
+                self.agent_session_seed_for_terminal_view(terminal_view_id, ctx)
+            {
+                ctx.spawn(async {}, move |_, _, ctx| {
+                    CLIAgentSessionsModel::handle(ctx).update(ctx, |model, ctx| {
+                        model.seed_resumed_session(terminal_view_id, provider, session_id, ctx);
+                    });
+                });
+            }
+        }
+
         if matches!(
             event,
             CLIAgentSessionsModelEvent::Started { .. }
                 | CLIAgentSessionsModelEvent::StatusChanged { .. }
                 | CLIAgentSessionsModelEvent::Ended { .. }
                 | CLIAgentSessionsModelEvent::SessionUpdated { .. }
-        ) && self.workspace_contains_terminal_view(event.terminal_view_id(), ctx)
+        ) && belongs_to_workspace
         {
             ctx.notify();
         }
@@ -8620,6 +8662,10 @@ impl Workspace {
         cwd: Option<String>,
         ctx: &mut ViewContext<Self>,
     ) {
+        #[cfg(feature = "local_tty")]
+        let agent_session_seed =
+            crate::agent_resume::agent_session_seed_from_restore_command(&command);
+
         // Create a new tab pinned to the session's original directory (bypasses the
         // user's working-directory setting, so `claude --resume`'s cwd-scoping holds).
         let options = NewTerminalOptions::default()
@@ -8630,6 +8676,15 @@ impl Workspace {
             None,
             ctx,
         );
+
+        #[cfg(feature = "local_tty")]
+        if let (Some((provider, session_id)), Some(terminal_view)) =
+            (agent_session_seed, self.active_session_view(ctx))
+        {
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |model, ctx| {
+                model.seed_resumed_session(terminal_view.id(), provider, session_id, ctx);
+            });
+        }
 
         // Attach the one-shot replay command to the new (now active) tab's single pane,
         // mirroring the snapshot-restore path (pane_group/mod.rs:1672).

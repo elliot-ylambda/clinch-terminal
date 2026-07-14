@@ -58,7 +58,7 @@ use crate::pane_group::{
 };
 use crate::safe_triangle::SafeTriangle;
 use crate::tab::{tab_position_id, SelectedTabColor, TabData};
-use crate::terminal::cli_agent_sessions::CLIAgentSessionsModel;
+use crate::terminal::cli_agent_sessions::{session_context_enabled, CLIAgentSessionsModel};
 use crate::terminal::session_settings::SessionSettings;
 use crate::terminal::view::TerminalViewState;
 use crate::terminal::{CLIAgent, TerminalView};
@@ -4048,6 +4048,9 @@ fn preferred_agent_tab_titles(
 fn terminal_agent_text(terminal_view: &TerminalView, app: &AppContext) -> TerminalAgentText {
     let cli_agent_session = CLIAgentSessionsModel::as_ref(app).session(terminal_view.id());
     let is_plugin_backed = cli_agent_session.is_some_and(|session| session.listener.is_some());
+    let has_clinch_session_context = session_context_enabled()
+        && cli_agent_session
+            .is_some_and(|session| matches!(session.agent, CLIAgent::Claude | CLIAgent::Codex));
     let is_ambient_agent = terminal_view.is_ambient_agent_session(app);
 
     let mut agent_text = TerminalAgentText {
@@ -4056,7 +4059,7 @@ fn terminal_agent_text(terminal_view: &TerminalView, app: &AppContext) -> Termin
         ..Default::default()
     };
 
-    if cli_agent_session.is_some() && !is_plugin_backed {
+    if cli_agent_session.is_some() && !is_plugin_backed && !has_clinch_session_context {
         return agent_text;
     }
 
@@ -4067,8 +4070,13 @@ fn terminal_agent_text(terminal_view: &TerminalView, app: &AppContext) -> Termin
         agent_text.conversation_display_title.is_some() || agent_text.is_oz_agent;
 
     if let Some(session) = cli_agent_session {
-        agent_text.cli_agent_title = session.session_context.title_like_text();
-        agent_text.cli_agent_latest_user_prompt = session.session_context.latest_user_prompt();
+        if has_clinch_session_context {
+            agent_text.cli_agent_title = session.title_for_tab(false);
+            agent_text.cli_agent_latest_user_prompt = session.latest_user_prompt_for_chrome();
+        } else {
+            agent_text.cli_agent_title = session.session_context.title_like_text();
+            agent_text.cli_agent_latest_user_prompt = session.session_context.latest_user_prompt();
+        }
     }
 
     agent_text

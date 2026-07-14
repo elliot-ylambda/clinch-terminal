@@ -57,7 +57,7 @@ function hookFields() {
 function promptLine(argv) {
     const payload = parseObject(readStdin(), "hook payload");
     const prompt = asString(payload.prompt, "");
-    if (!prompt) {
+    if (!prompt.trim()) {
         return "";
     }
     return JSON.stringify({
@@ -328,9 +328,11 @@ function listConversations(argv) {
     }
 
     const sessions = {};
-    function sessionFor(id) {
-        if (!sessions[id]) {
-            sessions[id] = {
+    function sessionFor(id, agent) {
+        agent = asString(agent, "claude");
+        const key = agent + "\u0000" + id;
+        if (!sessions[key]) {
+            sessions[key] = {
                 id: id,
                 start: "",
                 cwd: "",
@@ -338,15 +340,18 @@ function listConversations(argv) {
                 bridge: "",
                 bridgeTs: "",
                 prompt: "",
+                agent: agent,
+                mirrorSourcePriority: 0,
             };
         }
-        return sessions[id];
+        return sessions[key];
     }
-    function observe(id, ts, cwd, bridge) {
+    function observe(id, ts, cwd, bridge, agent) {
         if (!id) {
             return null;
         }
-        const session = sessionFor(id);
+        agent = asString(agent, "");
+        const session = sessionFor(id, agent);
         ts = asString(ts, "");
         if (ts && (!session.start || ts < session.start)) {
             session.start = ts;
@@ -363,12 +368,12 @@ function listConversations(argv) {
         }
         return session;
     }
-    function clearBridge(id, ts, bridge) {
+    function clearBridge(id, ts, bridge, agent) {
         bridge = asString(bridge, "");
         if (!id || !bridge) {
             return;
         }
-        const session = sessionFor(id);
+        const session = sessionFor(id, agent);
         ts = asString(ts, "");
         if (session.bridge === bridge && (!session.bridgeTs || !ts || ts >= session.bridgeTs)) {
             session.bridge = "";
@@ -382,34 +387,49 @@ function listConversations(argv) {
                 typeof row.command !== "string") {
             return;
         }
-        const match = row.command.match(/(?:clinch|warp)_agent_resume_launch\s+[a-z]+\s+([A-Za-z0-9-]+)/);
+        const match = row.command.match(/(?:clinch|warp)_agent_resume_launch\s+(claude|codex)\s+([A-Za-z0-9-]+)/);
         if (match) {
-            observe(match[1], row.ts, row.cwd, row.bridge);
+            observe(match[2], row.ts, row.cwd, row.bridge, match[1]);
             if (row.op === "scrub-bridge") {
-                clearBridge(match[1], row.ts, row.bridge);
+                clearBridge(match[2], row.ts, row.bridge, match[1]);
             }
         }
     });
 
     const promptsDirectory = directory + "/prompts";
-    listDirectory(promptsDirectory).forEach(function (name) {
-        if (typeof name !== "string" || !name.endsWith(".jsonl")) {
-            return;
-        }
-        const id = name.slice(0, -6);
-        parseJsonLines(readFile(promptsDirectory + "/" + name), function (row) {
-            if (!row || typeof row.prompt !== "string") {
+    function readPromptDirectory(path, agent, priority) {
+        listDirectory(path).forEach(function (name) {
+            if (typeof name !== "string" || !name.endsWith(".jsonl")) {
                 return;
             }
-            const session = observe(id, row.ts, row.cwd, row.bridge);
-            if (session && !session.prompt && row.prompt) {
-                session.prompt = row.prompt;
+            const id = name.slice(0, -6);
+            const known = sessionFor(id, agent);
+            if (known.mirrorSourcePriority > priority) {
+                return;
             }
+            if (known.mirrorSourcePriority < priority) {
+                known.prompt = "";
+                known.mirrorSourcePriority = priority;
+            }
+            parseJsonLines(readFile(path + "/" + name), function (row) {
+                if (!row || typeof row.prompt !== "string") {
+                    return;
+                }
+                const session = observe(id, row.ts, row.cwd, row.bridge, agent);
+                if (session && !session.prompt && row.prompt) {
+                    session.prompt = row.prompt;
+                }
+            });
         });
-    });
+    }
+    // Provider-scoped mirrors are canonical. Flat files are read only as the legacy Claude
+    // layout and cannot overwrite a scoped source for the same session id.
+    readPromptDirectory(promptsDirectory + "/claude", "claude", 2);
+    readPromptDirectory(promptsDirectory + "/codex", "codex", 2);
+    readPromptDirectory(promptsDirectory, "claude", 1);
 
     const conversations = Object.keys(sessions)
-        .map(function (id) { return sessions[id]; })
+        .map(function (key) { return sessions[key]; })
         .filter(function (session) {
             return session.start && (!cwdFilter || session.cwd === cwdFilter);
         })

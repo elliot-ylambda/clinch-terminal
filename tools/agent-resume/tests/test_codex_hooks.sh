@@ -39,10 +39,59 @@ rm -f "$WARP_AGENT_RESUME_DIR/.app-terminating"
 echo '{"session_id":"sess-99","cwd":"/tmp/repo"}' | bash "$HERE/codex-session-end.sh"
 [[ ! -f "$f" ]] || { echo "FAIL: end did not remove"; exit 1; }
 
+# Codex CLI 0.144.3 UserPromptSubmit fixture. The supported schema includes session/turn ids,
+# optional agent fields, transcript path, cwd, event, model, permission mode, and exact prompt.
+# The prompt-only hook must preserve multiline content without changing the pane registry.
+echo '{"session_id":"owner-stays","cwd":"/tmp/repo"}' | bash "$HERE/codex-session-start.sh"
+prompt_in='fix "quotes" and \
+keep this line'
+jq -cn --arg p "$prompt_in" '{
+  session_id:"sess-prompt", turn_id:"turn-1", agent_id:null, agent_type:null,
+  transcript_path:"/tmp/rollout-sess-prompt.jsonl", cwd:"/tmp/repo",
+  hook_event_name:"UserPromptSubmit", model:"gpt-5.3-codex",
+  permission_mode:"bypassPermissions", prompt:$p
+}' | bash "$HERE/codex-prompt-submit.sh"
+mf="$WARP_AGENT_RESUME_DIR/prompts/codex/sess-prompt.jsonl"
+[[ -f "$mf" ]] || { echo "FAIL: Codex prompt not mirrored"; exit 1; }
+[[ "$(jq -r '.prompt' "$mf")" == "$prompt_in" ]] || { echo "FAIL: Codex prompt text mangled"; exit 1; }
+[[ "$(jq -r '.cwd' "$mf")" == "/tmp/repo" ]] || { echo "FAIL: Codex mirror cwd wrong"; exit 1; }
+grep -q 'owner-stays' "$f" || { echo "FAIL: prompt hook rewrote pane registry"; exit 1; }
+[[ "$(stat -f '%Lp' "$mf")" == "600" ]] || { echo "FAIL: Codex mirror not private"; exit 1; }
+[[ "$(stat -f '%Lp' "$(dirname "$mf")")" == "700" ]] || { echo "FAIL: Codex mirror dir not private"; exit 1; }
+
+# Repeated identical messages are separate turns; Stop and empty prompts append nothing.
+jq -cn --arg p "$prompt_in" '{session_id:"sess-prompt",cwd:"/tmp/repo",hook_event_name:"UserPromptSubmit",prompt:$p}' \
+  | bash "$HERE/codex-prompt-submit.sh"
+before="$(wc -l < "$mf")"
+echo '{"session_id":"sess-prompt","cwd":"/tmp/repo","hook_event_name":"Stop","prompt":"ignored"}' \
+  | bash "$HERE/codex-prompt-submit.sh"
+echo '{"session_id":"sess-prompt","cwd":"/tmp/repo","hook_event_name":"UserPromptSubmit","prompt":""}' \
+  | bash "$HERE/codex-prompt-submit.sh"
+printf '%s\n' '{"session_id":"sess-prompt","cwd":"/tmp/repo","hook_event_name":"UserPromptSubmit","prompt":"  \n  "}' \
+  | bash "$HERE/codex-prompt-submit.sh"
+[[ "$before" -eq 2 && "$(wc -l < "$mf")" -eq 2 ]] \
+  || { echo "FAIL: Codex repeat/ignored event semantics wrong"; exit 1; }
+
+# A pre-existing symlink provider directory must never redirect sensitive prompt writes.
+symlink_reg="$TMP/symlink-reg"; outside="$TMP/outside"; mkdir -p "$symlink_reg/prompts" "$outside"
+ln -s "$outside" "$symlink_reg/prompts/codex"
+echo '{"session_id":"escape","cwd":"/tmp","hook_event_name":"UserPromptSubmit","prompt":"secret"}' \
+  | WARP_AGENT_RESUME_DIR="$symlink_reg" bash "$HERE/codex-prompt-submit.sh"
+[[ -z "$(find "$outside" -type f -print)" ]] || { echo "FAIL: provider symlink redirected prompt"; exit 1; }
+root_symlink_reg="$TMP/root-symlink-reg"; mkdir -p "$root_symlink_reg"; ln -s "$outside" "$root_symlink_reg/prompts"
+echo '{"session_id":"root-escape","cwd":"/tmp","hook_event_name":"UserPromptSubmit","prompt":"secret"}' \
+  | WARP_AGENT_RESUME_DIR="$root_symlink_reg" bash "$HERE/codex-prompt-submit.sh"
+[[ -z "$(find "$outside" -type f -print)" ]] || { echo "FAIL: prompts-root symlink redirected prompt"; exit 1; }
+rm -f "$f"
+
 # No-op outside a Clinch pane. (The registry dir legitimately holds journal.jsonl from the
 # writes above, so assert on pane entries, not an empty dir.)
 unset WARP_TERMINAL_SESSION_UUID
 echo '{"session_id":"x","cwd":"/tmp"}' | bash "$HERE/codex-session-start.sh"
 entries="$(find "$WARP_AGENT_RESUME_DIR" -name '*.json' 2>/dev/null)"
 [[ -z "$entries" ]] || { echo "FAIL: wrote outside pane"; exit 1; }
+echo '{"session_id":"outside","cwd":"/tmp","hook_event_name":"UserPromptSubmit","prompt":"secret"}' \
+  | bash "$HERE/codex-prompt-submit.sh"
+[[ ! -e "$WARP_AGENT_RESUME_DIR/prompts/codex/outside.jsonl" ]] \
+  || { echo "FAIL: prompt mirrored outside Clinch pane"; exit 1; }
 echo "PASS"

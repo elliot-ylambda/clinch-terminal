@@ -398,7 +398,7 @@ use crate::terminal::cli_agent_sessions::plugin_manager::{plugin_manager_for, Pl
 use crate::terminal::cli_agent_sessions::{
     CLIAgentInputEntrypoint, CLIAgentInputState, CLIAgentRichInputCloseReason, CLIAgentSession,
     CLIAgentSessionContext, CLIAgentSessionStatus, CLIAgentSessionsModel,
-    CLIAgentSessionsModelEvent,
+    CLIAgentSessionsModelEvent, PromptHistoryLoadState,
 };
 use crate::terminal::color::List;
 use crate::terminal::command_corrections_denylist::COMMAND_CORRECTIONS_PREFERRED_DENYLIST;
@@ -527,6 +527,7 @@ use crate::util::openable_file_type::{is_markdown_file, resolve_file_target, Fil
 use crate::util::repo_detection::{detect_possible_git_repo, RepoDetectionSessionType};
 use crate::util::truncation::truncate_from_end;
 use crate::view_components::action_button::{ActionButton, ButtonSize, KeystrokeSource};
+use crate::view_components::dropdown::{Dropdown, DropdownAction, DropdownEvent};
 use crate::view_components::find::{Event as FindEvent, Find, FindDirection, FindWithinBlockState};
 use crate::view_components::{DismissibleToast, ToastFlavor};
 use crate::workflows::workflow::Workflow;
@@ -2519,6 +2520,9 @@ pub struct TerminalView {
 
     context_menu: ViewHandle<Menu<TerminalAction>>,
 
+    /// Anchored, keyboard-accessible chronological history for the agent context header.
+    cli_agent_message_history_dropdown: ViewHandle<Dropdown<()>>,
+
     /// None iff there is no context menu open currently.
     context_menu_state: Option<ContextMenuState>,
 
@@ -2859,6 +2863,8 @@ pub struct TerminalView {
     /// pane/tab. Drives breadcrumb-vs-pill-bar rendering in the pane header.
     is_orchestration_split_off: bool,
     is_using_conversation_for_pane_header_title: bool,
+    /// True when the pane title is a Claude/Codex prompt, which should preserve its beginning.
+    is_using_cli_agent_prompt_for_pane_header_title: bool,
 
     ambient_agent_view_model: Option<ModelHandle<ambient_agent::AmbientAgentViewModel>>,
     pending_cloud_followup_task_id: Option<AmbientAgentTaskId>,
@@ -3875,6 +3881,22 @@ impl TerminalView {
             me.handle_menu_event(event, ctx);
         });
 
+        let cli_agent_message_history_dropdown = ctx.add_typed_action_view(|ctx| {
+            let mut dropdown = Dropdown::<()>::new(ctx).with_drop_shadow();
+            dropdown.set_main_axis_size(MainAxisSize::Min, ctx);
+            dropdown.set_top_bar_max_width(190.);
+            dropdown.set_top_bar_height(26., ctx);
+            dropdown.set_vertical_margin(0., ctx);
+            dropdown.set_menu_width(480., ctx);
+            dropdown.set_menu_max_height(360., ctx);
+            dropdown
+        });
+        ctx.subscribe_to_view(&cli_agent_message_history_dropdown, |me, _, event, ctx| {
+            if matches!(event, DropdownEvent::Close) {
+                me.redetermine_global_focus(ctx);
+            }
+        });
+
         let slow_bootstrap_banner = ctx.add_typed_action_view(|_| {
             Banner::<TerminalAction>::new_with_buttons(
                 BannerTextContent::formatted_text(vec![
@@ -4282,6 +4304,7 @@ impl TerminalView {
             is_selecting: false,
             context_menu_state: None,
             context_menu,
+            cli_agent_message_history_dropdown,
             hovered_secret: None,
             open_secret_tool_tip: None,
             hovered_block_index: None,
@@ -4404,6 +4427,7 @@ impl TerminalView {
             orchestration_pill_bar,
             is_orchestration_split_off: false,
             is_using_conversation_for_pane_header_title: false,
+            is_using_cli_agent_prompt_for_pane_header_title: false,
             ambient_agent_view_model,
             conversation_details_panel,
             is_conversation_details_panel_open: false,
@@ -11959,6 +11983,9 @@ impl TerminalView {
                                                         draft_text: None,
                                                         custom_command_prefix: custom_command_prefix.clone(),
                                                         received_rich_notification: false,
+                                                        prompt_history: Default::default(),
+                                                        prompt_history_load_state: Default::default(),
+                                                        prompt_history_generation: 0,
                                                     },
                                                     ctx,
                                                 );
@@ -13345,6 +13372,7 @@ impl TerminalView {
                     | CLIAgentSessionsModelEvent::Ended { .. }
             )
         {
+            self.sync_cli_agent_message_history_dropdown(ctx);
             self.update_pane_configuration(ctx);
             ctx.notify();
         }
@@ -13446,6 +13474,73 @@ impl TerminalView {
             Some(NotificationAgentVariant::CLIAgent((*agent).into())),
             ctx,
         );
+    }
+
+    fn sync_cli_agent_message_history_dropdown(&mut self, ctx: &mut ViewContext<Self>) {
+        let snapshot = CLIAgentSessionsModel::as_ref(ctx)
+            .session(self.view_id)
+            .filter(|session| matches!(session.agent, CLIAgent::Claude | CLIAgent::Codex))
+            .map(|session| {
+                (
+                    session.prompt_history.clone(),
+                    session.prompt_history_load_state.clone(),
+                )
+            });
+
+        let Some((history, load_state)) = snapshot else {
+            self.cli_agent_message_history_dropdown
+                .update(ctx, |dropdown, ctx| {
+                    dropdown.set_rich_items(Vec::<MenuItem<DropdownAction>>::new(), ctx);
+                    dropdown.set_selected_to_none(ctx);
+                });
+            return;
+        };
+
+        let mut items: Vec<MenuItem<DropdownAction>> = history
+            .prompts
+            .iter()
+            .enumerate()
+            .map(|(index, prompt)| {
+                let timestamp = prompt
+                    .timestamp
+                    .as_deref()
+                    .map(|timestamp| format!(" · {timestamp}"))
+                    .unwrap_or_default();
+                MenuItemFields::new_multiline(
+                    format!("{}.{}\n{}", index + 1, timestamp, prompt.text),
+                    1_000,
+                )
+                .into_item()
+            })
+            .collect();
+        if history.is_partial {
+            items.push(
+                MenuItemFields::new("Earlier messages may be unavailable")
+                    .with_disabled(true)
+                    .into_item(),
+            );
+        }
+        if items.is_empty() && matches!(load_state, PromptHistoryLoadState::Loading { .. }) {
+            items.push(
+                MenuItemFields::new("Restoring message history…")
+                    .with_disabled(true)
+                    .into_item(),
+            );
+        }
+
+        let label = if history.prompts.is_empty()
+            && matches!(load_state, PromptHistoryLoadState::Loading { .. })
+        {
+            "Message history (loading)".to_owned()
+        } else {
+            format!("Message history ({})", history.prompts.len())
+        };
+        self.cli_agent_message_history_dropdown
+            .update(ctx, move |dropdown, ctx| {
+                dropdown.set_rich_items(items, ctx);
+                dropdown.set_menu_header_text_override(move |_| label.clone());
+                dropdown.set_selected_by_index(0, ctx);
+            });
     }
 
     /// Handles the initialization of a session within this terminal pane.

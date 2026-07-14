@@ -8,7 +8,7 @@ export WARP_AGENT_RESUME_DIR="$TMP/reg"
 # The hook calls clinch-agent-resume as a sibling; put both in one bin and run from there.
 BIN="$TMP/bin"; mkdir -p "$BIN"
 install -m 0755 "$HERE/agent-json" "$HERE/clinch-agent-resume" \
-  "$HERE/claude-capture.sh" "$BIN/"
+  "$HERE/claude-capture.sh" "$HERE/prompt-mirror.sh" "$BIN/"
 install -m 0644 "$HERE/agent-json.js" "$BIN/"
 
 export WARP_TERMINAL_SESSION_UUID="cc33"
@@ -182,9 +182,9 @@ echo '{"session_id":"sess-new","cwd":"/tmp/repo","hook_event_name":"SessionEnd"}
 rm -f "$f"
 
 # --- Prompt mirror ---
-# Every UserPromptSubmit appends the prompt to prompts/<sid>.jsonl so prompt text
+# Every UserPromptSubmit appends the prompt to prompts/claude/<sid>.jsonl so prompt text
 # survives locally even for poisoned/child sessions that never write a transcript.
-P="$WARP_AGENT_RESUME_DIR/prompts"
+P="$WARP_AGENT_RESUME_DIR/prompts/claude"
 
 # The prompt text round-trips exactly through JSON escaping (quotes, backslash, newline).
 prompt_in='say "hi" \ and
@@ -198,11 +198,13 @@ mf="$P/sess-mm.jsonl"
 [[ "$(jq -r '.cwd' "$mf")" == "/tmp/repo" ]] || { echo "FAIL: mirror cwd wrong"; exit 1; }
 jq -e '.ts | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T")' "$mf" >/dev/null || { echo "FAIL: mirror ts not ISO8601"; exit 1; }
 perms="$(stat -f '%Lp' "$mf")"; [[ "$perms" == "600" ]] || { echo "FAIL: mirror perms $perms"; exit 1; }
-dperms="$(stat -f '%Lp' "$P")"; [[ "$dperms" == "700" ]] || { echo "FAIL: prompts dir perms $dperms"; exit 1; }
+dperms="$(stat -f '%Lp' "$P")"; [[ "$dperms" == "700" ]] || { echo "FAIL: provider prompts dir perms $dperms"; exit 1; }
+root_perms="$(stat -f '%Lp' "$(dirname "$P")")"; [[ "$root_perms" == "700" ]] || { echo "FAIL: prompts root perms $root_perms"; exit 1; }
 
 # Stop events and empty prompts mirror nothing.
 echo '{"session_id":"sess-mm","cwd":"/tmp/repo","hook_event_name":"Stop","permission_mode":"default"}' | "$BIN/claude-capture.sh"
 echo '{"session_id":"sess-mm","cwd":"/tmp/repo","hook_event_name":"UserPromptSubmit","permission_mode":"default","prompt":""}' | "$BIN/claude-capture.sh"
+printf '%s\n' '{"session_id":"sess-mm","cwd":"/tmp/repo","hook_event_name":"UserPromptSubmit","permission_mode":"default","prompt":"  \n  "}' | "$BIN/claude-capture.sh"
 [[ "$(wc -l < "$mf")" -eq 1 ]] || { echo "FAIL: Stop/empty prompt must not mirror"; exit 1; }
 
 # The mirror runs BEFORE the pane-ownership guard: a nested session's prompt is mirrored

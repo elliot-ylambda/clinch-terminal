@@ -2,9 +2,11 @@ use super::event::{
     parse_event, CLIAgentEvent, CLIAgentEventPayload, CLIAgentEventSource, CLIAgentEventType,
 };
 use super::{
+    merge_loaded_and_live_history, prompt_from_trusted_event, session_context_enabled_for,
     CLIAgentInputEntrypoint, CLIAgentInputState, CLIAgentSession, CLIAgentSessionContext,
-    CLIAgentSessionStatus, CLIAgentSessionsModel,
+    CLIAgentSessionKey, CLIAgentSessionStatus, CLIAgentSessionsModel, PromptHistoryLoadState,
 };
+use crate::agent_resume::{AgentPrompt, AgentPromptHistory, AgentResumeProvider};
 use crate::ai::blocklist::{InputConfig, InputType};
 use crate::terminal::CLIAgent;
 
@@ -260,6 +262,9 @@ fn apply_event_preserves_input_session() {
         draft_text: None,
         custom_command_prefix: None,
         received_rich_notification: false,
+        prompt_history: Default::default(),
+        prompt_history_load_state: Default::default(),
+        prompt_history_generation: 0,
     };
 
     let event = CLIAgentEvent {
@@ -295,6 +300,9 @@ fn is_remote_returns_true_when_remote_host_is_set() {
         remote_host: Some("user@devbox".to_owned()),
         custom_command_prefix: None,
         received_rich_notification: false,
+        prompt_history: Default::default(),
+        prompt_history_load_state: Default::default(),
+        prompt_history_generation: 0,
     };
     assert!(session.is_remote());
 }
@@ -313,6 +321,9 @@ fn is_remote_returns_false_when_remote_host_is_none() {
         draft_text: None,
         custom_command_prefix: None,
         received_rich_notification: false,
+        prompt_history: Default::default(),
+        prompt_history_load_state: Default::default(),
+        prompt_history_generation: 0,
     };
     assert!(!session.is_remote());
 }
@@ -382,6 +393,9 @@ fn session_start_sets_plugin_version() {
         remote_host: None,
         custom_command_prefix: None,
         received_rich_notification: false,
+        prompt_history: Default::default(),
+        prompt_history_load_state: Default::default(),
+        prompt_history_generation: 0,
     };
 
     let event = CLIAgentEvent {
@@ -416,6 +430,9 @@ fn session_start_without_plugin_version_leaves_none() {
         remote_host: None,
         custom_command_prefix: None,
         received_rich_notification: false,
+        prompt_history: Default::default(),
+        prompt_history_load_state: Default::default(),
+        prompt_history_generation: 0,
     };
 
     let event = CLIAgentEvent {
@@ -449,6 +466,9 @@ fn codex_session_not_rich_until_rich_notification() {
         draft_text: None,
         custom_command_prefix: None,
         received_rich_notification: false,
+        prompt_history: Default::default(),
+        prompt_history_load_state: Default::default(),
+        prompt_history_generation: 0,
     };
     assert!(!session.supports_rich_status());
 
@@ -471,6 +491,9 @@ fn non_codex_session_rich_after_rich_notification() {
         draft_text: None,
         custom_command_prefix: None,
         received_rich_notification: false,
+        prompt_history: Default::default(),
+        prompt_history_load_state: Default::default(),
+        prompt_history_generation: 0,
     };
     // No listener and no rich notification yet.
     assert!(!session.supports_rich_status());
@@ -502,6 +525,9 @@ fn blocked_claude_session_with_permission_state() -> CLIAgentSession {
         remote_host: None,
         custom_command_prefix: None,
         received_rich_notification: false,
+        prompt_history: Default::default(),
+        prompt_history_load_state: Default::default(),
+        prompt_history_generation: 0,
     }
 }
 
@@ -621,6 +647,9 @@ fn permission_request_still_populates_summary_and_tool_fields() {
         remote_host: None,
         custom_command_prefix: None,
         received_rich_notification: false,
+        prompt_history: Default::default(),
+        prompt_history_load_state: Default::default(),
+        prompt_history_generation: 0,
     };
 
     let event = CLIAgentEvent {
@@ -654,4 +683,291 @@ fn permission_request_still_populates_summary_and_tool_fields() {
         session.status,
         CLIAgentSessionStatus::Blocked { .. },
     ));
+}
+
+#[test]
+fn prompt_history_merge_preserves_repeated_turns_by_occurrence() {
+    let prompt = |text: &str| AgentPrompt {
+        timestamp: None,
+        text: text.to_owned(),
+    };
+    let loaded = AgentPromptHistory {
+        prompts: vec![prompt("repeat"), prompt("repeat")],
+        is_partial: true,
+    };
+    let live = AgentPromptHistory {
+        prompts: vec![
+            prompt("repeat"),
+            prompt("repeat"),
+            prompt("repeat"),
+            prompt("follow up"),
+        ],
+        is_partial: false,
+    };
+
+    let merged = merge_loaded_and_live_history(loaded, live);
+
+    assert_eq!(
+        merged
+            .prompts
+            .iter()
+            .map(|prompt| prompt.text.as_str())
+            .collect::<Vec<_>>(),
+        vec!["repeat", "repeat", "repeat", "follow up"]
+    );
+    assert!(merged.is_partial);
+}
+
+#[test]
+fn only_rich_prompt_submit_is_trusted_as_user_history() {
+    let event = |source, event, query: Option<&str>| CLIAgentEvent {
+        source,
+        v: 1,
+        agent: CLIAgent::Codex,
+        event,
+        session_id: Some("session".to_owned()),
+        cwd: None,
+        project: None,
+        payload: CLIAgentEventPayload {
+            query: query.map(str::to_owned),
+            ..Default::default()
+        },
+    };
+
+    assert_eq!(
+        prompt_from_trusted_event(&event(
+            CLIAgentEventSource::RichPlugin,
+            CLIAgentEventType::PromptSubmit,
+            Some("exact\nmessage"),
+        ))
+        .map(|prompt| prompt.text),
+        Some("exact\nmessage".to_owned())
+    );
+    assert!(prompt_from_trusted_event(&event(
+        CLIAgentEventSource::RichPlugin,
+        CLIAgentEventType::Stop,
+        Some("repeated by stop"),
+    ))
+    .is_none());
+    assert!(prompt_from_trusted_event(&event(
+        CLIAgentEventSource::CodexOsc9Fallback,
+        CLIAgentEventType::PromptSubmit,
+        Some("opaque OSC 9 body"),
+    ))
+    .is_none());
+    assert!(prompt_from_trusted_event(&event(
+        CLIAgentEventSource::RichPlugin,
+        CLIAgentEventType::PromptSubmit,
+        Some("  \n"),
+    ))
+    .is_none());
+}
+
+#[test]
+fn history_load_key_rejects_stale_session_or_generation() {
+    let key = CLIAgentSessionKey {
+        provider: AgentResumeProvider::Claude,
+        session_id: "one".to_owned(),
+    };
+    let other_key = CLIAgentSessionKey {
+        provider: AgentResumeProvider::Claude,
+        session_id: "two".to_owned(),
+    };
+    let state = PromptHistoryLoadState::Loading {
+        key: key.clone(),
+        generation: 7,
+    };
+
+    assert!(state.matches_loading(&key, 7));
+    assert!(!state.matches_loading(&key, 6));
+    assert!(!state.matches_loading(&other_key, 7));
+}
+
+#[test]
+fn listener_events_cannot_replace_the_outer_session_identity() {
+    let mut session = CLIAgentSession {
+        agent: CLIAgent::Claude,
+        status: CLIAgentSessionStatus::InProgress,
+        session_context: CLIAgentSessionContext {
+            session_id: Some("outer".to_owned()),
+            ..Default::default()
+        },
+        input_state: CLIAgentInputState::Closed,
+        should_auto_toggle_input: false,
+        listener: None,
+        plugin_version: None,
+        draft_text: None,
+        remote_host: None,
+        custom_command_prefix: None,
+        received_rich_notification: true,
+        prompt_history: AgentPromptHistory {
+            prompts: vec![AgentPrompt {
+                timestamp: None,
+                text: "outer prompt".to_owned(),
+            }],
+            is_partial: false,
+        },
+        prompt_history_load_state: PromptHistoryLoadState::Ready,
+        prompt_history_generation: 3,
+    };
+    let event = |event| CLIAgentEvent {
+        source: CLIAgentEventSource::RichPlugin,
+        v: 1,
+        agent: CLIAgent::Claude,
+        event,
+        session_id: Some("nested-or-new".to_owned()),
+        cwd: None,
+        project: None,
+        payload: CLIAgentEventPayload::default(),
+    };
+
+    assert!(!session.prepare_for_event_identity(&event(CLIAgentEventType::PromptSubmit)));
+    assert_eq!(session.prompt_count(), 1);
+    assert_eq!(session.prompt_history_generation, 3);
+
+    assert!(!session.prepare_for_event_identity(&event(CLIAgentEventType::SessionStart)));
+    assert_eq!(session.prompt_count(), 1);
+    assert_eq!(session.prompt_history_generation, 3);
+
+    // Explicit registration/seeding owns identity changes and resets the old context.
+    session.reset_prompt_history();
+    assert_eq!(session.prompt_count(), 0);
+    assert_eq!(
+        session.prompt_history_load_state,
+        PromptHistoryLoadState::NotRequested
+    );
+    assert_eq!(session.prompt_history_generation, 4);
+}
+
+#[test]
+fn durable_identity_seed_preserves_live_session_state_and_invalidates_old_history() {
+    let mut session = CLIAgentSession {
+        agent: CLIAgent::Codex,
+        status: CLIAgentSessionStatus::Success,
+        session_context: CLIAgentSessionContext {
+            session_id: None,
+            query: Some("opaque fallback text".to_owned()),
+            ..Default::default()
+        },
+        input_state: CLIAgentInputState::Closed,
+        should_auto_toggle_input: true,
+        listener: None,
+        plugin_version: None,
+        draft_text: Some("unfinished follow-up".to_owned()),
+        remote_host: None,
+        custom_command_prefix: None,
+        received_rich_notification: false,
+        prompt_history: AgentPromptHistory {
+            prompts: vec![AgentPrompt {
+                timestamp: None,
+                text: "stale prompt".to_owned(),
+            }],
+            is_partial: false,
+        },
+        prompt_history_load_state: PromptHistoryLoadState::Ready,
+        prompt_history_generation: 4,
+    };
+
+    assert!(session.seed_session_identity(CLIAgent::Codex, "durable-id".to_owned()));
+    assert_eq!(session.status, CLIAgentSessionStatus::Success);
+    assert!(session.should_auto_toggle_input);
+    assert_eq!(session.draft_text.as_deref(), Some("unfinished follow-up"));
+    assert_eq!(
+        session.session_context.session_id.as_deref(),
+        Some("durable-id")
+    );
+    assert_eq!(session.prompt_count(), 0);
+    assert_eq!(
+        session.prompt_history_load_state,
+        PromptHistoryLoadState::NotRequested
+    );
+    assert_eq!(session.prompt_history_generation, 5);
+
+    assert!(!session.seed_session_identity(CLIAgent::Claude, "other-id".to_owned()));
+    assert_eq!(
+        session.session_context.session_id.as_deref(),
+        Some("durable-id")
+    );
+}
+
+#[test]
+fn native_codex_osc9_query_is_not_used_as_a_prompt_title() {
+    let mut session = CLIAgentSession {
+        agent: CLIAgent::Codex,
+        status: CLIAgentSessionStatus::Success,
+        session_context: CLIAgentSessionContext {
+            query: Some("opaque completion notice".to_owned()),
+            ..Default::default()
+        },
+        input_state: CLIAgentInputState::Closed,
+        should_auto_toggle_input: false,
+        listener: None,
+        plugin_version: None,
+        draft_text: None,
+        remote_host: None,
+        custom_command_prefix: None,
+        received_rich_notification: false,
+        prompt_history: AgentPromptHistory::default(),
+        prompt_history_load_state: PromptHistoryLoadState::Unavailable,
+        prompt_history_generation: 1,
+    };
+
+    assert_eq!(session.latest_user_prompt_for_chrome(), None);
+    assert_eq!(session.title_for_tab(true), None);
+
+    session.received_rich_notification = true;
+    assert_eq!(
+        session.latest_user_prompt_for_chrome().as_deref(),
+        Some("opaque completion notice")
+    );
+}
+
+#[test]
+fn default_title_is_stable_first_prompt_and_explicit_preference_uses_latest() {
+    let mut session = CLIAgentSession {
+        agent: CLIAgent::Claude,
+        status: CLIAgentSessionStatus::InProgress,
+        session_context: CLIAgentSessionContext {
+            summary: Some("fallback summary".to_owned()),
+            query: Some("legacy latest".to_owned()),
+            ..Default::default()
+        },
+        input_state: CLIAgentInputState::Closed,
+        should_auto_toggle_input: false,
+        listener: None,
+        plugin_version: None,
+        draft_text: None,
+        remote_host: None,
+        custom_command_prefix: None,
+        received_rich_notification: true,
+        prompt_history: AgentPromptHistory::default(),
+        prompt_history_load_state: PromptHistoryLoadState::Ready,
+        prompt_history_generation: 1,
+    };
+    session.prompt_history.prompts = vec![
+        AgentPrompt {
+            timestamp: None,
+            text: "Plan the implementation. Include tests after this sentence.".to_owned(),
+        },
+        AgentPrompt {
+            timestamp: None,
+            text: "Now open a pull request".to_owned(),
+        },
+    ];
+
+    assert_eq!(
+        session.title_for_tab(false).as_deref(),
+        Some("Plan the implementation.")
+    );
+    assert_eq!(
+        session.title_for_tab(true).as_deref(),
+        Some("Now open a pull request")
+    );
+}
+
+#[test]
+fn session_context_is_clinch_only() {
+    assert!(session_context_enabled_for("sh.clinch.Clinch"));
+    assert!(session_context_enabled_for("sh.clinch.ClinchDev"));
+    assert!(!session_context_enabled_for("dev.warp.Warp-Stable"));
 }

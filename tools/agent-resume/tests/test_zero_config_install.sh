@@ -50,7 +50,8 @@ after="$(shasum "$HOME/.claude/settings.json" "$HOME/.codex/config.toml")"
 
 BIN="$HOME/.warp/agent-resume-bin"
 for file in agent-json agent-json.js clinch-agent-resume clinch_agent_resume_launch \
-  claude-capture.sh claude.zsh codex-session-start.sh codex-session-end.sh; do
+  claude-capture.sh prompt-mirror.sh claude.zsh codex-session-start.sh \
+  codex-prompt-submit.sh codex-session-end.sh; do
   [[ -f "$BIN/$file" ]] || { echo "FAIL: installer omitted $file"; exit 1; }
 done
 [[ ! -e "$BIN/install-agent-plugins.sh" ]] \
@@ -84,6 +85,8 @@ grep -q '^model = "gpt-5"$' "$HOME/.codex/config.toml" \
   || { echo "FAIL: unrelated Codex setting was lost"; exit 1; }
 [[ "$(grep -c '^# >>> clinch agent-resume >>>$' "$HOME/.codex/config.toml")" -eq 1 ]] \
   || { echo "FAIL: Codex managed block duplicated"; exit 1; }
+[[ "$(grep -c 'codex-prompt-submit.sh' "$HOME/.codex/config.toml")" -eq 1 ]] \
+  || { echo "FAIL: Codex prompt hook missing or duplicated"; exit 1; }
 
 # The executable launcher sources its own runtime and resumes immediately; no rcfile source
 # or new interactive shell is involved.
@@ -106,6 +109,7 @@ bash "$HERE/install.sh" disable --quiet
   || { echo "FAIL: disable left consent enabled"; exit 1; }
 [[ ! -e "$STATE/enabled" ]] || { echo "FAIL: disable kept consent marker"; exit 1; }
 [[ ! -e "$BIN/claude-capture.sh" ]] || { echo "FAIL: disable kept owned runtime"; exit 1; }
+[[ ! -e "$BIN/codex-prompt-submit.sh" ]] || { echo "FAIL: disable kept Codex prompt helper"; exit 1; }
 [[ -f "$HOME/.warp/agent-resume/keep.json" ]] \
   || { echo "FAIL: disable deleted captured metadata"; exit 1; }
 grep -q '"model": "opus"' "$HOME/.claude/settings.json" \

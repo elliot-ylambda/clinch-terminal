@@ -8184,6 +8184,9 @@ fn open_rich_input_for_terminal(terminal: &ViewHandle<TerminalView>, app: &mut A
                     draft_text: None,
                     custom_command_prefix: None,
                     received_rich_notification: false,
+                    prompt_history: Default::default(),
+                    prompt_history_load_state: Default::default(),
+                    prompt_history_generation: 0,
                 },
                 ctx,
             );

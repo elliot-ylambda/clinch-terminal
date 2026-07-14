@@ -4,6 +4,11 @@ matcher = "startup|resume"
 type = "command"
 command = "~/.warp/agent-resume-bin/codex-session-start.sh"
 
+[[hooks.UserPromptSubmit]]
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = "~/.warp/agent-resume-bin/codex-prompt-submit.sh"
+
 [[hooks.SessionEnd]]
 [[hooks.SessionEnd.hooks]]
 type = "command"

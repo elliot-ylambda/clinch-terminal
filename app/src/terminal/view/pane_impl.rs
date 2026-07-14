@@ -4,10 +4,11 @@ use settings::Setting as _;
 use warp_core::context_flag::ContextFlag;
 use warpui::elements::{
     ConstrainedBox, CrossAxisAlignment, Empty, Flex, MainAxisAlignment, MainAxisSize,
-    ParentElement, Shrinkable,
+    ParentElement, Shrinkable, Text,
 };
 use warpui::prelude::{ChildView, Container};
 use warpui::text_layout::ClipConfig;
+use warpui::ui_components::button::ButtonVariant;
 use warpui::ui_components::components::UiComponent;
 #[cfg(not(target_arch = "wasm32"))]
 use warpui::ui_components::components::UiComponentStyles;
@@ -42,7 +43,7 @@ use crate::pane_group::{BackingView, SplitPaneState, TOGGLE_MAXIMIZE_PANE_BINDIN
 use crate::settings::app_installation_detection::{
     UserAppInstallDetectionSettings, UserAppInstallStatus,
 };
-use crate::terminal::cli_agent_sessions::CLIAgentSessionsModel;
+use crate::terminal::cli_agent_sessions::{session_context_enabled, CLIAgentSessionsModel};
 use crate::terminal::shared_session::participant_avatar_view::render_participants_and_role_elements;
 use crate::terminal::shared_session::render_util::shared_session_indicator_color;
 use crate::terminal::shared_session::SharedSessionActionSource;
@@ -59,6 +60,7 @@ use crate::workspace::tab_settings::TabSettings;
 /// Sized so the component fits comfortably within `PANE_HEADER_HEIGHT` (34px) with a
 /// few pixels of vertical buffer.
 const PANE_HEADER_AGENT_SIZE: f32 = 26.;
+const CLI_AGENT_CONTEXT_HEADER_HEIGHT: f32 = 34.;
 
 impl TerminalView {
     /// Returns a reference to the focus handle if one has been set.
@@ -120,22 +122,28 @@ impl TerminalView {
         let is_ambient_agent = self.is_ambient_agent_session(ctx);
         let selected_conversation_title = self.selected_conversation_display_title(ctx);
         let selected_cli_agent_title = self.selected_cli_agent_title_for_chrome(ctx);
+        let selected_cli_agent_uses_prompt_title = self.selected_cli_agent_title_uses_prompt(ctx);
 
         // Prefer CLI agent session text before the terminal title,
         // matching the vertical-tab behavior in terminal_primary_line_data().
         let new_pane_title = if let Some(cli_agent_title) = selected_cli_agent_title {
             self.is_using_conversation_for_pane_header_title = false;
+            self.is_using_cli_agent_prompt_for_pane_header_title =
+                selected_cli_agent_uses_prompt_title;
             cli_agent_title
         } else if self.is_long_running_and_user_controlled() && !self.terminal_title.is_empty() {
             self.is_using_conversation_for_pane_header_title = false;
+            self.is_using_cli_agent_prompt_for_pane_header_title = false;
             self.terminal_title.clone()
         } else {
             match selected_conversation_title {
                 Some(conversation_title) => {
                     self.is_using_conversation_for_pane_header_title = true;
+                    self.is_using_cli_agent_prompt_for_pane_header_title = false;
                     conversation_title
                 }
                 None => {
+                    self.is_using_cli_agent_prompt_for_pane_header_title = false;
                     if is_ambient_agent {
                         default_agent_conversation_title(is_ambient_agent)
                     } else {
@@ -285,7 +293,9 @@ impl TerminalView {
         let appearance = Appearance::as_ref(app);
         let pane_config = self.pane_configuration.as_ref(app);
         let title = pane_config.title().to_owned();
-        let clip_config = if self.is_using_conversation_for_pane_header_title {
+        let clip_config = if self.is_using_conversation_for_pane_header_title
+            || self.is_using_cli_agent_prompt_for_pane_header_title
+        {
             ClipConfig::ellipsis()
         } else {
             ClipConfig::start()
@@ -594,13 +604,109 @@ impl TerminalView {
             app,
         );
 
-        if is_fullscreen_agent_view {
+        let header = if is_fullscreen_agent_view {
             Container::new(header)
                 .with_background(agent_view_bg_fill(app))
                 .finish()
         } else {
             header
+        };
+
+        if let Some(context_header) = self.render_cli_agent_context_header(app) {
+            Flex::column()
+                .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .with_child(header)
+                .with_child(context_header)
+                .finish()
+        } else {
+            header
         }
+    }
+
+    fn should_render_cli_agent_context_header(&self, app: &AppContext) -> bool {
+        session_context_enabled()
+            && CLIAgentSessionsModel::as_ref(app)
+                .session(self.view_id)
+                .filter(|session| {
+                    matches!(
+                        session.agent,
+                        crate::terminal::CLIAgent::Claude | crate::terminal::CLIAgent::Codex
+                    )
+                })
+                .is_some_and(|session| {
+                    session.prompt_count() > 0
+                        || matches!(
+                            session.prompt_history_load_state,
+                            crate::terminal::cli_agent_sessions::PromptHistoryLoadState::Loading {
+                                ..
+                            }
+                        )
+                })
+    }
+
+    fn render_cli_agent_context_header(&self, app: &AppContext) -> Option<Box<dyn Element>> {
+        if !self.should_render_cli_agent_context_header(app) {
+            return None;
+        }
+        let session = CLIAgentSessionsModel::as_ref(app).session(self.view_id)?;
+        let appearance = Appearance::as_ref(app);
+        let theme = appearance.theme();
+        let font_family = appearance.ui_font_family();
+        let font_size = appearance.ui_font_size() - 1.;
+        let text_color = theme.sub_text_color(theme.background());
+
+        let render_preview = |label: &str, message: &str| {
+            let preview = message.split_whitespace().collect::<Vec<_>>().join(" ");
+            let tooltip_text = message.to_owned();
+            let ui_builder = appearance.ui_builder().clone();
+            let label = Text::new_inline(format!("{label}  {preview}"), font_family, font_size)
+                .with_clip(ClipConfig::ellipsis())
+                .with_color(text_color.into())
+                .finish();
+            Shrinkable::new(
+                1.,
+                appearance
+                    .ui_builder()
+                    .button(ButtonVariant::Text, Default::default())
+                    .with_custom_label(label)
+                    .with_tooltip(move || {
+                        ui_builder.tool_tip(tooltip_text.clone()).build().finish()
+                    })
+                    .build()
+                    .finish(),
+            )
+            .finish()
+        };
+
+        let mut row = Flex::row()
+            .with_main_axis_size(MainAxisSize::Max)
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_spacing(12.);
+        match (session.first_prompt(), session.latest_prompt()) {
+            (Some(first), Some(_latest)) if session.prompt_count() == 1 => {
+                row.add_child(render_preview("Started with · Latest", &first.text));
+            }
+            (Some(first), Some(latest)) => {
+                row.add_child(render_preview("Started with", &first.text));
+                row.add_child(render_preview("Latest", &latest.text));
+            }
+            _ => {
+                row.add_child(render_preview("Restoring", "message history…"));
+            }
+        }
+        row.add_child(ChildView::new(&self.cli_agent_message_history_dropdown).finish());
+
+        Some(
+            Container::new(
+                ConstrainedBox::new(row.finish())
+                    .with_height(CLI_AGENT_CONTEXT_HEADER_HEIGHT)
+                    .finish(),
+            )
+            .with_padding_left(8.)
+            .with_padding_right(8.)
+            .with_background(theme.surface_2())
+            .finish(),
+        )
     }
 }
 
@@ -723,6 +829,7 @@ impl BackingView for TerminalView {
             && self.agent_view_controller.as_ref(app).is_fullscreen();
         is_shared
             || is_fullscreen_agent_view
+            || self.should_render_cli_agent_context_header(app)
             || FeatureFlag::ContextWindowUsageV2.is_enabled()
                 && self.split_pane_state(app).is_in_split_pane()
     }
@@ -732,11 +839,20 @@ impl BackingView for TerminalView {
         header_ctx: &view::HeaderRenderContext<'_>,
         app: &AppContext,
     ) -> view::HeaderContent {
-        view::HeaderContent::Custom {
-            element: self.render_terminal_pane_header(header_ctx, app),
-            // We wrap only the title row in the drag handler ourselves;
-            // the secondary row stays interactive.
-            has_custom_draggable_behavior: true,
+        let element = self.render_terminal_pane_header(header_ctx, app);
+        if self.should_render_cli_agent_context_header(app) {
+            view::HeaderContent::CustomWithHeight {
+                element,
+                // We wrap only the title row in the drag handler ourselves;
+                // the context row stays interactive.
+                has_custom_draggable_behavior: true,
+                height: PANE_HEADER_HEIGHT + CLI_AGENT_CONTEXT_HEADER_HEIGHT,
+            }
+        } else {
+            view::HeaderContent::Custom {
+                element,
+                has_custom_draggable_behavior: true,
+            }
         }
     }
 
@@ -1066,17 +1182,48 @@ impl TerminalView {
     }
 
     fn selected_cli_agent_title_for_chrome(&self, ctx: &AppContext) -> Option<String> {
-        let session = CLIAgentSessionsModel::as_ref(ctx)
-            .session(self.view_id)
-            .filter(|session| session.listener.is_some())?;
+        let session = CLIAgentSessionsModel::as_ref(ctx).session(self.view_id)?;
 
-        if *TabSettings::as_ref(ctx).use_latest_user_prompt_as_conversation_title_in_tab_names {
+        let supports_session_context = session_context_enabled()
+            && matches!(
+                session.agent,
+                crate::terminal::CLIAgent::Claude | crate::terminal::CLIAgent::Codex
+            );
+        if !supports_session_context && session.listener.is_none() {
+            return None;
+        }
+
+        let use_latest_prompt =
+            *TabSettings::as_ref(ctx).use_latest_user_prompt_as_conversation_title_in_tab_names;
+        if supports_session_context {
+            session.title_for_tab(use_latest_prompt)
+        } else if use_latest_prompt {
             session
                 .session_context
                 .latest_user_prompt()
                 .or_else(|| session.session_context.title_like_text())
         } else {
             session.session_context.title_like_text()
+        }
+    }
+
+    fn selected_cli_agent_title_uses_prompt(&self, ctx: &AppContext) -> bool {
+        let Some(session) = CLIAgentSessionsModel::as_ref(ctx).session(self.view_id) else {
+            return false;
+        };
+        if !session_context_enabled()
+            || !matches!(
+                session.agent,
+                crate::terminal::CLIAgent::Claude | crate::terminal::CLIAgent::Codex
+            )
+        {
+            return false;
+        }
+
+        if *TabSettings::as_ref(ctx).use_latest_user_prompt_as_conversation_title_in_tab_names {
+            session.latest_user_prompt_for_chrome().is_some() || session.first_prompt().is_some()
+        } else {
+            session.first_prompt().is_some()
         }
     }
 }

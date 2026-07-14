@@ -21,9 +21,10 @@ capture (agent SessionStart hooks)          replay (Rust, in Clinch)
 ```
 
 - **Capture is driven by agent hooks** — `SessionStart` and conditional `SessionEnd` for
-  both Claude and Codex (Claude additionally refreshes the entry on
-  `UserPromptSubmit`/`Stop`, see the flags bullet
-  below). The hook reads the *actual* live `session_id` from its payload and the pane UUID
+  both Claude and Codex. Both providers mirror `UserPromptSubmit`; Claude also refreshes
+  the pane entry on `UserPromptSubmit`/`Stop`, while Codex's prompt-only helper deliberately
+  leaves its SessionStart flags untouched. The hooks read the *actual* live `session_id` from
+  their payload and the pane UUID
   from the inherited `WARP_TERMINAL_SESSION_UUID` env var. This captures the right session
   in every case —
   fresh start, `--resume <id>`, the interactive picker, and `--continue` — because the
@@ -109,7 +110,8 @@ capture (agent SessionStart hooks)          replay (Rust, in Clinch)
     (shift+tab) sticks, toggling back to default strips the flag again, and entries
     written by older flag-less installs heal on the session's next prompt.
   - *Codex*: the `SessionStart` payload carries `permission_mode` and `model` directly;
-    `bypassPermissions` maps to `--dangerously-bypass-approvals-and-sandbox`.
+    `bypassPermissions` maps to `--dangerously-bypass-approvals-and-sandbox`. Its separate
+    `UserPromptSubmit` helper only appends history and cannot strip those recorded flags.
 - **Clinch stays agent-agnostic**: Rust only stores/replays an opaque command string.
   Adding another agent later is just another capture script — no Rust change.
 
@@ -132,12 +134,15 @@ conversation. Launch hygiene plus two durable layers reduce that risk (see
   `grep <sid> ~/.warp/agent-resume/journal.jsonl` recovers an overwritten pointer.
   Fail-open: a journal append failure never fails the registry mutation. No pruning in v1
   (~200 bytes/line).
-- **Prompt mirror** (`~/.warp/agent-resume/prompts/<sid>.jsonl`): every `UserPromptSubmit`
+- **Prompt mirror** (`~/.warp/agent-resume/prompts/<provider>/<sid>.jsonl`): every
+  `UserPromptSubmit`
   appends the prompt text (+ ts, cwd, bridge id) — so even a session that never writes a
   jsonl leaves its prompts on disk. Mirrored *before* the pane-ownership guard, so nested
   sessions' prompts survive too; capped at ~5 MB per session (one final
   `"truncated":true` marker). These files are as sensitive as `~/.claude/projects`
   transcripts: `700`/`600`, never leave the machine.
+  Legacy flat `prompts/<sid>.jsonl` files remain readable as Claude history; new writes are
+  provider-scoped so the same id can never be attributed to the wrong agent.
 - **Discovery**: `clinch-agent-resume list [--cwd <dir>] [--json]` prints a newest-first table of
   every conversation the journal + mirror know about — start time, short sid, cwd,
   `https://claude.ai/code/<bridge>` or `local`, and the first prompt. `--json` returns the
@@ -158,7 +163,8 @@ reviewing the disclosed paths. The equivalent repository command is explicit:
 Installs the capture hooks + the registry CLI into `~/.warp/agent-resume-bin/`, and wires:
 the Claude `SessionStart`/`UserPromptSubmit`/`Stop`/`SessionEnd` hooks into `~/.claude/settings.json`
 (via `wire-claude-hooks.sh`, a structural JSON merge — existing settings are preserved, and entries from
-the pre-rename `claude-session-start.sh` are migrated), the Codex `SessionStart`/`SessionEnd`
+  the pre-rename `claude-session-start.sh` are migrated), the Codex
+  `SessionStart`/`UserPromptSubmit`/`SessionEnd`
 hooks into a managed block in `~/.codex/config.toml`, and standalone replay executables into
 Clinch's bundled shell path and the installed runtime directory. It uses macOS's built-in JXA
 runtime for JSON handling. There is no `jq`, Homebrew, repository-clone, `.zshrc`, or shell-restart
@@ -235,11 +241,15 @@ separate data dir (`~/.warp-oss`), so the two never clobber each other's session
   double condition, accepted.
 - **Codex mode changes made mid-session are only re-captured at the next session start.**
   Claude's per-turn hooks keep the recorded mode live, but codex is captured at
-  `SessionStart` only: the local codex does expose a `user_prompt_submit` hook event, but
-  its payload fields are unverified, and wiring it blind could rewrite a flagged entry
-  flag-less. A Claude mode toggled *after* its last prompt/turn (then quitting Clinch with
-  no further activity) is similarly missed — the common toggle-then-prompt flow is
-  covered by `UserPromptSubmit`.
+  `SessionStart` only for resume flags. The Codex prompt hook is intentionally history-only,
+  so it cannot rewrite a flagged entry flag-less. A Claude mode toggled *after* its last
+  prompt/turn (then quitting Clinch with no further activity) is similarly missed — the common
+  toggle-then-prompt flow is covered by `UserPromptSubmit`.
+- **Codex prompt-hook schema baseline:** capture is fixture-tested against `codex-cli 0.144.3`'s
+  `UserPromptSubmit` stdin object: `session_id`, `turn_id`, optional `agent_id`/`agent_type`,
+  `transcript_path`, `cwd`, `hook_event_name`, `model`, `permission_mode`, and `prompt`. The
+  helper consumes prompt text only from stdin and fails open if a future payload is missing the
+  required event, session, or prompt fields; native rollout history remains the fallback.
 
 ## Files
 
@@ -247,10 +257,11 @@ separate data dir (`~/.warp-oss`), so the two never clobber each other's session
 |---|---|
 | `agent-json` / `agent-json.js` | native macOS JSON parsing, encoding, settings merge, and conversation listing without third-party runtimes |
 | `clinch-agent-resume` | registry CLI: `write`, `remove`, `scrub-bridge`, and `list [--cwd <dir>] [--json]`; journals every mutation to `journal.jsonl` |
-| `claude-capture.sh` | Claude `SessionStart`/`UserPromptSubmit`/`Stop` hook — captures the live session per pane, keeps its permission-mode/`--model` flags in sync with the live session, and mirrors every prompt to `prompts/<sid>.jsonl` |
+| `claude-capture.sh` | Claude `SessionStart`/`UserPromptSubmit`/`Stop` hook — captures the live session per pane and keeps its permission-mode/`--model` flags in sync |
+| `prompt-mirror.sh` | shared private, capped append-only writer for provider-scoped prompt history; prompt payload stays on stdin |
 | `claude.zsh` | Claude launch-identity scrub + replay functions (`clinch_agent_resume_resumable` / `clinch_agent_resume_launch`) loaded by the standalone launcher |
 | `clinch_agent_resume_launch` | executable replay entrypoint bundled in `Clinch.app/Contents/Resources/bin`; works without an rcfile edit |
-| `codex-session-start.sh` / `codex-session-end.sh` | Codex hooks — session id plus bypass/model flags from the payload |
+| `codex-session-start.sh` / `codex-prompt-submit.sh` / `codex-session-end.sh` | Codex registry lifecycle plus prompt-only history capture |
 | `config.toml.snippet` | Codex hook registration (installer applies it) |
 | `install-agent-plugins.sh` | legacy/manual development helper; not bundled or run by the public installer |
 | `wire-claude-hooks.sh` | idempotent native merge of Claude hook entries into settings.json (used by `install.sh`) |

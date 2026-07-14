@@ -8,13 +8,59 @@ pub mod listener;
 pub(crate) mod plugin_manager;
 
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 
+use blocking::unblock;
 use event::{CLIAgentEvent, CLIAgentEventSource, CLIAgentEventType};
 use warpui::{Entity, EntityId, ModelContext, ModelHandle, SingletonEntity};
 
 use self::listener::CLIAgentSessionListener;
 use super::CLIAgent;
+use crate::agent_resume::{
+    prompt_title, read_prompt_history, AgentPrompt, AgentPromptHistory, AgentResumeProvider,
+};
 use crate::ai::blocklist::InputConfig;
+use crate::channel::ChannelState;
+
+/// The public Clinch channels that own agent-session context chrome and local recovery.
+fn session_context_enabled_for(app_id: &str) -> bool {
+    matches!(app_id, "sh.clinch.Clinch" | "sh.clinch.ClinchDev")
+}
+
+pub(crate) fn session_context_enabled() -> bool {
+    session_context_enabled_for(&ChannelState::app_id().to_string())
+}
+
+/// Durable identity for prompt history. Entity/view IDs are intentionally not part of the key.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CLIAgentSessionKey {
+    pub provider: AgentResumeProvider,
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum PromptHistoryLoadState {
+    #[default]
+    NotRequested,
+    Loading {
+        key: CLIAgentSessionKey,
+        generation: u64,
+    },
+    Ready,
+    Unavailable,
+}
+
+impl PromptHistoryLoadState {
+    fn matches_loading(&self, key: &CLIAgentSessionKey, generation: u64) -> bool {
+        matches!(
+            self,
+            Self::Loading {
+                key: loading_key,
+                generation: loading_generation,
+            } if loading_key == key && *loading_generation == generation
+        )
+    }
+}
 
 /// Status of a tracked CLI agent session.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,6 +89,7 @@ pub struct CLIAgentSessionContext {
     pub cwd: Option<String>,
     pub project: Option<String>,
     pub session_id: Option<String>,
+    pub transcript_path: Option<String>,
     pub tool_name: Option<String>,
     pub tool_input_preview: Option<String>,
     pub summary: Option<String>,
@@ -148,9 +195,101 @@ pub struct CLIAgentSession {
     /// notification. Codex's OSC 9 fallback never sets it, so this is the
     /// single source of truth for whether the session is plugin-backed.
     pub received_rich_notification: bool,
+    /// Exact user-authored messages. Kept out of `session_context` so status events do not clone it.
+    pub prompt_history: AgentPromptHistory,
+    pub prompt_history_load_state: PromptHistoryLoadState,
+    pub(crate) prompt_history_generation: u64,
 }
 
 impl CLIAgentSession {
+    pub fn first_prompt(&self) -> Option<&AgentPrompt> {
+        self.prompt_history.prompts.first()
+    }
+
+    pub fn latest_prompt(&self) -> Option<&AgentPrompt> {
+        self.prompt_history.prompts.last()
+    }
+
+    pub fn prompt_count(&self) -> usize {
+        self.prompt_history.prompts.len()
+    }
+
+    /// Returns the newest text that is safe to present as a user prompt in session chrome.
+    /// Native Codex OSC 9 bodies are opaque completion notices, even though the legacy status
+    /// context stores them in `query`, so they are excluded until structured events are active.
+    pub fn latest_user_prompt_for_chrome(&self) -> Option<String> {
+        self.latest_prompt()
+            .map(|prompt| prompt.text.trim().to_owned())
+            .filter(|prompt| !prompt.is_empty())
+            .or_else(|| {
+                (self.agent != CLIAgent::Codex || self.received_rich_notification)
+                    .then(|| self.session_context.latest_user_prompt())
+                    .flatten()
+            })
+    }
+
+    pub fn initial_prompt_title(&self) -> Option<String> {
+        self.first_prompt()
+            .and_then(|prompt| prompt_title(&prompt.text))
+    }
+
+    pub fn title_for_tab(&self, use_latest_prompt: bool) -> Option<String> {
+        if use_latest_prompt {
+            self.latest_user_prompt_for_chrome()
+                .or_else(|| self.initial_prompt_title())
+                .or_else(|| self.session_context.title_like_text())
+        } else {
+            self.initial_prompt_title()
+                .or_else(|| self.session_context.title_like_text())
+        }
+    }
+
+    pub fn session_key(&self) -> Option<CLIAgentSessionKey> {
+        let provider = provider_for_agent(self.agent)?;
+        let session_id = self.session_context.session_id.as_deref()?.trim();
+        (!session_id.is_empty()).then(|| CLIAgentSessionKey {
+            provider,
+            session_id: session_id.to_owned(),
+        })
+    }
+
+    fn reset_prompt_history(&mut self) {
+        self.prompt_history = AgentPromptHistory::default();
+        self.prompt_history_load_state = PromptHistoryLoadState::NotRequested;
+        self.prompt_history_generation = self.prompt_history_generation.wrapping_add(1);
+    }
+
+    /// Applies a durable provider identity discovered outside the PTY event stream.
+    /// Existing listener and status state stay attached to the pane; only history keyed to the
+    /// previous identity is invalidated.
+    fn seed_session_identity(&mut self, agent: CLIAgent, session_id: String) -> bool {
+        if self.agent != agent {
+            return false;
+        }
+        if self.session_context.session_id.as_deref() != Some(session_id.as_str()) {
+            self.reset_prompt_history();
+            self.session_context.session_id = Some(session_id);
+        }
+        true
+    }
+
+    /// Enforces that listener events belong to the outer session. Identity changes are accepted
+    /// only by explicit listener registration or restore seeding, never from a nested PTY event.
+    fn prepare_for_event_identity(&mut self, event: &CLIAgentEvent) -> bool {
+        if event.agent != self.agent {
+            return false;
+        }
+        if let (Some(current), Some(incoming)) = (
+            self.session_context.session_id.as_deref(),
+            event.session_id.as_deref(),
+        ) {
+            if current != incoming {
+                return false;
+            }
+        }
+        true
+    }
+
     pub fn is_remote(&self) -> bool {
         self.remote_host.is_some()
     }
@@ -188,6 +327,11 @@ impl CLIAgentSession {
             .session_id
             .clone()
             .or(self.session_context.session_id.take());
+        self.session_context.transcript_path = event
+            .payload
+            .transcript_path
+            .clone()
+            .or(self.session_context.transcript_path.take());
 
         let new_status = match &event.event {
             CLIAgentEventType::PromptSubmit => {
@@ -243,6 +387,61 @@ impl CLIAgentSession {
         self.status = new_status.clone();
         Some(new_status)
     }
+}
+
+fn provider_for_agent(agent: CLIAgent) -> Option<AgentResumeProvider> {
+    match agent {
+        CLIAgent::Claude => Some(AgentResumeProvider::Claude),
+        CLIAgent::Codex => Some(AgentResumeProvider::Codex),
+        _ => None,
+    }
+}
+
+fn agent_for_provider(provider: AgentResumeProvider) -> CLIAgent {
+    match provider {
+        AgentResumeProvider::Claude => CLIAgent::Claude,
+        AgentResumeProvider::Codex => CLIAgent::Codex,
+    }
+}
+
+/// Merge a durable prefix with prompts observed while it was loading. Occurrence counts, rather
+/// than a set, preserve intentional repeated messages while suppressing the persisted/live copy of
+/// the same turn.
+fn merge_loaded_and_live_history(
+    mut loaded: AgentPromptHistory,
+    live: AgentPromptHistory,
+) -> AgentPromptHistory {
+    let mut durable_occurrences: HashMap<String, usize> = HashMap::new();
+    for prompt in &loaded.prompts {
+        *durable_occurrences.entry(prompt.text.clone()).or_default() += 1;
+    }
+
+    let mut live_occurrences: HashMap<String, usize> = HashMap::new();
+    for prompt in live.prompts {
+        let occurrence = live_occurrences.entry(prompt.text.clone()).or_default();
+        *occurrence += 1;
+        if *occurrence > durable_occurrences.get(&prompt.text).copied().unwrap_or(0) {
+            loaded.prompts.push(prompt);
+        }
+    }
+    loaded.is_partial |= live.is_partial;
+    loaded
+}
+
+fn prompt_from_trusted_event(event: &CLIAgentEvent) -> Option<AgentPrompt> {
+    if event.source != CLIAgentEventSource::RichPlugin
+        || event.event != CLIAgentEventType::PromptSubmit
+    {
+        return None;
+    }
+    let text = event.payload.query.as_ref()?;
+    if text.trim().is_empty() {
+        return None;
+    }
+    Some(AgentPrompt {
+        timestamp: None,
+        text: text.clone(),
+    })
 }
 
 /// Events emitted by `CLIAgentSessionsModel` for subscribers (e.g., `AgentNotificationsModel`).
@@ -328,6 +527,142 @@ impl CLIAgentSessionsModel {
         self.sessions.get(&terminal_view_id)
     }
 
+    /// Seeds a restored pane from its persisted provider resume command before any plugin event.
+    /// The provider session, rather than the new view ID, remains the durable history identity.
+    pub fn seed_resumed_session(
+        &mut self,
+        terminal_view_id: EntityId,
+        provider: AgentResumeProvider,
+        session_id: String,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        if !session_context_enabled() || session_id.trim().is_empty() {
+            return;
+        }
+
+        let session_id = session_id.trim().to_owned();
+        let agent = agent_for_provider(provider);
+        let upgraded_existing = self
+            .sessions
+            .get_mut(&terminal_view_id)
+            .is_some_and(|session| session.seed_session_identity(agent, session_id.clone()));
+        if !upgraded_existing {
+            self.set_session(
+                terminal_view_id,
+                CLIAgentSession {
+                    agent,
+                    status: CLIAgentSessionStatus::InProgress,
+                    session_context: CLIAgentSessionContext {
+                        session_id: Some(session_id),
+                        ..Default::default()
+                    },
+                    input_state: CLIAgentInputState::Closed,
+                    should_auto_toggle_input: false,
+                    listener: None,
+                    plugin_version: None,
+                    remote_host: None,
+                    draft_text: None,
+                    custom_command_prefix: None,
+                    received_rich_notification: false,
+                    prompt_history: AgentPromptHistory::default(),
+                    prompt_history_load_state: PromptHistoryLoadState::NotRequested,
+                    prompt_history_generation: 0,
+                },
+                ctx,
+            );
+        }
+        self.start_prompt_history_load(terminal_view_id, ctx);
+    }
+
+    fn start_prompt_history_load(
+        &mut self,
+        terminal_view_id: EntityId,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        if !session_context_enabled() {
+            return;
+        }
+
+        let Some(session) = self.sessions.get_mut(&terminal_view_id) else {
+            return;
+        };
+        let Some(key) = session.session_key() else {
+            return;
+        };
+        if matches!(
+            &session.prompt_history_load_state,
+            PromptHistoryLoadState::Loading { key: loading, .. } if loading == &key
+        ) || matches!(
+            session.prompt_history_load_state,
+            PromptHistoryLoadState::Ready
+        ) {
+            return;
+        }
+
+        session.prompt_history_generation = session.prompt_history_generation.wrapping_add(1);
+        let generation = session.prompt_history_generation;
+        session.prompt_history_load_state = PromptHistoryLoadState::Loading {
+            key: key.clone(),
+            generation,
+        };
+        let transcript_path = session
+            .session_context
+            .transcript_path
+            .as_deref()
+            .map(PathBuf::from);
+        let provider = key.provider;
+        let session_id = key.session_id.clone();
+
+        ctx.emit(CLIAgentSessionsModelEvent::SessionUpdated {
+            terminal_view_id,
+            agent: session.agent,
+        });
+        ctx.spawn(
+            async move {
+                unblock(move || {
+                    read_prompt_history(provider, &session_id, transcript_path.as_deref())
+                })
+                .await
+            },
+            move |model, loaded, ctx| {
+                model.finish_prompt_history_load(terminal_view_id, key, generation, loaded, ctx);
+            },
+        );
+    }
+
+    fn finish_prompt_history_load(
+        &mut self,
+        terminal_view_id: EntityId,
+        key: CLIAgentSessionKey,
+        generation: u64,
+        loaded: AgentPromptHistory,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        let Some(session) = self.sessions.get_mut(&terminal_view_id) else {
+            return;
+        };
+        let is_current = session
+            .prompt_history_load_state
+            .matches_loading(&key, generation)
+            && session.session_key().as_ref() == Some(&key);
+        if !is_current {
+            return;
+        }
+
+        session.prompt_history =
+            merge_loaded_and_live_history(loaded, std::mem::take(&mut session.prompt_history));
+        session.prompt_history_load_state =
+            if !session.prompt_history.prompts.is_empty() || session.prompt_history.is_partial {
+                PromptHistoryLoadState::Ready
+            } else {
+                PromptHistoryLoadState::Unavailable
+            };
+        ctx.emit(CLIAgentSessionsModelEvent::SessionUpdated {
+            terminal_view_id,
+            agent: session.agent,
+        });
+    }
+
     /// Returns `true` if the rich input editor is currently open for this terminal.
     pub fn is_input_open(&self, terminal_view_id: EntityId) -> bool {
         self.sessions
@@ -372,8 +707,12 @@ impl CLIAgentSessionsModel {
             session.should_auto_toggle_input = should_auto_toggle_input;
             session.session_context.cwd = cwd.or(session.session_context.cwd.take());
             session.session_context.project = project.or(session.session_context.project.take());
+            if session_id.is_some() && session_id != session.session_context.session_id {
+                session.reset_prompt_history();
+            }
             session.session_context.session_id =
                 session_id.or(session.session_context.session_id.take());
+            self.start_prompt_history_load(terminal_view_id, ctx);
             return;
         }
 
@@ -396,9 +735,13 @@ impl CLIAgentSessionsModel {
                 draft_text: None,
                 custom_command_prefix: None,
                 received_rich_notification: false,
+                prompt_history: AgentPromptHistory::default(),
+                prompt_history_load_state: PromptHistoryLoadState::NotRequested,
+                prompt_history_generation: 0,
             },
             ctx,
         );
+        self.start_prompt_history_load(terminal_view_id, ctx);
     }
 
     pub fn remove_session(&mut self, terminal_view_id: EntityId, ctx: &mut ModelContext<Self>) {
@@ -423,11 +766,20 @@ impl CLIAgentSessionsModel {
             return;
         };
 
+        // The listener is owned by the outer agent process. Ignore every mismatched nested-agent
+        // event; explicit listener registration or restore seeding owns identity switches.
+        if !session.prepare_for_event_identity(event) {
+            return;
+        }
+
         if event.source == CLIAgentEventSource::RichPlugin {
             session.received_rich_notification = true;
         }
 
         let event_type = &event.event;
+        let live_prompt = session_context_enabled()
+            .then(|| prompt_from_trusted_event(event))
+            .flatten();
         if let Some(new_status) = session.apply_event(event) {
             let agent = session.agent;
             ctx.emit(CLIAgentSessionsModelEvent::StatusChanged {
@@ -437,6 +789,15 @@ impl CLIAgentSessionsModel {
                 session_context: Box::new(session.session_context.clone()),
             });
         }
+
+        if let Some(prompt) = live_prompt {
+            session.prompt_history.prompts.push(prompt);
+        }
+
+        let should_load = matches!(
+            event_type,
+            CLIAgentEventType::SessionStart | CLIAgentEventType::PromptSubmit
+        );
 
         if matches!(
             event_type,
@@ -448,6 +809,9 @@ impl CLIAgentSessionsModel {
                 terminal_view_id,
                 agent: session.agent,
             });
+        }
+        if should_load {
+            self.start_prompt_history_load(terminal_view_id, ctx);
         }
     }
 

@@ -42,6 +42,13 @@ mod sharing;
 pub(crate) mod components;
 
 pub(crate) const PANE_HEADER_HEIGHT: f32 = 34.;
+
+pub(crate) const fn resolved_custom_header_height(explicit_height: Option<f32>) -> f32 {
+    match explicit_height {
+        Some(height) => height,
+        None => PANE_HEADER_HEIGHT,
+    }
+}
 const DRAG_SPLIT_THRESHOLD: f32 = 0.18;
 
 pub trait ActionPayload: Debug + Send + Sync + Clone + 'static {}
@@ -753,6 +760,9 @@ impl<P: BackingView> View for PaneHeader<P> {
             HeaderContent::Custom {
                 has_custom_draggable_behavior: true,
                 ..
+            } | HeaderContent::CustomWithHeight {
+                has_custom_draggable_behavior: true,
+                ..
             }
         );
         let element = match header_content {
@@ -765,7 +775,15 @@ impl<P: BackingView> View for PaneHeader<P> {
             }
             HeaderContent::Custom { element, .. } => Clipped::new(
                 ConstrainedBox::new(element)
-                    .with_height(PANE_HEADER_HEIGHT)
+                    .with_height(resolved_custom_header_height(None))
+                    .finish(),
+            )
+            .finish(),
+            HeaderContent::CustomWithHeight {
+                element, height, ..
+            } => Clipped::new(
+                ConstrainedBox::new(element)
+                    .with_height(resolved_custom_header_height(Some(height)))
                     .finish(),
             )
             .finish(),
