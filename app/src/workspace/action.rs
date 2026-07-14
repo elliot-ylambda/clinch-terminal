@@ -21,7 +21,7 @@ use crate::ai::agent::api::ServerConversationToken;
 use crate::ai::agent::conversation::AIConversationId;
 use crate::ai::agent::AIAgentExchangeId;
 use crate::ai::ambient_agents::AmbientAgentTaskId;
-use crate::ai::blocklist::usage::CliAgentUsageProvider;
+use crate::ai::blocklist::usage::{CliAgentUsageMetric, CliAgentUsageProvider};
 use crate::ai::blocklist::PendingAttachment;
 use crate::ai::document::ai_document_model::{AIDocumentId, AIDocumentVersion};
 use crate::auth::auth_manager::LoginGatedFeature;
@@ -423,6 +423,13 @@ pub enum WorkspaceAction {
     /// Toggle the focused usage panel for one CLI-agent provider, anchored
     /// under the tab-bar usage status widget.
     ToggleCliAgentUsagePanel(CliAgentUsageProvider),
+    /// Close the focused usage panel without relying on toggle semantics.
+    CloseCliAgentUsagePanel,
+    /// Toggle whether one provider statistic appears in the tab-bar header.
+    ToggleCliAgentUsageHeaderMetric {
+        provider: CliAgentUsageProvider,
+        metric: CliAgentUsageMetric,
+    },
     /// Enable the Claude plan-limit gauges from the usage widget's "Turn on"
     /// affordance. Flips the `show_plan_limits` setting; the usage poller's
     /// next fetch reads the Keychain, raising the macOS credential prompt.
@@ -1087,6 +1094,8 @@ impl WorkspaceAction {
             | OpenHeaderToolbarEditor
             | ShowHeaderToolbarContextMenu { .. }
             | ToggleCliAgentUsagePanel(_)
+            | CloseCliAgentUsagePanel
+            | ToggleCliAgentUsageHeaderMetric { .. }
             | EnableCliAgentPlanLimits
             | Reauth
             | SignupAnonymousUser
