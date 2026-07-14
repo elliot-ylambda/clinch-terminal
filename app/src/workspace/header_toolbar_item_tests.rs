@@ -34,6 +34,14 @@ fn all_items_keeps_tools_panel_available_for_customization() {
 }
 
 #[test]
+fn notifications_are_not_exposed_in_clinch_header_toolbars() {
+    assert!(!HeaderToolbarItemKind::default_right()
+        .contains(&HeaderToolbarItemKind::NotificationsMailbox));
+    assert!(!HeaderToolbarItemKind::all_items()
+        .contains(&HeaderToolbarItemKind::NotificationsMailbox));
+}
+
+#[test]
 fn file_explorer_is_a_panel_item() {
     // It renders the shared left panel when the dedicated Tools Panel item is
     // absent from the toolbar configuration.

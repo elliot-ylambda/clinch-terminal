@@ -16,6 +16,9 @@ use super::{CliAgentUsageHeaderVisibility, CliAgentUsageMetric, CliAgentUsagePro
 use crate::appearance::Appearance;
 use crate::workspace::WorkspaceAction;
 
+const PANEL_WIDTH: f32 = 340.;
+const PANEL_VALUE_WIDTH: f32 = 208.;
+
 /// Map a crate `Severity` to a fill against `bg` (the surface the text sits on).
 pub(super) fn severity_fill(severity: Severity, theme: &WarpTheme, bg: Fill) -> Fill {
     match severity {
@@ -186,7 +189,7 @@ pub fn render_cli_agent_usage_panel(
             .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
             .finish(),
     )
-    .with_width(300.)
+    .with_width(PANEL_WIDTH)
     .finish()
 }
 
@@ -203,7 +206,11 @@ fn window(p: &Provider, pick: u8) -> &WindowTotals {
 fn panel_row(label: Box<dyn Element>, value: Box<dyn Element>) -> Box<dyn Element> {
     let mut row = Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center);
     row.add_child(ConstrainedBox::new(label).with_width(84.).finish());
-    row.add_child(ConstrainedBox::new(value).with_width(160.).finish());
+    row.add_child(
+        ConstrainedBox::new(value)
+            .with_width(PANEL_VALUE_WIDTH)
+            .finish(),
+    );
     row.finish()
 }
 
@@ -241,7 +248,11 @@ fn configurable_panel_row(
             .with_width(80.)
             .finish(),
     );
-    row.add_child(ConstrainedBox::new(value).with_width(168.).finish());
+    row.add_child(
+        ConstrainedBox::new(value)
+            .with_width(PANEL_VALUE_WIDTH)
+            .finish(),
+    );
     row.finish()
 }
 

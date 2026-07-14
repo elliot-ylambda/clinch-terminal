@@ -21528,6 +21528,7 @@ impl Workspace {
                         .on_dismiss(|ctx, _app| {
                             ctx.dispatch_typed_action(WorkspaceAction::CloseCliAgentUsagePanel);
                         })
+                        .prevent_interaction_with_other_elements()
                         .finish()
                 } else {
                     stack.finish()
