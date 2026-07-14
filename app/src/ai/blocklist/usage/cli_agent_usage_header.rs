@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
-use cli_agent_usage::format::{chip_halves, fmt_pct, fmt_reset, fmt_reset_short, ChipHalf};
-use cli_agent_usage::{LimitWindow, Provider, Severity, UsageSnapshot};
+use cli_agent_usage::format::{chip_halves, fmt_pct, fmt_reset, fmt_reset_short, fmt_tokens};
+use cli_agent_usage::{LimitWindow, Provider, Severity, UsageSnapshot, WindowTotals};
 use warp_core::ui::theme::Fill;
 use warp_core::ui::Icon;
 use warpui::elements::{
@@ -11,7 +11,7 @@ use warpui::platform::Cursor;
 use warpui::Element;
 
 use super::cli_agent_usage_chip::{severity_fill, span, turn_on_plan_limits};
-use super::CliAgentUsageProvider;
+use super::{CliAgentUsageHeaderVisibility, CliAgentUsageMetric, CliAgentUsageProvider};
 use crate::appearance::Appearance;
 use crate::workspace::WorkspaceAction;
 
@@ -40,16 +40,125 @@ fn limit_texts(
 
 fn provider_windows(
     provider: &Provider,
-    include_fable: bool,
+    kind: CliAgentUsageProvider,
+    visibility: &CliAgentUsageHeaderVisibility,
 ) -> Vec<(&'static str, Option<LimitWindow>)> {
-    let mut windows = vec![
-        ("5h ", provider.plan.and_then(|plan| plan.session)),
-        ("wk ", provider.plan.and_then(|plan| plan.weekly)),
-    ];
-    if include_fable {
-        windows.push(("Fable ", provider.plan.and_then(|plan| plan.fable_weekly)));
+    [
+        (
+            CliAgentUsageMetric::FiveHour,
+            "5h ",
+            provider.plan.and_then(|plan| plan.session),
+        ),
+        (
+            CliAgentUsageMetric::Weekly,
+            "wk ",
+            provider.plan.and_then(|plan| plan.weekly),
+        ),
+        (
+            CliAgentUsageMetric::Fable,
+            "Fable ",
+            provider.plan.and_then(|plan| plan.fable_weekly),
+        ),
+    ]
+    .into_iter()
+    .filter(|(metric, _, _)| visibility.is_visible(kind, *metric))
+    .map(|(_, label, window)| (label, window))
+    .collect()
+}
+
+/// The narrow layout keeps one provider-wide plan window, preferring weekly
+/// as the previous compact chip did, plus Claude's optional Fable window. If
+/// weekly is hidden, an enabled 5-hour window takes its place.
+fn compact_provider_windows(
+    provider: &Provider,
+    kind: CliAgentUsageProvider,
+    visibility: &CliAgentUsageHeaderVisibility,
+) -> Vec<(CliAgentUsageMetric, Option<LimitWindow>)> {
+    let mut windows = Vec::new();
+    if visibility.is_visible(kind, CliAgentUsageMetric::Weekly) {
+        windows.push((
+            CliAgentUsageMetric::Weekly,
+            provider.plan.and_then(|plan| plan.weekly),
+        ));
+    } else if visibility.is_visible(kind, CliAgentUsageMetric::FiveHour) {
+        windows.push((
+            CliAgentUsageMetric::FiveHour,
+            provider.plan.and_then(|plan| plan.session),
+        ));
+    }
+    if visibility.is_visible(kind, CliAgentUsageMetric::Fable) {
+        windows.push((
+            CliAgentUsageMetric::Fable,
+            provider.plan.and_then(|plan| plan.fable_weekly),
+        ));
     }
     windows
+}
+
+fn visible_exhausted_until(
+    provider: &Provider,
+    kind: CliAgentUsageProvider,
+    visibility: &CliAgentUsageHeaderVisibility,
+) -> Option<DateTime<Utc>> {
+    let mut latest = None;
+    for (metric, window) in [
+        (
+            CliAgentUsageMetric::FiveHour,
+            provider.plan.and_then(|plan| plan.session),
+        ),
+        (
+            CliAgentUsageMetric::Weekly,
+            provider.plan.and_then(|plan| plan.weekly),
+        ),
+    ] {
+        if !visibility.is_visible(kind, metric) {
+            continue;
+        }
+        if let Some(window) = window.filter(|window| window.percent >= 100.) {
+            let resets_at = window.resets_at?;
+            latest =
+                Some(latest.map_or(resets_at, |current: DateTime<Utc>| current.max(resets_at)));
+        }
+    }
+    latest
+}
+
+fn token_windows<'a>(
+    provider: &'a Provider,
+    kind: CliAgentUsageProvider,
+    visibility: &CliAgentUsageHeaderVisibility,
+) -> Vec<(CliAgentUsageMetric, &'a WindowTotals)> {
+    [
+        (CliAgentUsageMetric::SessionTokens, &provider.session),
+        (CliAgentUsageMetric::TodayTokens, &provider.today),
+        (CliAgentUsageMetric::WeekTokens, &provider.week),
+        (CliAgentUsageMetric::MonthTokens, &provider.month),
+    ]
+    .into_iter()
+    .filter(|(metric, _)| visibility.is_visible(kind, *metric))
+    .collect()
+}
+
+fn token_label(metric: CliAgentUsageMetric, compact: bool) -> &'static str {
+    match (metric, compact) {
+        (CliAgentUsageMetric::SessionTokens, false) => "sess tok ",
+        (CliAgentUsageMetric::TodayTokens, false) => "today tok ",
+        (CliAgentUsageMetric::WeekTokens, false) => "week tok ",
+        (CliAgentUsageMetric::MonthTokens, false) => "month tok ",
+        (CliAgentUsageMetric::SessionTokens, true) => "s ",
+        (CliAgentUsageMetric::TodayTokens, true) => "d ",
+        (CliAgentUsageMetric::WeekTokens, true) => "w ",
+        (CliAgentUsageMetric::MonthTokens, true) => "m ",
+        _ => "",
+    }
+}
+
+fn token_text(totals: &WindowTotals) -> String {
+    if totals.tokens.total() == 0 {
+        "—".to_string()
+    } else {
+        fmt_tokens(totals.tokens.io())
+    }
 }
 
 /// Whether Claude's opt-in plan gauges are on, plus the shared mouse handle
@@ -68,6 +177,14 @@ impl PlanLimitsGate<'_> {
     }
 }
 
+struct HeaderRenderContext<'a> {
+    now: DateTime<Utc>,
+    visibility: &'a CliAgentUsageHeaderVisibility,
+    gate: PlanLimitsGate<'a>,
+    appearance: &'a Appearance,
+    bg: Fill,
+}
+
 /// One provider's inline segment: `{name} 5h {pct}[· {reset}]  wk {pct}[· {reset}]`.
 /// Claude also includes its model-scoped `Fable {pct}[· {reset}]` window. Percents
 /// are severity-colored; labels and resets are dimmed. The windows are separated
@@ -77,12 +194,11 @@ impl PlanLimitsGate<'_> {
 fn provider_segment(
     kind: CliAgentUsageProvider,
     provider: &Provider,
-    now: DateTime<Utc>,
     include_resets: bool,
-    gate: &PlanLimitsGate<'_>,
-    appearance: &Appearance,
-    bg: Fill,
+    render: &HeaderRenderContext<'_>,
 ) -> Box<dyn Element> {
+    let appearance = render.appearance;
+    let bg = render.bg;
     let theme = appearance.theme();
     let main = theme.main_text_color(bg);
     let sub = theme.sub_text_color(bg);
@@ -90,35 +206,54 @@ fn provider_segment(
         CliAgentUsageProvider::Claude => "Claude",
         CliAgentUsageProvider::Codex => "Codex",
     };
-    let include_fable = kind == CliAgentUsageProvider::Claude;
 
     let mut row = Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center);
     row.add_child(span(format!("{name} "), main, appearance));
 
-    if let Some(mouse_state) = gate.turn_on(kind) {
-        row.add_child(span("limits ", sub, appearance));
-        row.add_child(turn_on_plan_limits(appearance, bg, mouse_state));
-        return row.finish();
+    let windows = provider_windows(provider, kind, render.visibility);
+    let mut item_count = 0;
+    if !windows.is_empty() {
+        if let Some(mouse_state) = render.gate.turn_on(kind) {
+            row.add_child(span("limits ", sub, appearance));
+            row.add_child(turn_on_plan_limits(appearance, bg, mouse_state));
+            item_count += 1;
+        } else {
+            for (label, window) in windows {
+                if item_count > 0 {
+                    row.add_child(
+                        Container::new(Empty::new().finish())
+                            .with_margin_right(10.)
+                            .finish(),
+                    );
+                }
+                let show_reset = include_resets
+                    && render
+                        .visibility
+                        .is_visible(kind, CliAgentUsageMetric::ResetTimes);
+                let (pct, reset, severity) = limit_texts(window, render.now, show_reset);
+                row.add_child(span(label, sub, appearance));
+                row.add_child(span(pct, severity_fill(severity, theme, bg), appearance));
+                if let Some(reset) = reset {
+                    row.add_child(span(format!(" · {reset}"), sub, appearance));
+                }
+                item_count += 1;
+            }
+        }
     }
 
-    for (idx, (label, window)) in provider_windows(provider, include_fable)
-        .into_iter()
-        .enumerate()
-    {
-        if idx > 0 {
+    for (metric, totals) in token_windows(provider, kind, render.visibility) {
+        if item_count > 0 {
             row.add_child(
                 Container::new(Empty::new().finish())
                     .with_margin_right(10.)
                     .finish(),
             );
         }
-        let (pct, reset, severity) = limit_texts(window, now, include_resets);
-        row.add_child(span(label, sub, appearance));
-        row.add_child(span(pct, severity_fill(severity, theme, bg), appearance));
-        if let Some(reset) = reset {
-            row.add_child(span(format!(" · {reset}"), sub, appearance));
-        }
+        row.add_child(span(token_label(metric, false), sub, appearance));
+        row.add_child(span(token_text(totals), main, appearance));
+        item_count += 1;
     }
+
     row.finish()
 }
 
@@ -155,13 +290,12 @@ fn clickable_provider(
 /// divider + Codex segment.
 fn inline_row(
     snapshot: &UsageSnapshot,
-    now: DateTime<Utc>,
     include_resets: bool,
-    gate: &PlanLimitsGate<'_>,
-    appearance: &Appearance,
-    bg: Fill,
+    render: &HeaderRenderContext<'_>,
     mouse_states: &[MouseStateHandle; 2],
 ) -> Box<dyn Element> {
+    let appearance = render.appearance;
+    let bg = render.bg;
     let theme = appearance.theme();
     let sub = theme.sub_text_color(bg);
     let icon_size = appearance.monospace_font_size();
@@ -185,11 +319,8 @@ fn inline_row(
         provider_segment(
             CliAgentUsageProvider::Claude,
             &snapshot.claude,
-            now,
             include_resets,
-            gate,
-            appearance,
-            bg,
+            render,
         ),
         mouse_states[0].clone(),
         appearance,
@@ -204,11 +335,8 @@ fn inline_row(
         provider_segment(
             CliAgentUsageProvider::Codex,
             &snapshot.codex,
-            now,
             include_resets,
-            gate,
-            appearance,
-            bg,
+            render,
         ),
         mouse_states[1].clone(),
         appearance,
@@ -218,46 +346,69 @@ fn inline_row(
 
 fn compact_provider_segment(
     kind: CliAgentUsageProvider,
-    half: &ChipHalf,
     provider: &Provider,
-    now: DateTime<Utc>,
-    turn_on: Option<MouseStateHandle>,
-    appearance: &Appearance,
-    bg: Fill,
+    render: &HeaderRenderContext<'_>,
 ) -> Box<dyn Element> {
+    let appearance = render.appearance;
+    let bg = render.bg;
     let theme = appearance.theme();
     let neutral = theme.sub_text_color(bg);
+    let main = theme.main_text_color(bg);
+    let provider_label = match kind {
+        CliAgentUsageProvider::Claude => "cc ",
+        CliAgentUsageProvider::Codex => "cx ",
+    };
     let mut row = Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center);
-    row.add_child(span(format!("{} ", half.label), neutral, appearance));
+    row.add_child(span(provider_label, neutral, appearance));
 
-    if let Some(mouse_state) = turn_on {
-        row.add_child(turn_on_plan_limits(appearance, bg, mouse_state));
-        return row.finish();
-    }
+    let windows = compact_provider_windows(provider, kind, render.visibility);
+    let mut item_count = 0;
+    if !windows.is_empty() {
+        if let Some(mouse_state) = render.gate.turn_on(kind) {
+            row.add_child(span("limits ", neutral, appearance));
+            row.add_child(turn_on_plan_limits(appearance, bg, mouse_state));
+            item_count += 1;
+        } else {
+            for (metric, window) in windows {
+                if item_count > 0 {
+                    row.add_child(span(" · ", neutral, appearance));
+                }
+                let (pct, _, severity) = limit_texts(window, render.now, false);
+                let (label, pct) = match metric {
+                    CliAgentUsageMetric::FiveHour => ("5h ", pct),
+                    CliAgentUsageMetric::Weekly => ("", format!("{pct}w")),
+                    CliAgentUsageMetric::Fable => ("fb ", format!("{pct}w")),
+                    _ => ("", pct),
+                };
+                row.add_child(span(label, neutral, appearance));
+                row.add_child(span(pct, severity_fill(severity, theme, bg), appearance));
 
-    row.add_child(span(
-        half.pct.clone(),
-        severity_fill(half.severity, theme, bg),
-        appearance,
-    ));
-
-    if let Some(until) = provider.plan.and_then(|plan| plan.exhausted_until()) {
-        row.add_child(span(
-            format!(" resets {}", fmt_reset_short(until, now)),
-            neutral,
-            appearance,
-        ));
-    }
-
-    if kind == CliAgentUsageProvider::Claude {
-        if let Some(fable) = provider.plan.and_then(|plan| plan.fable_weekly) {
-            row.add_child(span(" · fb ", neutral, appearance));
-            row.add_child(span(
-                format!("{}w", fmt_pct(fable.percent)),
-                severity_fill(fable.severity, theme, bg),
-                appearance,
-            ));
+                if metric != CliAgentUsageMetric::Fable
+                    && render
+                        .visibility
+                        .is_visible(kind, CliAgentUsageMetric::ResetTimes)
+                {
+                    if let Some(until) = visible_exhausted_until(provider, kind, render.visibility)
+                    {
+                        row.add_child(span(
+                            format!(" resets {}", fmt_reset_short(until, render.now)),
+                            neutral,
+                            appearance,
+                        ));
+                    }
+                }
+                item_count += 1;
+            }
         }
+    }
+
+    for (metric, totals) in token_windows(provider, kind, render.visibility) {
+        if item_count > 0 {
+            row.add_child(span(" · ", neutral, appearance));
+        }
+        row.add_child(span(token_label(metric, true), neutral, appearance));
+        row.add_child(span(token_text(totals), main, appearance));
+        item_count += 1;
     }
 
     row.finish()
@@ -265,13 +416,11 @@ fn compact_provider_segment(
 
 fn compact_row(
     snapshot: &UsageSnapshot,
-    halves: &[ChipHalf; 2],
-    now: DateTime<Utc>,
-    gate: &PlanLimitsGate<'_>,
-    appearance: &Appearance,
-    bg: Fill,
+    render: &HeaderRenderContext<'_>,
     mouse_states: &[MouseStateHandle; 2],
 ) -> Box<dyn Element> {
+    let appearance = render.appearance;
+    let bg = render.bg;
     let theme = appearance.theme();
     let neutral = theme.sub_text_color(bg);
     let icon_size = appearance.monospace_font_size();
@@ -291,9 +440,8 @@ fn compact_row(
         .finish(),
     );
 
-    for (index, (kind, half)) in [CliAgentUsageProvider::Claude, CliAgentUsageProvider::Codex]
+    for (index, kind) in [CliAgentUsageProvider::Claude, CliAgentUsageProvider::Codex]
         .into_iter()
-        .zip(halves)
         .enumerate()
     {
         if index > 0 {
@@ -301,15 +449,7 @@ fn compact_row(
         }
         row.add_child(clickable_provider(
             kind,
-            compact_provider_segment(
-                kind,
-                half,
-                kind.data(snapshot),
-                now,
-                gate.turn_on(kind),
-                appearance,
-                bg,
-            ),
+            compact_provider_segment(kind, kind.data(snapshot), render),
             mouse_states[index].clone(),
             appearance,
         ));
@@ -323,22 +463,28 @@ fn compact_row(
 pub fn render_cli_agent_usage_header(
     snapshot: &UsageSnapshot,
     plan_limits_enabled: bool,
+    visibility: &CliAgentUsageHeaderVisibility,
     appearance: &Appearance,
     bg: Fill,
     mouse_states: &[MouseStateHandle; 2],
     turn_on_mouse_state: &MouseStateHandle,
 ) -> Option<Box<dyn Element>> {
     // Hidden when neither tool has data — same rule as the footer chip.
-    let halves = chip_halves(snapshot)?;
-    let now = Utc::now();
-    let gate = PlanLimitsGate {
-        enabled: plan_limits_enabled,
-        turn_on_mouse_state,
+    chip_halves(snapshot)?;
+    let render = HeaderRenderContext {
+        now: Utc::now(),
+        visibility,
+        gate: PlanLimitsGate {
+            enabled: plan_limits_enabled,
+            turn_on_mouse_state,
+        },
+        appearance,
+        bg,
     };
 
-    let full = inline_row(snapshot, now, true, &gate, appearance, bg, mouse_states);
-    let medium = inline_row(snapshot, now, false, &gate, appearance, bg, mouse_states);
-    let narrow = compact_row(snapshot, &halves, now, &gate, appearance, bg, mouse_states);
+    let full = inline_row(snapshot, true, &render, mouse_states);
+    let medium = inline_row(snapshot, false, &render, mouse_states);
+    let narrow = compact_row(snapshot, &render, mouse_states);
 
     // Conditions are checked in order; the narrower condition must come first so
     // it wins when both are satisfied. `full` is the default (widest) child.

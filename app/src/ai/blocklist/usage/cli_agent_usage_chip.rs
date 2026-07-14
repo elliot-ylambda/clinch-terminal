@@ -9,9 +9,10 @@ use warpui::elements::{
     MouseStateHandle, ParentElement, Radius, Text,
 };
 use warpui::platform::Cursor;
+use warpui::ui_components::components::UiComponent;
 use warpui::Element;
 
-use super::CliAgentUsageProvider;
+use super::{CliAgentUsageHeaderVisibility, CliAgentUsageMetric, CliAgentUsageProvider};
 use crate::appearance::Appearance;
 use crate::workspace::WorkspaceAction;
 
@@ -66,14 +67,25 @@ pub(super) fn turn_on_plan_limits(
 
 /// A focused provider panel: plan limits, local token totals, and a link to the
 /// provider's authoritative web usage page.
+pub struct CliAgentUsagePanelMouseStates<'a> {
+    pub metric_checkboxes: &'a [MouseStateHandle; CliAgentUsageMetric::COUNT],
+    pub usage_link_mouse_state: MouseStateHandle,
+    pub turn_on_mouse_state: MouseStateHandle,
+}
+
 pub fn render_cli_agent_usage_panel(
     snapshot: &UsageSnapshot,
     appearance: &Appearance,
     kind: CliAgentUsageProvider,
     plan_limits_enabled: bool,
-    link_mouse_state: MouseStateHandle,
-    turn_on_mouse_state: MouseStateHandle,
+    visibility: &CliAgentUsageHeaderVisibility,
+    mouse_states: CliAgentUsagePanelMouseStates<'_>,
 ) -> Box<dyn Element> {
+    let CliAgentUsagePanelMouseStates {
+        metric_checkboxes,
+        usage_link_mouse_state,
+        turn_on_mouse_state,
+    } = mouse_states;
     let theme = appearance.theme();
     let bg = theme.surface_2();
     let main = theme.main_text_color(bg);
@@ -89,49 +101,78 @@ pub fn render_cli_agent_usage_panel(
         appearance,
     ));
 
-    // Plan-% rows, or the enable affordance while the gauges are opt-out.
+    // Claude's live plan data is opt-in, but its visibility controls remain
+    // available even while collection is off.
     if kind.shows_plan_limits_turn_on(plan_limits_enabled) {
         col.add_child(panel_row(
             span("Limits", sub, appearance),
             turn_on_plan_limits(appearance, bg, turn_on_mouse_state),
         ));
-    } else {
-        col.add_child(panel_row(
-            span("5h", sub, appearance),
-            plan_cell(provider.plan.and_then(|p| p.session), now, appearance, bg),
-        ));
-        col.add_child(panel_row(
-            span("Weekly", sub, appearance),
-            plan_cell(provider.plan.and_then(|p| p.weekly), now, appearance, bg),
-        ));
-        if kind == CliAgentUsageProvider::Claude {
-            col.add_child(panel_row(
-                span("Fable wk", sub, appearance),
-                plan_cell(
-                    provider.plan.and_then(|p| p.fable_weekly),
-                    now,
-                    appearance,
-                    bg,
-                ),
-            ));
-        }
     }
+    col.add_child(configurable_panel_row(
+        kind,
+        CliAgentUsageMetric::FiveHour,
+        visibility,
+        metric_checkboxes,
+        plan_cell(provider.plan.and_then(|p| p.session), now, appearance, bg),
+        appearance,
+        bg,
+    ));
+    col.add_child(configurable_panel_row(
+        kind,
+        CliAgentUsageMetric::Weekly,
+        visibility,
+        metric_checkboxes,
+        plan_cell(provider.plan.and_then(|p| p.weekly), now, appearance, bg),
+        appearance,
+        bg,
+    ));
+    if kind == CliAgentUsageProvider::Claude {
+        col.add_child(configurable_panel_row(
+            kind,
+            CliAgentUsageMetric::Fable,
+            visibility,
+            metric_checkboxes,
+            plan_cell(
+                provider.plan.and_then(|p| p.fable_weekly),
+                now,
+                appearance,
+                bg,
+            ),
+            appearance,
+            bg,
+        ));
+    }
+    col.add_child(configurable_panel_row(
+        kind,
+        CliAgentUsageMetric::ResetTimes,
+        visibility,
+        metric_checkboxes,
+        span("Show countdowns", sub, appearance),
+        appearance,
+        bg,
+    ));
 
     // Token rows.
-    for (label, pick) in [
-        ("Session", 0u8),
-        ("Today", 1),
-        ("This week", 2),
-        ("This month", 3),
+    for (metric, pick) in [
+        (CliAgentUsageMetric::SessionTokens, 0u8),
+        (CliAgentUsageMetric::TodayTokens, 1),
+        (CliAgentUsageMetric::WeekTokens, 2),
+        (CliAgentUsageMetric::MonthTokens, 3),
     ] {
-        col.add_child(panel_row(
-            span(label, sub, appearance),
+        col.add_child(configurable_panel_row(
+            kind,
+            metric,
+            visibility,
+            metric_checkboxes,
             token_cell(window(provider, pick), appearance, main, sub),
+            appearance,
+            bg,
         ));
     }
 
     col.add_child(
-        Container::new(usage_link(kind, appearance, bg, link_mouse_state))
+        Container::new(usage_link(kind, appearance, bg, usage_link_mouse_state))
             .with_margin_top(6.)
             .finish(),
     );
@@ -145,7 +186,7 @@ pub fn render_cli_agent_usage_panel(
             .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
             .finish(),
     )
-    .with_width(276.)
+    .with_width(300.)
     .finish()
 }
 
@@ -163,6 +204,44 @@ fn panel_row(label: Box<dyn Element>, value: Box<dyn Element>) -> Box<dyn Elemen
     let mut row = Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center);
     row.add_child(ConstrainedBox::new(label).with_width(84.).finish());
     row.add_child(ConstrainedBox::new(value).with_width(160.).finish());
+    row.finish()
+}
+
+/// A provider statistic with a controlled checkbox that toggles whether the
+/// statistic appears in the tab-bar header. The current value remains visible
+/// in the panel regardless of the checkbox state.
+fn configurable_panel_row(
+    kind: CliAgentUsageProvider,
+    metric: CliAgentUsageMetric,
+    visibility: &CliAgentUsageHeaderVisibility,
+    metric_mouse_states: &[MouseStateHandle; CliAgentUsageMetric::COUNT],
+    value: Box<dyn Element>,
+    appearance: &Appearance,
+    bg: Fill,
+) -> Box<dyn Element> {
+    let sub = appearance.theme().sub_text_color(bg);
+    let checkbox = appearance
+        .ui_builder()
+        .checkbox(metric_mouse_states[metric.index()].clone(), Some(11.))
+        .check(visibility.is_visible(kind, metric))
+        .build()
+        .on_click(move |ctx, _app, _position| {
+            ctx.dispatch_typed_action(WorkspaceAction::ToggleCliAgentUsageHeaderMetric {
+                provider: kind,
+                metric,
+            });
+        })
+        .with_cursor(Cursor::PointingHand)
+        .finish();
+
+    let mut row = Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center);
+    row.add_child(ConstrainedBox::new(checkbox).with_width(20.).finish());
+    row.add_child(
+        ConstrainedBox::new(span(metric.label(), sub, appearance))
+            .with_width(80.)
+            .finish(),
+    );
+    row.add_child(ConstrainedBox::new(value).with_width(168.).finish());
     row.finish()
 }
 

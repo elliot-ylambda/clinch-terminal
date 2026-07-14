@@ -204,8 +204,8 @@ use crate::ai::blocklist::suggested_rule_modal::{
     SuggestedRuleAndId, SuggestedRuleModal, SuggestedRuleModalEvent,
 };
 use crate::ai::blocklist::usage::{
-    render_cli_agent_usage_header, render_cli_agent_usage_panel, CliAgentUsageModel,
-    CliAgentUsageProvider,
+    render_cli_agent_usage_header, render_cli_agent_usage_panel, CliAgentUsageHeaderVisibility,
+    CliAgentUsageMetric, CliAgentUsageModel, CliAgentUsagePanelMouseStates, CliAgentUsageProvider,
 };
 use crate::ai::blocklist::{
     BlocklistAIHistoryEvent, PendingAttachment, PendingQueryState, QueuedQueryOrigin,
@@ -1029,6 +1029,10 @@ pub struct Workspace {
     cli_agent_usage_claude_mouse_state: MouseStateHandle,
     cli_agent_usage_codex_mouse_state: MouseStateHandle,
     cli_agent_usage_link_mouse_state: MouseStateHandle,
+    /// Stable hover state for each provider panel's header-visibility
+    /// checkboxes, indexed by `CliAgentUsageMetric`.
+    cli_agent_usage_claude_metric_mouse_states: [MouseStateHandle; CliAgentUsageMetric::COUNT],
+    cli_agent_usage_codex_metric_mouse_states: [MouseStateHandle; CliAgentUsageMetric::COUNT],
     /// The gauges' "Turn on" affordance gets separate handles for the header
     /// and the panel — both can be visible at once and must hover independently.
     cli_agent_usage_turn_on_header_mouse_state: MouseStateHandle,
@@ -2877,6 +2881,10 @@ impl Workspace {
             // Re-render the tab bar when a usage scan completes.
             ctx.notify();
         });
+        ctx.subscribe_to_model(&CliAgentUsageSettings::handle(ctx), |_, _, _, ctx| {
+            // Re-render when this or another window changes header visibility.
+            ctx.notify();
+        });
 
         let referrals_client = ServerApiProvider::as_ref(ctx).get_referrals_client();
         // On startup, check if the user has earned a referral theme by referring other users
@@ -3135,6 +3143,9 @@ impl Workspace {
         ctx.subscribe_to_model(&CliAgentUsageModel::handle(ctx), |_, _, _, ctx| {
             ctx.notify();
         });
+        ctx.subscribe_to_model(&CliAgentUsageSettings::handle(ctx), |_, _, _, ctx| {
+            ctx.notify();
+        });
 
         // Repo detection completes asynchronously after a pwd change, so the
         // project tab label/header tint rendered from the bare cwd must be
@@ -3374,6 +3385,8 @@ impl Workspace {
             cli_agent_usage_claude_mouse_state: Default::default(),
             cli_agent_usage_codex_mouse_state: Default::default(),
             cli_agent_usage_link_mouse_state: Default::default(),
+            cli_agent_usage_claude_metric_mouse_states: Default::default(),
+            cli_agent_usage_codex_metric_mouse_states: Default::default(),
             cli_agent_usage_turn_on_header_mouse_state: Default::default(),
             cli_agent_usage_turn_on_panel_mouse_state: Default::default(),
             traffic_light_mouse_states: Default::default(),
@@ -21392,7 +21405,11 @@ impl Workspace {
         // click target and detail panel.
         {
             let snapshot = CliAgentUsageModel::as_ref(ctx).latest().clone();
-            let plan_limits_enabled = *CliAgentUsageSettings::as_ref(ctx).show_plan_limits;
+            let usage_settings = CliAgentUsageSettings::as_ref(ctx);
+            let plan_limits_enabled = *usage_settings.show_plan_limits;
+            let visibility = CliAgentUsageHeaderVisibility::from_overrides(
+                &usage_settings.header_metric_visibility,
+            );
             let bg = appearance.theme().surface_1();
             let provider_mouse_states = [
                 self.cli_agent_usage_claude_mouse_state.clone(),
@@ -21401,6 +21418,7 @@ impl Workspace {
             if let Some(widget) = render_cli_agent_usage_header(
                 &snapshot,
                 plan_limits_enabled,
+                &visibility,
                 appearance,
                 bg,
                 &provider_mouse_states,
@@ -21416,14 +21434,30 @@ impl Workspace {
                             (ParentAnchor::BottomRight, ChildAnchor::TopRight)
                         }
                     };
+                    let metric_mouse_states = match provider {
+                        CliAgentUsageProvider::Claude => {
+                            &self.cli_agent_usage_claude_metric_mouse_states
+                        }
+                        CliAgentUsageProvider::Codex => {
+                            &self.cli_agent_usage_codex_metric_mouse_states
+                        }
+                    };
                     stack.add_positioned_overlay_child(
                         render_cli_agent_usage_panel(
                             &snapshot,
                             appearance,
                             provider,
                             plan_limits_enabled,
-                            self.cli_agent_usage_link_mouse_state.clone(),
-                            self.cli_agent_usage_turn_on_panel_mouse_state.clone(),
+                            &visibility,
+                            CliAgentUsagePanelMouseStates {
+                                metric_checkboxes: metric_mouse_states,
+                                usage_link_mouse_state: self
+                                    .cli_agent_usage_link_mouse_state
+                                    .clone(),
+                                turn_on_mouse_state: self
+                                    .cli_agent_usage_turn_on_panel_mouse_state
+                                    .clone(),
+                            },
                         ),
                         OffsetPositioning::offset_from_parent(
                             vec2f(0., 4.),
@@ -21433,6 +21467,16 @@ impl Workspace {
                         ),
                     );
                 }
+
+                let usage_status = if self.cli_agent_usage_panel_provider.is_some() {
+                    Dismiss::new(stack.finish())
+                        .on_dismiss(|ctx, _app| {
+                            ctx.dispatch_typed_action(WorkspaceAction::CloseCliAgentUsagePanel);
+                        })
+                        .finish()
+                } else {
+                    stack.finish()
+                };
 
                 // Horizontal tabs: `target` is the outer `tab_bar` flex, which is
                 // finitely constrained, so a flexible `Shrinkable` child is safe and
@@ -21450,11 +21494,11 @@ impl Workspace {
                 // non-flexible `ConstrainedBox` instead so `right_controls` never
                 // sees a flexible child and the switch gets a finite max width.
                 let wrapped = if vertical_tabs_active {
-                    ConstrainedBox::new(stack.finish())
+                    ConstrainedBox::new(usage_status)
                         .with_max_width(720.)
                         .finish()
                 } else {
-                    Shrinkable::new(1., stack.finish()).finish()
+                    Shrinkable::new(1., usage_status).finish()
                 };
 
                 target.add_child(
@@ -25351,6 +25395,23 @@ impl TypedActionView for Workspace {
                 self.cli_agent_usage_panel_provider =
                     provider.toggle_panel(self.cli_agent_usage_panel_provider);
                 ctx.notify();
+            }
+            CloseCliAgentUsagePanel => {
+                if self.cli_agent_usage_panel_provider.take().is_some() {
+                    ctx.notify();
+                }
+            }
+            ToggleCliAgentUsageHeaderMetric { provider, metric } => {
+                if metric.config_key(*provider).is_some() {
+                    CliAgentUsageSettings::handle(ctx).update(ctx, |settings, ctx| {
+                        let mut overrides = settings.header_metric_visibility.clone();
+                        metric.toggle_override(*provider, &mut overrides);
+                        report_if_error!(settings
+                            .header_metric_visibility
+                            .set_value(overrides, ctx));
+                    });
+                    ctx.notify();
+                }
             }
             EnableCliAgentPlanLimits => {
                 CliAgentUsageSettings::handle(ctx).update(ctx, |settings, ctx| {

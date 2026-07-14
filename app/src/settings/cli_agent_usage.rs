@@ -1,5 +1,7 @@
+use std::collections::HashMap;
+
 use settings::macros::define_settings_group;
-use settings::{SupportedPlatforms, SyncToCloud};
+use settings::{RespectUserSyncSetting, SupportedPlatforms, SyncToCloud};
 
 define_settings_group!(CliAgentUsageSettings, settings: [
     // Gates the Claude Code live plan-limit gauges (the 5-hour and weekly
@@ -22,6 +24,19 @@ define_settings_group!(CliAgentUsageSettings, settings: [
                       item from your macOS Keychain (asks for your password) and \
                       queries Anthropic's usage endpoint. Off by default; local \
                       token and cost stats work without it.",
+    }
+
+    // Sparse overrides for the per-provider statistics rendered in the tab-bar
+    // usage header. Missing plan-limit keys default to visible, while missing
+    // token-window keys default to hidden; see `CliAgentUsageMetric`.
+    header_metric_visibility: CliAgentUsageHeaderMetricVisibility {
+        type: HashMap<String, bool>,
+        default: HashMap::default(),
+        supported_platforms: SupportedPlatforms::ALL,
+        sync_to_cloud: SyncToCloud::Globally(RespectUserSyncSetting::Yes),
+        private: false,
+        toml_path: "ai.cli_agent_usage.header_metric_visibility",
+        description: "Per-provider visibility overrides for statistics in the CLI-agent usage header.",
     }
 ]);
 

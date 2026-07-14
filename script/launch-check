@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Reproducible source gate used by local candidates and Clinch CI.
+# Reproducible source gate used by local candidates and the release workflow.
 set -euo pipefail
 
 # A release invoked from inside an older Make/agent process can inherit stale recursive-Make
