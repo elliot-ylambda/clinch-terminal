@@ -311,6 +311,9 @@ fn test_session(agent: CLIAgent) -> CLIAgentSession {
         draft_text: None,
         custom_command_prefix: None,
         received_rich_notification: true,
+        prompt_history: Default::default(),
+        prompt_history_load_state: Default::default(),
+        prompt_history_generation: 0,
     }
 }
 

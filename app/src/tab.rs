@@ -36,6 +36,7 @@ use crate::launch_configs::launch_config::LaunchConfig;
 use crate::menu::{MenuAction, MenuItem, MenuItemFields};
 use crate::pane_group::{PaneGroup, PaneId};
 use crate::shell_indicator::ShellIndicatorType;
+use crate::terminal::cli_agent_sessions::{session_context_enabled, CLIAgentSessionsModel};
 use crate::terminal::session_settings::SessionSettings;
 use crate::terminal::shared_session::render_util::shared_session_indicator_color;
 use crate::terminal::view::TerminalViewState;
@@ -61,6 +62,14 @@ use crate::BlocklistAIHistoryModel;
 
 pub const TAB_BAR_BORDER_HEIGHT: f32 = 1.0;
 const TAB_INDICATOR_HEIGHT: f32 = 14.0;
+
+fn should_clip_tab_text_start(
+    has_custom_title: bool,
+    has_ai_conversation_title: bool,
+    has_cli_agent_prompt_title: bool,
+) -> bool {
+    !has_custom_title && !has_ai_conversation_title && !has_cli_agent_prompt_title
+}
 
 /// Label for the tab right-click menu's "Move to group" submenu parent.
 pub const MOVE_TO_GROUP_LABEL: &str = "Move to group";
@@ -822,6 +831,8 @@ pub struct TabComponent<'a> {
     editor: ViewHandle<EditorView>,
     title: String,
     has_custom_title: bool,
+    /// Prompt-derived titles preserve their beginning even when status indicators are hidden.
+    has_cli_agent_prompt_title: bool,
     tab_index: usize,
     styles: TabStyles,
     ui_builder: UiBuilder,
@@ -1003,12 +1014,14 @@ impl<'a> TabComponent<'a> {
             pane_group_id,
             pane_id,
         };
+        let has_cli_agent_prompt_title = Self::has_cli_agent_prompt_title(tab, ctx);
         Self {
             tab: tab.clone(),
             tab_bar,
             editor,
             title,
             has_custom_title: tab.pane_group.as_ref(ctx).custom_title(ctx).is_some(),
+            has_cli_agent_prompt_title,
             tab_index,
             styles: TabStyles::default(appearance, tab.color()),
             ui_builder: appearance.ui_builder().clone(),
@@ -1133,12 +1146,68 @@ impl<'a> TabComponent<'a> {
         Self::is_agent_task_indicator(&self.indicator)
     }
 
+    fn has_cli_agent_prompt_title(tab: &TabData, ctx: &AppContext) -> bool {
+        if !session_context_enabled() {
+            return false;
+        }
+        let Some(view) = tab.pane_group.as_ref(ctx).focused_session_view(ctx) else {
+            return false;
+        };
+        let Some(session) = CLIAgentSessionsModel::as_ref(ctx)
+            .session(view.id())
+            .filter(|session| matches!(session.agent, CLIAgent::Claude | CLIAgent::Codex))
+        else {
+            return false;
+        };
+
+        if *TabSettings::as_ref(ctx).use_latest_user_prompt_as_conversation_title_in_tab_names {
+            session.latest_prompt().is_some()
+                || session.session_context.latest_user_prompt().is_some()
+                || session.first_prompt().is_some()
+        } else {
+            session.first_prompt().is_some()
+        }
+    }
+
     /// Get the tooltip message for tabs - handles both agent tasks and regular tab titles
     fn get_tooltip_message(
         indicator: &Indicator,
         tab: &TabData,
         ctx: &AppContext,
     ) -> Option<String> {
+        // Prompt titles are excerpts, so keep the exact first message available on hover. This
+        // lookup is independent of status-indicator visibility.
+        if session_context_enabled() {
+            let initial_prompt = tab
+                .pane_group
+                .as_ref(ctx)
+                .focused_session_view(ctx)
+                .and_then(|view| {
+                    CLIAgentSessionsModel::as_ref(ctx)
+                        .session(view.id())
+                        .filter(|session| {
+                            matches!(session.agent, CLIAgent::Claude | CLIAgent::Codex)
+                        })
+                        .and_then(|session| {
+                            session.first_prompt().map(|prompt| prompt.text.clone())
+                        })
+                });
+            if let Some(initial_prompt) = initial_prompt {
+                let status_line = if let Indicator::CLIAgent { agent, status, .. } = indicator {
+                    let suffix = match status {
+                        Some(ConversationStatus::Blocked { .. }) => " — needs your attention",
+                        Some(ConversationStatus::Success) => " — done",
+                        Some(ConversationStatus::InProgress) => " — working",
+                        _ => "",
+                    };
+                    format!("\n\n{}{suffix}", agent.display_name())
+                } else {
+                    String::new()
+                };
+                return Some(format!("{initial_prompt}{status_line}"));
+            }
+        }
+
         // CLI agents (Claude/Codex/etc.) aren't tracked in `BlocklistAIHistoryModel`, so they
         // get their own tooltip text (agent name + status) rather than going through
         // `get_agent_task_tooltip_message`, which only knows about Oz agent conversations.
@@ -1566,7 +1635,11 @@ impl<'a> TabComponent<'a> {
     }
 
     fn should_clip_text_start(&self) -> bool {
-        !self.has_custom_title && !self.has_ai_conversation_title()
+        should_clip_tab_text_start(
+            self.has_custom_title,
+            self.has_ai_conversation_title(),
+            self.has_cli_agent_prompt_title,
+        )
     }
 
     fn render_tab_container_internal(
@@ -2175,5 +2248,12 @@ mod tests {
         assert!(!TabComponent::is_agent_task_indicator(&Indicator::Shell(
             ShellIndicatorType::Linux
         )));
+    }
+
+    #[test]
+    fn cli_prompt_titles_end_clip_even_without_status_indicator() {
+        assert!(!should_clip_tab_text_start(false, false, true));
+        assert!(should_clip_tab_text_start(false, false, false));
+        assert!(!should_clip_tab_text_start(true, false, false));
     }
 }

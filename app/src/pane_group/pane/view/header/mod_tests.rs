@@ -6,7 +6,7 @@ use warpui::elements::Empty;
 use warpui::platform::WindowStyle;
 use warpui::{App, AppContext, Element, Entity, TypedActionView, View, ViewContext};
 
-use super::{Event, OpenOverlay};
+use super::{resolved_custom_header_height, Event, OpenOverlay, PANE_HEADER_HEIGHT};
 use crate::ai::blocklist::BlocklistAIHistoryModel;
 use crate::auth::AuthStateProvider;
 use crate::cloud_object::model::persistence::CloudModel;
@@ -133,6 +133,15 @@ fn initialize_app(app: &mut App) {
     #[cfg(feature = "voice_input")]
     app.add_singleton_model(voice_input::VoiceInput::new);
     app.add_singleton_model(|_| AuthStateProvider::new_for_test());
+}
+
+#[test]
+fn custom_header_height_defaults_to_one_row_and_accepts_context_row() {
+    assert_eq!(resolved_custom_header_height(None), PANE_HEADER_HEIGHT);
+    assert_eq!(
+        resolved_custom_header_height(Some(PANE_HEADER_HEIGHT * 2.)),
+        PANE_HEADER_HEIGHT * 2.
+    );
 }
 
 #[test]

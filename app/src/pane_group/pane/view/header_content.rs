@@ -127,6 +127,14 @@ pub enum HeaderContent {
         /// part of the header (the empty space) should be draggable.
         has_custom_draggable_behavior: bool,
     },
+
+    /// Custom content with an explicit height. Existing custom headers continue to use the
+    /// standard 34px contract; multi-row views opt in to this variant.
+    CustomWithHeight {
+        element: Box<dyn Element>,
+        has_custom_draggable_behavior: bool,
+        height: f32,
+    },
 }
 
 impl HeaderContent {
