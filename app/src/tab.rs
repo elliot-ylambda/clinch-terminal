@@ -1161,9 +1161,7 @@ impl<'a> TabComponent<'a> {
         };
 
         if *TabSettings::as_ref(ctx).use_latest_user_prompt_as_conversation_title_in_tab_names {
-            session.latest_prompt().is_some()
-                || session.session_context.latest_user_prompt().is_some()
-                || session.first_prompt().is_some()
+            session.latest_user_prompt_for_chrome().is_some() || session.first_prompt().is_some()
         } else {
             session.first_prompt().is_some()
         }
