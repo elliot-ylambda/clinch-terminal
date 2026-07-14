@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, Read};
 use std::path::{Path, PathBuf};
 
+use chrono::{DateTime, Local};
 use serde::Deserialize;
 use serde_json::Value;
 use unicode_segmentation::UnicodeSegmentation;
@@ -77,6 +78,30 @@ pub fn prompt_title(text: &str) -> Option<String> {
             graphemes[..MAX_GRAPHEMES].concat().trim_end()
         ))
     }
+}
+
+/// Formats a stored ISO-8601 UTC prompt timestamp as a short local clock time,
+/// e.g. "2:32 PM". Returns None when the input is absent or unparseable.
+pub fn format_prompt_time_short(timestamp: Option<&str>) -> Option<String> {
+    let timestamp = DateTime::parse_from_rfc3339(timestamp?).ok()?;
+    Some(
+        timestamp
+            .with_timezone(&Local)
+            .format("%-I:%M %p")
+            .to_string(),
+    )
+}
+
+/// Formats a stored ISO-8601 UTC prompt timestamp as a short local date + time,
+/// e.g. "Jul 14, 2:32 PM". Returns None when the input is absent or unparseable.
+pub fn format_prompt_time_full(timestamp: Option<&str>) -> Option<String> {
+    let timestamp = DateTime::parse_from_rfc3339(timestamp?).ok()?;
+    Some(
+        timestamp
+            .with_timezone(&Local)
+            .format("%b %-d, %-I:%M %p")
+            .to_string(),
+    )
 }
 
 /// Reads the best locally available prompt history for a provider session.

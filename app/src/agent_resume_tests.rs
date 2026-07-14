@@ -27,6 +27,31 @@ fn prompt_title_collapses_whitespace_and_truncates_at_graphemes() {
 }
 
 #[test]
+fn prompt_timestamp_formats_as_local_time() {
+    let timestamp = "2026-07-14T14:32:05Z";
+    let local = chrono::DateTime::parse_from_rfc3339(timestamp)
+        .unwrap()
+        .with_timezone(&chrono::Local);
+
+    assert_eq!(
+        format_prompt_time_short(Some(timestamp)),
+        Some(local.format("%-I:%M %p").to_string())
+    );
+    assert_eq!(
+        format_prompt_time_full(Some(timestamp)),
+        Some(local.format("%b %-d, %-I:%M %p").to_string())
+    );
+}
+
+#[test]
+fn prompt_timestamp_formatting_rejects_missing_or_invalid_values() {
+    assert_eq!(format_prompt_time_short(None), None);
+    assert_eq!(format_prompt_time_short(Some("garbage")), None);
+    assert_eq!(format_prompt_time_full(None), None);
+    assert_eq!(format_prompt_time_full(Some("garbage")), None);
+}
+
+#[test]
 fn restore_command_seed_accepts_current_and_legacy_launchers() {
     assert_eq!(
         agent_session_seed_from_restore_command(
