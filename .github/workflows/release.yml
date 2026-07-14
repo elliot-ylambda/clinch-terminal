@@ -60,8 +60,36 @@ concurrency:
 
 jobs:
   gate:
-    name: Required source gate
-    uses: ./.github/workflows/ci.yml
+    name: Full release gate
+    runs-on: macos-15-intel
+    timeout-minutes: 150
+    env:
+      CARGO_TERM_COLOR: always
+      RUSTFLAGS: -C debuginfo=line-tables-only --cfg=web_sys_unstable_apis
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Prepare public macOS build environment
+        uses: ./.github/actions/prepare_environment
+        with:
+          target_os: macos
+          is_self_hosted: false
+          install_test_deps: true
+          cache_key: clinch-release-gate
+
+      - name: Install dependency audit runner
+        uses: taiki-e/install-action@b8cecb83565409bcc297b2df6e77f030b2a468d5 # v2.82.0
+        with:
+          tool: cargo-deny
+
+      - name: Install test runner
+        uses: taiki-e/install-action@b8cecb83565409bcc297b2df6e77f030b2a468d5 # v2.82.0
+        with:
+          tool: nextest
+
+      - name: Run the complete source, test, lint, license, and advisory gate
+        run: ./script/launch-check
 
   package-and-publish:
     name: Package, attest, and publish
@@ -238,7 +266,7 @@ jobs:
             --arg qa_record "$QA_RECORD" \
             --arg tested_macos_versions "$QA_TESTED_MACOS_VERSIONS" \
             --argjson intel_smoke "$QA_INTEL_SMOKE" \
-            '{schema_version:1, version:$version, commit:$commit, update_sequence:($sequence|tonumber), runner:$runner, gates:["Source checks","Stable build and lint","Component tests"], artifact_checks:["universal x86_64+arm64","ad-hoc hardened-runtime signature","empty Clinch entitlements","ZIP/DMG app equality","integration opt-in and removal","signed exact-tag manifest"], manual_qa:{record:$qa_record,tested_macos_versions:$tested_macos_versions,first_install:true,authenticated_manual_upgrade:true,session_integration_opt_in_and_removal:true,selective_uninstall:true,offline_startup:true,apple_silicon_smoke:true,intel_smoke:$intel_smoke}, notarized:false}' \
+            '{schema_version:1, version:$version, commit:$commit, update_sequence:($sequence|tonumber), runner:$runner, gates:["Full release gate"], artifact_checks:["universal x86_64+arm64","ad-hoc hardened-runtime signature","empty Clinch entitlements","ZIP/DMG app equality","integration opt-in and removal","signed exact-tag manifest"], manual_qa:{record:$qa_record,tested_macos_versions:$tested_macos_versions,first_install:true,authenticated_manual_upgrade:true,session_integration_opt_in_and_removal:true,selective_uninstall:true,offline_startup:true,apple_silicon_smoke:true,intel_smoke:$intel_smoke}, notarized:false}' \
             > "$RUNNER_TEMP/dist/Clinch.release-validation.json"
           (cd "$RUNNER_TEMP/dist" && \
             shasum -a 256 Clinch.dmg Clinch.app.zip Clinch.update.json Clinch.update.sig \

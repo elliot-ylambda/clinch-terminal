@@ -7,7 +7,6 @@ on:
     branches: [main]
     types: [opened, reopened, synchronize, ready_for_review]
   workflow_dispatch:
-  workflow_call:
 
 permissions:
   contents: read
@@ -16,32 +15,19 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-env:
-  CARGO_TERM_COLOR: always
-  RUSTFLAGS: -C debuginfo=line-tables-only --cfg=web_sys_unstable_apis
-
 jobs:
-  source-checks:
-    name: Source checks
+  pr-checks:
+    name: Clinch PR checks
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: macos-15-intel
-    timeout-minutes: 75
+    timeout-minutes: 20
     steps:
       - name: Checkout sources
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Prepare public macOS build environment
-        uses: ./.github/actions/prepare_environment
-        with:
-          target_os: macos
-          is_self_hosted: false
-          install_test_deps: true
-          cache_key: clinch-source-checks
-
-      - name: Install dependency audit runner
-        uses: taiki-e/install-action@b8cecb83565409bcc297b2df6e77f030b2a468d5 # v2.82.0
-        with:
-          tool: cargo-deny
+      - name: Install the pinned Rust formatter
+        shell: bash
+        run: rustup toolchain install 1.92.0 --profile minimal --component rustfmt --no-self-update
 
       - name: Check Rust and repository formatting
         run: ./script/format --check
@@ -70,65 +56,3 @@ jobs:
               bash "$test"
             fi
           done
-
-      - name: Audit dependency advisories for both public architectures
-        run: |
-          for target in aarch64-apple-darwin x86_64-apple-darwin; do
-            cargo metadata --locked --format-version 1 --filter-platform "$target" > "$RUNNER_TEMP/$target.json"
-            cargo deny check advisories --metadata-path "$RUNNER_TEMP/$target.json"
-          done
-
-      - name: Check dependency licenses and notice policy
-        run: |
-          ./script/check_license_config_sync
-          cargo deny check licenses
-
-  stable-build-and-lint:
-    name: Stable build and lint
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    runs-on: macos-15-intel
-    timeout-minutes: 120
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Prepare public macOS build environment
-        uses: ./.github/actions/prepare_environment
-        with:
-          target_os: macos
-          is_self_hosted: false
-          install_test_deps: true
-          cache_key: clinch-stable-build
-
-      - name: Check the stable Clinch binary with release defaults
-        run: cargo check --locked --bin stable
-
-      - name: Lint shipped components
-        run: |
-          cargo clippy --locked -p warp --lib --bin stable --tests --all-features -- -D warnings
-          cargo clippy --locked -p cli_agent_usage --all-targets --all-features -- -D warnings
-
-  component-tests:
-    name: Component tests
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    runs-on: macos-15-intel
-    timeout-minutes: 120
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Prepare public macOS build environment
-        uses: ./.github/actions/prepare_environment
-        with:
-          target_os: macos
-          is_self_hosted: false
-          install_test_deps: true
-          cache_key: clinch-component-tests
-
-      - name: Install nextest
-        uses: taiki-e/install-action@b8cecb83565409bcc297b2df6e77f030b2a468d5 # v2.82.0
-        with:
-          tool: nextest
-
-      - name: Run shipped component tests
-        run: cargo nextest run --locked -p warp -p warpui -p cli_agent_usage
