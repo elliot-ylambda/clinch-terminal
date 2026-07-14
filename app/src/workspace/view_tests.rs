@@ -67,7 +67,7 @@ use crate::settings_view::DisplayCount;
 use crate::suggestions::ignored_suggestions_model::IgnoredSuggestionsModel;
 use crate::system::SystemStats;
 use crate::tab_configs::tab_config::{TabConfigPaneNode, TabConfigPaneType};
-use crate::terminal::cli_agent_sessions::CLIAgentSessionsModel;
+use crate::terminal::cli_agent_sessions::{CLIAgentSessionStatus, CLIAgentSessionsModel};
 use crate::terminal::history::History;
 use crate::terminal::keys::TerminalKeybindings;
 use crate::terminal::local_tty::spawner::PtySpawner;
@@ -90,6 +90,31 @@ use crate::workspaces::user_workspaces::UserWorkspaces;
 use crate::{
     experiments, workspace, AgentNotificationsModel, GlobalResourceHandlesProvider, ObjectActions,
 };
+
+#[test]
+fn project_agent_count_only_includes_in_progress_claude_and_codex_sessions() {
+    assert!(is_in_progress_project_agent(
+        crate::terminal::CLIAgent::Claude,
+        &CLIAgentSessionStatus::InProgress,
+    ));
+    assert!(is_in_progress_project_agent(
+        crate::terminal::CLIAgent::Codex,
+        &CLIAgentSessionStatus::InProgress,
+    ));
+    assert!(!is_in_progress_project_agent(
+        crate::terminal::CLIAgent::Claude,
+        &CLIAgentSessionStatus::Success,
+    ));
+    assert!(!is_in_progress_project_agent(
+        crate::terminal::CLIAgent::Codex,
+        &CLIAgentSessionStatus::Blocked { message: None },
+    ));
+    assert!(!is_in_progress_project_agent(
+        crate::terminal::CLIAgent::Gemini,
+        &CLIAgentSessionStatus::InProgress,
+    ));
+}
+
 #[test]
 fn query_for_rewind_prefill_uses_custom_display_query_inputs() {
     let context: std::sync::Arc<[crate::ai::agent::AIAgentContext]> = Vec::new().into();

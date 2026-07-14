@@ -141,6 +141,7 @@ const PROJECT_TAB_MIN_WIDTH: f32 = 96.;
 const PROJECT_TAB_VERTICAL_NUDGE: f32 = 2.;
 const PROJECT_TAB_VERTICAL_PADDING: f32 = 6.;
 const PROJECT_TAB_BORDER_WIDTH: f32 = 1.;
+const PROJECT_AGENT_COUNT_BADGE_BORDER_WIDTH: f32 = 1.;
 fn previous_project_index(active_index: usize, project_count: usize) -> Option<usize> {
     (project_count > 1).then(|| active_index.checked_sub(1).unwrap_or(project_count - 1))
 }
@@ -288,16 +289,23 @@ impl ProjectWindow {
             return "No projects".to_string();
         };
         let workspace = project.workspace.as_ref(app);
+        let in_progress_agent_count = workspace.in_progress_cli_agent_count(app);
+        let working = match in_progress_agent_count {
+            0 => String::new(),
+            1 => ", 1 agent working".to_string(),
+            count => format!(", {count} agents working"),
+        };
         let unread = if workspace.has_unread_project_activity(app) {
             ", unread activity"
         } else {
             ""
         };
         format!(
-            "Project {} of {}: {}{}",
+            "Project {} of {}: {}{}{}",
             self.active_project_index + 1,
             self.projects.len(),
             workspace.project_display_name(app),
+            working,
             unread
         )
     }
@@ -314,17 +322,24 @@ impl ProjectWindow {
                 } else {
                     ""
                 };
+                let in_progress_agent_count = workspace.in_progress_cli_agent_count(app);
+                let working = match in_progress_agent_count {
+                    0 => String::new(),
+                    1 => ", 1 agent working".to_string(),
+                    count => format!(", {count} agents working"),
+                };
                 let unread = if workspace.has_unread_project_activity(app) {
                     ", unread activity"
                 } else {
                     ""
                 };
                 format!(
-                    "{} of {}: {}{}{}",
+                    "{} of {}: {}{}{}{}",
                     index + 1,
                     self.projects.len(),
                     workspace.project_display_name(app),
                     selected,
+                    working,
                     unread
                 )
             })
@@ -1074,6 +1089,7 @@ impl ProjectWindow {
             let workspace = project.workspace.as_ref(app);
             let title = workspace.project_display_name(app);
             let has_unread = workspace.has_unread_project_activity(app);
+            let in_progress_agent_count = workspace.in_progress_cli_agent_count(app);
             let is_active = index == self.active_project_index;
             let text_color = if is_active {
                 theme.active_ui_text_color()
@@ -1110,6 +1126,27 @@ impl ProjectWindow {
                             .with_height(6.)
                             .finish(),
                         )
+                        .with_margin_right(6.)
+                        .finish(),
+                    );
+                }
+                if in_progress_agent_count > 0 {
+                    label.add_child(
+                        Container::new(
+                            Text::new_inline(
+                                in_progress_agent_count.to_string(),
+                                font_family,
+                                (font_size - 2.).max(8.),
+                            )
+                            .with_color(CLINCH_LOGO_GREEN.into())
+                            .finish(),
+                        )
+                        .with_horizontal_padding(4.)
+                        .with_border(
+                            Border::all(PROJECT_AGENT_COUNT_BADGE_BORDER_WIDTH)
+                                .with_border_fill(Fill::Solid(CLINCH_LOGO_GREEN)),
+                        )
+                        .with_corner_radius(CornerRadius::with_all(Radius::Percentage(50.)))
                         .with_margin_right(6.)
                         .finish(),
                     );

@@ -388,7 +388,9 @@ use crate::terminal::block_list_viewport::InputMode;
 use crate::terminal::cli_agent_sessions::plugin_manager::{plugin_manager_for, PluginModalKind};
 #[cfg(feature = "local_tty")]
 use crate::terminal::cli_agent_sessions::session_context_enabled;
-use crate::terminal::cli_agent_sessions::{CLIAgentSessionsModel, CLIAgentSessionsModelEvent};
+use crate::terminal::cli_agent_sessions::{
+    CLIAgentSessionStatus, CLIAgentSessionsModel, CLIAgentSessionsModelEvent,
+};
 use crate::terminal::enable_auto_reload_modal::{
     EnableAutoReloadModal, EnableAutoReloadModalEvent,
 };
@@ -434,7 +436,7 @@ use crate::terminal::view::{
     NOTIFICATIONS_TROUBLESHOOT_URL,
 };
 use crate::terminal::warpify::settings::WarpifySettings;
-use crate::terminal::{self, BlockListSettings, SizeInfo, TerminalModel, TerminalView};
+use crate::terminal::{self, BlockListSettings, CLIAgent, SizeInfo, TerminalModel, TerminalView};
 use crate::themes::theme::{AnsiColorIdentifier, RespectSystemTheme, ThemeKind};
 use crate::themes::theme_chooser::{ThemeChooser, ThemeChooserEvent, ThemeChooserMode};
 use crate::themes::theme_creator_modal::{ThemeCreatorModal, ThemeCreatorModalEvent};
@@ -1222,6 +1224,11 @@ pub struct Workspace {
     /// orchestration cards' "New API key…" flow. Cloud mode renders the
     /// FTUX view inline and does not use this.
     create_auth_secret_modal: Option<ViewHandle<Modal<AuthSecretFtuxView>>>,
+}
+
+fn is_in_progress_project_agent(agent: CLIAgent, status: &CLIAgentSessionStatus) -> bool {
+    matches!(agent, CLIAgent::Claude | CLIAgent::Codex)
+        && matches!(status, CLIAgentSessionStatus::InProgress)
 }
 
 impl Workspace {
@@ -3632,8 +3639,9 @@ impl Workspace {
             AgentManagementEvent::NotificationAdded { .. }
             | AgentManagementEvent::NotificationUpdated
             | AgentManagementEvent::AllNotificationsMarkedRead => {
-                // Re-render so the vertical tabs panel can update unread-activity dots.
-                ctx.notify();
+                // The outer project-tab strip may be owned by ProjectWindow. Notify it so the
+                // existing blue unread-activity dots stay live alongside the running count.
+                self.notify_project_metadata_changed(ctx);
             }
         }
     }
@@ -3776,7 +3784,9 @@ impl Workspace {
                 | CLIAgentSessionsModelEvent::SessionUpdated { .. }
         ) && belongs_to_workspace
         {
-            ctx.notify();
+            // The outer project-tab strip is owned by ProjectWindow, so notify it as well as this
+            // workspace. This keeps running-agent counts live for background projects.
+            self.notify_project_metadata_changed(ctx);
         }
     }
 
@@ -21709,6 +21719,20 @@ impl Workspace {
                 .into_iter()
                 .any(|terminal| notifications.has_unread_for_terminal_view(terminal.id()))
         })
+    }
+
+    /// Number of Claude Code or Codex panes in this project that are actively working.
+    pub(crate) fn in_progress_cli_agent_count(&self, ctx: &AppContext) -> usize {
+        let sessions = CLIAgentSessionsModel::as_ref(ctx);
+        self.tabs
+            .iter()
+            .flat_map(|tab| tab.pane_group.as_ref(ctx).terminal_views(ctx))
+            .filter(|terminal| {
+                sessions.session(terminal.id()).is_some_and(|session| {
+                    is_in_progress_project_agent(session.agent, &session.status)
+                })
+            })
+            .count()
     }
 
     /// Renders the tab bar contents, wrapped in hover and drag-drop behaviors.
