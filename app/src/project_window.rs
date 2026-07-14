@@ -1138,7 +1138,7 @@ impl ProjectWindow {
                                 font_family,
                                 (font_size - 2.).max(8.),
                             )
-                            .with_color(CLINCH_LOGO_GREEN.into())
+                            .with_color(CLINCH_LOGO_GREEN)
                             .finish(),
                         )
                         .with_horizontal_padding(4.)
