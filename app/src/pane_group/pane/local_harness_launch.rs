@@ -34,6 +34,9 @@ pub(super) struct PreparedLocalHarnessLaunch {
 }
 
 async fn ensure_local_claude_child_plugins(manager: &dyn CliAgentPluginManager) {
+    if !manager.can_auto_install() {
+        return;
+    }
     // Most environments should follow the standard Claude plugin setup path so
     // hidden local children retain the same notification support as regular
     // Claude sessions. The exception is local marketplace override testing:

@@ -25,44 +25,107 @@ fn app_id_enables_runtime(app_id: &str) -> bool {
     matches!(app_id, "sh.clinch.Clinch" | "sh.clinch.ClinchDev")
 }
 
-fn runtime_enabled() -> bool {
-    app_id_enables_runtime(&ChannelState::app_id().to_string())
-        || std::env::var_os("CLINCH_AGENT_RESUME_ENABLE").is_some()
+fn runtime_enabled_for(app_id: &str, has_consent: bool, explicit_override: bool) -> bool {
+    explicit_override || (app_id_enables_runtime(app_id) && has_consent)
 }
 
-/// Installs/refreshes the capture hooks shipped inside the Clinch app bundle.
+fn runtime_enabled() -> bool {
+    #[cfg(target_os = "macos")]
+    let has_consent = capture_layer_enabled();
+    #[cfg(not(target_os = "macos"))]
+    let has_consent = false;
+
+    runtime_enabled_for(
+        &ChannelState::app_id().to_string(),
+        has_consent,
+        std::env::var_os("CLINCH_AGENT_RESUME_ENABLE").is_some(),
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn bundled_capture_installer() -> Option<PathBuf> {
+    warp_core::paths::bundled_resources_dir()
+        .map(|resources| resources.join("agent-resume").join("install.sh"))
+}
+
+#[cfg(target_os = "macos")]
+fn capture_consent_marker() -> PathBuf {
+    if let Some(path) = std::env::var_os("CLINCH_AGENT_STATE_DIR") {
+        return PathBuf::from(path).join("enabled");
+    }
+    warp_core::paths::state_dir()
+        .join("agent-integration")
+        .join("enabled")
+}
+
+/// Returns whether the user has explicitly enabled Claude/Codex session capture.
+#[cfg(target_os = "macos")]
+pub fn capture_layer_enabled() -> bool {
+    std::fs::symlink_metadata(capture_consent_marker())
+        .is_ok_and(|metadata| metadata.file_type().is_file())
+}
+
+/// Enables or disables the bundled capture integration after a direct settings action.
+#[cfg(target_os = "macos")]
+pub fn set_capture_layer_enabled(enabled: bool) -> Result<(), String> {
+    use std::process::Stdio;
+
+    use command::blocking::Command;
+
+    let installer = bundled_capture_installer()
+        .filter(|path| path.is_file())
+        .ok_or_else(|| "the Clinch session-capture installer is missing".to_owned())?;
+    let status = Command::new("/bin/bash")
+        .arg(installer)
+        .arg(if enabled { "enable" } else { "disable" })
+        .arg("--quiet")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .status()
+        .map_err(|error| format!("could not run the session-capture installer: {error}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "the session-capture installer exited with status {status}"
+        ))
+    }
+}
+
+/// Refreshes the capture hooks shipped inside the Clinch app bundle, but only after consent.
 ///
 /// This is intentionally fail-open: a hand-edited third-party config must never prevent the
-/// terminal itself from launching. The bundled installer is idempotent and uses only macOS
-/// system tools, so running it before every Clinch GUI session also heals deleted/stale hooks.
+/// terminal itself from launching. `repair` is a no-op unless the durable consent marker exists.
 #[cfg(target_os = "macos")]
 pub fn install_bundled_capture_layer() {
     use std::process::Stdio;
 
     use command::blocking::Command;
 
+    // With no consent, startup must not create, rewrite, or clean up capture state.
+    if !capture_layer_enabled() {
+        return;
+    }
+
     // A graceful previous shutdown intentionally left this marker while PTYs emitted
     // SessionEnd. It must be gone before the first restored/new agent can exit.
     clear_app_terminating_marker();
 
-    let Some(resources_dir) = warp_core::paths::bundled_resources_dir() else {
-        return;
-    };
-    let installer = resources_dir.join("agent-resume").join("install.sh");
-    if !installer.is_file() {
+    let Some(installer) = bundled_capture_installer().filter(|path| path.is_file()) else {
         // Expected for unbundled local/test binaries.
         return;
-    }
+    };
 
     let status = Command::new("/bin/bash")
         .arg(installer)
+        .arg("repair")
         .arg("--quiet")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
     if !status.is_ok_and(|status| status.success()) {
-        eprintln!("clinch: automatic Claude/Codex resume setup did not complete");
+        eprintln!("clinch: enabled Claude/Codex session capture could not be refreshed");
     }
 }
 

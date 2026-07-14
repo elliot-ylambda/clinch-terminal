@@ -261,7 +261,6 @@ install_update() {
       launch_as_user "$uid" "$home" "$destination" "" 0 || true
       fail "could not move the staged bundle into place"
     fi
-    /usr/bin/xattr -dr com.apple.quarantine "$destination" 2>/dev/null || true
     if ! launch_as_user "$uid" "$home" "$destination" "$success" 1; then
       rollback_bundle "$uid" "$home" "$destination" "$backup" "$failed"
       rm -rf "$update_dir"

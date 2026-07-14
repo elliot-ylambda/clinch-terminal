@@ -35,8 +35,12 @@ fn test_persist_events_doesnt_include_ugc_events() {
 
             let file_path = dirs.root().join("rudderstack");
 
+            // Exercise the serialization/filtering layer directly. The process-wide test
+            // channel intentionally has no telemetry destination, so the public flush path
+            // correctly drops the queue without creating a file.
+            let file = File::create(&file_path).expect("Failed to create file");
             telemetry_api
-                .flush_and_persist_events_at_path(10, PrivacySettingsSnapshot::mock(), &file_path)
+                .persist_events_at_path(&file, 10, warpui::telemetry::flush_events())
                 .expect("Should be able to persist events");
 
             let file_content: Vec<RudderBatchMessage> =

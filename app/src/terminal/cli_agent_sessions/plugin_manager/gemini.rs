@@ -53,7 +53,7 @@ impl CliAgentPluginManager for GeminiPluginManager {
     }
 
     fn can_auto_install(&self) -> bool {
-        true
+        super::automatic_plugin_changes_allowed()
     }
 
     fn is_installed(&self) -> bool {

@@ -36,7 +36,8 @@ generate() {
     exit 1
   }
   [[ "$sequence" =~ ^[0-9]+$ ]] || { echo "Update sequence must be numeric." >&2; exit 1; }
-  [[ "$version" =~ ^v[0-9A-Za-z._-]+$ ]] || { echo "Unsafe release tag: $version" >&2; exit 1; }
+  [[ "$version" =~ ^v[0-9]+(\.[0-9]+)+$ ]] \
+    || { echo "Clinch release tags must contain only dot-separated integers: $version" >&2; exit 1; }
 
   openssl3="$(find_openssl3)"
   raw_public="$($openssl3 pkey -in "$key" -pubout -outform DER | tail -c 32 | base64 | tr -d '\n')"
@@ -81,6 +82,7 @@ next_key = os.environ.get("CLINCH_UPDATE_NEXT_PUBLIC_KEY")
 if info.get("ClinchUpdateSequence") != str(sequence):
     raise SystemExit("app bundle update sequence does not match the manifest sequence")
 manifest = {
+    "architectures": ["arm64", "x86_64"],
     "archive": {
         "name": archive.name,
         "sha256": digest.hexdigest(),
@@ -88,13 +90,16 @@ manifest = {
         "url": f"https://github.com/elliot-ylambda/clinch-terminal/releases/download/{version}/{archive.name}",
     },
     "bundle_id": info["CFBundleIdentifier"],
+    "notarized": False,
     "minimum_macos_version": info.get("LSMinimumSystemVersion", "13.0"),
     "release_notes": os.environ.get("RELEASE_NOTES", "Clinch stability and recovery improvements."),
+    "repository": "elliot-ylambda/clinch-terminal",
     "release_url": f"https://github.com/elliot-ylambda/clinch-terminal/releases/tag/{version}",
     "rollback": os.environ.get("CLINCH_UPDATE_ROLLBACK", "0").lower() in {"1", "true", "yes"},
     "schema_version": 1,
     "sequence": sequence,
     "signing_key_id": public_key["key_id"],
+    "tag": version,
     "version": version,
 }
 if next_key:

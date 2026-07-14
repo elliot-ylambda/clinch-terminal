@@ -8,6 +8,7 @@ use std::time::Duration;
 use cloud_object_models::CodeForge;
 use futures::channel::oneshot;
 use futures::executor::block_on;
+use instant::Instant;
 use repo_metadata::{DirectoryWatcher, RepoMetadataEvent, RepoMetadataModel, RepositoryIdentifier};
 use tempfile::TempDir;
 use warp_cli::agent::Harness;
@@ -369,6 +370,19 @@ fn managed_resolution_failure_includes_uid_and_message() {
 
 // ── IdleTimeoutSender tests ──────────────────────────────────────────────────────
 
+fn receive_before<T>(receiver: &mut oneshot::Receiver<T>, timeout: Duration) -> Option<T> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(value) = receiver.try_recv().expect("sender should remain alive") {
+            return Some(value);
+        }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 #[test]
 fn idle_timeout_sender_send_now_delivers_value() {
     let (tx, mut rx) = oneshot::channel::<i32>();
@@ -395,8 +409,7 @@ fn idle_timeout_sender_send_after_delivers_after_timeout() {
     // Not yet delivered.
     assert_eq!(rx.try_recv().unwrap(), None);
 
-    std::thread::sleep(Duration::from_millis(100));
-    assert_eq!(rx.try_recv().unwrap(), Some(99));
+    assert_eq!(receive_before(&mut rx, Duration::from_secs(5)), Some(99));
 }
 
 #[test]
@@ -431,8 +444,7 @@ fn idle_timeout_sender_later_send_after_supersedes_earlier() {
     // Second timer: short timeout. The first is implicitly cancelled.
     idle_timeout.end_run_after(Duration::from_millis(50), 2);
 
-    std::thread::sleep(Duration::from_millis(100));
-    assert_eq!(rx.try_recv().unwrap(), Some(2));
+    assert_eq!(receive_before(&mut rx, Duration::from_secs(5)), Some(2));
 }
 
 #[test]
@@ -456,8 +468,7 @@ fn idle_timeout_sender_complete_with_optional_idle_some_defers_then_delivers() {
     // Not delivered yet.
     assert_eq!(rx.try_recv().unwrap(), None);
 
-    std::thread::sleep(Duration::from_millis(100));
-    assert_eq!(rx.try_recv().unwrap(), Some(7));
+    assert_eq!(receive_before(&mut rx, Duration::from_secs(5)), Some(7));
 }
 
 #[test]

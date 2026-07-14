@@ -206,6 +206,49 @@ function wireClaude(argv) {
     return JSON.stringify(settings, null, 2) + "\n";
 }
 
+function unwireClaude(argv) {
+    const oldCommand = argv[0];
+    const captureCommand = argv[1];
+    if (!oldCommand || !captureCommand) {
+        throw new Error("unwire-claude requires old and current hook paths");
+    }
+
+    const settings = parseObject(readStdin(), "Claude settings");
+    if (settings.hooks === null || Array.isArray(settings.hooks) || typeof settings.hooks !== "object") {
+        return JSON.stringify(settings, null, 2) + "\n";
+    }
+
+    Object.keys(settings.hooks).forEach(function (eventName) {
+        const groups = settings.hooks[eventName];
+        if (!Array.isArray(groups)) {
+            return;
+        }
+        settings.hooks[eventName] = groups.filter(function (group) {
+            if (group === null || Array.isArray(group) || typeof group !== "object") {
+                return true;
+            }
+            if (!Array.isArray(group.hooks)) {
+                return true;
+            }
+            group.hooks = group.hooks.filter(function (hook) {
+                if (hook === null || Array.isArray(hook) || typeof hook !== "object") {
+                    return true;
+                }
+                return hook.command !== oldCommand && hook.command !== captureCommand;
+            });
+            return group.hooks.length > 0;
+        });
+        if (settings.hooks[eventName].length === 0) {
+            delete settings.hooks[eventName];
+        }
+    });
+
+    if (Object.keys(settings.hooks).length === 0) {
+        delete settings.hooks;
+    }
+    return JSON.stringify(settings, null, 2) + "\n";
+}
+
 // Return one pane's journaled writes newest-first. Fields are base64 encoded and
 // pipe-delimited so Bash 3.2 can consume arbitrary cwd/flag text without jq. A later
 // scrub-bridge record clears that bridge from older candidates, while a still-later
@@ -417,6 +460,8 @@ function run(argv) {
         return promptLine(argv);
     case "wire-claude":
         return wireClaude(argv);
+    case "unwire-claude":
+        return unwireClaude(argv);
     case "registry-entry":
         return registryEntry(argv);
     case "registry-fields":

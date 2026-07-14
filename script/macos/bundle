@@ -182,7 +182,7 @@ while (( "$#" )); do
     # Build only for a specific architecture (implies --nouniversal)
     --arch)
       if [ -n "$2" ] && [ "${2:0:1}" != "-" ]; then
-        if [ "$2" = "x86_64" -o "$2" = "aarch64" ]; then
+        if [ "$2" = "x86_64" ] || [ "$2" = "aarch64" ]; then
           echo "Building for specific architecture: $2"
           TARGET_ARCH=$2
           UNIVERSAL_BINARY=false
@@ -346,6 +346,9 @@ elif [[ $RELEASE_CHANNEL = "stable" ]]; then
     WARP_APP_NAME="Clinch"
     WARP_DISPLAY_NAME="$WARP_APP_NAME"
     WARP_SCHEME_NAME="clinch"
+    # Public Clinch support begins at macOS 13. Keep the binary deployment target, plist, signed
+    # release manifest, installer, and website on one explicit value.
+    export MACOSX_DEPLOYMENT_TARGET="${CLINCH_MINIMUM_MACOS_VERSION:-13.0}"
     # Clinch fork: intentionally omit jemalloc_pprof/heap_usage_tracking. They are Warp-internal
     # profiling features that bundle the Go-based pprof binary (script/prepare_bundled_pprof runs
     # `go tool -n pprof`), which would force a Go toolchain into this otherwise dependency-light,
@@ -429,8 +432,8 @@ fi
 
 # First clean up and prep the outdir
 mkdir -p "$OUT_DIR"
-rm -R "$OUT_DIR/$WARP_APP_NAME.app" || echo "No old app to remove"
-rm -R "$OUT_DIR/$FINAL_DMG_NAME" || echo "No old dmg to remove"
+rm -R -- "${OUT_DIR:?}/${WARP_APP_NAME:?}.app" || echo "No old app to remove"
+rm -R -- "${OUT_DIR:?}/${FINAL_DMG_NAME:?}" || echo "No old dmg to remove"
 
 ###########################
 ## Step 1: Build the app ##
@@ -498,18 +501,18 @@ if [[ "$ARTIFACT" == "app" ]]; then
           <string>public.plain-text</string>
         </array>
       </dict>
-    </array>" "$BUNDLE_DIR"/$WARP_APP_NAME.app/Contents/Info.plist
+    </array>" "$BUNDLE_DIR/$WARP_APP_NAME.app/Contents/Info.plist"
   fi
 
   # Temporary key that ChatGPT Desktop can use to determine if the latest version of Warp supports the ChatGPT integration.
   # Once support has been rolled out for a sufficient amount of time we (and ChatGPT) can remove this.
-  plutil -insert SUPPORTS_CHAT_GPT_WORK_WITH_APPS -bool true "$BUNDLE_DIR"/$WARP_APP_NAME.app/Contents/Info.plist
+  plutil -insert SUPPORTS_CHAT_GPT_WORK_WITH_APPS -bool true "$BUNDLE_DIR/$WARP_APP_NAME.app/Contents/Info.plist"
 
   # Add LSBackgroundOnly key and set it to false since we need a UI app
-  plutil -insert LSBackgroundOnly -bool false "$BUNDLE_DIR"/$WARP_APP_NAME.app/Contents/Info.plist
+  plutil -insert LSBackgroundOnly -bool false "$BUNDLE_DIR/$WARP_APP_NAME.app/Contents/Info.plist"
 
   # Add SMAuthorizedClients for macOS 13+ (Ventura) to support login item functionality
-  plutil -insert SMAuthorizedClients -xml "<array><string>$BUNDLE_ID</string></array>" "$BUNDLE_DIR"/$WARP_APP_NAME.app/Contents/Info.plist
+  plutil -insert SMAuthorizedClients -xml "<array><string>$BUNDLE_ID</string></array>" "$BUNDLE_DIR/$WARP_APP_NAME.app/Contents/Info.plist"
 
   if [[ $UNIVERSAL_BINARY = true ]]; then
       if [[ $BUILD_BINARY = true ]]; then
@@ -539,9 +542,9 @@ if [[ "$ARTIFACT" == "app" ]]; then
       # would be located at dev.dSYM/Contents/Resources/DWARF/dev-080cf7e291fb066d.dSYM where dev.dSYM is symlink to
       # deps/dev-080cf7e291fb066d.dSYM. To fix this, parse out the actual name of the directory that the dSYM is
       # symlinked to, since this is also the name of file that contains the debug symbols within the dSYM.
-      INTEL_DSYM_NAME=$(basename "$(realpath target/$INTEL_TARGET/$TARGET_PROFILE_DIR/$WARP_BIN.dSYM)" .dSYM)
+      INTEL_DSYM_NAME=$(basename "$(realpath "target/$INTEL_TARGET/$TARGET_PROFILE_DIR/$WARP_BIN.dSYM")" .dSYM)
       INTEL_DSYM_PATH="target/$INTEL_TARGET/$TARGET_PROFILE_DIR/$WARP_BIN.dSYM/Contents/Resources/DWARF/$INTEL_DSYM_NAME"
-      ARM_DSYM_NAME=$(basename "$(realpath target/$ARM_TARGET/$TARGET_PROFILE_DIR/$WARP_BIN.dSYM)" .dSYM)
+      ARM_DSYM_NAME=$(basename "$(realpath "target/$ARM_TARGET/$TARGET_PROFILE_DIR/$WARP_BIN.dSYM")" .dSYM)
       ARM_DSYM_PATH="target/$ARM_TARGET/$TARGET_PROFILE_DIR/$WARP_BIN.dSYM/Contents/Resources/DWARF/$ARM_DSYM_NAME"
       if [[ -e "$INTEL_DSYM_PATH" && -e "$ARM_DSYM_PATH" ]]; then
         echo "Building universal binary .dSYM using lipo and storing in $OUT_DIR/$WARP_BIN.dSYM"
@@ -564,8 +567,8 @@ if [[ "$ARTIFACT" == "app" ]]; then
   cp -R "$DOCK_TILE_PLUGIN_DIR" "$BUNDLE_DIR/$WARP_APP_NAME.app/Contents/PlugIns/"
 
   echo "Updating plist with dock tile plugin entries"
-  plutil -insert NSDockTilePlugIn -string "WarpDockTilePlugin.docktileplugin" "$BUNDLE_DIR"/$WARP_APP_NAME.app/Contents/Info.plist
-  plutil -insert MainAppBundleIdentifier -string "$BUNDLE_ID" "$BUNDLE_DIR"/$WARP_APP_NAME.app/Contents/PlugIns/WarpDockTilePlugin.docktileplugin/Contents/Info.plist
+  plutil -insert NSDockTilePlugIn -string "WarpDockTilePlugin.docktileplugin" "$BUNDLE_DIR/$WARP_APP_NAME.app/Contents/Info.plist"
+  plutil -insert MainAppBundleIdentifier -string "$BUNDLE_ID" "$BUNDLE_DIR/$WARP_APP_NAME.app/Contents/PlugIns/WarpDockTilePlugin.docktileplugin/Contents/Info.plist"
 
   BUNDLED_RESOURCES_DIR="$BUNDLE_DIR/$WARP_APP_NAME.app/Contents/Resources"
   echo "Preparing bundled resources..."
@@ -734,12 +737,21 @@ fi
 ##############################
 
 if [[ $SELFSIGN = true ]]; then
-  SIGNING_CERT="$(security find-identity -p codesigning -v | grep "Apple Development" | awk '{print $2}' | head -1)"
-  if [[ -z "$SIGNING_CERT" ]]; then
-    echo "No Apple Development cert found, falling back to ad-hoc signing."
-    SIGNING_CERT="-"
+  if [[ "$BUNDLE_ID" == "sh.clinch.Clinch" || "$BUNDLE_ID" == "sh.clinch.ClinchDev" ]]; then
+    # The no-fee public preview has no Apple-issued distribution identity. Always produce the
+    # same ad-hoc identity unless an explicit identity is supplied by a future release workflow.
+    SIGNING_CERT="${CLINCH_CODESIGN_IDENTITY:--}"
+    SIGNING_ENTITLEMENTS="script/Clinch-Entitlements.plist"
+    echo "Signing Clinch with the public-preview identity '${SIGNING_CERT}'."
   else
-    echo "Found Apple Development certificate"
+    SIGNING_CERT="$(security find-identity -p codesigning -v | grep "Apple Development" | awk '{print $2}' | head -1)"
+    if [[ -z "$SIGNING_CERT" ]]; then
+      echo "No Apple Development cert found, falling back to ad-hoc signing."
+      SIGNING_CERT="-"
+    else
+      echo "Found Apple Development certificate"
+    fi
+    SIGNING_ENTITLEMENTS="script/SelfSign-Entitlements.plist"
   fi
   # SelfSign-Entitlements (not Debug-Entitlements): shipped bundles must not
   # carry get-task-allow, or macOS never persists Keychain "Always Allow"
@@ -751,19 +763,24 @@ if [[ $SELFSIGN = true ]]; then
   # code be injected into a process holding Keychain access.
   if [[ "$ARTIFACT" == app ]]; then
     echo "Self-signing $BUNDLE_DIR/$WARP_APP_NAME.app with ${SIGNING_CERT}..."
-    codesign --force --deep --options runtime --sign "$SIGNING_CERT" "$BUNDLE_DIR/$WARP_APP_NAME.app" --entitlements script/SelfSign-Entitlements.plist
+    codesign --force --deep --options runtime --sign "$SIGNING_CERT" "$BUNDLE_DIR/$WARP_APP_NAME.app" --entitlements "$SIGNING_ENTITLEMENTS"
   elif [[ "$ARTIFACT" == cli || "$ARTIFACT" == warpctrl ]]; then
     echo "Self-signing $OUT_DIR/$WARP_BIN with ${SIGNING_CERT}..."
-    codesign --force --options runtime --sign "$SIGNING_CERT" "$OUT_DIR/$WARP_BIN" --entitlements script/SelfSign-Entitlements.plist
+    codesign --force --options runtime --sign "$SIGNING_CERT" "$OUT_DIR/$WARP_BIN" --entitlements "$SIGNING_ENTITLEMENTS"
   fi
 elif [[ $CODESIGN = true ]]; then
+  if [[ "$BUNDLE_ID" == "sh.clinch.Clinch" || "$BUNDLE_ID" == "sh.clinch.ClinchDev" ]]; then
+    SIGNING_ENTITLEMENTS="script/Clinch-Entitlements.plist"
+  else
+    SIGNING_ENTITLEMENTS="script/Entitlements.plist"
+  fi
   if [[ "$ARTIFACT" == app ]]; then
     echo "Codesigning $BUNDLE_DIR/$WARP_APP_NAME.app..."
     # Use --deep so we sign bundled frameworks as well
-    codesign --deep -f -o runtime --timestamp -s "$APPLE_TEAM_ID" "$BUNDLE_DIR/$WARP_APP_NAME.app" --entitlements script/Entitlements.plist
+    codesign --deep -f -o runtime --timestamp -s "$APPLE_TEAM_ID" "$BUNDLE_DIR/$WARP_APP_NAME.app" --entitlements "$SIGNING_ENTITLEMENTS"
   elif [[ "$ARTIFACT" == cli || "$ARTIFACT" == warpctrl ]]; then
     echo "Codesigning $OUT_DIR/$WARP_BIN..."
-    codesign -f -o runtime --timestamp -s "$APPLE_TEAM_ID" "$OUT_DIR/$WARP_BIN" --entitlements script/Entitlements.plist
+    codesign -f -o runtime --timestamp -s "$APPLE_TEAM_ID" "$OUT_DIR/$WARP_BIN" --entitlements "$SIGNING_ENTITLEMENTS"
 
     # Create the .zip for notarization in a separate location - otherwise, Apple's codesigning
     # tools decide that it's a sealed resource that belongs to the binary and needs to also be signed.
@@ -875,16 +892,17 @@ fi
 
 if [[ $CODESIGN = true ]]; then
   echo "Uploading $NOTARIZATION_ARTIFACT to Apple for notarization..."
-  xcrun notarytool submit "$NOTARIZATION_ARTIFACT" --apple-id "$WARP_NOTARIZATION_APPLE_ID" --password "$WARP_NOTARIZATION_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+  if ! xcrun notarytool submit "$NOTARIZATION_ARTIFACT" --apple-id "$WARP_NOTARIZATION_APPLE_ID" --password "$WARP_NOTARIZATION_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait; then
+    echo "Notarization failed; see above output for details."
+    exit 1
+  fi
 
   if [[ $STAPLE_TICKET = true ]]; then
     echo "Attempting to staple the notarization ticket to $NOTARIZATION_ARTIFACT..."
-    xcrun stapler staple "$NOTARIZATION_ARTIFACT"
-  fi
-
-  if [[ $? != 0 ]]; then
-    echo "Notarization failed; see above output for details."
-    exit 1
+    if ! xcrun stapler staple "$NOTARIZATION_ARTIFACT"; then
+      echo "Stapling the notarization ticket failed; see above output for details."
+      exit 1
+    fi
   fi
 
   # Verify the notarization results (this is format-dependent)
@@ -927,7 +945,7 @@ if [ "${GITHUB_ACTIONS}" == "true" ]; then
 
       # If the dSYM is a symlink, output its real path.
       if [[ -L "$DSYM_PATH" ]]; then
-        echo "dsym_realpath=$(relpath $(realpath $DSYM_PATH))" >> "$GITHUB_OUTPUT"
+        echo "dsym_realpath=$(relpath "$(realpath "$DSYM_PATH")")" >> "$GITHUB_OUTPUT"
       fi
     fi
   fi

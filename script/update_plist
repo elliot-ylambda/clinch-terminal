@@ -16,6 +16,8 @@ if [[ -z "$WARP_PLIST_PATH" ]]; then
   exit 1
 fi
 
+APP_BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$WARP_PLIST_PATH" 2>/dev/null || true)"
+
 if [[ -n "$GIT_RELEASE_TAG" ]]; then
   echo "Updating plist Warp version to $GIT_RELEASE_TAG"
   plutil -insert WarpVersion -string "$GIT_RELEASE_TAG" "$WARP_PLIST_PATH"
@@ -25,7 +27,14 @@ if [[ -n "$GIT_RELEASE_TAG" ]]; then
   # (They technically only allow [major].[minor].[patch], but it's not enforced.)
   # This allows IT admins to work with a more stable version of our internal versioning scheme.
   # A tag like `v0.2025.01.07.08.02.stable_02` would be converted to `0.2025.01.07.08.02.02`.
-  if [[ $GIT_RELEASE_TAG =~ ^v([0-9]+)\.([0-9]{4})\.([0-9]{2})\.([0-9]{2})\.([0-9]{2})\.([0-9]{2})\.[a-z]+_([0-9]{2})$ ]]; then
+  if [[ "$APP_BUNDLE_ID" == "sh.clinch.Clinch" || "$APP_BUNDLE_ID" == "sh.clinch.ClinchDev" ]]; then
+    [[ "$GIT_RELEASE_TAG" =~ ^v[0-9]+(\.[0-9]+)+$ ]] || {
+      echo "Clinch release tags must contain only dot-separated integers: $GIT_RELEASE_TAG" >&2
+      exit 1
+    }
+    CLINCH_DISPLAY_VERSION="${GIT_RELEASE_TAG#v}"
+    echo "Updating Clinch plist version to $CLINCH_DISPLAY_VERSION"
+  elif [[ $GIT_RELEASE_TAG =~ ^v([0-9]+)\.([0-9]{4})\.([0-9]{2})\.([0-9]{2})\.([0-9]{2})\.([0-9]{2})\.[a-z]+_([0-9]{2})$ ]]; then
     MAJOR="${BASH_REMATCH[1]}"
     YEAR="${BASH_REMATCH[2]}"
     MONTH="${BASH_REMATCH[3]}"
@@ -51,6 +60,9 @@ if [[ -n "${CLINCH_UPDATE_SEQUENCE:-}" ]]; then
   }
   echo "Updating plist Clinch update sequence to $CLINCH_UPDATE_SEQUENCE"
   plutil -insert ClinchUpdateSequence -string "$CLINCH_UPDATE_SEQUENCE" "$WARP_PLIST_PATH"
+  if [[ "$APP_BUNDLE_ID" == "sh.clinch.Clinch" || "$APP_BUNDLE_ID" == "sh.clinch.ClinchDev" ]]; then
+    plutil -replace CFBundleVersion -string "$CLINCH_UPDATE_SEQUENCE" "$WARP_PLIST_PATH"
+  fi
 fi
 
 if [[ -n "$WARP_SCHEME_NAME" ]]; then
@@ -265,14 +277,28 @@ fi
 # Use the bundle's real display name so consent dialogs don't say "Warp" in a
 # Clinch build (Info.plist CFBundleName is authoritative for every channel).
 APP_DISPLAY_NAME="$(/usr/libexec/PlistBuddy -c 'Print CFBundleName' "$WARP_PLIST_PATH" 2>/dev/null || echo "Warp")"
-echo "Updating plist with permissions descriptions"
-plutil -insert NSAppleEventsUsageDescription -string "A program in $APP_DISPLAY_NAME wants to use AppleScript." "$WARP_PLIST_PATH"
-plutil -insert NSCameraUsageDescription -string "A program in $APP_DISPLAY_NAME wants to use the camera." "$WARP_PLIST_PATH"
-plutil -insert NSMicrophoneUsageDescription -string "A program in $APP_DISPLAY_NAME wants to use your microphone." "$WARP_PLIST_PATH"
-plutil -insert NSContactsUsageDescription -string "A program in $APP_DISPLAY_NAME wants to use your contacts." "$WARP_PLIST_PATH"
-plutil -insert NSCalendarsUsageDescription -string "A program in $APP_DISPLAY_NAME wants to use your calendar." "$WARP_PLIST_PATH"
-plutil -insert NSLocationUsageDescription -string "A program in $APP_DISPLAY_NAME wants to use your location information." "$WARP_PLIST_PATH"
-plutil -insert NSPhotoLibraryUsageDescription -string "A program in $APP_DISPLAY_NAME wants to use your photo library." "$WARP_PLIST_PATH"
+if [[ "$APP_BUNDLE_ID" == "sh.clinch.Clinch" || "$APP_BUNDLE_ID" == "sh.clinch.ClinchDev" ]]; then
+  echo "Removing unused privacy permission descriptions from Clinch"
+  for key in \
+    NSAppleEventsUsageDescription NSCameraUsageDescription NSMicrophoneUsageDescription \
+    NSContactsUsageDescription NSCalendarsUsageDescription NSLocationUsageDescription \
+    NSPhotoLibraryUsageDescription; do
+    plutil -remove "$key" "$WARP_PLIST_PATH" 2>/dev/null || true
+  done
+  plutil -replace LSMinimumSystemVersion -string "${MACOSX_DEPLOYMENT_TARGET:-13.0}" \
+    "$WARP_PLIST_PATH" 2>/dev/null \
+    || plutil -insert LSMinimumSystemVersion -string "${MACOSX_DEPLOYMENT_TARGET:-13.0}" \
+      "$WARP_PLIST_PATH"
+else
+  echo "Updating plist with permissions descriptions"
+  plutil -insert NSAppleEventsUsageDescription -string "A program in $APP_DISPLAY_NAME wants to use AppleScript." "$WARP_PLIST_PATH"
+  plutil -insert NSCameraUsageDescription -string "A program in $APP_DISPLAY_NAME wants to use the camera." "$WARP_PLIST_PATH"
+  plutil -insert NSMicrophoneUsageDescription -string "A program in $APP_DISPLAY_NAME wants to use your microphone." "$WARP_PLIST_PATH"
+  plutil -insert NSContactsUsageDescription -string "A program in $APP_DISPLAY_NAME wants to use your contacts." "$WARP_PLIST_PATH"
+  plutil -insert NSCalendarsUsageDescription -string "A program in $APP_DISPLAY_NAME wants to use your calendar." "$WARP_PLIST_PATH"
+  plutil -insert NSLocationUsageDescription -string "A program in $APP_DISPLAY_NAME wants to use your location information." "$WARP_PLIST_PATH"
+  plutil -insert NSPhotoLibraryUsageDescription -string "A program in $APP_DISPLAY_NAME wants to use your photo library." "$WARP_PLIST_PATH"
+fi
 
 echo "Disabling use of Liquid Glass on macOS Tahoe"
 plutil -insert UIDesignRequiresCompatibility -bool true "$WARP_PLIST_PATH"

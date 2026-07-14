@@ -5,6 +5,7 @@
 
 accepted = [
     "0BSD",
+    "AGPL-3.0-only",
     "Apache-2.0",
     "BSD-2-Clause",
     "BSD-3-Clause",
@@ -20,8 +21,8 @@ accepted = [
     "Zlib",
 ]
 
-# Exclude private workspace crates (publish = false).
-private = { ignore = true }
+# Include non-publishable workspace and pinned Git dependencies in the distributed notice. The
+# app ships their compiled code even when the crates themselves are not published to crates.io.
 
 # Build and dev dependencies are not redistributed.
 ignore-build-dependencies = true
@@ -33,17 +34,5 @@ workarounds = [
     "rustls",
 ]
 
-# These are Warp's own private crates, sourced via git from the warpdotdev
-# organization. They are not part of this workspace and do not have explicit
-# licenses yet (they will be open-sourced soon). cargo-about will skip them
-# during generation. Once they are open-sourced and have license fields, they
-# will be included automatically and we can add --fail back to the generate
-# invocation.
-#
-# Excluded crates (same as deny.toml exceptions):
-#   - command-corrections
-#   - session-sharing-protocol
-#   - warp-command-signatures
-#   - warp-completion-metadata
-#   - warp-workflows
-#   - warp-workflows-types
+# Pinned warpdotdev Git dependencies now declare AGPL-3.0-only, Apache-2.0, or MIT. They are
+# intentionally included in THIRD_PARTY_LICENSES.txt even though Cargo marks them non-publishable.
