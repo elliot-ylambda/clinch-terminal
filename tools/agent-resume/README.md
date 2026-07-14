@@ -113,17 +113,16 @@ capture (agent SessionStart hooks)          replay (Rust, in Clinch)
 - **Clinch stays agent-agnostic**: Rust only stores/replays an opaque command string.
   Adding another agent later is just another capture script — no Rust change.
 
-## Durability: journal, prompt mirror, pre-update snapshot
+## Durability: journal and prompt mirror
 
 Pane entries are single mutable files — the next session in a pane overwrites them — and
 a Claude launch poisoned by inherited child-session identity writes no local transcript at
 all. Twice (2026-07-08, 2026-07-09) an overwrite destroyed the only pointer to a live
-conversation. Launch hygiene plus three durable layers close that hole (see
+conversation. Launch hygiene plus two durable layers reduce that risk (see
 `specs/claude-transcript-durability/`):
 
-- **Launch hygiene**: the update relaunch dynamically strips all inherited
-  `CLAUDE_CODE_*` variables (plus related Claude/Make markers) before `open`; local PTY
-  creation strips identity again after environment overrides, with no rcfile edit, while
+- **Launch hygiene**: local PTY creation strips inherited `CLAUDE_CODE_*` identity after
+  environment overrides, with no rcfile edit, while
   preserving user behavior toggles. The standalone replay wrapper also preserves argv
   exactly. Remote control remains enabled.
 
@@ -139,17 +138,6 @@ conversation. Launch hygiene plus three durable layers close that hole (see
   sessions' prompts survive too; capped at ~5 MB per session (one final
   `"truncated":true` marker). These files are as sensitive as `~/.claude/projects`
   transcripts: `700`/`600`, never leave the machine.
-- **Pre-quit snapshot**: `script/update-installed-clinch` copies the whole registry
-  (entries + journal + mirrors) plus any locally-present transcripts it references into
-  `~/Library/Application Support/sh.clinch.Clinch/session-recovery-<stamp>/` *before*
-  quitting the app for a swap. Auto-snapshots carry a `.auto-snapshot` marker and only the
-  newest 15 are kept; hand-made recovery dirs (no marker) are never pruned.
-- **Live update repair + fail-closed swap**: before quitting, the source updater correlates
-  active pane UUIDs with outer Claude/Codex process ancestry and cwd. It repairs legacy
-  nested takeovers, removes stale shell mappings, and resolves duplicated bridge ownership
-  from durable history. LaunchServices and exact-path process checks must both report the
-  old app gone before its bundle can be replaced; TERM/KILL escalation targets only resolved
-  bundle PIDs. The public installer applies the same running-app guard.
 - **Discovery**: `clinch-agent-resume list [--cwd <dir>] [--json]` prints a newest-first table of
   every conversation the journal + mirror know about — start time, short sid, cwd,
   `https://claude.ai/code/<bridge>` or `local`, and the first prompt. `--json` returns the
@@ -158,13 +146,13 @@ conversation. Launch hygiene plus three durable layers close that hole (see
   inherited/leaked bridge from matching pane entries and journals the clear so discovery does
   not resurrect the poisoned cloud URL.
 
-## Install (capture layer)
+## Enable or remove session capture
 
-Public users do not run this manually. Clinch runs the bundled installer idempotently before its
-first GUI pane opens, and the curl installer runs it once before opening the app.
+Session capture is off on a fresh install. Public users enable it from Clinch Settings after
+reviewing the disclosed paths. The equivalent repository command is explicit:
 
 ```bash
-./tools/agent-resume/install.sh
+./tools/agent-resume/install.sh enable
 ```
 
 Installs the capture hooks + the registry CLI into `~/.warp/agent-resume-bin/`, and wires:
@@ -174,19 +162,21 @@ the pre-rename `claude-session-start.sh` are migrated), the Codex `SessionStart`
 hooks into a managed block in `~/.codex/config.toml`, and standalone replay executables into
 Clinch's bundled shell path and the installed runtime directory. It uses macOS's built-in JXA
 runtime for JSON handling. There is no `jq`, Homebrew, repository-clone, `.zshrc`, or shell-restart
-requirement. `make release` runs this installer automatically so local installed copies never drift
-from the repo.
+requirement. On later launches Clinch runs `repair --quiet`, which performs no mutation unless the
+durable consent marker from `enable` exists.
 
 The hooks only record when launched inside a Clinch pane (`WARP_TERMINAL_SESSION_UUID` set).
 New Claude and Codex sessions are captured immediately.
 
-Passing `--plugins` also runs `install-agent-plugins.sh`, which installs Warp's CLI-agent
-notification plugins into Claude (`warp@claude-code-warp`) and Codex (`warp@codex-warp`).
-These make the agents emit OSC-777 status events that Clinch turns into tab badges and
-desktop notifications. It is best-effort (skips a missing CLI, warns and continues if
-offline) and requires restarting the agent to take effect. Removing the plugins
-(`claude plugin uninstall warp@claude-code-warp`) disables the badges/notifications;
-everything else keeps working.
+Remove only managed hooks and helpers while keeping captured metadata with:
+
+```bash
+./tools/agent-resume/install.sh disable
+```
+
+Use `purge` instead only when you also intend to delete `~/.warp/agent-resume/`. No command prints
+help and changes nothing. Notification plugins are a separate provider action; this manager never
+installs them.
 
 **Desktop notifications:** on a fresh profile the first agent status change shows an
 in-app banner to enable notifications; enable it once, after which background-pane
@@ -208,7 +198,7 @@ separate data dir (`~/.warp-oss`), so the two never clobber each other's session
 
 | Scenario | Resumes? |
 |---|---|
-| `Cmd-Q` / update-and-restart | ✅ yes |
+| `Cmd-Q` / normal reopen | ✅ when the provider transcript and capture mapping remain available |
 | Crash | ⚠️ best-effort — Clinch has **no periodic autosave**; pane state is saved on UI mutations and flushed at quit (`on_will_terminate`). A crash recovers only what was last saved. No worse than today. |
 | Machine reboot | resumes the *conversation* (`--resume`), never the live process — that's physics, not a bug. |
 
@@ -262,9 +252,10 @@ separate data dir (`~/.warp-oss`), so the two never clobber each other's session
 | `clinch_agent_resume_launch` | executable replay entrypoint bundled in `Clinch.app/Contents/Resources/bin`; works without an rcfile edit |
 | `codex-session-start.sh` / `codex-session-end.sh` | Codex hooks — session id plus bypass/model flags from the payload |
 | `config.toml.snippet` | Codex hook registration (installer applies it) |
-| `install-agent-plugins.sh` | install Warp's Claude/Codex notification plugins (emit the OSC-777 status events) |
+| `install-agent-plugins.sh` | legacy/manual development helper; not bundled or run by the public installer |
 | `wire-claude-hooks.sh` | idempotent native merge of Claude hook entries into settings.json (used by `install.sh`) |
-| `install.sh` | idempotently install capture hooks and replay runtime into agent config |
+| `unwire-claude-hooks.sh` | remove only Clinch/legacy Warp managed Claude hook entries |
+| `install.sh` | explicit `enable`, consent-gated `repair`, `disable`, `status`, and `purge` manager |
 | `build-app.sh` | build + brand + install the co-installable app |
 | `tests/` | self-contained shell tests for the scripts |
 

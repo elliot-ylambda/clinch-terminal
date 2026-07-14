@@ -8,12 +8,24 @@ set -e
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 
 python3 -c "
-import tomllib, sys
+import pathlib, re, sys
 
-with open('$REPO_ROOT/deny.toml', 'rb') as f:
-    deny = set(tomllib.load(f)['licenses']['allow'])
-with open('$REPO_ROOT/about.toml', 'rb') as f:
-    about = set(tomllib.load(f)['accepted'])
+def string_array(path, key, section=None):
+    text = pathlib.Path(path).read_text(encoding='utf-8')
+    if section is not None:
+        match = re.search(
+            rf'(?ms)^\\[{re.escape(section)}\\]\\s*(.*?)(?=^\\[|\\Z)', text
+        )
+        if match is None:
+            raise SystemExit(f'missing [{section}] in {path}')
+        text = match.group(1)
+    match = re.search(rf'(?ms)^{re.escape(key)}\\s*=\\s*\\[(.*?)^\\]', text)
+    if match is None:
+        raise SystemExit(f'missing {key} array in {path}')
+    return set(re.findall(r'\"([^\"]+)\"', match.group(1)))
+
+deny = string_array('$REPO_ROOT/deny.toml', 'allow', 'licenses')
+about = string_array('$REPO_ROOT/about.toml', 'accepted')
 
 if deny != about:
     only_deny = deny - about

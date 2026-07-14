@@ -3,7 +3,8 @@
 # SessionStart captures the live session; UserPromptSubmit and Stop keep the entry's
 # permission-mode flags in sync; SessionEnd removes sessions users actually exited. Also removes entries left
 # by the pre-rename install (claude-session-start.sh). Structural merge only -- never clobbers
-# unrelated settings or hooks. Idempotent.
+# unrelated settings or hooks. Idempotent. This low-level helper does not record consent;
+# normal callers should use `install.sh enable` instead.
 #
 # Usage: wire-claude-hooks.sh <settings.json> <installed-bin-dir>
 set -euo pipefail

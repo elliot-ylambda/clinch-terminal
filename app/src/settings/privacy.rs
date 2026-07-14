@@ -15,6 +15,7 @@ use super::cloud_preferences_syncer::CloudPreferencesSyncer;
 use crate::ai::blocklist::telemetry_banner::should_collect_ai_ugc_telemetry;
 use crate::auth::auth_state::AuthState;
 use crate::auth::AuthStateProvider;
+use crate::channel::ChannelState;
 use crate::cloud_object::model::persistence::CloudModel;
 use crate::report_error;
 use crate::server::cloud_objects::update_manager::UpdateManager;
@@ -146,6 +147,8 @@ pub struct PrivacySettings {
     auth_client: Arc<dyn AuthClient>,
     pub is_telemetry_enabled: bool,
     pub is_crash_reporting_enabled: bool,
+    telemetry_available: bool,
+    crash_reporting_available: bool,
     pub is_cloud_conversation_storage_enabled: bool,
     pub has_initialized_default_secret_regexes: HasInitializedDefaultSecretRegexes,
     /// List of user defined secret regexes.
@@ -168,6 +171,8 @@ pub struct PrivacySettings {
 /// A snapshot of a user's [`PrivacySettings`] settings at some point in time.
 #[derive(Clone, Copy)]
 pub struct PrivacySettingsSnapshot {
+    telemetry_available: bool,
+    crash_reporting_available: bool,
     is_telemetry_enabled: bool,
     is_crash_reporting_enabled: bool,
     is_telemetry_force_enabled: bool,
@@ -184,18 +189,21 @@ impl PrivacySettingsSnapshot {
     }
 
     pub fn is_telemetry_enabled(&self) -> bool {
-        self.is_telemetry_enabled
+        self.telemetry_available && self.is_telemetry_enabled
     }
 
     pub fn is_crash_reporting_enabled(&self) -> bool {
-        self.is_crash_reporting_enabled
+        self.crash_reporting_available && self.is_crash_reporting_enabled
     }
 
     pub fn is_telemetry_force_enabled(&self) -> bool {
-        self.is_telemetry_force_enabled
+        self.telemetry_available && self.is_telemetry_force_enabled
     }
 
     pub fn should_disable_telemetry(&self) -> bool {
+        if !self.telemetry_available {
+            return true;
+        }
         // If a user has opted in to the agent mode analytics experiment, telemetry must be enabled.
         !self.is_telemetry_enabled
             && !self.is_telemetry_force_enabled
@@ -203,13 +211,15 @@ impl PrivacySettingsSnapshot {
     }
 
     pub fn should_collect_ai_ugc_telemetry(&self) -> bool {
-        self.should_collect_ai_ugc_telemetry
+        self.telemetry_available && self.should_collect_ai_ugc_telemetry
     }
 
     #[cfg(test)]
     pub fn mock() -> Self {
         Self {
             cloud_conversation_storage_enabled: None,
+            telemetry_available: true,
+            crash_reporting_available: true,
             is_telemetry_enabled: true,
             is_crash_reporting_enabled: true,
             is_telemetry_force_enabled: true,
@@ -246,8 +256,12 @@ impl PrivacySettings {
         // Initialize from `WarpDrivePrivacySettings`, which is the source of truth for these
         // booleans.
         let warp_drive_privacy = WarpDrivePrivacySettings::as_ref(ctx);
-        let is_telemetry_enabled = *warp_drive_privacy.is_telemetry_enabled.value();
-        let is_crash_reporting_enabled = *warp_drive_privacy.is_crash_reporting_enabled.value();
+        let telemetry_available = ChannelState::is_telemetry_available();
+        let crash_reporting_available = ChannelState::is_crash_reporting_available();
+        let is_telemetry_enabled =
+            telemetry_available && *warp_drive_privacy.is_telemetry_enabled.value();
+        let is_crash_reporting_enabled =
+            crash_reporting_available && *warp_drive_privacy.is_crash_reporting_enabled.value();
         let is_cloud_conversation_storage_enabled = *warp_drive_privacy
             .is_cloud_conversation_storage_enabled
             .value();
@@ -294,6 +308,8 @@ impl PrivacySettings {
             auth_client,
             is_crash_reporting_enabled,
             is_telemetry_enabled,
+            telemetry_available,
+            crash_reporting_available,
             is_cloud_conversation_storage_enabled,
             user_secret_regex_list,
             has_initialized_default_secret_regexes,
@@ -304,11 +320,11 @@ impl PrivacySettings {
     }
 
     pub fn is_telemetry_force_enabled(&self) -> bool {
-        self.is_telemetry_force_enabled
+        self.telemetry_available && self.is_telemetry_force_enabled
     }
 
     pub fn set_is_telemetry_force_enabled(&mut self, is_telemetry_force_enabled: bool) {
-        self.is_telemetry_force_enabled = is_telemetry_force_enabled;
+        self.is_telemetry_force_enabled = self.telemetry_available && is_telemetry_force_enabled;
     }
 
     pub fn is_enterprise_secret_redaction_enabled(&self) -> bool {
@@ -362,8 +378,8 @@ impl PrivacySettings {
 
     pub fn refresh_to_default(&mut self) {
         // TODO(zach): this seems incorrect - should we also update the values on disk?
-        self.is_telemetry_enabled = true;
-        self.is_crash_reporting_enabled = true;
+        self.is_telemetry_enabled = self.telemetry_available;
+        self.is_crash_reporting_enabled = self.crash_reporting_available;
         self.is_cloud_conversation_storage_enabled = true;
         self.is_telemetry_force_enabled = false;
         self.is_enterprise_secret_redaction_enabled = false;
@@ -456,6 +472,8 @@ impl PrivacySettings {
             auth_client: Arc::new(MockAuthClient::new()),
             is_crash_reporting_enabled: true,
             is_telemetry_enabled: true,
+            telemetry_available: true,
+            crash_reporting_available: true,
             is_cloud_conversation_storage_enabled: true,
             user_secret_regex_list: CustomSecretRegexList::new(None),
             has_initialized_default_secret_regexes: HasInitializedDefaultSecretRegexes::new(None),
@@ -473,13 +491,14 @@ impl PrivacySettings {
         PrivacySettingsSnapshot {
             cloud_conversation_storage_enabled: (!self.is_cloud_conversation_storage_enabled)
                 .then_some(false),
-            is_telemetry_enabled: self.is_telemetry_enabled,
-            is_crash_reporting_enabled: self.is_crash_reporting_enabled,
-            is_telemetry_force_enabled: self.is_telemetry_force_enabled,
-            should_collect_ai_ugc_telemetry: should_collect_ai_ugc_telemetry(
-                app,
-                self.is_telemetry_enabled,
-            ),
+            telemetry_available: self.telemetry_available,
+            crash_reporting_available: self.crash_reporting_available,
+            is_telemetry_enabled: self.telemetry_available && self.is_telemetry_enabled,
+            is_crash_reporting_enabled: self.crash_reporting_available
+                && self.is_crash_reporting_enabled,
+            is_telemetry_force_enabled: self.telemetry_available && self.is_telemetry_force_enabled,
+            should_collect_ai_ugc_telemetry: self.telemetry_available
+                && should_collect_ai_ugc_telemetry(app, self.is_telemetry_enabled),
         }
     }
 
@@ -493,6 +512,10 @@ impl PrivacySettings {
         new_value: bool,
         ctx: &mut ModelContext<PrivacySettings>,
     ) {
+        if !self.crash_reporting_available {
+            self.is_crash_reporting_enabled = false;
+            return;
+        }
         let old_value = self.is_crash_reporting_enabled;
         if new_value != old_value {
             self.is_crash_reporting_enabled = new_value;
@@ -529,6 +552,10 @@ impl PrivacySettings {
         new_value: bool,
         ctx: &mut ModelContext<PrivacySettings>,
     ) {
+        if !self.telemetry_available {
+            self.is_telemetry_enabled = false;
+            return;
+        }
         let old_value = self.is_telemetry_enabled;
         if new_value != old_value {
             self.is_telemetry_enabled = new_value;
@@ -785,25 +812,30 @@ impl PrivacySettings {
                 // signing up. Without this step, maybe_sync_local_prefs_to_cloud would read
                 // the stale WarpDrivePrivacySettings defaults and push those to the cloud.
                 WarpDrivePrivacySettings::handle(ctx).update(ctx, |settings, ctx| {
-                    report_if_error!(settings
-                        .is_telemetry_enabled
-                        .set_value(self.is_telemetry_enabled, ctx));
-                    report_if_error!(settings
-                        .is_crash_reporting_enabled
-                        .set_value(self.is_crash_reporting_enabled, ctx));
+                    if self.telemetry_available {
+                        report_if_error!(settings
+                            .is_telemetry_enabled
+                            .set_value(self.is_telemetry_enabled, ctx));
+                    }
+                    if self.crash_reporting_available {
+                        report_if_error!(settings
+                            .is_crash_reporting_enabled
+                            .set_value(self.is_crash_reporting_enabled, ctx));
+                    }
                     report_if_error!(settings
                         .is_cloud_conversation_storage_enabled
                         .set_value(self.is_cloud_conversation_storage_enabled, ctx));
                 });
+                let mut storage_keys =
+                    vec![IsCloudConversationStorageEnabled::storage_key().to_string()];
+                if self.telemetry_available {
+                    storage_keys.push(IsTelemetryEnabled::storage_key().to_string());
+                }
+                if self.crash_reporting_available {
+                    storage_keys.push(IsCrashReportingEnabled::storage_key().to_string());
+                }
                 CloudPreferencesSyncer::handle(ctx).update(ctx, |syncer, ctx| {
-                    syncer.maybe_sync_local_prefs_to_cloud(
-                        vec![
-                            IsTelemetryEnabled::storage_key().to_string(),
-                            IsCrashReportingEnabled::storage_key().to_string(),
-                            IsCloudConversationStorageEnabled::storage_key().to_string(),
-                        ],
-                        ctx,
-                    );
+                    syncer.maybe_sync_local_prefs_to_cloud(storage_keys, ctx);
                 });
             }
         }
@@ -838,3 +870,27 @@ impl Entity for PrivacySettings {
 }
 
 impl SingletonEntity for PrivacySettings {}
+
+#[cfg(test)]
+mod availability_tests {
+    use super::PrivacySettingsSnapshot;
+
+    #[test]
+    fn unavailable_telemetry_beats_stored_and_force_enabled_values() {
+        let snapshot = PrivacySettingsSnapshot {
+            telemetry_available: false,
+            crash_reporting_available: false,
+            is_telemetry_enabled: true,
+            is_crash_reporting_enabled: true,
+            is_telemetry_force_enabled: true,
+            should_collect_ai_ugc_telemetry: true,
+            cloud_conversation_storage_enabled: None,
+        };
+
+        assert!(!snapshot.is_telemetry_enabled());
+        assert!(!snapshot.is_crash_reporting_enabled());
+        assert!(!snapshot.is_telemetry_force_enabled());
+        assert!(snapshot.should_disable_telemetry());
+        assert!(!snapshot.should_collect_ai_ugc_telemetry());
+    }
+}

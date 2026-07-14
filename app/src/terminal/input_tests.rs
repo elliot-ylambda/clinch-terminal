@@ -7270,6 +7270,23 @@ fn test_input_buffer_submitted_telemetry_uses_raw_input_type_decision_source() {
         events
     }
 
+    // This test validates the payload produced by a telemetry-capable build. The default test
+    // channel intentionally has no telemetry destination, matching Clinch's public build, and
+    // therefore must not construct or enqueue this event at all. Nextest runs each test in its
+    // own process, so this explicit channel override cannot leak into another test.
+    let mut channel_config = warp_core::channel::ChannelConfig::no_backend(
+        warp_core::AppId::new("test", "warp", "WarpTelemetryTest"),
+        "warp-telemetry-test.log",
+    );
+    channel_config.telemetry_config = Some(warp_core::channel::TelemetryConfig {
+        telemetry_file_name: "warp-telemetry-test.json".into(),
+        rudderstack_config: None,
+    });
+    warp_core::channel::ChannelState::set(warp_core::channel::ChannelState::new(
+        warp_core::channel::Channel::Local,
+        channel_config,
+    ));
+
     App::test((), |mut app| async move {
         initialize_app(&mut app);
         crate::server::telemetry::clear_event_queue();

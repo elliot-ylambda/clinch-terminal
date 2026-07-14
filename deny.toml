@@ -15,13 +15,14 @@ ignore = [
 ]
 
 [licenses]
-# Don't worry about licenses for crates in this workspace.
-private = { ignore = true }
 # Explicitly allowed licenses.
+# Include workspace and non-publishable git dependencies: several of them ship in Clinch and must
+# be covered by the same policy and generated notice as registry dependencies.
 # This list must stay in sync with about.toml's accepted list.
 # CI enforces this via script/check_license_config_sync.
 allow = [
     "0BSD",
+    "AGPL-3.0-only",
     "Apache-2.0",
     "BSD-2-Clause",
     "BSD-3-Clause",

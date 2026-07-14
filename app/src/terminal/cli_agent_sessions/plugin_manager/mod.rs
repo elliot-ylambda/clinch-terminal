@@ -14,10 +14,21 @@ use codex::CodexPluginManager;
 use gemini::GeminiPluginManager;
 use opencode::OpenCodePluginManager;
 
+use crate::channel::ChannelState;
 use crate::features::FeatureFlag;
 use crate::terminal::model::session::LocalCommandExecutor;
 use crate::terminal::shell::ShellType;
 use crate::terminal::CLIAgent;
+
+/// Public Clinch builds never change a provider's plugin configuration implicitly. Their
+/// managers still expose source-identified manual instructions after a direct user action.
+fn automatic_plugin_changes_allowed_for(app_id: &str) -> bool {
+    !matches!(app_id, "sh.clinch.Clinch" | "sh.clinch.ClinchDev")
+}
+
+pub(crate) fn automatic_plugin_changes_allowed() -> bool {
+    automatic_plugin_changes_allowed_for(&ChannelState::app_id().to_string())
+}
 
 /// Distinguishes whether the plugin instructions modal should show install or update steps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
