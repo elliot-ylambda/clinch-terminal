@@ -37,8 +37,9 @@ fn all_items_keeps_tools_panel_available_for_customization() {
 fn notifications_are_not_exposed_in_clinch_header_toolbars() {
     assert!(!HeaderToolbarItemKind::default_right()
         .contains(&HeaderToolbarItemKind::NotificationsMailbox));
-    assert!(!HeaderToolbarItemKind::all_items()
-        .contains(&HeaderToolbarItemKind::NotificationsMailbox));
+    assert!(
+        !HeaderToolbarItemKind::all_items().contains(&HeaderToolbarItemKind::NotificationsMailbox)
+    );
 }
 
 #[test]
