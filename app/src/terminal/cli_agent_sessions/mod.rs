@@ -38,8 +38,9 @@ pub struct CLIAgentSessionKey {
     pub session_id: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum PromptHistoryLoadState {
+    #[default]
     NotRequested,
     Loading {
         key: CLIAgentSessionKey,
@@ -58,12 +59,6 @@ impl PromptHistoryLoadState {
                 generation: loading_generation,
             } if loading_key == key && *loading_generation == generation
         )
-    }
-}
-
-impl Default for PromptHistoryLoadState {
-    fn default() -> Self {
-        Self::NotRequested
     }
 }
 
