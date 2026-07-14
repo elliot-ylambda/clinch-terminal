@@ -3,7 +3,7 @@
 use settings::Setting as _;
 use warp_core::context_flag::ContextFlag;
 use warpui::elements::{
-    ConstrainedBox, CrossAxisAlignment, Empty, Expanded, Flex, MainAxisAlignment, MainAxisSize,
+    ConstrainedBox, CrossAxisAlignment, Empty, Flex, MainAxisAlignment, MainAxisSize,
     ParentElement, Shrinkable,
 };
 use warpui::prelude::{ChildView, Container};
@@ -59,7 +59,6 @@ use crate::workspace::tab_settings::TabSettings;
 /// Sized so the component fits comfortably within `PANE_HEADER_HEIGHT` (34px) with a
 /// few pixels of vertical buffer.
 const PANE_HEADER_AGENT_SIZE: f32 = 26.;
-const CLI_AGENT_CONTEXT_HEADER_HEIGHT: f32 = 34.;
 
 impl TerminalView {
     /// Returns a reference to the focus handle if one has been set.
@@ -603,26 +602,16 @@ impl TerminalView {
             app,
         );
 
-        let header = if is_fullscreen_agent_view {
+        if is_fullscreen_agent_view {
             Container::new(header)
                 .with_background(agent_view_bg_fill(app))
-                .finish()
-        } else {
-            header
-        };
-
-        if let Some(context_header) = self.render_cli_agent_context_header(app) {
-            Flex::column()
-                .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
-                .with_child(header)
-                .with_child(context_header)
                 .finish()
         } else {
             header
         }
     }
 
-    fn should_render_cli_agent_context_header(&self, app: &AppContext) -> bool {
+    fn should_use_cli_agent_history_header(&self, app: &AppContext) -> bool {
         session_context_enabled()
             && CLIAgentSessionsModel::as_ref(app)
                 .session(self.view_id)
@@ -633,7 +622,7 @@ impl TerminalView {
                     )
                 })
                 .is_some_and(|session| {
-                    session.prompt_count() >= 2
+                    session.prompt_count() >= 1
                         || matches!(
                             session.prompt_history_load_state,
                             crate::terminal::cli_agent_sessions::PromptHistoryLoadState::Loading {
@@ -641,37 +630,6 @@ impl TerminalView {
                             }
                         )
                 })
-    }
-
-    fn render_cli_agent_context_header(&self, app: &AppContext) -> Option<Box<dyn Element>> {
-        if !self.should_render_cli_agent_context_header(app) {
-            return None;
-        }
-        let appearance = Appearance::as_ref(app);
-        let theme = appearance.theme();
-
-        let row = Flex::row()
-            .with_main_axis_size(MainAxisSize::Max)
-            .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_child(
-                Expanded::new(
-                    1.,
-                    ChildView::new(&self.cli_agent_message_history_dropdown).finish(),
-                )
-                .finish(),
-            );
-
-        Some(
-            Container::new(
-                ConstrainedBox::new(row.finish())
-                    .with_height(CLI_AGENT_CONTEXT_HEADER_HEIGHT)
-                    .finish(),
-            )
-            .with_padding_left(8.)
-            .with_padding_right(8.)
-            .with_background(theme.surface_2())
-            .finish(),
-        )
     }
 }
 
@@ -794,7 +752,7 @@ impl BackingView for TerminalView {
             && self.agent_view_controller.as_ref(app).is_fullscreen();
         is_shared
             || is_fullscreen_agent_view
-            || self.should_render_cli_agent_context_header(app)
+            || self.should_use_cli_agent_history_header(app)
             || FeatureFlag::ContextWindowUsageV2.is_enabled()
                 && self.split_pane_state(app).is_in_split_pane()
     }
@@ -805,19 +763,9 @@ impl BackingView for TerminalView {
         app: &AppContext,
     ) -> view::HeaderContent {
         let element = self.render_terminal_pane_header(header_ctx, app);
-        if self.should_render_cli_agent_context_header(app) {
-            view::HeaderContent::CustomWithHeight {
-                element,
-                // We wrap only the title row in the drag handler ourselves;
-                // the context row stays interactive.
-                has_custom_draggable_behavior: true,
-                height: PANE_HEADER_HEIGHT + CLI_AGENT_CONTEXT_HEADER_HEIGHT,
-            }
-        } else {
-            view::HeaderContent::Custom {
-                element,
-                has_custom_draggable_behavior: true,
-            }
+        view::HeaderContent::Custom {
+            element,
+            has_custom_draggable_behavior: true,
         }
     }
 
