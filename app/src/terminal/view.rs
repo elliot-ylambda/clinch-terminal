@@ -13537,22 +13537,12 @@ impl TerminalView {
             );
         }
 
-        let trigger = history
-            .prompts
-            .last()
-            .map(|latest| {
-                let latest_text = latest.text.split_whitespace().collect::<Vec<_>>().join(" ");
-                crate::agent_resume::format_prompt_time_short(latest.timestamp.as_deref())
-                    .map(|timestamp| format!("Latest · {timestamp}  {latest_text}"))
-                    .unwrap_or_else(|| format!("Latest  {latest_text}"))
-            })
-            .unwrap_or_else(|| {
-                if is_loading {
-                    "Restoring message history…".to_owned()
-                } else {
-                    label
-                }
-            });
+        let trigger = self.pane_configuration.as_ref(ctx).title().to_owned();
+        let trigger = if trigger.trim().is_empty() {
+            label
+        } else {
+            trigger
+        };
         let selected_index = usize::from(!history.prompts.is_empty());
         self.cli_agent_message_history_dropdown
             .update(ctx, move |dropdown, ctx| {
