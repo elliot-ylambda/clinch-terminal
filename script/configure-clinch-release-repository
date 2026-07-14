@@ -5,14 +5,9 @@ set -euo pipefail
 
 REPO="${CLINCH_REPO:-elliot-ylambda/clinch-terminal}"
 BRANCH="${CLINCH_RELEASE_BRANCH:-main}"
-APPROVALS="${CLINCH_REQUIRED_APPROVALS:-0}"
 RELEASE_ENVIRONMENT="${CLINCH_RELEASE_ENVIRONMENT:-public-release}"
 RELEASE_REVIEWER="${CLINCH_RELEASE_REVIEWER:-}"
 
-[[ "$APPROVALS" =~ ^[0-6]$ ]] || {
-  echo "CLINCH_REQUIRED_APPROVALS must be between 0 and 6" >&2
-  exit 2
-}
 command -v gh >/dev/null || { echo "gh is required" >&2; exit 1; }
 gh auth status >/dev/null
 if [[ -z "$RELEASE_REVIEWER" ]]; then
@@ -22,7 +17,7 @@ RELEASE_REVIEWER_ID="$(gh api "users/$RELEASE_REVIEWER" --jq .id)"
 [[ "$RELEASE_REVIEWER_ID" =~ ^[0-9]+$ ]] \
   || { echo "could not resolve release reviewer $RELEASE_REVIEWER" >&2; exit 1; }
 
-for workflow in ci.yml release.yml; do
+for workflow in release.yml; do
   gh api "repos/$REPO/contents/.github/workflows/$workflow?ref=$BRANCH" >/dev/null \
     || {
       echo "$workflow is not present on $BRANCH; land the workflows before applying policy" >&2
@@ -32,18 +27,10 @@ done
 
 tmp="$(mktemp -d -t clinch-repository-policy)"
 trap 'rm -rf "$tmp"' EXIT
-jq -n --argjson approvals "$APPROVALS" '{
-  required_status_checks: {
-    strict: true,
-    contexts: ["Clinch PR checks"]
-  },
+jq -n '{
+  required_status_checks: null,
   enforce_admins: true,
-  required_pull_request_reviews: {
-    dismiss_stale_reviews: true,
-    require_code_owner_reviews: false,
-    require_last_push_approval: ($approvals > 0),
-    required_approving_review_count: $approvals
-  },
+  required_pull_request_reviews: null,
   restrictions: null,
   required_linear_history: true,
   allow_force_pushes: false,
@@ -101,5 +88,5 @@ jq -n '{
 gh api --method PATCH "repos/$REPO" --input "$tmp/repository.json" >/dev/null
 
 echo "Repository release policy is configured for $REPO/$BRANCH."
-echo "Required approvals: $APPROVALS"
+echo "Required pull-request checks: none (the full gate runs at release time)"
 echo "Release environment reviewer: $RELEASE_REVIEWER"
