@@ -2,7 +2,7 @@
 //! plus the append-only journal and prompt mirror they maintain.
 
 use std::collections::{HashMap, HashSet};
-use std::io::BufRead;
+use std::io::{BufRead, Read};
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
@@ -84,11 +84,18 @@ pub fn prompt_title(text: &str) -> Option<String> {
 /// The implementation is intentionally synchronous so callers can place it on the repository's
 /// blocking worker pool. Rendering paths must never call it directly.
 pub fn read_prompt_history(
-    _provider: AgentResumeProvider,
-    _session_id: &str,
-    _transcript_path: Option<&Path>,
+    provider: AgentResumeProvider,
+    session_id: &str,
+    transcript_path: Option<&Path>,
 ) -> AgentPromptHistory {
-    AgentPromptHistory::default()
+    let roots = agent_transcript_roots();
+    read_prompt_history_in(
+        provider,
+        session_id,
+        transcript_path,
+        registry_dir().as_deref(),
+        &roots,
+    )
 }
 
 #[derive(Deserialize)]
@@ -225,10 +232,10 @@ struct JournalRecord {
     bridge: Option<String>,
 }
 
-/// One line of a prompt-mirror file (`prompts/<sid>.jsonl`), written by
-/// `claude-capture.sh` on every user prompt. The final line of a capped file is a bare
+/// One line of a provider prompt-mirror file (`prompts/<provider>/<sid>.jsonl`), written by
+/// the opted-in prompt hooks. The final line of a capped file is a bare
 /// `{"truncated":true}` marker, so every field must tolerate being absent.
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 struct PromptMirrorRecord {
     #[serde(default)]
     ts: Option<String>,
@@ -238,6 +245,8 @@ struct PromptMirrorRecord {
     bridge: Option<String>,
     #[serde(default)]
     prompt: Option<String>,
+    #[serde(default)]
+    truncated: bool,
 }
 
 /// A ready-to-run "fork this session" command plus the directory it should run in.
@@ -377,6 +386,26 @@ fn parse_launch_command(command: &str) -> Option<LaunchCommand<'_>> {
         format!(" {flags}")
     };
     Some(LaunchCommand { agent, id, flags })
+}
+
+/// Extracts the durable provider/session identity from a stored pane resume command.
+///
+/// Both the current Clinch launcher and the legacy Warp-prefixed launcher remain readable so
+/// snapshots created by older Clinch builds can hydrate history before the resumed agent emits a
+/// new event. Unknown providers and malformed session identifiers are rejected.
+pub fn agent_session_seed_from_restore_command(
+    command: &str,
+) -> Option<(AgentResumeProvider, String)> {
+    let launch = parse_launch_command(command)?;
+    let provider = AgentResumeProvider::from_agent_name(launch.agent)?;
+    is_safe_session_id(launch.id).then(|| (provider, launch.id.to_string()))
+}
+
+fn is_safe_session_id(session_id: &str) -> bool {
+    !session_id.is_empty()
+        && session_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
 }
 
 /// Turns a stored resume command (`clinch_agent_resume_launch <agent> <id> [flags…]`) into
@@ -535,7 +564,7 @@ pub fn recent_conversations(limit: usize) -> Vec<AgentConversation> {
 
 fn recent_conversations_in(dir: &Path, limit: usize) -> Vec<AgentConversation> {
     let mut sightings = Vec::new();
-    let mut journal_claude_session_ids = HashSet::new();
+    let mut journal_session_providers = HashMap::new();
 
     // Journal writes: session id + flags come from the recorded launch command; lines
     // whose command is not a Clinch/legacy resume-launch form (or that are malformed)
@@ -551,8 +580,8 @@ fn recent_conversations_in(dir: &Path, limit: usize) -> Vec<AgentConversation> {
             let Some(launch) = record.command.as_deref().and_then(parse_launch_command) else {
                 continue;
             };
-            if launch.agent == "claude" {
-                journal_claude_session_ids.insert(launch.id.to_string());
+            if let Some(provider) = AgentResumeProvider::from_agent_name(launch.agent) {
+                journal_session_providers.insert(launch.id.to_string(), provider);
             }
             let recorded_bridge = record.bridge.filter(|bridge| !bridge.is_empty());
             let (bridge, clear_bridge) = if record.op == "write" {
@@ -572,47 +601,18 @@ fn recent_conversations_in(dir: &Path, limit: usize) -> Vec<AgentConversation> {
         }
     }
 
-    // Prompt-mirror files enrich journal-backed Claude sessions with their first-prompt
-    // excerpt and earliest timestamp. Mirror-only sessions are deliberately excluded:
-    // the global Claude hook also sees nested/background helpers that were never owned
-    // by a Clinch pane, and those entries otherwise swamp the in-app finder. Only the
-    // first line is read because mirror files are append-only and can grow to ~5 MB.
+    // Prompt-mirror files enrich journal-backed sessions with their first prompt and earliest
+    // timestamp. Mirror-only sessions are deliberately excluded: global hooks also see nested
+    // helpers that were never owned by a Clinch pane, and those entries otherwise swamp the
+    // in-app finder. Provider-scoped files are canonical; legacy flat files remain a Claude-only
+    // fallback for sessions captured by older Clinch builds.
     let mut first_prompts = HashMap::new();
-    if let Ok(entries) = std::fs::read_dir(dir.join("prompts")) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let Some(session_id) = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .and_then(|name| name.strip_suffix(".jsonl"))
-                .map(str::to_string)
-            else {
-                continue;
-            };
-            if !journal_claude_session_ids.contains(&session_id) {
-                continue;
-            }
-            let Some(line) = read_first_line(&path) else {
-                continue;
-            };
-            let Ok(record) = serde_json::from_str::<PromptMirrorRecord>(&line) else {
-                continue;
-            };
-            let Some(ts) = record.ts else { continue };
-            if let Some(prompt) = record.prompt.as_deref() {
-                first_prompts.insert(session_id.clone(), single_line_excerpt(prompt, 160));
-            }
-            sightings.push(ConversationSighting {
-                ts,
-                session_id,
-                agent: None,
-                cwd: record.cwd.filter(|cwd| !cwd.is_empty()),
-                bridge: record.bridge.filter(|bridge| !bridge.is_empty()),
-                clear_bridge: None,
-                flags: None,
-            });
-        }
-    }
+    collect_conversation_mirrors(
+        dir,
+        &journal_session_providers,
+        &mut first_prompts,
+        &mut sightings,
+    );
 
     // Chronological fold, exactly like `clinch-agent-resume list`: the first sighting
     // fixes a conversation's start timestamp and ordering; the latest non-empty
@@ -669,6 +669,41 @@ fn recent_conversations_in(dir: &Path, limit: usize) -> Vec<AgentConversation> {
     conversations
 }
 
+fn collect_conversation_mirrors(
+    dir: &Path,
+    journal_session_providers: &HashMap<String, AgentResumeProvider>,
+    first_prompts: &mut HashMap<String, String>,
+    sightings: &mut Vec<ConversationSighting>,
+) {
+    for (session_id, provider) in journal_session_providers {
+        let mirror = read_scoped_prompt_mirror(dir, *provider, session_id).or_else(|| {
+            (*provider == AgentResumeProvider::Claude)
+                .then(|| read_legacy_claude_prompt_mirror(dir, session_id))
+                .flatten()
+        });
+        let Some(mirror) = mirror else { continue };
+
+        if let Some(prompt) = mirror.history.prompts.first() {
+            first_prompts.insert(session_id.clone(), single_line_excerpt(&prompt.text, 160));
+        }
+        let Some(record) = mirror.first_record else {
+            continue;
+        };
+        let Some(ts) = record.ts.filter(|ts| !ts.is_empty()) else {
+            continue;
+        };
+        sightings.push(ConversationSighting {
+            ts,
+            session_id: session_id.clone(),
+            agent: None,
+            cwd: record.cwd.filter(|cwd| !cwd.is_empty()),
+            bridge: record.bridge.filter(|bridge| !bridge.is_empty()),
+            clear_bridge: None,
+            flags: None,
+        });
+    }
+}
+
 #[derive(Default)]
 struct AgentTranscriptRoots {
     claude_projects: Option<PathBuf>,
@@ -688,6 +723,115 @@ fn agent_transcript_roots() -> AgentTranscriptRoots {
     AgentTranscriptRoots {
         claude_projects: claude_config.map(|root| root.join("projects")),
         codex_sessions: codex_home.map(|root| root.join("sessions")),
+    }
+}
+
+fn read_prompt_history_in(
+    provider: AgentResumeProvider,
+    session_id: &str,
+    transcript_path: Option<&Path>,
+    registry: Option<&Path>,
+    roots: &AgentTranscriptRoots,
+) -> AgentPromptHistory {
+    if !is_safe_session_id(session_id) {
+        return AgentPromptHistory::default();
+    }
+
+    if let Some(registry) = registry {
+        if let Some(mirror) = read_scoped_prompt_mirror(registry, provider, session_id) {
+            return mirror.history;
+        }
+        if provider == AgentResumeProvider::Claude {
+            if let Some(mirror) = read_legacy_claude_prompt_mirror(registry, session_id) {
+                return mirror.history;
+            }
+        }
+    }
+
+    if let Some(path) =
+        transcript_path.and_then(|path| safe_provider_transcript(path, provider, session_id, roots))
+    {
+        return prompt_history_from_transcript(provider, &path);
+    }
+
+    find_provider_transcript(provider, session_id, roots)
+        .map(|path| prompt_history_from_transcript(provider, &path))
+        .unwrap_or_default()
+}
+
+fn provider_transcript_root(
+    provider: AgentResumeProvider,
+    roots: &AgentTranscriptRoots,
+) -> Option<&Path> {
+    match provider {
+        AgentResumeProvider::Claude => roots.claude_projects.as_deref(),
+        AgentResumeProvider::Codex => roots.codex_sessions.as_deref(),
+    }
+}
+
+fn transcript_path_matches_provider(
+    path: &Path,
+    provider: AgentResumeProvider,
+    session_id: &str,
+) -> bool {
+    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    match provider {
+        AgentResumeProvider::Claude => {
+            file_name == format!("{session_id}.jsonl")
+                && !path
+                    .components()
+                    .any(|component| component.as_os_str() == "subagents")
+        }
+        AgentResumeProvider::Codex => {
+            file_name.starts_with("rollout-")
+                && file_name
+                    .strip_suffix(".jsonl")
+                    .is_some_and(|stem| stem.ends_with(&format!("-{session_id}")))
+        }
+    }
+}
+
+/// Accept an event-provided transcript only when its canonical location remains inside the
+/// configured provider root and its filename identifies the requested provider session.
+fn safe_provider_transcript(
+    path: &Path,
+    provider: AgentResumeProvider,
+    session_id: &str,
+    roots: &AgentTranscriptRoots,
+) -> Option<PathBuf> {
+    let root = std::fs::canonicalize(provider_transcript_root(provider, roots)?).ok()?;
+    let path = std::fs::canonicalize(path).ok()?;
+    (path.starts_with(&root) && transcript_path_matches_provider(&path, provider, session_id))
+        .then_some(path)
+}
+
+fn find_provider_transcript(
+    provider: AgentResumeProvider,
+    session_id: &str,
+    roots: &AgentTranscriptRoots,
+) -> Option<PathBuf> {
+    let root = provider_transcript_root(provider, roots)?;
+    if !root.is_dir() {
+        return None;
+    }
+    WalkDir::new(root)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_file())
+        .map(|entry| entry.into_path())
+        .find(|path| transcript_path_matches_provider(path, provider, session_id))
+}
+
+fn prompt_history_from_transcript(
+    provider: AgentResumeProvider,
+    path: &Path,
+) -> AgentPromptHistory {
+    match provider {
+        AgentResumeProvider::Claude => prompt_history_from_claude_transcript(path),
+        AgentResumeProvider::Codex => prompt_history_from_codex_transcript(path),
     }
 }
 
@@ -779,12 +923,153 @@ fn transcript_session_id(
     }
 }
 
-fn first_prompt_from_claude_transcript(path: &Path) -> Option<String> {
+const MAX_PROMPT_HISTORY_SOURCE_BYTES: u64 = 5 * 1024 * 1024;
+
+struct BoundedJsonl {
+    values: Vec<Value>,
+    source_non_empty: bool,
+    is_partial: bool,
+}
+
+/// Reads at most the same five MiB budget used by the prompt mirrors. Invalid UTF-8 or JSON on
+/// one line does not hide later records, but it does mark the result partial so the UI never
+/// presents a corrupted source as complete.
+fn read_bounded_jsonl(path: &Path) -> Option<BoundedJsonl> {
+    let metadata = std::fs::symlink_metadata(path).ok()?;
+    if !metadata.file_type().is_file() {
+        return None;
+    }
+    let source_non_empty = metadata.len() > 0;
+    let source_exceeds_limit = metadata.len() > MAX_PROMPT_HISTORY_SOURCE_BYTES;
     let file = std::fs::File::open(path).ok()?;
-    for line in std::io::BufReader::new(file).lines().map_while(Result::ok) {
-        let Ok(record) = serde_json::from_str::<Value>(&line) else {
+    let mut reader = std::io::BufReader::new(file).take(MAX_PROMPT_HISTORY_SOURCE_BYTES);
+    let mut values = Vec::new();
+    let mut is_partial = source_exceeds_limit;
+    let mut line = Vec::new();
+
+    loop {
+        line.clear();
+        let bytes_read = reader.read_until(b'\n', &mut line).ok()?;
+        if bytes_read == 0 {
+            break;
+        }
+        let is_complete_line = line.last() == Some(&b'\n');
+        if source_exceeds_limit && reader.limit() == 0 && !is_complete_line {
+            // The cap landed in the middle of a record; never parse a truncated prompt body.
+            break;
+        }
+        while matches!(line.last(), Some(b'\n' | b'\r')) {
+            line.pop();
+        }
+        if line.iter().all(u8::is_ascii_whitespace) {
+            continue;
+        }
+        let Ok(line) = std::str::from_utf8(&line) else {
+            is_partial = true;
             continue;
         };
+        match serde_json::from_str::<Value>(line) {
+            Ok(value) => values.push(value),
+            Err(_) => is_partial = true,
+        }
+    }
+
+    Some(BoundedJsonl {
+        values,
+        source_non_empty,
+        is_partial,
+    })
+}
+
+struct PromptMirrorRead {
+    history: AgentPromptHistory,
+    first_record: Option<PromptMirrorRecord>,
+}
+
+fn prompt_mirror_path(dir: &Path, provider: AgentResumeProvider, session_id: &str) -> PathBuf {
+    dir.join("prompts")
+        .join(provider.as_str())
+        .join(format!("{session_id}.jsonl"))
+}
+
+fn legacy_claude_prompt_mirror_path(dir: &Path, session_id: &str) -> PathBuf {
+    dir.join("prompts").join(format!("{session_id}.jsonl"))
+}
+
+fn path_is_symlink(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink())
+}
+
+fn read_scoped_prompt_mirror(
+    dir: &Path,
+    provider: AgentResumeProvider,
+    session_id: &str,
+) -> Option<PromptMirrorRead> {
+    let prompts = dir.join("prompts");
+    let provider_dir = prompts.join(provider.as_str());
+    if path_is_symlink(&prompts) || path_is_symlink(&provider_dir) {
+        return None;
+    }
+    read_prompt_mirror(&prompt_mirror_path(dir, provider, session_id))
+}
+
+fn read_legacy_claude_prompt_mirror(dir: &Path, session_id: &str) -> Option<PromptMirrorRead> {
+    let prompts = dir.join("prompts");
+    if path_is_symlink(&prompts) {
+        return None;
+    }
+    read_prompt_mirror(&legacy_claude_prompt_mirror_path(dir, session_id))
+}
+
+/// `Some` means a physically non-empty mirror exists and is therefore canonical, even if all of
+/// its records are malformed. An empty file returns `None` so a native transcript can recover it.
+fn read_prompt_mirror(path: &Path) -> Option<PromptMirrorRead> {
+    let jsonl = read_bounded_jsonl(path)?;
+    if !jsonl.source_non_empty {
+        return None;
+    }
+
+    let mut history = AgentPromptHistory {
+        prompts: Vec::new(),
+        is_partial: jsonl.is_partial,
+    };
+    let mut first_record = None;
+    for value in jsonl.values {
+        let Ok(record) = serde_json::from_value::<PromptMirrorRecord>(value) else {
+            history.is_partial = true;
+            continue;
+        };
+        if record.truncated {
+            history.is_partial = true;
+            continue;
+        }
+        let Some(prompt) = record.prompt.as_deref() else {
+            history.is_partial = true;
+            continue;
+        };
+        if prompt.trim().is_empty() {
+            continue;
+        }
+        if first_record.is_none() {
+            first_record = Some(record.clone());
+        }
+        history.prompts.push(AgentPrompt {
+            timestamp: record.ts.clone().filter(|timestamp| !timestamp.is_empty()),
+            text: prompt.to_string(),
+        });
+    }
+    Some(PromptMirrorRead {
+        history,
+        first_record,
+    })
+}
+
+fn prompt_history_from_claude_transcript(path: &Path) -> AgentPromptHistory {
+    let Some(jsonl) = read_bounded_jsonl(path) else {
+        return AgentPromptHistory::default();
+    };
+    let mut prompts = Vec::new();
+    for record in jsonl.values {
         if record.get("type").and_then(Value::as_str) != Some("user")
             || record.get("isMeta").and_then(Value::as_bool) == Some(true)
         {
@@ -793,34 +1078,53 @@ fn first_prompt_from_claude_transcript(path: &Path) -> Option<String> {
         let Some(text) = user_content_text(record.pointer("/message/content"), "text") else {
             continue;
         };
-        if let Some(preview) = non_empty_prompt_excerpt(&text) {
-            return Some(preview);
+        if text.trim().is_empty() {
+            continue;
         }
+        prompts.push(AgentPrompt {
+            timestamp: record
+                .get("timestamp")
+                .and_then(Value::as_str)
+                .filter(|timestamp| !timestamp.is_empty())
+                .map(str::to_string),
+            text,
+        });
     }
-    None
+    AgentPromptHistory {
+        prompts,
+        is_partial: jsonl.is_partial,
+    }
 }
 
-fn first_prompt_from_codex_transcript(path: &Path) -> Option<String> {
-    let file = std::fs::File::open(path).ok()?;
-    let mut response_item_fallback = None;
-    for line in std::io::BufReader::new(file).lines().map_while(Result::ok) {
-        let Ok(record) = serde_json::from_str::<Value>(&line) else {
-            continue;
-        };
+fn prompt_history_from_codex_transcript(path: &Path) -> AgentPromptHistory {
+    let Some(jsonl) = read_bounded_jsonl(path) else {
+        return AgentPromptHistory::default();
+    };
+    let mut event_prompts = Vec::new();
+    let mut response_item_prompts = Vec::new();
+    for record in jsonl.values {
+        let timestamp = record
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .filter(|timestamp| !timestamp.is_empty())
+            .map(str::to_string);
         if record.get("type").and_then(Value::as_str) == Some("event_msg")
             && record.pointer("/payload/type").and_then(Value::as_str) == Some("user_message")
         {
-            if let Some(preview) = record
+            if let Some(text) = record
                 .pointer("/payload/message")
                 .and_then(Value::as_str)
-                .and_then(non_empty_prompt_excerpt)
+                .filter(|text| !text.trim().is_empty())
             {
-                return Some(preview);
+                event_prompts.push(AgentPrompt {
+                    timestamp,
+                    text: text.to_string(),
+                });
             }
+            continue;
         }
 
-        if response_item_fallback.is_none()
-            && record.get("type").and_then(Value::as_str) == Some("response_item")
+        if record.get("type").and_then(Value::as_str) == Some("response_item")
             && record.pointer("/payload/type").and_then(Value::as_str) == Some("message")
             && record.pointer("/payload/role").and_then(Value::as_str) == Some("user")
         {
@@ -828,12 +1132,37 @@ fn first_prompt_from_codex_transcript(path: &Path) -> Option<String> {
             else {
                 continue;
             };
-            if !is_generated_codex_context(&text) {
-                response_item_fallback = non_empty_prompt_excerpt(&text);
+            if !text.trim().is_empty() && !is_generated_codex_context(&text) {
+                response_item_prompts.push(AgentPrompt { timestamp, text });
             }
         }
     }
-    response_item_fallback
+
+    // Current rollouts record the same submission as both a response_item and an event_msg. The
+    // event stream is canonical when present; response_item is an all-history fallback for older
+    // rollouts. This avoids synthetic deduplication that would erase intentional repeated turns.
+    AgentPromptHistory {
+        prompts: if event_prompts.is_empty() {
+            response_item_prompts
+        } else {
+            event_prompts
+        },
+        is_partial: jsonl.is_partial,
+    }
+}
+
+fn first_prompt_from_claude_transcript(path: &Path) -> Option<String> {
+    prompt_history_from_claude_transcript(path)
+        .prompts
+        .first()
+        .and_then(|prompt| non_empty_prompt_excerpt(&prompt.text))
+}
+
+fn first_prompt_from_codex_transcript(path: &Path) -> Option<String> {
+    prompt_history_from_codex_transcript(path)
+        .prompts
+        .first()
+        .and_then(|prompt| non_empty_prompt_excerpt(&prompt.text))
 }
 
 fn user_content_text(content: Option<&Value>, text_block_type: &str) -> Option<String> {
@@ -869,14 +1198,6 @@ fn is_generated_codex_context(text: &str) -> bool {
 fn non_empty_prompt_excerpt(text: &str) -> Option<String> {
     let excerpt = single_line_excerpt(text, 160);
     (!excerpt.is_empty()).then_some(excerpt)
-}
-
-fn read_first_line(path: &Path) -> Option<String> {
-    let file = std::fs::File::open(path).ok()?;
-    let mut line = String::new();
-    std::io::BufReader::new(file).read_line(&mut line).ok()?;
-    let line = line.trim();
-    (!line.is_empty()).then(|| line.to_string())
 }
 
 /// Collapses a mirrored prompt onto one line and caps its length for display and fuzzy

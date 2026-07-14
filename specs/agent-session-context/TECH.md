@@ -43,8 +43,8 @@ Clinch already has the durable sources needed for restoration:
 - A terminal snapshot already stores a stable pane UUID and the provider resume command containing
   the session ID, but no prompt context
   ([`TerminalPaneSnapshot`](https://github.com/elliot-ylambda/clinch-terminal/blob/4bc1dbffd19d5e4c83abad8bd67fb060c1f03977/app/src/app_state.rs#L261-L276)).
-- Codex capture currently wires only `SessionStart` and `SessionEnd`; its documented
-  `user_prompt_submit` payload still needs verification before it is added to the managed block
+- Codex capture originally wired only `SessionStart` and `SessionEnd`; the implementation verifies
+  the installed `codex-cli 0.144.3` `UserPromptSubmit` schema before adding it to the managed block
   ([installer](https://github.com/elliot-ylambda/clinch-terminal/blob/4bc1dbffd19d5e4c83abad8bd67fb060c1f03977/tools/agent-resume/install.sh#L122-L140),
   [known caveat](https://github.com/elliot-ylambda/clinch-terminal/blob/4bc1dbffd19d5e4c83abad8bd67fb060c1f03977/tools/agent-resume/README.md#L236-L242)).
 
@@ -116,11 +116,13 @@ Do not add prompt bodies to logs, telemetry, crash metadata, command-line argume
 
 ### 2. Complete opted-in Codex capture
 
-Before wiring a new hook, run a small local compatibility probe against the bundled/supported Codex
-version and capture only the payload schema in a synthetic test fixture. Verify the event name plus
-the exact fields for session ID, cwd, prompt text, and event type.
+The compatibility probe against installed `codex-cli 0.144.3` and its matching tagged OpenAI source
+verified the `UserPromptSubmit` stdin schema. The synthetic fixture records field names only:
+`session_id`, `turn_id`, optional `agent_id`/`agent_type`, `transcript_path`, `cwd`,
+`hook_event_name`, `model`, `permission_mode`, and exact `prompt`. The required event, session, cwd,
+and prompt fields are covered by the shell fixture so future schema drift fails open.
 
-Once verified, add a separate prompt-submit helper and a managed Codex `UserPromptSubmit` block in
+Add a separate prompt-submit helper and a managed Codex `UserPromptSubmit` block in
 `tools/agent-resume/install.sh` and `config.toml.snippet`. The helper only appends prompt history; it
 must not rewrite the pane's resume command or flags, which avoids the failure called out in the
 current README. Extract/share the Claude mirror append logic so both providers get identical JSON

@@ -74,14 +74,16 @@ tail -n 1 "$J" | jq -e . >/dev/null || { echo "FAIL: escaped journal line is not
 # Hand-crafted journal + mirrors so ordering is deterministic (real writes can share a
 # second). Three conversations: bridged, local, and mirror-only (nested, never registered).
 rm -f "$J" "$WARP_AGENT_RESUME_DIR"/pane-*.json
-P="$WARP_AGENT_RESUME_DIR/prompts"; mkdir -p "$P"
+P="$WARP_AGENT_RESUME_DIR/prompts"; mkdir -p "$P/claude"
 cat > "$J" <<'EOF'
 {"ts":"2026-07-09T10:00:00Z","op":"write","pane":"pane-a","command":"warp_agent_resume_launch claude sid-oldest-aaa","cwd":"/tmp/projA","bridge":""}
 {"ts":"2026-07-09T11:00:00Z","op":"write","pane":"pane-b","command":"clinch_agent_resume_launch claude sid-bridged-bbb","cwd":"/tmp/projB","bridge":""}
 {"ts":"2026-07-09T11:30:00Z","op":"write","pane":"pane-b","command":"clinch_agent_resume_launch claude sid-bridged-bbb --model opus","cwd":"/tmp/projB","bridge":"session_01LISTBRIDGE"}
 {"ts":"2026-07-09T11:45:00Z","op":"remove","pane":"pane-a"}
 EOF
-printf '{"ts":"2026-07-09T11:00:05Z","cwd":"/tmp/projB","bridge":"","prompt":"fix the flaky test in ci"}\n' > "$P/sid-bridged-bbb.jsonl"
+# Provider-scoped data is canonical; a same-id legacy flat file must not replace it.
+printf '{"ts":"2026-07-09T11:00:05Z","cwd":"/tmp/projB","bridge":"","prompt":"fix the flaky test in ci"}\n' > "$P/claude/sid-bridged-bbb.jsonl"
+printf '{"ts":"2026-07-09T11:00:06Z","cwd":"/tmp/wrong","bridge":"","prompt":"legacy must not win"}\n' > "$P/sid-bridged-bbb.jsonl"
 printf '{"ts":"2026-07-09T12:00:00Z","cwd":"/tmp/projC","bridge":"","prompt":"nested run prompt"}\n' > "$P/sid-nested-ccc.jsonl"
 
 out="$("$CLI" list)"

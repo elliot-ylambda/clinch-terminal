@@ -76,7 +76,9 @@ install_runtime() {
     "$SRC/warp-agent-resume" \
     "$SRC/clinch_agent_resume_launch" \
     "$SRC/claude-capture.sh" \
+    "$SRC/prompt-mirror.sh" \
     "$SRC/codex-session-start.sh" \
+    "$SRC/codex-prompt-submit.sh" \
     "$SRC/codex-session-end.sh" \
     "$BIN/"
   install -m 0644 "$SRC/agent-json.js" "$SRC/claude.zsh" "$BIN/"
@@ -89,7 +91,8 @@ remove_runtime() {
   for name in \
     agent-json agent-json.js clinch-agent-resume warp-agent-resume \
     clinch_agent_resume_launch warp_agent_resume_launch claude-capture.sh \
-    claude-session-start.sh claude.zsh codex-session-start.sh codex-session-end.sh \
+    prompt-mirror.sh claude-session-start.sh claude.zsh codex-session-start.sh \
+    codex-prompt-submit.sh codex-session-end.sh \
     install-agent-plugins.sh wire-claude-hooks.sh unwire-claude-hooks.sh; do
     rm -f "$BIN/$name"
   done
@@ -133,6 +136,10 @@ write_codex_config() {
     printf '[[hooks.SessionStart.hooks]]\n'
     printf 'type = "command"\n'
     printf 'command = "%s/codex-session-start.sh"\n\n' "$BIN"
+    printf '[[hooks.UserPromptSubmit]]\n'
+    printf '[[hooks.UserPromptSubmit.hooks]]\n'
+    printf 'type = "command"\n'
+    printf 'command = "%s/codex-prompt-submit.sh"\n\n' "$BIN"
     printf '[[hooks.SessionEnd]]\n'
     printf '[[hooks.SessionEnd.hooks]]\n'
     printf 'type = "command"\n'

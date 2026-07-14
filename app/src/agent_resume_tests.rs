@@ -27,6 +27,32 @@ fn prompt_title_collapses_whitespace_and_truncates_at_graphemes() {
 }
 
 #[test]
+fn restore_command_seed_accepts_current_and_legacy_launchers() {
+    assert_eq!(
+        agent_session_seed_from_restore_command(
+            "clinch_agent_resume_launch claude 0190-abcd --model opus"
+        ),
+        Some((AgentResumeProvider::Claude, "0190-abcd".to_string()))
+    );
+    assert_eq!(
+        agent_session_seed_from_restore_command("warp_agent_resume_launch codex legacy-456"),
+        Some((AgentResumeProvider::Codex, "legacy-456".to_string()))
+    );
+    assert_eq!(
+        agent_session_seed_from_restore_command("claude --resume x"),
+        None
+    );
+    assert_eq!(
+        agent_session_seed_from_restore_command("clinch_agent_resume_launch gemini x"),
+        None
+    );
+    assert_eq!(
+        agent_session_seed_from_restore_command("clinch_agent_resume_launch codex ../escape"),
+        None
+    );
+}
+
+#[test]
 fn production_and_dev_clinch_are_the_only_supported_agent_resume_apps() {
     assert!(app_id_enables_runtime("sh.clinch.Clinch"));
     assert!(app_id_enables_runtime("sh.clinch.ClinchDev"));
@@ -230,7 +256,8 @@ fn reopen_command_resumes_codex_sessions_and_rejects_unknown_agents() {
 fn recent_conversations_aggregates_journal_and_mirror() {
     let dir = std::env::temp_dir().join(format!("agent_resume_recent_test_{}", std::process::id()));
     let prompts = dir.join("prompts");
-    std::fs::create_dir_all(&prompts).unwrap();
+    std::fs::create_dir_all(prompts.join("claude")).unwrap();
+    std::fs::create_dir_all(prompts.join("codex")).unwrap();
 
     // Same fixture shape as tools/agent-resume/tests/test_registry_journal.sh: an
     // unbridged conversation, a conversation that bridges (and gains flags) on a later
@@ -257,7 +284,7 @@ fn recent_conversations_aggregates_journal_and_mirror() {
     )
     .unwrap();
     std::fs::write(
-        prompts.join("sid-bridged-bbb.jsonl"),
+        prompts.join("claude/sid-bridged-bbb.jsonl"),
         "{\"ts\":\"2026-07-09T11:00:05Z\",\"cwd\":\"/tmp/projB\",\"bridge\":\"\",\"prompt\":\"fix the flaky test in ci\"}\n",
     )
     .unwrap();
@@ -269,6 +296,11 @@ fn recent_conversations_aggregates_journal_and_mirror() {
     std::fs::write(
         prompts.join("sid-codex-ddd.jsonl"),
         "{\"ts\":\"2026-07-09T09:00:05Z\",\"cwd\":\"/tmp/projD\",\"bridge\":\"\",\"prompt\":\"must not enrich a Codex session\"}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        prompts.join("codex/sid-codex-ddd.jsonl"),
+        "{\"ts\":\"2026-07-09T09:00:05Z\",\"cwd\":\"/tmp/projD\",\"bridge\":\"\",\"prompt\":\"Codex scoped prompt\"}\n",
     )
     .unwrap();
 
@@ -309,7 +341,7 @@ fn recent_conversations_aggregates_journal_and_mirror() {
 
     let codex = &conversations[2];
     assert_eq!(codex.agent, "codex");
-    assert_eq!(codex.first_prompt, None);
+    assert_eq!(codex.first_prompt.as_deref(), Some("Codex scoped prompt"));
 
     // The limit keeps the newest conversations.
     let capped = recent_conversations_in(&dir, 1);
@@ -417,6 +449,272 @@ fn codex_transcript_uses_meaningful_user_response_when_event_is_absent() {
 }
 
 #[test]
+fn provider_mirror_is_canonical_and_preserves_exact_repeated_prompts() {
+    let dir = std::env::temp_dir().join(format!(
+        "agent_resume_provider_mirror_test_{}",
+        uuid::Uuid::new_v4()
+    ));
+    let scoped = dir.join("prompts/claude");
+    let native = dir.join("native/project");
+    std::fs::create_dir_all(&scoped).unwrap();
+    std::fs::create_dir_all(&native).unwrap();
+    std::fs::write(
+        scoped.join("session-1.jsonl"),
+        concat!(
+            "malformed\n",
+            r#"{"ts":"2026-07-14T01:02:03Z","prompt":"same\nmessage"}"#,
+            "\n",
+            r#"{"prompt":"same\nmessage"}"#,
+            "\n",
+            r#"{"ts":"2026-07-14T01:03:00Z","truncated":true}"#,
+            "\n",
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        native.join("session-1.jsonl"),
+        r#"{"type":"user","message":{"content":"native must not replace mirror"}}"#,
+    )
+    .unwrap();
+
+    let roots = AgentTranscriptRoots {
+        claude_projects: Some(dir.join("native")),
+        codex_sessions: None,
+    };
+    let history = read_prompt_history_in(
+        AgentResumeProvider::Claude,
+        "session-1",
+        Some(&native.join("session-1.jsonl")),
+        Some(&dir),
+        &roots,
+    );
+    assert_eq!(
+        history.prompts,
+        vec![
+            AgentPrompt {
+                timestamp: Some("2026-07-14T01:02:03Z".to_string()),
+                text: "same\nmessage".to_string(),
+            },
+            AgentPrompt {
+                timestamp: None,
+                text: "same\nmessage".to_string(),
+            },
+        ]
+    );
+    assert!(
+        history.is_partial,
+        "malformed lines and the cap marker are surfaced"
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn legacy_flat_mirror_is_claude_only_and_scoped_mirror_wins() {
+    let dir = std::env::temp_dir().join(format!(
+        "agent_resume_legacy_mirror_test_{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(dir.join("prompts/claude")).unwrap();
+    std::fs::write(
+        dir.join("prompts/legacy-id.jsonl"),
+        "{\"ts\":\"old\",\"prompt\":\"legacy prompt\"}\n",
+    )
+    .unwrap();
+    let roots = AgentTranscriptRoots::default();
+    assert_eq!(
+        read_prompt_history_in(
+            AgentResumeProvider::Claude,
+            "legacy-id",
+            None,
+            Some(&dir),
+            &roots,
+        )
+        .prompts[0]
+            .text,
+        "legacy prompt"
+    );
+    assert!(
+        read_prompt_history_in(
+            AgentResumeProvider::Codex,
+            "legacy-id",
+            None,
+            Some(&dir),
+            &roots,
+        )
+        .prompts
+        .is_empty(),
+        "legacy flat mirrors must never be attributed to Codex"
+    );
+
+    std::fs::write(
+        dir.join("prompts/claude/legacy-id.jsonl"),
+        "{\"ts\":\"new\",\"prompt\":\"scoped prompt\"}\n",
+    )
+    .unwrap();
+    assert_eq!(
+        read_prompt_history_in(
+            AgentResumeProvider::Claude,
+            "legacy-id",
+            None,
+            Some(&dir),
+            &roots,
+        )
+        .prompts[0]
+            .text,
+        "scoped prompt"
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn claude_history_parser_keeps_exact_user_text_and_timestamps() {
+    let dir = std::env::temp_dir().join(format!(
+        "agent_resume_claude_history_test_{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("session.jsonl");
+    std::fs::write(
+        &path,
+        concat!(
+            r#"{"type":"user","isMeta":true,"timestamp":"ignored","message":{"content":"metadata"}}"#,
+            "\n",
+            r#"{"type":"user","timestamp":"2026-07-14T02:00:00Z","message":{"content":"first\nline"}}"#,
+            "\n",
+            r#"{"type":"user","timestamp":"2026-07-14T02:01:00Z","message":{"content":[{"type":"tool_result","content":"ignored"},{"type":"text","text":"second"},{"type":"text","text":"detail"}]}}"#,
+            "\n",
+        ),
+    )
+    .unwrap();
+    assert_eq!(
+        prompt_history_from_claude_transcript(&path),
+        AgentPromptHistory {
+            prompts: vec![
+                AgentPrompt {
+                    timestamp: Some("2026-07-14T02:00:00Z".to_string()),
+                    text: "first\nline".to_string(),
+                },
+                AgentPrompt {
+                    timestamp: Some("2026-07-14T02:01:00Z".to_string()),
+                    text: "second\ndetail".to_string(),
+                },
+            ],
+            is_partial: false,
+        }
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn codex_event_messages_are_canonical_without_collapsing_repeated_turns() {
+    let dir = std::env::temp_dir().join(format!(
+        "agent_resume_codex_history_test_{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("rollout-test-session.jsonl");
+    std::fs::write(
+        &path,
+        concat!(
+            r#"{"timestamp":"generated","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<skills_instructions>generated</skills_instructions>"}]}}"#,
+            "\n",
+            r#"{"timestamp":"duplicate-form","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"same"}]}}"#,
+            "\n",
+            r#"{"timestamp":"turn-1","type":"event_msg","payload":{"type":"user_message","message":"same"}}"#,
+            "\n",
+            r#"{"timestamp":"turn-2","type":"event_msg","payload":{"type":"user_message","message":"same"}}"#,
+            "\n",
+        ),
+    )
+    .unwrap();
+    assert_eq!(
+        prompt_history_from_codex_transcript(&path).prompts,
+        vec![
+            AgentPrompt {
+                timestamp: Some("turn-1".to_string()),
+                text: "same".to_string(),
+            },
+            AgentPrompt {
+                timestamp: Some("turn-2".to_string()),
+                text: "same".to_string(),
+            },
+        ]
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn explicit_transcript_must_stay_inside_matching_provider_root() {
+    let dir = std::env::temp_dir().join(format!(
+        "agent_resume_safe_transcript_test_{}",
+        uuid::Uuid::new_v4()
+    ));
+    let root = dir.join("claude/project");
+    let outside = dir.join("outside");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    let good = root.join("safe-id.jsonl");
+    let escaped = outside.join("escape-id.jsonl");
+    std::fs::write(&good, r#"{"type":"user","message":{"content":"safe"}}"#).unwrap();
+    std::fs::write(
+        &escaped,
+        r#"{"type":"user","message":{"content":"must not read"}}"#,
+    )
+    .unwrap();
+    let roots = AgentTranscriptRoots {
+        claude_projects: Some(dir.join("claude")),
+        codex_sessions: None,
+    };
+    assert_eq!(
+        read_prompt_history_in(
+            AgentResumeProvider::Claude,
+            "safe-id",
+            Some(&good),
+            None,
+            &roots,
+        )
+        .prompts[0]
+            .text,
+        "safe"
+    );
+    assert!(
+        read_prompt_history_in(
+            AgentResumeProvider::Claude,
+            "escape-id",
+            Some(&escaped),
+            None,
+            &roots,
+        )
+        .prompts
+        .is_empty()
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn source_byte_cap_marks_history_partial_without_parsing_a_cut_record() {
+    let dir = std::env::temp_dir().join(format!(
+        "agent_resume_history_cap_test_{}",
+        uuid::Uuid::new_v4()
+    ));
+    let scoped = dir.join("prompts/codex");
+    std::fs::create_dir_all(&scoped).unwrap();
+    let path = scoped.join("large-id.jsonl");
+    let file = std::fs::File::create(&path).unwrap();
+    file.set_len(MAX_PROMPT_HISTORY_SOURCE_BYTES + 1).unwrap();
+    let history = read_prompt_history_in(
+        AgentResumeProvider::Codex,
+        "large-id",
+        None,
+        Some(&dir),
+        &AgentTranscriptRoots::default(),
+    );
+    assert!(history.prompts.is_empty());
+    assert!(history.is_partial);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn recent_conversations_honors_explicit_bridge_scrub() {
     let dir = std::env::temp_dir().join(format!("agent_resume_scrub_test_{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -503,11 +801,13 @@ fn active_pane_manifest_is_atomic_sorted_and_deduplicated() {
         std::fs::read_to_string(dir.join(ACTIVE_PANES_FILE)).unwrap(),
         "00ff\naa\nbb\n"
     );
-    assert!(std::fs::read_dir(&dir).unwrap().all(|entry| !entry
-        .unwrap()
-        .file_name()
-        .to_string_lossy()
-        .contains(".tmp.")));
+    assert!(std::fs::read_dir(&dir).unwrap().all(|entry| {
+        !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .contains(".tmp.")
+    }));
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
