@@ -2509,6 +2509,21 @@ impl AgentDriver {
         manager: &dyn CliAgentPluginManager,
         required: bool,
     ) -> Result<(), AgentDriverError> {
+        if !manager.can_auto_install() {
+            if required
+                && (manager.platform_plugin_needs_update()
+                    || !manager.is_platform_plugin_installed())
+            {
+                return Err(Self::required_platform_plugin_error(
+                    harness_name,
+                    "Required platform plugin must be installed explicitly",
+                ));
+            }
+            if required {
+                Self::verify_required_platform_plugin(harness_name, manager)?;
+            }
+            return Ok(());
+        }
         if manager.platform_plugin_needs_update() {
             if let Err(e) = manager.update_platform_plugin().await {
                 if required {

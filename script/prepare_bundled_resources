@@ -62,9 +62,9 @@ else
   echo "Warning: No bundled directory found at $RESOURCES_SRC/bundled" >&2
 fi
 
-# Clinch's macOS distribution carries the complete local agent-resume runtime. The GUI runs
-# its installer idempotently on launch, and Resources/bin is appended to every local shell's
-# PATH, so pane replay works before the user has touched an rcfile or restarted a shell.
+# Clinch's macOS distribution carries the local agent-resume runtime. Nothing is installed on
+# first launch: the user enables capture explicitly in Clinch settings. Once enabled, the GUI may
+# repair only Clinch-managed files while the durable consent marker exists.
 if [ "$(uname -s)" = "Darwin" ]; then
   AGENT_RESUME_SRC="$REPO_ROOT/tools/agent-resume"
   AGENT_RESUME_DEST="$DEST_DIR/agent-resume"
@@ -79,8 +79,8 @@ if [ "$(uname -s)" = "Darwin" ]; then
     "$AGENT_RESUME_SRC/claude-capture.sh" \
     "$AGENT_RESUME_SRC/codex-session-start.sh" \
     "$AGENT_RESUME_SRC/codex-session-end.sh" \
-    "$AGENT_RESUME_SRC/install-agent-plugins.sh" \
     "$AGENT_RESUME_SRC/wire-claude-hooks.sh" \
+    "$AGENT_RESUME_SRC/unwire-claude-hooks.sh" \
     "$AGENT_RESUME_SRC/install.sh" \
     "$AGENT_RESUME_DEST/"
   install -m 0644 \
@@ -92,18 +92,9 @@ if [ "$(uname -s)" = "Darwin" ]; then
   install -m 0755 "$AGENT_RESUME_SRC/clinch_agent_resume_launch" \
     "$DEST_DIR/bin/warp_agent_resume_launch"
 
-  if [ "$CHANNEL" = "stable" ]; then
-    UPDATE_SRC="$REPO_ROOT/resources/update"
-    UPDATE_DEST="$DEST_DIR/update"
-    echo "Copying Clinch update trust root and helper to $UPDATE_DEST"
-    rm -rf "$UPDATE_DEST"
-    mkdir -p "$UPDATE_DEST"
-    install -m 0644 \
-      "$UPDATE_SRC/clinch-update-public-key.json" \
-      "$UPDATE_SRC/clinch-update-authorizer.applescript" \
-      "$UPDATE_DEST/"
-    install -m 0755 "$UPDATE_SRC/clinch-update-helper" "$UPDATE_DEST/"
-  fi
+  # The public preview uses authenticated manual updates. Do not ship the privileged update
+  # authorizer/helper until its atomic swap and root-owned control state have been redesigned.
+  rm -rf "$DEST_DIR/update"
 fi
 
 if [ -n "$GIT_RELEASE_TAG" ]; then
@@ -150,6 +141,8 @@ if [ -z "$NO_LICENSES" ]; then
   echo "Generating third-party licenses at $LICENSES_OUTPUT"
   cargo about generate \
       --workspace \
+      --locked \
+      --fail \
       --manifest-path "$REPO_ROOT/Cargo.toml" \
       -c "$REPO_ROOT/about.toml" \
       -o "$LICENSES_OUTPUT" \

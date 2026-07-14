@@ -1,0 +1,321 @@
+name: Clinch public preview release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact immutable release tag (for example v0.2026.07.13.1800)
+        required: true
+        type: string
+      qa_record:
+        description: URL or identifier for the completed manual release QA record
+        required: true
+        type: string
+      tested_macos_versions:
+        description: macOS versions covered by hands-on release QA
+        required: true
+        type: string
+      qa_first_install:
+        description: A clean first install passed
+        required: true
+        default: false
+        type: boolean
+      qa_authenticated_upgrade:
+        description: An authenticated manual upgrade passed
+        required: true
+        default: false
+        type: boolean
+      qa_session_integration:
+        description: Session capture opt-in and removal passed
+        required: true
+        default: false
+        type: boolean
+      qa_uninstall:
+        description: Selective application uninstall passed
+        required: true
+        default: false
+        type: boolean
+      qa_offline_startup:
+        description: Startup while offline passed
+        required: true
+        default: false
+        type: boolean
+      qa_apple_silicon_smoke:
+        description: Native Apple Silicon smoke test passed
+        required: true
+        default: false
+        type: boolean
+      qa_intel_smoke:
+        description: Optional hands-on Intel smoke test passed
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: clinch-public-release
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    name: Required source gate
+    uses: ./.github/workflows/ci.yml
+
+  package-and-publish:
+    name: Package, attest, and publish
+    needs: gate
+    runs-on: macos-15-intel
+    timeout-minutes: 210
+    environment: public-release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ inputs.version }}
+      QA_RECORD: ${{ inputs.qa_record }}
+      QA_TESTED_MACOS_VERSIONS: ${{ inputs.tested_macos_versions }}
+      QA_FIRST_INSTALL: ${{ inputs.qa_first_install }}
+      QA_AUTHENTICATED_UPGRADE: ${{ inputs.qa_authenticated_upgrade }}
+      QA_SESSION_INTEGRATION: ${{ inputs.qa_session_integration }}
+      QA_UNINSTALL: ${{ inputs.qa_uninstall }}
+      QA_OFFLINE_STARTUP: ${{ inputs.qa_offline_startup }}
+      QA_APPLE_SILICON_SMOKE: ${{ inputs.qa_apple_silicon_smoke }}
+      QA_INTEL_SMOKE: ${{ inputs.qa_intel_smoke }}
+      CARGO_TERM_COLOR: always
+      RUSTFLAGS: -C debuginfo=line-tables-only --cfg=web_sys_unstable_apis
+    steps:
+      - name: Checkout the exact gated main revision
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+
+      - name: Confirm release source and version
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == "refs/heads/main" ]] || {
+            echo "Releases must be dispatched from main, not $GITHUB_REF" >&2
+            exit 1
+          }
+          [[ "$VERSION" =~ ^v[0-9]+(\.[0-9]+)+$ ]] || {
+            echo "Release tags must contain only dot-separated integers: $VERSION" >&2
+            exit 1
+          }
+          [[ -n "${QA_RECORD//[[:space:]]/}" && ${#QA_RECORD} -le 500 ]] || {
+            echo "qa_record must be a non-empty identifier of at most 500 characters" >&2
+            exit 1
+          }
+          [[ -n "${QA_TESTED_MACOS_VERSIONS//[[:space:]]/}" \
+            && ${#QA_TESTED_MACOS_VERSIONS} -le 200 ]] || {
+            echo "tested_macos_versions must be non-empty and at most 200 characters" >&2
+            exit 1
+          }
+          for qa_flag in \
+            QA_FIRST_INSTALL \
+            QA_AUTHENTICATED_UPGRADE \
+            QA_SESSION_INTEGRATION \
+            QA_UNINSTALL \
+            QA_OFFLINE_STARTUP \
+            QA_APPLE_SILICON_SMOKE
+          do
+            [[ "${!qa_flag}" == true ]] || {
+              echo "manual release check $qa_flag was not confirmed" >&2
+              exit 1
+            }
+          done
+          [[ "$QA_INTEL_SMOKE" == true || "$QA_INTEL_SMOKE" == false ]] || {
+            echo "qa_intel_smoke must be true or false" >&2
+            exit 1
+          }
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]] || exit 1
+          [[ -z "$(git status --porcelain)" ]] || exit 1
+          gh api "repos/$GITHUB_REPOSITORY/releases/latest" > "$RUNNER_TEMP/latest.json"
+          python3 - "$RUNNER_TEMP/latest.json" "$VERSION" <<'PY'
+          import json, re, sys
+          latest = json.load(open(sys.argv[1], encoding="utf-8"))["tag_name"]
+          requested = sys.argv[2]
+          def parts(value):
+              return tuple(int(piece) for piece in re.findall(r"\d+", value))
+          requested_parts = parts(requested)
+          latest_parts = parts(latest)
+          width = max(len(requested_parts), len(latest_parts))
+          requested_parts += (0,) * (width - len(requested_parts))
+          latest_parts += (0,) * (width - len(latest_parts))
+          if requested_parts <= latest_parts:
+              raise SystemExit(f"requested version {requested} is not newer than {latest}")
+          PY
+
+      - name: Prepare public macOS build environment
+        uses: ./.github/actions/prepare_environment
+        with:
+          target_os: macos
+          is_self_hosted: false
+          install_test_deps: true
+          cache_key: clinch-public-release
+
+      - name: Install release cryptography
+        shell: bash
+        run: |
+          brew list openssl@3 >/dev/null 2>&1 || brew install openssl@3
+          echo "CLINCH_OPENSSL_BIN=$(brew --prefix openssl@3)/bin/openssl" >> "$GITHUB_ENV"
+
+      - name: Materialize and verify scoped release keys
+        shell: bash
+        env:
+          UPDATE_PRIVATE_KEY: ${{ secrets.CLINCH_UPDATE_SIGNING_KEY }}
+          RELEASE_PRIVATE_KEY: ${{ secrets.CLINCH_RELEASE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          [[ -n "$UPDATE_PRIVATE_KEY" && -n "$RELEASE_PRIVATE_KEY" ]] || {
+            echo "Release signing secrets are not configured" >&2
+            exit 1
+          }
+          umask 077
+          printf '%s\n' "$UPDATE_PRIVATE_KEY" > "$RUNNER_TEMP/update-signing-key.pem"
+          printf '%s\n' "$RELEASE_PRIVATE_KEY" > "$RUNNER_TEMP/release-signing-key"
+          chmod 600 "$RUNNER_TEMP/update-signing-key.pem" "$RUNNER_TEMP/release-signing-key"
+          actual="$(ssh-keygen -y -f "$RUNNER_TEMP/release-signing-key" | awk '{print $1, $2}')"
+          expected="$(awk '{print $2, $3}' resources/release/clinch-release-allowed-signers)"
+          [[ "$actual" == "$expected" ]] || {
+            echo "Release SSH private key does not match the committed trust root" >&2
+            exit 1
+          }
+          echo "CLINCH_UPDATE_SIGNING_KEY=$RUNNER_TEMP/update-signing-key.pem" >> "$GITHUB_ENV"
+          echo "CLINCH_RELEASE_SIGNING_KEY=$RUNNER_TEMP/release-signing-key" >> "$GITHUB_ENV"
+
+      - name: Derive a monotonic authenticated release sequence
+        shell: bash
+        run: |
+          sequence="$(./script/next-clinch-update-sequence)"
+          [[ "$sequence" =~ ^[0-9]+$ ]] || exit 1
+          echo "UPDATE_SEQUENCE=$sequence" >> "$GITHUB_ENV"
+
+      - name: Build and verify the universal candidate
+        shell: bash
+        run: |
+          make _verify \
+            VERSION="$VERSION" \
+            UPDATE_SEQUENCE="$UPDATE_SEQUENCE" \
+            UNIVERSAL=1 \
+            CLINCH_UPDATE_SIGNING_KEY="$CLINCH_UPDATE_SIGNING_KEY" \
+            CLINCH_RELEASE_SIGNING_KEY="$CLINCH_RELEASE_SIGNING_KEY"
+
+      - name: Generate a machine-readable SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: target/release-lto/bundle/osx/Clinch.app
+          format: cyclonedx-json
+          output-file: ${{ runner.temp }}/Clinch.sbom.cdx.json
+          upload-artifact: false
+
+      - name: Assemble immutable release assets and validation record
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/dist"
+          cp \
+            target/release-lto/bundle/osx/Clinch.dmg \
+            target/release-lto/bundle/osx/Clinch.dmg.sha256 \
+            target/release-lto/bundle/osx/Clinch.app.zip \
+            target/release-lto/bundle/osx/Clinch.app.zip.sha256 \
+            target/release-lto/bundle/osx/Clinch.update.json \
+            target/release-lto/bundle/osx/Clinch.update.sig \
+            target/release-lto/bundle/osx/Clinch.update.sshsig \
+            install.sh uninstall.sh \
+            resources/release/clinch-release-allowed-signers \
+            "$RUNNER_TEMP/Clinch.sbom.cdx.json" \
+            "$RUNNER_TEMP/dist/"
+          jq -n \
+            --arg version "$VERSION" \
+            --arg commit "$GITHUB_SHA" \
+            --arg sequence "$UPDATE_SEQUENCE" \
+            --arg runner "$RUNNER_OS/$RUNNER_ARCH" \
+            --arg qa_record "$QA_RECORD" \
+            --arg tested_macos_versions "$QA_TESTED_MACOS_VERSIONS" \
+            --argjson intel_smoke "$QA_INTEL_SMOKE" \
+            '{schema_version:1, version:$version, commit:$commit, update_sequence:($sequence|tonumber), runner:$runner, gates:["Source checks","Stable build and lint","Component tests"], artifact_checks:["universal x86_64+arm64","ad-hoc hardened-runtime signature","empty Clinch entitlements","ZIP/DMG app equality","integration opt-in and removal","signed exact-tag manifest"], manual_qa:{record:$qa_record,tested_macos_versions:$tested_macos_versions,first_install:true,authenticated_manual_upgrade:true,session_integration_opt_in_and_removal:true,selective_uninstall:true,offline_startup:true,apple_silicon_smoke:true,intel_smoke:$intel_smoke}, notarized:false}' \
+            > "$RUNNER_TEMP/dist/Clinch.release-validation.json"
+          (cd "$RUNNER_TEMP/dist" && \
+            shasum -a 256 Clinch.dmg Clinch.app.zip Clinch.update.json Clinch.update.sig \
+              Clinch.update.sshsig Clinch.sbom.cdx.json install.sh uninstall.sh \
+              clinch-release-allowed-signers \
+              Clinch.release-validation.json > Clinch.checksums.txt)
+          ssh-keygen -Y sign -f "$CLINCH_RELEASE_SIGNING_KEY" -n clinch-checksums - \
+            < "$RUNNER_TEMP/dist/Clinch.checksums.txt" \
+            > "$RUNNER_TEMP/dist/Clinch.checksums.sshsig"
+          ssh-keygen -Y verify \
+            -f "$RUNNER_TEMP/dist/clinch-release-allowed-signers" \
+            -I clinch-release -n clinch-checksums \
+            -s "$RUNNER_TEMP/dist/Clinch.checksums.sshsig" \
+            < "$RUNNER_TEMP/dist/Clinch.checksums.txt" >/dev/null
+          cat > "$RUNNER_TEMP/release-notes.md" <<EOF
+          Clinch $VERSION is an unnotarized public preview for macOS 13 or later on Intel and Apple Silicon.
+
+          Download **Clinch.dmg**, authenticate **Clinch.checksums.txt** with
+          **Clinch.checksums.sshsig**, compare the DMG digest, and drag Clinch to Applications.
+          Use **System Settings → Privacy & Security → Open Anyway** if macOS blocks the first launch.
+          The authenticated **install.sh** asset is a secondary convenience.
+
+          Session capture and provider plugins are off by default. Automatic updates are disabled for
+          this preview; install a newer authenticated release manually. See **Clinch.release-validation.json**
+          for the automated and hands-on checks recorded by the release workflow.
+
+          Manual QA record: $QA_RECORD
+          Tested macOS versions: $QA_TESTED_MACOS_VERSIONS
+          Hands-on Intel smoke test: $QA_INTEL_SMOKE
+          EOF
+
+      - name: Attest release asset provenance
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: ${{ runner.temp }}/dist/*
+
+      - name: Retain the verified candidate for workflow review
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: Clinch-${{ inputs.version }}-verified-release
+          path: ${{ runner.temp }}/dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Create or verify the signed immutable tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Clinch release workflow"
+          git config user.email "releases@clinch.sh"
+          git config gpg.format ssh
+          git config user.signingkey "$CLINCH_RELEASE_SIGNING_KEY"
+          git config gpg.ssh.allowedSignersFile "$GITHUB_WORKSPACE/resources/release/clinch-release-allowed-signers"
+          if git ls-remote --exit-code --tags origin "refs/tags/$VERSION" >/dev/null 2>&1; then
+            git fetch --force origin "refs/tags/$VERSION:refs/tags/$VERSION"
+            [[ "$(git rev-list -n 1 "$VERSION")" == "$GITHUB_SHA" ]] || {
+              echo "Existing tag points to another commit" >&2
+              exit 1
+            }
+            git verify-tag "$VERSION"
+          else
+            git tag -s -a "$VERSION" -m "Clinch $VERSION public preview" "$GITHUB_SHA"
+            git verify-tag "$VERSION"
+            git push origin "refs/tags/$VERSION"
+          fi
+
+      - name: Publish only the preverified tag and assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $VERSION already exists; refusing to mutate it" >&2
+            exit 1
+          fi
+          gh release create "$VERSION" "$RUNNER_TEMP"/dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --latest \
+            --title "Clinch $VERSION" \
+            --notes-file "$RUNNER_TEMP/release-notes.md"

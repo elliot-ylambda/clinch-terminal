@@ -3,11 +3,19 @@ use std::io::Write;
 use super::*;
 
 #[test]
-fn production_and_dev_clinch_enable_agent_resume_runtime() {
+fn production_and_dev_clinch_are_the_only_supported_agent_resume_apps() {
     assert!(app_id_enables_runtime("sh.clinch.Clinch"));
     assert!(app_id_enables_runtime("sh.clinch.ClinchDev"));
     assert!(!app_id_enables_runtime("dev.warp.Warp-Local"));
     assert!(!app_id_enables_runtime("dev.warp.WarpOss"));
+}
+
+#[test]
+fn agent_resume_runtime_requires_consent_or_an_explicit_test_override() {
+    assert!(!runtime_enabled_for("sh.clinch.Clinch", false, false));
+    assert!(runtime_enabled_for("sh.clinch.Clinch", true, false));
+    assert!(!runtime_enabled_for("dev.warp.Warp-Local", true, false));
+    assert!(runtime_enabled_for("dev.warp.Warp-Local", false, true));
 }
 
 #[test]

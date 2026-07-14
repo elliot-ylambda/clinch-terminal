@@ -767,9 +767,9 @@ pub fn run() -> Result<()> {
         return Ok(());
     }
 
-    // The public Clinch bundle is local-first and ships its Claude/Codex capture runtime.
-    // Configure it before the first pane can launch; worker/CLI entrypoints returned above
-    // and non-Clinch Warp channels are deliberately untouched.
+    // The public Clinch bundle ships an optional Claude/Codex capture runtime. Refresh its
+    // managed files before the first pane can launch only when the user has already opted in;
+    // worker/CLI entrypoints and non-Clinch Warp channels are deliberately untouched.
     #[cfg(target_os = "macos")]
     if ChannelState::app_id().to_string() == "sh.clinch.Clinch" {
         agent_resume::install_bundled_capture_layer();

@@ -9,7 +9,10 @@ use warp_core::{report_error, report_if_error};
 use warpui::r#async::{FutureExt as _, Timer};
 use warpui::{App, Entity, ModelContext, SingletonEntity};
 
-use super::{clear_event_queue, rudder_event_file_path, RUDDER_TELEMETRY_EVENTS_FILE_NAME};
+use super::{
+    clear_event_queue, remove_persisted_event_files, rudder_event_file_path,
+    RUDDER_TELEMETRY_EVENTS_FILE_NAME,
+};
 use crate::auth::AuthStateProvider;
 use crate::channel::ChannelState;
 use crate::features::FeatureFlag;
@@ -42,6 +45,11 @@ impl TelemetryCollector {
     }
 
     pub fn initialize_telemetry_collection(&self, ctx: &mut ModelContext<TelemetryCollector>) {
+        if !ChannelState::is_telemetry_available() {
+            clear_event_queue();
+            remove_persisted_event_files();
+            return;
+        }
         // Start a background thread to periodically flush events from the telemetry event queue.
         if ChannelState::is_release_bundle() || FeatureFlag::WithSandboxTelemetry.is_enabled() {
             // Flush the events to Rudderstack that were persisted into a file the last time the app was
@@ -80,6 +88,11 @@ impl TelemetryCollector {
     /// Writes all queued but unsent telemetry telemetry events to disk so that they may be sent
     /// on the next app startup.
     pub fn write_telemetry_events_to_disk(&self, ctx: &mut ModelContext<TelemetryCollector>) {
+        if !ChannelState::is_telemetry_available() {
+            clear_event_queue();
+            remove_persisted_event_files();
+            return;
+        }
         match self.server_api.persist_telemetry_events(
             MAX_TELEMETRY_EVENTS_TO_STORE,
             PrivacySettings::as_ref(ctx).get_snapshot(ctx),
@@ -99,6 +112,11 @@ impl TelemetryCollector {
     /// * Write events to disk, for sending on the next app startup
     /// * Synchronously send events to rudderstack
     pub fn flush_telemetry_events_for_shutdown(&self, ctx: &mut ModelContext<TelemetryCollector>) {
+        if !ChannelState::is_telemetry_available() {
+            clear_event_queue();
+            remove_persisted_event_files();
+            return;
+        }
         let execution_mode = AppExecutionMode::as_ref(ctx);
 
         if execution_mode.send_telemetry_at_shutdown() {
@@ -168,6 +186,9 @@ impl TelemetryCollector {
     /// telemetry is enabled. The scheduled task once again schedules itself after
     /// `ACTIVE_USAGE_DURATION`.
     fn schedule_send_active_usage_event(&self, ctx: &mut ModelContext<TelemetryCollector>) {
+        if !ChannelState::is_telemetry_available() {
+            return;
+        }
         let auth_state = AuthStateProvider::as_ref(ctx).get().clone();
         let is_telemetry_enabled = PrivacySettings::as_ref(ctx).is_telemetry_enabled;
         let _ = ctx.spawn(
@@ -198,6 +219,10 @@ impl TelemetryCollector {
     /// them in rudderstack request if telemetry is enabled. The scheduled task once again schedules
     /// itself after `TELEMETRY_FLUSH_DURATION`.
     fn schedule_event_queue_flush(&self, ctx: &mut ModelContext<TelemetryCollector>) {
+        if !ChannelState::is_telemetry_available() {
+            clear_event_queue();
+            return;
+        }
         let server_api = self.server_api.clone();
         let privacy_settings_snapshot = PrivacySettings::as_ref(ctx).get_snapshot(ctx);
         let _ = ctx.spawn(

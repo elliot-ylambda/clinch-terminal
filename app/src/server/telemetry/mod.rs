@@ -47,6 +47,22 @@ pub fn clear_event_queue() {
     let _ = warpui::telemetry::flush_events();
 }
 
+/// Deletes current and legacy persisted queues without attempting to upload them.
+fn remove_persisted_event_files() {
+    let current = rudder_event_file_path();
+    let legacy = warp_core::paths::state_dir().join(RUDDER_TELEMETRY_EVENTS_FILE_NAME);
+    for path in [current, legacy] {
+        if let Err(error) = std::fs::remove_file(&path) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                log::warn!(
+                    "could not remove stale telemetry queue {}: {error}",
+                    path.display()
+                );
+            }
+        }
+    }
+}
+
 pub struct TelemetryApi {
     pub(super) client: http_client::Client,
 }
@@ -92,6 +108,10 @@ impl TelemetryApi {
     // Batches up telemetry events from the global queue and sends a Message to the Rudderstack API.
     // Returns the number of events that were flushed.
     pub async fn flush_events(&self, settings_snapshot: PrivacySettingsSnapshot) -> Result<usize> {
+        if !ChannelState::is_telemetry_available() {
+            clear_event_queue();
+            return Ok(0);
+        }
         let events = warpui::telemetry::flush_events();
         let event_count = events.len();
 
@@ -121,6 +141,9 @@ impl TelemetryApi {
         path: &Path,
         settings_snapshot: PrivacySettingsSnapshot,
     ) -> Result<()> {
+        if !ChannelState::is_telemetry_available() {
+            return Ok(());
+        }
         if path.exists() {
             let file = File::open(path)?;
             let events: Vec<RudderBatchMessage> = serde_json::from_reader(file)?;
@@ -149,6 +172,11 @@ impl TelemetryApi {
         max_event_count: usize,
         settings_snapshot: PrivacySettingsSnapshot,
     ) -> Result<()> {
+        if !ChannelState::is_telemetry_available() {
+            clear_event_queue();
+            remove_persisted_event_files();
+            return Ok(());
+        }
         self.flush_and_persist_events_at_path(
             max_event_count,
             settings_snapshot,
@@ -162,6 +190,10 @@ impl TelemetryApi {
         settings_snapshot: PrivacySettingsSnapshot,
         path: impl AsRef<Path>,
     ) -> Result<()> {
+        if !ChannelState::is_telemetry_available() {
+            clear_event_queue();
+            return Ok(());
+        }
         if settings_snapshot.should_disable_telemetry() {
             log::info!("Not writing queued events to disk because telemetry is disabled.");
             return Result::Ok(());
@@ -199,6 +231,9 @@ impl TelemetryApi {
 
     #[cfg(not(target_family = "wasm"))]
     fn persist_events_to_telemetry_log_file(&self, events: Vec<Event>) -> Result<()> {
+        if !ChannelState::is_telemetry_available() {
+            return Ok(());
+        }
         let log_directory = warp_logging::log_directory()?;
         let telemetry_file_path = log_directory.join(&*ChannelState::telemetry_file_name());
 
@@ -218,6 +253,9 @@ impl TelemetryApi {
         event: impl warp_core::telemetry::TelemetryEvent,
         settings_snapshot: PrivacySettingsSnapshot,
     ) -> Result<()> {
+        if !ChannelState::is_telemetry_available() {
+            return Ok(());
+        }
         let event = warpui::telemetry::create_event(
             user_id.map(|uid| uid.as_string()),
             anonymous_id,
@@ -241,7 +279,9 @@ impl TelemetryApi {
         settings_snapshot: PrivacySettingsSnapshot,
     ) -> impl Future<Output = Result<()>> + '_ {
         let work = async move {
-            if settings_snapshot.should_disable_telemetry() {
+            if !ChannelState::is_telemetry_available()
+                || settings_snapshot.should_disable_telemetry()
+            {
                 log::info!("Not sending telemetry event because telemetry is disabled.");
                 return Result::Ok(());
             }
@@ -305,6 +345,9 @@ impl TelemetryApi {
         messages: Vec<RudderBatchMessageWithMetadata>,
         settings_snapshot: PrivacySettingsSnapshot,
     ) -> Result<()> {
+        if !ChannelState::is_telemetry_available() {
+            return Ok(());
+        }
         if messages.is_empty() {
             log::debug!("Dropping empty RudderStack telemetry batch");
             return Ok(());
@@ -382,6 +425,9 @@ impl TelemetryApi {
         mut msg: RudderMessage,
         rudder_stack_destination: RudderStackDestination,
     ) -> Result<()> {
+        if !ChannelState::is_telemetry_available() {
+            return Ok(());
+        }
         msg.attach_context();
 
         let path = match msg {

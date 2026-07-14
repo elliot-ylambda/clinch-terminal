@@ -19,7 +19,7 @@ fn agent_status_action_toggles_only_the_clinch_badge_setting() {
         let (_, view) = app.add_window(WindowStyle::NotStealFocus, ClinchSettingsPageView::new);
 
         view.update(&mut app, |view, ctx| {
-            view.handle_action(&ClinchSettingsPageAction::ToggleAgentStatusOnTabs, ctx);
+            view.handle_action(&ClinchSettingsPageAction::AgentStatusOnTabs, ctx);
         });
 
         let after = SessionSettings::handle(&app)
@@ -41,7 +41,7 @@ fn plan_limits_action_toggles_the_existing_opt_in_setting() {
         let (_, view) = app.add_window(WindowStyle::NotStealFocus, ClinchSettingsPageView::new);
 
         view.update(&mut app, |view, ctx| {
-            view.handle_action(&ClinchSettingsPageAction::ToggleCliAgentPlanLimits, ctx);
+            view.handle_action(&ClinchSettingsPageAction::CliAgentPlanLimits, ctx);
         });
 
         let after = CliAgentUsageSettings::handle(&app)

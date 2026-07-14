@@ -89,7 +89,7 @@ impl CliAgentPluginManager for CodexPluginManager {
     }
 
     fn can_auto_install(&self) -> bool {
-        FeatureFlag::CodexPlugin.is_enabled()
+        FeatureFlag::CodexPlugin.is_enabled() && super::automatic_plugin_changes_allowed()
     }
 
     fn is_installed(&self) -> bool {
@@ -270,10 +270,10 @@ impl CliAgentPluginManager for CodexPluginManager {
     }
 }
 
-static PLUGIN_INSTALL_INSTRUCTIONS: LazyLock<PluginInstructions> =
-    LazyLock::new(|| PluginInstructions {
+static PLUGIN_INSTALL_INSTRUCTIONS: LazyLock<PluginInstructions> = LazyLock::new(|| {
+    PluginInstructions {
         title: "Install Warp Plugin for Codex",
-        subtitle: "Run the following commands, then restart Codex.",
+        subtitle: "Source: Warp's warpdotdev/codex-warp repository. These commands update Codex's provider-managed plugin configuration and cache under its home directory (normally ~/.codex).",
         steps: &[
             PluginInstructionStep {
                 description: "Add the Warp plugin marketplace repository",
@@ -289,7 +289,8 @@ static PLUGIN_INSTALL_INSTRUCTIONS: LazyLock<PluginInstructions> =
             },
         ],
         post_install_notes: &["Restart Codex to activate the plugin."],
-    });
+    }
+});
 
 static NATIVE_INSTALL_INSTRUCTIONS: LazyLock<PluginInstructions> = LazyLock::new(|| {
     PluginInstructions {
@@ -323,7 +324,7 @@ static EMPTY_INSTRUCTIONS: LazyLock<PluginInstructions> = LazyLock::new(|| Plugi
 static PLUGIN_UPDATE_INSTRUCTIONS: LazyLock<PluginInstructions> = LazyLock::new(|| {
     PluginInstructions {
         title: "Update Warp Plugin for Codex",
-        subtitle: "Run the following commands, then restart Codex.",
+        subtitle: "Source: Warp's warpdotdev/codex-warp repository. These commands update Codex's provider-managed plugin configuration and cache under its home directory (normally ~/.codex).",
         steps: &[
             PluginInstructionStep {
                 description: "Upgrade the marketplace",

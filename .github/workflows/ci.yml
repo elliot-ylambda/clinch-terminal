@@ -14,22 +14,19 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -C debuginfo=line-tables-only --cfg=web_sys_unstable_apis
 
 jobs:
-  launch-gate:
-    name: macOS launch gate
+  source-checks:
+    name: Source checks
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    runs-on: macos-latest
-    timeout-minutes: 90
+    runs-on: macos-15-intel
+    timeout-minutes: 75
     steps:
-      # No `lfs: true`: this fork's LFS store has no objects, and shipped
-      # builds compile from the committed LFS pointer files (see
-      # .github/actions/prepare_environment/action.yml).
       - name: Checkout sources
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -39,26 +36,30 @@ jobs:
           target_os: macos
           is_self_hosted: false
           install_test_deps: true
-          cache_key: clinch-macos
+          cache_key: clinch-source-checks
 
-      - name: Install test and security runners
+      - name: Install dependency audit runner
         uses: taiki-e/install-action@b8cecb83565409bcc297b2df6e77f030b2a468d5 # v2.82.0
         with:
-          tool: nextest,cargo-deny
+          tool: cargo-deny
 
       - name: Check Rust and repository formatting
         run: ./script/format --check
 
-      - name: Check installer and agent integration syntax
+      - name: Check shipped script syntax
         shell: bash
         run: |
           sh -n install.sh
-          bash -n script/launch-check script/macos/bundle script/prepare_bundled_resources \
-            script/update-installed-clinch script/update_plist script/verify-clinch-release
-          bash -n tools/agent-resume/*.sh tools/agent-resume/clinch-agent-resume tools/agent-resume/warp-agent-resume
+          bash -n uninstall.sh resources/update/clinch-update-helper \
+            script/check_license_config_sync script/clinch-update-manifest \
+            script/configure-clinch-release-repository \
+            script/launch-check script/macos/bundle script/next-clinch-update-sequence \
+            script/prepare_bundled_resources script/update_plist script/verify-clinch-release
+          bash -n tools/agent-resume/*.sh tools/agent-resume/clinch-agent-resume \
+            tools/agent-resume/warp-agent-resume tools/agent-resume/tests/*.sh
           zsh -n tools/agent-resume/claude.zsh tools/agent-resume/clinch_agent_resume_launch
 
-      - name: Test zero-config agent capture and resume
+      - name: Test installer, integrations, manifests, and removal
         shell: bash
         run: |
           for test in tools/agent-resume/tests/test_*.sh; do
@@ -70,20 +71,64 @@ jobs:
             fi
           done
 
+      - name: Audit dependency advisories for both public architectures
+        run: |
+          for target in aarch64-apple-darwin x86_64-apple-darwin; do
+            cargo metadata --locked --format-version 1 --filter-platform "$target" > "$RUNNER_TEMP/$target.json"
+            cargo deny check advisories --metadata-path "$RUNNER_TEMP/$target.json"
+          done
+
+      - name: Check dependency licenses and notice policy
+        run: |
+          ./script/check_license_config_sync
+          cargo deny check licenses
+
+  stable-build-and-lint:
+    name: Stable build and lint
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: macos-15-intel
+    timeout-minutes: 120
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Prepare public macOS build environment
+        uses: ./.github/actions/prepare_environment
+        with:
+          target_os: macos
+          is_self_hosted: false
+          install_test_deps: true
+          cache_key: clinch-stable-build
+
       - name: Check the stable Clinch binary with release defaults
         run: cargo check --locked --bin stable
-
-      - name: Run shipped component tests
-        run: cargo nextest run --locked -p warp -p warpui -p cli_agent_usage
 
       - name: Lint shipped components
         run: |
           cargo clippy --locked -p warp --lib --bin stable --tests --all-features -- -D warnings
           cargo clippy --locked -p cli_agent_usage --all-targets --all-features -- -D warnings
 
-      - name: Audit dependency advisories
-        run: |
-          for target in aarch64-apple-darwin x86_64-apple-darwin; do
-            cargo metadata --locked --format-version 1 --filter-platform "$target" > "$RUNNER_TEMP/$target.json"
-            cargo deny check advisories --metadata-path "$RUNNER_TEMP/$target.json"
-          done
+  component-tests:
+    name: Component tests
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: macos-15-intel
+    timeout-minutes: 120
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Prepare public macOS build environment
+        uses: ./.github/actions/prepare_environment
+        with:
+          target_os: macos
+          is_self_hosted: false
+          install_test_deps: true
+          cache_key: clinch-component-tests
+
+      - name: Install nextest
+        uses: taiki-e/install-action@b8cecb83565409bcc297b2df6e77f030b2a468d5 # v2.82.0
+        with:
+          tool: nextest
+
+      - name: Run shipped component tests
+        run: cargo nextest run --locked -p warp -p warpui -p cli_agent_usage

@@ -3,6 +3,7 @@ use std::collections::HashMap;
 
 use ::settings::{Setting, ToggleableSetting};
 use warpui::elements::{Element, MouseStateHandle};
+use warpui::ui_components::button::ButtonVariant;
 use warpui::ui_components::components::UiComponent;
 use warpui::ui_components::switch::SwitchStateHandle;
 use warpui::{AppContext, Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle};
@@ -19,13 +20,15 @@ use crate::terminal::session_settings::{NotificationsSettings, SessionSettings};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ClinchSettingsPageAction {
-    ToggleAgentStatusOnTabs,
-    ToggleCliAgentPlanLimits,
+    SessionCapture,
+    AgentStatusOnTabs,
+    CliAgentPlanLimits,
 }
 
 pub struct ClinchSettingsPageView {
     page: PageType<Self>,
     local_only_icon_tooltip_states: RefCell<HashMap<String, MouseStateHandle>>,
+    session_capture_enabled: bool,
 }
 
 impl ClinchSettingsPageView {
@@ -35,8 +38,10 @@ impl ClinchSettingsPageView {
             ctx.notify()
         });
 
-        let agent_widgets: Vec<Box<dyn SettingsWidget<View = Self>>> =
-            vec![Box::new(AgentStatusBadgesWidget::default())];
+        let agent_widgets: Vec<Box<dyn SettingsWidget<View = Self>>> = vec![
+            Box::new(SessionCaptureWidget::default()),
+            Box::new(AgentStatusBadgesWidget::default()),
+        ];
         let mut usage_widgets: Vec<Box<dyn SettingsWidget<View = Self>>> = vec![];
         if CliAgentUsageSettings::as_ref(ctx)
             .show_plan_limits
@@ -53,6 +58,10 @@ impl ClinchSettingsPageView {
         Self {
             page: PageType::new_categorized(categories, Some("Clinch Settings")),
             local_only_icon_tooltip_states: RefCell::new(HashMap::new()),
+            #[cfg(target_os = "macos")]
+            session_capture_enabled: crate::agent_resume::capture_layer_enabled(),
+            #[cfg(not(target_os = "macos"))]
+            session_capture_enabled: false,
         }
     }
 }
@@ -66,7 +75,34 @@ impl TypedActionView for ClinchSettingsPageView {
 
     fn handle_action(&mut self, action: &Self::Action, ctx: &mut ViewContext<Self>) {
         match action {
-            ClinchSettingsPageAction::ToggleAgentStatusOnTabs => {
+            ClinchSettingsPageAction::SessionCapture => {
+                #[cfg(target_os = "macos")]
+                {
+                    let next = !self.session_capture_enabled;
+                    let result = crate::agent_resume::set_capture_layer_enabled(next);
+                    self.session_capture_enabled = crate::agent_resume::capture_layer_enabled();
+                    let window_id = ctx.window_id();
+                    crate::ToastStack::handle(ctx).update(ctx, |toast_stack, ctx| {
+                        let toast = match result {
+                            Ok(()) if next => crate::view_components::DismissibleToast::success(
+                                "Session capture enabled".to_owned(),
+                            ),
+                            Ok(()) => crate::view_components::DismissibleToast::success(
+                                "Session capture integration removed".to_owned(),
+                            ),
+                            Err(error) => {
+                                log::error!("could not change Clinch session capture: {error}");
+                                crate::view_components::DismissibleToast::error(format!(
+                                    "Could not change session capture: {error}"
+                                ))
+                            }
+                        };
+                        toast_stack.add_ephemeral_toast(toast, window_id, ctx);
+                    });
+                    ctx.notify();
+                }
+            }
+            ClinchSettingsPageAction::AgentStatusOnTabs => {
                 let current = SessionSettings::as_ref(ctx).notifications.value().clone();
                 let next = NotificationsSettings {
                     show_agent_status_on_tabs: !current.show_agent_status_on_tabs,
@@ -77,13 +113,65 @@ impl TypedActionView for ClinchSettingsPageView {
                 });
                 ctx.notify();
             }
-            ClinchSettingsPageAction::ToggleCliAgentPlanLimits => {
+            ClinchSettingsPageAction::CliAgentPlanLimits => {
                 CliAgentUsageSettings::handle(ctx).update(ctx, |settings, ctx| {
                     report_if_error!(settings.show_plan_limits.toggle_and_save_value(ctx));
                 });
                 ctx.notify();
             }
         }
+    }
+}
+
+#[derive(Default)]
+struct SessionCaptureWidget {
+    button_state: MouseStateHandle,
+}
+
+impl SettingsWidget for SessionCaptureWidget {
+    type View = ClinchSettingsPageView;
+
+    fn search_terms(&self) -> &str {
+        "clinch claude codex session capture hooks integration local conversations enable remove"
+    }
+
+    fn render(
+        &self,
+        view: &Self::View,
+        appearance: &Appearance,
+        _app: &AppContext,
+    ) -> Box<dyn Element> {
+        let label = if view.session_capture_enabled {
+            "Remove integration"
+        } else {
+            "Enable session capture"
+        };
+        let button = appearance
+            .ui_builder()
+            .button(ButtonVariant::Secondary, self.button_state.clone())
+            .with_text_label(label.to_owned())
+            .build()
+            .on_click(|ctx, _, _| {
+                ctx.dispatch_typed_action(ClinchSettingsPageAction::SessionCapture);
+            })
+            .finish();
+
+        render_body_item::<ClinchSettingsPageAction>(
+            "Claude Code and Codex session capture".into(),
+            None,
+            LocalOnlyIconState::Hidden,
+            ToggleState::Enabled,
+            appearance,
+            button,
+            Some(
+                "Optional. Enabling adds clearly marked hooks to ~/.claude/settings.json and \
+                 ~/.codex/config.toml, installs helpers in ~/.warp/agent-resume-bin/, stores local \
+                 session metadata in ~/.warp/agent-resume/, and records consent under Clinch's \
+                 Application Support directory. Removing it keeps captured metadata unless you \
+                 purge it separately. No notification plugin is installed."
+                    .into(),
+            ),
+        )
     }
 }
 
@@ -158,7 +246,7 @@ impl SettingsWidget for AgentStatusBadgesWidget {
                 .check(enabled)
                 .build()
                 .on_click(|ctx, _, _| {
-                    ctx.dispatch_typed_action(ClinchSettingsPageAction::ToggleAgentStatusOnTabs);
+                    ctx.dispatch_typed_action(ClinchSettingsPageAction::AgentStatusOnTabs);
                 })
                 .finish(),
             Some(
@@ -206,7 +294,7 @@ impl SettingsWidget for CliAgentPlanLimitsWidget {
                 .check(show_plan_limits)
                 .build()
                 .on_click(|ctx, _, _| {
-                    ctx.dispatch_typed_action(ClinchSettingsPageAction::ToggleCliAgentPlanLimits);
+                    ctx.dispatch_typed_action(ClinchSettingsPageAction::CliAgentPlanLimits);
                 })
                 .finish(),
             Some(

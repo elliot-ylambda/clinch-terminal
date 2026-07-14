@@ -59,7 +59,7 @@ impl CliAgentPluginManager for ClaudeCodePluginManager {
     }
 
     fn can_auto_install(&self) -> bool {
-        true
+        super::automatic_plugin_changes_allowed()
     }
 
     fn is_installed(&self) -> bool {
@@ -212,7 +212,7 @@ impl CliAgentPluginManager for ClaudeCodePluginManager {
 static INSTALL_INSTRUCTIONS: LazyLock<PluginInstructions> = LazyLock::new(|| {
     PluginInstructions {
         title: "Install Warp Plugin for Claude Code",
-        subtitle: "Ensure that jq is installed on your machine. Then, run these commands.",
+        subtitle: "Source: Warp's warpdotdev/claude-code-warp repository. These commands update Claude Code's provider-managed plugin records under ~/.claude/plugins. Ensure jq is installed first.",
         steps: &[
             PluginInstructionStep {
                 description: "Add the Warp plugin marketplace repository",
@@ -235,9 +235,10 @@ static INSTALL_INSTRUCTIONS: LazyLock<PluginInstructions> = LazyLock::new(|| {
     }
 });
 
-static UPDATE_INSTRUCTIONS: LazyLock<PluginInstructions> = LazyLock::new(|| PluginInstructions {
+static UPDATE_INSTRUCTIONS: LazyLock<PluginInstructions> = LazyLock::new(|| {
+    PluginInstructions {
     title: "Update Warp Plugin for Claude Code",
-    subtitle: "Run the following commands.",
+    subtitle: "Source: Warp's warpdotdev/claude-code-warp repository. These commands replace Claude Code's provider-managed marketplace/plugin records under ~/.claude/plugins.",
     steps: &[
         PluginInstructionStep {
             description: "Remove the existing marketplace (if present)",
@@ -259,6 +260,7 @@ static UPDATE_INSTRUCTIONS: LazyLock<PluginInstructions> = LazyLock::new(|| Plug
         },
     ],
     post_install_notes: &["Restart Claude Code to activate the update."],
+}
 });
 
 fn check_installed(claude_dir: &Path) -> bool {

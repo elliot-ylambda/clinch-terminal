@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 
-use super::{compare_versions, plugin_manager_for};
+use super::{automatic_plugin_changes_allowed_for, compare_versions, plugin_manager_for};
 use crate::terminal::CLIAgent;
 
 #[test]
@@ -35,6 +35,13 @@ fn returns_none_for_unsupported_agents() {
     assert!(plugin_manager_for(CLIAgent::Droid).is_none());
     assert!(plugin_manager_for(CLIAgent::Copilot).is_none());
     assert!(plugin_manager_for(CLIAgent::Unknown).is_none());
+}
+
+#[test]
+fn clinch_never_allows_implicit_provider_plugin_changes() {
+    assert!(!automatic_plugin_changes_allowed_for("sh.clinch.Clinch"));
+    assert!(!automatic_plugin_changes_allowed_for("sh.clinch.ClinchDev"));
+    assert!(automatic_plugin_changes_allowed_for("dev.warp.Warp-Stable"));
 }
 
 #[test]

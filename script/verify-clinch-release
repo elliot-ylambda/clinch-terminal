@@ -1,107 +1,208 @@
 #!/usr/bin/env bash
-# Verifies the exact app/zip/DMG that the Makefile is about to publish.
+# Verifies the exact app/ZIP/DMG and authenticated metadata before publication.
 set -euo pipefail
 
-APP="${1:?usage: verify-clinch-release <app> <zip> <sha256> <dmg> <version> <manifest> <signature> <sequence>}"
+APP="${1:?usage: verify-clinch-release <app> <zip> <sha256> <dmg> <version> <manifest> <raw-signature> <ssh-signature> <sequence>}"
 ZIP="${2:?missing zip}"
 SHA_FILE="${3:?missing checksum sidecar}"
 DMG="${4:?missing dmg}"
 VERSION="${5:?missing version}"
 MANIFEST="${6:?missing update manifest}"
-SIGNATURE="${7:?missing update signature}"
-UPDATE_SEQUENCE="${8:?missing update sequence}"
+RAW_SIGNATURE="${7:?missing raw update signature}"
+SSH_SIGNATURE="${8:?missing SSH release signature}"
+UPDATE_SEQUENCE="${9:?missing update sequence}"
+MINIMUM_MACOS="${CLINCH_MINIMUM_MACOS_VERSION:-13.0}"
+ALLOWED_SIGNERS="resources/release/clinch-release-allowed-signers"
 
 fail() { echo "release verification failed: $*" >&2; exit 1; }
-for path in "$APP" "$ZIP" "$SHA_FILE" "$DMG" "$MANIFEST" "$SIGNATURE"; do
-  [[ -e "$path" ]] || fail "missing $path"
+for item in \
+  "$APP" "$ZIP" "$SHA_FILE" "$DMG" "$MANIFEST" "$RAW_SIGNATURE" \
+  "$SSH_SIGNATURE" "$ALLOWED_SIGNERS"; do
+  [[ -e "$item" ]] || fail "missing $item"
 done
+[[ "$VERSION" =~ ^v[0-9]+(\.[0-9]+)+$ ]] \
+  || fail "release tag must contain only dot-separated integers: $VERSION"
+[[ "$UPDATE_SEQUENCE" =~ ^[0-9]+$ && "$UPDATE_SEQUENCE" -gt 0 ]] \
+  || fail "invalid update sequence"
 
-PLIST="$APP/Contents/Info.plist"
-[[ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$PLIST")" == "sh.clinch.Clinch" ]] \
-  || fail "bundle identifier is not sh.clinch.Clinch"
-[[ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleName' "$PLIST")" == "Clinch" ]] \
-  || fail "bundle name is not Clinch"
-[[ "$(/usr/libexec/PlistBuddy -c 'Print WarpVersion' "$PLIST")" == "$VERSION" ]] \
-  || fail "bundle version does not match $VERSION"
-[[ "$(/usr/libexec/PlistBuddy -c 'Print ClinchUpdateSequence' "$PLIST")" == "$UPDATE_SEQUENCE" ]] \
-  || fail "bundle update sequence does not match $UPDATE_SEQUENCE"
+verify_app() {
+  local app="$1" label="$2" plist binary entitlements forbidden key
+  plist="$app/Contents/Info.plist"
+  [[ -f "$plist" ]] || fail "$label has no Info.plist"
+  [[ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$plist")" == "sh.clinch.Clinch" ]] \
+    || fail "$label bundle identifier is not sh.clinch.Clinch"
+  [[ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleName' "$plist")" == "Clinch" ]] \
+    || fail "$label bundle name is not Clinch"
+  [[ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$plist")" == "stable" ]] \
+    || fail "$label executable is not stable"
+  [[ "$(/usr/libexec/PlistBuddy -c 'Print WarpVersion' "$plist")" == "$VERSION" ]] \
+    || fail "$label version does not match $VERSION"
+  [[ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$plist")" == "${VERSION#v}" ]] \
+    || fail "$label short version does not match $VERSION"
+  [[ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$plist")" == "$UPDATE_SEQUENCE" ]] \
+    || fail "$label build version does not match $UPDATE_SEQUENCE"
+  [[ "$(/usr/libexec/PlistBuddy -c 'Print ClinchUpdateSequence' "$plist")" == "$UPDATE_SEQUENCE" ]] \
+    || fail "$label update sequence does not match $UPDATE_SEQUENCE"
+  [[ "$(/usr/libexec/PlistBuddy -c 'Print LSMinimumSystemVersion' "$plist")" == "$MINIMUM_MACOS" ]] \
+    || fail "$label minimum macOS is not $MINIMUM_MACOS"
 
-codesign --verify --deep --strict "$APP" || fail "app code signature is invalid"
-entitlements="$(codesign -d --entitlements :- "$APP" 2>/dev/null || true)"
-[[ "$entitlements" != *"get-task-allow"* ]] \
-  || fail "release carries the development-only get-task-allow entitlement"
+  codesign --verify --deep --strict "$app" || fail "$label code signature is invalid"
+  entitlements="$(codesign -d --entitlements :- "$app" 2>/dev/null || true)"
+  for forbidden in \
+    get-task-allow disable-library-validation automation.apple-events device.audio-input \
+    device.camera personal-information.addressbook personal-information.calendars \
+    personal-information.location personal-information.photos-library application-groups; do
+    [[ "$entitlements" != *"$forbidden"* ]] \
+      || fail "$label carries forbidden entitlement $forbidden"
+  done
+  for key in \
+    NSAppleEventsUsageDescription NSCameraUsageDescription NSMicrophoneUsageDescription \
+    NSContactsUsageDescription NSCalendarsUsageDescription NSLocationUsageDescription \
+    NSPhotoLibraryUsageDescription; do
+    if /usr/libexec/PlistBuddy -c "Print $key" "$plist" >/dev/null 2>&1; then
+      fail "$label carries unused privacy description $key"
+    fi
+  done
 
-MAIN_BINARY="$APP/Contents/MacOS/stable"
-[[ -x "$MAIN_BINARY" ]] || fail "bundle omitted its stable executable"
-if [[ "${REQUIRE_UNIVERSAL:-1}" == "1" ]]; then
-  lipo "$MAIN_BINARY" -verify_arch x86_64 arm64 >/dev/null \
-    || fail "public release is not universal (x86_64 + arm64)"
-fi
+  binary="$app/Contents/MacOS/stable"
+  [[ -x "$binary" ]] || fail "$label omitted its stable executable"
+  if [[ "${REQUIRE_UNIVERSAL:-1}" == "1" ]]; then
+    lipo "$binary" -verify_arch x86_64 arm64 >/dev/null \
+      || fail "$label is not universal (x86_64 + arm64)"
+  fi
 
-for file in \
-  "$APP/Contents/Resources/agent-resume/install.sh" \
-  "$APP/Contents/Resources/agent-resume/agent-json" \
-  "$APP/Contents/Resources/agent-resume/agent-json.js" \
-  "$APP/Contents/Resources/bin/clinch_agent_resume_launch" \
-  "$APP/Contents/Resources/bin/warp_agent_resume_launch" \
-  "$APP/Contents/Resources/update/clinch-update-public-key.json" \
-  "$APP/Contents/Resources/update/clinch-update-helper" \
-  "$APP/Contents/Resources/update/clinch-update-authorizer.applescript"; do
-  [[ -f "$file" ]] || fail "bundle omitted ${file#"$APP/"}"
-done
-[[ -x "$APP/Contents/Resources/agent-resume/install.sh" ]] \
-  || fail "bundled installer is not executable"
-[[ -x "$APP/Contents/Resources/bin/clinch_agent_resume_launch" ]] \
-  || fail "bundled resume launcher is not executable"
+  for item in \
+    "$app/Contents/Resources/agent-resume/install.sh" \
+    "$app/Contents/Resources/agent-resume/unwire-claude-hooks.sh" \
+    "$app/Contents/Resources/agent-resume/agent-json" \
+    "$app/Contents/Resources/agent-resume/agent-json.js" \
+    "$app/Contents/Resources/bin/clinch_agent_resume_launch" \
+    "$app/Contents/Resources/bin/warp_agent_resume_launch"; do
+    [[ -f "$item" ]] || fail "$label omitted ${item#"$app/"}"
+  done
+  [[ -x "$app/Contents/Resources/agent-resume/install.sh" ]] \
+    || fail "$label integration manager is not executable"
+  [[ ! -e "$app/Contents/Resources/agent-resume/install-agent-plugins.sh" ]] \
+    || fail "$label bundled the floating provider-plugin installer"
+  [[ ! -e "$app/Contents/Resources/update/clinch-update-helper" ]] \
+    || fail "$label bundled the disabled privileged updater helper"
+}
+
+verify_app "$APP" "built app"
 
 expected="$(awk 'NF { print $1; exit }' "$SHA_FILE" | tr 'A-F' 'a-f')"
 actual="$(shasum -a 256 "$ZIP" | awk '{ print $1 }')"
-[[ "$expected" == "$actual" ]] || fail "zip checksum sidecar does not match"
+[[ "$expected" =~ ^[0-9a-f]{64}$ ]] || fail "checksum sidecar has an invalid digest"
+[[ "$expected" == "$actual" ]] || fail "ZIP checksum sidecar does not match"
 
-./script/clinch-update-manifest verify "$MANIFEST" "$SIGNATURE" \
-  resources/update/clinch-update-public-key.json || fail "update manifest signature is invalid"
-/usr/bin/python3 - "$MANIFEST" "$ZIP" "$VERSION" "$UPDATE_SEQUENCE" <<'PY' || exit 1
+./script/clinch-update-manifest verify "$MANIFEST" "$RAW_SIGNATURE" \
+  resources/update/clinch-update-public-key.json || fail "raw manifest signature is invalid"
+ssh-keygen -Y verify -f "$ALLOWED_SIGNERS" -I clinch-release -n clinch-install \
+  -s "$SSH_SIGNATURE" < "$MANIFEST" >/dev/null \
+  || fail "release SSH signature is invalid"
+
+/usr/bin/python3 - "$MANIFEST" "$ZIP" "$VERSION" "$UPDATE_SEQUENCE" "$MINIMUM_MACOS" <<'PY' \
+  || exit 1
 import hashlib, json, pathlib, sys
 manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 archive = pathlib.Path(sys.argv[2])
+version = sys.argv[3]
 expected = {
     "schema_version": 1,
-    "version": sys.argv[3],
+    "repository": "elliot-ylambda/clinch-terminal",
+    "version": version,
+    "tag": version,
     "sequence": int(sys.argv[4]),
+    "minimum_macos_version": sys.argv[5],
     "bundle_id": "sh.clinch.Clinch",
+    "signing_key_id": "a353cda3ad59f128",
+    "notarized": False,
+    "architectures": ["arm64", "x86_64"],
+    "release_url": f"https://github.com/elliot-ylambda/clinch-terminal/releases/tag/{version}",
 }
 for key, value in expected.items():
     if manifest.get(key) != value:
         raise SystemExit(f"release verification failed: manifest {key} mismatch")
+expected_url = (
+    "https://github.com/elliot-ylambda/clinch-terminal/releases/download/"
+    f"{version}/Clinch.app.zip"
+)
 if manifest.get("archive", {}).get("name") != "Clinch.app.zip":
     raise SystemExit("release verification failed: unexpected manifest archive name")
+if manifest["archive"].get("url") != expected_url:
+    raise SystemExit("release verification failed: unexpected manifest archive URL")
 if manifest["archive"].get("size") != archive.stat().st_size:
     raise SystemExit("release verification failed: manifest archive size mismatch")
-digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-if manifest["archive"].get("sha256") != digest:
+digest = hashlib.sha256()
+with archive.open("rb") as source:
+    for chunk in iter(lambda: source.read(1024 * 1024), b""):
+        digest.update(chunk)
+if manifest["archive"].get("sha256") != digest.hexdigest():
     raise SystemExit("release verification failed: manifest archive hash mismatch")
 PY
 
 TMP="$(mktemp -d -t clinch-release-verify)"
-trap 'rm -rf "$TMP"' EXIT
+MOUNT="$TMP/mount"
+MOUNTED=0
+cleanup() {
+  if (( MOUNTED )); then
+    hdiutil detach "$MOUNT" -force >/dev/null 2>&1 || true
+  fi
+  rm -rf "$TMP"
+}
+trap cleanup EXIT
+
 ditto -x -k "$ZIP" "$TMP/unzipped"
 ZIPPED_APP="$TMP/unzipped/Clinch.app"
-[[ -d "$ZIPPED_APP" ]] || fail "zip does not contain Clinch.app at its root"
-codesign --verify --deep --strict "$ZIPPED_APP" \
-  || fail "zip round-trip invalidated the app signature"
-if [[ "${REQUIRE_UNIVERSAL:-1}" == "1" ]]; then
-  lipo "$ZIPPED_APP/Contents/MacOS/stable" -verify_arch x86_64 arm64 >/dev/null \
-    || fail "zip round-trip lost a required architecture"
-fi
+[[ -d "$ZIPPED_APP" ]] || fail "ZIP does not contain Clinch.app at its root"
+verify_app "$ZIPPED_APP" "ZIP app"
 
-# Exercise the same clean-account setup users receive, with no third-party tools on PATH.
+# Default invocation and first launch must not infer integration consent.
 mkdir -p "$TMP/home"
 HOME="$TMP/home" PATH="/usr/bin:/bin" \
-  /bin/bash "$ZIPPED_APP/Contents/Resources/agent-resume/install.sh" --quiet
-[[ -f "$TMP/home/.claude/settings.json" ]] || fail "first-run Claude setup did not land"
-[[ -f "$TMP/home/.codex/config.toml" ]] || fail "first-run Codex setup did not land"
+  /bin/bash "$ZIPPED_APP/Contents/Resources/agent-resume/install.sh" >/dev/null
+[[ ! -e "$TMP/home/.warp" ]] || fail "no-argument integration manager mutated ~/.warp"
+[[ ! -e "$TMP/home/.claude/settings.json" ]] \
+  || fail "no-argument integration manager changed Claude"
+[[ ! -e "$TMP/home/.codex/config.toml" ]] \
+  || fail "no-argument integration manager changed Codex"
 
-hdiutil verify "$DMG" >/dev/null || fail "DMG verification failed"
+# Explicit enable/disable must be idempotent and preserve capture data by default.
+HOME="$TMP/home" PATH="/usr/bin:/bin" \
+  /bin/bash "$ZIPPED_APP/Contents/Resources/agent-resume/install.sh" enable --quiet
+[[ -f "$TMP/home/Library/Application Support/sh.clinch.Clinch/agent-integration/enabled" ]] \
+  || fail "explicit integration enable did not record consent"
+printf '%s\n' keep > "$TMP/home/.warp/agent-resume/release-verifier-data"
+HOME="$TMP/home" PATH="/usr/bin:/bin" \
+  /bin/bash "$ZIPPED_APP/Contents/Resources/agent-resume/install.sh" disable --quiet
+[[ ! -e "$TMP/home/Library/Application Support/sh.clinch.Clinch/agent-integration/enabled" ]] \
+  || fail "integration disable retained consent"
+[[ -f "$TMP/home/.warp/agent-resume/release-verifier-data" ]] \
+  || fail "integration disable purged captured data"
+! grep -q 'agent-resume-bin/claude-capture.sh' "$TMP/home/.claude/settings.json" \
+  || fail "integration disable retained Claude hooks"
+! grep -q '^# >>> clinch agent-resume >>>$' "$TMP/home/.codex/config.toml" \
+  || fail "integration disable retained Codex hooks"
+
+hdiutil verify "$DMG" >/dev/null || fail "DMG container verification failed"
+mkdir -p "$MOUNT"
+hdiutil attach -readonly -nobrowse -mountpoint "$MOUNT" "$DMG" >/dev/null \
+  || fail "DMG could not be mounted read-only"
+MOUNTED=1
+[[ -d "$MOUNT/Clinch.app" ]] || fail "DMG does not contain Clinch.app"
+[[ -L "$MOUNT/Applications" && "$(readlink "$MOUNT/Applications")" == "/Applications" ]] \
+  || fail "DMG Applications link is missing or unsafe"
+while IFS= read -r item; do
+  case "$(basename "$item")" in
+    Clinch.app|Applications|.background|.DS_Store|.VolumeIcon.icns) ;;
+    *) fail "DMG contains unexpected root item $(basename "$item")" ;;
+  esac
+done < <(find "$MOUNT" -mindepth 1 -maxdepth 1 -print)
+verify_app "$MOUNT/Clinch.app" "DMG app"
+diff -qr "$ZIPPED_APP" "$MOUNT/Clinch.app" >/dev/null \
+  || fail "DMG and ZIP do not contain identical app files"
+hdiutil detach "$MOUNT" >/dev/null || fail "DMG could not be detached"
+MOUNTED=0
 
 if [[ "${REQUIRE_NOTARIZATION:-0}" == "1" ]]; then
   spctl --assess --type execute --verbose=2 "$APP" \
