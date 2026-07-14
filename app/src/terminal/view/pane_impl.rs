@@ -4,11 +4,10 @@ use settings::Setting as _;
 use warp_core::context_flag::ContextFlag;
 use warpui::elements::{
     ConstrainedBox, CrossAxisAlignment, Empty, Expanded, Flex, MainAxisAlignment, MainAxisSize,
-    ParentElement, Shrinkable, Text,
+    ParentElement, Shrinkable,
 };
 use warpui::prelude::{ChildView, Container};
 use warpui::text_layout::ClipConfig;
-use warpui::ui_components::button::ButtonVariant;
 use warpui::ui_components::components::UiComponent;
 #[cfg(not(target_arch = "wasm32"))]
 use warpui::ui_components::components::UiComponentStyles;
