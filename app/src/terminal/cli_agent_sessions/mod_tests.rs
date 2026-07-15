@@ -1,14 +1,26 @@
+use warp_core::channel::{Channel, ChannelConfig, ChannelState};
+use warp_core::AppId;
+use warpui::{App, Entity, EntityId};
+
 use super::event::{
     parse_event, CLIAgentEvent, CLIAgentEventPayload, CLIAgentEventSource, CLIAgentEventType,
 };
 use super::{
     merge_loaded_and_live_history, prompt_from_trusted_event, session_context_enabled_for,
     CLIAgentInputEntrypoint, CLIAgentInputState, CLIAgentSession, CLIAgentSessionContext,
-    CLIAgentSessionKey, CLIAgentSessionStatus, CLIAgentSessionsModel, PromptHistoryLoadState,
+    CLIAgentSessionKey, CLIAgentSessionStatus, CLIAgentSessionsModel, CLIAgentSessionsModelEvent,
+    PromptHistoryLoadState,
 };
 use crate::agent_resume::{AgentPrompt, AgentPromptHistory, AgentResumeProvider};
 use crate::ai::blocklist::{InputConfig, InputType};
 use crate::terminal::CLIAgent;
+
+#[derive(Default)]
+struct CapturedSessionEvents(Vec<CLIAgentSessionsModelEvent>);
+
+impl Entity for CapturedSessionEvents {
+    type Event = ();
+}
 
 #[test]
 fn parse_stop_notification() {
@@ -858,6 +870,67 @@ fn only_rich_prompt_submit_is_trusted_as_user_history() {
         Some("  \n"),
     ))
     .is_none());
+}
+
+/// This test mutates the process-global channel state. The repository's required nextest runner
+/// isolates tests by process, so the Clinch app ID cannot leak into another test.
+#[test]
+fn appending_prompt_without_session_id_emits_session_updated() {
+    ChannelState::set(ChannelState::new(
+        Channel::Local,
+        ChannelConfig::no_backend(AppId::new("sh", "clinch", "ClinchDev"), "clinch-test.log"),
+    ));
+
+    App::test((), |mut app| async move {
+        let sessions = app.add_model(|_| CLIAgentSessionsModel::new());
+        let captured_events = app.add_model(|_| CapturedSessionEvents::default());
+        captured_events.update(&mut app, |_, ctx| {
+            ctx.subscribe_to_model(&sessions, |captured, _, event, _| {
+                captured.0.push(event.clone());
+            });
+        });
+
+        let terminal_view_id = EntityId::new();
+        sessions.update(&mut app, |model, ctx| {
+            model.set_session(terminal_view_id, idle_test_session(CLIAgent::Claude), ctx);
+        });
+        captured_events.update(&mut app, |captured, _| captured.0.clear());
+
+        sessions.update(&mut app, |model, ctx| {
+            model.update_from_event(
+                terminal_view_id,
+                &CLIAgentEvent {
+                    source: CLIAgentEventSource::RichPlugin,
+                    v: 1,
+                    agent: CLIAgent::Claude,
+                    event: CLIAgentEventType::PromptSubmit,
+                    session_id: None,
+                    cwd: None,
+                    project: None,
+                    payload: CLIAgentEventPayload {
+                        query: Some("hi cc".to_owned()),
+                        ..Default::default()
+                    },
+                },
+                ctx,
+            );
+        });
+
+        sessions.read(&app, |model, _| {
+            let session = model.session(terminal_view_id).expect("session exists");
+            assert_eq!(session.prompt_count(), 1);
+            assert_eq!(session.latest_prompt().unwrap().text, "hi cc");
+        });
+        captured_events.read(&app, |captured, _| {
+            assert!(captured.0.iter().any(|event| matches!(
+                event,
+                CLIAgentSessionsModelEvent::SessionUpdated {
+                    terminal_view_id: updated_view_id,
+                    agent: CLIAgent::Claude,
+                } if *updated_view_id == terminal_view_id
+            )));
+        });
+    });
 }
 
 #[test]

@@ -824,6 +824,7 @@ impl CLIAgentSessionsModel {
             });
         }
 
+        let prompt_history_changed = live_prompt.is_some();
         if let Some(prompt) = live_prompt {
             session.prompt_history.prompts.push(prompt);
         }
@@ -833,12 +834,12 @@ impl CLIAgentSessionsModel {
             CLIAgentEventType::SessionStart | CLIAgentEventType::PromptSubmit
         );
 
-        if matches!(
-            event_type,
-            CLIAgentEventType::SessionStart
-                | CLIAgentEventType::PromptSubmit
-                | CLIAgentEventType::ToolComplete
-        ) {
+        if prompt_history_changed
+            || matches!(
+                event_type,
+                CLIAgentEventType::SessionStart | CLIAgentEventType::ToolComplete
+            )
+        {
             ctx.emit(CLIAgentSessionsModelEvent::SessionUpdated {
                 terminal_view_id,
                 agent: session.agent,

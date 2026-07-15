@@ -4808,6 +4808,10 @@ impl TerminalView {
             terminal_view.restore_conversations_on_view_creation(restoration, ctx);
         }
 
+        // Session state may already exist when a restored terminal view is constructed. Hydrate
+        // the dropdown once so its selected item does not depend solely on a later model event.
+        terminal_view.sync_cli_agent_message_history_dropdown(ctx);
+
         send_telemetry_from_ctx!(TelemetryEvent::SessionCreation, ctx);
 
         terminal_view
@@ -13373,8 +13377,8 @@ impl TerminalView {
                     | CLIAgentSessionsModelEvent::Ended { .. }
             )
         {
-            self.sync_cli_agent_message_history_dropdown(ctx);
             self.update_pane_configuration(ctx);
+            self.sync_cli_agent_message_history_dropdown(ctx);
             ctx.notify();
         }
         if event.terminal_view_id() == self.view_id
@@ -13537,12 +13541,21 @@ impl TerminalView {
             );
         }
 
-        let trigger = self.pane_configuration.as_ref(ctx).title().to_owned();
-        let trigger = if trigger.trim().is_empty() {
-            label
-        } else {
-            trigger
-        };
+        let pane_title = self
+            .pane_configuration
+            .as_ref(ctx)
+            .title()
+            .trim()
+            .to_owned();
+        let latest_prompt = history
+            .prompts
+            .last()
+            .map(|prompt| prompt.text.split_whitespace().collect::<Vec<_>>().join(" "))
+            .filter(|prompt| !prompt.is_empty());
+        let trigger = (!pane_title.is_empty())
+            .then_some(pane_title)
+            .or(latest_prompt)
+            .unwrap_or(label);
         let selected_index = usize::from(!history.prompts.is_empty());
         self.cli_agent_message_history_dropdown
             .update(ctx, move |dropdown, ctx| {
