@@ -56,7 +56,7 @@ Messages can send through its Apple Events scripting interface but exposes no su
 ### Packaging and release policy
 
 - Raise Clinch's deployment target, Info.plist minimum, release manifest default, scripts, documentation, and verification expectations from macOS 13 to 14.
-- Build the helper for arm64 and x86_64, combine it into a universal executable under `Contents/Helpers`, and self-test it before copying. Release signing performs an initial deep app sign, explicitly re-signs the helper with its Apple Events entitlement, and finally re-seals the outer app. Developer runs build the host architecture only.
+- Build the helper for arm64 and x86_64, combine it into a universal executable under `Contents/Helpers`, and self-test it before copying. Copied SwiftPM resource directories receive canonical resource-bundle metadata so macOS deep signing recognizes and seals them as nested bundles. Release signing performs an initial deep app sign, explicitly re-signs the helper with its Apple Events entitlement, and finally re-seals the outer app. Developer runs build the host architecture only.
 - Add `NSAppleEventsUsageDescription` for Clinch and `com.apple.security.automation.apple-events` to Clinch entitlements; continue rejecting unrelated privacy entitlements. Verify the helper architecture, protocol smoke test, usage description, entitlements, and bundled licenses in release checks.
 - A stable signing identity is the production expectation for durable TCC grants. Ad-hoc development builds remain supported but surface that an update or rebuild may require permission regranting.
 

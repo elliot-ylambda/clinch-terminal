@@ -27,6 +27,26 @@ verify_binary_minimum_macos() {
   [[ "$versions" == "$MINIMUM_MACOS" ]] \
     || fail "$label deployment target is '${versions:-missing}', not $MINIMUM_MACOS"
 }
+
+verify_swift_resource_bundle() {
+  local bundle="$1"
+  local expected_identifier="$2"
+  local label="$3"
+  local plist="$bundle/Info.plist"
+  [[ -d "$bundle" ]] || fail "$label is missing"
+  [[ -f "$plist" ]] || fail "$label has no Info.plist"
+  /usr/bin/plutil -lint "$plist" >/dev/null 2>&1 \
+    || fail "$label has an invalid Info.plist"
+  [[ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$plist" 2>/dev/null)" \
+      == "$expected_identifier" ]] \
+    || fail "$label has an unexpected bundle identifier"
+  [[ "$(/usr/libexec/PlistBuddy -c 'Print CFBundlePackageType' "$plist" 2>/dev/null)" \
+      == "BNDL" ]] \
+    || fail "$label is not marked as a resource bundle"
+  codesign --verify --strict "$bundle" \
+    || fail "$label signature is invalid"
+}
+
 for item in \
   "$APP" "$ZIP" "$SHA_FILE" "$DMG" "$MANIFEST" "$RAW_SIGNATURE" \
   "$SSH_SIGNATURE" "$ALLOWED_SIGNERS"; do
@@ -106,10 +126,14 @@ verify_app() {
     || fail "$label Messages bridge is not universal (x86_64 + arm64)"
   verify_binary_minimum_macos \
     "$app/Contents/Helpers/clinch-imessage-bridge" "$label Messages bridge"
-  [[ -d "$app/Contents/Helpers/PhoneNumberKit_PhoneNumberKit.bundle" ]] \
-    || fail "$label omitted the PhoneNumberKit resource bundle"
-  [[ -d "$app/Contents/Helpers/SQLite.swift_SQLite.bundle" ]] \
-    || fail "$label omitted the SQLite.swift resource bundle"
+  verify_swift_resource_bundle \
+    "$app/Contents/Helpers/PhoneNumberKit_PhoneNumberKit.bundle" \
+    "sh.clinch.ClinchIMessageBridge.PhoneNumberKit" \
+    "$label PhoneNumberKit resource bundle"
+  verify_swift_resource_bundle \
+    "$app/Contents/Helpers/SQLite.swift_SQLite.bundle" \
+    "sh.clinch.ClinchIMessageBridge.SQLiteSwift" \
+    "$label SQLite.swift resource bundle"
   "$app/Contents/Helpers/clinch-imessage-bridge" --self-test >/dev/null \
     || fail "$label Messages bridge self-test failed"
   codesign --verify --strict "$app/Contents/Helpers/clinch-imessage-bridge" \
