@@ -689,6 +689,10 @@ const MOBILE_OVERLAY_SCRIM_ALPHA: u8 = 128;
 
 pub const NEW_TAB_BUTTON_POSITION_ID: &str = "new_tab_button";
 pub const NEW_SESSION_MENU_BUTTON_POSITION_ID: &str = "new_session_menu_button";
+/// Saved position of the tab-bar CLI-agent usage widget, used to anchor its
+/// detail panel — which is rendered at the workspace root so its click-outside
+/// underlay paints above every pane.
+pub const CLI_AGENT_USAGE_HEADER_POSITION_ID: &str = "cli_agent_usage_header";
 
 // The max length of the title of a fork toast (after which we truncate it).
 const MAX_FORK_TOAST_TITLE_LENGTH: usize = 100;
@@ -21486,60 +21490,13 @@ impl Workspace {
                 &provider_mouse_states,
                 &self.cli_agent_usage_turn_on_header_mouse_state,
             ) {
-                let mut stack = Stack::new().with_child(widget);
-                if let Some(provider) = self.cli_agent_usage_panel_provider {
-                    let (parent_anchor, child_anchor) = match provider {
-                        CliAgentUsageProvider::Claude => {
-                            (ParentAnchor::BottomLeft, ChildAnchor::TopLeft)
-                        }
-                        CliAgentUsageProvider::Codex => {
-                            (ParentAnchor::BottomRight, ChildAnchor::TopRight)
-                        }
-                    };
-                    let metric_mouse_states = match provider {
-                        CliAgentUsageProvider::Claude => {
-                            &self.cli_agent_usage_claude_metric_mouse_states
-                        }
-                        CliAgentUsageProvider::Codex => {
-                            &self.cli_agent_usage_codex_metric_mouse_states
-                        }
-                    };
-                    stack.add_positioned_overlay_child(
-                        render_cli_agent_usage_panel(
-                            &snapshot,
-                            appearance,
-                            provider,
-                            plan_limits_enabled,
-                            &visibility,
-                            CliAgentUsagePanelMouseStates {
-                                metric_checkboxes: metric_mouse_states,
-                                usage_link_mouse_state: self
-                                    .cli_agent_usage_link_mouse_state
-                                    .clone(),
-                                turn_on_mouse_state: self
-                                    .cli_agent_usage_turn_on_panel_mouse_state
-                                    .clone(),
-                            },
-                        ),
-                        OffsetPositioning::offset_from_parent(
-                            vec2f(0., 4.),
-                            ParentOffsetBounds::WindowByPosition,
-                            parent_anchor,
-                            child_anchor,
-                        ),
-                    );
-                }
-
-                let usage_status = if self.cli_agent_usage_panel_provider.is_some() {
-                    Dismiss::new(stack.finish())
-                        .on_dismiss(|ctx, _app| {
-                            ctx.dispatch_typed_action(WorkspaceAction::CloseCliAgentUsagePanel);
-                        })
-                        .prevent_interaction_with_other_elements()
-                        .finish()
-                } else {
-                    stack.finish()
-                };
+                // The detail panel is rendered at the workspace root (see
+                // `render`) so its click-outside `Dismiss` underlay paints above
+                // every pane; here we only save the widget's screen position so
+                // that root-level panel can anchor to it. Also keeps the panel
+                // clear of the tab bar's `Clipped` bounds.
+                let anchored =
+                    SavePosition::new(widget, CLI_AGENT_USAGE_HEADER_POSITION_ID).finish();
 
                 // Horizontal tabs: `target` is the outer `tab_bar` flex, which is
                 // finitely constrained, so a flexible `Shrinkable` child is safe and
@@ -21557,11 +21514,9 @@ impl Workspace {
                 // non-flexible `ConstrainedBox` instead so `right_controls` never
                 // sees a flexible child and the switch gets a finite max width.
                 let wrapped = if vertical_tabs_active {
-                    ConstrainedBox::new(usage_status)
-                        .with_max_width(720.)
-                        .finish()
+                    ConstrainedBox::new(anchored).with_max_width(720.).finish()
                 } else {
-                    Shrinkable::new(1., usage_status).finish()
+                    Shrinkable::new(1., anchored).finish()
                 };
 
                 target.add_child(
@@ -26859,6 +26814,66 @@ impl View for Workspace {
                     ChildAnchor::TopLeft,
                 ),
             );
+        }
+
+        // Claude Code + Codex usage detail panel. Rendered here at the workspace
+        // root (not inside the tab bar) so its `Dismiss` underlay paints above
+        // every pane — clicking anywhere in the window closes it. Anchored to the
+        // tab-bar usage widget via its saved position. Gated on the same data
+        // check the widget uses, so the anchor is always registered when shown.
+        if let Some(provider) = self.cli_agent_usage_panel_provider {
+            let snapshot = CliAgentUsageModel::as_ref(app).latest().clone();
+            if cli_agent_usage::format::chip_halves(&snapshot).is_some() {
+                let usage_settings = CliAgentUsageSettings::as_ref(app);
+                let plan_limits_enabled = *usage_settings.show_plan_limits;
+                let visibility = CliAgentUsageHeaderVisibility::from_overrides(
+                    &usage_settings.header_metric_visibility,
+                );
+                let (parent_anchor, child_anchor) = match provider {
+                    CliAgentUsageProvider::Claude => {
+                        (PositionedElementAnchor::BottomLeft, ChildAnchor::TopLeft)
+                    }
+                    CliAgentUsageProvider::Codex => {
+                        (PositionedElementAnchor::BottomRight, ChildAnchor::TopRight)
+                    }
+                };
+                let metric_mouse_states = match provider {
+                    CliAgentUsageProvider::Claude => {
+                        &self.cli_agent_usage_claude_metric_mouse_states
+                    }
+                    CliAgentUsageProvider::Codex => {
+                        &self.cli_agent_usage_codex_metric_mouse_states
+                    }
+                };
+                stack.add_positioned_overlay_child(
+                    Dismiss::new(render_cli_agent_usage_panel(
+                        &snapshot,
+                        appearance,
+                        provider,
+                        plan_limits_enabled,
+                        &visibility,
+                        CliAgentUsagePanelMouseStates {
+                            metric_checkboxes: metric_mouse_states,
+                            usage_link_mouse_state: self.cli_agent_usage_link_mouse_state.clone(),
+                            turn_on_mouse_state: self
+                                .cli_agent_usage_turn_on_panel_mouse_state
+                                .clone(),
+                        },
+                    ))
+                    .prevent_interaction_with_other_elements()
+                    .on_dismiss(|ctx, _app| {
+                        ctx.dispatch_typed_action(WorkspaceAction::CloseCliAgentUsagePanel);
+                    })
+                    .finish(),
+                    OffsetPositioning::offset_from_save_position_element(
+                        CLI_AGENT_USAGE_HEADER_POSITION_ID,
+                        vec2f(0., 4.),
+                        PositionedElementOffsetBounds::WindowByPosition,
+                        parent_anchor,
+                        child_anchor,
+                    ),
+                );
+            }
         }
 
         if uses_vertical_tabs() && self.vertical_tabs_panel_open {

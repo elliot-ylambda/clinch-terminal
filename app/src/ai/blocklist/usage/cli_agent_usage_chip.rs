@@ -16,8 +16,22 @@ use super::{CliAgentUsageHeaderVisibility, CliAgentUsageMetric, CliAgentUsagePro
 use crate::appearance::Appearance;
 use crate::workspace::WorkspaceAction;
 
-const PANEL_WIDTH: f32 = 340.;
-const PANEL_VALUE_WIDTH: f32 = 208.;
+// Column widths are the baseline (default 13px monospace) sizes; the panel
+// scales them up with the user's monospace font so larger fonts don't clip the
+// value text. The panel width is derived from the columns so they always match.
+const PANEL_VALUE_WIDTH: f32 = 232.;
+const PANEL_LABEL_WIDTH: f32 = 80.;
+const PANEL_ROW_LABEL_WIDTH: f32 = 84.;
+const PANEL_CHECKBOX_WIDTH: f32 = 20.;
+const PANEL_H_PADDING: f32 = 16.;
+/// The monospace size the baseline column widths were tuned for.
+const PANEL_BASELINE_FONT_SIZE: f32 = 13.;
+
+/// Grows the panel's fixed columns with the user's monospace font size (never
+/// below the baseline) so wider text keeps fitting instead of clipping.
+fn panel_scale(appearance: &Appearance) -> f32 {
+    (appearance.monospace_font_size() / PANEL_BASELINE_FONT_SIZE).max(1.0)
+}
 
 /// Map a crate `Severity` to a fill against `bg` (the surface the text sits on).
 pub(super) fn severity_fill(severity: Severity, theme: &WarpTheme, bg: Fill) -> Fill {
@@ -95,6 +109,7 @@ pub fn render_cli_agent_usage_panel(
     let sub = theme.sub_text_color(bg);
     let now = Utc::now();
     let provider = kind.data(snapshot);
+    let scale = panel_scale(appearance);
 
     // Header row.
     let mut col = Flex::column().with_spacing(4.);
@@ -110,6 +125,7 @@ pub fn render_cli_agent_usage_panel(
         col.add_child(panel_row(
             span("Limits", sub, appearance),
             turn_on_plan_limits(appearance, bg, turn_on_mouse_state),
+            scale,
         ));
     }
     col.add_child(configurable_panel_row(
@@ -180,16 +196,20 @@ pub fn render_cli_agent_usage_panel(
             .finish(),
     );
 
+    // Width tracks the widest (checkbox + label + value) row plus padding so the
+    // columns always fit the panel exactly, at any monospace font size.
+    let panel_width =
+        (2. * PANEL_H_PADDING + PANEL_CHECKBOX_WIDTH + PANEL_LABEL_WIDTH + PANEL_VALUE_WIDTH) * scale;
     ConstrainedBox::new(
         Container::new(col.finish())
             .with_vertical_padding(12.)
-            .with_horizontal_padding(16.)
+            .with_horizontal_padding(PANEL_H_PADDING * scale)
             .with_background(bg)
             .with_border(Border::all(1.).with_border_fill(theme.accent()))
             .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
             .finish(),
     )
-    .with_width(PANEL_WIDTH)
+    .with_width(panel_width)
     .finish()
 }
 
@@ -203,12 +223,16 @@ fn window(p: &Provider, pick: u8) -> &WindowTotals {
 }
 
 /// A two-cell row: fixed-width label followed by the selected provider's value.
-fn panel_row(label: Box<dyn Element>, value: Box<dyn Element>) -> Box<dyn Element> {
+fn panel_row(label: Box<dyn Element>, value: Box<dyn Element>, scale: f32) -> Box<dyn Element> {
     let mut row = Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center);
-    row.add_child(ConstrainedBox::new(label).with_width(84.).finish());
+    row.add_child(
+        ConstrainedBox::new(label)
+            .with_width(PANEL_ROW_LABEL_WIDTH * scale)
+            .finish(),
+    );
     row.add_child(
         ConstrainedBox::new(value)
-            .with_width(PANEL_VALUE_WIDTH)
+            .with_width(PANEL_VALUE_WIDTH * scale)
             .finish(),
     );
     row.finish()
@@ -227,9 +251,13 @@ fn configurable_panel_row(
     bg: Fill,
 ) -> Box<dyn Element> {
     let sub = appearance.theme().sub_text_color(bg);
+    let scale = panel_scale(appearance);
     let checkbox = appearance
         .ui_builder()
-        .checkbox(metric_mouse_states[metric.index()].clone(), Some(11.))
+        .checkbox(
+            metric_mouse_states[metric.index()].clone(),
+            Some(11. * scale),
+        )
         .check(visibility.is_visible(kind, metric))
         .build()
         .on_click(move |ctx, _app, _position| {
@@ -242,15 +270,19 @@ fn configurable_panel_row(
         .finish();
 
     let mut row = Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center);
-    row.add_child(ConstrainedBox::new(checkbox).with_width(20.).finish());
+    row.add_child(
+        ConstrainedBox::new(checkbox)
+            .with_width(PANEL_CHECKBOX_WIDTH * scale)
+            .finish(),
+    );
     row.add_child(
         ConstrainedBox::new(span(metric.label(), sub, appearance))
-            .with_width(80.)
+            .with_width(PANEL_LABEL_WIDTH * scale)
             .finish(),
     );
     row.add_child(
         ConstrainedBox::new(value)
-            .with_width(PANEL_VALUE_WIDTH)
+            .with_width(PANEL_VALUE_WIDTH * scale)
             .finish(),
     );
     row.finish()
