@@ -128,11 +128,7 @@ impl MobileSessionRoute {
             .unwrap_or(!self.legacy_opted_out && enabled_by_default)
     }
 
-    pub(crate) fn is_eligible(
-        &self,
-        globally_enabled: bool,
-        enabled_by_default: bool,
-    ) -> bool {
+    pub(crate) fn is_eligible(&self, globally_enabled: bool, enabled_by_default: bool) -> bool {
         globally_enabled && self.active && self.notifications_enabled(enabled_by_default)
     }
 }
@@ -403,10 +399,7 @@ impl RouteState {
             .routes
             .iter()
             .filter(|route| {
-                route.is_eligible(
-                    self.globally_enabled,
-                    self.notifications_enabled_by_default,
-                )
+                route.is_eligible(self.globally_enabled, self.notifications_enabled_by_default)
             })
             .collect::<Vec<_>>();
         routes.sort_by(|left, right| left.id.cmp(&right.id));
@@ -787,10 +780,7 @@ impl RouteState {
 
     fn route_is_eligible(&self, id: &MobileRouteId) -> bool {
         self.route_by_id(id).is_some_and(|route| {
-            route.is_eligible(
-                self.globally_enabled,
-                self.notifications_enabled_by_default,
-            )
+            route.is_eligible(self.globally_enabled, self.notifications_enabled_by_default)
         })
     }
 

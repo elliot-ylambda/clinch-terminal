@@ -146,8 +146,7 @@ impl IMessageCoordinator {
             state.reset_conversation_state();
         }
         state.globally_enabled = configuration.enabled && configuration.setup_complete;
-        state.notifications_enabled_by_default =
-            configuration.notifications_enabled_by_default;
+        state.notifications_enabled_by_default = configuration.notifications_enabled_by_default;
         let status = status_for_configuration(&configuration, state.pending_calibration.is_some());
 
         ctx.subscribe_to_model(
@@ -199,10 +198,7 @@ impl IMessageCoordinator {
         self.test_status
     }
 
-    pub(crate) fn session_notifications_enabled(
-        &self,
-        terminal_view_id: EntityId,
-    ) -> Option<bool> {
+    pub(crate) fn session_notifications_enabled(&self, terminal_view_id: EntityId) -> Option<bool> {
         let key = self.view_sessions.get(&terminal_view_id)?;
         let route = self.state.route_for_key(key)?;
         Some(route.notifications_enabled(self.state.notifications_enabled_by_default))
@@ -278,7 +274,7 @@ impl IMessageCoordinator {
         self.outbound_jobs.push_back(OutboundJob {
             route_id: None,
             parts: VecDeque::from([
-                "Clinch test message. Your iMessage connection is working.".to_owned(),
+                "Clinch test message. Your iMessage connection is working.".to_owned()
             ]),
             drain_after_send: false,
             kind: OutboundJobKind::ConnectionTest,
@@ -326,16 +322,14 @@ impl IMessageCoordinator {
 
     pub(crate) fn disconnect(&mut self, ctx: &mut ModelContext<Self>) {
         self.stop_bridge();
-        let notifications_enabled_by_default =
-            self.configuration.notifications_enabled_by_default;
+        let notifications_enabled_by_default = self.configuration.notifications_enabled_by_default;
         self.configuration = IMessageConfiguration {
             notifications_enabled_by_default,
             ..IMessageConfiguration::default()
         };
-        self.state = RouteState {
-            notifications_enabled_by_default,
-            ..RouteState::default()
-        };
+        self.state.globally_enabled = false;
+        self.state.notifications_enabled_by_default = notifications_enabled_by_default;
+        self.state.reset_conversation_state();
         self.outbound_jobs.clear();
         self.test_status = IMessageTestStatus::Idle;
         self.mobile_submissions_in_flight.clear();
@@ -343,9 +337,7 @@ impl IMessageCoordinator {
         self.current_send_intent_id = None;
         self.schedule_expiration_check(ctx);
         self.save_configuration(ctx);
-        if let Err(error) = self.store.clear() {
-            log::warn!("Could not clear local iMessage routing state: {error:#}");
-        }
+        self.persist_state();
         self.set_status(IMessageConnectionStatus::SetupRequired, ctx);
     }
 
@@ -391,15 +383,12 @@ impl IMessageCoordinator {
         if self.state.route_for_key(&key).is_none() {
             self.register_mapped_sessions(ctx);
         }
-        let currently_enabled = self
+        let currently_enabled = self.state.route_for_key(&key).is_some_and(|route| {
+            route.notifications_enabled(self.state.notifications_enabled_by_default)
+        });
+        let cancelled = self
             .state
-            .route_for_key(&key)
-            .is_some_and(|route| {
-                route.notifications_enabled(self.state.notifications_enabled_by_default)
-            });
-        let cancelled =
-            self.state
-                .set_notifications_enabled(&key, !currently_enabled, now());
+            .set_notifications_enabled(&key, !currently_enabled, now());
         if currently_enabled {
             let route_ids = self
                 .state
@@ -1342,8 +1331,7 @@ impl IMessageCoordinator {
         }
 
         self.outbound_jobs.extend(jobs.into_iter().filter(|job| {
-            !job
-                .route_id
+            !job.route_id
                 .as_ref()
                 .is_some_and(|route_id| disabled.contains(route_id))
         }));
@@ -1726,5 +1714,63 @@ mod tests {
             status_for_bridge_error_code("schema_changed"),
             IMessageConnectionStatus::Error
         );
+    }
+
+    #[test]
+    fn disabling_a_route_cancels_unsent_completion_parts_safely() {
+        let route = MobileRouteId::parse("C7K2").unwrap();
+        let other_route = MobileRouteId::parse("D8M3").unwrap();
+        let job = |route_id: MobileRouteId, parts: &[&str]| OutboundJob {
+            route_id: Some(route_id),
+            parts: parts.iter().map(|part| (*part).to_owned()).collect(),
+            drain_after_send: true,
+            kind: OutboundJobKind::Message,
+        };
+        let coordinator = |send_in_flight, outbound_jobs| IMessageCoordinator {
+            status: IMessageConnectionStatus::Connected,
+            configuration: IMessageConfiguration::default(),
+            state: RouteState::default(),
+            store: RouteStateStore::default(),
+            bridge: None,
+            view_sessions: HashMap::new(),
+            session_views: HashMap::new(),
+            outbound_jobs,
+            mobile_submissions_in_flight: HashSet::new(),
+            send_in_flight,
+            test_status: IMessageTestStatus::Idle,
+            current_send_intent_id: None,
+            bridge_generation: 0,
+            bridge_restart_attempts: 0,
+            bridge_restart_scheduled: false,
+            expiration_generation: 0,
+        };
+
+        let mut queued = coordinator(
+            false,
+            VecDeque::from([
+                job(route.clone(), &["part one", "part two"]),
+                job(other_route.clone(), &["other"]),
+            ]),
+        );
+        queued.cancel_pending_completion_jobs(std::slice::from_ref(&route));
+        assert_eq!(queued.outbound_jobs.len(), 1);
+        assert_eq!(queued.outbound_jobs[0].route_id, Some(other_route.clone()));
+
+        let mut sending = coordinator(
+            true,
+            VecDeque::from([
+                job(route.clone(), &["sending", "not sent"]),
+                job(route.clone(), &["later"]),
+                job(other_route.clone(), &["other"]),
+            ]),
+        );
+        sending.cancel_pending_completion_jobs(&[route]);
+        assert_eq!(sending.outbound_jobs.len(), 2);
+        assert_eq!(
+            sending.outbound_jobs[0].parts,
+            VecDeque::from(["sending".to_owned()])
+        );
+        assert!(!sending.outbound_jobs[0].drain_after_send);
+        assert_eq!(sending.outbound_jobs[1].route_id, Some(other_route));
     }
 }

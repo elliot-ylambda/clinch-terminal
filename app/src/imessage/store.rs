@@ -89,6 +89,7 @@ impl RouteStateStore {
         result
     }
 
+    #[cfg(test)]
     pub(crate) fn clear(&self) -> Result<()> {
         match fs::remove_file(&self.path) {
             Ok(()) => Ok(()),

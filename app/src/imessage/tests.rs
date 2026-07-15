@@ -66,7 +66,10 @@ fn session_notification_overrides_outlive_default_changes() {
     state.register_session(inherited.clone(), "codex", NOW);
     state.register_session(explicit.clone(), "claude", NOW);
 
-    assert!(state.route_for_key(&inherited).unwrap().notifications_enabled(true));
+    assert!(state
+        .route_for_key(&inherited)
+        .unwrap()
+        .notifications_enabled(true));
     state.notifications_enabled_by_default = false;
     assert!(!state
         .route_for_key(&inherited)

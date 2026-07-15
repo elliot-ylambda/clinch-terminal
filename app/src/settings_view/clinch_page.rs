@@ -68,6 +68,15 @@ impl ClinchSettingsPageView {
         ctx.subscribe_to_model(&IMessageCoordinator::handle(ctx), |_, _, _, ctx| {
             ctx.notify()
         });
+        #[cfg(target_os = "macos")]
+        if matches!(
+            IMessageCoordinator::as_ref(ctx).status(),
+            IMessageConnectionStatus::Paused(_) | IMessageConnectionStatus::Error
+        ) {
+            IMessageCoordinator::handle(ctx).update(ctx, |coordinator, ctx| {
+                coordinator.refresh_health(ctx);
+            });
+        }
 
         #[cfg(target_os = "macos")]
         let imessage_recipient_editor = ctx.add_typed_action_view(|ctx| {
@@ -524,9 +533,7 @@ impl SettingsWidget for IMessageWidget {
                     .with_text_label("Open Settings".to_owned())
                     .build()
                     .on_click(|ctx, _, _| {
-                        ctx.dispatch_typed_action(
-                            ClinchSettingsPageAction::OpenAutomationSettings,
-                        );
+                        ctx.dispatch_typed_action(ClinchSettingsPageAction::OpenAutomationSettings);
                     })
                     .finish();
                 (
@@ -624,8 +631,7 @@ impl SettingsWidget for IMessageWidget {
                             .to_owned()
                     }
                     IMessageTestStatus::Idle if !configuration.enabled => {
-                        "Turn on the iMessage connection below to send a test message."
-                            .to_owned()
+                        "Turn on the iMessage connection below to send a test message.".to_owned()
                     }
                     IMessageTestStatus::Idle => {
                         "This is the number Clinch will use. Test sends a short message without \
