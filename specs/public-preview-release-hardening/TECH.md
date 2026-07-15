@@ -132,6 +132,17 @@ results. It also requires the tested macOS versions and a QA record identifier. 
 the optional hands-on Intel result, are written into the signed release validation asset. The
 checked-in `QA_TEMPLATE.md` defines the record expected by the workflow.
 
+`make release` is the interactive operator front end for that dispatch. It first synchronizes a
+clean local `main` with `clinch/main`, compares its timestamp-derived version with the latest public
+release and increments the latest version when necessary, and detects the local macOS version. It
+then displays the required hands-on checklist and requires the operator to type `RELEASE`; it does
+not infer a pass from default Make variables. Unless the operator supplies an existing QA record,
+the dispatcher creates a public GitHub issue containing the exact version, commit, machine, OS,
+checked results, and optional Intel result, then uses that URL for the workflow input. Explicit
+variables remain available for tested automation, but noninteractive dispatch requires
+`QA_CONFIRMED=true`. The dispatch also carries that exact commit as a required input; the workflow
+stops before building if `main` changed between local QA confirmation and GitHub dispatch.
+
 Actions are pinned to immutable commit SHAs and receive least-privilege job permissions. A
 repository configuration script enables immutable releases, protects `main` against force pushes
 and deletion, requires review and the named gate checks, and leaves secret scanning/push protection

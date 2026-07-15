@@ -199,7 +199,8 @@ pub fn render_cli_agent_usage_panel(
     // Width tracks the widest (checkbox + label + value) row plus padding so the
     // columns always fit the panel exactly, at any monospace font size.
     let panel_width =
-        (2. * PANEL_H_PADDING + PANEL_CHECKBOX_WIDTH + PANEL_LABEL_WIDTH + PANEL_VALUE_WIDTH) * scale;
+        (2. * PANEL_H_PADDING + PANEL_CHECKBOX_WIDTH + PANEL_LABEL_WIDTH + PANEL_VALUE_WIDTH)
+            * scale;
     ConstrainedBox::new(
         Container::new(col.finish())
             .with_vertical_padding(12.)

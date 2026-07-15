@@ -26887,9 +26887,7 @@ impl View for Workspace {
                     CliAgentUsageProvider::Claude => {
                         &self.cli_agent_usage_claude_metric_mouse_states
                     }
-                    CliAgentUsageProvider::Codex => {
-                        &self.cli_agent_usage_codex_metric_mouse_states
-                    }
+                    CliAgentUsageProvider::Codex => &self.cli_agent_usage_codex_metric_mouse_states,
                 };
                 stack.add_positioned_overlay_child(
                     Dismiss::new(render_cli_agent_usage_panel(

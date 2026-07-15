@@ -25,6 +25,7 @@ bash -n \
   uninstall.sh \
   script/check_license_config_sync \
   script/configure-clinch-release-repository \
+  script/dispatch-clinch-release \
   script/launch-check \
   script/macos/bundle \
   script/next-clinch-update-sequence \
@@ -39,6 +40,12 @@ bash -n tools/agent-resume/*.sh \
   tools/agent-resume/warp-agent-resume
 zsh -n tools/agent-resume/claude.zsh \
   tools/agent-resume/clinch_agent_resume_launch
+
+echo "==> Release dispatcher tests"
+for test in script/tests/test_*.sh; do
+  echo "running $test"
+  bash "$test"
+done
 
 echo "==> Agent capture, durability, install, and replay tests"
 for test in tools/agent-resume/tests/test_*.sh; do

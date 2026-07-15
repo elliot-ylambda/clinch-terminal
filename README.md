@@ -164,6 +164,12 @@ is optional because Intel is already built and tested by the required Intel-host
 the [release QA template](specs/public-preview-release-hardening/QA_TEMPLATE.md) for the public
 record referenced by the workflow.
 
+After completing those hands-on checks, run `make release` from a clean `main` checkout. It selects
+the next version, detects the current macOS version, shows the checklist for one explicit
+confirmation, creates the public QA issue, and dispatches the protected workflow. Advanced users
+can still override `VERSION`, `QA_RECORD`, `QA_TESTED_MACOS_VERSIONS`, or the optional
+`QA_INTEL_SMOKE` result.
+
 ## License and attribution
 
 Clinch is a modified version of [Warp](https://github.com/warpdotdev/warp), licensed under

@@ -1,0 +1,218 @@
+#!/usr/bin/env bash
+# Turns the protected Clinch release workflow into a safe one-command operator flow.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
+
+REPO="${CLINCH_REPO:-elliot-ylambda/clinch-terminal}"
+REQUESTED_VERSION="${VERSION:-}"
+AUTO_VERSION="${CLINCH_AUTO_VERSION:-0}"
+QA_RECORD_VALUE="${QA_RECORD:-auto}"
+TESTED_MACOS_VERSIONS="${QA_TESTED_MACOS_VERSIONS:-auto}"
+QA_INTEL_SMOKE="${QA_INTEL_SMOKE:-false}"
+QA_CONFIRMED="${QA_CONFIRMED:-false}"
+
+fail() {
+  echo "release dispatch failed: $*" >&2
+  exit 1
+}
+
+validate_version() {
+  [[ "$1" =~ ^v[0-9]+(\.[0-9]+)+$ ]]
+}
+
+version_is_newer() {
+  local left="${1#v}" right="${2#v}" width index left_part right_part
+  local -a left_parts right_parts
+  IFS=. read -r -a left_parts <<< "$left"
+  IFS=. read -r -a right_parts <<< "$right"
+  width="${#left_parts[@]}"
+  if (( ${#right_parts[@]} > width )); then
+    width="${#right_parts[@]}"
+  fi
+  for ((index = 0; index < width; index++)); do
+    left_part="${left_parts[index]:-0}"
+    right_part="${right_parts[index]:-0}"
+    left_part=$((10#$left_part))
+    right_part=$((10#$right_part))
+    (( left_part > right_part )) && return 0
+    (( left_part < right_part )) && return 1
+  done
+  return 1
+}
+
+increment_version() {
+  local version="$1" prefix last
+  prefix="${version%.*}"
+  last="${version##*.}"
+  printf '%s.%s\n' "$prefix" "$((10#$last + 1))"
+}
+
+all_manual_checks_confirmed() {
+  [[ "${QA_FIRST_INSTALL:-false}" == true \
+    && "${QA_AUTHENTICATED_UPGRADE:-false}" == true \
+    && "${QA_SESSION_INTEGRATION:-false}" == true \
+    && "${QA_UNINSTALL:-false}" == true \
+    && "${QA_OFFLINE_STARTUP:-false}" == true \
+    && "${QA_APPLE_SILICON_SMOKE:-false}" == true ]]
+}
+
+confirm_manual_checks() {
+  if all_manual_checks_confirmed || [[ "$QA_CONFIRMED" == true ]]; then
+    return
+  fi
+  [[ -t 0 ]] || fail \
+    "manual QA is not confirmed; run interactively or set QA_CONFIRMED=true after completing it"
+
+  cat <<EOF
+
+Manual release QA for $REQUESTED_VERSION at $(git rev-parse --short HEAD):
+  - candidate update manifest and signatures authenticated
+  - clean DMG install and first launch passed
+  - authenticated manual upgrade preserved the existing app until replacement
+  - session capture was off by default; opt-in, removal, and purge were scoped
+  - app-only uninstall preserved capture data, transcripts, credentials, and ~/.warp
+  - offline startup made no account, telemetry, crash, or update request
+  - native Apple Silicon launch, shell, tabs/panes, settings, quit, and relaunch passed
+
+This confirmation is written to a public QA issue and the signed release validation record.
+Type RELEASE only if every item above passed on this exact main revision:
+EOF
+  read -r response
+  [[ "$response" == RELEASE ]] || fail "release was not confirmed"
+}
+
+command -v gh >/dev/null 2>&1 || fail "gh is required"
+command -v git >/dev/null 2>&1 || fail "git is required"
+[[ "$REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || fail "invalid repository '$REPO'"
+[[ "$AUTO_VERSION" == 0 || "$AUTO_VERSION" == 1 ]] || fail "CLINCH_AUTO_VERSION must be 0 or 1"
+[[ "$QA_INTEL_SMOKE" == true || "$QA_INTEL_SMOKE" == false ]] \
+  || fail "QA_INTEL_SMOKE must be true or false"
+gh auth status >/dev/null || fail "authenticate gh before releasing"
+
+if [[ "${CLINCH_RELEASE_SKIP_REPOSITORY_CHECKS:-0}" != 1 ]]; then
+  ./script/require-latest-main
+  [[ "$(git rev-parse --abbrev-ref HEAD)" == main ]] || fail "release checkout is not on main"
+  [[ -z "$(git status --porcelain)" ]] || fail "release checkout is dirty"
+  [[ "$(git rev-parse HEAD)" == "$(git rev-parse clinch/main)" ]] \
+    || fail "local main does not exactly match clinch/main"
+fi
+
+COMMIT_SHA="${CLINCH_RELEASE_COMMIT_SHA:-$(git rev-parse HEAD)}"
+[[ "$COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "invalid release commit '$COMMIT_SHA'"
+
+latest_version="$(gh api "repos/$REPO/releases/latest" --jq .tag_name)" \
+  || fail "could not resolve the latest release"
+validate_version "$latest_version" || fail "latest release has invalid version '$latest_version'"
+
+if [[ -z "$REQUESTED_VERSION" || "$REQUESTED_VERSION" == auto ]]; then
+  REQUESTED_VERSION="v0.$(date -u +%Y.%m.%d.%H%M)"
+  AUTO_VERSION=1
+fi
+validate_version "$REQUESTED_VERSION" || fail "invalid version '$REQUESTED_VERSION'"
+if ! version_is_newer "$REQUESTED_VERSION" "$latest_version"; then
+  if [[ "$AUTO_VERSION" == 1 ]]; then
+    REQUESTED_VERSION="$(increment_version "$latest_version")"
+  else
+    fail "requested version $REQUESTED_VERSION is not newer than $latest_version"
+  fi
+fi
+
+if [[ -z "$TESTED_MACOS_VERSIONS" || "$TESTED_MACOS_VERSIONS" == auto ]]; then
+  product_version="$(sw_vers -productVersion)" || fail "could not detect the macOS version"
+  build_version="$(sw_vers -buildVersion 2>/dev/null || true)"
+  TESTED_MACOS_VERSIONS="macOS $product_version"
+  [[ -z "$build_version" ]] || TESTED_MACOS_VERSIONS+=" ($build_version)"
+fi
+[[ -n "${TESTED_MACOS_VERSIONS//[[:space:]]/}" \
+  && ${#TESTED_MACOS_VERSIONS} -le 200 ]] || fail "invalid tested macOS versions"
+
+confirm_manual_checks
+QA_FIRST_INSTALL=true
+QA_AUTHENTICATED_UPGRADE=true
+QA_SESSION_INTEGRATION=true
+QA_UNINSTALL=true
+QA_OFFLINE_STARTUP=true
+QA_APPLE_SILICON_SMOKE=true
+
+created_issue=false
+if [[ -z "$QA_RECORD_VALUE" || "$QA_RECORD_VALUE" == auto ]]; then
+  tester="$(gh api user --jq .login)" || fail "could not resolve the GitHub release operator"
+  [[ "$tester" =~ ^[A-Za-z0-9-]+$ ]] || fail "invalid GitHub release operator '$tester'"
+  qa_file="$(mktemp -t clinch-release-qa)"
+  trap 'rm -f "$qa_file"' EXIT
+  mac_model="$(sysctl -n hw.model 2>/dev/null || echo unknown)"
+  cpu_arch="$(uname -m)"
+  cat > "$qa_file" <<EOF
+# Clinch public-preview release QA
+
+- Version: \`$REQUESTED_VERSION\`
+- Commit: \`$COMMIT_SHA\`
+- Tester: @$tester
+- Date: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+- Mac: $mac_model ($cpu_arch)
+- Tested macOS: $TESTED_MACOS_VERSIONS
+- Untested macOS versions: all others
+- Update sequence: assigned and authenticated by the release workflow
+
+## Required checks
+
+- [x] The candidate update manifest and signatures authenticate with the committed Clinch keys.
+- [x] Clean manual install from the candidate DMG succeeds.
+- [x] First launch succeeds using the documented Privacy & Security approval when required.
+- [x] Authenticated manual upgrade preserves the existing app until replacement succeeds.
+- [x] Session capture is off on a clean install and first launch.
+- [x] Session capture opt-in shows the affected paths and adds only Clinch-managed entries.
+- [x] Session capture removal preserves unrelated Claude Code and Codex configuration.
+- [x] Capture purge lists and removes only the Clinch capture directory.
+- [x] App-only uninstall removes Clinch without removing capture data, provider transcripts,
+      Keychain credentials, or unrelated \`~/.warp\` data.
+- [x] Startup while offline succeeds without a Warp account, telemetry, crash-reporting, or update
+      request.
+- [x] Native Apple Silicon smoke test covers launch, a local shell, tabs/panes, settings, quit, and
+      relaunch.
+
+## Optional Intel check
+
+- [$([[ "$QA_INTEL_SMOKE" == true ]] && echo x || echo ' ')] Native Intel smoke test
+
+## Result
+
+- [x] PASS — eligible for the protected public-preview workflow
+
+Recorded by \`make release\` after explicit operator confirmation. The release workflow will
+independently run the complete source, test, lint, license, advisory, artifact, and signature gate.
+EOF
+  issue_output="$(gh issue create --repo "$REPO" \
+    --title "Release QA: $REQUESTED_VERSION" --body-file "$qa_file")" \
+    || fail "could not create the public QA record"
+  QA_RECORD_VALUE="$(printf '%s\n' "$issue_output" | awk '/^https:\/\// { url=$0 } END { print url }')"
+  [[ "$QA_RECORD_VALUE" == https://* ]] || fail "GitHub did not return a QA issue URL"
+  created_issue=true
+fi
+[[ -n "${QA_RECORD_VALUE//[[:space:]]/}" && ${#QA_RECORD_VALUE} -le 500 ]] \
+  || fail "invalid QA record identifier"
+
+if ! gh workflow run release.yml --repo "$REPO" --ref main \
+  -f version="$REQUESTED_VERSION" \
+  -f expected_commit="$COMMIT_SHA" \
+  -f qa_record="$QA_RECORD_VALUE" \
+  -f tested_macos_versions="$TESTED_MACOS_VERSIONS" \
+  -f qa_first_install=true \
+  -f qa_authenticated_upgrade=true \
+  -f qa_session_integration=true \
+  -f qa_uninstall=true \
+  -f qa_offline_startup=true \
+  -f qa_apple_silicon_smoke=true \
+  -f qa_intel_smoke="$QA_INTEL_SMOKE"; then
+  if [[ "$created_issue" == true ]]; then
+    gh issue comment "$QA_RECORD_VALUE" --body \
+      "Release workflow dispatch failed. No release was published." >/dev/null 2>&1 || true
+  fi
+  fail "GitHub rejected the release workflow dispatch"
+fi
+
+echo "Dispatched the gated release workflow for $REQUESTED_VERSION."
+echo "QA record: $QA_RECORD_VALUE"
+echo "Workflow: https://github.com/$REPO/actions/workflows/release.yml"

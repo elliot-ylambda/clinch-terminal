@@ -172,6 +172,9 @@ download, especially when the app cannot use Apple's Developer ID and notarizati
     a native Apple Silicon smoke check. Intel remains covered by the universal artifact verifier
     and native Intel CI; a separate hands-on Intel smoke check is recorded when practical but does
     not block this preview. Results and any untested OS versions are recorded with the release.
+    The local `make release` command may derive the next version, tested macOS version, and public
+    QA-record location, but it must obtain one explicit operator confirmation covering every
+    required hands-on check. Mechanical defaults never count as evidence that QA passed.
 
 34. If any authenticity or safety check cannot be completed, the installer or release workflow
     stops with a specific error and leaves the existing installation or public release unchanged.

@@ -7,6 +7,8 @@ HERE="$(cd "$(dirname "$0")/.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 export HOME="$TMP/home"
+unset WARP_AGENT_RESUME_DIR CLINCH_AGENT_BIN_DIR CLINCH_AGENT_STATE_DIR \
+  CLINCH_CLAUDE_SETTINGS CLINCH_CODEX_CONFIG
 mkdir -p "$HOME/.claude" "$HOME/.codex" "$TMP/bin"
 
 # Any accidental jq use is a hard failure even if the developer has jq installed.

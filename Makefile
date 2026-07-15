@@ -1,7 +1,7 @@
 # Clinch public-preview build flow.
 #
 #   make candidate                    Build and verify locally; never publish.
-#   make release ...                  Dispatch after supplying every required manual-QA variable.
+#   make release                      Confirm QA once, record it, and dispatch the protected workflow.
 #   make update                       Install the latest authenticated public release manually.
 #   make dev                          Build and run isolated Clinch Dev.
 
@@ -24,9 +24,11 @@ BUNDLE_ARCH_FLAG := $(if $(filter 1 true yes,$(UNIVERSAL)),,--nouniversal)
 ifeq ($(origin VERSION), undefined)
 VERSION := v0.$(shell date +%Y.%m.%d.%H%M)
 endif
+CLINCH_AUTO_VERSION := $(if $(filter file,$(origin VERSION)),1,0)
 UPDATE_SEQUENCE ?= auto
-QA_RECORD ?=
-QA_TESTED_MACOS_VERSIONS ?=
+QA_RECORD ?= auto
+QA_TESTED_MACOS_VERSIONS ?= auto
+QA_CONFIRMED ?= false
 QA_FIRST_INSTALL ?= false
 QA_AUTHENTICATED_UPGRADE ?= false
 QA_SESSION_INTEGRATION ?= false
@@ -116,36 +118,21 @@ candidate: release-check ## Build and verify a universal candidate without publi
 	$(MAKE) _verify VERSION="$(VERSION)" UPDATE_SEQUENCE="$$sequence" UNIVERSAL="$(UNIVERSAL)"
 	@echo "✓ Verified local candidate $(VERSION). No tag or release was created."
 
-release: ## Dispatch the protected workflow after the required manual QA
-	@printf '%s\n' "$(VERSION)" | grep -Eq '^v[0-9]+(\.[0-9]+)+$$' \
-	  || { echo "VERSION must contain only dot-separated integers: $(VERSION)" >&2; exit 2; }
-	@test -n "$(strip $(QA_RECORD))" || { echo "QA_RECORD is required" >&2; exit 2; }
-	@test -n "$(strip $(QA_TESTED_MACOS_VERSIONS))" \
-	  || { echo "QA_TESTED_MACOS_VERSIONS is required" >&2; exit 2; }
-	@for entry in \
-	  "QA_FIRST_INSTALL=$(QA_FIRST_INSTALL)" \
-	  "QA_AUTHENTICATED_UPGRADE=$(QA_AUTHENTICATED_UPGRADE)" \
-	  "QA_SESSION_INTEGRATION=$(QA_SESSION_INTEGRATION)" \
-	  "QA_UNINSTALL=$(QA_UNINSTALL)" \
-	  "QA_OFFLINE_STARTUP=$(QA_OFFLINE_STARTUP)" \
-	  "QA_APPLE_SILICON_SMOKE=$(QA_APPLE_SILICON_SMOKE)"; do \
-	  test "$${entry#*=}" = true \
-	    || { echo "$${entry%%=*}=true is required" >&2; exit 2; }; \
-	done
-	@case "$(QA_INTEL_SMOKE)" in true|false) ;; \
-	  *) echo "QA_INTEL_SMOKE must be true or false" >&2; exit 2 ;; esac
-	gh workflow run release.yml --repo "$(CLINCH_REPO)" --ref main \
-	  -f version="$(VERSION)" \
-	  -f qa_record="$(QA_RECORD)" \
-	  -f tested_macos_versions="$(QA_TESTED_MACOS_VERSIONS)" \
-	  -f qa_first_install="$(QA_FIRST_INSTALL)" \
-	  -f qa_authenticated_upgrade="$(QA_AUTHENTICATED_UPGRADE)" \
-	  -f qa_session_integration="$(QA_SESSION_INTEGRATION)" \
-	  -f qa_uninstall="$(QA_UNINSTALL)" \
-	  -f qa_offline_startup="$(QA_OFFLINE_STARTUP)" \
-	  -f qa_apple_silicon_smoke="$(QA_APPLE_SILICON_SMOKE)" \
-	  -f qa_intel_smoke="$(QA_INTEL_SMOKE)"
-	@echo "Dispatched the gated release workflow for $(VERSION)."
+release: ## Confirm manual QA, create its public record, and dispatch the protected workflow
+	@CLINCH_REPO="$(CLINCH_REPO)" \
+	  VERSION="$(VERSION)" \
+	  CLINCH_AUTO_VERSION="$(CLINCH_AUTO_VERSION)" \
+	  QA_RECORD="$(QA_RECORD)" \
+	  QA_TESTED_MACOS_VERSIONS="$(QA_TESTED_MACOS_VERSIONS)" \
+	  QA_CONFIRMED="$(QA_CONFIRMED)" \
+	  QA_FIRST_INSTALL="$(QA_FIRST_INSTALL)" \
+	  QA_AUTHENTICATED_UPGRADE="$(QA_AUTHENTICATED_UPGRADE)" \
+	  QA_SESSION_INTEGRATION="$(QA_SESSION_INTEGRATION)" \
+	  QA_UNINSTALL="$(QA_UNINSTALL)" \
+	  QA_OFFLINE_STARTUP="$(QA_OFFLINE_STARTUP)" \
+	  QA_APPLE_SILICON_SMOKE="$(QA_APPLE_SILICON_SMOKE)" \
+	  QA_INTEL_SMOKE="$(QA_INTEL_SMOKE)" \
+	  ./script/dispatch-clinch-release
 
 update: ## Install the latest authenticated public release (Clinch must be quit)
 	./install.sh

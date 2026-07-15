@@ -1,8 +1,9 @@
 # Clinch public-preview release QA
 
-Copy this checklist into a release issue or another durable public record. Do not dispatch the
-release workflow until every required item passes. Put the record URL or identifier in the
-`qa_record` workflow input.
+`make release` creates a release issue from this checklist after explicit operator confirmation.
+For a separately maintained record, copy this checklist into a release issue or another durable
+public record. Do not dispatch the release workflow until every required item passes. Put the
+record URL or identifier in the `qa_record` workflow input.
 
 ## Candidate
 
@@ -17,7 +18,7 @@ release workflow until every required item passes. Put the record URL or identif
 
 ## Required checks
 
-- [ ] The signed checksum list authenticates with the committed Clinch release key.
+- [ ] The candidate update manifest and signatures authenticate with the committed Clinch keys.
 - [ ] Clean manual install from the candidate DMG succeeds.
 - [ ] First launch succeeds using the documented Privacy & Security approval when required.
 - [ ] Authenticated manual upgrade preserves the existing app until replacement succeeds.

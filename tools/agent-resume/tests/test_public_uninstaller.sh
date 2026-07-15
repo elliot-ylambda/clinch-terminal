@@ -5,6 +5,8 @@ ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 export HOME="$TMP/home"
+unset WARP_AGENT_RESUME_DIR CLINCH_AGENT_BIN_DIR CLINCH_AGENT_STATE_DIR \
+  CLINCH_CLAUDE_SETTINGS CLINCH_CODEX_CONFIG
 mkdir -p "$TMP/bin"
 cat > "$TMP/bin/not-running" <<'EOF'
 #!/bin/sh
