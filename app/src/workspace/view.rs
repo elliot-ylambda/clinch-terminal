@@ -1232,6 +1232,12 @@ fn is_in_progress_project_agent(agent: CLIAgent, is_actively_working: bool) -> b
     matches!(agent, CLIAgent::Claude | CLIAgent::Codex) && is_actively_working
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct ProjectCliAgentCounts {
+    pub(crate) working: usize,
+    pub(crate) done: usize,
+}
+
 impl Workspace {
     pub fn is_tab_drag_preview(&self) -> bool {
         self.is_tab_drag_preview
@@ -3590,7 +3596,20 @@ impl Workspace {
         event: &AgentManagementEvent,
         ctx: &mut ViewContext<Self>,
     ) {
-        // Only process events for the active window.
+        if matches!(
+            event,
+            AgentManagementEvent::NotificationAdded { .. }
+                | AgentManagementEvent::NotificationUpdated
+                | AgentManagementEvent::AllNotificationsMarkedRead
+        ) {
+            // Every project derives its blue count and unread state from the shared notification
+            // model. Invalidate background projects too so their outer tabs stay live even while
+            // another project or OS window is active.
+            self.notify_project_metadata_changed(ctx);
+            return;
+        }
+
+        // Legacy attention toasts are window-global and only belong to the active project.
         if ctx
             .windows()
             .active_window()
@@ -3640,9 +3659,7 @@ impl Workspace {
             AgentManagementEvent::NotificationAdded { .. }
             | AgentManagementEvent::NotificationUpdated
             | AgentManagementEvent::AllNotificationsMarkedRead => {
-                // The outer project-tab strip may be owned by ProjectWindow. Notify it so the
-                // existing blue unread-activity dots stay live alongside the running count.
-                self.notify_project_metadata_changed(ctx);
+                unreachable!("notification events return before legacy active-project handling")
             }
         }
     }
@@ -21673,18 +21690,47 @@ impl Workspace {
         })
     }
 
-    /// Number of Claude Code or Codex panes in this project that are actively working.
-    pub(crate) fn in_progress_cli_agent_count(&self, ctx: &AppContext) -> usize {
+    /// Unread project activity that is not already represented by the blue completed-agent count.
+    pub(crate) fn has_other_unread_project_activity(&self, ctx: &AppContext) -> bool {
+        let notifications = AgentNotificationsModel::as_ref(ctx).notifications();
+        self.tabs.iter().any(|tab| {
+            tab.pane_group
+                .as_ref(ctx)
+                .terminal_views(ctx)
+                .into_iter()
+                .any(|terminal| {
+                    notifications.has_other_unread_project_activity_for_terminal_view(terminal.id())
+                })
+        })
+    }
+
+    /// Claude Code and Codex activity summarized for this project's outer tab.
+    ///
+    /// `working` is based on observed turn activity. `done` is the number of unread completed
+    /// turns, matching the blue notification dots on the corresponding inner tabs.
+    pub(crate) fn project_cli_agent_counts(&self, ctx: &AppContext) -> ProjectCliAgentCounts {
         let sessions = CLIAgentSessionsModel::as_ref(ctx);
-        self.tabs
+        let notifications = AgentNotificationsModel::as_ref(ctx).notifications();
+        let mut counts = ProjectCliAgentCounts::default();
+
+        for terminal in self
+            .tabs
             .iter()
             .flat_map(|tab| tab.pane_group.as_ref(ctx).terminal_views(ctx))
-            .filter(|terminal| {
-                sessions.session(terminal.id()).is_some_and(|session| {
-                    is_in_progress_project_agent(session.agent, session.is_actively_working())
-                })
-            })
-            .count()
+        {
+            let is_working = sessions.session(terminal.id()).is_some_and(|session| {
+                is_in_progress_project_agent(session.agent, session.is_actively_working())
+            });
+            if is_working {
+                counts.working += 1;
+            } else if notifications
+                .has_unread_completed_project_cli_agent_for_terminal_view(terminal.id())
+            {
+                counts.done += 1;
+            }
+        }
+
+        counts
     }
 
     /// Renders the tab bar contents, wrapped in hover and drag-drop behaviors.

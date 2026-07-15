@@ -298,6 +298,59 @@ fn open_claude_and_codex_sessions_are_not_active_turns() {
 }
 
 #[test]
+fn local_user_submissions_mark_claude_and_codex_turns_as_working() {
+    App::test((), |mut app| async move {
+        let sessions = app.add_model(|_| CLIAgentSessionsModel::new());
+        let captured_events = app.add_model(|_| CapturedSessionEvents::default());
+        captured_events.update(&mut app, |_, ctx| {
+            ctx.subscribe_to_model(&sessions, |captured, _, event, _| {
+                captured.0.push(event.clone());
+            });
+        });
+
+        let claude_terminal = EntityId::new();
+        let codex_terminal = EntityId::new();
+        sessions.update(&mut app, |model, ctx| {
+            model.set_session(claude_terminal, idle_test_session(CLIAgent::Claude), ctx);
+            let mut completed_codex = idle_test_session(CLIAgent::Codex);
+            completed_codex.status = CLIAgentSessionStatus::Success;
+            model.set_session(codex_terminal, completed_codex, ctx);
+        });
+        captured_events.update(&mut app, |captured, _| captured.0.clear());
+
+        sessions.update(&mut app, |model, ctx| {
+            model.mark_project_cli_agent_turn_started_from_user_submission(claude_terminal, ctx);
+            model.mark_project_cli_agent_turn_started_from_user_submission(codex_terminal, ctx);
+        });
+
+        sessions.read(&app, |model, _| {
+            assert!(model
+                .session(claude_terminal)
+                .is_some_and(CLIAgentSession::is_actively_working));
+            assert!(model
+                .session(codex_terminal)
+                .is_some_and(CLIAgentSession::is_actively_working));
+        });
+        captured_events.read(&app, |captured, _| {
+            for (terminal_view_id, agent) in [
+                (claude_terminal, CLIAgent::Claude),
+                (codex_terminal, CLIAgent::Codex),
+            ] {
+                assert!(captured.0.iter().any(|event| matches!(
+                    event,
+                    CLIAgentSessionsModelEvent::StatusChanged {
+                        terminal_view_id: changed_terminal,
+                        agent: changed_agent,
+                        status: CLIAgentSessionStatus::InProgress,
+                        ..
+                    } if *changed_terminal == terminal_view_id && *changed_agent == agent
+                )));
+            }
+        });
+    });
+}
+
+#[test]
 fn prompt_submit_is_active_until_stop() {
     for agent in [CLIAgent::Claude, CLIAgent::Codex] {
         let mut session = idle_test_session(agent);

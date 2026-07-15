@@ -6074,8 +6074,14 @@ fn submit_cli_agent_rich_input_codex_uses_bracketed_paste() {
         let _agent_view = FeatureFlag::AgentView.override_enabled(true);
         let _cli_rich = FeatureFlag::CLIAgentRichInput.override_enabled(true);
 
-        let (_terminal, pty_writes) =
+        let (terminal, pty_writes) =
             submit_rich_input_and_collect_pty_writes(&mut app, CLIAgent::Codex, "hello");
+
+        terminal.read(&app, |view, ctx| {
+            assert!(CLIAgentSessionsModel::as_ref(ctx)
+                .session(view.view_id)
+                .is_some_and(CLIAgentSession::is_actively_working));
+        });
 
         let writes = pty_writes.borrow();
         // BracketedPaste: first write is ESC[200~ + text + ESC[201~, second is \r.

@@ -9253,6 +9253,7 @@ impl TerminalView {
         data: B,
         ctx: &mut ViewContext<Self>,
     ) {
+        let bytes = data.into();
         {
             let mut terminal_model = self.model.lock();
             let active_block = terminal_model.block_list().active_block();
@@ -9274,7 +9275,18 @@ impl TerminalView {
         // so this is a no-op for that path.
         self.cancel_auto_continue_on_user_input(ctx);
 
-        let bytes = data.into();
+        // Interactive CLI agents submit on carriage return. Do not treat line feeds embedded in
+        // a multi-line bracketed paste as a submission before the user actually presses Enter.
+        if bytes.contains(&b'\r') {
+            let terminal_view_id = self.view_id;
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                sessions.mark_project_cli_agent_turn_started_from_user_submission(
+                    terminal_view_id,
+                    ctx,
+                );
+            });
+        }
+
         let bytes_vec = bytes.to_vec();
         self.clear_selected_blocks(ctx);
         self.update_scroll_position_locking(ScrollPositionUpdate::AfterWriteUserBytesToPty, ctx);

@@ -67,7 +67,13 @@ use crate::settings_view::DisplayCount;
 use crate::suggestions::ignored_suggestions_model::IgnoredSuggestionsModel;
 use crate::system::SystemStats;
 use crate::tab_configs::tab_config::{TabConfigPaneNode, TabConfigPaneType};
-use crate::terminal::cli_agent_sessions::CLIAgentSessionsModel;
+use crate::terminal::cli_agent_sessions::event::{
+    CLIAgentEvent, CLIAgentEventPayload, CLIAgentEventSource, CLIAgentEventType,
+};
+use crate::terminal::cli_agent_sessions::{
+    CLIAgentInputState, CLIAgentSession, CLIAgentSessionContext, CLIAgentSessionStatus,
+    CLIAgentSessionsModel,
+};
 use crate::terminal::history::History;
 use crate::terminal::keys::TerminalKeybindings;
 use crate::terminal::local_tty::spawner::PtySpawner;
@@ -113,6 +119,107 @@ fn project_agent_count_only_includes_in_progress_claude_and_codex_sessions() {
         crate::terminal::CLIAgent::Gemini,
         true,
     ));
+}
+
+#[test]
+fn project_agent_counts_include_simultaneous_claude_and_codex_turns() {
+    App::test((), |mut app| async move {
+        let _notifications_guard =
+            warp_core::features::FeatureFlag::HOANotifications.override_enabled(true);
+        initialize_app(&mut app);
+        crate::settings::AISettings::handle(&app).update(&mut app, |settings, ctx| {
+            let _ = settings.show_agent_notifications.set_value(false, ctx);
+        });
+        let workspace = mock_workspace(&mut app);
+
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.add_terminal_tab(false, ctx);
+        });
+        let terminal_ids = workspace.read(&app, |workspace, ctx| {
+            workspace
+                .tabs
+                .iter()
+                .map(|tab| {
+                    tab.pane_group
+                        .as_ref(ctx)
+                        .terminal_views(ctx)
+                        .into_iter()
+                        .next()
+                        .expect("each test tab should contain a terminal")
+                        .id()
+                })
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(terminal_ids.len(), 2);
+
+        CLIAgentSessionsModel::handle(&app).update(&mut app, |sessions, ctx| {
+            for (terminal_view_id, agent) in terminal_ids.iter().copied().zip([
+                crate::terminal::CLIAgent::Codex,
+                crate::terminal::CLIAgent::Claude,
+            ]) {
+                sessions.set_session(
+                    terminal_view_id,
+                    CLIAgentSession {
+                        agent,
+                        status: CLIAgentSessionStatus::InProgress,
+                        session_context: CLIAgentSessionContext::default(),
+                        input_state: CLIAgentInputState::Closed,
+                        should_auto_toggle_input: false,
+                        listener: None,
+                        plugin_version: None,
+                        remote_host: None,
+                        draft_text: None,
+                        custom_command_prefix: None,
+                        received_rich_notification: false,
+                        has_observed_turn_activity: true,
+                        prompt_history: Default::default(),
+                        prompt_history_load_state: Default::default(),
+                        prompt_history_generation: 0,
+                    },
+                    ctx,
+                );
+            }
+        });
+
+        workspace.read(&app, |workspace, ctx| {
+            assert_eq!(
+                workspace.project_cli_agent_counts(ctx),
+                ProjectCliAgentCounts {
+                    working: 2,
+                    done: 0,
+                }
+            );
+        });
+
+        // The first tab is in the background. Completing its Codex turn should move that pane
+        // from the green count into the blue unread-done count without affecting Claude.
+        CLIAgentSessionsModel::handle(&app).update(&mut app, |sessions, ctx| {
+            sessions.update_from_event(
+                terminal_ids[0],
+                &CLIAgentEvent {
+                    source: CLIAgentEventSource::RichPlugin,
+                    v: 1,
+                    agent: crate::terminal::CLIAgent::Codex,
+                    event: CLIAgentEventType::Stop,
+                    session_id: None,
+                    cwd: None,
+                    project: None,
+                    payload: CLIAgentEventPayload::default(),
+                },
+                ctx,
+            );
+        });
+
+        workspace.read(&app, |workspace, ctx| {
+            assert_eq!(
+                workspace.project_cli_agent_counts(ctx),
+                ProjectCliAgentCounts {
+                    working: 1,
+                    done: 1,
+                }
+            );
+        });
+    });
 }
 
 #[test]

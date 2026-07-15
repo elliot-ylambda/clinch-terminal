@@ -22,16 +22,30 @@ fn make_conversation_notification(
 }
 
 fn make_cli_session_notification(terminal_view_id: EntityId) -> NotificationItem {
+    make_cli_notification(
+        terminal_view_id,
+        CLIAgent::Claude,
+        NotificationCategory::Complete,
+        false,
+    )
+}
+
+fn make_cli_notification(
+    terminal_view_id: EntityId,
+    agent: CLIAgent,
+    category: NotificationCategory,
+    is_read: bool,
+) -> NotificationItem {
     NotificationItem::new(
         "cli test".to_owned(),
         "cli msg".to_owned(),
-        NotificationCategory::Complete,
+        category,
         NotificationSourceAgent::CLI {
-            agent: CLIAgent::Claude,
+            agent,
             is_ambient: false,
         },
         NotificationOrigin::CLISession(terminal_view_id),
-        false,
+        is_read,
         terminal_view_id,
         vec![],
         None,
@@ -98,4 +112,42 @@ fn remove_by_origin_returns_false_when_nothing_to_remove() {
 
     let removed = items.remove_by_origin(NotificationOrigin::CLISession(terminal_view_id));
     assert!(!removed);
+}
+
+#[test]
+fn completed_project_cli_agent_query_only_matches_unread_claude_and_codex_completions() {
+    for agent in [CLIAgent::Claude, CLIAgent::Codex] {
+        let terminal_view_id = EntityId::new();
+        let mut items = NotificationItems::default();
+        items.push(make_cli_notification(
+            terminal_view_id,
+            agent,
+            NotificationCategory::Complete,
+            false,
+        ));
+
+        assert!(items.has_unread_completed_project_cli_agent_for_terminal_view(terminal_view_id));
+        assert!(!items.has_other_unread_project_activity_for_terminal_view(terminal_view_id));
+    }
+
+    for (agent, category, is_read) in [
+        (CLIAgent::Gemini, NotificationCategory::Complete, false),
+        (CLIAgent::Claude, NotificationCategory::Request, false),
+        (CLIAgent::Codex, NotificationCategory::Complete, true),
+    ] {
+        let terminal_view_id = EntityId::new();
+        let mut items = NotificationItems::default();
+        items.push(make_cli_notification(
+            terminal_view_id,
+            agent,
+            category,
+            is_read,
+        ));
+
+        assert!(!items.has_unread_completed_project_cli_agent_for_terminal_view(terminal_view_id));
+        assert_eq!(
+            items.has_other_unread_project_activity_for_terminal_view(terminal_view_id),
+            !is_read
+        );
+    }
 }

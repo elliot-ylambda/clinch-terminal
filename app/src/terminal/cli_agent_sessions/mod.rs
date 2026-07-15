@@ -557,6 +557,39 @@ impl CLIAgentSessionsModel {
         self.sessions.get(&terminal_view_id)
     }
 
+    /// Marks a Claude Code or Codex turn as working when Clinch itself observes the user submit
+    /// input to the interactive CLI.
+    ///
+    /// Rich plugins normally report `PromptSubmit`, but command-detected sessions and Codex's
+    /// OSC 9 fallback only report completion. Recording the local submission closes that gap
+    /// without treating an interactive CLI that is merely open at its prompt as active work.
+    pub fn mark_project_cli_agent_turn_started_from_user_submission(
+        &mut self,
+        terminal_view_id: EntityId,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        let Some(session) = self.sessions.get_mut(&terminal_view_id) else {
+            return;
+        };
+        if !matches!(session.agent, CLIAgent::Claude | CLIAgent::Codex)
+            || session.is_actively_working()
+        {
+            return;
+        }
+
+        session.has_observed_turn_activity = true;
+        session.status = CLIAgentSessionStatus::InProgress;
+        session.session_context.response = None;
+        session.clear_permission_scoped_state();
+
+        ctx.emit(CLIAgentSessionsModelEvent::StatusChanged {
+            terminal_view_id,
+            agent: session.agent,
+            status: CLIAgentSessionStatus::InProgress,
+            session_context: Box::new(session.session_context.clone()),
+        });
+    }
+
     /// Seeds a restored pane from its persisted provider resume command before any plugin event.
     /// The provider session, rather than the new view ID, remains the durable history identity.
     pub fn seed_resumed_session(

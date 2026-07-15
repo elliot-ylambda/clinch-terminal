@@ -212,6 +212,44 @@ impl NotificationItems {
             .iter()
             .any(|item| item.terminal_view_id == terminal_view_id && !item.is_read)
     }
+
+    /// Whether this terminal has an unread completion from a Claude Code or Codex turn.
+    ///
+    /// Project tabs use this narrower query for their blue completed-agent count. Other unread
+    /// notifications (permission requests, errors, and Oz runs) continue to use the generic dot.
+    pub(crate) fn has_unread_completed_project_cli_agent_for_terminal_view(
+        &self,
+        terminal_view_id: EntityId,
+    ) -> bool {
+        self.items.iter().any(|item| {
+            item.terminal_view_id == terminal_view_id && is_unread_completed_project_cli_agent(item)
+        })
+    }
+
+    /// Whether this terminal has unread activity not already represented by the blue completed
+    /// Claude/Codex count on its project tab.
+    pub(crate) fn has_other_unread_project_activity_for_terminal_view(
+        &self,
+        terminal_view_id: EntityId,
+    ) -> bool {
+        self.items.iter().any(|item| {
+            item.terminal_view_id == terminal_view_id
+                && !item.is_read
+                && !is_unread_completed_project_cli_agent(item)
+        })
+    }
+}
+
+fn is_unread_completed_project_cli_agent(item: &NotificationItem) -> bool {
+    !item.is_read
+        && item.category == NotificationCategory::Complete
+        && matches!(
+            item.agent,
+            NotificationSourceAgent::CLI {
+                agent: CLIAgent::Claude | CLIAgent::Codex,
+                ..
+            }
+        )
 }
 
 #[cfg(test)]

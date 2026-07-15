@@ -50,9 +50,9 @@ Figma: none provided. The interaction should follow the familiar behavior of Chr
 
 11. Long project labels truncate with an ellipsis. The complete ordered project list remains available to accessibility output with each project label, position, selected state, and unread state. Duplicate labels are allowed; their project order and contents remain distinct.
 
-12. A project tab shows a small notification dot whenever any inner terminal or agent session in that project has unread activity in Clinch's notification model. The dot uses the existing accent/notification token and does not replace or duplicate the detailed notification mailbox.
+12. A project tab summarizes Claude Code and Codex turns with two independent numeric badges: a green count for turns currently working and a blue count for unread completed turns. Both providers contribute to the same counts. The blue count uses the existing accent/notification token and corresponds to the blue unread dots on the completed turns' inner tabs. Other unread activity that is not represented by the completed count continues to render as a small notification dot. These indicators do not replace or duplicate the detailed notification mailbox.
 
-13. Activating a project alone does not clear its notification dot. The dot disappears only when the underlying notifications are read, removed, or otherwise cease to be unread according to the existing notification behavior.
+13. Activating a project alone does not clear its blue completed count or notification dot. Each indicator disappears only when its underlying notifications are read, removed, or otherwise cease to be unread according to the existing notification behavior.
 
 14. Clicking a desktop or in-app notification for a session in an inactive project first activates the containing window and project, then activates and focuses the originating inner tab and pane. It must not navigate to a similarly positioned pane in the currently active project.
 
