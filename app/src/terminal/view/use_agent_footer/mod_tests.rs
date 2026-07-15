@@ -98,6 +98,40 @@ fn simulate_user_started_long_running_command(view: &mut TerminalView) {
     }
 }
 
+#[test]
+fn manual_resume_wrapper_exposes_history_identity_from_the_active_command() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let terminal = add_window_with_terminal(&mut app, None);
+
+        terminal.update(&mut app, |view, _ctx| {
+            let mut model = view.model.lock();
+            model.init_shell(InitShellValue {
+                session_id: 0.into(),
+                shell: "zsh".to_owned(),
+                ..Default::default()
+            });
+            model.bootstrapped(BootstrappedValue {
+                shell: "zsh".to_owned(),
+                ..Default::default()
+            });
+            model.simulate_long_running_block(
+                "clinch_agent_resume_launch claude requested-session --dangerously-skip-permissions",
+                "",
+            );
+            drop(model);
+
+            assert_eq!(
+                view.active_resume_command_seed(),
+                Some((
+                    AgentResumeProvider::Claude,
+                    "requested-session".to_owned()
+                ))
+            );
+        });
+    });
+}
+
 fn transition_to_user_handoff_state(
     view: &mut TerminalView,
     reason: UserTakeOverReason,

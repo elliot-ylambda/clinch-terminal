@@ -638,6 +638,31 @@ impl CLIAgentSessionsModel {
         self.start_prompt_history_load(terminal_view_id, ctx);
     }
 
+    /// Seeds identity parsed from a command the user launched in an existing terminal pane.
+    /// A structured provider event may already have supplied the actual live identity (which can
+    /// differ when the resume launcher teleports or falls back), so command text only fills an
+    /// otherwise-unidentified session for the same agent.
+    pub fn seed_resumed_session_if_unidentified(
+        &mut self,
+        terminal_view_id: EntityId,
+        provider: AgentResumeProvider,
+        session_id: String,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        let agent = agent_for_provider(provider);
+        if self.sessions.get(&terminal_view_id).is_some_and(|session| {
+            session.agent != agent
+                || session
+                    .session_context
+                    .session_id
+                    .as_deref()
+                    .is_some_and(|session_id| !session_id.trim().is_empty())
+        }) {
+            return;
+        }
+        self.seed_resumed_session(terminal_view_id, provider, session_id, ctx);
+    }
+
     fn start_prompt_history_load(
         &mut self,
         terminal_view_id: EntityId,

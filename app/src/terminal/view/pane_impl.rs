@@ -4,8 +4,8 @@ use settings::Setting as _;
 use warp_core::context_flag::ContextFlag;
 use warp_core::ui::theme::Fill as ThemeFill;
 use warpui::elements::{
-    Border, ConstrainedBox, CrossAxisAlignment, Empty, Flex, MainAxisAlignment, MainAxisSize,
-    ParentElement, Shrinkable,
+    Border, ConstrainedBox, CrossAxisAlignment, Empty, Expanded, Flex, MainAxisAlignment,
+    MainAxisSize, ParentElement, Shrinkable,
 };
 use warpui::prelude::{ChildView, Container};
 use warpui::text_layout::ClipConfig;
@@ -403,22 +403,23 @@ impl TerminalView {
             return self.render_header_title(false, header_ctx, app);
         }
 
-        // Mirror the canonical pane-header center (see `render_header_title`,
-        // `code/view.rs`): a `MainAxisSize::Min` row holding an intrinsically
-        // sized child. The dropdown is added directly rather than wrapped in
-        // `Expanded` — an `Expanded` (flex) child inside a `Max` row was the
-        // sole layout that deviated from every other pane header and is the one
-        // construct that blows up under an unbounded-width constraint (the
-        // failure the drag path and the comment in `maybe_add_parent_navigation_card`
-        // deliberately avoid). The dropdown's own `MainAxisSize::Max` top bar
-        // still fills the available header width, so the menu stays full-width.
+        // Give the dropdown a bounded, full-width slot via `Expanded` inside a
+        // `Max` row. The finite constraint lets the button's `Shrinkable` label
+        // use the space left by the chevron; compact vertical padding in the
+        // dropdown constructor gives the text line enough height to paint.
         let mut center_row = Flex::row()
-            .with_main_axis_size(MainAxisSize::Min)
+            .with_main_axis_size(MainAxisSize::Max)
             .with_cross_axis_alignment(CrossAxisAlignment::Center);
         if let Some(indicator) = self.render_header_title_indicator(app) {
             center_row.add_child(Container::new(indicator).with_margin_right(4.).finish());
         }
-        center_row.add_child(ChildView::new(&self.cli_agent_message_history_dropdown).finish());
+        center_row.add_child(
+            Expanded::new(
+                1.,
+                ChildView::new(&self.cli_agent_message_history_dropdown).finish(),
+            )
+            .finish(),
+        );
         center_row.finish()
     }
 

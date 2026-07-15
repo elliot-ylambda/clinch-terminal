@@ -612,26 +612,6 @@ where
     fn render_top_bar(&self, appearance: &Appearance, app: &AppContext) -> Box<dyn Element> {
         let icon_path = "bundled/svg/chevron-down.svg";
         let (selected_item_text, font_family_id) = self.top_bar_text_and_font_family(app);
-        // TEMP DIAGNOSTIC — remove once the CLI-agent history header renders. The
-        // provider-driven top bar (only the CLI history dropdown sets a provider)
-        // renders blank in-app despite the provider returning the first prompt. This
-        // logs the resolved text + font sanity so one rebuild distinguishes an empty
-        // data path from an invisible paint (e.g. font_size resolving to 0). Grep
-        // logs for `cli-history-header`.
-        if self.menu_header_text_provider.is_some() {
-            log::warn!(
-                "[cli-history-header] top_bar_text={:?} text_len={} ui_font_size={} \
-                 self.font_size={:?} self.font_color_set={} font_family_override={:?} \
-                 selected_item_is_some={}",
-                selected_item_text,
-                selected_item_text.chars().count(),
-                appearance.ui_font_size(),
-                self.font_size,
-                self.font_color.is_some(),
-                font_family_id,
-                self.selected_item.is_some(),
-            );
-        }
         let mut top_bar = appearance
             .ui_builder()
             .button(

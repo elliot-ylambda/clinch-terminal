@@ -170,7 +170,7 @@ use warpui::platform::{Cursor, OperatingSystem};
 use warpui::r#async::executor::Background;
 use warpui::r#async::{SpawnedFutureHandle, Timer};
 use warpui::text::SelectionType;
-use warpui::ui_components::components::UiComponent;
+use warpui::ui_components::components::{Coords, UiComponent};
 use warpui::units::{IntoLines, IntoPixels, Lines, Pixels};
 use warpui::windowing::WindowManager;
 use warpui::{
@@ -2985,18 +2985,27 @@ enum BlockMetadataUpdateSource {
 }
 
 fn cli_agent_history_trigger(history: &AgentPromptHistory, fallback: String) -> String {
-    history
-        .prompts
-        .first()
-        .map(|prompt| prompt.text.split_whitespace().collect::<Vec<_>>().join(" "))
-        .filter(|prompt| !prompt.is_empty())
-        .unwrap_or(fallback)
+    let Some(first_prompt) = history.prompts.first() else {
+        return fallback;
+    };
+    let message = first_prompt
+        .text
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if message.is_empty() {
+        return fallback;
+    }
+
+    crate::agent_resume::format_prompt_time_full(first_prompt.timestamp.as_deref())
+        .map(|timestamp| format!("{timestamp} | {message}"))
+        .unwrap_or(message)
 }
 
-fn cli_agent_history_additional_prompts(history: &AgentPromptHistory) -> &[AgentPrompt] {
-    // AgentPromptHistory is chronological. The first prompt is permanently reserved for the
-    // closed header, so the expanded menu contains only the remaining prompts in that order.
-    history.prompts.get(1..).unwrap_or_default()
+fn cli_agent_history_prompts(history: &AgentPromptHistory) -> &[AgentPrompt] {
+    // The closed header previews the first prompt, but the expanded history must still contain
+    // every prompt in chronological order.
+    &history.prompts
 }
 
 fn cli_agent_history_prompt_label(ordinal: usize, prompt: &AgentPrompt) -> String {
@@ -3916,13 +3925,35 @@ impl TerminalView {
         });
 
         let cli_agent_message_history_dropdown = ctx.add_typed_action_view(|ctx| {
+            let header_text_color = Appearance::as_ref(ctx).theme().active_ui_text_color();
+            let header_font_size = Appearance::as_ref(ctx).ui_font_size();
             let mut dropdown = Dropdown::<()>::new(ctx).with_drop_shadow();
+            // `Max` top bar filling the `Expanded` header slot (see
+            // `render_cli_agent_history_header_center`) — the original, working
+            // layout for the closed header. `match_menu_width_to_top_bar` is left
+            // off (default) so the popup sizes to its own rows instead of the
+            // full-width top bar, which previously garbled the menu.
             dropdown.set_main_axis_size(MainAxisSize::Max, ctx);
             dropdown.set_top_bar_max_width(f32::MAX);
             dropdown.set_top_bar_height(26., ctx);
+            // The outlined button has a 1px border on both sides. Its default 5px vertical
+            // padding leaves only 14px for a 12px font with a 1.2 line height (14.4px), which
+            // makes WarpUI discard the line while still painting the chevron.
+            dropdown.set_padding(
+                Coords {
+                    top: 2.,
+                    bottom: 2.,
+                    left: 8.,
+                    right: 8.,
+                },
+                ctx,
+            );
             dropdown.set_vertical_margin(0., ctx);
-            dropdown.set_match_menu_width_to_top_bar(true, ctx);
             dropdown.set_menu_max_height(360., ctx);
+            // Explicit, header-appropriate text color + size so the first-prompt
+            // text is always painted, mirroring `render_pane_header_title_text`.
+            dropdown.set_font_color(header_text_color.into(), ctx);
+            dropdown.set_font_size(header_font_size, ctx);
             dropdown
         });
         ctx.subscribe_to_view(&cli_agent_message_history_dropdown, |me, _, event, ctx| {
@@ -12061,6 +12092,7 @@ impl TerminalView {
                                             _ => {}
                                         },
                                     );
+                                    me.seed_cli_agent_from_active_resume_command(ctx);
 
                                     // Codex doesn't use the sentinel-based plugin protocol,
                                     // so create the listener proactively on command detection
@@ -13570,15 +13602,12 @@ impl TerminalView {
         let mut items: Vec<MenuItem<DropdownAction>> = vec![MenuItemFields::new(label.clone())
             .with_disabled(true)
             .into_item()];
-        items.extend(
-            cli_agent_history_additional_prompts(&history)
-                .iter()
-                .enumerate()
-                .map(|(index, prompt)| {
-                    let ordinal = index + 2;
-                    MenuItemFields::new(cli_agent_history_prompt_label(ordinal, prompt)).into_item()
-                }),
-        );
+        items.extend(cli_agent_history_prompts(&history).iter().enumerate().map(
+            |(index, prompt)| {
+                let ordinal = index + 1;
+                MenuItemFields::new(cli_agent_history_prompt_label(ordinal, prompt)).into_item()
+            },
+        ));
         if is_loading {
             items.push(
                 MenuItemFields::new("Restoring message history…")
@@ -13597,6 +13626,8 @@ impl TerminalView {
         self.cli_agent_message_history_dropdown
             .update(ctx, |dropdown, ctx| {
                 dropdown.set_rich_items(items, ctx);
+                // The model-backed header provider supplies the first prompt independently of
+                // menu selection. History rows are informational and should not become selected.
                 dropdown.set_selected_to_none(ctx);
             });
     }

@@ -986,6 +986,74 @@ fn appending_prompt_without_session_id_emits_session_updated() {
     });
 }
 
+/// This test mutates the process-global channel state. The repository's required nextest runner
+/// isolates tests by process, so the Clinch app ID cannot leak into another test.
+#[test]
+fn resume_command_seed_only_fills_unidentified_matching_agent_sessions() {
+    ChannelState::set(ChannelState::new(
+        Channel::Local,
+        ChannelConfig::no_backend(AppId::new("sh", "clinch", "ClinchDev"), "clinch-test.log"),
+    ));
+
+    App::test((), |mut app| async move {
+        let sessions = app.add_model(|_| CLIAgentSessionsModel::new());
+        let missing_view_id = EntityId::new();
+        let identified_view_id = EntityId::new();
+        let other_agent_view_id = EntityId::new();
+
+        sessions.update(&mut app, |model, ctx| {
+            model.seed_resumed_session_if_unidentified(
+                missing_view_id,
+                AgentResumeProvider::Claude,
+                "requested-session".to_owned(),
+                ctx,
+            );
+
+            let mut identified = idle_test_session(CLIAgent::Claude);
+            identified.session_context.session_id = Some("actual-live-session".to_owned());
+            model.set_session(identified_view_id, identified, ctx);
+            model.seed_resumed_session_if_unidentified(
+                identified_view_id,
+                AgentResumeProvider::Claude,
+                "requested-session".to_owned(),
+                ctx,
+            );
+
+            model.set_session(other_agent_view_id, idle_test_session(CLIAgent::Codex), ctx);
+            model.seed_resumed_session_if_unidentified(
+                other_agent_view_id,
+                AgentResumeProvider::Claude,
+                "requested-session".to_owned(),
+                ctx,
+            );
+        });
+
+        sessions.read(&app, |model, _| {
+            let missing = model
+                .session(missing_view_id)
+                .expect("seeded session exists");
+            assert_eq!(missing.agent, CLIAgent::Claude);
+            assert_eq!(
+                missing.session_context.session_id.as_deref(),
+                Some("requested-session")
+            );
+
+            assert_eq!(
+                model
+                    .session(identified_view_id)
+                    .and_then(|session| session.session_context.session_id.as_deref()),
+                Some("actual-live-session")
+            );
+
+            let other_agent = model
+                .session(other_agent_view_id)
+                .expect("other agent session remains");
+            assert_eq!(other_agent.agent, CLIAgent::Codex);
+            assert_eq!(other_agent.session_context.session_id, None);
+        });
+    });
+}
+
 #[test]
 fn history_load_key_rejects_stale_session_or_generation() {
     let key = CLIAgentSessionKey {

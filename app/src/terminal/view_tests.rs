@@ -118,7 +118,30 @@ fn cli_agent_history_trigger_uses_first_ever_prompt() {
 }
 
 #[test]
-fn cli_agent_history_additional_prompts_omit_first_and_stay_chronological() {
+fn cli_agent_history_trigger_includes_the_first_prompt_time() {
+    let first_timestamp = "2026-07-14T08:00:00Z";
+    let history = AgentPromptHistory {
+        prompts: vec![
+            AgentPrompt {
+                timestamp: Some(first_timestamp.to_owned()),
+                text: "older\nprompt".to_owned(),
+            },
+            AgentPrompt {
+                timestamp: Some("2026-07-14T09:00:00Z".to_owned()),
+                text: "newer prompt".to_owned(),
+            },
+        ],
+        is_partial: false,
+    };
+
+    let trigger = cli_agent_history_trigger(&history, "Message history (2)".to_owned());
+    let first_time = crate::agent_resume::format_prompt_time_full(Some(first_timestamp)).unwrap();
+
+    assert_eq!(trigger, format!("{first_time} | older prompt"));
+}
+
+#[test]
+fn cli_agent_history_prompts_include_first_and_stay_chronological() {
     let history = AgentPromptHistory {
         prompts: vec![
             AgentPrompt {
@@ -137,14 +160,14 @@ fn cli_agent_history_additional_prompts_omit_first_and_stay_chronological() {
         is_partial: false,
     };
 
-    let prompts = cli_agent_history_additional_prompts(&history);
+    let prompts = cli_agent_history_prompts(&history);
 
     assert_eq!(
         prompts
             .iter()
             .map(|prompt| prompt.text.as_str())
             .collect::<Vec<_>>(),
-        vec!["second", "third"]
+        vec!["first", "second", "third"]
     );
 }
 
