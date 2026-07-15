@@ -2,9 +2,10 @@
 //! business logic for integrating the terminal view with the pane infra (`crate::pane_group`).
 use settings::Setting as _;
 use warp_core::context_flag::ContextFlag;
+use warp_core::ui::theme::Fill as ThemeFill;
 use warpui::elements::{
-    ConstrainedBox, CrossAxisAlignment, Empty, Expanded, Flex, MainAxisAlignment, MainAxisSize,
-    ParentElement, Shrinkable,
+    Border, ConstrainedBox, CrossAxisAlignment, Empty, Expanded, Flex, MainAxisAlignment,
+    MainAxisSize, ParentElement, Shrinkable,
 };
 use warpui::prelude::{ChildView, Container};
 use warpui::text_layout::ClipConfig;
@@ -50,7 +51,7 @@ use crate::terminal::{TerminalManager, TerminalView};
 use crate::ui_components::agent_icon::terminal_view_agent_icon_variant_respecting_tab_setting;
 use crate::ui_components::buttons::icon_button_with_color;
 use crate::ui_components::icon_with_status::render_icon_with_status;
-use crate::ui_components::{blended_colors, icons};
+use crate::ui_components::{blended_colors, icons, CLINCH_LOGO_GREEN};
 use crate::util::bindings::keybinding_name_to_display_string;
 use crate::workspace::tab_settings::TabSettings;
 
@@ -600,9 +601,10 @@ impl TerminalView {
         let is_fullscreen_agent_view = FeatureFlag::AgentView.is_enabled()
             && self.agent_view_controller.as_ref(app).is_fullscreen();
         let parent_conversation_header_card = self.render_parent_conversation_header_card(app);
+        let use_cli_agent_history_header = self.should_use_cli_agent_history_header(app);
 
         let left = self.maybe_render_header_back_button(app);
-        let center = if self.should_use_cli_agent_history_header(app) {
+        let center = if use_cli_agent_history_header {
             self.render_cli_agent_history_header_center(header_ctx, app)
         } else {
             self.render_header_title(is_fullscreen_agent_view, header_ctx, app)
@@ -636,9 +638,20 @@ impl TerminalView {
             app,
         );
 
-        if is_fullscreen_agent_view {
+        let header = if is_fullscreen_agent_view {
             Container::new(header)
                 .with_background(agent_view_bg_fill(app))
+                .finish()
+        } else {
+            header
+        };
+
+        if use_cli_agent_history_header {
+            Container::new(header)
+                .with_border(
+                    Border::bottom(1.)
+                        .with_border_fill(ThemeFill::Solid(CLINCH_LOGO_GREEN).with_opacity(50)),
+                )
                 .finish()
         } else {
             header
