@@ -181,9 +181,7 @@ impl View for SubmittableTextInput {
                 button = button.disable();
             }
             button
-                .on_click(|ctx, _, _| {
-                    ctx.dispatch_typed_action(SubmittableTextInputAction::Submit)
-                })
+                .on_click(|ctx, _, _| ctx.dispatch_typed_action(SubmittableTextInputAction::Submit))
                 .finish()
         } else {
             let mut button = appearance
@@ -198,9 +196,7 @@ impl View for SubmittableTextInput {
                 button = button.disable();
             }
             button
-                .on_click(|ctx, _, _| {
-                    ctx.dispatch_typed_action(SubmittableTextInputAction::Submit)
-                })
+                .on_click(|ctx, _, _| ctx.dispatch_typed_action(SubmittableTextInputAction::Submit))
                 .finish()
         };
 
