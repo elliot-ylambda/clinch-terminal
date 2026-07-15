@@ -10,7 +10,6 @@ const IMESSAGE_CONFIGURATION_STORAGE_KEY: &str = "ClinchIMessageConfiguration";
 #[derive(
     Clone,
     Debug,
-    Default,
     Deserialize,
     Eq,
     PartialEq,
@@ -21,9 +20,29 @@ const IMESSAGE_CONFIGURATION_STORAGE_KEY: &str = "ClinchIMessageConfiguration";
 pub struct IMessageConfiguration {
     pub enabled: bool,
     pub setup_complete: bool,
+    #[serde(default = "default_imessage_notifications_enabled")]
+    #[schemars(default = "default_imessage_notifications_enabled")]
+    pub notifications_enabled_by_default: bool,
     pub recipient: String,
     pub chat_id: Option<i64>,
     pub chat_guid: Option<String>,
+}
+
+fn default_imessage_notifications_enabled() -> bool {
+    true
+}
+
+impl Default for IMessageConfiguration {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            setup_complete: false,
+            notifications_enabled_by_default: true,
+            recipient: String::new(),
+            chat_id: None,
+            chat_guid: None,
+        }
+    }
 }
 
 pub struct IMessageConfigurationSetting {

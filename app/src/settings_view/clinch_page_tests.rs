@@ -96,3 +96,33 @@ fn plan_limits_action_toggles_the_existing_opt_in_setting() {
         assert_eq!(after, !before);
     });
 }
+
+#[test]
+#[cfg(target_os = "macos")]
+fn imessage_default_action_changes_only_the_session_notification_default() {
+    App::test((), |mut app| async move {
+        initialize_settings_for_tests(&mut app);
+        app.add_singleton_model(|_| CLIAgentSessionsModel::new());
+        app.add_singleton_model(IMessageCoordinator::new);
+        app.add_singleton_model(|_| AuthStateProvider::new_logged_out_for_test());
+        app.add_singleton_model(|_| KeybindingChangedNotifier::new());
+        app.add_singleton_model(|_| Appearance::mock());
+        let before = ClinchSettings::handle(&app)
+            .read(&app, |settings, _| settings.imessage().clone());
+        let (_, view) = app.add_window(WindowStyle::NotStealFocus, ClinchSettingsPageView::new);
+
+        view.update(&mut app, |view, ctx| {
+            view.handle_action(
+                &ClinchSettingsPageAction::IMessageNotificationsDefault,
+                ctx,
+            );
+        });
+
+        let after = ClinchSettings::handle(&app)
+            .read(&app, |settings, _| settings.imessage().clone());
+        let mut expected = before;
+        expected.notifications_enabled_by_default =
+            !expected.notifications_enabled_by_default;
+        assert_eq!(after, expected);
+    });
+}

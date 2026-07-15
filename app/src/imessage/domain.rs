@@ -111,14 +111,29 @@ pub(crate) struct MobileSessionRoute {
     pub(crate) key: MobileSessionKey,
     pub(crate) label: String,
     pub(crate) active: bool,
-    pub(crate) opted_out: bool,
+    /// Reads the original persisted `opted_out` field. New writes use
+    /// `notification_override`, but retaining this field makes an existing
+    /// explicit opt-out continue to mean off after upgrading.
+    #[serde(default, rename = "opted_out", skip_serializing_if = "is_false")]
+    pub(crate) legacy_opted_out: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) notification_override: Option<bool>,
     pub(crate) created_at: i64,
     pub(crate) updated_at: i64,
 }
 
 impl MobileSessionRoute {
-    pub(crate) fn is_eligible(&self, globally_enabled: bool) -> bool {
-        globally_enabled && self.active && !self.opted_out
+    pub(crate) fn notifications_enabled(&self, enabled_by_default: bool) -> bool {
+        self.notification_override
+            .unwrap_or(!self.legacy_opted_out && enabled_by_default)
+    }
+
+    pub(crate) fn is_eligible(
+        &self,
+        globally_enabled: bool,
+        enabled_by_default: bool,
+    ) -> bool {
+        globally_enabled && self.active && self.notifications_enabled(enabled_by_default)
     }
 }
 
@@ -235,6 +250,8 @@ pub(crate) struct ExpiredItems {
 pub(crate) struct RouteState {
     pub(crate) version: u32,
     pub(crate) globally_enabled: bool,
+    #[serde(default = "default_true")]
+    pub(crate) notifications_enabled_by_default: bool,
     pub(crate) last_row_id: i64,
     pub(crate) routes: Vec<MobileSessionRoute>,
     pub(crate) retired_routes: Vec<RetiredRoute>,
@@ -252,6 +269,7 @@ impl Default for RouteState {
         Self {
             version: 1,
             globally_enabled: false,
+            notifications_enabled_by_default: true,
             last_row_id: 0,
             routes: Vec::new(),
             retired_routes: Vec::new(),
@@ -266,6 +284,21 @@ impl Default for RouteState {
 }
 
 impl RouteState {
+    pub(crate) fn migrate_legacy_notification_overrides(&mut self) -> bool {
+        let mut changed = false;
+        for route in &mut self.routes {
+            if route.notification_override.is_none() && route.legacy_opted_out {
+                route.notification_override = Some(false);
+                changed = true;
+            }
+            if route.legacy_opted_out {
+                route.legacy_opted_out = false;
+                changed = true;
+            }
+        }
+        changed
+    }
+
     pub(crate) fn register_session(
         &mut self,
         key: MobileSessionKey,
@@ -290,7 +323,8 @@ impl RouteState {
             key,
             label,
             active: true,
-            opted_out: false,
+            legacy_opted_out: false,
+            notification_override: None,
             created_at: now,
             updated_at: now,
         });
@@ -336,19 +370,20 @@ impl RouteState {
         self.take_queued_for_route(&id)
     }
 
-    pub(crate) fn set_opted_out(
+    pub(crate) fn set_notifications_enabled(
         &mut self,
         key: &MobileSessionKey,
-        opted_out: bool,
+        enabled: bool,
         now: i64,
     ) -> Vec<QueuedMobileReply> {
         let Some(route) = self.routes.iter_mut().find(|route| &route.key == key) else {
             return Vec::new();
         };
-        route.opted_out = opted_out;
+        route.legacy_opted_out = false;
+        route.notification_override = Some(enabled);
         route.updated_at = now;
         let id = route.id.clone();
-        if opted_out {
+        if !enabled {
             self.take_queued_for_route(&id)
         } else {
             Vec::new()
@@ -367,7 +402,12 @@ impl RouteState {
         let mut routes = self
             .routes
             .iter()
-            .filter(|route| route.is_eligible(self.globally_enabled))
+            .filter(|route| {
+                route.is_eligible(
+                    self.globally_enabled,
+                    self.notifications_enabled_by_default,
+                )
+            })
             .collect::<Vec<_>>();
         routes.sort_by(|left, right| left.id.cmp(&right.id));
         routes
@@ -746,8 +786,12 @@ impl RouteState {
     }
 
     fn route_is_eligible(&self, id: &MobileRouteId) -> bool {
-        self.route_by_id(id)
-            .is_some_and(|route| route.is_eligible(self.globally_enabled))
+        self.route_by_id(id).is_some_and(|route| {
+            route.is_eligible(
+                self.globally_enabled,
+                self.notifications_enabled_by_default,
+            )
+        })
     }
 
     fn unavailable_route_ids(&self, now: i64) -> HashSet<MobileRouteId> {
@@ -782,6 +826,14 @@ impl RouteState {
 
 fn text_fingerprint(text: &str) -> String {
     hex::encode(Sha256::digest(text.as_bytes()))
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 fn generate_route_id(unavailable: &HashSet<MobileRouteId>) -> MobileRouteId {

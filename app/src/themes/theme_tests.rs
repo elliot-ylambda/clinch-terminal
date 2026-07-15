@@ -485,3 +485,32 @@ fn in_memory_theme_generation_test() {
         )
     );
 }
+
+#[test]
+fn clinch_themes_are_registered_and_default() {
+    // Both Clinch themes are present in the bundled registry (guards against forgetting to
+    // register them — `theme()` would otherwise silently fall back to the dark theme).
+    let config = WarpThemeConfig::new();
+    assert!(
+        config
+            .theme_items()
+            .any(|(kind, _)| *kind == ThemeKind::ClinchInk),
+        "Clinch Ink should be registered as a bundled theme",
+    );
+    assert!(
+        config
+            .theme_items()
+            .any(|(kind, _)| *kind == ThemeKind::ClinchPaper),
+        "Clinch Paper should be registered as a bundled theme",
+    );
+
+    // Clinch Ink is the compiled default; following the OS theme yields Paper (light) / Ink (dark).
+    assert_eq!(ThemeKind::default(), ThemeKind::ClinchInk);
+    let system = SelectedSystemThemes::default();
+    assert_eq!(system.light, ThemeKind::ClinchPaper);
+    assert_eq!(system.dark, ThemeKind::ClinchInk);
+
+    // Display names are stable (theme picker labels + settings TOML values).
+    assert_eq!(ThemeKind::ClinchInk.to_string(), "Clinch Ink");
+    assert_eq!(ThemeKind::ClinchPaper.to_string(), "Clinch Paper");
+}

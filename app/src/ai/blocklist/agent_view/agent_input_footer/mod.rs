@@ -67,7 +67,9 @@ use crate::context_chips::prompt_type::PromptType;
 use crate::context_chips::{self, ContextChipKind};
 use crate::features::FeatureFlag;
 #[cfg(target_os = "macos")]
-use crate::imessage::{IMessageCoordinator, IMessageCoordinatorEvent};
+use crate::imessage::{
+    IMessageConnectionStatus, IMessageCoordinator, IMessageCoordinatorEvent, IMessagePermission,
+};
 use crate::network::NetworkStatus;
 use crate::send_telemetry_from_ctx;
 #[cfg(feature = "voice_input")]
@@ -286,6 +288,91 @@ pub struct AgentInputFooter {
     prompt_cache_expiry_timer_handle: Option<SpawnedFutureHandle>,
 }
 
+#[cfg(target_os = "macos")]
+#[derive(Debug, Eq, PartialEq)]
+struct IMessageFooterPresentation {
+    label: String,
+    tooltip: String,
+    active: bool,
+}
+
+#[cfg(target_os = "macos")]
+fn imessage_footer_presentation(
+    setup_complete: bool,
+    recipient_configured: bool,
+    status: &IMessageConnectionStatus,
+    globally_enabled: bool,
+    session_notifications_enabled: bool,
+    route_id: Option<&str>,
+) -> IMessageFooterPresentation {
+    if !setup_complete {
+        let (label, tooltip) = if !recipient_configured {
+            (
+                "Set up iMessage",
+                "Set up iMessage notifications in Clinch Settings",
+            )
+        } else {
+            match status {
+                IMessageConnectionStatus::Paused(IMessagePermission::FullDiskAccess) => (
+                    "iMessage: Enable access",
+                    "Enable Full Disk Access, then quit and reopen Clinch to continue setup",
+                ),
+                IMessageConnectionStatus::Paused(IMessagePermission::Automation) => (
+                    "iMessage: Allow Messages",
+                    "Allow Clinch to control Messages to continue setup",
+                ),
+                IMessageConnectionStatus::Paused(IMessagePermission::MessagesSignIn) => (
+                    "iMessage: Sign in",
+                    "Sign in to Messages to continue iMessage setup",
+                ),
+                IMessageConnectionStatus::AwaitingCalibrationReply => (
+                    "iMessage: Check your phone",
+                    "Reply with the one-time code in the Clinch setup message",
+                ),
+                IMessageConnectionStatus::Error => (
+                    "iMessage: Needs attention",
+                    "Open Clinch Settings to finish or restart iMessage setup",
+                ),
+                IMessageConnectionStatus::Disabled
+                | IMessageConnectionStatus::SetupRequired
+                | IMessageConnectionStatus::Connecting
+                | IMessageConnectionStatus::Connected => (
+                    "iMessage: Connecting…",
+                    "Clinch is setting up the configured phone number",
+                ),
+            }
+        };
+        return IMessageFooterPresentation {
+            label: label.to_owned(),
+            tooltip: tooltip.to_owned(),
+            active: false,
+        };
+    }
+
+    let preference = if session_notifications_enabled {
+        "Yes"
+    } else {
+        "No"
+    };
+    let route = route_id
+        .map(|route_id| format!(" Route {route_id}."))
+        .unwrap_or_default();
+    let tooltip = if globally_enabled {
+        format!(
+            "Get notified about this session: {preference}.{route} Click to change this session only."
+        )
+    } else {
+        format!(
+            "This session is set to {preference}, but iMessage notifications are paused globally in Clinch Settings.{route} Click to change this saved preference."
+        )
+    };
+    IMessageFooterPresentation {
+        label: format!("Get notified: {preference}"),
+        tooltip,
+        active: session_notifications_enabled,
+    }
+}
+
 impl AgentInputFooter {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -473,7 +560,7 @@ impl AgentInputFooter {
                 })
         });
         let quick_insert_add_button = ctx.add_typed_action_view(|_ctx| {
-            ActionButton::new("Add", QuickInsertAddButtonTheme)
+            ActionButton::new("Add", ClinchAccentButtonTheme)
                 .with_icon(Icon::Plus)
                 .with_tooltip("Add quick-insert button")
                 .with_size(cli_button_size)
@@ -510,9 +597,9 @@ impl AgentInputFooter {
 
         #[cfg(target_os = "macos")]
         let message_me_button = ctx.add_typed_action_view(|_ctx| {
-            ActionButton::new("Message me", AgentInputButtonTheme)
+            ActionButton::new("Set up iMessage", ClinchAccentButtonTheme)
                 .with_icon(Icon::Phone01)
-                .with_tooltip("Text this iPhone when the agent finishes")
+                .with_tooltip("Set up iMessage notifications in Clinch Settings")
                 .with_size(cli_button_size)
                 .with_tooltip_alignment(TooltipAlignment::Left)
                 .on_click(|ctx| {
@@ -1155,35 +1242,21 @@ impl AgentInputFooter {
         let route_id = coordinator
             .route_id_for_view(self.terminal_view_id)
             .map(ToString::to_string);
-        let session_enabled = coordinator.is_session_enabled(self.terminal_view_id);
-        let (label, tooltip) = if !configuration.setup_complete {
-            (
-                "Set up Message me".to_owned(),
-                "Connect your iPhone in Clinch Settings".to_owned(),
-            )
-        } else if !configuration.enabled {
-            (
-                "Message me: off".to_owned(),
-                "iMessage notifications are off globally; open Clinch Settings".to_owned(),
-            )
-        } else if session_enabled {
-            (
-                route_id
-                    .map(|route_id| format!("Message me · {route_id}"))
-                    .unwrap_or_else(|| "Message me: on".to_owned()),
-                "Text this iPhone when this agent finishes; click to opt this session out"
-                    .to_owned(),
-            )
-        } else {
-            (
-                "Message me: off".to_owned(),
-                "Click to text this iPhone when this agent finishes".to_owned(),
-            )
-        };
+        let session_notifications_enabled = coordinator
+            .session_notifications_enabled(self.terminal_view_id)
+            .unwrap_or(configuration.notifications_enabled_by_default);
+        let presentation = imessage_footer_presentation(
+            configuration.setup_complete,
+            !configuration.recipient.trim().is_empty(),
+            coordinator.status(),
+            configuration.enabled,
+            session_notifications_enabled,
+            route_id.as_deref(),
+        );
         self.message_me_button.update(ctx, |button, ctx| {
-            button.set_label(label, ctx);
-            button.set_tooltip(Some(tooltip), ctx);
-            button.set_active(session_enabled, ctx);
+            button.set_label(presentation.label, ctx);
+            button.set_tooltip(Some(presentation.tooltip), ctx);
+            button.set_active(presentation.active, ctx);
         });
     }
 
@@ -1693,11 +1766,12 @@ impl AgentInputFooter {
     }
 
     /// The per-pane "auto-continue when the rate limit resets" toggle.
-    /// Three states: off, on (waiting for a limit stop), and armed (shows the
-    /// scheduled send time so the send is never a surprise). One click always
-    /// flips the opt-in — clicking an armed toggle disarms it. Built fresh
-    /// each render because the label reflects live state; the persistent
-    /// `MouseStateHandle` lives on `self` (see `custom_insert_mouse_states`).
+    /// Three states: off, on (waiting for a limit stop), and armed. The label
+    /// stays a simple on/off indicator while the armed send time remains in
+    /// the tooltip. One click always flips the opt-in — clicking an armed
+    /// toggle disarms it. Built fresh each render because its state is live;
+    /// the persistent `MouseStateHandle` lives on `self` (see
+    /// `custom_insert_mouse_states`).
     fn render_auto_continue_toggle(&self, app: &AppContext) -> Box<dyn Element> {
         let model = AutoContinueModel::as_ref(app);
         let enabled = model.is_enabled(self.terminal_view_id);
@@ -1711,7 +1785,7 @@ impl AgentInputFooter {
             (true, Some(fire_at)) => {
                 let at = fire_at.with_timezone(&Local).format("%H:%M");
                 (
-                    format!("Auto-continue at {at}"),
+                    "Auto-continue: on".to_string(),
                     format!(
                         "Will send \"{AUTO_CONTINUE_PROMPT}\" to this {agent_name} session at {at}, \
                          just after its rate limit resets. Click to cancel."
@@ -1734,7 +1808,7 @@ impl AgentInputFooter {
             ),
         };
 
-        ActionButton::new(label, AgentInputButtonTheme)
+        ActionButton::new(label, ClinchAccentButtonTheme)
             .with_icon(Icon::Clock)
             .with_size(ButtonSize::AgentInputButtonLarge)
             .with_tooltip(tooltip)
@@ -1809,6 +1883,11 @@ impl AgentInputFooter {
             }
         }
 
+        // Keep the quick-insert creator as the first actionable footer control.
+        if FeatureFlag::CliAgentQuickInsertButtons.is_enabled() && self.cli_agent(app).is_some() {
+            left_buttons.add_child(ChildView::new(&self.quick_insert_add_button).finish());
+        }
+
         if let Some(chip_kind) = self.plugin_chip_kind(app) {
             let manual = self.should_use_manual_mode(app);
             let chip = match (chip_kind, manual) {
@@ -1844,16 +1923,11 @@ impl AgentInputFooter {
             }
         }
 
-        // "+ Add" quick-insert button: always rendered (not a configurable
-        // chip) when a CLI agent session is active and the feature is enabled.
-        // Opens the "Create quick-insert button" modal.
-        if FeatureFlag::CliAgentQuickInsertButtons.is_enabled() && self.cli_agent(app).is_some() {
-            left_buttons.add_child(ChildView::new(&self.quick_insert_add_button).finish());
-        }
-
-        // Rate-limit auto-continue toggle. Use the same availability predicate
-        // as the Command Palette and action handlers so hidden controls cannot
-        // remain reachable through another entry point.
+        // Rate-limit auto-continue toggle. Keep it with the right-side session
+        // controls so it cannot be mistaken for a quick-insert prompt button.
+        // Use the same availability predicate as the Command Palette and
+        // action handlers so hidden controls cannot remain reachable through
+        // another entry point.
         let auto_continue_available = self.cli_agent(app).is_some_and(|agent| {
             is_auto_continue_available(
                 agent,
@@ -1861,14 +1935,14 @@ impl AgentInputFooter {
                 shared_status.is_viewer(),
             )
         });
-        if auto_continue_available {
-            left_buttons.add_child(self.render_auto_continue_toggle(app));
-        }
-
         let mut right_buttons = Flex::row()
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
             .with_main_axis_size(MainAxisSize::Min)
             .with_spacing(4.);
+
+        if auto_continue_available {
+            right_buttons.add_child(self.render_auto_continue_toggle(app));
+        }
 
         for item in &right_items {
             if let Some(element) = self.render_cli_toolbar_item(
@@ -1882,10 +1956,7 @@ impl AgentInputFooter {
         }
 
         #[cfg(target_os = "macos")]
-        if IMessageCoordinator::as_ref(app)
-            .route_id_for_view(self.terminal_view_id)
-            .is_some()
-        {
+        if IMessageCoordinator::as_ref(app).has_supported_session(self.terminal_view_id) {
             right_buttons.add_child(ChildView::new(&self.message_me_button).finish());
         }
 
@@ -3034,7 +3105,7 @@ impl TypedActionView for AgentInputFooter {
             #[cfg(target_os = "macos")]
             AgentInputFooterAction::ToggleIMessageNotifications => {
                 let configuration = IMessageCoordinator::as_ref(ctx).configuration();
-                if configuration.setup_complete && configuration.enabled {
+                if configuration.setup_complete {
                     let terminal_view_id = self.terminal_view_id;
                     IMessageCoordinator::handle(ctx).update(ctx, |coordinator, ctx| {
                         coordinator.toggle_session(terminal_view_id, ctx);
@@ -3202,10 +3273,10 @@ impl ActionButtonTheme for QuickInsertButtonTheme {
     }
 }
 
-/// Call-to-action variant matching the green outline on active project tabs.
-struct QuickInsertAddButtonTheme;
+/// Clinch-accented control matching the green outline on active project tabs.
+struct ClinchAccentButtonTheme;
 
-impl ActionButtonTheme for QuickInsertAddButtonTheme {
+impl ActionButtonTheme for ClinchAccentButtonTheme {
     fn background(&self, hovered: bool, appearance: &Appearance) -> Option<Fill> {
         AgentInputButtonTheme.background(hovered, appearance)
     }
@@ -3473,5 +3544,86 @@ impl ActionButtonTheme for NLDButtonTheme {
 
     fn should_opt_out_of_contrast_adjustment(&self) -> bool {
         true
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod imessage_footer_tests {
+    use super::imessage_footer_presentation;
+    use crate::imessage::{IMessageConnectionStatus, IMessagePermission};
+
+    #[test]
+    fn imessage_footer_moves_from_setup_to_an_explicit_yes_no_toggle() {
+        let setup = imessage_footer_presentation(
+            false,
+            false,
+            &IMessageConnectionStatus::SetupRequired,
+            false,
+            true,
+            None,
+        );
+        assert_eq!(setup.label, "Set up iMessage");
+        assert!(!setup.active);
+
+        let enabled = imessage_footer_presentation(
+            true,
+            true,
+            &IMessageConnectionStatus::Connected,
+            true,
+            true,
+            Some("C7K2"),
+        );
+        assert_eq!(enabled.label, "Get notified: Yes");
+        assert!(enabled.active);
+        assert!(enabled.tooltip.contains("Route C7K2"));
+
+        let disabled = imessage_footer_presentation(
+            true,
+            true,
+            &IMessageConnectionStatus::Connected,
+            true,
+            false,
+            Some("C7K2"),
+        );
+        assert_eq!(disabled.label, "Get notified: No");
+        assert!(!disabled.active);
+    }
+
+    #[test]
+    fn submitted_number_immediately_replaces_the_setup_footer_state() {
+        let connecting = imessage_footer_presentation(
+            false,
+            true,
+            &IMessageConnectionStatus::Connecting,
+            true,
+            true,
+            None,
+        );
+        assert_eq!(connecting.label, "iMessage: Connecting…");
+
+        let permission = imessage_footer_presentation(
+            false,
+            true,
+            &IMessageConnectionStatus::Paused(IMessagePermission::FullDiskAccess),
+            true,
+            true,
+            None,
+        );
+        assert_eq!(permission.label, "iMessage: Enable access");
+    }
+
+    #[test]
+    fn paused_global_delivery_keeps_the_saved_session_preference_visible() {
+        let presentation = imessage_footer_presentation(
+            true,
+            true,
+            &IMessageConnectionStatus::Disabled,
+            false,
+            true,
+            Some("C7K2"),
+        );
+        assert_eq!(presentation.label, "Get notified: Yes");
+        assert!(presentation.active);
+        assert!(presentation.tooltip.contains("paused globally"));
     }
 }

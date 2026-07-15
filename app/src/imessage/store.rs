@@ -49,11 +49,12 @@ impl RouteStateStore {
                 return Err(error).with_context(|| format!("read {}", self.path.display()))
             }
         };
-        let state: RouteState = serde_json::from_slice(&bytes)
+        let mut state: RouteState = serde_json::from_slice(&bytes)
             .with_context(|| format!("parse {}", self.path.display()))?;
         if state.version != RouteState::default().version {
             anyhow::bail!("unsupported iMessage route state version {}", state.version);
         }
+        state.migrate_legacy_notification_overrides();
         Ok(state)
     }
 

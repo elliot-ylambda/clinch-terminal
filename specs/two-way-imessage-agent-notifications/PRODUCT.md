@@ -16,7 +16,7 @@ Figma: none provided. The controls follow existing Clinch Settings, pane-header,
 
 ## Behavior
 
-1. Clinch exposes a global iMessage connection status in the header, a per-session **Message me** control in supported CLI-agent footers, and setup and troubleshooting controls in Clinch Settings.
+1. Clinch exposes a global iMessage connection status in the header, a prominent green-outlined iMessage control in every supported durable Codex and Claude Code footer, and setup and troubleshooting controls in Clinch Settings. Before setup, the footer action is labeled **Set up iMessage** and opens the iMessage Settings category. After setup, the same control becomes a two-state **Get notified: Yes/No** toggle for that exact session.
 
 2. The feature is disabled until setup succeeds. Setup asks for the phone number associated with the user's iPhone and explains that messages are sent from the Messages account already signed in on the Mac; it does not ask the user to install or configure an iPhone app.
 
@@ -26,9 +26,9 @@ Figma: none provided. The controls follow existing Clinch Settings, pane-header,
 
    Starting setup over clears conversation-specific GUID history, retained route selections, and queued phone replies before calibrating the new conversation. It preserves live session identities and explicit per-session opt-outs, and Settings discloses the clearing behavior.
 
-5. After successful setup, messaging is enabled for all currently live and subsequently created durable Codex and Claude Code sessions. An explicit per-session opt-out is preserved for that session even when the global setting changes.
+5. After successful setup, messaging is enabled for all currently live and subsequently created durable Codex and Claude Code sessions by default. Clinch Settings includes a **Get notified by default** preference that is on initially. Changing it immediately updates sessions that still inherit the default. Toggling a footer writes an explicit Yes or No override for that durable session, and that override is preserved across restarts and later default changes.
 
-6. Disabling the global feature stops new notifications and inbound routing without deleting setup information. Disconnecting the feature stops the listener and removes the stored destination, calibrated conversation, pending selections, and queued replies.
+6. Disabling the global feature stops new notifications and inbound routing without deleting setup information, the notification default, or per-session overrides. Footer toggles continue to show and edit each session's saved preference while the global feature is paused, and their tooltip makes the global pause clear. Disconnecting the feature stops the listener and removes the stored destination, calibrated conversation, pending selections, and queued replies while preserving the user's default for a later setup.
 
 7. When an enabled session changes to a successfully finished state, Clinch sends the complete trustworthy structured final response. It never scrapes arbitrary terminal output to manufacture a response; if structured output is unavailable it sends a generic completion message.
 

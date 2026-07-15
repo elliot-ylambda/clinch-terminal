@@ -20,7 +20,7 @@ Messages can send through its Apple Events scripting interface but exposes no su
 - Add an `imessage` module with a singleton `IMessageCoordinator`. It owns configuration health, the helper process, live route registry, outbound GUID map, database cursor, processed GUIDs, pending ambiguous selections, and per-route FIFO queues.
 - Define `MobileRouteId`, `MobileSessionRoute`, `QueuedMobileReply`, `PendingRouteSelection`, `IMessageConnectionStatus`, and versioned persisted-state types. A route contains `CLIAgentSessionKey`; terminal view IDs are ephemeral lookup hints only.
 - Generate four-character route IDs from an unambiguous alphabet with at least one letter and one digit, keep one ID for the durable session lifetime, and quarantine retired IDs for 30 days.
-- Store the destination and calibrated chat identity through local secure storage. Store operational state beneath Clinch's Application Support directory in an atomic owner-only JSON file. Persist after each cursor, queue, route, or deduplication change. A generation-guarded local timer expires pending selections after ten minutes and queued bodies after 24 hours, emitting body-free notices while messaging is enabled.
+- Store the destination, calibrated chat identity, global enablement, and default session-notification preference through local secure storage. Store operational state beneath Clinch's Application Support directory in an atomic owner-only JSON file. Each route stores an optional explicit notification override; no override inherits the secure default, whose migration default is `true`. Preserve legacy persisted `opted_out` routes as explicit `false` overrides. Persist after each cursor, queue, route, override, or deduplication change. A generation-guarded local timer expires pending selections after ten minutes and queued bodies after 24 hours, emitting body-free notices while messaging is enabled.
 - Treat a configured chat without a positive persisted database cursor as unsafe recovery. Clear its conversation correlation and require a new calibration; never reconstruct progress by watching the calibrated chat from ROWID zero.
 - Add pure modules for Unicode-safe 3,000-character response splitting, route parsing, incoming classification, FIFO drain decisions, sanitization, and persisted-version validation so routing behavior is unit-testable without Messages or a PTY.
 
@@ -47,10 +47,10 @@ Messages can send through its Apple Events scripting interface but exposes no su
 
 ### Settings and UI
 
-- Extend local Clinch settings with global enabled/setup state and default-on behavior. Keep sensitive destination/chat values private and never cloud synced. Persist per-session explicit opt-outs in coordinator state.
+- Extend local Clinch settings with global enabled/setup state and a **Get notified by default** preference whose initial and missing-field value is on. Keep sensitive destination/chat values private and never cloud synced. Persist optional per-session Yes/No overrides in coordinator state; inherited sessions react to default changes while explicit choices do not.
 - Add an iMessage category to Clinch Settings containing destination input, setup/start-over, Automation and Full Disk Access health, test/calibration status, global enablement, and troubleshooting actions that open the relevant System Settings panes.
 - Add a compact header status item with disabled, setup-required, connected, paused, and error states. Clicking it opens the iMessage Settings category.
-- Add a **Message me** CLI-agent footer item for durable Codex/Claude sessions. It reflects inherited global-on state and toggles an explicit session override.
+- Add an always-present, green-outlined iMessage CLI-agent footer item for durable Codex/Claude sessions. It reads **Set up iMessage** before setup and opens Settings. After setup it reads **Get notified: Yes** or **Get notified: No**, reflects the inherited default or explicit override, and toggles an explicit session override. Keep the route code in the tooltip rather than replacing the toggle label. While global messaging is paused, the preference remains editable and the tooltip discloses that no messages will be delivered until the master switch is restored.
 - All UI observes coordinator and settings model changes; no view owns bridge lifecycle or persisted routing state.
 
 ### Packaging and release policy
@@ -62,7 +62,7 @@ Messages can send through its Apple Events scripting interface but exposes no su
 
 ## Testing and validation
 
-- Rust domain tests cover multipart Unicode boundaries, stable/quarantined routes, restart deactivation/reactivation, parent/explicit/sole precedence, route stripping, ambiguity and queue expiry, GUID deduplication, FIFO drain, opt-out cancellation, unsupported-message filtering, terminal-control sanitization, and owner-only atomic persistence.
+- Rust domain tests cover multipart Unicode boundaries, stable/quarantined routes, restart deactivation/reactivation, default inheritance, explicit Yes/No overrides, legacy opt-out migration, parent/explicit/sole precedence, route stripping, ambiguity and queue expiry, GUID deduplication, FIFO drain, opt-out cancellation, unsupported-message filtering, terminal-control sanitization, and owner-only atomic persistence.
 - Rust bridge tests cover request correlation, event separation, and recovery after an oversized protocol line. Swift tests cover protocol decoding, invalid requests, and a real PhoneNumberKit resource lookup. The pinned `IMsgCore` dependency owns its lower-level SQLite/WAL, delayed-chat-join, and attributed-body fixture coverage.
 - Settings rendering tests instantiate the iMessage category alongside its required models. Compile-time session integration and exact `CLIAgentSessionKey` revalidation cover the external PTY entry point; real Messages/TCC behavior remains part of the release matrix below.
 - Release tests assert macOS 14 across the binary/plist/manifest, both helper architectures, nested signing and helper entitlement, Apple Events metadata, absence of unrelated privacy entitlements, protocol/resource self-tests, and third-party license attribution.

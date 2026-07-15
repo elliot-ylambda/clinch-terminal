@@ -68,6 +68,15 @@ impl IMessageConnectionStatus {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum IMessageTestStatus {
+    #[default]
+    Idle,
+    Sending,
+    Sent,
+    Failed,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) enum IMessageCoordinatorEvent {
     Changed,
@@ -79,6 +88,13 @@ struct OutboundJob {
     route_id: Option<MobileRouteId>,
     parts: VecDeque<String>,
     drain_after_send: bool,
+    kind: OutboundJobKind,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OutboundJobKind {
+    Message,
+    ConnectionTest,
 }
 
 pub(crate) struct IMessageCoordinator {
@@ -92,6 +108,7 @@ pub(crate) struct IMessageCoordinator {
     outbound_jobs: VecDeque<OutboundJob>,
     mobile_submissions_in_flight: HashSet<MobileSessionKey>,
     send_in_flight: bool,
+    test_status: IMessageTestStatus,
     current_send_intent_id: Option<String>,
     bridge_generation: u64,
     bridge_restart_attempts: usize,
@@ -129,6 +146,8 @@ impl IMessageCoordinator {
             state.reset_conversation_state();
         }
         state.globally_enabled = configuration.enabled && configuration.setup_complete;
+        state.notifications_enabled_by_default =
+            configuration.notifications_enabled_by_default;
         let status = status_for_configuration(&configuration, state.pending_calibration.is_some());
 
         ctx.subscribe_to_model(
@@ -150,6 +169,7 @@ impl IMessageCoordinator {
             outbound_jobs: VecDeque::new(),
             mobile_submissions_in_flight: HashSet::new(),
             send_in_flight: false,
+            test_status: IMessageTestStatus::Idle,
             current_send_intent_id: None,
             bridge_generation: 0,
             bridge_restart_attempts: 0,
@@ -175,16 +195,26 @@ impl IMessageCoordinator {
         &self.configuration
     }
 
-    pub(crate) fn is_session_enabled(&self, terminal_view_id: EntityId) -> bool {
-        self.view_sessions
-            .get(&terminal_view_id)
-            .and_then(|key| self.state.route_for_key(key))
-            .is_some_and(|route| route.is_eligible(self.state.globally_enabled))
+    pub(crate) fn test_status(&self) -> IMessageTestStatus {
+        self.test_status
+    }
+
+    pub(crate) fn session_notifications_enabled(
+        &self,
+        terminal_view_id: EntityId,
+    ) -> Option<bool> {
+        let key = self.view_sessions.get(&terminal_view_id)?;
+        let route = self.state.route_for_key(key)?;
+        Some(route.notifications_enabled(self.state.notifications_enabled_by_default))
     }
 
     pub(crate) fn route_id_for_view(&self, terminal_view_id: EntityId) -> Option<&MobileRouteId> {
         let key = self.view_sessions.get(&terminal_view_id)?;
         Some(&self.state.route_for_key(key)?.id)
+    }
+
+    pub(crate) fn has_supported_session(&self, terminal_view_id: EntityId) -> bool {
+        self.view_sessions.contains_key(&terminal_view_id)
     }
 
     pub(crate) fn begin_setup(&mut self, recipient: String, ctx: &mut ModelContext<Self>) {
@@ -193,14 +223,12 @@ impl IMessageCoordinator {
             self.set_status(IMessageConnectionStatus::Error, ctx);
             return;
         }
-        self.configuration = IMessageConfiguration {
-            enabled: false,
-            setup_complete: false,
+        self.configuration = configuration_for_setup(
             recipient,
-            chat_id: None,
-            chat_guid: None,
-        };
+            self.configuration.notifications_enabled_by_default,
+        );
         self.outbound_jobs.clear();
+        self.test_status = IMessageTestStatus::Idle;
         self.state.globally_enabled = false;
         self.state.reset_conversation_state();
         self.bridge_restart_attempts = 0;
@@ -211,10 +239,6 @@ impl IMessageCoordinator {
     }
 
     pub(crate) fn set_enabled(&mut self, enabled: bool, ctx: &mut ModelContext<Self>) {
-        if enabled && !self.configuration.setup_complete {
-            self.set_status(IMessageConnectionStatus::SetupRequired, ctx);
-            return;
-        }
         if self.configuration.enabled == enabled {
             return;
         }
@@ -222,29 +246,103 @@ impl IMessageCoordinator {
         self.state.globally_enabled = enabled && self.configuration.setup_complete;
         self.save_configuration(ctx);
         self.persist_state();
+        if !self.configuration.setup_complete {
+            if self.bridge.is_none() && self.should_run_bridge() {
+                self.start_bridge(self.should_send_calibration(), ctx);
+            } else {
+                ctx.emit(IMessageCoordinatorEvent::Changed);
+            }
+            return;
+        }
         if enabled {
             self.start_bridge(false, ctx);
         } else {
             self.stop_bridge();
             self.outbound_jobs.clear();
+            self.test_status = IMessageTestStatus::Idle;
             self.set_status(IMessageConnectionStatus::Disabled, ctx);
         }
     }
 
+    pub(crate) fn send_test_message(&mut self, ctx: &mut ModelContext<Self>) {
+        if matches!(self.test_status, IMessageTestStatus::Sending) {
+            return;
+        }
+        if !self.configuration.setup_complete
+            || !self.configuration.enabled
+            || !matches!(self.status, IMessageConnectionStatus::Connected)
+        {
+            self.set_test_status(IMessageTestStatus::Failed, ctx);
+            return;
+        }
+        self.outbound_jobs.push_back(OutboundJob {
+            route_id: None,
+            parts: VecDeque::from([
+                "Clinch test message. Your iMessage connection is working.".to_owned(),
+            ]),
+            drain_after_send: false,
+            kind: OutboundJobKind::ConnectionTest,
+        });
+        self.set_test_status(IMessageTestStatus::Sending, ctx);
+        self.start_next_send(ctx);
+    }
+
+    pub(crate) fn set_notifications_enabled_by_default(
+        &mut self,
+        enabled: bool,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        if self.configuration.notifications_enabled_by_default == enabled {
+            return;
+        }
+        self.configuration.notifications_enabled_by_default = enabled;
+        self.state.notifications_enabled_by_default = enabled;
+
+        let disabled_route_ids = self
+            .state
+            .routes
+            .iter()
+            .filter(|route| route.active && !route.notifications_enabled(enabled))
+            .map(|route| route.id.clone())
+            .collect::<Vec<_>>();
+        self.cancel_pending_completion_jobs(&disabled_route_ids);
+        let cancelled_count = disabled_route_ids
+            .iter()
+            .map(|route_id| self.state.take_queued_for_route(route_id).len())
+            .sum::<usize>();
+
+        self.save_configuration(ctx);
+        self.persist_state();
+        self.schedule_expiration_check(ctx);
+        if cancelled_count > 0 {
+            self.enqueue_system_message(format!(
+                "{cancelled_count} queued phone {} cancelled because notifications are off by default.",
+                if cancelled_count == 1 { "reply was" } else { "replies were" }
+            ));
+        }
+        ctx.emit(IMessageCoordinatorEvent::Changed);
+        self.start_next_send(ctx);
+    }
+
     pub(crate) fn disconnect(&mut self, ctx: &mut ModelContext<Self>) {
         self.stop_bridge();
-        self.configuration = IMessageConfiguration::default();
-        self.state = RouteState::default();
+        let notifications_enabled_by_default =
+            self.configuration.notifications_enabled_by_default;
+        self.configuration = IMessageConfiguration {
+            notifications_enabled_by_default,
+            ..IMessageConfiguration::default()
+        };
+        self.state = RouteState {
+            notifications_enabled_by_default,
+            ..RouteState::default()
+        };
         self.outbound_jobs.clear();
+        self.test_status = IMessageTestStatus::Idle;
         self.mobile_submissions_in_flight.clear();
         self.send_in_flight = false;
         self.current_send_intent_id = None;
         self.schedule_expiration_check(ctx);
-        ClinchSettings::handle(ctx).update(ctx, |settings, ctx| {
-            if let Err(error) = settings.imessage_configuration.clear_value(ctx) {
-                log::warn!("Could not clear the local iMessage configuration: {error:#}");
-            }
-        });
+        self.save_configuration(ctx);
         if let Err(error) = self.store.clear() {
             log::warn!("Could not clear local iMessage routing state: {error:#}");
         }
@@ -290,16 +388,31 @@ impl IMessageCoordinator {
         let Some(key) = self.view_sessions.get(&terminal_view_id).cloned() else {
             return;
         };
-        let opted_out = self
+        if self.state.route_for_key(&key).is_none() {
+            self.register_mapped_sessions(ctx);
+        }
+        let currently_enabled = self
             .state
             .route_for_key(&key)
-            .is_some_and(|route| !route.opted_out);
-        let cancelled = self.state.set_opted_out(&key, opted_out, now());
+            .is_some_and(|route| {
+                route.notifications_enabled(self.state.notifications_enabled_by_default)
+            });
+        let cancelled =
+            self.state
+                .set_notifications_enabled(&key, !currently_enabled, now());
+        if currently_enabled {
+            let route_ids = self
+                .state
+                .route_for_key(&key)
+                .map(|route| vec![route.id.clone()])
+                .unwrap_or_default();
+            self.cancel_pending_completion_jobs(&route_ids);
+        }
         self.persist_state();
         self.schedule_expiration_check(ctx);
         if !cancelled.is_empty() {
             self.enqueue_system_message(format!(
-                "{} queued phone {} cancelled because Message me was turned off.",
+                "{} queued phone {} cancelled because Get notified was turned off.",
                 cancelled.len(),
                 if cancelled.len() == 1 {
                     "reply was"
@@ -322,6 +435,8 @@ impl IMessageCoordinator {
         self.configuration = configuration;
         self.state.globally_enabled =
             self.configuration.enabled && self.configuration.setup_complete;
+        self.state.notifications_enabled_by_default =
+            self.configuration.notifications_enabled_by_default;
         self.persist_state();
         let should_run = self.should_run_bridge();
         if should_run && (!was_running || self.bridge.is_none()) {
@@ -746,17 +861,20 @@ impl IMessageCoordinator {
                 self.state.mark_processed(message.guid, now());
                 self.state.pending_calibration = None;
                 self.configuration.setup_complete = true;
-                self.configuration.enabled = true;
-                self.state.globally_enabled = true;
+                self.state.globally_enabled = self.configuration.enabled;
                 self.register_mapped_sessions(ctx);
                 self.save_configuration(ctx);
                 self.persist_state();
-                self.set_status(IMessageConnectionStatus::Connected, ctx);
-                self.enqueue_system_message(
-                    "Clinch is connected. Finished Codex and Claude sessions will message you by default."
-                        .to_owned(),
-                );
-                self.start_next_send(ctx);
+                if self.configuration.enabled {
+                    self.set_status(IMessageConnectionStatus::Connected, ctx);
+                    self.enqueue_system_message(
+                        "Clinch is connected. Finished Codex and Claude sessions will message you by default."
+                            .to_owned(),
+                    );
+                    self.start_next_send(ctx);
+                } else {
+                    self.set_status(IMessageConnectionStatus::Disabled, ctx);
+                }
             } else if message.guid != calibration.sent_guid {
                 self.state.mark_processed(message.guid, now());
                 self.persist_state();
@@ -912,7 +1030,10 @@ impl IMessageCoordinator {
         let Some(route) = self.state.route_for_key(&key).cloned() else {
             return;
         };
-        if !route.is_eligible(self.state.globally_enabled) {
+        if !route.is_eligible(
+            self.state.globally_enabled,
+            self.state.notifications_enabled_by_default,
+        ) {
             return;
         }
 
@@ -931,6 +1052,7 @@ impl IMessageCoordinator {
             route_id: Some(route.id),
             parts: parts.into(),
             drain_after_send: true,
+            kind: OutboundJobKind::Message,
         });
         self.start_next_send(ctx);
     }
@@ -1009,6 +1131,7 @@ impl IMessageCoordinator {
             route_id: None,
             parts: VecDeque::from([text]),
             drain_after_send: false,
+            kind: OutboundJobKind::Message,
         });
     }
 
@@ -1073,17 +1196,36 @@ impl IMessageCoordinator {
         if self.send_in_flight || !matches!(self.status, IMessageConnectionStatus::Connected) {
             return;
         }
-        while self
-            .outbound_jobs
-            .front()
-            .is_some_and(|job| job.parts.is_empty())
-        {
-            let completed = self.outbound_jobs.pop_front().unwrap();
-            if completed.drain_after_send {
-                if let Some(route_id) = completed.route_id {
-                    self.submit_next_queued(&route_id, ctx);
+        loop {
+            while self
+                .outbound_jobs
+                .front()
+                .is_some_and(|job| job.parts.is_empty())
+            {
+                let completed = self.outbound_jobs.pop_front().unwrap();
+                if completed.drain_after_send {
+                    if let Some(route_id) = completed.route_id {
+                        self.submit_next_queued(&route_id, ctx);
+                    }
                 }
             }
+            let route_is_disabled = self
+                .outbound_jobs
+                .front()
+                .and_then(|job| job.route_id.as_ref())
+                .is_some_and(|route_id| {
+                    !self.state.route_by_id(route_id).is_some_and(|route| {
+                        route.is_eligible(
+                            self.state.globally_enabled,
+                            self.state.notifications_enabled_by_default,
+                        )
+                    })
+                });
+            if route_is_disabled {
+                self.outbound_jobs.pop_front();
+                continue;
+            }
+            break;
         }
         let Some(job) = self.outbound_jobs.front() else {
             return;
@@ -1128,7 +1270,9 @@ impl IMessageCoordinator {
     ) {
         self.send_in_flight = false;
         let intent_id = self.current_send_intent_id.take();
+        let job_kind = self.outbound_jobs.front().map(|job| job.kind);
         let result = self.successful_result(response, ctx);
+        let sent = matches!(&result, Some(BridgeResult::Sent { .. }));
         match result {
             Some(BridgeResult::Sent {
                 guid,
@@ -1160,7 +1304,49 @@ impl IMessageCoordinator {
                 }
             }
         }
+        if matches!(job_kind, Some(OutboundJobKind::ConnectionTest)) {
+            self.set_test_status(
+                if sent {
+                    IMessageTestStatus::Sent
+                } else {
+                    IMessageTestStatus::Failed
+                },
+                ctx,
+            );
+        }
         self.start_next_send(ctx);
+    }
+
+    fn cancel_pending_completion_jobs(&mut self, route_ids: &[MobileRouteId]) {
+        if route_ids.is_empty() {
+            return;
+        }
+        let disabled = route_ids.iter().collect::<HashSet<_>>();
+        let mut jobs = std::mem::take(&mut self.outbound_jobs);
+
+        if self.send_in_flight {
+            if let Some(mut front) = jobs.pop_front() {
+                if front
+                    .route_id
+                    .as_ref()
+                    .is_some_and(|route_id| disabled.contains(route_id))
+                {
+                    // The first part may already have reached Messages and
+                    // cannot be recalled. Retain only its correlation slot;
+                    // all later parts and the queue drain are cancelled.
+                    front.parts.truncate(1);
+                    front.drain_after_send = false;
+                }
+                self.outbound_jobs.push_back(front);
+            }
+        }
+
+        self.outbound_jobs.extend(jobs.into_iter().filter(|job| {
+            !job
+                .route_id
+                .as_ref()
+                .is_some_and(|route_id| disabled.contains(route_id))
+        }));
     }
 
     fn submit_next_queued(&mut self, route_id: &MobileRouteId, ctx: &mut ModelContext<Self>) {
@@ -1272,10 +1458,39 @@ impl IMessageCoordinator {
     }
 
     fn set_status(&mut self, status: IMessageConnectionStatus, ctx: &mut ModelContext<Self>) {
-        if self.status != status {
+        let test_changed = !matches!(&status, IMessageConnectionStatus::Connected)
+            && matches!(self.test_status, IMessageTestStatus::Sending);
+        if test_changed {
+            self.test_status = IMessageTestStatus::Failed;
+        }
+        if self.status != status || test_changed {
             self.status = status;
             ctx.emit(IMessageCoordinatorEvent::Changed);
         }
+    }
+
+    fn set_test_status(&mut self, status: IMessageTestStatus, ctx: &mut ModelContext<Self>) {
+        if self.test_status != status {
+            self.test_status = status;
+            ctx.emit(IMessageCoordinatorEvent::Changed);
+        }
+    }
+}
+
+fn configuration_for_setup(
+    recipient: String,
+    notifications_enabled_by_default: bool,
+) -> IMessageConfiguration {
+    IMessageConfiguration {
+        // The connection remains ineffective until calibration completes,
+        // but the visible preferences start in their promised default-on
+        // state as soon as setup begins.
+        enabled: true,
+        setup_complete: false,
+        notifications_enabled_by_default,
+        recipient,
+        chat_id: None,
+        chat_guid: None,
     }
 }
 
@@ -1407,6 +1622,16 @@ mod tests {
     }
 
     #[test]
+    fn starting_setup_defaults_the_connection_on_before_it_becomes_effective() {
+        let configuration = configuration_for_setup("+1 415 555 1212".to_owned(), true);
+
+        assert!(configuration.enabled);
+        assert!(configuration.notifications_enabled_by_default);
+        assert!(!configuration.setup_complete);
+        assert_eq!(configuration.recipient, "+1 415 555 1212");
+    }
+
+    #[test]
     fn status_follows_setup_before_enablement() {
         assert_eq!(
             status_for_configuration(&IMessageConfiguration::default(), false),
@@ -1442,6 +1667,7 @@ mod tests {
             recipient: "+14155551212".to_owned(),
             chat_id: Some(7),
             chat_guid: Some("chat-guid".to_owned()),
+            ..IMessageConfiguration::default()
         };
         assert!(requires_recalibration(&configured, &RouteState::default()));
 

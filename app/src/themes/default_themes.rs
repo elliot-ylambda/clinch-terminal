@@ -218,6 +218,54 @@ const ADEBERRY_BRIGHT_COLORS: AnsiColors = AnsiColors::new(
     AnsiColor::from_u32(0xFFFFFFFF),
 );
 
+// Clinch Ink (dark) — muted jewel tones on near-black, strong hue separation.
+// Bright-black (index 8, 0x6C7079) is tuned to stay legible: it is the gray Claude Code / Codex
+// use for dim secondary text and box borders, so it must sit clearly above the background.
+// The brand lime is deliberately NOT in this palette — it lives only in native Clinch chrome.
+const CLINCH_INK_NORMAL_COLORS: AnsiColors = AnsiColors::new(
+    AnsiColor::from_u32(0x4E535CFF),
+    AnsiColor::from_u32(0xF26D6DFF),
+    AnsiColor::from_u32(0x7ED18AFF),
+    AnsiColor::from_u32(0xE6C15EFF),
+    AnsiColor::from_u32(0x62A8F2FF),
+    AnsiColor::from_u32(0xC48BF0FF),
+    AnsiColor::from_u32(0x4FCFC4FF),
+    AnsiColor::from_u32(0xCDD1D8FF),
+);
+const CLINCH_INK_BRIGHT_COLORS: AnsiColors = AnsiColors::new(
+    AnsiColor::from_u32(0x6C7079FF),
+    AnsiColor::from_u32(0xFF8B8BFF),
+    AnsiColor::from_u32(0x9BE0A6FF),
+    AnsiColor::from_u32(0xF2D27BFF),
+    AnsiColor::from_u32(0x8AC1F7FF),
+    AnsiColor::from_u32(0xD6A8F5FF),
+    AnsiColor::from_u32(0x74DFD6FF),
+    AnsiColor::from_u32(0xECEEF2FF),
+);
+
+// Clinch Paper (light) — darkened ANSI colors so they stay readable on a cool off-white ground.
+// Yellow becomes dark gold and "white" becomes mid/dark grays, since pure yellow/white vanish on light.
+const CLINCH_PAPER_NORMAL_COLORS: AnsiColors = AnsiColors::new(
+    AnsiColor::from_u32(0x28323EFF),
+    AnsiColor::from_u32(0xC63A3AFF),
+    AnsiColor::from_u32(0x218A54FF),
+    AnsiColor::from_u32(0x9A6B00FF),
+    AnsiColor::from_u32(0x2560C4FF),
+    AnsiColor::from_u32(0x9333B8FF),
+    AnsiColor::from_u32(0x0E7C86FF),
+    AnsiColor::from_u32(0x8792A0FF),
+);
+const CLINCH_PAPER_BRIGHT_COLORS: AnsiColors = AnsiColors::new(
+    AnsiColor::from_u32(0x5E6B7BFF),
+    AnsiColor::from_u32(0xD64B4BFF),
+    AnsiColor::from_u32(0x2E9E63FF),
+    AnsiColor::from_u32(0xB07C00FF),
+    AnsiColor::from_u32(0x3670D4FF),
+    AnsiColor::from_u32(0xA544C9FF),
+    AnsiColor::from_u32(0x128C96FF),
+    AnsiColor::from_u32(0x3B4756FF),
+);
+
 pub(super) fn light_mode_colors() -> TerminalColors {
     TerminalColors::new(LIGHT_MODE_NORMAL_COLORS, LIGHT_MODE_BRIGHT_COLORS)
 }
@@ -258,6 +306,14 @@ pub(super) fn adeberry_colors() -> TerminalColors {
     TerminalColors::new(ADEBERRY_NORMAL_COLORS, ADEBERRY_BRIGHT_COLORS)
 }
 
+pub(super) fn clinch_ink_colors() -> TerminalColors {
+    TerminalColors::new(CLINCH_INK_NORMAL_COLORS, CLINCH_INK_BRIGHT_COLORS)
+}
+
+pub(super) fn clinch_paper_colors() -> TerminalColors {
+    TerminalColors::new(CLINCH_PAPER_NORMAL_COLORS, CLINCH_PAPER_BRIGHT_COLORS)
+}
+
 /// Default bundled themes
 pub fn dark_theme() -> WarpTheme {
     WarpTheme::new(
@@ -282,6 +338,37 @@ pub fn light_theme() -> WarpTheme {
         light_mode_colors(),
         None,
         Some("Light".to_string()),
+    )
+}
+
+/// Clinch bundled themes.
+///
+/// The accent (and block cursor) carry the Clinch brand green. On Ink it is the raw logo lime
+/// `#BFFF00`; on Paper it steps to a slightly olive `#A6E000` so text drawn on accent-filled
+/// surfaces stays legible against a light background. The 4th argument is the cursor `Fill`.
+pub(super) fn clinch_ink() -> WarpTheme {
+    WarpTheme::new(
+        Fill::Solid(ColorU::from_u32(0x0C0D10FF)),
+        ColorU::from_u32(0xCDD1D8FF),
+        Fill::Solid(ColorU::from_u32(0xBFFF00FF)),
+        Some(Fill::Solid(ColorU::from_u32(0xBFFF00FF))),
+        Some(Details::Darker),
+        clinch_ink_colors(),
+        None,
+        Some("Clinch Ink".to_string()),
+    )
+}
+
+pub(super) fn clinch_paper() -> WarpTheme {
+    WarpTheme::new(
+        Fill::Solid(ColorU::from_u32(0xF5F7FAFF)),
+        ColorU::from_u32(0x1C2733FF),
+        Fill::Solid(ColorU::from_u32(0xA6E000FF)),
+        Some(Fill::Solid(ColorU::from_u32(0xA6E000FF))),
+        Some(Details::Lighter),
+        clinch_paper_colors(),
+        None,
+        Some("Clinch Paper".to_string()),
     )
 }
 

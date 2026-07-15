@@ -313,7 +313,7 @@ impl AgentToolbarItemKind {
     /// `all_available_for_cli_input`, so they can be dragged back via the footer
     /// toolbar editor.
     pub fn cli_default_left() -> Vec<Self> {
-        let mut items = vec![
+        vec![
             Self::ForkSession,
             Self::Compact,
             Self::ContinuePrompt,
@@ -323,6 +323,15 @@ impl AgentToolbarItemKind {
                 text: "Create a PR, then merge main into this PR".to_owned(),
             },
             Self::VoiceInput,
+        ]
+    }
+
+    /// Default right-side items for the CLI agent footer.
+    pub fn cli_default_right() -> Vec<Self> {
+        let mut items = vec![
+            Self::ContextChip(ContextChipKind::WorkingDirectory),
+            Self::ContextChip(ContextChipKind::ShellGitBranch),
+            Self::Settings,
         ];
         if FeatureFlag::CreatingSharedSessions.is_enabled()
             && FeatureFlag::HOARemoteControl.is_enabled()
@@ -330,15 +339,6 @@ impl AgentToolbarItemKind {
             items.push(Self::ShareSession);
         }
         items
-    }
-
-    /// Default right-side items for the CLI agent footer.
-    pub fn cli_default_right() -> Vec<Self> {
-        vec![
-            Self::ContextChip(ContextChipKind::WorkingDirectory),
-            Self::ContextChip(ContextChipKind::ShellGitBranch),
-            Self::Settings,
-        ]
     }
 
     /// All items available for the CLI agent footer configurator.

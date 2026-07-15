@@ -15,7 +15,9 @@ use super::settings_page::{
 use super::{SettingsSection, ToggleState};
 use crate::appearance::Appearance;
 #[cfg(target_os = "macos")]
-use crate::imessage::IMessageCoordinator;
+use crate::imessage::{
+    IMessageConnectionStatus, IMessageCoordinator, IMessagePermission, IMessageTestStatus,
+};
 use crate::report_if_error;
 use crate::settings::{
     AutoCreateWorktreesForNewTabs, CliAgentUsageSettings, ClinchSettings, ShowCliAgentPlanLimits,
@@ -29,9 +31,11 @@ pub enum ClinchSettingsPageAction {
     #[cfg(target_os = "macos")]
     IMessageEnabled,
     #[cfg(target_os = "macos")]
-    IMessageRefresh,
+    IMessageNotificationsDefault,
     #[cfg(target_os = "macos")]
-    IMessageDisconnect,
+    IMessageTest,
+    #[cfg(target_os = "macos")]
+    IMessageChangeNumber,
     #[cfg(target_os = "macos")]
     OpenMessages,
     #[cfg(target_os = "macos")]
@@ -67,18 +71,20 @@ impl ClinchSettingsPageView {
 
         #[cfg(target_os = "macos")]
         let imessage_recipient_editor = ctx.add_typed_action_view(|ctx| {
-            let mut input = SubmittableTextInput::new(ctx).validate_on_submit(|recipient| {
-                let digits = recipient
-                    .chars()
-                    .filter(|character| character.is_ascii_digit())
-                    .count();
-                (7..=15).contains(&digits)
-                    && recipient.chars().count() <= 32
-                    && recipient.chars().all(|character| {
-                        character.is_ascii_digit()
-                            || matches!(character, '+' | '-' | '(' | ')' | ' ' | '.')
-                    })
-            });
+            let mut input = SubmittableTextInput::new(ctx)
+                .validate_on_submit(|recipient| {
+                    let digits = recipient
+                        .chars()
+                        .filter(|character| character.is_ascii_digit())
+                        .count();
+                    (7..=15).contains(&digits)
+                        && recipient.chars().count() <= 32
+                        && recipient.chars().all(|character| {
+                            character.is_ascii_digit()
+                                || matches!(character, '+' | '-' | '(' | ')' | ' ' | '.')
+                        })
+                })
+                .with_submit_label("Connect");
             input.set_placeholder_text("iPhone number, for example +1 415 555 1212", ctx);
             let existing = ClinchSettings::as_ref(ctx).imessage().recipient.clone();
             if !existing.is_empty() {
@@ -94,6 +100,9 @@ impl ClinchSettingsPageView {
                 IMessageCoordinator::handle(ctx).update(ctx, |coordinator, ctx| {
                     coordinator.begin_setup(recipient.clone(), ctx);
                 });
+                ctx.open_url(
+                    "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
+                );
             }
             SubmittableTextInputEvent::Escape => {}
         });
@@ -161,13 +170,22 @@ impl TypedActionView for ClinchSettingsPageView {
                 });
             }
             #[cfg(target_os = "macos")]
-            ClinchSettingsPageAction::IMessageRefresh => {
+            ClinchSettingsPageAction::IMessageNotificationsDefault => {
+                let enabled = IMessageCoordinator::as_ref(ctx)
+                    .configuration()
+                    .notifications_enabled_by_default;
                 IMessageCoordinator::handle(ctx).update(ctx, |coordinator, ctx| {
-                    coordinator.refresh_health(ctx);
+                    coordinator.set_notifications_enabled_by_default(!enabled, ctx);
                 });
             }
             #[cfg(target_os = "macos")]
-            ClinchSettingsPageAction::IMessageDisconnect => {
+            ClinchSettingsPageAction::IMessageTest => {
+                IMessageCoordinator::handle(ctx).update(ctx, |coordinator, ctx| {
+                    coordinator.send_test_message(ctx);
+                });
+            }
+            #[cfg(target_os = "macos")]
+            ClinchSettingsPageAction::IMessageChangeNumber => {
                 IMessageCoordinator::handle(ctx).update(ctx, |coordinator, ctx| {
                     coordinator.disconnect(ctx);
                 });
@@ -340,14 +358,61 @@ impl From<ViewHandle<ClinchSettingsPageView>> for SettingsPageViewHandle {
 }
 
 #[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum IMessageSetupStage {
+    EnterNumber,
+    Connecting,
+    FullDiskAccess,
+    Automation,
+    MessagesSignIn,
+    AwaitingReply,
+    Connected,
+    Error,
+}
+
+#[cfg(target_os = "macos")]
+fn imessage_setup_stage(
+    setup_complete: bool,
+    recipient_is_empty: bool,
+    status: &IMessageConnectionStatus,
+) -> IMessageSetupStage {
+    if recipient_is_empty {
+        return IMessageSetupStage::EnterNumber;
+    }
+    match status {
+        IMessageConnectionStatus::Paused(IMessagePermission::FullDiskAccess) => {
+            IMessageSetupStage::FullDiskAccess
+        }
+        IMessageConnectionStatus::Paused(IMessagePermission::Automation) => {
+            IMessageSetupStage::Automation
+        }
+        IMessageConnectionStatus::Paused(IMessagePermission::MessagesSignIn) => {
+            IMessageSetupStage::MessagesSignIn
+        }
+        IMessageConnectionStatus::AwaitingCalibrationReply => IMessageSetupStage::AwaitingReply,
+        IMessageConnectionStatus::Connected | IMessageConnectionStatus::Disabled
+            if setup_complete =>
+        {
+            IMessageSetupStage::Connected
+        }
+        IMessageConnectionStatus::Error => IMessageSetupStage::Error,
+        IMessageConnectionStatus::SetupRequired
+        | IMessageConnectionStatus::Connecting
+        | IMessageConnectionStatus::Connected
+        | IMessageConnectionStatus::Disabled => IMessageSetupStage::Connecting,
+    }
+}
+
+#[cfg(target_os = "macos")]
 #[derive(Default)]
 struct IMessageWidget {
     enabled_switch_state: SwitchStateHandle,
-    refresh_button_state: MouseStateHandle,
+    notifications_default_switch_state: SwitchStateHandle,
+    test_button_state: MouseStateHandle,
+    change_number_button_state: MouseStateHandle,
     messages_button_state: MouseStateHandle,
     automation_button_state: MouseStateHandle,
     full_disk_access_button_state: MouseStateHandle,
-    disconnect_button_state: MouseStateHandle,
 }
 
 #[cfg(target_os = "macos")]
@@ -368,182 +433,309 @@ impl SettingsWidget for IMessageWidget {
         let configuration = coordinator.configuration();
         let status = coordinator.status();
 
-        let refresh_button = appearance
-            .ui_builder()
-            .button(ButtonVariant::Secondary, self.refresh_button_state.clone())
-            .with_text_label("Refresh".to_owned())
-            .build()
-            .on_click(|ctx, _, _| {
-                ctx.dispatch_typed_action(ClinchSettingsPageAction::IMessageRefresh);
-            })
-            .finish();
-
-        let setup = render_body_item::<ClinchSettingsPageAction>(
-            status.label().to_owned(),
-            None,
-            LocalOnlyIconState::Hidden,
-            ToggleState::Enabled,
-            appearance,
-            refresh_button,
-            Some(
-                "Uses the Messages account on this Mac to text your iPhone. No iPhone app or \
-                 Clinch server is involved. Clinch cannot distinguish an iPhone reply from a \
-                 reply sent through another device signed in to the same Apple Account."
-                    .into(),
-            ),
+        let stage = imessage_setup_stage(
+            configuration.setup_complete,
+            configuration.recipient.trim().is_empty(),
+            status,
         );
-
-        let recipient = render_body_item::<ClinchSettingsPageAction>(
-            if configuration.setup_complete {
-                "Connected iPhone number"
-            } else {
-                "Set up your iPhone number"
-            }
-            .into(),
-            None,
-            LocalOnlyIconState::Hidden,
-            ToggleState::Enabled,
-            appearance,
-            ConstrainedBox::new(ChildView::new(&view.imessage_recipient_editor).finish())
-                .with_width(320.)
-                .finish(),
-            Some(if configuration.setup_complete {
-                "Edit the number and press Return or the arrow to start setup over. Clinch sends \
-                 a new calibration iMessage and waits for its one-time reply. Starting over \
-                 clears retained and queued phone replies."
-                    .into()
-            } else {
-                "Press Return or the arrow to send a calibration iMessage, then reply with the \
-                 one-time code from your iPhone. Standard Messages delivery may apply."
-                    .into()
-            }),
-        );
-
-        let enabled_switch = {
-            let switch = appearance
+        let phone_chip = || {
+            super::render_model_chips(
+                [configuration.recipient.clone()],
+                appearance,
+                appearance.theme().active_ui_text_color(),
+            )
+        };
+        let change_number_button = || {
+            appearance
                 .ui_builder()
-                .switch(self.enabled_switch_state.clone())
-                .check(configuration.enabled);
-            if configuration.setup_complete {
-                switch
+                .button(
+                    ButtonVariant::Secondary,
+                    self.change_number_button_state.clone(),
+                )
+                .with_text_label("Change number".to_owned())
+                .build()
+                .on_click(|ctx, _, _| {
+                    ctx.dispatch_typed_action(ClinchSettingsPageAction::IMessageChangeNumber);
+                })
+                .finish()
+        };
+
+        let (setup_label, setup_control, setup_description) = match stage {
+            IMessageSetupStage::EnterNumber => (
+                "Set up your phone".to_owned(),
+                ConstrainedBox::new(ChildView::new(&view.imessage_recipient_editor).finish())
+                    .with_width(360.)
+                    .finish(),
+                "Enter the number associated with your iPhone, then select Connect or press \
+                 Return. Clinch will open Full Disk Access in System Settings so setup can \
+                 continue. No iPhone app or Clinch server is involved."
+                    .to_owned(),
+            ),
+            IMessageSetupStage::Connecting => (
+                if configuration.setup_complete {
+                    "Reconnecting this number".to_owned()
+                } else {
+                    "Setting up this number".to_owned()
+                },
+                Flex::row()
+                    .with_spacing(8.)
+                    .with_child(phone_chip())
+                    .with_child(change_number_button())
+                    .finish(),
+                "System Settings should be open. Enable Clinch under Privacy & Security > Full \
+                 Disk Access, then quit and reopen Clinch to continue setup automatically."
+                    .to_owned(),
+            ),
+            IMessageSetupStage::FullDiskAccess => {
+                let open_settings = appearance
+                    .ui_builder()
+                    .button(
+                        ButtonVariant::Secondary,
+                        self.full_disk_access_button_state.clone(),
+                    )
+                    .with_text_label("Open Settings".to_owned())
                     .build()
                     .on_click(|ctx, _, _| {
-                        ctx.dispatch_typed_action(ClinchSettingsPageAction::IMessageEnabled);
+                        ctx.dispatch_typed_action(
+                            ClinchSettingsPageAction::OpenFullDiskAccessSettings,
+                        );
                     })
-                    .finish()
-            } else {
-                switch.disable().build().finish()
+                    .finish();
+                (
+                    "Allow Full Disk Access".to_owned(),
+                    Flex::row()
+                        .with_spacing(8.)
+                        .with_child(phone_chip())
+                        .with_child(open_settings)
+                        .with_child(change_number_button())
+                        .finish(),
+                    "Turn on Clinch in the System Settings pane that opened, then quit and reopen \
+                     Clinch. Setup will resume with this number automatically."
+                        .to_owned(),
+                )
+            }
+            IMessageSetupStage::Automation => {
+                let open_settings = appearance
+                    .ui_builder()
+                    .button(
+                        ButtonVariant::Secondary,
+                        self.automation_button_state.clone(),
+                    )
+                    .with_text_label("Open Settings".to_owned())
+                    .build()
+                    .on_click(|ctx, _, _| {
+                        ctx.dispatch_typed_action(
+                            ClinchSettingsPageAction::OpenAutomationSettings,
+                        );
+                    })
+                    .finish();
+                (
+                    "Allow access to Messages".to_owned(),
+                    Flex::row()
+                        .with_spacing(8.)
+                        .with_child(phone_chip())
+                        .with_child(open_settings)
+                        .with_child(change_number_button())
+                        .finish(),
+                    "Allow Clinch to control Messages so it can send the setup message. Return to \
+                     Clinch after approving the macOS prompt."
+                        .to_owned(),
+                )
+            }
+            IMessageSetupStage::MessagesSignIn => {
+                let open_messages = appearance
+                    .ui_builder()
+                    .button(ButtonVariant::Secondary, self.messages_button_state.clone())
+                    .with_text_label("Open Messages".to_owned())
+                    .build()
+                    .on_click(|ctx, _, _| {
+                        ctx.dispatch_typed_action(ClinchSettingsPageAction::OpenMessages);
+                    })
+                    .finish();
+                (
+                    "Sign in to Messages".to_owned(),
+                    Flex::row()
+                        .with_spacing(8.)
+                        .with_child(phone_chip())
+                        .with_child(open_messages)
+                        .with_child(change_number_button())
+                        .finish(),
+                    "Sign in to iMessage with the Apple Account already used by this Mac, then \
+                     reopen Clinch to continue setup."
+                        .to_owned(),
+                )
+            }
+            IMessageSetupStage::AwaitingReply => {
+                let open_messages = appearance
+                    .ui_builder()
+                    .button(ButtonVariant::Secondary, self.messages_button_state.clone())
+                    .with_text_label("Open Messages".to_owned())
+                    .build()
+                    .on_click(|ctx, _, _| {
+                        ctx.dispatch_typed_action(ClinchSettingsPageAction::OpenMessages);
+                    })
+                    .finish();
+                (
+                    "Finish connecting on your phone".to_owned(),
+                    Flex::row()
+                        .with_spacing(8.)
+                        .with_child(phone_chip())
+                        .with_child(open_messages)
+                        .with_child(change_number_button())
+                        .finish(),
+                    "Clinch sent a setup message to this number. Reply with the one-time code in \
+                     that message to verify that Clinch can both send and receive."
+                        .to_owned(),
+                )
+            }
+            IMessageSetupStage::Connected => {
+                let test_status = coordinator.test_status();
+                let can_test = configuration.enabled
+                    && matches!(status, IMessageConnectionStatus::Connected)
+                    && !matches!(test_status, IMessageTestStatus::Sending);
+                let test_label = match test_status {
+                    IMessageTestStatus::Idle => "Test",
+                    IMessageTestStatus::Sending => "Sending…",
+                    IMessageTestStatus::Sent => "Test again",
+                    IMessageTestStatus::Failed => "Try again",
+                };
+                let mut test_button = appearance
+                    .ui_builder()
+                    .button(ButtonVariant::Secondary, self.test_button_state.clone())
+                    .with_text_label(test_label.to_owned())
+                    .build();
+                if !can_test {
+                    test_button = test_button.disable();
+                }
+                let test_button = test_button
+                    .on_click(|ctx, _, _| {
+                        ctx.dispatch_typed_action(ClinchSettingsPageAction::IMessageTest);
+                    })
+                    .finish();
+                let description = match test_status {
+                    IMessageTestStatus::Sending => {
+                        "Sending a test message to this number…".to_owned()
+                    }
+                    IMessageTestStatus::Sent => {
+                        "Test message sent. Check Messages on your phone.".to_owned()
+                    }
+                    IMessageTestStatus::Failed => {
+                        "The test message could not be sent. Check the connection and try again."
+                            .to_owned()
+                    }
+                    IMessageTestStatus::Idle if !configuration.enabled => {
+                        "Turn on the iMessage connection below to send a test message."
+                            .to_owned()
+                    }
+                    IMessageTestStatus::Idle => {
+                        "This is the number Clinch will use. Test sends a short message without \
+                         changing any agent settings."
+                            .to_owned()
+                    }
+                };
+                (
+                    "Connected to this number".to_owned(),
+                    Flex::row()
+                        .with_spacing(8.)
+                        .with_child(phone_chip())
+                        .with_child(test_button)
+                        .with_child(change_number_button())
+                        .finish(),
+                    description,
+                )
+            }
+            IMessageSetupStage::Error => {
+                let open_settings = appearance
+                    .ui_builder()
+                    .button(
+                        ButtonVariant::Secondary,
+                        self.full_disk_access_button_state.clone(),
+                    )
+                    .with_text_label("Open Settings".to_owned())
+                    .build()
+                    .on_click(|ctx, _, _| {
+                        ctx.dispatch_typed_action(
+                            ClinchSettingsPageAction::OpenFullDiskAccessSettings,
+                        );
+                    })
+                    .finish();
+                (
+                    "iMessage needs attention".to_owned(),
+                    Flex::row()
+                        .with_spacing(8.)
+                        .with_child(phone_chip())
+                        .with_child(open_settings)
+                        .with_child(change_number_button())
+                        .finish(),
+                    "Check that Clinch has Full Disk Access and that Messages is signed in, then \
+                     quit and reopen Clinch. You can also change the number and start over."
+                        .to_owned(),
+                )
             }
         };
-        let enabled = render_body_item::<ClinchSettingsPageAction>(
-            "Message me when agents finish".into(),
+        let setup = render_body_item::<ClinchSettingsPageAction>(
+            setup_label,
             None,
             LocalOnlyIconState::Hidden,
-            if configuration.setup_complete {
-                ToggleState::Enabled
-            } else {
-                ToggleState::Disabled
-            },
+            ToggleState::Enabled,
+            appearance,
+            setup_control,
+            Some(setup_description),
+        );
+
+        let enabled_switch = appearance
+            .ui_builder()
+            .switch(self.enabled_switch_state.clone())
+            .check(configuration.enabled)
+            .build()
+            .on_click(|ctx, _, _| {
+                ctx.dispatch_typed_action(ClinchSettingsPageAction::IMessageEnabled);
+            })
+            .finish();
+        let enabled = render_body_item::<ClinchSettingsPageAction>(
+            "iMessage connection".into(),
+            None,
+            LocalOnlyIconState::Hidden,
+            ToggleState::Enabled,
             appearance,
             enabled_switch,
             Some(
-                "Each successful turn sends its full final response as plain-text parts. This is \
-                 enabled by default for current and future durable Codex and Claude Code \
-                 sessions, and each session can be opted out from its footer. Replies queue \
-                 while an agent is working and never answer permission prompts remotely."
+                "Turning this off pauses completion messages and phone replies without forgetting \
+                 the connected number or individual footer choices."
                     .into(),
             ),
         );
 
-        let messages_button = appearance
-            .ui_builder()
-            .button(ButtonVariant::Secondary, self.messages_button_state.clone())
-            .with_text_label("Open Messages".to_owned())
-            .build()
-            .on_click(|ctx, _, _| {
-                ctx.dispatch_typed_action(ClinchSettingsPageAction::OpenMessages);
-            })
-            .finish();
-        let automation_button = appearance
-            .ui_builder()
-            .button(
-                ButtonVariant::Secondary,
-                self.automation_button_state.clone(),
-            )
-            .with_text_label("Messages automation".to_owned())
-            .build()
-            .on_click(|ctx, _, _| {
-                ctx.dispatch_typed_action(ClinchSettingsPageAction::OpenAutomationSettings);
-            })
-            .finish();
-        let full_disk_access_button = appearance
-            .ui_builder()
-            .button(
-                ButtonVariant::Secondary,
-                self.full_disk_access_button_state.clone(),
-            )
-            .with_text_label("Full Disk Access".to_owned())
-            .build()
-            .on_click(|ctx, _, _| {
-                ctx.dispatch_typed_action(ClinchSettingsPageAction::OpenFullDiskAccessSettings);
-            })
-            .finish();
-        let permissions = render_body_item::<ClinchSettingsPageAction>(
-            "macOS permissions".into(),
+        let notifications_default = render_body_item::<ClinchSettingsPageAction>(
+            "Get notified by default".into(),
             None,
             LocalOnlyIconState::Hidden,
             ToggleState::Enabled,
             appearance,
-            Flex::row()
-                .with_spacing(8.)
-                .with_child(messages_button)
-                .with_child(automation_button)
-                .with_child(full_disk_access_button)
+            appearance
+                .ui_builder()
+                .switch(self.notifications_default_switch_state.clone())
+                .check(configuration.notifications_enabled_by_default)
+                .build()
+                .on_click(|ctx, _, _| {
+                    ctx.dispatch_typed_action(
+                        ClinchSettingsPageAction::IMessageNotificationsDefault,
+                    );
+                })
                 .finish(),
             Some(
-                "Automation lets Clinch ask Messages to send. Full Disk Access lets the bundled \
-                 local helper watch the Messages database for replies. After granting access, \
-                 quit and reopen Clinch, then click Refresh."
+                "On by default. Sessions without an individual footer choice follow this setting. \
+                 A Get notified: Yes or No choice for a session is preserved across changes and \
+                 restarts."
                     .into(),
             ),
         );
 
-        let disconnect_button = appearance
-            .ui_builder()
-            .button(
-                ButtonVariant::Secondary,
-                self.disconnect_button_state.clone(),
-            )
-            .with_text_label("Disconnect and clear routing data".to_owned())
-            .build()
-            .on_click(|ctx, _, _| {
-                ctx.dispatch_typed_action(ClinchSettingsPageAction::IMessageDisconnect);
-            })
-            .finish();
-        let disconnect = render_body_item::<ClinchSettingsPageAction>(
-            "Disconnect iMessage".into(),
-            None,
-            LocalOnlyIconState::Hidden,
-            if configuration.setup_complete || !configuration.recipient.is_empty() {
-                ToggleState::Enabled
-            } else {
-                ToggleState::Disabled
-            },
-            appearance,
-            disconnect_button,
-            Some(
-                "Stops the local bridge and deletes Clinch's phone configuration, route codes, \
-                 queued replies, and processed-message IDs. It does not delete Messages history."
-                    .into(),
-            ),
-        );
-
-        let mut column = Flex::column()
-            .with_child(setup)
-            .with_child(recipient)
-            .with_child(enabled)
-            .with_child(permissions);
-        column.add_child(disconnect);
+        let mut column = Flex::column().with_child(setup);
+        if configuration.setup_complete {
+            column.add_child(enabled);
+            column.add_child(notifications_default);
+        }
         column.finish()
     }
 }

@@ -2264,19 +2264,18 @@ impl PaneGroup {
             .any(|pane| pane.terminal_view(ctx).id() == terminal_view_id)
     }
 
-    /// Discovers the durable agent identity currently registered for a live terminal pane.
-    /// This bridges provider hooks to command-detected sessions without interpreting opaque PTY
-    /// notifications as user-authored prompt text.
+    /// Returns the durable UUID used by the agent-resume registry for a live terminal pane.
+    /// The caller can use it to reconcile provider identity without doing filesystem work while
+    /// the pane-group model is borrowed.
     #[cfg(feature = "local_tty")]
-    pub fn agent_session_seed_for_terminal_view(
+    pub fn agent_session_uuid_for_terminal_view(
         &self,
         terminal_view_id: EntityId,
         ctx: &AppContext,
-    ) -> Option<(crate::agent_resume::AgentResumeProvider, String)> {
+    ) -> Option<Vec<u8>> {
         let pane_id = self.find_pane_id_for_terminal_view(terminal_view_id, ctx)?;
         let pane = self.downcast_pane_by_id::<TerminalPane>(pane_id)?;
-        let command = crate::agent_resume::read_on_restore_command(&pane.session_uuid())?;
-        crate::agent_resume::agent_session_seed_from_restore_command(&command)
+        Some(pane.session_uuid())
     }
 
     /// Returns the [`PaneId`] of the terminal pane whose persistent UUID matches

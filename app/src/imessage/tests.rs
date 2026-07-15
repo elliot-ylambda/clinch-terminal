@@ -38,7 +38,7 @@ fn enabled_state() -> RouteState {
 }
 
 #[test]
-fn session_route_is_stable_and_an_explicit_opt_out_cancels_its_queue() {
+fn session_route_is_stable_and_an_explicit_no_cancels_its_queue() {
     let mut state = enabled_state();
     let session = key(MobileProvider::Codex, "session-one");
     let route = state.register_session(session.clone(), "project", NOW);
@@ -50,9 +50,72 @@ fn session_route_is_stable_and_an_explicit_opt_out_cancels_its_queue() {
     state
         .enqueue_reply("phone-1", route.clone(), "one", NOW)
         .unwrap();
-    let cancelled = state.set_opted_out(&session, true, NOW + 2);
+    let cancelled = state.set_notifications_enabled(&session, false, NOW + 2);
     assert_eq!(cancelled.len(), 1);
-    assert!(!state.route_for_key(&session).unwrap().is_eligible(true));
+    assert!(!state
+        .route_for_key(&session)
+        .unwrap()
+        .is_eligible(true, true));
+}
+
+#[test]
+fn session_notification_overrides_outlive_default_changes() {
+    let mut state = enabled_state();
+    let inherited = key(MobileProvider::Codex, "inherited");
+    let explicit = key(MobileProvider::Claude, "explicit");
+    state.register_session(inherited.clone(), "codex", NOW);
+    state.register_session(explicit.clone(), "claude", NOW);
+
+    assert!(state.route_for_key(&inherited).unwrap().notifications_enabled(true));
+    state.notifications_enabled_by_default = false;
+    assert!(!state
+        .route_for_key(&inherited)
+        .unwrap()
+        .notifications_enabled(false));
+
+    state.set_notifications_enabled(&explicit, true, NOW + 1);
+    assert!(state
+        .route_for_key(&explicit)
+        .unwrap()
+        .notifications_enabled(false));
+    state.notifications_enabled_by_default = true;
+    state.set_notifications_enabled(&inherited, false, NOW + 2);
+    assert!(!state
+        .route_for_key(&inherited)
+        .unwrap()
+        .notifications_enabled(true));
+
+    state.notifications_enabled_by_default = false;
+    assert!(state
+        .route_for_key(&explicit)
+        .unwrap()
+        .notifications_enabled(false));
+    assert!(!state
+        .route_for_key(&inherited)
+        .unwrap()
+        .notifications_enabled(false));
+}
+
+#[test]
+fn legacy_opt_out_and_missing_default_migrate_without_enabling_the_route() {
+    let mut state = enabled_state();
+    state.register_session(key(MobileProvider::Codex, "legacy"), "codex", NOW);
+    let mut value = serde_json::to_value(state).unwrap();
+    let object = value.as_object_mut().unwrap();
+    object.remove("notifications_enabled_by_default");
+    let route = object["routes"].as_array_mut().unwrap()[0]
+        .as_object_mut()
+        .unwrap();
+    route.insert("opted_out".to_owned(), serde_json::Value::Bool(true));
+    route.remove("notification_override");
+
+    let mut restored: RouteState = serde_json::from_value(value).unwrap();
+    assert!(restored.notifications_enabled_by_default);
+    assert!(restored.migrate_legacy_notification_overrides());
+    let route = &restored.routes[0];
+    assert!(!route.legacy_opted_out);
+    assert_eq!(route.notification_override, Some(false));
+    assert!(!route.notifications_enabled(true));
 }
 
 #[test]
@@ -467,12 +530,12 @@ fn route_state_store_is_atomic_owner_only_and_round_trips() {
 }
 
 #[test]
-fn inactive_or_opted_out_parent_routes_do_not_fall_back_elsewhere() {
+fn inactive_or_notification_disabled_parent_routes_do_not_fall_back_elsewhere() {
     let mut state = enabled_state();
     let session = key(MobileProvider::Codex, "c");
     let route = state.register_session(session.clone(), "codex", NOW);
     state.record_outbound_guid("completion", route, NOW);
-    state.set_opted_out(&session, true, NOW + 1);
+    state.set_notifications_enabled(&session, false, NOW + 1);
     state.register_session(key(MobileProvider::Claude, "d"), "claude", NOW + 1);
     let mut message = incoming("phone", "must not reroute");
     message.parent_guid = Some("completion".to_owned());

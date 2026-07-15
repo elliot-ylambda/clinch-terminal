@@ -45,11 +45,15 @@ pub enum ThemeKind {
     SentReferralReward,
     #[schemars(skip)]
     ReceivedReferralReward,
+    #[default]
+    #[schemars(description = "Clinch Ink")]
+    ClinchInk,
+    #[schemars(description = "Clinch Paper")]
+    ClinchPaper,
     #[schemars(description = "Adeberry")]
     Adeberry,
     #[schemars(description = "Phenomenon")]
     Phenomenon,
-    #[default]
     #[schemars(description = "Dark")]
     Dark,
     #[schemars(description = "Dracula")]
@@ -110,6 +114,8 @@ impl From<CustomTheme> for ThemeKind {
 impl std::fmt::Display for ThemeKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let value = match &self {
+            ThemeKind::ClinchInk => "Clinch Ink",
+            ThemeKind::ClinchPaper => "Clinch Paper",
             ThemeKind::Light => "Light",
             ThemeKind::Dark => "Dark",
             ThemeKind::Dracula => "Dracula",
@@ -471,6 +477,8 @@ impl WarpThemeConfig {
                 ThemeKind::ReceivedReferralReward,
                 received_referral_reward(),
             ),
+            (ThemeKind::ClinchInk, clinch_ink()),
+            (ThemeKind::ClinchPaper, clinch_paper()),
             (ThemeKind::Dark, dark_theme()),
             (ThemeKind::Light, light_theme()),
             (ThemeKind::SolarizedDark, solarized_dark()),
@@ -556,8 +564,8 @@ impl RespectSystemTheme {
 impl Default for SelectedSystemThemes {
     fn default() -> Self {
         Self {
-            light: ThemeKind::Light,
-            dark: ThemeKind::Dark,
+            light: ThemeKind::ClinchPaper,
+            dark: ThemeKind::ClinchInk,
         }
     }
 }

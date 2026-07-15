@@ -3,6 +3,7 @@ use warpui::elements::{
     Border, Container, CornerRadius, CrossAxisAlignment, Flex, MainAxisAlignment, MainAxisSize,
     MouseStateHandle, ParentElement, Radius, Shrinkable,
 };
+use warpui::ui_components::button::ButtonVariant;
 use warpui::ui_components::components::{Coords, UiComponent, UiComponentStyles};
 use warpui::{
     AppContext, Element, Entity, FocusContext, SingletonEntity, TypedActionView, View, ViewContext,
@@ -34,6 +35,7 @@ pub struct SubmittableTextInput {
     /// Whether or not the last edit made the contents valid.
     has_error: bool,
     submit_button_state: MouseStateHandle,
+    submit_label: Option<String>,
     outer_margin_top: f32,
     outer_margin_bottom: f32,
 }
@@ -59,6 +61,7 @@ impl SubmittableTextInput {
             validator_type: ValidatorType::OnEdit,
             has_error: false,
             submit_button_state: Default::default(),
+            submit_label: None,
             outer_margin_top: 10.,
             outer_margin_bottom: 10.,
         }
@@ -84,6 +87,13 @@ impl SubmittableTextInput {
         self.editor.update(ctx, |editor, ctx| {
             editor.set_placeholder_text(text, ctx);
         });
+    }
+
+    /// Replaces the compact Return icon with a labeled submit button. Pressing
+    /// Return continues to submit the input as usual.
+    pub fn with_submit_label(mut self, label: impl Into<String>) -> Self {
+        self.submit_label = Some(label.into());
+        self
     }
 
     pub fn set_outer_margins(&mut self, top: f32, bottom: f32, ctx: &mut ViewContext<Self>) {
@@ -159,20 +169,40 @@ impl View for SubmittableTextInput {
             appearance.theme().outline()
         };
 
-        let mut submit_button = appearance
-            .ui_builder()
-            .enter_button(ENTER_BUTTON_SIZE, self.submit_button_state.clone())
-            .with_style(UiComponentStyles {
-                padding: Some(Coords::uniform(4.)),
-                ..Default::default()
-            })
-            .build();
-
-        if self.has_error
-            || self.editor.as_ref(app).interaction_state(app) == InteractionState::Disabled
-        {
-            submit_button = submit_button.disable();
-        }
+        let submit_disabled = self.has_error
+            || self.editor.as_ref(app).interaction_state(app) == InteractionState::Disabled;
+        let submit_button = if let Some(label) = self.submit_label.as_ref() {
+            let mut button = appearance
+                .ui_builder()
+                .button(ButtonVariant::Accent, self.submit_button_state.clone())
+                .with_text_label(label.clone())
+                .build();
+            if submit_disabled {
+                button = button.disable();
+            }
+            button
+                .on_click(|ctx, _, _| {
+                    ctx.dispatch_typed_action(SubmittableTextInputAction::Submit)
+                })
+                .finish()
+        } else {
+            let mut button = appearance
+                .ui_builder()
+                .enter_button(ENTER_BUTTON_SIZE, self.submit_button_state.clone())
+                .with_style(UiComponentStyles {
+                    padding: Some(Coords::uniform(4.)),
+                    ..Default::default()
+                })
+                .build();
+            if submit_disabled {
+                button = button.disable();
+            }
+            button
+                .on_click(|ctx, _, _| {
+                    ctx.dispatch_typed_action(SubmittableTextInputAction::Submit)
+                })
+                .finish()
+        };
 
         Container::new(
             Flex::row()
@@ -195,11 +225,7 @@ impl View for SubmittableTextInput {
                             .finish(),
                     )
                     .finish(),
-                    submit_button
-                        .on_click(|ctx, _, _| {
-                            ctx.dispatch_typed_action(SubmittableTextInputAction::Submit)
-                        })
-                        .finish(),
+                    submit_button,
                 ])
                 .finish(),
         )

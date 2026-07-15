@@ -83,6 +83,17 @@ fn cli_default_left_includes_create_pull_request_quick_insert() {
 }
 
 #[test]
+fn cli_default_places_remote_control_at_the_end_of_the_right_side() {
+    let _creating_shared_sessions = FeatureFlag::CreatingSharedSessions.override_enabled(true);
+    let _remote_control = FeatureFlag::HOARemoteControl.override_enabled(true);
+    let left = AgentToolbarItemKind::cli_default_left();
+    let right = AgentToolbarItemKind::cli_default_right();
+
+    assert!(!left.contains(&AgentToolbarItemKind::ShareSession));
+    assert_eq!(right.last(), Some(&AgentToolbarItemKind::ShareSession));
+}
+
+#[test]
 fn cli_input_configurator_offers_quick_replies() {
     let available = AgentToolbarItemKind::all_available_for_cli_input();
     assert!(available.contains(&AgentToolbarItemKind::ContinuePrompt));

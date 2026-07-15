@@ -11,7 +11,8 @@ mod protocol;
 mod store;
 
 pub(crate) use coordinator::{
-    IMessageConnectionStatus, IMessageCoordinator, IMessageCoordinatorEvent,
+    IMessageConnectionStatus, IMessageCoordinator, IMessageCoordinatorEvent, IMessagePermission,
+    IMessageTestStatus,
 };
 
 #[cfg(test)]

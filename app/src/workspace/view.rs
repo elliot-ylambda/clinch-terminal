@@ -47,6 +47,8 @@ use ai::index::full_source_code_embedding::manager::CodebaseIndexManager;
 #[cfg(target_os = "macos")]
 use anyhow::Result;
 use autoupdate::AutoupdateStage;
+#[cfg(feature = "local_tty")]
+use blocking::unblock;
 #[cfg(target_os = "macos")]
 use command::blocking::Command;
 use futures::Future;
@@ -105,6 +107,8 @@ use warpui::notification::{NotificationSendError, RequestPermissionsOutcome, Use
 use warpui::platform::{
     Cursor, FilePickerConfiguration, FullscreenState, SystemTheme, TerminationMode,
 };
+#[cfg(feature = "local_tty")]
+use warpui::r#async::Timer;
 use warpui::text_layout::ClipConfig;
 use warpui::ui_components::button::{Button, ButtonVariant};
 use warpui::ui_components::components::{Coords, UiComponent, UiComponentStyles};
@@ -709,6 +713,15 @@ const AUTO_CLOUD_HANDOFF_PROMPT: &str =
 /// The default display name used for the user if they have no associated display name.
 pub const DEFAULT_USER_DISPLAY_NAME: &str = "User";
 
+#[cfg(target_os = "macos")]
+const IMESSAGE_HEADER_SETUP_PROMPT: &str =
+    "Use Clinch over iMessage to talk with Claude and Codex.";
+
+#[cfg(target_os = "macos")]
+fn imessage_header_setup_prompt(setup_complete: bool) -> Option<&'static str> {
+    (!setup_complete).then_some(IMESSAGE_HEADER_SETUP_PROMPT)
+}
+
 lazy_static! {
     static ref OPENING_WARP_DRIVE_ON_START_UP: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
     static ref PANEL_CORNER_RADIUS: CornerRadius = CornerRadius::with_all(Radius::Pixels(8.));
@@ -1021,6 +1034,37 @@ pub enum WorkspaceEvent {
     ProjectMetadataChanged,
 }
 
+#[cfg(feature = "local_tty")]
+fn cli_agent_session_seed_poll_delay(attempt: u32) -> Duration {
+    match attempt {
+        0 => Duration::ZERO,
+        1..=20 => Duration::from_millis(250),
+        21..=50 => Duration::from_secs(1),
+        _ => Duration::from_secs(5),
+    }
+}
+
+#[cfg(feature = "local_tty")]
+fn unidentified_cli_agent_provider(
+    session: Option<&crate::terminal::cli_agent_sessions::CLIAgentSession>,
+) -> Option<crate::agent_resume::AgentResumeProvider> {
+    let session = session?;
+    if session
+        .session_context
+        .session_id
+        .as_deref()
+        .is_some_and(|session_id| !session_id.trim().is_empty())
+    {
+        return None;
+    }
+
+    match session.agent {
+        crate::terminal::CLIAgent::Claude => Some(crate::agent_resume::AgentResumeProvider::Claude),
+        crate::terminal::CLIAgent::Codex => Some(crate::agent_resume::AgentResumeProvider::Codex),
+        _ => None,
+    }
+}
+
 pub struct Workspace {
     window_id: WindowId,
     pub(crate) tabs: Vec<TabData>,
@@ -1200,6 +1244,10 @@ pub struct Workspace {
     /// When true, this workspace was created to receive a transferred PaneGroup.
     /// The placeholder tab will be replaced when adopt_transferred_pane_group is called.
     pending_pane_group_transfer: bool,
+    /// One token per unidentified CLI-agent session whose pane registry is being reconciled.
+    /// Replacing/removing a token cancels stale timer callbacks without keeping task handles.
+    #[cfg(feature = "local_tty")]
+    cli_agent_session_seed_poll_tokens: HashMap<EntityId, Arc<()>>,
     /// When true, `on_window_closed` skips detaching panes, so pane groups
     /// transferred to another window aren't torn down when this window closes
     /// via `TerminationMode::ContentTransferred`.
@@ -3548,6 +3596,8 @@ impl Workspace {
             hoa_onboarding_flow: None,
             hoa_vtabs_callout_pinned_position: None,
             pending_pane_group_transfer: false,
+            #[cfg(feature = "local_tty")]
+            cli_agent_session_seed_poll_tokens: HashMap::new(),
             suppress_detach_panes_on_window_close: false,
             suppress_notification_reads_during_project_activation: Cell::new(false),
             skip_next_notification_read_interaction: Cell::new(false),
@@ -3744,16 +3794,149 @@ impl Workspace {
     }
 
     #[cfg(feature = "local_tty")]
-    fn agent_session_seed_for_terminal_view(
+    fn agent_session_uuid_for_terminal_view(
         &self,
         terminal_view_id: EntityId,
         ctx: &AppContext,
-    ) -> Option<(crate::agent_resume::AgentResumeProvider, String)> {
+    ) -> Option<Vec<u8>> {
         self.tabs.iter().find_map(|tab| {
             tab.pane_group
                 .as_ref(ctx)
-                .agent_session_seed_for_terminal_view(terminal_view_id, ctx)
+                .agent_session_uuid_for_terminal_view(terminal_view_id, ctx)
         })
+    }
+
+    #[cfg(feature = "local_tty")]
+    fn cli_agent_session_seed_poll_is_current(
+        &self,
+        terminal_view_id: EntityId,
+        token: &Arc<()>,
+    ) -> bool {
+        self.cli_agent_session_seed_poll_tokens
+            .get(&terminal_view_id)
+            .is_some_and(|current| Arc::ptr_eq(current, token))
+    }
+
+    #[cfg(feature = "local_tty")]
+    fn stop_cli_agent_session_seed_poll(&mut self, terminal_view_id: EntityId, token: &Arc<()>) {
+        if self.cli_agent_session_seed_poll_is_current(terminal_view_id, token) {
+            self.cli_agent_session_seed_poll_tokens
+                .remove(&terminal_view_id);
+        }
+    }
+
+    #[cfg(feature = "local_tty")]
+    fn ensure_cli_agent_session_seed_poll(
+        &mut self,
+        terminal_view_id: EntityId,
+        restart: bool,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let should_poll = session_context_enabled()
+            && self.workspace_contains_terminal_view(terminal_view_id, ctx)
+            && unidentified_cli_agent_provider(
+                CLIAgentSessionsModel::as_ref(ctx).session(terminal_view_id),
+            )
+            .is_some();
+        if !should_poll {
+            self.cli_agent_session_seed_poll_tokens
+                .remove(&terminal_view_id);
+            return;
+        }
+
+        if restart {
+            self.cli_agent_session_seed_poll_tokens
+                .remove(&terminal_view_id);
+        } else if self
+            .cli_agent_session_seed_poll_tokens
+            .contains_key(&terminal_view_id)
+        {
+            return;
+        }
+
+        let token = Arc::new(());
+        self.cli_agent_session_seed_poll_tokens
+            .insert(terminal_view_id, token.clone());
+        self.poll_cli_agent_session_seed(terminal_view_id, token, 0, ctx);
+    }
+
+    #[cfg(feature = "local_tty")]
+    fn poll_cli_agent_session_seed(
+        &mut self,
+        terminal_view_id: EntityId,
+        token: Arc<()>,
+        attempt: u32,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        if !self.cli_agent_session_seed_poll_is_current(terminal_view_id, &token)
+            || !self.workspace_contains_terminal_view(terminal_view_id, ctx)
+            || unidentified_cli_agent_provider(
+                CLIAgentSessionsModel::as_ref(ctx).session(terminal_view_id),
+            )
+            .is_none()
+        {
+            self.stop_cli_agent_session_seed_poll(terminal_view_id, &token);
+            return;
+        }
+
+        let Some(pane_uuid) = self.agent_session_uuid_for_terminal_view(terminal_view_id, ctx)
+        else {
+            self.stop_cli_agent_session_seed_poll(terminal_view_id, &token);
+            return;
+        };
+        let delay = cli_agent_session_seed_poll_delay(attempt);
+        let callback_token = token.clone();
+        ctx.spawn(
+            async move {
+                if !delay.is_zero() {
+                    Timer::after(delay).await;
+                }
+                unblock(move || {
+                    let command = crate::agent_resume::read_on_restore_command(&pane_uuid)?;
+                    crate::agent_resume::agent_session_seed_from_restore_command(&command)
+                })
+                .await
+            },
+            move |workspace, seed, ctx| {
+                if !workspace
+                    .cli_agent_session_seed_poll_is_current(terminal_view_id, &callback_token)
+                {
+                    return;
+                }
+                if !workspace.workspace_contains_terminal_view(terminal_view_id, ctx) {
+                    workspace.stop_cli_agent_session_seed_poll(terminal_view_id, &callback_token);
+                    return;
+                }
+
+                let Some(expected_provider) = unidentified_cli_agent_provider(
+                    CLIAgentSessionsModel::as_ref(ctx).session(terminal_view_id),
+                ) else {
+                    workspace.stop_cli_agent_session_seed_poll(terminal_view_id, &callback_token);
+                    return;
+                };
+                if let Some((provider, session_id)) =
+                    seed.filter(|(provider, _)| *provider == expected_provider)
+                {
+                    workspace.stop_cli_agent_session_seed_poll(terminal_view_id, &callback_token);
+                    CLIAgentSessionsModel::handle(ctx).update(ctx, |model, ctx| {
+                        model.seed_resumed_session_if_unidentified(
+                            terminal_view_id,
+                            provider,
+                            session_id,
+                            ctx,
+                        );
+                    });
+                    return;
+                }
+
+                workspace.poll_cli_agent_session_seed(
+                    terminal_view_id,
+                    callback_token,
+                    attempt.saturating_add(1),
+                    ctx,
+                );
+            },
+        );
     }
 
     fn agent_conversation_event_affects_vertical_tabs(
@@ -3786,27 +3969,24 @@ impl Workspace {
         let terminal_view_id = event.terminal_view_id();
         let belongs_to_workspace = self.workspace_contains_terminal_view(terminal_view_id, ctx);
 
-        // Provider SessionStart hooks write the durable identity to the pane registry. Native
-        // Codex sessions otherwise expose only an ID-less OSC 9 notification, so discover that
-        // identity on lifecycle events and let the model hydrate the private prompt mirror. The
-        // update is deferred because this callback is itself running inside a model emission.
+        // Provider hooks publish durable identity to the pane registry. Interactive pickers can
+        // do that long after command detection emits `Started`, so keep reconciling for the
+        // lifetime of an unidentified session instead of taking a one-time snapshot.
         #[cfg(feature = "local_tty")]
-        if session_context_enabled()
-            && belongs_to_workspace
-            && matches!(
-                event,
-                CLIAgentSessionsModelEvent::Started { .. }
-                    | CLIAgentSessionsModelEvent::StatusChanged { .. }
-            )
-        {
-            if let Some((provider, session_id)) =
-                self.agent_session_seed_for_terminal_view(terminal_view_id, ctx)
-            {
-                ctx.spawn(async {}, move |_, _, ctx| {
-                    CLIAgentSessionsModel::handle(ctx).update(ctx, |model, ctx| {
-                        model.seed_resumed_session(terminal_view_id, provider, session_id, ctx);
-                    });
-                });
+        if belongs_to_workspace {
+            match event {
+                CLIAgentSessionsModelEvent::Started { .. } => {
+                    self.ensure_cli_agent_session_seed_poll(terminal_view_id, true, ctx);
+                }
+                CLIAgentSessionsModelEvent::StatusChanged { .. }
+                | CLIAgentSessionsModelEvent::SessionUpdated { .. } => {
+                    self.ensure_cli_agent_session_seed_poll(terminal_view_id, false, ctx);
+                }
+                CLIAgentSessionsModelEvent::Ended { .. } => {
+                    self.cli_agent_session_seed_poll_tokens
+                        .remove(&terminal_view_id);
+                }
+                CLIAgentSessionsModelEvent::InputSessionChanged { .. } => {}
             }
         }
 
@@ -21537,6 +21717,83 @@ impl Workspace {
         ctx: &AppContext,
     ) -> Box<dyn Element> {
         let coordinator = IMessageCoordinator::as_ref(ctx);
+        if let Some(prompt) =
+            imessage_header_setup_prompt(coordinator.configuration().setup_complete)
+        {
+            let theme = appearance.theme();
+            let foreground = internal_colors::accent_fg_strong(theme);
+            let label = Flex::row()
+                .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                .with_child(
+                    ConstrainedBox::new(icons::Icon::Phone01.to_warpui_icon(foreground).finish())
+                        .with_width(14.)
+                        .with_height(14.)
+                        .finish(),
+                )
+                .with_child(
+                    Shrinkable::new(
+                        1.,
+                        Container::new(
+                            Text::new_inline(prompt, appearance.ui_font_family(), 12.)
+                                .with_color(foreground.into())
+                                .with_style(Properties::default().weight(Weight::Semibold))
+                                .with_clip(ClipConfig::ellipsis())
+                                .finish(),
+                        )
+                        .with_margin_left(6.)
+                        .finish(),
+                    )
+                    .finish(),
+                )
+                .finish();
+
+            let default_styles = UiComponentStyles {
+                background: Some(internal_colors::accent_overlay_1(theme).into()),
+                border_color: Some(theme.accent().into()),
+                border_radius: Some(CornerRadius::with_all(Radius::Pixels(4.))),
+                border_width: Some(1.),
+                height: Some(24.),
+                padding: Some(Coords {
+                    top: 0.,
+                    bottom: 0.,
+                    left: 8.,
+                    right: 8.,
+                }),
+                ..Default::default()
+            };
+            let hovered_styles = UiComponentStyles {
+                background: Some(internal_colors::accent_overlay_2(theme).into()),
+                ..default_styles
+            };
+            let clicked_styles = UiComponentStyles {
+                background: Some(internal_colors::accent_overlay_3(theme).into()),
+                ..default_styles
+            };
+
+            let button = Button::new(
+                self.mouse_states.imessage_status.clone(),
+                default_styles,
+                Some(hovered_styles),
+                Some(clicked_styles),
+                None,
+            )
+            .with_custom_label(label)
+            .with_tooltip(self.render_tab_bar_icon_button_tooltip(
+                appearance,
+                coordinator.status().label().to_owned(),
+                Some("Open Clinch iMessage settings".to_owned()),
+            ))
+            .build()
+            .on_click(|ctx, _, _| {
+                ctx.dispatch_typed_action(WorkspaceAction::ShowSettingsPage(
+                    SettingsSection::Clinch,
+                ));
+            })
+            .finish();
+
+            return ConstrainedBox::new(button).with_max_width(380.).finish();
+        }
+
         let connected = matches!(
             coordinator.status(),
             crate::imessage::IMessageConnectionStatus::Connected

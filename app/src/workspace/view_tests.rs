@@ -97,6 +97,63 @@ use crate::{
     experiments, workspace, AgentNotificationsModel, GlobalResourceHandlesProvider, ObjectActions,
 };
 
+#[cfg(feature = "local_tty")]
+#[test]
+fn cli_agent_session_seed_poll_stays_alive_for_slow_interactive_pickers() {
+    assert_eq!(cli_agent_session_seed_poll_delay(0), Duration::ZERO);
+    assert_eq!(
+        cli_agent_session_seed_poll_delay(20),
+        Duration::from_millis(250)
+    );
+    assert_eq!(
+        cli_agent_session_seed_poll_delay(50),
+        Duration::from_secs(1)
+    );
+    assert_eq!(
+        cli_agent_session_seed_poll_delay(u32::MAX),
+        Duration::from_secs(5)
+    );
+}
+
+#[cfg(feature = "local_tty")]
+#[test]
+fn cli_agent_session_seed_poll_never_overwrites_a_structured_identity() {
+    let mut session = CLIAgentSession {
+        agent: crate::terminal::CLIAgent::Claude,
+        status: CLIAgentSessionStatus::InProgress,
+        session_context: CLIAgentSessionContext::default(),
+        input_state: CLIAgentInputState::Closed,
+        should_auto_toggle_input: false,
+        listener: None,
+        plugin_version: None,
+        remote_host: None,
+        draft_text: None,
+        custom_command_prefix: None,
+        received_rich_notification: false,
+        has_observed_turn_activity: false,
+        prompt_history: Default::default(),
+        prompt_history_load_state: Default::default(),
+        prompt_history_generation: 0,
+    };
+
+    assert_eq!(
+        unidentified_cli_agent_provider(Some(&session)),
+        Some(crate::agent_resume::AgentResumeProvider::Claude)
+    );
+    session.session_context.session_id = Some("structured-session".to_owned());
+    assert_eq!(unidentified_cli_agent_provider(Some(&session)), None);
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn imessage_header_prompts_for_setup_until_setup_is_complete() {
+    assert_eq!(
+        imessage_header_setup_prompt(false),
+        Some("Use Clinch over iMessage to talk with Claude and Codex.")
+    );
+    assert_eq!(imessage_header_setup_prompt(true), None);
+}
+
 #[test]
 fn project_agent_count_only_includes_in_progress_claude_and_codex_sessions() {
     assert!(is_in_progress_project_agent(
