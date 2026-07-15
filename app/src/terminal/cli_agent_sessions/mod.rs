@@ -557,13 +557,14 @@ impl CLIAgentSessionsModel {
         self.sessions.get(&terminal_view_id)
     }
 
-    /// Marks a Claude Code or Codex turn as working when Clinch itself observes the user submit
-    /// input to the interactive CLI.
+    /// Marks a Claude Code or Codex turn as working when Clinch submits a known, non-empty prompt
+    /// through its CLI-agent prompt pipeline.
     ///
     /// Rich plugins normally report `PromptSubmit`, but command-detected sessions and Codex's
-    /// OSC 9 fallback only report completion. Recording the local submission closes that gap
-    /// without treating an interactive CLI that is merely open at its prompt as active work.
-    pub fn mark_project_cli_agent_turn_started_from_user_submission(
+    /// OSC 9 fallback may only report completion. Raw PTY carriage returns are deliberately not
+    /// accepted here: startup menus, confirmation screens, and an empty Enter at an idle prompt
+    /// use the same byte without proving that an agent turn started.
+    pub fn mark_project_cli_agent_turn_started_from_clinch_submission(
         &mut self,
         terminal_view_id: EntityId,
         ctx: &mut ModelContext<Self>,

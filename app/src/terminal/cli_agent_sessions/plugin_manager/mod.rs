@@ -20,8 +20,8 @@ use crate::terminal::model::session::LocalCommandExecutor;
 use crate::terminal::shell::ShellType;
 use crate::terminal::CLIAgent;
 
-/// Public Clinch builds never change a provider's plugin configuration implicitly. Their
-/// managers still expose source-identified manual instructions after a direct user action.
+/// Clinch startup provisioning uses the pinned local marketplaces in the application bundle.
+/// Keep the footer managers in manual mode so their floating Git sources remain a fallback only.
 fn automatic_plugin_changes_allowed_for(app_id: &str) -> bool {
     !matches!(app_id, "sh.clinch.Clinch" | "sh.clinch.ClinchDev")
 }

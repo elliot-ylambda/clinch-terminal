@@ -74,6 +74,20 @@ fn tracked_remote_ref_validates_full_ref_names() {
 }
 
 #[test]
+#[cfg(feature = "local_fs")]
+fn linked_worktree_detection_excludes_submodule_git_dirs() {
+    let common_git_dir = PathBuf::from("repo").join(".git");
+
+    assert!(Repository::is_linked_worktree_git_dir(
+        &common_git_dir.join("worktrees").join("feature")
+    ));
+    assert!(!Repository::is_linked_worktree_git_dir(
+        &common_git_dir.join("modules").join("dependency")
+    ));
+    assert!(!Repository::is_linked_worktree_git_dir(&common_git_dir));
+}
+
+#[test]
 fn tracked_remote_ref_path_uses_common_git_dir() {
     VirtualFS::test(
         "tracked_remote_ref_path_uses_common_git_dir",
@@ -101,6 +115,7 @@ fn tracked_remote_ref_path_uses_common_git_dir() {
                     .unwrap();
 
                 repo_handle.update(&mut app, |repo, _| {
+                    assert!(!repo.is_linked_worktree());
                     assert!(
                         repo.update_tracked_remote_ref(TrackedRemoteRef::from_full_ref_name(
                             "refs/remotes/origin/main"
@@ -153,6 +168,7 @@ fn tracked_remote_ref_path_uses_linked_worktree_common_git_dir() {
                     .unwrap();
 
                 repo_handle.update(&mut app, |repo, _| {
+                    assert!(repo.is_linked_worktree());
                     assert!(
                         repo.update_tracked_remote_ref(TrackedRemoteRef::from_full_ref_name(
                             "refs/remotes/origin/feature"

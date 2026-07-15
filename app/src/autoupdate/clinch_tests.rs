@@ -15,7 +15,7 @@ fn fixture() -> (Manifest, GithubRelease) {
             schema_version: 1,
             version: version.to_owned(),
             sequence: 1_800_000_000,
-            minimum_macos_version: "13.0".to_owned(),
+            minimum_macos_version: "14.0".to_owned(),
             bundle_id: EXPECTED_BUNDLE_ID.to_owned(),
             signing_key_id: "test-key".to_owned(),
             archive: Archive {

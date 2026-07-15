@@ -57,6 +57,7 @@ use crate::pane_group::{
     CodePane, NotebookPane, PaneGroup, PaneId, TabBarHoverIndex, TerminalPane, WorkflowPane,
 };
 use crate::safe_triangle::SafeTriangle;
+use crate::settings::ClinchSettings;
 use crate::tab::{tab_position_id, SelectedTabColor, TabData};
 use crate::terminal::cli_agent_sessions::{session_context_enabled, CLIAgentSessionsModel};
 use crate::terminal::session_settings::SessionSettings;
@@ -66,7 +67,7 @@ use crate::themes::theme::Fill as ThemeFill;
 use crate::ui_components::agent_icon::{
     cli_agent_session_status_for_display, terminal_view_agent_icon_variant_respecting_tab_setting,
 };
-use crate::ui_components::buttons::combo_inner_button;
+use crate::ui_components::buttons::{combo_inner_button, icon_button_with_color};
 use crate::ui_components::icon_with_status::{render_icon_with_status, IconWithStatusVariant};
 use crate::ui_components::icons::Icon as UiIcon;
 use crate::util::bindings::keybinding_name_to_display_string;
@@ -702,6 +703,8 @@ pub(super) struct VerticalTabsPanelState {
     detail_overlay_state: Arc<Mutex<VerticalTabsDetailOverlayState>>,
     new_tab_hover_state: MouseStateHandle,
     new_tab_button_state: MouseStateHandle,
+    worktree_toggle_hover_state: MouseStateHandle,
+    worktree_toggle_button_state: MouseStateHandle,
     pub(super) search_query: String,
     settings_button_mouse_state: MouseStateHandle,
     panes_segment_mouse_state: MouseStateHandle,
@@ -740,6 +743,8 @@ impl Default for VerticalTabsPanelState {
             detail_overlay_state: Arc::new(Mutex::new(VerticalTabsDetailOverlayState::default())),
             new_tab_hover_state: Default::default(),
             new_tab_button_state: Default::default(),
+            worktree_toggle_hover_state: Default::default(),
+            worktree_toggle_button_state: Default::default(),
             search_query: String::new(),
             settings_button_mouse_state: Default::default(),
             panes_segment_mouse_state: Default::default(),
@@ -1497,6 +1502,7 @@ fn render_control_bar(
         .finish();
 
     let settings_button = render_settings_button(state, appearance);
+    let worktree_toggle = render_automatic_worktree_toggle(state, appearance, app);
     let new_tab_button = render_new_tab_button(state, workspace, appearance, app);
 
     let mut control_row = Flex::row()
@@ -1509,18 +1515,18 @@ fn render_control_bar(
         control_row = control_row.with_child(attention_chip);
     }
 
-    Container::new(
-        control_row
-            .with_child(settings_button)
-            .with_child(new_tab_button)
-            .finish(),
-    )
-    .with_padding(
-        Padding::uniform(CONTROL_BAR_VERTICAL_PADDING)
-            .with_left(GROUP_HORIZONTAL_PADDING)
-            .with_right(GROUP_HORIZONTAL_PADDING),
-    )
-    .finish()
+    control_row = control_row.with_child(settings_button);
+    if let Some(worktree_toggle) = worktree_toggle {
+        control_row = control_row.with_child(worktree_toggle);
+    }
+
+    Container::new(control_row.with_child(new_tab_button).finish())
+        .with_padding(
+            Padding::uniform(CONTROL_BAR_VERTICAL_PADDING)
+                .with_left(GROUP_HORIZONTAL_PADDING)
+                .with_right(GROUP_HORIZONTAL_PADDING),
+        )
+        .finish()
 }
 
 fn render_detail_kind_badge_icon(
@@ -1639,6 +1645,100 @@ fn render_settings_button(
     .finish();
 
     SavePosition::new(button, VERTICAL_TABS_SETTINGS_BUTTON_POSITION_ID).finish()
+}
+
+fn automatic_worktree_toggle_tooltip(enabled: bool) -> (&'static str, &'static str) {
+    (
+        if enabled {
+            "Automatic worktree tabs: On"
+        } else {
+            "Automatic worktree tabs: Off"
+        },
+        "Applies to all projects",
+    )
+}
+
+fn render_automatic_worktree_toggle(
+    state: &VerticalTabsPanelState,
+    appearance: &Appearance,
+    app: &AppContext,
+) -> Option<Box<dyn Element>> {
+    let setting = &ClinchSettings::as_ref(app).auto_create_worktrees_for_new_tabs;
+    if !setting.is_supported_on_current_platform() {
+        return None;
+    }
+
+    let enabled = **setting;
+    let theme = appearance.theme();
+    let sub_text = theme.sub_text_color(theme.background());
+    let active_color = theme.accent();
+    let ui_builder = appearance.ui_builder().clone();
+    let (tooltip_label, tooltip_sublabel) = automatic_worktree_toggle_tooltip(enabled);
+
+    Some(
+        Hoverable::new(
+            state.worktree_toggle_hover_state.clone(),
+            move |hover_state| {
+                let toggle_button = icon_button_with_color(
+                    appearance,
+                    UiIcon::Dataflow02,
+                    enabled,
+                    state.worktree_toggle_button_state.clone(),
+                    if enabled { active_color } else { sub_text },
+                )
+                .with_style(
+                    UiComponentStyles::default()
+                        .set_border_radius(CornerRadius::with_all(CONTROL_BAR_BUTTON_RADIUS)),
+                )
+                .with_active_styles(
+                    UiComponentStyles::default()
+                        .set_background(internal_colors::fg_overlay_3(theme).into()),
+                )
+                .build()
+                .on_click(|ctx, _, _| {
+                    ctx.dispatch_typed_action(WorkspaceAction::ToggleAutomaticWorktreeTabs);
+                })
+                .finish();
+
+                let contents = if hover_state.is_hovered() {
+                    let tooltip = ui_builder
+                        .tool_tip_with_sublabel(
+                            tooltip_label.to_string(),
+                            tooltip_sublabel.to_string(),
+                        )
+                        .build()
+                        .finish();
+                    let mut stack = Stack::new().with_child(toggle_button);
+                    stack.add_positioned_overlay_child(
+                        tooltip,
+                        OffsetPositioning::offset_from_parent(
+                            vec2f(0., 4.),
+                            ParentOffsetBounds::WindowByPosition,
+                            ParentAnchor::BottomMiddle,
+                            ChildAnchor::TopMiddle,
+                        ),
+                    );
+                    stack.finish()
+                } else {
+                    toggle_button
+                };
+
+                let mut container = Container::new(
+                    ConstrainedBox::new(contents)
+                        .with_height(SPLIT_BUTTON_HEIGHT)
+                        .finish(),
+                )
+                .with_corner_radius(CornerRadius::with_all(CONTROL_BAR_BUTTON_RADIUS));
+                if enabled {
+                    container = container.with_background(internal_colors::fg_overlay_3(theme));
+                } else if hover_state.is_hovered() {
+                    container = container.with_background(internal_colors::neutral_1(theme));
+                }
+                container.finish()
+            },
+        )
+        .finish(),
+    )
 }
 
 fn render_new_tab_button(
@@ -3911,6 +4011,7 @@ fn terminal_pane_search_text_fragments(
         working_directory,
         terminal_view.current_git_branch(app),
         terminal_kind_badge_label(agent_text.is_oz_agent, agent_text.cli_agent),
+        terminal_view.is_linked_git_worktree(app),
         pull_request_label,
         terminal_view.current_diff_line_changes(app),
     )
@@ -3921,6 +4022,7 @@ fn terminal_search_text_fragments(
     working_directory: String,
     git_branch: Option<String>,
     kind_badge_label: String,
+    is_linked_worktree: bool,
     pull_request_label: Option<String>,
     diff_stats: Option<GitLineChanges>,
 ) -> Vec<String> {
@@ -3930,6 +4032,9 @@ fn terminal_search_text_fragments(
     }
     if let Some(pull_request_label) = pull_request_label.filter(|label| !label.trim().is_empty()) {
         fragments.push(pull_request_label);
+    }
+    if is_linked_worktree {
+        fragments.push(TerminalView::LINKED_WORKTREE_LABEL.to_string());
     }
     if let Some(diff_stats) = diff_stats {
         fragments.push(vtab_diff_stats_text(&diff_stats));
@@ -5231,6 +5336,11 @@ fn render_terminal_right_badges(
         .with_spacing(4.);
     let mut has_badges = false;
 
+    if terminal_view.is_linked_git_worktree(app) {
+        right_badges.add_child(render_passive_worktree_badge(appearance));
+        has_badges = true;
+    }
+
     if show_diff_stats {
         if let Some(git_line_changes) = terminal_view.current_diff_line_changes(app) {
             right_badges.add_child(render_terminal_diff_stats_badge(
@@ -5392,6 +5502,32 @@ fn render_badge_container(content: Box<dyn Element>, background: ThemeFill) -> B
         .with_background(background)
         .with_corner_radius(CornerRadius::with_all(Radius::Pixels(3.)))
         .finish()
+}
+
+fn render_passive_worktree_badge(appearance: &Appearance) -> Box<dyn Element> {
+    let theme = appearance.theme();
+    let sub_text_color = theme.sub_text_color(theme.background());
+    let content = Flex::row()
+        .with_cross_axis_alignment(CrossAxisAlignment::Center)
+        .with_spacing(4.)
+        .with_child(
+            ConstrainedBox::new(UiIcon::Dataflow02.to_warpui_icon(sub_text_color).finish())
+                .with_width(BADGE_ICON_SIZE)
+                .with_height(BADGE_ICON_SIZE)
+                .finish(),
+        )
+        .with_child(
+            Text::new_inline(
+                TerminalView::LINKED_WORKTREE_LABEL.to_string(),
+                appearance.ui_font_family(),
+                10.,
+            )
+            .with_color(sub_text_color.into())
+            .finish(),
+        )
+        .finish();
+
+    render_badge_container(content, internal_colors::fg_overlay_1(theme))
 }
 
 fn render_pull_request_badge_content(label: &str, appearance: &Appearance) -> Box<dyn Element> {
@@ -7048,6 +7184,13 @@ fn render_compact_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn El
     let sub_text_color = theme.sub_text_color(theme.background());
     let font_family = appearance.ui_font_family();
     let has_indicator = props.typed.badge(app).is_some() || has_unread_activity(&props.typed, app);
+    let is_linked_worktree = match &props.typed {
+        TypedPane::Terminal(terminal_pane) => terminal_pane
+            .terminal_view(app)
+            .as_ref(app)
+            .is_linked_git_worktree(app),
+        _ => false,
+    };
 
     let icon = render_pane_icon_with_status(
         resolve_icon_with_status_variant(&props.typed, &props.title, appearance, app),
@@ -7192,15 +7335,25 @@ fn render_compact_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn El
             (title, subtitle)
         };
 
-    // Title row with optional indicator
-    let title_row = if has_indicator {
+    // Keep the worktree chip separate from the single-priority status indicator.
+    let title_row = if has_indicator || is_linked_worktree {
+        let mut trailing = Flex::row()
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_spacing(4.);
+        if is_linked_worktree {
+            trailing.add_child(render_passive_worktree_badge(appearance));
+        }
+        if has_indicator {
+            trailing.add_child(render_title_indicator(theme));
+        }
+
         Flex::row()
             .with_main_axis_size(MainAxisSize::Max)
             .with_main_axis_alignment(MainAxisAlignment::SpaceBetween)
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
             .with_child(Shrinkable::new(1., title_element).finish())
             .with_child(
-                Container::new(render_title_indicator(theme))
+                Container::new(trailing.finish())
                     .with_margin_left(4.)
                     .finish(),
             )

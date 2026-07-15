@@ -170,6 +170,55 @@ pub fn build_tab_config(
     }
 }
 
+/// Builds the in-memory tab config used by Clinch's automatic project
+/// worktree setting.
+///
+/// Unlike the reusable session-config flow, every dynamic value is already
+/// concrete here. Quoting the complete shell arguments keeps managed paths
+/// with spaces safe without writing a one-off config to disk.
+pub fn build_automatic_worktree_tab_config(
+    session_type: &SessionType,
+    directory: &Path,
+    base_ref: &str,
+    worktree_branch_name: &str,
+) -> TabConfig {
+    let worktree_path = super::tab_config::generated_worktree_path(directory, worktree_branch_name);
+    let quoted_branch = shell_words::quote(worktree_branch_name);
+    let worktree_path_text = worktree_path.to_string_lossy();
+    let quoted_path = shell_words::quote(&worktree_path_text);
+    let quoted_base = shell_words::quote(base_ref);
+    let mut commands = vec![
+        format!("git worktree add -b {quoted_branch} {quoted_path} {quoted_base}"),
+        format!("cd {quoted_path}"),
+    ];
+    if let Some(prefix) = session_type.command_prefix() {
+        commands.push(prefix.to_string());
+    }
+
+    let pane_type = match session_type {
+        SessionType::Oz => TabConfigPaneType::Agent,
+        SessionType::Terminal | SessionType::CliAgent(_) => TabConfigPaneType::Terminal,
+    };
+
+    TabConfig {
+        name: config_name(directory, true),
+        title: None,
+        color: None,
+        panes: vec![TabConfigPaneNode {
+            id: "main".to_string(),
+            pane_type: Some(pane_type),
+            split: None,
+            children: None,
+            is_focused: Some(true),
+            directory: Some(directory.to_string_lossy().into_owned()),
+            commands: Some(commands),
+            shell: None,
+        }],
+        params: HashMap::new(),
+        source_path: None,
+    }
+}
+
 /// Serializes a `TabConfig` to TOML and writes it to an unused path in `dir`.
 ///
 /// Creates `dir` if it doesn't exist. Returns the path of the written file.

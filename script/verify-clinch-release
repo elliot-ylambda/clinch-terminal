@@ -11,7 +11,7 @@ MANIFEST="${6:?missing update manifest}"
 RAW_SIGNATURE="${7:?missing raw update signature}"
 SSH_SIGNATURE="${8:?missing SSH release signature}"
 UPDATE_SEQUENCE="${9:?missing update sequence}"
-MINIMUM_MACOS="${CLINCH_MINIMUM_MACOS_VERSION:-13.0}"
+MINIMUM_MACOS="${CLINCH_MINIMUM_MACOS_VERSION:-14.0}"
 ALLOWED_SIGNERS="resources/release/clinch-release-allowed-signers"
 
 fail() { echo "release verification failed: $*" >&2; exit 1; }
@@ -26,7 +26,7 @@ done
   || fail "invalid update sequence"
 
 verify_app() {
-  local app="$1" label="$2" plist binary entitlements forbidden key
+  local app="$1" label="$2" plist binary entitlements helper_entitlements forbidden key licenses component
   plist="$app/Contents/Info.plist"
   [[ -f "$plist" ]] || fail "$label has no Info.plist"
   [[ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$plist")" == "sh.clinch.Clinch" ]] \
@@ -49,20 +49,24 @@ verify_app() {
   codesign --verify --deep --strict "$app" || fail "$label code signature is invalid"
   entitlements="$(codesign -d --entitlements :- "$app" 2>/dev/null || true)"
   for forbidden in \
-    get-task-allow disable-library-validation automation.apple-events device.audio-input \
+    get-task-allow disable-library-validation device.audio-input \
     device.camera personal-information.addressbook personal-information.calendars \
     personal-information.location personal-information.photos-library application-groups; do
     [[ "$entitlements" != *"$forbidden"* ]] \
       || fail "$label carries forbidden entitlement $forbidden"
   done
   for key in \
-    NSAppleEventsUsageDescription NSCameraUsageDescription NSMicrophoneUsageDescription \
+    NSCameraUsageDescription NSMicrophoneUsageDescription \
     NSContactsUsageDescription NSCalendarsUsageDescription NSLocationUsageDescription \
     NSPhotoLibraryUsageDescription; do
     if /usr/libexec/PlistBuddy -c "Print $key" "$plist" >/dev/null 2>&1; then
       fail "$label carries unused privacy description $key"
     fi
   done
+  [[ "$entitlements" == *"com.apple.security.automation.apple-events"* ]] \
+    || fail "$label omitted the Messages automation entitlement"
+  /usr/libexec/PlistBuddy -c 'Print NSAppleEventsUsageDescription' "$plist" >/dev/null 2>&1 \
+    || fail "$label omitted the Messages automation usage description"
 
   binary="$app/Contents/MacOS/stable"
   [[ -x "$binary" ]] || fail "$label omitted its stable executable"
@@ -77,11 +81,34 @@ verify_app() {
     "$app/Contents/Resources/agent-resume/agent-json" \
     "$app/Contents/Resources/agent-resume/agent-json.js" \
     "$app/Contents/Resources/bin/clinch_agent_resume_launch" \
-    "$app/Contents/Resources/bin/warp_agent_resume_launch"; do
+    "$app/Contents/Resources/bin/warp_agent_resume_launch" \
+    "$app/Contents/Helpers/clinch-imessage-bridge"; do
     [[ -f "$item" ]] || fail "$label omitted ${item#"$app/"}"
   done
   [[ -x "$app/Contents/Resources/agent-resume/install.sh" ]] \
     || fail "$label integration manager is not executable"
+  [[ -x "$app/Contents/Helpers/clinch-imessage-bridge" ]] \
+    || fail "$label Messages bridge is not executable"
+  lipo "$app/Contents/Helpers/clinch-imessage-bridge" -verify_arch x86_64 arm64 >/dev/null \
+    || fail "$label Messages bridge is not universal (x86_64 + arm64)"
+  [[ -d "$app/Contents/Helpers/PhoneNumberKit_PhoneNumberKit.bundle" ]] \
+    || fail "$label omitted the PhoneNumberKit resource bundle"
+  [[ -d "$app/Contents/Helpers/SQLite.swift_SQLite.bundle" ]] \
+    || fail "$label omitted the SQLite.swift resource bundle"
+  "$app/Contents/Helpers/clinch-imessage-bridge" --self-test >/dev/null \
+    || fail "$label Messages bridge self-test failed"
+  codesign --verify --strict "$app/Contents/Helpers/clinch-imessage-bridge" \
+    || fail "$label Messages bridge signature is invalid"
+  helper_entitlements="$(codesign -d --entitlements :- \
+    "$app/Contents/Helpers/clinch-imessage-bridge" 2>/dev/null || true)"
+  [[ "$helper_entitlements" == *"com.apple.security.automation.apple-events"* ]] \
+    || fail "$label Messages bridge omitted its Apple Events entitlement"
+  licenses="$app/Contents/Resources/THIRD_PARTY_LICENSES.txt"
+  [[ -f "$licenses" ]] || fail "$label omitted third-party license attribution"
+  for component in IMsgCore PhoneNumberKit SQLite.swift; do
+    grep -Fq "$component" "$licenses" \
+      || fail "$label omitted the $component license attribution"
+  done
   [[ ! -e "$app/Contents/Resources/agent-resume/install-agent-plugins.sh" ]] \
     || fail "$label bundled the floating provider-plugin installer"
   [[ ! -e "$app/Contents/Resources/update/clinch-update-helper" ]] \

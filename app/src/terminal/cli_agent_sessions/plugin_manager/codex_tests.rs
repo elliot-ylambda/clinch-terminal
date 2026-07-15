@@ -437,6 +437,19 @@ fn write_plugin_config(dir: &Path, plugin_key: &str, enabled: bool) {
     .unwrap();
 }
 
+#[test]
+fn bundled_clinch_plugin_is_detected() {
+    let dir = tempfile::tempdir().unwrap();
+    write_plugin_config(dir.path(), "warp@clinch-codex-warp", true);
+    write_cache_manifest_for_marketplace(dir.path(), "clinch-codex-warp", "warp", "0.4.0");
+
+    assert!(super::check_installed(dir.path()));
+    assert_eq!(
+        super::installed_version(dir.path()).as_deref(),
+        Some("0.4.0")
+    );
+}
+
 fn write_marketplace_config(dir: &Path, source_type: &str) {
     fs::write(
         dir.join("config.toml"),
@@ -454,6 +467,27 @@ fn write_cache_manifest(dir: &Path, plugin_name: &str, version: &str) {
         version,
         serde_json::json!({ "name": plugin_name, "version": version }),
     );
+}
+
+fn write_cache_manifest_for_marketplace(
+    dir: &Path,
+    marketplace_name: &str,
+    plugin_name: &str,
+    version: &str,
+) {
+    let manifest_dir = dir
+        .join("plugins")
+        .join("cache")
+        .join(marketplace_name)
+        .join(plugin_name)
+        .join(version)
+        .join(".codex-plugin");
+    fs::create_dir_all(&manifest_dir).unwrap();
+    fs::write(
+        manifest_dir.join("plugin.json"),
+        serde_json::json!({ "name": plugin_name, "version": version }).to_string(),
+    )
+    .unwrap();
 }
 
 fn write_cache_manifest_without_version(dir: &Path, plugin_name: &str, version_dir: &str) {

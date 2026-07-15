@@ -114,14 +114,16 @@ fi
 
 if (( REMOVE_PLUGINS )); then
   if command -v claude >/dev/null 2>&1; then
+    claude plugin uninstall warp@clinch-claude-code-warp </dev/null || true
+    claude plugin marketplace remove clinch-claude-code-warp </dev/null || true
     claude plugin uninstall warp@claude-code-warp </dev/null || true
-    claude plugin marketplace remove claude-code-warp </dev/null || true
   else
     echo "Claude Code is not on PATH; its plugin was not changed."
   fi
   if command -v codex >/dev/null 2>&1; then
+    codex plugin remove warp@clinch-codex-warp </dev/null || true
+    codex plugin marketplace remove clinch-codex-warp </dev/null || true
     codex plugin remove warp@codex-warp </dev/null || true
-    codex plugin marketplace remove codex-warp </dev/null || true
   else
     echo "Codex is not on PATH; its plugin was not changed."
   fi

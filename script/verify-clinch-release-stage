@@ -1,0 +1,324 @@
+#!/usr/bin/env bash
+# Portably verifies the cryptographic staging contract before local publication.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
+
+DIST="${1:?usage: verify-clinch-release-stage <dist> <version> <commit> <sequence>}"
+VERSION="${2:?missing version}"
+EXPECTED_COMMIT="${3:?missing commit}"
+EXPECTED_SEQUENCE="${4:?missing sequence}"
+ALLOWED_SIGNERS="${CLINCH_ALLOWED_SIGNERS:-$ROOT/resources/release/clinch-release-allowed-signers}"
+UPDATE_PUBLIC_KEY_JSON="${CLINCH_UPDATE_PUBLIC_KEY_JSON:-$ROOT/resources/update/clinch-update-public-key.json}"
+
+fail() {
+  echo "staged release verification failed: $*" >&2
+  exit 1
+}
+
+[[ -d "$DIST" ]] || fail "missing distribution directory $DIST"
+[[ "$VERSION" =~ ^v[0-9]+(\.[0-9]+)+$ ]] || fail "invalid version $VERSION"
+[[ "$EXPECTED_COMMIT" =~ ^[0-9a-f]{40}$ ]] || fail "invalid expected commit"
+[[ "$EXPECTED_SEQUENCE" =~ ^[0-9]+$ && "$EXPECTED_SEQUENCE" -gt 0 ]] \
+  || fail "invalid update sequence"
+[[ -f "$ALLOWED_SIGNERS" ]] || fail "missing committed release trust root"
+[[ -f "$UPDATE_PUBLIC_KEY_JSON" ]] || fail "missing committed update trust root"
+
+required_files=(
+  Clinch.app.zip
+  Clinch.app.zip.sha256
+  Clinch.build-provenance.json
+  Clinch.build-provenance.sshsig
+  Clinch.checksums.sshsig
+  Clinch.checksums.txt
+  Clinch.dmg
+  Clinch.dmg.sha256
+  Clinch.release-validation.json
+  Clinch.sbom.cdx.json
+  Clinch.update.json
+  Clinch.update.sig
+  Clinch.update.sshsig
+  clinch-release-allowed-signers
+  install.sh
+  uninstall.sh
+)
+
+expected_list="$(mktemp "${TMPDIR:-/tmp}/clinch-expected-assets.XXXXXX")"
+actual_list="$(mktemp "${TMPDIR:-/tmp}/clinch-actual-assets.XXXXXX")"
+cleanup() {
+  rm -f "$expected_list" "$actual_list"
+}
+trap cleanup EXIT
+printf '%s\n' "${required_files[@]}" | LC_ALL=C sort > "$expected_list"
+find "$DIST" -mindepth 1 -maxdepth 1 -print \
+  | sed 's#^.*/##' | LC_ALL=C sort > "$actual_list"
+if ! cmp -s "$expected_list" "$actual_list"; then
+  diff -u "$expected_list" "$actual_list" >&2 || true
+  fail "distribution asset set is not exact"
+fi
+for file in "${required_files[@]}"; do
+  [[ -f "$DIST/$file" && ! -L "$DIST/$file" ]] \
+    || fail "distribution asset $file is not a regular file"
+done
+
+cmp -s "$ALLOWED_SIGNERS" "$DIST/clinch-release-allowed-signers" \
+  || fail "staged release trust root differs from the committed trust root"
+
+ssh-keygen -Y verify -f "$ALLOWED_SIGNERS" -I clinch-release -n clinch-install \
+  -s "$DIST/Clinch.update.sshsig" < "$DIST/Clinch.update.json" >/dev/null \
+  || fail "update manifest SSH signature is invalid"
+./script/clinch-update-manifest verify \
+  "$DIST/Clinch.update.json" "$DIST/Clinch.update.sig" "$UPDATE_PUBLIC_KEY_JSON" \
+  >/dev/null || fail "update manifest Ed25519 signature is invalid"
+ssh-keygen -Y verify -f "$ALLOWED_SIGNERS" -I clinch-release -n clinch-provenance \
+  -s "$DIST/Clinch.build-provenance.sshsig" \
+  < "$DIST/Clinch.build-provenance.json" >/dev/null \
+  || fail "build provenance signature is invalid"
+ssh-keygen -Y verify -f "$ALLOWED_SIGNERS" -I clinch-release -n clinch-checksums \
+  -s "$DIST/Clinch.checksums.sshsig" < "$DIST/Clinch.checksums.txt" >/dev/null \
+  || fail "checksum-list signature is invalid"
+
+/usr/bin/python3 - \
+  "$DIST" "$VERSION" "$EXPECTED_COMMIT" "$EXPECTED_SEQUENCE" "$ROOT" \
+  "$UPDATE_PUBLIC_KEY_JSON" <<'PY'
+import hashlib
+import json
+import pathlib
+import re
+import sys
+
+dist = pathlib.Path(sys.argv[1])
+version = sys.argv[2]
+commit = sys.argv[3]
+sequence = int(sys.argv[4])
+root = pathlib.Path(sys.argv[5])
+update_public_key_path = pathlib.Path(sys.argv[6])
+
+primary_assets = [
+    "Clinch.dmg",
+    "Clinch.dmg.sha256",
+    "Clinch.app.zip",
+    "Clinch.app.zip.sha256",
+    "Clinch.update.json",
+    "Clinch.update.sig",
+    "Clinch.update.sshsig",
+    "install.sh",
+    "uninstall.sh",
+    "clinch-release-allowed-signers",
+    "Clinch.sbom.cdx.json",
+    "Clinch.release-validation.json",
+]
+checksummed_assets = primary_assets + [
+    "Clinch.build-provenance.json",
+    "Clinch.build-provenance.sshsig",
+]
+
+
+def fail(message):
+    raise SystemExit(f"staged release verification failed: {message}")
+
+
+def digest(path):
+    value = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            value.update(chunk)
+    return value.hexdigest()
+
+
+checksums = {}
+for raw_line in (dist / "Clinch.checksums.txt").read_text(encoding="utf-8").splitlines():
+    match = re.fullmatch(r"([0-9a-f]{64})[ \t]+([^/]+)", raw_line)
+    if not match or match.group(2) in checksums:
+        fail("checksum list is malformed or contains duplicate/path entries")
+    checksums[match.group(2)] = match.group(1)
+if set(checksums) != set(checksummed_assets):
+    fail("checksum list does not cover the exact signed asset set")
+for name, expected in checksums.items():
+    if digest(dist / name) != expected:
+        fail(f"checksum mismatch for {name}")
+
+for sidecar_name, artifact_name in (
+    ("Clinch.app.zip.sha256", "Clinch.app.zip"),
+    ("Clinch.dmg.sha256", "Clinch.dmg"),
+):
+    pieces = (dist / sidecar_name).read_text(encoding="utf-8").split()
+    if len(pieces) < 2 or pieces[0].lower() != digest(dist / artifact_name):
+        fail(f"{sidecar_name} does not authenticate {artifact_name}")
+    if pathlib.Path(pieces[-1]).name != artifact_name:
+        fail(f"{sidecar_name} names the wrong artifact")
+
+manifest = json.loads((dist / "Clinch.update.json").read_text(encoding="utf-8"))
+update_public_key = json.loads(update_public_key_path.read_text(encoding="utf-8"))
+manifest_expected = {
+    "schema_version": 1,
+    "repository": "elliot-ylambda/clinch-terminal",
+    "version": version,
+    "tag": version,
+    "sequence": sequence,
+    "bundle_id": "sh.clinch.Clinch",
+    "minimum_macos_version": "14.0",
+    "notarized": False,
+    "architectures": ["arm64", "x86_64"],
+    "release_url": (
+        "https://github.com/elliot-ylambda/clinch-terminal/releases/tag/"
+        f"{version}"
+    ),
+    "rollback": False,
+    "signing_key_id": update_public_key.get("key_id"),
+}
+for key, expected in manifest_expected.items():
+    if manifest.get(key) != expected:
+        fail(f"manifest {key} mismatch")
+archive = manifest.get("archive", {})
+if archive.get("name") != "Clinch.app.zip":
+    fail("manifest archive name mismatch")
+if archive.get("url") != (
+    f"https://github.com/elliot-ylambda/clinch-terminal/releases/download/"
+    f"{version}/Clinch.app.zip"
+):
+    fail("manifest archive URL mismatch")
+if archive.get("size") != (dist / "Clinch.app.zip").stat().st_size:
+    fail("manifest archive size mismatch")
+if archive.get("sha256") != digest(dist / "Clinch.app.zip"):
+    fail("manifest archive digest mismatch")
+if not isinstance(manifest.get("release_notes"), str) or not manifest["release_notes"].strip():
+    fail("manifest release notes are empty")
+
+validation = json.loads(
+    (dist / "Clinch.release-validation.json").read_text(encoding="utf-8")
+)
+for key, expected in {
+    "schema_version": 2,
+    "version": version,
+    "commit": commit,
+    "update_sequence": sequence,
+}.items():
+    if validation.get(key) != expected:
+        fail(f"validation record {key} mismatch")
+if validation.get("gates") != ["Local full release gate"]:
+    fail("validation record does not identify the local full gate")
+if validation.get("notarized") is not False:
+    fail("validation record notarization state mismatch")
+if validation.get("artifact_checks") != [
+    "universal x86_64+arm64",
+    "ad-hoc hardened-runtime signature",
+    "Messages automation entitlement only",
+    "universal signed iMessage helper",
+    "ZIP/DMG app equality",
+    "integration opt-in and removal",
+    "signed exact-tag manifest",
+]:
+    fail("validation record artifact checks mismatch")
+builder = validation.get("builder", {})
+if builder.get("kind") != "local-release-workstation" or builder.get("os") != "macOS":
+    fail("validation record builder mismatch")
+if builder.get("architecture") not in {"arm64", "x86_64"}:
+    fail("validation record builder architecture is invalid")
+if not isinstance(builder.get("os_version"), str) or not builder["os_version"].strip():
+    fail("validation record builder OS version is empty")
+publication = validation.get("publication", {})
+if publication != {
+    "command": "make release",
+    "kind": "local-release-command",
+}:
+    fail("validation record publication boundary mismatch")
+qa = validation.get("manual_qa", {})
+for key in (
+    "first_install",
+    "authenticated_manual_upgrade",
+    "session_integration_opt_in_and_removal",
+    "selective_uninstall",
+    "offline_startup",
+    "apple_silicon_smoke",
+):
+    if qa.get(key) is not True:
+        fail(f"validation record manual QA field {key} is not true")
+if not isinstance(qa.get("intel_smoke"), bool):
+    fail("validation record Intel smoke value is not boolean")
+if not isinstance(qa.get("record"), str) or not qa["record"].strip():
+    fail("validation record QA record is empty")
+if not isinstance(qa.get("tested_macos_versions"), str) or not qa[
+    "tested_macos_versions"
+].strip():
+    fail("validation record tested macOS versions are empty")
+
+sbom = json.loads((dist / "Clinch.sbom.cdx.json").read_text(encoding="utf-8"))
+if sbom.get("bomFormat") != "CycloneDX":
+    fail("SBOM is not CycloneDX JSON")
+if not isinstance(sbom.get("specVersion"), str) or not sbom["specVersion"].strip():
+    fail("SBOM has no CycloneDX specification version")
+
+provenance = json.loads(
+    (dist / "Clinch.build-provenance.json").read_text(encoding="utf-8")
+)
+if provenance.get("_type") != "https://in-toto.io/Statement/v1":
+    fail("provenance statement type mismatch")
+if provenance.get("predicateType") != "https://slsa.dev/provenance/v1":
+    fail("provenance predicate type mismatch")
+subjects = provenance.get("subject")
+if not isinstance(subjects, list):
+    fail("provenance subjects are missing")
+subject_map = {}
+for subject in subjects:
+    if not isinstance(subject, dict) or set(subject) != {"name", "digest"}:
+        fail("provenance subject is malformed")
+    name = subject["name"]
+    value = subject["digest"]
+    if name in subject_map or not isinstance(value, dict) or set(value) != {"sha256"}:
+        fail("provenance subject digest is malformed or duplicated")
+    if not isinstance(value["sha256"], str) or not re.fullmatch(
+        r"[0-9a-f]{64}", value["sha256"]
+    ):
+        fail("provenance subject digest is not SHA-256")
+    subject_map[name] = value["sha256"]
+if set(subject_map) != set(primary_assets):
+    fail("provenance does not cover the exact primary asset set")
+for name, expected in subject_map.items():
+    if digest(dist / name) != expected:
+        fail(f"provenance digest mismatch for {name}")
+
+predicate = provenance.get("predicate", {})
+definition = predicate.get("buildDefinition", {})
+if definition.get("buildType") != (
+    "https://github.com/elliot-ylambda/clinch-terminal/local-release/v1"
+):
+    fail("provenance build type mismatch")
+parameters = definition.get("externalParameters", {})
+if parameters != {"update_sequence": sequence, "version": version}:
+    fail("provenance external parameters mismatch")
+if definition.get("internalParameters") != {}:
+    fail("provenance internal parameters mismatch")
+dependencies = definition.get("resolvedDependencies")
+if not isinstance(dependencies, list) or len(dependencies) != 2:
+    fail("provenance resolved dependencies are not exact")
+if any(not isinstance(entry, dict) or set(entry) != {"uri", "digest"} for entry in dependencies):
+    fail("provenance resolved dependency is malformed")
+dependency_map = {entry["uri"]: entry["digest"] for entry in dependencies}
+if len(dependency_map) != 2:
+    fail("provenance resolved dependencies are duplicated")
+source_uri = f"git+https://github.com/elliot-ylambda/clinch-terminal@{commit}"
+if dependency_map.get(source_uri) != {"sha1": commit}:
+    fail("provenance source commit mismatch")
+lock_digest = digest(root / "Cargo.lock")
+if dependency_map.get("file:Cargo.lock") != {"sha256": lock_digest}:
+    fail("provenance Cargo.lock digest mismatch")
+run_details = predicate.get("runDetails", {})
+builder_id = run_details.get("builder", {}).get("id", "")
+if commit not in builder_id or not builder_id.endswith("/script/assemble-clinch-release-stage"):
+    fail("provenance builder identity mismatch")
+metadata = run_details.get("metadata", {})
+if metadata.get("invocationId") != f"{version}-{commit}":
+    fail("provenance invocation identity mismatch")
+timestamp_pattern = r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z"
+for name in ("startedOn", "finishedOn"):
+    if not isinstance(metadata.get(name), str) or not re.fullmatch(
+        timestamp_pattern, metadata[name]
+    ):
+        fail(f"provenance {name} timestamp is invalid")
+if metadata["startedOn"] > metadata["finishedOn"]:
+    fail("provenance timestamps are reversed")
+PY
+
+echo "✓ Verified staged release assets for $VERSION at ${EXPECTED_COMMIT:0:12}"

@@ -20,7 +20,7 @@ plutil -insert NSMicrophoneUsageDescription -string stale "$PLIST"
     WARP_SCHEME_NAME=clinch \
     GIT_RELEASE_TAG=v0.2026.07.13.1800 \
     CLINCH_UPDATE_SEQUENCE=1784000000 \
-    MACOSX_DEPLOYMENT_TARGET=13.0 \
+    MACOSX_DEPLOYMENT_TARGET=14.0 \
     bash script/update_plist >/dev/null
 )
 
@@ -28,7 +28,7 @@ plutil -insert NSMicrophoneUsageDescription -string stale "$PLIST"
 [[ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$PLIST")" == 0.2026.07.13.1800 ]]
 [[ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$PLIST")" == 1784000000 ]]
 [[ "$(/usr/libexec/PlistBuddy -c 'Print ClinchUpdateSequence' "$PLIST")" == 1784000000 ]]
-[[ "$(/usr/libexec/PlistBuddy -c 'Print LSMinimumSystemVersion' "$PLIST")" == 13.0 ]]
+[[ "$(/usr/libexec/PlistBuddy -c 'Print LSMinimumSystemVersion' "$PLIST")" == 14.0 ]]
 if /usr/libexec/PlistBuddy -c 'Print NSMicrophoneUsageDescription' "$PLIST" >/dev/null 2>&1; then
   echo "FAIL: Clinch plist retained an unused privacy permission description"
   exit 1

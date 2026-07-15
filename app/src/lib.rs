@@ -1,5 +1,7 @@
 #![allow(clippy::doc_lazy_continuation)]
 
+#[cfg(target_os = "macos")]
+mod agent_plugins;
 pub mod agent_resume;
 mod ai;
 mod alloc;
@@ -41,6 +43,8 @@ mod font_fallback;
 mod global_resource_handles;
 mod gpu_state;
 mod image_viewer;
+#[cfg(target_os = "macos")]
+mod imessage;
 mod input_classifier;
 mod interval_timer;
 mod linear;
@@ -774,6 +778,11 @@ pub fn run() -> Result<()> {
     if ChannelState::app_id().to_string() == "sh.clinch.Clinch" {
         agent_resume::install_bundled_capture_layer();
     }
+
+    // The notification plugins are part of the current Clinch artifact and are provisioned into
+    // each provider's user-level plugin store before the first terminal pane can launch.
+    #[cfg(target_os = "macos")]
+    agent_plugins::install_bundled_plugins();
 
     let api_key = args.api_key().cloned();
     run_internal(LaunchMode::App {
@@ -1885,6 +1894,8 @@ pub(crate) fn initialize_app(
     });
     ctx.add_singleton_model(move |_| RestoredAgentConversations::new(multi_agent_conversations));
     ctx.add_singleton_model(|_| CLIAgentSessionsModel::new());
+    #[cfg(target_os = "macos")]
+    ctx.add_singleton_model(crate::imessage::IMessageCoordinator::new);
     // Must come after CLIAgentSessionsModel and CliAgentUsageModel: it observes
     // both session events and late usage snapshots to arm/cancel per-pane
     // rate-limit auto-continues.

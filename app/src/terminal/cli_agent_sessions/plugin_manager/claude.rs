@@ -14,6 +14,7 @@ use crate::terminal::model::session::LocalCommandExecutor;
 use crate::terminal::shell::ShellType;
 
 const PLUGIN_KEY: &str = "warp@claude-code-warp";
+const BUNDLED_PLUGIN_KEY: &str = "warp@clinch-claude-code-warp";
 const PLATFORM_PLUGIN_KEY: &str = "oz-harness-support@claude-code-warp";
 
 const MARKETPLACE_REPO: &str = "warpdotdev/claude-code-warp";
@@ -264,7 +265,9 @@ static UPDATE_INSTRUCTIONS: LazyLock<PluginInstructions> = LazyLock::new(|| {
 });
 
 fn check_installed(claude_dir: &Path) -> bool {
-    check_plugin_installed(claude_dir, PLUGIN_KEY)
+    [PLUGIN_KEY, BUNDLED_PLUGIN_KEY]
+        .iter()
+        .any(|plugin_key| check_plugin_installed(claude_dir, plugin_key))
 }
 
 fn check_platform_plugin_installed(claude_dir: &Path) -> bool {
@@ -289,26 +292,26 @@ fn check_plugin_installed(claude_dir: &Path, plugin_key: &str) -> bool {
 
 /// Reads the installed version string for the Warp plugin, if present.
 fn installed_version(claude_dir: &Path) -> Option<String> {
-    installed_plugin_version(claude_dir, PLUGIN_KEY)
+    installed_plugin_version(claude_dir, &[PLUGIN_KEY, BUNDLED_PLUGIN_KEY])
 }
 
 /// Reads the installed version string for the Oz platform plugin, if present.
 fn installed_platform_plugin_version(claude_dir: &Path) -> Option<String> {
-    installed_plugin_version(claude_dir, PLATFORM_PLUGIN_KEY)
+    installed_plugin_version(claude_dir, &[PLATFORM_PLUGIN_KEY])
 }
 
-fn installed_plugin_version(claude_dir: &Path, plugin_key: &str) -> Option<String> {
+fn installed_plugin_version(claude_dir: &Path, plugin_keys: &[&str]) -> Option<String> {
     let plugins_path = claude_dir.join("plugins").join("installed_plugins.json");
     let contents = fs::read_to_string(plugins_path).ok()?;
     let parsed: Value = serde_json::from_str(&contents).ok()?;
-    parsed
-        .get("plugins")?
-        .get(plugin_key)?
-        .as_array()?
-        .first()?
-        .get("version")?
-        .as_str()
-        .map(|s| s.to_owned())
+    let plugins = parsed.get("plugins")?;
+    plugin_keys
+        .iter()
+        .filter_map(|plugin_key| plugins.get(plugin_key).and_then(Value::as_array))
+        .flatten()
+        .filter_map(|install| install.get("version").and_then(Value::as_str))
+        .max_by(|left, right| compare_versions(left, right))
+        .map(str::to_owned)
 }
 
 fn claude_code_marketplace_has_local_override(claude_dir: &Path) -> bool {

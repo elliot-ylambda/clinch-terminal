@@ -73,7 +73,9 @@ use crate::settings::{
 use crate::terminal::alt_screen::{should_intercept_mouse, should_intercept_scroll};
 use crate::terminal::block_list_viewport::AutoscrollBehavior;
 use crate::terminal::blockgrid_renderer::BlockGridParams;
+use crate::terminal::cli_agent_sessions::CLIAgentSessionsModel;
 use crate::terminal::input::inline_menu::InlineMenuPositioner;
+use crate::terminal::links::should_directly_open_link;
 use crate::terminal::model::block::{Block, BlockSection};
 use crate::terminal::model::blocks::{
     BlockHeight, BlockHeightItem, BlockHeightSummary, BlockList, BlockListPoint, TotalIndex,
@@ -868,6 +870,28 @@ pub struct BlockListMouseStates {
 }
 
 impl BlockListElement {
+    fn is_cli_agent_session(&self, app: &AppContext) -> bool {
+        CLIAgentSessionsModel::as_ref(app)
+            .session(self.terminal_view_id)
+            .is_some()
+    }
+
+    fn should_reserve_link_click(
+        &self,
+        modifiers: &ModifiersState,
+        point: Option<&WithinBlock<IndexPoint>>,
+        app: &AppContext,
+    ) -> bool {
+        should_directly_open_link(modifiers)
+            && (self.is_cli_agent_session(app)
+                || point.is_some_and(|point| {
+                    self.highlighted_url.as_ref().is_some_and(|link| {
+                        link.in_same_block_and_grid(point)
+                            && link.inner.range().contains(&point.inner)
+                    })
+                }))
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         model: Arc<FairMutex<TerminalModel>>,
@@ -1566,6 +1590,17 @@ impl BlockListElement {
                                 return true;
                             }
 
+                            let within_block = viewport.block_list_point_to_grid_point(point);
+                            if self.should_reserve_link_click(modifiers, within_block.as_ref(), app)
+                            {
+                                // Reserve Cmd/Ctrl-click for terminal links. Mouse-up
+                                // performs the actual open (including an on-demand file
+                                // path scan when hover detection has not completed yet).
+                                drop(model);
+                                ctx.dispatch_typed_action(TerminalAction::Focus);
+                                return true;
+                            }
+
                             let on_long_running_block = model
                                 .block_list()
                                 .block_at(block_index)
@@ -1579,8 +1614,6 @@ impl BlockListElement {
                             if on_long_running_block
                                 && !should_intercept_mouse(&model, modifiers.shift, app)
                             {
-                                let within_block = viewport.block_list_point_to_grid_point(point);
-
                                 if let Some(within_block) = within_block {
                                     let grid_point =
                                         point_from_first_visible_row(&viewport, within_block);
@@ -1726,7 +1759,10 @@ impl BlockListElement {
                         .block_at(within_block.block_index)
                         .is_some_and(|block| block.is_active_and_long_running());
 
+                    let reserve_link_click =
+                        self.should_reserve_link_click(modifiers, Some(&within_block), app);
                     let alt_mouse_action = on_long_running_block
+                        && !reserve_link_click
                         && !should_intercept_mouse(&model, modifiers.shift, app);
 
                     if alt_mouse_action {
@@ -1760,8 +1796,12 @@ impl BlockListElement {
                     }
                     Some(block_index) => block_index,
                 };
+                let within_block = viewport.block_list_point_to_grid_point(point);
+                let reserve_link_click =
+                    self.should_reserve_link_click(modifiers, within_block.as_ref(), app);
 
-                if self.highlighted_url.is_none()
+                if !reserve_link_click
+                    && self.highlighted_url.is_none()
                     && self.hovered_secret.is_none()
                     && !self.snackbar_header_state().contains_point(position)
                 {

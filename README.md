@@ -3,7 +3,7 @@
 Clinch is a local-first macOS terminal focused on reopening Claude Code and Codex work across
 projects, tabs, and panes. It is an independent AGPL fork of Warp.
 
-**macOS 13+ · Intel and Apple Silicon · no Clinch account · no Warp backend ·
+**macOS 14+ · Intel and Apple Silicon · no Clinch account · no Warp backend ·
 [clinch.sh](https://clinch.sh)**
 
 ## Public preview
@@ -77,9 +77,14 @@ bash tools/agent-resume/install.sh disable
 bash tools/agent-resume/install.sh purge
 ```
 
-Notification plugins are separate. Clinch never installs or updates them during app installation,
-first launch, or hidden harness startup. Provider-specific plugin instructions appear only after a
-direct user action.
+Notification plugins are separate from session capture. Clinch ships pinned snapshots of the
+Warp notification plugins for Claude Code and Codex and best-effort installs them into the
+provider-owned user plugin stores on launch when those CLIs are present. The payload is local to
+the Clinch app and uses dedicated Clinch marketplace IDs, so installation neither clones a plugin
+repository nor replaces other Warp/Oz marketplace plugins. The app also puts a pinned universal
+`jq` on each local pane's `PATH`, satisfying the plugins' runtime dependency without Homebrew.
+Missing CLIs and provider policy failures do not block launch and are retried later. Use
+`./uninstall.sh --remove-plugins` when you want to remove the provider plugins as well as Clinch.
 
 Conversation recovery is best-effort. Clinch starts a new provider process with a resume command;
 it does not preserve a live process through quit, crash, or reboot. Provider retention, invalid or
@@ -88,11 +93,36 @@ deleted transcripts, changed CLIs, and abrupt power loss can prevent an exact re
 More implementation detail is in
 [tools/agent-resume/README.md](tools/agent-resume/README.md).
 
+## Two-way iMessage is optional
+
+On macOS 14 or later, Clinch can use the Messages account already signed in on the Mac to text an
+iPhone with the full final response when a durable Codex or Claude Code turn finishes. Long
+responses are split into ordered plain-text parts. A reply can start a follow-up in the same live
+session; when several sessions are eligible, each completion includes a short route code. No
+iPhone app, Clinch account, hosted relay, or SMS fallback is used.
+
+Set it up under **Clinch Settings → iMessage**. Setup sends a calibration message and requires:
+
+- **Messages Automation**, so Clinch can ask Messages to send iMessage-only text; and
+- **Full Disk Access**, so Clinch's bundled local helper can watch the calibrated conversation in
+  the Messages database for replies.
+
+Messaging is enabled for current and new supported sessions after calibration, with a **Message
+me** opt-out in each session footer. Replies received while an agent is working are queued locally
+and are never injected into permission or confirmation prompts. Disconnecting clears Clinch's
+phone configuration, routing state, and queued replies without deleting Messages history.
+
+Apple does not expose a trustworthy source-device identity for synchronized Messages. Clinch can
+restrict replies to the calibrated conversation, but it cannot prove that a reply came from the
+iPhone rather than another Apple device signed in to the same account.
+
 ## Main features
 
 - Project tabs that keep independent terminal workspaces in one window.
 - Persistence for project order, working directories, terminal tabs, splits, and panels.
 - Optional Claude Code and Codex session capture and pane-level resume.
+- Optional local two-way iMessage completion notifications and routed follow-ups for durable
+  Claude Code and Codex sessions.
 - Local agent-status badges and macOS notification routing when a compatible provider signal is
   available.
 - Optional Claude Code plan-limit gauges; they are off by default and contact Anthropic only after
@@ -109,14 +139,16 @@ The stable channel is created by
 RudderStack telemetry, Sentry crash reporting, bundled MCP credentials, or automatic updater
 configuration. When telemetry is unavailable, the runtime does not schedule telemetry tasks,
 persist a queue, or send it; stale Clinch telemetry queues are deleted without upload. The public
-bundle uses an empty Clinch-specific entitlement set and does not include the privileged update
-helper.
+bundle carries only the Apple Events entitlement needed by the optional Messages integration and
+does not include the privileged update helper.
 
 Stable Clinch starts no Warp account session, telemetry/crash reporter, or automatic release
 check. Network activity still occurs when the user asks for it or launches software that uses it.
 Examples include Claude Code, Codex, SSH, MCP servers, remote assets, language/package tooling,
 provider plugin commands, and the optional Claude plan-limit gauge. Those tools have their own
-privacy and security behavior.
+privacy and security behavior. If two-way iMessage is enabled, Messages uses Apple's iMessage
+service and the local helper uses read-only database access while watching only the calibrated
+Messages conversation.
 
 Session-capture data stays in local Clinch-owned files. Claude Code and Codex continue to manage
 their own transcripts and credentials. Clinch does not delete provider transcripts or Keychain
@@ -154,21 +186,32 @@ build, component tests, Clippy, dependency license policy, bundled notices, and 
 candidate` builds and verifies the universal app, ZIP, DMG, both manifest signatures, minimum OS,
 entitlements, opt-in/removal flow, and ZIP/DMG app equality. It does not create a tag or release.
 
-Public releases can be published only by `.github/workflows/release.yml` after the required CI
-jobs pass. The workflow signs the tag, manifest, and checksum list, records checks, generates an
-SBOM and GitHub provenance attestation, and publishes immutable-release-compatible assets. Its
-manual dispatch also requires completed first-install, authenticated-upgrade, integration,
-uninstall, offline-startup, and Apple Silicon smoke checks; the QA record and tested macOS
-versions are included in the signed release validation file. A separate hands-on Intel smoke test
-is optional because Intel is already built and tested by the required Intel-hosted CI jobs. Use
-the [release QA template](specs/public-preview-release-hardening/QA_TEMPLATE.md) for the public
-record referenced by the workflow.
+Release builds use the persistent local Cargo cache instead of paid hosted macOS runners. Install
+the normal build/test/release dependencies plus OpenSSL 3 and Syft (`brew install openssl@3 syft`)
+before the first release; `make release` checks every required command, signing key, and at least
+40 GiB of free space before starting the expensive gate.
 
-After completing those hands-on checks, run `make release` from a clean `main` checkout. It selects
-the next version, detects the current macOS version, shows the checklist for one explicit
-confirmation, creates the public QA issue, and dispatches the protected workflow. Advanced users
-can still override `VERSION`, `QA_RECORD`, `QA_TESTED_MACOS_VERSIONS`, or the optional
-`QA_INTEL_SMOKE` result.
+After completing the hands-on checks, run `make release` from a clean, current `main` checkout. It
+selects the next version, records the exact commit, confirms QA, runs the full local gate, builds
+and verifies both macOS architectures, generates a CycloneDX SBOM and signed local provenance,
+and assembles the exact signed asset set under `target/release-stage/<version>/`. Only after a
+second version-and-commit-specific confirmation does it push the signed tag, create or refresh a
+private draft release, download the uploaded assets into a fresh directory, verify them again, and
+publish the draft. Advanced users can override `VERSION`, `QA_RECORD`,
+`QA_TESTED_MACOS_VERSIONS`, or the optional `QA_INTEL_SMOKE` result. Use the
+[release QA template](specs/public-preview-release-hardening/QA_TEMPLATE.md) for a separately
+maintained record.
+
+Release publication runs no GitHub Actions job. Immediately before publication, the local command
+rechecks the signed remote tag, current `main`, both manifest signatures, exact asset set and
+digests, SBOM, validation record, local provenance, and monotonic update sequence. It also rejects
+a draft whose metadata changes during or after download. A failure leaves the draft private and
+safe to retry. The separate hands-on Intel smoke test remains optional; the universal artifact
+verifier always checks that the Intel slice is present.
+
+After these changes land on `main`, run `make configure-release-repository` once. It validates both
+workstation key copies before deleting the obsolete GitHub signing secrets and `public-release`
+environment, then reapplies branch, scanning, Actions-token, and immutable-release controls.
 
 ## License and attribution
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Reproducible source gate used by local candidates and the release workflow.
+# Reproducible source gate used by local candidates and releases.
 set -euo pipefail
 
 # A release invoked from inside an older Make/agent process can inherit stale recursive-Make
@@ -8,7 +8,7 @@ set -euo pipefail
 unset RELEASE_NOTES MAKEFLAGS MFLAGS GNUMAKEFLAGS MAKELEVEL MAKEOVERRIDES \
   MAKE_TERMOUT MAKE_TERMERR
 
-for tool in cargo cargo-nextest cargo-deny; do
+for tool in cargo cargo-nextest cargo-deny swift; do
   command -v "$tool" >/dev/null 2>&1 || {
     echo "error: $tool is required for the launch gate" >&2
     echo "run ./script/bootstrap and ./script/install_cargo_test_deps first" >&2
@@ -24,16 +24,20 @@ sh -n install.sh
 bash -n \
   uninstall.sh \
   script/check_license_config_sync \
+  script/assemble-clinch-release-stage \
+  script/build-clinch-imessage-bridge \
   script/configure-clinch-release-repository \
   script/dispatch-clinch-release \
   script/launch-check \
   script/macos/bundle \
+  script/macos/run \
   script/next-clinch-update-sequence \
   script/prepare_bundled_resources \
   script/clinch-update-manifest \
   script/update-installed-clinch \
   script/update_plist \
-  script/verify-clinch-release
+  script/verify-clinch-release \
+  script/verify-clinch-release-stage
 bash -n resources/update/clinch-update-helper
 bash -n tools/agent-resume/*.sh \
   tools/agent-resume/clinch-agent-resume \
@@ -59,6 +63,9 @@ done
 
 echo "==> Stable Clinch build configuration"
 cargo check --locked --bin stable
+
+echo "==> Pinned iMessage bridge tests"
+swift test --package-path tools/imessage-bridge
 
 echo "==> Shipped component tests"
 cargo nextest run --locked -p warp -p warpui -p cli_agent_usage

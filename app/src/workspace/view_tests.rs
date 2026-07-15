@@ -122,7 +122,7 @@ fn project_agent_count_only_includes_in_progress_claude_and_codex_sessions() {
 }
 
 #[test]
-fn project_agent_counts_include_simultaneous_claude_and_codex_turns() {
+fn project_agent_counts_only_include_active_claude_and_codex_turns() {
     App::test((), |mut app| async move {
         let _notifications_guard =
             warp_core::features::FeatureFlag::HOANotifications.override_enabled(true);
@@ -171,11 +171,32 @@ fn project_agent_counts_include_simultaneous_claude_and_codex_turns() {
                         draft_text: None,
                         custom_command_prefix: None,
                         received_rich_notification: false,
-                        has_observed_turn_activity: true,
+                        has_observed_turn_activity: false,
                         prompt_history: Default::default(),
                         prompt_history_load_state: Default::default(),
                         prompt_history_generation: 0,
                     },
+                    ctx,
+                );
+            }
+        });
+
+        workspace.read(&app, |workspace, ctx| {
+            assert_eq!(
+                workspace.project_cli_agent_counts(ctx),
+                ProjectCliAgentCounts {
+                    working: 0,
+                    done: 0,
+                }
+            );
+        });
+
+        // Merely opening interactive Codex and Claude Code processes leaves the project badge
+        // empty. Only a confirmed prompt submission moves those sessions into the green count.
+        CLIAgentSessionsModel::handle(&app).update(&mut app, |sessions, ctx| {
+            for terminal_view_id in terminal_ids.iter().copied() {
+                sessions.mark_project_cli_agent_turn_started_from_clinch_submission(
+                    terminal_view_id,
                     ctx,
                 );
             }
@@ -452,6 +473,73 @@ pub(crate) fn mock_workspace(app: &mut App) -> ViewHandle<Workspace> {
         )
     });
     workspace
+}
+
+#[test]
+fn user_menu_uses_clinch_branding() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+
+        workspace.read(&app, |workspace, ctx| {
+            let items = workspace.user_menu_items(ctx);
+            let labels = items
+                .iter()
+                .filter_map(|item| match item {
+                    MenuItem::Item(fields) => Some(fields.label()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+
+            assert!(
+                labels.iter().all(|label| !label.contains("Warp")),
+                "user menu should not contain Warp-branded items: {labels:?}"
+            );
+
+            let assert_item =
+                |expected_label: &str, action_matches: fn(&WorkspaceAction) -> bool| {
+                    let fields = items.iter().find_map(|item| match item {
+                        MenuItem::Item(fields) if fields.label() == expected_label => Some(fields),
+                        _ => None,
+                    });
+                    assert!(
+                        fields
+                            .and_then(MenuItemFields::on_select_action)
+                            .is_some_and(action_matches),
+                        "missing or incorrectly wired menu item: {expected_label}"
+                    );
+                };
+
+            assert_item("What's new in Clinch", |action| {
+                matches!(action, WorkspaceAction::ViewLatestChangelog)
+            });
+            assert_item("Clinch settings", |action| {
+                matches!(action, WorkspaceAction::ShowSettings)
+            });
+            assert_item("Terminal settings", |action| {
+                matches!(
+                    action,
+                    WorkspaceAction::ShowSettingsPage(SettingsSection::Appearance)
+                )
+            });
+            assert_item("Keyboard shortcuts", |action| {
+                matches!(action, WorkspaceAction::ToggleKeybindingsPage)
+            });
+            assert_item("Clinch documentation", |action| {
+                matches!(action, WorkspaceAction::ViewUserDocs)
+            });
+            assert_item("Report an issue", |action| {
+                matches!(action, WorkspaceAction::SendFeedback)
+            });
+            assert_item("Clinch on GitHub", |action| {
+                matches!(action, WorkspaceAction::JoinSlack)
+            });
+            #[cfg(not(target_family = "wasm"))]
+            assert_item("View Clinch logs", |action| {
+                matches!(action, WorkspaceAction::ViewLogs)
+            });
+        });
+    });
 }
 
 #[test]
@@ -3470,6 +3558,127 @@ fn test_pointer_opened_tab_configs_menu_does_not_select_top_item() {
                     .read(ctx, |menu, _| menu.selected_index()),
                 None
             );
+        });
+    });
+}
+
+#[cfg(feature = "local_fs")]
+fn init_repo_for_automatic_worktree_test() -> (TempDir, PathBuf) {
+    fn git(repo: &Path, args: &[&str]) {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(repo)
+            .output()
+            .expect("failed to run git");
+        assert!(
+            output.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let temp_dir = tempfile::tempdir().expect("failed to create temp repo");
+    let repo_path = temp_dir.path().to_path_buf();
+    git(&repo_path, &["init", "-b", "main"]);
+    git(&repo_path, &["config", "user.email", "test@example.com"]);
+    git(&repo_path, &["config", "user.name", "Clinch Test"]);
+    git(&repo_path, &["commit", "--allow-empty", "-m", "initial"]);
+    (temp_dir, repo_path)
+}
+
+#[test]
+#[cfg(feature = "local_fs")]
+fn test_automatic_worktree_planning_reserves_unique_terminal_and_agent_tabs() {
+    let (_temp_dir, repo_path) = init_repo_for_automatic_worktree_test();
+
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+
+        workspace.update(&mut app, |workspace, _| {
+            let terminal_config = workspace
+                .automatic_worktree_tab_config_for_repo(SessionType::Terminal, &repo_path)
+                .expect("eligible repo should produce a terminal worktree config");
+            let reserved_after_terminal = workspace.reserved_automatic_worktree_branches.clone();
+            assert_eq!(reserved_after_terminal.len(), 1);
+            assert_eq!(
+                terminal_config.panes[0].pane_type,
+                Some(TabConfigPaneType::Terminal)
+            );
+
+            let agent_config = workspace
+                .automatic_worktree_tab_config_for_repo(SessionType::Oz, &repo_path)
+                .expect("eligible repo should produce an Agent worktree config");
+            assert_eq!(workspace.reserved_automatic_worktree_branches.len(), 2);
+            assert!(
+                reserved_after_terminal.is_subset(&workspace.reserved_automatic_worktree_branches)
+            );
+            assert_eq!(
+                agent_config.panes[0].pane_type,
+                Some(TabConfigPaneType::Agent)
+            );
+            assert_ne!(
+                terminal_config.panes[0].commands, agent_config.panes[0].commands,
+                "concurrent plans must reserve different branch names and paths"
+            );
+        });
+    });
+}
+
+#[test]
+fn test_automatic_worktree_routing_preserves_disabled_and_special_mode_paths() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        ClinchSettings::handle(&app).update(&mut app, |settings, ctx| {
+            settings
+                .auto_create_worktrees_for_new_tabs
+                .set_value(false, ctx)
+                .expect("disable automatic worktrees");
+        });
+        let workspace = mock_workspace(&mut app);
+
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.handle_action(&WorkspaceAction::ToggleAutomaticWorktreeTabs, ctx);
+        });
+        ClinchSettings::handle(&app).read(&app, |settings, _| {
+            assert!(*settings.auto_create_worktrees_for_new_tabs);
+        });
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.handle_action(&WorkspaceAction::ToggleAutomaticWorktreeTabs, ctx);
+        });
+        ClinchSettings::handle(&app).read(&app, |settings, _| {
+            assert!(!*settings.auto_create_worktrees_for_new_tabs);
+        });
+
+        workspace.update(&mut app, |workspace, ctx| {
+            let original_tab_count = workspace.tab_count();
+            assert!(!workspace.try_add_automatic_worktree_tab(DefaultSessionMode::Terminal, ctx));
+            workspace.handle_action(&WorkspaceAction::AddDefaultTab, ctx);
+            assert_eq!(workspace.tab_count(), original_tab_count + 1);
+        });
+
+        ClinchSettings::handle(&app).update(&mut app, |settings, ctx| {
+            settings
+                .auto_create_worktrees_for_new_tabs
+                .set_value(true, ctx)
+                .expect("enable automatic worktrees");
+        });
+        workspace.update(&mut app, |workspace, ctx| {
+            let original_tab_count = workspace.tab_count();
+            workspace.add_default_tab_from_local_control(ctx);
+            assert_eq!(workspace.tab_count(), original_tab_count + 1);
+            assert!(workspace.reserved_automatic_worktree_branches.is_empty());
+
+            for mode in [
+                DefaultSessionMode::TabConfig,
+                DefaultSessionMode::CloudAgent,
+                DefaultSessionMode::DockerSandbox,
+            ] {
+                assert!(
+                    !workspace.try_add_automatic_worktree_tab(mode, ctx),
+                    "special mode {mode:?} must retain its existing path"
+                );
+            }
         });
     });
 }

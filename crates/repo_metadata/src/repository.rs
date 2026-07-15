@@ -179,6 +179,39 @@ impl Repository {
         self.external_git_directory.as_ref()
     }
 
+    #[cfg(feature = "local_fs")]
+    fn is_linked_worktree_git_dir(path: &Path) -> bool {
+        let Some(worktrees_dir) = path.parent() else {
+            return false;
+        };
+        let Some(common_git_dir) = worktrees_dir.parent() else {
+            return false;
+        };
+
+        path.file_name().is_some()
+            && worktrees_dir.file_name().and_then(|name| name.to_str()) == Some("worktrees")
+            && common_git_dir.file_name().and_then(|name| name.to_str()) == Some(".git")
+    }
+
+    /// Returns whether this repository is a linked Git worktree.
+    ///
+    /// Submodules also use an external Git directory, but their paths live
+    /// under `.git/modules/...`; only `.git/worktrees/<name>` is a worktree.
+    pub fn is_linked_worktree(&self) -> bool {
+        #[cfg(feature = "local_fs")]
+        {
+            self.external_git_directory
+                .as_ref()
+                .and_then(StandardizedPath::to_local_path)
+                .is_some_and(|path| Self::is_linked_worktree_git_dir(&path))
+        }
+
+        #[cfg(not(feature = "local_fs"))]
+        {
+            false
+        }
+    }
+
     /// Adds linked-worktree git metadata when it was not known at registration time.
     ///
     /// Directory registrations can be created from a raw path before git detection completes.

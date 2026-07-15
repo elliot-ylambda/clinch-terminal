@@ -54,7 +54,11 @@ pub(crate) fn create_tab(
     let (tab_id, previous_tab_count, tab_count, active_tab_index) =
         workspace.update(ctx, |workspace, ctx| {
             let previous_tab_count = workspace.tab_count();
-            workspace.handle_action(&action, ctx);
+            if matches!(&action, WorkspaceAction::AddDefaultTab) {
+                workspace.add_default_tab_from_local_control(ctx);
+            } else {
+                workspace.handle_action(&action, ctx);
+            }
             let tab_id = workspace
                 .get_pane_group_view(workspace.active_tab_index())
                 .map(|tab| tab.id().to_string())

@@ -278,16 +278,22 @@ fi
 # Clinch build (Info.plist CFBundleName is authoritative for every channel).
 APP_DISPLAY_NAME="$(/usr/libexec/PlistBuddy -c 'Print CFBundleName' "$WARP_PLIST_PATH" 2>/dev/null || echo "Warp")"
 if [[ "$APP_BUNDLE_ID" == "sh.clinch.Clinch" || "$APP_BUNDLE_ID" == "sh.clinch.ClinchDev" ]]; then
-  echo "Removing unused privacy permission descriptions from Clinch"
+  echo "Configuring Clinch privacy permission descriptions"
   for key in \
-    NSAppleEventsUsageDescription NSCameraUsageDescription NSMicrophoneUsageDescription \
+    NSCameraUsageDescription NSMicrophoneUsageDescription \
     NSContactsUsageDescription NSCalendarsUsageDescription NSLocationUsageDescription \
     NSPhotoLibraryUsageDescription; do
     plutil -remove "$key" "$WARP_PLIST_PATH" 2>/dev/null || true
   done
-  plutil -replace LSMinimumSystemVersion -string "${MACOSX_DEPLOYMENT_TARGET:-13.0}" \
+  plutil -replace NSAppleEventsUsageDescription -string \
+    "Clinch sends agent completion messages through the Messages app when you enable iMessage notifications." \
     "$WARP_PLIST_PATH" 2>/dev/null \
-    || plutil -insert LSMinimumSystemVersion -string "${MACOSX_DEPLOYMENT_TARGET:-13.0}" \
+    || plutil -insert NSAppleEventsUsageDescription -string \
+      "Clinch sends agent completion messages through the Messages app when you enable iMessage notifications." \
+      "$WARP_PLIST_PATH"
+  plutil -replace LSMinimumSystemVersion -string "${MACOSX_DEPLOYMENT_TARGET:-14.0}" \
+    "$WARP_PLIST_PATH" 2>/dev/null \
+    || plutil -insert LSMinimumSystemVersion -string "${MACOSX_DEPLOYMENT_TARGET:-14.0}" \
       "$WARP_PLIST_PATH"
 else
   echo "Updating plist with permissions descriptions"

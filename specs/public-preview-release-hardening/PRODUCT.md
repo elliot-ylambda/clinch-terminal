@@ -9,16 +9,17 @@ must never imply that Apple has verified the app.
 
 ## Problem
 
-The current preview relies on mutable release URLs, removes macOS quarantine, modifies Claude
-Code and Codex configuration during installation and first launch, and can publish before the
-full validation suite completes. That is too much implicit trust and surprise for a public
-download, especially when the app cannot use Apple's Developer ID and notarization trust path.
+The current preview relies on mutable release URLs, removes macOS quarantine, may modify Claude
+Code and Codex configuration without a bounded payload, and can publish before the full validation
+suite completes. That is too much implicit trust and surprise for a public download, especially
+when the app cannot use Apple's Developer ID and notarization trust path.
 
 ## Goals
 
 - Make the downloadable app and its release metadata independently verifiable with Clinch-owned
   release keys and immutable version identifiers.
-- Make every persistent integration an informed, reversible opt-in.
+- Keep session capture an informed, reversible opt-in and make automatic notification-plugin
+  provisioning local, pinned, versioned, and removable.
 - Prevent a release unless the exact source revision and artifacts pass the release gate.
 - Ensure the stable build does not send or persist Clinch/Warp analytics or crash telemetry.
 - State the remaining macOS trust limitation plainly on every installation surface.
@@ -78,14 +79,15 @@ download, especially when the app cannot use Apple's Developer ID and notarizati
     is required before automatic repair of session-capture hooks. Removing that marker stops all
     future automatic hook changes.
 
-12. Notification plugins are never installed by the app installer or first launch. Any in-app
-    installation requires a direct user action and identifies the plugin, publisher, source, and
-    files or configuration it will affect before execution.
+12. On first launch and whenever its bundled plugin version changes, Clinch best-effort installs
+    its bundled Warp notification plugins into detected Claude Code and Codex user plugin stores.
+    The authenticated app also carries the plugins' pinned universal macOS `jq` dependency on the
+    pane path. A missing CLI or provider policy failure never blocks launch and is retried later.
 
-13. Plugin code bundled or automatically installed by Clinch is pinned to an exact upstream
+13. Plugin code bundled and automatically installed by Clinch is pinned to an exact upstream
     revision and digest, travels inside the authenticated Clinch artifact, and updates only with
-    a new authenticated Clinch release. User-chosen third-party or remote plugin sources are
-    clearly outside this guarantee.
+    a new Clinch release. User-chosen third-party or remote plugin sources remain outside this
+    bundle.
 
 14. Session-capture removal deletes only Clinch-managed Claude and Codex hook entries and
     Clinch-owned helper files. It preserves unrelated configuration and, by default, preserves
@@ -135,30 +137,34 @@ download, especially when the app cannot use Apple's Developer ID and notarizati
     only the disk-image container.
 
 25. Public release tags are immutable, annotated, and cryptographically signed by a dedicated
-    Clinch release key. A release is built from the exact tagged source revision, and the published
-    release refuses a tag that was created or moved outside the gated release process.
+    Clinch release key. `make release` builds from one clean, current `main` revision and refuses
+    to stage a tag whose commit differs from the revision covered by the manual QA record.
 
-26. The public release workflow runs the full formatting, script/integration, stable-build,
-    component-test, lint, and dependency-advisory gates before packaging. A timeout, cancellation,
-    skipped required step, or test failure prevents publication.
+26. Before it creates a tag or draft release, `make release` runs the full formatting,
+    script/integration, stable-build, component-test, lint, dependency-license, and advisory gates
+    locally, then builds and verifies the universal candidate. A timeout, interruption, skipped
+    required step, or test failure prevents staging and publication.
 
-27. Release publication is performed only by the protected GitHub workflow. Local developer
-    commands may build and verify candidates, but no bypass flag or local background job can
-    publish a public release.
+27. The local release command creates a signed tag and a private draft release containing only
+    fully verified assets. It downloads that draft into a fresh directory, repeats the complete
+    portable signature, digest, provenance, version, commit, and sequence checks, and only then
+    makes the draft public. Public release publication does not run GitHub Actions.
 
 28. Every release publishes the DMG, ZIP, authenticated metadata and signatures, a
-    release-key-signed checksum list, machine-readable SBOM, and GitHub artifact provenance.
-    Publication uses an existing verified tag and is compatible with GitHub immutable releases.
+    release-key-signed checksum list, machine-readable SBOM, signed validation record, and
+    release-key-signed local build provenance. The provenance identifies the exact source commit
+    and artifact digests without claiming that GitHub built a workstation-produced artifact.
+    Publication remains compatible with GitHub immutable releases.
 
 29. The release update sequence is strictly greater than every previously published sequence,
     even when a build machine's clock is wrong or two releases are initiated close together.
 
-30. The `main` branch requires review and the named release-gate checks before update. Force
-    pushes and branch deletion are disabled, GitHub secret scanning remains enabled, and the
-    release workflow receives only the minimal write permissions needed for tags, releases, and
-    attestations.
+30. The `main` branch rejects force pushes and deletion, GitHub secret scanning remains enabled,
+    and release keys remain only on the release workstation. Final publication is authorized by
+    the version-and-commit-specific local confirmation and the operator's authenticated GitHub
+    credentials; no release signing secret or publication workflow is stored or run on GitHub.
 
-31. Security documentation includes the installer, release keys, GitHub Actions, update helper,
+31. Security documentation includes the installer, release keys, GitHub release API, update helper,
     hooks, provider credentials, local transcripts, command construction, and plugin sources in
     its threat model. It distinguishes verified controls, residual risks, and validation that
     still requires independent reviewers or real-world beta users.
@@ -169,12 +175,17 @@ download, especially when the app cannot use Apple's Developer ID and notarizati
 
 33. A release candidate is not promoted until it has passed first install, authenticated manual
     upgrade, integration opt-in, integration removal, application uninstall, offline-startup, and
-    a native Apple Silicon smoke check. Intel remains covered by the universal artifact verifier
-    and native Intel CI; a separate hands-on Intel smoke check is recorded when practical but does
-    not block this preview. Results and any untested OS versions are recorded with the release.
+    a native Apple Silicon smoke check. The universal artifact verifier confirms that the Intel
+    slice is present; a separate hands-on Intel smoke check is recorded when practical but does not
+    block this preview. Results and any untested OS versions are recorded with the release.
     The local `make release` command may derive the next version, tested macOS version, and public
     QA-record location, but it must obtain one explicit operator confirmation covering every
-    required hands-on check. Mechanical defaults never count as evidence that QA passed.
+    required hands-on check. After the automated build and verification finish, it requires a
+    second version-and-commit-specific confirmation before creating remote staging state and
+    publishing it after verification. Mechanical defaults never count as evidence that QA passed
+    or permission to publish.
 
-34. If any authenticity or safety check cannot be completed, the installer or release workflow
-    stops with a specific error and leaves the existing installation or public release unchanged.
+34. If any authenticity or safety check cannot be completed, the installer or local release
+    command stops with a specific error and leaves the existing installation and every published
+    release unchanged. An interrupted staging attempt may leave a correctly signed tag or private
+    draft for an idempotent retry, but it never exposes an unverified public release.

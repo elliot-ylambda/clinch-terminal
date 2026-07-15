@@ -1,5 +1,5 @@
 use std::fmt::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use command::r#async::Command;
 use instant::Instant;
@@ -11,6 +11,92 @@ use warp_core::AppId;
 use warpui::ApplicationBundleInfo;
 
 use super::*;
+
+/// An application registered with macOS as capable of opening a particular file.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FileOpeningApplication {
+    pub display_name: String,
+    pub application_path: PathBuf,
+    pub is_default: bool,
+}
+
+/// Returns the applications Launch Services has registered for `file_path`.
+///
+/// This powers file-link context menus, so it intentionally asks macOS about the
+/// concrete file instead of maintaining a file-extension allowlist in the app.
+pub fn applications_that_can_open_file(file_path: &Path) -> Vec<FileOpeningApplication> {
+    autoreleasepool(|_| {
+        let file_path = NSString::from_str(&file_path.to_string_lossy());
+        let file_url = NSURL::fileURLWithPath(&file_path);
+        let workspace = NSWorkspace::sharedWorkspace();
+        let default_application_path = workspace
+            .URLForApplicationToOpenURL(&file_url)
+            .and_then(|url| url.path())
+            .map(|path| PathBuf::from(path.to_string()));
+
+        let mut applications = workspace
+            .URLsForApplicationsToOpenURL(&file_url)
+            .iter()
+            .filter_map(|application_url| {
+                let application_path = application_url
+                    .path()
+                    .map(|path| PathBuf::from(path.to_string()))?;
+                let display_name = application_path
+                    .file_stem()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .filter(|name| !name.is_empty())?;
+
+                Some(FileOpeningApplication {
+                    is_default: default_application_path.as_ref() == Some(&application_path),
+                    display_name,
+                    application_path,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        applications.sort_by(|left, right| {
+            right.is_default.cmp(&left.is_default).then_with(|| {
+                left.display_name
+                    .to_lowercase()
+                    .cmp(&right.display_name.to_lowercase())
+            })
+        });
+        applications.dedup_by(|left, right| left.application_path == right.application_path);
+        applications
+    })
+}
+
+/// Opens `file_path` with a specific macOS application bundle.
+pub fn open_file_path_with_application(
+    file_path: PathBuf,
+    application_path: PathBuf,
+    ctx: &mut AppContext,
+) {
+    let mut command = Command::new("/usr/bin/open");
+    command.arg("-a").arg(&application_path).arg(&file_path);
+
+    match command.spawn() {
+        Ok(mut child) => {
+            ctx.background_executor()
+                .spawn(async move {
+                    if let Err(error) = child.status().await {
+                        log::error!(
+                            "Unable to await application opener for {}: {error:?}",
+                            file_path.display()
+                        );
+                    }
+                })
+                .detach();
+        }
+        Err(error) => {
+            log::error!(
+                "Unable to open {} with {}: {error:?}",
+                file_path.display(),
+                application_path.display()
+            );
+        }
+    }
+}
 
 /// The executable we use to launch the editor.
 #[derive(Debug)]

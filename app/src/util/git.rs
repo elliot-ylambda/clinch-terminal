@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Result};
 use warp_core::safe_warn;
@@ -37,6 +37,69 @@ pub fn list_local_branches_sync(repo_path: &Path) -> HashSet<String> {
 #[cfg(not(feature = "local_fs"))]
 pub fn list_local_branches_sync(_repo_path: &Path) -> HashSet<String> {
     HashSet::new()
+}
+
+/// Resolves the primary checkout for the repository containing `repo_path`.
+///
+/// `git worktree list --porcelain` always lists the primary checkout first, so
+/// this also maps a linked-worktree cwd back to the source checkout used to
+/// group Clinch-managed worktrees.
+#[cfg(feature = "local_fs")]
+pub fn primary_worktree_root_sync(repo_path: &Path) -> Option<PathBuf> {
+    let output = command::blocking::Command::new("git")
+        .args(["worktree", "list", "--porcelain"])
+        .current_dir(repo_path)
+        .stdout(command::Stdio::piped())
+        .stderr(command::Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let output_text = String::from_utf8_lossy(&output.stdout);
+    let primary = output_text
+        .lines()
+        .find_map(|line| line.strip_prefix("worktree "))?;
+    let primary = PathBuf::from(primary);
+    primary
+        .is_dir()
+        .then(|| dunce::canonicalize(&primary).unwrap_or(primary))
+}
+
+#[cfg(not(feature = "local_fs"))]
+pub fn primary_worktree_root_sync(_repo_path: &Path) -> Option<PathBuf> {
+    None
+}
+
+/// Resolves the fixed `main` base used by automatic Clinch worktrees.
+///
+/// Prefer the local branch so the new branch starts from the user's local
+/// `main`. Repositories without it may still use `origin/main`; no other
+/// default branch is guessed.
+#[cfg(feature = "local_fs")]
+pub fn resolve_main_worktree_base_ref_sync(repo_path: &Path) -> Option<String> {
+    [
+        ("refs/heads/main", "main"),
+        ("refs/remotes/origin/main", "origin/main"),
+    ]
+    .into_iter()
+    .find_map(|(full_ref, display_ref)| {
+        command::blocking::Command::new("git")
+            .args(["show-ref", "--verify", "--quiet", full_ref])
+            .current_dir(repo_path)
+            .stdout(command::Stdio::null())
+            .stderr(command::Stdio::null())
+            .status()
+            .ok()
+            .filter(|status| status.success())
+            .map(|_| display_ref.to_string())
+    })
+}
+
+#[cfg(not(feature = "local_fs"))]
+pub fn resolve_main_worktree_base_ref_sync(_repo_path: &Path) -> Option<String> {
+    None
 }
 
 /// Fetches the current git branch.

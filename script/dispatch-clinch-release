@@ -1,22 +1,48 @@
 #!/usr/bin/env bash
-# Turns the protected Clinch release workflow into a safe one-command operator flow.
+# Builds, verifies, signs, remotely re-verifies, and publishes a release locally.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 REPO="${CLINCH_REPO:-elliot-ylambda/clinch-terminal}"
+REMOTE="${CLINCH_REMOTE:-clinch}"
 REQUESTED_VERSION="${VERSION:-}"
 AUTO_VERSION="${CLINCH_AUTO_VERSION:-0}"
 QA_RECORD_VALUE="${QA_RECORD:-auto}"
 TESTED_MACOS_VERSIONS="${QA_TESTED_MACOS_VERSIONS:-auto}"
 QA_INTEL_SMOKE="${QA_INTEL_SMOKE:-false}"
 QA_CONFIRMED="${QA_CONFIRMED:-false}"
+UPDATE_KEY="${CLINCH_UPDATE_SIGNING_KEY:-$HOME/.config/clinch/update-signing-key.pem}"
+RELEASE_KEY="${CLINCH_RELEASE_SIGNING_KEY:-$HOME/.config/clinch/release-signing-key}"
+ALLOWED_SIGNERS="$ROOT/resources/release/clinch-release-allowed-signers"
+MINIMUM_FREE_KIB=$((40 * 1024 * 1024))
+
+created_issue=false
+publication_started=false
+publish_tmp=
 
 fail() {
-  echo "release dispatch failed: $*" >&2
+  echo "local release failed: $*" >&2
   exit 1
 }
+
+on_exit() {
+  local status=$? failure_note
+  trap - EXIT
+  [[ -z "$publish_tmp" ]] || rm -rf "$publish_tmp" || true
+  if (( status != 0 )) && [[ "$created_issue" == true ]]; then
+    if [[ "$publication_started" == true ]]; then
+      failure_note="The final GitHub publication request returned an error. Inspect the release state before retrying; the signed tag and verified draft are safe to reuse."
+    else
+      failure_note="Local release staging or verification failed before publication. No public release was intentionally published; a correctly signed tag or private draft may remain for an idempotent retry."
+    fi
+    gh issue comment "$QA_RECORD_VALUE" --repo "$REPO" --body "$failure_note" \
+      >/dev/null 2>&1 || true
+  fi
+  return "$status"
+}
+trap on_exit EXIT
 
 validate_version() {
   [[ "$1" =~ ^v[0-9]+(\.[0-9]+)+$ ]]
@@ -76,36 +102,261 @@ Manual release QA for $REQUESTED_VERSION at $(git rev-parse --short HEAD):
   - offline startup made no account, telemetry, crash, or update request
   - native Apple Silicon launch, shell, tabs/panes, settings, quit, and relaunch passed
 
-This confirmation is written to a public QA issue and the signed release validation record.
 Type RELEASE only if every item above passed on this exact main revision:
 EOF
   read -r response
-  [[ "$response" == RELEASE ]] || fail "release was not confirmed"
+  [[ "$response" == RELEASE ]] || fail "release QA was not confirmed"
 }
 
-command -v gh >/dev/null 2>&1 || fail "gh is required"
-command -v git >/dev/null 2>&1 || fail "git is required"
-[[ "$REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || fail "invalid repository '$REPO'"
-[[ "$AUTO_VERSION" == 0 || "$AUTO_VERSION" == 1 ]] || fail "CLINCH_AUTO_VERSION must be 0 or 1"
-[[ "$QA_INTEL_SMOKE" == true || "$QA_INTEL_SMOKE" == false ]] \
-  || fail "QA_INTEL_SMOKE must be true or false"
-gh auth status >/dev/null || fail "authenticate gh before releasing"
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || fail "$1 is required${2:+ ($2)}"
+}
 
-if [[ "${CLINCH_RELEASE_SKIP_REPOSITORY_CHECKS:-0}" != 1 ]]; then
-  ./script/require-latest-main
+verify_release_key() {
+  local actual expected
+  actual="$(ssh-keygen -y -f "$RELEASE_KEY" | awk '{print $1, $2}')" \
+    || fail "could not read the release signing key"
+  expected="$(awk 'NF {print $2, $3; exit}' "$ALLOWED_SIGNERS")"
+  [[ "$actual" == "$expected" ]] \
+    || fail "release signing key does not match the committed trust root"
+}
+
+verify_source_state() {
+  local expected_commit="$1" remote_main
   [[ "$(git rev-parse --abbrev-ref HEAD)" == main ]] || fail "release checkout is not on main"
   [[ -z "$(git status --porcelain)" ]] || fail "release checkout is dirty"
-  [[ "$(git rev-parse HEAD)" == "$(git rev-parse clinch/main)" ]] \
-    || fail "local main does not exactly match clinch/main"
-fi
+  [[ "$(git rev-parse HEAD)" == "$expected_commit" ]] || fail "release source commit changed"
+  [[ "$(git rev-parse "$REMOTE/main")" == "$expected_commit" ]] \
+    || fail "local main no longer matches $REMOTE/main"
+  remote_main="$(git ls-remote "$REMOTE" refs/heads/main | awk 'NF {print $1; exit}')"
+  [[ "$remote_main" == "$expected_commit" ]] \
+    || fail "$REMOTE/main changed during the local release"
+}
 
-COMMIT_SHA="${CLINCH_RELEASE_COMMIT_SHA:-$(git rev-parse HEAD)}"
-[[ "$COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "invalid release commit '$COMMIT_SHA'"
+create_qa_record() {
+  local version="$1" commit="$2" sequence="$3" tester qa_file issue_output
+  local mac_model cpu_arch
+  if [[ -n "$QA_RECORD_VALUE" && "$QA_RECORD_VALUE" != auto ]]; then
+    return
+  fi
+  tester="$(gh api user --jq .login)" || fail "could not resolve the GitHub release operator"
+  [[ "$tester" =~ ^[A-Za-z0-9-]+$ ]] || fail "invalid GitHub release operator '$tester'"
+  qa_file="$(mktemp -t clinch-release-qa)"
+  mac_model="$(sysctl -n hw.model 2>/dev/null || echo unknown)"
+  cpu_arch="$(uname -m)"
+  cat > "$qa_file" <<EOF
+# Clinch public-preview release QA
+
+- Version: \`$version\`
+- Commit: \`$commit\`
+- Update sequence: \`$sequence\`
+- Tester: @$tester
+- Date: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+- Mac: $mac_model ($cpu_arch)
+- Tested macOS: $TESTED_MACOS_VERSIONS
+- Untested macOS versions: all others
+
+## Required checks
+
+- [x] The candidate update manifest and signatures authenticate with the committed Clinch keys.
+- [x] Clean manual install from the candidate DMG succeeds.
+- [x] First launch succeeds using the documented Privacy & Security approval when required.
+- [x] Authenticated manual upgrade preserves the existing app until replacement succeeds.
+- [x] Session capture was off on a clean install and first launch.
+- [x] Session capture opt-in showed the affected paths and added only Clinch-managed entries.
+- [x] Session capture removal preserved unrelated Claude Code and Codex configuration.
+- [x] Capture purge listed and removed only the Clinch capture directory.
+- [x] App-only uninstall preserved capture data, transcripts, credentials, and unrelated \`~/.warp\` data.
+- [x] Startup while offline made no account, telemetry, crash-reporting, or update request.
+- [x] Native Apple Silicon launch, shell, tabs/panes, settings, quit, and relaunch passed.
+
+## Optional Intel check
+
+- [$([[ "$QA_INTEL_SMOKE" == true ]] && echo x || echo ' ')] Native Intel smoke test
+
+## Result
+
+- [x] PASS — eligible for direct publication after local build and remote-draft verification.
+
+Recorded by \`make release\` after explicit operator confirmation for this exact commit. The
+release key authenticates the local build provenance and assets. The local release command
+downloads and independently verifies the private draft before making it public.
+EOF
+  issue_output="$(gh issue create --repo "$REPO" \
+    --title "Release QA: $version" --body-file "$qa_file")" \
+    || { rm -f "$qa_file"; fail "could not create the public QA record"; }
+  rm -f "$qa_file"
+  QA_RECORD_VALUE="$(printf '%s\n' "$issue_output" | awk '/^https:\/\// {url=$0} END {print url}')"
+  [[ "$QA_RECORD_VALUE" == https://* ]] || fail "GitHub did not return a QA issue URL"
+  created_issue=true
+}
+
+confirm_publication() {
+  local version="$1" commit="$2" expected response
+  expected="PUBLISH $version ${commit:0:12}"
+  [[ -t 0 ]] || fail "publication requires an interactive terminal"
+  cat <<EOF
+
+The complete local gate, universal artifact verification, SBOM, provenance, and signatures passed.
+No public release exists yet. The next step creates or refreshes a signed tag and private draft,
+downloads and verifies every uploaded asset, then publishes that release immediately.
+
+Type exactly: $expected
+EOF
+  read -r response
+  [[ "$response" == "$expected" ]] || fail "publication was not confirmed"
+}
+
+ensure_signed_remote_tag() {
+  local version="$1" commit="$2"
+  if git ls-remote --exit-code --tags "$REMOTE" "refs/tags/$version" >/dev/null 2>&1; then
+    git fetch --force "$REMOTE" "refs/tags/$version:refs/tags/$version"
+  elif git rev-parse -q --verify "refs/tags/$version" >/dev/null 2>&1; then
+    :
+  else
+    git \
+      -c user.name="Clinch local release" \
+      -c user.email="releases@clinch.sh" \
+      -c gpg.format=ssh \
+      -c user.signingkey="$RELEASE_KEY" \
+      tag -s -a "$version" -m "Clinch $version public preview" "$commit"
+  fi
+  git -c gpg.format=ssh -c gpg.ssh.allowedSignersFile="$ALLOWED_SIGNERS" \
+    verify-tag "$version"
+  [[ "$(git rev-list -n 1 "$version")" == "$commit" ]] \
+    || fail "tag $version points to another commit"
+  if ! git ls-remote --exit-code --tags "$REMOTE" "refs/tags/$version" >/dev/null 2>&1; then
+    git push "$REMOTE" "refs/tags/$version"
+  fi
+}
+
+verify_asset_name_set() {
+  local version="$1" dist="$2" allow_missing="$3" release_json local_names remote_names extra
+  release_json="$(gh api "repos/$REPO/releases/tags/$version")" \
+    || fail "could not inspect draft release $version"
+  local_names="$(find "$dist" -mindepth 1 -maxdepth 1 -print \
+    | sed 's#^.*/##' | LC_ALL=C sort)"
+  remote_names="$(jq -r '.assets[].name' <<< "$release_json" | LC_ALL=C sort)"
+  extra="$(comm -13 <(printf '%s\n' "$local_names") <(printf '%s\n' "$remote_names"))"
+  [[ -z "$extra" ]] || fail "draft release contains unexpected assets: ${extra//$'\n'/, }"
+  if [[ "$allow_missing" != true ]]; then
+    [[ "$local_names" == "$remote_names" ]] || fail "draft release asset set is incomplete"
+  fi
+}
+
+stage_private_draft() {
+  local version="$1" commit="$2" stage="$3" dist release_json
+  dist="$stage/dist"
+  if release_json="$(gh api "repos/$REPO/releases/tags/$version" 2>/dev/null)"; then
+    [[ "$(jq -r .draft <<< "$release_json")" == true ]] \
+      || fail "release $version already exists and is not a private draft"
+    verify_asset_name_set "$version" "$dist" true
+    gh release edit "$version" --repo "$REPO" --draft --latest=false \
+      --title "Clinch $version" --notes-file "$stage/release-notes.md" >/dev/null
+    gh release upload "$version" "$dist"/* --repo "$REPO" --clobber
+  else
+    gh release create "$version" "$dist"/* \
+      --repo "$REPO" \
+      --verify-tag \
+      --target "$commit" \
+      --draft \
+      --latest=false \
+      --title "Clinch $version" \
+      --notes-file "$stage/release-notes.md"
+  fi
+  verify_asset_name_set "$version" "$dist" false
+}
+
+snapshot_private_draft() {
+  local version="$1" output="$2" release_json
+  release_json="$(gh api "repos/$REPO/releases/tags/$version")" \
+    || fail "could not inspect private draft $version"
+  [[ "$(jq -r .draft <<< "$release_json")" == true ]] \
+    || fail "release $version is no longer a private draft"
+  [[ "$(jq -r .tag_name <<< "$release_json")" == "$version" ]] \
+    || fail "private draft tag changed"
+  jq -S '{id,tag_name,draft,name,body,target_commitish,assets:([.assets[] |
+    {id,name,size,updated_at,digest}] | sort_by(.name))}' <<< "$release_json" > "$output"
+}
+
+verify_remote_tag() {
+  local version="$1" commit="$2" remote_tag local_tag
+  git -c gpg.format=ssh -c gpg.ssh.allowedSignersFile="$ALLOWED_SIGNERS" \
+    verify-tag "$version"
+  [[ "$(git rev-list -n 1 "$version")" == "$commit" ]] \
+    || fail "tag $version stopped pointing to $commit"
+  remote_tag="$(git ls-remote --tags "$REMOTE" "refs/tags/$version" \
+    | awk 'NF {print $1; exit}')"
+  local_tag="$(git rev-parse "refs/tags/$version")"
+  [[ -n "$remote_tag" && "$remote_tag" == "$local_tag" ]] \
+    || fail "signed tag $version changed after verification"
+}
+
+publish_verified_draft() {
+  local version="$1" commit="$2" sequence="$3"
+  local before_download after_download before_publish
+
+  publish_tmp="$(mktemp -d "${TMPDIR:-/tmp}/clinch-release-publish.XXXXXX")"
+  mkdir -p "$publish_tmp/dist"
+  before_download="$publish_tmp/draft-before-download.json"
+  after_download="$publish_tmp/draft-after-download.json"
+  before_publish="$publish_tmp/draft-before-publish.json"
+
+  echo "==> Downloading and independently verifying the private draft"
+  snapshot_private_draft "$version" "$before_download"
+  gh release download "$version" --repo "$REPO" --dir "$publish_tmp/dist"
+  snapshot_private_draft "$version" "$after_download"
+  cmp "$before_download" "$after_download" \
+    || fail "private draft changed while its assets were downloading"
+  ./script/verify-clinch-release-stage "$publish_tmp/dist" "$version" "$commit" "$sequence"
+
+  CLINCH_REPO="$REPO" ./script/next-clinch-update-sequence verify "$version" "$sequence"
+  verify_source_state "$commit"
+  verify_remote_tag "$version" "$commit"
+  snapshot_private_draft "$version" "$before_publish"
+  cmp "$after_download" "$before_publish" \
+    || fail "private draft changed after cryptographic verification"
+
+  echo "==> Publishing the verified draft"
+  publication_started=true
+  gh release edit "$version" --repo "$REPO" --draft=false --latest >/dev/null \
+    || fail "GitHub rejected final release publication; inspect the draft before retrying"
+  publication_started=false
+  rm -rf "$publish_tmp" || true
+  publish_tmp=
+}
+
+for command in gh git make cargo cargo-nextest cargo-deny cargo-bundle cargo-about syft jq curl \
+    ssh-keygen shasum hdiutil cmp; do
+  require_command "$command" "see README release prerequisites"
+done
+[[ -x /usr/bin/python3 ]] || fail "/usr/bin/python3 is required"
+[[ "$REPO" == elliot-ylambda/clinch-terminal ]] \
+  || fail "authenticated artifacts are fixed to elliot-ylambda/clinch-terminal"
+[[ "$AUTO_VERSION" == 0 || "$AUTO_VERSION" == 1 ]] \
+  || fail "CLINCH_AUTO_VERSION must be 0 or 1"
+[[ "$QA_INTEL_SMOKE" == true || "$QA_INTEL_SMOKE" == false ]] \
+  || fail "QA_INTEL_SMOKE must be true or false"
+[[ -f "$UPDATE_KEY" ]] || fail "missing update signing key $UPDATE_KEY"
+[[ -f "$RELEASE_KEY" ]] || fail "missing release signing key $RELEASE_KEY"
+./script/clinch-update-manifest verify-key \
+  "$UPDATE_KEY" "$ROOT/resources/update/clinch-update-public-key.json" >/dev/null \
+  || fail "update signing key preflight failed"
+verify_release_key
+gh auth status >/dev/null || fail "authenticate gh before releasing"
+git remote get-url "$REMOTE" >/dev/null || fail "missing Git remote $REMOTE"
+available_kib="$(df -Pk "$ROOT" | awk 'NR == 2 {print $4}')"
+[[ "$available_kib" =~ ^[0-9]+$ ]] || fail "could not determine free disk space"
+(( available_kib >= MINIMUM_FREE_KIB )) \
+  || fail "at least 40 GiB of free disk space is required for a universal local release"
+
+./script/require-latest-main
+COMMIT_SHA="$(git rev-parse HEAD)"
+verify_source_state "$COMMIT_SHA"
 
 latest_version="$(gh api "repos/$REPO/releases/latest" --jq .tag_name)" \
   || fail "could not resolve the latest release"
 validate_version "$latest_version" || fail "latest release has invalid version '$latest_version'"
-
 if [[ -z "$REQUESTED_VERSION" || "$REQUESTED_VERSION" == auto ]]; then
   REQUESTED_VERSION="v0.$(date -u +%Y.%m.%d.%H%M)"
   AUTO_VERSION=1
@@ -129,90 +380,48 @@ fi
   && ${#TESTED_MACOS_VERSIONS} -le 200 ]] || fail "invalid tested macOS versions"
 
 confirm_manual_checks
-QA_FIRST_INSTALL=true
-QA_AUTHENTICATED_UPGRADE=true
-QA_SESSION_INTEGRATION=true
-QA_UNINSTALL=true
-QA_OFFLINE_STARTUP=true
-QA_APPLE_SILICON_SMOKE=true
 
-created_issue=false
-if [[ -z "$QA_RECORD_VALUE" || "$QA_RECORD_VALUE" == auto ]]; then
-  tester="$(gh api user --jq .login)" || fail "could not resolve the GitHub release operator"
-  [[ "$tester" =~ ^[A-Za-z0-9-]+$ ]] || fail "invalid GitHub release operator '$tester'"
-  qa_file="$(mktemp -t clinch-release-qa)"
-  trap 'rm -f "$qa_file"' EXIT
-  mac_model="$(sysctl -n hw.model 2>/dev/null || echo unknown)"
-  cpu_arch="$(uname -m)"
-  cat > "$qa_file" <<EOF
-# Clinch public-preview release QA
+echo "==> Running the complete local release gate for ${COMMIT_SHA:0:12}"
+RELEASE_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+make release-check
+verify_source_state "$COMMIT_SHA"
 
-- Version: \`$REQUESTED_VERSION\`
-- Commit: \`$COMMIT_SHA\`
-- Tester: @$tester
-- Date: $(date -u +%Y-%m-%dT%H:%M:%SZ)
-- Mac: $mac_model ($cpu_arch)
-- Tested macOS: $TESTED_MACOS_VERSIONS
-- Untested macOS versions: all others
-- Update sequence: assigned and authenticated by the release workflow
+echo "==> Deriving the authenticated update sequence"
+UPDATE_SEQUENCE="$(CLINCH_REPO="$REPO" ./script/next-clinch-update-sequence)"
+[[ "$UPDATE_SEQUENCE" =~ ^[0-9]+$ && "$UPDATE_SEQUENCE" -gt 0 ]] \
+  || fail "sequence helper returned an invalid value"
 
-## Required checks
+echo "==> Building and verifying the universal release candidate"
+make _verify \
+  VERSION="$REQUESTED_VERSION" \
+  UPDATE_SEQUENCE="$UPDATE_SEQUENCE" \
+  UNIVERSAL=1 \
+  CLINCH_UPDATE_SIGNING_KEY="$UPDATE_KEY" \
+  CLINCH_RELEASE_SIGNING_KEY="$RELEASE_KEY"
+verify_source_state "$COMMIT_SHA"
 
-- [x] The candidate update manifest and signatures authenticate with the committed Clinch keys.
-- [x] Clean manual install from the candidate DMG succeeds.
-- [x] First launch succeeds using the documented Privacy & Security approval when required.
-- [x] Authenticated manual upgrade preserves the existing app until replacement succeeds.
-- [x] Session capture is off on a clean install and first launch.
-- [x] Session capture opt-in shows the affected paths and adds only Clinch-managed entries.
-- [x] Session capture removal preserves unrelated Claude Code and Codex configuration.
-- [x] Capture purge lists and removes only the Clinch capture directory.
-- [x] App-only uninstall removes Clinch without removing capture data, provider transcripts,
-      Keychain credentials, or unrelated \`~/.warp\` data.
-- [x] Startup while offline succeeds without a Warp account, telemetry, crash-reporting, or update
-      request.
-- [x] Native Apple Silicon smoke test covers launch, a local shell, tabs/panes, settings, quit, and
-      relaunch.
-
-## Optional Intel check
-
-- [$([[ "$QA_INTEL_SMOKE" == true ]] && echo x || echo ' ')] Native Intel smoke test
-
-## Result
-
-- [x] PASS — eligible for the protected public-preview workflow
-
-Recorded by \`make release\` after explicit operator confirmation. The release workflow will
-independently run the complete source, test, lint, license, advisory, artifact, and signature gate.
-EOF
-  issue_output="$(gh issue create --repo "$REPO" \
-    --title "Release QA: $REQUESTED_VERSION" --body-file "$qa_file")" \
-    || fail "could not create the public QA record"
-  QA_RECORD_VALUE="$(printf '%s\n' "$issue_output" | awk '/^https:\/\// { url=$0 } END { print url }')"
-  [[ "$QA_RECORD_VALUE" == https://* ]] || fail "GitHub did not return a QA issue URL"
-  created_issue=true
-fi
+create_qa_record "$REQUESTED_VERSION" "$COMMIT_SHA" "$UPDATE_SEQUENCE"
 [[ -n "${QA_RECORD_VALUE//[[:space:]]/}" && ${#QA_RECORD_VALUE} -le 500 ]] \
   || fail "invalid QA record identifier"
 
-if ! gh workflow run release.yml --repo "$REPO" --ref main \
-  -f version="$REQUESTED_VERSION" \
-  -f expected_commit="$COMMIT_SHA" \
-  -f qa_record="$QA_RECORD_VALUE" \
-  -f tested_macos_versions="$TESTED_MACOS_VERSIONS" \
-  -f qa_first_install=true \
-  -f qa_authenticated_upgrade=true \
-  -f qa_session_integration=true \
-  -f qa_uninstall=true \
-  -f qa_offline_startup=true \
-  -f qa_apple_silicon_smoke=true \
-  -f qa_intel_smoke="$QA_INTEL_SMOKE"; then
-  if [[ "$created_issue" == true ]]; then
-    gh issue comment "$QA_RECORD_VALUE" --body \
-      "Release workflow dispatch failed. No release was published." >/dev/null 2>&1 || true
-  fi
-  fail "GitHub rejected the release workflow dispatch"
-fi
+echo "==> Assembling signed local release provenance and draft assets"
+STAGE="target/release-stage/$REQUESTED_VERSION"
+CLINCH_RELEASE_SIGNING_KEY="$RELEASE_KEY" \
+CLINCH_RELEASE_STARTED_AT="$RELEASE_STARTED_AT" \
+./script/assemble-clinch-release-stage \
+  "$REQUESTED_VERSION" "$COMMIT_SHA" "$UPDATE_SEQUENCE" \
+  "$QA_RECORD_VALUE" "$TESTED_MACOS_VERSIONS" "$QA_INTEL_SMOKE"
+./script/verify-clinch-release-stage \
+  "$STAGE/dist" "$REQUESTED_VERSION" "$COMMIT_SHA" "$UPDATE_SEQUENCE"
+verify_source_state "$COMMIT_SHA"
 
-echo "Dispatched the gated release workflow for $REQUESTED_VERSION."
+confirm_publication "$REQUESTED_VERSION" "$COMMIT_SHA"
+verify_source_state "$COMMIT_SHA"
+ensure_signed_remote_tag "$REQUESTED_VERSION" "$COMMIT_SHA"
+stage_private_draft "$REQUESTED_VERSION" "$COMMIT_SHA" "$STAGE"
+publish_verified_draft "$REQUESTED_VERSION" "$COMMIT_SHA" "$UPDATE_SEQUENCE"
+
+trap - EXIT
+echo "✓ Locally built, verified, signed, and published $REQUESTED_VERSION."
 echo "QA record: $QA_RECORD_VALUE"
-echo "Workflow: https://github.com/$REPO/actions/workflows/release.yml"
+echo "Release: https://github.com/$REPO/releases/tag/$REQUESTED_VERSION"

@@ -256,6 +256,13 @@ pub enum TerminalAction {
     JumpToBookmark(BlockIndex),
     OpenGridLink(GridHighlightedLink),
     OpenRichContentLink(RichContentLink),
+    #[cfg(feature = "local_fs")]
+    OpenFileWithSystemDefault(PathBuf),
+    #[cfg(all(feature = "local_fs", target_os = "macos"))]
+    OpenFileWithApplication {
+        file_path: PathBuf,
+        application_path: PathBuf,
+    },
     ToggleGridSecret {
         handle: WithinModel<SecretHandle>,
         show_secret: bool,
@@ -599,6 +606,10 @@ impl fmt::Debug for TerminalAction {
             }
             OpenGridLink(_) => f.write_str("OpenGridLink"),
             OpenRichContentLink(_) => f.write_str("OpenRichContentLink"),
+            #[cfg(feature = "local_fs")]
+            OpenFileWithSystemDefault(_) => f.write_str("OpenFileWithSystemDefault"),
+            #[cfg(all(feature = "local_fs", target_os = "macos"))]
+            OpenFileWithApplication { .. } => f.write_str("OpenFileWithApplication"),
             ToggleGridSecret { show_secret, .. } => write!(f, "ToggleGridSecret {show_secret:?}"),
             ToggleRichContentSecret { show_secret, .. } => {
                 write!(f, "ToggleRichContentSecret {show_secret:?}")

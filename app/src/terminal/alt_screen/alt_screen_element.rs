@@ -19,7 +19,7 @@ use warpui::units::{IntoLines, IntoPixels, Lines, Pixels};
 use warpui::{
     end_trace, record_trace_event, start_trace, AfterLayoutContext, AppContext, ClipBounds,
     Element, EntityId, Event, EventContext, LayoutContext, ModelHandle, PaintContext,
-    SizeConstraint,
+    SingletonEntity as _, SizeConstraint,
 };
 
 use super::{should_intercept_mouse, should_intercept_scroll};
@@ -27,8 +27,10 @@ use crate::appearance::Appearance;
 use crate::pane_group::SplitPaneState;
 use crate::settings::EnforceMinimumContrast;
 use crate::terminal::blockgrid_renderer::GridRenderParams;
+use crate::terminal::cli_agent_sessions::CLIAgentSessionsModel;
 use crate::terminal::find::TerminalFindModel;
 use crate::terminal::grid_renderer::CellGlyphCache;
+use crate::terminal::links::should_directly_open_link;
 use crate::terminal::meta_shortcuts::handle_keystroke_despite_composing;
 use crate::terminal::model::escape_sequences::{
     maybe_kitty_keyboard_escape_sequence, KeystrokeWithDetails, ToEscapeSequence,
@@ -91,6 +93,26 @@ pub struct AltScreenElement {
 }
 
 impl AltScreenElement {
+    fn is_cli_agent_session(&self, app: &AppContext) -> bool {
+        CLIAgentSessionsModel::as_ref(app)
+            .session(self.terminal_view_id)
+            .is_some()
+    }
+
+    fn should_reserve_link_click(
+        &self,
+        modifiers: &ModifiersState,
+        point: Point,
+        app: &AppContext,
+    ) -> bool {
+        should_directly_open_link(modifiers)
+            && (self.is_cli_agent_session(app)
+                || self
+                    .highlighted_url
+                    .as_ref()
+                    .is_some_and(|link| link.range().contains(&point)))
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         model: Arc<FairMutex<TerminalModel>>,
@@ -273,16 +295,20 @@ impl AltScreenElement {
             SelectionType::from_click_count(click_count)
         };
 
-        if should_intercept_mouse(&self.model.lock(), mouse_state.modifiers().shift, app) {
-            ctx.dispatch_typed_action(TerminalAction::AltSelect(SelectAction::Begin {
-                point,
-                side,
-                selection_type,
-                position: local_position,
-            }));
-        } else {
-            ctx.dispatch_typed_action(TerminalAction::MaybeClearAltSelect);
-            ctx.dispatch_typed_action(TerminalAction::AltMouseAction(mouse_state.set_point(point)));
+        if !self.should_reserve_link_click(mouse_state.modifiers(), point, app) {
+            if should_intercept_mouse(&self.model.lock(), mouse_state.modifiers().shift, app) {
+                ctx.dispatch_typed_action(TerminalAction::AltSelect(SelectAction::Begin {
+                    point,
+                    side,
+                    selection_type,
+                    position: local_position,
+                }));
+            } else {
+                ctx.dispatch_typed_action(TerminalAction::MaybeClearAltSelect);
+                ctx.dispatch_typed_action(TerminalAction::AltMouseAction(
+                    mouse_state.set_point(point),
+                ));
+            }
         }
         true
     }
@@ -300,7 +326,14 @@ impl AltScreenElement {
 
         let point = self.coord_to_point(local_position);
 
-        if should_intercept_mouse(&self.model.lock(), mouse_state.modifiers().shift, app) {
+        let is_over_link = self
+            .highlighted_url
+            .as_ref()
+            .is_some_and(|link| link.range().contains(&point));
+        if self.is_cli_agent_session(app)
+            || is_over_link
+            || should_intercept_mouse(&self.model.lock(), mouse_state.modifiers().shift, app)
+        {
             ctx.dispatch_typed_action(TerminalAction::AltScreenContextMenu {
                 position: local_position,
             });
@@ -398,7 +431,9 @@ impl AltScreenElement {
             ctx.dispatch_typed_action(TerminalAction::AltSelect(SelectAction::End));
         }
 
-        if !should_intercept_mouse(&self.model.lock(), mouse_state.modifiers().shift, app) {
+        if !self.should_reserve_link_click(mouse_state.modifiers(), point, app)
+            && !should_intercept_mouse(&self.model.lock(), mouse_state.modifiers().shift, app)
+        {
             ctx.dispatch_typed_action(TerminalAction::AltMouseAction(mouse_state.set_point(point)));
         }
 

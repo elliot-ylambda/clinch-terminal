@@ -1,7 +1,7 @@
 # Clinch public-preview build flow.
 #
 #   make candidate                    Build and verify locally; never publish.
-#   make release                      Confirm QA once, record it, and dispatch the protected workflow.
+#   make release                      Build, sign, verify the uploaded draft, and publish locally.
 #   make update                       Install the latest authenticated public release manually.
 #   make dev                          Build and run isolated Clinch Dev.
 
@@ -43,7 +43,7 @@ SKIP_DMG_APPLESCRIPT       ?= 1
 export SKIP_DMG_APPLESCRIPT
 
 define RELEASE_NOTES
-Clinch $(VERSION) is an unnotarized public preview for macOS 13 or later on Intel and Apple Silicon.
+Clinch $(VERSION) is an unnotarized public preview for macOS 14 or later on Intel and Apple Silicon.
 
 Download Clinch.dmg, authenticate Clinch.checksums.txt with Clinch.checksums.sshsig, compare the
 DMG SHA-256, and drag Clinch to Applications. Then use System Settings > Privacy & Security >
@@ -52,7 +52,8 @@ a secondary convenience.
 
 Session capture and provider plugins are off by default. Enable session capture from Clinch
 Settings only if you want Clinch to add managed Claude Code and Codex hooks. Automatic updates are
-disabled for this preview; install a newer authenticated release manually.
+disabled for this preview; install a newer authenticated release manually. Two-way iMessage is
+optional and local; setup requires Messages Automation and Full Disk Access on the Mac.
 endef
 export RELEASE_NOTES
 
@@ -118,8 +119,10 @@ candidate: release-check ## Build and verify a universal candidate without publi
 	$(MAKE) _verify VERSION="$(VERSION)" UPDATE_SEQUENCE="$$sequence" UNIVERSAL="$(UNIVERSAL)"
 	@echo "✓ Verified local candidate $(VERSION). No tag or release was created."
 
-release: ## Confirm manual QA, create its public record, and dispatch the protected workflow
+release: ## Build, sign, remotely verify, and publish without GitHub Actions
 	@CLINCH_REPO="$(CLINCH_REPO)" \
+	  CLINCH_UPDATE_SIGNING_KEY="$(CLINCH_UPDATE_SIGNING_KEY)" \
+	  CLINCH_RELEASE_SIGNING_KEY="$(CLINCH_RELEASE_SIGNING_KEY)" \
 	  VERSION="$(VERSION)" \
 	  CLINCH_AUTO_VERSION="$(CLINCH_AUTO_VERSION)" \
 	  QA_RECORD="$(QA_RECORD)" \
@@ -140,5 +143,5 @@ update: ## Install the latest authenticated public release (Clinch must be quit)
 agent-resume-enable: ## Explicitly enable local Claude/Codex session capture
 	bash tools/agent-resume/install.sh enable
 
-configure-release-repository: ## Apply GitHub branch, secret-scanning, and immutable-release policy
+configure-release-repository: ## Apply GitHub branch, scanning, and local-release policy
 	./script/configure-clinch-release-repository

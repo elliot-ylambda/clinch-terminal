@@ -33,6 +33,7 @@ if [ "$WARP_CHANNEL" = "local" ]; then
     WARP_APP_PATH="${TARGET_DIR}/debug/bundle/osx/ClinchDev.app"
     WARP_SCHEME_NAME="clinchdev"
     WARP_DISPLAY_NAME="Clinch Dev"
+    export MACOSX_DEPLOYMENT_TARGET="${CLINCH_MINIMUM_MACOS_VERSION:-14.0}"
 else
     WARP_APP_PATH="${TARGET_DIR}/debug/bundle/osx/WarpOss.app"
     WARP_SCHEME_NAME="warposs"
@@ -136,6 +137,11 @@ NO_LICENSES=1 "${REPO_ROOT}/script/prepare_bundled_resources" "$WARP_APP_PATH/Co
 
 "${REPO_ROOT}/script/compile_icon" "$WARP_CHANNEL" "$WARP_APP_PATH"
 
+if [ "$WARP_CHANNEL" = "local" ]; then
+  echo "Bundling the Clinch iMessage bridge..."
+  "${REPO_ROOT}/script/build-clinch-imessage-bridge" "$WARP_APP_PATH/Contents/Helpers"
+fi
+
 if [[ ",$FEATURES," =~ ",heap_usage_tracking," ]]; then
   echo "Bundling pprof..."
   HELPERS_DIR="$WARP_APP_PATH/Contents/Helpers"
@@ -153,6 +159,13 @@ fi
 echo "Codesigning app..."
 SIGNING_CERT="$(security find-identity -p codesigning -v | grep "Apple Development" | awk '{print $2}' | head -1)"
 codesign --force --deep --options runtime --sign "${SIGNING_CERT:--}" "$WARP_APP_PATH" --entitlements script/Debug-Entitlements.plist
+if [[ -x "$WARP_APP_PATH/Contents/Helpers/clinch-imessage-bridge" ]]; then
+  codesign --force --options runtime --sign "${SIGNING_CERT:--}" \
+    --entitlements script/Debug-Entitlements.plist \
+    "$WARP_APP_PATH/Contents/Helpers/clinch-imessage-bridge"
+  codesign --force --options runtime --sign "${SIGNING_CERT:--}" \
+    --entitlements script/Debug-Entitlements.plist "$WARP_APP_PATH"
+fi
 
 if [ "$DONT_OPEN" = false ] ; then
     if  [ "$OPEN_WITH_LAUNCHD" = true ]; then

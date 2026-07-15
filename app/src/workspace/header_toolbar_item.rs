@@ -33,6 +33,7 @@ pub enum HeaderToolbarItemKind {
     ToolsPanel,
     AgentManagement,
     CodeReview,
+    IMessageStatus,
     NotificationsMailbox,
 }
 
@@ -46,6 +47,7 @@ impl HeaderToolbarItemKind {
             Self::ToolsPanel => "Tools Panel",
             Self::AgentManagement => "Agent Management",
             Self::CodeReview => "Code Review",
+            Self::IMessageStatus => "iMessage Status",
             Self::NotificationsMailbox => "Notifications",
         }
     }
@@ -59,6 +61,7 @@ impl HeaderToolbarItemKind {
             Self::ToolsPanel => Icon::Tool2,
             Self::AgentManagement => Icon::Grid,
             Self::CodeReview => Icon::Diff,
+            Self::IMessageStatus => Icon::Phone01,
             Self::NotificationsMailbox => Icon::Inbox,
         }
     }
@@ -86,6 +89,7 @@ impl HeaderToolbarItemKind {
                     && !is_web_anonymous_user
             }
             Self::CodeReview => cfg!(feature = "local_fs"),
+            Self::IMessageStatus => cfg!(target_os = "macos"),
             // Clinch does not surface agent notifications. Keep this variant so
             // older serialized toolbar settings still deserialize successfully.
             Self::NotificationsMailbox => false,
@@ -101,6 +105,7 @@ impl HeaderToolbarItemKind {
         match self {
             Self::FileExplorer => *CodeSettings::as_ref(app).show_project_explorer,
             Self::CodeReview => *TabSettings::as_ref(app).show_code_review_button.value(),
+            Self::IMessageStatus => true,
             Self::NotificationsMailbox => *AISettings::as_ref(app).show_agent_notifications,
             Self::TabsPanel
             | Self::Skills
@@ -138,7 +143,7 @@ impl HeaderToolbarItemKind {
     }
 
     pub fn default_right() -> Vec<Self> {
-        vec![Self::CodeReview]
+        vec![Self::IMessageStatus, Self::CodeReview]
     }
 
     /// Toolbar items offered by Clinch's configurator (availability filtering
@@ -152,6 +157,7 @@ impl HeaderToolbarItemKind {
             Self::ToolsPanel,
             Self::AgentManagement,
             Self::CodeReview,
+            Self::IMessageStatus,
         ]
     }
 }

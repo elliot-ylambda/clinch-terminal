@@ -6,7 +6,8 @@ use tempfile::TempDir;
 
 use super::{
     detect_current_branch, detect_current_branch_display, get_pr_for_branch, is_gh_auth_error,
-    is_gh_missing_error, RepositoryInfo,
+    is_gh_missing_error, primary_worktree_root_sync, resolve_main_worktree_base_ref_sync,
+    RepositoryInfo,
 };
 
 /// Helper: run a git command inside the given repo directory.
@@ -113,6 +114,61 @@ async fn init_repo() -> (TempDir, std::path::PathBuf) {
     git(&path, &["commit", "--allow-empty", "-m", "initial"]).await;
 
     (dir, path)
+}
+
+#[cfg(feature = "local_fs")]
+#[tokio::test]
+async fn automatic_worktree_preflight_resolves_primary_checkout_and_main() {
+    let (_dir, repo) = init_repo().await;
+    let linked_worktree = repo.join("linked-worktree");
+    let linked_worktree_arg = linked_worktree.to_string_lossy().into_owned();
+    git(
+        &repo,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "feature",
+            &linked_worktree_arg,
+            "main",
+        ],
+    )
+    .await;
+
+    let canonical_repo = dunce::canonicalize(&repo).unwrap();
+    assert_eq!(
+        primary_worktree_root_sync(&repo),
+        Some(canonical_repo.clone())
+    );
+    assert_eq!(
+        primary_worktree_root_sync(&linked_worktree),
+        Some(canonical_repo)
+    );
+    assert_eq!(
+        resolve_main_worktree_base_ref_sync(&linked_worktree).as_deref(),
+        Some("main")
+    );
+}
+
+#[cfg(feature = "local_fs")]
+#[tokio::test]
+async fn automatic_worktree_preflight_uses_origin_main_then_rejects_missing_main() {
+    let (_dir, repo) = init_repo().await;
+    git(&repo, &["checkout", "-b", "feature"]).await;
+    git(&repo, &["update-ref", "refs/remotes/origin/main", "HEAD"]).await;
+    git(&repo, &["branch", "-D", "main"]).await;
+
+    assert_eq!(
+        resolve_main_worktree_base_ref_sync(&repo).as_deref(),
+        Some("origin/main")
+    );
+
+    git(&repo, &["update-ref", "-d", "refs/remotes/origin/main"]).await;
+    assert_eq!(resolve_main_worktree_base_ref_sync(&repo), None);
+    assert_eq!(
+        primary_worktree_root_sync(_dir.path().join("missing").as_path()),
+        None
+    );
 }
 
 #[cfg(all(feature = "local_fs", unix))]

@@ -66,6 +66,8 @@ use crate::context_chips::display_chip::{DisplayChip, DisplayChipConfig, PromptC
 use crate::context_chips::prompt_type::PromptType;
 use crate::context_chips::{self, ContextChipKind};
 use crate::features::FeatureFlag;
+#[cfg(target_os = "macos")]
+use crate::imessage::{IMessageCoordinator, IMessageCoordinatorEvent};
 use crate::network::NetworkStatus;
 use crate::send_telemetry_from_ctx;
 #[cfg(feature = "voice_input")]
@@ -108,6 +110,7 @@ use crate::terminal::view::TerminalAction;
 use crate::terminal::ShellLaunchData;
 use crate::terminal::{CLIAgent, TerminalModel};
 use crate::ui_components::icons::Icon;
+use crate::ui_components::CLINCH_LOGO_GREEN;
 use crate::view_components::action_button::{
     ActionButton, ActionButtonTheme, AdjoinedSide, ButtonSize, KeystrokeSource, NakedTheme,
     TooltipAlignment,
@@ -235,6 +238,8 @@ pub struct AgentInputFooter {
     quick_insert_add_button: ViewHandle<ActionButton>,
     rich_input_button: ViewHandle<ActionButton>,
     settings_button: ViewHandle<ActionButton>,
+    #[cfg(target_os = "macos")]
+    message_me_button: ViewHandle<ActionButton>,
     install_plugin_button: ViewHandle<ActionButton>,
     plugin_instructions_button: ViewHandle<ActionButton>,
     update_plugin_button: ViewHandle<ActionButton>,
@@ -468,7 +473,7 @@ impl AgentInputFooter {
                 })
         });
         let quick_insert_add_button = ctx.add_typed_action_view(|_ctx| {
-            ActionButton::new("Add", AgentInputButtonTheme)
+            ActionButton::new("Add", QuickInsertAddButtonTheme)
                 .with_icon(Icon::Plus)
                 .with_tooltip("Add quick-insert button")
                 .with_size(cli_button_size)
@@ -502,6 +507,37 @@ impl AgentInputFooter {
                     ctx.dispatch_typed_action(AgentInputFooterAction::OpenCodingAgentSettings);
                 })
         });
+
+        #[cfg(target_os = "macos")]
+        let message_me_button = ctx.add_typed_action_view(|_ctx| {
+            ActionButton::new("Message me", AgentInputButtonTheme)
+                .with_icon(Icon::Phone01)
+                .with_tooltip("Text this iPhone when the agent finishes")
+                .with_size(cli_button_size)
+                .with_tooltip_alignment(TooltipAlignment::Left)
+                .on_click(|ctx| {
+                    ctx.dispatch_typed_action(AgentInputFooterAction::ToggleIMessageNotifications);
+                })
+        });
+
+        #[cfg(target_os = "macos")]
+        let imessage_terminal_view_id = terminal_view_id;
+        #[cfg(target_os = "macos")]
+        ctx.subscribe_to_model(
+            &IMessageCoordinator::handle(ctx),
+            move |me, _, event, ctx| {
+                let relevant = matches!(event, IMessageCoordinatorEvent::Changed)
+                    || matches!(
+                        event,
+                        IMessageCoordinatorEvent::SessionChanged { terminal_view_id: event_view_id }
+                            if *event_view_id == imessage_terminal_view_id
+                    );
+                if relevant {
+                    me.sync_message_me_button(ctx);
+                    ctx.notify();
+                }
+            },
+        );
 
         let install_plugin_button = ctx.add_typed_action_view(|_ctx| {
             ActionButton::new("Enable notifications", InstallPluginButtonTheme)
@@ -924,6 +960,8 @@ impl AgentInputFooter {
             quick_insert_add_button,
             rich_input_button,
             settings_button,
+            #[cfg(target_os = "macos")]
+            message_me_button,
             start_remote_control_button,
             stop_remote_control_button,
             install_plugin_button,
@@ -966,6 +1004,8 @@ impl AgentInputFooter {
         };
         me.sync_fast_forward_button(ctx);
         me.sync_remote_control_button(ctx);
+        #[cfg(target_os = "macos")]
+        me.sync_message_me_button(ctx);
         me.update_context_window_button(ctx);
         me.update_display_chips(&prompt, ctx);
         me.update_ftu_callout_render_state(ctx);
@@ -1106,6 +1146,45 @@ impl AgentInputFooter {
         CLIAgentSessionsModel::as_ref(app)
             .session(self.terminal_view_id)
             .map(|session| session.agent)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn sync_message_me_button(&mut self, ctx: &mut ViewContext<Self>) {
+        let coordinator = IMessageCoordinator::as_ref(ctx);
+        let configuration = coordinator.configuration();
+        let route_id = coordinator
+            .route_id_for_view(self.terminal_view_id)
+            .map(ToString::to_string);
+        let session_enabled = coordinator.is_session_enabled(self.terminal_view_id);
+        let (label, tooltip) = if !configuration.setup_complete {
+            (
+                "Set up Message me".to_owned(),
+                "Connect your iPhone in Clinch Settings".to_owned(),
+            )
+        } else if !configuration.enabled {
+            (
+                "Message me: off".to_owned(),
+                "iMessage notifications are off globally; open Clinch Settings".to_owned(),
+            )
+        } else if session_enabled {
+            (
+                route_id
+                    .map(|route_id| format!("Message me · {route_id}"))
+                    .unwrap_or_else(|| "Message me: on".to_owned()),
+                "Text this iPhone when this agent finishes; click to opt this session out"
+                    .to_owned(),
+            )
+        } else {
+            (
+                "Message me: off".to_owned(),
+                "Click to text this iPhone when this agent finishes".to_owned(),
+            )
+        };
+        self.message_me_button.update(ctx, |button, ctx| {
+            button.set_label(label, ctx);
+            button.set_tooltip(Some(tooltip), ctx);
+            button.set_active(session_enabled, ctx);
+        });
     }
 
     fn is_cli_agent_session_active(&self, app: &AppContext) -> bool {
@@ -1558,7 +1637,7 @@ impl AgentInputFooter {
                     .clone();
                 let text = text.clone();
                 Some(
-                    ActionButton::new(label.clone(), AgentInputButtonTheme)
+                    ActionButton::new(label.clone(), QuickInsertButtonTheme)
                         .with_icon(Icon::Play)
                         .with_size(ButtonSize::AgentInputButtonLarge)
                         .with_tooltip(format!("Insert: {text}"))
@@ -1800,6 +1879,14 @@ impl AgentInputFooter {
             ) {
                 right_buttons.add_child(element);
             }
+        }
+
+        #[cfg(target_os = "macos")]
+        if IMessageCoordinator::as_ref(app)
+            .route_id_for_view(self.terminal_view_id)
+            .is_some()
+        {
+            right_buttons.add_child(ChildView::new(&self.message_me_button).finish());
         }
 
         let content = Wrap::row()
@@ -2670,6 +2757,8 @@ pub enum AgentInputFooterAction {
     StartRemoteControl,
     StopRemoteControl,
     OpenCodingAgentSettings,
+    #[cfg(target_os = "macos")]
+    ToggleIMessageNotifications,
     /// User clicked the "Hand off to cloud" footer chip. The terminal `Input`
     /// subscriber decides whether to dispatch the immediate empty-prompt
     /// handoff or enter `&` compose mode based on the current input state.
@@ -2942,6 +3031,20 @@ impl TypedActionView for AgentInputFooter {
                     widget_id: crate::settings_view::cli_agent_settings_widget_id(),
                 });
             }
+            #[cfg(target_os = "macos")]
+            AgentInputFooterAction::ToggleIMessageNotifications => {
+                let configuration = IMessageCoordinator::as_ref(ctx).configuration();
+                if configuration.setup_complete && configuration.enabled {
+                    let terminal_view_id = self.terminal_view_id;
+                    IMessageCoordinator::handle(ctx).update(ctx, |coordinator, ctx| {
+                        coordinator.toggle_session(terminal_view_id, ctx);
+                    });
+                } else {
+                    ctx.dispatch_typed_action_deferred(WorkspaceAction::ShowSettingsPage(
+                        SettingsSection::Clinch,
+                    ));
+                }
+            }
             AgentInputFooterAction::HandoffChipClicked => {
                 if FeatureFlag::OzHandoff.is_enabled()
                     && FeatureFlag::HandoffLocalCloud.is_enabled()
@@ -3066,6 +3169,66 @@ impl ActionButtonTheme for AgentInputButtonTheme {
         } else {
             None
         }
+    }
+}
+
+/// More prominent outlined theme for user-created quick-insert buttons.
+struct QuickInsertButtonTheme;
+
+impl ActionButtonTheme for QuickInsertButtonTheme {
+    fn background(&self, hovered: bool, appearance: &Appearance) -> Option<Fill> {
+        AgentInputButtonTheme.background(hovered, appearance)
+    }
+
+    fn text_color(
+        &self,
+        hovered: bool,
+        background: Option<Fill>,
+        appearance: &Appearance,
+    ) -> ColorU {
+        AgentInputButtonTheme.text_color(hovered, background, appearance)
+    }
+
+    fn border(&self, appearance: &Appearance) -> Option<ColorU> {
+        Some(appearance.theme().outline().into_solid())
+    }
+
+    fn should_opt_out_of_contrast_adjustment(&self) -> bool {
+        AgentInputButtonTheme.should_opt_out_of_contrast_adjustment()
+    }
+
+    fn font_properties(&self) -> Option<warpui::fonts::Properties> {
+        AgentInputButtonTheme.font_properties()
+    }
+}
+
+/// Call-to-action variant matching the green outline on active project tabs.
+struct QuickInsertAddButtonTheme;
+
+impl ActionButtonTheme for QuickInsertAddButtonTheme {
+    fn background(&self, hovered: bool, appearance: &Appearance) -> Option<Fill> {
+        AgentInputButtonTheme.background(hovered, appearance)
+    }
+
+    fn text_color(
+        &self,
+        hovered: bool,
+        background: Option<Fill>,
+        appearance: &Appearance,
+    ) -> ColorU {
+        AgentInputButtonTheme.text_color(hovered, background, appearance)
+    }
+
+    fn border(&self, _appearance: &Appearance) -> Option<ColorU> {
+        Some(CLINCH_LOGO_GREEN)
+    }
+
+    fn should_opt_out_of_contrast_adjustment(&self) -> bool {
+        AgentInputButtonTheme.should_opt_out_of_contrast_adjustment()
+    }
+
+    fn font_properties(&self) -> Option<warpui::fonts::Properties> {
+        AgentInputButtonTheme.font_properties()
     }
 }
 

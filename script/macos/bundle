@@ -346,9 +346,10 @@ elif [[ $RELEASE_CHANNEL = "stable" ]]; then
     WARP_APP_NAME="Clinch"
     WARP_DISPLAY_NAME="$WARP_APP_NAME"
     WARP_SCHEME_NAME="clinch"
-    # Public Clinch support begins at macOS 13. Keep the binary deployment target, plist, signed
+    # Two-way Messages integration uses macOS 14 APIs and its pinned database reader requires 14.
+    # Keep the binary deployment target, plist, signed
     # release manifest, installer, and website on one explicit value.
-    export MACOSX_DEPLOYMENT_TARGET="${CLINCH_MINIMUM_MACOS_VERSION:-13.0}"
+    export MACOSX_DEPLOYMENT_TARGET="${CLINCH_MINIMUM_MACOS_VERSION:-14.0}"
     # Clinch fork: intentionally omit jemalloc_pprof/heap_usage_tracking. They are Warp-internal
     # profiling features that bundle the Go-based pprof binary (script/prepare_bundled_pprof runs
     # `go tool -n pprof`), which would force a Go toolchain into this otherwise dependency-light,
@@ -577,6 +578,10 @@ if [[ "$ARTIFACT" == "app" ]]; then
   "$WORKSPACE_ROOT_DIR/script/compile_icon" "$RELEASE_CHANNEL" "$BUNDLE_DIR/$WARP_APP_NAME.app"
 
   HELPERS_DIR="$BUNDLE_DIR/$WARP_APP_NAME.app/Contents/Helpers"
+  if [[ "$BUNDLE_ID" == "sh.clinch.Clinch" || "$BUNDLE_ID" == "sh.clinch.ClinchDev" ]]; then
+    echo "Bundling the universal Clinch iMessage bridge..."
+    "$WORKSPACE_ROOT_DIR/script/build-clinch-imessage-bridge" "$HELPERS_DIR" --universal
+  fi
   if [[ ",$FEATURES," =~ ",heap_usage_tracking," ]]; then
     echo "Bundling pprof..."
     "$WORKSPACE_ROOT_DIR/script/prepare_bundled_pprof" "$HELPERS_DIR"
@@ -739,7 +744,7 @@ fi
 if [[ $SELFSIGN = true ]]; then
   if [[ "$BUNDLE_ID" == "sh.clinch.Clinch" || "$BUNDLE_ID" == "sh.clinch.ClinchDev" ]]; then
     # The no-fee public preview has no Apple-issued distribution identity. Always produce the
-    # same ad-hoc identity unless an explicit identity is supplied by a future release workflow.
+    # same ad-hoc identity unless an explicit identity is supplied by a future release process.
     SIGNING_CERT="${CLINCH_CODESIGN_IDENTITY:--}"
     SIGNING_ENTITLEMENTS="script/Clinch-Entitlements.plist"
     echo "Signing Clinch with the public-preview identity '${SIGNING_CERT}'."
@@ -763,7 +768,18 @@ if [[ $SELFSIGN = true ]]; then
   # code be injected into a process holding Keychain access.
   if [[ "$ARTIFACT" == app ]]; then
     echo "Self-signing $BUNDLE_DIR/$WARP_APP_NAME.app with ${SIGNING_CERT}..."
+    # The first deep pass signs inherited nested code. The Messages helper is
+    # then re-signed with its required Apple Events entitlement, followed by a
+    # final outer-app pass so the bundle seal authenticates that exact helper.
     codesign --force --deep --options runtime --sign "$SIGNING_CERT" "$BUNDLE_DIR/$WARP_APP_NAME.app" --entitlements "$SIGNING_ENTITLEMENTS"
+    if [[ -x "$BUNDLE_DIR/$WARP_APP_NAME.app/Contents/Helpers/clinch-imessage-bridge" ]]; then
+      codesign --force --options runtime --sign "$SIGNING_CERT" \
+        --entitlements "$SIGNING_ENTITLEMENTS" \
+        "$BUNDLE_DIR/$WARP_APP_NAME.app/Contents/Helpers/clinch-imessage-bridge"
+      codesign --force --options runtime --sign "$SIGNING_CERT" \
+        --entitlements "$SIGNING_ENTITLEMENTS" \
+        "$BUNDLE_DIR/$WARP_APP_NAME.app"
+    fi
   elif [[ "$ARTIFACT" == cli || "$ARTIFACT" == warpctrl ]]; then
     echo "Self-signing $OUT_DIR/$WARP_BIN with ${SIGNING_CERT}..."
     codesign --force --options runtime --sign "$SIGNING_CERT" "$OUT_DIR/$WARP_BIN" --entitlements "$SIGNING_ENTITLEMENTS"
@@ -776,8 +792,17 @@ elif [[ $CODESIGN = true ]]; then
   fi
   if [[ "$ARTIFACT" == app ]]; then
     echo "Codesigning $BUNDLE_DIR/$WARP_APP_NAME.app..."
-    # Use --deep so we sign bundled frameworks as well
+    # Deep-sign inherited nested code first, then put the Apple Events
+    # entitlement back on the Messages helper and refresh the outer seal.
     codesign --deep -f -o runtime --timestamp -s "$APPLE_TEAM_ID" "$BUNDLE_DIR/$WARP_APP_NAME.app" --entitlements "$SIGNING_ENTITLEMENTS"
+    if [[ -x "$BUNDLE_DIR/$WARP_APP_NAME.app/Contents/Helpers/clinch-imessage-bridge" ]]; then
+      codesign --force --options runtime --timestamp --sign "$APPLE_TEAM_ID" \
+        --entitlements "$SIGNING_ENTITLEMENTS" \
+        "$BUNDLE_DIR/$WARP_APP_NAME.app/Contents/Helpers/clinch-imessage-bridge"
+      codesign --force --options runtime --timestamp --sign "$APPLE_TEAM_ID" \
+        --entitlements "$SIGNING_ENTITLEMENTS" \
+        "$BUNDLE_DIR/$WARP_APP_NAME.app"
+    fi
   elif [[ "$ARTIFACT" == cli || "$ARTIFACT" == warpctrl ]]; then
     echo "Codesigning $OUT_DIR/$WARP_BIN..."
     codesign -f -o runtime --timestamp -s "$APPLE_TEAM_ID" "$OUT_DIR/$WARP_BIN" --entitlements "$SIGNING_ENTITLEMENTS"

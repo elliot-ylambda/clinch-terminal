@@ -971,6 +971,9 @@ pub const DOGFOOD_FLAGS: &[FeatureFlag] = &[
     FeatureFlag::PromptCacheExpiryWarning,
     FeatureFlag::PinnedTabs,
     FeatureFlag::ContextWindowUsageBreakdown,
+    // Launched features still need an explicit dogfood entry because local/dev
+    // builds do not enable RELEASE_FLAGS.
+    FeatureFlag::CliAgentQuickInsertButtons,
 ];
 
 /// Features enabled for feature preview build users (e.g.: Friends of Warp).

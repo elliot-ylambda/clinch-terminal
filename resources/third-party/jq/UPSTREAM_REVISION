@@ -1,0 +1,9 @@
+jq-1.8.2 https://github.com/jqlang/jq/releases/tag/jq-1.8.2
+jq-macos-amd64 e94b266e3c26690550006abe63152b782280f4e14374accdf04cbde844f00bc0
+jq-macos-arm64 2d75340ba57a4b4b4c8708a21c2dc8e958a48aaa8bba13b27f77f6e4c0eca07e
+jq-macos-universal eb354eaaaa11a4ba35850482848534509ae5bf6278fc0ab4b6bafddd046dec51
+
+Constructed from the two verified official assets with:
+  lipo -create jq-macos-amd64 jq-macos-arm64 -output jq
+  chmod 0755 jq
+  codesign --force --sign - jq

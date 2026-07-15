@@ -92,6 +92,12 @@ if [ "$(uname -s)" = "Darwin" ]; then
   install -m 0755 "$AGENT_RESUME_SRC/clinch_agent_resume_launch" \
     "$DEST_DIR/bin/warp_agent_resume_launch"
 
+  # The pinned Claude/Codex notification hooks use jq. Put a universal, release-pinned binary on
+  # the PATH that Clinch appends to every local pane so plugin setup stays zero-dependency.
+  install -m 0755 \
+    "$REPO_ROOT/resources/third-party/jq/jq-macos-universal" \
+    "$DEST_DIR/bin/jq"
+
   # The public preview uses authenticated manual updates. Do not ship the privileged update
   # authorizer/helper until its atomic swap and root-owned control state have been redesigned.
   rm -rf "$DEST_DIR/update"
@@ -130,6 +136,12 @@ ADDITIONAL_LICENSES=(
     "Roboto Font|SIL Open Font License|app/assets/bundled/fonts/roboto/LICENSE.txt"
     "bash-preexec|MIT|app/assets/bundled/bootstrap/bash-preexec-LICENSE.md"
     "Claude API Skill|Apache-2.0|resources/bundled/skills/claude-api/LICENSE.txt"
+    "Warp Claude Code Plugin|MIT|resources/bundled/agent-plugins/claude-code-warp/LICENSE"
+    "Warp Codex Plugin|MIT|resources/bundled/agent-plugins/codex-warp/LICENSE"
+    "IMsgCore|MIT|tools/imessage-bridge/LICENSE-IMSG"
+    "PhoneNumberKit|MIT|tools/imessage-bridge/LICENSE-PHONENUMBERKIT"
+    "SQLite.swift|MIT|tools/imessage-bridge/LICENSE-SQLITE-SWIFT"
+    "jq|MIT and bundled notices|resources/third-party/jq/COPYING"
     "rudder-sdk-rust|MIT|app/src/server/telemetry/LICENSE-RUDDER-SDK-RUST.txt"
     "Windows Terminal|MIT|app/assets/windows/LICENSE-WINDOWS-TERMINAL"
     "GitHub Desktop|MIT|app/src/code_review/GITHUB-DESKTOP-LICENSE"

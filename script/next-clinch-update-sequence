@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Computes a sequence strictly newer than the latest authenticated Clinch release.
+# Computes or verifies values strictly newer than the latest authenticated release.
 set -euo pipefail
 
 REPO="${CLINCH_REPO:-elliot-ylambda/clinch-terminal}"
 API="https://api.github.com/repos/$REPO"
 ALLOWED_SIGNERS="resources/release/clinch-release-allowed-signers"
-TMP="$(mktemp -d -t clinch-sequence)"
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/clinch-sequence.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 
 fail() { echo "sequence check failed: $*" >&2; exit 1; }
@@ -22,15 +22,14 @@ if ! download "$TMP/latest.json" "$API/releases/latest"; then
   fail "could not resolve the latest release"
 fi
 
-tag="$(/usr/bin/osascript -l JavaScript - "$TMP/latest.json" <<'JXA'
-ObjC.import("Foundation");
-function run(argv) {
-  const text = $.NSString.stringWithContentsOfFileEncodingError(argv[0], $.NSUTF8StringEncoding, null);
-  const value = JSON.parse(ObjC.unwrap(text));
-  if (!value || typeof value.tag_name !== "string") throw new Error("missing tag_name");
-  return value.tag_name;
-}
-JXA
+tag="$(/usr/bin/python3 - "$TMP/latest.json" <<'PY'
+import json, pathlib, sys
+value = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+tag = value.get("tag_name")
+if not isinstance(tag, str):
+    raise SystemExit("missing tag_name")
+print(tag)
+PY
 )" || fail "latest release response is invalid"
 [[ "$tag" =~ ^v[0-9][0-9A-Za-z._-]*$ ]] || fail "latest release has unsafe tag '$tag'"
 
@@ -50,18 +49,48 @@ else
     || fail "latest release raw manifest signature is invalid"
 fi
 
-previous="$(/usr/bin/osascript -l JavaScript - "$TMP/manifest" <<'JXA'
-ObjC.import("Foundation");
-function run(argv) {
-  const text = $.NSString.stringWithContentsOfFileEncodingError(argv[0], $.NSUTF8StringEncoding, null);
-  const value = JSON.parse(ObjC.unwrap(text));
-  if (!value || !Number.isSafeInteger(value.sequence) || value.sequence < 1) {
-    throw new Error("invalid sequence");
-  }
-  return String(value.sequence);
-}
-JXA
+previous="$(/usr/bin/python3 - "$TMP/manifest" <<'PY'
+import json, pathlib, sys
+value = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+sequence = value.get("sequence")
+if not isinstance(sequence, int) or isinstance(sequence, bool) or sequence < 1:
+    raise SystemExit("invalid sequence")
+print(sequence)
+PY
 )" || fail "latest authenticated manifest has an invalid sequence"
+
+if [[ "${1:-}" == verify ]]; then
+  requested_version="${2:?usage: next-clinch-update-sequence verify <version> <sequence>}"
+  requested_sequence="${3:?missing requested sequence}"
+  [[ $# -eq 3 ]] || fail "usage: next-clinch-update-sequence verify <version> <sequence>"
+  [[ "$requested_version" =~ ^v[0-9]+(\.[0-9]+)+$ ]] \
+    || fail "requested version has invalid syntax"
+  [[ "$requested_sequence" =~ ^[0-9]+$ && "$requested_sequence" -gt 0 ]] \
+    || fail "requested sequence is invalid"
+  /usr/bin/python3 - "$tag" "$requested_version" <<'PY' \
+    || fail "requested version $requested_version is not newer than $tag"
+import sys
+
+
+def parts(value):
+    return tuple(int(piece) for piece in value.removeprefix("v").split("."))
+
+
+left = parts(sys.argv[1])
+right = parts(sys.argv[2])
+width = max(len(left), len(right))
+left += (0,) * (width - len(left))
+right += (0,) * (width - len(right))
+if right <= left:
+    raise SystemExit(1)
+PY
+  (( requested_sequence > previous )) \
+    || fail "requested sequence $requested_sequence is not newer than $previous"
+  echo "✓ $requested_version sequence $requested_sequence is newer than $tag sequence $previous"
+  exit 0
+fi
+
+[[ $# -eq 0 ]] || fail "usage: next-clinch-update-sequence [verify <version> <sequence>]"
 
 now="$(date +%s)"
 if (( now > previous )); then

@@ -1,0 +1,266 @@
+#!/usr/bin/env bash
+# Assembles, signs, and verifies the exact draft-release asset set locally.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
+
+VERSION="${1:?usage: assemble-clinch-release-stage <version> <commit> <sequence> <qa-record> <tested-macos> <intel-smoke>}"
+COMMIT="${2:?missing commit}"
+UPDATE_SEQUENCE="${3:?missing sequence}"
+QA_RECORD="${4:?missing QA record}"
+QA_TESTED_MACOS_VERSIONS="${5:?missing tested macOS versions}"
+QA_INTEL_SMOKE="${6:?missing Intel smoke result}"
+
+STABLE_APP="target/release-lto/bundle/osx/Clinch.app"
+RELEASE_DIR="target/release-lto/bundle/osx"
+STAGE="target/release-stage/$VERSION"
+DIST="$STAGE/dist"
+ALLOWED_SIGNERS="resources/release/clinch-release-allowed-signers"
+RELEASE_KEY="${CLINCH_RELEASE_SIGNING_KEY:-$HOME/.config/clinch/release-signing-key}"
+
+fail() {
+  echo "release staging failed: $*" >&2
+  exit 1
+}
+
+[[ "$VERSION" =~ ^v[0-9]+(\.[0-9]+)+$ ]] || fail "invalid version $VERSION"
+[[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]] || fail "invalid commit"
+[[ "$UPDATE_SEQUENCE" =~ ^[0-9]+$ && "$UPDATE_SEQUENCE" -gt 0 ]] \
+  || fail "invalid update sequence"
+[[ "$QA_INTEL_SMOKE" == true || "$QA_INTEL_SMOKE" == false ]] \
+  || fail "QA_INTEL_SMOKE must be true or false"
+[[ -n "${QA_RECORD//[[:space:]]/}" && ${#QA_RECORD} -le 500 ]] \
+  || fail "QA record must be non-empty and at most 500 characters"
+[[ -n "${QA_TESTED_MACOS_VERSIONS//[[:space:]]/}" \
+  && ${#QA_TESTED_MACOS_VERSIONS} -le 200 ]] \
+  || fail "tested macOS versions must be non-empty and at most 200 characters"
+[[ "$(git rev-parse HEAD)" == "$COMMIT" ]] || fail "source commit changed before staging"
+[[ -d "$STABLE_APP" ]] || fail "missing verified app bundle $STABLE_APP"
+for item in \
+  "$RELEASE_DIR/Clinch.dmg" \
+  "$RELEASE_DIR/Clinch.dmg.sha256" \
+  "$RELEASE_DIR/Clinch.app.zip" \
+  "$RELEASE_DIR/Clinch.app.zip.sha256" \
+  "$RELEASE_DIR/Clinch.update.json" \
+  "$RELEASE_DIR/Clinch.update.sig" \
+  "$RELEASE_DIR/Clinch.update.sshsig" \
+  install.sh uninstall.sh "$ALLOWED_SIGNERS" "$RELEASE_KEY" Cargo.lock; do
+  [[ -f "$item" ]] || fail "missing $item"
+done
+command -v syft >/dev/null 2>&1 || fail "syft is required (brew install syft)"
+
+actual_release_key="$(ssh-keygen -y -f "$RELEASE_KEY" | awk '{print $1, $2}')"
+expected_release_key="$(awk 'NF {print $2, $3; exit}' "$ALLOWED_SIGNERS")"
+[[ "$actual_release_key" == "$expected_release_key" ]] \
+  || fail "release signing key does not match the committed trust root"
+
+rm -rf "$STAGE"
+mkdir -p "$DIST"
+cp \
+  "$RELEASE_DIR/Clinch.dmg" \
+  "$RELEASE_DIR/Clinch.dmg.sha256" \
+  "$RELEASE_DIR/Clinch.app.zip" \
+  "$RELEASE_DIR/Clinch.app.zip.sha256" \
+  "$RELEASE_DIR/Clinch.update.json" \
+  "$RELEASE_DIR/Clinch.update.sig" \
+  "$RELEASE_DIR/Clinch.update.sshsig" \
+  install.sh uninstall.sh "$ALLOWED_SIGNERS" \
+  "$DIST/"
+
+echo "==> Generating CycloneDX SBOM"
+syft "$STABLE_APP" -o "cyclonedx-json=$DIST/Clinch.sbom.cdx.json"
+
+builder_os_version="$(sw_vers -productVersion)"
+builder_architecture="$(uname -m)"
+created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+started_at="${CLINCH_RELEASE_STARTED_AT:-$created_at}"
+[[ "$started_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] \
+  || fail "invalid local release start timestamp"
+
+/usr/bin/python3 - \
+  "$DIST/Clinch.release-validation.json" \
+  "$VERSION" "$COMMIT" "$UPDATE_SEQUENCE" "$QA_RECORD" \
+  "$QA_TESTED_MACOS_VERSIONS" "$QA_INTEL_SMOKE" \
+  "$builder_os_version" "$builder_architecture" <<'PY'
+import json
+import pathlib
+import sys
+
+output = pathlib.Path(sys.argv[1])
+value = {
+    "artifact_checks": [
+        "universal x86_64+arm64",
+        "ad-hoc hardened-runtime signature",
+        "Messages automation entitlement only",
+        "universal signed iMessage helper",
+        "ZIP/DMG app equality",
+        "integration opt-in and removal",
+        "signed exact-tag manifest",
+    ],
+    "builder": {
+        "architecture": sys.argv[9],
+        "kind": "local-release-workstation",
+        "os": "macOS",
+        "os_version": sys.argv[8],
+    },
+    "commit": sys.argv[3],
+    "gates": ["Local full release gate"],
+    "manual_qa": {
+        "apple_silicon_smoke": True,
+        "authenticated_manual_upgrade": True,
+        "first_install": True,
+        "intel_smoke": sys.argv[7] == "true",
+        "offline_startup": True,
+        "record": sys.argv[5],
+        "selective_uninstall": True,
+        "session_integration_opt_in_and_removal": True,
+        "tested_macos_versions": sys.argv[6],
+    },
+    "notarized": False,
+    "publication": {
+        "command": "make release",
+        "kind": "local-release-command",
+    },
+    "schema_version": 2,
+    "update_sequence": int(sys.argv[4]),
+    "version": sys.argv[2],
+}
+output.write_text(
+    json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n",
+    encoding="utf-8",
+)
+PY
+
+primary_assets=(
+  Clinch.dmg
+  Clinch.dmg.sha256
+  Clinch.app.zip
+  Clinch.app.zip.sha256
+  Clinch.update.json
+  Clinch.update.sig
+  Clinch.update.sshsig
+  install.sh
+  uninstall.sh
+  clinch-release-allowed-signers
+  Clinch.sbom.cdx.json
+  Clinch.release-validation.json
+)
+
+/usr/bin/python3 - \
+  "$DIST/Clinch.build-provenance.json" "$DIST" "$VERSION" "$COMMIT" \
+  "$UPDATE_SEQUENCE" "$started_at" "$created_at" "$ROOT/Cargo.lock" \
+  "${primary_assets[@]}" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+output = pathlib.Path(sys.argv[1])
+dist = pathlib.Path(sys.argv[2])
+version = sys.argv[3]
+commit = sys.argv[4]
+sequence = int(sys.argv[5])
+started_at = sys.argv[6]
+finished_at = sys.argv[7]
+lockfile = pathlib.Path(sys.argv[8])
+asset_names = sys.argv[9:]
+
+
+def digest(path):
+    value = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            value.update(chunk)
+    return value.hexdigest()
+
+
+value = {
+    "_type": "https://in-toto.io/Statement/v1",
+    "predicateType": "https://slsa.dev/provenance/v1",
+    "predicate": {
+        "buildDefinition": {
+            "buildType": (
+                "https://github.com/elliot-ylambda/clinch-terminal/local-release/v1"
+            ),
+            "externalParameters": {
+                "update_sequence": sequence,
+                "version": version,
+            },
+            "internalParameters": {},
+            "resolvedDependencies": [
+                {
+                    "digest": {"sha1": commit},
+                    "uri": (
+                        "git+https://github.com/elliot-ylambda/"
+                        f"clinch-terminal@{commit}"
+                    ),
+                },
+                {
+                    "digest": {"sha256": digest(lockfile)},
+                    "uri": "file:Cargo.lock",
+                },
+            ],
+        },
+        "runDetails": {
+            "builder": {
+                "id": (
+                    "https://github.com/elliot-ylambda/clinch-terminal/blob/"
+                    f"{commit}/script/assemble-clinch-release-stage"
+                )
+            },
+            "metadata": {
+                "finishedOn": finished_at,
+                "invocationId": f"{version}-{commit}",
+                "startedOn": started_at,
+            },
+        },
+    },
+    "subject": [
+        {"digest": {"sha256": digest(dist / name)}, "name": name}
+        for name in asset_names
+    ],
+}
+output.write_text(
+    json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n",
+    encoding="utf-8",
+)
+PY
+
+ssh-keygen -Y sign -f "$RELEASE_KEY" -n clinch-provenance - \
+  < "$DIST/Clinch.build-provenance.json" \
+  > "$DIST/Clinch.build-provenance.sshsig"
+
+checksummed_assets=(
+  "${primary_assets[@]}"
+  Clinch.build-provenance.json
+  Clinch.build-provenance.sshsig
+)
+: > "$DIST/Clinch.checksums.txt"
+for asset in "${checksummed_assets[@]}"; do
+  (cd "$DIST" && shasum -a 256 "$asset") >> "$DIST/Clinch.checksums.txt"
+done
+ssh-keygen -Y sign -f "$RELEASE_KEY" -n clinch-checksums - \
+  < "$DIST/Clinch.checksums.txt" > "$DIST/Clinch.checksums.sshsig"
+
+cat > "$STAGE/release-notes.md" <<EOF
+Clinch $VERSION is an unnotarized public preview for macOS 14 or later on Intel and Apple Silicon.
+
+Download **Clinch.dmg**, authenticate **Clinch.checksums.txt** with
+**Clinch.checksums.sshsig**, compare the DMG digest, and drag Clinch to Applications.
+Use **System Settings → Privacy & Security → Open Anyway** if macOS blocks the first launch.
+The authenticated **install.sh** asset is a secondary convenience.
+
+Session capture and provider plugins are off by default. Automatic updates are disabled for
+this preview; install a newer authenticated release manually. See
+**Clinch.release-validation.json** and **Clinch.build-provenance.json** for the automated,
+hands-on, and local-builder records authenticated by the Clinch release key. Two-way iMessage is
+optional and local; setup requires Messages Automation and Full Disk Access on the Mac.
+
+Manual QA record: $QA_RECORD
+Tested macOS versions: $QA_TESTED_MACOS_VERSIONS
+Hands-on Intel smoke test: $QA_INTEL_SMOKE
+EOF
+
+./script/verify-clinch-release-stage "$DIST" "$VERSION" "$COMMIT" "$UPDATE_SEQUENCE"
+echo "$STAGE"

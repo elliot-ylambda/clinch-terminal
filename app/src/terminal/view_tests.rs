@@ -10,6 +10,8 @@ use chrono::Local;
 use parking_lot::FairMutex;
 use session_sharing_protocol::common::CLIAgentSessionState;
 use warp_cli::agent::Harness;
+use warp_core::channel::{Channel, ChannelConfig, ChannelState};
+use warp_core::AppId;
 use warp_terminal::model::escape_sequences::{BRACKETED_PASTE_END, BRACKETED_PASTE_START, C0};
 use warpui::notification::UserNotification;
 use warpui::platform::WindowStyle;
@@ -97,7 +99,7 @@ fn add_window_with_cloud_mode_terminal(app: &mut App) -> ViewHandle<TerminalView
 }
 
 #[test]
-fn cli_agent_history_trigger_uses_first_ever_prompt() {
+fn cli_agent_history_trigger_uses_latest_prompt() {
     let history = AgentPromptHistory {
         prompts: vec![
             AgentPrompt {
@@ -114,20 +116,20 @@ fn cli_agent_history_trigger_uses_first_ever_prompt() {
 
     let trigger = cli_agent_history_trigger(&history, "Message history (2)".to_owned());
 
-    assert_eq!(trigger, "older prompt");
+    assert_eq!(trigger, "newer prompt");
 }
 
 #[test]
-fn cli_agent_history_trigger_includes_the_first_prompt_time() {
-    let first_timestamp = "2026-07-14T08:00:00Z";
+fn cli_agent_history_trigger_includes_the_latest_prompt_time() {
+    let latest_timestamp = "2026-07-14T09:00:00Z";
     let history = AgentPromptHistory {
         prompts: vec![
             AgentPrompt {
-                timestamp: Some(first_timestamp.to_owned()),
+                timestamp: Some("2026-07-14T08:00:00Z".to_owned()),
                 text: "older\nprompt".to_owned(),
             },
             AgentPrompt {
-                timestamp: Some("2026-07-14T09:00:00Z".to_owned()),
+                timestamp: Some(latest_timestamp.to_owned()),
                 text: "newer prompt".to_owned(),
             },
         ],
@@ -135,9 +137,9 @@ fn cli_agent_history_trigger_includes_the_first_prompt_time() {
     };
 
     let trigger = cli_agent_history_trigger(&history, "Message history (2)".to_owned());
-    let first_time = crate::agent_resume::format_prompt_time_full(Some(first_timestamp)).unwrap();
+    let latest_time = crate::agent_resume::format_prompt_time_full(Some(latest_timestamp)).unwrap();
 
-    assert_eq!(trigger, format!("{first_time} | older prompt"));
+    assert_eq!(trigger, format!("{latest_time} | newer prompt"));
 }
 
 #[test]
@@ -186,7 +188,7 @@ fn cli_agent_history_prompt_label_stays_on_one_line() {
 }
 
 #[test]
-fn resumed_cli_agent_header_reads_history_when_dropdown_selection_is_empty() {
+fn resumed_cli_agent_header_reads_latest_history_when_dropdown_selection_is_empty() {
     App::test((), |mut app| async move {
         initialize_app_for_terminal_view(&mut app);
         let terminal = add_window_with_terminal(&mut app, None);
@@ -239,12 +241,103 @@ fn resumed_cli_agent_header_reads_history_when_dropdown_selection_is_empty() {
         terminal.read(&app, |view, ctx| {
             view.cli_agent_message_history_dropdown
                 .read(ctx, |dropdown, ctx| {
+                    let latest_time =
+                        crate::agent_resume::format_prompt_time_full(Some("2026-07-14T08:01:00Z"))
+                            .unwrap();
                     assert_eq!(
                         dropdown.top_bar_text_for_test(ctx),
-                        "Run /review on my current changes"
+                        format!("{latest_time} | Implement {{feature}}")
                     );
                 });
         });
+    });
+}
+
+/// This test mutates the process-global channel state. The repository's required nextest runner
+/// isolates tests by process, so the Clinch app ID cannot leak into another test.
+#[test]
+fn cli_agent_history_header_updates_after_live_prompts_for_claude_and_codex() {
+    ChannelState::set(ChannelState::new(
+        Channel::Local,
+        ChannelConfig::no_backend(AppId::new("sh", "clinch", "ClinchDev"), "clinch-test.log"),
+    ));
+
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+
+        for agent in [CLIAgent::Claude, CLIAgent::Codex] {
+            let terminal = add_window_with_terminal(&mut app, None);
+            let initial_prompt = format!("Initial {} prompt", agent.command_prefix());
+            let latest_prompt = format!("Latest {} prompt", agent.command_prefix());
+
+            terminal.update(&mut app, |view, ctx| {
+                CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                    sessions.set_session(
+                        view.view_id,
+                        CLIAgentSession {
+                            agent,
+                            status: CLIAgentSessionStatus::Success,
+                            session_context: CLIAgentSessionContext::default(),
+                            input_state: CLIAgentInputState::Closed,
+                            should_auto_toggle_input: false,
+                            listener: None,
+                            remote_host: None,
+                            plugin_version: None,
+                            draft_text: None,
+                            custom_command_prefix: None,
+                            received_rich_notification: true,
+                            has_observed_turn_activity: true,
+                            prompt_history: AgentPromptHistory {
+                                prompts: vec![AgentPrompt {
+                                    timestamp: None,
+                                    text: initial_prompt.clone(),
+                                }],
+                                is_partial: false,
+                            },
+                            prompt_history_load_state: PromptHistoryLoadState::Ready,
+                            prompt_history_generation: 1,
+                        },
+                        ctx,
+                    );
+                });
+            });
+
+            terminal.read(&app, |view, ctx| {
+                view.cli_agent_message_history_dropdown
+                    .read(ctx, |dropdown, ctx| {
+                        assert_eq!(dropdown.top_bar_text_for_test(ctx), initial_prompt);
+                    });
+            });
+
+            terminal.update(&mut app, |view, ctx| {
+                CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                    sessions.update_from_event(
+                        view.view_id,
+                        &CLIAgentEvent {
+                            source: CLIAgentEventSource::RichPlugin,
+                            v: 1,
+                            agent,
+                            event: CLIAgentEventType::PromptSubmit,
+                            session_id: None,
+                            cwd: None,
+                            project: None,
+                            payload: CLIAgentEventPayload {
+                                query: Some(latest_prompt.clone()),
+                                ..Default::default()
+                            },
+                        },
+                        ctx,
+                    );
+                });
+            });
+
+            terminal.read(&app, |view, ctx| {
+                view.cli_agent_message_history_dropdown
+                    .read(ctx, |dropdown, ctx| {
+                        assert_eq!(dropdown.top_bar_text_for_test(ctx), latest_prompt);
+                    });
+            });
+        }
     });
 }
 
@@ -3727,6 +3820,49 @@ fn test_context_menu_omits_clear_for_text_right_click() {
     })
 }
 
+#[cfg(feature = "local_fs")]
+#[test]
+fn test_binary_file_link_context_menu_includes_open_and_open_with() {
+    let file = tempfile::Builder::new()
+        .suffix(".mp4")
+        .tempfile()
+        .expect("create temporary video file");
+    let highlighted_link =
+        GridHighlightedLink::File(WithinModel::AltScreen(crate::util::file::FileLink {
+            link: crate::terminal::model::grid::grid_handler::Link {
+                range: Point::new(0, 0)..=Point::new(0, 4),
+                is_empty: false,
+            },
+            absolute_path: file.path().to_path_buf(),
+            line_and_column_num: None,
+        }));
+    let items =
+        TerminalView::file_link_context_menu_items(&highlighted_link, file.path().to_path_buf());
+    let labels = items
+        .iter()
+        .filter_map(|item| item.fields().map(|fields| fields.label()))
+        .collect::<Vec<_>>();
+
+    assert!(labels.contains(&"Open"), "menu labels: {labels:?}");
+    assert!(labels.contains(&"Copy path"), "menu labels: {labels:?}");
+
+    let open_with_menu = items
+        .iter()
+        .find_map(|item| match item {
+            MenuItem::Submenu { fields, menu } if fields.label() == "Open With" => Some(menu),
+            _ => None,
+        })
+        .expect("Open With submenu");
+    assert_eq!(
+        open_with_menu
+            .items()
+            .first()
+            .and_then(MenuItem::fields)
+            .map(MenuItemFields::label),
+        Some("System Default")
+    );
+}
+
 #[test]
 fn test_clear_buffer_clears_autosuggestion() {
     App::test((), |mut app| async move {
@@ -5986,6 +6122,50 @@ fn open_cli_agent_rich_input_for_agent_with_window_id(
         assert!(view.has_active_cli_agent_input_session(ctx));
     });
     (window_id, terminal)
+}
+
+#[test]
+fn raw_terminal_input_does_not_mark_idle_cli_agents_as_working() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let terminal = add_window_with_terminal(&mut app, None);
+
+        for agent in [CLIAgent::Claude, CLIAgent::Codex] {
+            terminal.update(&mut app, |view, ctx| {
+                CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                    sessions.set_session(
+                        view.view_id,
+                        CLIAgentSession {
+                            agent,
+                            status: CLIAgentSessionStatus::InProgress,
+                            session_context: CLIAgentSessionContext::default(),
+                            input_state: CLIAgentInputState::Closed,
+                            should_auto_toggle_input: false,
+                            listener: None,
+                            remote_host: None,
+                            plugin_version: None,
+                            draft_text: None,
+                            custom_command_prefix: None,
+                            received_rich_notification: false,
+                            has_observed_turn_activity: false,
+                            prompt_history: Default::default(),
+                            prompt_history_load_state: Default::default(),
+                            prompt_history_generation: 0,
+                        },
+                        ctx,
+                    );
+                });
+
+                // A startup menu selection and Enter use the same raw PTY path as direct TUI
+                // input. Without an agent lifecycle event, neither proves that a turn started.
+                view.write_user_bytes_to_pty(b"1\r".to_vec(), ctx);
+
+                assert!(!CLIAgentSessionsModel::as_ref(ctx)
+                    .session(view.view_id)
+                    .is_some_and(CLIAgentSession::is_actively_working));
+            });
+        }
+    })
 }
 
 /// Verifies that Ctrl-G closes CLI agent rich input when dispatched from the

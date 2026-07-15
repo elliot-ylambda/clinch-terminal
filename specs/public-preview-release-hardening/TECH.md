@@ -3,7 +3,7 @@
 ## Context
 
 This design applies to the Clinch fork at source revision
-`e423139fbb5b31ebced183e8db09c5e9ce384435`. It deliberately does not change
+`bcf40defc05b0fb66f35214c75c2227696e1433d`. It deliberately does not change
 upstream Warp behavior. The public artifact remains an unnotarized macOS preview because the
 project will not enroll in the Apple Developer Program.
 
@@ -36,7 +36,7 @@ The manifest remains the single authenticated description of the ZIP. It must na
 repository, tag, version, bundle identifier, archive URL, archive filename, byte length, SHA-256,
 minimum macOS version, architectures, update sequence, and signing-key identifier. Release assets
 also include the SSHSIG, release-key-signed human-readable checksum list, DMG, installer,
-uninstaller, SBOM, and GitHub provenance attestation.
+uninstaller, SBOM, validation record, and release-key-signed local build provenance.
 
 `install.sh` resolves `latest` once through the GitHub API, or accepts a strict `--version` value,
 then fetches only exact-tag assets. It size-limits metadata, authenticates it before parsing, and
@@ -70,10 +70,16 @@ runtime files. It performs a structural removal and preserves every unrelated ke
 captured metadata is retained by default. `purge` is a separate explicit operation for
 Clinch-owned capture data.
 
-Add setup, remove, and status controls to the Clinch settings page. The app installer and first
-launch do not install notification plugins. Existing harness auto-install paths are disabled for
-backend-free Clinch; the UI may show manual, source-identified plugin instructions after a direct
-user action.
+Add setup, remove, and status controls to the Clinch settings page. Session capture remains
+consent-gated, while `app/src/agent_plugins.rs` runs the bundled
+`resources/bundled/agent-plugins/install.sh` before the first pane launches. The script uses exact
+local Claude Code and Codex marketplace snapshots, skips already-current installs, and treats a
+missing CLI or provider-policy failure as non-fatal. Dedicated Clinch marketplace IDs keep the
+local bundle from replacing upstream Warp marketplaces or their Oz plugins. A pinned universal jq
+binary is copied to `Contents/Resources/bin`, already part of every local pane's path, so the exact
+upstream hooks run without a system package install. Existing footer auto-install paths remain
+disabled for backend-free Clinch so they cannot replace the local bundle with floating Git
+sources; manual source-identified instructions remain the fallback.
 
 ### 3. Privacy and startup behavior
 
@@ -95,58 +101,94 @@ injection tests, and independent review.
 
 ### 4. Bundle permissions and platform contract
 
-Add a Clinch-only release entitlement plist containing an empty dictionary. Select it by the
-Clinch bundle identifier, not by the shared stable channel. Keep hardened-runtime code signing but
-use deterministic ad-hoc signing for the public preview unless an explicit compatible identity is
-provided. Do not request app sandboxing or unused Apple Events, microphone, camera, contacts,
-calendar, location, Photos, app-group, JIT, library-validation bypass, or debugger entitlements.
+Use a Clinch-only release entitlement plist selected by the Clinch bundle identifier, not by the
+shared stable channel. It contains only `com.apple.security.automation.apple-events`, the
+documented capability used by the optional two-way iMessage feature. Keep hardened-runtime code
+signing but use deterministic ad-hoc signing for the public preview unless an explicit compatible
+identity is provided. Do not request app sandboxing or microphone, camera, contacts, calendar,
+location, Photos, app-group, JIT, library-validation bypass, or debugger entitlements.
 
-`script/update_plist` omits corresponding privacy usage descriptions for Clinch and writes an
-explicit minimum macOS version. Release verification rejects forbidden entitlements or dead usage
-keys and confirms both `arm64` and `x86_64` slices.
+`script/update_plist` omits unrelated privacy usage descriptions, includes a specific Apple Events
+usage description, and writes an explicit minimum macOS version. Release verification rejects
+forbidden entitlements or dead usage keys, confirms both `arm64` and `x86_64` app/helper slices,
+and smoke-tests the nested Messages bridge.
 
-### 5. Release gate and publication
+### 5. Local release gate and direct publication
 
-Replace local publication with a manually dispatched GitHub release workflow on `main`. The local
-Make target may build a candidate or dispatch the workflow, but cannot call `gh release create`.
-The workflow:
+Move every expensive or secret-bearing release operation to the release workstation. The local
+`make release` command owns version selection, exact-source validation, manual-QA confirmation,
+the complete automated gate, universal packaging, SBOM generation, signing, artifact verification,
+private draft staging, independent verification of the uploaded draft, and the final
+draft-to-public transition. Release publication runs no GitHub Actions job.
 
-1. validates a strict semantic version and ensures it is greater than the last release;
-2. runs formatting, shell/JavaScript tests, stable compilation, component tests, Clippy, and
-   dependency license policy, bundled-notice generation, and advisories as independently visible
-   required jobs;
-3. builds the exact gated commit on an Intel runner and verifies the universal artifact;
-4. derives a monotonic sequence greater than the latest authenticated manifest;
-5. packages and verifies ZIP and DMG contents, signs metadata and the annotated tag, and produces
-  a release-key-signed checksum list plus a CycloneDX SBOM;
-6. creates the release from the preverified tag and uploads GitHub provenance attestations only
-  after every gate succeeds.
+The local flow:
+
+1. synchronizes a clean `main` with `clinch/main`, records its full commit, validates a strict
+   monotonic version, checks release tools, free disk space, and both private keys, and obtains the
+   existing explicit manual-QA confirmation;
+2. runs formatting, shell/JavaScript tests, stable compilation, component tests, Clippy,
+   dependency-license policy, bundled-notice generation, and advisories before creating remote
+   release state;
+3. derives a sequence strictly newer than the latest authenticated public manifest, builds both
+   architectures with the persistent local Cargo cache, packages them, and runs the complete
+   app/ZIP/DMG verifier;
+4. generates a CycloneDX SBOM, signed validation record, and an in-toto/SLSA-shaped local build
+   provenance statement whose subjects are the staged release assets and whose source material is
+   the exact Git commit and `Cargo.lock` digest;
+5. signs the provenance and the complete checksum list with the dedicated OpenSSH release key,
+   then independently verifies every staged digest and signature;
+6. requires a second interactive `PUBLISH <version> <short-commit>` confirmation, creates or
+   verifies the signed annotated tag, pushes it to `clinch`, creates or refreshes a private draft
+   release, uploads the exact verified asset set, downloads it into a fresh temporary directory,
+   repeats the portable asset and monotonic-sequence verification, rechecks the remote tag and
+   `main`, and changes only that verified draft to the public latest release; and
+7. leaves a correct existing tag or draft reusable after interruption, but refuses a mismatched
+   tag, a published release, a non-draft staging release, or an unsigned/extra/missing asset.
+
+`target/release-stage/<version>/` is the local staging boundary. It contains a `dist` directory
+with the exact public asset set and a sibling release-notes file. Generated state remains ignored
+by Git and may be recreated only after the source gate and candidate verification succeed.
+
+The local publication phase downloads the private draft assets rather than trusting the upload
+operation. It requires the current remote `main` and signed remote tag to remain identical to the
+verified local commit and tag, snapshots release/asset metadata before and after download, verifies
+the exact asset allowlist, committed trust roots, both manifest signatures, checksum signature and
+digests, provenance signature and subjects, QA validation record, version, and monotonic sequence,
+and snapshots the draft once more immediately before publication. A failure leaves the draft
+private. The operator's existing `gh` authentication is the only publication credential.
+
+GitHub provenance is intentionally absent because GitHub does not build the artifacts. The
+dedicated release key authenticates a local provenance statement that accurately names the
+workstation build type, source material, invocation, and artifact subjects. The checksum signature
+also covers the provenance statement and signature.
 
 The dependency license gate includes workspace and non-publishable git dependencies, keeps the
 `cargo-deny` and `cargo-about` allowlists synchronized, and fails packaging if a complete bundled
 third-party notice cannot be generated from the locked dependency graph.
 
-The manual dispatch requires confirmation of clean install, authenticated manual upgrade, session
+The local operator flow requires confirmation of clean install, authenticated manual upgrade, session
 integration opt-in/removal, selective uninstall, offline startup, and native Apple Silicon smoke
 results. It also requires the tested macOS versions and a QA record identifier. Those fields, plus
 the optional hands-on Intel result, are written into the signed release validation asset. The
-checked-in `QA_TEMPLATE.md` defines the record expected by the workflow.
+checked-in `QA_TEMPLATE.md` defines the record expected by the local release command.
 
-`make release` is the interactive operator front end for that dispatch. It first synchronizes a
+`make release` is the interactive operator front end for the local build and direct publish. It
+first synchronizes a
 clean local `main` with `clinch/main`, compares its timestamp-derived version with the latest public
 release and increments the latest version when necessary, and detects the local macOS version. It
 then displays the required hands-on checklist and requires the operator to type `RELEASE`; it does
 not infer a pass from default Make variables. Unless the operator supplies an existing QA record,
 the dispatcher creates a public GitHub issue containing the exact version, commit, machine, OS,
-checked results, and optional Intel result, then uses that URL for the workflow input. Explicit
-variables remain available for tested automation, but noninteractive dispatch requires
-`QA_CONFIRMED=true`. The dispatch also carries that exact commit as a required input; the workflow
-stops before building if `main` changed between local QA confirmation and GitHub dispatch.
+checked results, and optional Intel result, then embeds that URL in the signed validation record.
+Explicit variables remain available for tested QA setup, but remote staging and publication always
+require the second interactive publish confirmation. The command stops before publication if
+`main`, the signed tag, or the private draft changes between local verification and publication.
 
-Actions are pinned to immutable commit SHAs and receive least-privilege job permissions. A
+There is no release workflow. Release private keys are removed from the obsolete GitHub release
+environment, and the environment itself is deleted after the local key copies are validated. The
 repository configuration script enables immutable releases, protects `main` against force pushes
-and deletion, requires review and the named gate checks, and leaves secret scanning/push protection
-enabled. It is safe to run only after the new workflow exists on GitHub.
+and deletion, restricts default Actions permissions, and leaves secret scanning/push protection
+enabled.
 
 The monotonic sequence helper reads the latest signed manifest, verifies it, and computes
 `max(previous + 1, current UTC epoch seconds)`. Publication refuses a sequence provided by a local
@@ -179,9 +221,15 @@ network-capable optional features, exact side effects, and residual review gaps.
 - Release verification mounts the DMG read-only and recursively compares its app with the verified
   ZIP, validates the plist, entitlements, signatures, architectures, authenticated manifest, and
   explicit integration lifecycle. Manual release QA records first install, upgrade, uninstall,
-  offline launch, and a native Apple Silicon smoke check. The universal build and Intel-hosted CI
-  remain required; a separate hands-on Intel smoke check is recorded when practical but is not a
-  preview release blocker.
+  offline launch, and a native Apple Silicon smoke check. The universal artifact verifier requires
+  both architecture slices; a separate hands-on Intel smoke check is recorded when practical but
+  is not a preview release blocker.
+- Release orchestration fixtures stub every `gh` and Git mutation and prove that automated failures
+  cannot create a tag or draft, remote staging requires the exact interactive confirmation, retries
+  accept only a matching signed tag/private draft, uploaded assets are re-downloaded and verified,
+  draft/tag/source mutation blocks publication, and only the verified draft is made public.
+  Portable staged-asset fixtures cover missing, extra, tampered, wrong-version, stale-sequence,
+  wrong-commit, invalid-signature, and valid release sets.
 - The website runs lint and a production build; its release claims are reviewed against this
   contract before deployment.
 
@@ -193,11 +241,27 @@ network-capable optional features, exact side effects, and residual review gaps.
   release from an older legitimately signed release without an independent freshness source.
 - GitHub, the release signing workstation, and both private keys remain high-value dependencies.
   Private keys must never enter repository history or ordinary build artifacts.
+- A local build is less hermetic than an ephemeral hosted runner. The signed provenance records
+  that fact rather than overstating assurance; clean-source checks, exact tool requirements,
+  complete artifact verification, re-verification of downloaded draft assets, and public source
+  reproducibility are the compensating controls. Removing the protected publication job also
+  removes independent environment approval: the release workstation and authenticated operator
+  are the sole publication authority.
 - Disabling the in-app updater trades convenience for a smaller privileged attack surface. The
   preview must make manual update availability visible without performing a background check.
 - CI and self-authored tests are not an independent audit. Promotion remains a public preview until
   outside reviewers and beta users validate the documented release checks.
 
-Roll out in this order: land code and tests, merge the workflow, configure branch and immutable
-release protection, run a candidate build without publishing, perform the recorded Apple Silicon
-smoke test and optional Intel smoke test, then dispatch the first gated public-preview release.
+Roll out in this order: land code and tests, remove the obsolete GitHub release environment and
+signing secrets with the repository configuration command, run a candidate build without staging,
+perform the recorded Apple Silicon smoke test and optional Intel smoke test, then run the first
+fully local release publication.
+
+## Parallelization
+
+The release implementation is intentionally kept in one checkout because the Make targets,
+orchestrator, staged-asset contract, and shell fixtures evolve together. Separate agents
+or worktrees would create more merge risk than time savings. At release time, cheap non-Cargo
+preflight checks may run before compilation, but the heavyweight Cargo gate and two release builds
+share one workstation and persistent target directory; uncontrolled concurrent builds would trade
+determinism and memory pressure for little reliable wall-clock improvement.

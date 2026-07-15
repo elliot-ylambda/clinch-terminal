@@ -2,6 +2,8 @@ use std::ops::Deref;
 
 use serde::{Serialize, Serializer};
 use warpui::platform::Cursor;
+#[cfg(feature = "local_fs")]
+use warpui::SingletonEntity;
 use warpui::ViewContext;
 
 use crate::send_telemetry_from_ctx;
@@ -16,6 +18,7 @@ cfg_if::cfg_if! {
     if #[cfg(feature = "local_fs")] {
         use crate::{
             terminal::model::grid::grid_handler,
+            terminal::cli_agent_sessions::CLIAgentSessionsModel,
             terminal::ShellLaunchData,
             util::file::{FileLink, absolute_path_if_valid, ShellPathType},
             util::openable_file_type::FileTarget,
@@ -36,6 +39,20 @@ const PREFIXES_TO_REMOVE: [&str; 2] = ["a/", "b/"];
 /// for `ls`.
 #[cfg(feature = "local_fs")]
 const SUFFIXES_TO_REMOVE: [&str; 1] = ["@"];
+
+#[cfg(feature = "local_fs")]
+enum FileLinkScanIntent {
+    Highlight,
+    Open {
+        position: WithinModel<Point>,
+        method: LinkOpenMethod,
+    },
+}
+
+#[cfg(feature = "local_fs")]
+fn should_scan_file_paths(from_editor: TerminalEditor, is_cli_agent_session: bool) -> bool {
+    matches!(from_editor, TerminalEditor::No) || is_cli_agent_session
+}
 
 /// Highlighted link within a terminal model grid.
 #[derive(Debug, Clone)]
@@ -355,7 +372,7 @@ impl super::TerminalView {
         }
 
         #[cfg(feature = "local_fs")]
-        self.scan_for_file_path(position, from_editor, ctx);
+        self.scan_for_file_path(position, from_editor, FileLinkScanIntent::Highlight, ctx);
     }
 
     pub(super) fn open_highlighted_link(
@@ -427,12 +444,30 @@ impl super::TerminalView {
 // where we can spawn a local tty.
 #[cfg(feature = "local_fs")]
 impl super::TerminalView {
+    /// Resolves and opens a file link directly from a click. Hover detection is
+    /// asynchronous, so this is the fallback for clicks that arrive before the
+    /// hover result has populated `highlighted_link`.
+    pub(super) fn open_file_link_at_position(
+        &mut self,
+        position: WithinModel<Point>,
+        method: LinkOpenMethod,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        self.scan_for_file_path(
+            position,
+            TerminalEditor::No,
+            FileLinkScanIntent::Open { position, method },
+            ctx,
+        );
+    }
+
     /// Scans the terminal model at the given position to see if it is
     /// contained within a path that should be linkified.
     fn scan_for_file_path(
         &mut self,
         position: WithinModel<Point>,
         from_editor: TerminalEditor,
+        intent: FileLinkScanIntent,
         ctx: &mut ViewContext<Self>,
     ) {
         // For AltScreen we scan for relative path with the current working directory.
@@ -448,10 +483,16 @@ impl super::TerminalView {
                 .and_then(|block| block.pwd().map(String::from)),
         };
 
+        let is_cli_agent_session = CLIAgentSessionsModel::as_ref(ctx)
+            .session(self.view_id)
+            .is_some();
+
         match pwd_to_scan_for {
             // Check if we are hovering on any file path. Don't scan for file path
-            // if user is hovering from an editor like vim or nano.
-            Some(path) if matches!(from_editor, TerminalEditor::No) => {
+            // if user is hovering from an editor like vim or nano. CLI agent TUIs
+            // also enable SGR mouse reporting, but their output should retain normal
+            // terminal file-link behavior.
+            Some(path) if should_scan_file_paths(from_editor, is_cli_agent_session) => {
                 let possible_paths = self.model.lock().possible_file_paths_at_point(position);
                 let max_columns = self.size_info.columns;
                 let shell_launch_data = self
@@ -479,7 +520,7 @@ impl super::TerminalView {
                     .ok();
 
                 let _ = ctx.spawn(
-                    async move { rx.await.ok().flatten() },
+                    async move { (rx.await.ok().flatten(), intent) },
                     Self::handle_file_link_completed,
                 );
             }
@@ -611,19 +652,53 @@ impl super::TerminalView {
 
     fn handle_file_link_completed(
         &mut self,
-        link_result: Option<GridHighlightedLink>,
+        (link_result, intent): (Option<GridHighlightedLink>, FileLinkScanIntent),
         ctx: &mut ViewContext<Self>,
     ) {
-        let mut model = self.model.lock();
-        if self.highlighted_link.take(&mut model).is_some() {
-            ctx.reset_cursor();
-            ctx.notify();
-        }
+        match intent {
+            FileLinkScanIntent::Highlight => {
+                let mut model = self.model.lock();
+                if self.highlighted_link.take(&mut model).is_some() {
+                    ctx.reset_cursor();
+                    ctx.notify();
+                }
 
-        if let Some(new_link) = link_result {
-            self.highlighted_link.set(new_link, &mut model);
-            ctx.set_cursor_shape(Cursor::PointingHand);
-            ctx.notify();
+                if let Some(new_link) = link_result {
+                    self.highlighted_link.set(new_link, &mut model);
+                    ctx.set_cursor_shape(Cursor::PointingHand);
+                    ctx.notify();
+                }
+            }
+            FileLinkScanIntent::Open { position, method } => {
+                let Some(link) = link_result.filter(|link| link.contains(&position)) else {
+                    return;
+                };
+                send_telemetry_from_ctx!(
+                    TelemetryEvent::OpenLink {
+                        link: link.clone(),
+                        open_with: method
+                    },
+                    ctx
+                );
+                if let GridHighlightedLink::File(file_link) = link {
+                    let file_link = file_link.get_inner();
+                    if let Some(path) = file_link.absolute_path() {
+                        self.open_file_path(path, file_link.line_and_column_num, ctx);
+                    }
+                }
+            }
         }
+    }
+}
+
+#[cfg(all(test, feature = "local_fs"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cli_agent_tuis_are_scanned_for_file_paths_despite_mouse_reporting() {
+        assert!(should_scan_file_paths(TerminalEditor::Yes, true));
+        assert!(should_scan_file_paths(TerminalEditor::No, false));
+        assert!(!should_scan_file_paths(TerminalEditor::Yes, false));
     }
 }

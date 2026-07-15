@@ -6,6 +6,11 @@ pub mod settings;
 #[cfg(target_os = "windows")]
 mod windows;
 
+#[cfg(target_os = "macos")]
+pub use self::mac::{
+    applications_that_can_open_file, open_file_path_with_application, FileOpeningApplication,
+};
+
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};

@@ -282,6 +282,8 @@ use crate::editor::{
 use crate::env_vars::manager::{EnvVarCollectionManager, EnvVarCollectionSource};
 use crate::env_vars::CloudEnvVarCollection;
 use crate::experiments::{BlockOnboarding, Experiment};
+#[cfg(target_os = "macos")]
+use crate::imessage::IMessageCoordinator;
 use crate::launch_configs::launch_config::WindowTemplate;
 use crate::launch_configs::save_modal::{LaunchConfigModalEvent, LaunchConfigSaveModal};
 use crate::menu::{Event as MenuEvent, Menu, MenuItem, MenuItemFields, MenuSelectionSource};
@@ -346,10 +348,10 @@ use crate::settings::cloud_preferences::CloudPreferencesSettings;
 use crate::settings::{
     active_theme_kind, respect_system_theme, AISettings, AISettingsChangedEvent,
     AccessibilitySettings, AliasExpansionSettings, AppEditorSettings, BlockVisibilitySettings,
-    ChangelogSettings, CliAgentUsageSettings, CodeSettings, CodeSettingsChangedEvent,
-    CtrlTabBehavior, CursorBlink, DebugSettings, DefaultSessionMode, FontSettings, GPUSettings,
-    InputModeSettings, InputSettings, MonospaceFontSize, PaneSettings, PrivacySettings,
-    SelectionSettings, Settings, SshSettings, ThemeSettings,
+    ChangelogSettings, CliAgentUsageSettings, ClinchSettings, CodeSettings,
+    CodeSettingsChangedEvent, CtrlTabBehavior, CursorBlink, DebugSettings, DefaultSessionMode,
+    FontSettings, GPUSettings, InputModeSettings, InputSettings, MonospaceFontSize, PaneSettings,
+    PrivacySettings, SelectionSettings, Settings, SshSettings, ThemeSettings,
 };
 use crate::settings_view::environments_page::EnvironmentsPage;
 use crate::settings_view::handoff_environment_creation_modal::{
@@ -370,6 +372,7 @@ use crate::tab_configs::action_sidecar::SidecarItemKind;
 use crate::tab_configs::remove_confirmation_dialog::{
     RemoveTabConfigConfirmationDialog, RemoveTabConfigConfirmationEvent,
 };
+use crate::tab_configs::session_config::{build_automatic_worktree_tab_config, SessionType};
 use crate::tab_configs::session_config_modal::{SessionConfigModal, SessionConfigModalEvent};
 use crate::tab_configs::telemetry::{
     ExistingTabConfigOpenMode, GuidedModalSessionType, TabConfigsTelemetryEvent,
@@ -572,9 +575,8 @@ const TAB_BAR_ICON_PADDING: f32 = 4.;
 
 const TAB_BAR_PILL_WIDTH: f32 = 100.;
 const PILL_FONT_SIZE: f32 = 12.;
-// We use the word "Warp" in the Update Ready button to make it obvious that the terminal is Warp.
-// This can lead to free advertising when users screen-share Warp when an update is available.
-const UPDATE_READY_TEXT: &str = "Update Warp";
+// Keep the app identity explicit in the update button.
+const UPDATE_READY_TEXT: &str = "Update Clinch";
 
 const TAB_BAR_OVERFLOW_MENU_WIDTH: f32 = 300.;
 
@@ -613,7 +615,7 @@ const AI_ASSISTANT_BUTTON_ID: &str = "workspace_view:ai_assistant_button";
 
 const VERSION_DEPRECATION_BANNER_TEXT: &str = "Your app is out of date and some features may not work as expected. Please update immediately.";
 
-const VERSION_DEPRECATION_WITHOUT_PERMISSIONS_BANNER_TEXT: &str = "Some Warp features may not work as expected without updating immediately, but Warp is unable to perform the update.";
+const VERSION_DEPRECATION_WITHOUT_PERMISSIONS_BANNER_TEXT: &str = "Some Clinch features may not work as expected without updating immediately, but Clinch is unable to perform the update.";
 
 const ASK_AI_ASSISTANT_KEYBINDING_NAME: &str = "workspace:toggle_ai_assistant";
 const TOGGLE_RESOURCE_CENTER_KEYBINDING_NAME: &str = "workspace:toggle_resource_center";
@@ -1103,6 +1105,10 @@ pub struct Workspace {
     show_session_config_tab_config_chip: bool,
     pending_session_config_tab_config_chip_tutorial:
         Option<PendingSessionConfigTabConfigChipTutorial>,
+    /// Names reserved by automatic worktree tabs whose queued `git worktree`
+    /// command may not have created the branch yet. This closes the rapid-tab
+    /// race without mutating Git during preflight.
+    reserved_automatic_worktree_branches: HashSet<String>,
     new_worktree_modal: ModalViewState<Modal<NewWorktreeModal>>,
     close_session_confirmation_dialog: ViewHandle<CloseSessionConfirmationDialog>,
     rewind_confirmation_dialog: ViewHandle<RewindConfirmationDialog>,
@@ -3154,12 +3160,21 @@ impl Workspace {
         ctx.subscribe_to_model(&CLIAgentSessionsModel::handle(ctx), |me, _, event, ctx| {
             me.handle_cli_agent_sessions_event(event, ctx);
         });
+        #[cfg(target_os = "macos")]
+        ctx.subscribe_to_model(&IMessageCoordinator::handle(ctx), |_, _, _, ctx| {
+            ctx.notify();
+        });
 
         // Re-render tabs when a CLI-agent session's model changes.
         ctx.subscribe_to_model(&CliAgentUsageModel::handle(ctx), |_, _, _, ctx| {
             ctx.notify();
         });
         ctx.subscribe_to_model(&CliAgentUsageSettings::handle(ctx), |_, _, _, ctx| {
+            ctx.notify();
+        });
+        ctx.subscribe_to_model(&ClinchSettings::handle(ctx), |_, _, _, ctx| {
+            // Keep the vertical-tabs worktree toggle synchronized when the
+            // preference changes from Clinch Settings or another window.
             ctx.notify();
         });
 
@@ -3447,6 +3462,7 @@ impl Workspace {
             pending_session_config_tab_config_chip: false,
             show_session_config_tab_config_chip: false,
             pending_session_config_tab_config_chip_tutorial: None,
+            reserved_automatic_worktree_branches: HashSet::new(),
             new_worktree_modal,
             close_session_confirmation_dialog,
             rewind_confirmation_dialog,
@@ -6597,6 +6613,13 @@ impl Workspace {
     }
 
     fn view_latest_changelog(&mut self, ctx: &mut ViewContext<Self>) {
+        // Backend-free Clinch builds do not have Warp's changelog service. The
+        // Clinch releases page is the canonical source of release notes.
+        if !ChannelState::has_backend() {
+            ctx.open_url(links::RELEASES_URL);
+            return;
+        }
+
         self.update_toast_stack.update(ctx, |stack, ctx| {
             stack.clear_toasts(ctx);
         });
@@ -7408,14 +7431,17 @@ impl Workspace {
             .get(self.active_tab_index)
             .is_some_and(|tab| tab.group_id == Some(group_id));
 
-        self.add_new_session_tab_with_default_mode(
-            NewSessionSource::Tab,
-            Some(ctx.window_id()),
-            None,
-            None,
-            false,
-            ctx,
-        );
+        let effective_mode = AISettings::as_ref(ctx).default_session_mode(ctx);
+        if !self.try_add_automatic_worktree_tab(effective_mode, ctx) {
+            self.add_new_session_tab_with_default_mode(
+                NewSessionSource::Tab,
+                Some(ctx.window_id()),
+                None,
+                None,
+                false,
+                ctx,
+            );
+        }
 
         // If the active tab is a member of the group, the new tab inherits this group on creation.
         // Otherwise we must manually update it here, and place this new tab at the end of the group.
@@ -7853,7 +7879,7 @@ impl Workspace {
     }
 
     /// The tab bar overflow menu is the context menu that appears when
-    /// a user clicks "Update Warp" in the top right of the tab bar.
+    /// a user clicks "Update Clinch" in the top right of the tab bar.
     pub fn toggle_tab_bar_overflow_menu(&mut self, ctx: &mut ViewContext<Self>) {
         if self.show_tab_bar_overflow_menu {
             self.close_tab_bar_overflow_menu(ctx);
@@ -7882,7 +7908,7 @@ impl Workspace {
                             .into_item(),
                     ),
                     AutoupdateStage::UnableToUpdateToNewVersion { .. } => menu_items.push(
-                        MenuItemFields::new("Update Warp manually")
+                        MenuItemFields::new("Update Clinch manually")
                             .with_on_select_action(WorkspaceAction::DownloadNewVersion)
                             .into_item(),
                     ),
@@ -9780,7 +9806,7 @@ impl Workspace {
                     ) =>
                 {
                     items.push(
-                        MenuItemFields::new("Update and relaunch Warp")
+                        MenuItemFields::new("Update and relaunch Clinch")
                             .with_on_select_action(WorkspaceAction::ApplyUpdate)
                             .with_override_text_color(appearance.theme().ansi_fg_red())
                             .into_item(),
@@ -9803,7 +9829,7 @@ impl Workspace {
                     ) =>
                 {
                     items.push(
-                        MenuItemFields::new("Update Warp manually")
+                        MenuItemFields::new("Update Clinch manually")
                             .with_on_select_action(WorkspaceAction::DownloadNewVersion)
                             .with_override_text_color(appearance.theme().ansi_fg_red())
                             .into_item(),
@@ -9814,13 +9840,13 @@ impl Workspace {
         }
 
         items.extend([
-            MenuItemFields::new("What's new")
+            MenuItemFields::new("What's new in Clinch")
                 .with_on_select_action(WorkspaceAction::ViewLatestChangelog)
                 .into_item(),
             MenuItemFields::new("Clinch settings")
                 .with_on_select_action(WorkspaceAction::ShowSettings)
                 .into_item(),
-            MenuItemFields::new("Warp settings")
+            MenuItemFields::new("Terminal settings")
                 .with_on_select_action(WorkspaceAction::ShowSettingsPage(
                     SettingsSection::Appearance,
                 ))
@@ -9829,23 +9855,23 @@ impl Workspace {
                 .with_on_select_action(WorkspaceAction::ToggleKeybindingsPage)
                 .into_item(),
             MenuItem::Separator,
-            MenuItemFields::new("Documentation")
+            MenuItemFields::new("Clinch documentation")
                 .with_on_select_action(WorkspaceAction::ViewUserDocs)
                 .into_item(),
-            MenuItemFields::new("Feedback")
+            MenuItemFields::new("Report an issue")
                 .with_on_select_action(WorkspaceAction::SendFeedback)
                 .into_item(),
         ]);
 
         #[cfg(not(target_family = "wasm"))]
         items.push(
-            MenuItemFields::new("View Warp logs")
+            MenuItemFields::new("View Clinch logs")
                 .with_on_select_action(WorkspaceAction::ViewLogs)
                 .into_item(),
         );
 
         items.push(
-            MenuItemFields::new("GitHub")
+            MenuItemFields::new("Clinch on GitHub")
                 .with_on_select_action(WorkspaceAction::JoinSlack)
                 .into_item(),
         );
@@ -12711,6 +12737,138 @@ impl Workspace {
         );
     }
 
+    fn automatic_worktree_tab_config_for_repo(
+        &mut self,
+        session_type: SessionType,
+        repo_path: &Path,
+    ) -> Option<crate::tab_configs::TabConfig> {
+        let primary_repo = crate::util::git::primary_worktree_root_sync(repo_path)?;
+        let base_ref = crate::util::git::resolve_main_worktree_base_ref_sync(&primary_repo)?;
+        let mut existing_branches = crate::util::git::list_local_branches_sync(&primary_repo);
+        existing_branches.extend(self.reserved_automatic_worktree_branches.iter().cloned());
+
+        // The generator already avoids branch collisions. Also reject a stale
+        // managed directory that no longer has a corresponding branch.
+        for _ in 0..16 {
+            let branch_name = {
+                let branch_refs = existing_branches
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<HashSet<_>>();
+                warp_util::worktree_names::generate_worktree_branch_name(&branch_refs)
+            };
+            let worktree_path = crate::tab_configs::tab_config::generated_worktree_path(
+                &primary_repo,
+                &branch_name,
+            );
+            if worktree_path.exists() {
+                existing_branches.insert(branch_name);
+                continue;
+            }
+
+            self.reserved_automatic_worktree_branches
+                .insert(branch_name.clone());
+            return Some(build_automatic_worktree_tab_config(
+                &session_type,
+                &primary_repo,
+                &base_ref,
+                &branch_name,
+            ));
+        }
+
+        None
+    }
+
+    fn try_add_automatic_worktree_tab(
+        &mut self,
+        default_mode: DefaultSessionMode,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        let setting = &ClinchSettings::as_ref(ctx).auto_create_worktrees_for_new_tabs;
+        if !setting.is_supported_on_current_platform() || !**setting {
+            return false;
+        }
+
+        let session_type = match default_mode {
+            DefaultSessionMode::Terminal => SessionType::Terminal,
+            DefaultSessionMode::Agent => SessionType::Oz,
+            DefaultSessionMode::TabConfig
+            | DefaultSessionMode::CloudAgent
+            | DefaultSessionMode::DockerSandbox => return false,
+        };
+        let Some(repo_path) = self.active_session_view(ctx).and_then(|terminal| {
+            terminal.read(ctx, |terminal, ctx| {
+                terminal
+                    .canonical_session_pwd_if_local(ctx)
+                    .map(|path| path.as_path().to_path_buf())
+                    .or_else(|| terminal.current_local_repo_path().map(Path::to_path_buf))
+            })
+        }) else {
+            return false;
+        };
+        let Some(config) = self.automatic_worktree_tab_config_for_repo(session_type, &repo_path)
+        else {
+            return false;
+        };
+
+        self.open_tab_config_with_params(config, HashMap::new(), None, ctx);
+        ctx.notify();
+        true
+    }
+
+    fn add_default_tab_impl(
+        &mut self,
+        allow_automatic_worktree: bool,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let effective_mode = AISettings::as_ref(ctx).default_session_mode(ctx);
+        if allow_automatic_worktree && self.try_add_automatic_worktree_tab(effective_mode, ctx) {
+            return;
+        }
+
+        match effective_mode {
+            DefaultSessionMode::TabConfig => {
+                let ai_settings = AISettings::as_ref(ctx);
+                if let Some(config) = ai_settings.resolved_default_tab_config(ctx) {
+                    self.open_tab_config(config, ctx);
+                } else {
+                    // Config missing or deleted — clear and fall through to Terminal.
+                    AISettings::handle(ctx).update(ctx, |settings, ctx| {
+                        report_if_error!(settings
+                            .default_session_mode_internal
+                            .set_value(DefaultSessionMode::Terminal, ctx));
+                        report_if_error!(settings
+                            .default_tab_config_path
+                            .set_value(String::new(), ctx));
+                    });
+                    if !allow_automatic_worktree
+                        || !self.try_add_automatic_worktree_tab(DefaultSessionMode::Terminal, ctx)
+                    {
+                        self.add_terminal_tab(false, ctx);
+                    }
+                }
+            }
+            DefaultSessionMode::CloudAgent => {
+                self.add_ambient_agent_tab(ctx);
+            }
+            DefaultSessionMode::DockerSandbox => {
+                self.add_docker_sandbox_tab(ctx);
+            }
+            // Terminal and Agent are handled by the existing path
+            // (add_terminal_tab applies DefaultSessionMode::Agent internally).
+            DefaultSessionMode::Terminal | DefaultSessionMode::Agent => {
+                self.add_terminal_tab(false, ctx);
+            }
+        }
+    }
+
+    /// Local-control `tab.create` preserves the requested default mode without
+    /// opting automation into the user-facing automatic-worktree behavior.
+    pub(crate) fn add_default_tab_from_local_control(&mut self, ctx: &mut ViewContext<Self>) {
+        self.add_default_tab_impl(false, ctx);
+        ctx.dispatch_global_action("workspace:save_app", ());
+    }
+
     pub fn add_terminal_tab(&mut self, hide_homepage: bool, ctx: &mut ViewContext<Self>) {
         self.add_new_session_tab_with_default_mode(
             NewSessionSource::Tab,
@@ -15132,7 +15290,7 @@ impl Workspace {
                                 link = link.with_keystroke(keystroke);
                             }
 
-                            let toast = DismissibleToast::default(String::from("Warp updated!"))
+                            let toast = DismissibleToast::default(String::from("Clinch updated!"))
                                 .with_link(link);
 
                             stack.add_ephemeral_toast(toast, ctx);
@@ -21342,6 +21500,16 @@ impl Workspace {
                 self.render_agent_management_view_button(appearance, ctx)
             }
             HeaderToolbarItemKind::CodeReview => self.render_right_panel_button(appearance, ctx),
+            HeaderToolbarItemKind::IMessageStatus => {
+                #[cfg(target_os = "macos")]
+                {
+                    self.render_imessage_status_button(appearance, ctx)
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    return None;
+                }
+            }
             HeaderToolbarItemKind::NotificationsMailbox => {
                 self.render_notifications_mailbox_button(appearance, ctx)
             }
@@ -21360,6 +21528,30 @@ impl Workspace {
             .with_margin_left(TAB_BAR_ICON_PADDING)
             .finish(),
         )
+    }
+
+    #[cfg(target_os = "macos")]
+    fn render_imessage_status_button(
+        &self,
+        appearance: &Appearance,
+        ctx: &AppContext,
+    ) -> Box<dyn Element> {
+        let coordinator = IMessageCoordinator::as_ref(ctx);
+        let connected = matches!(
+            coordinator.status(),
+            crate::imessage::IMessageConnectionStatus::Connected
+        );
+        self.render_tab_bar_icon_button(
+            appearance,
+            icons::Icon::Phone01,
+            &self.mouse_states.imessage_status,
+            WorkspaceAction::ShowSettingsPage(SettingsSection::Clinch),
+            coordinator.status().label().to_owned(),
+            Some("Open Clinch iMessage settings".to_owned()),
+            connected,
+            false,
+        )
+        .finish()
     }
 
     /// Renders the notifications mailbox button (extracted for reuse from
@@ -22640,7 +22832,7 @@ impl Workspace {
                         if is_incoming_version_past_current(new_version.soft_cutoff.as_deref()) {
                             VERSION_DEPRECATION_WITHOUT_PERMISSIONS_BANNER_TEXT.to_owned()
                         } else {
-                            "A new version is available but Warp is unable to perform the update."
+                            "A new version is available but Clinch is unable to perform the update."
                                 .to_owned()
                         };
 
@@ -22651,7 +22843,7 @@ impl Workspace {
                         description,
                         secondary_button: None,
                         button: Some(WorkspaceBannerButtonDetails {
-                            text: "Update Warp manually".to_string(),
+                            text: "Update Clinch manually".to_string(),
                             action: WorkspaceAction::DownloadNewVersion,
                             variant: BannerButtonVariant::Outlined,
                             icon: None,
@@ -22666,7 +22858,7 @@ impl Workspace {
                         if is_incoming_version_past_current(new_version.soft_cutoff.as_deref()) {
                             VERSION_DEPRECATION_WITHOUT_PERMISSIONS_BANNER_TEXT.to_owned()
                         } else {
-                            "Warp was unable to launch the new installed version.".to_owned()
+                            "Clinch was unable to launch the newly installed version.".to_owned()
                         };
 
                     Some(WorkspaceBannerFields {
@@ -22676,7 +22868,7 @@ impl Workspace {
                         description,
                         secondary_button: None,
                         button: Some(WorkspaceBannerButtonDetails {
-                            text: "Update Warp manually".to_string(),
+                            text: "Update Clinch manually".to_string(),
                             action: WorkspaceAction::DownloadNewVersion,
                             variant: BannerButtonVariant::Outlined,
                             icon: None,
@@ -23246,6 +23438,7 @@ impl Workspace {
             }
             HeaderToolbarItemKind::AgentManagement
             | HeaderToolbarItemKind::ConversationFinder
+            | HeaderToolbarItemKind::IMessageStatus
             | HeaderToolbarItemKind::NotificationsMailbox => None,
         }
     }
@@ -24308,39 +24501,7 @@ impl TypedActionView for Workspace {
             UnpinTab(tab_index) => self.unpin_tab(*tab_index, ctx),
             PinTabGroup(group_id) => self.pin_tab_group(*group_id, ctx),
             UnpinTabGroup(group_id) => self.unpin_tab_group(*group_id, ctx),
-            AddDefaultTab => {
-                let effective_mode = AISettings::as_ref(ctx).default_session_mode(ctx);
-                match effective_mode {
-                    DefaultSessionMode::TabConfig => {
-                        let ai_settings = AISettings::as_ref(ctx);
-                        if let Some(config) = ai_settings.resolved_default_tab_config(ctx) {
-                            self.open_tab_config(config, ctx);
-                        } else {
-                            // Config missing or deleted — clear and fall through to Terminal.
-                            AISettings::handle(ctx).update(ctx, |settings, ctx| {
-                                report_if_error!(settings
-                                    .default_session_mode_internal
-                                    .set_value(DefaultSessionMode::Terminal, ctx));
-                                report_if_error!(settings
-                                    .default_tab_config_path
-                                    .set_value(String::new(), ctx));
-                            });
-                            self.add_terminal_tab(false, ctx);
-                        }
-                    }
-                    DefaultSessionMode::CloudAgent => {
-                        self.add_ambient_agent_tab(ctx);
-                    }
-                    DefaultSessionMode::DockerSandbox => {
-                        self.add_docker_sandbox_tab(ctx);
-                    }
-                    // Terminal and Agent are handled by the existing path
-                    // (add_terminal_tab applies DefaultSessionMode::Agent internally).
-                    DefaultSessionMode::Terminal | DefaultSessionMode::Agent => {
-                        self.add_terminal_tab(false, ctx);
-                    }
-                }
-            }
+            AddDefaultTab => self.add_default_tab_impl(true, ctx),
             AddTerminalTab { hide_homepage } => {
                 self.add_new_session_tab_internal_with_default_session_mode_behavior(
                     NewSessionSource::Tab,
@@ -25017,6 +25178,14 @@ impl TypedActionView for Workspace {
                         !self.vertical_tabs_panel.show_settings_popup;
                     ctx.notify();
                 }
+            }
+            ToggleAutomaticWorktreeTabs => {
+                ClinchSettings::handle(ctx).update(ctx, |settings, ctx| {
+                    report_if_error!(settings
+                        .auto_create_worktrees_for_new_tabs
+                        .toggle_and_save_value(ctx));
+                });
+                ctx.notify();
             }
             SetVerticalTabsDisplayGranularity(granularity) => {
                 let granularity = *granularity;

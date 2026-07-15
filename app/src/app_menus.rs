@@ -1051,7 +1051,7 @@ fn make_new_help_menu() -> Menu {
             link_menu_item("GitHub Issues...", links::GITHUB_ISSUES_URL.into()),
             link_menu_item(
                 "Warp Documentation (upstream)...",
-                links::USER_DOCS_URL.into(),
+                links::UPSTREAM_DOCS_URL.into(),
             ),
         ],
     )

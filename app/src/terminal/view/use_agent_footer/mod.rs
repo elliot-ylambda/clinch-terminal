@@ -13,7 +13,9 @@ use crate::ai::blocklist::agent_view::agent_input_footer::{
     AgentInputFooter, AgentInputFooterEvent,
 };
 use crate::terminal::cli_agent_sessions::auto_continue::AutoContinueModel;
-use crate::terminal::cli_agent_sessions::{CLIAgentInputEntrypoint, CLIAgentSessionsModel};
+use crate::terminal::cli_agent_sessions::{
+    CLIAgentInputEntrypoint, CLIAgentSessionStatus, CLIAgentSessionsModel,
+};
 use crate::terminal::shared_session::{
     SharedSessionActionSource, SharedSessionScrollbackType, SharedSessionSource,
 };
@@ -803,6 +805,30 @@ impl TerminalView {
         self.write_cli_agent_text_then_submit(text_bytes, strategy, ctx);
     }
 
+    /// Revalidates a durable CLI-agent identity immediately before inserting
+    /// a reply received through Clinch's local iMessage bridge. This is the
+    /// only external-reply entry point: a stale pane ID, a busy/blocked turn,
+    /// or an exited foreground process must never receive the text.
+    #[cfg(all(target_os = "macos", feature = "local_tty"))]
+    pub(crate) fn submit_external_imessage_reply(
+        &mut self,
+        expected_key: crate::terminal::cli_agent_sessions::CLIAgentSessionKey,
+        text: String,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        let exact_idle_session = CLIAgentSessionsModel::as_ref(ctx)
+            .session(self.view_id)
+            .is_some_and(|session| {
+                session.session_key().as_ref() == Some(&expected_key)
+                    && matches!(session.status, CLIAgentSessionStatus::Success)
+            });
+        if !exact_idle_session || text.is_empty() || !self.is_long_running() {
+            return false;
+        }
+        self.submit_text_to_cli_agent_pty(text, ctx);
+        true
+    }
+
     /// Simulates clipboard image paste for each pending image attachment by
     /// writing the image to the system clipboard and sending Ctrl+V to the PTY.
     /// After all images are pasted, the text prompt is sent via the normal
@@ -1001,6 +1027,14 @@ impl TerminalView {
         strategy: RichInputSubmitStrategy,
         ctx: &mut ViewContext<Self>,
     ) {
+        // This pipeline is only reached with a known, non-empty agent prompt. Mark it directly
+        // instead of inferring activity from arbitrary carriage returns written to the raw TUI;
+        // those can also confirm startup menus or be sent while the agent is idle.
+        let view_id = self.view_id;
+        CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+            sessions.mark_project_cli_agent_turn_started_from_clinch_submission(view_id, ctx);
+        });
+
         match strategy {
             RichInputSubmitStrategy::Inline => {
                 let mut bytes = text_bytes;

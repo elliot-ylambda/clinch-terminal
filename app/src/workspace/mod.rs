@@ -1437,8 +1437,8 @@ fn add_open_setting_pages_as_editable_binding(app: &mut AppContext) {
         .with_custom_action(CustomAction::ShowSettings),
         EditableBinding::new(
             "workspace:show_warp_settings",
-            BindingDescription::new("Open Warp Settings")
-                .with_custom_description(bindings::MAC_MENUS_CONTEXT, "Warp Settings..."),
+            BindingDescription::new("Open Terminal Settings")
+                .with_custom_description(bindings::MAC_MENUS_CONTEXT, "Terminal Settings..."),
             WorkspaceAction::ShowSettingsPage(SettingsSection::Appearance),
         )
         .with_context_predicate(id!("Workspace"))
@@ -1634,7 +1634,7 @@ fn add_overflow_menu_items_as_editable_binding(app: &mut AppContext) {
         #[cfg(not(target_family = "wasm"))]
         EditableBinding::new(
             "workspace:view_logs",
-            "View Warp logs",
+            "View Clinch logs",
             WorkspaceAction::ViewLogs,
         )
         .with_context_predicate(id!("Workspace")),

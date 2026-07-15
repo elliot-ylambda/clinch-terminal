@@ -217,6 +217,45 @@ fn round_trip_cli_agent_with_worktree() {
     );
 }
 
+#[test]
+fn automatic_worktree_config_quotes_full_paths_and_uses_main() {
+    let repo = Path::new("/Users/Test User/my repo");
+    let config =
+        build_automatic_worktree_tab_config(&SessionType::Terminal, repo, "main", "mesa-coyote");
+    let worktree_path = super::super::tab_config::generated_worktree_path(repo, "mesa-coyote");
+    let worktree_path_text = worktree_path.to_string_lossy();
+    let quoted_path = shell_words::quote(&worktree_path_text);
+
+    assert_eq!(config.name, "Worktree: my repo");
+    assert!(config.title.is_none());
+    assert_eq!(config.panes[0].pane_type, Some(TabConfigPaneType::Terminal));
+    assert_eq!(config.panes[0].directory.as_deref(), repo.to_str());
+    assert_eq!(
+        config.panes[0].commands.as_deref(),
+        Some(
+            [
+                format!("git worktree add -b mesa-coyote {quoted_path} main"),
+                format!("cd {quoted_path}"),
+            ]
+            .as_slice()
+        )
+    );
+}
+
+#[test]
+fn automatic_worktree_agent_waits_behind_setup_commands() {
+    let config = build_automatic_worktree_tab_config(
+        &SessionType::Oz,
+        Path::new("/Users/me/repo"),
+        "origin/main",
+        "obsidian-hawk",
+    );
+
+    assert_eq!(config.panes[0].pane_type, Some(TabConfigPaneType::Agent));
+    assert_eq!(config.panes[0].commands.as_ref().unwrap().len(), 2);
+    assert!(config.panes[0].commands.as_ref().unwrap()[0].ends_with(" origin/main"));
+}
+
 // ── render_tab_config integration ──
 
 #[test]

@@ -1,10 +1,16 @@
+#[cfg(feature = "local_fs")]
+use repo_metadata::repositories::DetectedRepositories;
 use warpui::AppContext;
+#[cfg(feature = "local_fs")]
+use warpui::SingletonEntity as _;
 
 use crate::context_chips::display_chip::GitLineChanges;
 use crate::context_chips::{git_line_changes_from_chips, ContextChipKind};
 use crate::terminal::TerminalView;
 
 impl TerminalView {
+    pub const LINKED_WORKTREE_LABEL: &'static str = "Worktree";
+
     fn prompt_chip_value(&self, chip_kind: &ContextChipKind, ctx: &AppContext) -> Option<String> {
         self.current_prompt
             .as_ref(ctx)
@@ -40,6 +46,29 @@ impl TerminalView {
                     .map(|metadata| metadata.current_branch_name.clone())
                     .filter(|branch| !branch.trim().is_empty())
             })
+    }
+
+    /// Whether the active local session is inside a linked Git worktree.
+    pub fn is_linked_git_worktree(&self, ctx: &AppContext) -> bool {
+        #[cfg(feature = "local_fs")]
+        {
+            let Some(cwd) = self.canonical_session_pwd_if_local(ctx) else {
+                return false;
+            };
+            let Some(repository) = DetectedRepositories::as_ref(ctx)
+                .get_local_watched_repo_for_path(cwd.as_path(), ctx)
+            else {
+                return false;
+            };
+
+            repository.as_ref(ctx).is_linked_worktree()
+        }
+
+        #[cfg(not(feature = "local_fs"))]
+        {
+            let _ = ctx;
+            false
+        }
     }
 
     pub fn last_completed_command_text(&self) -> Option<String> {

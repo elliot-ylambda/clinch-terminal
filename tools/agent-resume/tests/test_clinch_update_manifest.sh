@@ -33,7 +33,7 @@ mkdir -p "$APP/Contents"
 /usr/bin/plutil -insert CFBundleIdentifier -string sh.clinch.Clinch "$APP/Contents/Info.plist"
 /usr/bin/plutil -insert WarpVersion -string "$VERSION" "$APP/Contents/Info.plist"
 /usr/bin/plutil -insert ClinchUpdateSequence -string "$SEQUENCE" "$APP/Contents/Info.plist"
-/usr/bin/plutil -insert LSMinimumSystemVersion -string 13.0 "$APP/Contents/Info.plist"
+/usr/bin/plutil -insert LSMinimumSystemVersion -string 14.0 "$APP/Contents/Info.plist"
 printf 'authenticated archive fixture\n' > "$ZIP"
 
 CLINCH_OPENSSL_BIN="$OPENSSL3" \

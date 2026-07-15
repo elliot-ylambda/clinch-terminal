@@ -319,8 +319,8 @@ fn local_user_submissions_mark_claude_and_codex_turns_as_working() {
         captured_events.update(&mut app, |captured, _| captured.0.clear());
 
         sessions.update(&mut app, |model, ctx| {
-            model.mark_project_cli_agent_turn_started_from_user_submission(claude_terminal, ctx);
-            model.mark_project_cli_agent_turn_started_from_user_submission(codex_terminal, ctx);
+            model.mark_project_cli_agent_turn_started_from_clinch_submission(claude_terminal, ctx);
+            model.mark_project_cli_agent_turn_started_from_clinch_submission(codex_terminal, ctx);
         });
 
         sessions.read(&app, |model, _| {

@@ -16,8 +16,10 @@ use crate::terminal::shell::ShellType;
 
 const PLUGIN_NAME: &str = "warp";
 const PLUGIN_KEY: &str = "warp@codex-warp";
+const BUNDLED_PLUGIN_KEY: &str = "warp@clinch-codex-warp";
 const MARKETPLACE_REPO: &str = "warpdotdev/codex-warp";
 const MARKETPLACE_NAME: &str = "codex-warp";
+const BUNDLED_MARKETPLACE_NAME: &str = "clinch-codex-warp";
 
 const PLATFORM_PLUGIN_NAME: &str = "orchestration";
 const PLATFORM_PLUGIN_KEY: &str = "orchestration@codex-warp";
@@ -112,7 +114,7 @@ impl CliAgentPluginManager for CodexPluginManager {
         if codex_warp_marketplace_config(&codex_dir).is_some_and(|config| !config.is_git()) {
             return false;
         }
-        plugin_needs_update(&codex_dir, PLUGIN_NAME, PLUGIN_KEY, MINIMUM_PLUGIN_VERSION)
+        notification_plugin_needs_update(&codex_dir)
     }
 
     fn is_platform_plugin_installed(&self) -> bool {
@@ -347,7 +349,9 @@ static PLUGIN_UPDATE_INSTRUCTIONS: LazyLock<PluginInstructions> = LazyLock::new(
 });
 
 fn check_installed(codex_dir: &Path) -> bool {
-    check_plugin_enabled(codex_dir, PLUGIN_KEY)
+    [PLUGIN_KEY, BUNDLED_PLUGIN_KEY]
+        .iter()
+        .any(|plugin_key| check_plugin_enabled(codex_dir, plugin_key))
 }
 
 fn check_platform_plugin_installed(codex_dir: &Path) -> bool {
@@ -373,7 +377,11 @@ fn check_plugin_enabled(codex_dir: &Path, plugin_key: &str) -> bool {
 
 /// Reads the latest cached Warp plugin version, if present.
 fn installed_version(codex_dir: &Path) -> Option<String> {
-    installed_plugin_version(codex_dir, PLUGIN_NAME)
+    installed_plugin_version_in_marketplaces(
+        codex_dir,
+        PLUGIN_NAME,
+        &[MARKETPLACE_NAME, BUNDLED_MARKETPLACE_NAME],
+    )
 }
 
 /// Reads the latest cached orchestration plugin version, if present.
@@ -390,24 +398,36 @@ fn platform_plugin_version_is_current(codex_dir: &Path) -> bool {
 /// Reads the latest cached version for `plugin_name` from
 /// `plugins/cache/codex-warp/<plugin_name>/<version>/.codex-plugin/plugin.json`.
 fn installed_plugin_version(codex_dir: &Path, plugin_name: &str) -> Option<String> {
-    let cache_dir = codex_dir
-        .join("plugins")
-        .join("cache")
-        .join(MARKETPLACE_NAME)
-        .join(plugin_name);
-    let entries = fs::read_dir(cache_dir).ok()?;
+    installed_plugin_version_in_marketplaces(codex_dir, plugin_name, &[MARKETPLACE_NAME])
+}
+
+fn installed_plugin_version_in_marketplaces(
+    codex_dir: &Path,
+    plugin_name: &str,
+    marketplace_names: &[&str],
+) -> Option<String> {
     let mut latest: Option<String> = None;
-    for entry in entries.flatten() {
-        let manifest_path = entry.path().join(".codex-plugin").join("plugin.json");
-        let Some(version) = plugin_manifest_version(manifest_path) else {
+    for marketplace_name in marketplace_names {
+        let cache_dir = codex_dir
+            .join("plugins")
+            .join("cache")
+            .join(marketplace_name)
+            .join(plugin_name);
+        let Ok(entries) = fs::read_dir(cache_dir) else {
             continue;
         };
-        if latest
-            .as_deref()
-            .map(|current| compare_versions(&version, current).is_gt())
-            .unwrap_or(true)
-        {
-            latest = Some(version);
+        for entry in entries.flatten() {
+            let manifest_path = entry.path().join(".codex-plugin").join("plugin.json");
+            let Some(version) = plugin_manifest_version(manifest_path) else {
+                continue;
+            };
+            if latest
+                .as_deref()
+                .map(|current| compare_versions(&version, current).is_gt())
+                .unwrap_or(true)
+            {
+                latest = Some(version);
+            }
         }
     }
     latest
@@ -436,6 +456,25 @@ fn plugin_needs_update(
         // No version field means very old plugin.
         None => true,
     }
+}
+
+fn notification_plugin_needs_update(codex_dir: &Path) -> bool {
+    let upstream_enabled = check_plugin_enabled(codex_dir, PLUGIN_KEY);
+    let bundled_enabled = check_plugin_enabled(codex_dir, BUNDLED_PLUGIN_KEY);
+    if !upstream_enabled && !bundled_enabled {
+        return false;
+    }
+
+    let mut marketplaces = Vec::with_capacity(2);
+    if upstream_enabled {
+        marketplaces.push(MARKETPLACE_NAME);
+    }
+    if bundled_enabled {
+        marketplaces.push(BUNDLED_MARKETPLACE_NAME);
+    }
+    installed_plugin_version_in_marketplaces(codex_dir, PLUGIN_NAME, &marketplaces)
+        .map(|version| compare_versions(&version, MINIMUM_PLUGIN_VERSION).is_lt())
+        .unwrap_or(true)
 }
 
 struct CodexWarpMarketplaceConfig {

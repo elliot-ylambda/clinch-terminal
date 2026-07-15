@@ -327,6 +327,8 @@ use crate::env_vars::env_var_collection_block::{
 };
 use crate::env_vars::{CloudEnvVarCollection, EnvVar, EnvVarExt};
 use crate::features::FeatureFlag;
+#[cfg(feature = "local_fs")]
+use crate::menu::SubMenu;
 use crate::menu::{Event as MenuEvent, Menu, MenuItem, MenuItemFields};
 use crate::pane_group::focus_state::PaneFocusHandle;
 use crate::pane_group::{
@@ -521,6 +523,10 @@ use crate::util::bindings::{
 };
 use crate::util::clipboard::clipboard_content_with_escaped_paths;
 use crate::util::color::darken;
+#[cfg(all(feature = "local_fs", target_os = "macos"))]
+use crate::util::file::external_editor::{
+    applications_that_can_open_file, open_file_path_with_application,
+};
 #[cfg(feature = "local_fs")]
 use crate::util::file::external_editor::{settings::EditorLayout, EditorSettings};
 #[cfg(feature = "local_fs")]
@@ -2985,25 +2991,27 @@ enum BlockMetadataUpdateSource {
 }
 
 fn cli_agent_history_trigger(history: &AgentPromptHistory, fallback: String) -> String {
-    let Some(first_prompt) = history.prompts.first() else {
-        return fallback;
-    };
-    let message = first_prompt
-        .text
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
-    if message.is_empty() {
-        return fallback;
-    }
+    history
+        .prompts
+        .iter()
+        .rev()
+        .find_map(|prompt| {
+            let message = prompt.text.split_whitespace().collect::<Vec<_>>().join(" ");
+            if message.is_empty() {
+                return None;
+            }
 
-    crate::agent_resume::format_prompt_time_full(first_prompt.timestamp.as_deref())
-        .map(|timestamp| format!("{timestamp} | {message}"))
-        .unwrap_or(message)
+            Some(
+                crate::agent_resume::format_prompt_time_full(prompt.timestamp.as_deref())
+                    .map(|timestamp| format!("{timestamp} | {message}"))
+                    .unwrap_or(message),
+            )
+        })
+        .unwrap_or(fallback)
 }
 
 fn cli_agent_history_prompts(history: &AgentPromptHistory) -> &[AgentPrompt] {
-    // The closed header previews the first prompt, but the expanded history must still contain
+    // The closed header previews the latest prompt, but the expanded history must still contain
     // every prompt in chronological order.
     &history.prompts
 }
@@ -3950,7 +3958,7 @@ impl TerminalView {
             );
             dropdown.set_vertical_margin(0., ctx);
             dropdown.set_menu_max_height(360., ctx);
-            // Explicit, header-appropriate text color + size so the first-prompt
+            // Explicit, header-appropriate text color + size so the latest-prompt
             // text is always painted, mirroring `render_pane_header_title_text`.
             dropdown.set_font_color(header_text_color.into(), ctx);
             dropdown.set_font_size(header_font_size, ctx);
@@ -9336,18 +9344,6 @@ impl TerminalView {
         // so this is a no-op for that path.
         self.cancel_auto_continue_on_user_input(ctx);
 
-        // Interactive CLI agents submit on carriage return. Do not treat line feeds embedded in
-        // a multi-line bracketed paste as a submission before the user actually presses Enter.
-        if bytes.contains(&b'\r') {
-            let terminal_view_id = self.view_id;
-            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
-                sessions.mark_project_cli_agent_turn_started_from_user_submission(
-                    terminal_view_id,
-                    ctx,
-                );
-            });
-        }
-
         let bytes_vec = bytes.to_vec();
         self.clear_selected_blocks(ctx);
         self.update_scroll_position_locking(ScrollPositionUpdate::AfterWriteUserBytesToPty, ctx);
@@ -13626,7 +13622,7 @@ impl TerminalView {
         self.cli_agent_message_history_dropdown
             .update(ctx, |dropdown, ctx| {
                 dropdown.set_rich_items(items, ctx);
-                // The model-backed header provider supplies the first prompt independently of
+                // The model-backed header provider supplies the latest prompt independently of
                 // menu selection. History rows are informational and should not become selected.
                 dropdown.set_selected_to_none(ctx);
             });
@@ -16806,6 +16802,93 @@ impl TerminalView {
             .hovered_rich_content_link()
     }
 
+    #[cfg(feature = "local_fs")]
+    fn file_link_context_menu_items(
+        highlighted_link: &GridHighlightedLink,
+        path: PathBuf,
+    ) -> Vec<MenuItem<TerminalAction>> {
+        let show_in_file_explorer_menu_item_label = if cfg!(target_os = "macos") {
+            "Show in Finder"
+        } else {
+            "Show containing folder"
+        };
+
+        #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+        let mut open_with_items = vec![MenuItemFields::new("System Default")
+            .with_on_select_action(TerminalAction::OpenFileWithSystemDefault(path.clone()))
+            .into_item()];
+        #[cfg(target_os = "macos")]
+        open_with_items.extend(applications_that_can_open_file(&path).into_iter().map(
+            |application| {
+                let label = if application.is_default {
+                    format!("{} (Default)", application.display_name)
+                } else {
+                    application.display_name
+                };
+                MenuItemFields::new(label)
+                    .with_on_select_action(TerminalAction::OpenFileWithApplication {
+                        file_path: path.clone(),
+                        application_path: application.application_path,
+                    })
+                    .into_item()
+            },
+        ));
+
+        let mut items = vec![
+            MenuItemFields::new("Open")
+                .with_on_select_action(TerminalAction::OpenGridLink(highlighted_link.clone()))
+                .into_item(),
+            MenuItem::Submenu {
+                fields: MenuItemFields::new_submenu("Open With"),
+                menu: SubMenu::new(open_with_items),
+            },
+        ];
+
+        if is_markdown_file(&path) {
+            items.push(
+                MenuItemFields::new("Open in Warp")
+                    .with_on_select_action(TerminalAction::OpenFileInWarp(path.clone()))
+                    .into_item(),
+            );
+        }
+
+        items.extend([
+            MenuItem::Separator,
+            MenuItemFields::new("Copy path")
+                .with_on_select_action(TerminalAction::ContextMenu(ContextMenuAction::CopyUrl {
+                    url_content: path.to_string_lossy().into_owned(),
+                }))
+                .into_item(),
+            MenuItemFields::new(show_in_file_explorer_menu_item_label)
+                .with_on_select_action(TerminalAction::ShowInFileExplorer(path))
+                .into_item(),
+        ]);
+        items
+    }
+
+    fn grid_link_context_menu_items(
+        highlighted_link: &GridHighlightedLink,
+        model: &TerminalModel,
+    ) -> Vec<MenuItem<TerminalAction>> {
+        match highlighted_link {
+            GridHighlightedLink::Url(url) => {
+                let url_content = model.link_at_range(url, RespectObfuscatedSecrets::Yes);
+                vec![MenuItemFields::new("Copy URL")
+                    .with_on_select_action(TerminalAction::ContextMenu(
+                        ContextMenuAction::CopyUrl { url_content },
+                    ))
+                    .into_item()]
+            }
+            #[cfg(feature = "local_fs")]
+            GridHighlightedLink::File(file_link) => {
+                let Some(path) = file_link.get_inner().absolute_path() else {
+                    return Vec::new();
+                };
+                Self::file_link_context_menu_items(highlighted_link, path)
+            }
+        }
+    }
+
     fn context_menu_items(
         &self,
         menu_source: &BlockListMenuSource,
@@ -16823,68 +16906,7 @@ impl TerminalView {
                 | BlockListMenuSource::RichContentBlockRightClick { .. },
                 Some(highlighted_link),
                 _,
-            ) => {
-                match highlighted_link {
-                    GridHighlightedLink::Url(url) => {
-                        let url_content =
-                            Some(model.link_at_range(url, RespectObfuscatedSecrets::Yes));
-                        url_content
-                            .map(|url_content| {
-                                vec![MenuItemFields::new("Copy URL")
-                                    .with_on_select_action(TerminalAction::ContextMenu(
-                                        ContextMenuAction::CopyUrl { url_content },
-                                    ))
-                                    .into_item()]
-                            })
-                            .unwrap_or_default()
-                    }
-                    #[cfg(feature = "local_fs")]
-                    GridHighlightedLink::File(file_link) => {
-                        let path = file_link.get_inner().absolute_path();
-                        let show_in_file_explorer_menu_item_label = if cfg!(target_os = "macos") {
-                            "Show in Finder"
-                        } else {
-                            "Show containing folder"
-                        };
-                        path.map(|path| {
-                            let mut items = vec![
-                                MenuItemFields::new("Copy path")
-                                    .with_on_select_action(TerminalAction::ContextMenu(
-                                        ContextMenuAction::CopyUrl {
-                                            url_content: path.to_string_lossy().into(),
-                                        },
-                                    ))
-                                    .into_item(),
-                                MenuItemFields::new(show_in_file_explorer_menu_item_label)
-                                    .with_on_select_action(TerminalAction::ShowInFileExplorer(
-                                        path.clone(),
-                                    ))
-                                    .into_item(),
-                            ];
-
-                            if is_markdown_file(&path) {
-                                items.push(
-                                    MenuItemFields::new("Open in Warp")
-                                        .with_on_select_action(TerminalAction::OpenFileInWarp(path))
-                                        .into_item(),
-                                );
-                                // Because the default for cmd-click is to open in Warp, we also
-                                // have an open-in-editor option.
-                                items.push(
-                                    MenuItemFields::new("Open in editor")
-                                        .with_on_select_action(TerminalAction::OpenGridLink(
-                                            highlighted_link.clone(),
-                                        ))
-                                        .into_item(),
-                                );
-                            }
-
-                            items
-                        })
-                        .unwrap_or_default()
-                    }
-                }
-            }
+            ) => Self::grid_link_context_menu_items(highlighted_link, &model),
             (
                 BlockListMenuSource::RegularTextRightClick { .. }
                 | BlockListMenuSource::RichContentTextRightClick { .. },
@@ -17936,13 +17958,30 @@ impl TerminalView {
         &self,
         ctx: &mut ViewContext<Self>,
     ) -> Vec<MenuItem<TerminalAction>> {
-        let mut menu_items = Vec::new();
         let model = self.model.lock();
+        let is_alt_screen_link = self
+            .highlighted_link
+            .as_ref()
+            .is_some_and(|link| match link {
+                GridHighlightedLink::Url(WithinModel::AltScreen(_)) => true,
+                #[cfg(feature = "local_fs")]
+                GridHighlightedLink::File(WithinModel::AltScreen(_)) => true,
+                _ => false,
+            });
+        let mut menu_items = self
+            .highlighted_link
+            .as_ref()
+            .filter(|_| is_alt_screen_link)
+            .map(|link| Self::grid_link_context_menu_items(link, &model))
+            .unwrap_or_default();
 
         let semantic_selection = SemanticSelection::as_ref(ctx);
         let selection_string =
             model.selection_to_string(semantic_selection, self.is_inverted_blocklist(ctx), ctx);
         if selection_string.is_some() {
+            if !menu_items.is_empty() {
+                menu_items.push(MenuItem::Separator);
+            }
             menu_items.push(
                 MenuItemFields::new("Copy")
                     .with_on_select_action(TerminalAction::ContextMenu(
@@ -18600,6 +18639,14 @@ impl TerminalView {
         }
 
         if should_directly_open_link {
+            #[cfg(feature = "local_fs")]
+            {
+                let opened = self.maybe_open_link(LinkOpenMethod::CmdClick, position, ctx);
+                if !opened {
+                    self.open_file_link_at_position(*position, LinkOpenMethod::CmdClick, ctx);
+                }
+            }
+            #[cfg(not(feature = "local_fs"))]
             self.maybe_open_link(LinkOpenMethod::CmdClick, position, ctx);
         }
     }
@@ -18644,10 +18691,13 @@ impl TerminalView {
         link_open_method: LinkOpenMethod,
         position: &WithinModel<Point>,
         ctx: &mut ViewContext<Self>,
-    ) {
+    ) -> bool {
         let Some(link) = self.highlighted_link.as_ref() else {
-            return;
+            return false;
         };
+        if !link.contains(position) {
+            return false;
+        }
         send_telemetry_from_ctx!(
             TelemetryEvent::OpenLink {
                 link: link.clone(),
@@ -18658,24 +18708,24 @@ impl TerminalView {
 
         match link {
             #[cfg(feature = "local_fs")]
-            GridHighlightedLink::File(link) if link.contains(position) => {
+            GridHighlightedLink::File(link) => {
                 let link = link.get_inner();
                 if let Some(path) = link.absolute_path() {
                     self.open_file_path(path, link.line_and_column_num, ctx);
                 }
             }
-            GridHighlightedLink::Url(url) if url.contains(position) => {
+            GridHighlightedLink::Url(url) => {
                 let model = self.model.lock();
                 ctx.notify();
                 ctx.open_url(&model.link_at_range(url, RespectObfuscatedSecrets::No));
             }
-            _ => (),
         }
 
         if self.highlighted_link.take(&mut self.model.lock()).is_some() {
             ctx.reset_cursor();
             ctx.notify();
         }
+        true
     }
 
     fn middle_click_on_grid(
@@ -26357,6 +26407,10 @@ impl TypedActionView for TerminalView {
             | StartLspServer => ActionAccessibilityContent::from_debug(),
             #[cfg(feature = "local_fs")]
             OpenCodeInWarp { .. } => ActionAccessibilityContent::from_debug(),
+            #[cfg(feature = "local_fs")]
+            OpenFileWithSystemDefault(_) => ActionAccessibilityContent::from_debug(),
+            #[cfg(all(feature = "local_fs", target_os = "macos"))]
+            OpenFileWithApplication { .. } => ActionAccessibilityContent::from_debug(),
             OpenInWarpBanner(action) => self.open_in_warp_banner_accessibility_content(*action),
             OpenAIBlockAttachedBlocksMenu { .. } => Custom(AccessibilityContent::new_without_help(
                 "Open list of blocks attached as context to this AI query.".to_owned(),
@@ -26777,6 +26831,17 @@ impl TypedActionView for TerminalView {
             }
             OpenRichContentLink(link) => {
                 self.open_rich_content_link(link, ctx);
+            }
+            #[cfg(feature = "local_fs")]
+            OpenFileWithSystemDefault(path) => {
+                self.open_file_path_with_target(path.clone(), FileTarget::SystemGeneric, None, ctx);
+            }
+            #[cfg(all(feature = "local_fs", target_os = "macos"))]
+            OpenFileWithApplication {
+                file_path,
+                application_path,
+            } => {
+                open_file_path_with_application(file_path.clone(), application_path.clone(), ctx);
             }
             ShowInFileExplorer(path) => {
                 send_telemetry_from_ctx!(TelemetryEvent::ShowInFileExplorer, ctx);
@@ -28530,9 +28595,16 @@ impl View for TerminalView {
             }
         };
 
-        Some(AccessibilityData {
-            content: terminal_session_content,
-        })
+        let content = if self.is_linked_git_worktree(ctx) {
+            format!(
+                "{}\n{terminal_session_content}",
+                Self::LINKED_WORKTREE_LABEL
+            )
+        } else {
+            terminal_session_content
+        };
+
+        Some(AccessibilityData { content })
     }
 }
 

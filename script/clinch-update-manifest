@@ -5,7 +5,29 @@ set -euo pipefail
 usage() {
   echo "usage: $0 generate <app> <zip> <version> <sequence> <manifest> <signature>" >&2
   echo "       $0 verify <manifest> <signature> <public-key-json>" >&2
+  echo "       $0 verify-key <private-key> <public-key-json>" >&2
   exit 2
+}
+
+verify_key() {
+  [[ $# -eq 2 ]] || usage
+  local private_key="$1" public_key_json="$2" openssl3 actual_public expected_public
+  [[ -f "$private_key" ]] || { echo "Missing update signing key: $private_key" >&2; exit 1; }
+  [[ -f "$public_key_json" ]] || { echo "Missing update public key: $public_key_json" >&2; exit 1; }
+  openssl3="$(find_openssl3)"
+  actual_public="$($openssl3 pkey -in "$private_key" -pubout -outform DER \
+    | tail -c 32 | base64 | tr -d '\n')"
+  expected_public="$(/usr/bin/python3 - "$public_key_json" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as source:
+    print(json.load(source)["ed25519_public_key"])
+PY
+)"
+  [[ "$actual_public" == "$expected_public" ]] || {
+    echo "The update private key does not match $public_key_json." >&2
+    exit 1
+  }
+  echo "Verified update signing key against $public_key_json"
 }
 
 find_openssl3() {
@@ -91,7 +113,7 @@ manifest = {
     },
     "bundle_id": info["CFBundleIdentifier"],
     "notarized": False,
-    "minimum_macos_version": info.get("LSMinimumSystemVersion", "13.0"),
+    "minimum_macos_version": info.get("LSMinimumSystemVersion", "14.0"),
     "release_notes": os.environ.get("RELEASE_NOTES", "Clinch stability and recovery improvements."),
     "repository": "elliot-ylambda/clinch-terminal",
     "release_url": f"https://github.com/elliot-ylambda/clinch-terminal/releases/tag/{version}",
@@ -132,7 +154,7 @@ verify() {
   local manifest="$1" signature="$2" public_key_json="$3"
   local openssl3 temp_dir raw_public
   openssl3="$(find_openssl3)"
-  temp_dir="$(mktemp -d -t clinch-update-verify)"
+  temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/clinch-update-verify.XXXXXX")"
   trap 'rm -rf "${temp_dir:-}"' EXIT
 
   raw_public="$(/usr/bin/python3 - "$public_key_json" <<'PY'
@@ -141,12 +163,20 @@ with open(sys.argv[1], encoding="utf-8") as source:
     print(json.load(source)["ed25519_public_key"])
 PY
 )"
-  printf '%s' "$raw_public" | base64 -D > "$temp_dir/public.raw"
-  # SubjectPublicKeyInfo prefix for a raw Ed25519 public key (RFC 8410).
-  printf '302a300506032b6570032100' | xxd -r -p > "$temp_dir/public.der"
-  cat "$temp_dir/public.raw" >> "$temp_dir/public.der"
+  /usr/bin/python3 - "$raw_public" "$temp_dir/public.der" <<'PY'
+import base64, pathlib, sys
+prefix = bytes.fromhex("302a300506032b6570032100")
+raw_public = base64.b64decode(sys.argv[1], validate=True)
+if len(raw_public) != 32:
+    raise SystemExit("invalid Ed25519 public key length")
+pathlib.Path(sys.argv[2]).write_bytes(prefix + raw_public)
+PY
   "$openssl3" pkey -pubin -inform DER -in "$temp_dir/public.der" -out "$temp_dir/public.pem" >/dev/null
-  tr -d '\r\n' < "$signature" | base64 -D > "$temp_dir/signature.bin"
+  /usr/bin/python3 - "$signature" "$temp_dir/signature.bin" <<'PY'
+import base64, pathlib, sys
+encoded = pathlib.Path(sys.argv[1]).read_text(encoding="ascii").replace("\r", "").replace("\n", "")
+pathlib.Path(sys.argv[2]).write_bytes(base64.b64decode(encoded, validate=True))
+PY
   "$openssl3" pkeyutl -verify -pubin -rawin -inkey "$temp_dir/public.pem" \
     -in "$manifest" -sigfile "$temp_dir/signature.bin" >/dev/null
   echo "Verified signed Clinch update manifest: $manifest"
@@ -155,5 +185,6 @@ PY
 case "${1:-}" in
   generate) shift; generate "$@" ;;
   verify) shift; verify "$@" ;;
+  verify-key) shift; verify_key "$@" ;;
   *) usage ;;
 esac

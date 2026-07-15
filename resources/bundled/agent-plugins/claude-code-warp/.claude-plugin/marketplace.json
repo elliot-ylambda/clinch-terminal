@@ -1,0 +1,18 @@
+{
+  "name": "clinch-claude-code-warp",
+  "description": "Warp terminal integration for Claude Code bundled with Clinch",
+  "owner": {
+    "name": "Warp",
+    "url": "https://warp.dev"
+  },
+  "plugins": [
+    {
+      "name": "warp",
+      "description": "Native Warp notifications when Claude completes tasks or needs input",
+      "source": "./plugins/warp",
+      "version": "2.1.0",
+      "category": "productivity",
+      "tags": ["notifications", "terminal", "warp"]
+    }
+  ]
+}

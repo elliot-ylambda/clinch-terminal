@@ -151,6 +151,25 @@ On save, generate one grouping UUID per physical window and write one existing `
 
 Do not migrate or reinterpret launch configuration windows as multiple projects in the first version. Opening a multi-window launch configuration retains its explicit window semantics; each launched window starts with one project unless the caller explicitly requests opening its single window template in the active project.
 
+### 7. Create ordinary project tabs in managed Git worktrees
+
+Add a public, local-only `ClinchSettings` group with a default-on `auto_create_worktrees_for_new_tabs` boolean at `clinch.projects.auto_create_worktrees_for_new_tabs`. Register it through the normal application and test settings initialization paths. Extend the standalone Clinch settings page with a Projects category and a switch backed by this setting (PRODUCT 35 and 40).
+
+Keep the behavior at the user-action boundary in `Workspace`, rather than changing the low-level tab insertion or terminal constructors. The primary `AddDefaultTab` path and `NewTabInGroup` path first attempt automatic worktree creation for ordinary terminal sessions; the default built-in Agent mode requests an Agent pane so its existing pending-command behavior defers Agent Mode until setup completes. Explicit `AddTerminalTab` callers and feature-specific paths that intentionally use local-control, restoration, cloud, sandbox, custom configuration, alternate shell, split, notification, or deep-link semantics continue calling the existing paths unchanged (PRODUCT 36–37).
+
+Add synchronous, read-only Git preflight helpers beside the existing branch-list helper in `app/src/util/git.rs`:
+
+- Resolve the primary checkout with `git worktree list --porcelain`, so invoking the feature from an already-linked worktree still stores the next checkout beneath the original repository's managed directory.
+- Resolve the base ref in fixed order: `refs/heads/main`, then `refs/remotes/origin/main`. Return no plan for non-repositories, missing refs, Git failures, or an unavailable primary checkout.
+
+Build the automatic worktree as an in-memory `TabConfig` rather than writing a persistent user tab-config file. Generate a fresh branch name with the existing `warp_util::worktree_names` helper, reject a generated destination that already exists, and reuse `generated_worktree_path` for Clinch's managed path. The single-pane template starts in the primary checkout and queues `git worktree add -b <branch> <path> <base>` followed by `cd <path>`. Quote generated shell arguments through the same shell-quoting dependency used by tab-config rendering. Preserve normal dynamic tab titles and branch metadata rather than manufacturing a worktree-specific custom title (PRODUCT 38–39 and 41).
+
+For the visible state, add `Repository::is_linked_worktree()` in `repo_metadata`. It must recognize only exact external Git directories shaped like `<common>/.git/worktrees/<name>`; `external_git_directory().is_some()` is insufficient because submodules use `.git` files backed by `.git/modules/...` too. Expose the result through `TerminalView` using the detected repository for its current local cwd. Render a passive `Dataflow02` + **Worktree** chip as a separate right-side badge in expanded vertical rows and as a trailing chip in compact rows, add the rendered label to terminal tab search fragments, and prefix the focused terminal's accessibility content with the same label. Keeping the chip out of the single-priority `Indicator` enum ensures existing status indicators remain visible (PRODUCT 39 and 41).
+
+Add a compact `Dataflow02` toggle to the vertical-tabs control row between its view-options and new-tab buttons. Reuse the existing control-row icon-button sizing, 4px spacing, hover/focus behavior, theme accent for the active state, and tooltip component. Dispatch a `WorkspaceAction` that toggles and saves the existing `ClinchSettings` value; do not add per-project state. Every workspace subscribes to `ClinchSettings` changes so toggling from Clinch Settings or another window immediately refreshes the header. The tooltip reports the current on/off state and explicitly says the preference applies to all projects (PRODUCT 42).
+
+When preflight returns no plan, immediately call the unchanged ordinary-tab path. Runtime command failures remain terminal output and do not trigger cleanup: Git owns the atomicity of branch/worktree creation, `cd` cannot mutate the parent process outside that new terminal, and Clinch does not remove paths or refs on the user's behalf (PRODUCT 40–41).
+
 ## End-to-end flow
 
 ```mermaid
@@ -172,6 +191,12 @@ For notification navigation, terminal identity resolves to a workspace/project, 
 ### Automated coverage
 
 - `project_window_tests.rs` covers macOS shortcut ownership, previous/next wrapping and singleton no-ops, close-neighbor selection, and preserving active-project identity when an inactive project is removed.
+- Clinch settings-page tests cover toggling only the new worktree preference and its default-on value.
+- Tab-config tests cover the source directory, managed destination, shell-quoted commands, base ref, and terminal-versus-Agent pane type.
+- Git utility tests cover primary-checkout resolution from both a main checkout and a linked worktree, plus local/remote `main` ref selection and missing-ref fallback.
+- Workspace tests cover action routing: enabled eligible tabs use the worktree template, disabled/ineligible tabs use the existing new-session path, and Agent mode defers entry behind setup commands.
+- Workspace and vertical-tabs tests cover toggling the shared automatic-worktree preference from the header action and the header toggle's on/off tooltip copy.
+- Repository and vertical-tab tests distinguish linked worktrees from submodules and cover the Worktree chip's search label without displacing existing badge text.
 - SQLite tests cover a multi-project physical-window round trip and migration of legacy rows with no project grouping into singleton project windows.
 - `warpui_core` transfer tests cover reparenting a live view between project containers so later responder-chain traversal and subtree transfer follow the new owner.
 - Compile validation covers the project-aware workspace registry, active-project routing, menus/keybindings, notification identity routing, close confirmation, persistence models, and live cross-window transfer paths.
@@ -194,3 +219,7 @@ The remaining behavior is interaction-heavy and must be validated in a running m
 - **Persistence captures a temporary target or intermediate reorder.** Reuse the existing save suppression boundary for both inner-tab and project drags, then save only after the project reaches one committed owner.
 - **Registry callers assume one workspace per window.** Keep the active lookup compatible, add identity-based project activation helpers, and cover same-physical-window inactive-project navigation in tests.
 - **Header changes regress window controls or zen mode.** Keep the existing `Workspace` header authoritative and replace only its center content with the project strip, then manually verify traffic-light spacing and hidden-header states.
+- **Default-on worktree behavior surprises non-`main` repositories or special tab flows.** Preflight only the two explicit `main` refs, fall back without mutation, and intercept only ordinary user-created terminal/Agent tab actions rather than the shared low-level constructors.
+- **Creating a worktree from an existing linked worktree nests managed paths under the generated branch name.** Resolve the primary checkout before naming the managed repository directory and before listing shared branches.
+- **Generated paths or branch names are interpreted by the shell.** Pass every dynamic command argument through shell quoting and cover paths containing spaces in the builder tests.
+- **A submodule is mislabeled as a linked worktree.** Derive the badge from the exact `.git/worktrees/<name>` external-git-dir shape and cover `.git/modules/<name>` as a negative case.

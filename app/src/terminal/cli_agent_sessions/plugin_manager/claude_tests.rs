@@ -44,6 +44,27 @@ fn installed_when_plugin_present() {
 }
 
 #[test]
+fn installed_when_clinch_bundled_plugin_present() {
+    let dir = tempfile::tempdir().unwrap();
+    let plugins_dir = dir.path().join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+
+    let json = serde_json::json!({
+        "plugins": {
+            "warp@clinch-claude-code-warp": [{"version": "2.1.0"}]
+        }
+    });
+    fs::write(
+        plugins_dir.join("installed_plugins.json"),
+        serde_json::to_string(&json).unwrap(),
+    )
+    .unwrap();
+
+    assert!(check_installed(dir.path()));
+    assert_eq!(installed_version(dir.path()).as_deref(), Some("2.1.0"));
+}
+
+#[test]
 fn local_marketplace_override_detects_directory_source() {
     let dir = tempfile::tempdir().unwrap();
     let settings = serde_json::json!({

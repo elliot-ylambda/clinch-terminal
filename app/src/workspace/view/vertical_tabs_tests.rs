@@ -6,8 +6,8 @@ use warpui::elements::PositionedElementOffsetBounds;
 use warpui::EntityId;
 
 use super::{
-    branch_label_display, coalesce_summary_branch_entries, code_detail_kind_label,
-    compact_branch_subtitle_display, detail_sidecar_width_and_bounds,
+    automatic_worktree_toggle_tooltip, branch_label_display, coalesce_summary_branch_entries,
+    code_detail_kind_label, compact_branch_subtitle_display, detail_sidecar_width_and_bounds,
     detail_target_for_hovered_row, non_terminal_search_text_fragments,
     pane_ids_for_display_granularity, pane_search_text_fragments, preferred_agent_tab_titles,
     push_normalized_unique_summary_label, search_fragments_contain_query,
@@ -35,6 +35,18 @@ fn label(text: &str) -> VerticalTabsSummaryPrimaryLabel {
         text: text.to_string(),
         status: None,
     }
+}
+
+#[test]
+fn automatic_worktree_toggle_tooltip_reports_shared_setting_state() {
+    assert_eq!(
+        automatic_worktree_toggle_tooltip(true),
+        ("Automatic worktree tabs: On", "Applies to all projects")
+    );
+    assert_eq!(
+        automatic_worktree_toggle_tooltip(false),
+        ("Automatic worktree tabs: Off", "Applies to all projects")
+    );
 }
 
 fn pane_id() -> PaneId {
@@ -772,6 +784,7 @@ fn terminal_search_fragments_include_rendered_terminal_badges() {
         "~/warp".to_string(),
         Some("main".to_string()),
         terminal_kind_badge_label(false, Some(CLIAgent::Claude)),
+        true,
         Some(terminal_pull_request_badge_label(
             "https://github.com/warpdotdev/warp-internal/pull/12345",
         )),
@@ -788,6 +801,7 @@ fn terminal_search_fragments_include_rendered_terminal_badges() {
         "review the failing tests"
     ));
     assert!(search_fragments_contain_query(&fragments, "#12345"));
+    assert!(search_fragments_contain_query(&fragments, "worktree"));
     assert!(search_fragments_contain_query(&fragments, "+2"));
     assert!(search_fragments_contain_query(&fragments, "-3"));
 }
