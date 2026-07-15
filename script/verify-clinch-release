@@ -15,6 +15,18 @@ MINIMUM_MACOS="${CLINCH_MINIMUM_MACOS_VERSION:-14.0}"
 ALLOWED_SIGNERS="resources/release/clinch-release-allowed-signers"
 
 fail() { echo "release verification failed: $*" >&2; exit 1; }
+
+verify_binary_minimum_macos() {
+  local binary="$1"
+  local label="$2"
+  local versions
+  versions="$(xcrun vtool -show-build "$binary" 2>/dev/null \
+    | awk '$1 == "minos" { print $2 }' \
+    | sort -u)" \
+    || fail "$label does not expose a readable Mach-O deployment target"
+  [[ "$versions" == "$MINIMUM_MACOS" ]] \
+    || fail "$label deployment target is '${versions:-missing}', not $MINIMUM_MACOS"
+}
 for item in \
   "$APP" "$ZIP" "$SHA_FILE" "$DMG" "$MANIFEST" "$RAW_SIGNATURE" \
   "$SSH_SIGNATURE" "$ALLOWED_SIGNERS"; do
@@ -70,6 +82,7 @@ verify_app() {
 
   binary="$app/Contents/MacOS/stable"
   [[ -x "$binary" ]] || fail "$label omitted its stable executable"
+  verify_binary_minimum_macos "$binary" "$label stable executable"
   if [[ "${REQUIRE_UNIVERSAL:-1}" == "1" ]]; then
     lipo "$binary" -verify_arch x86_64 arm64 >/dev/null \
       || fail "$label is not universal (x86_64 + arm64)"
@@ -91,6 +104,8 @@ verify_app() {
     || fail "$label Messages bridge is not executable"
   lipo "$app/Contents/Helpers/clinch-imessage-bridge" -verify_arch x86_64 arm64 >/dev/null \
     || fail "$label Messages bridge is not universal (x86_64 + arm64)"
+  verify_binary_minimum_macos \
+    "$app/Contents/Helpers/clinch-imessage-bridge" "$label Messages bridge"
   [[ -d "$app/Contents/Helpers/PhoneNumberKit_PhoneNumberKit.bundle" ]] \
     || fail "$label omitted the PhoneNumberKit resource bundle"
   [[ -d "$app/Contents/Helpers/SQLite.swift_SQLite.bundle" ]] \

@@ -60,7 +60,7 @@ Figma: none provided. The controls follow existing Clinch Settings, pane-header,
 
 20. Clinch watches only the calibrated conversation. It ignores messages it sent itself, duplicate events, reactions, edits, empty bodies, and unsupported attachments.
 
-21. Because replies in a self-conversation may be synchronized as messages sent by the user's own account, Clinch identifies its own output by the exact Messages GUIDs it recorded instead of discarding every `is_from_me` row.
+21. Because replies in a self-conversation may be synchronized as messages sent by the user's own account, Clinch identifies its own output by the exact Messages GUIDs it recorded instead of discarding every `is_from_me` row. Before each send it persists a short-lived SHA-256 text fingerprint and cursor, allowing a restart between send acceptance and GUID persistence to recover that one outgoing row's exact GUID without storing another response-body copy.
 
 22. Setup clearly discloses that Messages does not expose a supported, trustworthy source-device identity. Any Apple device synchronized with the configured Messages account and conversation may be capable of issuing a reply; Clinch cannot cryptographically prove it came from the iPhone.
 

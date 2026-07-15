@@ -6,11 +6,6 @@ pub mod settings;
 #[cfg(target_os = "windows")]
 mod windows;
 
-#[cfg(target_os = "macos")]
-pub use self::mac::{
-    applications_that_can_open_file, open_file_path_with_application, FileOpeningApplication,
-};
-
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -18,6 +13,10 @@ use settings::EditorChoice;
 use warp_util::path::LineAndColumnArg;
 use warpui::{AppContext, SingletonEntity};
 
+#[cfg(target_os = "macos")]
+pub use self::mac::{
+    applications_that_can_open_file, open_file_path_with_application, FileOpeningApplication,
+};
 pub use self::settings::{EditorLayout, EditorSettings};
 
 pub const SUPPORTED_EDITORS: &[Editor] = &[

@@ -5,6 +5,7 @@ use std::fmt;
 
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
 use uuid::Uuid;
 
 use crate::agent_resume::AgentResumeProvider;
@@ -16,6 +17,7 @@ const ROUTE_ALPHABET: &[u8] = b"23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 const ROUTE_QUARANTINE_SECONDS: i64 = 30 * 24 * 60 * 60;
 const PENDING_SELECTION_TTL_SECONDS: i64 = 10 * 60;
 const QUEUED_REPLY_TTL_SECONDS: i64 = 24 * 60 * 60;
+const OUTBOUND_INTENT_TTL_SECONDS: i64 = 24 * 60 * 60;
 const PROCESSED_GUID_RETENTION_SECONDS: i64 = 30 * 24 * 60 * 60;
 const MAX_PROCESSED_GUIDS: usize = 20_000;
 
@@ -128,6 +130,15 @@ pub(crate) struct OutboundMessageRoute {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct PendingOutboundIntent {
+    pub(crate) id: String,
+    pub(crate) text_sha256: String,
+    pub(crate) route_id: Option<MobileRouteId>,
+    pub(crate) after_row_id: i64,
+    pub(crate) created_at: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct PendingCalibration {
     pub(crate) expected_reply: String,
     pub(crate) sent_guid: String,
@@ -181,6 +192,8 @@ pub(crate) struct IncomingMessage {
     pub(crate) is_edited: bool,
     #[serde(default)]
     pub(crate) has_attachments: bool,
+    #[serde(default)]
+    pub(crate) is_from_me: bool,
 }
 
 impl IncomingMessage {
@@ -226,6 +239,8 @@ pub(crate) struct RouteState {
     pub(crate) routes: Vec<MobileSessionRoute>,
     pub(crate) retired_routes: Vec<RetiredRoute>,
     pub(crate) outbound_messages: Vec<OutboundMessageRoute>,
+    #[serde(default)]
+    pub(crate) pending_outbound_intents: Vec<PendingOutboundIntent>,
     pub(crate) processed_messages: Vec<ProcessedMessage>,
     pub(crate) pending_selections: Vec<PendingRouteSelection>,
     pub(crate) queued_replies: Vec<QueuedMobileReply>,
@@ -241,6 +256,7 @@ impl Default for RouteState {
             routes: Vec::new(),
             retired_routes: Vec::new(),
             outbound_messages: Vec::new(),
+            pending_outbound_intents: Vec::new(),
             processed_messages: Vec::new(),
             pending_selections: Vec::new(),
             queued_replies: Vec::new(),
@@ -404,6 +420,28 @@ impl RouteState {
         });
     }
 
+    pub(crate) fn record_outbound_intent(
+        &mut self,
+        text: &str,
+        route_id: Option<MobileRouteId>,
+        now: i64,
+    ) -> String {
+        let id = Uuid::new_v4().to_string();
+        self.pending_outbound_intents.push(PendingOutboundIntent {
+            id: id.clone(),
+            text_sha256: text_fingerprint(text),
+            route_id,
+            after_row_id: self.last_row_id,
+            created_at: now,
+        });
+        id
+    }
+
+    pub(crate) fn resolve_outbound_intent(&mut self, id: &str) {
+        self.pending_outbound_intents
+            .retain(|intent| intent.id != id);
+    }
+
     pub(crate) fn mark_processed(&mut self, guid: impl Into<String>, now: i64) {
         let guid = guid.into();
         if guid.trim().is_empty()
@@ -443,6 +481,25 @@ impl RouteState {
                 .any(|message| message.guid == incoming.guid)
         {
             return RouteDecision::Ignore;
+        }
+
+        // `is_from_me` is not a general inbound filter in a synchronized
+        // self-chat. It is used only with a persisted pre-send fingerprint to
+        // recover the exact GUID when the app exited after Messages accepted
+        // the send but before the response was stored.
+        if incoming.is_from_me {
+            let fingerprint = text_fingerprint(&incoming.text);
+            if let Some(index) = self.pending_outbound_intents.iter().position(|intent| {
+                incoming.row_id > intent.after_row_id && intent.text_sha256 == fingerprint
+            }) {
+                let intent = self.pending_outbound_intents.remove(index);
+                if let Some(route_id) = intent.route_id {
+                    self.record_outbound_guid(incoming.guid.clone(), route_id, now);
+                } else {
+                    self.record_system_outbound_guid(incoming.guid.clone(), now);
+                }
+                return RouteDecision::Ignore;
+            }
         }
 
         for referenced_guid in [
@@ -645,6 +702,11 @@ impl RouteState {
         });
         state_changed |= before != self.outbound_messages.len();
 
+        let before = self.pending_outbound_intents.len();
+        self.pending_outbound_intents
+            .retain(|intent| now.saturating_sub(intent.created_at) < OUTBOUND_INTENT_TTL_SECONDS);
+        state_changed |= before != self.pending_outbound_intents.len();
+
         ExpiredItems {
             pending_selections,
             queued_replies,
@@ -665,12 +727,18 @@ impl RouteState {
                     .iter()
                     .map(|reply| reply.queued_at.saturating_add(QUEUED_REPLY_TTL_SECONDS)),
             )
+            .chain(self.pending_outbound_intents.iter().map(|intent| {
+                intent
+                    .created_at
+                    .saturating_add(OUTBOUND_INTENT_TTL_SECONDS)
+            }))
             .min()
     }
 
     pub(crate) fn reset_conversation_state(&mut self) {
         self.last_row_id = 0;
         self.outbound_messages.clear();
+        self.pending_outbound_intents.clear();
         self.processed_messages.clear();
         self.pending_selections.clear();
         self.queued_replies.clear();
@@ -710,6 +778,10 @@ impl RouteState {
             })
             .map(|(index, _)| (index, route_id))
     }
+}
+
+fn text_fingerprint(text: &str) -> String {
+    hex::encode(Sha256::digest(text.as_bytes()))
 }
 
 fn generate_route_id(unavailable: &HashSet<MobileRouteId>) -> MobileRouteId {

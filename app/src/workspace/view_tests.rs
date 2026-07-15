@@ -3565,7 +3565,7 @@ fn test_pointer_opened_tab_configs_menu_does_not_select_top_item() {
 #[cfg(feature = "local_fs")]
 fn init_repo_for_automatic_worktree_test() -> (TempDir, PathBuf) {
     fn git(repo: &Path, args: &[&str]) {
-        let output = std::process::Command::new("git")
+        let output = command::blocking::Command::new("git")
             .args(args)
             .current_dir(repo)
             .output()

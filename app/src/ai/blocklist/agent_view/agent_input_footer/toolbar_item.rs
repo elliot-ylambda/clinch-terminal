@@ -318,6 +318,10 @@ impl AgentToolbarItemKind {
             Self::Compact,
             Self::ContinuePrompt,
             Self::LooksGoodPrompt,
+            Self::CustomInsert {
+                label: "Create a PR".to_owned(),
+                text: "Create a PR, then merge main into this PR".to_owned(),
+            },
             Self::VoiceInput,
         ];
         if FeatureFlag::CreatingSharedSessions.is_enabled()

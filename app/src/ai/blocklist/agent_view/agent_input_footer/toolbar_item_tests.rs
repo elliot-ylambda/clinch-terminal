@@ -71,6 +71,18 @@ fn cli_default_left_places_quick_replies_right_after_fork_and_compact() {
 }
 
 #[test]
+fn cli_default_left_includes_create_pull_request_quick_insert() {
+    let items = AgentToolbarItemKind::cli_default_left();
+    assert_eq!(
+        items.get(4),
+        Some(&AgentToolbarItemKind::CustomInsert {
+            label: "Create a PR".to_owned(),
+            text: "Create a PR, then merge main into this PR".to_owned(),
+        })
+    );
+}
+
+#[test]
 fn cli_input_configurator_offers_quick_replies() {
     let available = AgentToolbarItemKind::all_available_for_cli_input();
     assert!(available.contains(&AgentToolbarItemKind::ContinuePrompt));

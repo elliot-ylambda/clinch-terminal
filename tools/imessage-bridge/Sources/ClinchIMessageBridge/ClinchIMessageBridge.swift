@@ -360,6 +360,7 @@ actor BridgeRuntime {
       "is_reaction": message.isReaction,
       "is_edited": false,
       "has_attachments": message.attachmentsCount > 0,
+      "is_from_me": message.isFromMe,
     ]
     if let parent = message.replyToGUID ?? message.threadOriginatorGUID, !parent.isEmpty {
       normalized["parent_guid"] = parent

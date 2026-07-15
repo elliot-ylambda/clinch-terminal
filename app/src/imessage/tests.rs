@@ -26,6 +26,7 @@ fn incoming(guid: &str, text: &str) -> IncomingMessage {
         is_reaction: false,
         is_edited: false,
         has_attachments: false,
+        is_from_me: false,
     }
 }
 
@@ -191,6 +192,7 @@ fn starting_setup_over_clears_conversation_data_but_preserves_routes() {
     let mut state = enabled_state();
     let route = state.register_session(key(MobileProvider::Codex, "c"), "codex", NOW);
     state.record_outbound_guid("outbound", route.clone(), NOW);
+    state.record_outbound_intent("pending part", Some(route.clone()), NOW);
     state.mark_processed("incoming", NOW);
     state
         .enqueue_reply("incoming", route.clone(), "queued", NOW)
@@ -207,6 +209,7 @@ fn starting_setup_over_clears_conversation_data_but_preserves_routes() {
     assert_eq!(state.route_by_id(&route).unwrap().key.session_id, "c");
     assert_eq!(state.last_row_id, 0);
     assert!(state.outbound_messages.is_empty());
+    assert!(state.pending_outbound_intents.is_empty());
     assert!(state.processed_messages.is_empty());
     assert!(state.pending_selections.is_empty());
     assert!(state.queued_replies.is_empty());
@@ -311,6 +314,51 @@ fn outbound_and_processed_guids_are_suppressed_without_using_is_from_me() {
     assert_eq!(
         state.route_incoming(&incoming("seen", "again"), NOW + 1),
         RouteDecision::Duplicate
+    );
+}
+
+#[test]
+fn a_persisted_send_fingerprint_recovers_the_exact_guid_after_a_crash() {
+    let mut state = enabled_state();
+    let route = state.register_session(key(MobileProvider::Codex, "c"), "codex", NOW);
+    state.last_row_id = 40;
+    state.record_outbound_intent("full private completion", Some(route.clone()), NOW);
+    assert_ne!(
+        state.pending_outbound_intents[0].text_sha256,
+        "full private completion"
+    );
+    assert_eq!(state.pending_outbound_intents[0].text_sha256.len(), 64);
+
+    let mut replayed_outgoing = incoming("recovered-guid", "full private completion");
+    replayed_outgoing.row_id = 41;
+    replayed_outgoing.is_from_me = true;
+    assert_eq!(
+        state.route_incoming(&replayed_outgoing, NOW + 1),
+        RouteDecision::Ignore
+    );
+    assert!(state.pending_outbound_intents.is_empty());
+
+    let mut reply = incoming("reply-guid", "continue from my phone");
+    reply.row_id = 42;
+    reply.parent_guid = Some("recovered-guid".to_owned());
+    reply.is_from_me = true;
+    assert_eq!(
+        state.route_incoming(&reply, NOW + 2),
+        RouteDecision::Deliver {
+            route_id: route.clone(),
+            text: "continue from my phone".to_owned(),
+        }
+    );
+
+    let mut unmatched_self_chat = incoming("phone-self", "another follow up");
+    unmatched_self_chat.row_id = 43;
+    unmatched_self_chat.is_from_me = true;
+    assert_eq!(
+        state.route_incoming(&unmatched_self_chat, NOW + 3),
+        RouteDecision::Deliver {
+            route_id: route,
+            text: "another follow up".to_owned(),
+        }
     );
 }
 

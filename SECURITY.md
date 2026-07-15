@@ -91,8 +91,9 @@ integration preserves captured data by default; purge is separate.
 Optional two-way iMessage is off until calibration succeeds. It uses Apple Events to ask Messages
 to send iMessage-only text and Full Disk Access to read the calibrated conversation from the local
 Messages database. The destination is stored in local secure storage. Route state, database
-cursors, GUIDs, ambiguous messages, and queued reply bodies are stored in owner-only local files,
-expire where applicable, and are never included in telemetry or ordinary logs. Disconnecting
+cursors, GUIDs, short-lived outgoing text hashes, ambiguous messages, and queued reply bodies are
+stored in owner-only local files, expire where applicable, and are never included in telemetry or
+ordinary logs. Disconnecting
 deletes that Clinch-owned state but does not alter Messages history. Messages synchronization does
 not provide a trustworthy source-device identity, so Clinch cannot prove that a synchronized reply
 came from an iPhone rather than another device on the same Apple Account.

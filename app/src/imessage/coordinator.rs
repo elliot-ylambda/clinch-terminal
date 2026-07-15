@@ -92,6 +92,7 @@ pub(crate) struct IMessageCoordinator {
     outbound_jobs: VecDeque<OutboundJob>,
     mobile_submissions_in_flight: HashSet<MobileSessionKey>,
     send_in_flight: bool,
+    current_send_intent_id: Option<String>,
     bridge_generation: u64,
     bridge_restart_attempts: usize,
     bridge_restart_scheduled: bool,
@@ -149,6 +150,7 @@ impl IMessageCoordinator {
             outbound_jobs: VecDeque::new(),
             mobile_submissions_in_flight: HashSet::new(),
             send_in_flight: false,
+            current_send_intent_id: None,
             bridge_generation: 0,
             bridge_restart_attempts: 0,
             bridge_restart_scheduled: false,
@@ -233,11 +235,10 @@ impl IMessageCoordinator {
         self.stop_bridge();
         self.configuration = IMessageConfiguration::default();
         self.state = RouteState::default();
-        self.view_sessions.clear();
-        self.session_views.clear();
         self.outbound_jobs.clear();
         self.mobile_submissions_in_flight.clear();
         self.send_in_flight = false;
+        self.current_send_intent_id = None;
         self.schedule_expiration_check(ctx);
         ClinchSettings::handle(ctx).update(ctx, |settings, ctx| {
             if let Err(error) = settings.imessage_configuration.clear_value(ctx) {
@@ -395,6 +396,7 @@ impl IMessageCoordinator {
             bridge.terminate();
         }
         self.send_in_flight = false;
+        self.current_send_intent_id = None;
     }
 
     fn should_send_calibration(&self) -> bool {
@@ -694,6 +696,7 @@ impl IMessageCoordinator {
             bridge.terminate();
         }
         self.send_in_flight = false;
+        self.current_send_intent_id = None;
         self.set_status(IMessageConnectionStatus::Error, ctx);
         self.schedule_bridge_restart(ctx);
     }
@@ -745,6 +748,7 @@ impl IMessageCoordinator {
                 self.configuration.setup_complete = true;
                 self.configuration.enabled = true;
                 self.state.globally_enabled = true;
+                self.register_mapped_sessions(ctx);
                 self.save_configuration(ctx);
                 self.persist_state();
                 self.set_status(IMessageConnectionStatus::Connected, ctx);
@@ -971,6 +975,29 @@ impl IMessageCoordinator {
         ctx.emit(IMessageCoordinatorEvent::Changed);
     }
 
+    fn register_mapped_sessions(&mut self, ctx: &AppContext) {
+        let mapped = self
+            .view_sessions
+            .iter()
+            .map(|(view_id, key)| (*view_id, key.clone()))
+            .collect::<Vec<_>>();
+        for (view_id, key) in mapped {
+            let Some(session) = CLIAgentSessionsModel::as_ref(ctx)
+                .session(view_id)
+                .filter(|session| session_key(session.session_key()) == Some(key.clone()))
+            else {
+                continue;
+            };
+            let label = session
+                .session_context
+                .project
+                .clone()
+                .or_else(|| session.session_context.cwd.clone())
+                .unwrap_or_else(|| format!("{} session", key.provider.display_name()));
+            self.state.register_session(key, label, now());
+        }
+    }
+
     fn enqueue_system_message(&mut self, text: String) {
         if !self.configuration.setup_complete
             || !self.configuration.enabled
@@ -1070,6 +1097,12 @@ impl IMessageCoordinator {
             return;
         };
         let generation = self.bridge_generation;
+        let intent_id = self
+            .state
+            .record_outbound_intent(&text, route_id.clone(), now());
+        self.current_send_intent_id = Some(intent_id);
+        self.persist_state();
+        self.schedule_expiration_check(ctx);
         self.send_in_flight = true;
         ctx.spawn(
             async move {
@@ -1094,6 +1127,7 @@ impl IMessageCoordinator {
         ctx: &mut ModelContext<Self>,
     ) {
         self.send_in_flight = false;
+        let intent_id = self.current_send_intent_id.take();
         let result = self.successful_result(response, ctx);
         match result {
             Some(BridgeResult::Sent {
@@ -1102,6 +1136,9 @@ impl IMessageCoordinator {
                 chat_guid,
                 ..
             }) => {
+                if let Some(intent_id) = intent_id.as_deref() {
+                    self.state.resolve_outbound_intent(intent_id);
+                }
                 self.configuration.chat_id = Some(chat_id);
                 if chat_guid.is_some() {
                     self.configuration.chat_guid = chat_guid;
@@ -1408,8 +1445,10 @@ mod tests {
         };
         assert!(requires_recalibration(&configured, &RouteState::default()));
 
-        let mut state = RouteState::default();
-        state.last_row_id = 1;
+        let state = RouteState {
+            last_row_id: 1,
+            ..RouteState::default()
+        };
         assert!(!requires_recalibration(&configured, &state));
         assert!(!requires_recalibration(
             &IMessageConfiguration::default(),
