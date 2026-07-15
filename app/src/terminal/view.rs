@@ -201,7 +201,7 @@ use super::warpify::success_block::{WarpifySuccessBlock, WarpifySuccessBlockEven
 use super::warpify::trigger_state::{SshBlockState, WarpifyState};
 use super::warpify::WarpificationSource;
 use super::{cli_agent, CLIAgent, GridType, HistoryEvent};
-use crate::agent_resume::AgentPromptHistory;
+use crate::agent_resume::{AgentPrompt, AgentPromptHistory};
 use crate::ai::agent::api::ServerConversationToken;
 use crate::ai::agent::conversation::{AIConversation, AIConversationId, ConversationStatus};
 use crate::ai::agent::redaction::redact_secrets;
@@ -2984,24 +2984,26 @@ enum BlockMetadataUpdateSource {
     Osc7,
 }
 
-fn cli_agent_history_trigger(
-    pane_title: &str,
-    history: &AgentPromptHistory,
-    fallback: String,
-) -> String {
-    if !pane_title.trim().is_empty() {
-        return pane_title.trim().to_owned();
-    }
-
-    // The menu displays prompts newest-first, so its first message is the last non-empty prompt
-    // in the chronological history.
+fn cli_agent_history_trigger(history: &AgentPromptHistory, fallback: String) -> String {
     history
         .prompts
-        .iter()
-        .rev()
+        .first()
         .map(|prompt| prompt.text.split_whitespace().collect::<Vec<_>>().join(" "))
-        .find(|prompt| !prompt.is_empty())
+        .filter(|prompt| !prompt.is_empty())
         .unwrap_or(fallback)
+}
+
+fn cli_agent_history_additional_prompts(history: &AgentPromptHistory) -> &[AgentPrompt] {
+    // AgentPromptHistory is chronological. The first prompt is permanently reserved for the
+    // closed header, so the expanded menu contains only the remaining prompts in that order.
+    history.prompts.get(1..).unwrap_or_default()
+}
+
+fn cli_agent_history_prompt_label(ordinal: usize, prompt: &AgentPrompt) -> String {
+    let message = prompt.text.split_whitespace().collect::<Vec<_>>().join(" ");
+    crate::agent_resume::format_prompt_time_full(prompt.timestamp.as_deref())
+        .map(|timestamp| format!("{ordinal} · {timestamp} | {message}"))
+        .unwrap_or_else(|| format!("{ordinal} | {message}"))
 }
 
 fn cli_agent_history_label(
@@ -4145,7 +4147,6 @@ impl TerminalView {
         let initial_title = model.lock().shell_launch_state().display_name().to_string();
 
         let pane_configuration = ctx.add_model(|_| PaneConfiguration::new(initial_title));
-        let history_header_pane_configuration = pane_configuration.clone();
         cli_agent_message_history_dropdown.update(ctx, move |dropdown, _| {
             dropdown.set_menu_header_text_provider(move |_, app| {
                 let Some(session) = CLIAgentSessionsModel::as_ref(app)
@@ -4155,7 +4156,6 @@ impl TerminalView {
                     return String::new();
                 };
                 cli_agent_history_trigger(
-                    history_header_pane_configuration.as_ref(app).title(),
                     &session.prompt_history,
                     cli_agent_history_label(
                         &session.prompt_history,
@@ -13571,18 +13571,12 @@ impl TerminalView {
             .with_disabled(true)
             .into_item()];
         items.extend(
-            history
-                .prompts
+            cli_agent_history_additional_prompts(&history)
                 .iter()
                 .enumerate()
-                .rev()
                 .map(|(index, prompt)| {
-                    let ordinal = index + 1;
-                    let label =
-                        crate::agent_resume::format_prompt_time_full(prompt.timestamp.as_deref())
-                            .map(|timestamp| format!("{ordinal} · {timestamp}\n{}", prompt.text))
-                            .unwrap_or_else(|| format!("{ordinal}\n{}", prompt.text));
-                    MenuItemFields::new_multiline(label, 1_000).into_item()
+                    let ordinal = index + 2;
+                    MenuItemFields::new(cli_agent_history_prompt_label(ordinal, prompt)).into_item()
                 }),
         );
         if is_loading {
@@ -13600,11 +13594,10 @@ impl TerminalView {
             );
         }
 
-        let selected_index = usize::from(!history.prompts.is_empty());
         self.cli_agent_message_history_dropdown
             .update(ctx, |dropdown, ctx| {
                 dropdown.set_rich_items(items, ctx);
-                dropdown.set_selected_by_index(selected_index, ctx);
+                dropdown.set_selected_to_none(ctx);
             });
     }
 

@@ -97,7 +97,7 @@ fn add_window_with_cloud_mode_terminal(app: &mut App) -> ViewHandle<TerminalView
 }
 
 #[test]
-fn cli_agent_history_trigger_uses_first_displayed_prompt() {
+fn cli_agent_history_trigger_uses_first_ever_prompt() {
     let history = AgentPromptHistory {
         prompts: vec![
             AgentPrompt {
@@ -112,9 +112,54 @@ fn cli_agent_history_trigger_uses_first_displayed_prompt() {
         is_partial: false,
     };
 
-    let trigger = cli_agent_history_trigger("", &history, "Message history (2)".to_owned());
+    let trigger = cli_agent_history_trigger(&history, "Message history (2)".to_owned());
 
-    assert_eq!(trigger, "newer prompt");
+    assert_eq!(trigger, "older prompt");
+}
+
+#[test]
+fn cli_agent_history_additional_prompts_omit_first_and_stay_chronological() {
+    let history = AgentPromptHistory {
+        prompts: vec![
+            AgentPrompt {
+                timestamp: Some("2026-07-14T08:00:00Z".to_owned()),
+                text: "first".to_owned(),
+            },
+            AgentPrompt {
+                timestamp: Some("2026-07-14T08:01:00Z".to_owned()),
+                text: "second".to_owned(),
+            },
+            AgentPrompt {
+                timestamp: Some("2026-07-14T08:02:00Z".to_owned()),
+                text: "third".to_owned(),
+            },
+        ],
+        is_partial: false,
+    };
+
+    let prompts = cli_agent_history_additional_prompts(&history);
+
+    assert_eq!(
+        prompts
+            .iter()
+            .map(|prompt| prompt.text.as_str())
+            .collect::<Vec<_>>(),
+        vec!["second", "third"]
+    );
+}
+
+#[test]
+fn cli_agent_history_prompt_label_stays_on_one_line() {
+    let prompt = AgentPrompt {
+        timestamp: Some("2026-07-14T08:01:00Z".to_owned()),
+        text: "second\n  message".to_owned(),
+    };
+
+    let label = cli_agent_history_prompt_label(2, &prompt);
+
+    assert!(label.starts_with("2 · "));
+    assert!(label.ends_with(" | second message"));
+    assert_eq!(label.lines().count(), 1);
 }
 
 #[test]
@@ -141,10 +186,16 @@ fn resumed_cli_agent_header_reads_history_when_dropdown_selection_is_empty() {
                         received_rich_notification: false,
                         has_observed_turn_activity: false,
                         prompt_history: AgentPromptHistory {
-                            prompts: vec![AgentPrompt {
-                                timestamp: None,
-                                text: "Run /review on my current changes".to_owned(),
-                            }],
+                            prompts: vec![
+                                AgentPrompt {
+                                    timestamp: Some("2026-07-14T08:00:00Z".to_owned()),
+                                    text: "Run /review on my current changes".to_owned(),
+                                },
+                                AgentPrompt {
+                                    timestamp: Some("2026-07-14T08:01:00Z".to_owned()),
+                                    text: "Implement {feature}".to_owned(),
+                                },
+                            ],
                             is_partial: false,
                         },
                         prompt_history_load_state: PromptHistoryLoadState::Ready,
@@ -154,7 +205,7 @@ fn resumed_cli_agent_header_reads_history_when_dropdown_selection_is_empty() {
                 );
             });
             view.pane_configuration.update(ctx, |configuration, ctx| {
-                configuration.set_title("", ctx);
+                configuration.set_title("OpenAI Codex", ctx);
             });
             view.cli_agent_message_history_dropdown
                 .update(ctx, |dropdown, ctx| {
