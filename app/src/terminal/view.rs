@@ -3004,6 +3004,17 @@ fn cli_agent_history_trigger(
         .unwrap_or(fallback)
 }
 
+fn cli_agent_history_label(
+    history: &AgentPromptHistory,
+    load_state: &PromptHistoryLoadState,
+) -> String {
+    if history.prompts.is_empty() && matches!(load_state, PromptHistoryLoadState::Loading { .. }) {
+        "Message history (loading)".to_owned()
+    } else {
+        format!("Message history ({})", history.prompts.len())
+    }
+}
+
 impl TerminalView {
     /// Returns the path to the current repository, if any.
     pub fn current_repo_path(&self) -> Option<&LocalOrRemotePath> {
@@ -4134,6 +4145,25 @@ impl TerminalView {
         let initial_title = model.lock().shell_launch_state().display_name().to_string();
 
         let pane_configuration = ctx.add_model(|_| PaneConfiguration::new(initial_title));
+        let history_header_pane_configuration = pane_configuration.clone();
+        cli_agent_message_history_dropdown.update(ctx, move |dropdown, _| {
+            dropdown.set_menu_header_text_provider(move |_, app| {
+                let Some(session) = CLIAgentSessionsModel::as_ref(app)
+                    .session(terminal_view_id)
+                    .filter(|session| matches!(session.agent, CLIAgent::Claude | CLIAgent::Codex))
+                else {
+                    return String::new();
+                };
+                cli_agent_history_trigger(
+                    history_header_pane_configuration.as_ref(app).title(),
+                    &session.prompt_history,
+                    cli_agent_history_label(
+                        &session.prompt_history,
+                        &session.prompt_history_load_state,
+                    ),
+                )
+            });
+        });
 
         ctx.observe(
             &WindowActiveSession::handle(ctx),
@@ -13529,7 +13559,6 @@ impl TerminalView {
             self.cli_agent_message_history_dropdown
                 .update(ctx, |dropdown, ctx| {
                     dropdown.set_rich_items(Vec::<MenuItem<DropdownAction>>::new(), ctx);
-                    dropdown.clear_menu_header_text_override();
                     dropdown.set_selected_to_none(ctx);
                 });
             return;
@@ -13537,11 +13566,7 @@ impl TerminalView {
 
         let is_loading = history.prompts.is_empty()
             && matches!(load_state, PromptHistoryLoadState::Loading { .. });
-        let label = if is_loading {
-            "Message history (loading)".to_owned()
-        } else {
-            format!("Message history ({})", history.prompts.len())
-        };
+        let label = cli_agent_history_label(&history, &load_state);
         let mut items: Vec<MenuItem<DropdownAction>> = vec![MenuItemFields::new(label.clone())
             .with_disabled(true)
             .into_item()];
@@ -13575,13 +13600,10 @@ impl TerminalView {
             );
         }
 
-        let trigger =
-            cli_agent_history_trigger(self.pane_configuration.as_ref(ctx).title(), &history, label);
         let selected_index = usize::from(!history.prompts.is_empty());
         self.cli_agent_message_history_dropdown
-            .update(ctx, move |dropdown, ctx| {
+            .update(ctx, |dropdown, ctx| {
                 dropdown.set_rich_items(items, ctx);
-                dropdown.set_menu_header_text_override(move |_| trigger.clone());
                 dropdown.set_selected_by_index(selected_index, ctx);
             });
     }

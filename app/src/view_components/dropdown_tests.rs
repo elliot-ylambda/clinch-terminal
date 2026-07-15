@@ -14,9 +14,9 @@ fn menu_header_override_populates_an_empty_selection() {
             dropdown
         });
 
-        dropdown.read(&app, |dropdown, _| {
+        dropdown.read(&app, |dropdown, ctx| {
             assert_eq!(
-                dropdown.top_bar_text_and_font_family().0,
+                dropdown.top_bar_text_and_font_family(ctx).0,
                 "First restored message"
             );
         });

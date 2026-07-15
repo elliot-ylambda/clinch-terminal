@@ -59,7 +59,7 @@ use crate::terminal::cli_agent_sessions::event::{
 use crate::terminal::cli_agent_sessions::listener::CLIAgentSessionListener;
 use crate::terminal::cli_agent_sessions::{
     CLIAgentInputEntrypoint, CLIAgentInputState, CLIAgentRichInputCloseReason, CLIAgentSession,
-    CLIAgentSessionContext, CLIAgentSessionStatus, CLIAgentSessionsModel,
+    CLIAgentSessionContext, CLIAgentSessionStatus, CLIAgentSessionsModel, PromptHistoryLoadState,
 };
 use crate::terminal::model::ansi::{self, BootstrappedValue, InitShellValue, PreexecValue};
 use crate::terminal::model::block::AgentViewVisibility;
@@ -115,6 +115,63 @@ fn cli_agent_history_trigger_uses_first_displayed_prompt() {
     let trigger = cli_agent_history_trigger("", &history, "Message history (2)".to_owned());
 
     assert_eq!(trigger, "newer prompt");
+}
+
+#[test]
+fn resumed_cli_agent_header_reads_history_when_dropdown_selection_is_empty() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let terminal = add_window_with_terminal(&mut app, None);
+
+        terminal.update(&mut app, |view, ctx| {
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                sessions.set_session(
+                    view.view_id,
+                    CLIAgentSession {
+                        agent: CLIAgent::Codex,
+                        status: CLIAgentSessionStatus::InProgress,
+                        session_context: CLIAgentSessionContext::default(),
+                        input_state: CLIAgentInputState::Closed,
+                        should_auto_toggle_input: false,
+                        listener: None,
+                        remote_host: None,
+                        plugin_version: None,
+                        draft_text: None,
+                        custom_command_prefix: None,
+                        received_rich_notification: false,
+                        has_observed_turn_activity: false,
+                        prompt_history: AgentPromptHistory {
+                            prompts: vec![AgentPrompt {
+                                timestamp: None,
+                                text: "Run /review on my current changes".to_owned(),
+                            }],
+                            is_partial: false,
+                        },
+                        prompt_history_load_state: PromptHistoryLoadState::Ready,
+                        prompt_history_generation: 1,
+                    },
+                    ctx,
+                );
+            });
+            view.pane_configuration.update(ctx, |configuration, ctx| {
+                configuration.set_title("", ctx);
+            });
+            view.cli_agent_message_history_dropdown
+                .update(ctx, |dropdown, ctx| {
+                    dropdown.set_selected_to_none(ctx);
+                });
+        });
+
+        terminal.read(&app, |view, ctx| {
+            view.cli_agent_message_history_dropdown
+                .read(ctx, |dropdown, ctx| {
+                    assert_eq!(
+                        dropdown.top_bar_text_for_test(ctx),
+                        "Run /review on my current changes"
+                    );
+                });
+        });
+    });
 }
 
 fn has_pending_user_query_block(view: &TerminalView) -> bool {

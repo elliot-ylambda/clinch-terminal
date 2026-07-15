@@ -30,6 +30,7 @@ pub const TOP_MENU_BAR_MAX_WIDTH: f32 = 190.;
 pub const DROPDOWN_PADDING: f32 = 6.;
 
 pub type MenuHeaderTextFormatter = Box<dyn Fn(&str) -> String>;
+pub type MenuHeaderTextProvider = Box<dyn Fn(&str, &AppContext) -> String>;
 pub trait DropdownItemAction: Action {
     fn clone_box(&self) -> Box<dyn DropdownItemAction>;
     fn eq_action(&self, other: &dyn DropdownItemAction) -> bool;
@@ -115,6 +116,8 @@ pub struct Dropdown<A: DropdownItemAction = ()> {
     selected_item: Option<MenuItem<DropdownAction>>,
     // Function for overriding the default closed-state text (the selected item)
     menu_header_text_override: Option<MenuHeaderTextFormatter>,
+    // Context-aware override for closed-state text that should follow external model state.
+    menu_header_text_provider: Option<MenuHeaderTextProvider>,
     self_handle: WeakViewHandle<Self>,
     style: DropdownStyle,
     use_drop_shadow: bool,
@@ -288,6 +291,7 @@ where
             top_bar_max_width: TOP_MENU_BAR_MAX_WIDTH,
             selected_item: None,
             menu_header_text_override: None,
+            menu_header_text_provider: None,
             self_handle: ctx.handle(),
             style: Default::default(),
             element_anchor: PositionedElementAnchor::BottomLeft,
@@ -390,9 +394,13 @@ where
         self.menu_header_text_override = Some(Box::new(formatter));
     }
 
-    /// Restores the default closed-state text derived from the selected item.
-    pub fn clear_menu_header_text_override(&mut self) {
-        self.menu_header_text_override = None;
+    /// Derives the closed-state text from current application state. This takes precedence over
+    /// [`Self::set_menu_header_text_override`] and does not require a selected menu item.
+    pub fn set_menu_header_text_provider<F>(&mut self, provider: F)
+    where
+        F: Fn(&str, &AppContext) -> String + 'static,
+    {
+        self.menu_header_text_provider = Some(Box::new(provider));
     }
 
     pub fn set_menu_position(
@@ -579,24 +587,31 @@ where
         ctx.notify();
     }
 
-    fn top_bar_text_and_font_family(&self) -> (String, Option<FamilyId>) {
+    fn top_bar_text_and_font_family(&self, app: &AppContext) -> (String, Option<FamilyId>) {
         let (selected_item_text, font_family_id) = match self.selected_item.as_ref() {
             Some(MenuItem::Item(fields)) => {
                 (fields.label().to_owned(), fields.override_font_family())
             }
             _ => (String::new(), None),
         };
-        let selected_item_text = self
-            .menu_header_text_override
-            .as_ref()
-            .map(|formatter| formatter(&selected_item_text))
-            .unwrap_or(selected_item_text);
+        let selected_item_text = if let Some(provider) = &self.menu_header_text_provider {
+            provider(&selected_item_text, app)
+        } else if let Some(formatter) = &self.menu_header_text_override {
+            formatter(&selected_item_text)
+        } else {
+            selected_item_text
+        };
         (selected_item_text, font_family_id)
     }
 
-    fn render_top_bar(&self, appearance: &Appearance) -> Box<dyn Element> {
+    #[cfg(test)]
+    pub(crate) fn top_bar_text_for_test(&self, app: &AppContext) -> String {
+        self.top_bar_text_and_font_family(app).0
+    }
+
+    fn render_top_bar(&self, appearance: &Appearance, app: &AppContext) -> Box<dyn Element> {
         let icon_path = "bundled/svg/chevron-down.svg";
-        let (selected_item_text, font_family_id) = self.top_bar_text_and_font_family();
+        let (selected_item_text, font_family_id) = self.top_bar_text_and_font_family(app);
         let mut top_bar = appearance
             .ui_builder()
             .button(
@@ -715,7 +730,7 @@ where
 
     fn render(&self, app: &AppContext) -> Box<dyn Element> {
         let appearance = Appearance::as_ref(app);
-        let mut dropdown_stack = Stack::new().with_child(self.render_top_bar(appearance));
+        let mut dropdown_stack = Stack::new().with_child(self.render_top_bar(appearance, app));
         if self.is_expanded {
             let mut menu = ChildView::new(&self.dropdown).finish();
             if self.use_drop_shadow {
