@@ -201,6 +201,7 @@ use super::warpify::success_block::{WarpifySuccessBlock, WarpifySuccessBlockEven
 use super::warpify::trigger_state::{SshBlockState, WarpifyState};
 use super::warpify::WarpificationSource;
 use super::{cli_agent, CLIAgent, GridType, HistoryEvent};
+use crate::agent_resume::AgentPromptHistory;
 use crate::ai::agent::api::ServerConversationToken;
 use crate::ai::agent::conversation::{AIConversation, AIConversationId, ConversationStatus};
 use crate::ai::agent::redaction::redact_secrets;
@@ -2981,6 +2982,26 @@ enum BlockMetadataUpdateSource {
     /// the CWD actually changed, and never run block-completion callbacks
     /// (the block hasn't completed).
     Osc7,
+}
+
+fn cli_agent_history_trigger(
+    pane_title: &str,
+    history: &AgentPromptHistory,
+    fallback: String,
+) -> String {
+    if !pane_title.trim().is_empty() {
+        return pane_title.trim().to_owned();
+    }
+
+    // The menu displays prompts newest-first, so its first message is the last non-empty prompt
+    // in the chronological history.
+    history
+        .prompts
+        .iter()
+        .rev()
+        .map(|prompt| prompt.text.split_whitespace().collect::<Vec<_>>().join(" "))
+        .find(|prompt| !prompt.is_empty())
+        .unwrap_or(fallback)
 }
 
 impl TerminalView {
@@ -13496,6 +13517,7 @@ impl TerminalView {
             self.cli_agent_message_history_dropdown
                 .update(ctx, |dropdown, ctx| {
                     dropdown.set_rich_items(Vec::<MenuItem<DropdownAction>>::new(), ctx);
+                    dropdown.clear_menu_header_text_override();
                     dropdown.set_selected_to_none(ctx);
                 });
             return;
@@ -13541,21 +13563,8 @@ impl TerminalView {
             );
         }
 
-        let pane_title = self
-            .pane_configuration
-            .as_ref(ctx)
-            .title()
-            .trim()
-            .to_owned();
-        let latest_prompt = history
-            .prompts
-            .last()
-            .map(|prompt| prompt.text.split_whitespace().collect::<Vec<_>>().join(" "))
-            .filter(|prompt| !prompt.is_empty());
-        let trigger = (!pane_title.is_empty())
-            .then_some(pane_title)
-            .or(latest_prompt)
-            .unwrap_or(label);
+        let trigger =
+            cli_agent_history_trigger(self.pane_configuration.as_ref(ctx).title(), &history, label);
         let selected_index = usize::from(!history.prompts.is_empty());
         self.cli_agent_message_history_dropdown
             .update(ctx, move |dropdown, ctx| {

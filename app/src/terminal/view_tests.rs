@@ -16,6 +16,7 @@ use warpui::platform::WindowStyle;
 use warpui::{App, Presenter, ReadModel, WindowInvalidation};
 
 use super::*;
+use crate::agent_resume::{AgentPrompt, AgentPromptHistory};
 use crate::ai::agent::conversation::{AIConversation, ConversationStatus};
 use crate::ai::agent::task::TaskId;
 use crate::ai::agent::{
@@ -93,6 +94,27 @@ fn add_window_with_cloud_mode_terminal(app: &mut App) -> ViewHandle<TerminalView
         view.model.lock().set_is_dummy_cloud_mode_session(true);
     });
     terminal
+}
+
+#[test]
+fn cli_agent_history_trigger_uses_first_displayed_prompt() {
+    let history = AgentPromptHistory {
+        prompts: vec![
+            AgentPrompt {
+                timestamp: None,
+                text: "older prompt".to_owned(),
+            },
+            AgentPrompt {
+                timestamp: None,
+                text: "newer\nprompt".to_owned(),
+            },
+        ],
+        is_partial: false,
+    };
+
+    let trigger = cli_agent_history_trigger("", &history, "Message history (2)".to_owned());
+
+    assert_eq!(trigger, "newer prompt");
 }
 
 fn has_pending_user_query_block(view: &TerminalView) -> bool {

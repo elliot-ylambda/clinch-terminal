@@ -21,6 +21,10 @@ use warpui::{
 use crate::appearance::Appearance;
 use crate::menu::{Event as MenuEvent, Menu, MenuItem, MenuItemFields, MenuVariant};
 
+#[cfg(test)]
+#[path = "dropdown_tests.rs"]
+mod tests;
+
 pub const TOP_MENU_BAR_HEIGHT: f32 = 30.;
 pub const TOP_MENU_BAR_MAX_WIDTH: f32 = 190.;
 pub const DROPDOWN_PADDING: f32 = 6.;
@@ -377,11 +381,18 @@ where
         ctx.notify();
     }
 
+    /// Overrides the closed-state text. When no item is selected, the formatter receives an
+    /// empty string so callers can still provide a useful trigger label.
     pub fn set_menu_header_text_override<F>(&mut self, formatter: F)
     where
         F: Fn(&str) -> String + 'static,
     {
         self.menu_header_text_override = Some(Box::new(formatter));
+    }
+
+    /// Restores the default closed-state text derived from the selected item.
+    pub fn clear_menu_header_text_override(&mut self) {
+        self.menu_header_text_override = None;
     }
 
     pub fn set_menu_position(
@@ -568,21 +579,24 @@ where
         ctx.notify();
     }
 
-    fn render_top_bar(&self, appearance: &Appearance) -> Box<dyn Element> {
-        let icon_path = "bundled/svg/chevron-down.svg";
-
-        let (selected_item_text, font_family_id) = match self.selected_item.clone() {
+    fn top_bar_text_and_font_family(&self) -> (String, Option<FamilyId>) {
+        let (selected_item_text, font_family_id) = match self.selected_item.as_ref() {
             Some(MenuItem::Item(fields)) => {
-                let label = fields.label();
-                let text = if let Some(formatter) = &self.menu_header_text_override {
-                    formatter(label)
-                } else {
-                    label.to_string()
-                };
-                (text, fields.override_font_family())
+                (fields.label().to_owned(), fields.override_font_family())
             }
             _ => (String::new(), None),
         };
+        let selected_item_text = self
+            .menu_header_text_override
+            .as_ref()
+            .map(|formatter| formatter(&selected_item_text))
+            .unwrap_or(selected_item_text);
+        (selected_item_text, font_family_id)
+    }
+
+    fn render_top_bar(&self, appearance: &Appearance) -> Box<dyn Element> {
+        let icon_path = "bundled/svg/chevron-down.svg";
+        let (selected_item_text, font_family_id) = self.top_bar_text_and_font_family();
         let mut top_bar = appearance
             .ui_builder()
             .button(
