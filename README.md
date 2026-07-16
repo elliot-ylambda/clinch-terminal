@@ -18,10 +18,30 @@ independent security audit. See [SECURITY.md](SECURITY.md) for the trust model a
 
 ## Install
 
-The primary installation path is a versioned release from the
-[Clinch releases page](https://github.com/elliot-ylambda/clinch-terminal/releases). Download
-`Clinch.dmg`, `Clinch.checksums.txt`, and `Clinch.checksums.sshsig`. Authenticate the checksum
-list with the Clinch release key, then verify the disk image before opening it:
+Copy this into your terminal to download and install Clinch:
+
+```bash
+curl -fsSL https://clinch.sh/install | sh
+```
+
+The URL redirects to the authenticated `install.sh` asset on the latest versioned release. The
+script authenticates the signed release manifest with a Clinch release key embedded in the
+reviewed script. It resolves one exact tag, verifies the archive size and SHA-256, bundle ID,
+version, minimum macOS version, Intel and Apple Silicon slices, and structural code signature,
+then stages the app in `/Applications` or `~/Applications` and opens it (pass `--no-open` to
+skip launching). It does not configure Claude Code or Codex, install plugins, request
+administrator access, or change Gatekeeper. Command-line downloads carry no browser quarantine
+flag, so Gatekeeper does not block the first launch and no System Settings approval is needed.
+To read the script before running it, download `install.sh` from a versioned release, inspect
+it, then run `sh install.sh`.
+
+### Manual verification
+
+Every versioned release on the
+[Clinch releases page](https://github.com/elliot-ylambda/clinch-terminal/releases) also ships
+the artifacts to verify and install by hand. Download `Clinch.dmg`, `Clinch.checksums.txt`, and
+`Clinch.checksums.sshsig` from the same release. Authenticate the checksum list with the Clinch
+release key, then verify the disk image before opening it:
 
 ```bash
 printf '%s\n' 'clinch-release ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGr+qT8+Fx8TjATDpWlhzzfbL08AsS1EXbaaOUBi0wJp' > /tmp/clinch-allowed-signers
@@ -32,23 +52,10 @@ grep ' Clinch.dmg$' Clinch.checksums.txt
 ```
 
 `ssh-keygen` must report a good signature, and the two digests must match. Open the DMG and drag
-`Clinch.app` to Applications. If macOS blocks
-the first launch, try once, then approve Clinch under **System Settings → Privacy & Security →
-Open Anyway**. Do not disable Gatekeeper globally. Clinch's installer and documentation do not
-remove `com.apple.quarantine`.
-
-Each release also has an authenticated convenience installer. Download `install.sh` from the
-same versioned release, inspect it, then run it:
-
-```bash
-sh install.sh
-```
-
-The script authenticates the signed release manifest with a Clinch release key embedded in the
-reviewed script. It resolves one exact tag, verifies the archive size and SHA-256, bundle ID,
-version, minimum macOS version, Intel and Apple Silicon slices, and structural code signature,
-then stages the app in `/Applications` or `~/Applications`. It does not open Clinch, configure
-Claude Code or Codex, install plugins, request administrator access, or change Gatekeeper.
+`Clinch.app` to Applications. A browser download is quarantined and the preview is not notarized,
+so macOS will block the first launch: try once, then approve Clinch under **System Settings →
+Privacy & Security → Open Anyway**. Do not disable Gatekeeper globally. Clinch's installer and
+documentation do not remove `com.apple.quarantine`.
 
 Clinch uses the bundle ID `sh.clinch.Clinch`, so it can coexist with Warp.
 

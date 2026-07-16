@@ -45,10 +45,12 @@ export SKIP_DMG_APPLESCRIPT
 define RELEASE_NOTES
 Clinch $(VERSION) is an unnotarized public preview for macOS 14 or later on Intel and Apple Silicon.
 
-Download Clinch.dmg, authenticate Clinch.checksums.txt with Clinch.checksums.sshsig, compare the
-DMG SHA-256, and drag Clinch to Applications. Then use System Settings > Privacy & Security >
-Open Anyway if macOS blocks the first launch. The authenticated install.sh asset is available as
-a secondary convenience.
+Install with `curl -fsSL https://clinch.sh/install | sh` — the authenticated install.sh asset
+verifies this exact release, stages Clinch in Applications, and opens it. Command-line downloads
+are not quarantined, so no Gatekeeper approval is needed. To install manually instead, download
+Clinch.dmg, authenticate Clinch.checksums.txt with Clinch.checksums.sshsig, compare the DMG
+SHA-256, and drag Clinch to Applications; then use System Settings > Privacy & Security >
+Open Anyway when macOS blocks the browser-downloaded first launch.
 
 Session restore is enabled by default, using managed local Claude Code and Codex hooks. You can
 turn session capture off or back on from Clinch Settings. Automatic updates are disabled for this

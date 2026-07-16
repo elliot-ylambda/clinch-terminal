@@ -1,6 +1,7 @@
 #!/bin/sh
-# Authenticated convenience installer for the unnotarized Clinch public preview.
-# Manual versioned DMG/ZIP downloads remain the primary installation path.
+# Authenticated installer for the unnotarized Clinch public preview.
+# Primary installation path: curl -fsSL https://clinch.sh/install | sh
+# Manual versioned DMG/ZIP downloads, verified per the README, remain available.
 set -eu
 
 REPO="elliot-ylambda/clinch-terminal"
@@ -19,6 +20,7 @@ GITHUB_RELEASES="https://github.com/$REPO/releases"
 
 VERSION=""
 INSTALL_DIR="${CLINCH_INSTALL_DIR:-}"
+OPEN_APP=1
 
 say() { printf '%s\n' "$*"; }
 fail() {
@@ -27,11 +29,12 @@ fail() {
 }
 usage() {
     cat <<'EOF'
-usage: install.sh [--version vX.Y.Z] [--install-dir DIRECTORY]
+usage: install.sh [--version vX.Y.Z] [--install-dir DIRECTORY] [--no-open]
 
 Downloads one exact Clinch GitHub release, authenticates its signed manifest with the
-embedded Clinch release key, verifies the app, and installs it without changing Gatekeeper,
-Claude Code, Codex, plugins, preferences, or the running-app state.
+embedded Clinch release key, verifies the app, installs it, and opens it. It does not
+change Gatekeeper, Claude Code, Codex, plugins, or preferences. Use --no-open to skip
+launching Clinch after the install.
 EOF
 }
 
@@ -49,6 +52,7 @@ while [ "$#" -gt 0 ]; do
             shift 2
             ;;
         --install-dir=*) INSTALL_DIR=${1#*=}; shift ;;
+        --no-open) OPEN_APP=0; shift ;;
         --help|-h) usage; exit 0 ;;
         *) fail "unknown option: $1" ;;
     esac
@@ -361,6 +365,16 @@ say "Release sequence: $UPDATE_SEQUENCE"
 say ""
 say "This public preview is ad-hoc signed and not notarized by Apple."
 say "The installer did not remove quarantine data or change Gatekeeper settings."
-say "If macOS blocks the first launch, use System Settings → Privacy & Security → Open Anyway."
+say "Command-line downloads are not quarantined, so no Gatekeeper approval is needed."
 say "Session restore is enabled on first launch; you can turn capture off in Clinch Settings."
 say "Updates are manual for this preview; rerun this installer for a signed newer version."
+
+if [ "$OPEN_APP" = 1 ]; then
+    say ""
+    if /usr/bin/open "$DEST" 2>/dev/null; then
+        say "Opening Clinch. If it was already running, quit and reopen it to use $VERSION."
+    else
+        say "Could not open Clinch automatically; open it from $INSTALL_DIR."
+        say "If macOS blocks the launch, use System Settings → Privacy & Security → Open Anyway."
+    fi
+fi
