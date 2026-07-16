@@ -68,9 +68,9 @@ use crate::ui_components::agent_icon::{
     cli_agent_session_status_for_display, terminal_view_agent_icon_variant_respecting_tab_setting,
 };
 use crate::ui_components::buttons::{combo_inner_button, icon_button_with_color};
-use crate::ui_components::CLINCH_DONE_BLUE;
 use crate::ui_components::icon_with_status::{render_icon_with_status, IconWithStatusVariant};
 use crate::ui_components::icons::Icon as UiIcon;
+use crate::ui_components::CLINCH_DONE_BLUE;
 use crate::util::bindings::keybinding_name_to_display_string;
 use crate::util::color::Opacity;
 use crate::workspace::action::{NewSessionMenuAnchor, WorkspaceAction};

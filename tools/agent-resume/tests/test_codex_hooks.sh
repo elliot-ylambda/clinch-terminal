@@ -59,17 +59,20 @@ grep -q 'owner-stays' "$f" || { echo "FAIL: prompt hook rewrote pane registry"; 
 [[ "$(stat -f '%Lp' "$mf")" == "600" ]] || { echo "FAIL: Codex mirror not private"; exit 1; }
 [[ "$(stat -f '%Lp' "$(dirname "$mf")")" == "700" ]] || { echo "FAIL: Codex mirror dir not private"; exit 1; }
 
-# Repeated identical messages are separate turns; Stop and empty prompts append nothing.
+# Repeated identical messages are separate turns; Stop appends a boundary and empty prompts append
+# nothing. The boundary lets the reader preserve an intentional repeat after a completed turn.
 jq -cn --arg p "$prompt_in" '{session_id:"sess-prompt",cwd:"/tmp/repo",hook_event_name:"UserPromptSubmit",prompt:$p}' \
   | bash "$HERE/codex-prompt-submit.sh"
 before="$(wc -l < "$mf")"
 echo '{"session_id":"sess-prompt","cwd":"/tmp/repo","hook_event_name":"Stop","prompt":"ignored"}' \
   | bash "$HERE/codex-prompt-submit.sh"
+after_stop="$(wc -l < "$mf")"
 echo '{"session_id":"sess-prompt","cwd":"/tmp/repo","hook_event_name":"UserPromptSubmit","prompt":""}' \
   | bash "$HERE/codex-prompt-submit.sh"
 printf '%s\n' '{"session_id":"sess-prompt","cwd":"/tmp/repo","hook_event_name":"UserPromptSubmit","prompt":"  \n  "}' \
   | bash "$HERE/codex-prompt-submit.sh"
-[[ "$before" -eq 2 && "$(wc -l < "$mf")" -eq 2 ]] \
+[[ "$before" -eq 2 && "$after_stop" -eq 3 && "$(wc -l < "$mf")" -eq 3 \
+  && "$(tail -n 1 "$mf" | jq -r '.stop')" == true ]] \
   || { echo "FAIL: Codex repeat/ignored event semantics wrong"; exit 1; }
 
 # A pre-existing symlink provider directory must never redirect sensitive prompt writes.

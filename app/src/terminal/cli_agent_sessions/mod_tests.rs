@@ -456,7 +456,12 @@ fn user_interrupt_ignores_sessions_that_are_not_mid_turn() {
         });
 
         sessions.read(&app, |model, _| {
-            assert!(!model.session(codex_terminal).unwrap().turn_interrupted_by_user);
+            assert!(
+                !model
+                    .session(codex_terminal)
+                    .unwrap()
+                    .turn_interrupted_by_user
+            );
         });
     });
 }
