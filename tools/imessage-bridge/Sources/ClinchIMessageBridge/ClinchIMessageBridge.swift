@@ -1,4 +1,5 @@
 import AppKit
+import CoreServices
 import Darwin
 import Foundation
 import IMsgCore
@@ -94,7 +95,6 @@ actor BridgeRuntime {
   private static let maximumRecentOutboundGUIDs = 4_096
 
   private let output: JSONOutput
-  private let sender = MessageSender()
   private var store: MessageStore?
   private var recipient = ""
   private var chatID: Int64?
@@ -118,15 +118,12 @@ actor BridgeRuntime {
     do {
       switch request.command {
       case "health":
-        let health = healthStatus()
-        emitSuccess(request.id, result: [
-          "type": "health",
-          "messages_running": health.messagesRunning,
-          "database_readable": health.databaseReadable,
-          "automation_authorized": health.automationAuthorized,
-        ])
+        emitSuccess(request.id, result: await healthResult())
+      case "request_automation":
+        _ = await Self.requestAutomationAuthorization()
+        emitSuccess(request.id, result: await healthResult())
       case "configure":
-        try configure(request)
+        try await configure(request)
         emitSuccess(request.id, result: configuredResult())
       case "send":
         let text = try requiredNonempty(request.text, name: "text")
@@ -167,7 +164,7 @@ actor BridgeRuntime {
     return true
   }
 
-  private func configure(_ request: BridgeRequest) throws {
+  private func configure(_ request: BridgeRequest) async throws {
     recipient = try requiredNonempty(request.recipient, name: "recipient")
     chatID = request.chatID
     chatGUID = request.chatGUID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -175,7 +172,10 @@ actor BridgeRuntime {
     // Opening the database before sending ensures a missing Full Disk Access
     // grant fails before Apple Events can produce an uncorrelated side effect.
     let messageStore = try openStore()
-    guard canAutomateMessages() else { throw BridgeFailure.automation }
+    guard await Self.automationAuthorized(askUserIfNeeded: false) else {
+      throw BridgeFailure.automation
+    }
+    guard await Self.imessageServiceAvailable() else { throw BridgeFailure.messagesSignIn }
     if chatID == nil,
       let chat = try messageStore.chatInfo(matchingTarget: recipient, preferredServices: ["iMessage"])
     {
@@ -194,8 +194,9 @@ actor BridgeRuntime {
     return result
   }
 
-  private func healthStatus() -> (
-    messagesRunning: Bool, databaseReadable: Bool, automationAuthorized: Bool
+  private func healthStatus() async -> (
+    messagesRunning: Bool, databaseReadable: Bool, automationAuthorized: Bool,
+    imessageAvailable: Bool?
   ) {
     let messagesRunning = NSWorkspace.shared.runningApplications.contains {
       $0.bundleIdentifier == "com.apple.MobileSMS"
@@ -207,14 +208,57 @@ actor BridgeRuntime {
     } catch {
       databaseReadable = false
     }
-    return (messagesRunning, databaseReadable, canAutomateMessages())
+    let automationAuthorized = await Self.automationAuthorized(askUserIfNeeded: false)
+    let imessageAvailable = automationAuthorized ? await Self.imessageServiceAvailable() : nil
+    return (messagesRunning, databaseReadable, automationAuthorized, imessageAvailable)
   }
 
-  private func canAutomateMessages() -> Bool {
-    let script = NSAppleScript(source: "tell application \"Messages\" to count services")
+  private func healthResult() async -> [String: Any] {
+    let health = await healthStatus()
+    var result: [String: Any] = [
+      "type": "health",
+      "messages_running": health.messagesRunning,
+      "database_readable": health.databaseReadable,
+      "automation_authorized": health.automationAuthorized,
+    ]
+    if let imessageAvailable = health.imessageAvailable {
+      result["imessage_available"] = imessageAvailable
+    }
+    return result
+  }
+
+  @MainActor
+  private static func automationAuthorized(askUserIfNeeded: Bool) -> Bool {
+    let target = NSAppleEventDescriptor(bundleIdentifier: "com.apple.MobileSMS")
+    guard let descriptor = target.aeDesc else { return false }
+    return AEDeterminePermissionToAutomateTarget(
+      descriptor, typeWildCard, typeWildCard, askUserIfNeeded
+    ) == noErr
+  }
+
+  @MainActor
+  private static func requestAutomationAuthorization() -> Bool {
+    automationAuthorized(askUserIfNeeded: true)
+  }
+
+  // Apple documents NSAppleScript as main-thread-only. Both the service probe
+  // and MessageSender's AppleScript implementation must stay on MainActor;
+  // running them on BridgeRuntime's generic actor can hang until the parent
+  // reaches its request timeout.
+  @MainActor
+  private static func imessageServiceAvailable() -> Bool {
+    let script = NSAppleScript(
+      source: "tell application \"Messages\" to count (every service whose service type is iMessage)"
+    )
     var details: NSDictionary?
-    _ = script?.executeAndReturnError(&details)
-    return details == nil
+    let result = script?.executeAndReturnError(&details)
+    guard details == nil else { return false }
+    return (result?.int32Value ?? 0) > 0
+  }
+
+  @MainActor
+  private static func sendViaMessages(_ options: MessageSendOptions) throws {
+    try MessageSender().send(options)
   }
 
   private func openStore() throws -> MessageStore {
@@ -242,7 +286,7 @@ actor BridgeRuntime {
     let startedAt = Date().addingTimeInterval(-2)
     sendCorrelationInProgress = true
     do {
-      try sender.send(
+      try await Self.sendViaMessages(
         MessageSendOptions(
           recipient: recipient,
           text: text,

@@ -21,3 +21,9 @@ import Testing
     try JSONDecoder().decode(BridgeRequest.self, from: data)
   }
 }
+
+@Test func decodesExplicitAutomationRequest() throws {
+  let data = Data(#"{"version":1,"id":"permission","command":"request_automation"}"#.utf8)
+  let request = try JSONDecoder().decode(BridgeRequest.self, from: data)
+  #expect(request.command == "request_automation")
+}

@@ -46,7 +46,10 @@ pub(crate) enum IMessageConnectionStatus {
     Disabled,
     SetupRequired,
     Connecting,
+    ReadyToTest,
+    SendingSetupMessage,
     AwaitingCalibrationReply,
+    CalibrationReplyMismatch,
     Connected,
     Paused(IMessagePermission),
     Error,
@@ -57,13 +60,39 @@ impl IMessageConnectionStatus {
         match self {
             Self::Disabled => "iMessage off",
             Self::SetupRequired => "Set up iMessage",
-            Self::Connecting => "Connecting iMessage…",
+            Self::Connecting => "Checking iMessage setup…",
+            Self::ReadyToTest => "Ready to test iMessage",
+            Self::SendingSetupMessage => "Sending iMessage test…",
             Self::AwaitingCalibrationReply => "Reply to the setup message",
+            Self::CalibrationReplyMismatch => "Reply with the setup code",
             Self::Connected => "iMessage connected",
             Self::Paused(IMessagePermission::Automation) => "Allow Messages automation",
             Self::Paused(IMessagePermission::FullDiskAccess) => "Allow Full Disk Access",
             Self::Paused(IMessagePermission::MessagesSignIn) => "Sign in to Messages",
             Self::Error => "iMessage unavailable",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct IMessageSetupRequirements {
+    pub(crate) full_disk_access: Option<bool>,
+    pub(crate) automation: Option<bool>,
+    pub(crate) imessage_available: Option<bool>,
+}
+
+impl IMessageSetupRequirements {
+    pub(crate) fn all_ready(self) -> bool {
+        self.full_disk_access == Some(true)
+            && self.automation == Some(true)
+            && self.imessage_available == Some(true)
+    }
+
+    fn ready() -> Self {
+        Self {
+            full_disk_access: Some(true),
+            automation: Some(true),
+            imessage_available: Some(true),
         }
     }
 }
@@ -75,6 +104,13 @@ pub(crate) enum IMessageTestStatus {
     Sending,
     Sent,
     Failed,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CalibrationReplyKind {
+    MatchingCode,
+    OtherText,
+    Ignore,
 }
 
 #[derive(Clone, Debug)]
@@ -109,6 +145,7 @@ pub(crate) struct IMessageCoordinator {
     mobile_submissions_in_flight: HashSet<MobileSessionKey>,
     send_in_flight: bool,
     test_status: IMessageTestStatus,
+    setup_requirements: IMessageSetupRequirements,
     current_send_intent_id: Option<String>,
     bridge_generation: u64,
     bridge_restart_attempts: usize,
@@ -147,7 +184,12 @@ impl IMessageCoordinator {
         }
         state.globally_enabled = configuration.enabled && configuration.setup_complete;
         state.notifications_enabled_by_default = configuration.notifications_enabled_by_default;
-        let status = status_for_configuration(&configuration, state.pending_calibration.is_some());
+        let status = status_for_configuration(&configuration, calibration_send_confirmed(&state));
+        let setup_requirements = if configuration.setup_complete {
+            IMessageSetupRequirements::ready()
+        } else {
+            IMessageSetupRequirements::default()
+        };
 
         ctx.subscribe_to_model(
             &CLIAgentSessionsModel::handle(ctx),
@@ -169,6 +211,7 @@ impl IMessageCoordinator {
             mobile_submissions_in_flight: HashSet::new(),
             send_in_flight: false,
             test_status: IMessageTestStatus::Idle,
+            setup_requirements,
             current_send_intent_id: None,
             bridge_generation: 0,
             bridge_restart_attempts: 0,
@@ -181,7 +224,7 @@ impl IMessageCoordinator {
             coordinator.save_configuration(ctx);
         }
         if coordinator.should_run_bridge() {
-            coordinator.start_bridge(coordinator.should_send_calibration(), ctx);
+            coordinator.start_bridge(false, ctx);
         }
         coordinator
     }
@@ -196,6 +239,10 @@ impl IMessageCoordinator {
 
     pub(crate) fn test_status(&self) -> IMessageTestStatus {
         self.test_status
+    }
+
+    pub(crate) fn setup_requirements(&self) -> IMessageSetupRequirements {
+        self.setup_requirements
     }
 
     pub(crate) fn session_notifications_enabled(&self, terminal_view_id: EntityId) -> Option<bool> {
@@ -225,13 +272,14 @@ impl IMessageCoordinator {
         );
         self.outbound_jobs.clear();
         self.test_status = IMessageTestStatus::Idle;
+        self.setup_requirements = IMessageSetupRequirements::default();
         self.state.globally_enabled = false;
         self.state.reset_conversation_state();
         self.bridge_restart_attempts = 0;
         self.schedule_expiration_check(ctx);
         self.save_configuration(ctx);
         self.persist_state();
-        self.start_bridge(true, ctx);
+        self.start_health_check(ctx);
     }
 
     pub(crate) fn set_enabled(&mut self, enabled: bool, ctx: &mut ModelContext<Self>) {
@@ -244,7 +292,7 @@ impl IMessageCoordinator {
         self.persist_state();
         if !self.configuration.setup_complete {
             if self.bridge.is_none() && self.should_run_bridge() {
-                self.start_bridge(self.should_send_calibration(), ctx);
+                self.start_bridge(false, ctx);
             } else {
                 ctx.emit(IMessageCoordinatorEvent::Changed);
             }
@@ -264,8 +312,21 @@ impl IMessageCoordinator {
         if matches!(self.test_status, IMessageTestStatus::Sending) {
             return;
         }
-        if !self.configuration.setup_complete
-            || !self.configuration.enabled
+        if !self.configuration.setup_complete {
+            if self.configuration.recipient.trim().is_empty()
+                || !self.setup_requirements.all_ready()
+            {
+                self.set_test_status(IMessageTestStatus::Failed, ctx);
+                self.refresh_health(ctx);
+                return;
+            }
+            self.state.pending_calibration = None;
+            self.persist_state();
+            self.set_test_status(IMessageTestStatus::Sending, ctx);
+            self.start_bridge(true, ctx);
+            return;
+        }
+        if !self.configuration.enabled
             || !matches!(self.status, IMessageConnectionStatus::Connected)
         {
             self.set_test_status(IMessageTestStatus::Failed, ctx);
@@ -281,6 +342,25 @@ impl IMessageCoordinator {
         });
         self.set_test_status(IMessageTestStatus::Sending, ctx);
         self.start_next_send(ctx);
+    }
+
+    pub(crate) fn request_automation_access(&mut self, ctx: &mut ModelContext<Self>) {
+        if self.bridge.is_none() {
+            self.start_health_check(ctx);
+        }
+        let Some(bridge) = self.bridge.clone() else {
+            return;
+        };
+        let generation = self.bridge_generation;
+        self.set_status(IMessageConnectionStatus::Connecting, ctx);
+        ctx.spawn(
+            async move { bridge.request(BridgeCommand::RequestAutomation).await },
+            move |coordinator, response, ctx| {
+                if coordinator.bridge_generation == generation {
+                    coordinator.handle_health_response(response, ctx);
+                }
+            },
+        );
     }
 
     pub(crate) fn set_notifications_enabled_by_default(
@@ -332,6 +412,7 @@ impl IMessageCoordinator {
         self.state.reset_conversation_state();
         self.outbound_jobs.clear();
         self.test_status = IMessageTestStatus::Idle;
+        self.setup_requirements = IMessageSetupRequirements::default();
         self.mobile_submissions_in_flight.clear();
         self.send_in_flight = false;
         self.current_send_intent_id = None;
@@ -343,25 +424,28 @@ impl IMessageCoordinator {
 
     pub(crate) fn refresh_health(&mut self, ctx: &mut ModelContext<Self>) {
         self.bridge_restart_attempts = 0;
-        if !self.should_run_bridge() {
+        if self.configuration.recipient.trim().is_empty() {
             self.stop_bridge();
             self.set_status(
                 status_for_configuration(
                     &self.configuration,
-                    self.state.pending_calibration.is_some(),
+                    calibration_send_confirmed(&self.state),
                 ),
                 ctx,
             );
             return;
         }
         if self.bridge.is_none() {
-            self.start_bridge(self.should_send_calibration(), ctx);
+            self.start_health_check(ctx);
             return;
         }
         let Some(bridge) = self.bridge.clone() else {
             return;
         };
         let generation = self.bridge_generation;
+        if !self.configuration.setup_complete && !calibration_send_confirmed(&self.state) {
+            self.set_status(IMessageConnectionStatus::Connecting, ctx);
+        }
         ctx.spawn(
             async move { bridge.request(BridgeCommand::Health).await },
             move |coordinator, response, ctx| {
@@ -429,13 +513,13 @@ impl IMessageCoordinator {
         self.persist_state();
         let should_run = self.should_run_bridge();
         if should_run && (!was_running || self.bridge.is_none()) {
-            self.start_bridge(self.should_send_calibration(), ctx);
+            self.start_bridge(false, ctx);
         } else if !should_run {
             self.stop_bridge();
             self.outbound_jobs.clear();
             let status = status_for_configuration(
                 &self.configuration,
-                self.state.pending_calibration.is_some(),
+                calibration_send_confirmed(&self.state),
             );
             self.set_status(status, ctx);
         } else {
@@ -451,6 +535,13 @@ impl IMessageCoordinator {
     }
 
     fn start_bridge(&mut self, send_calibration: bool, ctx: &mut ModelContext<Self>) {
+        if !self.configuration.setup_complete
+            && !send_calibration
+            && !calibration_send_confirmed(&self.state)
+        {
+            self.start_health_check(ctx);
+            return;
+        }
         self.stop_bridge();
         let Some(path) = bridge_executable_path().filter(|path| path.is_file()) else {
             self.set_status(IMessageConnectionStatus::Error, ctx);
@@ -486,6 +577,36 @@ impl IMessageCoordinator {
         );
     }
 
+    fn start_health_check(&mut self, ctx: &mut ModelContext<Self>) {
+        self.stop_bridge();
+        let Some(path) = bridge_executable_path().filter(|path| path.is_file()) else {
+            self.set_status(IMessageConnectionStatus::Error, ctx);
+            return;
+        };
+        let bridge = match IMessageBridge::spawn(&path) {
+            Ok(bridge) => Arc::new(bridge),
+            Err(error) => {
+                log::warn!("Could not start the local Messages bridge: {error:#}");
+                self.set_status(IMessageConnectionStatus::Error, ctx);
+                self.schedule_bridge_restart(ctx);
+                return;
+            }
+        };
+        let events = bridge.events();
+        self.bridge = Some(bridge.clone());
+        let generation = self.bridge_generation;
+        self.set_status(IMessageConnectionStatus::Connecting, ctx);
+        self.receive_next_bridge_event(events, generation, ctx);
+        ctx.spawn(
+            async move { bridge.request(BridgeCommand::Health).await },
+            move |coordinator, response, ctx| {
+                if coordinator.bridge_generation == generation {
+                    coordinator.handle_health_response(response, ctx);
+                }
+            },
+        );
+    }
+
     fn stop_bridge(&mut self) {
         self.bridge_generation = self.bridge_generation.wrapping_add(1);
         self.bridge_restart_scheduled = false;
@@ -501,12 +622,6 @@ impl IMessageCoordinator {
         }
         self.send_in_flight = false;
         self.current_send_intent_id = None;
-    }
-
-    fn should_send_calibration(&self) -> bool {
-        !self.configuration.setup_complete
-            && self.state.pending_calibration.is_none()
-            && !self.configuration.recipient.trim().is_empty()
     }
 
     fn receive_next_bridge_event(
@@ -551,6 +666,10 @@ impl IMessageCoordinator {
             self.set_status(IMessageConnectionStatus::Error, ctx);
             return;
         };
+        if self.setup_requirements != IMessageSetupRequirements::ready() {
+            self.setup_requirements = IMessageSetupRequirements::ready();
+            ctx.emit(IMessageCoordinatorEvent::Changed);
+        }
         if chat_id.is_some() {
             self.configuration.chat_id = chat_id;
         }
@@ -590,7 +709,8 @@ impl IMessageCoordinator {
             created_at: now(),
         });
         self.persist_state();
-        self.set_status(IMessageConnectionStatus::AwaitingCalibrationReply, ctx);
+        self.set_test_status(IMessageTestStatus::Sending, ctx);
+        self.set_status(IMessageConnectionStatus::SendingSetupMessage, ctx);
         let Some(bridge) = self.bridge.clone() else {
             self.set_status(IMessageConnectionStatus::Error, ctx);
             return;
@@ -623,6 +743,7 @@ impl IMessageCoordinator {
             Ok(response) => response,
             Err(error) => {
                 log::warn!("Local Messages calibration request failed: {error:#}");
+                self.set_test_status(IMessageTestStatus::Failed, ctx);
                 self.handle_bridge_exit(ctx);
                 return;
             }
@@ -647,12 +768,10 @@ impl IMessageCoordinator {
                 self.state.pending_calibration = None;
                 self.persist_state();
             }
+            self.note_bridge_error(code, ctx);
+            self.set_test_status(IMessageTestStatus::Failed, ctx);
             self.set_status(status.clone(), ctx);
-            if matches!(code, Some("sent_message_not_observed")) {
-                if let Some(chat_id) = self.configuration.chat_id {
-                    self.start_watch(chat_id, self.state.last_row_id, ctx);
-                }
-            } else if matches!(status, IMessageConnectionStatus::Error) {
+            if matches!(status, IMessageConnectionStatus::Error) {
                 self.handle_bridge_exit(ctx);
             }
             return;
@@ -679,6 +798,7 @@ impl IMessageCoordinator {
         self.state.last_row_id = self.state.last_row_id.max(row_id);
         self.save_configuration(ctx);
         self.persist_state();
+        self.set_test_status(IMessageTestStatus::Sent, ctx);
         self.set_status(IMessageConnectionStatus::AwaitingCalibrationReply, ctx);
         self.start_watch(chat_id, row_id, ctx);
     }
@@ -708,10 +828,17 @@ impl IMessageCoordinator {
                     coordinator.set_status(IMessageConnectionStatus::Error, ctx);
                     return;
                 }
-                let status = if coordinator.state.pending_calibration.is_some() {
+                let status = if coordinator.configuration.setup_complete {
+                    IMessageConnectionStatus::Connected
+                } else if matches!(
+                    coordinator.status,
+                    IMessageConnectionStatus::CalibrationReplyMismatch
+                ) {
+                    IMessageConnectionStatus::CalibrationReplyMismatch
+                } else if calibration_send_confirmed(&coordinator.state) {
                     IMessageConnectionStatus::AwaitingCalibrationReply
                 } else {
-                    IMessageConnectionStatus::Connected
+                    IMessageConnectionStatus::ReadyToTest
                 };
                 coordinator.bridge_restart_attempts = 0;
                 coordinator.set_status(status, ctx);
@@ -732,19 +859,38 @@ impl IMessageCoordinator {
         let BridgeResult::Health {
             database_readable,
             automation_authorized,
+            imessage_available,
         } = result
         else {
             return;
         };
+        let requirements = IMessageSetupRequirements {
+            full_disk_access: Some(database_readable),
+            automation: Some(automation_authorized),
+            imessage_available,
+        };
+        if self.setup_requirements != requirements {
+            self.setup_requirements = requirements;
+            ctx.emit(IMessageCoordinatorEvent::Changed);
+        }
         let status = if !database_readable {
             IMessageConnectionStatus::Paused(IMessagePermission::FullDiskAccess)
         } else if !automation_authorized {
             IMessageConnectionStatus::Paused(IMessagePermission::Automation)
+        } else if imessage_available != Some(true) {
+            IMessageConnectionStatus::Paused(IMessagePermission::MessagesSignIn)
+        } else if !self.configuration.setup_complete && !calibration_send_confirmed(&self.state) {
+            IMessageConnectionStatus::ReadyToTest
+        } else if self.configuration.setup_complete && !self.configuration.enabled {
+            self.stop_bridge();
+            IMessageConnectionStatus::Disabled
+        } else if matches!(self.status, IMessageConnectionStatus::Connected) {
+            IMessageConnectionStatus::Connected
         } else {
             // A health response does not recreate a watcher that stopped when
             // Full Disk Access was revoked. Reconfigure a fresh helper so
             // restoring permission actually resumes from the persisted cursor.
-            self.start_bridge(self.should_send_calibration(), ctx);
+            self.start_bridge(false, ctx);
             return;
         };
         self.set_status(status, ctx);
@@ -772,12 +918,14 @@ impl IMessageCoordinator {
                 version,
                 permission,
             } if version == BRIDGE_PROTOCOL_VERSION => {
+                self.note_bridge_permission(permission, ctx);
                 self.set_status(IMessageConnectionStatus::Paused(permission.into()), ctx);
             }
             BridgeEvent::DeliveryFailed { version, code }
             | BridgeEvent::WatchFailed { version, code }
                 if version == BRIDGE_PROTOCOL_VERSION =>
             {
+                self.note_bridge_error(Some(&code), ctx);
                 let status = status_for_bridge_error_code(&code);
                 let retry = matches!(status, IMessageConnectionStatus::Error);
                 self.set_status(status, ctx);
@@ -825,7 +973,7 @@ impl IMessageCoordinator {
                 }
                 coordinator.bridge_restart_scheduled = false;
                 if coordinator.should_run_bridge() {
-                    coordinator.start_bridge(coordinator.should_send_calibration(), ctx);
+                    coordinator.start_bridge(false, ctx);
                 }
             },
         );
@@ -840,13 +988,8 @@ impl IMessageCoordinator {
         self.expire_local_state(ctx);
         if let Some(calibration) = self.state.pending_calibration.clone() {
             self.state.last_row_id = self.state.last_row_id.max(message.row_id);
-            if message.is_supported_text()
-                && message.guid != calibration.sent_guid
-                && message
-                    .text
-                    .trim()
-                    .eq_ignore_ascii_case(&calibration.expected_reply)
-            {
+            let reply_kind = classify_calibration_reply(&message, &calibration);
+            if matches!(reply_kind, CalibrationReplyKind::MatchingCode) {
                 self.state.mark_processed(message.guid, now());
                 self.state.pending_calibration = None;
                 self.configuration.setup_complete = true;
@@ -867,6 +1010,9 @@ impl IMessageCoordinator {
             } else if message.guid != calibration.sent_guid {
                 self.state.mark_processed(message.guid, now());
                 self.persist_state();
+                if matches!(reply_kind, CalibrationReplyKind::OtherText) {
+                    self.set_status(IMessageConnectionStatus::CalibrationReplyMismatch, ctx);
+                }
             }
             return;
         }
@@ -1416,6 +1562,7 @@ impl IMessageCoordinator {
         };
         if !response.ok {
             let code = response.error.as_ref().map(|error| error.code.as_str());
+            self.note_bridge_error(code, ctx);
             let status = code
                 .map(status_for_bridge_error_code)
                 .unwrap_or(IMessageConnectionStatus::Error);
@@ -1428,6 +1575,44 @@ impl IMessageCoordinator {
             return None;
         }
         response.result
+    }
+
+    fn note_bridge_permission(
+        &mut self,
+        permission: BridgePermission,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        match permission {
+            BridgePermission::FullDiskAccess => {
+                self.setup_requirements.full_disk_access = Some(false);
+            }
+            BridgePermission::Automation => {
+                self.setup_requirements.full_disk_access = Some(true);
+                self.setup_requirements.automation = Some(false);
+                self.setup_requirements.imessage_available = None;
+            }
+            BridgePermission::MessagesSignIn => {
+                self.setup_requirements.full_disk_access = Some(true);
+                self.setup_requirements.automation = Some(true);
+                self.setup_requirements.imessage_available = Some(false);
+            }
+        }
+        ctx.emit(IMessageCoordinatorEvent::Changed);
+    }
+
+    fn note_bridge_error(&mut self, code: Option<&str>, ctx: &mut ModelContext<Self>) {
+        match code {
+            Some("full_disk_access_required") => {
+                self.note_bridge_permission(BridgePermission::FullDiskAccess, ctx)
+            }
+            Some("automation_required") => {
+                self.note_bridge_permission(BridgePermission::Automation, ctx)
+            }
+            Some("messages_sign_in_required") => {
+                self.note_bridge_permission(BridgePermission::MessagesSignIn, ctx)
+            }
+            _ => {}
+        }
     }
 
     fn save_configuration(&mut self, ctx: &mut ModelContext<Self>) {
@@ -1446,8 +1631,13 @@ impl IMessageCoordinator {
     }
 
     fn set_status(&mut self, status: IMessageConnectionStatus, ctx: &mut ModelContext<Self>) {
-        let test_changed = !matches!(&status, IMessageConnectionStatus::Connected)
-            && matches!(self.test_status, IMessageTestStatus::Sending);
+        let test_changed = matches!(
+            &status,
+            IMessageConnectionStatus::Disabled
+                | IMessageConnectionStatus::SetupRequired
+                | IMessageConnectionStatus::Paused(_)
+                | IMessageConnectionStatus::Error
+        ) && matches!(self.test_status, IMessageTestStatus::Sending);
         if test_changed {
             self.test_status = IMessageTestStatus::Failed;
         }
@@ -1497,9 +1687,9 @@ fn status_for_bridge_error_code(code: &str) -> IMessageConnectionStatus {
 
 fn status_for_configuration(
     configuration: &IMessageConfiguration,
-    pending_calibration: bool,
+    calibration_send_confirmed: bool,
 ) -> IMessageConnectionStatus {
-    if pending_calibration {
+    if calibration_send_confirmed {
         IMessageConnectionStatus::AwaitingCalibrationReply
     } else if !configuration.setup_complete {
         if configuration.recipient.trim().is_empty() {
@@ -1511,6 +1701,30 @@ fn status_for_configuration(
         IMessageConnectionStatus::Disabled
     } else {
         IMessageConnectionStatus::Connecting
+    }
+}
+
+fn calibration_send_confirmed(state: &RouteState) -> bool {
+    state
+        .pending_calibration
+        .as_ref()
+        .is_some_and(|calibration| !calibration.sent_guid.is_empty())
+}
+
+fn classify_calibration_reply(
+    message: &super::domain::IncomingMessage,
+    calibration: &PendingCalibration,
+) -> CalibrationReplyKind {
+    if message.guid == calibration.sent_guid || !message.is_supported_text() {
+        CalibrationReplyKind::Ignore
+    } else if message
+        .text
+        .trim()
+        .eq_ignore_ascii_case(&calibration.expected_reply)
+    {
+        CalibrationReplyKind::MatchingCode
+    } else {
+        CalibrationReplyKind::OtherText
     }
 }
 
@@ -1617,6 +1831,68 @@ mod tests {
         assert!(configuration.notifications_enabled_by_default);
         assert!(!configuration.setup_complete);
         assert_eq!(configuration.recipient, "+1 415 555 1212");
+    }
+
+    #[test]
+    fn setup_is_testable_only_when_every_prerequisite_is_confirmed() {
+        let mut requirements = IMessageSetupRequirements::default();
+        assert!(!requirements.all_ready());
+        requirements.full_disk_access = Some(true);
+        requirements.automation = Some(true);
+        assert!(!requirements.all_ready());
+        requirements.imessage_available = Some(true);
+        assert!(requirements.all_ready());
+        requirements.automation = Some(false);
+        assert!(!requirements.all_ready());
+    }
+
+    #[test]
+    fn awaiting_phone_copy_requires_a_confirmed_calibration_guid() {
+        let mut state = RouteState {
+            pending_calibration: Some(PendingCalibration {
+                expected_reply: "CLINCH ABC123".to_owned(),
+                sent_guid: String::new(),
+                created_at: 1,
+            }),
+            ..RouteState::default()
+        };
+        assert!(!calibration_send_confirmed(&state));
+        state.pending_calibration.as_mut().unwrap().sent_guid = "sent-guid".to_owned();
+        assert!(calibration_send_confirmed(&state));
+    }
+
+    #[test]
+    fn calibration_distinguishes_the_code_from_other_received_text() {
+        let calibration = PendingCalibration {
+            expected_reply: "CLINCH ABC123".to_owned(),
+            sent_guid: "sent-guid".to_owned(),
+            created_at: 1,
+        };
+        let incoming = |guid: &str, text: &str| super::super::domain::IncomingMessage {
+            guid: guid.to_owned(),
+            row_id: 42,
+            text: text.to_owned(),
+            service: "iMessage".to_owned(),
+            parent_guid: None,
+            associated_guid: None,
+            is_reaction: false,
+            is_edited: false,
+            has_attachments: false,
+            is_from_me: false,
+        };
+
+        assert_eq!(
+            classify_calibration_reply(&incoming("reply-guid", "clinch abc123"), &calibration),
+            CalibrationReplyKind::MatchingCode
+        );
+        assert_eq!(
+            classify_calibration_reply(&incoming("reply-guid", "test message"), &calibration),
+            CalibrationReplyKind::OtherText
+        );
+        assert_eq!(
+            classify_calibration_reply(&incoming("sent-guid", "CLINCH ABC123"), &calibration),
+            CalibrationReplyKind::Ignore
+        );
     }
 
     #[test]
@@ -1738,6 +2014,7 @@ mod tests {
             mobile_submissions_in_flight: HashSet::new(),
             send_in_flight,
             test_status: IMessageTestStatus::Idle,
+            setup_requirements: IMessageSetupRequirements::default(),
             current_send_intent_id: None,
             bridge_generation: 0,
             bridge_restart_attempts: 0,

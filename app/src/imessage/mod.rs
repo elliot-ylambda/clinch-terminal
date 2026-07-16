@@ -12,7 +12,7 @@ mod store;
 
 pub(crate) use coordinator::{
     IMessageConnectionStatus, IMessageCoordinator, IMessageCoordinatorEvent, IMessagePermission,
-    IMessageTestStatus,
+    IMessageSetupRequirements, IMessageTestStatus,
 };
 
 #[cfg(test)]

@@ -3,12 +3,18 @@ use warpui::platform::WindowStyle;
 use warpui::{App, SingletonEntity, TypedActionView};
 
 #[cfg(target_os = "macos")]
-use super::{imessage_setup_stage, IMessageSetupStage};
+use super::{
+    imessage_requirement_label, imessage_setup_stage, imessage_test_presentation,
+    IMessageSetupStage,
+};
 use super::{ClinchSettingsPageAction, ClinchSettingsPageView};
 use crate::appearance::Appearance;
 use crate::auth::AuthStateProvider;
 #[cfg(target_os = "macos")]
-use crate::imessage::{IMessageConnectionStatus, IMessageCoordinator, IMessagePermission};
+use crate::imessage::{
+    IMessageConnectionStatus, IMessageCoordinator, IMessagePermission, IMessageSetupRequirements,
+    IMessageTestStatus,
+};
 #[cfg(target_os = "macos")]
 use crate::settings::CliAgentUsageSettings;
 use crate::settings::ClinchSettings;
@@ -30,6 +36,14 @@ fn imessage_setup_stage_tracks_the_submitted_number_and_permission_flow() {
         IMessageSetupStage::Connecting
     );
     assert_eq!(
+        imessage_setup_stage(false, false, &IMessageConnectionStatus::ReadyToTest),
+        IMessageSetupStage::ReadyToTest
+    );
+    assert_eq!(
+        imessage_setup_stage(false, false, &IMessageConnectionStatus::SendingSetupMessage,),
+        IMessageSetupStage::SendingTest
+    );
+    assert_eq!(
         imessage_setup_stage(
             false,
             false,
@@ -46,6 +60,14 @@ fn imessage_setup_stage_tracks_the_submitted_number_and_permission_flow() {
         IMessageSetupStage::AwaitingReply
     );
     assert_eq!(
+        imessage_setup_stage(
+            false,
+            false,
+            &IMessageConnectionStatus::CalibrationReplyMismatch,
+        ),
+        IMessageSetupStage::ReplyMismatch
+    );
+    assert_eq!(
         imessage_setup_stage(true, false, &IMessageConnectionStatus::Connected),
         IMessageSetupStage::Connected
     );
@@ -53,6 +75,83 @@ fn imessage_setup_stage_tracks_the_submitted_number_and_permission_flow() {
         imessage_setup_stage(true, false, &IMessageConnectionStatus::Disabled),
         IMessageSetupStage::Connected
     );
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn imessage_setup_checklist_and_test_copy_are_truthful() {
+    let checking = IMessageSetupRequirements::default();
+    let ready = IMessageSetupRequirements {
+        full_disk_access: Some(true),
+        automation: Some(true),
+        imessage_available: Some(true),
+    };
+
+    assert_eq!(
+        imessage_requirement_label("Full Disk Access", Some(true)),
+        "✓ Full Disk Access"
+    );
+    assert_eq!(
+        imessage_requirement_label("Full Disk Access", Some(false)),
+        "○ Full Disk Access"
+    );
+    assert_eq!(
+        imessage_requirement_label("Full Disk Access", None),
+        "… Checking Full Disk Access"
+    );
+
+    let blocked = imessage_test_presentation(
+        false,
+        true,
+        &IMessageConnectionStatus::Connecting,
+        checking,
+        IMessageTestStatus::Idle,
+    );
+    assert_eq!(blocked.label, "Test iMessage");
+    assert!(!blocked.enabled);
+
+    let sendable = imessage_test_presentation(
+        false,
+        true,
+        &IMessageConnectionStatus::ReadyToTest,
+        ready,
+        IMessageTestStatus::Idle,
+    );
+    assert_eq!(sendable.label, "Test iMessage");
+    assert!(sendable.enabled);
+
+    let sending = imessage_test_presentation(
+        false,
+        true,
+        &IMessageConnectionStatus::SendingSetupMessage,
+        ready,
+        IMessageTestStatus::Sending,
+    );
+    assert_eq!(sending.label, "Sending…");
+    assert!(!sending.enabled);
+    assert!(!sending.description.contains("sent"));
+
+    let awaiting = imessage_test_presentation(
+        false,
+        true,
+        &IMessageConnectionStatus::AwaitingCalibrationReply,
+        ready,
+        IMessageTestStatus::Sent,
+    );
+    assert_eq!(awaiting.label, "Send again");
+    assert!(awaiting.enabled);
+    assert!(awaiting.description.contains("sent and confirmed"));
+
+    let mismatch = imessage_test_presentation(
+        false,
+        true,
+        &IMessageConnectionStatus::CalibrationReplyMismatch,
+        ready,
+        IMessageTestStatus::Sent,
+    );
+    assert_eq!(mismatch.label, "Send again");
+    assert!(mismatch.enabled);
+    assert!(mismatch.description.contains("did not match"));
 }
 
 #[test]

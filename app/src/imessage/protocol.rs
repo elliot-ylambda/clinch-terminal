@@ -26,6 +26,7 @@ impl BridgeRequest {
 #[serde(tag = "command", rename_all = "snake_case")]
 pub(crate) enum BridgeCommand {
     Health,
+    RequestAutomation,
     Configure {
         recipient: String,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -61,6 +62,8 @@ pub(crate) enum BridgeResult {
     Health {
         database_readable: bool,
         automation_authorized: bool,
+        #[serde(default)]
+        imessage_available: Option<bool>,
     },
     Configured {
         #[serde(default)]
@@ -110,4 +113,22 @@ pub(crate) enum BridgePermission {
     Automation,
     FullDiskAccess,
     MessagesSignIn,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn automation_permission_request_uses_the_versioned_protocol_command() {
+        let value = serde_json::to_value(BridgeRequest::new(
+            "permission",
+            BridgeCommand::RequestAutomation,
+        ))
+        .unwrap();
+
+        assert_eq!(value["version"], BRIDGE_PROTOCOL_VERSION);
+        assert_eq!(value["id"], "permission");
+        assert_eq!(value["command"], "request_automation");
+    }
 }

@@ -329,6 +329,18 @@ fn imessage_footer_presentation(
                     "iMessage: Check your phone",
                     "Reply with the one-time code in the Clinch setup message",
                 ),
+                IMessageConnectionStatus::CalibrationReplyMismatch => (
+                    "iMessage: Reply with code",
+                    "Clinch received your message, but it did not match the one-time setup code",
+                ),
+                IMessageConnectionStatus::ReadyToTest => (
+                    "iMessage: Ready to test",
+                    "Open Clinch Settings and select Test iMessage",
+                ),
+                IMessageConnectionStatus::SendingSetupMessage => (
+                    "iMessage: Sending test…",
+                    "Clinch is sending and confirming the setup message",
+                ),
                 IMessageConnectionStatus::Error => (
                     "iMessage: Needs attention",
                     "Open Clinch Settings to finish or restart iMessage setup",
@@ -3610,6 +3622,47 @@ mod imessage_footer_tests {
             None,
         );
         assert_eq!(permission.label, "iMessage: Enable access");
+
+        let ready = imessage_footer_presentation(
+            false,
+            true,
+            &IMessageConnectionStatus::ReadyToTest,
+            true,
+            true,
+            None,
+        );
+        assert_eq!(ready.label, "iMessage: Ready to test");
+
+        let sending = imessage_footer_presentation(
+            false,
+            true,
+            &IMessageConnectionStatus::SendingSetupMessage,
+            true,
+            true,
+            None,
+        );
+        assert_eq!(sending.label, "iMessage: Sending test…");
+
+        let awaiting = imessage_footer_presentation(
+            false,
+            true,
+            &IMessageConnectionStatus::AwaitingCalibrationReply,
+            true,
+            true,
+            None,
+        );
+        assert_eq!(awaiting.label, "iMessage: Check your phone");
+
+        let mismatch = imessage_footer_presentation(
+            false,
+            true,
+            &IMessageConnectionStatus::CalibrationReplyMismatch,
+            true,
+            true,
+            None,
+        );
+        assert_eq!(mismatch.label, "iMessage: Reply with code");
+        assert!(mismatch.tooltip.contains("did not match"));
     }
 
     #[test]

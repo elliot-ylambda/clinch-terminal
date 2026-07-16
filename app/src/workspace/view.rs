@@ -287,7 +287,7 @@ use crate::env_vars::manager::{EnvVarCollectionManager, EnvVarCollectionSource};
 use crate::env_vars::CloudEnvVarCollection;
 use crate::experiments::{BlockOnboarding, Experiment};
 #[cfg(target_os = "macos")]
-use crate::imessage::IMessageCoordinator;
+use crate::imessage::{IMessageConnectionStatus, IMessageCoordinator, IMessagePermission};
 use crate::launch_configs::launch_config::WindowTemplate;
 use crate::launch_configs::save_modal::{LaunchConfigModalEvent, LaunchConfigSaveModal};
 use crate::menu::{Event as MenuEvent, Menu, MenuItem, MenuItemFields, MenuSelectionSource};
@@ -718,8 +718,38 @@ const IMESSAGE_HEADER_SETUP_PROMPT: &str =
     "Use Clinch over iMessage to talk with Claude and Codex.";
 
 #[cfg(target_os = "macos")]
-fn imessage_header_setup_prompt(setup_complete: bool) -> Option<&'static str> {
-    (!setup_complete).then_some(IMESSAGE_HEADER_SETUP_PROMPT)
+fn imessage_header_setup_prompt(
+    setup_complete: bool,
+    status: &IMessageConnectionStatus,
+) -> Option<&'static str> {
+    if setup_complete {
+        return None;
+    }
+    Some(match status {
+        IMessageConnectionStatus::SetupRequired => IMESSAGE_HEADER_SETUP_PROMPT,
+        IMessageConnectionStatus::Connecting => "Checking iMessage setup…",
+        IMessageConnectionStatus::ReadyToTest => "iMessage is ready to test in Settings.",
+        IMessageConnectionStatus::SendingSetupMessage => "Sending the iMessage setup test…",
+        IMessageConnectionStatus::AwaitingCalibrationReply => {
+            "Check your phone to finish iMessage setup."
+        }
+        IMessageConnectionStatus::CalibrationReplyMismatch => {
+            "Reply did not match—send the one-time setup code."
+        }
+        IMessageConnectionStatus::Paused(IMessagePermission::FullDiskAccess) => {
+            "Finish iMessage setup: Allow Full Disk Access."
+        }
+        IMessageConnectionStatus::Paused(IMessagePermission::Automation) => {
+            "Finish iMessage setup: Allow Messages access."
+        }
+        IMessageConnectionStatus::Paused(IMessagePermission::MessagesSignIn) => {
+            "Finish iMessage setup: Sign in to iMessage."
+        }
+        IMessageConnectionStatus::Error => "iMessage setup needs attention.",
+        IMessageConnectionStatus::Disabled | IMessageConnectionStatus::Connected => {
+            IMESSAGE_HEADER_SETUP_PROMPT
+        }
+    })
 }
 
 lazy_static! {
@@ -21717,9 +21747,10 @@ impl Workspace {
         ctx: &AppContext,
     ) -> Box<dyn Element> {
         let coordinator = IMessageCoordinator::as_ref(ctx);
-        if let Some(prompt) =
-            imessage_header_setup_prompt(coordinator.configuration().setup_complete)
-        {
+        if let Some(prompt) = imessage_header_setup_prompt(
+            coordinator.configuration().setup_complete,
+            coordinator.status(),
+        ) {
             let theme = appearance.theme();
             let foreground = internal_colors::accent_fg_strong(theme);
             let label = Flex::row()

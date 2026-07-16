@@ -282,7 +282,7 @@ mod tests {
             r#"#!/bin/sh
 while IFS= read -r line; do
   printf '%s\n' '{"event":"permission_required","version":1,"permission":"automation"}'
-  printf '%s\n' '{"version":1,"id":"test","ok":true,"result":{"type":"health","messages_running":true,"database_readable":true,"automation_authorized":true}}'
+  printf '%s\n' '{"version":1,"id":"test","ok":true,"result":{"type":"health","messages_running":true,"database_readable":true,"automation_authorized":true,"imessage_available":true}}'
 done
 "#,
         )
@@ -305,7 +305,14 @@ done
                 .await
                 .unwrap();
             assert!(response.ok);
-            assert!(matches!(response.result, Some(BridgeResult::Health { .. })));
+            assert!(matches!(
+                response.result,
+                Some(BridgeResult::Health {
+                    database_readable: true,
+                    automation_authorized: true,
+                    imessage_available: Some(true),
+                })
+            ));
             assert!(matches!(
                 bridge.events().recv().await.unwrap(),
                 IMessageBridgeEvent::Message(BridgeEvent::PermissionRequired { .. })
