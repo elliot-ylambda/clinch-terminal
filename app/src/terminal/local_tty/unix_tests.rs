@@ -135,3 +135,26 @@ fn docker_sandbox_command_sets_history_size_sentinels() {
         Some(Some(BASH_HISTORY_SIZE_SENTINEL.to_owned()))
     );
 }
+
+/// A PTY follower must resolve to a real device path (e.g. `/dev/ttys004`) so
+/// `WARP_TTY` can point agent hooks (which run without a controlling terminal)
+/// back at the pane's PTY.
+#[test]
+fn tty_device_path_resolves_pty_follower() {
+    let size = libc::winsize {
+        ws_row: 24,
+        ws_col: 80,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    let (leader, follower) = make_pty(size).unwrap();
+
+    let path = tty_device_path(follower).expect("PTY follower should have a device path");
+    assert!(path.starts_with("/dev/"), "unexpected tty path: {path}");
+    assert!(std::path::Path::new(&path).exists());
+
+    unsafe {
+        libc::close(leader);
+        libc::close(follower);
+    }
+}

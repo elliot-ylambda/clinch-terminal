@@ -83,15 +83,17 @@ capture (agent SessionStart hooks)          replay (Rust, in Clinch)
   resurrecting an agent the user exited even if the best-effort journal was unwritable.
   Graceful app termination queues one final complete snapshot before the SQLite writer is
   synchronously joined.
-- **Bridged sessions teleport their cloud copy back.** A bridged session's cloud copy may
-  contain turns continued from another device, while a poisoned child launch can have no
-  usable local jsonl at all. The capture hook
+- **Local history wins; bridges recover cloud-only sessions.** Claude `--resume` keeps the
+  original session id and repaints the complete locally saved exchange. In contrast, a
+  `--teleport` can restore context into a new local id without repainting that exchange, which
+  looks like a blank resumed pane. The capture hook
   records the session's `CLAUDE_CODE_BRIDGE_SESSION_ID` in the entry's optional `bridge`
-  field, and on restore `clinch_agent_resume_launch` runs `claude --teleport <bridge>`
-  before local resume — deliberately keeping the cloud copy authoritative even though
-  clean remote-control sessions now also write normal local transcripts. A
+  field. Restore runs `claude --resume <id>` whenever that transcript has a real turn and uses
+  `claude --teleport <bridge>` only when local history is absent or unusable. This favors visible
+  local continuity; a bridge continued exclusively on another device can still be recovered from
+  its recorded `https://claude.ai/code/<bridge>` URL. A
   teleport that fails fast (dirty tree, git lock race between panes sharing a repo, API
-  error) falls back to local resume, then fresh, printing
+  error) falls back to fresh recovery, printing
   `https://claude.ai/code/<bridge>` for manual recovery; a non-zero exit after a real run
   is the user quitting and does not relaunch (`WARP_AGENT_RESUME_TELEPORT_GRACE`, default
   15s, distinguishes the two). Note teleport performs git operations (branch checkout), so
@@ -135,11 +137,13 @@ conversation. Launch hygiene plus two durable layers reduce that risk (see
   Fail-open: a journal append failure never fails the registry mutation. No pruning in v1
   (~200 bytes/line).
 - **Prompt mirror** (`~/.warp/agent-resume/prompts/<provider>/<sid>.jsonl`): every
-  `UserPromptSubmit`
-  appends the prompt text (+ ts, cwd, bridge id) — so even a session that never writes a
+  `UserPromptSubmit` appends the prompt text (+ ts, cwd, bridge id), and Claude `Stop` appends a
+  turn boundary — so even a session that never writes a
   jsonl leaves its prompts on disk. Mirrored *before* the pane-ownership guard, so nested
   sessions' prompts survive too; capped at ~5 MB per session (one final
-  `"truncated":true` marker). These files are as sensitive as `~/.claude/projects`
+  `"truncated":true` marker). Identical retained-input submissions coalesce only while the same
+  turn is open; the Stop boundary preserves an intentional identical prompt after an answer.
+  These files are as sensitive as `~/.claude/projects`
   transcripts: `700`/`600`, never leave the machine.
   Legacy flat `prompts/<sid>.jsonl` files remain readable as Claude history; new writes are
   provider-scoped so the same id can never be attributed to the wrong agent.
@@ -151,10 +155,11 @@ conversation. Launch hygiene plus two durable layers reduce that risk (see
   inherited/leaked bridge from matching pane entries and journals the clear so discovery does
   not resurrect the poisoned cloud URL.
 
-## Enable or remove session capture
+## Default session capture and opt-out
 
-Session capture is off on a fresh install. Public users enable it from Clinch Settings after
-reviewing the disclosed paths. The equivalent repository command is explicit:
+Clinch enables session capture on first launch so local Claude Code and Codex restore works by
+default. Users can turn it off or back on from Clinch Settings. The equivalent repository command
+is:
 
 ```bash
 ./tools/agent-resume/install.sh enable
@@ -168,8 +173,8 @@ the Claude `SessionStart`/`UserPromptSubmit`/`Stop`/`SessionEnd` hooks into `~/.
 hooks into a managed block in `~/.codex/config.toml`, and standalone replay executables into
 Clinch's bundled shell path and the installed runtime directory. It uses macOS's built-in JXA
 runtime for JSON handling. There is no `jq`, Homebrew, repository-clone, `.zshrc`, or shell-restart
-requirement. On later launches Clinch runs `repair --quiet`, which performs no mutation unless the
-durable consent marker from `enable` exists.
+requirement. On later launches Clinch runs `repair --quiet` while enabled. `disable` writes a
+durable opt-out marker, and older disabled installations are recognized by their retained receipt.
 
 The hooks only record when launched inside a Clinch pane (`WARP_TERMINAL_SESSION_UUID` set).
 New Claude and Codex sessions are captured immediately.
@@ -266,7 +271,7 @@ separate data dir (`~/.warp-oss`), so the two never clobber each other's session
 | `install-agent-plugins.sh` | legacy/manual development helper; not bundled or run by the public installer |
 | `wire-claude-hooks.sh` | idempotent native merge of Claude hook entries into settings.json (used by `install.sh`) |
 | `unwire-claude-hooks.sh` | remove only Clinch/legacy Warp managed Claude hook entries |
-| `install.sh` | explicit `enable`, consent-gated `repair`, `disable`, `status`, and `purge` manager |
+| `install.sh` | `enable`, enabled-state `repair`, persistent `disable`, `status`, and `purge` manager |
 | `build-app.sh` | build + brand + install the co-installable app |
 | `tests/` | self-contained shell tests for the scripts |
 

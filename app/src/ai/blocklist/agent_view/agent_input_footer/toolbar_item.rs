@@ -158,7 +158,7 @@ impl AgentToolbarItemKind {
             Self::ShareSession => Cow::Borrowed("/remote-control"),
             Self::Settings => Cow::Borrowed("Settings"),
             Self::Compact => Cow::Borrowed("Compact"),
-            Self::ForkSession => Cow::Borrowed("Fork"),
+            Self::ForkSession => Cow::Borrowed("Fork in New Tab"),
             Self::ContinuePrompt => Cow::Borrowed("Continue"),
             Self::LooksGoodPrompt => Cow::Borrowed("LGTM"),
             Self::FastForwardToggle => Cow::Borrowed("Fast Forward"),
@@ -321,6 +321,22 @@ impl AgentToolbarItemKind {
             Self::CustomInsert {
                 label: "Create a PR".to_owned(),
                 text: "Create a PR, then merge main into this PR".to_owned(),
+            },
+            Self::CustomInsert {
+                label: "Review w/ Codex Sol Max".to_owned(),
+                text: "Review w/ Codex Sol Max".to_owned(),
+            },
+            Self::CustomInsert {
+                label: "Review w/ Claude Code Fable".to_owned(),
+                text: "Review w/ Claude Code Fable".to_owned(),
+            },
+            Self::CustomInsert {
+                label: "Debug w/ Ultracode".to_owned(),
+                text: "Investigate with Ultra Code and use subagents".to_owned(),
+            },
+            Self::CustomInsert {
+                label: "Git Worktree".to_owned(),
+                text: "Move our current work and code into an isolated git work tree. And create a branch. Work out of the git worktree".to_owned(),
             },
             Self::VoiceInput,
         ]

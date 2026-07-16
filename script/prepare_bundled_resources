@@ -62,9 +62,8 @@ else
   echo "Warning: No bundled directory found at $RESOURCES_SRC/bundled" >&2
 fi
 
-# Clinch's macOS distribution carries the local agent-resume runtime. Nothing is installed on
-# first launch: the user enables capture explicitly in Clinch settings. Once enabled, the GUI may
-# repair only Clinch-managed files while the durable consent marker exists.
+# Clinch's macOS distribution carries the local agent-resume runtime. The GUI enables its managed
+# capture hooks on first launch, refreshes them while enabled, and honors a persisted user opt-out.
 if [ "$(uname -s)" = "Darwin" ]; then
   AGENT_RESUME_SRC="$REPO_ROOT/tools/agent-resume"
   AGENT_RESUME_DEST="$DEST_DIR/agent-resume"
@@ -77,7 +76,9 @@ if [ "$(uname -s)" = "Darwin" ]; then
     "$AGENT_RESUME_SRC/warp-agent-resume" \
     "$AGENT_RESUME_SRC/clinch_agent_resume_launch" \
     "$AGENT_RESUME_SRC/claude-capture.sh" \
+    "$AGENT_RESUME_SRC/prompt-mirror.sh" \
     "$AGENT_RESUME_SRC/codex-session-start.sh" \
+    "$AGENT_RESUME_SRC/codex-prompt-submit.sh" \
     "$AGENT_RESUME_SRC/codex-session-end.sh" \
     "$AGENT_RESUME_SRC/wire-claude-hooks.sh" \
     "$AGENT_RESUME_SRC/unwire-claude-hooks.sh" \

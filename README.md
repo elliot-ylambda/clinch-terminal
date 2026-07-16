@@ -52,24 +52,25 @@ Claude Code or Codex, install plugins, request administrator access, or change G
 
 Clinch uses the bundle ID `sh.clinch.Clinch`, so it can coexist with Warp.
 
-## Session capture is optional
+## Session restore is enabled by default
 
 Clinch can reopen a captured Claude Code or Codex conversation in the pane that owned it. This
-requires provider hooks and is off on a fresh install. Enable it from **Clinch Settings → Agents →
-Enable session capture** after reviewing the paths shown there.
+requires provider hooks, so Clinch enables its local session-capture integration on first launch.
+You can turn it off or back on at any time from **Clinch Settings → Agents → Claude Code and Codex
+session capture**.
 
-Enabling session capture:
+While session capture is enabled, Clinch:
 
 - adds clearly marked managed hooks to `~/.claude/settings.json` and `~/.codex/config.toml`;
 - installs Clinch-owned helper files in `~/.warp/agent-resume-bin/`; and
 - stores local pane mappings, a journal, and prompt mirrors in `~/.warp/agent-resume/`; and
-- records consent and a hash/mode receipt under
+- records the enabled/disabled preference and a hash/mode receipt under
   `~/Library/Application Support/sh.clinch.Clinch/agent-integration/`.
 
-Clinch may repair those managed entries on later launches only while the consent marker exists.
-Removing the integration deletes its hooks and helper files while preserving unrelated provider
-configuration and captured metadata. Purging captured metadata is a separate action. The command
-line equivalents are:
+Clinch repairs those managed entries on later launches only while the setting is enabled. Turning
+it off persists the opt-out and deletes its hooks and helper files while preserving unrelated
+provider configuration and captured metadata. Purging captured metadata is a separate action. The
+command-line equivalents are:
 
 ```bash
 bash tools/agent-resume/install.sh enable
@@ -157,7 +158,7 @@ make candidate
 `script/launch-check` covers formatting, installer/integration/update-format tests, the stable
 build, component tests, Clippy, dependency license policy, bundled notices, and advisories. `make
 candidate` builds and verifies the universal app, ZIP, DMG, both manifest signatures, minimum OS,
-entitlements, opt-in/removal flow, and ZIP/DMG app equality. It does not create a tag or release.
+entitlements, default-on/opt-out flow, and ZIP/DMG app equality. It does not create a tag or release.
 
 Release builds use the persistent local Cargo cache instead of paid hosted macOS runners. Install
 the normal build/test/release dependencies plus OpenSSL 3 and Syft (`brew install openssl@3 syft`)

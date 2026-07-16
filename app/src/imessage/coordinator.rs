@@ -750,6 +750,10 @@ impl IMessageCoordinator {
         };
         if !response.ok {
             let code = response.error.as_ref().map(|error| error.code.as_str());
+            log::warn!(
+                "Local Messages calibration request was rejected: {}",
+                code.unwrap_or("missing_error_code")
+            );
             let status = code
                 .map(status_for_bridge_error_code)
                 .unwrap_or(IMessageConnectionStatus::Error);
@@ -913,6 +917,14 @@ impl IMessageCoordinator {
                     return;
                 }
                 self.handle_incoming(message, ctx);
+            }
+            BridgeEvent::CursorAdvanced { version, row_id }
+                if version == BRIDGE_PROTOCOL_VERSION =>
+            {
+                if row_id > self.state.last_row_id {
+                    self.state.last_row_id = row_id;
+                    self.persist_state();
+                }
             }
             BridgeEvent::PermissionRequired {
                 version,

@@ -46,7 +46,7 @@ fi
 # Current provider state must make a later launch a true no-op.
 mkdir -p \
   "$TMP/claude/plugins" \
-  "$TMP/codex/plugins/cache/clinch-codex-warp/warp/0.4.0/.codex-plugin"
+  "$TMP/codex/plugins/cache/clinch-codex-warp/warp/0.4.1/.codex-plugin"
 cat >"$TMP/claude/plugins/installed_plugins.json" <<'EOF'
 {
   "version": 2,
@@ -61,8 +61,8 @@ cat >"$TMP/codex/config.toml" <<'EOF'
 [plugins."warp@clinch-codex-warp"]
 enabled = true
 EOF
-cat >"$TMP/codex/plugins/cache/clinch-codex-warp/warp/0.4.0/.codex-plugin/plugin.json" <<'EOF'
-{ "name": "warp", "version": "0.4.0" }
+cat >"$TMP/codex/plugins/cache/clinch-codex-warp/warp/0.4.1/.codex-plugin/plugin.json" <<'EOF'
+{ "name": "warp", "version": "0.4.1" }
 EOF
 : >"$LOG"
 

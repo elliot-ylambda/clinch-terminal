@@ -207,7 +207,7 @@ if validation.get("artifact_checks") != [
     "no Apple Events entitlement or usage description",
     "no bundled iMessage helper",
     "ZIP/DMG app equality",
-    "integration opt-in and removal",
+    "default-on integration, opt-out, and removal",
     "signed exact-tag manifest",
 ]:
     fail("validation record artifact checks mismatch")

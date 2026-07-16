@@ -201,11 +201,13 @@ perms="$(stat -f '%Lp' "$mf")"; [[ "$perms" == "600" ]] || { echo "FAIL: mirror 
 dperms="$(stat -f '%Lp' "$P")"; [[ "$dperms" == "700" ]] || { echo "FAIL: provider prompts dir perms $dperms"; exit 1; }
 root_perms="$(stat -f '%Lp' "$(dirname "$P")")"; [[ "$root_perms" == "700" ]] || { echo "FAIL: prompts root perms $root_perms"; exit 1; }
 
-# Stop events and empty prompts mirror nothing.
+# Stop records a turn boundary; empty prompts still mirror nothing. The boundary lets the reader
+# distinguish an in-flight duplicate from an intentional identical prompt after an answer.
 echo '{"session_id":"sess-mm","cwd":"/tmp/repo","hook_event_name":"Stop","permission_mode":"default"}' | "$BIN/claude-capture.sh"
+[[ "$(tail -n 1 "$mf" | jq -r '.stop')" == "true" ]] || { echo "FAIL: Stop boundary not mirrored"; exit 1; }
 echo '{"session_id":"sess-mm","cwd":"/tmp/repo","hook_event_name":"UserPromptSubmit","permission_mode":"default","prompt":""}' | "$BIN/claude-capture.sh"
 printf '%s\n' '{"session_id":"sess-mm","cwd":"/tmp/repo","hook_event_name":"UserPromptSubmit","permission_mode":"default","prompt":"  \n  "}' | "$BIN/claude-capture.sh"
-[[ "$(wc -l < "$mf")" -eq 1 ]] || { echo "FAIL: Stop/empty prompt must not mirror"; exit 1; }
+[[ "$(wc -l < "$mf")" -eq 2 ]] || { echo "FAIL: empty prompt changed mirror beyond Stop boundary"; exit 1; }
 
 # The mirror runs BEFORE the pane-ownership guard: a nested session's prompt is mirrored
 # under its own sid even though the pane registry entry is left alone.

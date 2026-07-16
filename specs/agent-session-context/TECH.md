@@ -33,8 +33,8 @@ be accepted as user-authored history
 
 Clinch already has the durable sources needed for restoration:
 
-- Claude's opted-in capture hook appends exact `UserPromptSubmit` payloads to a private, 5 MB-capped
-  prompt mirror
+- Claude's default-enabled capture hook appends exact `UserPromptSubmit` payloads to a private,
+  5 MB-capped prompt mirror
   ([`claude-capture.sh`](https://github.com/elliot-ylambda/clinch-terminal/blob/4bc1dbffd19d5e4c83abad8bd67fb060c1f03977/tools/agent-resume/claude-capture.sh#L159-L195)).
 - `agent_resume.rs` can locate Claude and Codex transcripts and extract one first prompt today;
   these parsers should be generalized rather than duplicated
@@ -96,9 +96,11 @@ History source precedence is deterministic:
    Claude/Codex roots.
 4. If no durable source exists, return an empty history and let trusted live events populate it.
 
-Read JSONL line by line on a blocking worker, tolerate malformed individual records, preserve
-repeated identical prompts as distinct turns, and surface the existing cap/truncation marker through
-`is_partial`. Generalize `first_prompt_from_claude_transcript` and
+Read JSONL line by line on a blocking worker, tolerate malformed individual records, and surface
+the existing cap/truncation marker through `is_partial`. Coalesce an adjacent identical prompt only
+while the same turn remains open; a Claude Stop mirror record (or a visible assistant response in
+the native transcript) resets that boundary so intentional identical prompts remain distinct turns.
+Generalize `first_prompt_from_claude_transcript` and
 `first_prompt_from_codex_transcript` into all-prompt parsers, then implement the existing first-prompt
 picker in terms of `prompts.first()` so the conversation finder keeps its current behavior. Retain
 the existing generated-Codex-context filter.
@@ -114,7 +116,7 @@ Continue reading legacy flat `prompts/<session-id>.jsonl` files as Claude histor
 existing conversation-list aggregation and local recovery snapshots to understand both layouts.
 Do not add prompt bodies to logs, telemetry, crash metadata, command-line arguments, or SQLite.
 
-### 2. Complete opted-in Codex capture
+### 2. Complete default-enabled Codex capture
 
 The compatibility probe against installed `codex-cli 0.144.3` and its matching tagged OpenAI source
 verified the `UserPromptSubmit` stdin schema. The synthetic fixture records field names only:
@@ -129,11 +131,12 @@ current README. Extract/share the Claude mirror append logic so both providers g
 escaping, 0700/0600 permissions, append-only behavior, and the existing cap/one-marker semantics.
 Pass prompt content over stdin, never as argv.
 
-This remains part of Clinch's existing explicit “Claude Code and Codex session capture” opt-in.
-`disable` stops future hook writes while preserving captured data, and `purge` removes provider
-history under its existing destructive semantics. When capture is disabled, live structured events
-still power the current-run UI and native transcripts provide best-effort restoration; Clinch does
-not silently install hooks or create a second durable prompt store.
+This remains part of Clinch's default-on “Claude Code and Codex session capture” setting. `disable`
+persists the opt-out and stops future hook writes while preserving captured data, and `purge`
+removes provider history under its existing destructive semantics. When capture is disabled, live
+structured events still power the current-run UI and native transcripts provide best-effort
+restoration; later launches honor the opt-out and do not reinstall hooks or create a second durable
+prompt store unless the user re-enables capture.
 
 If the supported Codex version does not expose a trustworthy prompt payload, do not guess. Keep the
 native rollout transcript as the durable Codex source and document that the header may briefly load
@@ -163,9 +166,9 @@ pub enum PromptHistoryLoadState {
 
 Expose model helpers for `first_prompt`, `latest_prompt`, `prompt_count`, and the derived title.
 Append only `RichPlugin + PromptSubmit` events to live history. Never append `Stop`, Codex OSC 9,
-permission summaries, tool output, or idle notifications. A repeated user submission remains a new
-turn; duplicate delivery of one structured event should be suppressed at the listener/event-id
-boundary when an ID is available.
+permission summaries, tool output, or idle notifications. When the session is already InProgress,
+an identical latest PromptSubmit is a retained-input retry of the open turn and does not append;
+Stop/Success resets that guard, so the same text submitted after an answer remains a new turn.
 
 Retain `transcript_path` in session context when structured events provide it. When a stable
 `session_id` first appears or changes, start an async `read_prompt_history` task. Apply its result
@@ -244,9 +247,10 @@ terminal. Keep the overlay outside the draggable region and outside the header's
 separate selectable-text/export surface is a non-goal for the first version.
 
 Use a Clinch-specific channel/capability check for the title resolver, restore hydration, and header
-gate. Keep that separate from capture consent: a Clinch session can show trusted live prompts while
-capture is disabled, but it cannot silently install hooks or promise the durable mirror. Stock Warp
-must not acquire the new header, title precedence, or `~/.warp/agent-resume` reads.
+gate. Keep that separate from the capture setting: a Clinch session can show trusted live prompts
+while capture is disabled, but UI rendering must not reverse a persisted opt-out or promise the
+durable mirror. Stock Warp must not acquire the new header, title precedence, or
+`~/.warp/agent-resume` reads.
 
 ## End-to-end flow
 
@@ -274,11 +278,13 @@ Map tests directly to PRODUCT behavior:
 
 - **History parser/unit tests (Behavior 1–5, 18, 23–30):** exact multiline text, timestamps,
   malformed lines, truncation marker, legacy Claude path, Claude native transcript fallback, Codex
-  `event_msg` and `response_item` forms, generated Codex context filtering, repeated identical
-  prompts, and 80-grapheme/first-sentence title derivation.
+  `event_msg` and `response_item` forms, generated provider-context filtering, in-flight identical
+  prompt coalescing, same-text prompts separated by Stop/response, and 80-grapheme/first-sentence
+  title derivation.
 - **Session-model tests (Behavior 14, 22–27, 32):** append only trusted rich `PromptSubmit`, never
-  `Stop`/OSC 9; first prompt remains stable; latest advances; loading/live merge; stale generation
-  ignored; session-ID change resets; same-ID resume restores; nested/non-owner session rejected.
+  `Stop`/OSC 9; coalesce an identical retry while InProgress and preserve it after Stop; first
+  prompt remains stable; latest advances; loading/live merge; stale generation ignored; session-ID
+  change resets; same-ID resume restores; nested/non-owner session rejected.
 - **Title tests (Behavior 4–9):** default first-prompt title, explicit latest-prompt preference,
   manual override, summary/terminal fallback, end clipping independent of status-indicator setting,
   split focus, tooltip full text, and unchanged project-tab label.
@@ -315,8 +321,9 @@ OSC 9 fallback. Finish with the repository's presubmit workflow once targeted te
 
 ## Risks and mitigations
 
-- **Prompt privacy:** durable prompt mirroring stays behind the existing explicit capture opt-in,
-  private modes, cap, local-only policy, and purge behavior. Never log or emit prompt bodies.
+- **Prompt privacy:** default-on durable prompt mirroring is disclosed, local-only, persistently
+  disableable, protected by private modes and a cap, and covered by purge behavior. Never log or
+  emit prompt bodies.
 - **Large histories copied on status changes:** keep history outside `CLIAgentSessionContext` and
   expose references/derived previews from the session model.
 - **Slow transcript-tree scans:** prefer retained `transcript_path`, run I/O off the UI thread, and

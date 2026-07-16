@@ -29,4 +29,15 @@ pub(crate) const CLINCH_LOGO_GREEN: ColorU = ColorU {
     a: 0xFF,
 };
 
+/// Blue used for "agent done / unread notification" indicators (project-tab
+/// done counts, tab notification dots). Deliberately NOT `theme.accent()`:
+/// themes may set the accent to the same lime as [`CLINCH_LOGO_GREEN`], which
+/// makes "working" (green) and "done" (blue) badges indistinguishable.
+pub(crate) const CLINCH_DONE_BLUE: ColorU = ColorU {
+    r: 0x37,
+    g: 0x80,
+    b: 0xE9,
+    a: 0xFF,
+};
+
 const BORDER_RADIUS: f32 = 4.;

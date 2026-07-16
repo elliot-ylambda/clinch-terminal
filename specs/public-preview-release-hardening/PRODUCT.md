@@ -18,8 +18,8 @@ when the app cannot use Apple's Developer ID and notarization trust path.
 
 - Make the downloadable app and its release metadata independently verifiable with Clinch-owned
   release keys and immutable version identifiers.
-- Keep session capture an informed, reversible opt-in and make automatic notification-plugin
-  provisioning local, pinned, versioned, and removable.
+- Make default-on session capture clearly disclosed, reversible, and persistently disableable, and
+  make automatic notification-plugin provisioning local, pinned, versioned, and removable.
 - Prevent a release unless the exact source revision and artifacts pass the release gate.
 - Ensure the stable build does not send or persist Clinch/Warp analytics or crash telemetry.
 - State the remaining macOS trust limitation plainly on every installation surface.
@@ -66,18 +66,20 @@ when the app cannot use Apple's Developer ID and notarization trust path.
    preserves the old installation until the replacement can complete. An interrupted or failed
    install must not leave a partially copied app at the destination.
 
-9. Claude Code and Codex session capture is a separate, explicit opt-in. Before enabling it, the
-   user is told which configuration files, managed hook blocks, executable files, and local data
-   directories will be created or changed.
+9. Claude Code and Codex session capture is enabled on first app launch so session restore works by
+   default. The README and settings page disclose which configuration files, managed hook blocks,
+   executable files, and local data directories are created or changed. Release notes and installer
+   output disclose the default, and the settings page lets the user turn capture off or back on.
 
 10. Once session capture is enabled, Clinch may refresh only its clearly marked managed entries
     on launch. It preserves unrelated user configuration byte-for-byte where the underlying file
     format permits, creates restrictive file permissions, and fails open without preventing the
     terminal from launching when a third-party configuration is invalid.
 
-11. Clinch does not infer consent from merely launching the app. A durable local consent marker
-    is required before automatic repair of session-capture hooks. Removing that marker stops all
-    future automatic hook changes.
+11. With no prior capture preference, first launch creates a durable local enabled marker only
+    after the managed hooks install successfully. Disabling capture writes a durable opt-out;
+    future launches make no hook changes until the user explicitly re-enables it. A retained
+    receipt from an older disabled installation is also honored as an opt-out during migration.
 
 12. On first launch and whenever its bundled plugin version changes, Clinch best-effort installs
     its bundled Warp notification plugins into detected Claude Code and Codex user plugin stores.
@@ -174,10 +176,11 @@ when the app cannot use Apple's Developer ID and notarization trust path.
     behavior, licenses, and removal. Claims are tied to observable behavior rather than promises.
 
 33. A release candidate is not promoted until it has passed first install, authenticated manual
-    upgrade, integration opt-in, integration removal, application uninstall, offline-startup, and
-    a native Apple Silicon smoke check. The universal artifact verifier confirms that the Intel
-    slice is present; a separate hands-on Intel smoke check is recorded when practical but does not
-    block this preview. Results and any untested OS versions are recorded with the release.
+    upgrade, default integration enablement, persistent opt-out, re-enable, integration removal,
+    application uninstall, offline-startup, and a native Apple Silicon smoke check. The universal
+    artifact verifier confirms that the Intel slice is present; a separate hands-on Intel smoke
+    check is recorded when practical but does not block this preview. Results and any untested OS
+    versions are recorded with the release.
     The local `make release` command may derive the next version, tested macOS version, and public
     QA-record location, but it must obtain one explicit operator confirmation covering every
     required hands-on check. After the automated build and verification finish, it requires a

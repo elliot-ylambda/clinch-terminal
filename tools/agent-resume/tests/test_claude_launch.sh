@@ -92,42 +92,42 @@ HOME="$EHOME" clinch_agent_resume_launch claude stub-1 --dangerously-skip-permis
 grep -q -- '--resume' "$TMP/last_args"                       && { echo "FAIL: fallback must not resume"; exit 1; }
 grep -q -- '--dangerously-skip-permissions' "$TMP/last_args" || { echo "FAIL: skip-permissions not forwarded on fresh fallback"; exit 1; }
 
-# --- Bridged sessions: teleport-first (cloud copy is authoritative) ---
+# --- Bridged sessions: local history first, cloud-only recovery second ---
 export WARP_AGENT_RESUME_DIR="$TMP/reg"
 export WARP_TERMINAL_SESSION_UUID="pane99"
 mkdir -p "$WARP_AGENT_RESUME_DIR"
 printf '{ "command": "clinch_agent_resume_launch claude good-1", "cwd": "/tmp/repo", "bridge": "session_01XYZ" }\n' \
   > "$WARP_AGENT_RESUME_DIR/pane99.json"
 
-# Bridge recorded -> teleport (with launch flags forwarded), even when a local jsonl with a
-# real turn exists (a bridged session's local file is a stale husk).
+# A real local transcript wins even when a bridge is recorded: native resume repaints the full
+# visible exchange and retains the original session id instead of creating a blank local copy.
 rm -f "$TMP/last_args" "$TMP/all_args" "$TMP/claude_rc"
 HOME="$EHOME" clinch_agent_resume_launch claude good-1 --dangerously-skip-permissions
-grep -q -- '--teleport session_01XYZ' "$TMP/last_args"       || { echo "FAIL: bridged session should teleport"; exit 1; }
-grep -q -- '--dangerously-skip-permissions' "$TMP/last_args" || { echo "FAIL: flags not forwarded to teleport"; exit 1; }
-grep -q -- '--resume' "$TMP/all_args"                        && { echo "FAIL: successful teleport must not also resume"; exit 1; }
+grep -q -- '--resume good-1' "$TMP/last_args"                || { echo "FAIL: bridged local session should resume"; exit 1; }
+grep -q -- '--dangerously-skip-permissions' "$TMP/last_args" || { echo "FAIL: flags not forwarded to local resume"; exit 1; }
+grep -q -- '--teleport' "$TMP/all_args"                      && { echo "FAIL: local transcript must not teleport"; exit 1; }
 
-# Teleport that fails FAST falls back to the local paths (resume here) and prints the
-# cloud URL for manual recovery.
-rm -f "$TMP/last_args" "$TMP/all_args"
-echo 1 > "$TMP/claude_rc"
-err="$(HOME="$EHOME" clinch_agent_resume_launch claude good-1 2>&1 >/dev/null)" || true
-grep -q -- '--teleport session_01XYZ' "$TMP/all_args" || { echo "FAIL: teleport not attempted"; exit 1; }
-grep -q -- '--resume good-1' "$TMP/all_args"          || { echo "FAIL: fast-fail teleport should fall back to resume"; exit 1; }
-[[ "$err" == *"https://claude.ai/code/session_01XYZ"* ]] || { echo "FAIL: fallback missing cloud URL"; exit 1; }
-
-# ...and to a fresh session when nothing is locally resumable.
+# With no usable local conversation, the recorded bridge remains the recovery path.
 rm -f "$TMP/last_args" "$TMP/all_args"
 printf '{ "command": "clinch_agent_resume_launch claude stub-1", "cwd": "/tmp/repo", "bridge": "session_01XYZ" }\n' \
   > "$WARP_AGENT_RESUME_DIR/pane99.json"
-HOME="$EHOME" clinch_agent_resume_launch claude stub-1 || true
-grep -q -- '--teleport' "$TMP/last_args" && { echo "FAIL: fallback fresh launch must not re-teleport"; exit 1; }
-grep -q -- '--resume' "$TMP/last_args"   && { echo "FAIL: stub must not resume"; exit 1; }
+HOME="$EHOME" clinch_agent_resume_launch claude stub-1 --dangerously-skip-permissions
+grep -q -- '--teleport session_01XYZ' "$TMP/last_args"       || { echo "FAIL: cloud-only session should teleport"; exit 1; }
+grep -q -- '--dangerously-skip-permissions' "$TMP/last_args" || { echo "FAIL: flags not forwarded to teleport"; exit 1; }
+grep -q -- '--resume' "$TMP/all_args"                        && { echo "FAIL: cloud-only teleport must not resume a stub"; exit 1; }
+
+# A cloud-only teleport that fails FAST starts fresh and prints the cloud URL for manual recovery.
+rm -f "$TMP/last_args" "$TMP/all_args"
+echo 1 > "$TMP/claude_rc"
+err="$(HOME="$EHOME" clinch_agent_resume_launch claude stub-1 2>&1 >/dev/null)" || true
+grep -q -- '--teleport session_01XYZ' "$TMP/all_args" || { echo "FAIL: teleport not attempted"; exit 1; }
+grep -q -- '--resume' "$TMP/all_args" && { echo "FAIL: stub must not resume after teleport failure"; exit 1; }
+[[ "$err" == *"https://claude.ai/code/session_01XYZ"* ]] || { echo "FAIL: fallback missing cloud URL"; exit 1; }
 
 # A non-zero exit AFTER a real run is the user quitting -- no relaunch on top.
 # GRACE=-1 makes every run count as "real" without sleeping in the test.
 rm -f "$TMP/last_args" "$TMP/all_args"
-WARP_AGENT_RESUME_TELEPORT_GRACE=-1 HOME="$EHOME" clinch_agent_resume_launch claude good-1 || true
+WARP_AGENT_RESUME_TELEPORT_GRACE=-1 HOME="$EHOME" clinch_agent_resume_launch claude stub-1 || true
 (( $(wc -l < "$TMP/all_args") == 1 )) || { echo "FAIL: long-run teleport exit must not relaunch"; exit 1; }
 echo 0 > "$TMP/claude_rc"
 

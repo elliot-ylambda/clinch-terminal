@@ -28,6 +28,9 @@ use crate::AppId;
 /// repository workflows would be stored (in "./.warp/workflows").
 pub const WARP_CONFIG_DIR: &str = ".warp";
 
+/// The home-relative config directory used by the local Clinch application.
+const CLINCH_LOCAL_CONFIG_DIR: &str = ".clinch-local";
+
 /// The name of the folder that stores Warp execution logs and network logs.
 /// This is currently only used on Windows to maintain backwards compatibility.
 pub const WARP_LOGS_DIR: &str = "logs";
@@ -40,13 +43,31 @@ fn base_warp_config_dir_name() -> String {
         Channel::Oss => format!("{WARP_CONFIG_DIR}-oss"),
         Channel::Dev => format!("{WARP_CONFIG_DIR}-dev"),
         Channel::Integration => format!("{WARP_CONFIG_DIR}-integration"),
-        Channel::Local => format!("{WARP_CONFIG_DIR}-local"),
+        Channel::Local => local_home_config_dir_name().to_owned(),
     }
 }
+
+fn local_home_config_dir_name_for_app_id(app_id: &AppId) -> &'static str {
+    if app_id.qualifier() == "sh" && app_id.organization() == "clinch" {
+        CLINCH_LOCAL_CONFIG_DIR
+    } else {
+        ".warp-local"
+    }
+}
+
+/// Returns the home-relative config directory name for the local application.
+///
+/// Clinch Dev and upstream Warp Local are separate applications and must never
+/// write into one another's storage.
+pub fn local_home_config_dir_name() -> &'static str {
+    local_home_config_dir_name_for_app_id(&ChannelState::app_id())
+}
+
 /// Returns the home-relative Warp config directory name for the current channel and data profile.
 ///
-/// This preserves the historical `.warp*` directory shape while still isolating dev, local,
-/// integration, oss, and optional development profiles.
+/// This preserves the historical `.warp*` directory shape for Warp while keeping Clinch Local in
+/// `.clinch-local`. Dev, local, integration, oss, and optional development profiles remain
+/// isolated from one another.
 pub fn warp_home_config_dir_name() -> String {
     let base_dir_name = base_warp_config_dir_name();
 
@@ -60,8 +81,8 @@ pub fn warp_home_config_dir_name() -> String {
 /// Returns the home-relative Warp config directory for the current channel and data profile.
 ///
 /// Unlike [`data_dir`] and [`config_local_dir`] on non-macOS platforms, this intentionally keeps
-/// Warp-authored, user-facing config under a `.warp*` directory in the home directory instead of
-/// using the platform XDG/AppData project directories.
+/// user-facing app config in a home-relative, application-owned directory instead of using the
+/// platform XDG/AppData project directories.
 pub fn warp_home_config_dir() -> Option<PathBuf> {
     dirs::home_dir().map(|home_dir| home_dir.join(warp_home_config_dir_name()))
 }
@@ -77,7 +98,8 @@ pub fn warp_home_mcp_config_file_path() -> Option<PathBuf> {
 /// Returns the macOS config directory name for the current channel.
 ///
 /// Stable uses `.warp`, while other channels include a channel suffix
-/// (e.g., `.warp-dev`, `.warp-local`).
+/// (e.g., `.warp-dev`). Clinch Dev uses `.clinch-local` so it remains
+/// independent from Warp Local.
 ///
 /// These suffixes are persisted on disk as directory names and must not be
 /// changed once established, or existing user data will be orphaned.
@@ -89,7 +111,7 @@ fn macos_config_dir_name() -> String {
         Channel::Oss => format!("{WARP_CONFIG_DIR}-oss"),
         Channel::Dev => format!("{WARP_CONFIG_DIR}-dev"),
         Channel::Integration => format!("{WARP_CONFIG_DIR}-integration"),
-        Channel::Local => format!("{WARP_CONFIG_DIR}-local"),
+        Channel::Local => local_home_config_dir_name().to_owned(),
     }
 }
 

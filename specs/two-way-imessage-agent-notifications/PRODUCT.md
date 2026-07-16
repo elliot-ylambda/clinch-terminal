@@ -64,7 +64,7 @@ Figma: none provided. The controls follow existing Clinch Settings, pane-header,
 
     If secure setup remains but the local database cursor is missing, corrupt, or from an unsupported state version, Clinch fails closed and requires a fresh calibration rather than reading the calibrated conversation from its historical beginning.
 
-20. Clinch watches only the calibrated conversation. It ignores messages it sent itself, duplicate events, reactions, edits, empty bodies, and unsupported attachments.
+20. Clinch watches only the calibrated conversation. It ignores messages it sent itself, duplicate events, reactions, edits, empty bodies, and unsupported attachments. When a synchronized self-conversation records one phone message as adjacent sent and received rows with different GUIDs, Clinch coalesces only the same-chat, same-sender, exact-body, opposite-direction pair within a tight timestamp window and advances its durable cursor past both.
 
 21. Because replies in a self-conversation may be synchronized as messages sent by the user's own account, Clinch identifies its own output by the exact Messages GUIDs it recorded instead of discarding every `is_from_me` row. Before each send it persists a short-lived SHA-256 text fingerprint and cursor, allowing a restart between send acceptance and GUID persistence to recover that one outgoing row's exact GUID without storing another response-body copy.
 

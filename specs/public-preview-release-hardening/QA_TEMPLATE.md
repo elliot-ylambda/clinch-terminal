@@ -23,8 +23,9 @@ command re-downloads and verifies the private draft before publishing it without
 - [ ] Clean manual install from the candidate DMG succeeds.
 - [ ] First launch succeeds using the documented Privacy & Security approval when required.
 - [ ] Authenticated manual upgrade preserves the existing app until replacement succeeds.
-- [ ] Session capture is off on a clean install and first launch.
-- [ ] Session capture opt-in shows the affected paths and adds only Clinch-managed entries.
+- [ ] Session capture is on after a clean install and first launch, with the affected paths
+      disclosed, and adds only Clinch-managed entries.
+- [ ] Session capture opt-out persists across relaunch; re-enable restores the managed entries.
 - [ ] Session capture removal preserves unrelated Claude Code and Codex configuration.
 - [ ] Capture purge lists and removes only the Clinch capture directory.
 - [ ] No iMessage control appears in the header, Clinch Settings, or Claude Code/Codex footer.

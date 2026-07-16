@@ -188,6 +188,29 @@ fn cli_agent_history_prompt_label_stays_on_one_line() {
 }
 
 #[test]
+fn cli_agent_history_prompt_tooltip_shows_full_text_and_caps_pathological_prompts() {
+    let short = AgentPrompt {
+        timestamp: None,
+        text: "  a full\nmulti-line message  ".to_owned(),
+    };
+    assert_eq!(
+        cli_agent_history_prompt_tooltip(&short),
+        "a full\nmulti-line message"
+    );
+
+    let long = AgentPrompt {
+        timestamp: None,
+        text: "é".repeat(CLI_AGENT_HISTORY_TOOLTIP_MAX_CHARS + 1),
+    };
+    let tooltip = cli_agent_history_prompt_tooltip(&long);
+    assert_eq!(
+        tooltip.chars().count(),
+        CLI_AGENT_HISTORY_TOOLTIP_MAX_CHARS + 1
+    );
+    assert!(tooltip.ends_with('…'));
+}
+
+#[test]
 fn resumed_cli_agent_header_reads_latest_history_when_dropdown_selection_is_empty() {
     App::test((), |mut app| async move {
         initialize_app_for_terminal_view(&mut app);
@@ -210,6 +233,7 @@ fn resumed_cli_agent_header_reads_latest_history_when_dropdown_selection_is_empt
                         custom_command_prefix: None,
                         received_rich_notification: false,
                         has_observed_turn_activity: false,
+                        turn_interrupted_by_user: false,
                         prompt_history: AgentPromptHistory {
                             prompts: vec![
                                 AgentPrompt {
@@ -287,6 +311,7 @@ fn cli_agent_history_header_updates_after_live_prompts_for_claude_and_codex() {
                             custom_command_prefix: None,
                             received_rich_notification: true,
                             has_observed_turn_activity: true,
+                            turn_interrupted_by_user: false,
                             prompt_history: AgentPromptHistory {
                                 prompts: vec![AgentPrompt {
                                     timestamp: None,
@@ -798,6 +823,7 @@ fn submit_cli_agent_rich_input_restores_unlocked_input_config() {
                         custom_command_prefix: None,
                         received_rich_notification: false,
                         has_observed_turn_activity: false,
+                        turn_interrupted_by_user: false,
                         prompt_history: Default::default(),
                         prompt_history_load_state: Default::default(),
                         prompt_history_generation: 0,
@@ -869,6 +895,7 @@ fn unregister_cli_agent_session_restores_unlocked_input_config() {
                         custom_command_prefix: None,
                         received_rich_notification: false,
                         has_observed_turn_activity: false,
+                        turn_interrupted_by_user: false,
                         prompt_history: Default::default(),
                         prompt_history_load_state: Default::default(),
                         prompt_history_generation: 0,
@@ -6067,6 +6094,7 @@ fn submit_rich_input_and_collect_pty_writes(
                     custom_command_prefix: None,
                     received_rich_notification: false,
                     has_observed_turn_activity: false,
+                    turn_interrupted_by_user: false,
                     prompt_history: Default::default(),
                     prompt_history_load_state: Default::default(),
                     prompt_history_generation: 0,
@@ -6110,6 +6138,7 @@ fn open_cli_agent_rich_input_for_agent_with_window_id(
                     custom_command_prefix: None,
                     received_rich_notification: false,
                     has_observed_turn_activity: false,
+                    turn_interrupted_by_user: false,
                     prompt_history: Default::default(),
                     prompt_history_load_state: Default::default(),
                     prompt_history_generation: 0,
@@ -6148,6 +6177,7 @@ fn raw_terminal_input_does_not_mark_idle_cli_agents_as_working() {
                             custom_command_prefix: None,
                             received_rich_notification: false,
                             has_observed_turn_activity: false,
+                            turn_interrupted_by_user: false,
                             prompt_history: Default::default(),
                             prompt_history_load_state: Default::default(),
                             prompt_history_generation: 0,
@@ -6519,6 +6549,7 @@ fn drag_drop_image_in_cli_agent_long_running_command_pastes_via_clipboard() {
                         custom_command_prefix: None,
                         received_rich_notification: false,
                         has_observed_turn_activity: false,
+                        turn_interrupted_by_user: false,
                         prompt_history: Default::default(),
                         prompt_history_load_state: Default::default(),
                         prompt_history_generation: 0,
@@ -6599,6 +6630,7 @@ fn paste_raw_image_clipboard_in_cli_agent_sends_correct_bytes() {
                             custom_command_prefix: None,
                             received_rich_notification: false,
                             has_observed_turn_activity: false,
+                            turn_interrupted_by_user: false,
                             prompt_history: Default::default(),
                             prompt_history_load_state: Default::default(),
                             prompt_history_generation: 0,
@@ -6681,6 +6713,7 @@ fn submit_without_auto_dismiss_keeps_rich_input_open() {
                         custom_command_prefix: None,
                         received_rich_notification: false,
                         has_observed_turn_activity: false,
+                        turn_interrupted_by_user: false,
                         prompt_history: Default::default(),
                         prompt_history_load_state: Default::default(),
                         prompt_history_generation: 0,
@@ -6748,6 +6781,7 @@ fn submit_with_plugin_and_auto_toggle_keeps_rich_input_open() {
                         custom_command_prefix: None,
                         received_rich_notification: true,
                         has_observed_turn_activity: true,
+                        turn_interrupted_by_user: false,
                         prompt_history: Default::default(),
                         prompt_history_load_state: Default::default(),
                         prompt_history_generation: 0,
@@ -6807,6 +6841,7 @@ fn submit_with_plugin_but_auto_toggle_off_respects_auto_dismiss() {
                         custom_command_prefix: None,
                         received_rich_notification: false,
                         has_observed_turn_activity: false,
+                        turn_interrupted_by_user: false,
                         prompt_history: Default::default(),
                         prompt_history_load_state: Default::default(),
                         prompt_history_generation: 0,
@@ -6875,6 +6910,7 @@ fn status_blocked_auto_closes_rich_input() {
                         custom_command_prefix: None,
                         received_rich_notification: false,
                         has_observed_turn_activity: false,
+                        turn_interrupted_by_user: false,
                         prompt_history: Default::default(),
                         prompt_history_load_state: Default::default(),
                         prompt_history_generation: 0,
@@ -6967,6 +7003,7 @@ fn status_in_progress_auto_opens_rich_input_after_blocked() {
                         custom_command_prefix: None,
                         received_rich_notification: false,
                         has_observed_turn_activity: false,
+                        turn_interrupted_by_user: false,
                         prompt_history: Default::default(),
                         prompt_history_load_state: Default::default(),
                         prompt_history_generation: 0,
@@ -7074,6 +7111,7 @@ fn codex_status_change_does_not_auto_open_rich_input() {
                         custom_command_prefix: None,
                         received_rich_notification: false,
                         has_observed_turn_activity: false,
+                        turn_interrupted_by_user: false,
                         prompt_history: Default::default(),
                         prompt_history_load_state: Default::default(),
                         prompt_history_generation: 0,
@@ -7160,6 +7198,7 @@ fn cli_session_status_updates_active_child_conversation() {
                         custom_command_prefix: None,
                         received_rich_notification: false,
                         has_observed_turn_activity: false,
+                        turn_interrupted_by_user: false,
                         prompt_history: Default::default(),
                         prompt_history_load_state: Default::default(),
                         prompt_history_generation: 0,
@@ -7309,6 +7348,7 @@ fn cli_session_status_updates_single_child_conversation_without_agent_view() {
                         custom_command_prefix: None,
                         received_rich_notification: false,
                         has_observed_turn_activity: false,
+                        turn_interrupted_by_user: false,
                         prompt_history: Default::default(),
                         prompt_history_load_state: Default::default(),
                         prompt_history_generation: 0,
@@ -7392,6 +7432,7 @@ fn manual_dismiss_disables_auto_toggle_for_session() {
                         custom_command_prefix: None,
                         received_rich_notification: false,
                         has_observed_turn_activity: false,
+                        turn_interrupted_by_user: false,
                         prompt_history: Default::default(),
                         prompt_history_load_state: Default::default(),
                         prompt_history_generation: 0,

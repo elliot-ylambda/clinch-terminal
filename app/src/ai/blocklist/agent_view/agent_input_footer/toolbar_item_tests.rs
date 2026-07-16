@@ -30,6 +30,10 @@ fn quick_replies_are_hidden_from_session_viewers() {
 #[test]
 fn quick_replies_have_expected_labels_and_icons() {
     assert_eq!(
+        AgentToolbarItemKind::ForkSession.display_label(),
+        "Fork in New Tab"
+    );
+    assert_eq!(
         AgentToolbarItemKind::ContinuePrompt.display_label(),
         "Continue"
     );
@@ -71,14 +75,32 @@ fn cli_default_left_places_quick_replies_right_after_fork_and_compact() {
 }
 
 #[test]
-fn cli_default_left_includes_create_pull_request_quick_insert() {
+fn cli_default_left_includes_expected_quick_inserts() {
     let items = AgentToolbarItemKind::cli_default_left();
     assert_eq!(
-        items.get(4),
-        Some(&AgentToolbarItemKind::CustomInsert {
-            label: "Create a PR".to_owned(),
-            text: "Create a PR, then merge main into this PR".to_owned(),
-        })
+        &items[4..9],
+        &[
+            AgentToolbarItemKind::CustomInsert {
+                label: "Create a PR".to_owned(),
+                text: "Create a PR, then merge main into this PR".to_owned(),
+            },
+            AgentToolbarItemKind::CustomInsert {
+                label: "Review w/ Codex Sol Max".to_owned(),
+                text: "Review w/ Codex Sol Max".to_owned(),
+            },
+            AgentToolbarItemKind::CustomInsert {
+                label: "Review w/ Claude Code Fable".to_owned(),
+                text: "Review w/ Claude Code Fable".to_owned(),
+            },
+            AgentToolbarItemKind::CustomInsert {
+                label: "Debug w/ Ultracode".to_owned(),
+                text: "Investigate with Ultra Code and use subagents".to_owned(),
+            },
+            AgentToolbarItemKind::CustomInsert {
+                label: "Git Worktree".to_owned(),
+                text: "Move our current work and code into an isolated git work tree. And create a branch. Work out of the git worktree".to_owned(),
+            },
+        ]
     );
 }
 

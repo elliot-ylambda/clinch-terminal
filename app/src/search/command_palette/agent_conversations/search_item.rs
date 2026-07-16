@@ -68,9 +68,9 @@ impl AgentConversationSearchItem {
     }
 
     fn subtitle(&self) -> String {
-        // "bridged" = the conversation's authoritative copy lives at claude.ai and
-        // reopening teleports it; "local" = plain `--resume` of the local transcript.
-        let location = if self.conversation.bridge.is_some() {
+        // A usable local transcript wins even when the conversation also has a cloud bridge,
+        // because native resume repaints the complete terminal history.
+        let location = if !self.conversation.local_resumable && self.conversation.bridge.is_some() {
             "bridged"
         } else {
             "local"

@@ -94,6 +94,15 @@ verify_app() {
     "$app/Contents/Resources/agent-resume/unwire-claude-hooks.sh" \
     "$app/Contents/Resources/agent-resume/agent-json" \
     "$app/Contents/Resources/agent-resume/agent-json.js" \
+    "$app/Contents/Resources/agent-resume/clinch-agent-resume" \
+    "$app/Contents/Resources/agent-resume/warp-agent-resume" \
+    "$app/Contents/Resources/agent-resume/clinch_agent_resume_launch" \
+    "$app/Contents/Resources/agent-resume/claude-capture.sh" \
+    "$app/Contents/Resources/agent-resume/prompt-mirror.sh" \
+    "$app/Contents/Resources/agent-resume/claude.zsh" \
+    "$app/Contents/Resources/agent-resume/codex-session-start.sh" \
+    "$app/Contents/Resources/agent-resume/codex-prompt-submit.sh" \
+    "$app/Contents/Resources/agent-resume/codex-session-end.sh" \
     "$app/Contents/Resources/bin/clinch_agent_resume_launch" \
     "$app/Contents/Resources/bin/warp_agent_resume_launch"; do
     [[ -f "$item" ]] || fail "$label omitted ${item#"$app/"}"
@@ -181,7 +190,7 @@ ZIPPED_APP="$TMP/unzipped/Clinch.app"
 [[ -d "$ZIPPED_APP" ]] || fail "ZIP does not contain Clinch.app at its root"
 verify_app "$ZIPPED_APP" "ZIP app"
 
-# Default invocation and first launch must not infer integration consent.
+# The integration manager remains a no-op without a command. The app owns first-launch enablement.
 mkdir -p "$TMP/home"
 HOME="$TMP/home" PATH="/usr/bin:/bin" \
   /bin/bash "$ZIPPED_APP/Contents/Resources/agent-resume/install.sh" >/dev/null
@@ -191,22 +200,30 @@ HOME="$TMP/home" PATH="/usr/bin:/bin" \
 [[ ! -e "$TMP/home/.codex/config.toml" ]] \
   || fail "no-argument integration manager changed Codex"
 
-# Explicit enable/disable must be idempotent and preserve capture data by default.
+# Enable/disable/re-enable must be idempotent and preserve capture data by default.
 HOME="$TMP/home" PATH="/usr/bin:/bin" \
   /bin/bash "$ZIPPED_APP/Contents/Resources/agent-resume/install.sh" enable --quiet
 [[ -f "$TMP/home/Library/Application Support/sh.clinch.Clinch/agent-integration/enabled" ]] \
-  || fail "explicit integration enable did not record consent"
+  || fail "integration enable did not persist its state"
 printf '%s\n' keep > "$TMP/home/.warp/agent-resume/release-verifier-data"
 HOME="$TMP/home" PATH="/usr/bin:/bin" \
   /bin/bash "$ZIPPED_APP/Contents/Resources/agent-resume/install.sh" disable --quiet
 [[ ! -e "$TMP/home/Library/Application Support/sh.clinch.Clinch/agent-integration/enabled" ]] \
-  || fail "integration disable retained consent"
+  || fail "integration disable retained the enabled state"
+[[ -f "$TMP/home/Library/Application Support/sh.clinch.Clinch/agent-integration/disabled" ]] \
+  || fail "integration disable did not persist the opt-out"
 [[ -f "$TMP/home/.warp/agent-resume/release-verifier-data" ]] \
   || fail "integration disable purged captured data"
 ! grep -q 'agent-resume-bin/claude-capture.sh' "$TMP/home/.claude/settings.json" \
   || fail "integration disable retained Claude hooks"
 ! grep -q '^# >>> clinch agent-resume >>>$' "$TMP/home/.codex/config.toml" \
   || fail "integration disable retained Codex hooks"
+HOME="$TMP/home" PATH="/usr/bin:/bin" \
+  /bin/bash "$ZIPPED_APP/Contents/Resources/agent-resume/install.sh" enable --quiet
+[[ -f "$TMP/home/Library/Application Support/sh.clinch.Clinch/agent-integration/enabled" ]] \
+  || fail "integration re-enable did not persist its state"
+[[ ! -e "$TMP/home/Library/Application Support/sh.clinch.Clinch/agent-integration/disabled" ]] \
+  || fail "integration re-enable retained the opt-out"
 
 hdiutil verify "$DMG" >/dev/null || fail "DMG container verification failed"
 mkdir -p "$MOUNT"

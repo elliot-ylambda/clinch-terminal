@@ -145,9 +145,9 @@ _clinch_agent_resume_has_conversation() {
 }
 
 # True if the pane's existing registry entry still points somewhere recoverable: a
-# claude.ai bridge id (the cloud copy is authoritative for bridged sessions, with or
-# without a local transcript) or a local session with a real conversation. Such an entry
-# is the pane's only link to that conversation.
+# claude.ai bridge id (the cloud-only fallback, with or without a local transcript) or a
+# local session with a real conversation. Such an entry is the pane's only link to that
+# conversation.
 _clinch_agent_resume_entry_protected() {
   local entry_file="$1" old_sid
   [[ -f "$entry_file" ]] || return 1
@@ -199,15 +199,12 @@ _clinch_agent_resume_capture_main() {
       extra="$(_clinch_agent_resume_extract_flags "$(_clinch_agent_resume_claude_argv)")"
       ;;
     UserPromptSubmit|Stop)
-      # Mirror the prompt BEFORE the pane-ownership guard below: the mirror is keyed by
-      # session id (no clobber risk), and a nested claude run's prompts -- exactly the
-      # sessions the guard exists to keep out of the pane registry -- deserve durability
-      # too. Only the registry write stays behind the guard.
-      if [[ "$event" == UserPromptSubmit ]]; then
-        # The exact prompt remains on stdin all the way into the shared mirror helper; user text
-        # is never exposed through a process argument.
-        printf '%s' "$payload" | "$BIN/prompt-mirror.sh" claude >/dev/null 2>&1 || true
-      fi
+      # Mirror prompts and their Stop turn boundaries BEFORE the pane-ownership guard below: the
+      # mirror is keyed by session id (no clobber risk), and a nested claude run's history --
+      # exactly the sessions the guard exists to keep out of the pane registry -- deserves
+      # durability too. The exact payload remains on stdin, so user text is never exposed through
+      # a process argument. Only the registry write stays behind the guard.
+      printf '%s' "$payload" | "$BIN/prompt-mirror.sh" claude >/dev/null 2>&1 || true
       (( nested )) && return 0
       # An outer session is authoritative even if a hook from an older build let a nested
       # child clobber the entry. Its next prompt/Stop event repairs that mapping in place.
@@ -233,8 +230,8 @@ _clinch_agent_resume_capture_main() {
   # depend on the agent inheriting the shell PATH.
   #
   # Also record the claude.ai cloud-copy id. Its cloud copy can include remotely continued
-  # turns and is the only durable pane -> cloud-conversation link if the local jsonl is
-  # missing or stale. The hook runs as a child of the
+  # turns and is the durable pane -> cloud-conversation fallback if the local jsonl is
+  # missing or unusable. The hook runs as a child of the
   # owning claude process, which exports CLAUDE_CODE_BRIDGE_SESSION_ID once bridged; the
   # per-turn events (UserPromptSubmit/Stop) keep the field fresh if the bridge attaches
   # after SessionStart.

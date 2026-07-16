@@ -135,7 +135,7 @@ pub struct TabConfigPaneNode {
 
 // ── TabConfig ───────────────────────────────────────────────────────
 
-/// A tab config loaded from a `.toml` file in `~/.warp/tab_configs/`.
+/// A tab config loaded from the current app data directory's `tab_configs/` folder.
 ///
 /// Pane layout is defined with a flat `[[panes]]` array where the first entry
 /// is the root and splits reference children by ID.

@@ -400,6 +400,7 @@ fn cli_agent_footer_is_sticky_for_viewer_of_shared_cloud_agent_session() {
                         custom_command_prefix: None,
                         received_rich_notification: false,
                         has_observed_turn_activity: false,
+                        turn_interrupted_by_user: false,
                         prompt_history: Default::default(),
                         prompt_history_load_state: Default::default(),
                         prompt_history_generation: 0,
@@ -426,6 +427,108 @@ fn cli_agent_footer_is_sticky_for_viewer_of_shared_cloud_agent_session() {
                 .last_non_hidden_rich_content_block_after_block(Some(active_block_index))
                 .map(|(_, item)| item.view_id);
             assert_eq!(rendered_footer_view_id, None);
+        });
+    })
+}
+
+/// Regression test: a restored pane seeds its CLI agent session before the
+/// resume command runs (see `seed_resumed_session`), which suppresses the
+/// `Started` event that normally marks the command's block as an agent TUI
+/// block. Long-running-command detection must still apply the agent grid
+/// behavior (e.g. trailing-blank-row trimming) to the resumed command's block,
+/// otherwise the block renders a full screen of blank rows below the TUI.
+#[test]
+fn long_running_resume_command_trims_trailing_blanks_despite_seeded_session() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let _trim_guard = FeatureFlag::TrimTrailingBlankLines.override_enabled(true);
+
+        let terminal = add_window_with_terminal(&mut app, None);
+
+        terminal.update(&mut app, |view, ctx| {
+            // Restore seeds the session while a pre-command block is active.
+            let view_id = view.view_id;
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                sessions.set_session(
+                    view_id,
+                    CLIAgentSession {
+                        agent: CLIAgent::Codex,
+                        status: CLIAgentSessionStatus::InProgress,
+                        session_context: CLIAgentSessionContext {
+                            session_id: Some("seeded-session".to_owned()),
+                            ..Default::default()
+                        },
+                        input_state: CLIAgentInputState::Closed,
+                        listener: None,
+                        plugin_version: None,
+                        remote_host: None,
+                        draft_text: None,
+                        custom_command_prefix: None,
+                        received_rich_notification: false,
+                        has_observed_turn_activity: false,
+                        turn_interrupted_by_user: false,
+                        prompt_history: Default::default(),
+                        prompt_history_load_state: Default::default(),
+                        prompt_history_generation: 0,
+                        should_auto_toggle_input: false,
+                    },
+                    ctx,
+                );
+            });
+
+            {
+                let mut model = view.model.lock();
+                model.init_shell(InitShellValue {
+                    session_id: 0.into(),
+                    shell: "zsh".to_owned(),
+                    ..Default::default()
+                });
+                model.bootstrapped(BootstrappedValue {
+                    shell: "zsh".to_owned(),
+                    ..Default::default()
+                });
+                // The seed-era block completes before the resume command runs.
+                model.simulate_cmd("echo warmup");
+                model.finish_block();
+
+                // The resumed agent redraws like a TUI: the visible frame
+                // occupies the top rows, while an earlier frame touched the
+                // bottom of the screen (and was cleared by a later repaint),
+                // leaving a trail of blank rows below the content.
+                model.simulate_long_running_block(
+                    "clinch_agent_resume_launch codex seeded-session --model gpt-5.6-sol",
+                    "Hooks need review\r\nPress enter to confirm",
+                );
+            }
+
+            let content_len = {
+                let model = view.model.lock();
+                model
+                    .block_list()
+                    .active_block()
+                    .grid_of_type(crate::terminal::GridType::Output)
+                    .expect("active block should have an output grid")
+                    .len_displayed()
+            };
+
+            {
+                let mut model = view.model.lock();
+                model.process_bytes("\x1b[99;1Hstatus\x1b[2K");
+            }
+
+            view.handle_long_running_command_cli_agent_detection(ctx);
+
+            let model = view.model.lock();
+            let output_grid = model
+                .block_list()
+                .active_block()
+                .grid_of_type(crate::terminal::GridType::Output)
+                .expect("active block should have an output grid");
+            assert_eq!(
+                output_grid.len_displayed(),
+                content_len,
+                "agent block should trim trailing blank rows below the visible TUI content"
+            );
         });
     })
 }

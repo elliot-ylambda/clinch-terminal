@@ -131,12 +131,12 @@ clinch_agent_resume_fallback_id() {
 
 # Print this pane's recorded claude.ai bridge id (session_<...>), if any.
 #
-# Bridged Claude sessions ("repl bridge") keep the full conversation at
-# https://claude.ai/code/<bridge> and stop updating their local jsonl the moment they bridge,
-# so the cloud copy -- not the local file -- is authoritative for them. The id is read back
-# from the pane's registry entry (written by claude-capture.sh). Only claude.ai-shaped ids
-# (session_*) are emitted; anything else a hand-edited entry might contain is ignored. The
-# value is only echoed, never evaluated.
+# Bridged Claude sessions also keep a cloud recovery copy at
+# https://claude.ai/code/<bridge>. Local resume is preferred when its transcript has a real turn
+# because it repaints the original terminal history; this id is the fallback when the local copy
+# is absent or unusable. The id is read back from the pane's registry entry (written by
+# claude-capture.sh). Only claude.ai-shaped ids (session_*) are emitted; anything else a
+# hand-edited entry might contain is ignored. The value is only echoed, never evaluated.
 clinch_agent_resume_bridge_id() {
   [[ -n "${WARP_TERMINAL_SESSION_UUID:-}" ]] || return 0
   local entry="${WARP_AGENT_RESUME_DIR:-$HOME/.warp/agent-resume}/$WARP_TERMINAL_SESSION_UUID.json"
@@ -153,14 +153,16 @@ clinch_agent_resume_bridge_id() {
 # session reopens the same way.
 #
 # Path order:
-# 1. Bridged claude session (bridge id recorded) -> `claude --teleport <bridge>`. Clean
-#    Clinch launches now keep a local jsonl even with remote control enabled, but teleport
-#    deliberately stays first: the cloud copy can contain turns continued from another
-#    device and remains authoritative for a bridged session. A teleport that fails *fast*
-#    (dirty tree, git lock race, API error) falls through to the local paths; a non-zero
-#    exit after a real run is the user quitting the session, so it must NOT relaunch on top
+# 1. Local transcript with a real turn -> `claude --resume <id>` / `codex resume <id>`.
+#    Native resume keeps the provider's original session id and repaints the complete visible
+#    terminal history. Claude's `--teleport` creates a new local id and can restore model context
+#    without repainting the prior exchange, leaving an apparently blank restored pane.
+# 2. Bridged claude session without a usable local transcript -> `claude --teleport <bridge>`.
+#    This preserves cloud-only recovery (including turns continued from another device) without
+#    replacing a complete local transcript. A teleport that fails *fast* (dirty tree, git lock
+#    race, API error) falls through to fresh recovery; a non-zero exit after a real run is the
+#    user quitting the session, so it must NOT relaunch on top
 #    (WARP_AGENT_RESUME_TELEPORT_GRACE seconds distinguishes the two, default 15).
-# 2. Local transcript with a real turn -> `claude --resume <id>` / `codex resume <id>`.
 # 3. Dead id in an unbridged claude pane -> adopt the newest unclaimed session recorded
 #    for this directory (clinch_agent_resume_fallback_id): a stale registry entry must
 #    degrade into a near-miss, not silently orphan the pane's real conversation. Bridged
@@ -175,8 +177,15 @@ clinch_agent_resume_launch() {
   shift 2
   local bridge=""
   [[ "$agent" == claude ]] && bridge="$(clinch_agent_resume_bridge_id)"
+  if clinch_agent_resume_resumable "$agent" "$id"; then
+    case "$agent" in
+      claude) claude --resume "$id" "$@" ;;
+      codex)  codex resume "$id" "$@" ;;
+    esac
+    return $?
+  fi
   if [[ -n "$bridge" ]]; then
-    echo "clinch: teleporting bridged claude session ($bridge)." >&2
+    echo "clinch: local claude transcript is unavailable -- teleporting cloud session ($bridge)." >&2
     local _clinch_start=$SECONDS _clinch_rc
     claude --teleport "$bridge" "$@"
     _clinch_rc=$?
@@ -184,13 +193,6 @@ clinch_agent_resume_launch() {
       return $_clinch_rc
     fi
     echo "clinch: teleport failed -- falling back (cloud copy: https://claude.ai/code/$bridge)." >&2
-  fi
-  if clinch_agent_resume_resumable "$agent" "$id"; then
-    case "$agent" in
-      claude) claude --resume "$id" "$@" ;;
-      codex)  codex resume "$id" "$@" ;;
-    esac
-    return $?
   fi
   local adopt=""
   if [[ -z "$bridge" ]]; then

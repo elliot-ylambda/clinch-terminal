@@ -68,6 +68,7 @@ use crate::ui_components::agent_icon::{
     cli_agent_session_status_for_display, terminal_view_agent_icon_variant_respecting_tab_setting,
 };
 use crate::ui_components::buttons::{combo_inner_button, icon_button_with_color};
+use crate::ui_components::CLINCH_DONE_BLUE;
 use crate::ui_components::icon_with_status::{render_icon_with_status, IconWithStatusVariant};
 use crate::ui_components::icons::Icon as UiIcon;
 use crate::util::bindings::keybinding_name_to_display_string;
@@ -106,6 +107,11 @@ const PIN_INDICATOR_CORNER_INSET: f32 = 6.;
 const GROUP_ACTION_BUTTON_PADDING: f32 = 2.;
 const GROUP_ACTION_BUTTON_GAP: f32 = 2.;
 const ROW_CORNER_RADIUS: f32 = 4.;
+/// Active-tab accent "spine": a short brand-accent bar pinned to the focused tab's left edge.
+/// This is the single place the brand accent appears in the rail — kept deliberately small.
+const ACTIVE_TAB_SPINE_WIDTH: f32 = 3.;
+const ACTIVE_TAB_SPINE_HEIGHT: f32 = 16.;
+const ACTIVE_TAB_SPINE_LEFT_INSET: f32 = 1.;
 const TAB_GROUP_MEMBER_INDENT: f32 = 12.;
 const TAB_GROUP_ICON_SIZE: f32 = 16.;
 const TAB_GROUP_CONTENT_INSET: f32 = 4.;
@@ -446,27 +452,55 @@ fn render_pane_row_element(
             }))
             .finish();
 
-        // Pin indicator anchored at the visible pane's top-right corner. Pin
-        // is visible when the container is not hovered.
-        if show_pin {
-            let pin_icon = ConstrainedBox::new(
-                WarpIcon::PinFilledDiagonal
-                    .to_warpui_icon(theme.sub_text_color(theme.background()))
-                    .finish(),
-            )
-            .with_width(PIN_INDICATOR_ICON_SIZE)
-            .with_height(PIN_INDICATOR_ICON_SIZE)
-            .finish();
+        // Overlays that live outside the row's content clip: the active-tab accent
+        // "spine" on the left edge and the pin indicator at the top-right corner.
+        // Only wrap in a Stack when at least one overlay is present.
+        if is_selected || show_pin {
             let mut stack = Stack::new().with_child(pane);
-            stack.add_positioned_overlay_child(
-                pin_icon,
-                OffsetPositioning::offset_from_parent(
-                    vec2f(-PIN_INDICATOR_CORNER_INSET, PIN_INDICATOR_CORNER_INSET),
-                    ParentOffsetBounds::ParentByPosition,
-                    ParentAnchor::TopRight,
-                    ChildAnchor::TopRight,
-                ),
-            );
+            if is_selected {
+                // A short accent bar marking the focused tab — the single place the
+                // brand accent shows up in the rail. Drawn as an overlay so it never
+                // shifts the row content and paints above the row's clip and border.
+                let spine = ConstrainedBox::new(
+                    Container::new(Empty::new().finish())
+                        .with_background(ThemeFill::Solid(theme.accent().into()))
+                        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(
+                            ACTIVE_TAB_SPINE_WIDTH / 2.,
+                        )))
+                        .finish(),
+                )
+                .with_width(ACTIVE_TAB_SPINE_WIDTH)
+                .with_height(ACTIVE_TAB_SPINE_HEIGHT)
+                .finish();
+                stack.add_positioned_overlay_child(
+                    spine,
+                    OffsetPositioning::offset_from_parent(
+                        vec2f(ACTIVE_TAB_SPINE_LEFT_INSET, 0.),
+                        ParentOffsetBounds::ParentByPosition,
+                        ParentAnchor::MiddleLeft,
+                        ChildAnchor::MiddleLeft,
+                    ),
+                );
+            }
+            if show_pin {
+                let pin_icon = ConstrainedBox::new(
+                    WarpIcon::PinFilledDiagonal
+                        .to_warpui_icon(theme.sub_text_color(theme.background()))
+                        .finish(),
+                )
+                .with_width(PIN_INDICATOR_ICON_SIZE)
+                .with_height(PIN_INDICATOR_ICON_SIZE)
+                .finish();
+                stack.add_positioned_overlay_child(
+                    pin_icon,
+                    OffsetPositioning::offset_from_parent(
+                        vec2f(-PIN_INDICATOR_CORNER_INSET, PIN_INDICATOR_CORNER_INSET),
+                        ParentOffsetBounds::ParentByPosition,
+                        ParentAnchor::TopRight,
+                        ChildAnchor::TopRight,
+                    ),
+                );
+            }
             stack.finish()
         } else {
             pane
@@ -3405,10 +3439,12 @@ fn has_unread_activity_for_terminal_view(terminal_view_id: EntityId, app: &AppCo
 
 const INDICATOR_DOT_SIZE: f32 = 8.;
 
-fn render_title_indicator(theme: &WarpTheme) -> Box<dyn Element> {
+// Unread/attention dots are always "done blue", never the theme accent: an
+// accent that resolves to lime would collide with the green working badge.
+fn render_title_indicator() -> Box<dyn Element> {
     ConstrainedBox::new(
         WarpIcon::CircleFilled
-            .to_warpui_icon(theme.accent())
+            .to_warpui_icon(WarpThemeFill::Solid(CLINCH_DONE_BLUE))
             .finish(),
     )
     .with_width(INDICATOR_DOT_SIZE)
@@ -3484,7 +3520,7 @@ fn render_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn Element> {
         );
         if has_indicator {
             title_row.add_child(
-                Container::new(render_title_indicator(theme))
+                Container::new(render_title_indicator())
                     .with_margin_left(4.)
                     .finish(),
             );
@@ -4449,7 +4485,7 @@ fn render_terminal_row_content(
         }
         if has_activity_indicator {
             trailing.add_child(
-                Container::new(render_title_indicator(theme))
+                Container::new(render_title_indicator())
                     .with_margin_left(4.)
                     .finish(),
             );
@@ -4749,7 +4785,7 @@ fn render_summary_tab_item(
                 .with_cross_axis_alignment(CrossAxisAlignment::Center)
                 .with_child(Shrinkable::new(1., title_region).finish())
                 .with_child(
-                    Container::new(render_title_indicator(theme))
+                    Container::new(render_title_indicator())
                         .with_margin_left(4.)
                         .finish(),
                 )
@@ -7344,7 +7380,7 @@ fn render_compact_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn El
             trailing.add_child(render_passive_worktree_badge(appearance));
         }
         if has_indicator {
-            trailing.add_child(render_title_indicator(theme));
+            trailing.add_child(render_title_indicator());
         }
 
         Flex::row()

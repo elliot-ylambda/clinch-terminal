@@ -2,6 +2,54 @@ use std::io::Write;
 
 use super::*;
 
+#[cfg(target_os = "macos")]
+#[test]
+fn capture_installer_failure_includes_compact_stderr() {
+    use std::os::unix::process::ExitStatusExt;
+
+    let status = std::process::ExitStatus::from_raw(71 << 8);
+    let message = capture_installer_failure(
+        status,
+        b"install: /bundle/prompt-mirror.sh: No such file or directory\n",
+    );
+
+    assert_eq!(
+        message,
+        "install: /bundle/prompt-mirror.sh: No such file or directory (exit status: 71)"
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn capture_state_is_shared_by_production_and_dev_apps() {
+    let base = Path::new("/Users/test/Library/Application Support");
+    assert_eq!(
+        default_capture_state_dir(base),
+        base.join("sh.clinch.Clinch/agent-integration")
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn session_capture_defaults_on_but_preserves_current_and_legacy_opt_outs() {
+    assert_eq!(
+        capture_startup_action(false, false, false),
+        CaptureStartupAction::Enable
+    );
+    assert_eq!(
+        capture_startup_action(true, false, false),
+        CaptureStartupAction::Repair
+    );
+    assert_eq!(
+        capture_startup_action(false, true, false),
+        CaptureStartupAction::Skip
+    );
+    assert_eq!(
+        capture_startup_action(false, false, true),
+        CaptureStartupAction::Skip
+    );
+}
+
 #[test]
 fn prompt_title_prefers_the_first_sentence_within_the_limit() {
     assert_eq!(
@@ -86,7 +134,7 @@ fn production_and_dev_clinch_are_the_only_supported_agent_resume_apps() {
 }
 
 #[test]
-fn agent_resume_runtime_requires_consent_or_an_explicit_test_override() {
+fn agent_resume_runtime_requires_capture_or_an_explicit_test_override() {
     assert!(!runtime_enabled_for("sh.clinch.Clinch", false, false));
     assert!(runtime_enabled_for("sh.clinch.Clinch", true, false));
     assert!(!runtime_enabled_for("dev.warp.Warp-Local", true, false));
@@ -215,6 +263,7 @@ fn conversation(
     session_id: &str,
     bridge: Option<&str>,
     flags: &str,
+    local_resumable: bool,
 ) -> AgentConversation {
     AgentConversation {
         agent: agent.to_string(),
@@ -223,20 +272,26 @@ fn conversation(
         bridge: bridge.map(str::to_string),
         start_ts: "2026-07-09T10:00:00Z".to_string(),
         first_prompt: None,
+        local_resumable,
         flags: flags.to_string(),
     }
 }
 
 #[test]
-fn reopen_command_teleports_bridged_claude_sessions() {
-    // Mirrors pane restore's priority: the cloud copy is authoritative for a bridged
-    // session, and launch flags are forwarded.
+fn reopen_command_teleports_cloud_only_claude_sessions() {
     assert_eq!(
-        conversation("claude", "abc-123", Some("session_01XYZ"), "").reopen_command(),
+        conversation("claude", "abc-123", Some("session_01XYZ"), "", false).reopen_command(),
         Some("claude --teleport session_01XYZ".to_string())
     );
     assert_eq!(
-        conversation("claude", "abc-123", Some("session_01XYZ"), " --model opus").reopen_command(),
+        conversation(
+            "claude",
+            "abc-123",
+            Some("session_01XYZ"),
+            " --model opus",
+            false,
+        )
+        .reopen_command(),
         Some("claude --teleport session_01XYZ --model opus".to_string())
     );
 }
@@ -244,17 +299,24 @@ fn reopen_command_teleports_bridged_claude_sessions() {
 #[test]
 fn reopen_command_resumes_local_claude_sessions() {
     assert_eq!(
-        conversation("claude", "abc-123", None, "").reopen_command(),
+        conversation("claude", "abc-123", Some("session_01XYZ"), "", true).reopen_command(),
         Some("claude --resume abc-123".to_string())
     );
     // A bridge that is not claude.ai-shaped (session_*) is not teleported — same guard
     // as the shell replay side.
     assert_eq!(
-        conversation("claude", "abc-123", Some("garbage"), "").reopen_command(),
+        conversation("claude", "abc-123", Some("garbage"), "", false).reopen_command(),
         Some("claude --resume abc-123".to_string())
     );
     assert_eq!(
-        conversation("claude", "abc-123", None, " --dangerously-skip-permissions").reopen_command(),
+        conversation(
+            "claude",
+            "abc-123",
+            None,
+            " --dangerously-skip-permissions",
+            true,
+        )
+        .reopen_command(),
         Some("claude --resume abc-123 --dangerously-skip-permissions".to_string())
     );
 }
@@ -266,13 +328,14 @@ fn reopen_command_resumes_codex_sessions_and_rejects_unknown_agents() {
             "codex",
             "xyz-9",
             None,
-            " --dangerously-bypass-approvals-and-sandbox"
+            " --dangerously-bypass-approvals-and-sandbox",
+            true,
         )
         .reopen_command(),
         Some("codex resume xyz-9 --dangerously-bypass-approvals-and-sandbox".to_string())
     );
     assert_eq!(
-        conversation("gemini", "abc", None, "").reopen_command(),
+        conversation("gemini", "abc", None, "", false).reopen_command(),
         None
     );
 }
@@ -417,14 +480,14 @@ fn native_transcripts_backfill_claude_and_codex_first_prompts() {
     )
     .unwrap();
 
-    let mut mirrored = conversation("claude", "mirrored-session", None, "");
+    let mut mirrored = conversation("claude", "mirrored-session", None, "", false);
     mirrored.first_prompt = Some("Captured mirror wins".to_string());
     let mut conversations = vec![
-        conversation("claude", "claude-session", None, ""),
-        conversation("codex", "codex-session", None, ""),
+        conversation("claude", "claude-session", None, "", false),
+        conversation("codex", "codex-session", None, "", false),
         mirrored,
     ];
-    enrich_missing_first_prompts_from_transcripts(
+    enrich_conversations_from_transcripts(
         &mut conversations,
         &AgentTranscriptRoots {
             claude_projects: Some(dir.join("claude-projects")),
@@ -444,6 +507,9 @@ fn native_transcripts_backfill_claude_and_codex_first_prompts() {
         conversations[2].first_prompt.as_deref(),
         Some("Captured mirror wins")
     );
+    assert!(conversations[0].local_resumable);
+    assert!(conversations[1].local_resumable);
+    assert!(!conversations[2].local_resumable);
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -474,7 +540,7 @@ fn codex_transcript_uses_meaningful_user_response_when_event_is_absent() {
 }
 
 #[test]
-fn provider_mirror_is_canonical_and_preserves_exact_repeated_prompts() {
+fn provider_mirror_coalesces_inflight_retries_but_preserves_repeats_after_stop() {
     let dir = std::env::temp_dir().join(format!(
         "agent_resume_provider_mirror_test_{}",
         uuid::Uuid::new_v4()
@@ -490,6 +556,10 @@ fn provider_mirror_is_canonical_and_preserves_exact_repeated_prompts() {
             r#"{"ts":"2026-07-14T01:02:03Z","prompt":"same\nmessage"}"#,
             "\n",
             r#"{"prompt":"same\nmessage"}"#,
+            "\n",
+            r#"{"ts":"2026-07-14T01:02:30Z","stop":true}"#,
+            "\n",
+            r#"{"ts":"2026-07-14T01:03:00Z","prompt":"same\nmessage"}"#,
             "\n",
             r#"{"ts":"2026-07-14T01:03:00Z","truncated":true}"#,
             "\n",
@@ -521,7 +591,7 @@ fn provider_mirror_is_canonical_and_preserves_exact_repeated_prompts() {
                 text: "same\nmessage".to_string(),
             },
             AgentPrompt {
-                timestamp: None,
+                timestamp: Some("2026-07-14T01:03:00Z".to_string()),
                 text: "same\nmessage".to_string(),
             },
         ]
@@ -608,6 +678,16 @@ fn claude_history_parser_keeps_exact_user_text_and_timestamps() {
             "\n",
             r#"{"type":"user","timestamp":"2026-07-14T02:01:00Z","message":{"content":[{"type":"tool_result","content":"ignored"},{"type":"text","text":"second"},{"type":"text","text":"detail"}]}}"#,
             "\n",
+            r#"{"type":"user","timestamp":"2026-07-14T02:01:05Z","origin":{"kind":"human"},"message":{"content":"second\ndetail"}}"#,
+            "\n",
+            r#"{"type":"user","timestamp":"2026-07-14T02:01:06Z","interruptedMessageId":"msg-1","message":{"content":"[Request interrupted by user]"}}"#,
+            "\n",
+            r#"{"type":"user","timestamp":"2026-07-14T02:01:07Z","message":{"content":"<local-command-stdout>hidden</local-command-stdout>"}}"#,
+            "\n",
+            r#"{"type":"assistant","timestamp":"2026-07-14T02:01:10Z","message":{"content":[{"type":"text","text":"visible answer"}]}}"#,
+            "\n",
+            r#"{"type":"user","timestamp":"2026-07-14T02:02:00Z","origin":{"kind":"human"},"message":{"content":"second\ndetail"}}"#,
+            "\n",
         ),
     )
     .unwrap();
@@ -621,6 +701,10 @@ fn claude_history_parser_keeps_exact_user_text_and_timestamps() {
                 },
                 AgentPrompt {
                     timestamp: Some("2026-07-14T02:01:00Z".to_string()),
+                    text: "second\ndetail".to_string(),
+                },
+                AgentPrompt {
+                    timestamp: Some("2026-07-14T02:02:00Z".to_string()),
                     text: "second\ndetail".to_string(),
                 },
             ],

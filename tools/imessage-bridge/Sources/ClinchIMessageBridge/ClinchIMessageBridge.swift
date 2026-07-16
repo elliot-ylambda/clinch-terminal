@@ -51,6 +51,7 @@ enum BridgeFailure: Error {
   case fullDiskAccess
   case automation
   case messagesSignIn
+  case messagesSendFailed
   case sentMessageNotObserved
   case internalFailure
 
@@ -62,6 +63,7 @@ enum BridgeFailure: Error {
     case .fullDiskAccess: return "full_disk_access_required"
     case .automation: return "automation_required"
     case .messagesSignIn: return "messages_sign_in_required"
+    case .messagesSendFailed: return "messages_send_failed"
     case .sentMessageNotObserved: return "sent_message_not_observed"
     case .internalFailure: return "internal_error"
     }
@@ -75,6 +77,7 @@ enum BridgeFailure: Error {
     case .fullDiskAccess: return "Clinch needs Full Disk Access to read the Messages database."
     case .automation: return "Clinch needs permission to automate Messages."
     case .messagesSignIn: return "Sign in to iMessage in Messages and try again."
+    case .messagesSendFailed: return "Messages did not accept the iMessage send."
     case .sentMessageNotObserved:
       return "Messages accepted the send, but Clinch could not identify the sent message."
     case .internalFailure: return "The Messages bridge encountered an internal error."
@@ -91,8 +94,78 @@ enum BridgeFailure: Error {
   }
 }
 
+enum MessagesAppleScript {
+  static let source = """
+    on run argv
+        set theRecipient to item 1 of argv
+        set theMessage to item 2 of argv
+
+        tell application "Messages"
+            set targetService to first service whose service type is iMessage
+            set targetBuddy to buddy theRecipient of targetService
+            send theMessage to targetBuddy
+        end tell
+    end run
+    """
+
+  static func arguments(recipient: String, text: String) -> [String] {
+    ["-l", "AppleScript", "-", recipient, text]
+  }
+}
+
+func normalizedMessagesRecipient(_ rawRecipient: String) throws -> String {
+  do {
+    let phoneNumbers = PhoneNumberUtility()
+    let parsed = try phoneNumbers.parse(rawRecipient, withRegion: "US", ignoreType: true)
+    return phoneNumbers.format(parsed, toType: .e164)
+  } catch {
+    throw BridgeFailure.invalidRequest("recipient must be a valid phone number.")
+  }
+}
+
+struct MirroredMessageFingerprint {
+  static let maximumTimeDelta: TimeInterval = 2
+
+  let rowID: Int64
+  let chatID: Int64
+  let sender: String
+  let text: String
+  let date: Date
+  let isFromMe: Bool
+  let service: String
+  let attachmentsCount: Int
+
+  func mirrors(_ other: Self) -> Bool {
+    rowID != other.rowID
+      && abs(rowID - other.rowID) == 1
+      && chatID == other.chatID
+      && sender == other.sender
+      && text == other.text
+      && isFromMe != other.isFromMe
+      && service.caseInsensitiveCompare(other.service) == .orderedSame
+      && attachmentsCount == other.attachmentsCount
+      && abs(date.timeIntervalSince(other.date)) <= Self.maximumTimeDelta
+  }
+}
+
+extension MirroredMessageFingerprint {
+  init(message: Message) {
+    self.init(
+      rowID: message.rowID,
+      chatID: message.chatID,
+      sender: message.sender,
+      text: message.text,
+      date: message.date,
+      isFromMe: message.isFromMe,
+      service: message.service,
+      attachmentsCount: message.attachmentsCount
+    )
+  }
+}
+
 actor BridgeRuntime {
   private static let maximumRecentOutboundGUIDs = 4_096
+  private static let maximumMirrorCandidates = 256
 
   private let output: JSONOutput
   private var store: MessageStore?
@@ -104,6 +177,7 @@ actor BridgeRuntime {
   private var bufferedWatchMessages: [Message] = []
   private var recentOutboundGUIDs: Set<String> = []
   private var recentOutboundGUIDOrder: [String] = []
+  private var recentMirrorCandidates: [MirroredMessageFingerprint] = []
 
   init(output: JSONOutput) {
     self.output = output
@@ -165,7 +239,8 @@ actor BridgeRuntime {
   }
 
   private func configure(_ request: BridgeRequest) async throws {
-    recipient = try requiredNonempty(request.recipient, name: "recipient")
+    recipient = try normalizedMessagesRecipient(
+      requiredNonempty(request.recipient, name: "recipient"))
     chatID = request.chatID
     chatGUID = request.chatGUID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
@@ -241,10 +316,9 @@ actor BridgeRuntime {
     automationAuthorized(askUserIfNeeded: true)
   }
 
-  // Apple documents NSAppleScript as main-thread-only. Both the service probe
-  // and MessageSender's AppleScript implementation must stay on MainActor;
-  // running them on BridgeRuntime's generic actor can hang until the parent
-  // reaches its request timeout.
+  // Apple documents NSAppleScript as main-thread-only. Keep the service probe
+  // on MainActor so it cannot hang the bridge actor until the parent reaches
+  // its request timeout.
   @MainActor
   private static func imessageServiceAvailable() -> Bool {
     let script = NSAppleScript(
@@ -257,8 +331,43 @@ actor BridgeRuntime {
   }
 
   @MainActor
-  private static func sendViaMessages(_ options: MessageSendOptions) throws {
-    try MessageSender().send(options)
+  private static func sendViaMessages(recipient: String, text: String) throws {
+    // `NSAppleScript.executeAppleEvent` can reject the synthetic `run` event
+    // even when a direct Messages AppleScript succeeds for the same signed
+    // application. Invoke the system AppleScript runner directly, pass all
+    // user-controlled values as argv, and keep the script source constant.
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+    process.arguments = MessagesAppleScript.arguments(recipient: recipient, text: text)
+    let input = Pipe()
+    let errors = Pipe()
+    process.standardInput = input
+    process.standardOutput = FileHandle.nullDevice
+    process.standardError = errors
+
+    do {
+      try process.run()
+      try input.fileHandleForWriting.write(contentsOf: Data(MessagesAppleScript.source.utf8))
+      try input.fileHandleForWriting.close()
+    } catch {
+      if process.isRunning { process.terminate() }
+      throw BridgeFailure.internalFailure
+    }
+
+    process.waitUntilExit()
+    guard process.terminationReason == .exit, process.terminationStatus == 0 else {
+      let errorData = errors.fileHandleForReading.readDataToEndOfFile()
+      let details = String(data: errorData, encoding: .utf8)?.lowercased() ?? ""
+      if details.contains("-1743") || details.contains("not authorized")
+        || details.contains("not authorised")
+      {
+        throw BridgeFailure.automation
+      }
+      if details.contains("service") && details.contains("imessage") {
+        throw BridgeFailure.messagesSignIn
+      }
+      throw BridgeFailure.messagesSendFailed
+    }
   }
 
   private func openStore() throws -> MessageStore {
@@ -286,25 +395,40 @@ actor BridgeRuntime {
     let startedAt = Date().addingTimeInterval(-2)
     sendCorrelationInProgress = true
     do {
-      try await Self.sendViaMessages(
-        MessageSendOptions(
-          recipient: recipient,
-          text: text,
-          service: .imessage,
-          chatGUID: chatGUID,
-          allowSMSFallback: false
-        ))
+      try await Self.sendViaMessages(recipient: recipient, text: text)
     } catch {
       throw classify(error)
     }
 
     for _ in 0..<80 {
-      if let message = try messageStore.latestSentMessage(
+      var observed = try messageStore.latestSentMessage(
         matchingText: text,
         chatID: chatID,
         since: startedAt
-      ), message.rowID > baseline, !message.guid.isEmpty {
+      )
+      if let candidate = observed,
+        candidate.rowID <= baseline || candidate.guid.isEmpty
+      {
+        observed = nil
+      }
+      // A saved chat identity can become stale while Messages still routes the
+      // configured buddy correctly. Heal it from the exact post-baseline send
+      // instead of declaring a successful AppleScript delivery indeterminate.
+      if observed == nil, chatID != nil {
+        observed = try messageStore.latestSentMessage(
+          matchingText: text,
+          chatID: nil,
+          since: startedAt
+        )
+        if let candidate = observed,
+          candidate.rowID <= baseline || candidate.guid.isEmpty
+        {
+          observed = nil
+        }
+      }
+      if let message = observed {
         recordOutboundGUID(message.guid)
+        rememberMirrorCandidate(message)
         let info = try messageStore.chatInfo(chatID: message.chatID)
         chatID = message.chatID
         if let info, !info.guid.isEmpty { chatGUID = info.guid }
@@ -324,6 +448,7 @@ actor BridgeRuntime {
       $0.rowID > baseline && $0.isFromMe && $0.text == text && !$0.guid.isEmpty
     }) {
       recordOutboundGUID(message.guid)
+      rememberMirrorCandidate(message)
       let info = try messageStore.chatInfo(chatID: message.chatID)
       chatID = message.chatID
       if let info, !info.guid.isEmpty { chatGUID = info.guid }
@@ -395,6 +520,15 @@ actor BridgeRuntime {
       recentOutboundGUIDOrder.removeAll { $0 == message.guid }
       return
     }
+    if consumeMirrorCandidate(message) {
+      output.emit([
+        "event": "cursor_advanced",
+        "version": protocolVersion,
+        "row_id": message.rowID,
+      ])
+      return
+    }
+    rememberMirrorCandidate(message)
     var normalized: [String: Any] = [
       "guid": message.guid,
       "row_id": message.rowID,
@@ -426,6 +560,23 @@ actor BridgeRuntime {
       let expired = recentOutboundGUIDOrder.removeFirst()
       recentOutboundGUIDs.remove(expired)
     }
+  }
+
+  private func rememberMirrorCandidate(_ message: Message) {
+    recentMirrorCandidates.append(MirroredMessageFingerprint(message: message))
+    if recentMirrorCandidates.count > Self.maximumMirrorCandidates {
+      recentMirrorCandidates.removeFirst(
+        recentMirrorCandidates.count - Self.maximumMirrorCandidates)
+    }
+  }
+
+  private func consumeMirrorCandidate(_ message: Message) -> Bool {
+    let fingerprint = MirroredMessageFingerprint(message: message)
+    guard let index = recentMirrorCandidates.firstIndex(where: { $0.mirrors(fingerprint) }) else {
+      return false
+    }
+    recentMirrorCandidates.remove(at: index)
+    return true
   }
 
   private func stopWatch() {

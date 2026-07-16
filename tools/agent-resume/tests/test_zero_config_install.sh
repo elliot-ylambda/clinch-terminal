@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Proves session capture is an explicit, reversible opt-in that needs no jq, rcfile edit,
-# repository clone, or shell restart.
+# Proves session capture is a reversible persisted setting that needs no jq, rcfile edit,
+# repository clone, or shell restart. The app owns the default-on startup decision.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
@@ -25,28 +25,40 @@ printf '%s\n' '{"model":"opus","hooks":{"PostToolUse":[{"hooks":[{"type":"comman
   > "$HOME/.claude/settings.json"
 printf '%s\n' 'model = "gpt-5"' > "$HOME/.codex/config.toml"
 
-# No command prints help and must not create the consent/runtime/data directories.
+# No command prints help and must not create the setting/runtime/data directories.
 before_noop="$(shasum "$HOME/.claude/settings.json" "$HOME/.codex/config.toml")"
 bash "$HERE/install.sh" >/dev/null
 after_noop="$(shasum "$HOME/.claude/settings.json" "$HOME/.codex/config.toml")"
 [[ "$before_noop" == "$after_noop" ]] || { echo "FAIL: no-argument call changed config"; exit 1; }
 [[ ! -e "$HOME/.warp" ]] || { echo "FAIL: no-argument call created ~/.warp"; exit 1; }
 [[ ! -e "$HOME/Library/Application Support/sh.clinch.Clinch/agent-integration/enabled" ]] \
-  || { echo "FAIL: no-argument call recorded consent"; exit 1; }
+  || { echo "FAIL: no-argument call enabled capture"; exit 1; }
 
-# A symlink is not a durable consent record and must not authorize startup repair.
+# A symlink is not a durable enabled state and must not authorize startup repair.
 STATE="$HOME/Library/Application Support/sh.clinch.Clinch/agent-integration"
 mkdir -p "$STATE"
 ln -s "$HOME/.claude/settings.json" "$STATE/enabled"
 bash "$HERE/install.sh" repair --quiet
 [[ "$(bash "$HERE/install.sh" status)" == "disabled" ]] \
-  || { echo "FAIL: symlink marker was treated as consent"; exit 1; }
+  || { echo "FAIL: symlink marker was treated as enabled"; exit 1; }
 [[ ! -e "$HOME/.warp" ]] || { echo "FAIL: symlink marker installed runtime files"; exit 1; }
 rm -f "$STATE/enabled"
 
+# An opt-out is durable even before the integration has ever been enabled.
+bash "$HERE/install.sh" disable --quiet
+grep -q '"model": "opus"' "$HOME/.claude/settings.json" \
+  || { echo "FAIL: disabling a fresh integration lost unrelated Claude config"; exit 1; }
+grep -q '^model = "gpt-5"$' "$HOME/.codex/config.toml" \
+  || { echo "FAIL: disabling a fresh integration lost unrelated Codex config"; exit 1; }
+[[ -f "$STATE/disabled" && "$(stat -f '%Lp' "$STATE/disabled")" == "600" ]] \
+  || { echo "FAIL: disable did not persist an owner-only opt-out"; exit 1; }
+bash "$HERE/install.sh" repair --quiet
+[[ ! -e "$HOME/.warp" ]] || { echo "FAIL: repair ignored the persisted opt-out"; exit 1; }
+
 bash "$HERE/install.sh" enable --quiet
+[[ ! -e "$STATE/disabled" ]] || { echo "FAIL: re-enable retained the opt-out marker"; exit 1; }
 before="$(shasum "$HOME/.claude/settings.json" "$HOME/.codex/config.toml")"
-bash "$HERE/install.sh" repair --quiet # idempotence after explicit consent
+bash "$HERE/install.sh" repair --quiet # idempotence while enabled
 after="$(shasum "$HOME/.claude/settings.json" "$HOME/.codex/config.toml")"
 [[ "$before" == "$after" ]] || { echo "FAIL: rerun changed managed config"; exit 1; }
 
@@ -60,9 +72,9 @@ done
   || { echo "FAIL: integration bundled a floating plugin installer"; exit 1; }
 
 [[ -f "$STATE/enabled" && -f "$STATE/receipt" ]] \
-  || { echo "FAIL: explicit enable did not record consent and receipt"; exit 1; }
+  || { echo "FAIL: enable did not record its state and receipt"; exit 1; }
 [[ "$(stat -f '%Lp' "$STATE/enabled")" == "600" ]] \
-  || { echo "FAIL: consent marker permissions are not 600"; exit 1; }
+  || { echo "FAIL: enabled marker permissions are not 600"; exit 1; }
 [[ "$(stat -f '%Lp' "$STATE/receipt")" == "600" ]] \
   || { echo "FAIL: receipt permissions are not 600"; exit 1; }
 grep -q '^owner=sh\.clinch\.Clinch$' "$STATE/receipt" \
@@ -108,8 +120,9 @@ grep -q -- '--resume session-ready' "$TMP/claude-args" \
 printf '%s\n' '{"keep":true}' > "$HOME/.warp/agent-resume/keep.json"
 bash "$HERE/install.sh" disable --quiet
 [[ "$(bash "$HERE/install.sh" status)" == "disabled" ]] \
-  || { echo "FAIL: disable left consent enabled"; exit 1; }
-[[ ! -e "$STATE/enabled" ]] || { echo "FAIL: disable kept consent marker"; exit 1; }
+  || { echo "FAIL: disable left capture enabled"; exit 1; }
+[[ ! -e "$STATE/enabled" ]] || { echo "FAIL: disable kept the enabled marker"; exit 1; }
+[[ -f "$STATE/disabled" ]] || { echo "FAIL: disable did not persist the opt-out"; exit 1; }
 [[ ! -e "$BIN/claude-capture.sh" ]] || { echo "FAIL: disable kept owned runtime"; exit 1; }
 [[ ! -e "$BIN/codex-prompt-submit.sh" ]] || { echo "FAIL: disable kept Codex prompt helper"; exit 1; }
 [[ -f "$HOME/.warp/agent-resume/keep.json" ]] \
@@ -125,12 +138,12 @@ grep -q '^model = "gpt-5"$' "$HOME/.codex/config.toml" \
 ! grep -q '^# >>> clinch agent-resume >>>$' "$HOME/.codex/config.toml" \
   || { echo "FAIL: disable kept the Codex managed block"; exit 1; }
 
-# Repair without consent is a no-op. Purge requires an explicit command and removes only capture data.
+# Repair while disabled is a no-op. Purge requires an explicit command and removes only capture data.
 before_disabled="$(shasum "$HOME/.claude/settings.json" "$HOME/.codex/config.toml")"
 bash "$HERE/install.sh" repair --quiet
 after_disabled="$(shasum "$HOME/.claude/settings.json" "$HOME/.codex/config.toml")"
 [[ "$before_disabled" == "$after_disabled" ]] \
-  || { echo "FAIL: repair without consent changed config"; exit 1; }
+  || { echo "FAIL: repair while disabled changed config"; exit 1; }
 bash "$HERE/install.sh" enable --quiet
 printf '%s\n' '{"purge":true}' > "$HOME/.warp/agent-resume/purge.json"
 purge_output="$(bash "$HERE/install.sh" purge)"
@@ -138,5 +151,7 @@ purge_output="$(bash "$HERE/install.sh" purge)"
   || { echo "FAIL: purge did not identify the directory it removed"; exit 1; }
 [[ ! -e "$HOME/.warp/agent-resume" ]] \
   || { echo "FAIL: explicit purge retained capture data"; exit 1; }
+[[ -f "$STATE/disabled" && ! -e "$STATE/enabled" ]] \
+  || { echo "FAIL: purge did not preserve the capture opt-out"; exit 1; }
 
 echo "PASS"

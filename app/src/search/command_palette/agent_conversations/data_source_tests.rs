@@ -8,6 +8,7 @@ fn conversation(agent: &str) -> AgentConversation {
         bridge: None,
         start_ts: "2026-07-13T12:00:00Z".to_string(),
         first_prompt: Some("fix the flaky test".to_string()),
+        local_resumable: true,
         flags: String::new(),
     }
 }

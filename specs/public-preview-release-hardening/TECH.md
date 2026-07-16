@@ -11,7 +11,8 @@ The current path has five material release risks:
 
 - `install.sh` trusts mutable release locations and a sibling checksum, clears quarantine, then
   installs hooks and plugins as side effects.
-- `app/src/lib.rs` repairs agent hooks on every stable launch without a consent record.
+- `app/src/lib.rs` repairs agent hooks on every stable launch without a persisted user-controlled
+  enabled/disabled state.
 - Clinch has no telemetry destination, but the collector can still schedule work and persist its
   queue because shared Warp privacy defaults are true.
 - the self-signed bundle inherits unused privacy and development entitlements.
@@ -49,29 +50,31 @@ Installation first stages and validates a complete sibling bundle. Replacement u
 renames with a backup and restores that backup on every handled failure. The installer changes no
 integration, plugin, preference, or running-app state.
 
-### 2. Explicit, reversible session capture
+### 2. Default-on, reversible session capture
 
 Refactor `tools/agent-resume/install.sh` into explicit `enable`, `disable`, `status`, and `purge`
 commands. With no command it prints help and performs no mutation. Enabling explains and then:
 
 - installs Clinch-owned runtime files with restrictive modes;
 - structurally adds only the managed Claude hooks and Codex notify block;
-- writes a versioned consent/receipt file after successful configuration.
+- writes a versioned enabled-state marker and receipt after successful configuration.
 
 The receipt records ownership plus pre/post hashes and modes without copying provider transcripts,
 configuration contents, or secrets. Disable performs a structural removal of the exact managed
-entries; the receipt is an audit record, not a backup. On stable startup,
-`app/src/agent_resume.rs` may refresh managed entries only when this consent record exists. Invalid
-third-party JSON or malformed Codex managed markers are reported without preventing Clinch launch
-or rewriting unrelated configuration.
+entries; the receipt is an audit record, not a backup. On first Clinch launch with no prior state,
+`app/src/agent_resume.rs` runs the bundled enable command. Later launches repair managed entries
+only while the enabled marker exists. A durable disabled marker prevents startup mutation, and a
+retained receipt without an enabled marker migrates older explicit disables to the same opt-out
+semantics. Invalid third-party JSON or malformed Codex managed markers are reported without
+preventing Clinch launch or rewriting unrelated configuration.
 
-Disabling removes the consent marker first, then removes only exact managed entries and owned
-runtime files. It performs a structural removal and preserves every unrelated key or line;
-captured metadata is retained by default. `purge` is a separate explicit operation for
-Clinch-owned capture data.
+Disabling atomically records the opt-out, removes the enabled marker, then removes only exact
+managed entries and owned runtime files. It performs a structural removal and preserves every
+unrelated key or line; captured metadata is retained by default. `purge` is a separate explicit
+operation for Clinch-owned capture data and retains the opt-out.
 
 Add setup, remove, and status controls to the Clinch settings page. Session capture remains
-consent-gated, while `app/src/agent_plugins.rs` runs the bundled
+user-controlled and enabled by default, while `app/src/agent_plugins.rs` runs the bundled
 `resources/bundled/agent-plugins/install.sh` before the first pane launches. The script uses exact
 local Claude Code and Codex marketplace snapshots, skips already-current installs, and treats a
 missing CLI or provider-policy failure as non-fatal. Dedicated Clinch marketplace IDs keep the
@@ -166,11 +169,12 @@ The dependency license gate includes workspace and non-publishable git dependenc
 `cargo-deny` and `cargo-about` allowlists synchronized, and fails packaging if a complete bundled
 third-party notice cannot be generated from the locked dependency graph.
 
-The local operator flow requires confirmation of clean install, authenticated manual upgrade, session
-integration opt-in/removal, selective uninstall, offline startup, and native Apple Silicon smoke
-results. It also requires the tested macOS versions and a QA record identifier. Those fields, plus
-the optional hands-on Intel result, are written into the signed release validation asset. The
-checked-in `QA_TEMPLATE.md` defines the record expected by the local release command.
+The local operator flow requires confirmation of clean install, authenticated manual upgrade,
+default session integration enablement, persistent opt-out, re-enable/removal, selective uninstall,
+offline startup, and native Apple Silicon smoke results. It also requires the tested macOS versions
+and a QA record identifier. Those fields, plus the optional hands-on Intel result, are written into
+the signed release validation asset. The checked-in `QA_TEMPLATE.md` defines the record expected by
+the local release command.
 
 `make release` is the interactive operator front end for the local build and direct publish. It
 first synchronizes a
@@ -212,18 +216,19 @@ network-capable optional features, exact side effects, and residual review gaps.
   no-op/enable/repair/disable/purge behavior, malformed provider configuration, preservation, and
   selective uninstallation. The release verifier enforces manifest identity, size/hash, universal
   bundles, and the absence of quarantine-changing code in the shipped installer.
-- Agent integration tests cover no-argument no-op, enable/status/disable/purge idempotence, invalid
+- Agent integration tests cover no-argument no-op, default-on startup selection,
+  enable/status/disable/re-enable/purge idempotence, invalid
   third-party config, Claude and Codex structural preservation, receipt modes, and launch repair
-  gated by consent.
+  gated by the persisted enabled state.
 - Rust unit tests cover unavailable telemetry beating stored and forced values, disabled
-  auto-update, and agent-resume runtime consent; stable compilation exercises the guarded
-  collector, settings action, and backend-free plugin paths.
+  auto-update, and agent-resume default/opt-out state selection; stable compilation exercises the
+  guarded collector, settings action, and backend-free plugin paths.
 - Release verification mounts the DMG read-only and recursively compares its app with the verified
   ZIP, validates the plist, entitlements, signatures, architectures, authenticated manifest, and
-  explicit integration lifecycle. Manual release QA records first install, upgrade, uninstall,
-  offline launch, and a native Apple Silicon smoke check. The universal artifact verifier requires
-  both architecture slices; a separate hands-on Intel smoke check is recorded when practical but
-  is not a preview release blocker.
+  default-on and opt-out/re-enable integration lifecycle. Manual release QA records first install,
+  upgrade, uninstall, offline launch, and a native Apple Silicon smoke check. The universal
+  artifact verifier requires both architecture slices; a separate hands-on Intel smoke check is
+  recorded when practical but is not a preview release blocker.
 - Release orchestration fixtures stub every `gh` and Git mutation and prove that automated failures
   cannot create a tag or draft, remote staging requires the exact interactive confirmation, retries
   accept only a matching signed tag/private draft, uploaded assets are re-downloaded and verified,

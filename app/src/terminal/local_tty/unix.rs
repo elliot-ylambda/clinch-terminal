@@ -80,6 +80,18 @@ fn make_pty(size: winsize) -> Result<(RawFd, RawFd)> {
     Ok((ends.master, ends.slave))
 }
 
+/// Resolves the filesystem path (e.g. `/dev/ttys004`) of a PTY follower fd.
+/// Returns `None` when the fd does not name a terminal device.
+fn tty_device_path(fd: RawFd) -> Option<String> {
+    let mut name_buf = [0 as libc::c_char; 256];
+    let rc = unsafe { libc::ttyname_r(fd, name_buf.as_mut_ptr(), name_buf.len()) };
+    if rc != 0 {
+        return None;
+    }
+    let name = unsafe { CStr::from_ptr(name_buf.as_ptr()) };
+    Some(name.to_string_lossy().into_owned())
+}
+
 fn docker_sandbox_run_args(starter: &DockerSandboxShellStarter) -> Vec<std::ffi::OsString> {
     let init_dir = starter.init_dir();
     let init_path = starter.init_path();
@@ -435,6 +447,13 @@ fn spawn_command_in_pty(
     // Close the follower at the end of this function.
     // We need to keep it alive long enough for fork().
     let _file = unsafe { File::from_raw_fd(follower) };
+
+    // Agent CLIs (e.g. Codex) spawn their hook subprocesses without a controlling
+    // terminal, so a hook's `/dev/tty` write can never reach this pane. Export the
+    // follower's device path so those hooks can still deliver OSC sequences here.
+    if let Some(tty_path) = tty_device_path(follower) {
+        command.env("WARP_TTY", tty_path);
+    }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     if let Ok(mut termios) = termios::tcgetattr(leader) {

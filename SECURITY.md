@@ -80,10 +80,11 @@ or automatic updater. Unavailable telemetry overrides stored defaults and experi
 flags. The collector drains memory, removes stale Clinch queue files without upload, and does not
 start telemetry timers or write a shutdown queue.
 
-Optional session capture is off until a user enables it. Its managed Claude Code and Codex hooks
-write local pane mappings, a journal, and prompt mirrors. Those files can contain sensitive paths,
-commands, identifiers, and prompt text and are created with restrictive permissions. Disabling the
-integration preserves captured data by default; purge is separate.
+Local session capture is enabled on first launch so Claude Code and Codex conversations can be
+restored by default. Its managed hooks write local pane mappings, a journal, and prompt mirrors.
+Those files can contain sensitive paths, commands, identifiers, and prompt text and are created
+with restrictive permissions. Disabling the integration persists the opt-out and preserves
+captured data by default; purge is separate.
 
 Software launched inside Clinch is outside this no-telemetry statement. Provider CLIs, SSH, MCP
 servers, plugins, package managers, remote assets, and other user commands may use the network or

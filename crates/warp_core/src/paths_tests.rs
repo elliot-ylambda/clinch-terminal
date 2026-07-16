@@ -62,6 +62,19 @@ fn test_warp_home_skills_and_mcp_paths() {
         Some(config_dir.join(".mcp.json"))
     );
 }
+
+#[test]
+fn test_local_home_config_dir_name_is_scoped_to_the_app_owner() {
+    assert_eq!(
+        local_home_config_dir_name_for_app_id(&AppId::new("sh", "clinch", "ClinchDev")),
+        ".clinch-local"
+    );
+    assert_eq!(
+        local_home_config_dir_name_for_app_id(&AppId::new("dev", "warp", "Warp-Local")),
+        ".warp-local"
+    );
+}
+
 #[test]
 fn test_cache_dir_path() {
     let home_dir = home_dir().expect("Should be able to compute home directory");

@@ -199,6 +199,10 @@ pub struct CLIAgentSession {
     /// Session creation and `SessionStart` only prove that the interactive CLI is open; they do
     /// not mean the agent is actively working.
     pub has_observed_turn_activity: bool,
+    /// Set when direct user input (Esc / Ctrl-C typed into the agent TUI) ended the in-flight
+    /// turn. Providers fire no hook for an aborted turn, so the keystroke is the only signal.
+    /// A later `ToolComplete` proves the guess wrong and revives the working state.
+    pub turn_interrupted_by_user: bool,
     /// Exact user-authored messages. Kept out of `session_context` so status events do not clone it.
     pub prompt_history: AgentPromptHistory,
     pub prompt_history_load_state: PromptHistoryLoadState,
@@ -356,7 +360,11 @@ impl CLIAgentSession {
                 CLIAgentSessionStatus::InProgress
             }
             CLIAgentEventType::ToolComplete => {
-                if !matches!(self.status, CLIAgentSessionStatus::Blocked { .. }) {
+                // A completing tool proves a turn is running: resume from the permission flow,
+                // or from a user-interrupt guess that this event just disproved.
+                if !matches!(self.status, CLIAgentSessionStatus::Blocked { .. })
+                    && !self.turn_interrupted_by_user
+                {
                     return None;
                 }
                 self.has_observed_turn_activity = true;
@@ -414,6 +422,7 @@ impl CLIAgentSession {
             CLIAgentEventType::Unknown(_) => return None,
         };
 
+        self.turn_interrupted_by_user = false;
         self.status = new_status.clone();
         Some(new_status)
     }
@@ -472,6 +481,17 @@ fn prompt_from_trusted_event(event: &CLIAgentEvent) -> Option<AgentPrompt> {
         timestamp: None,
         text: text.clone(),
     })
+}
+
+/// Claude can retain and re-submit the same input while its current turn is still running (for
+/// example after a control sequence or TUI history navigation). Those provider events have
+/// distinct delivery identities but represent one semantic message. Once Stop/Success closes the
+/// turn, an identical prompt is intentional history again.
+fn is_duplicate_inflight_prompt(session: &CLIAgentSession, prompt: &AgentPrompt) -> bool {
+    session.is_actively_working()
+        && session
+            .latest_prompt()
+            .is_some_and(|latest| latest.text == prompt.text)
 }
 
 /// Events emitted by `CLIAgentSessionsModel` for subscribers (e.g., `AgentNotificationsModel`).
@@ -579,6 +599,7 @@ impl CLIAgentSessionsModel {
         }
 
         session.has_observed_turn_activity = true;
+        session.turn_interrupted_by_user = false;
         session.status = CLIAgentSessionStatus::InProgress;
         session.session_context.response = None;
         session.clear_permission_scoped_state();
@@ -588,6 +609,38 @@ impl CLIAgentSessionsModel {
             agent: session.agent,
             status: CLIAgentSessionStatus::InProgress,
             session_context: Box::new(session.session_context.clone()),
+        });
+    }
+
+    /// Marks the in-flight Claude Code or Codex turn as ended after the user typed an
+    /// interrupt gesture (lone Esc / Ctrl-C) into the pane. Neither provider fires a hook
+    /// when a turn is aborted this way, so the keystroke itself is the only end-of-turn
+    /// signal — without it the working indicators stay lit until the next completed turn.
+    ///
+    /// The status moves to `Success` like the `IdlePrompt` completion fallback, but with a
+    /// `SessionUpdated` emission instead of `StatusChanged`: an interrupt must not mint a
+    /// completed-turn notification. If the guess was wrong (Esc merely dismissed provider
+    /// UI), the next `ToolComplete` event restores `InProgress`.
+    pub fn mark_project_cli_agent_turn_interrupted_from_user_input(
+        &mut self,
+        terminal_view_id: EntityId,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        let Some(session) = self.sessions.get_mut(&terminal_view_id) else {
+            return;
+        };
+        if !matches!(session.agent, CLIAgent::Claude | CLIAgent::Codex)
+            || !matches!(session.status, CLIAgentSessionStatus::InProgress)
+        {
+            return;
+        }
+
+        session.status = CLIAgentSessionStatus::Success;
+        session.turn_interrupted_by_user = true;
+
+        ctx.emit(CLIAgentSessionsModelEvent::SessionUpdated {
+            terminal_view_id,
+            agent: session.agent,
         });
     }
 
@@ -629,6 +682,7 @@ impl CLIAgentSessionsModel {
                     custom_command_prefix: None,
                     received_rich_notification: false,
                     has_observed_turn_activity: false,
+                    turn_interrupted_by_user: false,
                     prompt_history: AgentPromptHistory::default(),
                     prompt_history_load_state: PromptHistoryLoadState::NotRequested,
                     prompt_history_generation: 0,
@@ -828,6 +882,7 @@ impl CLIAgentSessionsModel {
                 custom_command_prefix: None,
                 received_rich_notification: false,
                 has_observed_turn_activity: false,
+                turn_interrupted_by_user: false,
                 prompt_history: AgentPromptHistory::default(),
                 prompt_history_load_state: PromptHistoryLoadState::NotRequested,
                 prompt_history_generation: 0,
@@ -870,9 +925,15 @@ impl CLIAgentSessionsModel {
         }
 
         let event_type = &event.event;
-        let live_prompt = session_context_enabled()
+        let mut live_prompt = session_context_enabled()
             .then(|| prompt_from_trusted_event(event))
             .flatten();
+        if live_prompt
+            .as_ref()
+            .is_some_and(|prompt| is_duplicate_inflight_prompt(session, prompt))
+        {
+            live_prompt = None;
+        }
         if let Some(new_status) = session.apply_event(event) {
             let agent = session.agent;
             ctx.emit(CLIAgentSessionsModelEvent::StatusChanged {

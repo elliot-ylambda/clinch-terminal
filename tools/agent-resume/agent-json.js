@@ -56,6 +56,16 @@ function hookFields() {
 
 function promptLine(argv) {
     const payload = parseObject(readStdin(), "hook payload");
+    const event = asString(payload.hook_event_name, "");
+    if (event === "Stop") {
+        return JSON.stringify({
+            ts: asString(argv[0], ""),
+            stop: true,
+        });
+    }
+    if (event !== "UserPromptSubmit") {
+        return "";
+    }
     const prompt = asString(payload.prompt, "");
     if (!prompt.trim()) {
         return "";

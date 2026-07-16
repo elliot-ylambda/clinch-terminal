@@ -170,6 +170,7 @@ use warpui::platform::{Cursor, OperatingSystem};
 use warpui::r#async::executor::Background;
 use warpui::r#async::{SpawnedFutureHandle, Timer};
 use warpui::text::SelectionType;
+use warpui::text_layout::ClipConfig;
 use warpui::ui_components::components::{Coords, UiComponent};
 use warpui::units::{IntoLines, IntoPixels, Lines, Pixels};
 use warpui::windowing::WindowManager;
@@ -329,7 +330,7 @@ use crate::env_vars::{CloudEnvVarCollection, EnvVar, EnvVarExt};
 use crate::features::FeatureFlag;
 #[cfg(feature = "local_fs")]
 use crate::menu::SubMenu;
-use crate::menu::{Event as MenuEvent, Menu, MenuItem, MenuItemFields};
+use crate::menu::{Event as MenuEvent, Menu, MenuItem, MenuItemFields, MenuTooltipPosition};
 use crate::pane_group::focus_state::PaneFocusHandle;
 use crate::pane_group::{
     CodeReviewPanelArg, PaneConfiguration, PaneEvent, PaneGroupAction, PaneHeaderAction,
@@ -3023,6 +3024,19 @@ fn cli_agent_history_prompt_label(ordinal: usize, prompt: &AgentPrompt) -> Strin
         .unwrap_or_else(|| format!("{ordinal} | {message}"))
 }
 
+/// Rows are ellipsis-clipped to one line, so hovering shows the full prompt in
+/// a tooltip. Capped so a pathological multi-kilobyte prompt can't blanket the
+/// window (the tooltip soft-wraps within window bounds).
+const CLI_AGENT_HISTORY_TOOLTIP_MAX_CHARS: usize = 2000;
+
+fn cli_agent_history_prompt_tooltip(prompt: &AgentPrompt) -> String {
+    let text = prompt.text.trim();
+    match text.char_indices().nth(CLI_AGENT_HISTORY_TOOLTIP_MAX_CHARS) {
+        Some((byte_index, _)) => format!("{}…", &text[..byte_index]),
+        None => text.to_owned(),
+    }
+}
+
 fn cli_agent_history_label(
     history: &AgentPromptHistory,
     load_state: &PromptHistoryLoadState,
@@ -3938,10 +3952,13 @@ impl TerminalView {
             let mut dropdown = Dropdown::<()>::new(ctx).with_drop_shadow();
             // `Max` top bar filling the `Expanded` header slot (see
             // `render_cli_agent_history_header_center`) — the original, working
-            // layout for the closed header. `match_menu_width_to_top_bar` is left
-            // off (default) so the popup sizes to its own rows instead of the
-            // full-width top bar, which previously garbled the menu.
+            // layout for the closed header. The open menu matches the top bar's
+            // full width; that only works because every history row is
+            // ellipsis-clipped to a single line in
+            // `sync_cli_agent_message_history_dropdown` — unclipped rows
+            // soft-wrap at the wide width and garble the menu.
             dropdown.set_main_axis_size(MainAxisSize::Max, ctx);
+            dropdown.set_match_menu_width_to_top_bar(true, ctx);
             dropdown.set_top_bar_max_width(f32::MAX);
             dropdown.set_top_bar_height(26., ctx);
             // The outlined button has a 1px border on both sides. Its default 5px vertical
@@ -9344,6 +9361,20 @@ impl TerminalView {
         // so this is a no-op for that path.
         self.cancel_auto_continue_on_user_input(ctx);
 
+        // A lone Esc or Ctrl-C is the interrupt gesture for agent TUIs (multi-byte key
+        // encodings like arrow keys arrive as a single larger write, so they never match).
+        // Neither Claude Code nor Codex fires a hook for an aborted turn, so the keystroke
+        // itself is the only signal that the in-flight turn ended.
+        if matches!(
+            &bytes[..],
+            [escape_sequences::C0::ESC] | [escape_sequences::C0::ETX]
+        ) {
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions_model, ctx| {
+                sessions_model
+                    .mark_project_cli_agent_turn_interrupted_from_user_input(self.view_id, ctx);
+            });
+        }
+
         let bytes_vec = bytes.to_vec();
         self.clear_selected_blocks(ctx);
         self.update_scroll_position_locking(ScrollPositionUpdate::AfterWriteUserBytesToPty, ctx);
@@ -12041,82 +12072,7 @@ impl TerminalView {
                                     LONG_RUNNING_COMMAND_DURATION_MS,
                                 )),
                                 move |me, _, ctx| {
-                                    // Detect CLI agent and create session before
-                                    // showing the footer, so the session drives
-                                    // the footer rather than the other way around.
-                                    let detection = {
-                                        let model = me.model.lock();
-                                        me.detect_cli_agent_from_model(&model, ctx)
-                                    };
-                                    let view_id = me.view_id;
-                                    CLIAgentSessionsModel::handle(ctx).update(
-                                        ctx,
-                                        |sessions_model, ctx| match detection {
-                                            Some((agent, ref custom_command_prefix))
-                                                if !sessions_model
-                                                    .session(view_id)
-                                                    .is_some_and(|s| s.agent == agent) =>
-                                            {
-                                                let remote_host =
-                                                    me.active_session_remote_host(ctx);
-                                                sessions_model.set_session(
-                                                    view_id,
-                                                    CLIAgentSession {
-                                                        agent,
-                                                        status: CLIAgentSessionStatus::InProgress,
-                                                        session_context:
-                                                            CLIAgentSessionContext::default(),
-                                                        input_state: CLIAgentInputState::Closed,
-                                                        should_auto_toggle_input: *AISettings::as_ref(
-                                                            ctx,
-                                                        )
-                                                        .auto_open_rich_input_on_cli_agent_start,
-                                                        listener: None,
-                                                        plugin_version: None,
-                                                        remote_host,
-                                                        draft_text: None,
-                                                        custom_command_prefix: custom_command_prefix.clone(),
-                                                        received_rich_notification: false,
-                                                        has_observed_turn_activity: false,
-                                                        prompt_history: Default::default(),
-                                                        prompt_history_load_state: Default::default(),
-                                                        prompt_history_generation: 0,
-                                                    },
-                                                    ctx,
-                                                );
-                                            }
-                                            _ => {}
-                                        },
-                                    );
-                                    me.seed_cli_agent_from_active_resume_command(ctx);
-
-                                    // Codex doesn't use the sentinel-based plugin protocol,
-                                    // so create the listener proactively on command detection
-                                    // (rather than waiting for a SessionStart event).
-                                    if matches!(detection, Some((CLIAgent::Codex, _))) {
-                                        me.register_cli_agent_listener_without_session_start_event(
-                                            CLIAgent::Codex,
-                                            ctx,
-                                        );
-                                    }
-
-                                    me.maybe_show_use_agent_footer_in_blocklist(ctx);
-                                    me.maybe_auto_open_cli_agent_rich_input(ctx);
-                                    me.input.update(ctx, |input, ctx| {
-                                        input.universal_developer_input_button_bar().update(
-                                            ctx,
-                                            |bar, ctx| {
-                                                bar.update_segmented_control_disabled_state(ctx);
-                                            },
-                                        )
-                                    });
-                                    // Update agent view back button state when command becomes long-running
-                                    if FeatureFlag::AgentView.is_enabled()
-                                        && me.agent_view_controller.as_ref(ctx).is_fullscreen()
-                                    {
-                                        me.update_agent_view_back_button_state(ctx);
-                                        me.update_agent_view_pane_header(ctx);
-                                    }
+                                    me.handle_long_running_command_cli_agent_detection(ctx);
                                 },
                             );
                         }
@@ -13426,6 +13382,100 @@ impl TerminalView {
         }
     }
 
+    /// Runs CLI agent detection once the active command has been running for
+    /// `LONG_RUNNING_COMMAND_DURATION_MS`: creates the session (unless one
+    /// already exists for the same agent), seeds resume identity, and
+    /// refreshes the dependent UI (footer, rich input, agent view chrome).
+    fn handle_long_running_command_cli_agent_detection(&mut self, ctx: &mut ViewContext<Self>) {
+        // Detect CLI agent and create session before
+        // showing the footer, so the session drives
+        // the footer rather than the other way around.
+        let detection = {
+            let model = self.model.lock();
+            self.detect_cli_agent_from_model(&model, ctx)
+        };
+        let view_id = self.view_id;
+        CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions_model, ctx| match detection {
+            Some((agent, ref custom_command_prefix))
+                if !sessions_model
+                    .session(view_id)
+                    .is_some_and(|s| s.agent == agent) =>
+            {
+                let remote_host = self.active_session_remote_host(ctx);
+                sessions_model.set_session(
+                    view_id,
+                    CLIAgentSession {
+                        agent,
+                        status: CLIAgentSessionStatus::InProgress,
+                        session_context: CLIAgentSessionContext::default(),
+                        input_state: CLIAgentInputState::Closed,
+                        should_auto_toggle_input: *AISettings::as_ref(ctx)
+                            .auto_open_rich_input_on_cli_agent_start,
+                        listener: None,
+                        plugin_version: None,
+                        remote_host,
+                        draft_text: None,
+                        custom_command_prefix: custom_command_prefix.clone(),
+                        received_rich_notification: false,
+                        has_observed_turn_activity: false,
+                        turn_interrupted_by_user: false,
+                        prompt_history: Default::default(),
+                        prompt_history_load_state: Default::default(),
+                        prompt_history_generation: 0,
+                    },
+                    ctx,
+                );
+            }
+            _ => {}
+        });
+        self.seed_cli_agent_from_active_resume_command(ctx);
+
+        // A resumed pane seeds its session before the command runs (see
+        // `seed_resumed_session`), which suppresses the `Started` event that
+        // normally marks the command's block as an agent TUI block — so apply
+        // the grid behavior directly whenever an agent command is detected.
+        if detection.is_some() || self.active_resume_command_seed().is_some() {
+            self.mark_active_block_as_cli_agent_tui();
+        }
+
+        // Codex doesn't use the sentinel-based plugin protocol,
+        // so create the listener proactively on command detection
+        // (rather than waiting for a SessionStart event).
+        if matches!(detection, Some((CLIAgent::Codex, _))) {
+            self.register_cli_agent_listener_without_session_start_event(CLIAgent::Codex, ctx);
+        }
+
+        self.maybe_show_use_agent_footer_in_blocklist(ctx);
+        self.maybe_auto_open_cli_agent_rich_input(ctx);
+        self.input.update(ctx, |input, ctx| {
+            input
+                .universal_developer_input_button_bar()
+                .update(ctx, |bar, ctx| {
+                    bar.update_segmented_control_disabled_state(ctx);
+                })
+        });
+        // Update agent view back button state when command becomes long-running
+        if FeatureFlag::AgentView.is_enabled()
+            && self.agent_view_controller.as_ref(ctx).is_fullscreen()
+        {
+            self.update_agent_view_back_button_state(ctx);
+            self.update_agent_view_pane_header(ctx);
+        }
+    }
+
+    /// Marks the active block as hosting a CLI agent TUI: full-grid clears
+    /// stay in place instead of scrolling old frames into history, and
+    /// trailing blank screen rows are excluded from the block's rendered
+    /// height.
+    fn mark_active_block_as_cli_agent_tui(&mut self) {
+        let mut model = self.model.lock();
+        let active_block = model.block_list_mut().active_block_mut();
+        active_block.enable_full_grid_clear_behavior();
+        if FeatureFlag::TrimTrailingBlankLines.is_enabled() {
+            active_block.set_trim_trailing_blank_rows(true);
+        }
+    }
+
     /// Handles CLI agent session status changes from the singleton model.
     /// Sends a desktop notification when a CLI agent reaches a completed state
     /// (blocked or succeeded) and the user is in a different window.
@@ -13441,12 +13491,7 @@ impl TerminalView {
             CLIAgentSessionsModelEvent::Started {
                 terminal_view_id, ..
             } if *terminal_view_id == self.view_id => {
-                let mut model = self.model.lock();
-                let active_block = model.block_list_mut().active_block_mut();
-                active_block.enable_full_grid_clear_behavior();
-                if FeatureFlag::TrimTrailingBlankLines.is_enabled() {
-                    active_block.set_trim_trailing_blank_rows(true);
-                }
+                self.mark_active_block_as_cli_agent_tui();
             }
             CLIAgentSessionsModelEvent::Ended {
                 terminal_view_id, ..
@@ -13601,7 +13646,16 @@ impl TerminalView {
         items.extend(cli_agent_history_prompts(&history).iter().enumerate().map(
             |(index, prompt)| {
                 let ordinal = index + 1;
-                MenuItemFields::new(cli_agent_history_prompt_label(ordinal, prompt)).into_item()
+                let mut fields =
+                    MenuItemFields::new(cli_agent_history_prompt_label(ordinal, prompt))
+                        .with_clip_config(ClipConfig::ellipsis());
+                let tooltip = cli_agent_history_prompt_tooltip(prompt);
+                if !tooltip.is_empty() {
+                    fields = fields
+                        .with_tooltip(tooltip)
+                        .with_tooltip_position(MenuTooltipPosition::Above);
+                }
+                fields.into_item()
             },
         ));
         if is_loading {

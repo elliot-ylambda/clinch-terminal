@@ -23,7 +23,7 @@ fi
   || { echo "FAIL: failed enable changed Codex config"; exit 1; }
 [[ ! -e "$HOME/.warp" ]] || { echo "FAIL: failed enable installed runtime files"; exit 1; }
 [[ ! -e "$HOME/Library/Application Support/sh.clinch.Clinch/agent-integration/enabled" ]] \
-  || { echo "FAIL: failed enable recorded consent"; exit 1; }
+  || { echo "FAIL: failed enable persisted the enabled state"; exit 1; }
 
 # A hand-edited or truncated managed block must fail closed before any file is changed. Without
 # this check, an unmatched begin marker would cause every following Codex setting to be dropped.
@@ -42,6 +42,6 @@ fi
   || { echo "FAIL: failed Codex validation changed Codex config"; exit 1; }
 [[ ! -e "$HOME/.warp" ]] || { echo "FAIL: failed Codex validation installed runtime files"; exit 1; }
 [[ ! -e "$HOME/Library/Application Support/sh.clinch.Clinch/agent-integration/enabled" ]] \
-  || { echo "FAIL: failed Codex validation recorded consent"; exit 1; }
+  || { echo "FAIL: failed Codex validation persisted the enabled state"; exit 1; }
 
 echo "PASS"

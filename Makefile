@@ -50,10 +50,10 @@ DMG SHA-256, and drag Clinch to Applications. Then use System Settings > Privacy
 Open Anyway if macOS blocks the first launch. The authenticated install.sh asset is available as
 a secondary convenience.
 
-Session capture and provider plugins are off by default. Enable session capture from Clinch
-Settings only if you want Clinch to add managed Claude Code and Codex hooks. Automatic updates are
-disabled for this preview; install a newer authenticated release manually. Two-way iMessage is
-optional and local; setup requires Messages Automation and Full Disk Access on the Mac.
+Session restore is enabled by default, using managed local Claude Code and Codex hooks. You can
+turn session capture off or back on from Clinch Settings. Automatic updates are disabled for this
+preview; install a newer authenticated release manually. Two-way iMessage is optional and local;
+setup requires Messages Automation and Full Disk Access on the Mac.
 endef
 export RELEASE_NOTES
 
@@ -140,7 +140,7 @@ release: ## Build, sign, remotely verify, and publish without GitHub Actions
 update: ## Install the latest authenticated public release (Clinch must be quit)
 	./install.sh
 
-agent-resume-enable: ## Explicitly enable local Claude/Codex session capture
+agent-resume-enable: ## Enable or repair local Claude/Codex session capture
 	bash tools/agent-resume/install.sh enable
 
 configure-release-repository: ## Apply GitHub branch, scanning, and local-release policy

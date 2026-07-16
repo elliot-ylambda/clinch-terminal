@@ -11,6 +11,7 @@ fn item(agent: &str, first_prompt: Option<&str>) -> AgentConversationSearchItem 
             bridge: None,
             start_ts: "2026-07-13T12:00:00Z".to_string(),
             first_prompt: first_prompt.map(str::to_string),
+            local_resumable: true,
             flags: String::new(),
         },
         "resume command".to_string(),

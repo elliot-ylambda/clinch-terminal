@@ -6,10 +6,10 @@ use super::event::{
     parse_event, CLIAgentEvent, CLIAgentEventPayload, CLIAgentEventSource, CLIAgentEventType,
 };
 use super::{
-    merge_loaded_and_live_history, prompt_from_trusted_event, session_context_enabled_for,
-    CLIAgentInputEntrypoint, CLIAgentInputState, CLIAgentSession, CLIAgentSessionContext,
-    CLIAgentSessionKey, CLIAgentSessionStatus, CLIAgentSessionsModel, CLIAgentSessionsModelEvent,
-    PromptHistoryLoadState,
+    is_duplicate_inflight_prompt, merge_loaded_and_live_history, prompt_from_trusted_event,
+    session_context_enabled_for, CLIAgentInputEntrypoint, CLIAgentInputState, CLIAgentSession,
+    CLIAgentSessionContext, CLIAgentSessionKey, CLIAgentSessionStatus, CLIAgentSessionsModel,
+    CLIAgentSessionsModelEvent, PromptHistoryLoadState,
 };
 use crate::agent_resume::{AgentPrompt, AgentPromptHistory, AgentResumeProvider};
 use crate::ai::blocklist::{InputConfig, InputType};
@@ -266,6 +266,7 @@ fn idle_test_session(agent: CLIAgent) -> CLIAgentSession {
         custom_command_prefix: None,
         received_rich_notification: true,
         has_observed_turn_activity: false,
+        turn_interrupted_by_user: false,
         prompt_history: Default::default(),
         prompt_history_load_state: Default::default(),
         prompt_history_generation: 0,
@@ -394,6 +395,109 @@ fn idle_prompt_only_completes_an_observed_turn() {
 }
 
 #[test]
+fn user_interrupt_ends_the_working_state_without_a_completion_notification() {
+    App::test((), |mut app| async move {
+        let sessions = app.add_model(|_| CLIAgentSessionsModel::new());
+        let captured_events = app.add_model(|_| CapturedSessionEvents::default());
+        captured_events.update(&mut app, |_, ctx| {
+            ctx.subscribe_to_model(&sessions, |captured, _, event, _| {
+                captured.0.push(event.clone());
+            });
+        });
+
+        let codex_terminal = EntityId::new();
+        sessions.update(&mut app, |model, ctx| {
+            let mut working = idle_test_session(CLIAgent::Codex);
+            working.has_observed_turn_activity = true;
+            model.set_session(codex_terminal, working, ctx);
+        });
+        captured_events.update(&mut app, |captured, _| captured.0.clear());
+
+        sessions.update(&mut app, |model, ctx| {
+            model.mark_project_cli_agent_turn_interrupted_from_user_input(codex_terminal, ctx);
+        });
+
+        sessions.read(&app, |model, _| {
+            let session = model.session(codex_terminal).unwrap();
+            assert!(!session.is_actively_working());
+            assert!(matches!(session.status, CLIAgentSessionStatus::Success));
+            assert!(session.turn_interrupted_by_user);
+        });
+        captured_events.read(&app, |captured, _| {
+            // Tabs must re-render, but an interrupt is not a completed turn: a
+            // `StatusChanged(Success)` here would mint a phantom "done" notification.
+            assert!(captured.0.iter().any(|event| matches!(
+                event,
+                CLIAgentSessionsModelEvent::SessionUpdated { terminal_view_id, .. }
+                    if *terminal_view_id == codex_terminal
+            )));
+            assert!(!captured
+                .0
+                .iter()
+                .any(|event| matches!(event, CLIAgentSessionsModelEvent::StatusChanged { .. })));
+        });
+    });
+}
+
+#[test]
+fn user_interrupt_ignores_sessions_that_are_not_mid_turn() {
+    App::test((), |mut app| async move {
+        let sessions = app.add_model(|_| CLIAgentSessionsModel::new());
+        let codex_terminal = EntityId::new();
+        sessions.update(&mut app, |model, ctx| {
+            let mut completed = idle_test_session(CLIAgent::Codex);
+            completed.status = CLIAgentSessionStatus::Success;
+            completed.has_observed_turn_activity = true;
+            model.set_session(codex_terminal, completed, ctx);
+        });
+
+        sessions.update(&mut app, |model, ctx| {
+            model.mark_project_cli_agent_turn_interrupted_from_user_input(codex_terminal, ctx);
+        });
+
+        sessions.read(&app, |model, _| {
+            assert!(!model.session(codex_terminal).unwrap().turn_interrupted_by_user);
+        });
+    });
+}
+
+#[test]
+fn tool_complete_revives_a_turn_the_interrupt_guess_got_wrong() {
+    let mut session = idle_test_session(CLIAgent::Codex);
+    session.apply_event(&activity_event(
+        CLIAgent::Codex,
+        CLIAgentEventType::PromptSubmit,
+    ));
+    assert!(session.is_actively_working());
+
+    // Esc was pressed but the turn was actually still running (e.g. it only
+    // dismissed provider UI). A completing tool proves the turn is live.
+    session.status = CLIAgentSessionStatus::Success;
+    session.turn_interrupted_by_user = true;
+
+    assert_eq!(
+        session.apply_event(&activity_event(
+            CLIAgent::Codex,
+            CLIAgentEventType::ToolComplete,
+        )),
+        Some(CLIAgentSessionStatus::InProgress)
+    );
+    assert!(session.is_actively_working());
+    assert!(!session.turn_interrupted_by_user);
+
+    // A genuinely completed turn stays completed: no revive without the flag.
+    session.apply_event(&activity_event(CLIAgent::Codex, CLIAgentEventType::Stop));
+    assert_eq!(
+        session.apply_event(&activity_event(
+            CLIAgent::Codex,
+            CLIAgentEventType::ToolComplete,
+        )),
+        None
+    );
+    assert!(!session.is_actively_working());
+}
+
+#[test]
 fn apply_event_preserves_input_session() {
     let input_state = CLIAgentInputState::Open {
         entrypoint: CLIAgentInputEntrypoint::CtrlG,
@@ -416,6 +520,7 @@ fn apply_event_preserves_input_session() {
         custom_command_prefix: None,
         received_rich_notification: false,
         has_observed_turn_activity: false,
+        turn_interrupted_by_user: false,
         prompt_history: Default::default(),
         prompt_history_load_state: Default::default(),
         prompt_history_generation: 0,
@@ -455,6 +560,7 @@ fn is_remote_returns_true_when_remote_host_is_set() {
         custom_command_prefix: None,
         received_rich_notification: false,
         has_observed_turn_activity: false,
+        turn_interrupted_by_user: false,
         prompt_history: Default::default(),
         prompt_history_load_state: Default::default(),
         prompt_history_generation: 0,
@@ -477,6 +583,7 @@ fn is_remote_returns_false_when_remote_host_is_none() {
         custom_command_prefix: None,
         received_rich_notification: false,
         has_observed_turn_activity: false,
+        turn_interrupted_by_user: false,
         prompt_history: Default::default(),
         prompt_history_load_state: Default::default(),
         prompt_history_generation: 0,
@@ -550,6 +657,7 @@ fn session_start_sets_plugin_version() {
         custom_command_prefix: None,
         received_rich_notification: false,
         has_observed_turn_activity: false,
+        turn_interrupted_by_user: false,
         prompt_history: Default::default(),
         prompt_history_load_state: Default::default(),
         prompt_history_generation: 0,
@@ -588,6 +696,7 @@ fn session_start_without_plugin_version_leaves_none() {
         custom_command_prefix: None,
         received_rich_notification: false,
         has_observed_turn_activity: false,
+        turn_interrupted_by_user: false,
         prompt_history: Default::default(),
         prompt_history_load_state: Default::default(),
         prompt_history_generation: 0,
@@ -625,6 +734,7 @@ fn codex_session_not_rich_until_rich_notification() {
         custom_command_prefix: None,
         received_rich_notification: false,
         has_observed_turn_activity: false,
+        turn_interrupted_by_user: false,
         prompt_history: Default::default(),
         prompt_history_load_state: Default::default(),
         prompt_history_generation: 0,
@@ -651,6 +761,7 @@ fn non_codex_session_rich_after_rich_notification() {
         custom_command_prefix: None,
         received_rich_notification: false,
         has_observed_turn_activity: false,
+        turn_interrupted_by_user: false,
         prompt_history: Default::default(),
         prompt_history_load_state: Default::default(),
         prompt_history_generation: 0,
@@ -686,6 +797,7 @@ fn blocked_claude_session_with_permission_state() -> CLIAgentSession {
         custom_command_prefix: None,
         received_rich_notification: false,
         has_observed_turn_activity: false,
+        turn_interrupted_by_user: false,
         prompt_history: Default::default(),
         prompt_history_load_state: Default::default(),
         prompt_history_generation: 0,
@@ -809,6 +921,7 @@ fn permission_request_still_populates_summary_and_tool_fields() {
         custom_command_prefix: None,
         received_rich_notification: false,
         has_observed_turn_activity: false,
+        turn_interrupted_by_user: false,
         prompt_history: Default::default(),
         prompt_history_load_state: Default::default(),
         prompt_history_generation: 0,
@@ -923,6 +1036,36 @@ fn only_rich_prompt_submit_is_trusted_as_user_history() {
         Some("  \n"),
     ))
     .is_none());
+}
+
+#[test]
+fn identical_prompt_retries_coalesce_only_until_stop() {
+    let mut session = idle_test_session(CLIAgent::Claude);
+    let prompt = AgentPrompt {
+        timestamp: None,
+        text: "yo v2".to_owned(),
+    };
+    let submit = CLIAgentEvent {
+        source: CLIAgentEventSource::RichPlugin,
+        v: 1,
+        agent: CLIAgent::Claude,
+        event: CLIAgentEventType::PromptSubmit,
+        session_id: Some("session-id".to_owned()),
+        cwd: None,
+        project: None,
+        payload: CLIAgentEventPayload {
+            query: Some(prompt.text.clone()),
+            ..Default::default()
+        },
+    };
+
+    assert!(!is_duplicate_inflight_prompt(&session, &prompt));
+    session.apply_event(&submit);
+    session.prompt_history.prompts.push(prompt.clone());
+    assert!(is_duplicate_inflight_prompt(&session, &prompt));
+
+    session.apply_event(&activity_event(CLIAgent::Claude, CLIAgentEventType::Stop));
+    assert!(!is_duplicate_inflight_prompt(&session, &prompt));
 }
 
 /// This test mutates the process-global channel state. The repository's required nextest runner
@@ -1092,6 +1235,7 @@ fn listener_events_cannot_replace_the_outer_session_identity() {
         custom_command_prefix: None,
         received_rich_notification: true,
         has_observed_turn_activity: true,
+        turn_interrupted_by_user: false,
         prompt_history: AgentPromptHistory {
             prompts: vec![AgentPrompt {
                 timestamp: None,
@@ -1150,6 +1294,7 @@ fn durable_identity_seed_preserves_live_session_state_and_invalidates_old_histor
         custom_command_prefix: None,
         received_rich_notification: false,
         has_observed_turn_activity: false,
+        turn_interrupted_by_user: false,
         prompt_history: AgentPromptHistory {
             prompts: vec![AgentPrompt {
                 timestamp: None,
@@ -1201,6 +1346,7 @@ fn native_codex_osc9_query_is_not_used_as_a_prompt_title() {
         custom_command_prefix: None,
         received_rich_notification: false,
         has_observed_turn_activity: false,
+        turn_interrupted_by_user: false,
         prompt_history: AgentPromptHistory::default(),
         prompt_history_load_state: PromptHistoryLoadState::Unavailable,
         prompt_history_generation: 1,
@@ -1235,6 +1381,7 @@ fn default_title_is_stable_first_prompt_and_explicit_preference_uses_latest() {
         custom_command_prefix: None,
         received_rich_notification: true,
         has_observed_turn_activity: true,
+        turn_interrupted_by_user: false,
         prompt_history: AgentPromptHistory::default(),
         prompt_history_load_state: PromptHistoryLoadState::Ready,
         prompt_history_generation: 1,

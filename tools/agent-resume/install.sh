@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Manages Clinch's local Claude Code / Codex session-capture integration.
-# No command means no mutation. The app invokes `repair --quiet` only after a user has enabled it.
+# No command means no mutation. The app invokes `enable --quiet` on first launch, `repair --quiet`
+# while enabled, and neither command after the user explicitly disables the setting.
 set -euo pipefail
 
 usage() {
@@ -8,8 +9,8 @@ usage() {
 usage: install.sh <enable|repair|disable|status|purge> [--quiet]
 
   enable   Install Clinch-owned helpers and add managed Claude/Codex hooks.
-  repair   Refresh managed files only when the durable consent marker exists.
-  disable  Remove managed hooks and helpers; keep captured conversation metadata.
+  repair   Refresh managed files only while session capture is enabled.
+  disable  Remove managed hooks and helpers, remember the opt-out, and keep captured metadata.
   status   Print enabled or disabled without changing anything.
   purge    Disable the integration and delete Clinch's captured conversation metadata.
 
@@ -46,7 +47,8 @@ SRC="$(cd "$(dirname "$0")" && pwd)"
 BIN="${CLINCH_AGENT_BIN_DIR:-$HOME/.warp/agent-resume-bin}"
 REG="${WARP_AGENT_RESUME_DIR:-$HOME/.warp/agent-resume}"
 STATE="${CLINCH_AGENT_STATE_DIR:-$HOME/Library/Application Support/sh.clinch.Clinch/agent-integration}"
-CONSENT="$STATE/enabled"
+ENABLED="$STATE/enabled"
+DISABLED="$STATE/disabled"
 RECEIPT="$STATE/receipt"
 CLAUDE_CFG="${CLINCH_CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"
 CODEX_CFG="${CLINCH_CODEX_CONFIG:-$HOME/.codex/config.toml}"
@@ -168,6 +170,8 @@ apply_staged_file() {
 write_receipt() {
   local claude_pre_sha="$1" claude_pre_mode="$2" codex_pre_sha="$3" codex_pre_mode="$4"
   local tmp="$STATE/.receipt.$$"
+  mkdir -p "$STATE"
+  chmod 700 "$STATE"
   umask 077
   {
     printf 'schema=1\n'
@@ -187,6 +191,17 @@ write_receipt() {
   } > "$tmp"
   chmod 600 "$tmp"
   mv "$tmp" "$RECEIPT"
+}
+
+write_state_marker() {
+  local name="$1" tmp
+  tmp="$STATE/.$name.$$"
+  mkdir -p "$STATE"
+  chmod 700 "$STATE"
+  umask 077
+  printf '1\n' > "$tmp"
+  chmod 600 "$tmp"
+  mv "$tmp" "$STATE/$name"
 }
 
 configure_integration() {
@@ -215,21 +230,21 @@ configure_integration() {
   apply_staged_file "$tx/claude.json" "$CLAUDE_CFG" "$claude_mode"
   apply_staged_file "$tx/codex.toml" "$CODEX_CFG" "$codex_mode"
 
-  mkdir -p "$STATE"
-  chmod 700 "$STATE"
   if [[ "$is_first_enable" == "1" || ! -f "$RECEIPT" ]]; then
     write_receipt "$claude_pre_sha" "$claude_mode" "$codex_pre_sha" "$codex_mode"
   fi
-  printf '1\n' > "$STATE/.enabled.$$"
-  chmod 600 "$STATE/.enabled.$$"
-  mv "$STATE/.enabled.$$" "$CONSENT"
+  write_state_marker enabled
+  rm -f "$DISABLED"
   trap - RETURN
   rm -rf "$tx"
 }
 
 disable_integration() {
   local failures=0 tmp mode
-  rm -f "$CONSENT"
+  # Persist the user's choice even when a hand-edited provider config prevents complete cleanup.
+  # The command still returns an error for partial cleanup, but startup must not re-enable it.
+  write_state_marker disabled
+  rm -f "$ENABLED"
 
   if [[ -f "$CLAUDE_CFG" ]]; then
     tmp="$(mktemp "$(dirname "$CLAUDE_CFG")/.clinch-settings.XXXXXX")"
@@ -265,14 +280,14 @@ disable_integration() {
 
 case "$COMMAND" in
   status)
-    if [[ -f "$CONSENT" && ! -L "$CONSENT" ]]; then
+    if [[ -f "$ENABLED" && ! -L "$ENABLED" ]]; then
       printf 'enabled\n'
     else
       printf 'disabled\n'
     fi
     ;;
   enable)
-    if [[ -f "$CONSENT" && ! -L "$CONSENT" ]]; then
+    if [[ -f "$ENABLED" && ! -L "$ENABLED" ]]; then
       configure_integration 0
       log "Clinch session capture was already enabled; managed files were refreshed."
     else
@@ -285,7 +300,7 @@ and install helper commands in:
   $BIN
 Captured session metadata will be stored in:
   $REG
-Consent and the non-secret change receipt will be stored in:
+The persisted setting and non-secret change receipt will be stored in:
   $STATE
 No notification plugin is installed.
 EOF
@@ -295,7 +310,7 @@ EOF
     fi
     ;;
   repair)
-    if [[ ! -f "$CONSENT" || -L "$CONSENT" ]]; then
+    if [[ ! -f "$ENABLED" || -L "$ENABLED" ]]; then
       exit 0
     fi
     configure_integration 0

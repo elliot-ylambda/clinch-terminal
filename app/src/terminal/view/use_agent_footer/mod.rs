@@ -70,8 +70,8 @@ use crate::terminal::cli_agent_sessions::CLIAgentRichInputCloseReason;
 use crate::terminal::model_events::{ModelEvent, ModelEventDispatcher};
 pub use crate::terminal::CLIAgent;
 use crate::terminal::TerminalModel;
+use crate::ui_components::blended_colors;
 use crate::ui_components::icons::Icon;
-use crate::ui_components::{blended_colors, CLINCH_LOGO_GREEN};
 use crate::view_components::action_button::{
     ActionButton, ActionButtonTheme, ButtonSize, KeystrokeSource, TooltipAlignment,
 };
@@ -434,7 +434,7 @@ impl TerminalView {
         })
     }
 
-    fn active_resume_command_seed(&self) -> Option<(AgentResumeProvider, String)> {
+    pub(super) fn active_resume_command_seed(&self) -> Option<(AgentResumeProvider, String)> {
         let model = self.model.lock();
         let active_block = model.block_list().active_block();
         active_block
@@ -1455,13 +1455,15 @@ impl View for UseAgentToolbar {
         // If a CLI agent is detected, delegate rendering to the CLI agent footer view.
         // Wrap with horizontal padding matching the terminal view padding so the footer
         // aligns consistently with the input context (which inherits terminal padding). The
-        // subtle logo-green top rule separates this persistent toolbelt from the agent UI.
+        // subtle accent-colored top rule separates this persistent toolbelt from the agent UI.
         if self.cli_agent(app).is_some() {
             let mut container = Container::new(ChildView::new(&self.agent_input_footer).finish())
                 .with_horizontal_padding(*super::PADDING_LEFT)
                 .with_border(
-                    Border::top(1.)
-                        .with_border_fill(ThemeFill::Solid(CLINCH_LOGO_GREEN).with_opacity(50)),
+                    Border::top(1.).with_border_fill(
+                        ThemeFill::Solid(Appearance::as_ref(app).theme().accent().into_solid())
+                            .with_opacity(50),
+                    ),
                 );
 
             // Apply the alt screen background on this outer container so it covers

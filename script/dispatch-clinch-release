@@ -97,7 +97,7 @@ Manual release QA for $REQUESTED_VERSION at $(git rev-parse --short HEAD):
   - candidate update manifest and signatures authenticated
   - clean DMG install and first launch passed
   - authenticated manual upgrade preserved the existing app until replacement
-  - session capture was off by default; opt-in, removal, and purge were scoped
+  - session capture was on after first launch; opt-out, re-enable, removal, and purge were scoped
   - app-only uninstall preserved capture data, transcripts, credentials, and ~/.warp
   - offline startup made no account, telemetry, crash, or update request
   - native Apple Silicon launch, shell, tabs/panes, settings, quit, and relaunch passed
@@ -162,8 +162,8 @@ create_qa_record() {
 - [x] Clean manual install from the candidate DMG succeeds.
 - [x] First launch succeeds using the documented Privacy & Security approval when required.
 - [x] Authenticated manual upgrade preserves the existing app until replacement succeeds.
-- [x] Session capture was off on a clean install and first launch.
-- [x] Session capture opt-in showed the affected paths and added only Clinch-managed entries.
+- [x] Session capture was on after a clean install and first launch.
+- [x] Session capture opt-out persisted across relaunch and re-enable restored only Clinch-managed entries.
 - [x] Session capture removal preserved unrelated Claude Code and Codex configuration.
 - [x] Capture purge listed and removed only the Clinch capture directory.
 - [x] App-only uninstall preserved capture data, transcripts, credentials, and unrelated \`~/.warp\` data.

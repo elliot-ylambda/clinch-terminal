@@ -137,19 +137,19 @@ fn app_id_enables_runtime(app_id: &str) -> bool {
     matches!(app_id, "sh.clinch.Clinch" | "sh.clinch.ClinchDev")
 }
 
-fn runtime_enabled_for(app_id: &str, has_consent: bool, explicit_override: bool) -> bool {
-    explicit_override || (app_id_enables_runtime(app_id) && has_consent)
+fn runtime_enabled_for(app_id: &str, capture_enabled: bool, explicit_override: bool) -> bool {
+    explicit_override || (app_id_enables_runtime(app_id) && capture_enabled)
 }
 
 fn runtime_enabled() -> bool {
     #[cfg(target_os = "macos")]
-    let has_consent = capture_layer_enabled();
+    let capture_enabled = capture_layer_enabled();
     #[cfg(not(target_os = "macos"))]
-    let has_consent = false;
+    let capture_enabled = false;
 
     runtime_enabled_for(
         &ChannelState::app_id().to_string(),
-        has_consent,
+        capture_enabled,
         std::env::var_os("CLINCH_AGENT_RESUME_ENABLE").is_some(),
     )
 }
@@ -161,61 +161,152 @@ fn bundled_capture_installer() -> Option<PathBuf> {
 }
 
 #[cfg(target_os = "macos")]
-fn capture_consent_marker() -> PathBuf {
-    if let Some(path) = std::env::var_os("CLINCH_AGENT_STATE_DIR") {
-        return PathBuf::from(path).join("enabled");
-    }
-    warp_core::paths::state_dir()
+fn default_capture_state_dir(base_config_dir: &Path) -> PathBuf {
+    // The provider hooks and helper runtime are shared by Clinch and Clinch Dev, so both apps
+    // must also share one persisted setting. The shell installer uses this same production-owned
+    // location by default.
+    base_config_dir
+        .join("sh.clinch.Clinch")
         .join("agent-integration")
-        .join("enabled")
 }
 
-/// Returns whether the user has explicitly enabled Claude/Codex session capture.
 #[cfg(target_os = "macos")]
-pub fn capture_layer_enabled() -> bool {
-    std::fs::symlink_metadata(capture_consent_marker())
+fn capture_state_dir() -> PathBuf {
+    if let Some(path) = std::env::var_os("CLINCH_AGENT_STATE_DIR") {
+        return PathBuf::from(path);
+    }
+    default_capture_state_dir(&warp_core::paths::base_config_dir())
+}
+
+#[cfg(target_os = "macos")]
+fn capture_state_file(name: &str) -> PathBuf {
+    capture_state_dir().join(name)
+}
+
+#[cfg(target_os = "macos")]
+fn capture_state_file_is_regular(name: &str) -> bool {
+    std::fs::symlink_metadata(capture_state_file(name))
         .is_ok_and(|metadata| metadata.file_type().is_file())
 }
 
-/// Enables or disables the bundled capture integration after a direct settings action.
+/// Returns the persisted Claude/Codex session-capture state.
 #[cfg(target_os = "macos")]
-pub fn set_capture_layer_enabled(enabled: bool) -> Result<(), String> {
-    use std::process::Stdio;
+pub fn capture_layer_enabled() -> bool {
+    capture_state_file_is_regular("enabled")
+}
 
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CaptureStartupAction {
+    Enable,
+    Repair,
+    Skip,
+}
+
+#[cfg(target_os = "macos")]
+fn capture_startup_action(
+    enabled: bool,
+    explicitly_disabled: bool,
+    has_legacy_receipt: bool,
+) -> CaptureStartupAction {
+    if enabled {
+        CaptureStartupAction::Repair
+    } else if explicitly_disabled || has_legacy_receipt {
+        // Older builds kept their receipt after `disable` but did not write a disabled marker.
+        // Treat that state as an opt-out so an upgrade never reverses the user's choice.
+        CaptureStartupAction::Skip
+    } else {
+        CaptureStartupAction::Enable
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn capture_startup_action_from_disk() -> CaptureStartupAction {
+    capture_startup_action(
+        capture_layer_enabled(),
+        capture_state_file_is_regular("disabled"),
+        capture_state_file_is_regular("receipt"),
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn capture_installer_failure(status: std::process::ExitStatus, stderr: &[u8]) -> String {
+    const MAX_DETAIL_CHARS: usize = 400;
+
+    let detail = String::from_utf8_lossy(stderr)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if detail.is_empty() {
+        return format!("the session-capture installer exited with {status}");
+    }
+
+    let detail = if detail.chars().count() > MAX_DETAIL_CHARS {
+        format!(
+            "{}…",
+            detail.chars().take(MAX_DETAIL_CHARS).collect::<String>()
+        )
+    } else {
+        detail
+    };
+    format!("{detail} ({status})")
+}
+
+#[cfg(target_os = "macos")]
+fn run_capture_installer(command: &str) -> Result<(), String> {
     use command::blocking::Command;
 
     let installer = bundled_capture_installer()
         .filter(|path| path.is_file())
         .ok_or_else(|| "the Clinch session-capture installer is missing".to_owned())?;
-    let status = Command::new("/bin/bash")
+    let output = Command::new("/bin/bash")
         .arg(installer)
-        .arg(if enabled { "enable" } else { "disable" })
+        .arg(command)
         .arg("--quiet")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .status()
+        .output()
         .map_err(|error| format!("could not run the session-capture installer: {error}"))?;
-    if status.success() {
+    if output.status.success() {
         Ok(())
     } else {
-        Err(format!(
-            "the session-capture installer exited with status {status}"
-        ))
+        Err(capture_installer_failure(output.status, &output.stderr))
     }
 }
 
-/// Refreshes the capture hooks shipped inside the Clinch app bundle, but only after consent.
+/// Enables or disables the bundled capture integration after a direct settings action.
+#[cfg(target_os = "macos")]
+pub fn set_capture_layer_enabled(enabled: bool) -> Result<(), String> {
+    run_capture_installer(if enabled { "enable" } else { "disable" })?;
+
+    let actual = capture_layer_enabled();
+    if actual != enabled {
+        return Err(format!(
+            "the session-capture installer did not persist the requested {} state",
+            if enabled { "enabled" } else { "disabled" }
+        ));
+    }
+    Ok(())
+}
+
+/// Enables the bundled capture hooks on first launch, refreshes them while enabled, and honors a
+/// persisted opt-out.
 ///
 /// This is intentionally fail-open: a hand-edited third-party config must never prevent the
-/// terminal itself from launching. `repair` is a no-op unless the durable consent marker exists.
+/// terminal itself from launching.
 #[cfg(target_os = "macos")]
 pub fn install_bundled_capture_layer() {
-    use std::process::Stdio;
+    if !app_id_enables_runtime(&ChannelState::app_id().to_string()) {
+        return;
+    }
 
-    use command::blocking::Command;
+    let action = capture_startup_action_from_disk();
+    let command = match action {
+        CaptureStartupAction::Enable => "enable",
+        CaptureStartupAction::Repair => "repair",
+        CaptureStartupAction::Skip => return,
+    };
 
-    // With no consent, startup must not create, rewrite, or clean up capture state.
-    if !capture_layer_enabled() {
+    if !bundled_capture_installer().is_some_and(|path| path.is_file()) {
+        // Expected for unbundled local/test binaries.
         return;
     }
 
@@ -223,21 +314,10 @@ pub fn install_bundled_capture_layer() {
     // SessionEnd. It must be gone before the first restored/new agent can exit.
     clear_app_terminating_marker();
 
-    let Some(installer) = bundled_capture_installer().filter(|path| path.is_file()) else {
-        // Expected for unbundled local/test binaries.
-        return;
-    };
-
-    let status = Command::new("/bin/bash")
-        .arg(installer)
-        .arg("repair")
-        .arg("--quiet")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-    if !status.is_ok_and(|status| status.success()) {
-        eprintln!("clinch: enabled Claude/Codex session capture could not be refreshed");
+    if let Err(error) = run_capture_installer(command) {
+        eprintln!("clinch: Claude/Codex session-capture {command} failed: {error}");
+    } else if action == CaptureStartupAction::Enable && !capture_layer_enabled() {
+        eprintln!("clinch: Claude/Codex session capture did not persist its enabled state");
     }
 }
 
@@ -270,6 +350,8 @@ struct PromptMirrorRecord {
     bridge: Option<String>,
     #[serde(default)]
     prompt: Option<String>,
+    #[serde(default)]
+    stop: bool,
     #[serde(default)]
     truncated: bool,
 }
@@ -529,6 +611,10 @@ pub struct AgentConversation {
     /// Single-line excerpt of the first user prompt, if it can be recovered from a prompt
     /// mirror or the agent's native transcript.
     pub first_prompt: Option<String>,
+    /// Whether the provider's native transcript contains a locally resumable user turn.
+    /// A bridged Claude conversation can have both this and `bridge`; local resume wins so the
+    /// reopened terminal paints the original visible history.
+    pub local_resumable: bool,
     /// Launch flags recorded with the latest journal write (leading space when
     /// non-empty), e.g. ` --dangerously-skip-permissions --model opus`.
     pub flags: String,
@@ -536,9 +622,10 @@ pub struct AgentConversation {
 
 impl AgentConversation {
     /// The command that reopens this conversation in a fresh pane, mirroring the
-    /// priority pane restore uses (`clinch_agent_resume_launch` in claude.zsh): a bridged
-    /// claude session teleports its authoritative cloud copy, everything else resumes
-    /// locally, and launch flags are forwarded either way. Unlike pane restore there is
+    /// priority pane restore uses (`clinch_agent_resume_launch` in claude.zsh): a Claude
+    /// session with a usable local transcript resumes locally so its visible history is
+    /// repainted; a bridge is the fallback for cloud-only sessions. Launch flags are forwarded
+    /// either way. Unlike pane restore there is
     /// deliberately no adopt/fresh fallback: the user picked *this* conversation, so a
     /// dead id should fail visibly in the pane instead of silently opening another
     /// session. Returns `None` for agents we don't know how to resume.
@@ -547,6 +634,7 @@ impl AgentConversation {
             agent,
             session_id,
             bridge,
+            local_resumable,
             flags,
             ..
         } = self;
@@ -554,6 +642,7 @@ impl AgentConversation {
             // Only claude.ai-shaped bridge ids are teleported, matching the shell
             // replay's `[[ "$bridge" == session_* ]]` guard; anything else a corrupt or
             // hand-edited record might contain falls back to local resume.
+            "claude" if *local_resumable => Some(format!("claude --resume {session_id}{flags}")),
             "claude" => Some(match bridge {
                 Some(bridge) if bridge.starts_with("session_") => {
                     format!("claude --teleport {bridge}{flags}")
@@ -658,6 +747,7 @@ fn recent_conversations_in(dir: &Path, limit: usize) -> Vec<AgentConversation> {
                     bridge: None,
                     start_ts: sighting.ts.clone(),
                     first_prompt: None,
+                    local_resumable: false,
                     flags: String::new(),
                 }
             });
@@ -690,7 +780,7 @@ fn recent_conversations_in(dir: &Path, limit: usize) -> Vec<AgentConversation> {
             Some(conversation)
         })
         .collect();
-    enrich_missing_first_prompts_from_transcripts(&mut conversations, &agent_transcript_roots());
+    enrich_conversations_from_transcripts(&mut conversations, &agent_transcript_roots());
     conversations
 }
 
@@ -860,10 +950,10 @@ fn prompt_history_from_transcript(
     }
 }
 
-/// Prompt mirrors are the cheapest and most precise source, but older Claude sessions and
-/// Codex sessions may not have one. Fill only those gaps from the agents' native transcripts.
-/// This runs once when the picker opens and scans each transcript tree at most once.
-fn enrich_missing_first_prompts_from_transcripts(
+/// Prompt mirrors are the cheapest source for titles, but reopen policy also needs to know whether
+/// the provider has a usable native transcript. Enrich title gaps and local-resume availability in
+/// one pass per transcript tree when the picker opens.
+fn enrich_conversations_from_transcripts(
     conversations: &mut [AgentConversation],
     roots: &AgentTranscriptRoots,
 ) {
@@ -873,19 +963,23 @@ fn enrich_missing_first_prompts_from_transcripts(
     ] {
         let session_ids: HashSet<_> = conversations
             .iter()
-            .filter(|conversation| {
-                conversation.agent == agent && conversation.first_prompt.is_none()
-            })
+            .filter(|conversation| conversation.agent == agent)
             .map(|conversation| conversation.session_id.clone())
             .collect();
         let Some(root) = root.filter(|root| !session_ids.is_empty() && root.is_dir()) else {
             continue;
         };
         let first_prompts = discover_first_prompts(root, agent, session_ids);
-        for conversation in conversations.iter_mut().filter(|conversation| {
-            conversation.agent == agent && conversation.first_prompt.is_none()
-        }) {
-            conversation.first_prompt = first_prompts.get(&conversation.session_id).cloned();
+        for conversation in conversations
+            .iter_mut()
+            .filter(|conversation| conversation.agent == agent)
+        {
+            if let Some(prompt) = first_prompts.get(&conversation.session_id) {
+                conversation.local_resumable = true;
+                if conversation.first_prompt.is_none() {
+                    conversation.first_prompt = Some(prompt.clone());
+                }
+            }
         }
     }
 }
@@ -1059,6 +1153,7 @@ fn read_prompt_mirror(path: &Path) -> Option<PromptMirrorRead> {
         is_partial: jsonl.is_partial,
     };
     let mut first_record = None;
+    let mut latest_prompt_in_open_turn: Option<String> = None;
     for value in jsonl.values {
         let Ok(record) = serde_json::from_value::<PromptMirrorRecord>(value) else {
             history.is_partial = true;
@@ -1068,11 +1163,24 @@ fn read_prompt_mirror(path: &Path) -> Option<PromptMirrorRead> {
             history.is_partial = true;
             continue;
         }
+        if record.stop {
+            latest_prompt_in_open_turn = None;
+            continue;
+        }
         let Some(prompt) = record.prompt.as_deref() else {
             history.is_partial = true;
             continue;
         };
         if prompt.trim().is_empty() {
+            continue;
+        }
+        // Claude can re-emit an unchanged retained input while the same turn is still in
+        // progress (for example after a control sequence or history navigation). Treat those as
+        // retries of one semantic submission. A Stop record clears this guard, so deliberately
+        // asking the same thing again after an answer remains a distinct turn. Legacy mirrors
+        // have no Stop records; coalescing only adjacent identical prompts is the least lossy
+        // recovery rule for them.
+        if latest_prompt_in_open_turn.as_deref() == Some(prompt) {
             continue;
         }
         if first_record.is_none() {
@@ -1082,6 +1190,7 @@ fn read_prompt_mirror(path: &Path) -> Option<PromptMirrorRead> {
             timestamp: record.ts.clone().filter(|timestamp| !timestamp.is_empty()),
             text: prompt.to_string(),
         });
+        latest_prompt_in_open_turn = Some(prompt.to_string());
     }
     Some(PromptMirrorRead {
         history,
@@ -1094,7 +1203,26 @@ fn prompt_history_from_claude_transcript(path: &Path) -> AgentPromptHistory {
         return AgentPromptHistory::default();
     };
     let mut prompts = Vec::new();
+    let mut latest_prompt_in_open_turn: Option<String> = None;
     for record in jsonl.values {
+        if record.get("type").and_then(Value::as_str) == Some("assistant") {
+            let has_visible_response = record
+                .pointer("/message/content")
+                .and_then(Value::as_array)
+                .is_some_and(|blocks| {
+                    blocks.iter().any(|block| {
+                        block.get("type").and_then(Value::as_str) == Some("text")
+                            && block
+                                .get("text")
+                                .and_then(Value::as_str)
+                                .is_some_and(|text| !text.trim().is_empty())
+                    })
+                });
+            if has_visible_response {
+                latest_prompt_in_open_turn = None;
+            }
+            continue;
+        }
         if record.get("type").and_then(Value::as_str) != Some("user")
             || record.get("isMeta").and_then(Value::as_bool) == Some(true)
         {
@@ -1106,6 +1234,12 @@ fn prompt_history_from_claude_transcript(path: &Path) -> AgentPromptHistory {
         if text.trim().is_empty() {
             continue;
         }
+        if is_generated_claude_user_message(&record, &text) {
+            continue;
+        }
+        if latest_prompt_in_open_turn.as_deref() == Some(text.as_str()) {
+            continue;
+        }
         prompts.push(AgentPrompt {
             timestamp: record
                 .get("timestamp")
@@ -1114,11 +1248,23 @@ fn prompt_history_from_claude_transcript(path: &Path) -> AgentPromptHistory {
                 .map(str::to_string),
             text,
         });
+        latest_prompt_in_open_turn = prompts.last().map(|prompt| prompt.text.clone());
     }
     AgentPromptHistory {
         prompts,
         is_partial: jsonl.is_partial,
     }
+}
+
+fn is_generated_claude_user_message(record: &Value, text: &str) -> bool {
+    if record.get("interruptedMessageId").is_some() {
+        return true;
+    }
+    let text = text.trim_start();
+    text == "[Request interrupted by user]"
+        || text.starts_with("This session is being continued from another machine.")
+        || text.starts_with("<local-command-")
+        || text.starts_with("<command-name>")
 }
 
 fn prompt_history_from_codex_transcript(path: &Path) -> AgentPromptHistory {

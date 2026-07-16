@@ -106,7 +106,9 @@ Figma: none provided.
     user-authored message for that agent session in chronological order, oldest first.
 
 18. Each history entry shows its turn number, full message text with original line breaks, and its
-    submission time when that time is available. Repeated messages remain separate turns.
+    submission time when that time is available. Repeated messages after a completed/ stopped turn
+    remain separate turns. If the provider re-submits the unchanged retained input while that same
+    turn is still in progress, Clinch shows it once rather than inventing another turn.
 
 19. Message text is shown in full, including original line breaks. Long histories scroll within a
     bounded popover instead of resizing the terminal or window. A dedicated selectable-text,
@@ -127,7 +129,8 @@ Figma: none provided.
 
 23. User messages observed while the session is live are added once and in submission order. A
     completion/stop notification that repeats the current query does not create a second history
-    entry.
+    entry, nor does an identical retained-input retry before that Stop. The same text submitted
+    after Stop is a new history entry.
 
 24. After Clinch quits and relaunches, restoring or resuming the same Claude Code or Codex session
     restores its first message, latest message, message count, and complete known user-message

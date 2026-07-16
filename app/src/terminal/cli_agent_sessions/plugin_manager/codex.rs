@@ -27,8 +27,10 @@ const PLATFORM_PLUGIN_KEY: &str = "orchestration@codex-warp";
 const CODEX_CONFIG_DIR: &str = ".codex";
 const CODEX_HOME_ENV: &str = "CODEX_HOME";
 
-// Keep in sync with the plugin version in warpdotdev/codex-warp.
-const MINIMUM_PLUGIN_VERSION: &str = "0.4.0";
+// Keep in sync with the bundled plugin version in resources/bundled/agent-plugins/codex-warp.
+// 0.4.1 adds the WARP_TTY fallback; without it no Codex hook event reaches Clinch on
+// Codex >= 0.144, which detached hook processes from the controlling terminal.
+const MINIMUM_PLUGIN_VERSION: &str = "0.4.1";
 // Keep in sync with the orchestration plugin version in warpdotdev/codex-warp.
 const MINIMUM_PLATFORM_PLUGIN_VERSION: &str = "0.4.0";
 

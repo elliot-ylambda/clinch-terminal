@@ -26,7 +26,7 @@ use crate::appearance::Appearance;
 use crate::root_view::NewWorkspaceSource;
 use crate::server::server_api::ServerTime;
 use crate::ui_components::icons::Icon;
-use crate::ui_components::CLINCH_LOGO_GREEN;
+use crate::ui_components::{CLINCH_DONE_BLUE, CLINCH_LOGO_GREEN};
 use crate::util::bindings::{self, CustomAction};
 use crate::workspace::{Workspace, WorkspaceEvent, WorkspaceRegistry};
 use crate::GlobalResourceHandles;
@@ -1125,12 +1125,14 @@ impl ProjectWindow {
                     .with_cross_axis_alignment(CrossAxisAlignment::Center);
                 // A blue completed count is the quantitative form of a completed-turn dot. Keep
                 // the plain dot for any other unread state, including mixed done + blocked cases.
+                // Both use the fixed done-blue rather than the theme accent: an accent that
+                // resolves to lime is indistinguishable from the green working badge.
                 if has_other_unread {
                     label.add_child(
                         Container::new(
                             ConstrainedBox::new(
                                 Rect::new()
-                                    .with_background(accent)
+                                    .with_background(Fill::Solid(CLINCH_DONE_BLUE))
                                     .with_corner_radius(CornerRadius::with_all(Radius::Percentage(
                                         50.,
                                     )))
@@ -1145,7 +1147,6 @@ impl ProjectWindow {
                     );
                 }
                 if agent_counts.done > 0 {
-                    let accent_color = accent.into_solid();
                     label.add_child(
                         Container::new(
                             Text::new_inline(
@@ -1153,13 +1154,13 @@ impl ProjectWindow {
                                 font_family,
                                 (font_size - 2.).max(8.),
                             )
-                            .with_color(accent_color)
+                            .with_color(CLINCH_DONE_BLUE)
                             .finish(),
                         )
                         .with_horizontal_padding(4.)
                         .with_border(
                             Border::all(PROJECT_AGENT_COUNT_BADGE_BORDER_WIDTH)
-                                .with_border_fill(Fill::Solid(accent_color)),
+                                .with_border_fill(Fill::Solid(CLINCH_DONE_BLUE)),
                         )
                         .with_corner_radius(CornerRadius::with_all(Radius::Percentage(50.)))
                         .with_margin_right(6.)
@@ -1262,7 +1263,7 @@ impl ProjectWindow {
                     inactive_background
                 };
                 let border_fill = if is_active {
-                    Fill::Solid(CLINCH_LOGO_GREEN)
+                    Fill::Solid(accent.into_solid())
                 } else if mouse_state.is_hovered() {
                     outline
                 } else {

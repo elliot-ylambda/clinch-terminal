@@ -93,6 +93,10 @@ pub(crate) enum BridgeEvent {
         version: u32,
         message: IncomingMessage,
     },
+    CursorAdvanced {
+        version: u32,
+        row_id: i64,
+    },
     PermissionRequired {
         version: u32,
         permission: BridgePermission,
@@ -130,5 +134,19 @@ mod tests {
         assert_eq!(value["version"], BRIDGE_PROTOCOL_VERSION);
         assert_eq!(value["id"], "permission");
         assert_eq!(value["command"], "request_automation");
+    }
+
+    #[test]
+    fn mirrored_message_cursor_event_is_versioned_and_body_free() {
+        let event: BridgeEvent =
+            serde_json::from_str(r#"{"event":"cursor_advanced","version":1,"row_id":42}"#).unwrap();
+
+        assert!(matches!(
+            event,
+            BridgeEvent::CursorAdvanced {
+                version: BRIDGE_PROTOCOL_VERSION,
+                row_id: 42
+            }
+        ));
     }
 }

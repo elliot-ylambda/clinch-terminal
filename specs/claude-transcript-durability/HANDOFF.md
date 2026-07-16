@@ -26,8 +26,8 @@ authorized shipping this scoped change directly to `clinch/main` without a PR:
 Two post-root-fix decisions required by TECH are explicit in code comments:
 
 - Prompt mirroring remains unconditional as cheap corruption/nested-session insurance.
-- Teleport remains first for a recorded bridge because remotely continued turns can make
-  the cloud copy newer than the local jsonl; local resume remains the fast-failure fallback.
+- Local resume comes first when its transcript has a real turn so the original id and visible
+  exchange survive relaunch; teleport remains the cloud-only fallback for a recorded bridge.
 
 ## Root cause: proved
 
@@ -97,7 +97,8 @@ After the clean relaunch, run PRODUCT's real lifecycle probe:
 2. Confirm a local `~/.claude/projects/**/<sid>.jsonl` exists and contains a real turn.
 3. Confirm `grep -rw "yo-durability-probe" ~/.warp/agent-resume/` finds the prompt mirror
    and the journal has the session/cwd/bridge pointer.
-4. Quit/reopen and confirm the pane restores via teleport or local resume.
+4. Quit/reopen and confirm a usable local transcript resumes with the complete visible exchange;
+   separately verify a bridge-only fixture still teleports.
 5. On the eventual clean durability branch, run one `make update` with an active probe and
    verify the pre-quit automatic snapshot plus post-update restore.
 

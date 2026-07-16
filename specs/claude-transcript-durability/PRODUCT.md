@@ -56,7 +56,8 @@ Before this work there was also **no automated pre-update snapshot**: the
 ### Durable local record (the core guarantee)
 1. Every Claude conversation started in a Clinch pane leaves a durable, append-only local
    record containing at minimum: session id, cwd, launch flags, bridge id (once known),
-   and every user prompt with timestamp. To prevent a runaway loop from filling the disk,
+   and every semantic user prompt with timestamp plus Stop boundaries that distinguish an
+   in-flight retained-input retry from a later identical turn. To prevent a runaway loop from filling the disk,
    prompt capture stops after about 5 MB for one session and appends an explicit truncation
    marker. This record exists even when Claude Code writes no local transcript.
 2. The record is plain text/JSONL under the user's home directory, greppable without Clinch running, and is never overwritten in place — only appended.
@@ -73,8 +74,9 @@ Before this work there was also **no automated pre-update snapshot**: the
    unwritable. An active-pane manifest prevents closed/zombie panes and append-only history
    from claiming live sessions during fallback.
 7. After Clinch quits (user quit, crash, or self-update) and relaunches, every captured
-   pane conversation is re-openable: bridged Claude sessions via teleport and local
-   Claude/Codex sessions via resume.
+   pane conversation is re-openable. A usable local Claude transcript resumes first so the
+   original session id and visible exchange are repainted; teleport recovers bridge-only Claude
+   sessions, and Codex resumes locally.
 8. `make update` snapshots the registry and journal **before** quitting, repairs legacy
    nested/stale/duplicate mappings while live process ancestry is still available, and
    refuses to replace the bundle unless LaunchServices and exact-path checks both confirm

@@ -12,8 +12,8 @@ See `PRODUCT.md` for user-visible behavior and incident history.
   permission mode, and prompt text; reconstructs launch flags from the live process argv;
   and writes one mutable pane entry through `clinch-agent-resume`.
 - **Replay**: `tools/agent-resume/claude.zsh` supplies
-  `clinch_agent_resume_launch`. It tries a recorded cloud bridge first, then a resumable
-  local id, then the newest unclaimed local session for the cwd, then a guarded fresh
+  `clinch_agent_resume_launch`. It tries a resumable local id first, then a recorded cloud
+  bridge, then the newest unclaimed local session for the cwd, then a guarded fresh
   launch.
 - **Rust persistence/replay**: `app/src/agent_resume.rs` reads the same registry for fork
   UI, publishes the active-pane manifest, and reconciles mutable registry state with the
@@ -71,10 +71,18 @@ On every non-empty `UserPromptSubmit`, `tools/agent-resume/claude-capture.sh` ap
 
 to `$DIR/prompts/<sid>.jsonl`.
 
+On `Stop`, it appends a turn boundary:
+
+```json
+{"ts":"<ISO8601>","stop":true}
+```
+
 - Mirroring occurs before the pane-ownership guard, so nested sessions keep their own
   prompt history without taking over the pane entry.
 - Mirroring stays unconditional even after launch hygiene restores normal jsonls. The
   redundancy is deliberate, cheap corruption insurance and covers child/nested sessions.
+- Readers coalesce an adjacent identical prompt only before the next Stop boundary. This hides
+  Claude retained-input retries while preserving an intentional identical prompt after an answer.
 - Files are private (`700` directory, `600` files), local-only, and capped at about 5 MB
   per session with one final `{"truncated":true}` marker.
 - Failure never fails or delays the Claude hook path beyond the attempted local append.
@@ -107,9 +115,11 @@ Two boundaries prevent a stale Claude identity from becoming a new top-level ses
   replay executable also sources `claude.zsh`, whose thin wrapper applies the same narrow
   identity scrub before it invokes the provider and forwards `"$@"` verbatim.
 
-Remote control stays enabled. Teleport also deliberately remains the first restore path
-when a valid bridge id is recorded: a cloud session may have turns continued from another
-device, so its cloud copy remains authoritative; local resume is the fast-failure fallback.
+Remote control stays enabled. A resumable local transcript is now the first restore path because
+`claude --resume` retains the original id and repaints its visible exchange. Teleport remains the
+fallback for a valid bridge whose local transcript is absent or unusable. This deliberately favors
+visible local continuity; remote-only continuation remains recoverable through the journaled bridge
+URL.
 
 ### 5. Discovery command
 
@@ -191,9 +201,9 @@ The shell suite under `tools/agent-resume/tests/` covers:
 - journal write/overwrite/remove history, escaping, permissions, list output, and fail-open
   behavior;
 - prompt JSON escaping, exact round-trip text, ownership-guard ordering, permissions,
-  bridge capture, empty/Stop behavior, and the single-marker size cap;
+  bridge capture, empty-prompt handling, Stop turn boundaries, and the single-marker size cap;
 - Claude launch wrapper identity scrubbing, unrelated/behavior environment preservation,
-  exact argv boundaries, and unchanged teleport/resume/fallback behavior;
+  exact argv boundaries, local-first visible-history resume, and cloud-only teleport fallback;
 - update relaunch scrubbing for current and future `CLAUDE_CODE_*` names, Make/update
   variables, unrelated-environment preservation, and exact bundle argv;
 - existing Claude flags, hooks, Codex hooks, installer wiring, and registry behavior.
