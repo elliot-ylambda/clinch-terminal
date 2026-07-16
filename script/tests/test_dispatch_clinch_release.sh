@@ -296,15 +296,21 @@ run_release_tty() {
     RELEASE_SCRIPT="$FIXTURE/script/dispatch-clinch-release" \
     /usr/bin/python3 - <<'PY'
 import errno
+import fcntl
 import os
 import pty
 
 pid, master = pty.fork()
 if pid == 0:
+    if os.environ.get("NONBLOCKING_STDIN") == "1":
+        flags = fcntl.fcntl(0, fcntl.F_GETFL)
+        fcntl.fcntl(0, fcntl.F_SETFL, flags | os.O_NONBLOCK)
     script = os.environ["RELEASE_SCRIPT"]
     os.execve(script, [script], os.environ)
 
-os.write(master, (os.environ["RELEASE_CONFIRMATION"] + "\n").encode())
+prompt = b"Type exactly: PUBLISH "
+recent = b""
+confirmation_sent = False
 while True:
     try:
         chunk = os.read(master, 4096)
@@ -315,6 +321,11 @@ while True:
     if not chunk:
         break
     os.write(1, chunk)
+    if not confirmation_sent:
+        recent = (recent + chunk)[-4096:]
+        if prompt in recent:
+            os.write(master, (os.environ["RELEASE_CONFIRMATION"] + "\n").encode())
+            confirmation_sent = True
 
 _, status = os.waitpid(pid, 0)
 raise SystemExit(os.waitstatus_to_exitcode(status))
@@ -331,7 +342,7 @@ assert_no_remote_mutation() {
 }
 
 reset_state
-run_release_tty "PUBLISH $VERSION ${COMMIT:0:12}" > "$TMP/happy.out"
+run_release_tty "PUBLISH $VERSION ${COMMIT:0:12}" NONBLOCKING_STDIN=1 > "$TMP/happy.out"
 grep -Fq "Locally built, verified, signed, and published $VERSION" "$TMP/happy.out"
 grep -Fq 'make release-check' "$TMP/ops.log"
 grep -Fq "make _verify VERSION=$VERSION UPDATE_SEQUENCE=$SEQUENCE UNIVERSAL=1" "$TMP/ops.log"

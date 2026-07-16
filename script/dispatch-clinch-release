@@ -27,6 +27,16 @@ fail() {
   exit 1
 }
 
+ensure_blocking_stdin() {
+  /usr/bin/python3 -c '
+import fcntl
+import os
+
+flags = fcntl.fcntl(0, fcntl.F_GETFL)
+fcntl.fcntl(0, fcntl.F_SETFL, flags & ~os.O_NONBLOCK)
+' || fail "could not restore blocking terminal input"
+}
+
 on_exit() {
   local status=$? failure_note
   trap - EXIT
@@ -104,6 +114,7 @@ Manual release QA for $REQUESTED_VERSION at $(git rev-parse --short HEAD):
 
 Type RELEASE only if every item above passed on this exact main revision:
 EOF
+  ensure_blocking_stdin
   read -r response
   [[ "$response" == RELEASE ]] || fail "release QA was not confirmed"
 }
@@ -203,6 +214,7 @@ downloads and verifies every uploaded asset, then publishes that release immedia
 
 Type exactly: $expected
 EOF
+  ensure_blocking_stdin
   read -r response
   [[ "$response" == "$expected" ]] || fail "publication was not confirmed"
 }
