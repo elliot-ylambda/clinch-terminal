@@ -66,7 +66,7 @@ use crate::context_chips::display_chip::{DisplayChip, DisplayChipConfig, PromptC
 use crate::context_chips::prompt_type::PromptType;
 use crate::context_chips::{self, ContextChipKind};
 use crate::features::FeatureFlag;
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
 use crate::imessage::{
     IMessageConnectionStatus, IMessageCoordinator, IMessageCoordinatorEvent, IMessagePermission,
 };
@@ -240,7 +240,7 @@ pub struct AgentInputFooter {
     quick_insert_add_button: ViewHandle<ActionButton>,
     rich_input_button: ViewHandle<ActionButton>,
     settings_button: ViewHandle<ActionButton>,
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
     message_me_button: ViewHandle<ActionButton>,
     install_plugin_button: ViewHandle<ActionButton>,
     plugin_instructions_button: ViewHandle<ActionButton>,
@@ -288,7 +288,7 @@ pub struct AgentInputFooter {
     prompt_cache_expiry_timer_handle: Option<SpawnedFutureHandle>,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
 #[derive(Debug, Eq, PartialEq)]
 struct IMessageFooterPresentation {
     label: String,
@@ -296,7 +296,7 @@ struct IMessageFooterPresentation {
     active: bool,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
 fn imessage_footer_presentation(
     setup_complete: bool,
     recipient_configured: bool,
@@ -607,7 +607,7 @@ impl AgentInputFooter {
                 })
         });
 
-        #[cfg(target_os = "macos")]
+        #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
         let message_me_button = ctx.add_typed_action_view(|_ctx| {
             ActionButton::new("Set up iMessage", ClinchAccentButtonTheme)
                 .with_icon(Icon::Phone01)
@@ -619,9 +619,9 @@ impl AgentInputFooter {
                 })
         });
 
-        #[cfg(target_os = "macos")]
+        #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
         let imessage_terminal_view_id = terminal_view_id;
-        #[cfg(target_os = "macos")]
+        #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
         ctx.subscribe_to_model(
             &IMessageCoordinator::handle(ctx),
             move |me, _, event, ctx| {
@@ -1059,7 +1059,7 @@ impl AgentInputFooter {
             quick_insert_add_button,
             rich_input_button,
             settings_button,
-            #[cfg(target_os = "macos")]
+            #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
             message_me_button,
             start_remote_control_button,
             stop_remote_control_button,
@@ -1103,7 +1103,7 @@ impl AgentInputFooter {
         };
         me.sync_fast_forward_button(ctx);
         me.sync_remote_control_button(ctx);
-        #[cfg(target_os = "macos")]
+        #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
         me.sync_message_me_button(ctx);
         me.update_context_window_button(ctx);
         me.update_display_chips(&prompt, ctx);
@@ -1247,7 +1247,7 @@ impl AgentInputFooter {
             .map(|session| session.agent)
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
     fn sync_message_me_button(&mut self, ctx: &mut ViewContext<Self>) {
         let coordinator = IMessageCoordinator::as_ref(ctx);
         let configuration = coordinator.configuration();
@@ -1967,7 +1967,7 @@ impl AgentInputFooter {
             }
         }
 
-        #[cfg(target_os = "macos")]
+        #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
         if IMessageCoordinator::as_ref(app).has_supported_session(self.terminal_view_id) {
             right_buttons.add_child(ChildView::new(&self.message_me_button).finish());
         }
@@ -2840,7 +2840,7 @@ pub enum AgentInputFooterAction {
     StartRemoteControl,
     StopRemoteControl,
     OpenCodingAgentSettings,
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
     ToggleIMessageNotifications,
     /// User clicked the "Hand off to cloud" footer chip. The terminal `Input`
     /// subscriber decides whether to dispatch the immediate empty-prompt
@@ -3114,7 +3114,7 @@ impl TypedActionView for AgentInputFooter {
                     widget_id: crate::settings_view::cli_agent_settings_widget_id(),
                 });
             }
-            #[cfg(target_os = "macos")]
+            #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
             AgentInputFooterAction::ToggleIMessageNotifications => {
                 let configuration = IMessageCoordinator::as_ref(ctx).configuration();
                 if configuration.setup_complete {
@@ -3559,7 +3559,7 @@ impl ActionButtonTheme for NLDButtonTheme {
     }
 }
 
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(all(test, target_os = "macos", feature = "clinch_imessage"))]
 mod imessage_footer_tests {
     use super::imessage_footer_presentation;
     use crate::imessage::{IMessageConnectionStatus, IMessagePermission};

@@ -286,7 +286,7 @@ use crate::editor::{
 use crate::env_vars::manager::{EnvVarCollectionManager, EnvVarCollectionSource};
 use crate::env_vars::CloudEnvVarCollection;
 use crate::experiments::{BlockOnboarding, Experiment};
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
 use crate::imessage::{IMessageConnectionStatus, IMessageCoordinator, IMessagePermission};
 use crate::launch_configs::launch_config::WindowTemplate;
 use crate::launch_configs::save_modal::{LaunchConfigModalEvent, LaunchConfigSaveModal};
@@ -713,11 +713,11 @@ const AUTO_CLOUD_HANDOFF_PROMPT: &str =
 /// The default display name used for the user if they have no associated display name.
 pub const DEFAULT_USER_DISPLAY_NAME: &str = "User";
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
 const IMESSAGE_HEADER_SETUP_PROMPT: &str =
     "Use Clinch over iMessage to talk with Claude and Codex.";
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
 fn imessage_header_setup_prompt(
     setup_complete: bool,
     status: &IMessageConnectionStatus,
@@ -3238,7 +3238,7 @@ impl Workspace {
         ctx.subscribe_to_model(&CLIAgentSessionsModel::handle(ctx), |me, _, event, ctx| {
             me.handle_cli_agent_sessions_event(event, ctx);
         });
-        #[cfg(target_os = "macos")]
+        #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
         ctx.subscribe_to_model(&IMessageCoordinator::handle(ctx), |_, _, _, ctx| {
             ctx.notify();
         });
@@ -21711,11 +21711,11 @@ impl Workspace {
             }
             HeaderToolbarItemKind::CodeReview => self.render_right_panel_button(appearance, ctx),
             HeaderToolbarItemKind::IMessageStatus => {
-                #[cfg(target_os = "macos")]
+                #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
                 {
                     self.render_imessage_status_button(appearance, ctx)
                 }
-                #[cfg(not(target_os = "macos"))]
+                #[cfg(not(all(target_os = "macos", feature = "clinch_imessage")))]
                 {
                     return None;
                 }
@@ -21740,7 +21740,7 @@ impl Workspace {
         )
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
     fn render_imessage_status_button(
         &self,
         appearance: &Appearance,

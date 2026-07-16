@@ -2,7 +2,7 @@ use settings::Setting as _;
 use warpui::platform::WindowStyle;
 use warpui::{App, SingletonEntity, TypedActionView};
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
 use super::{
     imessage_requirement_label, imessage_setup_stage, imessage_test_presentation,
     IMessageSetupStage,
@@ -10,7 +10,7 @@ use super::{
 use super::{ClinchSettingsPageAction, ClinchSettingsPageView};
 use crate::appearance::Appearance;
 use crate::auth::AuthStateProvider;
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
 use crate::imessage::{
     IMessageConnectionStatus, IMessageCoordinator, IMessagePermission, IMessageSetupRequirements,
     IMessageTestStatus,
@@ -19,13 +19,13 @@ use crate::imessage::{
 use crate::settings::CliAgentUsageSettings;
 use crate::settings::ClinchSettings;
 use crate::settings_view::keybindings::KeybindingChangedNotifier;
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
 use crate::terminal::cli_agent_sessions::CLIAgentSessionsModel;
 use crate::terminal::session_settings::SessionSettings;
 use crate::test_util::settings::initialize_settings_for_tests;
 
 #[test]
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
 fn imessage_setup_stage_tracks_the_submitted_number_and_permission_flow() {
     assert_eq!(
         imessage_setup_stage(false, true, &IMessageConnectionStatus::SetupRequired),
@@ -78,7 +78,7 @@ fn imessage_setup_stage_tracks_the_submitted_number_and_permission_flow() {
 }
 
 #[test]
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
 fn imessage_setup_checklist_and_test_copy_are_truthful() {
     let checking = IMessageSetupRequirements::default();
     let ready = IMessageSetupRequirements {
@@ -158,9 +158,9 @@ fn imessage_setup_checklist_and_test_copy_are_truthful() {
 fn agent_status_action_toggles_only_the_clinch_badge_setting() {
     App::test((), |mut app| async move {
         initialize_settings_for_tests(&mut app);
-        #[cfg(target_os = "macos")]
+        #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
         app.add_singleton_model(|_| CLIAgentSessionsModel::new());
-        #[cfg(target_os = "macos")]
+        #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
         app.add_singleton_model(IMessageCoordinator::new);
         app.add_singleton_model(|_| AuthStateProvider::new_logged_out_for_test());
         app.add_singleton_model(|_| KeybindingChangedNotifier::new());
@@ -185,9 +185,9 @@ fn agent_status_action_toggles_only_the_clinch_badge_setting() {
 fn auto_worktree_action_toggles_the_local_clinch_setting() {
     App::test((), |mut app| async move {
         initialize_settings_for_tests(&mut app);
-        #[cfg(target_os = "macos")]
+        #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
         app.add_singleton_model(|_| CLIAgentSessionsModel::new());
-        #[cfg(target_os = "macos")]
+        #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
         app.add_singleton_model(IMessageCoordinator::new);
         app.add_singleton_model(|_| AuthStateProvider::new_logged_out_for_test());
         app.add_singleton_model(|_| KeybindingChangedNotifier::new());
@@ -216,7 +216,9 @@ fn auto_worktree_action_toggles_the_local_clinch_setting() {
 fn plan_limits_action_toggles_the_existing_opt_in_setting() {
     App::test((), |mut app| async move {
         initialize_settings_for_tests(&mut app);
+        #[cfg(feature = "clinch_imessage")]
         app.add_singleton_model(|_| CLIAgentSessionsModel::new());
+        #[cfg(feature = "clinch_imessage")]
         app.add_singleton_model(IMessageCoordinator::new);
         app.add_singleton_model(|_| AuthStateProvider::new_logged_out_for_test());
         app.add_singleton_model(|_| KeybindingChangedNotifier::new());
@@ -236,7 +238,7 @@ fn plan_limits_action_toggles_the_existing_opt_in_setting() {
 }
 
 #[test]
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
 fn imessage_default_action_changes_only_the_session_notification_default() {
     App::test((), |mut app| async move {
         initialize_settings_for_tests(&mut app);

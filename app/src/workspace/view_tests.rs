@@ -145,7 +145,7 @@ fn cli_agent_session_seed_poll_never_overwrites_a_structured_identity() {
 }
 
 #[test]
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
 fn imessage_header_prompts_for_setup_until_setup_is_complete() {
     assert_eq!(
         imessage_header_setup_prompt(false, &IMessageConnectionStatus::SetupRequired),

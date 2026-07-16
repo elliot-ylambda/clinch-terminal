@@ -93,36 +93,11 @@ deleted transcripts, changed CLIs, and abrupt power loss can prevent an exact re
 More implementation detail is in
 [tools/agent-resume/README.md](tools/agent-resume/README.md).
 
-## Two-way iMessage is optional
-
-On macOS 14 or later, Clinch can use the Messages account already signed in on the Mac to text an
-iPhone with the full final response when a durable Codex or Claude Code turn finishes. Long
-responses are split into ordered plain-text parts. A reply can start a follow-up in the same live
-session; when several sessions are eligible, each completion includes a short route code. No
-iPhone app, Clinch account, hosted relay, or SMS fallback is used.
-
-Set it up under **Clinch Settings → iMessage**. Setup sends a calibration message and requires:
-
-- **Messages Automation**, so Clinch can ask Messages to send iMessage-only text; and
-- **Full Disk Access**, so Clinch's bundled local helper can watch the calibrated conversation in
-  the Messages database for replies.
-
-Messaging is enabled for current and new supported sessions after calibration, with a **Message
-me** opt-out in each session footer. Replies received while an agent is working are queued locally
-and are never injected into permission or confirmation prompts. Disconnecting clears Clinch's
-phone configuration, routing state, and queued replies without deleting Messages history.
-
-Apple does not expose a trustworthy source-device identity for synchronized Messages. Clinch can
-restrict replies to the calibrated conversation, but it cannot prove that a reply came from the
-iPhone rather than another Apple device signed in to the same account.
-
 ## Main features
 
 - Project tabs that keep independent terminal workspaces in one window.
 - Persistence for project order, working directories, terminal tabs, splits, and panels.
 - Optional Claude Code and Codex session capture and pane-level resume.
-- Optional local two-way iMessage completion notifications and routed follow-ups for durable
-  Claude Code and Codex sessions.
 - Local agent-status badges and macOS notification routing when a compatible provider signal is
   available.
 - Optional Claude Code plan-limit gauges; they are off by default and contact Anthropic only after
@@ -139,16 +114,14 @@ The stable channel is created by
 RudderStack telemetry, Sentry crash reporting, bundled MCP credentials, or automatic updater
 configuration. When telemetry is unavailable, the runtime does not schedule telemetry tasks,
 persist a queue, or send it; stale Clinch telemetry queues are deleted without upload. The public
-bundle carries only the Apple Events entitlement needed by the optional Messages integration and
-does not include the privileged update helper.
+bundle carries no Clinch-specific privacy entitlement and does not include the privileged update
+helper.
 
 Stable Clinch starts no Warp account session, telemetry/crash reporter, or automatic release
 check. Network activity still occurs when the user asks for it or launches software that uses it.
 Examples include Claude Code, Codex, SSH, MCP servers, remote assets, language/package tooling,
 provider plugin commands, and the optional Claude plan-limit gauge. Those tools have their own
-privacy and security behavior. If two-way iMessage is enabled, Messages uses Apple's iMessage
-service and the local helper uses read-only database access while watching only the calibrated
-Messages conversation.
+privacy and security behavior.
 
 Session-capture data stays in local Clinch-owned files. Claude Code and Codex continue to manage
 their own transcripts and credentials. Clinch does not delete provider transcripts or Keychain

@@ -27,15 +27,9 @@ command re-downloads and verifies the private draft before publishing it without
 - [ ] Session capture opt-in shows the affected paths and adds only Clinch-managed entries.
 - [ ] Session capture removal preserves unrelated Claude Code and Codex configuration.
 - [ ] Capture purge lists and removes only the Clinch capture directory.
-- [ ] Two-way iMessage is off before setup and accurately identifies missing Messages sign-in,
-      Automation, and Full Disk Access states.
-- [ ] iPhone calibration succeeds without an iPhone app; denying, granting, revoking, and
-      regranting both macOS permissions pauses and resumes without duplicate delivery.
-- [ ] Simultaneous Codex and Claude Code sessions receive distinct route codes; reply-to-message,
-      explicit-code, ambiguous-selection, busy FIFO, blocked-prompt, and restart routing all reach
-      only the intended durable session.
-- [ ] Per-session opt-out and Disconnect stop delivery; Disconnect clears Clinch routing state
-      without deleting Messages history.
+- [ ] No iMessage control appears in the header, Clinch Settings, or Claude Code/Codex footer.
+- [ ] The app contains no Messages helper, Apple Events entitlement, or Apple Events usage
+      description.
 - [ ] App-only uninstall removes Clinch without removing capture data, provider transcripts,
       Keychain credentials, or unrelated `~/.warp` data.
 - [ ] Startup while offline succeeds without a Warp account, telemetry, crash-reporting, or update

@@ -102,16 +102,16 @@ injection tests, and independent review.
 ### 4. Bundle permissions and platform contract
 
 Use a Clinch-only release entitlement plist selected by the Clinch bundle identifier, not by the
-shared stable channel. It contains only `com.apple.security.automation.apple-events`, the
-documented capability used by the optional two-way iMessage feature. Keep hardened-runtime code
-signing but use deterministic ad-hoc signing for the public preview unless an explicit compatible
-identity is provided. Do not request app sandboxing or microphone, camera, contacts, calendar,
-location, Photos, app-group, JIT, library-validation bypass, or debugger entitlements.
+shared stable channel. The current release plist is empty because no shipped Clinch capability
+needs a privacy entitlement. Keep hardened-runtime code signing but use deterministic ad-hoc
+signing for the public preview unless an explicit compatible identity is provided. Do not request
+app sandboxing or microphone, camera, contacts, calendar, location, Photos, app-group, Apple
+Events, JIT, library-validation bypass, or debugger entitlements.
 
-`script/update_plist` omits unrelated privacy usage descriptions, includes a specific Apple Events
-usage description, and writes an explicit minimum macOS version. Release verification rejects
-forbidden entitlements or dead usage keys, confirms both `arm64` and `x86_64` app/helper slices,
-and smoke-tests the nested Messages bridge.
+`script/update_plist` omits unrelated privacy usage descriptions and writes an explicit minimum
+macOS version. Release verification rejects forbidden entitlements or dead usage keys, confirms
+both `arm64` and `x86_64` app slices, and rejects the disabled messaging helper and its resource
+bundles if any are present.
 
 ### 5. Local release gate and direct publication
 

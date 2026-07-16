@@ -2,7 +2,10 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use ::settings::{Setting, ToggleableSetting};
-use warpui::elements::{ChildView, ConstrainedBox, Element, Flex, MouseStateHandle, ParentElement};
+#[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
+use warpui::elements::{ChildView, ConstrainedBox, Flex, ParentElement};
+use warpui::elements::{Element, MouseStateHandle};
+#[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
 use warpui::ui_components::button::ButtonVariant;
 use warpui::ui_components::components::UiComponent;
 use warpui::ui_components::switch::SwitchStateHandle;
@@ -14,7 +17,7 @@ use super::settings_page::{
 };
 use super::{SettingsSection, ToggleState};
 use crate::appearance::Appearance;
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
 use crate::imessage::{
     IMessageConnectionStatus, IMessageCoordinator, IMessagePermission, IMessageSetupRequirements,
     IMessageTestStatus,
@@ -24,26 +27,26 @@ use crate::settings::{
     AutoCreateWorktreesForNewTabs, CliAgentUsageSettings, ClinchSettings, ShowCliAgentPlanLimits,
 };
 use crate::terminal::session_settings::{NotificationsSettings, SessionSettings};
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
 use crate::view_components::{SubmittableTextInput, SubmittableTextInputEvent};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ClinchSettingsPageAction {
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
     IMessageEnabled,
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
     IMessageNotificationsDefault,
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
     IMessageTest,
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
     IMessageRefresh,
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
     IMessageRequestAutomation,
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
     IMessageChangeNumber,
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
     OpenMessages,
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
     OpenFullDiskAccessSettings,
     SessionCapture,
     AgentStatusOnTabs,
@@ -55,7 +58,7 @@ pub struct ClinchSettingsPageView {
     page: PageType<Self>,
     local_only_icon_tooltip_states: RefCell<HashMap<String, MouseStateHandle>>,
     session_capture_enabled: bool,
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
     imessage_recipient_editor: ViewHandle<SubmittableTextInput>,
 }
 
@@ -67,11 +70,11 @@ impl ClinchSettingsPageView {
         });
         ctx.subscribe_to_model(&ClinchSettings::handle(ctx), |_, _, _, ctx| ctx.notify());
 
-        #[cfg(target_os = "macos")]
+        #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
         ctx.subscribe_to_model(&IMessageCoordinator::handle(ctx), |_, _, _, ctx| {
             ctx.notify()
         });
-        #[cfg(target_os = "macos")]
+        #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
         if matches!(
             IMessageCoordinator::as_ref(ctx).status(),
             IMessageConnectionStatus::Paused(_) | IMessageConnectionStatus::Error
@@ -81,7 +84,7 @@ impl ClinchSettingsPageView {
             });
         }
 
-        #[cfg(target_os = "macos")]
+        #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
         let imessage_recipient_editor = ctx.add_typed_action_view(|ctx| {
             let mut input = SubmittableTextInput::new(ctx)
                 .validate_on_submit(|recipient| {
@@ -106,7 +109,7 @@ impl ClinchSettingsPageView {
             }
             input
         });
-        #[cfg(target_os = "macos")]
+        #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
         ctx.subscribe_to_view(&imessage_recipient_editor, |_, _, event, ctx| match event {
             SubmittableTextInputEvent::Submit(recipient) => {
                 IMessageCoordinator::handle(ctx).update(ctx, |coordinator, ctx| {
@@ -139,7 +142,7 @@ impl ClinchSettingsPageView {
         }
 
         let mut categories = vec![];
-        #[cfg(target_os = "macos")]
+        #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
         categories.push(Category::new(
             "iMessage",
             vec![Box::new(IMessageWidget::default())],
@@ -159,7 +162,7 @@ impl ClinchSettingsPageView {
             session_capture_enabled: crate::agent_resume::capture_layer_enabled(),
             #[cfg(not(target_os = "macos"))]
             session_capture_enabled: false,
-            #[cfg(target_os = "macos")]
+            #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
             imessage_recipient_editor,
         }
     }
@@ -174,14 +177,14 @@ impl TypedActionView for ClinchSettingsPageView {
 
     fn handle_action(&mut self, action: &Self::Action, ctx: &mut ViewContext<Self>) {
         match action {
-            #[cfg(target_os = "macos")]
+            #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
             ClinchSettingsPageAction::IMessageEnabled => {
                 let enabled = IMessageCoordinator::as_ref(ctx).configuration().enabled;
                 IMessageCoordinator::handle(ctx).update(ctx, |coordinator, ctx| {
                     coordinator.set_enabled(!enabled, ctx);
                 });
             }
-            #[cfg(target_os = "macos")]
+            #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
             ClinchSettingsPageAction::IMessageNotificationsDefault => {
                 let enabled = IMessageCoordinator::as_ref(ctx)
                     .configuration()
@@ -190,19 +193,19 @@ impl TypedActionView for ClinchSettingsPageView {
                     coordinator.set_notifications_enabled_by_default(!enabled, ctx);
                 });
             }
-            #[cfg(target_os = "macos")]
+            #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
             ClinchSettingsPageAction::IMessageTest => {
                 IMessageCoordinator::handle(ctx).update(ctx, |coordinator, ctx| {
                     coordinator.send_test_message(ctx);
                 });
             }
-            #[cfg(target_os = "macos")]
+            #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
             ClinchSettingsPageAction::IMessageRefresh => {
                 IMessageCoordinator::handle(ctx).update(ctx, |coordinator, ctx| {
                     coordinator.refresh_health(ctx);
                 });
             }
-            #[cfg(target_os = "macos")]
+            #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
             ClinchSettingsPageAction::IMessageRequestAutomation => {
                 IMessageCoordinator::handle(ctx).update(ctx, |coordinator, ctx| {
                     coordinator.request_automation_access(ctx);
@@ -211,7 +214,7 @@ impl TypedActionView for ClinchSettingsPageView {
                     "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation",
                 );
             }
-            #[cfg(target_os = "macos")]
+            #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
             ClinchSettingsPageAction::IMessageChangeNumber => {
                 IMessageCoordinator::handle(ctx).update(ctx, |coordinator, ctx| {
                     coordinator.disconnect(ctx);
@@ -222,11 +225,11 @@ impl TypedActionView for ClinchSettingsPageView {
                         .update(ctx, |editor, ctx| editor.clear_buffer(ctx));
                 });
             }
-            #[cfg(target_os = "macos")]
+            #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
             ClinchSettingsPageAction::OpenMessages => {
                 ctx.open_url("imessage:");
             }
-            #[cfg(target_os = "macos")]
+            #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
             ClinchSettingsPageAction::OpenFullDiskAccessSettings => {
                 ctx.open_url(
                     "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
@@ -377,7 +380,7 @@ impl From<ViewHandle<ClinchSettingsPageView>> for SettingsPageViewHandle {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum IMessageSetupStage {
     EnterNumber,
@@ -393,7 +396,7 @@ enum IMessageSetupStage {
     Error,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
 fn imessage_setup_stage(
     setup_complete: bool,
     recipient_is_empty: bool,
@@ -429,7 +432,7 @@ fn imessage_setup_stage(
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct IMessageTestPresentation {
     label: &'static str,
@@ -437,7 +440,7 @@ struct IMessageTestPresentation {
     enabled: bool,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
 fn imessage_test_presentation(
     setup_complete: bool,
     connection_enabled: bool,
@@ -497,7 +500,7 @@ fn imessage_test_presentation(
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
 fn imessage_requirement_label(name: &str, status: Option<bool>) -> String {
     match status {
         Some(true) => format!("✓ {name}"),
@@ -506,7 +509,7 @@ fn imessage_requirement_label(name: &str, status: Option<bool>) -> String {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
 #[derive(Default)]
 struct IMessageWidget {
     enabled_switch_state: SwitchStateHandle,
@@ -520,7 +523,7 @@ struct IMessageWidget {
     full_disk_access_button_state: MouseStateHandle,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
 impl SettingsWidget for IMessageWidget {
     type View = ClinchSettingsPageView;
 

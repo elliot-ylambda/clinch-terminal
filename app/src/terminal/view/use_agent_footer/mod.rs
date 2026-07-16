@@ -13,9 +13,13 @@ use crate::ai::blocklist::agent_view::agent_input_footer::{
     AgentInputFooter, AgentInputFooterEvent,
 };
 use crate::terminal::cli_agent_sessions::auto_continue::AutoContinueModel;
-use crate::terminal::cli_agent_sessions::{
-    CLIAgentInputEntrypoint, CLIAgentSessionStatus, CLIAgentSessionsModel,
-};
+#[cfg(all(
+    target_os = "macos",
+    feature = "clinch_imessage",
+    feature = "local_tty"
+))]
+use crate::terminal::cli_agent_sessions::CLIAgentSessionStatus;
+use crate::terminal::cli_agent_sessions::{CLIAgentInputEntrypoint, CLIAgentSessionsModel};
 use crate::terminal::shared_session::{
     SharedSessionActionSource, SharedSessionScrollbackType, SharedSessionSource,
 };
@@ -809,7 +813,11 @@ impl TerminalView {
     /// a reply received through Clinch's local iMessage bridge. This is the
     /// only external-reply entry point: a stale pane ID, a busy/blocked turn,
     /// or an exited foreground process must never receive the text.
-    #[cfg(all(target_os = "macos", feature = "local_tty"))]
+    #[cfg(all(
+        target_os = "macos",
+        feature = "local_tty",
+        feature = "clinch_imessage"
+    ))]
     pub(crate) fn submit_external_imessage_reply(
         &mut self,
         expected_key: crate::terminal::cli_agent_sessions::CLIAgentSessionKey,

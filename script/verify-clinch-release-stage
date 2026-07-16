@@ -204,8 +204,8 @@ if validation.get("notarized") is not False:
 if validation.get("artifact_checks") != [
     "universal x86_64+arm64",
     "ad-hoc hardened-runtime signature",
-    "Messages automation entitlement only",
-    "universal signed iMessage helper",
+    "no Apple Events entitlement or usage description",
+    "no bundled iMessage helper",
     "ZIP/DMG app equality",
     "integration opt-in and removal",
     "signed exact-tag manifest",

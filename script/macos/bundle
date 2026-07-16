@@ -346,9 +346,8 @@ elif [[ $RELEASE_CHANNEL = "stable" ]]; then
     WARP_APP_NAME="Clinch"
     WARP_DISPLAY_NAME="$WARP_APP_NAME"
     WARP_SCHEME_NAME="clinch"
-    # Two-way Messages integration uses macOS 14 APIs and its pinned database reader requires 14.
-    # Keep the binary deployment target, plist, signed
-    # release manifest, installer, and website on one explicit value.
+    # Keep the binary deployment target, plist, signed release manifest, installer, and website
+    # on one explicit public-preview support baseline.
     export MACOSX_DEPLOYMENT_TARGET="${CLINCH_MINIMUM_MACOS_VERSION:-14.0}"
     # Clinch fork: intentionally omit jemalloc_pprof/heap_usage_tracking. They are Warp-internal
     # profiling features that bundle the Go-based pprof binary (script/prepare_bundled_pprof runs
@@ -406,6 +405,12 @@ elif [[ "$ARTIFACT" == app ]]; then
   # All channels ship the v3 classifier and v2 heuristic.
   FEATURES="$FEATURES,gui,nld_classifier_v3,nld_heuristic_v2"
 fi
+
+if [[ "$RELEASE_CHANNEL" == "stable" && ",$FEATURES," =~ ",clinch_imessage," ]]; then
+  echo "The current Clinch release excludes the iMessage feature." >&2
+  exit 1
+fi
+export CLINCH_IMESSAGE_FEATURE_ENABLED=0
 
 # If we're building a universal bundle for the app artifact, make sure the additional target is available.
 if [[ $UNIVERSAL_BINARY = true ]]; then
@@ -578,7 +583,8 @@ if [[ "$ARTIFACT" == "app" ]]; then
   "$WORKSPACE_ROOT_DIR/script/compile_icon" "$RELEASE_CHANNEL" "$BUNDLE_DIR/$WARP_APP_NAME.app"
 
   HELPERS_DIR="$BUNDLE_DIR/$WARP_APP_NAME.app/Contents/Helpers"
-  if [[ "$BUNDLE_ID" == "sh.clinch.Clinch" || "$BUNDLE_ID" == "sh.clinch.ClinchDev" ]]; then
+  if [[ "$CLINCH_IMESSAGE_FEATURE_ENABLED" == "1" ]] \
+      && [[ "$BUNDLE_ID" == "sh.clinch.Clinch" || "$BUNDLE_ID" == "sh.clinch.ClinchDev" ]]; then
     echo "Bundling the universal Clinch iMessage bridge..."
     "$WORKSPACE_ROOT_DIR/script/build-clinch-imessage-bridge" "$HELPERS_DIR" --universal
   fi
@@ -768,9 +774,8 @@ if [[ $SELFSIGN = true ]]; then
   # code be injected into a process holding Keychain access.
   if [[ "$ARTIFACT" == app ]]; then
     echo "Self-signing $BUNDLE_DIR/$WARP_APP_NAME.app with ${SIGNING_CERT}..."
-    # The first deep pass signs inherited nested code. The Messages helper is
-    # then re-signed with its required Apple Events entitlement, followed by a
-    # final outer-app pass so the bundle seal authenticates that exact helper.
+    # The first deep pass signs inherited nested code. Any explicitly enabled
+    # nested helper is then re-signed before refreshing the outer bundle seal.
     codesign --force --deep --options runtime --sign "$SIGNING_CERT" "$BUNDLE_DIR/$WARP_APP_NAME.app" --entitlements "$SIGNING_ENTITLEMENTS"
     if [[ -x "$BUNDLE_DIR/$WARP_APP_NAME.app/Contents/Helpers/clinch-imessage-bridge" ]]; then
       codesign --force --options runtime --sign "$SIGNING_CERT" \
@@ -792,8 +797,8 @@ elif [[ $CODESIGN = true ]]; then
   fi
   if [[ "$ARTIFACT" == app ]]; then
     echo "Codesigning $BUNDLE_DIR/$WARP_APP_NAME.app..."
-    # Deep-sign inherited nested code first, then put the Apple Events
-    # entitlement back on the Messages helper and refresh the outer seal.
+    # Deep-sign inherited nested code first, then refresh the outer seal after
+    # any explicitly enabled nested helper is signed.
     codesign --deep -f -o runtime --timestamp -s "$APPLE_TEAM_ID" "$BUNDLE_DIR/$WARP_APP_NAME.app" --entitlements "$SIGNING_ENTITLEMENTS"
     if [[ -x "$BUNDLE_DIR/$WARP_APP_NAME.app/Contents/Helpers/clinch-imessage-bridge" ]]; then
       codesign --force --options runtime --timestamp --sign "$APPLE_TEAM_ID" \

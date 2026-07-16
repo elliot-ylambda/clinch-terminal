@@ -35,8 +35,8 @@ Clinch adds its own release controls:
 - the convenience installer authenticates the manifest before parsing it and downloads only from
   the authenticated exact tag;
 - the local release gate verifies the app, ZIP, and mounted DMG, including their identity,
-  architectures, the single documented Messages Automation entitlement, nested-helper and app
-  code-signature structure, and matching app files;
+  architectures, absence of unused privacy entitlements and excluded helpers, code-signature
+  structure, and matching app files;
 - the release workstation publishes a CycloneDX SBOM, signed validation record, signed checksum
   list, and release-key-signed local provenance for the exact gated commit;
 - the local release command downloads and independently verifies the private draft before making
@@ -64,17 +64,14 @@ The release review treats these as security-sensitive:
 - Claude Code and Codex configuration hooks, local transcripts, prompt mirrors, and provider
   credentials;
 - plugin sources and provider CLI commands;
-- the optional Messages Automation sender, read-only Messages database watcher, phone reply
-  routing, and locally queued reply bodies;
 - optional SSH, MCP, remote assets, language servers, and other user-launched network clients; and
 - any future privileged update helper.
 
 Clinch is a terminal, so it intentionally is not App Sandbox constrained. It launches arbitrary
-user commands and needs normal filesystem, PTY, process, and network access. The public bundle's
-Clinch-specific entitlement plist contains only `com.apple.security.automation.apple-events` for
-the optional, user-enabled Messages integration. Development, microphone, camera, contacts,
-calendars, location, Photos, app-group, JIT, and library-validation bypass entitlements are
-rejected by release verification.
+user commands and needs normal filesystem, PTY, process, and network access. The current public
+bundle has no Clinch-specific privacy entitlement. Development, microphone, camera, contacts,
+calendars, location, Photos, app-group, JIT, library-validation bypass, and Apple Events
+entitlements are rejected by release verification.
 
 ## Privacy posture
 
@@ -87,16 +84,6 @@ Optional session capture is off until a user enables it. Its managed Claude Code
 write local pane mappings, a journal, and prompt mirrors. Those files can contain sensitive paths,
 commands, identifiers, and prompt text and are created with restrictive permissions. Disabling the
 integration preserves captured data by default; purge is separate.
-
-Optional two-way iMessage is off until calibration succeeds. It uses Apple Events to ask Messages
-to send iMessage-only text and Full Disk Access to read the calibrated conversation from the local
-Messages database. The destination is stored in local secure storage. Route state, database
-cursors, GUIDs, short-lived outgoing text hashes, ambiguous messages, and queued reply bodies are
-stored in owner-only local files, expire where applicable, and are never included in telemetry or
-ordinary logs. Disconnecting
-deletes that Clinch-owned state but does not alter Messages history. Messages synchronization does
-not provide a trustworthy source-device identity, so Clinch cannot prove that a synchronized reply
-came from an iPhone rather than another device on the same Apple Account.
 
 Software launched inside Clinch is outside this no-telemetry statement. Provider CLIs, SSH, MCP
 servers, plugins, package managers, remote assets, and other user commands may use the network or
@@ -121,10 +108,5 @@ handle credentials according to their own policies.
   the artifact digest.
 - Session recovery is best-effort after crashes, power loss, provider changes, or transcript
   retention. Security controls do not guarantee data recovery.
-- The Messages database schema and Apple Events behavior are not public stability contracts. A
-  macOS update may pause the optional bridge until compatibility is restored. Full Disk Access
-  gives Clinch broad read access at the OS boundary even though the helper opens the database
-  read-only and filters its watcher to the calibrated Messages conversation.
-
 The current target is a public preview, not a claim that the app is risk-free or independently
 certified.

@@ -92,8 +92,8 @@ value = {
     "artifact_checks": [
         "universal x86_64+arm64",
         "ad-hoc hardened-runtime signature",
-        "Messages automation entitlement only",
-        "universal signed iMessage helper",
+        "no Apple Events entitlement or usage description",
+        "no bundled iMessage helper",
         "ZIP/DMG app equality",
         "integration opt-in and removal",
         "signed exact-tag manifest",
@@ -254,8 +254,7 @@ The authenticated **install.sh** asset is a secondary convenience.
 Session capture and provider plugins are off by default. Automatic updates are disabled for
 this preview; install a newer authenticated release manually. See
 **Clinch.release-validation.json** and **Clinch.build-provenance.json** for the automated,
-hands-on, and local-builder records authenticated by the Clinch release key. Two-way iMessage is
-optional and local; setup requires Messages Automation and Full Disk Access on the Mac.
+hands-on, and local-builder records authenticated by the Clinch release key.
 
 Manual QA record: $QA_RECORD
 Tested macOS versions: $QA_TESTED_MACOS_VERSIONS

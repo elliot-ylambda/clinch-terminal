@@ -8,7 +8,7 @@ set -euo pipefail
 unset RELEASE_NOTES MAKEFLAGS MFLAGS GNUMAKEFLAGS MAKELEVEL MAKEOVERRIDES \
   MAKE_TERMOUT MAKE_TERMERR
 
-for tool in cargo cargo-nextest cargo-deny swift; do
+for tool in cargo cargo-nextest cargo-deny; do
   command -v "$tool" >/dev/null 2>&1 || {
     echo "error: $tool is required for the launch gate" >&2
     echo "run ./script/bootstrap and ./script/install_cargo_test_deps first" >&2
@@ -63,9 +63,6 @@ done
 
 echo "==> Stable Clinch build configuration"
 cargo check --locked --bin stable
-
-echo "==> Pinned iMessage bridge tests"
-swift test --package-path tools/imessage-bridge
 
 echo "==> Shipped component tests"
 cargo nextest run --locked -p warp -p warpui -p cli_agent_usage

@@ -89,7 +89,7 @@ impl HeaderToolbarItemKind {
                     && !is_web_anonymous_user
             }
             Self::CodeReview => cfg!(feature = "local_fs"),
-            Self::IMessageStatus => cfg!(target_os = "macos"),
+            Self::IMessageStatus => cfg!(all(target_os = "macos", feature = "clinch_imessage")),
             // Clinch does not surface agent notifications. Keep this variant so
             // older serialized toolbar settings still deserialize successfully.
             Self::NotificationsMailbox => false,
@@ -143,13 +143,17 @@ impl HeaderToolbarItemKind {
     }
 
     pub fn default_right() -> Vec<Self> {
-        vec![Self::IMessageStatus, Self::CodeReview]
+        let mut items = vec![Self::CodeReview];
+        if cfg!(all(target_os = "macos", feature = "clinch_imessage")) {
+            items.insert(0, Self::IMessageStatus);
+        }
+        items
     }
 
     /// Toolbar items offered by Clinch's configurator (availability filtering
     /// is done at the call site).
     pub fn all_items() -> Vec<Self> {
-        vec![
+        let mut items = vec![
             Self::TabsPanel,
             Self::FileExplorer,
             Self::Skills,
@@ -157,8 +161,11 @@ impl HeaderToolbarItemKind {
             Self::ToolsPanel,
             Self::AgentManagement,
             Self::CodeReview,
-            Self::IMessageStatus,
-        ]
+        ];
+        if cfg!(all(target_os = "macos", feature = "clinch_imessage")) {
+            items.push(Self::IMessageStatus);
+        }
+        items
     }
 }
 

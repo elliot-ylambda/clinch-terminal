@@ -43,7 +43,9 @@ mod font_fallback;
 mod global_resource_handles;
 mod gpu_state;
 mod image_viewer;
-#[cfg(target_os = "macos")]
+// Kept as an opt-in development feature while the public Clinch build ships
+// without the iMessage UI, runtime, helper, or permissions.
+#[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
 mod imessage;
 mod input_classifier;
 mod interval_timer;
@@ -1894,7 +1896,7 @@ pub(crate) fn initialize_app(
     });
     ctx.add_singleton_model(move |_| RestoredAgentConversations::new(multi_agent_conversations));
     ctx.add_singleton_model(|_| CLIAgentSessionsModel::new());
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
     ctx.add_singleton_model(crate::imessage::IMessageCoordinator::new);
     // Must come after CLIAgentSessionsModel and CliAgentUsageModel: it observes
     // both session events and late usage snapshots to arm/cancel per-pane

@@ -43,12 +43,16 @@ fn notifications_are_not_exposed_in_clinch_header_toolbars() {
 }
 
 #[test]
-fn imessage_status_is_prominent_in_the_default_right_toolbar() {
+fn imessage_status_is_hidden_without_the_development_feature() {
+    let expected = cfg!(all(target_os = "macos", feature = "clinch_imessage"));
     assert_eq!(
-        HeaderToolbarItemKind::default_right().first(),
-        Some(&HeaderToolbarItemKind::IMessageStatus)
+        HeaderToolbarItemKind::default_right().contains(&HeaderToolbarItemKind::IMessageStatus),
+        expected
     );
-    assert!(HeaderToolbarItemKind::all_items().contains(&HeaderToolbarItemKind::IMessageStatus));
+    assert_eq!(
+        HeaderToolbarItemKind::all_items().contains(&HeaderToolbarItemKind::IMessageStatus),
+        expected
+    );
 }
 
 #[test]

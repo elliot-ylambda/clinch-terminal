@@ -1,5 +1,10 @@
 # Two-way iMessage agent notifications: technical design
 
+> Shipping status: disabled. The implementation is retained behind the non-default
+> `clinch_imessage` Cargo feature. Current Clinch and ClinchDev builds omit the module, coordinator,
+> UI, helper, Apple Events entitlement, and usage description; the stable bundler rejects attempts
+> to enable it.
+
 ## Context
 
 The product behavior is defined in [PRODUCT.md](./PRODUCT.md). Clinch already has most of the session-side primitives needed by the bridge:
@@ -69,7 +74,9 @@ Messages can send through its Apple Events scripting interface but exposes no su
 - Rust domain tests cover multipart Unicode boundaries, stable/quarantined routes, restart deactivation/reactivation, default inheritance, explicit Yes/No overrides, legacy opt-out migration, parent/explicit/sole precedence, route stripping, ambiguity and queue expiry, GUID deduplication, FIFO drain, opt-out cancellation, unsupported-message filtering, terminal-control sanitization, and owner-only atomic persistence.
 - Rust bridge tests cover request correlation, event separation, and recovery after an oversized protocol line. Swift tests cover protocol decoding, invalid requests, and a real PhoneNumberKit resource lookup. The pinned `IMsgCore` dependency owns its lower-level SQLite/WAL, delayed-chat-join, and attributed-body fixture coverage.
 - Rust tests cover prerequisite snapshots, non-prompting health results, explicit Automation requests, truthful calibration transitions, matching versus mismatched calibration replies, and pre-setup Test eligibility. Settings tests cover checklist presentation/actions and instantiate the iMessage category alongside its required models. Footer/header presentation tests cover checking, ready-to-test, sending, awaiting-reply, reply mismatch, permission remediation, connected Yes/No preference, failure, and globally paused delivery. Swift compilation enforces main-actor isolation around every `NSAppleScript` execution; Swift tests cover the added protocol command and health fields without changing live TCC state. Compile-time session integration and exact `CLIAgentSessionKey` revalidation cover the external PTY entry point; real Messages/TCC behavior remains part of the release matrix below.
-- Release tests assert macOS 14 across the binary/plist/manifest, both helper architectures, nested signing and helper entitlement, Apple Events metadata, absence of unrelated privacy entitlements, protocol/resource self-tests, and third-party license attribution.
+- While the feature remains disabled, release tests assert that the helper, its resource bundles,
+  Apple Events entitlement, and usage description are absent. If the feature is reconsidered,
+  restore the helper architecture, signing, protocol/resource, and license checks before shipping.
 - Before release, manually validate on Intel and Apple Silicon: first-time setup; permission denial, revocation, and regrant; Messages signed out; calibration from an iPhone; two simultaneous Codex/Claude sessions; reply-to-part and explicit-code routing; ambiguous selection; busy FIFO draining; blocked prompts; restart; and an in-place app update. This requires a signed app, a real Messages account, and an iPhone and is intentionally not simulated by unit tests.
 
 ## Risks and mitigations

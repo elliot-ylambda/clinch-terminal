@@ -1,5 +1,9 @@
 # Two-way iMessage agent notifications
 
+> Shipping status: disabled. Current Clinch builds do not compile or expose this feature and do
+> not include its helper or macOS permission metadata. This document is retained for a possible
+> future opt-in build.
+
 ## Summary
 
 Clinch can use the signed-in Messages account on the user's Mac to notify their iPhone when a durable Codex or Claude Code CLI turn finishes and to route text replies back into the correct live CLI session. The feature is local, opt-in, and requires no iPhone app or hosted service.
