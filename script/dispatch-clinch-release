@@ -242,9 +242,33 @@ ensure_signed_remote_tag() {
   fi
 }
 
+get_release_json() {
+  local version="$1"
+  gh release view "$version" --repo "$REPO" \
+    --json databaseId,tagName,isDraft,name,body,targetCommitish,assets \
+    | jq -e --arg version "$version" '
+        select(.tagName == $version)
+        | {
+            id: .databaseId,
+            tag_name: .tagName,
+            draft: .isDraft,
+            name,
+            body,
+            target_commitish: .targetCommitish,
+            assets: [.assets[] | {
+              id,
+              name,
+              size,
+              updated_at: .updatedAt,
+              digest
+            }]
+          }
+      '
+}
+
 verify_asset_name_set() {
   local version="$1" dist="$2" allow_missing="$3" release_json local_names remote_names extra
-  release_json="$(gh api "repos/$REPO/releases/tags/$version")" \
+  release_json="$(get_release_json "$version")" \
     || fail "could not inspect draft release $version"
   local_names="$(find "$dist" -mindepth 1 -maxdepth 1 -print \
     | sed 's#^.*/##' | LC_ALL=C sort)"
@@ -259,7 +283,7 @@ verify_asset_name_set() {
 stage_private_draft() {
   local version="$1" commit="$2" stage="$3" dist release_json
   dist="$stage/dist"
-  if release_json="$(gh api "repos/$REPO/releases/tags/$version" 2>/dev/null)"; then
+  if release_json="$(get_release_json "$version" 2>/dev/null)"; then
     [[ "$(jq -r .draft <<< "$release_json")" == true ]] \
       || fail "release $version already exists and is not a private draft"
     verify_asset_name_set "$version" "$dist" true
@@ -281,7 +305,7 @@ stage_private_draft() {
 
 snapshot_private_draft() {
   local version="$1" output="$2" release_json
-  release_json="$(gh api "repos/$REPO/releases/tags/$version")" \
+  release_json="$(get_release_json "$version")" \
     || fail "could not inspect private draft $version"
   [[ "$(jq -r .draft <<< "$release_json")" == true ]] \
     || fail "release $version is no longer a private draft"

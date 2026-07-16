@@ -168,15 +168,17 @@ case "${1:-} ${2:-}" in
   'api repos/elliot-ylambda/clinch-terminal/releases/latest')
     printf '%s\n' "$FIXTURE_LATEST"
     ;;
-  'api repos/elliot-ylambda/clinch-terminal/releases/tags/'*)
+  'release view')
     [[ -f "$DRAFT_STATE" ]] || exit 1
     if [[ -f "$DRAFT_MUTATED_STATE" ]]; then
       draft_body=mutated
     else
       draft_body=fixture
     fi
-    printf '{"draft":%s,"tag_name":"%s","body":"%s","assets":[' \
-      "${DRAFT_VALUE:-true}" "$FIXTURE_VERSION" "$draft_body"
+    printf '{"databaseId":1,"isDraft":%s,"tagName":"%s",' \
+      "${DRAFT_VALUE:-true}" "$FIXTURE_VERSION"
+    printf '"name":"fixture","body":"%s","targetCommitish":"%s","assets":[' \
+      "$draft_body" "$FIXTURE_COMMIT"
     separator=
     for name in \
       Clinch.app.zip Clinch.app.zip.sha256 Clinch.build-provenance.json \
@@ -184,11 +186,15 @@ case "${1:-} ${2:-}" in
       Clinch.dmg Clinch.dmg.sha256 Clinch.release-validation.json Clinch.sbom.cdx.json \
       Clinch.update.json Clinch.update.sig Clinch.update.sshsig \
       clinch-release-allowed-signers install.sh uninstall.sh; do
-      printf '%s{"name":"%s"}' "$separator" "$name"
+      printf '%s{"id":"fixture-%s","name":"%s","size":1,' \
+        "$separator" "$name" "$name"
+      printf '"updatedAt":"fixture","digest":"sha256:fixture"}'
       separator=,
     done
     if [[ -n "${GH_EXTRA_ASSET:-}" ]]; then
-      printf '%s{"name":"%s"}' "$separator" "$GH_EXTRA_ASSET"
+      printf '%s{"id":"fixture-extra","name":"%s","size":1,' \
+        "$separator" "$GH_EXTRA_ASSET"
+      printf '"updatedAt":"fixture","digest":"sha256:fixture"}'
     fi
     printf ']}\n'
     ;;
@@ -352,6 +358,7 @@ grep -Fq 'gh release-create' "$TMP/ops.log"
 grep -Fq 'gh release-download' "$TMP/ops.log"
 grep -Fq 'verify-sequence' "$TMP/ops.log"
 grep -Fq 'gh release-publish' "$TMP/ops.log"
+grep -Fq "gh release view $VERSION" "$TMP/gh.log"
 [[ -f "$TMP/published" ]]
 if grep -Fq 'workflow run' "$TMP/gh.log"; then
   echo "FAIL: local release dispatched GitHub Actions" >&2
