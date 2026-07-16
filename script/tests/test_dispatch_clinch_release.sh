@@ -262,6 +262,7 @@ BASE_ENV=(
   CLINCH_RELEASE_SIGNING_KEY="$TMP/release-key"
   VERSION="$VERSION"
   CLINCH_AUTO_VERSION=0
+  QA_CONFIRMED=false
   QA_RECORD=https://example.test/qa/fixture
   QA_TESTED_MACOS_VERSIONS='macOS fixture'
   QA_FIRST_INSTALL=true
