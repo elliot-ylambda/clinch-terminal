@@ -96,10 +96,9 @@ use inline_banner::{
     render_inline_notifications_discovery_banner, render_inline_notifications_error_banner,
     render_inline_shared_session_ended_banner, render_inline_shared_session_started_banner,
     render_open_in_warp_banner, render_shell_process_terminated_banner, render_vim_mode_banner,
-    AnonymousUserAISignUpBannerState, AnonymousUserLoginBannerAction,
-    AwsBedrockLoginBannerAction, AwsBedrockLoginBannerState, AwsCliNotInstalledBannerAction,
-    AwsCliNotInstalledBannerState, ByoLlmAuthBannerSessionState, OpenInWarpBannerState,
-    VimModeBannerAction,
+    AnonymousUserAISignUpBannerState, AnonymousUserLoginBannerAction, AwsBedrockLoginBannerAction,
+    AwsBedrockLoginBannerState, AwsCliNotInstalledBannerAction, AwsCliNotInstalledBannerState,
+    ByoLlmAuthBannerSessionState, OpenInWarpBannerState, VimModeBannerAction,
 };
 pub use inline_banner::{NotificationsDiscoveryBannerAction, NotificationsErrorBannerAction};
 use instant::Instant;
@@ -361,11 +360,11 @@ use crate::settings::ai::FocusedTerminalInfo;
 use crate::settings::import::model::ImportedConfigModel;
 use crate::settings::import::view::{SettingsImportEvent, SettingsImportView};
 use crate::settings::{
-    AISettings, AISettingsChangedEvent, AppEditorSettings,
-    BlockVisibilitySettings, BlockVisibilitySettingsChangedEvent, CliAgentUsageSettings,
-    CodeSettings, DebugSettings, DebugSettingsChangedEvent, EmacsBindingsSettings, FontSettings,
-    FontSettingsChangedEvent, InputModeSettings, InputModeSettingsChangedEvent, InputSettings,
-    PaneSettings, PaneSettingsChangedEvent, PrivacySettings, PrivacySettingsChangedEvent,
+    AISettings, AISettingsChangedEvent, AppEditorSettings, BlockVisibilitySettings,
+    BlockVisibilitySettingsChangedEvent, CliAgentUsageSettings, CodeSettings, DebugSettings,
+    DebugSettingsChangedEvent, EmacsBindingsSettings, FontSettings, FontSettingsChangedEvent,
+    InputModeSettings, InputModeSettingsChangedEvent, InputSettings, PaneSettings,
+    PaneSettingsChangedEvent, PrivacySettings, PrivacySettingsChangedEvent,
     PrivacySettingsSnapshot, SelectionSettings, VimBannerSettings,
 };
 use crate::settings_view::keybindings::KeybindingChangedNotifier;
@@ -474,8 +473,7 @@ use crate::terminal::view::init_environment::{InitEnvironmentBlock, InitEnvironm
 use crate::terminal::view::inline_banner::{
     render_agent_mode_setup_banner, AgentModeSetupSpeedbumpBannerAction,
     AgentModeSetupSpeedbumpBannerState, NotificationsDiscoveryBannerState,
-    NotificationsErrorBannerState, PromptSuggestionBannerState,
-    VimModeBannerState,
+    NotificationsErrorBannerState, PromptSuggestionBannerState, VimModeBannerState,
 };
 use crate::terminal::view::passive_suggestions::PromptSuggestionResolution;
 pub use crate::terminal::view::rich_content::{

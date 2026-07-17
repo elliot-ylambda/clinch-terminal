@@ -1,9 +1,10 @@
 //! Claude usage endpoint client + response parsing.
 
-use chrono::{DateTime, Utc};
-use serde::Deserialize;
 use std::fmt;
 use std::time::Duration;
+
+use chrono::{DateTime, Utc};
+use serde::Deserialize;
 
 use crate::codex::severity_from_percent;
 use crate::{LimitWindow, PlanLimits, Severity};

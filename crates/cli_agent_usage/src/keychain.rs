@@ -497,7 +497,11 @@ access: 5 entries
 
         #[test]
         fn trusted_when_security_ok_and_apple_tool_partition() {
-            let dump = item("u1", SECURITY_OK, &partition("apple-tool:, teamid:AAAA000000"));
+            let dump = item(
+                "u1",
+                SECURITY_OK,
+                &partition("apple-tool:, teamid:AAAA000000"),
+            );
             assert_eq!(
                 parse_dump_trust(&dump, SERVICE, "u1"),
                 KeychainTrust::Trusted

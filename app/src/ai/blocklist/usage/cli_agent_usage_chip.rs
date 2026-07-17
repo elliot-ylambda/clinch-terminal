@@ -13,8 +13,7 @@ use warpui::ui_components::components::UiComponent;
 use warpui::Element;
 
 use super::{
-    CliAgentUsageHeaderVisibility, CliAgentUsageMetric, CliAgentUsageProvider,
-    PlanLimitsAffordance,
+    CliAgentUsageHeaderVisibility, CliAgentUsageMetric, CliAgentUsageProvider, PlanLimitsAffordance,
 };
 use crate::appearance::Appearance;
 use crate::workspace::WorkspaceAction;

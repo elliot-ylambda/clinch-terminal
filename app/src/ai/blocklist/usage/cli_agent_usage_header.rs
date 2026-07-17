@@ -12,8 +12,7 @@ use warpui::Element;
 
 use super::cli_agent_usage_chip::{plan_limits_affordance_link, severity_fill, span};
 use super::{
-    CliAgentUsageHeaderVisibility, CliAgentUsageMetric, CliAgentUsageProvider,
-    PlanLimitsAffordance,
+    CliAgentUsageHeaderVisibility, CliAgentUsageMetric, CliAgentUsageProvider, PlanLimitsAffordance,
 };
 use crate::appearance::Appearance;
 use crate::workspace::WorkspaceAction;
@@ -224,7 +223,10 @@ fn provider_segment(
         if let Some((affordance, mouse_state)) = render.gate.affordance(kind, provider) {
             row.add_child(span("limits ", sub, appearance));
             row.add_child(plan_limits_affordance_link(
-                affordance, appearance, bg, mouse_state,
+                affordance,
+                appearance,
+                bg,
+                mouse_state,
             ));
             item_count += 1;
         } else {
@@ -377,7 +379,10 @@ fn compact_provider_segment(
         if let Some((affordance, mouse_state)) = render.gate.affordance(kind, provider) {
             row.add_child(span("limits ", neutral, appearance));
             row.add_child(plan_limits_affordance_link(
-                affordance, appearance, bg, mouse_state,
+                affordance,
+                appearance,
+                bg,
+                mouse_state,
             ));
             item_count += 1;
         } else {
