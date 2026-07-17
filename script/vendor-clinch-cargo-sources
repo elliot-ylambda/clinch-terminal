@@ -315,7 +315,14 @@ def main():
     try:
         metadata = json.loads(
             run(
-                ["cargo", "metadata", "--locked", "--format-version", "1"],
+                [
+                    "cargo",
+                    "metadata",
+                    "--locked",
+                    "--all-features",
+                    "--format-version",
+                    "1",
+                ],
                 cwd=root,
             )
         )

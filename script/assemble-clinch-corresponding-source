@@ -71,7 +71,7 @@ After installing the Rust toolchain declared by this tree, resolve and build
 without network access:
 
 \`\`\`sh
-cargo metadata --locked --offline --format-version 1
+cargo metadata --locked --offline --all-features --format-version 1
 cargo build --locked --offline --release --bin stable
 \`\`\`
 EOF
@@ -100,7 +100,8 @@ PY
 echo "==> Proving the vendored source graph resolves offline"
 (
   cd "$source_root"
-  CARGO_NET_OFFLINE=true cargo metadata --locked --offline --format-version 1 >/dev/null
+  CARGO_NET_OFFLINE=true cargo metadata \
+    --locked --offline --all-features --format-version 1 >/dev/null
 )
 
 archive_tmp="$work/Clinch.source.tar.gz"

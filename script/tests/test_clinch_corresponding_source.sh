@@ -54,6 +54,7 @@ case "${1:-}" in
     cp "$(dirname "$FIXTURE_GIT_MANIFEST")/src/lib.rs" "$destination/src/lib.rs"
     ;;
   metadata)
+    [[ " $* " == *' --all-features '* ]]
     if grep -Fq 'clinch-vendor-' .cargo/config.toml; then
       [[ "$(find vendor -name .cargo-checksum.json | wc -l | tr -d ' ')" == 2 ]]
       printf '{"packages":[]}\n'
