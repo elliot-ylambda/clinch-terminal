@@ -205,6 +205,7 @@ HOME="$TMP/home" PATH="/usr/bin:/bin" \
   /bin/bash "$ZIPPED_APP/Contents/Resources/agent-resume/install.sh" enable --quiet
 [[ -f "$TMP/home/Library/Application Support/sh.clinch.Clinch/agent-integration/enabled" ]] \
   || fail "integration enable did not persist its state"
+mkdir -p "$TMP/home/.warp/agent-resume"
 printf '%s\n' keep > "$TMP/home/.warp/agent-resume/release-verifier-data"
 HOME="$TMP/home" PATH="/usr/bin:/bin" \
   /bin/bash "$ZIPPED_APP/Contents/Resources/agent-resume/install.sh" disable --quiet
