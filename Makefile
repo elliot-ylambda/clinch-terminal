@@ -26,16 +26,6 @@ VERSION := v0.$(shell date +%Y.%m.%d.%H%M)
 endif
 CLINCH_AUTO_VERSION := $(if $(filter file,$(origin VERSION)),1,0)
 UPDATE_SEQUENCE ?= auto
-QA_RECORD ?= auto
-QA_TESTED_MACOS_VERSIONS ?= auto
-QA_CONFIRMED ?= false
-QA_FIRST_INSTALL ?= false
-QA_AUTHENTICATED_UPGRADE ?= false
-QA_SESSION_INTEGRATION ?= false
-QA_UNINSTALL ?= false
-QA_OFFLINE_STARTUP ?= false
-QA_APPLE_SILICON_SMOKE ?= false
-QA_INTEL_SMOKE ?= false
 
 CLINCH_UPDATE_SIGNING_KEY  ?= $(HOME)/.config/clinch/update-signing-key.pem
 CLINCH_RELEASE_SIGNING_KEY ?= $(HOME)/.config/clinch/release-signing-key
@@ -127,16 +117,6 @@ release: ## Build, sign, remotely verify, and publish without GitHub Actions
 	  CLINCH_RELEASE_SIGNING_KEY="$(CLINCH_RELEASE_SIGNING_KEY)" \
 	  VERSION="$(VERSION)" \
 	  CLINCH_AUTO_VERSION="$(CLINCH_AUTO_VERSION)" \
-	  QA_RECORD="$(QA_RECORD)" \
-	  QA_TESTED_MACOS_VERSIONS="$(QA_TESTED_MACOS_VERSIONS)" \
-	  QA_CONFIRMED="$(QA_CONFIRMED)" \
-	  QA_FIRST_INSTALL="$(QA_FIRST_INSTALL)" \
-	  QA_AUTHENTICATED_UPGRADE="$(QA_AUTHENTICATED_UPGRADE)" \
-	  QA_SESSION_INTEGRATION="$(QA_SESSION_INTEGRATION)" \
-	  QA_UNINSTALL="$(QA_UNINSTALL)" \
-	  QA_OFFLINE_STARTUP="$(QA_OFFLINE_STARTUP)" \
-	  QA_APPLE_SILICON_SMOKE="$(QA_APPLE_SILICON_SMOKE)" \
-	  QA_INTEL_SMOKE="$(QA_INTEL_SMOKE)" \
 	  ./script/dispatch-clinch-release
 
 update: ## Install the latest authenticated public release (Clinch must be quit)

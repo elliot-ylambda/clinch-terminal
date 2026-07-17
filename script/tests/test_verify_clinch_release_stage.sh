@@ -145,12 +145,20 @@ assemble_output="$(cd "$FIXTURE" && env \
   FIXTURE_COMMIT="$COMMIT" \
   CLINCH_RELEASE_SIGNING_KEY="$TMP/release-key" \
   ./script/assemble-clinch-release-stage \
-    "$VERSION" "$COMMIT" "$SEQUENCE" \
-    https://example.test/qa/fixture 'macOS fixture' false)"
+    "$VERSION" "$COMMIT" "$SEQUENCE")"
 grep -Fq "target/release-stage/$VERSION" <<< "$assemble_output"
 
 DIST="$FIXTURE/target/release-stage/$VERSION/dist"
 [[ -f "$FIXTURE/target/release-stage/$VERSION/release-notes.md" ]]
+/usr/bin/python3 - "$DIST/Clinch.release-validation.json" <<'PY'
+import json
+import pathlib
+import sys
+
+validation = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert validation["schema_version"] == 3
+assert "manual_qa" not in validation
+PY
 
 verify() {
   (cd "$FIXTURE" && ./script/verify-clinch-release-stage "$@")

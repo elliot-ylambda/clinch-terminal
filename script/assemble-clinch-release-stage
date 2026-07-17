@@ -5,12 +5,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-VERSION="${1:?usage: assemble-clinch-release-stage <version> <commit> <sequence> <qa-record> <tested-macos> <intel-smoke>}"
+VERSION="${1:?usage: assemble-clinch-release-stage <version> <commit> <sequence>}"
 COMMIT="${2:?missing commit}"
 UPDATE_SEQUENCE="${3:?missing sequence}"
-QA_RECORD="${4:?missing QA record}"
-QA_TESTED_MACOS_VERSIONS="${5:?missing tested macOS versions}"
-QA_INTEL_SMOKE="${6:?missing Intel smoke result}"
 
 STABLE_APP="target/release-lto/bundle/osx/Clinch.app"
 RELEASE_DIR="target/release-lto/bundle/osx"
@@ -28,13 +25,6 @@ fail() {
 [[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]] || fail "invalid commit"
 [[ "$UPDATE_SEQUENCE" =~ ^[0-9]+$ && "$UPDATE_SEQUENCE" -gt 0 ]] \
   || fail "invalid update sequence"
-[[ "$QA_INTEL_SMOKE" == true || "$QA_INTEL_SMOKE" == false ]] \
-  || fail "QA_INTEL_SMOKE must be true or false"
-[[ -n "${QA_RECORD//[[:space:]]/}" && ${#QA_RECORD} -le 500 ]] \
-  || fail "QA record must be non-empty and at most 500 characters"
-[[ -n "${QA_TESTED_MACOS_VERSIONS//[[:space:]]/}" \
-  && ${#QA_TESTED_MACOS_VERSIONS} -le 200 ]] \
-  || fail "tested macOS versions must be non-empty and at most 200 characters"
 [[ "$(git rev-parse HEAD)" == "$COMMIT" ]] || fail "source commit changed before staging"
 [[ -d "$STABLE_APP" ]] || fail "missing verified app bundle $STABLE_APP"
 for item in \
@@ -80,8 +70,7 @@ started_at="${CLINCH_RELEASE_STARTED_AT:-$created_at}"
 
 /usr/bin/python3 - \
   "$DIST/Clinch.release-validation.json" \
-  "$VERSION" "$COMMIT" "$UPDATE_SEQUENCE" "$QA_RECORD" \
-  "$QA_TESTED_MACOS_VERSIONS" "$QA_INTEL_SMOKE" \
+  "$VERSION" "$COMMIT" "$UPDATE_SEQUENCE" \
   "$builder_os_version" "$builder_architecture" <<'PY'
 import json
 import pathlib
@@ -99,30 +88,19 @@ value = {
         "signed exact-tag manifest",
     ],
     "builder": {
-        "architecture": sys.argv[9],
+        "architecture": sys.argv[6],
         "kind": "local-release-workstation",
         "os": "macOS",
-        "os_version": sys.argv[8],
+        "os_version": sys.argv[5],
     },
     "commit": sys.argv[3],
     "gates": ["Local full release gate"],
-    "manual_qa": {
-        "apple_silicon_smoke": True,
-        "authenticated_manual_upgrade": True,
-        "first_install": True,
-        "intel_smoke": sys.argv[7] == "true",
-        "offline_startup": True,
-        "record": sys.argv[5],
-        "selective_uninstall": True,
-        "session_integration_opt_in_and_removal": True,
-        "tested_macos_versions": sys.argv[6],
-    },
     "notarized": False,
     "publication": {
         "command": "make release",
         "kind": "local-release-command",
     },
-    "schema_version": 2,
+    "schema_version": 3,
     "update_sequence": int(sys.argv[4]),
     "version": sys.argv[2],
 }
@@ -253,12 +231,9 @@ The authenticated **install.sh** asset is a secondary convenience.
 
 Session restore is enabled by default and can be turned off or back on in Clinch Settings.
 Automatic updates are disabled for this preview; install a newer authenticated release manually. See
-**Clinch.release-validation.json** and **Clinch.build-provenance.json** for the automated,
-hands-on, and local-builder records authenticated by the Clinch release key.
-
-Manual QA record: $QA_RECORD
-Tested macOS versions: $QA_TESTED_MACOS_VERSIONS
-Hands-on Intel smoke test: $QA_INTEL_SMOKE
+**Clinch.release-validation.json** and **Clinch.build-provenance.json** for the automated validation
+and local-builder records authenticated by the Clinch release key. No manual QA attestation is
+required or recorded by the release command.
 EOF
 
 ./script/verify-clinch-release-stage "$DIST" "$VERSION" "$COMMIT" "$UPDATE_SEQUENCE"

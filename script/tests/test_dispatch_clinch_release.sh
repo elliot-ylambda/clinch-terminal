@@ -268,16 +268,6 @@ BASE_ENV=(
   CLINCH_RELEASE_SIGNING_KEY="$TMP/release-key"
   VERSION="$VERSION"
   CLINCH_AUTO_VERSION=0
-  QA_CONFIRMED=false
-  QA_RECORD=https://example.test/qa/fixture
-  QA_TESTED_MACOS_VERSIONS='macOS fixture'
-  QA_FIRST_INSTALL=true
-  QA_AUTHENTICATED_UPGRADE=true
-  QA_SESSION_INTEGRATION=true
-  QA_UNINSTALL=true
-  QA_OFFLINE_STARTUP=true
-  QA_APPLE_SILICON_SMOKE=true
-  QA_INTEL_SMOKE=false
 )
 
 reset_state() {
@@ -402,14 +392,12 @@ grep -Fq 'is not newer than' "$TMP/stale.out"
 assert_no_remote_mutation
 
 reset_state
-if run_release \
-    QA_FIRST_INSTALL=false QA_AUTHENTICATED_UPGRADE=false \
-    QA_SESSION_INTEGRATION=false QA_UNINSTALL=false QA_OFFLINE_STARTUP=false \
-    QA_APPLE_SILICON_SMOKE=false < /dev/null > "$TMP/unconfirmed.out" 2>&1; then
-  echo "FAIL: noninteractive unconfirmed QA was accepted" >&2
+if run_release < /dev/null > "$TMP/noninteractive.out" 2>&1; then
+  echo "FAIL: noninteractive publication was accepted" >&2
   exit 1
 fi
-grep -Fq 'manual QA is not confirmed' "$TMP/unconfirmed.out"
+grep -Fq 'publication requires an interactive terminal' "$TMP/noninteractive.out"
+grep -Fq 'assemble-stage' "$TMP/ops.log"
 assert_no_remote_mutation
 
 reset_state

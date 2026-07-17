@@ -119,16 +119,15 @@ bundles if any are present.
 ### 5. Local release gate and direct publication
 
 Move every expensive or secret-bearing release operation to the release workstation. The local
-`make release` command owns version selection, exact-source validation, manual-QA confirmation,
-the complete automated gate, universal packaging, SBOM generation, signing, artifact verification,
-private draft staging, independent verification of the uploaded draft, and the final
-draft-to-public transition. Release publication runs no GitHub Actions job.
+`make release` command owns version selection, exact-source validation, the complete automated
+gate, universal packaging, SBOM generation, signing, artifact verification, private draft staging,
+independent verification of the uploaded draft, and the final draft-to-public transition. Release
+publication runs no GitHub Actions job.
 
 The local flow:
 
 1. synchronizes a clean `main` with `clinch/main`, records its full commit, validates a strict
-   monotonic version, checks release tools, free disk space, and both private keys, and obtains the
-   existing explicit manual-QA confirmation;
+   monotonic version, and checks release tools, free disk space, and both private keys;
 2. runs formatting, shell/JavaScript tests, stable compilation, component tests, Clippy,
    dependency-license policy, bundled-notice generation, and advisories before creating remote
    release state;
@@ -140,7 +139,7 @@ The local flow:
    the exact Git commit and `Cargo.lock` digest;
 5. signs the provenance and the complete checksum list with the dedicated OpenSSH release key,
    then independently verifies every staged digest and signature;
-6. requires a second interactive `PUBLISH <version> <short-commit>` confirmation, creates or
+6. requires an interactive `PUBLISH <version> <short-commit>` confirmation, creates or
    verifies the signed annotated tag, pushes it to `clinch`, creates or refreshes a private draft
    release, uploads the exact verified asset set, downloads it into a fresh temporary directory,
    repeats the portable asset and monotonic-sequence verification, rechecks the remote tag and
@@ -156,7 +155,7 @@ The local publication phase downloads the private draft assets rather than trust
 operation. It requires the current remote `main` and signed remote tag to remain identical to the
 verified local commit and tag, snapshots release/asset metadata before and after download, verifies
 the exact asset allowlist, committed trust roots, both manifest signatures, checksum signature and
-digests, provenance signature and subjects, QA validation record, version, and monotonic sequence,
+digests, provenance signature and subjects, release validation record, version, and monotonic sequence,
 and snapshots the draft once more immediately before publication. A failure leaves the draft
 private. The operator's existing `gh` authentication is the only publication credential.
 
@@ -169,24 +168,17 @@ The dependency license gate includes workspace and non-publishable git dependenc
 `cargo-deny` and `cargo-about` allowlists synchronized, and fails packaging if a complete bundled
 third-party notice cannot be generated from the locked dependency graph.
 
-The local operator flow requires confirmation of clean install, authenticated manual upgrade,
-default session integration enablement, persistent opt-out, re-enable/removal, selective uninstall,
-offline startup, and native Apple Silicon smoke results. It also requires the tested macOS versions
-and a QA record identifier. Those fields, plus the optional hands-on Intel result, are written into
-the signed release validation asset. The checked-in `QA_TEMPLATE.md` defines the record expected by
-the local release command.
+The signed release validation asset records the automated gate, artifact checks, exact commit, and
+local builder OS and architecture. It deliberately omits manual-QA results because the release
+command neither requires nor performs hands-on QA.
 
 `make release` is the interactive operator front end for the local build and direct publish. It
-first synchronizes a
-clean local `main` with `clinch/main`, compares its timestamp-derived version with the latest public
-release and increments the latest version when necessary, and detects the local macOS version. It
-then displays the required hands-on checklist and requires the operator to type `RELEASE`; it does
-not infer a pass from default Make variables. Unless the operator supplies an existing QA record,
-the dispatcher creates a public GitHub issue containing the exact version, commit, machine, OS,
-checked results, and optional Intel result, then embeds that URL in the signed validation record.
-Explicit variables remain available for tested QA setup, but remote staging and publication always
-require the second interactive publish confirmation. The command stops before publication if
-`main`, the signed tag, or the private draft changes between local verification and publication.
+first synchronizes a clean local `main` with `clinch/main`, compares its timestamp-derived version
+with the latest public release, and increments the latest version when necessary. It proceeds
+directly into the automated gate and candidate verification without a manual-QA prompt or GitHub
+QA issue. Remote staging and publication still require the interactive version-and-commit-specific
+publish confirmation. The command stops before publication if `main`, the signed tag, or the
+private draft changes between local verification and publication.
 
 There is no release workflow. Release private keys are removed from the obsolete GitHub release
 environment, and the environment itself is deleted after the local key copies are validated. The
@@ -225,10 +217,9 @@ network-capable optional features, exact side effects, and residual review gaps.
   guarded collector, settings action, and backend-free plugin paths.
 - Release verification mounts the DMG read-only and recursively compares its app with the verified
   ZIP, validates the plist, entitlements, signatures, architectures, authenticated manifest, and
-  default-on and opt-out/re-enable integration lifecycle. Manual release QA records first install,
-  upgrade, uninstall, offline launch, and a native Apple Silicon smoke check. The universal
-  artifact verifier requires both architecture slices; a separate hands-on Intel smoke check is
-  recorded when practical but is not a preview release blocker.
+  default-on and opt-out/re-enable integration lifecycle. The signed validation record contains
+  only automated results and local builder metadata. The universal artifact verifier requires both
+  architecture slices.
 - Release orchestration fixtures stub every `gh` and Git mutation and prove that automated failures
   cannot create a tag or draft, remote staging requires the exact interactive confirmation, retries
   accept only a matching signed tag/private draft, uploaded assets are re-downloaded and verified,

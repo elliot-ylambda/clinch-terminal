@@ -190,7 +190,7 @@ validation = json.loads(
     (dist / "Clinch.release-validation.json").read_text(encoding="utf-8")
 )
 for key, expected in {
-    "schema_version": 2,
+    "schema_version": 3,
     "version": version,
     "commit": commit,
     "update_sequence": sequence,
@@ -224,25 +224,8 @@ if publication != {
     "kind": "local-release-command",
 }:
     fail("validation record publication boundary mismatch")
-qa = validation.get("manual_qa", {})
-for key in (
-    "first_install",
-    "authenticated_manual_upgrade",
-    "session_integration_opt_in_and_removal",
-    "selective_uninstall",
-    "offline_startup",
-    "apple_silicon_smoke",
-):
-    if qa.get(key) is not True:
-        fail(f"validation record manual QA field {key} is not true")
-if not isinstance(qa.get("intel_smoke"), bool):
-    fail("validation record Intel smoke value is not boolean")
-if not isinstance(qa.get("record"), str) or not qa["record"].strip():
-    fail("validation record QA record is empty")
-if not isinstance(qa.get("tested_macos_versions"), str) or not qa[
-    "tested_macos_versions"
-].strip():
-    fail("validation record tested macOS versions are empty")
+if "manual_qa" in validation:
+    fail("validation record unexpectedly claims manual QA")
 
 sbom = json.loads((dist / "Clinch.sbom.cdx.json").read_text(encoding="utf-8"))
 if sbom.get("bomFormat") != "CycloneDX":

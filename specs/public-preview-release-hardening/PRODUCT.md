@@ -140,7 +140,7 @@ when the app cannot use Apple's Developer ID and notarization trust path.
 
 25. Public release tags are immutable, annotated, and cryptographically signed by a dedicated
     Clinch release key. `make release` builds from one clean, current `main` revision and refuses
-    to stage a tag whose commit differs from the revision covered by the manual QA record.
+    to stage a tag whose commit differs from the revision that passed the automated release gate.
 
 26. Before it creates a tag or draft release, `make release` runs the full formatting,
     script/integration, stable-build, component-test, lint, dependency-license, and advisory gates
@@ -175,18 +175,13 @@ when the app cannot use Apple's Developer ID and notarization trust path.
     support, network behavior, integration side effects, signing/notarization status, update
     behavior, licenses, and removal. Claims are tied to observable behavior rather than promises.
 
-33. A release candidate is not promoted until it has passed first install, authenticated manual
-    upgrade, default integration enablement, persistent opt-out, re-enable, integration removal,
-    application uninstall, offline-startup, and a native Apple Silicon smoke check. The universal
-    artifact verifier confirms that the Intel slice is present; a separate hands-on Intel smoke
-    check is recorded when practical but does not block this preview. Results and any untested OS
-    versions are recorded with the release.
-    The local `make release` command may derive the next version, tested macOS version, and public
-    QA-record location, but it must obtain one explicit operator confirmation covering every
-    required hands-on check. After the automated build and verification finish, it requires a
-    second version-and-commit-specific confirmation before creating remote staging state and
-    publishing it after verification. Mechanical defaults never count as evidence that QA passed
-    or permission to publish.
+33. A release candidate is not promoted until the complete automated source gate and universal
+    artifact verification pass on the exact source revision. The signed validation record names
+    those automated gates, the artifact checks, and the local builder environment without claiming
+    manual QA occurred. `make release` does not require or create a hands-on QA attestation. After
+    the automated build and verification finish, it requires a version-and-commit-specific
+    confirmation before creating remote staging state and publishing it after verification.
+    Mechanical defaults never count as permission to publish.
 
 34. If any authenticity or safety check cannot be completed, the installer or local release
     command stops with a specific error and leaves the existing installation and every published

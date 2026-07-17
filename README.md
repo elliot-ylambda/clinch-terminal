@@ -173,23 +173,20 @@ the normal build/test/release dependencies plus OpenSSL 3 and Syft (`brew instal
 before the first release; `make release` checks every required command, signing key, and at least
 40 GiB of free space before starting the expensive gate.
 
-After completing the hands-on checks, run `make release` from a clean, current `main` checkout. It
-selects the next version, records the exact commit, confirms QA, runs the full local gate, builds
-and verifies both macOS architectures, generates a CycloneDX SBOM and signed local provenance,
-and assembles the exact signed asset set under `target/release-stage/<version>/`. Only after a
-second version-and-commit-specific confirmation does it push the signed tag, create or refresh a
-private draft release, download the uploaded assets into a fresh directory, verify them again, and
-publish the draft. Advanced users can override `VERSION`, `QA_RECORD`,
-`QA_TESTED_MACOS_VERSIONS`, or the optional `QA_INTEL_SMOKE` result. Use the
-[release QA template](specs/public-preview-release-hardening/QA_TEMPLATE.md) for a separately
-maintained record.
+Run `make release` from a clean, current `main` checkout. It selects the next version, records the
+exact commit, runs the full local gate, builds and verifies both macOS architectures, generates a
+CycloneDX SBOM and signed local provenance, and assembles the exact signed asset set under
+`target/release-stage/<version>/`. After a version-and-commit-specific publication confirmation,
+it pushes the signed tag, creates or refreshes a private draft release, downloads the uploaded
+assets into a fresh directory, verifies them again, and publishes the draft. The command does not
+require or record a manual QA attestation. Advanced users can override `VERSION`.
 
 Release publication runs no GitHub Actions job. Immediately before publication, the local command
 rechecks the signed remote tag, current `main`, both manifest signatures, exact asset set and
 digests, SBOM, validation record, local provenance, and monotonic update sequence. It also rejects
 a draft whose metadata changes during or after download. A failure leaves the draft private and
-safe to retry. The separate hands-on Intel smoke test remains optional; the universal artifact
-verifier always checks that the Intel slice is present.
+safe to retry. The universal artifact verifier always checks that both Intel and Apple Silicon
+slices are present.
 
 After these changes land on `main`, run `make configure-release-repository` once. It validates both
 workstation key copies before deleting the obsolete GitHub signing secrets and `public-release`
