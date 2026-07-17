@@ -514,7 +514,7 @@ fn native_transcripts_backfill_claude_and_codex_first_prompts() {
 }
 
 #[test]
-fn codex_transcript_uses_meaningful_user_response_when_event_is_absent() {
+fn codex_transcript_ignores_agent_instructions_and_titles_from_first_user_sentence() {
     let dir = std::env::temp_dir().join(format!(
         "agent_resume_codex_prompt_fallback_test_{}",
         uuid::Uuid::new_v4()
@@ -524,17 +524,21 @@ fn codex_transcript_uses_meaningful_user_response_when_event_is_absent() {
     std::fs::write(
         &path,
         concat!(
+            r##"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions\n\n<INSTRUCTIONS>generated</INSTRUCTIONS>"}]}}"##,
+            "\n",
             r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<permissions instructions>generated</permissions instructions>"}]}}"#,
             "\n",
-            r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Explain this failure"}]}}"#,
+            r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Explain this failure. Include the relevant logs."}]}}"#,
             "\n",
         ),
     )
     .unwrap();
 
+    let prompt = first_prompt_from_codex_transcript(&path).unwrap();
+    assert_eq!(prompt, "Explain this failure. Include the relevant logs.");
     assert_eq!(
-        first_prompt_from_codex_transcript(&path).as_deref(),
-        Some("Explain this failure")
+        prompt_title(&prompt).as_deref(),
+        Some("Explain this failure.")
     );
     std::fs::remove_dir_all(dir).unwrap();
 }
@@ -558,6 +562,8 @@ fn provider_mirror_coalesces_inflight_retries_but_preserves_repeats_after_stop()
             r#"{"prompt":"same\nmessage"}"#,
             "\n",
             r#"{"ts":"2026-07-14T01:02:30Z","stop":true}"#,
+            "\n",
+            r#"{"ts":"2026-07-14T01:02:45Z","prompt":"<task-notification> <task-id>t1</task-id> <summary>Background command \"suite\" completed (exit code 0)</summary> </task-notification>"}"#,
             "\n",
             r#"{"ts":"2026-07-14T01:03:00Z","prompt":"same\nmessage"}"#,
             "\n",
@@ -684,6 +690,8 @@ fn claude_history_parser_keeps_exact_user_text_and_timestamps() {
             "\n",
             r#"{"type":"user","timestamp":"2026-07-14T02:01:07Z","message":{"content":"<local-command-stdout>hidden</local-command-stdout>"}}"#,
             "\n",
+            r#"{"type":"user","timestamp":"2026-07-14T02:01:08Z","message":{"content":"<task-notification> <task-id>t1</task-id> <status>completed</status> <summary>Background command \"suite\" completed (exit code 0)</summary> </task-notification>"}}"#,
+            "\n",
             r#"{"type":"assistant","timestamp":"2026-07-14T02:01:10Z","message":{"content":[{"type":"text","text":"visible answer"}]}}"#,
             "\n",
             r#"{"type":"user","timestamp":"2026-07-14T02:02:00Z","origin":{"kind":"human"},"message":{"content":"second\ndetail"}}"#,
@@ -728,6 +736,8 @@ fn codex_event_messages_are_canonical_without_collapsing_repeated_turns() {
             r#"{"timestamp":"generated","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<skills_instructions>generated</skills_instructions>"}]}}"#,
             "\n",
             r#"{"timestamp":"duplicate-form","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"same"}]}}"#,
+            "\n",
+            r##"{"timestamp":"generated-event","type":"event_msg","payload":{"type":"user_message","message":"# AGENTS.md instructions\n\n<INSTRUCTIONS>generated</INSTRUCTIONS>"}}"##,
             "\n",
             r#"{"timestamp":"turn-1","type":"event_msg","payload":{"type":"user_message","message":"same"}}"#,
             "\n",

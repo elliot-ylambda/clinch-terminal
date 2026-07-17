@@ -1041,6 +1041,19 @@ fn only_rich_prompt_submit_is_trusted_as_user_history() {
         Some("  \n"),
     ))
     .is_none());
+    assert!(
+        prompt_from_trusted_event(&event(
+            CLIAgentEventSource::RichPlugin,
+            CLIAgentEventType::PromptSubmit,
+            Some(
+                "<task-notification> <task-id>t1</task-id> <status>completed</status> \
+                 <summary>Background command \"suite\" completed (exit code 0)</summary> \
+                 </task-notification>"
+            ),
+        ))
+        .is_none(),
+        "harness-injected task notifications are not user history"
+    );
 }
 
 #[test]

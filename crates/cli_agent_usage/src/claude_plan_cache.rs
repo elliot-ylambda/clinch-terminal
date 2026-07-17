@@ -11,26 +11,29 @@ use std::path::{Path, PathBuf};
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::PlanLimits;
+use crate::{PlanFetchOutcome, PlanLimits};
 
 const VERSION: u32 = 1;
 
 /// Anthropic's usage endpoint is rate-limited. This is a wall-clock throttle,
 /// independent of how long transcript scans take.
 fn min_attempt_interval() -> Duration {
-    Duration::minutes(1)
+    Duration::minutes(5)
 }
 
-/// Match the snapshot cache's stale-while-revalidate horizon. A failed refresh
-/// can retain a recent plan, but not one old enough to be actively misleading.
+/// Plan percentages move much faster than local token totals. Keep a recent
+/// result across transient failures, but hide it after an hour rather than
+/// presenting an old percentage as live data.
 fn max_plan_age() -> Duration {
-    Duration::hours(48)
+    Duration::hours(1)
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize)]
 struct CacheFile {
     version: u32,
     attempted_at: DateTime<Utc>,
+    #[serde(default)]
+    retry_at: Option<DateTime<Utc>>,
     fetched_at: Option<DateTime<Utc>>,
     plan: Option<PlanLimits>,
 }
@@ -38,8 +41,19 @@ struct CacheFile {
 #[derive(Clone, Copy)]
 struct CachedPlan {
     attempted_at: DateTime<Utc>,
+    retry_at: Option<DateTime<Utc>>,
     fetched_at: Option<DateTime<Utc>>,
     plan: Option<PlanLimits>,
+}
+
+fn retain_current_windows(mut plan: PlanLimits, now: DateTime<Utc>) -> Option<PlanLimits> {
+    let current = |window: Option<crate::LimitWindow>| {
+        window.filter(|window| window.resets_at.is_none_or(|reset| reset > now))
+    };
+    plan.session = current(plan.session);
+    plan.weekly = current(plan.weekly);
+    plan.fable_weekly = current(plan.fable_weekly);
+    (plan.session.is_some() || plan.weekly.is_some() || plan.fable_weekly.is_some()).then_some(plan)
 }
 
 fn cache_paths(snapshot_cache: &Path) -> Option<(PathBuf, PathBuf)> {
@@ -63,8 +77,13 @@ fn load(path: &Path, now: DateTime<Utc>) -> Option<CachedPlan> {
 
     Some(CachedPlan {
         attempted_at: file.attempted_at,
+        retry_at: file.retry_at.filter(|retry_at| *retry_at > now),
         fetched_at: if plan_is_fresh { file.fetched_at } else { None },
-        plan: if plan_is_fresh { file.plan } else { None },
+        plan: if plan_is_fresh {
+            file.plan.and_then(|plan| retain_current_windows(plan, now))
+        } else {
+            None
+        },
     })
 }
 
@@ -72,6 +91,7 @@ fn store(path: &Path, cached: CachedPlan) {
     let file = CacheFile {
         version: VERSION,
         attempted_at: cached.attempted_at,
+        retry_at: cached.retry_at,
         fetched_at: cached.fetched_at,
         plan: cached.plan,
     };
@@ -156,17 +176,17 @@ impl Drop for CacheLock {
     }
 }
 
-/// Return a shared recent plan, fetching at most once per minute across every
-/// Clinch process using this snapshot-cache directory.
+/// Return a shared recent plan, fetching at most once per five minutes across
+/// every Clinch process using this snapshot-cache directory.
 ///
 /// `fetch` runs while the interprocess lock is held, so a second process waits
 /// for the first request and then consumes its result instead of making a
-/// duplicate request. A failed request records the attempt and retains a recent
-/// last-known-good plan.
+/// duplicate request. A rate-limited response persists the server's retry
+/// deadline, and a failed request retains only a recent, not-yet-reset plan.
 pub fn refresh_shared(
     snapshot_cache: &Path,
     now: DateTime<Utc>,
-    fetch: impl FnOnce() -> Option<PlanLimits>,
+    fetch: impl FnOnce() -> PlanFetchOutcome,
 ) -> Option<PlanLimits> {
     let (cache_path, lock_path) = cache_paths(snapshot_cache)?;
     let Some(_lock) = CacheLock::acquire(&lock_path) else {
@@ -175,20 +195,31 @@ pub fn refresh_shared(
 
     let previous = load(&cache_path, now);
     if previous.is_some_and(|cached| {
-        now.signed_duration_since(cached.attempted_at) < min_attempt_interval()
+        cached.retry_at.is_some_and(|retry_at| retry_at > now)
+            || now.signed_duration_since(cached.attempted_at) < min_attempt_interval()
     }) {
         return previous.and_then(|cached| cached.plan);
     }
 
     let fresh = fetch();
     let cached = match fresh {
-        Some(plan) => CachedPlan {
+        PlanFetchOutcome::Success(plan) => CachedPlan {
             attempted_at: now,
+            retry_at: None,
             fetched_at: Some(now),
-            plan: Some(plan),
+            plan: retain_current_windows(plan, now),
         },
-        None => CachedPlan {
+        PlanFetchOutcome::RateLimited(retry_after) => CachedPlan {
             attempted_at: now,
+            retry_at: Duration::from_std(retry_after)
+                .ok()
+                .and_then(|delay| now.checked_add_signed(delay)),
+            fetched_at: previous.and_then(|cached| cached.fetched_at),
+            plan: previous.and_then(|cached| cached.plan),
+        },
+        PlanFetchOutcome::Unauthorized | PlanFetchOutcome::Unavailable => CachedPlan {
+            attempted_at: now,
+            retry_at: None,
             fetched_at: previous.and_then(|cached| cached.fetched_at),
             plan: previous.and_then(|cached| cached.plan),
         },

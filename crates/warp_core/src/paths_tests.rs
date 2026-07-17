@@ -76,6 +76,27 @@ fn test_local_home_config_dir_name_is_scoped_to_the_app_owner() {
 }
 
 #[test]
+fn test_stable_home_config_dir_name_is_scoped_to_the_app_owner() {
+    let clinch = AppId::new("sh", "clinch", "Clinch");
+    let warp = AppId::new("dev", "warp", "Warp-Stable");
+
+    assert_eq!(home_config_dir_name_for_app_id(&clinch), ".clinch");
+    assert_eq!(home_config_dir_name_for_app_id(&warp), ".warp");
+
+    #[cfg(target_os = "macos")]
+    {
+        assert_eq!(
+            macos_config_dir_name_for_app_id(Channel::Stable, &clinch),
+            ".clinch"
+        );
+        assert_eq!(
+            macos_config_dir_name_for_app_id(Channel::Stable, &warp),
+            ".warp"
+        );
+    }
+}
+
+#[test]
 fn test_cache_dir_path() {
     let home_dir = home_dir().expect("Should be able to compute home directory");
     // ChannelState, by default, is configured for Channel::Oss.

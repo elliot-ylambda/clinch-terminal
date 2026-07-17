@@ -1174,6 +1174,12 @@ fn read_prompt_mirror(path: &Path) -> Option<PromptMirrorRead> {
         if prompt.trim().is_empty() {
             continue;
         }
+        // Task notifications flow through the same prompt hook as typed messages, but they
+        // are harness-injected turns, not user history. They also don't close the open turn,
+        // so the retry-coalescing state below stays untouched.
+        if is_injected_task_notification(prompt) {
+            continue;
+        }
         // Claude can re-emit an unchanged retained input while the same turn is still in
         // progress (for example after a control sequence or history navigation). Treat those as
         // retries of one semantic submission. A Stop record clears this guard, so deliberately
@@ -1265,6 +1271,15 @@ fn is_generated_claude_user_message(record: &Value, text: &str) -> bool {
         || text.starts_with("This session is being continued from another machine.")
         || text.starts_with("<local-command-")
         || text.starts_with("<command-name>")
+        || is_injected_task_notification(text)
+}
+
+/// True when a user-role turn is a harness-injected task notification (background command or
+/// subagent completion) rather than text the user typed. These reach every capture path —
+/// prompt-submit hook events, the on-disk prompt mirror, and native transcripts — and must
+/// never surface as message history.
+pub(crate) fn is_injected_task_notification(text: &str) -> bool {
+    text.trim_start().starts_with("<task-notification>")
 }
 
 fn prompt_history_from_codex_transcript(path: &Path) -> AgentPromptHistory {
@@ -1286,6 +1301,7 @@ fn prompt_history_from_codex_transcript(path: &Path) -> AgentPromptHistory {
                 .pointer("/payload/message")
                 .and_then(Value::as_str)
                 .filter(|text| !text.trim().is_empty())
+                .filter(|text| !is_generated_codex_context(text))
             {
                 event_prompts.push(AgentPrompt {
                     timestamp,
@@ -1355,6 +1371,7 @@ fn user_content_text(content: Option<&Value>, text_block_type: &str) -> Option<S
 fn is_generated_codex_context(text: &str) -> bool {
     let text = text.trim_start();
     [
+        "# AGENTS.md instructions",
         "<environment_context>",
         "<permissions instructions>",
         "<collaboration_mode>",

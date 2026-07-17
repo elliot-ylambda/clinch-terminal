@@ -2,14 +2,85 @@
 
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
+use std::fmt;
+use std::time::Duration;
 
 use crate::codex::severity_from_percent;
 use crate::{LimitWindow, PlanLimits, Severity};
 
 pub const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FetchErrorKind {
+    Unauthorized,
+    RateLimited,
+    Other,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FetchError {
+    kind: FetchErrorKind,
+    retry_after: Option<Duration>,
+    message: String,
+}
+
+impl FetchError {
+    pub fn other(message: impl Into<String>) -> Self {
+        Self {
+            kind: FetchErrorKind::Other,
+            retry_after: None,
+            message: message.into(),
+        }
+    }
+
+    pub fn unauthorized() -> Self {
+        Self {
+            kind: FetchErrorKind::Unauthorized,
+            retry_after: None,
+            message: "usage HTTP 401 Unauthorized".to_string(),
+        }
+    }
+
+    pub fn rate_limited(retry_after: Option<Duration>) -> Self {
+        Self {
+            kind: FetchErrorKind::RateLimited,
+            retry_after,
+            message: "usage HTTP 429 Too Many Requests".to_string(),
+        }
+    }
+
+    fn http(status: reqwest::StatusCode, retry_after: Option<Duration>) -> Self {
+        let kind = match status {
+            reqwest::StatusCode::UNAUTHORIZED => FetchErrorKind::Unauthorized,
+            reqwest::StatusCode::TOO_MANY_REQUESTS => FetchErrorKind::RateLimited,
+            _ => FetchErrorKind::Other,
+        };
+        Self {
+            kind,
+            retry_after,
+            message: format!("usage HTTP {status}"),
+        }
+    }
+
+    pub fn kind(&self) -> FetchErrorKind {
+        self.kind
+    }
+
+    pub fn retry_after(&self) -> Option<Duration> {
+        self.retry_after
+    }
+}
+
+impl fmt::Display for FetchError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for FetchError {}
+
 pub trait FetchUsage {
-    fn fetch(&self, access_token: &str) -> Result<String, String>;
+    fn fetch(&self, access_token: &str) -> Result<String, FetchError>;
 }
 
 #[derive(Deserialize)]
@@ -155,11 +226,11 @@ pub fn parse_plan_limits(json: &str) -> Option<PlanLimits> {
 pub struct ReqwestUsage;
 
 impl FetchUsage for ReqwestUsage {
-    fn fetch(&self, access_token: &str) -> Result<String, String> {
+    fn fetch(&self, access_token: &str) -> Result<String, FetchError> {
         let client = reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_secs(20))
             .build()
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| FetchError::other(e.to_string()))?;
         let resp = client
             .get(USAGE_URL)
             .header("Authorization", format!("Bearer {access_token}"))
@@ -168,12 +239,21 @@ impl FetchUsage for ReqwestUsage {
             .header("Accept", "application/json")
             .header("User-Agent", "clinch-usage/0.1")
             .send()
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| FetchError::other(e.to_string()))?;
         if !resp.status().is_success() {
-            return Err(format!("usage HTTP {}", resp.status()));
+            let retry_after = resp
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|value| value.to_str().ok())
+                .and_then(parse_retry_after);
+            return Err(FetchError::http(resp.status(), retry_after));
         }
-        resp.text().map_err(|e| e.to_string())
+        resp.text().map_err(|e| FetchError::other(e.to_string()))
     }
+}
+
+fn parse_retry_after(value: &str) -> Option<Duration> {
+    value.trim().parse::<u64>().ok().map(Duration::from_secs)
 }
 
 #[cfg(test)]
@@ -241,5 +321,24 @@ mod tests {
     #[test]
     fn garbage_is_none() {
         assert!(parse_plan_limits("nope").is_none());
+    }
+
+    #[test]
+    fn parses_retry_after_delta_seconds() {
+        assert_eq!(parse_retry_after("2037"), Some(Duration::from_secs(2037)));
+        assert_eq!(parse_retry_after(" 60 "), Some(Duration::from_secs(60)));
+        assert_eq!(parse_retry_after("not-a-delay"), None);
+    }
+
+    #[test]
+    fn classifies_http_failures_without_losing_retry_delay() {
+        let retry = Duration::from_secs(2100);
+        let limited = FetchError::http(reqwest::StatusCode::TOO_MANY_REQUESTS, Some(retry));
+        assert_eq!(limited.kind(), FetchErrorKind::RateLimited);
+        assert_eq!(limited.retry_after(), Some(retry));
+
+        let unauthorized = FetchError::http(reqwest::StatusCode::UNAUTHORIZED, None);
+        assert_eq!(unauthorized.kind(), FetchErrorKind::Unauthorized);
+        assert_eq!(unauthorized.retry_after(), None);
     }
 }

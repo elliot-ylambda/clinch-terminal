@@ -57,7 +57,8 @@ so macOS will block the first launch: try once, then approve Clinch under **Syst
 Privacy & Security → Open Anyway**. Do not disable Gatekeeper globally. Clinch's installer and
 documentation do not remove `com.apple.quarantine`.
 
-Clinch uses the bundle ID `sh.clinch.Clinch`, so it can coexist with Warp.
+Clinch uses the bundle ID `sh.clinch.Clinch` and keeps its UI configuration in `~/.clinch`, so it
+can coexist with Warp without inheriting Warp's theme, zoom, keybindings, or other app settings.
 
 ## Session restore is enabled by default
 

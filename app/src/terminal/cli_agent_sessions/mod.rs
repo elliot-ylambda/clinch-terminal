@@ -17,7 +17,8 @@ use warpui::{Entity, EntityId, ModelContext, ModelHandle, SingletonEntity};
 use self::listener::CLIAgentSessionListener;
 use super::CLIAgent;
 use crate::agent_resume::{
-    prompt_title, read_prompt_history, AgentPrompt, AgentPromptHistory, AgentResumeProvider,
+    is_injected_task_notification, prompt_title, read_prompt_history, AgentPrompt,
+    AgentPromptHistory, AgentResumeProvider,
 };
 use crate::ai::blocklist::InputConfig;
 use crate::channel::ChannelState;
@@ -354,7 +355,12 @@ impl CLIAgentSession {
         let new_status = match &event.event {
             CLIAgentEventType::PromptSubmit => {
                 self.has_observed_turn_activity = true;
-                self.session_context.query = event.payload.query.clone();
+                // A turn opened by a harness-injected task notification still runs, but the
+                // session is still "about" the user's last typed prompt — keep it as the
+                // query so tab titles never show notification XML.
+                if !injected_notification_query(event) {
+                    self.session_context.query = event.payload.query.clone();
+                }
                 self.session_context.response = None;
                 self.clear_permission_scoped_state();
                 CLIAgentSessionStatus::InProgress
@@ -372,7 +378,9 @@ impl CLIAgentSession {
             }
             CLIAgentEventType::Stop => {
                 self.has_observed_turn_activity = true;
-                self.session_context.query = event.payload.query.clone();
+                if !injected_notification_query(event) {
+                    self.session_context.query = event.payload.query.clone();
+                }
                 self.session_context.response = event.payload.response.clone();
                 self.clear_permission_scoped_state();
                 CLIAgentSessionStatus::Success
@@ -467,6 +475,14 @@ fn merge_loaded_and_live_history(
     loaded
 }
 
+fn injected_notification_query(event: &CLIAgentEvent) -> bool {
+    event
+        .payload
+        .query
+        .as_deref()
+        .is_some_and(is_injected_task_notification)
+}
+
 fn prompt_from_trusted_event(event: &CLIAgentEvent) -> Option<AgentPrompt> {
     if event.source != CLIAgentEventSource::RichPlugin
         || event.event != CLIAgentEventType::PromptSubmit
@@ -475,6 +491,11 @@ fn prompt_from_trusted_event(event: &CLIAgentEvent) -> Option<AgentPrompt> {
     }
     let text = event.payload.query.as_ref()?;
     if text.trim().is_empty() {
+        return None;
+    }
+    // Background-task completion turns arrive through the same prompt-submit hook as typed
+    // messages; they are harness-injected, not user history.
+    if is_injected_task_notification(text) {
         return None;
     }
     Some(AgentPrompt {

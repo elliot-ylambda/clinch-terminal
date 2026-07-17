@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use chrono::{Duration, TimeZone, Utc};
 
 use super::*;
-use crate::{LimitWindow, PlanLimits, Severity};
+use crate::{LimitWindow, PlanFetchOutcome, PlanLimits, Severity};
 
 static NEXT_DIR: AtomicUsize = AtomicUsize::new(0);
 
@@ -32,18 +32,18 @@ fn plan(percent: f64) -> PlanLimits {
 }
 
 #[test]
-fn processes_share_one_attempt_per_wall_clock_minute() {
+fn processes_share_one_attempt_per_five_minutes() {
     let snapshot = temp_snapshot_path();
     let now = Utc.with_ymd_and_hms(2026, 7, 13, 18, 0, 0).unwrap();
     let calls = Cell::new(0);
 
     let first = refresh_shared(&snapshot, now, || {
         calls.set(calls.get() + 1);
-        Some(plan(14.0))
+        PlanFetchOutcome::Success(plan(14.0))
     });
     let second = refresh_shared(&snapshot, now + Duration::seconds(30), || {
         calls.set(calls.get() + 1);
-        Some(plan(99.0))
+        PlanFetchOutcome::Success(plan(99.0))
     });
 
     assert_eq!(calls.get(), 1);
@@ -58,22 +58,22 @@ fn transient_failure_retains_last_good_and_advances_backoff() {
     let snapshot = temp_snapshot_path();
     let now = Utc.with_ymd_and_hms(2026, 7, 13, 18, 0, 0).unwrap();
     assert_eq!(
-        refresh_shared(&snapshot, now, || Some(plan(55.0))),
+        refresh_shared(&snapshot, now, || PlanFetchOutcome::Success(plan(55.0))),
         Some(plan(55.0))
     );
 
     let calls = Cell::new(0);
     assert_eq!(
-        refresh_shared(&snapshot, now + Duration::seconds(61), || {
+        refresh_shared(&snapshot, now + Duration::seconds(301), || {
             calls.set(calls.get() + 1);
-            None
+            PlanFetchOutcome::Unavailable
         }),
         Some(plan(55.0))
     );
     assert_eq!(
-        refresh_shared(&snapshot, now + Duration::seconds(90), || {
+        refresh_shared(&snapshot, now + Duration::seconds(400), || {
             calls.set(calls.get() + 1);
-            Some(plan(99.0))
+            PlanFetchOutcome::Success(plan(99.0))
         }),
         Some(plan(55.0))
     );
@@ -91,18 +91,105 @@ fn failed_first_attempt_is_shared_without_fabricating_a_plan() {
     assert_eq!(
         refresh_shared(&snapshot, now, || {
             calls.set(calls.get() + 1);
-            None
+            PlanFetchOutcome::Unavailable
         }),
         None
     );
     assert_eq!(
         refresh_shared(&snapshot, now + Duration::seconds(30), || {
             calls.set(calls.get() + 1);
-            Some(plan(14.0))
+            PlanFetchOutcome::Success(plan(14.0))
         }),
         None
     );
     assert_eq!(calls.get(), 1);
+
+    let _ = fs::remove_dir_all(snapshot.parent().unwrap());
+}
+
+#[test]
+fn rate_limit_retry_after_is_shared_and_honored() {
+    let snapshot = temp_snapshot_path();
+    let now = Utc.with_ymd_and_hms(2026, 7, 13, 18, 0, 0).unwrap();
+    assert_eq!(
+        refresh_shared(&snapshot, now, || PlanFetchOutcome::Success(plan(49.0))),
+        Some(plan(49.0))
+    );
+
+    let calls = Cell::new(0);
+    assert_eq!(
+        refresh_shared(&snapshot, now + Duration::seconds(301), || {
+            calls.set(calls.get() + 1);
+            PlanFetchOutcome::RateLimited(std::time::Duration::from_secs(2_100))
+        }),
+        Some(plan(49.0))
+    );
+    assert_eq!(
+        refresh_shared(&snapshot, now + Duration::seconds(2_400), || {
+            calls.set(calls.get() + 1);
+            PlanFetchOutcome::Success(plan(100.0))
+        }),
+        Some(plan(49.0))
+    );
+    assert_eq!(calls.get(), 1, "must not fetch before Retry-After");
+
+    assert_eq!(
+        refresh_shared(&snapshot, now + Duration::seconds(2_402), || {
+            calls.set(calls.get() + 1);
+            PlanFetchOutcome::Success(plan(100.0))
+        }),
+        Some(plan(100.0))
+    );
+    assert_eq!(calls.get(), 2);
+
+    let _ = fs::remove_dir_all(snapshot.parent().unwrap());
+}
+
+#[test]
+fn cached_window_is_removed_after_its_reset() {
+    let snapshot = temp_snapshot_path();
+    let now = Utc.with_ymd_and_hms(2026, 7, 13, 18, 0, 0).unwrap();
+    let expiring = PlanLimits {
+        session: Some(LimitWindow {
+            percent: 49.0,
+            resets_at: Some(now + Duration::seconds(10)),
+            severity: Severity::Normal,
+        }),
+        ..PlanLimits::default()
+    };
+    assert_eq!(
+        refresh_shared(&snapshot, now, || PlanFetchOutcome::Success(expiring)),
+        Some(expiring)
+    );
+
+    let calls = Cell::new(0);
+    assert_eq!(
+        refresh_shared(&snapshot, now + Duration::seconds(30), || {
+            calls.set(calls.get() + 1);
+            PlanFetchOutcome::Success(plan(100.0))
+        }),
+        None
+    );
+    assert_eq!(calls.get(), 0, "normal throttle still applies");
+
+    let _ = fs::remove_dir_all(snapshot.parent().unwrap());
+}
+
+#[test]
+fn plan_older_than_one_hour_is_not_retained() {
+    let snapshot = temp_snapshot_path();
+    let now = Utc.with_ymd_and_hms(2026, 7, 13, 18, 0, 0).unwrap();
+    assert_eq!(
+        refresh_shared(&snapshot, now, || PlanFetchOutcome::Success(plan(49.0))),
+        Some(plan(49.0))
+    );
+
+    assert_eq!(
+        refresh_shared(&snapshot, now + Duration::minutes(61), || {
+            PlanFetchOutcome::Unavailable
+        }),
+        None
+    );
 
     let _ = fs::remove_dir_all(snapshot.parent().unwrap());
 }

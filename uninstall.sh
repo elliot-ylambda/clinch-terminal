@@ -141,6 +141,7 @@ fi
 
 if (( PURGE_APP_DATA )); then
   /bin/rm -rf \
+    "$HOME/.clinch" \
     "$HOME/Library/Application Support/sh.clinch.Clinch" \
     "$HOME/Library/Caches/sh.clinch.Clinch" \
     "$HOME/Library/HTTPStorages/sh.clinch.Clinch" \
@@ -159,7 +160,7 @@ if (( PURGE_APP_DATA )); then
     "$HOME/Library/Cookies/sh.clinch.Clinch.binarycookies"
   shopt -u nullglob
   /usr/bin/defaults delete sh.clinch.Clinch >/dev/null 2>&1 || true
-  echo "Removed Clinch-owned preferences, caches, logs, and application state."
+  echo "Removed Clinch-owned configuration, preferences, caches, logs, and application state."
 fi
 
 echo "Provider transcripts, Keychain credentials, and unrelated ~/.warp files were kept."

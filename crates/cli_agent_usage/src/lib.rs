@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::Duration as StdDuration;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -73,6 +74,14 @@ pub struct PlanLimits {
     pub weekly: Option<LimitWindow>,
     /// Fable's model-scoped weekly limit, when reported by Claude's usage API.
     pub fable_weekly: Option<LimitWindow>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PlanFetchOutcome {
+    Success(PlanLimits),
+    RateLimited(StdDuration),
+    Unauthorized,
+    Unavailable,
 }
 
 /// A usage window counts as exhausted only at (or above) full utilization.
@@ -302,11 +311,41 @@ pub fn fetch_plan_for_token(
     token: &keychain::ClaudeToken,
     now_ms: i64,
 ) -> Option<PlanLimits> {
-    if token.is_expired(now_ms) {
-        return None;
+    match fetch_plan_for_token_outcome(fetch, token, now_ms) {
+        PlanFetchOutcome::Success(plan) => Some(plan),
+        PlanFetchOutcome::RateLimited(_)
+        | PlanFetchOutcome::Unauthorized
+        | PlanFetchOutcome::Unavailable => None,
     }
-    let body = fetch.fetch(&token.access_token).ok()?;
+}
+
+/// Detailed form of [`fetch_plan_for_token`] used by the live poller. In
+/// particular, it preserves the endpoint's rate-limit delay so every Clinch
+/// process can share and honor the same retry deadline.
+pub fn fetch_plan_for_token_outcome(
+    fetch: &dyn http::FetchUsage,
+    token: &keychain::ClaudeToken,
+    now_ms: i64,
+) -> PlanFetchOutcome {
+    if token.is_expired(now_ms) {
+        return PlanFetchOutcome::Unavailable;
+    }
+    let body = match fetch.fetch(&token.access_token) {
+        Ok(body) => body,
+        Err(error) => {
+            return match error.kind() {
+                http::FetchErrorKind::Unauthorized => PlanFetchOutcome::Unauthorized,
+                http::FetchErrorKind::RateLimited => error
+                    .retry_after()
+                    .map(PlanFetchOutcome::RateLimited)
+                    .unwrap_or(PlanFetchOutcome::Unavailable),
+                http::FetchErrorKind::Other => PlanFetchOutcome::Unavailable,
+            };
+        }
+    };
     http::parse_plan_limits(&body)
+        .map(PlanFetchOutcome::Success)
+        .unwrap_or(PlanFetchOutcome::Unavailable)
 }
 
 #[cfg(test)]
@@ -440,8 +479,8 @@ mod tests {
         }
         struct NoFetch;
         impl crate::http::FetchUsage for NoFetch {
-            fn fetch(&self, _: &str) -> Result<String, String> {
-                Err("no".into())
+            fn fetch(&self, _: &str) -> Result<String, crate::http::FetchError> {
+                Err(crate::http::FetchError::other("no"))
             }
         }
         let paths = Paths {
@@ -470,8 +509,10 @@ mod tests {
         }
         struct Fetch(Result<&'static str, &'static str>);
         impl FetchUsage for Fetch {
-            fn fetch(&self, _: &str) -> Result<String, String> {
-                self.0.map(|s| s.to_string()).map_err(|e| e.to_string())
+            fn fetch(&self, _: &str) -> Result<String, crate::http::FetchError> {
+                self.0
+                    .map(|s| s.to_string())
+                    .map_err(crate::http::FetchError::other)
             }
         }
 
@@ -529,8 +570,10 @@ mod tests {
 
         struct Fetch(Result<&'static str, &'static str>);
         impl FetchUsage for Fetch {
-            fn fetch(&self, _: &str) -> Result<String, String> {
-                self.0.map(|s| s.to_string()).map_err(|e| e.to_string())
+            fn fetch(&self, _: &str) -> Result<String, crate::http::FetchError> {
+                self.0
+                    .map(|s| s.to_string())
+                    .map_err(crate::http::FetchError::other)
             }
         }
         let usage = r#"{"limits":[{"group":"session","percent":78,"severity":"warning","resets_at":"2026-07-01T02:30:00+00:00","is_active":true}]}"#;
@@ -549,6 +592,40 @@ mod tests {
         // Fetch error / garbage body -> None (fail-soft).
         assert!(fetch_plan_for_token(&Fetch(Err("boom")), &valid, 5_000).is_none());
         assert!(fetch_plan_for_token(&Fetch(Ok("garbage")), &valid, 5_000).is_none());
+    }
+
+    #[test]
+    fn detailed_plan_fetch_preserves_rate_limit_and_auth_failures() {
+        use crate::http::{FetchError, FetchUsage};
+        use crate::keychain::ClaudeToken;
+
+        struct Limited;
+        impl FetchUsage for Limited {
+            fn fetch(&self, _: &str) -> Result<String, FetchError> {
+                Err(FetchError::rate_limited(Some(StdDuration::from_secs(
+                    2_100,
+                ))))
+            }
+        }
+        struct Unauthorized;
+        impl FetchUsage for Unauthorized {
+            fn fetch(&self, _: &str) -> Result<String, FetchError> {
+                Err(FetchError::unauthorized())
+            }
+        }
+
+        let token = ClaudeToken {
+            access_token: "tok".to_string(),
+            expires_at_ms: Some(10_000),
+        };
+        assert_eq!(
+            fetch_plan_for_token_outcome(&Limited, &token, 5_000),
+            PlanFetchOutcome::RateLimited(StdDuration::from_secs(2_100))
+        );
+        assert_eq!(
+            fetch_plan_for_token_outcome(&Unauthorized, &token, 5_000),
+            PlanFetchOutcome::Unauthorized
+        );
     }
 
     #[test]
@@ -603,7 +680,7 @@ mod tests {
         }
         struct Fetch;
         impl FetchUsage for Fetch {
-            fn fetch(&self, _: &str) -> Result<String, String> {
+            fn fetch(&self, _: &str) -> Result<String, crate::http::FetchError> {
                 Ok(r#"{"limits":[{"kind":"weekly_all","group":"weekly","percent":47,"severity":"normal","resets_at":"2026-07-04T15:00:00+00:00","is_active":true}]}"#.to_string())
             }
         }

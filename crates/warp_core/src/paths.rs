@@ -28,12 +28,23 @@ use crate::AppId;
 /// repository workflows would be stored (in "./.warp/workflows").
 pub const WARP_CONFIG_DIR: &str = ".warp";
 
+/// The home-relative config directory used by the stable Clinch application.
+const CLINCH_CONFIG_DIR: &str = ".clinch";
+
 /// The home-relative config directory used by the local Clinch application.
 const CLINCH_LOCAL_CONFIG_DIR: &str = ".clinch-local";
 
 /// The name of the folder that stores Warp execution logs and network logs.
 /// This is currently only used on Windows to maintain backwards compatibility.
 pub const WARP_LOGS_DIR: &str = "logs";
+
+fn home_config_dir_name_for_app_id(app_id: &AppId) -> &'static str {
+    if app_id.qualifier() == "sh" && app_id.organization() == "clinch" {
+        CLINCH_CONFIG_DIR
+    } else {
+        WARP_CONFIG_DIR
+    }
+}
 
 fn base_warp_config_dir_name() -> String {
     match ChannelState::channel() {
@@ -97,22 +108,30 @@ pub fn warp_home_mcp_config_file_path() -> Option<PathBuf> {
 
 /// Returns the macOS config directory name for the current channel.
 ///
-/// Stable uses `.warp`, while other channels include a channel suffix
-/// (e.g., `.warp-dev`). Clinch Dev uses `.clinch-local` so it remains
-/// independent from Warp Local.
+/// Warp Stable uses `.warp`, while other channels include a channel suffix
+/// (e.g., `.warp-dev`). Clinch Stable uses `.clinch`, and Clinch Dev uses
+/// `.clinch-local`, so neither reads or writes upstream Warp configuration.
 ///
 /// These suffixes are persisted on disk as directory names and must not be
-/// changed once established, or existing user data will be orphaned.
+/// changed once established, or existing user data will be orphaned. Stable
+/// Clinch is the exception: its former `.warp` path was accidental shared state
+/// owned by Warp, so it must not be copied into the new `.clinch` directory.
+#[cfg(target_os = "macos")]
+fn macos_config_dir_name_for_app_id(channel: Channel, app_id: &AppId) -> String {
+    let config_dir = home_config_dir_name_for_app_id(app_id);
+    match channel {
+        Channel::Stable => config_dir.to_owned(),
+        Channel::Preview => format!("{config_dir}-preview"),
+        Channel::Oss => format!("{config_dir}-oss"),
+        Channel::Dev => format!("{config_dir}-dev"),
+        Channel::Integration => format!("{config_dir}-integration"),
+        Channel::Local => local_home_config_dir_name_for_app_id(app_id).to_owned(),
+    }
+}
+
 #[cfg(target_os = "macos")]
 fn macos_config_dir_name() -> String {
-    match ChannelState::channel() {
-        Channel::Stable => WARP_CONFIG_DIR.to_owned(),
-        Channel::Preview => format!("{WARP_CONFIG_DIR}-preview"),
-        Channel::Oss => format!("{WARP_CONFIG_DIR}-oss"),
-        Channel::Dev => format!("{WARP_CONFIG_DIR}-dev"),
-        Channel::Integration => format!("{WARP_CONFIG_DIR}-integration"),
-        Channel::Local => local_home_config_dir_name().to_owned(),
-    }
+    macos_config_dir_name_for_app_id(ChannelState::channel(), &ChannelState::app_id())
 }
 
 /// Returns the path to the directory where portable user data should be

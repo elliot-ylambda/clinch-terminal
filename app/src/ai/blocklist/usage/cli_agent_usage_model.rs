@@ -13,8 +13,8 @@ use cli_agent_usage::keychain::{
     read_claude_token, should_read_keychain, ClaudeToken, MacKeychain, ReadSecret,
 };
 use cli_agent_usage::{
-    claude_plan_cache, fetch_plan_for_token, scan_local, snapshot_cache, Caches, Paths, PlanLimits,
-    UsageSnapshot,
+    claude_plan_cache, fetch_plan_for_token_outcome, scan_local, snapshot_cache, Caches, Paths,
+    PlanFetchOutcome, PlanLimits, UsageSnapshot,
 };
 use warpui::r#async::block_on;
 use warpui::{Entity, ModelContext, SingletonEntity};
@@ -151,23 +151,15 @@ fn producer_loop(paths: Paths, tx: async_channel::Sender<UsageSnapshot>, enabled
 
     // Stale-while-revalidate: the widget hides until a snapshot has data, and
     // the first cold scan of the transcript dirs can take tens of seconds, so
-    // surface the previous run's snapshot immediately. The first live scan
-    // below replaces it. Seed `last_plan` from the same snapshot so a transient
-    // first fetch cannot immediately erase a good cached result.
+    // surface the previous run's local snapshot immediately. Plan percentages
+    // have their own cache with an independent freshness timestamp, so never
+    // revive the snapshot's embedded copy; the first shared-cache read below
+    // supplies it when it is still current.
     let mut last_stored = snapshot_cache::load(&paths.snapshot_cache, Utc::now());
-    let initially_enabled = enabled.load(Ordering::Relaxed);
-    let mut last_plan: Option<PlanLimits> = if initially_enabled {
-        last_stored.as_ref().and_then(|cached| cached.claude.plan)
-    } else {
-        None
-    };
-    if let Some(mut cached) = last_stored.clone() {
-        if !initially_enabled {
-            // The cache may predate disabling the plan gauges; never preview
-            // plan data the current setting forbids fetching.
-            cached.claude.plan = None;
-        }
-        if block_on(tx.send(cached)).is_err() {
+    let mut last_plan: Option<PlanLimits> = None;
+    if let Some(cached) = &mut last_stored {
+        cached.claude.plan = None;
+        if block_on(tx.send(cached.clone())).is_err() {
             return;
         }
     }
@@ -185,8 +177,8 @@ fn producer_loop(paths: Paths, tx: async_channel::Sender<UsageSnapshot>, enabled
             cached_token = None;
             last_read_ms = None;
             last_plan = None;
-        } else if let Some(shared_plan) =
-            claude_plan_cache::refresh_shared(&paths.snapshot_cache, now, || {
+        } else {
+            last_plan = claude_plan_cache::refresh_shared(&paths.snapshot_cache, now, || {
                 // Read the Keychain (the prompt-triggering call) only when we
                 // lack a usable token; otherwise reuse the cached one.
                 if should_read_keychain(
@@ -199,12 +191,46 @@ fn producer_loop(paths: Paths, tx: async_channel::Sender<UsageSnapshot>, enabled
                         read_claude_token(&keychain as &dyn ReadSecret, &paths.os_account);
                     last_read_ms = Some(now_ms);
                 }
-                cached_token.as_ref().and_then(|token| {
-                    fetch_plan_for_token(&fetch as &dyn FetchUsage, token, now_ms)
-                })
-            })
-        {
-            last_plan = Some(shared_plan);
+                let mut outcome = cached_token
+                    .as_ref()
+                    .map(|token| {
+                        fetch_plan_for_token_outcome(&fetch as &dyn FetchUsage, token, now_ms)
+                    })
+                    .unwrap_or(PlanFetchOutcome::Unavailable);
+
+                // Claude Code may rotate a still-nominally-valid token. A 401
+                // is the one signal that our cached copy is no longer usable;
+                // boundedly re-read the Keychain and retry only when the token
+                // actually changed.
+                if matches!(outcome, PlanFetchOutcome::Unauthorized)
+                    && last_read_ms
+                        .map(|last| now_ms.saturating_sub(last) >= REREAD_BACKOFF_MS)
+                        .unwrap_or(true)
+                {
+                    let refreshed =
+                        read_claude_token(&keychain as &dyn ReadSecret, &paths.os_account);
+                    let changed = match (&cached_token, &refreshed) {
+                        (Some(old), Some(new)) => old.access_token != new.access_token,
+                        (None, Some(_)) => true,
+                        _ => false,
+                    };
+                    cached_token = refreshed;
+                    last_read_ms = Some(now_ms);
+                    if changed {
+                        outcome = cached_token
+                            .as_ref()
+                            .map(|token| {
+                                fetch_plan_for_token_outcome(
+                                    &fetch as &dyn FetchUsage,
+                                    token,
+                                    now_ms,
+                                )
+                            })
+                            .unwrap_or(PlanFetchOutcome::Unavailable);
+                    }
+                }
+                outcome
+            });
         }
 
         // Plan refreshes should not sit behind a 10s+ recursive transcript
