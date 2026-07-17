@@ -117,6 +117,12 @@ pub struct Provider {
     pub week: WindowTotals,
     pub month: WindowTotals,
     pub plan: Option<PlanLimits>,
+    /// Claude only: the plan gauges are enabled, but reading the Keychain
+    /// token would raise the macOS credential prompt (the item's ACL no
+    /// longer trusts a silent read). The poller sets this instead of reading;
+    /// the UI offers an explicit Authorize gesture that sanctions the prompt.
+    #[serde(default)]
+    pub plan_needs_authorization: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

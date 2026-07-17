@@ -2,7 +2,6 @@
 //! inline banner is distinct from a typical app banner in that inline banner are rendered within
 //! the Blocklist (between blocks) while app banners are pinned to the top of the window.
 mod agent_mode_setup;
-mod alias_expansion;
 mod anonymous_user_ai_sign_up;
 mod aws_bedrock_login;
 mod aws_cli_not_installed;
@@ -17,7 +16,6 @@ mod shell_process_terminated;
 mod vim_mode;
 
 pub use agent_mode_setup::*;
-pub use alias_expansion::*;
 pub use anonymous_user_ai_sign_up::*;
 pub use aws_bedrock_login::*;
 pub use aws_cli_not_installed::*;
@@ -68,10 +66,6 @@ enum InlineBannerStyle {
     /// information.
     /// Mock: https://www.figma.com/file/vgZqQ1YvHgFrAX83QO9DkB/SSH-wrapper?node-id=201%3A418
     LowPriority,
-    /// Styling for an inline banner that is giving the user very low-priority
-    /// information.
-    /// Mock: https://www.figma.com/file/vgZqQ1YvHgFrAX83QO9DkB/SSH-wrapper?node-id=201%3A570
-    VeryLowPriority,
 }
 
 struct InlineBannerButtonState {
@@ -205,7 +199,6 @@ fn render_inline_block_list_banner(
         InlineBannerStyle::CallToAction => 100,
         InlineBannerStyle::Recommendation => 100,
         InlineBannerStyle::LowPriority => 90,
-        InlineBannerStyle::VeryLowPriority => 50,
     };
 
     let mut banner = Flex::row()
@@ -374,9 +367,6 @@ fn render_inline_block_list_banner(
                 .blend(&crate::themes::theme::Fill::Solid(ColorU::new(
                     0, 0, 0, 153,
                 )))
-        }
-        InlineBannerStyle::VeryLowPriority => {
-            crate::themes::theme::Fill::Solid(ColorU::new(0, 0, 0, 51))
         }
     };
     Container::new(Clipped::new(banner.finish()).finish())

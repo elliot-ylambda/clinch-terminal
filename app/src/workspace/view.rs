@@ -25956,6 +25956,10 @@ impl TypedActionView for Workspace {
                         report_if_error!(settings.show_plan_limits.toggle_and_save_value(ctx));
                     }
                 });
+                // The same click sanctions one Keychain read: if the item's
+                // ACL requires the macOS credential prompt, it appears now as
+                // a direct response to the gesture — never unbidden at launch.
+                CliAgentUsageModel::as_ref(ctx).request_authorization();
                 ctx.notify();
             }
             ReopenClosedSession => {

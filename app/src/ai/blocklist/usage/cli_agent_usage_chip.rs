@@ -12,7 +12,10 @@ use warpui::platform::Cursor;
 use warpui::ui_components::components::UiComponent;
 use warpui::Element;
 
-use super::{CliAgentUsageHeaderVisibility, CliAgentUsageMetric, CliAgentUsageProvider};
+use super::{
+    CliAgentUsageHeaderVisibility, CliAgentUsageMetric, CliAgentUsageProvider,
+    PlanLimitsAffordance,
+};
 use crate::appearance::Appearance;
 use crate::workspace::WorkspaceAction;
 
@@ -58,10 +61,12 @@ pub(super) fn span(
     .finish()
 }
 
-/// The plan gauges' enable affordance: accent "Turn on" text that flips the
-/// `show_plan_limits` setting. The poller's first fetch after enabling reads
-/// Claude Code's Keychain login, so macOS raises its password prompt then.
-pub(super) fn turn_on_plan_limits(
+/// The plan gauges' clickable affordance ("Turn on" / "Authorize"): accent
+/// text that ensures the `show_plan_limits` setting is on and sanctions one
+/// Keychain read. If macOS needs to raise its credential prompt, it does so
+/// right after this click — never unprompted at launch.
+pub(super) fn plan_limits_affordance_link(
+    affordance: PlanLimitsAffordance,
     appearance: &Appearance,
     bg: Fill,
     mouse_state: MouseStateHandle,
@@ -73,7 +78,7 @@ pub(super) fn turn_on_plan_limits(
         } else {
             theme.accent()
         };
-        span("Turn on", color, appearance)
+        span(affordance.label(), color, appearance)
     })
     .on_click(move |ctx, _app, _position| {
         ctx.dispatch_typed_action(WorkspaceAction::EnableCliAgentPlanLimits);
@@ -121,10 +126,10 @@ pub fn render_cli_agent_usage_panel(
 
     // Claude's live plan data is opt-in, but its visibility controls remain
     // available even while collection is off.
-    if kind.shows_plan_limits_turn_on(plan_limits_enabled) {
+    if let Some(affordance) = kind.plan_limits_affordance(plan_limits_enabled, provider) {
         col.add_child(panel_row(
             span("Limits", sub, appearance),
-            turn_on_plan_limits(appearance, bg, turn_on_mouse_state),
+            plan_limits_affordance_link(affordance, appearance, bg, turn_on_mouse_state),
             scale,
         ));
     }

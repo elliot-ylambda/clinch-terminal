@@ -19,7 +19,7 @@ use super::inline_banner::{
     OpenInWarpBannerAction, VimModeBannerAction,
 };
 use super::{
-    AliasExpansionBannerAction, ContextMenuAction, GridHighlightedLink, InputContextMenuAction,
+    ContextMenuAction, GridHighlightedLink, InputContextMenuAction,
     NotificationsDiscoveryBannerAction, NotificationsErrorBannerAction, RichContentLink,
     TerminalEditor,
 };
@@ -296,7 +296,6 @@ pub enum TerminalAction {
     /// command that the user entered.
     ShowSubshellBanner(String),
     InsertMostRecentCommandCorrection,
-    AliasExpansionBanner(AliasExpansionBannerAction),
     OpenInWarpBanner(OpenInWarpBannerAction),
     OpenBlockFilterEditor(BlockIndex),
     OnboardingFlow(OnboardingVersion),
@@ -634,7 +633,6 @@ impl fmt::Debug for TerminalAction {
             DismissWarpifyBanner(remember) => write!(f, "DismissWarpifyBanner({remember:?})"),
             ShowSubshellBanner(_) => f.write_str("ShowSubshellBanner"),
             InsertMostRecentCommandCorrection => f.write_str("InsertMostRecentCommandCorrection"),
-            AliasExpansionBanner(action) => write!(f, "AliasExpansionBanner({action:?}"),
             OpenInWarpBanner(action) => write!(f, "OpenInWarpBanner({action:?})"),
             OpenBlockFilterEditor(block_index) => {
                 write!(f, "OpenBlockFilterEditor({block_index:?})")

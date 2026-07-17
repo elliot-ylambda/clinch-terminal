@@ -171,9 +171,7 @@ use warp::terminal::model::grid::grid_handler::TermMode;
 use warp::terminal::model::grid::Dimensions;
 use warp::terminal::model::terminal_model::BlockIndex;
 use warp::terminal::session_settings::{HonorPS1, SessionSettings, StartupShellOverride};
-use warp::terminal::view::{
-    BlockVisibilityMode, TerminalAction, TerminalViewState, ALIAS_EXPANSION_BANNER_SEEN_KEY,
-};
+use warp::terminal::view::{BlockVisibilityMode, TerminalAction, TerminalViewState};
 use warp::terminal::{shell, TerminalView};
 use warp::util::bindings::CustomAction;
 use warp::workflows::categories::CategoriesView;
@@ -844,19 +842,11 @@ pub fn test_waterfall_input_alt_grid() -> Builder {
 // TODO(CORE-2721): Block count / index Failed b/c of in-band generators
 pub fn test_waterfall_input() -> Builder {
     new_builder()
-        .with_user_defaults(HashMap::from([
-            (
-                INPUT_MODE.to_owned(),
-                serde_json::to_string(&InputMode::Waterfall)
-                    .expect("input_mode value should convert to json string"),
-            ),
-            // Ensure the alias expansion doesn't appear (the use of "echo" could cause it to appear
-            // in Powershell since `echo` is an alias for `Write-Output`).
-            (
-                ALIAS_EXPANSION_BANNER_SEEN_KEY.to_owned(),
-                serde_json::to_string(&true).expect("bool should convert to JSON string"),
-            ),
-        ]))
+        .with_user_defaults(HashMap::from([(
+            INPUT_MODE.to_owned(),
+            serde_json::to_string(&InputMode::Waterfall)
+                .expect("input_mode value should convert to json string"),
+        )]))
         .with_step(
             wait_until_bootstrapped_single_pane_for_tab(0)
                 .add_assertion(assert_input_mode(InputMode::Waterfall)),
@@ -1038,19 +1028,11 @@ pub fn test_waterfall_input_text_selection() -> Builder {
 // TODO(CORE-2721): Block count / index Failed b/c of in-band generators
 pub fn test_waterfall_input_scrolling() -> Builder {
     let mut builder = new_builder()
-        .with_user_defaults(HashMap::from([
-            (
-                INPUT_MODE.to_owned(),
-                serde_json::to_string(&InputMode::Waterfall)
-                    .expect("input_mode value should convert to json string"),
-            ),
-            // Ensure the alias expansion doesn't appear (the use of "echo" could cause it to appear
-            // in Powershell since `echo` is an alias for `Write-Output`).
-            (
-                ALIAS_EXPANSION_BANNER_SEEN_KEY.to_owned(),
-                serde_json::to_string(&true).expect("bool should convert to JSON string"),
-            ),
-        ]))
+        .with_user_defaults(HashMap::from([(
+            INPUT_MODE.to_owned(),
+            serde_json::to_string(&InputMode::Waterfall)
+                .expect("input_mode value should convert to json string"),
+        )]))
         .with_step(
             wait_until_bootstrapped_single_pane_for_tab(0)
                 .add_assertion(assert_input_mode(InputMode::Waterfall)),

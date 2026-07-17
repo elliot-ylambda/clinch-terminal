@@ -1740,9 +1740,6 @@ pub enum TelemetryEvent {
     WarpifyFooterAcceptedWarpify {
         is_ssh: bool,
     },
-    ShowAliasExpansionBanner,
-    EnableAliasExpansionFromBanner,
-    DismissAliasExpansionBanner,
     ShowVimKeybindingsBanner,
     EnableVimKeybindingsFromBanner,
     DismissVimKeybindingsBanner,
@@ -4210,9 +4207,6 @@ impl TelemetryEvent {
             | TelemetryEvent::AddAddedSubshellCommand
             | TelemetryEvent::RemoveAddedSubshellCommand
             | TelemetryEvent::ReceivedSubshellRcFileDcs
-            | TelemetryEvent::ShowAliasExpansionBanner
-            | TelemetryEvent::EnableAliasExpansionFromBanner
-            | TelemetryEvent::DismissAliasExpansionBanner
             | TelemetryEvent::ShowVimKeybindingsBanner
             | TelemetryEvent::EnableVimKeybindingsFromBanner
             | TelemetryEvent::DismissVimKeybindingsBanner
@@ -5046,9 +5040,6 @@ impl TelemetryEvent {
             | TelemetryEvent::WarpifyFooterShown { .. }
             | TelemetryEvent::AgentToolbarDismissed
             | TelemetryEvent::WarpifyFooterAcceptedWarpify { .. }
-            | TelemetryEvent::ShowAliasExpansionBanner
-            | TelemetryEvent::EnableAliasExpansionFromBanner
-            | TelemetryEvent::DismissAliasExpansionBanner
             | TelemetryEvent::ShowVimKeybindingsBanner
             | TelemetryEvent::EnableVimKeybindingsFromBanner
             | TelemetryEvent::DismissVimKeybindingsBanner
@@ -5604,9 +5595,6 @@ impl TelemetryEventDesc for TelemetryEventDiscriminants {
             Self::AddAddedSubshellCommand => EnablementState::Always,
             Self::RemoveAddedSubshellCommand => EnablementState::Always,
             Self::ReceivedSubshellRcFileDcs => EnablementState::Always,
-            Self::ShowAliasExpansionBanner => EnablementState::Always,
-            Self::EnableAliasExpansionFromBanner => EnablementState::Always,
-            Self::DismissAliasExpansionBanner => EnablementState::Always,
             Self::ShowVimKeybindingsBanner => EnablementState::Always,
             Self::EnableVimKeybindingsFromBanner => EnablementState::Always,
             Self::DismissVimKeybindingsBanner => EnablementState::Always,
@@ -6110,9 +6098,6 @@ impl TelemetryEventDesc for TelemetryEventDiscriminants {
             Self::WarpifyFooterShown => "Warpify Footer Shown",
             Self::AgentToolbarDismissed => "Agent Toolbar Dismissed",
             Self::WarpifyFooterAcceptedWarpify => "Warpify Footer Accepted Warpify",
-            Self::ShowAliasExpansionBanner => "Show Alias Expansion Banner",
-            Self::DismissAliasExpansionBanner => "Dismiss Alias Expansion Banner",
-            Self::EnableAliasExpansionFromBanner => "Enable Alias Expansion From Banner",
             Self::InitiateReauth => "Initiate Reauth",
             Self::NeedsReauth => "Needs Reauth",
             Self::WarpDriveOpened => "Warp Drive Opened",
@@ -6817,15 +6802,6 @@ impl TelemetryEventDesc for TelemetryEventDiscriminants {
             }
             Self::AgentToolbarDismissed => "User dismissed the use-agent toolbar",
             Self::WarpifyFooterAcceptedWarpify => "User clicked Warpify in the warpify footer",
-            Self::ShowAliasExpansionBanner => {
-                "Displayed the banner asking whether Warp should automatically expand aliases within the Input Editor"
-            }
-            Self::EnableAliasExpansionFromBanner => {
-                "Enabled automatic alias expansion within the Input Editor from the banner"
-            }
-            Self::DismissAliasExpansionBanner => {
-                "Dismissed the banner to enable automatic alias expansion within the Input Editor"
-            }
             Self::ShowVimKeybindingsBanner => {
                 "Displayed the banner asking whether Warp should enable Vim keybindings in the Input Editor"
             }

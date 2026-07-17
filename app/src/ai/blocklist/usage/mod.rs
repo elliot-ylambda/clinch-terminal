@@ -218,14 +218,46 @@ impl CliAgentUsageProvider {
         }
     }
 
-    /// Whether this provider's gauge area shows the "Turn on" affordance
-    /// instead of limit windows. Claude's plan gauges come from the opt-in
-    /// Keychain + usage-endpoint poller (`show_plan_limits`), so while that
-    /// setting is off they would otherwise render as permanent dashes that
-    /// read as "broken". Codex limits come from local files and ignore the
-    /// setting.
-    fn shows_plan_limits_turn_on(self, plan_limits_enabled: bool) -> bool {
-        self == Self::Claude && !plan_limits_enabled
+    /// Which clickable affordance this provider's gauge area shows instead of
+    /// limit windows. Claude's plan gauges come from the opt-in Keychain +
+    /// usage-endpoint poller (`show_plan_limits`): while the setting is off
+    /// they offer "Turn on" (otherwise permanent dashes read as "broken"),
+    /// and while the poller reports that reading the Keychain would prompt
+    /// they offer "Authorize" — so the macOS credential prompt only ever
+    /// appears as the direct result of a click, never unbidden at launch.
+    /// Codex limits come from local files and need neither.
+    fn plan_limits_affordance(
+        self,
+        plan_limits_enabled: bool,
+        provider: &Provider,
+    ) -> Option<PlanLimitsAffordance> {
+        if self != Self::Claude {
+            return None;
+        }
+        if !plan_limits_enabled {
+            return Some(PlanLimitsAffordance::TurnOn);
+        }
+        provider
+            .plan_needs_authorization
+            .then_some(PlanLimitsAffordance::Authorize)
+    }
+}
+
+/// See [`CliAgentUsageProvider::plan_limits_affordance`]. Both variants
+/// dispatch the same `EnableCliAgentPlanLimits` gesture: ensure the setting is
+/// on and sanction one Keychain read (with its prompt, if macOS raises one).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlanLimitsAffordance {
+    TurnOn,
+    Authorize,
+}
+
+impl PlanLimitsAffordance {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::TurnOn => "Turn on",
+            Self::Authorize => "Authorize",
+        }
     }
 }
 
@@ -276,9 +308,11 @@ pub fn render_context_window_usage_icon(
 mod cli_agent_usage_provider_tests {
     use std::collections::HashMap;
 
+    use cli_agent_usage::Provider;
+
     use super::{
         CliAgentUsageHeaderVisibility, CliAgentUsageMetric, CliAgentUsageProvider,
-        CLAUDE_USAGE_URL, CODEX_USAGE_URL,
+        PlanLimitsAffordance, CLAUDE_USAGE_URL, CODEX_USAGE_URL,
     };
 
     #[test]
@@ -292,14 +326,40 @@ mod cli_agent_usage_provider_tests {
     }
 
     #[test]
-    fn turn_on_affordance_is_claude_only_and_only_while_disabled() {
+    fn plan_limits_affordance_is_claude_only_turn_on_then_authorize() {
         let claude = CliAgentUsageProvider::Claude;
         let codex = CliAgentUsageProvider::Codex;
+        let idle = Provider::default();
+        let needs_auth = Provider {
+            plan_needs_authorization: true,
+            ..Provider::default()
+        };
 
-        assert!(claude.shows_plan_limits_turn_on(false));
-        assert!(!claude.shows_plan_limits_turn_on(true));
-        assert!(!codex.shows_plan_limits_turn_on(false));
-        assert!(!codex.shows_plan_limits_turn_on(true));
+        // Setting off: Claude offers "Turn on" regardless of poller state.
+        assert_eq!(
+            claude.plan_limits_affordance(false, &idle),
+            Some(PlanLimitsAffordance::TurnOn)
+        );
+        assert_eq!(
+            claude.plan_limits_affordance(false, &needs_auth),
+            Some(PlanLimitsAffordance::TurnOn)
+        );
+        // Setting on: Authorize appears only while the poller reports that
+        // reading the Keychain would prompt.
+        assert_eq!(claude.plan_limits_affordance(true, &idle), None);
+        assert_eq!(
+            claude.plan_limits_affordance(true, &needs_auth),
+            Some(PlanLimitsAffordance::Authorize)
+        );
+        // Codex limits come from local files; no affordance ever.
+        assert_eq!(codex.plan_limits_affordance(false, &idle), None);
+        assert_eq!(codex.plan_limits_affordance(true, &needs_auth), None);
+    }
+
+    #[test]
+    fn affordance_labels_name_the_gesture() {
+        assert_eq!(PlanLimitsAffordance::TurnOn.label(), "Turn on");
+        assert_eq!(PlanLimitsAffordance::Authorize.label(), "Authorize");
     }
 
     #[test]

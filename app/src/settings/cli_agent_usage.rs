@@ -21,9 +21,10 @@ define_settings_group!(CliAgentUsageSettings, settings: [
         toml_path: "ai.cli_agent_usage.show_plan_limits",
         description: "Show Claude Code's live plan-limit gauges in the usage \
                       widget. When enabled, reads the 'Claude Code-credentials' \
-                      item from your macOS Keychain (asks for your password) and \
-                      queries Anthropic's usage endpoint. Off by default; local \
-                      token and cost stats work without it.",
+                      item from your macOS Keychain (may ask for your keychain \
+                      password when you turn it on) and queries Anthropic's \
+                      usage endpoint. Off by default; local token and cost \
+                      stats work without it.",
     }
 
     // Sparse overrides for the per-provider statistics rendered in the tab-bar

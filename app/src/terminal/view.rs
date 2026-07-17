@@ -92,12 +92,11 @@ pub use init::{
 };
 use init::{INPUT_BOX_VISIBLE_KEY, TOGGLE_BLOCK_FILTER_KEYBINDING};
 use inline_banner::{
-    render_alias_expansion_banner, render_aws_bedrock_login_banner,
-    render_aws_cli_not_installed_banner, render_inline_notifications_discovery_banner,
-    render_inline_notifications_error_banner, render_inline_shared_session_ended_banner,
-    render_inline_shared_session_started_banner, render_open_in_warp_banner,
-    render_shell_process_terminated_banner, render_vim_mode_banner, AliasExpansionBanner,
-    AliasExpansionBannerAction, AnonymousUserAISignUpBannerState, AnonymousUserLoginBannerAction,
+    render_aws_bedrock_login_banner, render_aws_cli_not_installed_banner,
+    render_inline_notifications_discovery_banner, render_inline_notifications_error_banner,
+    render_inline_shared_session_ended_banner, render_inline_shared_session_started_banner,
+    render_open_in_warp_banner, render_shell_process_terminated_banner, render_vim_mode_banner,
+    AnonymousUserAISignUpBannerState, AnonymousUserLoginBannerAction,
     AwsBedrockLoginBannerAction, AwsBedrockLoginBannerState, AwsCliNotInstalledBannerAction,
     AwsCliNotInstalledBannerState, ByoLlmAuthBannerSessionState, OpenInWarpBannerState,
     VimModeBannerAction,
@@ -362,7 +361,7 @@ use crate::settings::ai::FocusedTerminalInfo;
 use crate::settings::import::model::ImportedConfigModel;
 use crate::settings::import::view::{SettingsImportEvent, SettingsImportView};
 use crate::settings::{
-    AISettings, AISettingsChangedEvent, AliasExpansionSettings, AppEditorSettings,
+    AISettings, AISettingsChangedEvent, AppEditorSettings,
     BlockVisibilitySettings, BlockVisibilitySettingsChangedEvent, CliAgentUsageSettings,
     CodeSettings, DebugSettings, DebugSettingsChangedEvent, EmacsBindingsSettings, FontSettings,
     FontSettingsChangedEvent, InputModeSettings, InputModeSettingsChangedEvent, InputSettings,
@@ -373,7 +372,6 @@ use crate::settings_view::keybindings::KeybindingChangedNotifier;
 use crate::settings_view::mcp_servers_page::MCPServersSettingsPage;
 use crate::settings_view::{flags, SettingsSection};
 use crate::shell_indicator::ShellIndicatorType;
-use crate::terminal::alias::{check_for_alias_async, AliasedCommand};
 use crate::terminal::alt_screen::alt_screen_element::AltScreenElement;
 use crate::terminal::alt_screen_reporting::{AltScreenReporting, AltScreenReportingChangedEvent};
 use crate::terminal::block_filter::{
@@ -475,8 +473,8 @@ use crate::terminal::view::init_environment::mode_selector::{
 use crate::terminal::view::init_environment::{InitEnvironmentBlock, InitEnvironmentBlockEvent};
 use crate::terminal::view::inline_banner::{
     render_agent_mode_setup_banner, AgentModeSetupSpeedbumpBannerAction,
-    AgentModeSetupSpeedbumpBannerState, AliasExpansionBannerState,
-    NotificationsDiscoveryBannerState, NotificationsErrorBannerState, PromptSuggestionBannerState,
+    AgentModeSetupSpeedbumpBannerState, NotificationsDiscoveryBannerState,
+    NotificationsErrorBannerState, PromptSuggestionBannerState,
     VimModeBannerState,
 };
 use crate::terminal::view::passive_suggestions::PromptSuggestionResolution;
@@ -684,9 +682,6 @@ enum Osc52ClipboardBlockedType {
     Read,
     Write,
 }
-
-/// Key used in user defaults to save whether the user has seen the banner.
-pub const ALIAS_EXPANSION_BANNER_SEEN_KEY: &str = "AliasExpansionBannerSeen";
 
 /// Delay between receiving preexec hook for a command we want to auto-warpify
 /// and triggering the warpification (subshell bootstrapping).
@@ -1001,7 +996,6 @@ pub enum InlineBannerType {
     NotificationsDiscovery,
     NotificationsError,
     PromptSuggestions,
-    AliasExpansion,
     SharedSessionStart,
     SharedSessionEnd,
     ShellProcessTerminated,
@@ -1029,7 +1023,6 @@ impl InlineBannerType {
             // Terminal-context banners: hidden in agent view
             Self::NotificationsDiscovery
             | Self::NotificationsError
-            | Self::AliasExpansion
             | Self::SharedSessionStart
             | Self::SharedSessionEnd
             | Self::ShellProcessTerminated
@@ -1065,8 +1058,6 @@ struct InlineBannersState {
     notifications_error_banner: NotificationsErrorBanner,
 
     prompt_suggestions_banner: Option<PromptSuggestionBannerState>,
-
-    alias_expansion_banner: AliasExpansionBanner,
 
     shared_session_banner_state: SharedSessionBanners,
 
@@ -9973,47 +9964,6 @@ impl TerminalView {
         }
     }
 
-    fn alias_expansion_banner_action(
-        &mut self,
-        action: AliasExpansionBannerAction,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        use AliasExpansionBannerAction::*;
-
-        match action {
-            Enable => {
-                let mut should_dismiss_banner = true;
-                AliasExpansionSettings::handle(ctx).update(ctx, |settings, ctx| {
-                    if let Err(e) = settings.alias_expansion_enabled.set_value(true, ctx) {
-                        should_dismiss_banner = false;
-                        log::error!("Failed to enable alias expansion setting from banner: {e}");
-                    }
-                });
-                if should_dismiss_banner {
-                    self.dismiss_alias_expansion_banner(ctx);
-                    send_telemetry_from_ctx!(TelemetryEvent::EnableAliasExpansionFromBanner, ctx);
-                }
-            }
-            Dismiss => {
-                self.dismiss_alias_expansion_banner(ctx);
-                send_telemetry_from_ctx!(TelemetryEvent::DismissAliasExpansionBanner, ctx);
-            }
-        };
-    }
-
-    fn dismiss_alias_expansion_banner(&mut self, ctx: &mut ViewContext<Self>) {
-        if let AliasExpansionBanner::Open { state } =
-            &self.inline_banners_state.alias_expansion_banner
-        {
-            self.model
-                .lock()
-                .block_list_mut()
-                .remove_inline_banner(state.id);
-            self.inline_banners_state.alias_expansion_banner = AliasExpansionBanner::Closed;
-        }
-        ctx.notify();
-    }
-
     /// Inserts a notifications discovery banner into the block list.
     fn insert_notifications_discovery_banner(
         &mut self,
@@ -10336,39 +10286,6 @@ impl TerminalView {
         let is_setting_enabled = ai_settings.is_code_suggestions_enabled(ctx);
         let is_setting_toggleable = UserWorkspaces::as_ref(ctx).is_code_suggestions_toggleable();
         is_prompt_suggestions_enabled && is_setting_enabled && is_setting_toggleable
-    }
-
-    fn insert_alias_expansion_banner(
-        &mut self,
-        aliased_command: AliasedCommand,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        if let AliasExpansionBanner::Open { .. } = self.inline_banners_state.alias_expansion_banner
-        {
-            // We only show this banner once to the user.
-            log::warn!("Tried to insert more than one alias expansion banner");
-            return;
-        }
-        let banner_id = self.inline_banners_state.next_banner_id();
-        self.inline_banners_state.alias_expansion_banner = AliasExpansionBanner::Open {
-            state: AliasExpansionBannerState {
-                id: banner_id,
-                aliased_command,
-                yes_button_mouse_state: Default::default(),
-                no_button_mouse_state: Default::default(),
-            },
-        };
-
-        send_telemetry_from_ctx!(TelemetryEvent::ShowAliasExpansionBanner, ctx);
-
-        self.model
-            .lock()
-            .block_list_mut()
-            .append_inline_banner(InlineBannerItem::new(
-                banner_id,
-                InlineBannerType::AliasExpansion,
-            ));
-        ctx.notify();
     }
 
     /// Inserts a vim keybinding banner into the blocklist.
@@ -12328,10 +12245,6 @@ impl TerminalView {
                     // We don't want any suggestion UIs on AI requested blocks.
                     if !block_completed.was_part_of_agent_interaction {
                         self.maybe_generate_command_suggestions(block_completed, ctx);
-
-                        if self.can_suggest_alias_expansion(ctx) {
-                            self.maybe_suggest_alias_expansion(block_completed, ctx);
-                        }
 
                         self.maybe_suggest_open_in_warp(block_completed, ctx);
                     }
@@ -15985,62 +15898,6 @@ impl TerminalView {
                 Self::fetch_command_corrections(block_completed.clone(), session, history_entries),
                 Self::after_command_correction_generation,
             );
-        }
-    }
-
-    fn can_suggest_alias_expansion(&mut self, ctx: &mut ViewContext<TerminalView>) -> bool {
-        let has_user_seen_banner: bool = ctx
-            .private_user_preferences()
-            .read_value(ALIAS_EXPANSION_BANNER_SEEN_KEY)
-            .unwrap_or_default()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or(false);
-        let alias_expansion_settings = AliasExpansionSettings::as_ref(ctx);
-        let supported_on_current_platform = alias_expansion_settings
-            .alias_expansion_enabled
-            .is_supported_on_current_platform();
-        let is_fish_shell = self
-            .active_block_session_id()
-            .and_then(|id| self.sessions.as_ref(ctx).get(id))
-            .is_some_and(|s| s.shell().shell_type() == ShellType::Fish);
-
-        supported_on_current_platform
-            && !*alias_expansion_settings.alias_expansion_enabled
-            && !has_user_seen_banner
-            // We don't suggest alias expansions for fish since we already expand
-            // abbreviations by default.
-            && !is_fish_shell
-    }
-
-    fn maybe_suggest_alias_expansion(
-        &mut self,
-        block_completed: &UserBlockCompleted,
-        ctx: &mut ViewContext<TerminalView>,
-    ) {
-        if let Some(session) = self
-            .active_block_session_id()
-            .and_then(|id| self.sessions.as_ref(ctx).get(id))
-        {
-            let command = block_completed.command.clone();
-            ctx.spawn(
-                async move { check_for_alias_async(&command, session).await },
-                move |view, aliased_command, ctx| {
-                    view.suggest_alias_expansion(aliased_command, ctx);
-                },
-            );
-        }
-    }
-
-    fn suggest_alias_expansion(
-        &mut self,
-        aliased_command: Option<AliasedCommand>,
-        ctx: &mut ViewContext<TerminalView>,
-    ) {
-        if let Some(aliased_command) = aliased_command {
-            let _ = ctx
-                .private_user_preferences()
-                .write_value(ALIAS_EXPANSION_BANNER_SEEN_KEY, "true".to_owned());
-            self.insert_alias_expansion_banner(aliased_command, ctx);
         }
     }
 
@@ -24001,12 +23858,6 @@ impl TerminalView {
             );
         }
 
-        if let AliasExpansionBanner::Open { state } =
-            &self.inline_banners_state.alias_expansion_banner
-        {
-            inline_banners.insert(state.id, render_alias_expansion_banner(state, appearance));
-        }
-
         if let Some(ShellProcessTerminatedBanner {
             banner_id,
             was_premature_termination,
@@ -26444,7 +26295,6 @@ impl TypedActionView for TerminalView {
             | ShowSubshellBanner(_)
             | DismissWarpifyBanner(_)
             | OpenBlockListContextMenu
-            | AliasExpansionBanner(_)
             | VimModeBanner(_)
             | InsertMostRecentCommandCorrection
             | StopSharingCurrentSession { .. }
@@ -26972,7 +26822,6 @@ impl TypedActionView for TerminalView {
                 }
             }
             InsertMostRecentCommandCorrection => self.insert_most_recent_command_correction(ctx),
-            AliasExpansionBanner(action) => self.alias_expansion_banner_action(*action, ctx),
             OpenInWarpBanner(action) => self.handle_open_in_warp_banner_action(*action, ctx),
             OpenBlockFilterEditor(block_index) => {
                 self.open_block_filter_editor(*block_index, OpenedFromClick::Yes, ctx)

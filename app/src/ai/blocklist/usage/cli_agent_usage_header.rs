@@ -10,8 +10,11 @@ use warpui::elements::{
 use warpui::platform::Cursor;
 use warpui::Element;
 
-use super::cli_agent_usage_chip::{severity_fill, span, turn_on_plan_limits};
-use super::{CliAgentUsageHeaderVisibility, CliAgentUsageMetric, CliAgentUsageProvider};
+use super::cli_agent_usage_chip::{plan_limits_affordance_link, severity_fill, span};
+use super::{
+    CliAgentUsageHeaderVisibility, CliAgentUsageMetric, CliAgentUsageProvider,
+    PlanLimitsAffordance,
+};
 use crate::appearance::Appearance;
 use crate::workspace::WorkspaceAction;
 
@@ -162,18 +165,23 @@ fn token_text(totals: &WindowTotals) -> String {
 }
 
 /// Whether Claude's opt-in plan gauges are on, plus the shared mouse handle
-/// for the "Turn on" affordance rendered in their place while they're off.
+/// for the "Turn on"/"Authorize" affordance rendered in their place while the
+/// gauges are off or the Keychain read awaits a sanctioning click.
 struct PlanLimitsGate<'a> {
     enabled: bool,
     turn_on_mouse_state: &'a MouseStateHandle,
 }
 
 impl PlanLimitsGate<'_> {
-    /// The affordance's mouse handle, when `kind`'s gauge area should show
-    /// "Turn on" instead of limit windows.
-    fn turn_on(&self, kind: CliAgentUsageProvider) -> Option<MouseStateHandle> {
-        kind.shows_plan_limits_turn_on(self.enabled)
-            .then(|| self.turn_on_mouse_state.clone())
+    /// The affordance (and its mouse handle) when `kind`'s gauge area should
+    /// show a clickable link instead of limit windows.
+    fn affordance(
+        &self,
+        kind: CliAgentUsageProvider,
+        provider: &Provider,
+    ) -> Option<(PlanLimitsAffordance, MouseStateHandle)> {
+        kind.plan_limits_affordance(self.enabled, provider)
+            .map(|affordance| (affordance, self.turn_on_mouse_state.clone()))
     }
 }
 
@@ -213,9 +221,11 @@ fn provider_segment(
     let windows = provider_windows(provider, kind, render.visibility);
     let mut item_count = 0;
     if !windows.is_empty() {
-        if let Some(mouse_state) = render.gate.turn_on(kind) {
+        if let Some((affordance, mouse_state)) = render.gate.affordance(kind, provider) {
             row.add_child(span("limits ", sub, appearance));
-            row.add_child(turn_on_plan_limits(appearance, bg, mouse_state));
+            row.add_child(plan_limits_affordance_link(
+                affordance, appearance, bg, mouse_state,
+            ));
             item_count += 1;
         } else {
             for (label, window) in windows {
@@ -364,9 +374,11 @@ fn compact_provider_segment(
     let windows = compact_provider_windows(provider, kind, render.visibility);
     let mut item_count = 0;
     if !windows.is_empty() {
-        if let Some(mouse_state) = render.gate.turn_on(kind) {
+        if let Some((affordance, mouse_state)) = render.gate.affordance(kind, provider) {
             row.add_child(span("limits ", neutral, appearance));
-            row.add_child(turn_on_plan_limits(appearance, bg, mouse_state));
+            row.add_child(plan_limits_affordance_link(
+                affordance, appearance, bg, mouse_state,
+            ));
             item_count += 1;
         } else {
             for (metric, window) in windows {
