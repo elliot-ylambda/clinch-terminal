@@ -1,0 +1,372 @@
+#!/usr/bin/env python3
+"""Create isolated Cargo directory sources for a Corresponding Source archive.
+
+Cargo's built-in ``cargo vendor`` merges all upstream sources into one
+directory. It refuses a lockfile when two upstreams provide the same package
+name and version, even though Cargo can otherwise resolve those packages by
+their distinct source IDs. Clinch currently has such pairs. This helper keeps
+each registry or Git source in its own directory and emits equivalent Cargo
+source-replacement configuration.
+"""
+
+import hashlib
+import json
+import pathlib
+import posixpath
+import re
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+import urllib.parse
+
+
+def fail(message):
+    raise SystemExit(f"Cargo source vendoring failed: {message}")
+
+
+def run(command, *, cwd):
+    result = subprocess.run(
+        command,
+        cwd=str(cwd),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip()
+        fail(f"{' '.join(command)} failed\n{detail}")
+    return result.stdout
+
+
+def source_key(source_id):
+    return source_id.split("#", 1)[0]
+
+
+def directory_name(source_id):
+    return hashlib.sha256(source_id.encode("utf-8")).hexdigest()[:16]
+
+
+def package_name(package):
+    value = f"{package['name']}-{package['version']}"
+    if value in ("", ".", "..") or "/" in value or "\\" in value:
+        fail(f"unsafe package directory name: {value!r}")
+    return value
+
+
+def write_checksum(destination, package_checksum):
+    files = {}
+    for path in sorted(destination.rglob("*")):
+        if path.is_symlink():
+            fail(f"vendored package contains a symbolic link: {path}")
+        if path.is_file() and path.name != ".cargo-checksum.json":
+            relative = path.relative_to(destination).as_posix()
+            files[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+    if "Cargo.toml" not in files:
+        fail(f"vendored package has no Cargo.toml: {destination}")
+    value = {"files": files, "package": package_checksum}
+    (destination / ".cargo-checksum.json").write_text(
+        json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+
+
+def copy_registry_package(package, destination):
+    checksum = package.get("checksum")
+    if not isinstance(checksum, str) or not re.fullmatch(r"[0-9a-f]{64}", checksum):
+        fail(f"registry package {package_name(package)} has no SHA-256 checksum")
+    source = pathlib.Path(package["manifest_path"]).resolve().parent
+    if not source.is_dir():
+        fail(f"registry package source is unavailable: {source}")
+    index = source.parent
+    if index.parent.name != "src":
+        fail(f"unrecognized Cargo registry cache layout: {source}")
+    crate = index.parent.parent / "cache" / index.name / f"{source.name}.crate"
+    if not crate.is_file():
+        fail(f"verified registry archive is unavailable: {crate}")
+    digest = hashlib.sha256()
+    with crate.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    if digest.hexdigest() != checksum:
+        fail(f"registry archive checksum differs from Cargo.lock: {crate}")
+    extract_registry_crate(crate, package_name(package), destination)
+    write_checksum(destination, checksum)
+
+
+def extract_registry_crate(crate, expected_root, destination):
+    try:
+        archive = tarfile.open(crate, mode="r:gz")
+    except (OSError, tarfile.TarError) as error:
+        fail(f"invalid verified registry archive {crate}: {error}")
+    with archive:
+        members = archive.getmembers()
+        if not members:
+            fail(f"verified registry archive is empty: {crate}")
+        seen = set()
+        for member in members:
+            name = member.name.rstrip("/")
+            normalized = posixpath.normpath(name)
+            if (
+                not name
+                or name.startswith("/")
+                or normalized != name
+                or normalized in seen
+                or not (
+                    normalized == expected_root
+                    or normalized.startswith(expected_root + "/")
+                )
+            ):
+                fail(f"unsafe path in verified registry archive: {member.name}")
+            seen.add(normalized)
+            if not (member.isfile() or member.isdir()):
+                fail(f"unsupported entry in verified registry archive: {member.name}")
+        archive.extractall(destination.parent)
+    if not destination.is_dir():
+        fail(f"verified registry archive omitted {expected_root}")
+
+
+def cargo_lock_checksums(root):
+    checksums = {}
+    package = None
+
+    def record(value):
+        if not value:
+            return
+        required = ("name", "version", "source")
+        if all(key in value for key in required) and "checksum" in value:
+            key = tuple(value[field] for field in required)
+            checksums[key] = value["checksum"]
+
+    for raw_line in (root / "Cargo.lock").read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if line == "[[package]]":
+            record(package)
+            package = {}
+            continue
+        if package is None:
+            continue
+        match = re.fullmatch(r"(name|version|source|checksum)\s*=\s*(\".*\")", line)
+        if match:
+            try:
+                package[match.group(1)] = json.loads(match.group(2))
+            except json.JSONDecodeError as error:
+                fail(f"could not parse Cargo.lock string: {error}")
+    record(package)
+    return checksums
+
+
+def toml_string(value):
+    # A JSON string is also a valid basic TOML string and handles escaping.
+    return json.dumps(value, ensure_ascii=False)
+
+
+def git_url(identifier):
+    if not identifier.startswith("git+"):
+        fail(f"unsupported Cargo source: {identifier}")
+    parsed = urllib.parse.urlsplit(identifier[4:])
+    return urllib.parse.urlunsplit(
+        (parsed.scheme, parsed.netloc, parsed.path, "", "")
+    )
+
+
+def crates_io_patch_section(root):
+    manifest = (root / "Cargo.toml").read_text(encoding="utf-8")
+    match = re.search(
+        r"(?ms)^\[patch\.crates-io\]\s*$.*?(?=^\[|\Z)",
+        manifest,
+    )
+    return match.group(0).rstrip() if match else ""
+
+
+def vendor_git_source(
+    identifier,
+    packages,
+    destination_root,
+    temporary_root,
+    patch_section,
+):
+    resolved_sources = {package["source"] for package in packages}
+    if len(resolved_sources) != 1:
+        fail(f"Git source resolved to multiple revisions: {identifier}")
+    resolved_source = next(iter(resolved_sources))
+    if "#" not in resolved_source:
+        fail(f"Git source has no resolved revision: {resolved_source}")
+    revision = resolved_source.rsplit("#", 1)[1]
+    if not re.fullmatch(r"[0-9a-f]{40}", revision):
+        fail(f"Git source has an invalid resolved revision: {resolved_source}")
+
+    work = temporary_root / directory_name(identifier)
+    work.mkdir()
+    (work / "src").mkdir()
+    (work / "src/lib.rs").write_text("// Synthetic vendoring root.\n", encoding="utf-8")
+    manifest = work / "Cargo.toml"
+    lines = [
+        "[package]",
+        f'name = "clinch-vendor-{directory_name(identifier)}"',
+        'version = "0.0.0"',
+        'edition = "2021"',
+        "",
+    ]
+    for index, package in enumerate(
+        sorted(packages, key=lambda value: (value["name"], value["version"]))
+    ):
+        lines.extend(
+            [
+                f"[dependencies.clinch-source-{index:03d}]",
+                f"package = {toml_string(package['name'])}",
+                f"version = {toml_string('=' + package['version'])}",
+                f"git = {toml_string(git_url(identifier))}",
+                f"rev = {toml_string(revision)}",
+                "default-features = false",
+                "",
+            ]
+        )
+    if patch_section:
+        lines.extend([patch_section, ""])
+    manifest.write_text("\n".join(lines), encoding="utf-8")
+    staging = work / "vendor"
+    run(
+        [
+            "cargo",
+            "vendor",
+            "--versioned-dirs",
+            "--manifest-path",
+            str(manifest),
+            str(staging),
+        ],
+        cwd=work,
+    )
+    for package in packages:
+        name = package_name(package)
+        source = staging / name
+        if not source.is_dir():
+            fail(f"cargo vendor omitted Git package {name} from {identifier}")
+        destination = destination_root / name
+        shutil.move(str(source), destination)
+        write_checksum(destination, None)
+
+
+def git_source_definition(identifier):
+    if not identifier.startswith("git+"):
+        fail(f"unsupported Cargo source: {identifier}")
+    parsed = urllib.parse.urlsplit(identifier[4:])
+    query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+    unknown = set(query) - {"branch", "rev", "tag"}
+    if unknown or any(len(values) != 1 for values in query.values()):
+        fail(f"unsupported Git source selector: {identifier}")
+    lines = [f"git = {toml_string(git_url(identifier))}"]
+    for selector in ("branch", "rev", "tag"):
+        if selector in query:
+            lines.append(f"{selector} = {toml_string(query[selector][0])}")
+    return lines
+
+
+def write_config(groups, output):
+    lines = []
+    for identifier in sorted(groups):
+        alias = f"clinch-vendor-{directory_name(identifier)}"
+        if identifier == "registry+https://github.com/rust-lang/crates.io-index":
+            lines.extend(
+                [
+                    "[source.crates-io]",
+                    f"replace-with = {toml_string(alias)}",
+                    "",
+                ]
+            )
+        elif identifier.startswith("registry+"):
+            registry = identifier[len("registry+") :]
+            lines.extend(
+                [
+                    f"[source.{toml_string(identifier)}]",
+                    f"registry = {toml_string(registry)}",
+                    f"replace-with = {toml_string(alias)}",
+                    "",
+                ]
+            )
+        else:
+            lines.append(f"[source.{toml_string(identifier)}]")
+            lines.extend(git_source_definition(identifier))
+            lines.extend([f"replace-with = {toml_string(alias)}", ""])
+        lines.extend(
+            [
+                f"[source.{toml_string(alias)}]",
+                f'directory = "vendor/{directory_name(identifier)}"',
+                "",
+            ]
+        )
+    output.write_text("\n".join(lines), encoding="utf-8")
+
+
+def main():
+    if len(sys.argv) != 3:
+        fail("usage: vendor-clinch-cargo-sources <source-root> <config-output>")
+    root = pathlib.Path(sys.argv[1]).resolve()
+    output = pathlib.Path(sys.argv[2]).resolve()
+    if not (root / "Cargo.toml").is_file() or not (root / "Cargo.lock").is_file():
+        fail(f"not a locked Cargo source tree: {root}")
+    vendor = root / "vendor"
+    if vendor.exists():
+        fail(f"refusing to overwrite existing vendor directory: {vendor}")
+    if not output.parent.is_dir():
+        fail(f"configuration output directory does not exist: {output.parent}")
+
+    try:
+        metadata = json.loads(
+            run(
+                ["cargo", "metadata", "--locked", "--format-version", "1"],
+                cwd=root,
+            )
+        )
+    except json.JSONDecodeError as error:
+        fail(f"cargo metadata returned invalid JSON: {error}")
+    packages = [package for package in metadata.get("packages", []) if package.get("source")]
+    if not packages:
+        fail("Cargo metadata contains no remote dependency packages")
+
+    groups = {}
+    lock_checksums = cargo_lock_checksums(root)
+    for package in packages:
+        identifier = source_key(package["source"])
+        if identifier.startswith("registry+"):
+            key = (package["name"], package["version"], package["source"])
+            package["checksum"] = lock_checksums.get(key, package.get("checksum"))
+        groups.setdefault(identifier, []).append(package)
+
+    vendor.mkdir()
+    patch_section = crates_io_patch_section(root)
+    with tempfile.TemporaryDirectory(prefix="clinch-cargo-package-") as temporary:
+        temporary_root = pathlib.Path(temporary)
+        for identifier in sorted(groups):
+            destination_root = vendor / directory_name(identifier)
+            destination_root.mkdir()
+            if not identifier.startswith("registry+"):
+                vendor_git_source(
+                    identifier,
+                    groups[identifier],
+                    destination_root,
+                    temporary_root,
+                    patch_section,
+                )
+                continue
+            seen = set()
+            for package in sorted(
+                groups[identifier], key=lambda value: (value["name"], value["version"])
+            ):
+                name = package_name(package)
+                if name in seen:
+                    fail(f"duplicate package within Cargo source {identifier}: {name}")
+                seen.add(name)
+                destination = destination_root / name
+                copy_registry_package(package, destination)
+
+    write_config(groups, output)
+    print(
+        f"Vendored {len(packages)} packages from {len(groups)} isolated Cargo sources",
+        file=sys.stderr,
+    )
+
+
+if __name__ == "__main__":
+    main()

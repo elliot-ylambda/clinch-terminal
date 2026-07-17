@@ -36,6 +36,8 @@ required_files=(
   Clinch.dmg.sha256
   Clinch.release-validation.json
   Clinch.sbom.cdx.json
+  Clinch.source.tar.gz
+  Clinch.source.tar.gz.sha256
   Clinch.update.json
   Clinch.update.sig
   Clinch.update.sshsig
@@ -100,6 +102,8 @@ primary_assets = [
     "Clinch.dmg.sha256",
     "Clinch.app.zip",
     "Clinch.app.zip.sha256",
+    "Clinch.source.tar.gz",
+    "Clinch.source.tar.gz.sha256",
     "Clinch.update.json",
     "Clinch.update.sig",
     "Clinch.update.sshsig",
@@ -142,6 +146,7 @@ for name, expected in checksums.items():
 for sidecar_name, artifact_name in (
     ("Clinch.app.zip.sha256", "Clinch.app.zip"),
     ("Clinch.dmg.sha256", "Clinch.dmg"),
+    ("Clinch.source.tar.gz.sha256", "Clinch.source.tar.gz"),
 ):
     pieces = (dist / sidecar_name).read_text(encoding="utf-8").split()
     if len(pieces) < 2 or pieces[0].lower() != digest(dist / artifact_name):
@@ -190,7 +195,7 @@ validation = json.loads(
     (dist / "Clinch.release-validation.json").read_text(encoding="utf-8")
 )
 for key, expected in {
-    "schema_version": 3,
+    "schema_version": 4,
     "version": version,
     "commit": commit,
     "update_sequence": sequence,
@@ -207,6 +212,8 @@ if validation.get("artifact_checks") != [
     "no Apple Events entitlement or usage description",
     "no bundled iMessage helper",
     "ZIP/DMG app equality",
+    "exact licenses, modification notice, and third-party notices",
+    "versioned complete corresponding source archive",
     "default-on integration, opt-out, and removal",
     "signed exact-tag manifest",
 ]:
@@ -303,5 +310,8 @@ for name in ("startedOn", "finishedOn"):
 if metadata["startedOn"] > metadata["finishedOn"]:
     fail("provenance timestamps are reversed")
 PY
+
+"$ROOT/script/verify-clinch-source-archive" \
+  "$DIST/Clinch.source.tar.gz" "$VERSION" "$EXPECTED_COMMIT" "$ROOT" >/dev/null
 
 echo "✓ Verified staged release assets for $VERSION at ${EXPECTED_COMMIT:0:12}"

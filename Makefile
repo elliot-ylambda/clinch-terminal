@@ -46,6 +46,9 @@ Session restore is enabled by default, using managed local Claude Code and Codex
 turn session capture off or back on from Clinch Settings. Automatic updates are disabled for this
 preview; install a newer authenticated release manually. Two-way iMessage is optional and local;
 setup requires Messages Automation and Full Disk Access on the Mac.
+
+Complete Corresponding Source for this exact release, including locked Cargo dependencies, is
+attached to the same GitHub release as `Clinch.source.tar.gz`.
 endef
 export RELEASE_NOTES
 

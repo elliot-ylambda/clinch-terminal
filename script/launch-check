@@ -21,8 +21,11 @@ echo "==> Formatting"
 
 echo "==> Installer and agent-runtime syntax"
 sh -n install.sh
+/usr/bin/python3 -c \
+  'compile(open("script/vendor-clinch-cargo-sources", encoding="utf-8").read(), "script/vendor-clinch-cargo-sources", "exec")'
 bash -n \
   uninstall.sh \
+  script/assemble-clinch-corresponding-source \
   script/check_license_config_sync \
   script/assemble-clinch-release-stage \
   script/build-clinch-imessage-bridge \
@@ -37,6 +40,7 @@ bash -n \
   script/update-installed-clinch \
   script/update_plist \
   script/verify-clinch-release \
+  script/verify-clinch-source-archive \
   script/verify-clinch-release-stage
 bash -n resources/update/clinch-update-helper
 bash -n tools/agent-resume/*.sh \

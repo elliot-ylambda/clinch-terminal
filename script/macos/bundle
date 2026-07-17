@@ -367,7 +367,7 @@ elif [[ $RELEASE_CHANNEL = "oss" ]]; then
 fi
 
 OUT_DIR="target/$TARGET_PROFILE_DIR/bundle/osx"
-DOCK_TILE_PLUGIN_DIR="target/$TARGET_PROFILE_DIR/WarpDockTilePlugin.docktileplugin"
+DOCK_TILE_PLUGIN_DIR="target/$TARGET_PROFILE_DIR/ClinchDockTilePlugin.docktileplugin"
 
 # Handle specific architecture targeting
 if [[ -n "$TARGET_ARCH" ]]; then
@@ -572,9 +572,16 @@ if [[ "$ARTIFACT" == "app" ]]; then
   mkdir -p "$BUNDLE_DIR/$WARP_APP_NAME.app/Contents/PlugIns"
   cp -R "$DOCK_TILE_PLUGIN_DIR" "$BUNDLE_DIR/$WARP_APP_NAME.app/Contents/PlugIns/"
 
+  # Public Clinch bundles carry only Clinch's own icon art. The inherited icon
+  # collection remains available to upstream development channels.
+  if [[ "$RELEASE_CHANNEL" == "stable" ]]; then
+    find "$BUNDLE_DIR/$WARP_APP_NAME.app/Contents/PlugIns/ClinchDockTilePlugin.docktileplugin/Contents/Resources" \
+      -type f ! -name clinch.png -delete
+  fi
+
   echo "Updating plist with dock tile plugin entries"
-  plutil -insert NSDockTilePlugIn -string "WarpDockTilePlugin.docktileplugin" "$BUNDLE_DIR/$WARP_APP_NAME.app/Contents/Info.plist"
-  plutil -insert MainAppBundleIdentifier -string "$BUNDLE_ID" "$BUNDLE_DIR/$WARP_APP_NAME.app/Contents/PlugIns/WarpDockTilePlugin.docktileplugin/Contents/Info.plist"
+  plutil -insert NSDockTilePlugIn -string "ClinchDockTilePlugin.docktileplugin" "$BUNDLE_DIR/$WARP_APP_NAME.app/Contents/Info.plist"
+  plutil -insert MainAppBundleIdentifier -string "$BUNDLE_ID" "$BUNDLE_DIR/$WARP_APP_NAME.app/Contents/PlugIns/ClinchDockTilePlugin.docktileplugin/Contents/Info.plist"
 
   BUNDLED_RESOURCES_DIR="$BUNDLE_DIR/$WARP_APP_NAME.app/Contents/Resources"
   echo "Preparing bundled resources..."

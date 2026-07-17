@@ -1,0 +1,18 @@
+Clinch notices
+==============
+
+Clinch is a modified version of Warp, originally published by Denver
+Technologies, Inc. at https://github.com/warpdotdev/warp.
+
+Clinch-specific modifications began on 2026-06-29. The Git history and each
+signed release tag record the authors and dates of later modifications. Those
+modifications are Copyright (C) 2026 their respective Clinch contributors.
+
+Except for the separately identified MIT-licensed warpui and warpui_core
+crates and third-party components listed in THIRD_PARTY_LICENSES.txt, Clinch is
+distributed under the GNU Affero General Public License, version 3 only. See
+LICENSE-AGPL for the complete terms. See LICENSE-MIT for the warpui and
+warpui_core terms.
+
+Clinch is independent of, and is not affiliated with or endorsed by, Warp or
+Denver Technologies, Inc. Warp is a trademark of Denver Technologies, Inc.

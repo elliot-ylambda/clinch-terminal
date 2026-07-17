@@ -45,8 +45,8 @@ fn main() -> Result<()> {
             .compile("warp_objc");
 
         // Build the dock tile plugin
-        println!("cargo:rerun-if-changed=DockTilePlugin/WarpDockTilePlugin.m");
-        println!("cargo:rerun-if-changed=DockTilePlugin/WarpDockTilePlugin.h");
+        println!("cargo:rerun-if-changed=DockTilePlugin/ClinchDockTilePlugin.m");
+        println!("cargo:rerun-if-changed=DockTilePlugin/ClinchDockTilePlugin.h");
         println!("cargo:rerun-if-changed=DockTilePlugin/Info.plist");
         println!("cargo:rerun-if-changed=DockTilePlugin/Makefile");
 
@@ -64,8 +64,8 @@ fn main() -> Result<()> {
         // Copy the dock tile plugin to the output directory
         let profile = get_build_profile_name();
         let target_dir = app_target_dir(&profile).expect("Failed to get app target directory");
-        let plugin_src = Path::new("DockTilePlugin/WarpDockTilePlugin.docktileplugin");
-        let plugin_dst = target_dir.join("WarpDockTilePlugin.docktileplugin");
+        let plugin_src = Path::new("DockTilePlugin/ClinchDockTilePlugin.docktileplugin");
+        let plugin_dst = target_dir.join("ClinchDockTilePlugin.docktileplugin");
 
         if !status.success() {
             fs::remove_dir_all(plugin_src).expect("Failed to clean up plugin directory");

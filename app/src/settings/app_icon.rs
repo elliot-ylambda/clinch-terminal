@@ -6,7 +6,7 @@ use warp_core::settings::{SupportedPlatforms, SyncToCloud};
 
 /// The app icon to use (mac-only).
 ///
-/// IMPORTANT NOTE: If you add a new icon, you will need to update the logic in WarpDockTilePlugin.m
+/// IMPORTANT NOTE: If you add a new icon, update the logic in ClinchDockTilePlugin.m
 /// to read the new icon and also add the icon to app/DockTilePlugin/Resources.
 #[derive(
     Default,
@@ -62,9 +62,10 @@ pub enum AppIcon {
     Starburst,
     #[schemars(description = "Sticker")]
     Sticker,
-    /// Previous default icon with solid blue background.
-    #[schemars(description = "Warp 1")]
-    WarpOne,
+    /// Legacy upstream default icon with a solid blue background.
+    #[serde(alias = "WarpOne")]
+    #[schemars(description = "Legacy blue")]
+    LegacyBlue,
 }
 
 impl std::fmt::Display for AppIcon {
@@ -86,7 +87,7 @@ impl std::fmt::Display for AppIcon {
             AppIcon::Original => "Original",
             AppIcon::Starburst => "Starburst",
             AppIcon::Sticker => "Sticker",
-            AppIcon::WarpOne => "Warp 1",
+            AppIcon::LegacyBlue => "Legacy blue",
         };
         write!(f, "{value}")
     }
@@ -94,6 +95,9 @@ impl std::fmt::Display for AppIcon {
 
 impl AppIconSettings {
     pub fn get_base_icon_file_name(icon: AppIcon) -> &'static str {
+        if ChannelState::channel() == Channel::Stable {
+            return "clinch";
+        }
         match icon {
             AppIcon::Aurora => "aurora",
             AppIcon::Default => match ChannelState::channel() {
@@ -116,7 +120,7 @@ impl AppIconSettings {
             AppIcon::Original => "original",
             AppIcon::Starburst => "starburst",
             AppIcon::Sticker => "sticker",
-            AppIcon::WarpOne => "blue",
+            AppIcon::LegacyBlue => "blue",
         }
     }
 }
@@ -140,6 +144,18 @@ define_settings_group!(AppIconSettings, settings: [
         private: false,
         storage_key: "ShowDockIcon",
         toml_path: "appearance.icon.show_dock_icon",
-        description: "Whether Warp is shown in the macOS Dock and Cmd-Tab switcher.",
+        description: "Whether Clinch is shown in the macOS Dock and Cmd-Tab switcher.",
     },
 ]);
+
+#[cfg(test)]
+mod tests {
+    use super::AppIcon;
+
+    #[test]
+    fn legacy_warp_one_setting_deserializes_as_legacy_blue() {
+        let icon: AppIcon = serde_json::from_str(r#""WarpOne""#).unwrap();
+        assert_eq!(icon, AppIcon::LegacyBlue);
+        assert_eq!(serde_json::to_string(&icon).unwrap(), r#""LegacyBlue""#);
+    }
+}

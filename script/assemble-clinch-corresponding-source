@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# Builds a version-matched Corresponding Source archive with all Cargo sources vendored.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
+
+VERSION="${1:?usage: assemble-clinch-corresponding-source <version> <commit> <output.tar.gz>}"
+COMMIT="${2:?missing commit}"
+OUTPUT="${3:?missing output path}"
+
+fail() {
+  echo "corresponding-source assembly failed: $*" >&2
+  exit 1
+}
+
+[[ "$VERSION" =~ ^v[0-9]+(\.[0-9]+)+$ ]] || fail "invalid version $VERSION"
+[[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]] || fail "invalid commit"
+[[ "$(git rev-parse HEAD)" == "$COMMIT" ]] || fail "source checkout is not at $COMMIT"
+for item in Cargo.toml Cargo.lock LICENSE-AGPL LICENSE-MIT NOTICE .cargo/config.toml; do
+  [[ -f "$item" ]] || fail "missing $item"
+done
+for command in cargo git shasum tar; do
+  command -v "$command" >/dev/null 2>&1 || fail "$command is required"
+done
+[[ -x /usr/bin/python3 ]] || fail "/usr/bin/python3 is required"
+
+output_dir="$(dirname "$OUTPUT")"
+mkdir -p "$output_dir"
+output_dir="$(cd "$output_dir" && pwd)"
+output="$output_dir/$(basename "$OUTPUT")"
+[[ "$output" == *.tar.gz ]] || fail "output must end in .tar.gz"
+
+work="$(mktemp -d "${TMPDIR:-/tmp}/clinch-source.XXXXXX")"
+cleanup() {
+  rm -rf "$work"
+}
+trap cleanup EXIT
+
+source_name="Clinch-${VERSION#v}-source"
+source_root="$work/$source_name"
+mkdir -p "$source_root"
+
+echo "==> Exporting Clinch $VERSION source at $COMMIT"
+git archive --format=tar "$COMMIT" | tar -xf - -C "$source_root"
+
+echo "==> Vendoring locked Cargo dependency sources"
+/usr/bin/python3 "$ROOT/script/vendor-clinch-cargo-sources" \
+  "$source_root" "$work/vendor-config.toml"
+[[ -s "$work/vendor-config.toml" ]] || fail "vendoring produced no source configuration"
+cat >> "$source_root/.cargo/config.toml" <<'EOF'
+
+# Complete Corresponding Source releases resolve every Cargo dependency from
+# the adjacent vendor directory, without contacting crates.io or Git servers.
+EOF
+cat "$work/vendor-config.toml" >> "$source_root/.cargo/config.toml"
+
+cat > "$source_root/CORRESPONDING_SOURCE.md" <<EOF
+# Clinch $VERSION Corresponding Source
+
+This archive contains the source tree for commit \`$COMMIT\` and a vendored
+copy of every Cargo dependency selected by \`Cargo.lock\`. It accompanies the
+Clinch $VERSION binaries distributed from the release with the same tag.
+
+The main program is licensed under AGPL-3.0-only. The \`warpui\` and
+\`warpui_core\` crates remain MIT-licensed, and other dependency terms are
+included with their vendored sources and in the app's
+\`THIRD_PARTY_LICENSES.txt\`.
+
+After installing the Rust toolchain declared by this tree, resolve and build
+without network access:
+
+\`\`\`sh
+cargo metadata --locked --offline --format-version 1
+cargo build --locked --offline --release --bin stable
+\`\`\`
+EOF
+
+/usr/bin/python3 - "$source_root/.clinch-source.json" "$VERSION" "$COMMIT" \
+  "$source_root/Cargo.lock" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+output = pathlib.Path(sys.argv[1])
+lockfile = pathlib.Path(sys.argv[4])
+value = {
+    "cargo_lock_sha256": hashlib.sha256(lockfile.read_bytes()).hexdigest(),
+    "commit": sys.argv[3],
+    "schema_version": 1,
+    "version": sys.argv[2],
+}
+output.write_text(
+    json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n",
+    encoding="utf-8",
+)
+PY
+
+echo "==> Proving the vendored source graph resolves offline"
+(
+  cd "$source_root"
+  CARGO_NET_OFFLINE=true cargo metadata --locked --offline --format-version 1 >/dev/null
+)
+
+archive_tmp="$work/Clinch.source.tar.gz"
+echo "==> Compressing complete Corresponding Source"
+COPYFILE_DISABLE=1 tar -czf "$archive_tmp" -C "$work" "$source_name"
+mv "$archive_tmp" "$output"
+(
+  cd "$output_dir"
+  shasum -a 256 "$(basename "$output")" > "$(basename "$output").sha256"
+)
+
+"$ROOT/script/verify-clinch-source-archive" "$output" "$VERSION" "$COMMIT" "$ROOT"
+echo "$output"

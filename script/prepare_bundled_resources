@@ -53,6 +53,12 @@ fi
 # Create the destination directory if it doesn't exist
 mkdir -p "$DEST_DIR"
 
+# Ship the exact licenses and modification notice for the Clinch/warpui code,
+# independently of the generated third-party report.
+for legal_file in LICENSE-AGPL LICENSE-MIT NOTICE; do
+  install -m 0644 "$REPO_ROOT/$legal_file" "$DEST_DIR/$legal_file"
+done
+
 # Copy bundled resources
 if [ -d "$RESOURCES_SRC/bundled" ]; then
   echo "Copying bundled resources to $DEST_DIR/bundled"
@@ -137,6 +143,7 @@ ADDITIONAL_LICENSES=(
     "Roboto Font|SIL Open Font License|app/assets/bundled/fonts/roboto/LICENSE.txt"
     "bash-preexec|MIT|app/assets/bundled/bootstrap/bash-preexec-LICENSE.md"
     "Claude API Skill|Apache-2.0|resources/bundled/skills/claude-api/LICENSE.txt"
+    "Figma plugin typings|MIT|resources/bundled/mcp_skills/figma/figma-use/references/LICENSE-FIGMA-PLUGIN-TYPINGS"
     "Warp Claude Code Plugin|MIT|resources/bundled/agent-plugins/claude-code-warp/LICENSE"
     "Warp Codex Plugin|MIT|resources/bundled/agent-plugins/codex-warp/LICENSE"
     "jq|MIT and bundled notices|resources/third-party/jq/COPYING"

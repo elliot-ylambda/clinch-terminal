@@ -2,6 +2,8 @@
 # Verifies the exact app/ZIP/DMG and authenticated metadata before publication.
 set -euo pipefail
 
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
 APP="${1:?usage: verify-clinch-release <app> <zip> <sha256> <dmg> <version> <manifest> <raw-signature> <ssh-signature> <sequence>}"
 ZIP="${2:?missing zip}"
 SHA_FILE="${3:?missing checksum sidecar}"
@@ -39,7 +41,8 @@ done
   || fail "invalid update sequence"
 
 verify_app() {
-  local app="$1" label="$2" plist binary entitlements forbidden key item
+  local app="$1" label="$2" plist binary entitlements forbidden key item resources
+  local third_party figma_license plugin plugin_plist plugin_binary plugin_resources
   plist="$app/Contents/Info.plist"
   [[ -f "$plist" ]] || fail "$label has no Info.plist"
   [[ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$plist")" == "sh.clinch.Clinch" ]] \
@@ -119,6 +122,51 @@ verify_app() {
     || fail "$label bundled the floating provider-plugin installer"
   [[ ! -e "$app/Contents/Resources/update/clinch-update-helper" ]] \
     || fail "$label bundled the disabled privileged updater helper"
+
+  resources="$app/Contents/Resources"
+  for item in LICENSE-AGPL LICENSE-MIT NOTICE; do
+    [[ -f "$resources/$item" ]] || fail "$label omitted $item"
+    cmp -s "$ROOT/$item" "$resources/$item" \
+      || fail "$label $item differs from the release source"
+  done
+  third_party="$resources/THIRD_PARTY_LICENSES.txt"
+  [[ -f "$third_party" ]] || fail "$label omitted THIRD_PARTY_LICENSES.txt"
+  grep -Fq 'Figma plugin typings (MIT)' "$third_party" \
+    || fail "$label omitted the Figma plugin typings attribution"
+  grep -Fq 'Copyright (c) 2021 Figma, Inc.' "$third_party" \
+    || fail "$label omitted the Figma plugin typings copyright notice"
+  figma_license="$resources/bundled/mcp_skills/figma/figma-use/references/LICENSE-FIGMA-PLUGIN-TYPINGS"
+  [[ -f "$figma_license" ]] || fail "$label omitted the Figma plugin typings license file"
+  cmp -s \
+    "$ROOT/resources/bundled/mcp_skills/figma/figma-use/references/LICENSE-FIGMA-PLUGIN-TYPINGS" \
+    "$figma_license" || fail "$label changed the Figma plugin typings license"
+
+  [[ "$(/usr/libexec/PlistBuddy -c 'Print NSDockTilePlugIn' "$plist")" \
+      == "ClinchDockTilePlugin.docktileplugin" ]] \
+    || fail "$label names an unexpected dock tile plugin"
+  [[ ! -e "$app/Contents/PlugIns/WarpDockTilePlugin.docktileplugin" ]] \
+    || fail "$label retained the upstream-branded dock tile plugin"
+  plugin="$app/Contents/PlugIns/ClinchDockTilePlugin.docktileplugin"
+  plugin_plist="$plugin/Contents/Info.plist"
+  plugin_binary="$plugin/Contents/MacOS/ClinchDockTilePlugin"
+  plugin_resources="$plugin/Contents/Resources"
+  [[ -f "$plugin_plist" && -x "$plugin_binary" && -d "$plugin_resources" ]] \
+    || fail "$label omitted part of the Clinch dock tile plugin"
+  for key in \
+    'CFBundleIdentifier sh.clinch.ClinchDockTilePlugin' \
+    'CFBundleExecutable ClinchDockTilePlugin' \
+    'CFBundleName ClinchDockTilePlugin' \
+    'NSPrincipalClass ClinchDockTilePlugin' \
+    'MainAppBundleIdentifier sh.clinch.Clinch'; do
+    [[ "$(/usr/libexec/PlistBuddy -c "Print ${key%% *}" "$plugin_plist")" == "${key#* }" ]] \
+      || fail "$label dock tile plugin ${key%% *} is incorrect"
+  done
+  [[ "$(find "$plugin_resources" -mindepth 1 -maxdepth 1 -type f -print \
+      | sed 's#^.*/##' | LC_ALL=C sort)" == "clinch.png" ]] \
+    || fail "$label dock tile plugin contains non-Clinch icon art"
+  if /usr/bin/strings "$plugin_binary" | grep -Fq 'WarpDockTilePlugin'; then
+    fail "$label dock tile plugin retained its upstream product name"
+  fi
 }
 
 verify_app "$APP" "built app"

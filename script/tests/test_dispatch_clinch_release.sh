@@ -54,7 +54,8 @@ stage="target/release-stage/$version"
 dist="$stage/dist"
 mkdir -p "$dist"
 files=(
-  Clinch.app.zip Clinch.app.zip.sha256 Clinch.build-provenance.json
+  Clinch.app.zip Clinch.app.zip.sha256 Clinch.source.tar.gz
+  Clinch.source.tar.gz.sha256 Clinch.build-provenance.json
   Clinch.build-provenance.sshsig Clinch.checksums.sshsig Clinch.checksums.txt
   Clinch.dmg Clinch.dmg.sha256 Clinch.release-validation.json Clinch.sbom.cdx.json
   Clinch.update.json Clinch.update.sig Clinch.update.sshsig
@@ -117,7 +118,10 @@ case "$command" in
     esac
     ;;
   ls-remote)
-    if [[ "${args[*]}" == *'--tags'* ]]; then
+    if [[ "${args[*]}" == *'--tags --refs'* ]]; then
+      printf '%s\trefs/tags/%s\n' \
+        aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "$FIXTURE_LATEST"
+    elif [[ "${args[*]}" == *'--tags'* ]]; then
       [[ -f "$REMOTE_TAG_STATE" ]] || exit 2
       if [[ -f "$TAG_MUTATED_STATE" ]]; then
         tag_oid=dddddddddddddddddddddddddddddddddddddddd
@@ -165,8 +169,8 @@ case "${1:-} ${2:-}" in
   'auth status')
     exit 0
     ;;
-  'api repos/elliot-ylambda/clinch-terminal/releases/latest')
-    printf '%s\n' "$FIXTURE_LATEST"
+  'api repos/elliot-ylambda/clinch-terminal/releases?per_page=100')
+    [[ "${FIXTURE_NO_PREVIOUS_RELEASE:-0}" == 1 ]] || printf '%s\n' "$FIXTURE_LATEST"
     ;;
   'release view')
     [[ -f "$DRAFT_STATE" ]] || exit 1
@@ -181,7 +185,8 @@ case "${1:-} ${2:-}" in
       "$draft_body" "$FIXTURE_COMMIT"
     separator=
     for name in \
-      Clinch.app.zip Clinch.app.zip.sha256 Clinch.build-provenance.json \
+      Clinch.app.zip Clinch.app.zip.sha256 Clinch.source.tar.gz \
+      Clinch.source.tar.gz.sha256 Clinch.build-provenance.json \
       Clinch.build-provenance.sshsig Clinch.checksums.sshsig Clinch.checksums.txt \
       Clinch.dmg Clinch.dmg.sha256 Clinch.release-validation.json Clinch.sbom.cdx.json \
       Clinch.update.json Clinch.update.sig Clinch.update.sshsig \
@@ -354,6 +359,12 @@ if grep -Fq 'workflow run' "$TMP/gh.log"; then
   echo "FAIL: local release dispatched GitHub Actions" >&2
   exit 1
 fi
+
+reset_state
+run_release_tty "PUBLISH $VERSION ${COMMIT:0:12}" \
+  FIXTURE_NO_PREVIOUS_RELEASE=1 > "$TMP/bootstrap.out"
+grep -Fq "Locally built, verified, signed, and published $VERSION" "$TMP/bootstrap.out"
+grep -Fq 'gh release-publish' "$TMP/ops.log"
 
 reset_state
 if run_release_tty 'PUBLISH wrong' > "$TMP/wrong-confirm.out" 2>&1; then

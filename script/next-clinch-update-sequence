@@ -14,12 +14,31 @@ download() {
     --silent --show-error -o "$1" "$2"
 }
 
+has_previous_release=1
 if ! download "$TMP/latest.json" "$API/releases/latest"; then
   if [[ "${CLINCH_ALLOW_NO_PREVIOUS_RELEASE:-0}" == "1" ]]; then
-    date +%s
+    has_previous_release=0
+  else
+    fail "could not resolve the latest release"
+  fi
+fi
+
+if (( has_previous_release == 0 )); then
+  if [[ "${1:-}" == verify ]]; then
+    requested_version="${2:?usage: next-clinch-update-sequence verify <version> <sequence>}"
+    requested_sequence="${3:?missing requested sequence}"
+    [[ $# -eq 3 ]] \
+      || fail "usage: next-clinch-update-sequence [verify <version> <sequence>]"
+    [[ "$requested_version" =~ ^v[0-9]+(\.[0-9]+)+$ ]] \
+      || fail "requested version has invalid syntax"
+    [[ "$requested_sequence" =~ ^[0-9]+$ && "$requested_sequence" -gt 0 ]] \
+      || fail "requested sequence is invalid"
+    echo "✓ $requested_version sequence $requested_sequence is the authenticated bootstrap release"
     exit 0
   fi
-  fail "could not resolve the latest release"
+  [[ $# -eq 0 ]] || fail "usage: next-clinch-update-sequence [verify <version> <sequence>]"
+  date +%s
+  exit 0
 fi
 
 tag="$(/usr/bin/python3 - "$TMP/latest.json" <<'PY'

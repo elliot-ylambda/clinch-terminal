@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+# Verifies the identity, notices, and offline-vendor structure of a source archive.
+set -euo pipefail
+
+ARCHIVE="${1:?usage: verify-clinch-source-archive <archive> <version> <commit> [source-root]}"
+VERSION="${2:?missing version}"
+COMMIT="${3:?missing commit}"
+ROOT="${4:-$(cd "$(dirname "$0")/.." && pwd)}"
+
+fail() {
+  echo "corresponding-source verification failed: $*" >&2
+  exit 1
+}
+
+[[ -f "$ARCHIVE" && ! -L "$ARCHIVE" ]] || fail "archive is not a regular file"
+[[ "$VERSION" =~ ^v[0-9]+(\.[0-9]+)+$ ]] || fail "invalid version $VERSION"
+[[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]] || fail "invalid commit"
+for item in Cargo.lock LICENSE-AGPL LICENSE-MIT NOTICE; do
+  [[ -f "$ROOT/$item" ]] || fail "missing comparison file $ROOT/$item"
+done
+
+/usr/bin/python3 - "$ARCHIVE" "$VERSION" "$COMMIT" "$ROOT" <<'PY'
+import hashlib
+import json
+import pathlib
+import posixpath
+import re
+import sys
+import tarfile
+
+archive = pathlib.Path(sys.argv[1])
+version = sys.argv[2]
+commit = sys.argv[3]
+root = pathlib.Path(sys.argv[4])
+prefix = f"Clinch-{version.removeprefix('v')}-source"
+
+
+def fail(message):
+    raise SystemExit(f"corresponding-source verification failed: {message}")
+
+
+def digest(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+if archive.stat().st_size < 1 or archive.stat().st_size > 2 * 1024 * 1024 * 1024:
+    fail("archive size is outside GitHub's release-asset limit")
+
+try:
+    source = tarfile.open(archive, mode="r:gz")
+except (OSError, tarfile.TarError) as error:
+    fail(f"archive is not valid tar+gzip: {error}")
+
+with source:
+    members = source.getmembers()
+    if not members:
+        fail("archive is empty")
+    by_name = {}
+    for member in members:
+        name = member.name.rstrip("/")
+        normalized = posixpath.normpath(name)
+        if (
+            not name
+            or name.startswith("/")
+            or normalized != name
+            or normalized == ".."
+            or normalized.startswith("../")
+            or not (normalized == prefix or normalized.startswith(prefix + "/"))
+        ):
+            fail(f"unsafe or unexpected archive path: {member.name}")
+        if normalized in by_name:
+            fail(f"duplicate archive path: {normalized}")
+        by_name[normalized] = member
+        if member.issym() or member.islnk():
+            target = member.linkname
+            if target.startswith("/"):
+                fail(f"absolute archive link target: {normalized}")
+            resolved = posixpath.normpath(posixpath.join(posixpath.dirname(normalized), target))
+            if not (resolved == prefix or resolved.startswith(prefix + "/")):
+                fail(f"archive link escapes its source root: {normalized}")
+        elif not (member.isfile() or member.isdir()):
+            fail(f"unsupported special archive entry: {normalized}")
+
+    required = {
+        "Cargo.toml",
+        "Cargo.lock",
+        "LICENSE-AGPL",
+        "LICENSE-MIT",
+        "NOTICE",
+        ".cargo/config.toml",
+        ".clinch-source.json",
+        "CORRESPONDING_SOURCE.md",
+    }
+    for relative in required:
+        member = by_name.get(f"{prefix}/{relative}")
+        if member is None or not member.isfile():
+            fail(f"archive omitted {relative}")
+
+    def read(relative, limit=16 * 1024 * 1024):
+        member = by_name[f"{prefix}/{relative}"]
+        if member.size > limit:
+            fail(f"unexpectedly large metadata file: {relative}")
+        handle = source.extractfile(member)
+        if handle is None:
+            fail(f"could not read {relative}")
+        return handle.read()
+
+    for relative in ("LICENSE-AGPL", "LICENSE-MIT", "NOTICE", "Cargo.lock"):
+        if read(relative) != (root / relative).read_bytes():
+            fail(f"{relative} differs from the release checkout")
+
+    try:
+        marker = json.loads(read(".clinch-source.json").decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        fail(f"source identity marker is invalid: {error}")
+    expected_marker = {
+        "cargo_lock_sha256": digest((root / "Cargo.lock").read_bytes()),
+        "commit": commit,
+        "schema_version": 1,
+        "version": version,
+    }
+    if marker != expected_marker:
+        fail("source identity marker does not match the release")
+
+    config = read(".cargo/config.toml").decode("utf-8")
+    directories = set(
+        re.findall(
+            r'^directory\s*=\s*"(vendor/[0-9a-f]{16})"\s*$',
+            config,
+            re.MULTILINE,
+        )
+    )
+    if (
+        "[source.crates-io]" not in config
+        or "clinch-vendor-" not in config
+        or not directories
+    ):
+        fail("Cargo is not configured to use isolated bundled vendor sources")
+    guide = read("CORRESPONDING_SOURCE.md").decode("utf-8")
+    if version not in guide or commit not in guide or "--offline" not in guide:
+        fail("Corresponding Source instructions are incomplete")
+
+    vendor_prefix = f"{prefix}/vendor/"
+    checksums = [
+        member
+        for name, member in by_name.items()
+        if name.startswith(vendor_prefix) and name.endswith("/.cargo-checksum.json")
+    ]
+    if not checksums or any(not member.isfile() for member in checksums):
+        fail("archive has no verifiable vendored Cargo packages")
+    for directory in directories:
+        directory_prefix = f"{prefix}/{directory}/"
+        if not any(name.startswith(directory_prefix) for name in by_name):
+            fail(f"configured vendor source is absent: {directory}")
+
+print(f"✓ Verified complete Corresponding Source for {version} at {commit[:12]}")
+PY

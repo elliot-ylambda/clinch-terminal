@@ -15,9 +15,12 @@ mkdir -p \
 cp \
   "$ROOT/script/assemble-clinch-release-stage" \
   "$ROOT/script/verify-clinch-release-stage" \
+  "$ROOT/script/verify-clinch-source-archive" \
   "$ROOT/script/clinch-update-manifest" \
   "$FIXTURE/script/"
 cp "$ROOT/Cargo.lock" "$FIXTURE/Cargo.lock"
+cp "$ROOT/LICENSE-AGPL" "$ROOT/LICENSE-MIT" "$ROOT/NOTICE" "$FIXTURE/"
+printf '[workspace]\nmembers = []\n' > "$FIXTURE/Cargo.toml"
 printf '#!/bin/sh\n' > "$FIXTURE/install.sh"
 printf '#!/bin/sh\n' > "$FIXTURE/uninstall.sh"
 
@@ -138,6 +141,47 @@ set -euo pipefail
 output="${3#cyclonedx-json=}"
 printf '{"bomFormat":"CycloneDX","specVersion":"1.6"}\n' > "$output"
 STUB
+
+cat > "$FIXTURE/script/assemble-clinch-corresponding-source" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+version="$1"
+commit="$2"
+output="$3"
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+name="Clinch-${version#v}-source"
+root="$work/$name"
+vendor_id=0000000000000000
+mkdir -p "$root/.cargo" "$root/vendor/$vendor_id/fixture-1.0.0"
+cp Cargo.toml Cargo.lock LICENSE-AGPL LICENSE-MIT NOTICE "$root/"
+cat > "$root/.cargo/config.toml" <<EOF
+[source.crates-io]
+replace-with = "clinch-vendor-$vendor_id"
+
+[source."clinch-vendor-$vendor_id"]
+directory = "vendor/$vendor_id"
+EOF
+printf '{}\n' > "$root/vendor/$vendor_id/fixture-1.0.0/.cargo-checksum.json"
+printf '# %s Corresponding Source\n\n%s\n\ncargo metadata --offline\n' \
+  "$version" "$commit" > "$root/CORRESPONDING_SOURCE.md"
+/usr/bin/python3 - "$root/.clinch-source.json" "$version" "$commit" Cargo.lock <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+pathlib.Path(sys.argv[1]).write_text(json.dumps({
+    "cargo_lock_sha256": hashlib.sha256(pathlib.Path(sys.argv[4]).read_bytes()).hexdigest(),
+    "commit": sys.argv[3],
+    "schema_version": 1,
+    "version": sys.argv[2],
+}, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+PY
+COPYFILE_DISABLE=1 tar -czf "$output" -C "$work" "$name"
+(cd "$(dirname "$output")" && shasum -a 256 "$(basename "$output")" \
+  > "$(basename "$output").sha256")
+STUB
 chmod +x "$FIXTURE/script/"* "$TMP/bin/"*
 
 assemble_output="$(cd "$FIXTURE" && env \
@@ -156,7 +200,7 @@ import pathlib
 import sys
 
 validation = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-assert validation["schema_version"] == 3
+assert validation["schema_version"] == 4
 assert "manual_qa" not in validation
 PY
 
@@ -179,6 +223,11 @@ cp "$DIST/Clinch.app.zip" "$TMP/Clinch.app.zip"
 printf 'tampered\n' >> "$DIST/Clinch.app.zip"
 expect_failure tampered verify "$DIST" "$VERSION" "$COMMIT" "$SEQUENCE"
 cp "$TMP/Clinch.app.zip" "$DIST/Clinch.app.zip"
+
+cp "$DIST/Clinch.source.tar.gz" "$TMP/Clinch.source.tar.gz"
+printf 'tampered\n' >> "$DIST/Clinch.source.tar.gz"
+expect_failure tampered_source verify "$DIST" "$VERSION" "$COMMIT" "$SEQUENCE"
+cp "$TMP/Clinch.source.tar.gz" "$DIST/Clinch.source.tar.gz"
 
 printf 'extra\n' > "$DIST/unexpected.txt"
 expect_failure extra verify "$DIST" "$VERSION" "$COMMIT" "$SEQUENCE"

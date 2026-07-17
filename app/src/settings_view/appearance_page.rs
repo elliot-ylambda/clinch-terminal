@@ -1182,8 +1182,16 @@ impl AppearanceSettingsPageView {
             dropdown.set_top_bar_max_width(INPUT_MODE_DROPDOWN_WIDTH);
             dropdown.set_menu_width(INPUT_MODE_DROPDOWN_WIDTH, ctx);
 
-            let values: Vec<AppIcon> = all::<AppIcon>().collect();
-            let current_value = *AppIconSettings::as_ref(ctx).app_icon;
+            let values: Vec<AppIcon> = if ChannelState::channel() == Channel::Stable {
+                vec![AppIcon::Default]
+            } else {
+                all::<AppIcon>().collect()
+            };
+            let current_value = if ChannelState::channel() == Channel::Stable {
+                AppIcon::Default
+            } else {
+                *AppIconSettings::as_ref(ctx).app_icon
+            };
             let selected_index = values
                 .iter()
                 .position(|val| *val == current_value)
@@ -1615,7 +1623,7 @@ impl AppearanceSettingsPageView {
             AppIcon::Original => "Original",
             AppIcon::Starburst => "Starburst",
             AppIcon::Sticker => "Sticker",
-            AppIcon::WarpOne => "Warp 1",
+            AppIcon::LegacyBlue => "Legacy blue",
         }
     }
 
@@ -2927,7 +2935,7 @@ impl SettingsWidget for CustomAppIconWidget {
         );
 
         let show_dock_icon_toggle = render_body_item::<AppearancePageAction>(
-            "Show Warp in Dock".into(),
+            "Show Clinch in Dock".into(),
             None,
             LocalOnlyIconState::for_setting(
                 ShowDockIconState::storage_key(),
@@ -2967,7 +2975,7 @@ impl SettingsWidget for CustomAppIconWidget {
                     appearance
                         .ui_builder()
                         .wrappable_text(
-                            "You may need to restart Warp for MacOS to apply the preferred icon style.",
+                            "You may need to restart Clinch for macOS to apply the preferred icon style.",
                             true,
                         )
                         .with_style(UiComponentStyles {
@@ -2989,7 +2997,11 @@ impl SettingsWidget for CustomAppIconWidget {
             }
         }
 
-        let column = Flex::column().with_child(dropdown);
+        let column = if ChannelState::channel() == Channel::Stable {
+            Flex::column()
+        } else {
+            Flex::column().with_child(dropdown)
+        };
         let column = if show_dock_icon_is_supported {
             column.with_child(show_dock_icon_toggle)
         } else {

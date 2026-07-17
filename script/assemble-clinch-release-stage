@@ -58,6 +58,10 @@ cp \
   install.sh uninstall.sh "$ALLOWED_SIGNERS" \
   "$DIST/"
 
+echo "==> Assembling version-matched complete Corresponding Source"
+./script/assemble-clinch-corresponding-source \
+  "$VERSION" "$COMMIT" "$DIST/Clinch.source.tar.gz"
+
 echo "==> Generating CycloneDX SBOM"
 syft "$STABLE_APP" -o "cyclonedx-json=$DIST/Clinch.sbom.cdx.json"
 
@@ -84,6 +88,8 @@ value = {
         "no Apple Events entitlement or usage description",
         "no bundled iMessage helper",
         "ZIP/DMG app equality",
+        "exact licenses, modification notice, and third-party notices",
+        "versioned complete corresponding source archive",
         "default-on integration, opt-out, and removal",
         "signed exact-tag manifest",
     ],
@@ -100,7 +106,7 @@ value = {
         "command": "make release",
         "kind": "local-release-command",
     },
-    "schema_version": 3,
+    "schema_version": 4,
     "update_sequence": int(sys.argv[4]),
     "version": sys.argv[2],
 }
@@ -115,6 +121,8 @@ primary_assets=(
   Clinch.dmg.sha256
   Clinch.app.zip
   Clinch.app.zip.sha256
+  Clinch.source.tar.gz
+  Clinch.source.tar.gz.sha256
   Clinch.update.json
   Clinch.update.sig
   Clinch.update.sshsig
@@ -234,6 +242,11 @@ Automatic updates are disabled for this preview; install a newer authenticated r
 **Clinch.release-validation.json** and **Clinch.build-provenance.json** for the automated validation
 and local-builder records authenticated by the Clinch release key. No manual QA attestation is
 required or recorded by the release command.
+
+Complete Corresponding Source for this exact binary release, including vendored Cargo dependency
+sources, is provided as **Clinch.source.tar.gz** with its digest in
+**Clinch.source.tar.gz.sha256**:
+https://github.com/elliot-ylambda/clinch-terminal/releases/download/$VERSION/Clinch.source.tar.gz
 EOF
 
 ./script/verify-clinch-release-stage "$DIST" "$VERSION" "$COMMIT" "$UPDATE_SEQUENCE"

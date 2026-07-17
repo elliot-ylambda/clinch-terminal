@@ -37,11 +37,13 @@ it, then run `sh install.sh`.
 
 ### Manual verification
 
-Every versioned release on the
+Every current versioned release on the
 [Clinch releases page](https://github.com/elliot-ylambda/clinch-terminal/releases) also ships
-the artifacts to verify and install by hand. Download `Clinch.dmg`, `Clinch.checksums.txt`, and
-`Clinch.checksums.sshsig` from the same release. Authenticate the checksum list with the Clinch
-release key, then verify the disk image before opening it:
+the artifacts to verify and install by hand. Download `Clinch.dmg`, `Clinch.source.tar.gz`,
+`Clinch.checksums.txt`, and `Clinch.checksums.sshsig` from the same release. The source archive is
+the version-matched Complete Corresponding Source, including every locked Cargo dependency.
+Authenticate the checksum list with the Clinch release key, then verify the disk image and source
+archive before opening or extracting them:
 
 ```bash
 printf '%s\n' 'clinch-release ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGr+qT8+Fx8TjATDpWlhzzfbL08AsS1EXbaaOUBi0wJp' > /tmp/clinch-allowed-signers
@@ -49,9 +51,12 @@ ssh-keygen -Y verify -f /tmp/clinch-allowed-signers -I clinch-release -n clinch-
   -s Clinch.checksums.sshsig < Clinch.checksums.txt
 shasum -a 256 Clinch.dmg
 grep ' Clinch.dmg$' Clinch.checksums.txt
+shasum -a 256 Clinch.source.tar.gz
+grep ' Clinch.source.tar.gz$' Clinch.checksums.txt
 ```
 
-`ssh-keygen` must report a good signature, and the two digests must match. Open the DMG and drag
+`ssh-keygen` must report a good signature, and each printed digest must match its authenticated
+entry. Open the DMG and drag
 `Clinch.app` to Applications. A browser download is quarantined and the preview is not notarized,
 so macOS will block the first launch: try once, then approve Clinch under **System Settings →
 Privacy & Security → Open Anyway**. Do not disable Gatekeeper globally. Clinch's installer and
@@ -175,8 +180,9 @@ before the first release; `make release` checks every required command, signing 
 
 Run `make release` from a clean, current `main` checkout. It selects the next version, records the
 exact commit, runs the full local gate, builds and verifies both macOS architectures, generates a
-CycloneDX SBOM and signed local provenance, and assembles the exact signed asset set under
-`target/release-stage/<version>/`. After a version-and-commit-specific publication confirmation,
+CycloneDX SBOM, a vendored offline-buildable Corresponding Source archive, and signed local
+provenance, then assembles the exact signed asset set under `target/release-stage/<version>/`.
+After a version-and-commit-specific publication confirmation,
 it pushes the signed tag, creates or refreshes a private draft release, downloads the uploaded
 assets into a fresh directory, verifies them again, and publishes the draft. The command does not
 require or record a manual QA attestation. Advanced users can override `VERSION`.
@@ -200,3 +206,18 @@ Clinch is a modified version of [Warp](https://github.com/warpdotdev/warp), lice
 
 Clinch is not affiliated with or endorsed by Warp or Denver Technologies, Inc. “Warp” is their
 trademark.
+
+AGPL software may be sold. A paid Clinch download, subscription, support plan, or hosted service
+must preserve recipients' AGPL rights: they may run, inspect, modify, fork, and redistribute the
+covered code, including commercially. Clinch cannot add a no-fork, noncommercial, or no-resale
+restriction to the inherited AGPL code. A commercial distributor does not have to use a public
+GitHub repository, but it must provide the Complete Corresponding Source and required notices in
+the manner and for the periods required by the AGPL; network users must also receive the AGPL
+source offer. Code for which all relevant copyrights are separately controlled could be offered
+under another license, but that does not relicense the inherited AGPL portions.
+
+Those copyright permissions do not grant rights to Warp trademarks or guarantee access to any
+Warp-operated service. Before charging for Clinch, separately review branding, hosted-service
+terms, privacy disclosures, payment/tax obligations, and every non-code asset or integration used
+by the commercial offering. This repository's notices and release checks reduce known licensing
+risk; they are not a substitute for advice from counsel about a particular launch.

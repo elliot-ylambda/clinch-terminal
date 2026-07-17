@@ -40,6 +40,12 @@ if (-Not (Test-Path $DestinationDir)) {
     New-Item -ItemType Directory -Path $DestinationDir -Force | Out-Null
 }
 
+# Ship the exact licenses and modification notice for the Clinch/warpui code,
+# independently of the generated third-party report.
+foreach ($LegalFile in @('LICENSE-AGPL', 'LICENSE-MIT', 'NOTICE')) {
+    Copy-Item -Path (Join-Path $RepoRoot $LegalFile) -Destination (Join-Path $DestinationDir $LegalFile) -Force
+}
+
 # Copy bundled resources
 $BundledSource = Join-Path $ResourcesSource 'bundled'
 if (Test-Path $BundledSource -PathType Container) {
@@ -127,6 +133,7 @@ $AdditionalLicenses = @(
     @{ Name = 'Roboto Font'; License = 'SIL Open Font License'; Path = 'app\assets\bundled\fonts\roboto\LICENSE.txt' },
     @{ Name = 'bash-preexec'; License = 'MIT'; Path = 'app\assets\bundled\bootstrap\bash-preexec-LICENSE.md' },
     @{ Name = 'Claude API Skill'; License = 'Apache-2.0'; Path = 'resources\bundled\skills\claude-api\LICENSE.txt' },
+    @{ Name = 'Figma plugin typings'; License = 'MIT'; Path = 'resources\bundled\mcp_skills\figma\figma-use\references\LICENSE-FIGMA-PLUGIN-TYPINGS' },
     @{ Name = 'rudder-sdk-rust'; License = 'MIT'; Path = 'app\src\server\telemetry\LICENSE-RUDDER-SDK-RUST.txt' },
     @{ Name = 'Windows Terminal'; License = 'MIT'; Path = 'app\assets\windows\LICENSE-WINDOWS-TERMINAL' },
     @{ Name = 'GitHub Desktop'; License = 'MIT'; Path = 'app\src\code_review\GITHUB-DESKTOP-LICENSE' }
