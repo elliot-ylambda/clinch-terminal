@@ -3,6 +3,7 @@
 #[cfg(target_os = "macos")]
 mod agent_plugins;
 pub mod agent_resume;
+mod agent_skills;
 mod ai;
 mod alloc;
 mod antivirus;
