@@ -1,7 +1,9 @@
 //! Best-effort startup provisioning of the agent skills bundled with Clinch
 //! into the Claude Code and Codex personal skill directories.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+use crate::channel::ChannelState;
 
 const MANAGED_MARKER_PREFIX: &str = "<!-- managed-by: Clinch; version: ";
 const MANAGED_MARKER_SUFFIX: &str = "-->";
@@ -73,6 +75,45 @@ fn install_skills_from(source_root: &Path, agent_config_dir: &Path) {
                 target.display()
             );
         }
+    }
+}
+
+fn app_id_enables_bundled_skills(app_id: &str) -> bool {
+    matches!(app_id, "sh.clinch.Clinch" | "sh.clinch.ClinchDev")
+}
+
+/// Config dirs of the agents that consume bundled skills. Env overrides and
+/// empty-value handling match `agent_resume::agent_transcript_roots`.
+fn agent_config_dirs() -> Vec<PathBuf> {
+    let home = dirs::home_dir();
+    let claude = std::env::var_os("CLAUDE_CONFIG_DIR")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| home.clone().map(|home| home.join(".claude")));
+    let codex = std::env::var_os("CODEX_HOME")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| home.map(|home| home.join(".codex")));
+    claude.into_iter().chain(codex).collect()
+}
+
+/// Installs or refreshes the agent skills shipped in the current Clinch bundle
+/// into the Claude Code and Codex personal skill directories. Best-effort by
+/// design: a failure must never prevent Clinch from starting, and outdated or
+/// missing skills are retried on the next launch.
+pub fn install_bundled_skills() {
+    if !app_id_enables_bundled_skills(&ChannelState::app_id().to_string()) {
+        return;
+    }
+    let Some(source_root) = warp_core::paths::bundled_resources_dir()
+        .map(|resources| resources.join("bundled").join("agent-skills"))
+        .filter(|path| path.is_dir())
+    else {
+        // Expected for unit tests and unbundled binaries.
+        return;
+    };
+    for agent_config_dir in agent_config_dirs() {
+        install_skills_from(&source_root, &agent_config_dir);
     }
 }
 

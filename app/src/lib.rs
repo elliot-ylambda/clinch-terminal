@@ -785,6 +785,11 @@ pub fn run() -> Result<()> {
     #[cfg(target_os = "macos")]
     agent_plugins::install_bundled_plugins();
 
+    // The clinch-toolbelt skill ships in the bundle so Claude Code and Codex can
+    // manage the user's footer quick-insert buttons; provision it the same way.
+    #[cfg(target_os = "macos")]
+    agent_skills::install_bundled_skills();
+
     let api_key = args.api_key().cloned();
     run_internal(LaunchMode::App {
         args: args.into_app_args(),

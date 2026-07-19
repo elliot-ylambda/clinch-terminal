@@ -162,3 +162,10 @@ fn install_skips_agents_that_are_not_installed() {
         "must not create agent config dirs"
     );
 }
+
+#[test]
+fn provisioning_is_gated_to_clinch_app_ids() {
+    assert!(app_id_enables_bundled_skills("sh.clinch.Clinch"));
+    assert!(app_id_enables_bundled_skills("sh.clinch.ClinchDev"));
+    assert!(!app_id_enables_bundled_skills("dev.warp.Warp-Stable"));
+}
