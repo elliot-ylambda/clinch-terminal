@@ -3333,6 +3333,10 @@ impl Entity for AgentInputFooter {
     type Event = AgentInputFooterEvent;
 }
 
+#[cfg(test)]
+#[path = "agent_input_footer_tests.rs"]
+mod tests;
+
 pub(crate) struct AgentInputButtonTheme;
 
 impl ActionButtonTheme for AgentInputButtonTheme {

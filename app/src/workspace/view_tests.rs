@@ -27,6 +27,7 @@ use crate::ai::agent_conversations_model::AgentConversationsModel;
 use crate::ai::agent_tips::AITipModel;
 use crate::ai::ambient_agents::github_auth_notifier::GitHubAuthNotifier;
 use crate::ai::blocklist::agent_view::orchestration_pill_bar_model::OrchestrationPillBarModel;
+use crate::ai::blocklist::agent_view::toolbar_item::AgentToolbarItemKind;
 use crate::ai::blocklist::{BlocklistAIHistoryModel, BlocklistAIPermissions};
 use crate::ai::document::ai_document_model::AIDocumentModel;
 use crate::ai::execution_profiles::profiles::AIExecutionProfilesModel;
@@ -639,6 +640,60 @@ pub(crate) fn mock_workspace(app: &mut App) -> ViewHandle<Workspace> {
         )
     });
     workspace
+}
+
+#[test]
+fn terminal_targeted_quick_insert_save_updates_only_terminal_toolbar() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+        let cli_selection =
+            crate::terminal::session_settings::CLIAgentToolbarChipSelection::Custom {
+                left: vec![AgentToolbarItemKind::CustomInsert {
+                    label: "CLI only".to_owned(),
+                    text: "/review".to_owned(),
+                }],
+                right: Vec::new(),
+            };
+        SessionSettings::handle(&app).update(&mut app, |settings, ctx| {
+            settings
+                .cli_agent_footer_chip_selection
+                .set_value(cli_selection.clone(), ctx)
+                .unwrap();
+        });
+
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.handle_quick_insert_modal_event(
+                &QuickInsertModalEvent::Save {
+                    target: QuickInsertModalTarget::Terminal,
+                    label: "Status".to_owned(),
+                    text: "git status".to_owned(),
+                },
+                ctx,
+            );
+        });
+
+        SessionSettings::handle(&app).read(&app, |settings, _| {
+            assert_eq!(
+                settings.cli_agent_footer_chip_selection.value(),
+                &cli_selection
+            );
+            let crate::terminal::session_settings::TerminalToolbarChipSelection::Custom {
+                left,
+                right,
+            } = settings.terminal_footer_chip_selection.value()
+            else {
+                panic!("expected custom terminal toolbar selection");
+            };
+            let mut expected_left = AgentToolbarItemKind::terminal_default_left();
+            expected_left.push(AgentToolbarItemKind::CustomInsert {
+                label: "Status".to_owned(),
+                text: "git status".to_owned(),
+            });
+            assert_eq!(left, &expected_left);
+            assert!(right.is_empty());
+        });
+    });
 }
 
 #[test]

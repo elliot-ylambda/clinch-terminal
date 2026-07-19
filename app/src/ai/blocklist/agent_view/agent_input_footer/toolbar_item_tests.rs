@@ -1,5 +1,66 @@
 use super::*;
 
+#[test]
+fn terminal_default_left_contains_exact_quick_actions() {
+    assert_eq!(
+        AgentToolbarItemKind::terminal_default_left(),
+        vec![
+            AgentToolbarItemKind::CustomInsert {
+                label: "Claude".to_owned(),
+                text: "ca".to_owned(),
+            },
+            AgentToolbarItemKind::CustomInsert {
+                label: "Codex".to_owned(),
+                text: "cx".to_owned(),
+            },
+            AgentToolbarItemKind::CustomInsert {
+                label: "Claude resume".to_owned(),
+                text: "ca --resume".to_owned(),
+            },
+            AgentToolbarItemKind::CustomInsert {
+                label: "Codex resume".to_owned(),
+                text: "codex resume".to_owned(),
+            },
+            AgentToolbarItemKind::CustomInsert {
+                label: "Open".to_owned(),
+                text: "open .".to_owned(),
+            },
+        ]
+    );
+    assert!(AgentToolbarItemKind::terminal_default_right().is_empty());
+}
+
+#[test]
+fn terminal_availability_admits_only_custom_insert() {
+    let custom = AgentToolbarItemKind::CustomInsert {
+        label: "Build".to_owned(),
+        text: "cargo build".to_owned(),
+    };
+    assert!(custom.is_available_for_terminal());
+
+    let unavailable = [
+        AgentToolbarItemKind::ContextChip(ContextChipKind::WorkingDirectory),
+        AgentToolbarItemKind::ModelSelector,
+        AgentToolbarItemKind::NLDToggle,
+        AgentToolbarItemKind::ContextWindowUsage,
+        AgentToolbarItemKind::FileExplorer,
+        AgentToolbarItemKind::RichInput,
+        AgentToolbarItemKind::VoiceInput,
+        AgentToolbarItemKind::FileAttach,
+        AgentToolbarItemKind::ShareSession,
+        AgentToolbarItemKind::Settings,
+        AgentToolbarItemKind::Compact,
+        AgentToolbarItemKind::ForkSession,
+        AgentToolbarItemKind::ContinuePrompt,
+        AgentToolbarItemKind::LooksGoodPrompt,
+        AgentToolbarItemKind::FastForwardToggle,
+        AgentToolbarItemKind::HandoffToCloud,
+    ];
+    for item in unavailable {
+        assert!(!item.is_available_for_terminal(), "{item:?}");
+    }
+}
+
 /// The two CLI-agent quick-reply buttons added alongside Fork/Compact.
 fn quick_reply_kinds() -> [AgentToolbarItemKind; 2] {
     [

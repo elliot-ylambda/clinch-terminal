@@ -21,7 +21,8 @@ use crate::terminal::cli_agent_sessions::{
     CLIAgentInputState, CLIAgentSession, CLIAgentSessionContext, CLIAgentSessionStatus,
     CLIAgentSessionsModel,
 };
-use crate::terminal::model::ansi::{BootstrappedValue, Handler as _, InitShellValue};
+use crate::terminal::model::ansi::{self, BootstrappedValue, Handler as _, InitShellValue};
+use crate::terminal::session_settings::SessionSettings;
 use crate::terminal::shared_session::SharedSessionSource;
 use crate::terminal::CLIAgent;
 use crate::test_util::add_window_with_terminal;
@@ -169,6 +170,76 @@ fn simulate_user_started_long_running_command(view: &mut TerminalView) {
         });
         model.simulate_long_running_block("ssh localhost", "Password:");
     }
+}
+
+#[test]
+fn sticky_toolbelt_gate_handles_terminal_visibility_and_cli_precedence() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let terminal = add_window_with_terminal(&mut app, None);
+
+        terminal.read(&app, |view, ctx| {
+            let model = view.model.lock();
+            assert!(view.should_render_sticky_toolbelt_footer(&model, ctx));
+        });
+
+        SessionSettings::handle(&app).update(&mut app, |settings, ctx| {
+            settings.show_terminal_footer.set_value(false, ctx).unwrap();
+        });
+        terminal.read(&app, |view, ctx| {
+            let model = view.model.lock();
+            assert!(!view.should_render_sticky_toolbelt_footer(&model, ctx));
+        });
+
+        SessionSettings::handle(&app).update(&mut app, |settings, ctx| {
+            settings.show_terminal_footer.set_value(true, ctx).unwrap();
+        });
+        terminal.update(&mut app, |view, _| {
+            view.model.lock().set_mode(ansi::Mode::SwapScreen {
+                save_cursor_and_clear_screen: true,
+            });
+        });
+        terminal.read(&app, |view, ctx| {
+            let model = view.model.lock();
+            assert!(!view.should_render_sticky_toolbelt_footer(&model, ctx));
+        });
+
+        SessionSettings::handle(&app).update(&mut app, |settings, ctx| {
+            settings.show_terminal_footer.set_value(false, ctx).unwrap();
+        });
+        CLIAgentSessionsModel::handle(&app).update(&mut app, |sessions, ctx| {
+            sessions.set_session(
+                terminal.id(),
+                CLIAgentSession {
+                    agent: CLIAgent::Claude,
+                    status: CLIAgentSessionStatus::InProgress,
+                    session_context: CLIAgentSessionContext::default(),
+                    input_state: CLIAgentInputState::Closed,
+                    listener: None,
+                    plugin_version: None,
+                    remote_host: None,
+                    draft_text: None,
+                    custom_command_prefix: None,
+                    received_rich_notification: false,
+                    has_observed_turn_activity: false,
+                    turn_interrupted_by_user: false,
+                    prompt_history: Default::default(),
+                    prompt_history_load_state: Default::default(),
+                    prompt_history_generation: 0,
+                    should_auto_toggle_input: false,
+                },
+                ctx,
+            );
+        });
+        terminal.read(&app, |view, ctx| {
+            let model = view.model.lock();
+            assert!(view.should_render_sticky_toolbelt_footer(&model, ctx));
+            assert_eq!(
+                view.use_agent_footer.as_ref(ctx).cli_agent(ctx),
+                Some(CLIAgent::Claude)
+            );
+        });
+    });
 }
 
 #[test]
