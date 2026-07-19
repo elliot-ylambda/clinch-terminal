@@ -1,7 +1,8 @@
-use super::*;
-use crate::test_util::settings::initialize_settings_for_tests;
 use warpui::platform::WindowStyle;
 use warpui::App;
+
+use super::*;
+use crate::test_util::settings::initialize_settings_for_tests;
 
 #[test]
 fn next_selection_with_custom_button_appends_and_materializes_default() {

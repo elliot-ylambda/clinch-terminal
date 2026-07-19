@@ -1,6 +1,7 @@
-use super::*;
 use repo_metadata::repositories::DetectedRepositories;
 use warpui::App;
+
+use super::*;
 
 fn conversation(agent: &str) -> AgentConversation {
     conversation_in("session-123", agent, Some("/tmp/project"))
