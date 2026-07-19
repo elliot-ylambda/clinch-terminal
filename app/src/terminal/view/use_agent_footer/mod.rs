@@ -480,6 +480,10 @@ impl TerminalView {
 
         *SessionSettings::as_ref(app).show_terminal_footer
             && !model.is_alt_screen_active()
+            && !model
+                .block_list()
+                .active_block()
+                .is_eligible_for_agent_handoff()
             && !self.use_agent_footer.as_ref(app).is_warpify_active(app)
     }
 
@@ -1650,8 +1654,15 @@ impl View for UseAgentToolbar {
             return container.finish();
         }
 
-        let is_alt_screen_active = self.terminal_model.lock().is_alt_screen_active();
-        if *SessionSettings::as_ref(app).show_terminal_footer && !is_alt_screen_active {
+        let should_render_terminal_footer = {
+            let terminal_model = self.terminal_model.lock();
+            !terminal_model.is_alt_screen_active()
+                && !terminal_model
+                    .block_list()
+                    .active_block()
+                    .is_eligible_for_agent_handoff()
+        };
+        if *SessionSettings::as_ref(app).show_terminal_footer && should_render_terminal_footer {
             return Container::new(
                 self.agent_input_footer
                     .as_ref(app)
