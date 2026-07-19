@@ -7,11 +7,12 @@ use warp_core::ui::theme::Fill;
 use warpui::accessibility::{AccessibilityContent, ActionAccessibilityContent, WarpA11yRole};
 use warpui::elements::{
     Align, Border, ChildAnchor, ClippedScrollStateHandle, ClippedScrollable, ConstrainedBox,
-    Container, CornerRadius, CrossAxisAlignment, Draggable, DraggableState, Empty, Flex, Hoverable,
-    MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning, ParentAnchor,
-    ParentElement, ParentOffsetBounds, Radius, Rect, SavePosition, ScrollTarget,
+    Container, CornerRadius, CrossAxisAlignment, Draggable, DraggableState, DropShadow, Empty,
+    Flex, Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning, Padding,
+    ParentAnchor, ParentElement, ParentOffsetBounds, Radius, Rect, SavePosition, ScrollTarget,
     ScrollToPositionMode, ScrollbarWidth, Shrinkable, Stack, Text,
 };
+use warpui::fonts::{Properties, Weight};
 use warpui::keymap::{BindingDescription, EditableBinding};
 use warpui::platform::{Cursor, TerminationMode};
 use warpui::presenter::ChildView;
@@ -28,6 +29,9 @@ use crate::server::server_api::ServerTime;
 use crate::ui_components::icons::Icon;
 use crate::ui_components::{CLINCH_DONE_BLUE, CLINCH_LOGO_GREEN};
 use crate::util::bindings::{self, CustomAction};
+use crate::workspace::view::{
+    ProjectCliAgentActivity, ProjectCliAgentCounts, ProjectCliAgentSummary,
+};
 use crate::workspace::{Workspace, WorkspaceEvent, WorkspaceRegistry};
 use crate::GlobalResourceHandles;
 
@@ -142,6 +146,198 @@ const PROJECT_TAB_VERTICAL_NUDGE: f32 = 2.;
 const PROJECT_TAB_VERTICAL_PADDING: f32 = 6.;
 const PROJECT_TAB_BORDER_WIDTH: f32 = 1.;
 const PROJECT_AGENT_COUNT_BADGE_BORDER_WIDTH: f32 = 1.;
+const PROJECT_AGENT_HOVER_CARD_WIDTH: f32 = 320.;
+const PROJECT_AGENT_HOVER_CARD_MAX_ROWS: usize = 8;
+
+fn project_agent_hover_summary(
+    tab_count: usize,
+    agent_count: usize,
+    counts: ProjectCliAgentCounts,
+) -> String {
+    let mut parts = vec![if tab_count == 1 {
+        "1 open tab".to_string()
+    } else {
+        format!("{tab_count} open tabs")
+    }];
+    if agent_count > 0 {
+        parts.push(if agent_count == 1 {
+            "1 agent".to_string()
+        } else {
+            format!("{agent_count} agents")
+        });
+    }
+    if counts.working > 0 {
+        parts.push(format!("{} working", counts.working));
+    }
+    if counts.done > 0 {
+        parts.push(format!("{} done", counts.done));
+    }
+    parts.join(" · ")
+}
+
+fn render_project_agent_hover_card(
+    project_title: &str,
+    tab_count: usize,
+    agents: &[ProjectCliAgentSummary],
+    counts: ProjectCliAgentCounts,
+    appearance: &Appearance,
+) -> Box<dyn Element> {
+    let theme = appearance.theme();
+    let background = theme.tooltip_background();
+    let background_fill = Fill::Solid(background);
+    let main_text_color = theme.main_text_color(background_fill).into_solid();
+    let sub_text_color = theme.sub_text_color(background_fill).into_solid();
+    let disabled_text_color = theme.disabled_text_color(background_fill).into_solid();
+    let font_family = appearance.ui_font_family();
+
+    let header = Flex::column()
+        .with_main_axis_size(MainAxisSize::Min)
+        .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .with_spacing(2.)
+        .with_child(
+            Text::new_inline(project_title.to_string(), font_family, 12.)
+                .with_clip(ClipConfig::ellipsis())
+                .with_color(main_text_color)
+                .with_style(Properties::default().weight(Weight::Semibold))
+                .finish(),
+        )
+        .with_child(
+            Text::new_inline(
+                project_agent_hover_summary(tab_count, agents.len(), counts),
+                font_family,
+                10.,
+            )
+            .with_color(sub_text_color)
+            .finish(),
+        )
+        .finish();
+
+    let mut content = Flex::column()
+        .with_main_axis_size(MainAxisSize::Min)
+        .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .with_spacing(8.)
+        .with_child(header);
+
+    if agents.is_empty() {
+        content.add_child(
+            Text::new_inline(
+                "No Claude Code or Codex tabs open".to_string(),
+                font_family,
+                11.,
+            )
+            .with_color(sub_text_color)
+            .finish(),
+        );
+    } else {
+        content.add_child(
+            ConstrainedBox::new(Rect::new().with_background(theme.outline()).finish())
+                .with_height(1.)
+                .finish(),
+        );
+
+        let mut rows = Flex::column()
+            .with_main_axis_size(MainAxisSize::Min)
+            .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .with_spacing(8.);
+        for summary in agents.iter().take(PROJECT_AGENT_HOVER_CARD_MAX_ROWS) {
+            let icon = summary
+                .agent
+                .icon()
+                .map(|icon| {
+                    ConstrainedBox::new(icon.to_warpui_icon(Fill::Solid(main_text_color)).finish())
+                        .with_width(16.)
+                        .with_height(16.)
+                        .finish()
+                })
+                .unwrap_or_else(|| Empty::new().finish());
+            let activity_color = match summary.activity {
+                ProjectCliAgentActivity::Working => CLINCH_LOGO_GREEN,
+                ProjectCliAgentActivity::Done | ProjectCliAgentActivity::NeedsAttention => {
+                    CLINCH_DONE_BLUE
+                }
+                ProjectCliAgentActivity::Idle => disabled_text_color,
+            };
+            let metadata = Flex::row()
+                .with_main_axis_size(MainAxisSize::Min)
+                .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                .with_spacing(4.)
+                .with_child(
+                    ConstrainedBox::new(
+                        Rect::new()
+                            .with_background(Fill::Solid(activity_color))
+                            .with_corner_radius(CornerRadius::with_all(Radius::Percentage(50.)))
+                            .finish(),
+                    )
+                    .with_width(6.)
+                    .with_height(6.)
+                    .finish(),
+                )
+                .with_child(
+                    Text::new_inline(
+                        format!(
+                            "{} · {}",
+                            summary.agent.display_name(),
+                            summary.activity.label()
+                        ),
+                        font_family,
+                        10.,
+                    )
+                    .with_color(sub_text_color)
+                    .finish(),
+                )
+                .finish();
+            let labels = Flex::column()
+                .with_main_axis_size(MainAxisSize::Min)
+                .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .with_spacing(2.)
+                .with_child(
+                    Text::new_inline(summary.title.clone(), font_family, 11.)
+                        .with_clip(ClipConfig::ellipsis())
+                        .with_color(main_text_color)
+                        .finish(),
+                )
+                .with_child(metadata)
+                .finish();
+            rows.add_child(
+                Flex::row()
+                    .with_main_axis_size(MainAxisSize::Max)
+                    .with_cross_axis_alignment(CrossAxisAlignment::Start)
+                    .with_spacing(8.)
+                    .with_child(Container::new(icon).with_margin_top(1.).finish())
+                    .with_child(Shrinkable::new(1., labels).finish())
+                    .finish(),
+            );
+        }
+        if agents.len() > PROJECT_AGENT_HOVER_CARD_MAX_ROWS {
+            rows.add_child(
+                Text::new_inline(
+                    format!(
+                        "+ {} more open agent tabs",
+                        agents.len() - PROJECT_AGENT_HOVER_CARD_MAX_ROWS
+                    ),
+                    font_family,
+                    10.,
+                )
+                .with_color(sub_text_color)
+                .finish(),
+            );
+        }
+        content.add_child(rows.finish());
+    }
+
+    ConstrainedBox::new(
+        Container::new(content.finish())
+            .with_background(background)
+            .with_border(Border::all(1.).with_border_fill(theme.outline()))
+            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+            .with_padding(Padding::uniform(10.))
+            .with_drop_shadow(DropShadow::default())
+            .finish(),
+    )
+    .with_width(PROJECT_AGENT_HOVER_CARD_WIDTH)
+    .finish()
+}
+
 fn previous_project_index(active_index: usize, project_count: usize) -> Option<usize> {
     (project_count > 1).then(|| active_index.checked_sub(1).unwrap_or(project_count - 1))
 }
@@ -1102,11 +1298,23 @@ impl ProjectWindow {
             let title = workspace.project_display_name(app);
             let has_other_unread = workspace.has_other_unread_project_activity(app);
             let agent_counts = workspace.project_cli_agent_counts(app);
+            let agent_summaries = workspace.project_cli_agent_summaries(app);
+            let tab_count = workspace.tab_count();
             let is_active = index == self.active_project_index;
+            let is_dragging = project.draggable_state.is_dragging();
             let text_color = if is_active {
                 theme.active_ui_text_color()
             } else {
                 theme.nonactive_ui_text_color()
+            };
+            let (hover_parent_anchor, hover_child_anchor) = if self.projects.len() == 1 {
+                (ParentAnchor::BottomMiddle, ChildAnchor::TopMiddle)
+            } else if index == 0 {
+                (ParentAnchor::BottomLeft, ChildAnchor::TopLeft)
+            } else if index + 1 == self.projects.len() {
+                (ParentAnchor::BottomRight, ChildAnchor::TopRight)
+            } else {
+                (ParentAnchor::BottomMiddle, ChildAnchor::TopMiddle)
             };
 
             let project_id = project.id;
@@ -1269,7 +1477,7 @@ impl ProjectWindow {
                 } else {
                     inactive_background
                 };
-                ConstrainedBox::new(
+                let tab_body = ConstrainedBox::new(
                     Container::new(contents.finish())
                         .with_background(background)
                         .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
@@ -1283,7 +1491,29 @@ impl ProjectWindow {
                 )
                 .with_min_width(PROJECT_TAB_MIN_WIDTH)
                 .with_max_width(180.)
-                .finish()
+                .finish();
+
+                if mouse_state.is_hovered() && !is_dragging {
+                    let mut stack = Stack::new().with_child(tab_body);
+                    stack.add_positioned_overlay_child(
+                        render_project_agent_hover_card(
+                            &title,
+                            tab_count,
+                            &agent_summaries,
+                            agent_counts,
+                            appearance,
+                        ),
+                        OffsetPositioning::offset_from_parent(
+                            vec2f(0., 6.),
+                            ParentOffsetBounds::WindowByPosition,
+                            hover_parent_anchor,
+                            hover_child_anchor,
+                        ),
+                    );
+                    stack.finish()
+                } else {
+                    tab_body
+                }
             })
             .with_defer_events_to_children()
             .with_cursor(Cursor::PointingHand)

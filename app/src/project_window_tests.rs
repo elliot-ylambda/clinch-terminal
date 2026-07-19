@@ -4,11 +4,12 @@ use warpui::App;
 
 use super::{
     active_index_after_removal, close_project_decision, next_project_index, previous_project_index,
-    CloseProjectDecision, ACTIVATE_NEXT_PROJECT_MAC_KEY_BINDING,
+    project_agent_hover_summary, CloseProjectDecision, ACTIVATE_NEXT_PROJECT_MAC_KEY_BINDING,
     ACTIVATE_PREVIOUS_PROJECT_MAC_KEY_BINDING, PROJECT_TAB_BORDER_WIDTH,
     PROJECT_TAB_VERTICAL_NUDGE, PROJECT_TAB_VERTICAL_PADDING,
 };
 use crate::util::bindings::{custom_tag_to_keystroke, trigger_to_keystroke, CustomAction};
+use crate::workspace::view::ProjectCliAgentCounts;
 
 #[test]
 fn project_navigation_owns_command_brackets_on_mac() {
@@ -67,6 +68,25 @@ fn project_navigation_wraps_and_singletons_are_noops() {
 
     assert_eq!(previous_project_index(0, 1), None);
     assert_eq!(next_project_index(0, 1), None);
+}
+
+#[test]
+fn project_agent_hover_summary_matches_project_badge_counts() {
+    assert_eq!(
+        project_agent_hover_summary(
+            3,
+            2,
+            ProjectCliAgentCounts {
+                working: 1,
+                done: 1,
+            },
+        ),
+        "3 open tabs · 2 agents · 1 working · 1 done"
+    );
+    assert_eq!(
+        project_agent_hover_summary(1, 0, ProjectCliAgentCounts::default()),
+        "1 open tab"
+    );
 }
 
 #[test]

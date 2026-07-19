@@ -395,7 +395,9 @@ use crate::terminal::block_list_viewport::InputMode;
 use crate::terminal::cli_agent_sessions::plugin_manager::{plugin_manager_for, PluginModalKind};
 #[cfg(feature = "local_tty")]
 use crate::terminal::cli_agent_sessions::session_context_enabled;
-use crate::terminal::cli_agent_sessions::{CLIAgentSessionsModel, CLIAgentSessionsModelEvent};
+use crate::terminal::cli_agent_sessions::{
+    CLIAgentSessionStatus, CLIAgentSessionsModel, CLIAgentSessionsModelEvent,
+};
 use crate::terminal::enable_auto_reload_modal::{
     EnableAutoReloadModal, EnableAutoReloadModalEvent,
 };
@@ -1320,6 +1322,58 @@ fn is_in_progress_project_agent(agent: CLIAgent, is_actively_working: bool) -> b
 pub(crate) struct ProjectCliAgentCounts {
     pub(crate) working: usize,
     pub(crate) done: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ProjectCliAgentActivity {
+    NeedsAttention,
+    Done,
+    Working,
+    Idle,
+}
+
+impl ProjectCliAgentActivity {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::NeedsAttention => "Needs attention",
+            Self::Done => "Done",
+            Self::Working => "Working",
+            Self::Idle => "Idle",
+        }
+    }
+
+    fn priority(self) -> u8 {
+        match self {
+            Self::NeedsAttention => 0,
+            Self::Done => 1,
+            Self::Working => 2,
+            Self::Idle => 3,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ProjectCliAgentSummary {
+    pub(crate) agent: CLIAgent,
+    pub(crate) title: String,
+    pub(crate) activity: ProjectCliAgentActivity,
+}
+
+fn project_cli_agent_activity(
+    is_working: bool,
+    is_blocked: bool,
+    has_unread_completed: bool,
+    has_other_unread: bool,
+) -> ProjectCliAgentActivity {
+    if is_working {
+        ProjectCliAgentActivity::Working
+    } else if is_blocked || has_other_unread {
+        ProjectCliAgentActivity::NeedsAttention
+    } else if has_unread_completed {
+        ProjectCliAgentActivity::Done
+    } else {
+        ProjectCliAgentActivity::Idle
+    }
 }
 
 impl Workspace {
@@ -22213,6 +22267,65 @@ impl Workspace {
         }
 
         counts
+    }
+
+    /// Claude Code and Codex panes shown in the project-tab hover card.
+    ///
+    /// Titles follow the same pane and tab title sources used by vertical tabs. Attention-first
+    /// ordering makes it possible to scan several projects without first opening each one.
+    pub(crate) fn project_cli_agent_summaries(
+        &self,
+        ctx: &AppContext,
+    ) -> Vec<ProjectCliAgentSummary> {
+        let sessions = CLIAgentSessionsModel::as_ref(ctx);
+        let notifications = AgentNotificationsModel::as_ref(ctx).notifications();
+        let mut summaries = Vec::new();
+
+        for tab in &self.tabs {
+            let pane_group = tab.pane_group.as_ref(ctx);
+            let tab_title = pane_group.custom_title(ctx);
+            for terminal in pane_group.terminal_views(ctx) {
+                let terminal_view = terminal.as_ref(ctx);
+                let Some(session) = sessions.session(terminal_view.id()) else {
+                    continue;
+                };
+                if !matches!(session.agent, CLIAgent::Claude | CLIAgent::Codex) {
+                    continue;
+                }
+
+                let pane_configuration = terminal_view.pane_configuration().as_ref(ctx);
+                let title = pane_configuration
+                    .custom_vertical_tabs_title()
+                    .or(tab_title.as_deref())
+                    .unwrap_or_else(|| pane_configuration.title())
+                    .split_whitespace()
+                    .join(" ");
+                let title = if title.is_empty() {
+                    "New session".to_string()
+                } else {
+                    title
+                };
+                let has_unread_completed = notifications
+                    .has_unread_completed_project_cli_agent_for_terminal_view(terminal_view.id());
+                let has_other_unread = notifications
+                    .has_other_unread_project_activity_for_terminal_view(terminal_view.id());
+                let activity = project_cli_agent_activity(
+                    session.is_actively_working(),
+                    matches!(session.status, CLIAgentSessionStatus::Blocked { .. }),
+                    has_unread_completed,
+                    has_other_unread,
+                );
+
+                summaries.push(ProjectCliAgentSummary {
+                    agent: session.agent,
+                    title,
+                    activity,
+                });
+            }
+        }
+
+        summaries.sort_by_key(|summary| summary.activity.priority());
+        summaries
     }
 
     /// Renders the tab bar contents, wrapped in hover and drag-drop behaviors.

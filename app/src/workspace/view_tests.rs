@@ -191,6 +191,30 @@ fn project_agent_count_only_includes_in_progress_claude_and_codex_sessions() {
 }
 
 #[test]
+fn project_agent_activity_prioritizes_live_work_then_attention_then_done() {
+    assert_eq!(
+        project_cli_agent_activity(true, false, true, true),
+        ProjectCliAgentActivity::Working
+    );
+    assert_eq!(
+        project_cli_agent_activity(false, true, false, false),
+        ProjectCliAgentActivity::NeedsAttention
+    );
+    assert_eq!(
+        project_cli_agent_activity(false, false, true, true),
+        ProjectCliAgentActivity::NeedsAttention
+    );
+    assert_eq!(
+        project_cli_agent_activity(false, false, true, false),
+        ProjectCliAgentActivity::Done
+    );
+    assert_eq!(
+        project_cli_agent_activity(false, false, false, false),
+        ProjectCliAgentActivity::Idle
+    );
+}
+
+#[test]
 fn project_agent_counts_only_include_active_claude_and_codex_turns() {
     App::test((), |mut app| async move {
         let _notifications_guard =
@@ -250,6 +274,28 @@ fn project_agent_counts_only_include_active_claude_and_codex_turns() {
                 );
             }
         });
+        let pane_configurations = workspace.read(&app, |workspace, ctx| {
+            workspace
+                .tabs
+                .iter()
+                .map(|tab| {
+                    let terminal = tab
+                        .pane_group
+                        .as_ref(ctx)
+                        .terminal_views(ctx)
+                        .into_iter()
+                        .next()
+                        .expect("each test tab should contain a terminal");
+                    terminal.as_ref(ctx).pane_configuration().clone()
+                })
+                .collect::<Vec<_>>()
+        });
+        pane_configurations[0].update(&mut app, |configuration, ctx| {
+            configuration.set_custom_vertical_tabs_title("Fix project hover", ctx);
+        });
+        pane_configurations[1].update(&mut app, |configuration, ctx| {
+            configuration.set_title("Refactor sidebar", ctx);
+        });
 
         workspace.read(&app, |workspace, ctx| {
             assert_eq!(
@@ -258,6 +304,25 @@ fn project_agent_counts_only_include_active_claude_and_codex_turns() {
                     working: 0,
                     done: 0,
                 }
+            );
+            assert_eq!(
+                workspace
+                    .project_cli_agent_summaries(ctx)
+                    .into_iter()
+                    .map(|summary| (summary.agent, summary.title, summary.activity))
+                    .collect::<Vec<_>>(),
+                vec![
+                    (
+                        crate::terminal::CLIAgent::Codex,
+                        "Fix project hover".to_string(),
+                        ProjectCliAgentActivity::Idle
+                    ),
+                    (
+                        crate::terminal::CLIAgent::Claude,
+                        "Refactor sidebar".to_string(),
+                        ProjectCliAgentActivity::Idle
+                    ),
+                ]
             );
         });
 
@@ -280,6 +345,10 @@ fn project_agent_counts_only_include_active_claude_and_codex_turns() {
                     done: 0,
                 }
             );
+            assert!(workspace
+                .project_cli_agent_summaries(ctx)
+                .iter()
+                .all(|summary| summary.activity == ProjectCliAgentActivity::Working));
         });
 
         // The first tab is in the background. Completing its Codex turn should move that pane
@@ -308,6 +377,23 @@ fn project_agent_counts_only_include_active_claude_and_codex_turns() {
                     working: 1,
                     done: 1,
                 }
+            );
+            assert_eq!(
+                workspace
+                    .project_cli_agent_summaries(ctx)
+                    .into_iter()
+                    .map(|summary| (summary.agent, summary.activity))
+                    .collect::<Vec<_>>(),
+                vec![
+                    (
+                        crate::terminal::CLIAgent::Codex,
+                        ProjectCliAgentActivity::Done
+                    ),
+                    (
+                        crate::terminal::CLIAgent::Claude,
+                        ProjectCliAgentActivity::Working,
+                    ),
+                ]
             );
         });
     });
