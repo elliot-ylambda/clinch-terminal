@@ -1,4 +1,4 @@
-//! "Create quick-insert button" modal for the CLI-agent footer.
+//! "Create quick-insert button" modal for the CLI-agent and terminal footers.
 //!
 //! Lets the user save a piece of text as a footer button that inserts-and-sends
 //! it to the active CLI agent. The modal has two single-line editors (the text to
@@ -85,9 +85,19 @@ pub enum QuickInsertModalAction {
     SetText(String),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QuickInsertModalTarget {
+    CLIAgent,
+    Terminal,
+}
+
 #[derive(Debug)]
 pub enum QuickInsertModalEvent {
-    Save { label: String, text: String },
+    Save {
+        target: QuickInsertModalTarget,
+        label: String,
+        text: String,
+    },
     Cancel,
 }
 
@@ -98,6 +108,7 @@ pub struct QuickInsertModal {
     /// equals it, we keep syncing the derived label as the text changes; once the
     /// user overrides the label, they diverge and auto-fill stops.
     last_auto_label: String,
+    target: QuickInsertModalTarget,
     /// Active working directory, used to scope command + skill discovery.
     cwd: Option<PathBuf>,
     commands: Vec<DiscoveredCommand>,
@@ -129,6 +140,7 @@ impl QuickInsertModal {
             text_input,
             label_input,
             last_auto_label: String::new(),
+            target: QuickInsertModalTarget::CLIAgent,
             cwd: None,
             commands: Vec::new(),
             skills: Vec::new(),
@@ -162,12 +174,18 @@ impl QuickInsertModal {
     }
 
     /// Seeds the modal for a new button and (re)scans commands + skills for `cwd`.
-    pub fn open(&mut self, cwd: PathBuf, ctx: &mut ViewContext<Self>) {
+    pub fn open(
+        &mut self,
+        cwd: PathBuf,
+        target: QuickInsertModalTarget,
+        ctx: &mut ViewContext<Self>,
+    ) {
         let commands = discover_commands(&cwd, ctx);
         let lor = LocalOrRemotePath::Local(cwd.clone());
         let skills = SkillManager::as_ref(ctx).get_skills_for_working_directory(Some(&lor), ctx);
 
         self.cwd = Some(cwd);
+        self.target = target;
         self.commands = commands;
         self.skills = skills;
         self.last_auto_label = String::new();
@@ -218,6 +236,7 @@ impl QuickInsertModal {
             label.to_string()
         };
         ctx.emit(QuickInsertModalEvent::Save {
+            target: self.target,
             label,
             text: text.to_string(),
         });

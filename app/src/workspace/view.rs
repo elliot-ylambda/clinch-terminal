@@ -186,10 +186,11 @@ use crate::ai::ambient_agents::telemetry::{HandoffEntryPoint, HandoffInjectionPa
 use crate::ai::ambient_agents::AmbientAgentTaskId;
 use crate::ai::blocklist::agent_view::agent_input_footer::editor::AgentToolbarEditorMode;
 use crate::ai::blocklist::agent_view::editor::{
-    append_cli_custom_button, AgentToolbarEditorEvent, AgentToolbarEditorModal,
+    append_cli_custom_button, append_terminal_custom_button, AgentToolbarEditorEvent,
+    AgentToolbarEditorModal,
 };
 use crate::ai::blocklist::agent_view::quick_insert_modal::{
-    QuickInsertModal, QuickInsertModalEvent,
+    QuickInsertModal, QuickInsertModalEvent, QuickInsertModalTarget,
 };
 use crate::ai::blocklist::agent_view::AgentViewEntryOrigin;
 #[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
@@ -6351,8 +6352,19 @@ impl Workspace {
         ctx: &mut ViewContext<Self>,
     ) {
         match event {
-            QuickInsertModalEvent::Save { label, text } => {
-                append_cli_custom_button(label.clone(), text.clone(), ctx);
+            QuickInsertModalEvent::Save {
+                target,
+                label,
+                text,
+            } => {
+                match target {
+                    QuickInsertModalTarget::CLIAgent => {
+                        append_cli_custom_button(label.clone(), text.clone(), ctx)
+                    }
+                    QuickInsertModalTarget::Terminal => {
+                        append_terminal_custom_button(label.clone(), text.clone(), ctx)
+                    }
+                }
                 self.current_workspace_state.is_quick_insert_modal_open = false;
                 self.focus_active_tab(ctx);
                 ctx.notify();
@@ -20255,8 +20267,19 @@ impl Workspace {
             .active_quick_insert_cwd(ctx)
             .or_else(|| std::env::current_dir().ok())
             .unwrap_or_default();
+        let target = if self
+            .active_terminal_id(ctx)
+            .is_some_and(|terminal_view_id| {
+                CLIAgentSessionsModel::as_ref(ctx)
+                    .session(terminal_view_id)
+                    .is_some()
+            }) {
+            QuickInsertModalTarget::CLIAgent
+        } else {
+            QuickInsertModalTarget::Terminal
+        };
         self.quick_insert_modal
-            .update(ctx, |modal, ctx| modal.open(cwd, ctx));
+            .update(ctx, |modal, ctx| modal.open(cwd, target, ctx));
         self.close_all_overlays(ctx);
         self.current_workspace_state.is_quick_insert_modal_open = true;
         ctx.focus(&self.quick_insert_modal);

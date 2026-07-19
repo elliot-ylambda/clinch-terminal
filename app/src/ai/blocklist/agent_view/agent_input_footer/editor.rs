@@ -15,7 +15,7 @@ use crate::chip_configurator::{
 };
 use crate::terminal::session_settings::{
     AgentToolbarChipSelection, CLIAgentToolbarChipSelection, SessionSettings,
-    SessionSettingsChangedEvent, ToolbarChipSelection,
+    SessionSettingsChangedEvent, TerminalToolbarChipSelection, ToolbarChipSelection,
 };
 use crate::{report_if_error, Appearance};
 
@@ -293,6 +293,36 @@ pub fn append_cli_custom_button<V: View>(label: String, text: String, ctx: &mut 
         report_if_error!(settings
             .cli_agent_footer_chip_selection
             .set_value(next, ctx));
+    });
+}
+
+pub fn next_terminal_selection_with_custom_button(
+    current: TerminalToolbarChipSelection,
+    label: String,
+    text: String,
+) -> TerminalToolbarChipSelection {
+    let (mut left, right) = match current {
+        TerminalToolbarChipSelection::Default => (
+            AgentToolbarItemKind::terminal_default_left(),
+            AgentToolbarItemKind::terminal_default_right(),
+        ),
+        TerminalToolbarChipSelection::Custom { left, right } => (left, right),
+    };
+    left.push(AgentToolbarItemKind::CustomInsert { label, text });
+    TerminalToolbarChipSelection::Custom { left, right }
+}
+
+pub fn append_terminal_custom_button<V: View>(
+    label: String,
+    text: String,
+    ctx: &mut ViewContext<V>,
+) {
+    let current = SessionSettings::as_ref(ctx)
+        .terminal_footer_chip_selection
+        .clone();
+    let next = next_terminal_selection_with_custom_button(current, label, text);
+    SessionSettings::handle(ctx).update(ctx, |settings, ctx| {
+        report_if_error!(settings.terminal_footer_chip_selection.set_value(next, ctx));
     });
 }
 

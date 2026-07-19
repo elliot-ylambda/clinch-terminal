@@ -3019,18 +3019,14 @@ impl TypedActionView for AgentInputFooter {
                 }
             }
             AgentInputFooterAction::InsertCustomText(text) => {
-                // Insert-and-send the user's saved text, using the per-agent
-                // submit strategy. Guard on a live CLI agent (like Continue).
                 if self.cli_agent(ctx).is_some() {
                     ctx.emit(AgentInputFooterEvent::SubmitTextToCliAgent(text.clone()));
+                } else {
+                    ctx.emit(AgentInputFooterEvent::WriteToPty(format!("{text}\n")));
                 }
             }
             AgentInputFooterAction::OpenQuickInsertModal => {
-                // Open the create-quick-insert-button modal. Guard on a live
-                // CLI agent (the button only renders while one is active).
-                if self.cli_agent(ctx).is_some() {
-                    ctx.emit(AgentInputFooterEvent::OpenQuickInsertModal);
-                }
+                ctx.emit(AgentInputFooterEvent::OpenQuickInsertModal);
             }
             AgentInputFooterAction::ToggleCodeReview => {
                 if let Some(agent) = self.cli_agent(ctx) {
