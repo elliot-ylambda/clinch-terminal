@@ -415,6 +415,11 @@ fn render_agent_avatar(
             status: Some(status),
             is_ambient,
         },
+        NotificationSourceAgent::TerminalCommand => IconWithStatusVariant::Neutral {
+            icon: Icon::Terminal,
+            icon_color: theme.main_text_color(theme.surface_2()),
+            status: Some(status),
+        },
     };
     render_icon_with_status(
         variant,

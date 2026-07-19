@@ -96,6 +96,10 @@ pub struct CLIAgentSessionContext {
     pub summary: Option<String>,
     pub query: Option<String>,
     pub response: Option<String>,
+    /// Claude Code subagents that have started but have not emitted a matching stop event.
+    pub active_subagent_ids: HashSet<String>,
+    /// Whether a parent Stop/idle-prompt completion is waiting for active subagents to finish.
+    pub has_deferred_completion_for_subagents: bool,
 }
 
 /// State of the rich input editor for composing a prompt to send to a CLI agent.
@@ -267,6 +271,8 @@ impl CLIAgentSession {
         self.prompt_history_load_state = PromptHistoryLoadState::NotRequested;
         self.prompt_history_generation = self.prompt_history_generation.wrapping_add(1);
         self.has_observed_turn_activity = false;
+        self.session_context.active_subagent_ids.clear();
+        self.session_context.has_deferred_completion_for_subagents = false;
     }
 
     /// Applies a durable provider identity discovered outside the PTY event stream.
@@ -355,6 +361,7 @@ impl CLIAgentSession {
         let new_status = match &event.event {
             CLIAgentEventType::PromptSubmit => {
                 self.has_observed_turn_activity = true;
+                self.session_context.has_deferred_completion_for_subagents = false;
                 // A turn opened by a harness-injected task notification still runs, but the
                 // session is still "about" the user's last typed prompt — keep it as the
                 // query so tab titles never show notification XML.
@@ -374,7 +381,50 @@ impl CLIAgentSession {
                     return None;
                 }
                 self.has_observed_turn_activity = true;
+                self.session_context.has_deferred_completion_for_subagents = false;
                 CLIAgentSessionStatus::InProgress
+            }
+            CLIAgentEventType::SubagentStart => {
+                let Some(subagent_id) = event
+                    .payload
+                    .subagent_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|id| !id.is_empty())
+                else {
+                    return None;
+                };
+                self.session_context
+                    .active_subagent_ids
+                    .insert(subagent_id.to_owned());
+                self.has_observed_turn_activity = true;
+                if matches!(self.status, CLIAgentSessionStatus::InProgress) {
+                    return None;
+                }
+                CLIAgentSessionStatus::InProgress
+            }
+            CLIAgentEventType::SubagentStop => {
+                let Some(subagent_id) = event
+                    .payload
+                    .subagent_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|id| !id.is_empty())
+                else {
+                    return None;
+                };
+                if !self.session_context.active_subagent_ids.remove(subagent_id) {
+                    return None;
+                }
+                self.has_observed_turn_activity = true;
+                self.turn_interrupted_by_user = false;
+                if !self.session_context.active_subagent_ids.is_empty()
+                    || !self.session_context.has_deferred_completion_for_subagents
+                {
+                    return None;
+                }
+                self.session_context.has_deferred_completion_for_subagents = false;
+                CLIAgentSessionStatus::Success
             }
             CLIAgentEventType::Stop => {
                 self.has_observed_turn_activity = true;
@@ -383,10 +433,21 @@ impl CLIAgentSession {
                 }
                 self.session_context.response = event.payload.response.clone();
                 self.clear_permission_scoped_state();
-                CLIAgentSessionStatus::Success
+                if self.session_context.active_subagent_ids.is_empty() {
+                    self.session_context.has_deferred_completion_for_subagents = false;
+                    CLIAgentSessionStatus::Success
+                } else {
+                    self.session_context.has_deferred_completion_for_subagents = true;
+                    if matches!(self.status, CLIAgentSessionStatus::InProgress) {
+                        self.turn_interrupted_by_user = false;
+                        return None;
+                    }
+                    CLIAgentSessionStatus::InProgress
+                }
             }
             CLIAgentEventType::PermissionRequest => {
                 self.has_observed_turn_activity = true;
+                self.session_context.has_deferred_completion_for_subagents = false;
                 self.session_context.summary = event.payload.summary.clone();
                 self.session_context.tool_name = event.payload.tool_name.clone();
                 self.session_context.tool_input_preview = event.payload.tool_input_preview.clone();
@@ -396,6 +457,7 @@ impl CLIAgentSession {
             }
             CLIAgentEventType::QuestionAsked => {
                 self.has_observed_turn_activity = true;
+                self.session_context.has_deferred_completion_for_subagents = false;
                 CLIAgentSessionStatus::Blocked {
                     message: event
                         .payload
@@ -409,6 +471,7 @@ impl CLIAgentSession {
                     return None;
                 }
                 self.has_observed_turn_activity = true;
+                self.session_context.has_deferred_completion_for_subagents = false;
                 self.clear_permission_scoped_state();
                 CLIAgentSessionStatus::InProgress
             }
@@ -421,10 +484,18 @@ impl CLIAgentSession {
                 {
                     return None;
                 }
+                if !self.session_context.active_subagent_ids.is_empty() {
+                    self.session_context.has_deferred_completion_for_subagents = true;
+                    self.turn_interrupted_by_user = false;
+                    return None;
+                }
+                self.session_context.has_deferred_completion_for_subagents = false;
                 CLIAgentSessionStatus::Success
             }
             CLIAgentEventType::SessionStart => {
                 self.plugin_version = event.payload.plugin_version.clone();
+                self.session_context.active_subagent_ids.clear();
+                self.session_context.has_deferred_completion_for_subagents = false;
                 return None;
             }
             CLIAgentEventType::Unknown(_) => return None,
@@ -978,7 +1049,10 @@ impl CLIAgentSessionsModel {
         if prompt_history_changed
             || matches!(
                 event_type,
-                CLIAgentEventType::SessionStart | CLIAgentEventType::ToolComplete
+                CLIAgentEventType::SessionStart
+                    | CLIAgentEventType::ToolComplete
+                    | CLIAgentEventType::SubagentStart
+                    | CLIAgentEventType::SubagentStop
             )
         {
             ctx.emit(CLIAgentSessionsModelEvent::SessionUpdated {

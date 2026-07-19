@@ -12,7 +12,9 @@ use crate::ai::artifacts::Artifact;
 use crate::ai::blocklist::BlocklistAIHistoryEvent;
 use crate::settings::AISettings;
 use crate::terminal::cli_agent_sessions::CLIAgentSessionsModel;
+use crate::terminal::view::BlockNotification;
 use crate::test_util::settings::initialize_settings_for_tests;
+use crate::workspace::WorkspaceRegistry;
 use crate::{report_if_error, BlocklistAIHistoryModel};
 
 fn setup_app(
@@ -33,6 +35,7 @@ fn setup_app(
         crate::terminal::cli_agent_sessions::auto_continue::AutoContinueModel::new,
     );
     app.add_singleton_model(|_| ActiveAgentViewsModel::new());
+    app.add_singleton_model(|_| WorkspaceRegistry::new());
     let notifications = app.add_singleton_model(AgentNotificationsModel::new);
     (history, notifications)
 }
@@ -148,6 +151,86 @@ fn add_notification_tracks_unread_activity_when_in_app_notifications_are_hidden(
             assert!(model
                 .notifications()
                 .has_unread_for_terminal_view(terminal_view_id));
+        });
+    });
+}
+
+#[test]
+fn terminal_command_completion_adds_and_next_start_removes_notification() {
+    App::test((), |mut app| async move {
+        let _guard = FeatureFlag::HOANotifications.override_enabled(true);
+        let (_history, notifications) = setup_app(&mut app);
+        let terminal_view_id = EntityId::new();
+
+        notifications.update(&mut app, |model, ctx| {
+            model.terminal_command_completed(
+                terminal_view_id,
+                BlockNotification {
+                    title: "'make' finished after 12s".to_owned(),
+                    body: "Latest output: done".to_owned(),
+                },
+                true,
+                ctx,
+            );
+        });
+
+        notifications.read(&app, |model, _| {
+            let item = model
+                .notifications()
+                .items_filtered(NotificationFilter::All)
+                .next()
+                .expect("command completion notification");
+            assert_eq!(
+                item.origin,
+                NotificationOrigin::TerminalCommand(terminal_view_id)
+            );
+            assert_eq!(item.category, NotificationCategory::Complete);
+            assert!(matches!(
+                item.agent,
+                NotificationSourceAgent::TerminalCommand
+            ));
+        });
+
+        notifications.update(&mut app, |model, ctx| {
+            model.remove_terminal_command_notification(terminal_view_id, ctx);
+        });
+        notifications.read(&app, |model, _| {
+            assert_eq!(
+                model
+                    .notifications()
+                    .filtered_count(NotificationFilter::All),
+                0
+            );
+        });
+    });
+}
+
+#[test]
+fn failed_terminal_command_completion_is_an_error_notification() {
+    App::test((), |mut app| async move {
+        let _guard = FeatureFlag::HOANotifications.override_enabled(true);
+        let (_history, notifications) = setup_app(&mut app);
+        let terminal_view_id = EntityId::new();
+
+        notifications.update(&mut app, |model, ctx| {
+            model.terminal_command_completed(
+                terminal_view_id,
+                BlockNotification {
+                    title: "'make' failed after 12s".to_owned(),
+                    body: "Latest output: error".to_owned(),
+                },
+                false,
+                ctx,
+            );
+        });
+
+        notifications.read(&app, |model, _| {
+            assert_eq!(
+                model
+                    .notifications()
+                    .filtered_count(NotificationFilter::Errors),
+                1
+            );
         });
     });
 }

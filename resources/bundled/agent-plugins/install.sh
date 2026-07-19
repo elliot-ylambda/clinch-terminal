@@ -7,7 +7,7 @@
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CLAUDE_PLUGIN_VERSION="2.1.0"
+CLAUDE_PLUGIN_VERSION="2.2.0"
 CODEX_PLUGIN_VERSION="0.4.1"
 CLAUDE_MARKETPLACE_NAME="clinch-claude-code-warp"
 CLAUDE_BUNDLED_PLUGIN_KEY="warp@clinch-claude-code-warp"

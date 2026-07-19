@@ -89,6 +89,10 @@ Project tab metadata is derived as follows:
 - Fall back to `New Project`.
 - Determine unread state by collecting the workspace's terminal view IDs and querying `AgentNotificationsModel` for any unread item.
 
+`Workspace::project_cli_agent_counts` also derives three badge values across every terminal pane in the project. The existing Claude/Codex working and unread-completion counts remain unchanged. The ordinary-command count includes terminal views for which `TerminalView::is_long_running_and_user_controlled()` is true and excludes any view registered in `CLIAgentSessionsModel`; this reuses the terminal's short anti-flicker threshold, excludes read-only and agent-driven blocks, and still covers SSH/subshell paths. `TerminalViewStateChanged` already propagates through `PaneGroup` to `Workspace::notify_project_metadata_changed`, so background-project counts repaint without a polling loop. Render the third badge with a theme-derived disabled-text color and include it in accessibility and hover summaries (PRODUCT 12).
+
+When one of those ordinary commands completes, `TerminalView` formats a secret-obfuscated completion title and final output line, excluding agent-interaction blocks and commands detected as CLI-agent TUIs. `TerminalPane` forwards the terminal identity through `PaneGroup`, and `Workspace` records the result in `AgentNotificationsModel` with `NotificationSourceAgent::TerminalCommand` and a distinct `NotificationOrigin::TerminalCommand(EntityId)`. Success maps to `Complete` and failure to `Error`. Because the item remains terminal-scoped, the existing inner-tab dot, outer generic project dot, notification mailbox/toast, focus-to-read behavior, and project-aware navigation require no parallel state store. A subsequent block start removes the stale command origin; pane detach removes it except during a live move. Agent-specific notification telemetry ignores this source, and rendering uses a neutral terminal icon (PRODUCT 13–14).
+
 `Workspace` emits `WorkspaceEvent::ProjectMetadataChanged` when its active inner tab, active terminal session, working directory, or detected repository changes (each workspace also subscribes to `DetectedRepositories`, since repo detection completes asynchronously after a pwd change). `ProjectWindow` subscribes to that event for every owned workspace (and maintains the subscription across live project transfers). Because the strip is mounted inside the *active* workspace's tab bar in vertical-tabs mode, the `ProjectWindow` handler invalidates both itself (horizontal-header placement) and the active workspace, so a background project's metadata change refreshes the strip wherever it renders. This keeps both header placements current without maintaining a duplicate title cache. Clamp labels and expose full text/unread/position through accessibility content (PRODUCT 8–13, 28, and 29).
 
 Layout guardrail: the title bar's height budget is tight and a single-line `Text` whose line height exceeds its max-height constraint is dropped entirely, not clipped. The strip's `ClippedScrollable` must therefore keep zero scrollbar gutter padding (`with_padding_start(0.)`/`with_padding_end(0.)` — the default reserves 4px even with `ScrollbarWidth::None`), and `project_window_tests::project_tab_label_height_budget_fits_one_ui_line` asserts the pill's vertical chrome leaves at least one UI line for the label.
@@ -179,7 +183,7 @@ flowchart LR
     PW -->|kept live| WB[Workspace B]
     WA --> TA[inner tabs / panes / agents]
     WB --> TB[inner tabs / panes / agents]
-    Notify[AgentNotificationsModel] -->|terminal view identity| PW
+    Notify[AgentNotificationsModel<br/>agents + command completions] -->|terminal view identity| PW
     PW -->|active workspace only| Registry[WorkspaceRegistry]
     PW -->|all projects| Snapshot[ProjectWindowSnapshot]
 ```
@@ -196,6 +200,7 @@ For notification navigation, terminal identity resolves to a workspace/project, 
 - Git utility tests cover primary-checkout resolution from both a main checkout and a linked worktree, plus local/remote `main` ref selection and missing-ref fallback.
 - Workspace tests cover action routing: enabled eligible tabs use the worktree template, disabled/ineligible tabs use the existing new-session path, and Agent mode defers entry behind setup commands.
 - Workspace and vertical-tabs tests cover toggling the shared automatic-worktree preference from the header action and the header toggle's on/off tooltip copy.
+- Workspace, project-window, and notification-model tests cover ordinary-command count classification, muted-count summary copy, terminal-command origin isolation, generic unread classification, and stale-completion removal.
 - Repository and vertical-tab tests distinguish linked worktrees from submodules and cover the Worktree chip's search label without displacing existing badge text.
 - SQLite tests cover a multi-project physical-window round trip and migration of legacy rows with no project grouping into singleton project windows.
 - `warpui_core` transfer tests cover reparenting a live view between project containers so later responder-chain traversal and subtree transfer follow the new owner.
@@ -206,7 +211,8 @@ The remaining behavior is interaction-heavy and must be validated in a running m
 ### Integration and manual validation
 
 - Extend the custom integration framework with a two-project flow: create project, start distinguishable live sessions in each, cycle with both shortcuts, and confirm each project's active inner tab/input survives switching.
-- Exercise an unread Claude Code/Codex notification in an inactive project and verify the dot, notification click routing, and read clearing.
+- Exercise unread Claude Code/Codex and ordinary-command completions in an inactive project and verify their numeric badges/dots, notification click routing, and read clearing.
+- Run a foreground command in a background project and verify the muted count appears while it runs, drops on completion, and becomes a generic blue dot without incrementing the completed-agent count.
 - On macOS, record the multi-project drag flows: reorder, detach to desktop, attach to a second window, return to source, Escape, singleton window move, and attach of a singleton source.
 - Restart after arranging multiple projects across two windows and compare restored order, active project, inner tabs, pane layouts, and panels.
 - Capture screenshots of the vertical-inner-tab layout at normal and narrow/overflow widths, in focused/unfocused windows, and in dark/light appearances.
@@ -219,6 +225,7 @@ The remaining behavior is interaction-heavy and must be validated in a running m
 - **Persistence captures a temporary target or intermediate reorder.** Reuse the existing save suppression boundary for both inner-tab and project drags, then save only after the project reaches one committed owner.
 - **Registry callers assume one workspace per window.** Keep the active lookup compatible, add identity-based project activation helpers, and cover same-physical-window inactive-project navigation in tests.
 - **Header changes regress window controls or zen mode.** Keep the existing `Workspace` header authoritative and replace only its center content with the project strip, then manually verify traffic-light spacing and hidden-header states.
+- **Fast commands flood the notification center.** Only publish completions for commands that crossed the terminal's existing visible long-running threshold, de-duplicate by terminal pane, and clear the prior item when the next command starts.
 - **Default-on worktree behavior surprises non-`main` repositories or special tab flows.** Preflight only the two explicit `main` refs, fall back without mutation, and intercept only ordinary user-created terminal/Agent tab actions rather than the shared low-level constructors.
 - **Creating a worktree from an existing linked worktree nests managed paths under the generated branch name.** Resolve the primary checkout before naming the managed repository directory and before listing shared branches.
 - **Generated paths or branch names are interpreted by the shell.** Pass every dynamic command argument through shell quoting and cover paths containing spaces in the builder tests.

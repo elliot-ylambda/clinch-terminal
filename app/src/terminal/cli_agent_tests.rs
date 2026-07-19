@@ -590,6 +590,21 @@ fn test_from_serialized_name_falls_back_to_unknown() {
 }
 
 #[test]
+fn transfer_target_only_pairs_claude_and_codex() {
+    assert_eq!(CLIAgent::Claude.transfer_target(), Some(CLIAgent::Codex));
+    assert_eq!(CLIAgent::Codex.transfer_target(), Some(CLIAgent::Claude));
+    for agent in enum_iterator::all::<CLIAgent>() {
+        if !matches!(agent, CLIAgent::Claude | CLIAgent::Codex) {
+            assert_eq!(
+                agent.transfer_target(),
+                None,
+                "unexpected target for {agent:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn test_detect_aifx_agent_run_claude_wrong_team() {
     App::test((), |mut app| async move {
         let other_workspace = workspace_with_team_uid("some-other-team-uid-01");

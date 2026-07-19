@@ -79,6 +79,9 @@ pub enum AgentToolbarItemKind {
     // CLI agent only – submits "Looks good to me, continue" to the running agent.
     LooksGoodPrompt,
 
+    // CLI agent only – exits Claude Code or Codex and continues in the other agent.
+    TransferAgent,
+
     // CLI agent only – user-defined button that inserts-and-sends saved text.
     CustomInsert {
         label: String,
@@ -109,6 +112,7 @@ impl AgentToolbarItemKind {
             | Self::Compact
             | Self::ForkSession
             | Self::ContinuePrompt
+            | Self::TransferAgent
             | Self::CustomInsert { .. }
             | Self::LooksGoodPrompt => ToolbarAvailability::CLIAgentOnly,
         }
@@ -129,6 +133,7 @@ impl AgentToolbarItemKind {
             | Self::Compact
             | Self::ForkSession
             | Self::ContinuePrompt
+            | Self::TransferAgent
             | Self::CustomInsert { .. }
             | Self::LooksGoodPrompt => !status.is_viewer(),
             Self::FileAttach => !status.is_viewer() || is_cloud_mode,
@@ -161,6 +166,7 @@ impl AgentToolbarItemKind {
             Self::ForkSession => Cow::Borrowed("Fork in New Tab"),
             Self::ContinuePrompt => Cow::Borrowed("Continue"),
             Self::LooksGoodPrompt => Cow::Borrowed("LGTM"),
+            Self::TransferAgent => Cow::Borrowed("Transfer agent"),
             Self::FastForwardToggle => Cow::Borrowed("Fast Forward"),
             Self::HandoffToCloud => Cow::Borrowed("Hand off to cloud"),
             Self::CustomInsert { label, .. } => Cow::Owned(label.clone()),
@@ -183,6 +189,7 @@ impl AgentToolbarItemKind {
             Self::ForkSession => Some(Icon::GitBranch),
             Self::ContinuePrompt => Some(Icon::Play),
             Self::LooksGoodPrompt => Some(Icon::ThumbsUp),
+            Self::TransferAgent => Some(Icon::SwitchHorizontal01),
             Self::FastForwardToggle => Some(Icon::FastForward),
             // The bundled `upload-cloud-01.svg` (cloud-with-upward-arrow) is the
             // closest fit among the existing icons for V0; design may swap it later.
@@ -211,6 +218,7 @@ impl AgentToolbarItemKind {
             | Self::Compact
             | Self::ForkSession
             | Self::ContinuePrompt
+            | Self::TransferAgent
             | Self::CustomInsert { .. }
             | Self::LooksGoodPrompt => false,
         }
@@ -318,6 +326,7 @@ impl AgentToolbarItemKind {
             Self::Compact,
             Self::ContinuePrompt,
             Self::LooksGoodPrompt,
+            Self::TransferAgent,
             Self::CustomInsert {
                 label: "Create a PR".to_owned(),
                 text: "Create a PR, then merge main into this PR".to_owned(),
@@ -372,6 +381,7 @@ impl AgentToolbarItemKind {
             Self::Compact,
             Self::ContinuePrompt,
             Self::LooksGoodPrompt,
+            Self::TransferAgent,
             Self::Settings,
         ]);
         if FeatureFlag::CreatingSharedSessions.is_enabled()

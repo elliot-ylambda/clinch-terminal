@@ -62,7 +62,7 @@ use crate::terminal::{TerminalManager, TerminalView};
 use crate::view_components::ToastFlavor;
 use crate::workspace::sync_inputs::SyncedInputState;
 use crate::workspace::{PaneViewLocator, WorkspaceRegistry};
-use crate::AIExecutionProfilesModel;
+use crate::{AIExecutionProfilesModel, AgentNotificationsModel};
 // Imports below are only consumed by the non-wasm `launch_local_*_child`
 // dispatch helpers; gating them keeps the wasm build warning-clean.
 #[cfg(not(target_family = "wasm"))]
@@ -499,6 +499,9 @@ impl PaneContent for TerminalPane {
         if !matches!(detach_type, DetachType::Moved) {
             CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
                 sessions.remove_session(terminal_view_id, ctx);
+            });
+            AgentNotificationsModel::handle(ctx).update(ctx, |notifications, ctx| {
+                notifications.remove_terminal_command_notification(terminal_view_id, ctx);
             });
         }
 
@@ -1040,6 +1043,29 @@ fn handle_terminal_view_event(
                     notification: notification.clone(),
                     pane_id,
                 })
+            }
+            Event::BlockStarted {
+                is_for_in_band_command: false,
+            } => {
+                if let Some(terminal_view) = group.terminal_view_from_pane_id(terminal_pane_id, ctx)
+                {
+                    ctx.emit(pane_group::Event::TerminalCommandStarted {
+                        terminal_view_id: terminal_view.id(),
+                    });
+                }
+            }
+            Event::CommandCompleted {
+                notification,
+                succeeded,
+            } => {
+                if let Some(terminal_view) = group.terminal_view_from_pane_id(terminal_pane_id, ctx)
+                {
+                    ctx.emit(pane_group::Event::TerminalCommandCompleted {
+                        terminal_view_id: terminal_view.id(),
+                        notification: notification.clone(),
+                        succeeded: *succeeded,
+                    });
+                }
             }
             Event::PluggableNotification { title, body } => {
                 let message = if let Some(t) = title {

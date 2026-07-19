@@ -17,6 +17,8 @@ pub enum CLIAgentEventType {
     SessionStart,
     PromptSubmit,
     ToolComplete,
+    SubagentStart,
+    SubagentStop,
     Stop,
     PermissionRequest,
     PermissionReplied,
@@ -44,6 +46,8 @@ pub struct CLIAgentEventPayload {
     pub summary: Option<String>,
     pub tool_name: Option<String>,
     pub tool_input_preview: Option<String>,
+    /// Stable identity supplied by Claude Code's SubagentStart/SubagentStop hooks.
+    pub subagent_id: Option<String>,
     pub plugin_version: Option<String>,
 }
 

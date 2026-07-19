@@ -13,6 +13,8 @@ use crate::ai::blocklist::agent_view::agent_input_footer::{
     AgentInputFooter, AgentInputFooterEvent,
 };
 use crate::terminal::cli_agent_sessions::auto_continue::AutoContinueModel;
+#[cfg(feature = "local_tty")]
+use crate::terminal::cli_agent_sessions::CLIAgentSessionContext;
 #[cfg(all(
     target_os = "macos",
     feature = "clinch_imessage",
@@ -55,6 +57,8 @@ use warpui::{
     ViewContext, ViewHandle,
 };
 
+#[cfg(feature = "local_tty")]
+use super::PendingCliAgentTransfer;
 use super::{RichContentInsertionPosition, TerminalAction, TerminalView};
 use crate::agent_resume::{agent_session_seed_from_restore_command, AgentResumeProvider};
 use crate::ai::blocklist::agent_view::agent_view_bg_fill;
@@ -67,7 +71,11 @@ use crate::settings::{
     AISettings, AISettingsChangedEvent, CompiledCommandsForCodingAgentToolbar, InputModeSettings,
 };
 use crate::terminal::cli_agent_sessions::CLIAgentRichInputCloseReason;
+#[cfg(feature = "local_tty")]
+use crate::terminal::model::session::command_executor::shell_quote_arg;
 use crate::terminal::model_events::{ModelEvent, ModelEventDispatcher};
+#[cfg(feature = "local_tty")]
+use crate::terminal::shell::ShellType;
 pub use crate::terminal::CLIAgent;
 use crate::terminal::TerminalModel;
 use crate::ui_components::blended_colors;
@@ -148,6 +156,81 @@ fn rich_input_submit_strategy(agent: CLIAgent) -> RichInputSubmitStrategy {
         | CLIAgent::Vibe
         | CLIAgent::Unknown => RichInputSubmitStrategy::Inline,
     }
+}
+
+#[cfg(feature = "local_tty")]
+fn nonempty(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
+}
+
+#[cfg(feature = "local_tty")]
+fn default_transfer_transcript_hint(source_agent: CLIAgent, session_id: &str) -> String {
+    match source_agent {
+        CLIAgent::Claude => format!(
+            "Search `$CLAUDE_CONFIG_DIR/projects/**/{session_id}.jsonl` or \
+             `~/.claude/projects/**/{session_id}.jsonl`."
+        ),
+        CLIAgent::Codex => format!(
+            "Search `$CODEX_HOME/sessions/**/rollout-*-{session_id}.jsonl` or \
+             `~/.codex/sessions/**/rollout-*-{session_id}.jsonl`."
+        ),
+        _ => String::new(),
+    }
+}
+
+/// Builds the fresh target-agent command before asking the source TUI to exit.
+/// Clinch's provider hooks already persist native transcripts, so the handoff
+/// can reference that durable record instead of racing Claude Code's `/export`.
+#[cfg(feature = "local_tty")]
+fn build_cli_agent_transfer(
+    source_agent: CLIAgent,
+    session_context: &CLIAgentSessionContext,
+    shell_type: ShellType,
+) -> Option<PendingCliAgentTransfer> {
+    let target_agent = source_agent.transfer_target()?;
+    let session_id = nonempty(session_context.session_id.as_deref());
+    let transcript_path = nonempty(session_context.transcript_path.as_deref());
+    if session_id.is_none() && transcript_path.is_none() {
+        return None;
+    }
+
+    let mut prompt = format!(
+        "Start off by continuing where the last {} agent left off. Here's how to find the \
+         conversation.\n",
+        source_agent.display_name()
+    );
+    if let Some(session_id) = session_id {
+        prompt.push_str(&format!("Previous session ID: {session_id}\n"));
+    }
+    if let Some(transcript_path) = transcript_path {
+        prompt.push_str(&format!("Transcript path: {transcript_path}\n"));
+    } else if let Some(session_id) = session_id {
+        prompt.push_str(&default_transfer_transcript_hint(source_agent, session_id));
+        prompt.push('\n');
+    }
+    if let Some(cwd) = nonempty(session_context.cwd.as_deref()) {
+        prompt.push_str(&format!("Previous working directory: {cwd}\n"));
+    }
+    prompt.push_str(
+        "Read the prior conversation first, inspect the current working tree, and continue the \
+         unfinished work rather than starting over.",
+    );
+
+    let quoted_prompt = shell_quote_arg(&prompt, shell_type);
+    let launch_command = match target_agent {
+        CLIAgent::Claude => {
+            format!("claude --dangerously-skip-permissions {quoted_prompt}")
+        }
+        CLIAgent::Codex => {
+            format!("codex --dangerously-bypass-approvals-and-sandbox {quoted_prompt}")
+        }
+        _ => return None,
+    };
+
+    Some(PendingCliAgentTransfer {
+        source_agent,
+        launch_command,
+    })
 }
 
 static USE_AGENT_KEYSTROKE: LazyLock<Keystroke> =
@@ -262,6 +345,10 @@ impl TerminalView {
                 {
                     let _ = text;
                 }
+            }
+            UseAgentToolbarEvent::TransferAgent => {
+                #[cfg(feature = "local_tty")]
+                self.begin_cli_agent_transfer(ctx);
             }
             UseAgentToolbarEvent::OpenQuickInsertModal => {
                 // Route the footer "+ Add" click up to the workspace via a queued
@@ -809,6 +896,66 @@ impl TerminalView {
         self.write_cli_agent_text_then_submit(text_bytes, strategy, ctx);
     }
 
+    /// Starts a one-shot Claude Code ↔ Codex transfer. The launch command is
+    /// held until the source command's block completes, then written into the
+    /// returned shell by `complete_cli_agent_transfer`.
+    #[cfg(feature = "local_tty")]
+    fn begin_cli_agent_transfer(&mut self, ctx: &mut ViewContext<Self>) {
+        if self.pending_cli_agent_transfer.is_some() {
+            return;
+        }
+
+        let Some((source_agent, session_context)) = CLIAgentSessionsModel::as_ref(ctx)
+            .session(self.view_id)
+            .map(|session| (session.agent, session.session_context.clone()))
+        else {
+            return;
+        };
+        let Some(shell_type) = self.active_session_shell_type(ctx) else {
+            self.show_error_toast(
+                "Could not detect this pane's shell for the agent transfer.".to_string(),
+                ctx,
+            );
+            return;
+        };
+        let Some(transfer) = build_cli_agent_transfer(source_agent, &session_context, shell_type)
+        else {
+            self.show_error_toast(
+                "The current agent has not reported a session ID or transcript yet.".to_string(),
+                ctx,
+            );
+            return;
+        };
+
+        self.pending_cli_agent_transfer = Some(transfer);
+        self.submit_text_to_cli_agent_pty("/exit".to_string(), ctx);
+    }
+
+    /// Launches a pending transfer only when the exact source provider exits.
+    /// Waiting for `Ended` keeps the target command out of the old TUI's input
+    /// buffer and lets the shell create a normal command block for it.
+    #[cfg(feature = "local_tty")]
+    pub(super) fn complete_cli_agent_transfer(
+        &mut self,
+        ended_agent: CLIAgent,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        if !self
+            .pending_cli_agent_transfer
+            .as_ref()
+            .is_some_and(|transfer| transfer.source_agent == ended_agent)
+        {
+            return;
+        }
+        let transfer = self
+            .pending_cli_agent_transfer
+            .take()
+            .expect("pending transfer checked above");
+        let mut bytes = transfer.launch_command.into_bytes();
+        bytes.push(b'\r');
+        self.write_user_bytes_to_pty(bytes, ctx);
+    }
+
     /// Revalidates a durable CLI-agent identity immediately before inserting
     /// a reply received through Clinch's local iMessage bridge. This is the
     /// only external-reply entry point: a stale pane ID, a busy/blocked turn,
@@ -1307,6 +1454,9 @@ impl UseAgentToolbar {
             AgentInputFooterEvent::SubmitTextToCliAgent(text) => {
                 ctx.emit(UseAgentToolbarEvent::SubmitTextToCliAgent(text.clone()));
             }
+            AgentInputFooterEvent::TransferAgent => {
+                ctx.emit(UseAgentToolbarEvent::TransferAgent);
+            }
             AgentInputFooterEvent::StartRemoteControl => {
                 let scrollback_type = if self.cli_agent(ctx).is_some() {
                     SharedSessionScrollbackType::None
@@ -1419,6 +1569,8 @@ pub enum UseAgentToolbarEvent {
     /// Submit a fixed prompt string to this pane's live CLI agent using the
     /// per-agent submission strategy (types the text, then presses Enter).
     SubmitTextToCliAgent(String),
+    /// Exit Claude Code or Codex and continue the captured conversation in the other agent.
+    TransferAgent,
     /// Open the "Create quick-insert button" modal (footer "+ Add" button).
     OpenQuickInsertModal,
     /// Start remote control (one-click share without modal).

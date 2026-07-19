@@ -35,6 +35,21 @@ assert_eq() {
     fi
 }
 
+assert_contains() {
+    local test_name="$1"
+    local actual="$2"
+    local expected="$3"
+    if [[ "$actual" == *"$expected"* ]]; then
+        echo "  ✓ $test_name"
+        PASSED=$((PASSED + 1))
+    else
+        echo "  ✗ $test_name"
+        echo "    expected to contain: $expected"
+        echo "    actual:              $actual"
+        FAILED=$((FAILED + 1))
+    fi
+}
+
 assert_json_field() {
     local test_name="$1"
     local json="$2"
@@ -103,6 +118,28 @@ PAYLOAD=$(build_payload '{"session_id":"s1","cwd":"/tmp/proj","notification_type
     --arg summary "Claude is waiting for your input")
 assert_json_field "event is idle_prompt" "$PAYLOAD" ".event" "idle_prompt"
 assert_json_field "summary present" "$PAYLOAD" ".summary" "Claude is waiting for your input"
+
+echo ""
+echo "--- Subagent lifecycle events ---"
+PAYLOAD=$(build_payload '{"session_id":"s1","cwd":"/tmp/proj"}' "subagent_start" \
+    --arg subagent_id "agent-123")
+assert_json_field "start event is subagent_start" "$PAYLOAD" ".event" "subagent_start"
+assert_json_field "start carries stable identity" "$PAYLOAD" ".subagent_id" "agent-123"
+
+PAYLOAD=$(build_payload '{"session_id":"s1","cwd":"/tmp/proj"}' "subagent_stop" \
+    --arg subagent_id "agent-123")
+assert_json_field "stop event is subagent_stop" "$PAYLOAD" ".event" "subagent_stop"
+assert_json_field "stop carries stable identity" "$PAYLOAD" ".subagent_id" "agent-123"
+
+echo ""
+echo "--- Subagent hook registration ---"
+HOOKS_JSON=$(cat "$SCRIPT_DIR/../hooks/hooks.json")
+assert_json_field "SubagentStart hook is registered" "$HOOKS_JSON" \
+    ".hooks.SubagentStart[0].hooks[0].command" \
+    '${CLAUDE_PLUGIN_ROOT}/scripts/on-subagent-start.sh'
+assert_json_field "SubagentStop hook is registered" "$HOOKS_JSON" \
+    ".hooks.SubagentStop[0].hooks[0].command" \
+    '${CLAUDE_PLUGIN_ROOT}/scripts/on-subagent-stop.sh'
 
 echo ""
 echo "--- JSON special characters in values ---"
@@ -282,10 +319,38 @@ assert_eq "legacy Warp shows active message" \
 echo ""
 echo "--- Modern-only hooks exit silently without protocol version ---"
 
-for HOOK in on-permission-request.sh on-prompt-submit.sh on-post-tool-use.sh; do
+for HOOK in on-permission-request.sh on-prompt-submit.sh on-post-tool-use.sh \
+    on-subagent-start.sh on-subagent-stop.sh; do
     echo '{}' | bash "$HOOK_DIR/$HOOK" 2>/dev/null
     assert_eq "$HOOK exits 0 without protocol version" "0" "$?"
 done
+
+echo ""
+echo "--- Subagent hook routing ---"
+
+export WARP_CLI_AGENT_PROTOCOL_VERSION=1
+export WARP_CLIENT_VERSION="v0.2026.04.01.08.00.stable_00"
+export CLAUDE_CODE_VERSION="2.1.214"
+
+OUTPUT=$(echo '{"session_id":"s1","cwd":"/tmp/proj","agent_id":"agent-123"}' \
+    | bash "$HOOK_DIR/on-subagent-start.sh")
+SEQUENCE=$(echo "$OUTPUT" | jq -r '.terminalSequence // empty' 2>/dev/null)
+assert_contains "start hook emits its event" "$SEQUENCE" '"event":"subagent_start"'
+assert_contains "start hook forwards agent_id" "$SEQUENCE" '"subagent_id":"agent-123"'
+
+OUTPUT=$(echo '{"session_id":"s1","cwd":"/tmp/proj","agent_id":"agent-123"}' \
+    | bash "$HOOK_DIR/on-subagent-stop.sh")
+SEQUENCE=$(echo "$OUTPUT" | jq -r '.terminalSequence // empty' 2>/dev/null)
+assert_contains "stop hook emits its event" "$SEQUENCE" '"event":"subagent_stop"'
+assert_contains "stop hook forwards agent_id" "$SEQUENCE" '"subagent_id":"agent-123"'
+
+OUTPUT=$(echo '{"session_id":"s1","cwd":"/tmp/proj"}' \
+    | bash "$HOOK_DIR/on-subagent-start.sh")
+assert_eq "identity-less starts are ignored" "" "$OUTPUT"
+
+unset WARP_CLI_AGENT_PROTOCOL_VERSION
+unset WARP_CLIENT_VERSION
+unset CLAUDE_CODE_VERSION
 
 # --- Summary ---
 

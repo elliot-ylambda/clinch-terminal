@@ -361,11 +361,12 @@ use crate::settings::import::model::ImportedConfigModel;
 use crate::settings::import::view::{SettingsImportEvent, SettingsImportView};
 use crate::settings::{
     AISettings, AISettingsChangedEvent, AppEditorSettings, BlockVisibilitySettings,
-    BlockVisibilitySettingsChangedEvent, CliAgentUsageSettings, CodeSettings, DebugSettings,
-    DebugSettingsChangedEvent, EmacsBindingsSettings, FontSettings, FontSettingsChangedEvent,
-    InputModeSettings, InputModeSettingsChangedEvent, InputSettings, PaneSettings,
-    PaneSettingsChangedEvent, PrivacySettings, PrivacySettingsChangedEvent,
-    PrivacySettingsSnapshot, SelectionSettings, VimBannerSettings,
+    BlockVisibilitySettingsChangedEvent, CliAgentUsageSettings, CodeSettings,
+    CompiledCommandsForCodingAgentToolbar, DebugSettings, DebugSettingsChangedEvent,
+    EmacsBindingsSettings, FontSettings, FontSettingsChangedEvent, InputModeSettings,
+    InputModeSettingsChangedEvent, InputSettings, PaneSettings, PaneSettingsChangedEvent,
+    PrivacySettings, PrivacySettingsChangedEvent, PrivacySettingsSnapshot, SelectionSettings,
+    VimBannerSettings,
 };
 use crate::settings_view::keybindings::KeybindingChangedNotifier;
 use crate::settings_view::mcp_servers_page::MCPServersSettingsPage;
@@ -1654,6 +1655,11 @@ pub enum Event {
     BlockListCleared,
     ShareModalOpened(BlockIndex),
     SendNotification(BlockNotification),
+    /// An ordinary foreground command that was visible in project activity has completed.
+    CommandCompleted {
+        notification: BlockNotification,
+        succeeded: bool,
+    },
     BlockCompleted {
         block: Arc<SerializedBlock>,
         is_local: bool,
@@ -2380,6 +2386,15 @@ pub enum CliAgentRouting {
     Pty,
 }
 
+/// A one-shot local provider transfer waiting for the source TUI to exit.
+/// The target command is only written after the shell reports that source
+/// command's block as complete, so it cannot be swallowed by the old TUI.
+#[cfg(feature = "local_tty")]
+struct PendingCliAgentTransfer {
+    source_agent: CLIAgent,
+    launch_command: String,
+}
+
 /// An enum representing the different states that a terminal view can be in,
 /// based on any commands it's actively running and the result of the most
 /// recent command that it finished.
@@ -2746,6 +2761,10 @@ pub struct TerminalView {
     /// When true, automatically stop the shared session when the CLI agent session ends.
     /// Set when sharing is started from the remote control entrypoint.
     auto_stop_sharing_on_cli_end: bool,
+
+    /// One-shot Claude Code ↔ Codex transfer to launch after the source CLI exits.
+    #[cfg(feature = "local_tty")]
+    pending_cli_agent_transfer: Option<PendingCliAgentTransfer>,
 
     /// The inserted conversation-ended tombstone, if this view currently has one.
     conversation_ended_tombstone_view_id: Option<EntityId>,
@@ -4504,6 +4523,8 @@ impl TerminalView {
             shared_session: None,
             pending_share_source: None,
             auto_stop_sharing_on_cli_end: false,
+            #[cfg(feature = "local_tty")]
+            pending_cli_agent_transfer: None,
             conversation_ended_tombstone_view_id: None,
             ai_input_model,
             ai_context_model,
@@ -11906,6 +11927,9 @@ impl TerminalView {
                     return;
                 }
                 self.did_notify_long_running = false;
+                ctx.emit(Event::BlockStarted {
+                    is_for_in_band_command: *is_for_in_band_command,
+                });
 
                 // Snapshot the prompt state as of when the command began executing.
                 // Commands may themselves affect the prompt (if running `git checkout`), for
@@ -12016,9 +12040,6 @@ impl TerminalView {
                     self.maybe_insert_setup_command_blocks(block_id, ctx);
 
                     self.set_current_state(TerminalViewState::LongRunning, ctx);
-                    ctx.emit(Event::BlockStarted {
-                        is_for_in_band_command: *is_for_in_band_command,
-                    });
                 }
             }
             ModelEvent::AfterBlockCompleted(AfterBlockCompletedEvent {
@@ -12250,15 +12271,36 @@ impl TerminalView {
                 }
 
                 if let BlockType::User(block_completed) = block_type {
-                    if let Some(block_duration) =
-                        self.block_duration(&block_completed.serialized_block)
-                    {
+                    let block_duration = self.block_duration(&block_completed.serialized_block);
+                    if let Some(block_duration) = block_duration {
                         self.maybe_send_block_completed_notification(
                             block_completed,
                             block_duration,
                             ctx,
                         );
                     }
+                    let command_completion_notification = (self.did_notify_long_running
+                        && !block_completed.was_part_of_agent_interaction
+                        && !block_completed.command.trim().is_empty()
+                        && !self.completed_block_is_cli_agent_command(block_completed, ctx))
+                    .then(|| {
+                        let succeeded = !block_completed.serialized_block.has_failed();
+                        let trigger = NotificationsTrigger::LongRunningCommand(
+                            succeeded,
+                            block_duration.unwrap_or_else(|| {
+                                Duration::from_millis(LONG_RUNNING_COMMAND_DURATION_MS)
+                            }),
+                        );
+                        let notification = trigger.create_notification_content(
+                            block_completed.command_with_obfuscated_secrets.clone(),
+                            block_completed
+                                .output_truncated_with_obfuscated_secrets
+                                .lines()
+                                .last()
+                                .map_or_else(String::new, ToOwned::to_owned),
+                        );
+                        (notification, succeeded)
+                    });
 
                     // We don't want any suggestion UIs on AI requested blocks.
                     if !block_completed.was_part_of_agent_interaction {
@@ -12290,6 +12332,12 @@ impl TerminalView {
                     };
                     self.did_notify_long_running = false;
                     self.set_current_state(terminal_view_state, ctx);
+                    if let Some((notification, succeeded)) = command_completion_notification {
+                        ctx.emit(Event::CommandCompleted {
+                            notification,
+                            succeeded,
+                        });
+                    }
 
                     // Update agent view back button state when command completes
                     if FeatureFlag::AgentView.is_enabled()
@@ -13425,13 +13473,17 @@ impl TerminalView {
                 self.mark_active_block_as_cli_agent_tui();
             }
             CLIAgentSessionsModelEvent::Ended {
-                terminal_view_id, ..
+                terminal_view_id,
+                agent,
             } if *terminal_view_id == self.view_id => {
                 let mut model = self.model.lock();
                 let active_block = model.block_list_mut().active_block_mut();
                 if FeatureFlag::TrimTrailingBlankLines.is_enabled() {
                     active_block.set_trim_trailing_blank_rows(false);
                 }
+                drop(model);
+                #[cfg(feature = "local_tty")]
+                self.complete_cli_agent_transfer(*agent, ctx);
             }
             _ => {}
         }
@@ -15927,6 +15979,30 @@ impl TerminalView {
                 Self::after_command_correction_generation,
             );
         }
+    }
+
+    /// CLI-agent TUIs are long-lived shell commands too, but their lifecycle is represented by
+    /// the agent badges and notifications rather than the ordinary-command activity category.
+    fn completed_block_is_cli_agent_command(
+        &self,
+        block: &UserBlockCompleted,
+        ctx: &AppContext,
+    ) -> bool {
+        let detected_agent = block
+            .serialized_block
+            .session_id
+            .and_then(|session_id| self.sessions.as_ref(ctx).get(session_id))
+            .and_then(|session| {
+                CLIAgent::detect(
+                    &block.command,
+                    Some(session.shell_family().escape_char()),
+                    Some(session.aliases()),
+                    ctx,
+                )
+            });
+
+        detected_agent.is_some()
+            || CompiledCommandsForCodingAgentToolbar::matched_agent(ctx, &block.command).is_some()
     }
 
     fn maybe_send_block_completed_notification(

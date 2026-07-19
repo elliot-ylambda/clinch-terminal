@@ -1318,10 +1318,18 @@ fn is_in_progress_project_agent(agent: CLIAgent, is_actively_working: bool) -> b
     matches!(agent, CLIAgent::Claude | CLIAgent::Codex) && is_actively_working
 }
 
+fn is_running_project_command(
+    has_cli_agent_session: bool,
+    is_long_running_and_user_controlled: bool,
+) -> bool {
+    !has_cli_agent_session && is_long_running_and_user_controlled
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct ProjectCliAgentCounts {
     pub(crate) working: usize,
     pub(crate) done: usize,
+    pub(crate) running_commands: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -16731,6 +16739,25 @@ impl Workspace {
                     )
                 }
             }
+            pane_group::Event::TerminalCommandStarted { terminal_view_id } => {
+                AgentNotificationsModel::handle(ctx).update(ctx, |notifications, ctx| {
+                    notifications.remove_terminal_command_notification(*terminal_view_id, ctx);
+                });
+            }
+            pane_group::Event::TerminalCommandCompleted {
+                terminal_view_id,
+                notification,
+                succeeded,
+            } => {
+                AgentNotificationsModel::handle(ctx).update(ctx, |notifications, ctx| {
+                    notifications.terminal_command_completed(
+                        *terminal_view_id,
+                        notification.clone(),
+                        *succeeded,
+                        ctx,
+                    );
+                });
+            }
             pane_group::Event::OpenSettings(section) => {
                 self.show_settings_with_section(Some(*section), ctx);
             }
@@ -22240,7 +22267,7 @@ impl Workspace {
         })
     }
 
-    /// Claude Code and Codex activity summarized for this project's outer tab.
+    /// Claude Code, Codex, and ordinary terminal activity summarized for this project's outer tab.
     ///
     /// `working` is based on observed turn activity. `done` is the number of unread completed
     /// turns, matching the blue notification dots on the corresponding inner tabs.
@@ -22254,7 +22281,8 @@ impl Workspace {
             .iter()
             .flat_map(|tab| tab.pane_group.as_ref(ctx).terminal_views(ctx))
         {
-            let is_working = sessions.session(terminal.id()).is_some_and(|session| {
+            let cli_agent_session = sessions.session(terminal.id());
+            let is_working = cli_agent_session.is_some_and(|session| {
                 is_in_progress_project_agent(session.agent, session.is_actively_working())
             });
             if is_working {
@@ -22263,6 +22291,12 @@ impl Workspace {
                 .has_unread_completed_project_cli_agent_for_terminal_view(terminal.id())
             {
                 counts.done += 1;
+            }
+            if is_running_project_command(
+                cli_agent_session.is_some(),
+                terminal.as_ref(ctx).is_long_running_and_user_controlled(),
+            ) {
+                counts.running_commands += 1;
             }
         }
 

@@ -17,6 +17,8 @@ pub(super) fn parse(body: &str) -> Option<CLIAgentEvent> {
         "session_start" => CLIAgentEventType::SessionStart,
         "prompt_submit" => CLIAgentEventType::PromptSubmit,
         "tool_complete" => CLIAgentEventType::ToolComplete,
+        "subagent_start" => CLIAgentEventType::SubagentStart,
+        "subagent_stop" => CLIAgentEventType::SubagentStop,
         "stop" => CLIAgentEventType::Stop,
         "permission_request" => CLIAgentEventType::PermissionRequest,
         "permission_replied" => CLIAgentEventType::PermissionReplied,
@@ -52,6 +54,7 @@ pub(super) fn parse(body: &str) -> Option<CLIAgentEvent> {
             summary: raw.summary,
             tool_name: raw.tool_name,
             tool_input_preview,
+            subagent_id: raw.subagent_id,
             plugin_version: raw.plugin_version,
         },
         source: CLIAgentEventSource::RichPlugin,
@@ -72,5 +75,6 @@ struct RawEvent {
     summary: Option<String>,
     tool_name: Option<String>,
     tool_input: Option<serde_json::Value>,
+    subagent_id: Option<String>,
     plugin_version: Option<String>,
 }

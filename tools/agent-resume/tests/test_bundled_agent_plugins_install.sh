@@ -52,7 +52,7 @@ cat >"$TMP/claude/plugins/installed_plugins.json" <<'EOF'
   "version": 2,
   "plugins": {
     "warp@clinch-claude-code-warp": [
-      { "scope": "user", "version": "2.1.0" }
+      { "scope": "user", "version": "2.2.0" }
     ]
   }
 }

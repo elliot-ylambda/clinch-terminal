@@ -75,10 +75,28 @@ fn cli_default_left_places_quick_replies_right_after_fork_and_compact() {
 }
 
 #[test]
+fn agent_transfer_is_a_default_cli_host_control() {
+    let items = AgentToolbarItemKind::cli_default_left();
+    assert_eq!(items.get(4), Some(&AgentToolbarItemKind::TransferAgent));
+    assert_eq!(
+        AgentToolbarItemKind::TransferAgent.available_in(),
+        ToolbarAvailability::CLIAgentOnly
+    );
+    assert!(!AgentToolbarItemKind::TransferAgent
+        .available_to_session_viewer(&SharedSessionStatus::reader(), false));
+    assert_eq!(
+        AgentToolbarItemKind::TransferAgent.icon(),
+        Some(Icon::SwitchHorizontal01)
+    );
+    assert!(AgentToolbarItemKind::all_available_for_cli_input()
+        .contains(&AgentToolbarItemKind::TransferAgent));
+}
+
+#[test]
 fn cli_default_left_includes_expected_quick_inserts() {
     let items = AgentToolbarItemKind::cli_default_left();
     assert_eq!(
-        &items[4..9],
+        &items[5..10],
         &[
             AgentToolbarItemKind::CustomInsert {
                 label: "Create a PR".to_owned(),

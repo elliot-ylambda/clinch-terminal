@@ -507,6 +507,14 @@ pub enum Event {
         notification: BlockNotification,
         pane_id: PaneId,
     },
+    TerminalCommandStarted {
+        terminal_view_id: EntityId,
+    },
+    TerminalCommandCompleted {
+        terminal_view_id: EntityId,
+        notification: BlockNotification,
+        succeeded: bool,
+    },
     OpenSettings(SettingsSection),
     OpenAutoReloadModal {
         purchased_credits: i32,

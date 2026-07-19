@@ -52,6 +52,24 @@ fn make_cli_notification(
     )
 }
 
+fn make_terminal_command_notification(
+    terminal_view_id: EntityId,
+    category: NotificationCategory,
+    is_read: bool,
+) -> NotificationItem {
+    NotificationItem::new(
+        "'make' finished".to_owned(),
+        "Latest output: done".to_owned(),
+        category,
+        NotificationSourceAgent::TerminalCommand,
+        NotificationOrigin::TerminalCommand(terminal_view_id),
+        is_read,
+        terminal_view_id,
+        vec![],
+        None,
+    )
+}
+
 #[test]
 fn remove_by_origin_cleans_up_conversation_notification() {
     let mut items = NotificationItems::default();
@@ -80,6 +98,31 @@ fn remove_by_origin_cleans_up_cli_session_notification() {
     let removed = items.remove_by_origin(NotificationOrigin::CLISession(terminal_view_id));
     assert!(removed);
     assert_eq!(items.filtered_count(NotificationFilter::All), 0);
+}
+
+#[test]
+fn terminal_command_origin_is_independent_from_cli_session_origin() {
+    let mut items = NotificationItems::default();
+    let terminal_view_id = EntityId::new();
+
+    items.push(make_cli_session_notification(terminal_view_id));
+    items.push(make_terminal_command_notification(
+        terminal_view_id,
+        NotificationCategory::Complete,
+        false,
+    ));
+    assert_eq!(items.filtered_count(NotificationFilter::All), 2);
+
+    assert!(items.remove_by_origin(NotificationOrigin::TerminalCommand(terminal_view_id)));
+    assert_eq!(items.filtered_count(NotificationFilter::All), 1);
+    assert_eq!(
+        items
+            .items_filtered(NotificationFilter::All)
+            .next()
+            .unwrap()
+            .origin,
+        NotificationOrigin::CLISession(terminal_view_id)
+    );
 }
 
 #[test]
@@ -150,4 +193,20 @@ fn completed_project_cli_agent_query_only_matches_unread_claude_and_codex_comple
             !is_read
         );
     }
+}
+
+#[test]
+fn terminal_command_completion_is_generic_unread_project_activity() {
+    let terminal_view_id = EntityId::new();
+    let mut items = NotificationItems::default();
+    items.push(make_terminal_command_notification(
+        terminal_view_id,
+        NotificationCategory::Complete,
+        false,
+    ));
+
+    assert!(items.has_unread_for_terminal_view(terminal_view_id));
+    assert!(!items.has_unread_completed_project_cli_agent_for_terminal_view(terminal_view_id));
+    assert!(items.has_other_unread_project_activity_for_terminal_view(terminal_view_id));
+    assert!(!NotificationSourceAgent::TerminalCommand.is_ambient());
 }

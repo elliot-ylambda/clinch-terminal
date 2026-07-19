@@ -79,9 +79,10 @@ fn project_agent_hover_summary_matches_project_badge_counts() {
             ProjectCliAgentCounts {
                 working: 1,
                 done: 1,
+                running_commands: 2,
             },
         ),
-        "3 open tabs · 2 agents · 1 working · 1 done"
+        "3 open tabs · 2 agents · 1 working · 1 done · 2 commands running"
     );
     assert_eq!(
         project_agent_hover_summary(1, 0, ProjectCliAgentCounts::default()),

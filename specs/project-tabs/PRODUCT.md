@@ -12,7 +12,7 @@ Working on several repositories currently requires several Clinch windows. That 
 
 - Let one Clinch window contain several independent, live project workspaces.
 - Keep project navigation visually and behaviorally distinct from the existing inner tabs.
-- Make repository identity and unread agent activity visible at the project level.
+- Make repository identity plus live and unread agent/terminal activity visible at the project level.
 - Preserve the ability to turn any project into its own window and to attach it to another window.
 
 ## Non-goals
@@ -50,11 +50,11 @@ Figma: none provided. The interaction should follow the familiar behavior of Chr
 
 11. Long project labels truncate with an ellipsis. The complete ordered project list remains available to accessibility output with each project label, position, selected state, and unread state. Duplicate labels are allowed; their project order and contents remain distinct.
 
-12. A project tab summarizes Claude Code and Codex turns with two independent numeric badges: a green count for turns currently working and a blue count for unread completed turns. Merely opening an interactive agent process, leaving it idle, or interacting with its startup UI does not contribute to the green count. Both providers contribute to the same counts. The blue count uses the existing accent/notification token and corresponds to the blue unread dots on the completed turns' inner tabs. Other unread activity that is not represented by the completed count continues to render as a small notification dot. These indicators do not replace or duplicate the detailed notification mailbox.
+12. A project tab summarizes activity with three independent numeric badges: a green count for Claude Code and Codex turns currently working, a blue count for unread completed turns from those agents, and a visually muted count for ordinary foreground terminal commands currently running. Merely opening an interactive agent process, leaving it idle, or interacting with its startup UI does not contribute to the green count. Claude Code and Codex contribute to the same agent counts and are excluded from the ordinary-command count. Agent-driven commands and read-only terminal viewers are also excluded from the ordinary-command count. All other foreground commands contribute while actively executing; a command that starts and finishes before the UI can present a running frame may never visibly increment the count. The blue count uses the existing fixed notification blue and corresponds to the blue unread dots on the completed turns' inner tabs.
 
-13. Activating a project alone does not clear its blue completed count or notification dot. Each indicator disappears only when its underlying notifications are read, removed, or otherwise cease to be unread according to the existing notification behavior.
+13. When a command represented by the muted running count completes while its terminal is not visible, it creates a terminal-scoped notification and the existing generic blue unread dot; failures are represented as errors in the notification mailbox. The notification participates in the same in-app toast, mailbox, focus-to-read, and project-aware navigation behavior as agent notifications. It does not increment the blue completed-agent count. Starting the next command in that pane clears its stale command-completion notification, and closing the pane removes it. Existing configured desktop-notification thresholds continue to govern native OS notifications.
 
-14. Clicking a desktop or in-app notification for a session in an inactive project first activates the containing window and project, then activates and focuses the originating inner tab and pane. It must not navigate to a similarly positioned pane in the currently active project.
+14. Activating a project alone does not clear its blue completed count or notification dot. Each indicator disappears only when its underlying notifications are read, removed, or otherwise cease to be unread according to the existing notification behavior. Clicking a desktop or in-app notification for a session or command in an inactive project first activates the containing window and project, then activates and focuses the originating inner tab and pane. It must not navigate to a similarly positioned pane in the currently active project.
 
 15. Pressing `Command+N` while a normal Clinch window is active creates and activates a new project at the end of that window's project strip. The new project starts with the same empty/default workspace that a new Clinch window starts with today.
 

@@ -42,14 +42,14 @@ impl NotificationFilter {
     }
 }
 
-/// Identifies the agent that produced a notification, including whether the run was
-/// ambient (cloud) or local. The `is_ambient` flag drives the cloud-lobe rendering in
-/// [`render_agent_avatar`].
+/// Identifies the activity that produced a notification. Agent variants include whether the run
+/// was ambient (cloud) or local; terminal commands are always local.
 #[derive(Debug, Clone, Copy)]
 #[allow(clippy::upper_case_acronyms)]
 pub enum NotificationSourceAgent {
     Oz { is_ambient: bool },
     CLI { agent: CLIAgent, is_ambient: bool },
+    TerminalCommand,
 }
 
 impl NotificationSourceAgent {
@@ -57,6 +57,7 @@ impl NotificationSourceAgent {
         match self {
             NotificationSourceAgent::Oz { is_ambient }
             | NotificationSourceAgent::CLI { is_ambient, .. } => *is_ambient,
+            NotificationSourceAgent::TerminalCommand => false,
         }
     }
 }
@@ -69,6 +70,8 @@ pub enum NotificationOrigin {
     Conversation(AIConversationId),
     /// CLI sessions are keyed by terminal view because we only track one session per pane.
     CLISession(EntityId),
+    /// Completed shell commands are de-duplicated independently from CLI-agent sessions.
+    TerminalCommand(EntityId),
 }
 
 #[derive(Debug, Clone)]

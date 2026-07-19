@@ -191,6 +191,13 @@ fn project_agent_count_only_includes_in_progress_claude_and_codex_sessions() {
 }
 
 #[test]
+fn project_command_count_excludes_cli_agent_sessions_and_non_running_commands() {
+    assert!(is_running_project_command(false, true));
+    assert!(!is_running_project_command(true, true));
+    assert!(!is_running_project_command(false, false));
+}
+
+#[test]
 fn project_agent_activity_prioritizes_live_work_then_attention_then_done() {
     assert_eq!(
         project_cli_agent_activity(true, false, true, true),
@@ -303,6 +310,7 @@ fn project_agent_counts_only_include_active_claude_and_codex_turns() {
                 ProjectCliAgentCounts {
                     working: 0,
                     done: 0,
+                    running_commands: 0,
                 }
             );
             assert_eq!(
@@ -343,6 +351,7 @@ fn project_agent_counts_only_include_active_claude_and_codex_turns() {
                 ProjectCliAgentCounts {
                     working: 2,
                     done: 0,
+                    running_commands: 0,
                 }
             );
             assert!(workspace
@@ -376,6 +385,7 @@ fn project_agent_counts_only_include_active_claude_and_codex_turns() {
                 ProjectCliAgentCounts {
                     working: 1,
                     done: 1,
+                    running_commands: 0,
                 }
             );
             assert_eq!(

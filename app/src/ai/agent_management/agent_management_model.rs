@@ -17,6 +17,7 @@ use crate::settings::AISettings;
 use crate::terminal::cli_agent_sessions::{
     CLIAgentSessionStatus, CLIAgentSessionsModel, CLIAgentSessionsModelEvent,
 };
+use crate::terminal::view::BlockNotification;
 use crate::terminal::{CLIAgent, TerminalView};
 use crate::workspace::util::is_terminal_view_in_same_tab;
 use crate::workspace::WorkspaceRegistry;
@@ -424,6 +425,51 @@ impl AgentNotificationsModel {
             .unwrap_or_default()
     }
 
+    /// Clears any ordinary-command completion associated with this terminal pane.
+    pub(crate) fn remove_terminal_command_notification(
+        &mut self,
+        terminal_view_id: EntityId,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        if self
+            .notifications
+            .remove_by_origin(NotificationOrigin::TerminalCommand(terminal_view_id))
+        {
+            ctx.emit(AgentManagementEvent::NotificationUpdated);
+        }
+    }
+
+    /// Adds a completed ordinary shell command to the shared notification center. The terminal's
+    /// visibility determines whether the item starts read, matching agent notifications.
+    pub(crate) fn terminal_command_completed(
+        &mut self,
+        terminal_view_id: EntityId,
+        notification: BlockNotification,
+        succeeded: bool,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        if !FeatureFlag::HOANotifications.is_enabled() {
+            return;
+        }
+
+        let metadata = TerminalViewMetadata::lookup(terminal_view_id, ctx);
+        self.add_notification(
+            notification.title,
+            notification.body,
+            if succeeded {
+                NotificationCategory::Complete
+            } else {
+                NotificationCategory::Error
+            },
+            NotificationSourceAgent::TerminalCommand,
+            NotificationOrigin::TerminalCommand(terminal_view_id),
+            terminal_view_id,
+            vec![],
+            metadata.branch,
+            ctx,
+        );
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn add_notification(
         &mut self,
@@ -452,12 +498,12 @@ impl AgentNotificationsModel {
             branch,
         );
         if show_agent_notifications {
-            send_telemetry_from_ctx!(
-                TelemetryEvent::AgentNotificationShown {
-                    agent_variant: agent.into(),
-                },
-                ctx
-            );
+            if let Ok(agent_variant) = agent.try_into() {
+                send_telemetry_from_ctx!(
+                    TelemetryEvent::AgentNotificationShown { agent_variant },
+                    ctx
+                );
+            }
         }
 
         let id = item.id;

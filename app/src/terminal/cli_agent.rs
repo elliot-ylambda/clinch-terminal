@@ -215,6 +215,16 @@ impl CLIAgent {
         }
     }
 
+    /// Returns the other provider for the supported local conversation-transfer pair.
+    /// Other CLI agents do not yet have a compatible transcript handoff flow.
+    pub fn transfer_target(self) -> Option<Self> {
+        match self {
+            CLIAgent::Claude => Some(CLIAgent::Codex),
+            CLIAgent::Codex => Some(CLIAgent::Claude),
+            _ => None,
+        }
+    }
+
     /// Returns the Icon for this CLI agent, or `None` for unknown/custom agents.
     pub fn icon(&self) -> Option<Icon> {
         match self {

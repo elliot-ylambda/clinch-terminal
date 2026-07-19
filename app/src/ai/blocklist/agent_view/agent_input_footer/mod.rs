@@ -256,6 +256,9 @@ pub struct AgentInputFooter {
     /// `MouseStateHandle::default()` recreated on every render would
     /// silently break clicks.
     custom_insert_mouse_states: RefCell<HashMap<(String, String), MouseStateHandle>>,
+    /// Hover/click state for the dynamically labelled Claude Code ↔ Codex
+    /// conversation-transfer button.
+    transfer_agent_mouse_state: MouseStateHandle,
     /// Hover/click state for the rate-limit auto-continue toggle. Like
     /// `CustomInsert`, the button is built fresh in render (its label
     /// reflects live arm state), so the handle must persist here.
@@ -1068,6 +1071,7 @@ impl AgentInputFooter {
             update_instructions_button,
             dismiss_plugin_chip_button,
             custom_insert_mouse_states: RefCell::new(HashMap::new()),
+            transfer_agent_mouse_state: MouseStateHandle::default(),
             auto_continue_mouse_state: MouseStateHandle::default(),
             plugin_operation_in_progress: false,
             plugin_chip_ready: false,
@@ -1704,6 +1708,45 @@ impl AgentInputFooter {
             }
             AgentToolbarItemKind::LooksGoodPrompt => {
                 Some(ChildView::new(&self.looks_good_button).finish())
+            }
+            AgentToolbarItemKind::TransferAgent => {
+                if !cfg!(feature = "local_tty") || is_conversation_transcript_context {
+                    return None;
+                }
+                let session = CLIAgentSessionsModel::as_ref(app).session(self.terminal_view_id)?;
+                let target = session.agent.transfer_target()?;
+                let has_conversation_reference = session
+                    .session_context
+                    .session_id
+                    .as_deref()
+                    .is_some_and(|id| !id.trim().is_empty())
+                    || session
+                        .session_context
+                        .transcript_path
+                        .as_deref()
+                        .is_some_and(|path| !path.trim().is_empty());
+                if !has_conversation_reference {
+                    return None;
+                }
+
+                let label = format!("Transfer to {}", target.display_name());
+                let tooltip = format!(
+                    "Exit {} and continue this conversation in {}",
+                    session.agent.display_name(),
+                    target.display_name()
+                );
+                Some(
+                    ActionButton::new(label, QuickInsertButtonTheme)
+                        .with_icon(Icon::SwitchHorizontal01)
+                        .with_size(ButtonSize::AgentInputButtonLarge)
+                        .with_tooltip(tooltip)
+                        .with_tooltip_alignment(TooltipAlignment::Left)
+                        .with_mouse_state_handle(self.transfer_agent_mouse_state.clone())
+                        .on_click(|ctx| {
+                            ctx.dispatch_typed_action(AgentInputFooterAction::TransferAgent);
+                        })
+                        .render(app),
+                )
             }
             AgentToolbarItemKind::CustomInsert { label, text } => {
                 if !FeatureFlag::CliAgentQuickInsertButtons.is_enabled() {
@@ -2545,6 +2588,7 @@ impl AgentInputFooter {
             | AgentToolbarItemKind::Compact
             | AgentToolbarItemKind::ForkSession
             | AgentToolbarItemKind::ContinuePrompt
+            | AgentToolbarItemKind::TransferAgent
             | AgentToolbarItemKind::CustomInsert { .. }
             | AgentToolbarItemKind::LooksGoodPrompt => None,
         }
@@ -2826,6 +2870,8 @@ pub enum AgentInputFooterAction {
     SendContinue,
     /// Submit "Looks good to me, continue" to the running CLI agent.
     SendLooksGood,
+    /// Exit Claude Code or Codex and continue the captured conversation in the other agent.
+    TransferAgent,
     /// Toggle this pane's "auto-continue when the CLI agent's rate limit resets" opt-in.
     ToggleAutoContinue,
     ToggleRichInput,
@@ -2949,6 +2995,15 @@ impl TypedActionView for AgentInputFooter {
                     ctx.emit(AgentInputFooterEvent::SubmitTextToCliAgent(
                         "Looks good to me, continue".to_string(),
                     ));
+                }
+            }
+            AgentInputFooterAction::TransferAgent => {
+                if self
+                    .cli_agent(ctx)
+                    .and_then(CLIAgent::transfer_target)
+                    .is_some()
+                {
+                    ctx.emit(AgentInputFooterEvent::TransferAgent);
                 }
             }
             AgentInputFooterAction::ToggleAutoContinue => {
@@ -3162,6 +3217,8 @@ pub enum AgentInputFooterEvent {
     /// Submit a fixed prompt string to this pane's live CLI agent using the
     /// per-agent submission strategy (types the text, then presses Enter).
     SubmitTextToCliAgent(String),
+    /// Exit Claude Code or Codex and continue the captured conversation in the other agent.
+    TransferAgent,
     /// Open the "Create quick-insert button" modal (footer "+ Add" button).
     OpenQuickInsertModal,
     StartRemoteControl,

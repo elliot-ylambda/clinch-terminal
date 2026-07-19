@@ -172,6 +172,13 @@ fn project_agent_hover_summary(
     if counts.done > 0 {
         parts.push(format!("{} done", counts.done));
     }
+    if counts.running_commands > 0 {
+        parts.push(if counts.running_commands == 1 {
+            "1 command running".to_string()
+        } else {
+            format!("{} commands running", counts.running_commands)
+        });
+    }
     parts.join(" · ")
 }
 
@@ -496,18 +503,24 @@ impl ProjectWindow {
             1 => ", 1 agent done".to_string(),
             count => format!(", {count} agents done"),
         };
+        let running_commands = match agent_counts.running_commands {
+            0 => String::new(),
+            1 => ", 1 command running".to_string(),
+            count => format!(", {count} commands running"),
+        };
         let unread = if workspace.has_unread_project_activity(app) {
             ", unread activity"
         } else {
             ""
         };
         format!(
-            "Project {} of {}: {}{}{}{}",
+            "Project {} of {}: {}{}{}{}{}",
             self.active_project_index + 1,
             self.projects.len(),
             workspace.project_display_name(app),
             working,
             done,
+            running_commands,
             unread
         )
     }
@@ -535,19 +548,25 @@ impl ProjectWindow {
                     1 => ", 1 agent done".to_string(),
                     count => format!(", {count} agents done"),
                 };
+                let running_commands = match agent_counts.running_commands {
+                    0 => String::new(),
+                    1 => ", 1 command running".to_string(),
+                    count => format!(", {count} commands running"),
+                };
                 let unread = if workspace.has_unread_project_activity(app) {
                     ", unread activity"
                 } else {
                     ""
                 };
                 format!(
-                    "{} of {}: {}{}{}{}{}",
+                    "{} of {}: {}{}{}{}{}{}",
                     index + 1,
                     self.projects.len(),
                     workspace.project_display_name(app),
                     selected,
                     working,
                     done,
+                    running_commands,
                     unread
                 )
             })
@@ -1326,6 +1345,7 @@ impl ProjectWindow {
             let active_background = theme.surface_2();
             let inactive_background = theme.background();
             let hover_background = theme.surface_3();
+            let command_badge_color = theme.disabled_text_color(theme.background()).into_solid();
 
             let tab = Hoverable::new(project.mouse_state.clone(), move |mouse_state| {
                 let mut label = Flex::row()
@@ -1390,6 +1410,27 @@ impl ProjectWindow {
                         .with_border(
                             Border::all(PROJECT_AGENT_COUNT_BADGE_BORDER_WIDTH)
                                 .with_border_fill(Fill::Solid(CLINCH_LOGO_GREEN)),
+                        )
+                        .with_corner_radius(CornerRadius::with_all(Radius::Percentage(50.)))
+                        .with_margin_right(6.)
+                        .finish(),
+                    );
+                }
+                if agent_counts.running_commands > 0 {
+                    label.add_child(
+                        Container::new(
+                            Text::new_inline(
+                                agent_counts.running_commands.to_string(),
+                                font_family,
+                                (font_size - 2.).max(8.),
+                            )
+                            .with_color(command_badge_color)
+                            .finish(),
+                        )
+                        .with_horizontal_padding(4.)
+                        .with_border(
+                            Border::all(PROJECT_AGENT_COUNT_BADGE_BORDER_WIDTH)
+                                .with_border_fill(Fill::Solid(command_badge_color)),
                         )
                         .with_corner_radius(CornerRadius::with_all(Radius::Percentage(50.)))
                         .with_margin_right(6.)

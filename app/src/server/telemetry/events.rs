@@ -502,11 +502,14 @@ pub enum NotificationAgentVariant {
     CLIAgent(CLIAgentType),
 }
 
-impl From<NotificationSourceAgent> for NotificationAgentVariant {
-    fn from(agent: NotificationSourceAgent) -> Self {
+impl TryFrom<NotificationSourceAgent> for NotificationAgentVariant {
+    type Error = ();
+
+    fn try_from(agent: NotificationSourceAgent) -> Result<Self, Self::Error> {
         match agent {
-            NotificationSourceAgent::Oz { .. } => Self::Oz,
-            NotificationSourceAgent::CLI { agent, .. } => Self::CLIAgent(agent.into()),
+            NotificationSourceAgent::Oz { .. } => Ok(Self::Oz),
+            NotificationSourceAgent::CLI { agent, .. } => Ok(Self::CLIAgent(agent.into())),
+            NotificationSourceAgent::TerminalCommand => Err(()),
         }
     }
 }

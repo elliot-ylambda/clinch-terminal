@@ -227,6 +227,25 @@ fn parse_tool_complete_notification() {
 }
 
 #[test]
+fn parse_subagent_lifecycle_notifications() {
+    for (event_name, expected_type) in [
+        ("subagent_start", CLIAgentEventType::SubagentStart),
+        ("subagent_stop", CLIAgentEventType::SubagentStop),
+    ] {
+        let body = format!(
+            r#"{{"v":1,"agent":"claude","event":"{event_name}","session_id":"abc","subagent_id":"agent-123"}}"#
+        );
+        let notification = parse_event(Some("warp://cli-agent"), &body).unwrap();
+
+        assert_eq!(notification.event, expected_type);
+        assert_eq!(
+            notification.payload.subagent_id.as_deref(),
+            Some("agent-123")
+        );
+    }
+}
+
+#[test]
 fn parse_auggie_stop_notification() {
     // Mirrors what the community auggie-warp plugin emits on the Stop hook.
     let body = r#"{"v":1,"agent":"auggie","event":"stop","session_id":"abc","cwd":"/tmp/proj","project":"proj","query":"write a haiku","response":"Memory is safe"}"#;
@@ -287,6 +306,12 @@ fn activity_event(agent: CLIAgent, event: CLIAgentEventType) -> CLIAgentEvent {
             ..Default::default()
         },
     }
+}
+
+fn subagent_event(event: CLIAgentEventType, subagent_id: &str) -> CLIAgentEvent {
+    let mut event = activity_event(CLIAgent::Claude, event);
+    event.payload.subagent_id = Some(subagent_id.to_owned());
+    event
 }
 
 #[test]
@@ -392,6 +417,149 @@ fn idle_prompt_only_completes_an_observed_turn() {
         Some(CLIAgentSessionStatus::Success)
     );
     assert!(!session.is_actively_working());
+}
+
+#[test]
+fn background_subagents_defer_parent_stop_until_all_finish() {
+    let mut session = idle_test_session(CLIAgent::Claude);
+    session.apply_event(&activity_event(
+        CLIAgent::Claude,
+        CLIAgentEventType::PromptSubmit,
+    ));
+
+    assert_eq!(
+        session.apply_event(&subagent_event(CLIAgentEventType::SubagentStart, "agent-a")),
+        None
+    );
+    session.apply_event(&subagent_event(CLIAgentEventType::SubagentStart, "agent-b"));
+    // Duplicate starts and unmatched stops do not corrupt identity-based accounting.
+    session.apply_event(&subagent_event(CLIAgentEventType::SubagentStart, "agent-a"));
+    session.apply_event(&subagent_event(
+        CLIAgentEventType::SubagentStop,
+        "unknown-agent",
+    ));
+    assert_eq!(session.session_context.active_subagent_ids.len(), 2);
+
+    assert_eq!(
+        session.apply_event(&activity_event(CLIAgent::Claude, CLIAgentEventType::Stop)),
+        None
+    );
+    assert!(session.is_actively_working());
+    assert!(
+        session
+            .session_context
+            .has_deferred_completion_for_subagents
+    );
+
+    assert_eq!(
+        session.apply_event(&subagent_event(CLIAgentEventType::SubagentStop, "agent-a")),
+        None
+    );
+    assert!(session.is_actively_working());
+    assert_eq!(session.session_context.active_subagent_ids.len(), 1);
+
+    assert_eq!(
+        session.apply_event(&subagent_event(CLIAgentEventType::SubagentStop, "agent-b")),
+        Some(CLIAgentSessionStatus::Success)
+    );
+    assert!(!session.is_actively_working());
+    assert!(session.session_context.active_subagent_ids.is_empty());
+    assert!(
+        !session
+            .session_context
+            .has_deferred_completion_for_subagents
+    );
+}
+
+#[test]
+fn foreground_subagent_stop_does_not_complete_the_parent_turn() {
+    let mut session = idle_test_session(CLIAgent::Claude);
+    session.apply_event(&activity_event(
+        CLIAgent::Claude,
+        CLIAgentEventType::PromptSubmit,
+    ));
+    session.apply_event(&subagent_event(CLIAgentEventType::SubagentStart, "agent-a"));
+
+    assert_eq!(
+        session.apply_event(&subagent_event(CLIAgentEventType::SubagentStop, "agent-a")),
+        None
+    );
+    assert!(session.is_actively_working());
+
+    assert_eq!(
+        session.apply_event(&activity_event(CLIAgent::Claude, CLIAgentEventType::Stop)),
+        Some(CLIAgentSessionStatus::Success)
+    );
+    assert!(!session.is_actively_working());
+}
+
+#[test]
+fn idle_prompt_waits_for_an_active_subagent() {
+    let mut session = idle_test_session(CLIAgent::Claude);
+    session.apply_event(&activity_event(
+        CLIAgent::Claude,
+        CLIAgentEventType::PromptSubmit,
+    ));
+    session.apply_event(&subagent_event(CLIAgentEventType::SubagentStart, "agent-a"));
+
+    assert_eq!(
+        session.apply_event(&activity_event(
+            CLIAgent::Claude,
+            CLIAgentEventType::IdlePrompt,
+        )),
+        None
+    );
+    assert!(session.is_actively_working());
+
+    assert_eq!(
+        session.apply_event(&subagent_event(CLIAgentEventType::SubagentStop, "agent-a")),
+        Some(CLIAgentSessionStatus::Success)
+    );
+}
+
+#[test]
+fn resumed_parent_turn_cancels_a_deferred_subagent_completion() {
+    let mut session = idle_test_session(CLIAgent::Claude);
+    session.apply_event(&activity_event(
+        CLIAgent::Claude,
+        CLIAgentEventType::PromptSubmit,
+    ));
+    session.apply_event(&subagent_event(CLIAgentEventType::SubagentStart, "agent-a"));
+    session.apply_event(&activity_event(CLIAgent::Claude, CLIAgentEventType::Stop));
+
+    session.apply_event(&activity_event(
+        CLIAgent::Claude,
+        CLIAgentEventType::PromptSubmit,
+    ));
+    assert!(
+        !session
+            .session_context
+            .has_deferred_completion_for_subagents
+    );
+    assert_eq!(
+        session.apply_event(&subagent_event(CLIAgentEventType::SubagentStop, "agent-a")),
+        None
+    );
+    assert!(session.is_actively_working());
+
+    session.apply_event(&activity_event(CLIAgent::Claude, CLIAgentEventType::Stop));
+    assert!(!session.is_actively_working());
+}
+
+#[test]
+fn changing_session_identity_clears_subagent_lifecycle_state() {
+    let mut session = idle_test_session(CLIAgent::Claude);
+    session.apply_event(&subagent_event(CLIAgentEventType::SubagentStart, "agent-a"));
+    session.apply_event(&activity_event(CLIAgent::Claude, CLIAgentEventType::Stop));
+
+    assert!(session.seed_session_identity(CLIAgent::Claude, "new-session".to_owned()));
+    assert!(session.session_context.active_subagent_ids.is_empty());
+    assert!(
+        !session
+            .session_context
+            .has_deferred_completion_for_subagents
+    );
+    assert!(!session.has_observed_turn_activity);
 }
 
 #[test]

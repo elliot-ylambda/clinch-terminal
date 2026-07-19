@@ -27,6 +27,79 @@ use crate::terminal::CLIAgent;
 use crate::test_util::add_window_with_terminal;
 use crate::test_util::terminal::initialize_app_for_terminal_view;
 
+#[test]
+#[cfg(feature = "local_tty")]
+fn claude_transfer_launches_codex_with_session_transcript_hint() {
+    let transfer = build_cli_agent_transfer(
+        CLIAgent::Claude,
+        &CLIAgentSessionContext {
+            session_id: Some("claude-session-123".to_string()),
+            cwd: Some("/tmp/project".to_string()),
+            ..Default::default()
+        },
+        ShellType::Zsh,
+    )
+    .expect("Claude session should be transferable");
+
+    assert_eq!(transfer.source_agent, CLIAgent::Claude);
+    assert!(transfer
+        .launch_command
+        .starts_with("codex --dangerously-bypass-approvals-and-sandbox "));
+    assert!(transfer.launch_command.contains("last Claude Code agent"));
+    assert!(transfer.launch_command.contains("claude-session-123.jsonl"));
+    assert!(transfer.launch_command.contains("/tmp/project"));
+    assert!(!transfer.launch_command.contains("/export"));
+}
+
+#[test]
+#[cfg(feature = "local_tty")]
+fn codex_transfer_launches_claude_with_exact_transcript_path() {
+    let transfer = build_cli_agent_transfer(
+        CLIAgent::Codex,
+        &CLIAgentSessionContext {
+            session_id: Some("codex-session-456".to_string()),
+            transcript_path: Some("/tmp/o'malley/rollout-codex-session-456.jsonl".to_string()),
+            ..Default::default()
+        },
+        ShellType::Zsh,
+    )
+    .expect("Codex session should be transferable");
+
+    assert_eq!(transfer.source_agent, CLIAgent::Codex);
+    assert!(transfer
+        .launch_command
+        .starts_with("claude --dangerously-skip-permissions "));
+    assert!(transfer.launch_command.contains("last Codex agent"));
+    assert!(transfer
+        .launch_command
+        .contains("rollout-codex-session-456.jsonl"));
+    assert!(
+        transfer.launch_command.contains("'\"'\"'"),
+        "transcript path must remain shell-quoted: {}",
+        transfer.launch_command
+    );
+}
+
+#[test]
+#[cfg(feature = "local_tty")]
+fn transfer_requires_supported_agent_and_conversation_reference() {
+    assert!(build_cli_agent_transfer(
+        CLIAgent::Claude,
+        &CLIAgentSessionContext::default(),
+        ShellType::Zsh,
+    )
+    .is_none());
+    assert!(build_cli_agent_transfer(
+        CLIAgent::Gemini,
+        &CLIAgentSessionContext {
+            session_id: Some("session-123".to_string()),
+            ..Default::default()
+        },
+        ShellType::Zsh,
+    )
+    .is_none());
+}
+
 struct PendingAIBlockModel {
     conversation_id: AIConversationId,
     input: Vec<AIAgentInput>,

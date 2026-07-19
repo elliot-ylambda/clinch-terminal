@@ -2539,6 +2539,7 @@ impl Input {
                 | AgentInputFooterEvent::ToggleFileExplorer(_)
                 | AgentInputFooterEvent::ForkSession
                 | AgentInputFooterEvent::SubmitTextToCliAgent(_)
+                | AgentInputFooterEvent::TransferAgent
                 | AgentInputFooterEvent::OpenQuickInsertModal
                 | AgentInputFooterEvent::OpenRichInput
                 | AgentInputFooterEvent::HideRichInput => {}
