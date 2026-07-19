@@ -1,6 +1,8 @@
 //! Best-effort startup provisioning of the agent skills bundled with Clinch
 //! into the Claude Code and Codex personal skill directories.
 
+use std::path::Path;
+
 const MANAGED_MARKER_PREFIX: &str = "<!-- managed-by: Clinch; version: ";
 const MANAGED_MARKER_SUFFIX: &str = "-->";
 
@@ -38,6 +40,39 @@ fn decide(bundled_contents: &str, existing_contents: Option<&str>) -> InstallDec
         InstallDecision::Install
     } else {
         InstallDecision::SkipUpToDate
+    }
+}
+
+/// Installs every bundled skill under `source_root` into
+/// `<agent_config_dir>/skills/`. Quietly does nothing when the agent's config
+/// dir is absent (the agent is not installed on this machine); creating it
+/// would litter machines that never ran that agent.
+fn install_skills_from(source_root: &Path, agent_config_dir: &Path) {
+    if !agent_config_dir.is_dir() {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(source_root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let bundled_skill = entry.path().join("SKILL.md");
+        let Ok(bundled_contents) = std::fs::read_to_string(&bundled_skill) else {
+            continue;
+        };
+        let target_dir = agent_config_dir.join("skills").join(entry.file_name());
+        let target = target_dir.join("SKILL.md");
+        let existing_contents = std::fs::read_to_string(&target).ok();
+        if decide(&bundled_contents, existing_contents.as_deref()) != InstallDecision::Install {
+            continue;
+        }
+        let installed = std::fs::create_dir_all(&target_dir)
+            .and_then(|()| std::fs::write(&target, &bundled_contents));
+        if let Err(err) = installed {
+            eprintln!(
+                "clinch: could not provision bundled skill {}: {err}",
+                target.display()
+            );
+        }
     }
 }
 

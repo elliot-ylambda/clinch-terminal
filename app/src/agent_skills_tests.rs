@@ -105,3 +105,60 @@ fn decide_never_touches_user_owned_files() {
     );
     assert_eq!(decide(UNMANAGED, None), InstallDecision::Install);
 }
+
+fn scratch_bundle(skill_body: &str) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let skill_dir = dir.path().join("clinch-toolbelt");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    std::fs::write(skill_dir.join("SKILL.md"), skill_body).unwrap();
+    dir
+}
+
+#[test]
+fn install_creates_the_skill_for_an_existing_agent_dir() {
+    let source = scratch_bundle(MANAGED_V1);
+    let agent_home = tempfile::tempdir().unwrap();
+    install_skills_from(source.path(), agent_home.path());
+    let installed = agent_home.path().join("skills/clinch-toolbelt/SKILL.md");
+    assert_eq!(std::fs::read_to_string(installed).unwrap(), MANAGED_V1);
+}
+
+#[test]
+fn install_upgrades_an_older_managed_copy() {
+    let source = scratch_bundle(MANAGED_V2);
+    let agent_home = tempfile::tempdir().unwrap();
+    let target = agent_home.path().join("skills/clinch-toolbelt");
+    std::fs::create_dir_all(&target).unwrap();
+    std::fs::write(target.join("SKILL.md"), MANAGED_V1).unwrap();
+    install_skills_from(source.path(), agent_home.path());
+    assert_eq!(
+        std::fs::read_to_string(target.join("SKILL.md")).unwrap(),
+        MANAGED_V2
+    );
+}
+
+#[test]
+fn install_leaves_user_owned_files_alone() {
+    let source = scratch_bundle(MANAGED_V2);
+    let agent_home = tempfile::tempdir().unwrap();
+    let target = agent_home.path().join("skills/clinch-toolbelt");
+    std::fs::create_dir_all(&target).unwrap();
+    std::fs::write(target.join("SKILL.md"), UNMANAGED).unwrap();
+    install_skills_from(source.path(), agent_home.path());
+    assert_eq!(
+        std::fs::read_to_string(target.join("SKILL.md")).unwrap(),
+        UNMANAGED
+    );
+}
+
+#[test]
+fn install_skips_agents_that_are_not_installed() {
+    let source = scratch_bundle(MANAGED_V1);
+    let parent = tempfile::tempdir().unwrap();
+    let missing_agent_home = parent.path().join("no-such-agent");
+    install_skills_from(source.path(), &missing_agent_home);
+    assert!(
+        !missing_agent_home.exists(),
+        "must not create agent config dirs"
+    );
+}
