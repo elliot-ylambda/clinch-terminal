@@ -86,7 +86,7 @@ impl DataSourceStore {
         // picker reflects conversations recorded since the last open, while keystrokes
         // only filter the in-memory list.
         self.agent_conversations_data_source
-            .update(ctx, |source, _| source.refresh());
+            .update(ctx, |source, ctx| source.refresh(ctx));
 
         mixer.update(ctx, |mixer, ctx| {
             mixer.reset(ctx);
