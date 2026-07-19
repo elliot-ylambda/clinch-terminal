@@ -2816,6 +2816,29 @@ impl BlockList {
         self.early_output.reset_user_input();
     }
 
+    /// Reverts the start of the active block if it matches `block_id` and its
+    /// command never began executing (no preexec was received).
+    ///
+    /// This recovers panes whose written command never reached the shell's
+    /// line editor (or was never accepted by it): without reconciliation the
+    /// started-but-idle block reads as an active long-running command forever,
+    /// wedging the pane in a "command already running" state.
+    ///
+    /// Returns `true` if the block start was reverted.
+    pub fn abort_active_block_start_if_unexecuted(&mut self, block_id: &BlockId) -> bool {
+        if self.active_block_id() != block_id {
+            return false;
+        }
+
+        let active_block = self.active_block_mut();
+        if !active_block.started() || active_block.state() != BlockState::BeforeExecution {
+            return false;
+        }
+
+        active_block.abort_start();
+        true
+    }
+
     /// Increments `self.in_flight_in_band_command_count` and starts the active block as usual.
     pub fn start_active_block_for_in_band_command(&mut self) {
         // Cache the prompt in preexec. By the time preexec is called, the shell should have

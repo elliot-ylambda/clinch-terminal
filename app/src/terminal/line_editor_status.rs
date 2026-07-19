@@ -123,6 +123,14 @@ impl LineEditorStatus {
         self.mark_line_editor_active_abort_handle = Some(abort_handle);
     }
 
+    /// Marks the line editor as active immediately, mirroring the state
+    /// transition performed when the activation delay elapses. Only for tests.
+    #[cfg(test)]
+    pub(super) fn set_active_for_test(&mut self, ctx: &mut ModelContext<Self>) {
+        self.is_line_editor_active = true;
+        ctx.emit(LineEditorStatusEvent::Active);
+    }
+
     fn set_line_editor_inactive(&mut self, ctx: &mut ModelContext<Self>) {
         abort_if_running(self.mark_line_editor_active_abort_handle.take());
 

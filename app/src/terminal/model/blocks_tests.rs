@@ -2341,3 +2341,58 @@ fn test_device_status_uses_active_block_if_no_typeahead() {
 
     assert_eq!(writer, "\x1b[1;21R".as_bytes());
 }
+
+#[test]
+fn abort_active_block_start_reverts_started_but_unexecuted_block() {
+    let mut block_list =
+        new_bootstrapped_block_list(None, None, ChannelEventListener::new_for_test());
+    block_list.start_active_block();
+    let block_id = block_list.active_block_id().clone();
+    // Simulate the elapsed-time check having latched the block as long-running,
+    // as happens when a written command sits unexecuted for a while.
+    block_list
+        .active_block_mut()
+        .set_was_long_running(true.into());
+    assert!(block_list.active_block().started());
+    assert!(block_list.active_block().is_active_and_long_running());
+
+    assert!(block_list.abort_active_block_start_if_unexecuted(&block_id));
+
+    let active_block = block_list.active_block();
+    assert!(!active_block.started());
+    assert!(
+        !active_block.is_active_and_long_running(),
+        "aborting must also clear the latched long-running state"
+    );
+    assert!(
+        active_block.is_command_grid_active(),
+        "the block should return to accepting a new command"
+    );
+}
+
+#[test]
+fn abort_active_block_start_is_noop_once_block_is_executing() {
+    let mut block_list =
+        new_bootstrapped_block_list(None, None, ChannelEventListener::new_for_test());
+    block_list.start_active_block();
+    let block_id = block_list.active_block_id().clone();
+    block_list.preexec(PreexecValue {
+        command: "sleep 100".to_owned(),
+        session_id: None,
+    });
+
+    assert!(!block_list.abort_active_block_start_if_unexecuted(&block_id));
+    assert!(block_list.active_block().started());
+    assert!(block_list.active_block().is_executing());
+}
+
+#[test]
+fn abort_active_block_start_is_noop_for_stale_block_id() {
+    let mut block_list =
+        new_bootstrapped_block_list(None, None, ChannelEventListener::new_for_test());
+    block_list.start_active_block();
+    let stale_block_id = BlockId::new();
+
+    assert!(!block_list.abort_active_block_start_if_unexecuted(&stale_block_id));
+    assert!(block_list.active_block().started());
+}

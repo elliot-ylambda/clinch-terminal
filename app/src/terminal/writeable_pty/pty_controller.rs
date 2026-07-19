@@ -14,6 +14,7 @@ use crate::ai::agent::AIAgentPtyWriteMode;
 use crate::terminal::input::CommandExecutionSource;
 use crate::terminal::line_editor_status::{LineEditorStatus, LineEditorStatusEvent};
 use crate::terminal::model::ansi::Handler;
+use crate::terminal::model::block::BlockId;
 use crate::terminal::model::completions::ShellCompletion;
 use crate::terminal::model::escape_sequences;
 use crate::terminal::model::session::{
@@ -29,6 +30,11 @@ use crate::SessionSettings;
 
 /// Byte sequence to emulate the user pressing ENTER, used to execute a command in the shell.
 const COMMAND_ENTER: &[u8] = &[escape_sequences::C0::CR, escape_sequences::C0::LF];
+/// How long to wait for the shell's preexec hook after writing a command to
+/// the PTY before concluding the command never executed and reverting the
+/// block start. Preexec normally arrives within milliseconds of the write;
+/// this is sized generously to accommodate slow remote shells.
+const COMMAND_PREEXEC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 /// Used to let the shell know we are switching to the PS1 prompt via a bindkey \ep. This will
 /// restore the PS1 from the saved PS1 value (we had unset the PS1 for Warp prompt).
 const SWITCH_TO_PS1_ESCAPE_SEQUENCE: &[u8] = &[escape_sequences::C0::ESC, b'p'];
@@ -555,11 +561,20 @@ impl<T: EventLoopSender> PtyController<T> {
         source: CommandExecutionSource,
         ctx: &mut ModelContext<Self>,
     ) {
-        {
-            let mut model = self.terminal_model.lock();
+        self.pending_writes.clear();
+        self.is_user_command_executing = true;
+
+        // Start the block only once the command bytes are actually written to
+        // the PTY. If the write is parked below (line editor inactive) and
+        // never drains, a block started here would read as an active
+        // long-running command forever, wedging the pane in a "command
+        // already running" state with no command in flight.
+        let terminal_model = self.terminal_model.clone();
+        let before_write_fn = Box::new(move || {
+            let mut model = terminal_model.lock();
 
             // Explicitly start the block now that the command is executed.
-            match source {
+            match source.clone() {
                 CommandExecutionSource::AI { metadata } => {
                     model.start_command_execution_with_ai_metadata(metadata)
                 }
@@ -580,17 +595,14 @@ impl<T: EventLoopSender> PtyController<T> {
             // following commands as in-band command output. If the in-band command output is not
             // currently being received by the `TerminalModel`, this is a no-op.
             model.end_in_band_command_output(false);
-        }
-
-        self.pending_writes.clear();
-        self.is_user_command_executing = true;
+        });
 
         // Send the write to the PTY event loop.
         let write = PtyWrite::Command {
             command: command.to_owned(),
             shell_type,
             in_band_command_id: None,
-            before_write_fn: None,
+            before_write_fn: Some(before_write_fn),
         };
         if self.can_write_to_pty(ctx) {
             // Cancel the async writer task and clear the async write queue.
@@ -598,6 +610,27 @@ impl<T: EventLoopSender> PtyController<T> {
             self.send_write_to_event_loop(write, ctx);
         } else {
             self.pending_writes.push_back(write);
+        }
+    }
+
+    /// Reverts the start of the block identified by `block_id` if the command
+    /// written for it never began executing (no preexec arrived), so the pane
+    /// doesn't stay wedged reporting "command already running".
+    pub fn abort_command_start_if_unexecuted(
+        &mut self,
+        block_id: &BlockId,
+        _ctx: &mut ModelContext<Self>,
+    ) {
+        let mut model = self.terminal_model.lock();
+        if model
+            .block_list_mut()
+            .abort_active_block_start_if_unexecuted(block_id)
+        {
+            self.is_user_command_executing = false;
+            log::warn!(
+                "Reverted the start of a command block whose command never began executing \
+                 (no preexec received within {COMMAND_PREEXEC_TIMEOUT:?})"
+            );
         }
     }
 
@@ -670,12 +703,12 @@ impl<T: EventLoopSender> PtyController<T> {
     /// If the write corresponds to a command, this also calls
     /// [`LineEditorStatus::did_execute_command()`].
     fn send_write_to_event_loop(&mut self, write: PtyWrite, ctx: &mut ModelContext<Self>) {
-        let (bytes_to_write, is_for_command, on_write_fn) = match write {
+        let (bytes_to_write, is_for_command, is_for_in_band_command, on_write_fn) = match write {
             PtyWrite::Command {
                 command,
                 shell_type,
+                in_band_command_id,
                 before_write_fn: on_write_fn,
-                ..
             } => (
                 Cow::Owned(bytes_to_execute_command(
                     command.as_str(),
@@ -683,14 +716,15 @@ impl<T: EventLoopSender> PtyController<T> {
                     self.is_bracketed_paste_enabled,
                 )),
                 true,
+                in_band_command_id.is_some(),
                 on_write_fn,
             ),
             PtyWrite::AgentInput { bytes, mode } => {
                 let decorated_bytes =
                     mode.decorate_bytes(bytes.into_owned(), self.is_bracketed_paste_enabled);
-                (decorated_bytes.into(), false, None)
+                (decorated_bytes.into(), false, false, None)
             }
-            PtyWrite::Bytes { bytes } => (bytes, false, None),
+            PtyWrite::Bytes { bytes } => (bytes, false, false, None),
             PtyWrite::RunNativeShellCompletions(state) => {
                 self.in_flight_native_completions_state = Some(state);
 
@@ -698,7 +732,7 @@ impl<T: EventLoopSender> PtyController<T> {
                 // then wait for an OSC-based signal from the shell before we
                 // send the text that needs to be completed.
                 let bytes = vec![0x19_u8];
-                (bytes.into(), false, None)
+                (bytes.into(), false, false, None)
             }
         };
 
@@ -719,6 +753,24 @@ impl<T: EventLoopSender> PtyController<T> {
         }
 
         self.send_message_to_event_loop(Message::Input(bytes_to_write), ctx);
+
+        if is_for_command && !is_for_in_band_command {
+            // The block was just started by `on_write_fn`. If the shell never
+            // acknowledges execution via the preexec hook (e.g. the write was
+            // lost or the line editor never accepted the line), revert the
+            // start so the pane doesn't permanently report a phantom
+            // "command already running".
+            let block_id = self
+                .terminal_model
+                .lock()
+                .block_list()
+                .active_block_id()
+                .clone();
+            let _ = ctx.spawn(
+                async move { warpui::r#async::Timer::after(COMMAND_PREEXEC_TIMEOUT).await },
+                move |me, _, ctx| me.abort_command_start_if_unexecuted(&block_id, ctx),
+            );
+        }
     }
 
     /// Sends a message to the event loop. If the send fails with `SendError::Disconnected`, emits
@@ -833,6 +885,10 @@ fn wrap_bytes_in_bracketed_paste(bytes: impl IntoIterator<Item = u8>) -> impl It
 #[cfg(test)]
 #[path = "pty_controller_command_bytes_tests.rs"]
 mod command_bytes_tests;
+
+#[cfg(test)]
+#[path = "pty_controller_tests.rs"]
+mod pty_controller_tests;
 
 #[derive(Error, Debug)]
 pub enum EventLoopSendError {

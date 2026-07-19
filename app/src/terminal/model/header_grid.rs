@@ -766,6 +766,13 @@ impl HeaderGrid {
         self.command_start_time
     }
 
+    /// Reverts [`Self::start_command_grid`] for a command that turned out to
+    /// never begin executing, returning the grid to its pre-start state.
+    pub fn abort_command_start(&mut self) {
+        self.command_started = false;
+        self.command_start_time = None;
+    }
+
     pub fn num_secrets_obfuscated(&self) -> usize {
         self.prompt_and_command_grid.num_secrets_obfuscated()
     }

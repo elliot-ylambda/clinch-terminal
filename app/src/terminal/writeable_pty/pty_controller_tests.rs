@@ -1,233 +1,228 @@
-use crate::terminal::color::List;
-use crate::terminal::event::UserBlockCompleted;
-use crate::terminal::event_listener::ChannelEventListener;
-use crate::terminal::model::block::{BlockSize, SerializedBlock};
-use crate::terminal::shell::ShellType;
-use crate::terminal::BlockPadding;
-use crate::theme::WarpTheme;
+use std::sync::mpsc;
+use std::sync::Arc;
+
+use parking_lot::FairMutex;
+use warpui::App;
 
 use super::*;
+use crate::terminal::model::ansi::{Handler, PreexecValue};
+use crate::terminal::model::block::BlockId;
 
-impl PtyController {
-    /// Flushes PTY writes by sending a "dummy" test write, and blocking until the test write is
-    /// handled.
-    ///
-    /// When the "dummy write" is handled, an event is emitted through a channel. This method
-    /// blocks on receiving this event through the channel. Since async writes are handled in order
-    /// that they are queued, this ensures all queued writes have been handled/"flushed".
-    fn flush_pty_writes(&mut self) {
-        let (tx, rx) = futures::channel::oneshot::channel();
-        let _ = self.queue_async_write(AsyncPtyWrite {
-            bytes: vec![],
-            delay: None,
-            on_write_fn: Some(Box::new(move || {
-                let _ = tx.send(());
-            })),
+/// A [`EventLoopSender`] backed by an mpsc channel so tests can observe the
+/// bytes that would have been written to the PTY.
+struct TestEventLoopSender(mpsc::Sender<Message>);
+
+impl EventLoopSender for TestEventLoopSender {
+    fn send(&self, message: Message) -> Result<(), EventLoopSendError> {
+        self.0
+            .send(message)
+            .map_err(|_| EventLoopSendError::Disconnected)
+    }
+}
+
+struct TestPtyController {
+    controller: ModelHandle<PtyController<TestEventLoopSender>>,
+    event_loop_rx: mpsc::Receiver<Message>,
+    terminal_model: Arc<FairMutex<TerminalModel>>,
+    line_editor_status: ModelHandle<LineEditorStatus>,
+    // Keep the model-event channel open for the lifetime of the test so the
+    // dispatcher's stream doesn't terminate early.
+    _model_events_tx: async_channel::Sender<crate::terminal::event::Event>,
+}
+
+fn build_pty_controller(app: &mut App) -> TestPtyController {
+    let (event_loop_tx, event_loop_rx) = mpsc::channel();
+    let terminal_model = Arc::new(FairMutex::new(TerminalModel::mock(None, None)));
+
+    let (executor_command_tx, executor_command_rx) = async_channel::unbounded();
+    let sessions = app.add_model(|ctx| Sessions::new(executor_command_tx, ctx));
+
+    let (model_events_tx, model_events_rx) = async_channel::unbounded();
+    let model_event_dispatcher = {
+        let sessions = sessions.clone();
+        app.add_model(|ctx| ModelEventDispatcher::new(model_events_rx, sessions, ctx))
+    };
+
+    let line_editor_status = {
+        let model_event_dispatcher = model_event_dispatcher.clone();
+        let sessions = sessions.clone();
+        app.add_model(|ctx| LineEditorStatus::new(model_event_dispatcher, sessions, ctx))
+    };
+
+    let controller = {
+        let model_event_dispatcher = model_event_dispatcher.clone();
+        let line_editor_status = line_editor_status.clone();
+        let terminal_model = terminal_model.clone();
+        app.add_model(|ctx| {
+            PtyController::new(
+                TestEventLoopSender(event_loop_tx),
+                model_event_dispatcher,
+                line_editor_status,
+                sessions,
+                executor_command_rx,
+                terminal_model,
+                ctx,
+            )
+        })
+    };
+
+    TestPtyController {
+        controller,
+        event_loop_rx,
+        terminal_model,
+        line_editor_status,
+        _model_events_tx: model_events_tx,
+    }
+}
+
+fn active_block_is_started(terminal_model: &Arc<FairMutex<TerminalModel>>) -> bool {
+    terminal_model.lock().block_list().active_block().started()
+}
+
+fn active_block_id(terminal_model: &Arc<FairMutex<TerminalModel>>) -> BlockId {
+    terminal_model.lock().block_list().active_block_id().clone()
+}
+
+#[test]
+fn write_command_while_line_editor_inactive_defers_block_start() {
+    App::test((), |mut app| async move {
+        let harness = build_pty_controller(&mut app);
+
+        // The line editor has not reported active yet (e.g. a cold shell that
+        // is still bootstrapping), so the write must be parked.
+        harness.controller.update(&mut app, |controller, ctx| {
+            controller.write_command("ca", ShellType::Zsh, CommandExecutionSource::User, ctx);
         });
-        let _ = warpui::r#async::block_on(rx);
-    }
-}
 
-fn terminal_model(background_executor: Arc<Background>) -> Arc<FairMutex<TerminalModel>> {
-    Arc::new(FairMutex::new(TerminalModel::new_for_test(
-        // This BlockSize contains arbitrary values.
-        BlockSize {
-            block_padding: BlockPadding {
-                padding_top: 0.5,
-                command_padding_top: 0.5,
-                middle: 0.5,
-                bottom: 0.5,
-            },
-            size: SizeInfo::new_for_test_with_width_and_height(7., 10.5),
-            max_block_scroll_limit: 1000,
-            prompt_height: 1.,
-        },
-        List::from(&WarpTheme::default().into()),
-        ChannelEventListener::new_for_test(),
-        background_executor,
-        false,
-        None,
-        false,
-        None,
-    )))
-}
+        // Nothing was written to the PTY...
+        assert!(
+            harness.event_loop_rx.try_recv().is_err(),
+            "parked command must not reach the PTY while the line editor is inactive"
+        );
+        // ...so the block must not be considered started yet. Marking it
+        // started here is what wedges a restored pane in a phantom
+        // "command already running" state if the write never drains.
+        assert!(
+            !active_block_is_started(&harness.terminal_model),
+            "block must not start until the command bytes are actually written"
+        );
 
-fn assert_input_matches(message: &Message, expected_bytes: Vec<u8>) {
-    assert!(matches!(message, Message::Input(bytes) if bytes.to_vec() == expected_bytes));
-}
+        // Once the shell reports its line editor as active, the queued command
+        // drains: the bytes reach the PTY and the block starts.
+        harness
+            .line_editor_status
+            .update(&mut app, |status, ctx| status.set_active_for_test(ctx));
 
-/// Returns a vector containing the bytes we expect to be written to the PTY to execute the given
-/// `command` in the given `Shell`.
-fn expected_command_bytes(command: &str, shell: &Shell) -> Vec<u8> {
-    let mut bytes = shell.shell_type().kill_buffer_bytes().to_vec();
-    bytes.extend(command.as_bytes().to_vec());
-    bytes.extend(shell.shell_type().execute_command_bytes());
-    bytes
+        assert!(
+            matches!(harness.event_loop_rx.try_recv(), Ok(Message::Input(_))),
+            "queued command should be written once the line editor is active"
+        );
+        assert!(
+            active_block_is_started(&harness.terminal_model),
+            "block should start when the queued command is written"
+        );
+    });
 }
 
 #[test]
-fn test_pty_controller_writes_user_command() {
-    let (event_loop_tx, event_loop_rx) = mio_extras::channel::channel();
-    let background_executor = Arc::new(Background::default());
-    let mut controller = PtyController::new(
-        event_loop_tx,
-        background_executor.clone(),
-        terminal_model(background_executor),
-    );
+fn write_command_while_line_editor_active_starts_block_immediately() {
+    App::test((), |mut app| async move {
+        let harness = build_pty_controller(&mut app);
 
-    let shell = Shell::new(ShellType::Zsh, None, None, Default::default(), None);
-    assert!(controller.write_user_command("echo foo", &shell).is_ok());
-    controller.flush_pty_writes();
+        harness
+            .line_editor_status
+            .update(&mut app, |status, ctx| status.set_active_for_test(ctx));
 
-    let message = event_loop_rx
-        .try_recv()
-        .expect("PtyController should have sent write.");
-    assert!(
-        matches!(message, Message::Input(bytes) if bytes.to_vec() == expected_command_bytes("echo foo", &shell))
-    );
+        harness.controller.update(&mut app, |controller, ctx| {
+            controller.write_command(
+                "echo foo",
+                ShellType::Zsh,
+                CommandExecutionSource::User,
+                ctx,
+            );
+        });
+
+        assert!(
+            matches!(harness.event_loop_rx.try_recv(), Ok(Message::Input(_))),
+            "command should be written directly when the line editor is active"
+        );
+        assert!(
+            active_block_is_started(&harness.terminal_model),
+            "block should be started as soon as the command is written"
+        );
+    });
 }
 
 #[test]
-fn test_pty_controller_writes_in_band_command() {
-    let (event_loop_tx, event_loop_rx) = mio_extras::channel::channel();
-    let background_executor = Arc::new(Background::default());
-    let mut controller = PtyController::new(
-        event_loop_tx,
-        background_executor.clone(),
-        terminal_model(background_executor),
-    );
+fn abort_command_start_recovers_block_when_command_never_executes() {
+    App::test((), |mut app| async move {
+        let harness = build_pty_controller(&mut app);
 
-    let shell = Shell::new(ShellType::Zsh, None, None, Default::default(), None);
-    assert!(controller.write_in_band_command("echo foo", &shell).is_ok());
-    controller.flush_pty_writes();
+        harness
+            .line_editor_status
+            .update(&mut app, |status, ctx| status.set_active_for_test(ctx));
 
-    let message = event_loop_rx
-        .try_recv()
-        .expect("PtyController should have sent write.");
-    assert_input_matches(&message, expected_command_bytes("echo foo", &shell));
+        harness.controller.update(&mut app, |controller, ctx| {
+            controller.write_command("ca", ShellType::Zsh, CommandExecutionSource::User, ctx);
+        });
+        assert!(active_block_is_started(&harness.terminal_model));
+        let block_id = active_block_id(&harness.terminal_model);
+
+        // No preexec ever arrives (the shell never executed the line). The
+        // reconciler must revert the phantom start so the pane accepts
+        // commands again instead of reporting "command already running".
+        harness.controller.update(&mut app, |controller, ctx| {
+            controller.abort_command_start_if_unexecuted(&block_id, ctx);
+        });
+
+        let terminal_model = harness.terminal_model.lock();
+        let active_block = terminal_model.block_list().active_block();
+        assert!(
+            !active_block.started(),
+            "phantom start should be reverted when the command never executed"
+        );
+        assert!(
+            !active_block.is_active_and_long_running(),
+            "an aborted block must not read as an active long-running command"
+        );
+    });
 }
 
 #[test]
-fn test_pty_controller_updates_block_list_when_writing_in_band_command() {
-    let (event_loop_tx, _) = mio_extras::channel::channel();
-    let background_executor = Arc::new(Background::default());
-    let terminal_model = terminal_model(background_executor.clone());
-    let mut controller =
-        PtyController::new(event_loop_tx, background_executor, terminal_model.clone());
+fn abort_command_start_is_noop_once_command_is_executing() {
+    App::test((), |mut app| async move {
+        let harness = build_pty_controller(&mut app);
 
-    let shell = Shell::new(ShellType::Zsh, None, None, Default::default(), None);
-    assert!(controller.write_in_band_command("echo foo", &shell).is_ok());
-    controller.flush_pty_writes();
+        harness
+            .line_editor_status
+            .update(&mut app, |status, ctx| status.set_active_for_test(ctx));
 
-    assert!(terminal_model
-        .lock()
-        .block_list()
-        .is_writing_or_executing_in_band_command());
-}
+        harness.controller.update(&mut app, |controller, ctx| {
+            controller.write_command(
+                "sleep 100",
+                ShellType::Zsh,
+                CommandExecutionSource::User,
+                ctx,
+            );
+        });
+        let block_id = active_block_id(&harness.terminal_model);
 
-#[test]
-fn test_pty_controller_writes_input_buffer_sequence_after_block_completed() {
-    let (event_loop_tx, event_loop_rx) = mio_extras::channel::channel();
-    let background_executor = Arc::new(Background::default());
+        // The shell acknowledges execution via the preexec hook.
+        harness.terminal_model.lock().preexec(PreexecValue {
+            command: "sleep 100".to_owned(),
+            session_id: None,
+        });
 
-    let mut controller = PtyController::new(
-        event_loop_tx,
-        background_executor.clone(),
-        terminal_model(background_executor),
-    );
-    controller.set_state_after_block_completed(
-        &BlockType::User(UserBlockCompleted {
-            serialized_block: SerializedBlock::new_for_test("echo foo".as_bytes().to_vec(), vec![])
-                .into(),
-            command: "echo foo".to_owned(),
-            output_truncated: "".to_owned(),
-            started_at: None,
-            num_output_lines: 0,
-            num_output_lines_truncated: 0,
-            shell_type: None,
-        }),
-        true,
-    );
-    controller.flush_pty_writes();
+        harness.controller.update(&mut app, |controller, ctx| {
+            controller.abort_command_start_if_unexecuted(&block_id, ctx);
+        });
 
-    let message = event_loop_rx
-        .try_recv()
-        .expect("PtyController should have sent write.");
-    assert_input_matches(&message, vec![escape_sequences::C0::ESC, b'i']);
-}
-
-#[test]
-fn test_pty_controller_writes_in_band_command_after_input_buffer_sequence() {
-    let (event_loop_tx, event_loop_rx) = mio_extras::channel::channel();
-    let background_executor = Arc::new(Background::default());
-    let mut controller = PtyController::new(
-        event_loop_tx,
-        background_executor.clone(),
-        terminal_model(background_executor),
-    );
-
-    let shell = Shell::new(ShellType::Zsh, None, None, Default::default(), None);
-    controller.set_state_after_block_completed(
-        &BlockType::User(UserBlockCompleted {
-            serialized_block: SerializedBlock::new_for_test("echo foo".as_bytes().to_vec(), vec![])
-                .into(),
-            command: "echo foo".to_owned(),
-            output_truncated: "".to_owned(),
-            started_at: None,
-            num_output_lines: 0,
-            num_output_lines_truncated: 0,
-            shell_type: None,
-        }),
-        true,
-    );
-    assert!(controller.write_in_band_command("echo foo", &shell).is_ok());
-    controller.flush_pty_writes();
-
-    let mut messages = vec![];
-    while let Ok(message) = event_loop_rx.try_recv() {
-        messages.push(message);
-    }
-    assert_eq!(messages.len(), 2);
-    assert_input_matches(&messages[0], vec![escape_sequences::C0::ESC, b'i']);
-
-    assert_input_matches(&messages[1], expected_command_bytes("echo foo", &shell));
-}
-
-#[test]
-fn test_pty_controller_cancels_async_writes_upon_user_command() {
-    let (event_loop_tx, event_loop_rx) = mio_extras::channel::channel();
-    let background_executor = Arc::new(Background::default());
-    let mut controller = PtyController::new(
-        event_loop_tx,
-        background_executor.clone(),
-        terminal_model(background_executor),
-    );
-
-    controller.set_state_after_block_completed(
-        &BlockType::User(UserBlockCompleted {
-            serialized_block: SerializedBlock::new_for_test("echo foo".as_bytes().to_vec(), vec![])
-                .into(),
-            command: "echo foo".to_owned(),
-            output_truncated: "".to_owned(),
-            started_at: None,
-            num_output_lines: 0,
-            num_output_lines_truncated: 0,
-            shell_type: None,
-        }),
-        true,
-    );
-    let shell = Shell::new(ShellType::Zsh, None, None, Default::default(), None);
-    // Writing this command should cancel writing the input buffer escape sequence, which is
-    // written after a 50ms delay. Since only ~25 ms has passed the write should not have
-    // occurred yet.
-    assert!(controller.write_user_command("echo foo", &shell).is_ok());
-    controller.flush_pty_writes();
-
-    let mut messages = vec![];
-    while let Ok(message) = event_loop_rx.try_recv() {
-        messages.push(message);
-    }
-    assert_eq!(messages.len(), 1);
-
-    assert_input_matches(&messages[0], expected_command_bytes("echo foo", &shell));
+        let terminal_model = harness.terminal_model.lock();
+        let active_block = terminal_model.block_list().active_block();
+        assert!(
+            active_block.started(),
+            "a genuinely executing command must not be aborted"
+        );
+        assert!(active_block.is_executing());
+    });
 }

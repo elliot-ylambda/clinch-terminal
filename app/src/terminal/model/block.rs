@@ -1183,6 +1183,16 @@ impl Block {
         self.wakeup_after_delay();
     }
 
+    /// Reverts [`Self::start`] for a block whose command never began executing
+    /// (no preexec was received), returning it to accepting a new command.
+    /// Must only be called while the block is still in
+    /// [`BlockState::BeforeExecution`].
+    pub fn abort_start(&mut self) {
+        self.start_ts = None;
+        self.was_long_running.store(false, Ordering::Relaxed);
+        self.header_grid.abort_command_start();
+    }
+
     /// Returns the `env_var_metadata` associated with this block, if any.
     pub fn env_var_metadata(&self) -> Option<&BlocklistEnvVarMetadata> {
         self.env_var_metadata.as_ref()
