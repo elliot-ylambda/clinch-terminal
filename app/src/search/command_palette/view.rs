@@ -1,19 +1,27 @@
 use std::collections::HashSet;
 use std::ops::Deref;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use itertools::Itertools;
 use lazy_static::lazy_static;
+use pathfinder_geometry::vector::vec2f;
+use settings::Setting;
 use warp_core::send_telemetry_from_app_ctx;
 use warp_util::path::LineAndColumnArg;
 use warpui::elements::{
-    Align, Border, ChildView, Clipped, ClippedScrollStateHandle, ClippedScrollable, ConstrainedBox,
-    Container, CornerRadius, Dismiss, DispatchEventResult, Empty, EventHandler, Fill, Flex,
-    ParentElement, Radius, SavePosition, Shrinkable,
+    Align, Border, ChildAnchor, ChildView, Clipped, ClippedScrollStateHandle, ClippedScrollable,
+    ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Dismiss, DispatchEventResult,
+    Empty, EventHandler, Fill, Flex, MainAxisAlignment, OffsetPositioning, ParentAnchor,
+    ParentElement, ParentOffsetBounds, Radius, SavePosition, Shrinkable, Stack, Text,
 };
 use warpui::event::KeyState;
 use warpui::keymap::BindingId;
 use warpui::platform::keyboard::KeyCode;
+use warpui::ui_components::components::{Coords, UiComponentStyles};
+use warpui::ui_components::segmented_control::{
+    LabelConfig, RenderableOptionConfig, SegmentedControl, SegmentedControlEvent,
+};
 use warpui::units::{IntoPixels, Pixels};
 use warpui::{
     AppContext, Element, Entity, EntityId, FocusContext, ModelHandle, SingletonEntity,
@@ -25,10 +33,12 @@ use super::CommandPaletteMixer;
 use crate::appearance::Appearance;
 use crate::drive::CloudObjectTypeAndId;
 use crate::features::FeatureFlag;
+use crate::menu::{Event as MenuEvent, Menu, MenuItemFields, MenuVariant};
 use crate::palette::PaletteMode;
 use crate::root_view::OpenLaunchConfigArg;
 use crate::search::action::search_item::MatchedBinding;
 use crate::search::binding_source::{BindingFilterFn, BindingSource};
+use crate::search::command_palette::agent_conversations::{AgentFilter, DataSource, ScopeFilter};
 use crate::search::command_palette::data_sources::DataSourceStore;
 use crate::search::command_palette::mixer::CommandPaletteItemAction;
 use crate::search::command_palette::zero_state::{self, Event as ZeroStateEvent, ZeroState};
@@ -42,9 +52,15 @@ use crate::search::QueryFilter;
 use crate::server::ids::SyncId;
 use crate::server::telemetry::{LaunchConfigUiLocation, TelemetryEvent};
 use crate::session_management::SessionSource;
-use crate::settings::CtrlTabBehavior;
+use crate::settings::{
+    agent_conversation_finder_agent_value, agent_conversation_finder_scope_value,
+    parse_agent_conversation_finder_agent, parse_agent_conversation_finder_scope, ClinchSettings,
+    CtrlTabBehavior,
+};
+use crate::terminal::cli_agent::CLIAgent;
 use crate::terminal::keys_settings::KeysSettings;
 use crate::themes::theme::WarpTheme;
+use crate::view_components::action_button::{ActionButton, ButtonSize, SecondaryTheme};
 use crate::view_components::DismissibleToast;
 use crate::workspace::{active_terminal_in_window, ForkedConversationDestination, WorkspaceAction};
 use crate::{send_telemetry_from_ctx, ToastStack};
@@ -72,15 +88,34 @@ const MAX_SEARCH_RESULTS: usize = 250;
 /// Number of recently selected items to show in the zero state.
 const NUM_RECENT_ITEMS_IN_ZERO_STATE: usize = 3;
 
+fn agent_conversation_filter_styles(app: &AppContext) -> UiComponentStyles {
+    let appearance = Appearance::as_ref(app);
+    let theme = appearance.theme();
+
+    UiComponentStyles {
+        font_family_id: Some(appearance.ui_font_family()),
+        font_size: Some(appearance.ui_font_size()),
+        border_radius: Some(CornerRadius::with_all(Radius::Pixels(4.0))),
+        border_width: Some(1.0),
+        border_color: Some(Fill::Solid(theme.surface_3().into())),
+        background: Some(Fill::Solid(theme.background().into())),
+        height: Some(20.0),
+        padding: Some(Coords::uniform(0.0)),
+        ..Default::default()
+    }
+}
+
 struct ViewState {
     clipped_scroll_state: ClippedScrollStateHandle,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Action {
     ResultClicked { action: CommandPaletteItemAction },
     Close,
     CtrlPressed(bool),
+    ToggleAgentConversationFolderMenu,
+    SelectAgentConversationFolder { root: PathBuf, display_name: String },
 }
 
 #[derive(Debug)]
@@ -130,6 +165,12 @@ pub struct View {
     suggested_binding_ids: Vec<BindingId>,
     /// Store of all the data sources that should be used for the [`SearchMixer`].
     pub data_source_store: ModelHandle<DataSourceStore>,
+    agent_conversations_data_source: ModelHandle<DataSource>,
+    agent_conversation_scope_control: ViewHandle<SegmentedControl<ScopeFilter>>,
+    agent_conversation_agent_control: ViewHandle<SegmentedControl<AgentFilter>>,
+    agent_conversation_folder_button: ViewHandle<ActionButton>,
+    agent_conversation_folder_menu: ViewHandle<Menu<Action>>,
+    agent_conversation_folder_menu_open: bool,
     zero_state_items: ModelHandle<zero_state::Items>,
 
     /// The current navigation mode.
@@ -159,6 +200,12 @@ impl TypedActionView for View {
                     self.accept_selected_item(ctx);
                 }
             }
+            Action::ToggleAgentConversationFolderMenu => {
+                self.toggle_agent_conversation_folder_menu(ctx);
+            }
+            Action::SelectAgentConversationFolder { root, display_name } => {
+                self.select_agent_conversation_folder(root.clone(), display_name.clone(), ctx);
+            }
         }
     }
 }
@@ -182,6 +229,9 @@ impl warpui::View for View {
         if matches!(self.navigation_mode, NavigationMode::Normal) {
             // Don't show the search bar when navigating with ctrl-tab.
             palette.add_child(self.render_search_bar());
+        }
+        if let Some(filters) = self.render_agent_conversation_filters(app) {
+            palette.add_child(filters);
         }
         palette.add_child(Shrinkable::new(1., body).finish());
 
@@ -227,6 +277,18 @@ impl warpui::View for View {
 
 impl View {
     pub fn new(navigation_mode: NavigationMode, ctx: &mut ViewContext<Self>) -> Self {
+        let (initial_scope, initial_agent) = {
+            let settings = ClinchSettings::as_ref(ctx);
+            (
+                parse_agent_conversation_finder_scope(
+                    settings.agent_conversation_finder_scope.as_str(),
+                ),
+                parse_agent_conversation_finder_agent(
+                    settings.agent_conversation_finder_agent.as_str(),
+                ),
+            )
+        };
+
         let search_bar_state = ctx.add_model(|_ctx| {
             SearchBarState::new(SearchResultOrdering::TopDown).with_max_results(MAX_SEARCH_RESULTS)
         });
@@ -241,6 +303,122 @@ impl View {
         let data_source_store = ctx.add_model(|ctx| {
             DataSourceStore::new(binding_source.clone(), session_source.clone(), ctx)
         });
+        let agent_conversations_data_source = data_source_store
+            .as_ref(ctx)
+            .agent_conversations_data_source();
+        agent_conversations_data_source.update(ctx, |source, ctx| {
+            source.set_scope(initial_scope, ctx);
+            source.set_agent(initial_agent, ctx);
+        });
+
+        let agent_conversation_scope_control = ctx.add_typed_action_view(|ctx| {
+            SegmentedControl::new(
+                vec![ScopeFilter::ThisProject, ScopeFilter::All],
+                |scope, is_selected, app| {
+                    let appearance = Appearance::as_ref(app);
+                    let theme = appearance.theme();
+                    let color = if is_selected {
+                        theme.accent().into()
+                    } else {
+                        theme.main_text_color(theme.background()).into()
+                    };
+                    Some(RenderableOptionConfig {
+                        icon_path: "",
+                        icon_color: color,
+                        label: Some(LabelConfig {
+                            label: scope.label().into(),
+                            width_override: None,
+                            color,
+                        }),
+                        tooltip: None,
+                        background: if is_selected {
+                            Fill::Solid(theme.surface_3().into())
+                        } else {
+                            Fill::None
+                        },
+                    })
+                },
+                initial_scope,
+                agent_conversation_filter_styles(ctx),
+            )
+        });
+        ctx.subscribe_to_view(&agent_conversation_scope_control, |me, _, event, ctx| {
+            let SegmentedControlEvent::OptionSelected(scope) = event;
+            me.set_agent_conversation_scope(*scope, ctx);
+        });
+
+        let agent_conversation_agent_control = ctx.add_typed_action_view(|ctx| {
+            SegmentedControl::new(
+                vec![AgentFilter::All, AgentFilter::Claude, AgentFilter::Codex],
+                |filter, is_selected, app| {
+                    let appearance = Appearance::as_ref(app);
+                    let theme = appearance.theme();
+                    let default_color = if is_selected {
+                        theme.accent().into()
+                    } else {
+                        theme.main_text_color(theme.background()).into()
+                    };
+                    let cli_agent = match filter {
+                        AgentFilter::All => None,
+                        AgentFilter::Claude => Some(CLIAgent::Claude),
+                        AgentFilter::Codex => Some(CLIAgent::Codex),
+                    };
+                    let icon_path = cli_agent
+                        .and_then(|agent| agent.icon())
+                        .map(Into::into)
+                        .unwrap_or("");
+                    let icon_color = cli_agent
+                        .and_then(|agent| agent.brand_color())
+                        .unwrap_or(default_color);
+                    Some(RenderableOptionConfig {
+                        icon_path,
+                        icon_color,
+                        label: Some(LabelConfig {
+                            label: filter.label().into(),
+                            width_override: None,
+                            color: default_color,
+                        }),
+                        tooltip: None,
+                        background: if is_selected {
+                            Fill::Solid(theme.surface_3().into())
+                        } else {
+                            Fill::None
+                        },
+                    })
+                },
+                initial_agent,
+                agent_conversation_filter_styles(ctx),
+            )
+        });
+        ctx.subscribe_to_view(&agent_conversation_agent_control, |me, _, event, ctx| {
+            let SegmentedControlEvent::OptionSelected(agent) = event;
+            me.set_agent_conversation_agent(*agent, ctx);
+        });
+
+        let agent_conversation_folder_button = ctx.add_typed_action_view(|_| {
+            ActionButton::new("Folder", SecondaryTheme)
+                .with_size(ButtonSize::XSmall)
+                .with_menu(true)
+                .on_click(|ctx| {
+                    ctx.dispatch_typed_action(Action::ToggleAgentConversationFolderMenu)
+                })
+        });
+        let agent_conversation_folder_menu = ctx.add_typed_action_view(|_| {
+            Menu::<Action>::new()
+                .with_menu_variant(MenuVariant::scrollable())
+                .with_width(340.)
+                .with_drop_shadow()
+                .prevent_interaction_with_other_elements()
+        });
+        ctx.subscribe_to_view(
+            &agent_conversation_folder_menu,
+            |me, _, event, ctx| match event {
+                MenuEvent::ItemSelected | MenuEvent::Close { .. } => {
+                    me.set_agent_conversation_folder_menu_open(false, ctx);
+                }
+                MenuEvent::ItemHovered => {}
+            },
+        );
 
         ctx.observe(&binding_source, |me, _, ctx| {
             me.on_binding_source_changed(ctx)
@@ -307,6 +485,12 @@ impl View {
             binding_source,
             session_source,
             data_source_store,
+            agent_conversations_data_source,
+            agent_conversation_scope_control,
+            agent_conversation_agent_control,
+            agent_conversation_folder_button,
+            agent_conversation_folder_menu,
+            agent_conversation_folder_menu_open: false,
             zero_state_handle: zero_state,
             placeholder_query_renderer: placeholder_element,
             suggested_binding_ids,
@@ -507,6 +691,166 @@ impl View {
         self.search_bar.update(ctx, |search_bar, ctx| {
             search_bar.run_query(ctx);
         });
+    }
+
+    fn set_agent_conversation_scope(&mut self, scope: ScopeFilter, ctx: &mut ViewContext<Self>) {
+        self.agent_conversations_data_source
+            .update(ctx, |source, ctx| {
+                source.set_selected_folder(None, ctx);
+                source.set_scope(scope, ctx);
+            });
+        self.agent_conversation_folder_button
+            .update(ctx, |button, ctx| button.set_label("Folder", ctx));
+        ClinchSettings::handle(ctx).update(ctx, |settings, ctx| {
+            if let Err(error) = settings.agent_conversation_finder_scope.set_value(
+                agent_conversation_finder_scope_value(scope).to_string(),
+                ctx,
+            ) {
+                log::error!("Error persisting agent conversation finder scope: {error}");
+            }
+        });
+        self.rerun_agent_conversation_query(ctx);
+    }
+
+    fn set_agent_conversation_agent(&mut self, agent: AgentFilter, ctx: &mut ViewContext<Self>) {
+        self.agent_conversations_data_source
+            .update(ctx, |source, ctx| source.set_agent(agent, ctx));
+        ClinchSettings::handle(ctx).update(ctx, |settings, ctx| {
+            if let Err(error) = settings.agent_conversation_finder_agent.set_value(
+                agent_conversation_finder_agent_value(agent).to_string(),
+                ctx,
+            ) {
+                log::error!("Error persisting agent conversation finder agent: {error}");
+            }
+        });
+        self.rerun_agent_conversation_query(ctx);
+    }
+
+    fn toggle_agent_conversation_folder_menu(&mut self, ctx: &mut ViewContext<Self>) {
+        let should_open = !self.agent_conversation_folder_menu_open;
+        if should_open {
+            let folders = self
+                .agent_conversations_data_source
+                .as_ref(ctx)
+                .recent_folders()
+                .to_vec();
+            let items = if folders.is_empty() {
+                vec![MenuItemFields::new("No recent folders")
+                    .with_disabled(true)
+                    .into_item()]
+            } else {
+                folders
+                    .into_iter()
+                    .map(|folder| {
+                        let conversation_count = if folder.count == 1 {
+                            "1 conversation".to_string()
+                        } else {
+                            format!("{} conversations", folder.count)
+                        };
+                        let subtitle =
+                            format!("{} · {conversation_count}", folder.root.to_string_lossy());
+                        MenuItemFields::new_with_stacked_label(
+                            folder.display_name.clone(),
+                            subtitle,
+                        )
+                        .with_on_select_action(Action::SelectAgentConversationFolder {
+                            root: folder.root,
+                            display_name: folder.display_name,
+                        })
+                        .into_item()
+                    })
+                    .collect()
+            };
+            self.agent_conversation_folder_menu
+                .update(ctx, |menu, ctx| menu.set_items(items, ctx));
+        }
+        self.set_agent_conversation_folder_menu_open(should_open, ctx);
+    }
+
+    fn set_agent_conversation_folder_menu_open(
+        &mut self,
+        is_open: bool,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        self.agent_conversation_folder_menu_open = is_open;
+        self.agent_conversation_folder_button
+            .update(ctx, |button, ctx| button.set_active(is_open, ctx));
+        ctx.notify();
+    }
+
+    fn select_agent_conversation_folder(
+        &mut self,
+        root: PathBuf,
+        display_name: String,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        self.agent_conversations_data_source
+            .update(ctx, |source, ctx| {
+                source.set_selected_folder(Some(root), ctx)
+            });
+        self.agent_conversation_folder_button
+            .update(ctx, |button, ctx| button.set_label(display_name, ctx));
+        self.rerun_agent_conversation_query(ctx);
+    }
+
+    fn rerun_agent_conversation_query(&self, ctx: &mut ViewContext<Self>) {
+        self.search_bar
+            .update(ctx, |search_bar, ctx| search_bar.run_query(ctx));
+    }
+
+    fn render_agent_conversation_filters(&self, app: &AppContext) -> Option<Box<dyn Element>> {
+        if !self.is_mode_enabled(PaletteMode::AgentConversations, app) {
+            return None;
+        }
+
+        let appearance = Appearance::as_ref(app);
+        let theme = appearance.theme();
+        let label_color = theme.main_text_color(theme.background()).into_solid();
+        let render_label = |label| {
+            Text::new_inline(
+                label,
+                appearance.ui_font_family(),
+                appearance.ui_font_size() - 1.,
+            )
+            .with_color(label_color)
+            .finish()
+        };
+
+        let mut folder_button = Stack::new()
+            .with_child(ChildView::new(&self.agent_conversation_folder_button).finish());
+        if self.agent_conversation_folder_menu_open {
+            folder_button.add_positioned_overlay_child(
+                ChildView::new(&self.agent_conversation_folder_menu).finish(),
+                OffsetPositioning::offset_from_parent(
+                    vec2f(0., 4.),
+                    ParentOffsetBounds::WindowByPosition,
+                    ParentAnchor::BottomLeft,
+                    ChildAnchor::TopLeft,
+                ),
+            );
+        }
+
+        let row = Flex::row()
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_main_axis_alignment(MainAxisAlignment::Start)
+            .with_spacing(6.)
+            .with_child(render_label("Scope:"))
+            .with_child(ChildView::new(&self.agent_conversation_scope_control).finish())
+            .with_child(folder_button.finish())
+            .with_child(
+                Container::new(render_label("Agent:"))
+                    .with_padding_left(8.)
+                    .finish(),
+            )
+            .with_child(ChildView::new(&self.agent_conversation_agent_control).finish())
+            .finish();
+
+        Some(
+            Container::new(row)
+                .with_horizontal_padding(styles::RESULT_PADDING_HORIZONTAL)
+                .with_padding_bottom(8.)
+                .finish(),
+        )
     }
 
     fn render_search_bar(&self) -> Box<dyn Element> {

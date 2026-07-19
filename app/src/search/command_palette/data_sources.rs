@@ -75,6 +75,10 @@ impl DataSourceStore {
         }
     }
 
+    pub fn agent_conversations_data_source(&self) -> ModelHandle<agent_conversations::DataSource> {
+        self.agent_conversations_data_source.clone()
+    }
+
     /// Resets the [`CommandPaletteMixer`] to the set of data sources that are relevant for the command palette.
     pub fn reset_search_mixer(
         &mut self,
