@@ -15,12 +15,6 @@ use crate::ai::blocklist::agent_view::agent_input_footer::{
 use crate::terminal::cli_agent_sessions::auto_continue::AutoContinueModel;
 #[cfg(feature = "local_tty")]
 use crate::terminal::cli_agent_sessions::CLIAgentSessionContext;
-#[cfg(all(
-    target_os = "macos",
-    feature = "clinch_imessage",
-    feature = "local_tty"
-))]
-use crate::terminal::cli_agent_sessions::CLIAgentSessionStatus;
 use crate::terminal::cli_agent_sessions::{CLIAgentInputEntrypoint, CLIAgentSessionsModel};
 use crate::terminal::shared_session::{
     SharedSessionActionSource, SharedSessionScrollbackType, SharedSessionSource,
@@ -967,34 +961,6 @@ impl TerminalView {
         let mut bytes = transfer.launch_command.into_bytes();
         bytes.push(b'\r');
         self.write_user_bytes_to_pty(bytes, ctx);
-    }
-
-    /// Revalidates a durable CLI-agent identity immediately before inserting
-    /// a reply received through Clinch's local iMessage bridge. This is the
-    /// only external-reply entry point: a stale pane ID, a busy/blocked turn,
-    /// or an exited foreground process must never receive the text.
-    #[cfg(all(
-        target_os = "macos",
-        feature = "local_tty",
-        feature = "clinch_imessage"
-    ))]
-    pub(crate) fn submit_external_imessage_reply(
-        &mut self,
-        expected_key: crate::terminal::cli_agent_sessions::CLIAgentSessionKey,
-        text: String,
-        ctx: &mut ViewContext<Self>,
-    ) -> bool {
-        let exact_idle_session = CLIAgentSessionsModel::as_ref(ctx)
-            .session(self.view_id)
-            .is_some_and(|session| {
-                session.session_key().as_ref() == Some(&expected_key)
-                    && matches!(session.status, CLIAgentSessionStatus::Success)
-            });
-        if !exact_idle_session || text.is_empty() || !self.is_long_running() {
-            return false;
-        }
-        self.submit_text_to_cli_agent_pty(text, ctx);
-        true
     }
 
     /// Simulates clipboard image paste for each pending image attachment by

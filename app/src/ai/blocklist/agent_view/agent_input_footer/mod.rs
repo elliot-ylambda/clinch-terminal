@@ -66,10 +66,6 @@ use crate::context_chips::display_chip::{DisplayChip, DisplayChipConfig, PromptC
 use crate::context_chips::prompt_type::PromptType;
 use crate::context_chips::{self, ContextChipKind};
 use crate::features::FeatureFlag;
-#[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
-use crate::imessage::{
-    IMessageConnectionStatus, IMessageCoordinator, IMessageCoordinatorEvent, IMessagePermission,
-};
 use crate::network::NetworkStatus;
 use crate::send_telemetry_from_ctx;
 #[cfg(feature = "voice_input")]
@@ -239,8 +235,6 @@ pub struct AgentInputFooter {
     quick_insert_add_button: ViewHandle<ActionButton>,
     rich_input_button: ViewHandle<ActionButton>,
     settings_button: ViewHandle<ActionButton>,
-    #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
-    message_me_button: ViewHandle<ActionButton>,
     install_plugin_button: ViewHandle<ActionButton>,
     plugin_instructions_button: ViewHandle<ActionButton>,
     update_plugin_button: ViewHandle<ActionButton>,
@@ -288,103 +282,6 @@ pub struct AgentInputFooter {
     /// Pending one-shot timer that refreshes the context-window button at the
     /// prompt-cache expiry instant so the yellow tint appears while idle.
     prompt_cache_expiry_timer_handle: Option<SpawnedFutureHandle>,
-}
-
-#[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
-#[derive(Debug, Eq, PartialEq)]
-struct IMessageFooterPresentation {
-    label: String,
-    tooltip: String,
-    active: bool,
-}
-
-#[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
-fn imessage_footer_presentation(
-    setup_complete: bool,
-    recipient_configured: bool,
-    status: &IMessageConnectionStatus,
-    globally_enabled: bool,
-    session_notifications_enabled: bool,
-    route_id: Option<&str>,
-) -> IMessageFooterPresentation {
-    if !setup_complete {
-        let (label, tooltip) = if !recipient_configured {
-            (
-                "Set up iMessage",
-                "Set up iMessage notifications in Clinch Settings",
-            )
-        } else {
-            match status {
-                IMessageConnectionStatus::Paused(IMessagePermission::FullDiskAccess) => (
-                    "iMessage: Enable access",
-                    "Enable Full Disk Access, then quit and reopen Clinch to continue setup",
-                ),
-                IMessageConnectionStatus::Paused(IMessagePermission::Automation) => (
-                    "iMessage: Allow Messages",
-                    "Allow Clinch to control Messages to continue setup",
-                ),
-                IMessageConnectionStatus::Paused(IMessagePermission::MessagesSignIn) => (
-                    "iMessage: Sign in",
-                    "Sign in to Messages to continue iMessage setup",
-                ),
-                IMessageConnectionStatus::AwaitingCalibrationReply => (
-                    "iMessage: Check your phone",
-                    "Reply with the one-time code in the Clinch setup message",
-                ),
-                IMessageConnectionStatus::CalibrationReplyMismatch => (
-                    "iMessage: Reply with code",
-                    "Clinch received your message, but it did not match the one-time setup code",
-                ),
-                IMessageConnectionStatus::ReadyToTest => (
-                    "iMessage: Ready to test",
-                    "Open Clinch Settings and select Test iMessage",
-                ),
-                IMessageConnectionStatus::SendingSetupMessage => (
-                    "iMessage: Sending test…",
-                    "Clinch is sending and confirming the setup message",
-                ),
-                IMessageConnectionStatus::Error => (
-                    "iMessage: Needs attention",
-                    "Open Clinch Settings to finish or restart iMessage setup",
-                ),
-                IMessageConnectionStatus::Disabled
-                | IMessageConnectionStatus::SetupRequired
-                | IMessageConnectionStatus::Connecting
-                | IMessageConnectionStatus::Connected => (
-                    "iMessage: Connecting…",
-                    "Clinch is setting up the configured phone number",
-                ),
-            }
-        };
-        return IMessageFooterPresentation {
-            label: label.to_owned(),
-            tooltip: tooltip.to_owned(),
-            active: false,
-        };
-    }
-
-    let preference = if session_notifications_enabled {
-        "Yes"
-    } else {
-        "No"
-    };
-    let route = route_id
-        .map(|route_id| format!(" Route {route_id}."))
-        .unwrap_or_default();
-    let tooltip = if globally_enabled {
-        format!(
-            "Get notified about this session: {preference}.{route} Click to change this session only."
-        )
-    } else {
-        format!(
-            "This session is set to {preference}, but iMessage notifications are paused globally in Clinch Settings.{route} Click to change this saved preference."
-        )
-    };
-    IMessageFooterPresentation {
-        label: format!("Get notified: {preference}"),
-        tooltip,
-        active: session_notifications_enabled,
-    }
 }
 
 impl AgentInputFooter {
@@ -608,37 +505,6 @@ impl AgentInputFooter {
                     ctx.dispatch_typed_action(AgentInputFooterAction::OpenCodingAgentSettings);
                 })
         });
-
-        #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
-        let message_me_button = ctx.add_typed_action_view(|_ctx| {
-            ActionButton::new("Set up iMessage", ClinchAccentButtonTheme)
-                .with_icon(Icon::Phone01)
-                .with_tooltip("Set up iMessage notifications in Clinch Settings")
-                .with_size(cli_button_size)
-                .with_tooltip_alignment(TooltipAlignment::Left)
-                .on_click(|ctx| {
-                    ctx.dispatch_typed_action(AgentInputFooterAction::ToggleIMessageNotifications);
-                })
-        });
-
-        #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
-        let imessage_terminal_view_id = terminal_view_id;
-        #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
-        ctx.subscribe_to_model(
-            &IMessageCoordinator::handle(ctx),
-            move |me, _, event, ctx| {
-                let relevant = matches!(event, IMessageCoordinatorEvent::Changed)
-                    || matches!(
-                        event,
-                        IMessageCoordinatorEvent::SessionChanged { terminal_view_id: event_view_id }
-                            if *event_view_id == imessage_terminal_view_id
-                    );
-                if relevant {
-                    me.sync_message_me_button(ctx);
-                    ctx.notify();
-                }
-            },
-        );
 
         let install_plugin_button = ctx.add_typed_action_view(|_ctx| {
             ActionButton::new("Enable notifications", InstallPluginButtonTheme)
@@ -1064,8 +930,6 @@ impl AgentInputFooter {
             quick_insert_add_button,
             rich_input_button,
             settings_button,
-            #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
-            message_me_button,
             start_remote_control_button,
             stop_remote_control_button,
             install_plugin_button,
@@ -1109,8 +973,6 @@ impl AgentInputFooter {
         };
         me.sync_fast_forward_button(ctx);
         me.sync_remote_control_button(ctx);
-        #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
-        me.sync_message_me_button(ctx);
         me.update_context_window_button(ctx);
         me.update_display_chips(&prompt, ctx);
         me.update_ftu_callout_render_state(ctx);
@@ -1251,31 +1113,6 @@ impl AgentInputFooter {
         CLIAgentSessionsModel::as_ref(app)
             .session(self.terminal_view_id)
             .map(|session| session.agent)
-    }
-
-    #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
-    fn sync_message_me_button(&mut self, ctx: &mut ViewContext<Self>) {
-        let coordinator = IMessageCoordinator::as_ref(ctx);
-        let configuration = coordinator.configuration();
-        let route_id = coordinator
-            .route_id_for_view(self.terminal_view_id)
-            .map(ToString::to_string);
-        let session_notifications_enabled = coordinator
-            .session_notifications_enabled(self.terminal_view_id)
-            .unwrap_or(configuration.notifications_enabled_by_default);
-        let presentation = imessage_footer_presentation(
-            configuration.setup_complete,
-            !configuration.recipient.trim().is_empty(),
-            coordinator.status(),
-            configuration.enabled,
-            session_notifications_enabled,
-            route_id.as_deref(),
-        );
-        self.message_me_button.update(ctx, |button, ctx| {
-            button.set_label(presentation.label, ctx);
-            button.set_tooltip(Some(presentation.tooltip), ctx);
-            button.set_active(presentation.active, ctx);
-        });
     }
 
     fn is_cli_agent_session_active(&self, app: &AppContext) -> bool {
@@ -2031,11 +1868,6 @@ impl AgentInputFooter {
             ) {
                 right_buttons.add_child(element);
             }
-        }
-
-        #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
-        if IMessageCoordinator::as_ref(app).has_supported_session(self.terminal_view_id) {
-            right_buttons.add_child(ChildView::new(&self.message_me_button).finish());
         }
 
         let content = Wrap::row()
@@ -2962,8 +2794,6 @@ pub enum AgentInputFooterAction {
     StartRemoteControl,
     StopRemoteControl,
     OpenCodingAgentSettings,
-    #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
-    ToggleIMessageNotifications,
     /// User clicked the "Hand off to cloud" footer chip. The terminal `Input`
     /// subscriber decides whether to dispatch the immediate empty-prompt
     /// handoff or enter `&` compose mode based on the current input state.
@@ -3240,20 +3070,6 @@ impl TypedActionView for AgentInputFooter {
                     page: SettingsSection::ThirdPartyCLIAgents,
                     widget_id: crate::settings_view::cli_agent_settings_widget_id(),
                 });
-            }
-            #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
-            AgentInputFooterAction::ToggleIMessageNotifications => {
-                let configuration = IMessageCoordinator::as_ref(ctx).configuration();
-                if configuration.setup_complete {
-                    let terminal_view_id = self.terminal_view_id;
-                    IMessageCoordinator::handle(ctx).update(ctx, |coordinator, ctx| {
-                        coordinator.toggle_session(terminal_view_id, ctx);
-                    });
-                } else {
-                    ctx.dispatch_typed_action_deferred(WorkspaceAction::ShowSettingsPage(
-                        SettingsSection::Clinch,
-                    ));
-                }
             }
             AgentInputFooterAction::HandoffChipClicked => {
                 if FeatureFlag::OzHandoff.is_enabled()
@@ -3689,127 +3505,5 @@ impl ActionButtonTheme for NLDButtonTheme {
 
     fn should_opt_out_of_contrast_adjustment(&self) -> bool {
         true
-    }
-}
-
-#[cfg(all(test, target_os = "macos", feature = "clinch_imessage"))]
-mod imessage_footer_tests {
-    use super::imessage_footer_presentation;
-    use crate::imessage::{IMessageConnectionStatus, IMessagePermission};
-
-    #[test]
-    fn imessage_footer_moves_from_setup_to_an_explicit_yes_no_toggle() {
-        let setup = imessage_footer_presentation(
-            false,
-            false,
-            &IMessageConnectionStatus::SetupRequired,
-            false,
-            true,
-            None,
-        );
-        assert_eq!(setup.label, "Set up iMessage");
-        assert!(!setup.active);
-
-        let enabled = imessage_footer_presentation(
-            true,
-            true,
-            &IMessageConnectionStatus::Connected,
-            true,
-            true,
-            Some("C7K2"),
-        );
-        assert_eq!(enabled.label, "Get notified: Yes");
-        assert!(enabled.active);
-        assert!(enabled.tooltip.contains("Route C7K2"));
-
-        let disabled = imessage_footer_presentation(
-            true,
-            true,
-            &IMessageConnectionStatus::Connected,
-            true,
-            false,
-            Some("C7K2"),
-        );
-        assert_eq!(disabled.label, "Get notified: No");
-        assert!(!disabled.active);
-    }
-
-    #[test]
-    fn submitted_number_immediately_replaces_the_setup_footer_state() {
-        let connecting = imessage_footer_presentation(
-            false,
-            true,
-            &IMessageConnectionStatus::Connecting,
-            true,
-            true,
-            None,
-        );
-        assert_eq!(connecting.label, "iMessage: Connecting…");
-
-        let permission = imessage_footer_presentation(
-            false,
-            true,
-            &IMessageConnectionStatus::Paused(IMessagePermission::FullDiskAccess),
-            true,
-            true,
-            None,
-        );
-        assert_eq!(permission.label, "iMessage: Enable access");
-
-        let ready = imessage_footer_presentation(
-            false,
-            true,
-            &IMessageConnectionStatus::ReadyToTest,
-            true,
-            true,
-            None,
-        );
-        assert_eq!(ready.label, "iMessage: Ready to test");
-
-        let sending = imessage_footer_presentation(
-            false,
-            true,
-            &IMessageConnectionStatus::SendingSetupMessage,
-            true,
-            true,
-            None,
-        );
-        assert_eq!(sending.label, "iMessage: Sending test…");
-
-        let awaiting = imessage_footer_presentation(
-            false,
-            true,
-            &IMessageConnectionStatus::AwaitingCalibrationReply,
-            true,
-            true,
-            None,
-        );
-        assert_eq!(awaiting.label, "iMessage: Check your phone");
-
-        let mismatch = imessage_footer_presentation(
-            false,
-            true,
-            &IMessageConnectionStatus::CalibrationReplyMismatch,
-            true,
-            true,
-            None,
-        );
-        assert_eq!(mismatch.label, "iMessage: Reply with code");
-        assert!(mismatch.tooltip.contains("did not match"));
-    }
-
-    #[test]
-    fn paused_global_delivery_keeps_the_saved_session_preference_visible() {
-        let presentation = imessage_footer_presentation(
-            true,
-            true,
-            &IMessageConnectionStatus::Disabled,
-            false,
-            true,
-            Some("C7K2"),
-        );
-        assert_eq!(presentation.label, "Get notified: Yes");
-        assert!(presentation.active);
-        assert!(presentation.tooltip.contains("paused globally"));
     }
 }

@@ -147,27 +147,6 @@ fn cli_agent_session_seed_poll_never_overwrites_a_structured_identity() {
 }
 
 #[test]
-#[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
-fn imessage_header_prompts_for_setup_until_setup_is_complete() {
-    assert_eq!(
-        imessage_header_setup_prompt(false, &IMessageConnectionStatus::SetupRequired),
-        Some("Use Clinch over iMessage to talk with Claude and Codex.")
-    );
-    assert_eq!(
-        imessage_header_setup_prompt(false, &IMessageConnectionStatus::ReadyToTest),
-        Some("iMessage is ready to test in Settings.")
-    );
-    assert_eq!(
-        imessage_header_setup_prompt(false, &IMessageConnectionStatus::CalibrationReplyMismatch,),
-        Some("Reply did not match—send the one-time setup code.")
-    );
-    assert_eq!(
-        imessage_header_setup_prompt(true, &IMessageConnectionStatus::Connected),
-        None
-    );
-}
-
-#[test]
 fn project_agent_count_only_includes_in_progress_claude_and_codex_sessions() {
     assert!(is_in_progress_project_agent(
         crate::terminal::CLIAgent::Claude,

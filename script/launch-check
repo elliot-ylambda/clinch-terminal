@@ -28,7 +28,6 @@ bash -n \
   script/assemble-clinch-corresponding-source \
   script/check_license_config_sync \
   script/assemble-clinch-release-stage \
-  script/build-clinch-imessage-bridge \
   script/configure-clinch-release-repository \
   script/dispatch-clinch-release \
   script/launch-check \

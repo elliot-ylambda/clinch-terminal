@@ -1,9 +1,8 @@
 # Two-way iMessage agent notifications: technical design
 
-> Shipping status: disabled. The implementation is retained behind the non-default
-> `clinch_imessage` Cargo feature. Current Clinch and ClinchDev builds omit the module, coordinator,
-> UI, helper, Apple Events entitlement, and usage description; the stable bundler rejects attempts
-> to enable it.
+> Status: removed. Clinch uses native desktop notifications only. The former module, coordinator,
+> UI, helper, Cargo feature, Apple Events entitlement, and usage description no longer ship or
+> exist in the build. The design below is retained solely as historical context.
 
 ## Context
 

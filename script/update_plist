@@ -285,16 +285,7 @@ if [[ "$APP_BUNDLE_ID" == "sh.clinch.Clinch" || "$APP_BUNDLE_ID" == "sh.clinch.C
     NSPhotoLibraryUsageDescription; do
     plutil -remove "$key" "$WARP_PLIST_PATH" 2>/dev/null || true
   done
-  if [[ "${CLINCH_IMESSAGE_FEATURE_ENABLED:-0}" == "1" ]]; then
-    plutil -replace NSAppleEventsUsageDescription -string \
-      "Clinch sends agent completion messages through the Messages app when you enable iMessage notifications." \
-      "$WARP_PLIST_PATH" 2>/dev/null \
-      || plutil -insert NSAppleEventsUsageDescription -string \
-        "Clinch sends agent completion messages through the Messages app when you enable iMessage notifications." \
-        "$WARP_PLIST_PATH"
-  else
-    plutil -remove NSAppleEventsUsageDescription "$WARP_PLIST_PATH" 2>/dev/null || true
-  fi
+  plutil -remove NSAppleEventsUsageDescription "$WARP_PLIST_PATH" 2>/dev/null || true
   plutil -replace LSMinimumSystemVersion -string "${MACOSX_DEPLOYMENT_TARGET:-14.0}" \
     "$WARP_PLIST_PATH" 2>/dev/null \
     || plutil -insert LSMinimumSystemVersion -string "${MACOSX_DEPLOYMENT_TARGET:-14.0}" \

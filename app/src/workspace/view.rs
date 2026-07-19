@@ -287,8 +287,6 @@ use crate::editor::{
 use crate::env_vars::manager::{EnvVarCollectionManager, EnvVarCollectionSource};
 use crate::env_vars::CloudEnvVarCollection;
 use crate::experiments::{BlockOnboarding, Experiment};
-#[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
-use crate::imessage::{IMessageConnectionStatus, IMessageCoordinator, IMessagePermission};
 use crate::launch_configs::launch_config::WindowTemplate;
 use crate::launch_configs::save_modal::{LaunchConfigModalEvent, LaunchConfigSaveModal};
 use crate::menu::{Event as MenuEvent, Menu, MenuItem, MenuItemFields, MenuSelectionSource};
@@ -715,45 +713,6 @@ const AUTO_CLOUD_HANDOFF_PROMPT: &str =
 
 /// The default display name used for the user if they have no associated display name.
 pub const DEFAULT_USER_DISPLAY_NAME: &str = "User";
-
-#[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
-const IMESSAGE_HEADER_SETUP_PROMPT: &str =
-    "Use Clinch over iMessage to talk with Claude and Codex.";
-
-#[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
-fn imessage_header_setup_prompt(
-    setup_complete: bool,
-    status: &IMessageConnectionStatus,
-) -> Option<&'static str> {
-    if setup_complete {
-        return None;
-    }
-    Some(match status {
-        IMessageConnectionStatus::SetupRequired => IMESSAGE_HEADER_SETUP_PROMPT,
-        IMessageConnectionStatus::Connecting => "Checking iMessage setup…",
-        IMessageConnectionStatus::ReadyToTest => "iMessage is ready to test in Settings.",
-        IMessageConnectionStatus::SendingSetupMessage => "Sending the iMessage setup test…",
-        IMessageConnectionStatus::AwaitingCalibrationReply => {
-            "Check your phone to finish iMessage setup."
-        }
-        IMessageConnectionStatus::CalibrationReplyMismatch => {
-            "Reply did not match—send the one-time setup code."
-        }
-        IMessageConnectionStatus::Paused(IMessagePermission::FullDiskAccess) => {
-            "Finish iMessage setup: Allow Full Disk Access."
-        }
-        IMessageConnectionStatus::Paused(IMessagePermission::Automation) => {
-            "Finish iMessage setup: Allow Messages access."
-        }
-        IMessageConnectionStatus::Paused(IMessagePermission::MessagesSignIn) => {
-            "Finish iMessage setup: Sign in to iMessage."
-        }
-        IMessageConnectionStatus::Error => "iMessage setup needs attention.",
-        IMessageConnectionStatus::Disabled | IMessageConnectionStatus::Connected => {
-            IMESSAGE_HEADER_SETUP_PROMPT
-        }
-    })
-}
 
 lazy_static! {
     static ref OPENING_WARP_DRIVE_ON_START_UP: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
@@ -3300,10 +3259,6 @@ impl Workspace {
         );
         ctx.subscribe_to_model(&CLIAgentSessionsModel::handle(ctx), |me, _, event, ctx| {
             me.handle_cli_agent_sessions_event(event, ctx);
-        });
-        #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
-        ctx.subscribe_to_model(&IMessageCoordinator::handle(ctx), |_, _, _, ctx| {
-            ctx.notify();
         });
 
         // Re-render tabs when a CLI-agent session's model changes.
@@ -21827,16 +21782,9 @@ impl Workspace {
                 self.render_agent_management_view_button(appearance, ctx)
             }
             HeaderToolbarItemKind::CodeReview => self.render_right_panel_button(appearance, ctx),
-            HeaderToolbarItemKind::IMessageStatus => {
-                #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
-                {
-                    self.render_imessage_status_button(appearance, ctx)
-                }
-                #[cfg(not(all(target_os = "macos", feature = "clinch_imessage")))]
-                {
-                    return None;
-                }
-            }
+            // Retain this variant so old serialized toolbar settings still load, but never
+            // render the removed AppleScript/iMessage integration.
+            HeaderToolbarItemKind::IMessageStatus => return None,
             HeaderToolbarItemKind::NotificationsMailbox => {
                 self.render_notifications_mailbox_button(appearance, ctx)
             }
@@ -21855,108 +21803,6 @@ impl Workspace {
             .with_margin_left(TAB_BAR_ICON_PADDING)
             .finish(),
         )
-    }
-
-    #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
-    fn render_imessage_status_button(
-        &self,
-        appearance: &Appearance,
-        ctx: &AppContext,
-    ) -> Box<dyn Element> {
-        let coordinator = IMessageCoordinator::as_ref(ctx);
-        if let Some(prompt) = imessage_header_setup_prompt(
-            coordinator.configuration().setup_complete,
-            coordinator.status(),
-        ) {
-            let theme = appearance.theme();
-            let foreground = internal_colors::accent_fg_strong(theme);
-            let label = Flex::row()
-                .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                .with_child(
-                    ConstrainedBox::new(icons::Icon::Phone01.to_warpui_icon(foreground).finish())
-                        .with_width(14.)
-                        .with_height(14.)
-                        .finish(),
-                )
-                .with_child(
-                    Shrinkable::new(
-                        1.,
-                        Container::new(
-                            Text::new_inline(prompt, appearance.ui_font_family(), 12.)
-                                .with_color(foreground.into())
-                                .with_style(Properties::default().weight(Weight::Semibold))
-                                .with_clip(ClipConfig::ellipsis())
-                                .finish(),
-                        )
-                        .with_margin_left(6.)
-                        .finish(),
-                    )
-                    .finish(),
-                )
-                .finish();
-
-            let default_styles = UiComponentStyles {
-                background: Some(internal_colors::accent_overlay_1(theme).into()),
-                border_color: Some(theme.accent().into()),
-                border_radius: Some(CornerRadius::with_all(Radius::Pixels(4.))),
-                border_width: Some(1.),
-                height: Some(24.),
-                padding: Some(Coords {
-                    top: 0.,
-                    bottom: 0.,
-                    left: 8.,
-                    right: 8.,
-                }),
-                ..Default::default()
-            };
-            let hovered_styles = UiComponentStyles {
-                background: Some(internal_colors::accent_overlay_2(theme).into()),
-                ..default_styles
-            };
-            let clicked_styles = UiComponentStyles {
-                background: Some(internal_colors::accent_overlay_3(theme).into()),
-                ..default_styles
-            };
-
-            let button = Button::new(
-                self.mouse_states.imessage_status.clone(),
-                default_styles,
-                Some(hovered_styles),
-                Some(clicked_styles),
-                None,
-            )
-            .with_custom_label(label)
-            .with_tooltip(self.render_tab_bar_icon_button_tooltip(
-                appearance,
-                coordinator.status().label().to_owned(),
-                Some("Open Clinch iMessage settings".to_owned()),
-            ))
-            .build()
-            .on_click(|ctx, _, _| {
-                ctx.dispatch_typed_action(WorkspaceAction::ShowSettingsPage(
-                    SettingsSection::Clinch,
-                ));
-            })
-            .finish();
-
-            return ConstrainedBox::new(button).with_max_width(380.).finish();
-        }
-
-        let connected = matches!(
-            coordinator.status(),
-            crate::imessage::IMessageConnectionStatus::Connected
-        );
-        self.render_tab_bar_icon_button(
-            appearance,
-            icons::Icon::Phone01,
-            &self.mouse_states.imessage_status,
-            WorkspaceAction::ShowSettingsPage(SettingsSection::Clinch),
-            coordinator.status().label().to_owned(),
-            Some("Open Clinch iMessage settings".to_owned()),
-            connected,
-            false,
-        )
-        .finish()
     }
 
     /// Renders the notifications mailbox button (extracted for reuse from

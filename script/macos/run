@@ -21,12 +21,6 @@ cd "${REPO_ROOT}"
 : "${WARP_CHANNEL:?WARP_CHANNEL must be set (invoke via ./script/run)}"
 : "${FEATURES:?FEATURES must be set (invoke via ./script/run)}"
 
-if [[ ",$FEATURES," =~ ",clinch_imessage," ]]; then
-    export CLINCH_IMESSAGE_FEATURE_ENABLED=1
-else
-    export CLINCH_IMESSAGE_FEATURE_ENABLED=0
-fi
-
 # Resolve Cargo's actual target directory rather than assuming ./target. This
 # honors a shared CARGO_TARGET_DIR / build.target-dir (e.g. set in
 # ~/.cargo/config.toml), which is where `cargo bundle` writes the .app bundle.
@@ -143,11 +137,6 @@ NO_LICENSES=1 "${REPO_ROOT}/script/prepare_bundled_resources" "$WARP_APP_PATH/Co
 
 "${REPO_ROOT}/script/compile_icon" "$WARP_CHANNEL" "$WARP_APP_PATH"
 
-if [ "$WARP_CHANNEL" = "local" ] && [ "$CLINCH_IMESSAGE_FEATURE_ENABLED" = "1" ]; then
-  echo "Bundling the Clinch iMessage bridge..."
-  "${REPO_ROOT}/script/build-clinch-imessage-bridge" "$WARP_APP_PATH/Contents/Helpers"
-fi
-
 if [[ ",$FEATURES," =~ ",heap_usage_tracking," ]]; then
   echo "Bundling pprof..."
   HELPERS_DIR="$WARP_APP_PATH/Contents/Helpers"
@@ -165,17 +154,10 @@ fi
 echo "Codesigning app..."
 SIGNING_CERT="$(security find-identity -p codesigning -v | grep "Apple Development" | awk '{print $2}' | head -1)"
 SIGNING_ENTITLEMENTS="script/Debug-Entitlements.plist"
-if [ "$WARP_CHANNEL" = "local" ] && [ "$CLINCH_IMESSAGE_FEATURE_ENABLED" != "1" ]; then
+if [ "$WARP_CHANNEL" = "local" ]; then
   SIGNING_ENTITLEMENTS="script/Clinch-Debug-Entitlements.plist"
 fi
 codesign --force --deep --options runtime --sign "${SIGNING_CERT:--}" "$WARP_APP_PATH" --entitlements "$SIGNING_ENTITLEMENTS"
-if [[ -x "$WARP_APP_PATH/Contents/Helpers/clinch-imessage-bridge" ]]; then
-  codesign --force --options runtime --sign "${SIGNING_CERT:--}" \
-    --entitlements "$SIGNING_ENTITLEMENTS" \
-    "$WARP_APP_PATH/Contents/Helpers/clinch-imessage-bridge"
-  codesign --force --options runtime --sign "${SIGNING_CERT:--}" \
-    --entitlements "$SIGNING_ENTITLEMENTS" "$WARP_APP_PATH"
-fi
 
 if [ "$DONT_OPEN" = false ] ; then
     if  [ "$OPEN_WITH_LAUNCHD" = true ]; then

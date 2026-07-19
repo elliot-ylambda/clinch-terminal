@@ -81,7 +81,7 @@ verify_app() {
     fi
   done
   if /usr/libexec/PlistBuddy -c 'Print NSAppleEventsUsageDescription' "$plist" >/dev/null 2>&1; then
-    fail "$label carries the disabled Apple Events usage description"
+    fail "$label carries the removed Apple Events usage description"
   fi
 
   binary="$app/Contents/MacOS/stable"
@@ -116,7 +116,7 @@ verify_app() {
     "$app/Contents/Helpers/clinch-imessage-bridge" \
     "$app/Contents/Helpers/PhoneNumberKit_PhoneNumberKit.bundle" \
     "$app/Contents/Helpers/SQLite.swift_SQLite.bundle"; do
-    [[ ! -e "$item" ]] || fail "$label bundled disabled component ${item#"$app/"}"
+    [[ ! -e "$item" ]] || fail "$label bundled removed component ${item#"$app/"}"
   done
   [[ ! -e "$app/Contents/Resources/agent-resume/install-agent-plugins.sh" ]] \
     || fail "$label bundled the floating provider-plugin installer"
