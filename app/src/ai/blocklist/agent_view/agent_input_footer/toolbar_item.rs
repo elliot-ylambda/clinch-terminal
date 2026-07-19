@@ -118,6 +118,10 @@ impl AgentToolbarItemKind {
         }
     }
 
+    pub fn is_available_for_terminal(&self) -> bool {
+        matches!(self, Self::CustomInsert { .. })
+    }
+
     /// Whether this item should be visible to session viewers.
     /// Items that control host settings or initiate actions on the host's
     /// behalf are hidden from viewers.
@@ -364,6 +368,33 @@ impl AgentToolbarItemKind {
             items.push(Self::ShareSession);
         }
         items
+    }
+
+    /// Default left-side items for the plain terminal footer.
+    pub fn terminal_default_left() -> Vec<Self> {
+        [
+            ("Claude", "ca"),
+            ("Codex", "cx"),
+            ("Claude resume", "ca --resume"),
+            ("Codex resume", "codex resume"),
+            ("Open", "open ."),
+        ]
+        .into_iter()
+        .map(|(label, text)| Self::CustomInsert {
+            label: label.to_owned(),
+            text: text.to_owned(),
+        })
+        .collect()
+    }
+
+    /// Default right-side items for the plain terminal footer.
+    pub fn terminal_default_right() -> Vec<Self> {
+        Vec::new()
+    }
+
+    /// Items available when resetting the plain terminal footer configurator.
+    pub fn all_available_for_terminal_input() -> Vec<Self> {
+        Self::terminal_default_left()
     }
 
     /// All items available for the CLI agent footer configurator.
