@@ -332,12 +332,20 @@ impl AgentToolbarItemKind {
             Self::LooksGoodPrompt,
             Self::TransferAgent,
             Self::CustomInsert {
+                label: "/codex".to_owned(),
+                text: "/codex".to_owned(),
+            },
+            Self::CustomInsert {
                 label: "Make No Mistakes".to_owned(),
                 text: "Do it all for me. I'm stepping away. Don't make any mistakes.".to_owned(),
             },
             Self::CustomInsert {
                 label: "Create a PR".to_owned(),
                 text: "Create a PR, then merge main into this PR".to_owned(),
+            },
+            Self::CustomInsert {
+                label: "Worktree-Build".to_owned(),
+                text: "OK go into an isolated work tree. Plan this out, then implement it and create a pull request.".to_owned(),
             },
             Self::CustomInsert {
                 label: "Review w/ Codex Sol Max".to_owned(),

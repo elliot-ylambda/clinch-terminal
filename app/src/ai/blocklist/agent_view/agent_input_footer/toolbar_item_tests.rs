@@ -157,8 +157,12 @@ fn agent_transfer_is_a_default_cli_host_control() {
 fn cli_default_left_includes_expected_quick_inserts() {
     let items = AgentToolbarItemKind::cli_default_left();
     assert_eq!(
-        &items[5..11],
+        &items[5..13],
         &[
+            AgentToolbarItemKind::CustomInsert {
+                label: "/codex".to_owned(),
+                text: "/codex".to_owned(),
+            },
             AgentToolbarItemKind::CustomInsert {
                 label: "Make No Mistakes".to_owned(),
                 text: "Do it all for me. I'm stepping away. Don't make any mistakes.".to_owned(),
@@ -166,6 +170,10 @@ fn cli_default_left_includes_expected_quick_inserts() {
             AgentToolbarItemKind::CustomInsert {
                 label: "Create a PR".to_owned(),
                 text: "Create a PR, then merge main into this PR".to_owned(),
+            },
+            AgentToolbarItemKind::CustomInsert {
+                label: "Worktree-Build".to_owned(),
+                text: "OK go into an isolated work tree. Plan this out, then implement it and create a pull request.".to_owned(),
             },
             AgentToolbarItemKind::CustomInsert {
                 label: "Review w/ Codex Sol Max".to_owned(),
@@ -192,6 +200,12 @@ fn cli_default_left_includes_expected_quick_inserts() {
             text: "Push all these changes to main.".to_owned(),
         })
     );
+    assert!(!items.iter().any(|item| {
+        matches!(
+            item,
+            AgentToolbarItemKind::CustomInsert { label, .. } if label == "/codex-build"
+        )
+    }));
 }
 
 #[test]

@@ -12,7 +12,7 @@ fn bundled_skill_contents() -> String {
 fn bundled_skill_carries_a_managed_marker() {
     let contents = bundled_skill_contents();
     assert!(
-        contents.contains("<!-- managed-by: Clinch; version: 1.0.0 -->"),
+        contents.contains("<!-- managed-by: Clinch; version: 1.1.0 -->"),
         "the bundled skill must carry the Clinch managed marker"
     );
 }
@@ -54,6 +54,10 @@ fn bundled_skill_lists_every_default_custom_insert() {
             "SKILL.md is missing default item {name}"
         );
     }
+    assert!(
+        !contents.contains("/codex-build"),
+        "personal /codex-build skill must not be shipped as a default button"
+    );
 }
 
 const MANAGED_V1: &str = "---\nname: x\n---\n\n<!-- managed-by: Clinch; version: 1.0.0 -->\nbody";
