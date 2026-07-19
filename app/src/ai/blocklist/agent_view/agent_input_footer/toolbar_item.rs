@@ -332,6 +332,10 @@ impl AgentToolbarItemKind {
             Self::LooksGoodPrompt,
             Self::TransferAgent,
             Self::CustomInsert {
+                label: "Make No Mistakes".to_owned(),
+                text: "Do it all for me. I'm stepping away. Don't make any mistakes.".to_owned(),
+            },
+            Self::CustomInsert {
                 label: "Create a PR".to_owned(),
                 text: "Create a PR, then merge main into this PR".to_owned(),
             },
