@@ -73,10 +73,32 @@ version_is_at_least() {
   '
 }
 
+# A registered bundle path can vanish after installation (a cleaned dev build, a moved or
+# reinstalled app). The version check alone still reports the plugin as current then, so the
+# dead registration is never repaired and every provider hook fails until it is. Treat a
+# registered-but-missing marketplace directory as stale to force the reinstall that fixes it.
+claude_bundled_marketplace_is_stale() {
+  local claude_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+  local known="$claude_dir/plugins/known_marketplaces.json"
+  local location
+  [[ -f "$known" ]] || return 1
+  location="$(awk -v name="$CLAUDE_MARKETPLACE_NAME" '
+    index($0, "\"" name "\"") { in_entry = 1; next }
+    in_entry && /"installLocation"[[:space:]]*:/ {
+      sub(/^.*"installLocation"[[:space:]]*:[[:space:]]*"/, "")
+      sub(/".*$/, "")
+      print
+      exit
+    }
+  ' "$known")"
+  [[ -n "$location" && ! -d "$location" ]]
+}
+
 claude_plugin_is_current() {
   local claude_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
   local installed="$claude_dir/plugins/installed_plugins.json"
   local version
+  claude_bundled_marketplace_is_stale && return 1
   [[ -f "$installed" ]] || return 1
 
   # installed_plugins.json groups every install beneath its plugin id. Limit the version lookup
@@ -137,11 +159,33 @@ codex_marketplace_has_current_version() {
   return 1
 }
 
+# Same self-heal as claude_bundled_marketplace_is_stale: Codex records the bundled marketplace
+# source path in config.toml, and a dead path must force a reinstall rather than pass the
+# version check.
+codex_bundled_marketplace_is_stale() {
+  local codex_dir="${CODEX_HOME:-$HOME/.codex}"
+  local config="$codex_dir/config.toml"
+  local location
+  [[ -f "$config" ]] || return 1
+  location="$(awk -v section="[marketplaces.$CODEX_MARKETPLACE_NAME]" '
+    $0 == section { in_section = 1; next }
+    in_section && /^\[/ { exit }
+    in_section && /^[[:space:]]*source[[:space:]]*=[[:space:]]*"/ {
+      sub(/^[[:space:]]*source[[:space:]]*=[[:space:]]*"/, "")
+      sub(/".*$/, "")
+      print
+      exit
+    }
+  ' "$config")"
+  [[ -n "$location" && ! -d "$location" ]]
+}
+
 codex_plugin_is_current() {
   local codex_dir="${CODEX_HOME:-$HOME/.codex}"
   local config="$codex_dir/config.toml"
   [[ -f "$config" ]] || return 1
 
+  codex_bundled_marketplace_is_stale && return 1
   if codex_plugin_is_enabled "$config" "$CODEX_BUNDLED_PLUGIN_KEY" &&
     codex_marketplace_has_current_version "$codex_dir" "$CODEX_MARKETPLACE_NAME"; then
     return 0
