@@ -21,6 +21,7 @@ use crate::{report_if_error, Appearance};
 
 const AGENT_MODAL_TITLE: &str = "Edit agent toolbelt";
 const CLI_MODAL_TITLE: &str = "Edit CLI agent toolbelt";
+const TERMINAL_MODAL_TITLE: &str = "Edit terminal toolbelt";
 
 /// Controls which set of items and settings the editor modal operates on.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -28,6 +29,7 @@ pub enum AgentToolbarEditorMode {
     #[default]
     AgentView,
     CLIAgent,
+    Terminal,
 }
 pub enum AgentToolbarEditorEvent {
     Close,
@@ -87,6 +89,18 @@ fn open_toolbar_items_from_settings<V: View>(
                 selection.right_items(),
                 AgentToolbarItemKind::all_available_for_cli_input(),
             )
+        }
+        AgentToolbarEditorMode::Terminal => {
+            let selection = session_settings.terminal_footer_chip_selection.clone();
+            let current_left = selection.left_items();
+            let current_right = selection.right_items();
+            let mut available = AgentToolbarItemKind::all_available_for_terminal_input();
+            for item in current_left.iter().chain(&current_right) {
+                if item.is_available_for_terminal() && !available.contains(item) {
+                    available.push(item.clone());
+                }
+            }
+            (current_left, current_right, available)
         }
     };
 
@@ -171,6 +185,9 @@ impl AgentToolbarInlineEditor {
                 ) | (
                     AgentToolbarEditorMode::CLIAgent,
                     SessionSettingsChangedEvent::CLIAgentToolbarChipSelectionSetting { .. },
+                ) | (
+                    AgentToolbarEditorMode::Terminal,
+                    SessionSettingsChangedEvent::TerminalToolbarChipSelectionSetting { .. },
                 )
             );
 
@@ -358,6 +375,18 @@ fn save_toolbar_selection<V: View>(
                     .set_value(selection, ctx));
             });
         }
+        AgentToolbarEditorMode::Terminal => {
+            let selection = if is_default {
+                TerminalToolbarChipSelection::Default
+            } else {
+                TerminalToolbarChipSelection::Custom { left, right }
+            };
+            SessionSettings::handle(ctx).update(ctx, |settings, ctx| {
+                report_if_error!(settings
+                    .terminal_footer_chip_selection
+                    .set_value(selection, ctx));
+            });
+        }
     }
 }
 
@@ -397,6 +426,7 @@ impl AgentToolbarEditorModal {
         match self.mode {
             AgentToolbarEditorMode::AgentView => AGENT_MODAL_TITLE,
             AgentToolbarEditorMode::CLIAgent => CLI_MODAL_TITLE,
+            AgentToolbarEditorMode::Terminal => TERMINAL_MODAL_TITLE,
         }
     }
 }

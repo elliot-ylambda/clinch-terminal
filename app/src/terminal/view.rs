@@ -1354,7 +1354,8 @@ pub enum ContextMenuAction {
     EditPrompt,
     EditAgentToolbar,
     EditCLIAgentToolbar,
-    /// Open the "Create quick-insert button" modal for the CLI-agent footer.
+    EditTerminalToolbar,
+    /// Open the "Create quick-insert button" modal for a quick-actions footer.
     AddQuickInsertButton,
     /// Ask AI about the current context. Handled by blocklist AI if its feature flag is enabled and
     /// the AI assistant panel otherwise.
@@ -1489,6 +1490,7 @@ impl fmt::Debug for ContextMenuAction {
             EditPrompt => f.write_str("EditPrompt"),
             EditAgentToolbar => f.write_str("EditAgentToolbar"),
             EditCLIAgentToolbar => f.write_str("EditCLIAgentToolbar"),
+            EditTerminalToolbar => f.write_str("EditTerminalToolbar"),
             AddQuickInsertButton => f.write_str("AddQuickInsertButton"),
             AskAI(_) => f.write_str("AskAIAssistant"),
             OpenWorkflowModal => f.write_str("OpenWorkflowModal"),
@@ -1708,6 +1710,7 @@ pub enum Event {
     OpenPromptEditor,
     OpenAgentToolbarEditor,
     OpenCLIAgentToolbarEditor,
+    OpenTerminalToolbarEditor,
     OpenQuickInsertModal,
     SummarizationCancelDialogToggled {
         is_open: bool,
@@ -17633,6 +17636,14 @@ impl TerminalView {
                     ))
                     .into_item()
             })
+        } else if self.should_render_sticky_toolbelt_footer(&self.model.lock(), ctx) {
+            FeatureFlag::AgentToolbarEditor.is_enabled().then(|| {
+                MenuItemFields::new("Edit terminal toolbelt")
+                    .with_on_select_action(TerminalAction::ContextMenu(
+                        ContextMenuAction::EditTerminalToolbar,
+                    ))
+                    .into_item()
+            })
         } else {
             Some(
                 MenuItemFields::new("Edit prompt")
@@ -24941,6 +24952,11 @@ impl TerminalView {
             EditCLIAgentToolbar => {
                 if FeatureFlag::AgentToolbarEditor.is_enabled() {
                     ctx.emit(Event::OpenCLIAgentToolbarEditor);
+                }
+            }
+            EditTerminalToolbar => {
+                if FeatureFlag::AgentToolbarEditor.is_enabled() {
+                    ctx.emit(Event::OpenTerminalToolbarEditor);
                 }
             }
             AddQuickInsertButton => {

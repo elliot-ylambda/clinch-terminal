@@ -436,6 +436,11 @@ impl AgentToolbarItemKind {
                 Self::cli_default_right(),
                 Self::all_available_for_cli_input(),
             ),
+            AgentToolbarEditorMode::Terminal => (
+                Self::terminal_default_left(),
+                Self::terminal_default_right(),
+                Self::all_available_for_terminal_input(),
+            ),
         }
     }
 }

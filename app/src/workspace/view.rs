@@ -16853,6 +16853,9 @@ impl Workspace {
             pane_group::Event::OpenCLIAgentToolbarEditor => {
                 self.open_agent_toolbar_editor(AgentToolbarEditorMode::CLIAgent, ctx);
             }
+            pane_group::Event::OpenTerminalToolbarEditor => {
+                self.open_agent_toolbar_editor(AgentToolbarEditorMode::Terminal, ctx);
+            }
             pane_group::Event::OpenQuickInsertModal => {
                 self.open_quick_insert_modal(ctx);
             }

@@ -1169,6 +1169,9 @@ fn handle_terminal_view_event(
             Event::OpenCLIAgentToolbarEditor => {
                 ctx.emit(pane_group::Event::OpenCLIAgentToolbarEditor);
             }
+            Event::OpenTerminalToolbarEditor => {
+                ctx.emit(pane_group::Event::OpenTerminalToolbarEditor);
+            }
             Event::OpenQuickInsertModal => {
                 ctx.emit(pane_group::Event::OpenQuickInsertModal);
             }
