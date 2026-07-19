@@ -352,6 +352,10 @@ impl AgentToolbarItemKind {
                 text: "Move our current work and code into an isolated git work tree. And create a branch. Work out of the git worktree".to_owned(),
             },
             Self::VoiceInput,
+            Self::CustomInsert {
+                label: "Push2Main".to_owned(),
+                text: "Push all these changes to main.".to_owned(),
+            },
         ]
     }
 
@@ -373,9 +377,12 @@ impl AgentToolbarItemKind {
     /// Default left-side items for the plain terminal footer.
     pub fn terminal_default_left() -> Vec<Self> {
         [
-            ("Claude", "ca"),
-            ("Codex", "cx"),
-            ("Claude resume", "ca --resume"),
+            ("Claude", "claude --dangerously-skip-permissions"),
+            ("Codex", "codex --dangerously-bypass-approvals-and-sandbox"),
+            (
+                "Claude resume",
+                "claude --dangerously-skip-permissions --resume",
+            ),
             ("Codex resume", "codex resume"),
             ("Open", "open ."),
         ]

@@ -7,15 +7,15 @@ fn terminal_default_left_contains_exact_quick_actions() {
         vec![
             AgentToolbarItemKind::CustomInsert {
                 label: "Claude".to_owned(),
-                text: "ca".to_owned(),
+                text: "claude --dangerously-skip-permissions".to_owned(),
             },
             AgentToolbarItemKind::CustomInsert {
                 label: "Codex".to_owned(),
-                text: "cx".to_owned(),
+                text: "codex --dangerously-bypass-approvals-and-sandbox".to_owned(),
             },
             AgentToolbarItemKind::CustomInsert {
                 label: "Claude resume".to_owned(),
-                text: "ca --resume".to_owned(),
+                text: "claude --dangerously-skip-permissions --resume".to_owned(),
             },
             AgentToolbarItemKind::CustomInsert {
                 label: "Codex resume".to_owned(),
@@ -180,6 +180,13 @@ fn cli_default_left_includes_expected_quick_inserts() {
                 text: "Move our current work and code into an isolated git work tree. And create a branch. Work out of the git worktree".to_owned(),
             },
         ]
+    );
+    assert_eq!(
+        items.last(),
+        Some(&AgentToolbarItemKind::CustomInsert {
+            label: "Push2Main".to_owned(),
+            text: "Push all these changes to main.".to_owned(),
+        })
     );
 }
 
