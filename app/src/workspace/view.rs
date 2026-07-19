@@ -15015,7 +15015,15 @@ impl Workspace {
     }
 
     fn open_agent_conversations_palette(&mut self, ctx: &mut ViewContext<Self>) {
+        let project_root = self.active_header_project_dir(ctx);
         self.palette.update(ctx, |view, ctx| {
+            let agent_conversations_data_source = view
+                .data_source_store
+                .as_ref(ctx)
+                .agent_conversations_data_source();
+            agent_conversations_data_source.update(ctx, |source, ctx| {
+                source.set_project_root(project_root, ctx);
+            });
             view.reset(ctx);
             view.set_active_query_filter(QueryFilter::AgentConversations, ctx);
             view.set_initial_selection_offset(0, ctx);
