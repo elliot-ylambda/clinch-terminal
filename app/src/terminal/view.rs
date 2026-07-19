@@ -2980,6 +2980,14 @@ enum BlockMetadataUpdateSource {
     Osc7,
 }
 
+const CLI_AGENT_HISTORY_FONT_SIZE_INCREASE: f32 = 1.;
+const CLI_AGENT_HISTORY_TOP_BAR_HEIGHT: f32 = 30.;
+const CLI_AGENT_HISTORY_TOP_BAR_VERTICAL_PADDING: f32 = 4.;
+const CLI_AGENT_HISTORY_TOP_BAR_HORIZONTAL_PADDING: f32 = 10.;
+const CLI_AGENT_HISTORY_ITEM_VERTICAL_PADDING: f32 = 6.;
+const CLI_AGENT_HISTORY_ITEM_HORIZONTAL_PADDING: f32 = 16.;
+const CLI_AGENT_HISTORY_MENU_MAX_HEIGHT: f32 = 420.;
+
 fn cli_agent_history_trigger(history: &AgentPromptHistory, fallback: String) -> String {
     history
         .prompts
@@ -3024,6 +3032,18 @@ fn cli_agent_history_prompt_tooltip(prompt: &AgentPrompt) -> String {
         Some((byte_index, _)) => format!("{}…", &text[..byte_index]),
         None => text.to_owned(),
     }
+}
+
+fn cli_agent_history_menu_item_fields(
+    label: impl Into<String>,
+    font_size: f32,
+) -> MenuItemFields<DropdownAction> {
+    MenuItemFields::new(label)
+        .with_font_size_override(font_size)
+        .with_padding_override(
+            CLI_AGENT_HISTORY_ITEM_VERTICAL_PADDING,
+            CLI_AGENT_HISTORY_ITEM_HORIZONTAL_PADDING,
+        )
 }
 
 fn cli_agent_history_label(
@@ -3937,7 +3957,8 @@ impl TerminalView {
 
         let cli_agent_message_history_dropdown = ctx.add_typed_action_view(|ctx| {
             let header_text_color = Appearance::as_ref(ctx).theme().active_ui_text_color();
-            let header_font_size = Appearance::as_ref(ctx).ui_font_size();
+            let header_font_size =
+                Appearance::as_ref(ctx).ui_font_size() + CLI_AGENT_HISTORY_FONT_SIZE_INCREASE;
             let mut dropdown = Dropdown::<()>::new(ctx).with_drop_shadow();
             // `Max` top bar filling the `Expanded` header slot (see
             // `render_cli_agent_history_header_center`) — the original, working
@@ -3949,21 +3970,20 @@ impl TerminalView {
             dropdown.set_main_axis_size(MainAxisSize::Max, ctx);
             dropdown.set_match_menu_width_to_top_bar(true, ctx);
             dropdown.set_top_bar_max_width(f32::MAX);
-            dropdown.set_top_bar_height(26., ctx);
-            // The outlined button has a 1px border on both sides. Its default 5px vertical
-            // padding leaves only 14px for a 12px font with a 1.2 line height (14.4px), which
-            // makes WarpUI discard the line while still painting the chevron.
+            dropdown.set_top_bar_height(CLI_AGENT_HISTORY_TOP_BAR_HEIGHT, ctx);
+            // Keep the trigger comfortably inside the 34px pane header while giving the larger
+            // type a little more breathing room than the compact default dropdown treatment.
             dropdown.set_padding(
                 Coords {
-                    top: 2.,
-                    bottom: 2.,
-                    left: 8.,
-                    right: 8.,
+                    top: CLI_AGENT_HISTORY_TOP_BAR_VERTICAL_PADDING,
+                    bottom: CLI_AGENT_HISTORY_TOP_BAR_VERTICAL_PADDING,
+                    left: CLI_AGENT_HISTORY_TOP_BAR_HORIZONTAL_PADDING,
+                    right: CLI_AGENT_HISTORY_TOP_BAR_HORIZONTAL_PADDING,
                 },
                 ctx,
             );
             dropdown.set_vertical_margin(0., ctx);
-            dropdown.set_menu_max_height(360., ctx);
+            dropdown.set_menu_max_height(CLI_AGENT_HISTORY_MENU_MAX_HEIGHT, ctx);
             // Explicit, header-appropriate text color + size so the latest-prompt
             // text is always painted, mirroring `render_pane_header_title_text`.
             dropdown.set_font_color(header_text_color.into(), ctx);
@@ -13550,16 +13570,23 @@ impl TerminalView {
 
         let is_loading = history.prompts.is_empty()
             && matches!(load_state, PromptHistoryLoadState::Loading { .. });
+        let history_font_size =
+            Appearance::as_ref(ctx).ui_font_size() + CLI_AGENT_HISTORY_FONT_SIZE_INCREASE;
         let label = cli_agent_history_label(&history, &load_state);
-        let mut items: Vec<MenuItem<DropdownAction>> = vec![MenuItemFields::new(label.clone())
-            .with_disabled(true)
-            .into_item()];
+        let mut items: Vec<MenuItem<DropdownAction>> =
+            vec![
+                cli_agent_history_menu_item_fields(label.clone(), history_font_size)
+                    .with_disabled(true)
+                    .into_item(),
+            ];
         items.extend(cli_agent_history_prompts(&history).iter().enumerate().map(
             |(index, prompt)| {
                 let ordinal = index + 1;
-                let mut fields =
-                    MenuItemFields::new(cli_agent_history_prompt_label(ordinal, prompt))
-                        .with_clip_config(ClipConfig::ellipsis());
+                let mut fields = cli_agent_history_menu_item_fields(
+                    cli_agent_history_prompt_label(ordinal, prompt),
+                    history_font_size,
+                )
+                .with_clip_config(ClipConfig::ellipsis());
                 let tooltip = cli_agent_history_prompt_tooltip(prompt);
                 if !tooltip.is_empty() {
                     fields = fields
@@ -13571,16 +13598,19 @@ impl TerminalView {
         ));
         if is_loading {
             items.push(
-                MenuItemFields::new("Restoring message history…")
+                cli_agent_history_menu_item_fields("Restoring message history…", history_font_size)
                     .with_disabled(true)
                     .into_item(),
             );
         }
         if history.is_partial {
             items.push(
-                MenuItemFields::new("Earlier messages may be unavailable")
-                    .with_disabled(true)
-                    .into_item(),
+                cli_agent_history_menu_item_fields(
+                    "Earlier messages may be unavailable",
+                    history_font_size,
+                )
+                .with_disabled(true)
+                .into_item(),
             );
         }
 
