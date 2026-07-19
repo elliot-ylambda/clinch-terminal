@@ -385,15 +385,12 @@ impl CLIAgentSession {
                 CLIAgentSessionStatus::InProgress
             }
             CLIAgentEventType::SubagentStart => {
-                let Some(subagent_id) = event
+                let subagent_id = event
                     .payload
                     .subagent_id
                     .as_deref()
                     .map(str::trim)
-                    .filter(|id| !id.is_empty())
-                else {
-                    return None;
-                };
+                    .filter(|id| !id.is_empty())?;
                 self.session_context
                     .active_subagent_ids
                     .insert(subagent_id.to_owned());
@@ -404,15 +401,12 @@ impl CLIAgentSession {
                 CLIAgentSessionStatus::InProgress
             }
             CLIAgentEventType::SubagentStop => {
-                let Some(subagent_id) = event
+                let subagent_id = event
                     .payload
                     .subagent_id
                     .as_deref()
                     .map(str::trim)
-                    .filter(|id| !id.is_empty())
-                else {
-                    return None;
-                };
+                    .filter(|id| !id.is_empty())?;
                 if !self.session_context.active_subagent_ids.remove(subagent_id) {
                     return None;
                 }
