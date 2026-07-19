@@ -1,6 +1,12 @@
 use settings::{Setting as _, SyncToCloud};
 
-use super::{AutoCreateWorktreesForNewTabs, IMessageConfiguration, IMessageConfigurationSetting};
+use super::{
+    agent_conversation_finder_agent_value, agent_conversation_finder_scope_value,
+    parse_agent_conversation_finder_agent, parse_agent_conversation_finder_scope,
+    AgentConversationFinderAgent, AgentConversationFinderScope, AutoCreateWorktreesForNewTabs,
+    IMessageConfiguration, IMessageConfigurationSetting,
+};
+use crate::search::command_palette::agent_conversations::{AgentFilter, ScopeFilter};
 
 #[test]
 fn auto_create_worktrees_for_new_tabs_defaults_to_on() {
@@ -34,5 +40,36 @@ fn imessage_configuration_is_private_and_local_only() {
     assert_eq!(
         IMessageConfigurationSetting::sync_to_cloud(),
         SyncToCloud::Never
+    );
+}
+
+#[test]
+fn agent_conversation_finder_settings_round_trip_and_legacy_values_fall_back() {
+    assert_eq!(
+        AgentConversationFinderScope::default_value(),
+        "this_project"
+    );
+    assert_eq!(AgentConversationFinderAgent::default_value(), "all");
+
+    for scope in [ScopeFilter::ThisProject, ScopeFilter::All] {
+        assert_eq!(
+            parse_agent_conversation_finder_scope(agent_conversation_finder_scope_value(scope)),
+            scope
+        );
+    }
+    for agent in [AgentFilter::All, AgentFilter::Claude, AgentFilter::Codex] {
+        assert_eq!(
+            parse_agent_conversation_finder_agent(agent_conversation_finder_agent_value(agent)),
+            agent
+        );
+    }
+
+    assert_eq!(
+        parse_agent_conversation_finder_scope("legacy_scope"),
+        ScopeFilter::default()
+    );
+    assert_eq!(
+        parse_agent_conversation_finder_agent("legacy_agent"),
+        AgentFilter::default()
     );
 }
