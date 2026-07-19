@@ -10,7 +10,7 @@ use warpui::clipboard::{ClipboardContent, ImageData};
 
 use crate::ai::agent::ImageContext;
 use crate::ai::blocklist::agent_view::agent_input_footer::{
-    AgentInputFooter, AgentInputFooterEvent,
+    AgentInputFooter, AgentInputFooterAction, AgentInputFooterEvent,
 };
 use crate::terminal::cli_agent_sessions::auto_continue::AutoContinueModel;
 #[cfg(feature = "local_tty")]
@@ -1268,6 +1268,44 @@ impl TerminalView {
     }
 }
 
+/// Restores the shared footer's action-handling view boundary when its terminal-mode elements
+/// are rendered inside [`UseAgentToolbar`].
+struct TerminalModeFooterActionRelay {
+    agent_input_footer: ViewHandle<AgentInputFooter>,
+}
+
+impl TerminalModeFooterActionRelay {
+    fn new(agent_input_footer: ViewHandle<AgentInputFooter>) -> Self {
+        Self { agent_input_footer }
+    }
+}
+
+impl Entity for TerminalModeFooterActionRelay {
+    type Event = ();
+}
+
+impl View for TerminalModeFooterActionRelay {
+    fn ui_name() -> &'static str {
+        "TerminalModeFooterActionRelay"
+    }
+
+    fn render(&self, app: &AppContext) -> Box<dyn Element> {
+        self.agent_input_footer
+            .as_ref(app)
+            .render_terminal_mode_footer(app)
+    }
+}
+
+impl TypedActionView for TerminalModeFooterActionRelay {
+    type Action = AgentInputFooterAction;
+
+    fn handle_action(&mut self, action: &Self::Action, ctx: &mut ViewContext<Self>) {
+        self.agent_input_footer.update(ctx, |footer, ctx| {
+            footer.handle_action(action, ctx);
+        });
+    }
+}
+
 /// Footer rendered at the bottom of the active long-running block or terminal layout.
 ///
 /// For regular commands, displays a 'Use agent' keystroke button to enter agent mode.
@@ -1286,6 +1324,10 @@ pub struct UseAgentToolbar {
 
     // Shared agent input footer (renders CLI agent mode when a CLI session is active).
     agent_input_footer: ViewHandle<AgentInputFooter>,
+
+    // The plain-terminal footer renders the shared footer's elements outside its view tree.
+    // Relay their typed actions back to that shared footer so clicks are handled.
+    terminal_mode_footer_action_relay: ViewHandle<TerminalModeFooterActionRelay>,
 
     // Warpify footer UI (shown when a subshell/SSH command is detected).
     warpify_footer_view: ViewHandle<WarpifyFooterView>,
@@ -1361,6 +1403,10 @@ impl UseAgentToolbar {
             me.handle_agent_input_footer_event(event, ctx);
         });
 
+        let terminal_mode_footer_action_relay = ctx.add_typed_action_view(|_| {
+            TerminalModeFooterActionRelay::new(agent_input_footer.clone())
+        });
+
         let warpify_footer_view =
             ctx.add_typed_action_view(|ctx| WarpifyFooterView::new(terminal_model.clone(), ctx));
 
@@ -1412,6 +1458,7 @@ impl UseAgentToolbar {
             dismiss_button,
             dont_show_again_button,
             agent_input_footer,
+            terminal_mode_footer_action_relay,
             warpify_footer_view,
             terminal_model,
             did_user_dismiss: false,
@@ -1492,6 +1539,8 @@ impl UseAgentToolbar {
     pub(in crate::terminal) fn notify_and_notify_children(&mut self, ctx: &mut ViewContext<Self>) {
         ctx.notify();
         self.agent_input_footer.update(ctx, |_, ctx| ctx.notify());
+        self.terminal_mode_footer_action_relay
+            .update(ctx, |_, ctx| ctx.notify());
         self.warpify_footer_view.update(ctx, |_, ctx| ctx.notify());
         self.button.update(ctx, |_, ctx| ctx.notify());
         self.give_control_back_button
@@ -1630,9 +1679,7 @@ impl View for UseAgentToolbar {
         };
         if *SessionSettings::as_ref(app).show_terminal_footer && should_render_terminal_footer {
             return Container::new(
-                self.agent_input_footer
-                    .as_ref(app)
-                    .render_terminal_mode_footer(app),
+                ChildView::new(&self.terminal_mode_footer_action_relay).finish(),
             )
             .with_horizontal_padding(*super::PADDING_LEFT)
             .with_border(

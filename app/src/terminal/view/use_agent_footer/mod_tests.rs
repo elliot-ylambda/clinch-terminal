@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use warp_core::settings::Setting as _;
@@ -239,6 +240,43 @@ fn sticky_toolbelt_gate_handles_terminal_visibility_and_cli_precedence() {
                 Some(CLIAgent::Claude)
             );
         });
+    });
+}
+
+#[test]
+fn terminal_footer_action_relay_emits_submitted_pty_command() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let terminal = add_window_with_terminal(&mut app, None);
+        let window_id = app.read(|ctx| terminal.window_id(ctx));
+        let (toolbar, relay) = terminal.read(&app, |view, ctx| {
+            let toolbar = view.use_agent_footer.clone();
+            let relay = toolbar
+                .as_ref(ctx)
+                .terminal_mode_footer_action_relay
+                .clone();
+            (toolbar, relay)
+        });
+
+        let observed = Rc::new(RefCell::new(Vec::new()));
+        let observed_for_subscription = observed.clone();
+        app.update(|ctx| {
+            ctx.subscribe_to_view(&toolbar, move |_, event, _| {
+                if let UseAgentToolbarEvent::WriteToPty(text) = event {
+                    observed_for_subscription.borrow_mut().push(text.clone());
+                }
+            });
+        });
+
+        app.update(|ctx| {
+            ctx.dispatch_typed_action_for_view(
+                window_id,
+                relay.id(),
+                &AgentInputFooterAction::InsertCustomText("git status".to_owned()),
+            );
+        });
+
+        assert_eq!(*observed.borrow(), vec!["git status\n".to_owned()]);
     });
 }
 
