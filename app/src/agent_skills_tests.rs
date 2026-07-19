@@ -55,3 +55,53 @@ fn bundled_skill_lists_every_default_custom_insert() {
         );
     }
 }
+
+const MANAGED_V1: &str = "---\nname: x\n---\n\n<!-- managed-by: Clinch; version: 1.0.0 -->\nbody";
+const MANAGED_V2: &str = "---\nname: x\n---\n\n<!-- managed-by: Clinch; version: 1.1.0 -->\nbody";
+const UNMANAGED: &str = "---\nname: x\n---\n\nuser wrote this";
+
+#[test]
+fn managed_version_parses_the_marker_line() {
+    assert_eq!(managed_version(MANAGED_V1), Some(vec![1, 0, 0]));
+    assert_eq!(managed_version(UNMANAGED), None);
+    assert_eq!(
+        managed_version("<!-- managed-by: Clinch; version: nonsense -->"),
+        None
+    );
+}
+
+#[test]
+fn decide_installs_when_target_is_missing() {
+    assert_eq!(decide(MANAGED_V1, None), InstallDecision::Install);
+}
+
+#[test]
+fn decide_upgrades_older_managed_copies() {
+    assert_eq!(decide(MANAGED_V2, Some(MANAGED_V1)), InstallDecision::Install);
+}
+
+#[test]
+fn decide_skips_same_or_newer_managed_copies() {
+    assert_eq!(
+        decide(MANAGED_V1, Some(MANAGED_V1)),
+        InstallDecision::SkipUpToDate
+    );
+    assert_eq!(
+        decide(MANAGED_V1, Some(MANAGED_V2)),
+        InstallDecision::SkipUpToDate
+    );
+}
+
+#[test]
+fn decide_never_touches_user_owned_files() {
+    assert_eq!(
+        decide(MANAGED_V1, Some(UNMANAGED)),
+        InstallDecision::SkipUserOwned
+    );
+    // A bundled file without a marker is a packaging bug; refuse to overwrite anything.
+    assert_eq!(
+        decide(UNMANAGED, Some(MANAGED_V1)),
+        InstallDecision::SkipUserOwned
+    );
+    assert_eq!(decide(UNMANAGED, None), InstallDecision::Install);
+}
