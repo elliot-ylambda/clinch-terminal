@@ -41,6 +41,7 @@ use crate::{assert_lines_approx_eq, FeatureFlag};
 
 #[test]
 fn test_prompt_context_menu_items_shared_session_viewer_no_edit_prompt() {
+    let _agent_footer_guard = FeatureFlag::AgentToolbarEditor.override_enabled(true);
     App::test((), |mut app| async move {
         let terminal = terminal_view_for_viewer(&mut app);
 

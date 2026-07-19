@@ -5154,6 +5154,7 @@ fn test_fish_vim_banner_off() {
 
 #[test]
 fn test_prompt_context_menu_items_for_ps1() {
+    let _agent_footer_guard = FeatureFlag::AgentToolbarEditor.override_enabled(true);
     App::test((), |mut app| async move {
         initialize_app_for_terminal_view(&mut app);
         let terminal = add_window_with_terminal(&mut app, None);
@@ -5165,17 +5166,19 @@ fn test_prompt_context_menu_items_for_ps1() {
         terminal.read(&app, |view, ctx| {
             let items = view.prompt_context_menu_items(ctx);
             let len = items.len();
-            assert_eq!(len, 3);
+            assert_eq!(len, 4);
             assert_eq!(items[0].fields().unwrap().label(), "Copy prompt");
             assert!(items[1].is_separator());
             assert_eq!(items[2].fields().unwrap().label(), "Edit prompt");
             assert!(!items[2].fields().unwrap().is_disabled());
+            assert_eq!(items[3].fields().unwrap().label(), "Edit terminal toolbelt");
         });
     })
 }
 
 #[test]
 fn test_prompt_context_menu_items_for_context_chips() {
+    let _agent_footer_guard = FeatureFlag::AgentToolbarEditor.override_enabled(true);
     App::test((), |mut app| async move {
         initialize_app_for_terminal_view(&mut app);
 
@@ -5214,7 +5217,7 @@ fn test_prompt_context_menu_items_for_context_chips() {
 
         terminal.read(&app, |view, ctx| {
             let items: Vec<MenuItem<TerminalAction>> = view.prompt_context_menu_items(ctx);
-            assert_eq!(items.len(), 5);
+            assert_eq!(items.len(), 6);
 
             // We expect the prompt menu items to be something like the following when context chips are used:
             // Copy prompt
@@ -5222,6 +5225,7 @@ fn test_prompt_context_menu_items_for_context_chips() {
             // <context chip specific actions>
             // ------------
             // Edit prompt
+            // Edit terminal toolbelt
             assert_eq!(items[0].fields().unwrap().label(), "Copy prompt");
             assert!(items[1].is_separator());
             assert_eq!(
@@ -5231,12 +5235,14 @@ fn test_prompt_context_menu_items_for_context_chips() {
             assert!(items[3].is_separator());
             assert_eq!(items[4].fields().unwrap().label(), "Edit prompt");
             assert!(!items[4].fields().unwrap().is_disabled());
+            assert_eq!(items[5].fields().unwrap().label(), "Edit terminal toolbelt");
         });
     })
 }
 
 #[test]
 fn test_prompt_context_menu_items_for_no_context_chips() {
+    let _agent_footer_guard = FeatureFlag::AgentToolbarEditor.override_enabled(true);
     App::test((), |mut app| async move {
         initialize_app_for_terminal_view(&mut app);
 
@@ -5260,16 +5266,18 @@ fn test_prompt_context_menu_items_for_no_context_chips() {
 
         terminal.read(&app, |view, ctx| {
             let items: Vec<MenuItem<TerminalAction>> = view.prompt_context_menu_items(ctx);
-            assert_eq!(items.len(), 3);
+            assert_eq!(items.len(), 4);
 
             // We expect the prompt menu items to be something like the following when no context chips exist:
             // Copy prompt
             // ------------
             // Edit prompt
+            // Edit terminal toolbelt
             assert_eq!(items[0].fields().unwrap().label(), "Copy prompt");
             assert!(items[1].is_separator());
             assert_eq!(items[2].fields().unwrap().label(), "Edit prompt");
             assert!(!items[2].fields().unwrap().is_disabled());
+            assert_eq!(items[3].fields().unwrap().label(), "Edit terminal toolbelt");
         });
     })
 }

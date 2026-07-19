@@ -17636,14 +17636,6 @@ impl TerminalView {
                     ))
                     .into_item()
             })
-        } else if self.should_render_sticky_toolbelt_footer(&self.model.lock(), ctx) {
-            FeatureFlag::AgentToolbarEditor.is_enabled().then(|| {
-                MenuItemFields::new("Edit terminal toolbelt")
-                    .with_on_select_action(TerminalAction::ContextMenu(
-                        ContextMenuAction::EditTerminalToolbar,
-                    ))
-                    .into_item()
-            })
         } else {
             Some(
                 MenuItemFields::new("Edit prompt")
@@ -17654,6 +17646,18 @@ impl TerminalView {
                     .into_item(),
             )
         };
+        let terminal_toolbelt_menu_item = (!has_cli_agent_session
+            && !is_agent_view_active
+            && !self.model.lock().shared_session_status().is_active_viewer()
+            && FeatureFlag::AgentToolbarEditor.is_enabled()
+            && self.should_render_sticky_toolbelt_footer(&self.model.lock(), ctx))
+        .then(|| {
+            MenuItemFields::new("Edit terminal toolbelt")
+                .with_on_select_action(TerminalAction::ContextMenu(
+                    ContextMenuAction::EditTerminalToolbar,
+                ))
+                .into_item()
+        });
 
         // Sibling to "Edit CLI agent toolbelt": opens the modal that creates a
         // new custom quick-insert footer button. Only for live CLI-agent panes.
@@ -17681,6 +17685,9 @@ impl TerminalView {
             if let Some(edit_menu_item) = edit_menu_item {
                 items.extend([MenuItem::Separator, edit_menu_item]);
             }
+            if let Some(terminal_toolbelt_menu_item) = terminal_toolbelt_menu_item {
+                items.push(terminal_toolbelt_menu_item);
+            }
             if let Some(add_quick_insert_menu_item) = add_quick_insert_menu_item {
                 items.push(add_quick_insert_menu_item);
             }
@@ -17697,6 +17704,9 @@ impl TerminalView {
             }
             if let Some(edit_menu_item) = edit_menu_item {
                 items.extend([MenuItem::Separator, edit_menu_item]);
+            }
+            if let Some(terminal_toolbelt_menu_item) = terminal_toolbelt_menu_item {
+                items.push(terminal_toolbelt_menu_item);
             }
             if let Some(add_quick_insert_menu_item) = add_quick_insert_menu_item {
                 items.push(add_quick_insert_menu_item);
