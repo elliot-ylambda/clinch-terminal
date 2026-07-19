@@ -77,7 +77,10 @@ fn decide_installs_when_target_is_missing() {
 
 #[test]
 fn decide_upgrades_older_managed_copies() {
-    assert_eq!(decide(MANAGED_V2, Some(MANAGED_V1)), InstallDecision::Install);
+    assert_eq!(
+        decide(MANAGED_V2, Some(MANAGED_V1)),
+        InstallDecision::Install
+    );
 }
 
 #[test]
