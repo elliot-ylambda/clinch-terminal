@@ -975,6 +975,9 @@ impl AgentInputFooter {
                     me.update_display_chips(&prompt_for_session_settings, ctx);
                     ctx.notify();
                 }
+                SessionSettingsChangedEvent::TerminalToolbarChipSelectionSetting { .. } => {
+                    ctx.notify();
+                }
                 _ => {}
             },
         );
@@ -1671,6 +1674,51 @@ impl AgentInputFooter {
             .map(|chip| ChildView::new(chip).finish())
     }
 
+    fn render_custom_insert_button(
+        &self,
+        label: &str,
+        text: &str,
+        tooltip_verb: &str,
+        app: &AppContext,
+    ) -> Box<dyn Element> {
+        let mouse_state = self
+            .custom_insert_mouse_states
+            .borrow_mut()
+            .entry((label.to_owned(), text.to_owned()))
+            .or_default()
+            .clone();
+        let text = text.to_owned();
+        ActionButton::new(label.to_owned(), QuickInsertButtonTheme)
+            .with_icon(Icon::Play)
+            .with_size(ButtonSize::AgentInputButtonLarge)
+            .with_tooltip(format!("{tooltip_verb}: {text}"))
+            .with_tooltip_alignment(TooltipAlignment::Left)
+            .with_mouse_state_handle(mouse_state)
+            .on_click(move |ctx| {
+                ctx.dispatch_typed_action(AgentInputFooterAction::InsertCustomText(text.clone()));
+            })
+            .render(app)
+    }
+
+    fn render_terminal_toolbar_item(
+        &self,
+        item: &AgentToolbarItemKind,
+        app: &AppContext,
+    ) -> Option<Box<dyn Element>> {
+        if !item.is_available_for_terminal()
+            || !FeatureFlag::CliAgentQuickInsertButtons.is_enabled()
+        {
+            return None;
+        }
+
+        match item {
+            AgentToolbarItemKind::CustomInsert { label, text } => {
+                Some(self.render_custom_insert_button(label, text, "Run", app))
+            }
+            _ => None,
+        }
+    }
+
     fn render_cli_toolbar_item(
         &self,
         item: &AgentToolbarItemKind,
@@ -1752,31 +1800,7 @@ impl AgentInputFooter {
                 if !FeatureFlag::CliAgentQuickInsertButtons.is_enabled() {
                     return None;
                 }
-                // Can't be a pre-built singleton (label/text vary per item), so
-                // build it fresh here. `with_mouse_state_handle` reuses a handle
-                // cached by (label, text) so hover/click state survives across
-                // renders (see the field doc on `custom_insert_mouse_states`).
-                let mouse_state = self
-                    .custom_insert_mouse_states
-                    .borrow_mut()
-                    .entry((label.clone(), text.clone()))
-                    .or_default()
-                    .clone();
-                let text = text.clone();
-                Some(
-                    ActionButton::new(label.clone(), QuickInsertButtonTheme)
-                        .with_icon(Icon::Play)
-                        .with_size(ButtonSize::AgentInputButtonLarge)
-                        .with_tooltip(format!("Insert: {text}"))
-                        .with_tooltip_alignment(TooltipAlignment::Left)
-                        .with_mouse_state_handle(mouse_state)
-                        .on_click(move |ctx| {
-                            ctx.dispatch_typed_action(AgentInputFooterAction::InsertCustomText(
-                                text.clone(),
-                            ));
-                        })
-                        .render(app),
-                )
+                Some(self.render_custom_insert_button(label, text, "Insert", app))
             }
             AgentToolbarItemKind::RichInput => FeatureFlag::CLIAgentRichInput
                 .is_enabled()
@@ -2012,6 +2036,59 @@ impl AgentInputFooter {
         #[cfg(all(target_os = "macos", feature = "clinch_imessage"))]
         if IMessageCoordinator::as_ref(app).has_supported_session(self.terminal_view_id) {
             right_buttons.add_child(ChildView::new(&self.message_me_button).finish());
+        }
+
+        let content = Wrap::row()
+            .with_main_axis_size(MainAxisSize::Max)
+            .with_main_axis_alignment(MainAxisAlignment::SpaceBetween)
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_child(WrapFillEntireRun::new(left_buttons.finish()).finish())
+            .with_child(WrapFill::new(0., right_buttons.finish()).finish())
+            .with_run_spacing(context_chips::spacing::UDI_ROW_RUN_SPACING)
+            .finish();
+        let content = EventHandler::new(content)
+            .on_right_mouse_down(|ctx, _, position| {
+                ctx.dispatch_typed_action(AgentInputFooterAction::ShowContextMenu { position });
+                DispatchEventResult::StopPropagation
+            })
+            .finish();
+
+        Container::new(content).with_vertical_padding(8.).finish()
+    }
+
+    pub fn render_terminal_mode_footer(&self, app: &AppContext) -> Box<dyn Element> {
+        let session_settings = SessionSettings::as_ref(app);
+        let left_items = session_settings.terminal_footer_chip_selection.left_items();
+        let right_items = session_settings
+            .terminal_footer_chip_selection
+            .right_items();
+
+        let mut left_buttons = Wrap::row()
+            .with_main_axis_size(MainAxisSize::Min)
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_main_axis_alignment(MainAxisAlignment::Start)
+            .with_run_spacing(4.)
+            .with_spacing(4.);
+
+        if FeatureFlag::CliAgentQuickInsertButtons.is_enabled() {
+            left_buttons.add_child(ChildView::new(&self.quick_insert_add_button).finish());
+        }
+
+        for item in &left_items {
+            if let Some(element) = self.render_terminal_toolbar_item(item, app) {
+                left_buttons.add_child(element);
+            }
+        }
+
+        let mut right_buttons = Flex::row()
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_main_axis_size(MainAxisSize::Min)
+            .with_spacing(4.);
+
+        for item in &right_items {
+            if let Some(element) = self.render_terminal_toolbar_item(item, app) {
+                right_buttons.add_child(element);
+            }
         }
 
         let content = Wrap::row()

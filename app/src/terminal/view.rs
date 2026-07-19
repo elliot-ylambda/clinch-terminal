@@ -23364,6 +23364,14 @@ impl TerminalView {
             | SessionSettingsChangedEvent::GithubPrChipDefaultValidation { .. } => {
                 self.update_git_status_subscription(ctx);
             }
+            SessionSettingsChangedEvent::TerminalToolbarChipSelectionSetting { .. }
+            | SessionSettingsChangedEvent::ShowTerminalFooter { .. } => {
+                self.maybe_show_use_agent_footer_in_blocklist(ctx);
+                self.use_agent_footer.update(ctx, |footer, ctx| {
+                    footer.notify_and_notify_children(ctx);
+                });
+                ctx.notify();
+            }
             _ => {}
         }
     }
@@ -24636,7 +24644,7 @@ impl TerminalView {
             .with_main_axis_size(MainAxisSize::Max)
             .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
             .with_child(Shrinkable::new(1., gap_element).finish());
-        if self.should_render_sticky_cli_agent_footer(model, app) {
+        if self.should_render_sticky_toolbelt_footer(model, app) {
             column.add_child(ChildView::new(&self.use_agent_footer).finish());
         }
 
@@ -27829,16 +27837,16 @@ impl View for TerminalView {
                         self.render_block_list_element(&model, input_mode, true, app)
                     };
 
-                    let should_render_sticky_cli_footer =
-                        self.should_render_sticky_cli_agent_footer(&model, app);
+                    let should_render_sticky_toolbelt_footer =
+                        self.should_render_sticky_toolbelt_footer(&model, app);
                     let should_render_alt_screen_footer = model.is_alt_screen_active()
-                        && !should_render_sticky_cli_footer
+                        && !should_render_sticky_toolbelt_footer
                         && self.should_render_use_agent_footer(&model, app);
 
                     // A reversed pinned-to-top column lays its first child out at the bottom.
                     // Add the sticky toolbelt before the output in that mode so it remains a
                     // true bottom footer rather than moving above the composer.
-                    if should_render_sticky_cli_footer
+                    if should_render_sticky_toolbelt_footer
                         && matches!(input_mode, InputMode::PinnedToTop)
                     {
                         column.add_child(ChildView::new(&self.use_agent_footer).finish());
@@ -27862,8 +27870,8 @@ impl View for TerminalView {
                     }
 
                     // In the normal column direction, the last child owns the bottom edge. Keep
-                    // the CLI toolbelt outside both the scrollable block list and the composer.
-                    if should_render_sticky_cli_footer
+                    // the toolbelt outside both the scrollable block list and the composer.
+                    if should_render_sticky_toolbelt_footer
                         && !matches!(input_mode, InputMode::PinnedToTop)
                     {
                         column.add_child(ChildView::new(&self.use_agent_footer).finish());

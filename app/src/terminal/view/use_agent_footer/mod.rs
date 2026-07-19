@@ -74,6 +74,7 @@ use crate::terminal::cli_agent_sessions::CLIAgentRichInputCloseReason;
 #[cfg(feature = "local_tty")]
 use crate::terminal::model::session::command_executor::shell_quote_arg;
 use crate::terminal::model_events::{ModelEvent, ModelEventDispatcher};
+use crate::terminal::session_settings::{SessionSettings, SessionSettingsChangedEvent};
 #[cfg(feature = "local_tty")]
 use crate::terminal::shell::ShellType;
 pub use crate::terminal::CLIAgent;
@@ -463,17 +464,23 @@ impl TerminalView {
                 || active_block.is_eligible_for_agent_handoff())
     }
 
-    /// Whether the CLI agent toolbelt should be rendered as a persistent
+    /// Whether a toolbelt should be rendered as a persistent
     /// terminal-layout sibling instead of rich content inside the block list.
-    pub(super) fn should_render_sticky_cli_agent_footer(
+    pub(super) fn should_render_sticky_toolbelt_footer(
         &self,
         model: &TerminalModel,
         app: &AppContext,
     ) -> bool {
-        CLIAgentSessionsModel::as_ref(app)
+        let has_cli_agent = CLIAgentSessionsModel::as_ref(app)
             .session(self.view_id)
-            .is_some()
-            && self.should_render_use_agent_footer(model, app)
+            .is_some();
+        if has_cli_agent {
+            return self.should_render_use_agent_footer(model, app);
+        }
+
+        *SessionSettings::as_ref(app).show_terminal_footer
+            && !model.is_alt_screen_active()
+            && !self.use_agent_footer.as_ref(app).is_warpify_active(app)
     }
 
     /// Returns the detected CLI agent for the active block's command, if any.
@@ -679,10 +686,12 @@ impl TerminalView {
             );
         }
 
-        // CLI toolbelts are persistent terminal-layout children. Keeping them
+        // Toolbelts are persistent terminal-layout children. Keeping them
         // out of the block list prevents them from scrolling with the embedded
         // agent UI. Alt-screen footers are also rendered by TerminalView.
-        if cli_agent.is_some() || is_alt_screen_active {
+        if self.should_render_sticky_toolbelt_footer(&self.model.lock(), ctx)
+            || is_alt_screen_active
+        {
             return;
         }
 
@@ -1416,6 +1425,16 @@ impl UseAgentToolbar {
             me.notify_and_notify_children(ctx);
         });
 
+        ctx.subscribe_to_model(&SessionSettings::handle(ctx), |me, _, event, ctx| {
+            if matches!(
+                event,
+                SessionSettingsChangedEvent::TerminalToolbarChipSelectionSetting { .. }
+                    | SessionSettingsChangedEvent::ShowTerminalFooter { .. }
+            ) {
+                me.notify_and_notify_children(ctx);
+            }
+        });
+
         Self {
             terminal_view_id,
             button,
@@ -1629,6 +1648,23 @@ impl View for UseAgentToolbar {
             }
 
             return container.finish();
+        }
+
+        let is_alt_screen_active = self.terminal_model.lock().is_alt_screen_active();
+        if *SessionSettings::as_ref(app).show_terminal_footer && !is_alt_screen_active {
+            return Container::new(
+                self.agent_input_footer
+                    .as_ref(app)
+                    .render_terminal_mode_footer(app),
+            )
+            .with_horizontal_padding(*super::PADDING_LEFT)
+            .with_border(
+                Border::top(1.).with_border_fill(
+                    ThemeFill::Solid(Appearance::as_ref(app).theme().accent().into_solid())
+                        .with_opacity(50),
+                ),
+            )
+            .finish();
         }
 
         let terminal_model = self.terminal_model.lock();

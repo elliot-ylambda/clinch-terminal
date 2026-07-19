@@ -491,7 +491,7 @@ fn cli_agent_footer_is_sticky_for_viewer_of_shared_cloud_agent_session() {
                 "footer should render for viewer of shared cloud agent session with CLI agent",
             );
             assert!(
-                view.should_render_sticky_cli_agent_footer(&model, ctx),
+                view.should_render_sticky_toolbelt_footer(&model, ctx),
                 "CLI agent footer should render as a persistent terminal-layout child",
             );
             let active_block_index = model.block_list().active_block_index();
