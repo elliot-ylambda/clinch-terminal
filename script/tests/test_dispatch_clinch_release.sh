@@ -181,9 +181,9 @@ case "${1:-} ${2:-}" in
   'api repos/elliot-ylambda/clinch-terminal/releases?per_page=100')
     [[ "${FIXTURE_NO_PREVIOUS_RELEASE:-0}" == 1 ]] || printf '%s\n' "$FIXTURE_LATEST"
     ;;
-  'api repos/elliot-ylambda/clinch-terminal/releases/tags/'*)
+  'release view')
     if [[ ! -f "$DRAFT_STATE" ]]; then
-      echo 'gh: Not Found (HTTP 404)' >&2
+      echo 'release not found' >&2
       exit 1
     fi
     if [[ -f "$DRAFT_MUTATED_STATE" ]]; then
@@ -193,9 +193,9 @@ case "${1:-} ${2:-}" in
     fi
     draft_value="${DRAFT_VALUE:-true}"
     [[ ! -f "$PUBLISHED_STATE" ]] || draft_value=false
-    printf '{"id":1,"draft":%s,"tag_name":"%s",' \
+    printf '{"databaseId":1,"isDraft":%s,"tagName":"%s",' \
       "$draft_value" "$FIXTURE_VERSION"
-    printf '"name":"fixture","body":"%s","target_commitish":"%s","assets":[' \
+    printf '"name":"fixture","body":"%s","targetCommitish":"%s","assets":[' \
       "$draft_body" "$FIXTURE_COMMIT"
     separator=
     for name in \
@@ -207,13 +207,13 @@ case "${1:-} ${2:-}" in
       clinch-release-allowed-signers install.sh uninstall.sh; do
       printf '%s{"id":"fixture-%s","name":"%s","size":1,' \
         "$separator" "$name" "$name"
-      printf '"updated_at":"fixture","digest":"sha256:fixture"}'
+      printf '"updatedAt":"fixture","digest":"sha256:fixture"}'
       separator=,
     done
     if [[ -n "${GH_EXTRA_ASSET:-}" ]]; then
       printf '%s{"id":"fixture-extra","name":"%s","size":1,' \
         "$separator" "$GH_EXTRA_ASSET"
-      printf '"updated_at":"fixture","digest":"sha256:fixture"}'
+      printf '"updatedAt":"fixture","digest":"sha256:fixture"}'
     fi
     printf ']}\n'
     ;;
@@ -391,7 +391,7 @@ grep -Fq 'gh release-create' "$TMP/ops.log"
 grep -Fq 'gh release-download' "$TMP/ops.log"
 grep -Fq 'verify-sequence' "$TMP/ops.log"
 grep -Fq 'gh release-publish' "$TMP/ops.log"
-grep -Fq "gh api repos/elliot-ylambda/clinch-terminal/releases/tags/$VERSION" "$TMP/gh.log"
+grep -Fq "gh release view $VERSION" "$TMP/gh.log"
 [[ -f "$TMP/published" ]]
 if grep -Fq 'workflow run' "$TMP/gh.log"; then
   echo "FAIL: local release dispatched GitHub Actions" >&2

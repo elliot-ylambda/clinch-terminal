@@ -99,7 +99,9 @@ gh_with_retry() {
       status=$?
     fi
 
-    if grep -Eiq 'HTTP 404|"status"[[:space:]]*:[[:space:]]*"?404"?' "$stderr_file"; then
+    if grep -Eiq \
+      'HTTP 404|"status"[[:space:]]*:[[:space:]]*"?404"?|^release not found$' \
+      "$stderr_file"; then
       rm -f "$stdout_file" "$stderr_file"
       return 44
     fi
@@ -180,26 +182,27 @@ ensure_signed_remote_tag() {
 
 get_release_json() {
   local version="$1" response status
-  if response="$(gh_with_retry api "repos/$REPO/releases/tags/$version")"; then
+  if response="$(gh_with_retry release view "$version" --repo "$REPO" \
+      --json databaseId,tagName,isDraft,name,body,targetCommitish,assets)"; then
     :
   else
     status=$?
     return "$status"
   fi
   jq -e --arg version "$version" '
-        select(.tag_name == $version)
+        select(.tagName == $version)
         | {
-            id,
-            tag_name,
-            draft,
+            id: .databaseId,
+            tag_name: .tagName,
+            draft: .isDraft,
             name,
             body,
-            target_commitish,
+            target_commitish: .targetCommitish,
             assets: [.assets[] | {
               id,
               name,
               size,
-              updated_at,
+              updated_at: .updatedAt,
               digest
             }]
           }
