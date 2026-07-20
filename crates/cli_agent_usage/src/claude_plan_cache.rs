@@ -192,6 +192,28 @@ pub fn refresh_shared(
     now: DateTime<Utc>,
     fetch: impl FnOnce() -> PlanFetchOutcome,
 ) -> Option<PlanLimits> {
+    refresh_shared_inner(snapshot_cache, now, false, fetch)
+}
+
+/// Refresh after an explicit authorization gesture successfully acquired a
+/// token. A prior token-less/unauthorized attempt may have left an empty cache
+/// entry inside the normal five-minute throttle; in that one case, retry now
+/// so clicking Authorize does not appear to do nothing. Server Retry-After and
+/// a still-usable cached plan remain authoritative.
+pub fn refresh_shared_after_authorization(
+    snapshot_cache: &Path,
+    now: DateTime<Utc>,
+    fetch: impl FnOnce() -> PlanFetchOutcome,
+) -> Option<PlanLimits> {
+    refresh_shared_inner(snapshot_cache, now, true, fetch)
+}
+
+fn refresh_shared_inner(
+    snapshot_cache: &Path,
+    now: DateTime<Utc>,
+    retry_empty_after_authorization: bool,
+    fetch: impl FnOnce() -> PlanFetchOutcome,
+) -> Option<PlanLimits> {
     let (cache_path, lock_path) = cache_paths(snapshot_cache)?;
     let Some(_lock) = CacheLock::acquire(&lock_path) else {
         return load(&cache_path, now).and_then(|cached| cached.plan);
@@ -200,7 +222,10 @@ pub fn refresh_shared(
     let previous = load(&cache_path, now);
     if previous.is_some_and(|cached| {
         cached.retry_at.is_some_and(|retry_at| retry_at > now)
-            || now.signed_duration_since(cached.attempted_at) < min_attempt_interval()
+            || (now.signed_duration_since(cached.attempted_at) < min_attempt_interval()
+                && !(retry_empty_after_authorization
+                    && cached.retry_at.is_none()
+                    && cached.plan.is_none()))
     }) {
         return previous.and_then(|cached| cached.plan);
     }

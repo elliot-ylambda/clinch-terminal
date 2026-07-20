@@ -21930,7 +21930,9 @@ impl Workspace {
         // data exists (not tied to a focused pane). Each provider owns a focused
         // click target and detail panel.
         {
-            let snapshot = CliAgentUsageModel::as_ref(ctx).latest().clone();
+            let usage_model = CliAgentUsageModel::as_ref(ctx);
+            let snapshot = usage_model.latest().clone();
+            let authorization_pending = usage_model.authorization_pending();
             let usage_settings = CliAgentUsageSettings::as_ref(ctx);
             let plan_limits_enabled = *usage_settings.show_plan_limits;
             let visibility = CliAgentUsageHeaderVisibility::from_overrides(
@@ -21944,6 +21946,7 @@ impl Workspace {
             if let Some(widget) = render_cli_agent_usage_header(
                 &snapshot,
                 plan_limits_enabled,
+                authorization_pending,
                 &visibility,
                 appearance,
                 bg,
@@ -25986,7 +25989,9 @@ impl TypedActionView for Workspace {
                 // The same click sanctions one Keychain read: if the item's
                 // ACL requires the macOS credential prompt, it appears now as
                 // a direct response to the gesture — never unbidden at launch.
-                CliAgentUsageModel::as_ref(ctx).request_authorization();
+                CliAgentUsageModel::handle(ctx).update(ctx, |model, ctx| {
+                    model.request_authorization(ctx);
+                });
                 ctx.notify();
             }
             ReopenClosedSession => {
@@ -27358,7 +27363,9 @@ impl View for Workspace {
         // tab-bar usage widget via its saved position. Gated on the same data
         // check the widget uses, so the anchor is always registered when shown.
         if let Some(provider) = self.cli_agent_usage_panel_provider {
-            let snapshot = CliAgentUsageModel::as_ref(app).latest().clone();
+            let usage_model = CliAgentUsageModel::as_ref(app);
+            let snapshot = usage_model.latest().clone();
+            let authorization_pending = usage_model.authorization_pending();
             if cli_agent_usage::format::chip_halves(&snapshot).is_some() {
                 let usage_settings = CliAgentUsageSettings::as_ref(app);
                 let plan_limits_enabled = *usage_settings.show_plan_limits;
@@ -27385,6 +27392,7 @@ impl View for Workspace {
                         appearance,
                         provider,
                         plan_limits_enabled,
+                        authorization_pending,
                         &visibility,
                         CliAgentUsagePanelMouseStates {
                             metric_checkboxes: metric_mouse_states,

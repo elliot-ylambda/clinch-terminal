@@ -230,12 +230,16 @@ impl CliAgentUsageProvider {
         self,
         plan_limits_enabled: bool,
         provider: &Provider,
+        authorization_pending: bool,
     ) -> Option<PlanLimitsAffordance> {
         if self != Self::Claude {
             return None;
         }
         if !plan_limits_enabled {
             return Some(PlanLimitsAffordance::TurnOn);
+        }
+        if authorization_pending {
+            return Some(PlanLimitsAffordance::Authorizing);
         }
         provider
             .plan_needs_authorization
@@ -250,6 +254,7 @@ impl CliAgentUsageProvider {
 pub enum PlanLimitsAffordance {
     TurnOn,
     Authorize,
+    Authorizing,
 }
 
 impl PlanLimitsAffordance {
@@ -257,7 +262,12 @@ impl PlanLimitsAffordance {
         match self {
             Self::TurnOn => "Turn on",
             Self::Authorize => "Authorize",
+            Self::Authorizing => "Authorizing…",
         }
+    }
+
+    pub fn is_clickable(self) -> bool {
+        !matches!(self, Self::Authorizing)
     }
 }
 
@@ -337,29 +347,36 @@ mod cli_agent_usage_provider_tests {
 
         // Setting off: Claude offers "Turn on" regardless of poller state.
         assert_eq!(
-            claude.plan_limits_affordance(false, &idle),
+            claude.plan_limits_affordance(false, &idle, false),
             Some(PlanLimitsAffordance::TurnOn)
         );
         assert_eq!(
-            claude.plan_limits_affordance(false, &needs_auth),
+            claude.plan_limits_affordance(false, &needs_auth, true),
             Some(PlanLimitsAffordance::TurnOn)
         );
         // Setting on: Authorize appears only while the poller reports that
         // reading the Keychain would prompt.
-        assert_eq!(claude.plan_limits_affordance(true, &idle), None);
+        assert_eq!(claude.plan_limits_affordance(true, &idle, false), None);
         assert_eq!(
-            claude.plan_limits_affordance(true, &needs_auth),
+            claude.plan_limits_affordance(true, &needs_auth, false),
             Some(PlanLimitsAffordance::Authorize)
         );
+        assert_eq!(
+            claude.plan_limits_affordance(true, &needs_auth, true),
+            Some(PlanLimitsAffordance::Authorizing)
+        );
         // Codex limits come from local files; no affordance ever.
-        assert_eq!(codex.plan_limits_affordance(false, &idle), None);
-        assert_eq!(codex.plan_limits_affordance(true, &needs_auth), None);
+        assert_eq!(codex.plan_limits_affordance(false, &idle, false), None);
+        assert_eq!(codex.plan_limits_affordance(true, &needs_auth, true), None);
     }
 
     #[test]
     fn affordance_labels_name_the_gesture() {
         assert_eq!(PlanLimitsAffordance::TurnOn.label(), "Turn on");
         assert_eq!(PlanLimitsAffordance::Authorize.label(), "Authorize");
+        assert_eq!(PlanLimitsAffordance::Authorizing.label(), "Authorizing…");
+        assert!(PlanLimitsAffordance::Authorize.is_clickable());
+        assert!(!PlanLimitsAffordance::Authorizing.is_clickable());
     }
 
     #[test]

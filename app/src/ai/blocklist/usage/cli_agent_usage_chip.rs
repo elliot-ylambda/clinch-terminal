@@ -71,19 +71,25 @@ pub(super) fn plan_limits_affordance_link(
     mouse_state: MouseStateHandle,
 ) -> Box<dyn Element> {
     let theme = appearance.theme();
-    Hoverable::new(mouse_state, move |state| {
-        let color = if state.is_hovered() {
+    let clickable = affordance.is_clickable();
+    let mut element = Hoverable::new(mouse_state, move |state| {
+        let color = if !clickable {
+            theme.sub_text_color(bg)
+        } else if state.is_hovered() {
             theme.main_text_color(bg)
         } else {
             theme.accent()
         };
         span(affordance.label(), color, appearance)
-    })
-    .on_click(move |ctx, _app, _position| {
-        ctx.dispatch_typed_action(WorkspaceAction::EnableCliAgentPlanLimits);
-    })
-    .with_cursor(Cursor::PointingHand)
-    .finish()
+    });
+    if clickable {
+        element = element
+            .on_click(move |ctx, _app, _position| {
+                ctx.dispatch_typed_action(WorkspaceAction::EnableCliAgentPlanLimits);
+            })
+            .with_cursor(Cursor::PointingHand);
+    }
+    element.finish()
 }
 
 /// A focused provider panel: plan limits, local token totals, and a link to the
@@ -99,6 +105,7 @@ pub fn render_cli_agent_usage_panel(
     appearance: &Appearance,
     kind: CliAgentUsageProvider,
     plan_limits_enabled: bool,
+    authorization_pending: bool,
     visibility: &CliAgentUsageHeaderVisibility,
     mouse_states: CliAgentUsagePanelMouseStates<'_>,
 ) -> Box<dyn Element> {
@@ -125,7 +132,9 @@ pub fn render_cli_agent_usage_panel(
 
     // Claude's live plan data is opt-in, but its visibility controls remain
     // available even while collection is off.
-    if let Some(affordance) = kind.plan_limits_affordance(plan_limits_enabled, provider) {
+    if let Some(affordance) =
+        kind.plan_limits_affordance(plan_limits_enabled, provider, authorization_pending)
+    {
         col.add_child(panel_row(
             span("Limits", sub, appearance),
             plan_limits_affordance_link(affordance, appearance, bg, turn_on_mouse_state),

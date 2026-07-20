@@ -108,6 +108,52 @@ fn failed_first_attempt_is_shared_without_fabricating_a_plan() {
 }
 
 #[test]
+fn authorization_retries_an_empty_throttled_attempt_immediately() {
+    let snapshot = temp_snapshot_path();
+    let now = Utc.with_ymd_and_hms(2026, 7, 13, 18, 0, 0).unwrap();
+    assert_eq!(
+        refresh_shared(&snapshot, now, || PlanFetchOutcome::Unavailable),
+        None
+    );
+
+    let calls = Cell::new(0);
+    assert_eq!(
+        refresh_shared_after_authorization(&snapshot, now + Duration::seconds(30), || {
+            calls.set(calls.get() + 1);
+            PlanFetchOutcome::Success(plan(14.0))
+        }),
+        Some(plan(14.0))
+    );
+    assert_eq!(calls.get(), 1);
+
+    let _ = fs::remove_dir_all(snapshot.parent().unwrap());
+}
+
+#[test]
+fn authorization_does_not_bypass_retry_after() {
+    let snapshot = temp_snapshot_path();
+    let now = Utc.with_ymd_and_hms(2026, 7, 13, 18, 0, 0).unwrap();
+    assert_eq!(
+        refresh_shared(&snapshot, now, || PlanFetchOutcome::RateLimited(
+            std::time::Duration::from_secs(2_100)
+        )),
+        None
+    );
+
+    let calls = Cell::new(0);
+    assert_eq!(
+        refresh_shared_after_authorization(&snapshot, now + Duration::seconds(30), || {
+            calls.set(calls.get() + 1);
+            PlanFetchOutcome::Success(plan(14.0))
+        }),
+        None
+    );
+    assert_eq!(calls.get(), 0, "must still honor the server Retry-After");
+
+    let _ = fs::remove_dir_all(snapshot.parent().unwrap());
+}
+
+#[test]
 fn rate_limit_retry_after_is_shared_and_honored() {
     let snapshot = temp_snapshot_path();
     let now = Utc.with_ymd_and_hms(2026, 7, 13, 18, 0, 0).unwrap();

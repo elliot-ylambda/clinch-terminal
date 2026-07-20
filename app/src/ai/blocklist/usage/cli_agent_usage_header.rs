@@ -168,6 +168,7 @@ fn token_text(totals: &WindowTotals) -> String {
 /// gauges are off or the Keychain read awaits a sanctioning click.
 struct PlanLimitsGate<'a> {
     enabled: bool,
+    authorization_pending: bool,
     turn_on_mouse_state: &'a MouseStateHandle,
 }
 
@@ -179,7 +180,7 @@ impl PlanLimitsGate<'_> {
         kind: CliAgentUsageProvider,
         provider: &Provider,
     ) -> Option<(PlanLimitsAffordance, MouseStateHandle)> {
-        kind.plan_limits_affordance(self.enabled, provider)
+        kind.plan_limits_affordance(self.enabled, provider, self.authorization_pending)
             .map(|affordance| (affordance, self.turn_on_mouse_state.clone()))
     }
 }
@@ -480,6 +481,7 @@ fn compact_row(
 pub fn render_cli_agent_usage_header(
     snapshot: &UsageSnapshot,
     plan_limits_enabled: bool,
+    authorization_pending: bool,
     visibility: &CliAgentUsageHeaderVisibility,
     appearance: &Appearance,
     bg: Fill,
@@ -493,6 +495,7 @@ pub fn render_cli_agent_usage_header(
         visibility,
         gate: PlanLimitsGate {
             enabled: plan_limits_enabled,
+            authorization_pending,
             turn_on_mouse_state,
         },
         appearance,

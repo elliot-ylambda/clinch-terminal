@@ -34,12 +34,23 @@ pub enum CliAgentUsageModelEvent {
     Updated,
 }
 
+struct ProducerUpdate {
+    snapshot: UsageSnapshot,
+    authorization_attempt_finished: bool,
+}
+
 pub struct CliAgentUsageModel {
     latest: UsageSnapshot,
     /// One-shot gesture flag consumed by the producer thread: the user just
     /// clicked Turn on / Authorize, sanctioning one Keychain read even if
     /// macOS will raise its credential prompt for it.
     authorize: Arc<AtomicBool>,
+    /// Wakes the producer out of its idle wait so an explicit gesture does not
+    /// sit behind the normal file-poll interval.
+    producer_thread: Option<std::thread::Thread>,
+    /// UI-only acknowledgement shown from the click until the producer has
+    /// completed that specific Keychain attempt and any immediate fetch.
+    authorization_pending: bool,
 }
 
 impl Entity for CliAgentUsageModel {
@@ -50,7 +61,7 @@ impl SingletonEntity for CliAgentUsageModel {}
 
 impl CliAgentUsageModel {
     pub fn new(ctx: &mut ModelContext<Self>) -> Self {
-        let (tx, rx) = async_channel::unbounded::<UsageSnapshot>();
+        let (tx, rx) = async_channel::unbounded::<ProducerUpdate>();
 
         // Bridge the main-thread-only `show_plan_limits` setting to the
         // off-thread producer with a lock-free atomic (same pattern as
@@ -62,14 +73,18 @@ impl CliAgentUsageModel {
         ));
         let authorize = Arc::new(AtomicBool::new(false));
 
-        if let Some(paths) = Paths::detect() {
+        let producer_thread = if let Some(paths) = Paths::detect() {
             // Dedicated OS thread => guaranteed no Tokio runtime context.
             let enabled = enabled.clone();
             let authorize = authorize.clone();
-            let _ = std::thread::Builder::new()
+            std::thread::Builder::new()
                 .name("cli-agent-usage".to_string())
-                .spawn(move || producer_loop(paths, tx, enabled, authorize));
-        }
+                .spawn(move || producer_loop(paths, tx, enabled, authorize))
+                .ok()
+                .map(|handle| handle.thread().clone())
+        } else {
+            None
+        };
 
         // Track setting changes (Settings UI or Command Palette toggle). The
         // producer observes the new value on its next tick. Turning the
@@ -78,30 +93,51 @@ impl CliAgentUsageModel {
         ctx.subscribe_to_model(&CliAgentUsageSettings::handle(ctx), {
             let enabled = enabled.clone();
             let authorize = authorize.clone();
+            let producer_thread = producer_thread.clone();
             let mut was_enabled = *CliAgentUsageSettings::as_ref(ctx).show_plan_limits;
             move |_model, _handle, _event, ctx| {
                 let is_enabled = *CliAgentUsageSettings::as_ref(ctx).show_plan_limits;
-                if is_enabled && !was_enabled {
+                let turned_on = is_enabled && !was_enabled;
+                if turned_on {
                     authorize.store(true, Ordering::Relaxed);
                 }
                 was_enabled = is_enabled;
                 enabled.store(is_enabled, Ordering::Relaxed);
+                if turned_on {
+                    if let Some(thread) = &producer_thread {
+                        thread.unpark();
+                    }
+                }
             }
         });
 
         // Deliver each snapshot on the main thread; store it and notify observers.
-        ctx.spawn_stream_local(rx, Self::on_snapshot, |_, _| {});
+        ctx.spawn_stream_local(rx, Self::on_update, |_, _| {});
         Self {
             latest: UsageSnapshot::default(),
             authorize,
+            producer_thread,
+            authorization_pending: false,
         }
     }
 
     /// Sanction one Keychain read in direct response to a user click (the
     /// usage widget's Turn on / Authorize affordance). If reading requires
     /// the macOS credential prompt, it appears now — never unbidden at launch.
-    pub fn request_authorization(&self) {
+    pub fn request_authorization(&mut self, ctx: &mut ModelContext<Self>) {
         self.authorize.store(true, Ordering::Relaxed);
+        if let Some(thread) = &self.producer_thread {
+            thread.unpark();
+        }
+        if !self.authorization_pending {
+            self.authorization_pending = true;
+            ctx.emit(CliAgentUsageModelEvent::Updated);
+            ctx.notify();
+        }
+    }
+
+    pub fn authorization_pending(&self) -> bool {
+        self.authorization_pending
     }
 
     /// Test-only constructor: skips the producer thread (which reads the macOS
@@ -113,6 +149,8 @@ impl CliAgentUsageModel {
         Self {
             latest: UsageSnapshot::default(),
             authorize: Arc::new(AtomicBool::new(false)),
+            producer_thread: None,
+            authorization_pending: false,
         }
     }
 
@@ -124,14 +162,25 @@ impl CliAgentUsageModel {
         snapshot: UsageSnapshot,
         ctx: &mut ModelContext<Self>,
     ) {
-        self.on_snapshot(snapshot, ctx);
+        self.on_update(
+            ProducerUpdate {
+                snapshot,
+                authorization_attempt_finished: false,
+            },
+            ctx,
+        );
     }
 
     pub fn latest(&self) -> &UsageSnapshot {
         &self.latest
     }
 
-    fn on_snapshot(&mut self, snap: UsageSnapshot, ctx: &mut ModelContext<Self>) {
+    fn on_update(&mut self, update: ProducerUpdate, ctx: &mut ModelContext<Self>) {
+        let pending_changed = update.authorization_attempt_finished && self.authorization_pending;
+        if pending_changed {
+            self.authorization_pending = false;
+        }
+        let snap = update.snapshot;
         // Emit only on real change — the producer sends every ~5s forever, and an
         // unconditional notify would wake the footer each poll even when nothing
         // changed (and even when the chip is hidden), defeating idle-frame suppression.
@@ -146,7 +195,7 @@ impl CliAgentUsageModel {
                 .into_iter()
                 .flatten()
                 .any(|plan| plan.exhausted_until().is_some());
-        if snap == self.latest && !countdown_is_live {
+        if snap == self.latest && !countdown_is_live && !pending_changed {
             return;
         }
         self.latest = snap;
@@ -174,7 +223,7 @@ impl CliAgentUsageModel {
 /// (the `authorize` flag) is the only thing that sanctions a prompting read.
 fn producer_loop(
     paths: Paths,
-    tx: async_channel::Sender<UsageSnapshot>,
+    tx: async_channel::Sender<ProducerUpdate>,
     enabled: Arc<AtomicBool>,
     authorize: Arc<AtomicBool>,
 ) {
@@ -201,7 +250,12 @@ fn producer_loop(
         // Recomputed within the first tick (the probe is fast); never revive
         // last run's Authorize affordance ahead of a fresh ACL probe.
         cached.claude.plan_needs_authorization = false;
-        if block_on(tx.send(cached.clone())).is_err() {
+        if block_on(tx.send(ProducerUpdate {
+            snapshot: cached.clone(),
+            authorization_attempt_finished: false,
+        }))
+        .is_err()
+        {
             return;
         }
     }
@@ -212,6 +266,8 @@ fn producer_loop(
         let enabled_now = enabled.load(Ordering::Relaxed);
         let previous_plan = last_plan;
         let previous_needs_auth = needs_authorization;
+        let mut authorization_attempt_finished = false;
+        let mut authorized_token = false;
 
         if !enabled_now {
             // Gauge disabled: never touch the Keychain. Drop any cached token and
@@ -258,6 +314,8 @@ fn producer_loop(
                     }
                 }
                 last_read_ms = Some(now_ms);
+                authorization_attempt_finished = gesture;
+                authorized_token = gesture && cached_token.is_some();
             }
 
             last_plan = if needs_authorization {
@@ -266,7 +324,7 @@ fn producer_loop(
                 // healthy sibling process may be using.
                 None
             } else {
-                claude_plan_cache::refresh_shared(&paths.snapshot_cache, now, || {
+                let fetch_plan = || {
                     let mut outcome = cached_token
                         .as_ref()
                         .map(|token| {
@@ -309,7 +367,16 @@ fn producer_loop(
                         }
                     }
                     outcome
-                })
+                };
+                if authorized_token {
+                    claude_plan_cache::refresh_shared_after_authorization(
+                        &paths.snapshot_cache,
+                        now,
+                        fetch_plan,
+                    )
+                } else {
+                    claude_plan_cache::refresh_shared(&paths.snapshot_cache, now, fetch_plan)
+                }
             };
         }
 
@@ -317,11 +384,19 @@ fn producer_loop(
         // 10s+ recursive transcript scan. Push them with the last local
         // snapshot immediately; the live scan below replaces the local totals
         // on the same loop.
-        if last_plan != previous_plan || needs_authorization != previous_needs_auth {
+        if last_plan != previous_plan
+            || needs_authorization != previous_needs_auth
+            || authorization_attempt_finished
+        {
             let mut preview = last_stored.clone().unwrap_or_default();
             preview.claude.plan = last_plan;
             preview.claude.plan_needs_authorization = needs_authorization;
-            if block_on(tx.send(preview)).is_err() {
+            if block_on(tx.send(ProducerUpdate {
+                snapshot: preview,
+                authorization_attempt_finished,
+            }))
+            .is_err()
+            {
                 return;
             }
         }
@@ -333,9 +408,14 @@ fn producer_loop(
             snapshot_cache::store(&paths.snapshot_cache, &snap, now);
             last_stored = Some(snap.clone());
         }
-        if block_on(tx.send(snap)).is_err() {
+        if block_on(tx.send(ProducerUpdate {
+            snapshot: snap,
+            authorization_attempt_finished: false,
+        }))
+        .is_err()
+        {
             break; // receiver dropped (model gone) => exit cleanly
         }
-        std::thread::sleep(FILE_POLL);
+        std::thread::park_timeout(FILE_POLL);
     }
 }
