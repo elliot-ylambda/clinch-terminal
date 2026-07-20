@@ -165,6 +165,15 @@ cat > "$BIN/gh" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'gh %s\n' "$*" >> "$GH_LOG"
+if [[ -n "${GH_TRANSIENT_MATCH:-}" && "$*" == *"$GH_TRANSIENT_MATCH"* ]]; then
+  transient_count=0
+  [[ ! -f "$GH_TRANSIENT_STATE" ]] || transient_count="$(< "$GH_TRANSIENT_STATE")"
+  if (( transient_count < ${GH_TRANSIENT_FAILURES:-1} )); then
+    printf '%s\n' "$((transient_count + 1))" > "$GH_TRANSIENT_STATE"
+    echo 'gh: No server is currently available to service your request. (HTTP 503)' >&2
+    exit 1
+  fi
+fi
 case "${1:-} ${2:-}" in
   'auth status')
     exit 0
@@ -172,16 +181,21 @@ case "${1:-} ${2:-}" in
   'api repos/elliot-ylambda/clinch-terminal/releases?per_page=100')
     [[ "${FIXTURE_NO_PREVIOUS_RELEASE:-0}" == 1 ]] || printf '%s\n' "$FIXTURE_LATEST"
     ;;
-  'release view')
-    [[ -f "$DRAFT_STATE" ]] || exit 1
+  'api repos/elliot-ylambda/clinch-terminal/releases/tags/'*)
+    if [[ ! -f "$DRAFT_STATE" ]]; then
+      echo 'gh: Not Found (HTTP 404)' >&2
+      exit 1
+    fi
     if [[ -f "$DRAFT_MUTATED_STATE" ]]; then
       draft_body=mutated
     else
       draft_body=fixture
     fi
-    printf '{"databaseId":1,"isDraft":%s,"tagName":"%s",' \
-      "${DRAFT_VALUE:-true}" "$FIXTURE_VERSION"
-    printf '"name":"fixture","body":"%s","targetCommitish":"%s","assets":[' \
+    draft_value="${DRAFT_VALUE:-true}"
+    [[ ! -f "$PUBLISHED_STATE" ]] || draft_value=false
+    printf '{"id":1,"draft":%s,"tag_name":"%s",' \
+      "$draft_value" "$FIXTURE_VERSION"
+    printf '"name":"fixture","body":"%s","target_commitish":"%s","assets":[' \
       "$draft_body" "$FIXTURE_COMMIT"
     separator=
     for name in \
@@ -193,17 +207,27 @@ case "${1:-} ${2:-}" in
       clinch-release-allowed-signers install.sh uninstall.sh; do
       printf '%s{"id":"fixture-%s","name":"%s","size":1,' \
         "$separator" "$name" "$name"
-      printf '"updatedAt":"fixture","digest":"sha256:fixture"}'
+      printf '"updated_at":"fixture","digest":"sha256:fixture"}'
       separator=,
     done
     if [[ -n "${GH_EXTRA_ASSET:-}" ]]; then
       printf '%s{"id":"fixture-extra","name":"%s","size":1,' \
         "$separator" "$GH_EXTRA_ASSET"
-      printf '"updatedAt":"fixture","digest":"sha256:fixture"}'
+      printf '"updated_at":"fixture","digest":"sha256:fixture"}'
     fi
     printf ']}\n'
     ;;
   'release create')
+    if [[ "${GH_CREATE_AMBIGUOUS_ONCE:-0}" == 1 && ! -f "$GH_CREATE_AMBIGUOUS_STATE" ]]; then
+      touch "$DRAFT_STATE" "$GH_CREATE_AMBIGUOUS_STATE"
+      printf '%s\n' 'gh release-create-ambiguous' >> "$OPS_LOG"
+      echo 'gh: No server is currently available to service your request. (HTTP 503)' >&2
+      exit 1
+    fi
+    if [[ -f "$DRAFT_STATE" ]]; then
+      echo 'gh: Validation Failed (HTTP 422)' >&2
+      exit 1
+    fi
     touch "$DRAFT_STATE"
     printf '%s\n' 'gh release-create' >> "$OPS_LOG"
     printf 'https://github.com/elliot-ylambda/clinch-terminal/releases/tag/%s\n' \
@@ -212,6 +236,15 @@ case "${1:-} ${2:-}" in
   'release edit')
     if [[ " $* " == *' --draft=false '* ]]; then
       printf '%s\n' 'gh release-publish' >> "$OPS_LOG"
+      if [[ "${GH_PUBLISH_AMBIGUOUS_ONCE:-0}" == 1 && ! -f "$GH_PUBLISH_AMBIGUOUS_STATE" ]]; then
+        touch "$PUBLISHED_STATE" "$GH_PUBLISH_AMBIGUOUS_STATE"
+        echo 'gh: No server is currently available to service your request. (HTTP 503)' >&2
+        exit 1
+      fi
+      if [[ -f "$GH_PUBLISH_AMBIGUOUS_STATE" ]]; then
+        echo 'gh: Validation Failed (HTTP 422)' >&2
+        exit 1
+      fi
       [[ "${GH_PUBLISH_FAIL:-0}" != 1 ]] || exit 42
       touch "$PUBLISHED_STATE"
     else
@@ -264,6 +297,9 @@ BASE_ENV=(
   TAG_MUTATED_STATE="$TMP/tag-mutated"
   MAIN_MUTATED_STATE="$TMP/main-mutated"
   PUBLISHED_STATE="$TMP/published"
+  GH_TRANSIENT_STATE="$TMP/gh-transient-count"
+  GH_CREATE_AMBIGUOUS_STATE="$TMP/gh-create-ambiguous"
+  GH_PUBLISH_AMBIGUOUS_STATE="$TMP/gh-publish-ambiguous"
   FIXTURE_COMMIT="$COMMIT"
   FIXTURE_TAG_OID=cccccccccccccccccccccccccccccccccccccccc
   FIXTURE_LATEST="$LATEST"
@@ -279,6 +315,8 @@ reset_state() {
   rm -f \
     "$TMP/local-tag" "$TMP/remote-tag" "$TMP/draft" "$TMP/draft-mutated" \
     "$TMP/tag-mutated" "$TMP/main-mutated" "$TMP/published"
+  rm -f \
+    "$TMP/gh-transient-count" "$TMP/gh-create-ambiguous" "$TMP/gh-publish-ambiguous"
   : > "$TMP/ops.log"
   : > "$TMP/git.log"
   : > "$TMP/gh.log"
@@ -353,7 +391,7 @@ grep -Fq 'gh release-create' "$TMP/ops.log"
 grep -Fq 'gh release-download' "$TMP/ops.log"
 grep -Fq 'verify-sequence' "$TMP/ops.log"
 grep -Fq 'gh release-publish' "$TMP/ops.log"
-grep -Fq "gh release view $VERSION" "$TMP/gh.log"
+grep -Fq "gh api repos/elliot-ylambda/clinch-terminal/releases/tags/$VERSION" "$TMP/gh.log"
 [[ -f "$TMP/published" ]]
 if grep -Fq 'workflow run' "$TMP/gh.log"; then
   echo "FAIL: local release dispatched GitHub Actions" >&2
@@ -365,6 +403,33 @@ run_release_tty "PUBLISH $VERSION ${COMMIT:0:12}" \
   FIXTURE_NO_PREVIOUS_RELEASE=1 > "$TMP/bootstrap.out"
 grep -Fq "Locally built, verified, signed, and published $VERSION" "$TMP/bootstrap.out"
 grep -Fq 'gh release-publish' "$TMP/ops.log"
+
+reset_state
+run_release_tty "PUBLISH $VERSION ${COMMIT:0:12}" \
+  GH_TRANSIENT_MATCH='releases?per_page=100' GH_TRANSIENT_FAILURES=2 \
+  CLINCH_GH_RETRY_DELAY_SECONDS=0 > "$TMP/transient-read.out" 2>&1
+grep -Fq "Locally built, verified, signed, and published $VERSION" "$TMP/transient-read.out"
+[[ "$(grep -Fc 'gh api repos/elliot-ylambda/clinch-terminal/releases?per_page=100' \
+  "$TMP/gh.log")" == 3 ]]
+
+reset_state
+run_release_tty "PUBLISH $VERSION ${COMMIT:0:12}" \
+  GH_CREATE_AMBIGUOUS_ONCE=1 CLINCH_GH_RETRY_DELAY_SECONDS=0 \
+  > "$TMP/ambiguous-create.out" 2>&1
+grep -Fq "Locally built, verified, signed, and published $VERSION" \
+  "$TMP/ambiguous-create.out"
+grep -Fq 'gh release-create-ambiguous' "$TMP/ops.log"
+grep -Fq 'gh release-upload' "$TMP/ops.log"
+grep -Fq 'gh release-publish' "$TMP/ops.log"
+
+reset_state
+run_release_tty "PUBLISH $VERSION ${COMMIT:0:12}" \
+  GH_PUBLISH_AMBIGUOUS_ONCE=1 CLINCH_GH_RETRY_DELAY_SECONDS=0 \
+  > "$TMP/ambiguous-publish.out" 2>&1
+grep -Fq "Locally built, verified, signed, and published $VERSION" \
+  "$TMP/ambiguous-publish.out"
+[[ -f "$TMP/gh-publish-ambiguous" ]]
+[[ -f "$TMP/published" ]]
 
 reset_state
 if run_release_tty 'PUBLISH wrong' > "$TMP/wrong-confirm.out" 2>&1; then

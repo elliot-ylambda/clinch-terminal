@@ -12,10 +12,10 @@ if grep -REn 'gh workflow run|workflow_dispatch|runs-on:' \
   exit 1
 fi
 
-grep -Fq "gh release download \"\$version\"" "$DISPATCHER"
+grep -Fq "gh_with_retry release download \"\$version\"" "$DISPATCHER"
 grep -Fq "./script/verify-clinch-release-stage \"\$publish_tmp/dist\"" "$DISPATCHER"
 grep -Fq './script/next-clinch-update-sequence verify' "$DISPATCHER"
-grep -Fq "gh release edit \"\$version\" --repo \"\$REPO\" --draft=false" "$DISPATCHER"
+grep -Fq "gh_with_retry release edit \"\$version\" --repo \"\$REPO\"" "$DISPATCHER"
 grep -Fq 'clinch-update-manifest verify-key' "$CONFIGURE"
 grep -Fq "gh secret delete \"\$secret\"" "$CONFIGURE"
 grep -Fq "environments/\$RELEASE_ENVIRONMENT" "$CONFIGURE"
