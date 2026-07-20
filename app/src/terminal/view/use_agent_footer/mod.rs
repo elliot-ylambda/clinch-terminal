@@ -878,29 +878,39 @@ impl TerminalView {
     /// (the same pipeline as the CLI agent rich input composer).
     ///
     /// Intended for callers that produce prompts outside the rich input
-    /// editor (e.g. shared-session viewer follow-up prompts). Returns
-    /// without writing if there is no active CLI agent session or the text
-    /// is empty.
+    /// editor (e.g. shared-session viewer follow-up prompts). Returns whether
+    /// submission was initiated; `false` means there was no active session,
+    /// no text, or the agent currently owned the PTY input path.
     #[cfg(feature = "local_tty")]
     pub(crate) fn submit_text_to_cli_agent_pty(
         &mut self,
         text: String,
         ctx: &mut ViewContext<Self>,
-    ) {
+    ) -> bool {
         let Some(agent) = CLIAgentSessionsModel::as_ref(ctx)
             .session(self.view_id)
             .map(|s| s.agent)
         else {
-            return;
+            return false;
         };
 
         let text_bytes = text.into_bytes();
         if text_bytes.is_empty() {
-            return;
+            return false;
+        }
+        if self
+            .model
+            .lock()
+            .block_list()
+            .active_block()
+            .is_agent_in_control()
+        {
+            return false;
         }
 
         let strategy = rich_input_submit_strategy(agent);
         self.write_cli_agent_text_then_submit(text_bytes, strategy, ctx);
+        true
     }
 
     /// Starts a one-shot Claude Code ↔ Codex transfer. The launch command is

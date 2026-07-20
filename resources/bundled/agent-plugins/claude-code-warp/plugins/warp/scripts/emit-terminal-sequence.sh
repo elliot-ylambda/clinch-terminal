@@ -8,9 +8,10 @@
 # write to /dev/tty instead.
 #
 # Decision tree:
-#   1. CLAUDE_CODE_VERSION known, >= 2.1.141 → emit terminalSequence JSON
-#   2. CLAUDE_CODE_VERSION known, <  2.1.141 → write /dev/tty; give up if missing
-#   3. CLAUDE_CODE_VERSION unknown            → try /dev/tty, fall back to JSON
+#   1. WARP_FORCE_DIRECT_TTY=1                → write directly to the pane PTY
+#   2. CLAUDE_CODE_VERSION known, >= 2.1.141 → emit terminalSequence JSON
+#   3. CLAUDE_CODE_VERSION known, <  2.1.141 → write directly to the pane PTY
+#   4. CLAUDE_CODE_VERSION unknown            → try the pane PTY, fall back to JSON
 #
 # Usage:
 #   source "$SCRIPT_DIR/emit-terminal-sequence.sh"
@@ -55,9 +56,32 @@ _supports_terminal_sequence() {
     _version_at_least "$ver" "$TERMINAL_SEQUENCE_MIN_VERSION"
 }
 
+_write_terminal_sequence_directly() {
+    local seq="$1"
+
+    # Prefer the controlling terminal when the hook still has one. Claude Code
+    # may detach hooks from it, in which case Warp's pane PTY path is the
+    # reliable fallback.
+    if ( printf '%s' "$seq" > /dev/tty ) 2>/dev/null; then
+        return 0
+    fi
+    if [ -n "${WARP_TTY:-}" ] && [ -w "$WARP_TTY" ]; then
+        ( printf '%s' "$seq" > "$WARP_TTY" ) 2>/dev/null
+        return $?
+    fi
+    return 1
+}
+
 emit_terminal_sequence() {
     local seq="$1"
     [ -z "$seq" ] && return 0
+
+    # Some hook events (notably StopFailure) ignore hook output entirely, so
+    # terminalSequence JSON cannot be used even on current Claude Code.
+    if [ "${WARP_FORCE_DIRECT_TTY:-}" = "1" ]; then
+        _write_terminal_sequence_directly "$seq" || true
+        return 0
+    fi
 
     # Classify the running Claude Code version, if we can.
     local raw="${CLAUDE_CODE_VERSION:-}"
@@ -69,17 +93,17 @@ emit_terminal_sequence() {
             # Known new Claude Code — use the structured output field.
             jq -nc --arg seq "$seq" '{terminalSequence: $seq}'
         else
-            # Known-old Claude Code — /dev/tty is the only safe path.
+            # Known-old Claude Code — a direct PTY write is the only safe path.
             # Emitting terminalSequence here would be rejected by the Stop
             # hook validator as an unknown field.
-            printf '%s' "$seq" > /dev/tty 2>/dev/null || true
+            _write_terminal_sequence_directly "$seq" || true
         fi
         return 0
     fi
 
     # Unknown Claude Code version — try /dev/tty, fall back to JSON
     # as a best-effort attempt for new CC without version detection.
-    if printf '%s' "$seq" > /dev/tty 2>/dev/null; then
+    if _write_terminal_sequence_directly "$seq"; then
         return 0
     fi
     jq -nc --arg seq "$seq" '{terminalSequence: $seq}'

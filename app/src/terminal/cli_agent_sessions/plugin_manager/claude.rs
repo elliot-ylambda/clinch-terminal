@@ -20,9 +20,8 @@ const PLATFORM_PLUGIN_KEY: &str = "oz-harness-support@claude-code-warp";
 const MARKETPLACE_REPO: &str = "warpdotdev/claude-code-warp";
 const MARKETPLACE_NAME: &str = "claude-code-warp";
 
-// Keep in sync with the plugin version in warpdotdev/claude-code-warp.
-// (See the Versioning section of that repo's README.)
-const MINIMUM_PLUGIN_VERSION: &str = "2.2.0";
+// 2.3.0 adds causal usage-limit stop reasons used by rate-limit auto-continue.
+pub(crate) const MINIMUM_PLUGIN_VERSION: &str = "2.3.0";
 // Keep in sync with the oz-harness-support plugin version in warpdotdev/claude-code-warp.
 const MINIMUM_PLATFORM_PLUGIN_VERSION: &str = "1.1.2";
 

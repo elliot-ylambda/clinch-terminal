@@ -1,0 +1,22 @@
+{
+  "name": "clinch-codex-warp",
+  "description": "Warp terminal integration for Codex bundled with Clinch",
+  "owner": {
+    "name": "Warp",
+    "url": "https://warp.dev"
+  },
+  "plugins": [
+    {
+      "name": "warp",
+      "description": "Native Warp notifications when Codex completes tasks or needs input",
+      "source": "./plugins/warp",
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "version": "0.5.0",
+      "category": "productivity",
+      "tags": ["notifications", "terminal", "warp"]
+    }
+  ]
+}

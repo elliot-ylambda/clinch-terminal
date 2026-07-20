@@ -74,12 +74,11 @@ use crate::server::server_api::TranscribeError;
 use crate::server::telemetry::PluginChipTelemetryAction;
 use crate::server::telemetry::{PluginChipTelemetryKind, TelemetryEvent};
 use crate::settings::{
-    AISettings, AISettingsChangedEvent, CliAgentUsageSettings, PrivacySettings,
-    PrivacySettingsChangedEvent,
+    AISettings, AISettingsChangedEvent, PrivacySettings, PrivacySettingsChangedEvent,
 };
 use crate::settings_view::SettingsSection;
 use crate::terminal::cli_agent_sessions::auto_continue::{
-    is_auto_continue_available, AutoContinueModel, AUTO_CONTINUE_PROMPT,
+    AutoContinueAvailability, AutoContinueModel, AUTO_CONTINUE_PROMPT,
 };
 #[cfg(not(target_family = "wasm"))]
 use crate::terminal::cli_agent_sessions::plugin_manager::{
@@ -1681,23 +1680,37 @@ impl AgentInputFooter {
     }
 
     /// The per-pane "auto-continue when the rate limit resets" toggle.
-    /// Three states: off, on (waiting for a limit stop), and armed. The label
-    /// stays a simple on/off indicator while the armed send time remains in
-    /// the tooltip. One click always flips the opt-in — clicking an armed
-    /// toggle disarms it. Built fresh each render because its state is live;
+    /// Shows off, on, waiting, armed, retrying, and failed states so an
+    /// enabled-but-unschedulable session is never silently presented as ready.
+    /// One click always flips the opt-in — clicking an armed toggle disarms it.
+    /// Built fresh each render because its state is live;
     /// the persistent `MouseStateHandle` lives on `self` (see
     /// `custom_insert_mouse_states`).
-    fn render_auto_continue_toggle(&self, app: &AppContext) -> Box<dyn Element> {
+    fn render_auto_continue_toggle(
+        &self,
+        availability: AutoContinueAvailability,
+        app: &AppContext,
+    ) -> Box<dyn Element> {
         let model = AutoContinueModel::as_ref(app);
         let enabled = model.is_enabled(self.terminal_view_id);
         let armed_fire_at = model.armed_fire_at(self.terminal_view_id);
+        let delivery_error = model.delivery_error(self.terminal_view_id);
+        let waiting_for_reset = model.is_waiting_for_reset(self.terminal_view_id);
         let agent_name = self
             .cli_agent(app)
             .map(|agent| agent.display_name())
             .unwrap_or("CLI agent");
 
-        let (label, tooltip) = match (enabled, armed_fire_at) {
-            (true, Some(fire_at)) => {
+        let (label, tooltip) = match (enabled, armed_fire_at, delivery_error, availability) {
+            (true, Some(_), Some(error), _) => (
+                "Auto-continue: retrying".to_string(),
+                format!("The last automatic send could not start ({error}). Clinch will retry; click to turn off."),
+            ),
+            (true, None, Some(error), _) => (
+                "Auto-continue: failed".to_string(),
+                format!("Automatic sending stopped after repeated failures ({error}). Click to turn off, then turn it on again to retry."),
+            ),
+            (true, Some(fire_at), None, _) => {
                 let at = fire_at.with_timezone(&Local).format("%H:%M");
                 (
                     "Auto-continue: on".to_string(),
@@ -1707,14 +1720,31 @@ impl AgentInputFooter {
                     ),
                 )
             }
-            (true, None) => (
+            (true, None, None, _) if waiting_for_reset => (
+                "Auto-continue: waiting".to_string(),
+                format!(
+                    "{agent_name} reported a usage-limit stop. Waiting for a reliable reset time; click to turn off."
+                ),
+            ),
+            (true, None, None, AutoContinueAvailability::WaitingForUsageData) => (
+                "Auto-continue: waiting".to_string(),
+                format!(
+                    "Waiting for current {agent_name} plan-limit data before scheduling. Click to turn off."
+                ),
+            ),
+            (true, None, None, AutoContinueAvailability::Unsupported) => (
+                "Auto-continue: unavailable".to_string(),
+                "This session no longer meets the local plugin, identity, or sharing requirements. Click to turn off."
+                    .to_string(),
+            ),
+            (true, None, None, AutoContinueAvailability::Ready) => (
                 "Auto-continue: on".to_string(),
                 format!(
                     "If this {agent_name} session stops at its rate limit, \"{AUTO_CONTINUE_PROMPT}\" \
                      is sent once the limit resets. Click to turn off."
                 ),
             ),
-            (false, Some(_)) | (false, None) => (
+            (false, _, _, _) => (
                 "Auto-continue: off".to_string(),
                 format!(
                     "Auto-send \"{AUTO_CONTINUE_PROMPT}\" when this {agent_name} session's rate \
@@ -1843,20 +1873,18 @@ impl AgentInputFooter {
         // Use the same availability predicate as the Command Palette and
         // action handlers so hidden controls cannot remain reachable through
         // another entry point.
-        let auto_continue_available = self.cli_agent(app).is_some_and(|agent| {
-            is_auto_continue_available(
-                agent,
-                *CliAgentUsageSettings::as_ref(app).show_plan_limits,
-                shared_status.is_viewer(),
-            )
-        });
+        let auto_continue_availability =
+            AutoContinueModel::availability(self.terminal_view_id, shared_status.is_viewer(), app);
+        let auto_continue_enabled =
+            AutoContinueModel::as_ref(app).is_enabled(self.terminal_view_id);
         let mut right_buttons = Flex::row()
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
             .with_main_axis_size(MainAxisSize::Min)
             .with_spacing(4.);
 
-        if auto_continue_available {
-            right_buttons.add_child(self.render_auto_continue_toggle(app));
+        if auto_continue_availability.may_render(auto_continue_enabled) {
+            right_buttons
+                .add_child(self.render_auto_continue_toggle(auto_continue_availability, app));
         }
 
         for item in &right_items {
@@ -2914,21 +2942,20 @@ impl TypedActionView for AgentInputFooter {
                 // footer button and the Command Palette pair flip one state.
                 // Updating a model from here is safe (unlike a synchronous
                 // action dispatch that could re-borrow this pane's views).
+                let terminal_view_id = self.terminal_view_id;
                 let is_shared_session_viewer = self
                     .terminal_model
                     .lock()
                     .shared_session_status()
                     .is_viewer();
-                let is_available = self.cli_agent(ctx).is_some_and(|agent| {
-                    is_auto_continue_available(
-                        agent,
-                        *CliAgentUsageSettings::as_ref(ctx).show_plan_limits,
-                        is_shared_session_viewer,
-                    )
-                });
-                let terminal_view_id = self.terminal_view_id;
+                let may_enable = AutoContinueModel::availability(
+                    terminal_view_id,
+                    is_shared_session_viewer,
+                    ctx,
+                )
+                .may_enable();
                 AutoContinueModel::handle(ctx).update(ctx, |model, ctx| {
-                    if is_available {
+                    if model.is_enabled(terminal_view_id) || may_enable {
                         model.toggle(terminal_view_id, ctx);
                     } else {
                         model.disable(terminal_view_id, ctx);

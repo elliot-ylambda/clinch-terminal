@@ -11,7 +11,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use blocking::unblock;
-use event::{CLIAgentEvent, CLIAgentEventSource, CLIAgentEventType};
+use event::{CLIAgentEvent, CLIAgentEventSource, CLIAgentEventType, CLIAgentStopReason};
 use warpui::{Entity, EntityId, ModelContext, ModelHandle, SingletonEntity};
 
 use self::listener::CLIAgentSessionListener;
@@ -96,6 +96,9 @@ pub struct CLIAgentSessionContext {
     pub summary: Option<String>,
     pub query: Option<String>,
     pub response: Option<String>,
+    /// Present only when the provider's stop notification explicitly says
+    /// this turn ended because the account hit a usage limit.
+    pub stop_reason: Option<CLIAgentStopReason>,
     /// Claude Code subagents that have started but have not emitted a matching stop event.
     pub active_subagent_ids: HashSet<String>,
     /// Whether a parent Stop/idle-prompt completion is waiting for active subagents to finish.
@@ -273,6 +276,7 @@ impl CLIAgentSession {
         self.has_observed_turn_activity = false;
         self.session_context.active_subagent_ids.clear();
         self.session_context.has_deferred_completion_for_subagents = false;
+        self.session_context.stop_reason = None;
     }
 
     /// Applies a durable provider identity discovered outside the PTY event stream.
@@ -369,6 +373,7 @@ impl CLIAgentSession {
                     self.session_context.query = event.payload.query.clone();
                 }
                 self.session_context.response = None;
+                self.session_context.stop_reason = None;
                 self.clear_permission_scoped_state();
                 CLIAgentSessionStatus::InProgress
             }
@@ -381,6 +386,7 @@ impl CLIAgentSession {
                     return None;
                 }
                 self.has_observed_turn_activity = true;
+                self.session_context.stop_reason = None;
                 self.session_context.has_deferred_completion_for_subagents = false;
                 CLIAgentSessionStatus::InProgress
             }
@@ -395,6 +401,7 @@ impl CLIAgentSession {
                     .active_subagent_ids
                     .insert(subagent_id.to_owned());
                 self.has_observed_turn_activity = true;
+                self.session_context.stop_reason = None;
                 if matches!(self.status, CLIAgentSessionStatus::InProgress) {
                     return None;
                 }
@@ -420,8 +427,9 @@ impl CLIAgentSession {
                 self.session_context.has_deferred_completion_for_subagents = false;
                 CLIAgentSessionStatus::Success
             }
-            CLIAgentEventType::Stop => {
+            CLIAgentEventType::Stop | CLIAgentEventType::StopFailure => {
                 self.has_observed_turn_activity = true;
+                self.session_context.stop_reason = event.payload.stop_reason;
                 if !injected_notification_query(event) {
                     self.session_context.query = event.payload.query.clone();
                 }
@@ -441,6 +449,7 @@ impl CLIAgentSession {
             }
             CLIAgentEventType::PermissionRequest => {
                 self.has_observed_turn_activity = true;
+                self.session_context.stop_reason = None;
                 self.session_context.has_deferred_completion_for_subagents = false;
                 self.session_context.summary = event.payload.summary.clone();
                 self.session_context.tool_name = event.payload.tool_name.clone();
@@ -451,6 +460,7 @@ impl CLIAgentSession {
             }
             CLIAgentEventType::QuestionAsked => {
                 self.has_observed_turn_activity = true;
+                self.session_context.stop_reason = None;
                 self.session_context.has_deferred_completion_for_subagents = false;
                 CLIAgentSessionStatus::Blocked {
                     message: event
@@ -465,6 +475,7 @@ impl CLIAgentSession {
                     return None;
                 }
                 self.has_observed_turn_activity = true;
+                self.session_context.stop_reason = None;
                 self.session_context.has_deferred_completion_for_subagents = false;
                 self.clear_permission_scoped_state();
                 CLIAgentSessionStatus::InProgress
@@ -484,12 +495,14 @@ impl CLIAgentSession {
                     return None;
                 }
                 self.session_context.has_deferred_completion_for_subagents = false;
+                self.session_context.stop_reason = None;
                 CLIAgentSessionStatus::Success
             }
             CLIAgentEventType::SessionStart => {
                 self.plugin_version = event.payload.plugin_version.clone();
                 self.session_context.active_subagent_ids.clear();
                 self.session_context.has_deferred_completion_for_subagents = false;
+                self.session_context.stop_reason = None;
                 return None;
             }
             CLIAgentEventType::Unknown(_) => return None,
@@ -688,6 +701,7 @@ impl CLIAgentSessionsModel {
         session.turn_interrupted_by_user = false;
         session.status = CLIAgentSessionStatus::InProgress;
         session.session_context.response = None;
+        session.session_context.stop_reason = None;
         session.clear_permission_scoped_state();
 
         ctx.emit(CLIAgentSessionsModelEvent::StatusChanged {
@@ -723,6 +737,7 @@ impl CLIAgentSessionsModel {
 
         session.status = CLIAgentSessionStatus::Success;
         session.turn_interrupted_by_user = true;
+        session.session_context.stop_reason = None;
 
         ctx.emit(CLIAgentSessionsModelEvent::SessionUpdated {
             terminal_view_id,

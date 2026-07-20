@@ -90,7 +90,29 @@ pub enum PlanFetchOutcome {
 /// auto-continue scheduler, both of which must react only to a hard stop.
 const EXHAUSTED_PERCENT: f64 = 100.0;
 
+/// Whether provider-wide usage is currently exhausted, including the
+/// unschedulable case where the provider omitted a reset timestamp.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExhaustionStatus {
+    NotExhausted,
+    ResetUnknown,
+    ResetsAt(DateTime<Utc>),
+}
+
 impl PlanLimits {
+    pub fn exhaustion_status(&self) -> ExhaustionStatus {
+        let mut latest: Option<DateTime<Utc>> = None;
+        for window in [self.session, self.weekly].into_iter().flatten() {
+            if window.percent >= EXHAUSTED_PERCENT {
+                let Some(resets_at) = window.resets_at else {
+                    return ExhaustionStatus::ResetUnknown;
+                };
+                latest = Some(latest.map_or(resets_at, |current| current.max(resets_at)));
+            }
+        }
+        latest.map_or(ExhaustionStatus::NotExhausted, ExhaustionStatus::ResetsAt)
+    }
+
     /// When at least one provider-wide window is exhausted (percent >= 100),
     /// returns the instant at which *every* exhausted window will have reset
     /// (the latest of their reset times). Returns `None` when no window is
@@ -99,14 +121,10 @@ impl PlanLimits {
     /// guessing. Model-scoped limits such as Fable are intentionally excluded:
     /// exhausting one must not pause sessions using another Claude model.
     pub fn exhausted_until(&self) -> Option<DateTime<Utc>> {
-        let mut latest: Option<DateTime<Utc>> = None;
-        for window in [self.session, self.weekly].into_iter().flatten() {
-            if window.percent >= EXHAUSTED_PERCENT {
-                let resets_at = window.resets_at?;
-                latest = Some(latest.map_or(resets_at, |current| current.max(resets_at)));
-            }
+        match self.exhaustion_status() {
+            ExhaustionStatus::ResetsAt(resets_at) => Some(resets_at),
+            ExhaustionStatus::NotExhausted | ExhaustionStatus::ResetUnknown => None,
         }
-        latest
     }
 }
 
@@ -207,15 +225,33 @@ pub struct Paths {
 
 impl Paths {
     pub fn detect() -> Option<Paths> {
-        let home = std::env::var("HOME").ok()?;
+        let home = PathBuf::from(std::env::var_os("HOME")?);
         let os_account = std::env::var("USER").unwrap_or_default();
-        Some(Paths {
-            claude_projects: PathBuf::from(&home).join(".claude/projects"),
-            codex_sessions: PathBuf::from(&home).join(".codex/sessions"),
-            os_account,
-            snapshot_cache: PathBuf::from(&home).join(".warp/cli-agent-usage-snapshot.json"),
-        })
+        let claude_root =
+            nonempty_env_path("CLAUDE_CONFIG_DIR").unwrap_or_else(|| home.join(".claude"));
+        let codex_root = nonempty_env_path("CODEX_HOME").unwrap_or_else(|| home.join(".codex"));
+        Some(Self::from_roots(home, os_account, claude_root, codex_root))
     }
+
+    fn from_roots(
+        home: PathBuf,
+        os_account: String,
+        claude_root: PathBuf,
+        codex_root: PathBuf,
+    ) -> Self {
+        Paths {
+            claude_projects: claude_root.join("projects"),
+            codex_sessions: codex_root.join("sessions"),
+            os_account,
+            snapshot_cache: home.join(".warp/cli-agent-usage-snapshot.json"),
+        }
+    }
+}
+
+fn nonempty_env_path(name: &str) -> Option<PathBuf> {
+    std::env::var_os(name)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
 }
 
 pub struct Caches {
@@ -397,6 +433,7 @@ mod tests {
             fable_weekly: None,
         };
         assert_eq!(plan.exhausted_until(), None);
+        assert_eq!(plan.exhaustion_status(), ExhaustionStatus::NotExhausted);
         assert_eq!(PlanLimits::default().exhausted_until(), None);
     }
 
@@ -419,6 +456,10 @@ mod tests {
             fable_weekly: None,
         };
         assert_eq!(plan.exhausted_until(), Some(session_reset));
+        assert_eq!(
+            plan.exhaustion_status(),
+            ExhaustionStatus::ResetsAt(session_reset)
+        );
 
         // Both exhausted -> the later (weekly) reset: continuing before it
         // would still be blocked.
@@ -447,6 +488,7 @@ mod tests {
             fable_weekly: None,
         };
         assert_eq!(plan.exhausted_until(), None);
+        assert_eq!(plan.exhaustion_status(), ExhaustionStatus::ResetUnknown);
 
         // One exhausted window is known but another is not -> still None
         // (we cannot know when usage actually becomes available again).
@@ -456,6 +498,7 @@ mod tests {
             fable_weekly: None,
         };
         assert_eq!(plan.exhausted_until(), None);
+        assert_eq!(plan.exhaustion_status(), ExhaustionStatus::ResetUnknown);
     }
 
     #[test]
@@ -473,6 +516,30 @@ mod tests {
         };
 
         assert_eq!(plan.exhausted_until(), None);
+        assert_eq!(plan.exhaustion_status(), ExhaustionStatus::NotExhausted);
+    }
+
+    #[test]
+    fn paths_use_configured_provider_roots() {
+        let paths = Paths::from_roots(
+            "/Users/tester".into(),
+            "tester".to_owned(),
+            "/Volumes/config/claude".into(),
+            "/Volumes/config/codex".into(),
+        );
+
+        assert_eq!(
+            paths.claude_projects,
+            PathBuf::from("/Volumes/config/claude/projects")
+        );
+        assert_eq!(
+            paths.codex_sessions,
+            PathBuf::from("/Volumes/config/codex/sessions")
+        );
+        assert_eq!(
+            paths.snapshot_cache,
+            PathBuf::from("/Users/tester/.warp/cli-agent-usage-snapshot.json")
+        );
     }
 
     #[test]

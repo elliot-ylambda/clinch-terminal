@@ -14,6 +14,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../scripts" && pwd)"
 source "$SCRIPT_DIR/build-payload.sh"
+source "$SCRIPT_DIR/detect-stop-reason.sh"
 
 PASSED=0
 FAILED=0
@@ -102,6 +103,17 @@ assert_json_field "response present" "$PAYLOAD" ".response" "Memory is safe, the
 assert_json_field "transcript_path present" "$PAYLOAD" ".transcript_path" "/tmp/transcript.jsonl"
 
 echo ""
+echo "--- Usage-limit stop classification ---"
+assert_eq "Claude session limit" "usage_limit" \
+    "$(detect_stop_reason "You've hit your 5-hour limit")"
+assert_eq "Claude weekly limit" "usage_limit" \
+    "$(detect_stop_reason "You've hit your weekly limit")"
+assert_eq "ordinary completion has no reason" "" \
+    "$(detect_stop_reason "Implemented the requested changes")"
+assert_eq "generic transient error has no reason" "" \
+    "$(detect_stop_reason "Network request failed")"
+
+echo ""
 echo "--- Permission request event ---"
 PAYLOAD=$(build_payload '{"session_id":"s1","cwd":"/tmp/proj"}' "permission_request" \
     --arg summary "Wants to run Bash: rm -rf /tmp" \
@@ -140,6 +152,9 @@ assert_json_field "SubagentStart hook is registered" "$HOOKS_JSON" \
 assert_json_field "SubagentStop hook is registered" "$HOOKS_JSON" \
     ".hooks.SubagentStop[0].hooks[0].command" \
     '${CLAUDE_PLUGIN_ROOT}/scripts/on-subagent-stop.sh'
+assert_json_field "StopFailure hook is registered" "$HOOKS_JSON" \
+    ".hooks.StopFailure[0].hooks[0].command" \
+    '${CLAUDE_PLUGIN_ROOT}/scripts/on-stop-failure.sh'
 
 echo ""
 echo "--- JSON special characters in values ---"
@@ -295,6 +310,13 @@ echo "--- emit_terminal_sequence output ---"
 export CLAUDE_CODE_VERSION="2.1.141"
 OUTPUT=$(emit_terminal_sequence "test-seq")
 assert_json_field "new CC outputs terminalSequence" "$OUTPUT" ".terminalSequence" "test-seq"
+
+# Events whose output is ignored can force a direct write to Warp's pane PTY.
+DIRECT_TTY=$(mktemp)
+trap 'rm -f "$DIRECT_TTY"' EXIT
+OUTPUT=$(WARP_FORCE_DIRECT_TTY=1 WARP_TTY="$DIRECT_TTY" emit_terminal_sequence "direct-seq")
+assert_eq "forced direct write has no hook output" "" "$OUTPUT"
+assert_eq "forced direct write reaches Warp pane PTY" "direct-seq" "$(<"$DIRECT_TTY")"
 unset CLAUDE_CODE_VERSION
 
 # --- Routing tests ---
@@ -320,7 +342,7 @@ echo ""
 echo "--- Modern-only hooks exit silently without protocol version ---"
 
 for HOOK in on-permission-request.sh on-prompt-submit.sh on-post-tool-use.sh \
-    on-subagent-start.sh on-subagent-stop.sh; do
+    on-subagent-start.sh on-subagent-stop.sh on-stop-failure.sh; do
     echo '{}' | bash "$HOOK_DIR/$HOOK" 2>/dev/null
     assert_eq "$HOOK exits 0 without protocol version" "0" "$?"
 done
@@ -347,6 +369,23 @@ assert_contains "stop hook forwards agent_id" "$SEQUENCE" '"subagent_id":"agent-
 OUTPUT=$(echo '{"session_id":"s1","cwd":"/tmp/proj"}' \
     | bash "$HOOK_DIR/on-subagent-start.sh")
 assert_eq "identity-less starts are ignored" "" "$OUTPUT"
+
+echo ""
+echo "--- StopFailure routing ---"
+: > "$DIRECT_TTY"
+OUTPUT=$(echo '{"session_id":"s1","cwd":"/tmp/proj","error":"rate_limit","error_details":"429 Too Many Requests","last_assistant_message":"API Error: Rate limit reached"}' \
+    | WARP_TTY="$DIRECT_TTY" bash "$HOOK_DIR/on-stop-failure.sh")
+SEQUENCE=$(<"$DIRECT_TTY")
+assert_eq "failure hook emits no ignored hook output" "" "$OUTPUT"
+assert_contains "failure hook emits its event" "$SEQUENCE" '"event":"stop_failure"'
+assert_contains "rate-limit failure is causal" "$SEQUENCE" '"stop_reason":"usage_limit"'
+
+: > "$DIRECT_TTY"
+OUTPUT=$(echo '{"session_id":"s1","cwd":"/tmp/proj","error":"server_error","last_assistant_message":"API Error: unavailable"}' \
+    | WARP_TTY="$DIRECT_TTY" bash "$HOOK_DIR/on-stop-failure.sh")
+SEQUENCE=$(<"$DIRECT_TTY")
+assert_contains "non-limit failure emits its event" "$SEQUENCE" '"event":"stop_failure"'
+assert_contains "non-limit failure has no causal reason" "$SEQUENCE" '"stop_reason":""'
 
 unset WARP_CLI_AGENT_PROTOCOL_VERSION
 unset WARP_CLIENT_VERSION

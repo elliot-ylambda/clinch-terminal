@@ -4,6 +4,7 @@ use warpui::{App, Entity, EntityId};
 
 use super::event::{
     parse_event, CLIAgentEvent, CLIAgentEventPayload, CLIAgentEventSource, CLIAgentEventType,
+    CLIAgentStopReason,
 };
 use super::{
     is_duplicate_inflight_prompt, merge_loaded_and_live_history, prompt_from_trusted_event,
@@ -39,6 +40,52 @@ fn parse_stop_notification() {
         notif.payload.transcript_path.as_deref(),
         Some("/tmp/t.jsonl")
     );
+}
+
+#[test]
+fn parses_structured_usage_limit_stop_reason() {
+    let body = r#"{"v":1,"agent":"claude","event":"stop","session_id":"abc","stop_reason":"usage_limit","response":"limit"}"#;
+    let event = parse_event(Some("warp://cli-agent"), body).unwrap();
+    assert_eq!(
+        event.payload.stop_reason,
+        Some(CLIAgentStopReason::UsageLimit)
+    );
+}
+
+#[test]
+fn parses_claude_stop_failure_as_a_terminal_usage_limit_event() {
+    let body = r#"{"v":1,"agent":"claude","event":"stop_failure","session_id":"abc","stop_reason":"usage_limit","response":"API Error: Rate limit reached"}"#;
+    let event = parse_event(Some("warp://cli-agent"), body).unwrap();
+    assert_eq!(event.event, CLIAgentEventType::StopFailure);
+    assert_eq!(
+        event.payload.stop_reason,
+        Some(CLIAgentStopReason::UsageLimit)
+    );
+}
+
+#[test]
+fn infers_only_provider_specific_hard_limit_messages_for_legacy_stops() {
+    for (agent, response) in [
+        ("claude", "You've hit your weekly limit"),
+        (
+            "codex",
+            "Quota exceeded. Check your plan and billing details.",
+        ),
+    ] {
+        let body = format!(r#"{{"v":1,"agent":"{agent}","event":"stop","response":"{response}"}}"#);
+        let event = parse_event(Some("warp://cli-agent"), &body).unwrap();
+        assert_eq!(
+            event.payload.stop_reason,
+            Some(CLIAgentStopReason::UsageLimit)
+        );
+    }
+
+    let normal = parse_event(
+        Some("warp://cli-agent"),
+        r#"{"v":1,"agent":"claude","event":"stop","response":"Task complete"}"#,
+    )
+    .unwrap();
+    assert_eq!(normal.payload.stop_reason, None);
 }
 
 #[test]

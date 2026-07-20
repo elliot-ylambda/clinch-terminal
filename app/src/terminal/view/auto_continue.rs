@@ -16,9 +16,9 @@ use warpui::r#async::Timer;
 use warpui::{SingletonEntity, ViewContext};
 
 use super::TerminalView;
-use crate::settings::CliAgentUsageSettings;
+use crate::ai::blocklist::usage::CliAgentUsageModel;
 use crate::terminal::cli_agent_sessions::auto_continue::{
-    is_auto_continue_available, AutoContinueModel, AutoContinueModelEvent,
+    AutoContinueAvailability, AutoContinueModel, AutoContinueModelEvent, AUTO_CONTINUE_PROMPT,
 };
 use crate::terminal::cli_agent_sessions::{CLIAgentSessionStatus, CLIAgentSessionsModel};
 
@@ -40,6 +40,12 @@ impl TerminalView {
                 AutoContinueModelEvent::Changed { .. } => {}
             },
         );
+        // Availability depends on live provider plan data. Notify the pane
+        // even before it has an AutoContinueModel entry so the initially
+        // hidden toggle appears as soon as the first usable snapshot arrives.
+        ctx.subscribe_to_model(&CliAgentUsageModel::handle(ctx), |_, _, _, ctx| {
+            ctx.notify();
+        });
     }
 
     /// Toggle entry point shared by the footer button and the Command
@@ -47,17 +53,10 @@ impl TerminalView {
     pub(super) fn toggle_auto_continue_on_limit_reset(&mut self, ctx: &mut ViewContext<Self>) {
         let view_id = self.view_id;
         let is_shared_session_viewer = self.model.lock().shared_session_status().is_viewer();
-        let is_available = CLIAgentSessionsModel::as_ref(ctx)
-            .session(view_id)
-            .is_some_and(|session| {
-                is_auto_continue_available(
-                    session.agent,
-                    *CliAgentUsageSettings::as_ref(ctx).show_plan_limits,
-                    is_shared_session_viewer,
-                )
-            });
+        let is_available =
+            AutoContinueModel::availability(view_id, is_shared_session_viewer, ctx).may_enable();
         AutoContinueModel::handle(ctx).update(ctx, |model, ctx| {
-            if is_available {
+            if model.is_enabled(view_id) || is_available {
                 model.toggle(view_id, ctx);
             } else {
                 model.disable(view_id, ctx);
@@ -98,25 +97,18 @@ impl TerminalView {
         // against a settings or shared-session transition racing the timer,
         // even though both normal transitions proactively disarm the pane.
         let is_shared_session_viewer = self.model.lock().shared_session_status().is_viewer();
-        let is_available = CLIAgentSessionsModel::as_ref(ctx)
-            .session(view_id)
-            .is_some_and(|session| {
-                is_auto_continue_available(
-                    session.agent,
-                    *CliAgentUsageSettings::as_ref(ctx).show_plan_limits,
-                    is_shared_session_viewer,
-                )
-            });
-        if !is_available {
+        let availability = AutoContinueModel::availability(view_id, is_shared_session_viewer, ctx);
+        if matches!(availability, AutoContinueAvailability::Unsupported) {
             AutoContinueModel::handle(ctx).update(ctx, |model, ctx| model.disable(view_id, ctx));
             return;
         }
 
-        // Consuming the armed state (exactly-once) BEFORE any send; a stale
-        // generation or an intervening disarm yields `None`.
-        let Some(armed) = AutoContinueModel::handle(ctx).update(ctx, |model, ctx| {
-            model.take_due_fire(view_id, generation, ctx)
-        }) else {
+        // Inspect without consuming. A stale generation or intervening disarm
+        // stops here, while later validation failures leave the one-shot
+        // intact instead of silently losing it.
+        let Some(expected) =
+            AutoContinueModel::as_ref(ctx).armed_for_generation(view_id, generation)
+        else {
             return;
         };
 
@@ -126,33 +118,59 @@ impl TerminalView {
         let session_matches = CLIAgentSessionsModel::as_ref(ctx)
             .session(view_id)
             .is_some_and(|session| {
-                session.agent == armed.agent
-                    && matches!(session.status, CLIAgentSessionStatus::Success)
-                    && session.session_context.session_id.as_deref() == armed.session_id.as_deref()
+                session.agent == expected.agent
+                    && (matches!(session.status, CLIAgentSessionStatus::Success)
+                        || (expected.restored && !session.has_observed_turn_activity))
+                    && session.session_context.session_id.as_deref()
+                        == expected.session_id.as_deref()
             });
         if !session_matches {
+            AutoContinueModel::handle(ctx).update(ctx, |model, ctx| model.disable(view_id, ctx));
             return;
         }
 
         // The session entry can outlive its foreground block (the agent
         // process may have exited while the timer was pending); never type
         // into a plain shell prompt.
-        let agent_still_foreground = self
-            .model
-            .lock()
-            .block_list()
-            .active_block()
-            .is_active_and_long_running();
+        let agent_still_foreground = {
+            let model = self.model.lock();
+            let block = model.block_list().active_block();
+            block.is_active_and_long_running() && !block.is_agent_in_control()
+        };
         if !agent_still_foreground {
+            AutoContinueModel::handle(ctx).update(ctx, |model, ctx| {
+                model.record_delivery_failure(
+                    view_id,
+                    expected,
+                    "the original agent process is not the writable foreground command".to_owned(),
+                    ctx,
+                );
+            });
             return;
         }
 
+        let Some(fired) = AutoContinueModel::handle(ctx).update(ctx, |model, ctx| {
+            model.prepare_due_fire(view_id, generation, ctx)
+        }) else {
+            return;
+        };
+
         // Same pipeline as the footer's manual "Continue" button (per-agent
-        // Enter strategy). No local PTY means nothing to type into.
+        // Enter strategy). If initiation fails, retain a visible error and
+        // retry a bounded number of times instead of losing the one-shot.
         #[cfg(feature = "local_tty")]
-        self.submit_text_to_cli_agent_pty(
-            crate::terminal::cli_agent_sessions::auto_continue::AUTO_CONTINUE_PROMPT.to_string(),
-            ctx,
-        );
+        let submitted = self.submit_text_to_cli_agent_pty(AUTO_CONTINUE_PROMPT.to_string(), ctx);
+        #[cfg(not(feature = "local_tty"))]
+        let submitted = false;
+        if !submitted {
+            AutoContinueModel::handle(ctx).update(ctx, |model, ctx| {
+                model.record_delivery_failure(
+                    view_id,
+                    fired,
+                    "the agent PTY was not writable".to_owned(),
+                    ctx,
+                );
+            });
+        }
     }
 }

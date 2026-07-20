@@ -3,6 +3,7 @@
 //! fired" is simulated by calling `take_fire` with the armed generation.
 
 use chrono::{DateTime, Duration, TimeZone, Utc};
+use cli_agent_usage::ExhaustionStatus;
 #[cfg(target_os = "macos")]
 use cli_agent_usage::{LimitWindow, PlanLimits, Provider, Severity, UsageSnapshot};
 #[cfg(target_os = "macos")]
@@ -12,17 +13,16 @@ use warpui::{App, EntityId, SingletonEntity};
 
 #[cfg(target_os = "macos")]
 use super::AutoContinueModel;
-use super::{
-    is_auto_continue_available, ArmedAutoContinue, PaneAutoContinue,
-    AUTO_CONTINUE_RESET_SLACK_SECS, AUTO_CONTINUE_USAGE_CONFIRMATION_GRACE_SECS,
-};
+#[cfg(target_os = "macos")]
+use super::{auto_continue_availability, reset_for_causal_limit_stop, AutoContinueAvailability};
+use super::{ArmedAutoContinue, DueFireDecision, PaneAutoContinue, AUTO_CONTINUE_RESET_SLACK_SECS};
 #[cfg(target_os = "macos")]
 use crate::ai::blocklist::usage::CliAgentUsageModel;
 #[cfg(target_os = "macos")]
 use crate::settings::CliAgentUsageSettings;
 #[cfg(target_os = "macos")]
 use crate::terminal::cli_agent_sessions::event::{
-    CLIAgentEvent, CLIAgentEventPayload, CLIAgentEventSource, CLIAgentEventType,
+    CLIAgentEvent, CLIAgentEventPayload, CLIAgentEventSource, CLIAgentEventType, CLIAgentStopReason,
 };
 #[cfg(target_os = "macos")]
 use crate::terminal::cli_agent_sessions::{
@@ -35,17 +35,6 @@ use crate::test_util::settings::initialize_settings_for_tests;
 
 fn now() -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 7, 11, 12, 0, 0).unwrap()
-}
-
-#[test]
-fn availability_supports_claude_and_codex_but_not_viewers_or_other_agents() {
-    assert!(is_auto_continue_available(CLIAgent::Claude, true, false));
-    assert!(!is_auto_continue_available(CLIAgent::Claude, false, false));
-    assert!(!is_auto_continue_available(CLIAgent::Claude, true, true));
-    assert!(is_auto_continue_available(CLIAgent::Codex, true, false));
-    assert!(is_auto_continue_available(CLIAgent::Codex, false, false));
-    assert!(!is_auto_continue_available(CLIAgent::Codex, false, true));
-    assert!(!is_auto_continue_available(CLIAgent::Gemini, true, false));
 }
 
 /// Arms a fresh, enabled pane with a reset one hour out and returns
@@ -118,19 +107,18 @@ fn missing_session_id_never_arms_for_claude() {
 }
 
 #[test]
-fn codex_without_a_reported_session_id_uses_pane_scoped_identity() {
+fn codex_without_a_reported_session_id_never_arms() {
     let mut pane = PaneAutoContinue::default();
     pane.set_enabled(true);
-    let armed = pane
+    assert!(pane
         .on_agent_session_stopped(
             CLIAgent::Codex,
             None,
             Some(now() + Duration::hours(1)),
             now(),
         )
-        .expect("ID-less Codex fallback can still arm within this pane");
-    assert_eq!(armed.agent, CLIAgent::Codex);
-    assert_eq!(armed.session_id, None);
+        .is_none());
+    assert!(pane.armed().is_none());
 }
 
 #[test]
@@ -153,22 +141,103 @@ fn stale_past_reset_time_never_arms() {
 }
 
 #[test]
-fn an_old_normal_stop_cannot_arm_from_a_much_later_usage_limit() {
+fn causal_limit_stop_survives_an_extended_provider_retry_after() {
     let mut pane = PaneAutoContinue::default();
     pane.set_enabled(true);
     assert!(pane
         .on_agent_session_stopped(CLIAgent::Claude, Some("sess-1"), None, now())
         .is_none());
 
-    let after_confirmation_grace =
-        now() + Duration::seconds(AUTO_CONTINUE_USAGE_CONFIRMATION_GRACE_SECS + 1);
+    let much_later = now() + Duration::hours(2);
     assert!(pane
-        .retry_pending_usage_confirmation(
-            Some(after_confirmation_grace + Duration::hours(1)),
-            after_confirmation_grace,
-        )
+        .retry_pending_usage_confirmation(Some(much_later + Duration::hours(1)), much_later,)
+        .is_some());
+    assert!(pane.armed().is_some());
+}
+
+#[test]
+fn claude_confirmation_window_covers_more_than_one_five_minute_cache_interval() {
+    let mut pane = PaneAutoContinue::default();
+    pane.set_enabled(true);
+    assert!(pane
+        .on_agent_session_stopped(CLIAgent::Claude, Some("sess-1"), None, now())
+        .is_none());
+
+    let refreshed_at = now() + Duration::minutes(6);
+    assert!(pane
+        .retry_pending_usage_confirmation(Some(refreshed_at + Duration::hours(1)), refreshed_at,)
+        .is_some());
+}
+
+#[test]
+fn later_provider_reset_rearms_and_invalidates_the_old_timer() {
+    let (mut pane, first) = armed_pane();
+    let later_reset = now() + Duration::hours(3);
+    let rearmed = pane
+        .reconcile_reset(Some(later_reset), now())
+        .expect("a moved reset should replace the timer")
+        .clone();
+
+    assert_ne!(rearmed.generation, first.generation);
+    assert_eq!(
+        rearmed.fire_at,
+        later_reset + Duration::seconds(AUTO_CONTINUE_RESET_SLACK_SECS)
+    );
+    assert!(pane.take_fire(first.generation).is_none());
+}
+
+#[test]
+fn due_fire_waits_when_usage_data_is_unknown_and_fires_after_reset_clears() {
+    let (mut pane, first) = armed_pane();
+    let rearmed = match pane.prepare_due_fire(first.generation, None, first.fire_at) {
+        DueFireDecision::Rearmed(armed) => armed,
+        other => panic!("expected a deferred fire, got {other:?}"),
+    };
+    assert_ne!(rearmed.generation, first.generation);
+
+    assert_eq!(
+        pane.prepare_due_fire(
+            rearmed.generation,
+            Some(ExhaustionStatus::NotExhausted),
+            rearmed.fire_at,
+        ),
+        DueFireDecision::Fire(rearmed)
+    );
+}
+
+#[test]
+fn failed_delivery_is_retried_three_times_then_left_visibly_failed() {
+    let (mut pane, armed) = armed_pane();
+    let mut fired = match pane.prepare_due_fire(
+        armed.generation,
+        Some(ExhaustionStatus::NotExhausted),
+        armed.fire_at,
+    ) {
+        DueFireDecision::Fire(fired) => fired,
+        other => panic!("expected a due fire, got {other:?}"),
+    };
+
+    for attempt in 1..=3 {
+        let rearmed = pane
+            .rearm_after_delivery_failure(fired, now(), "PTY unavailable".to_owned())
+            .expect("the bounded retry should remain armed")
+            .clone();
+        assert_eq!(rearmed.delivery_attempts, attempt);
+        fired = match pane.prepare_due_fire(
+            rearmed.generation,
+            Some(ExhaustionStatus::NotExhausted),
+            rearmed.fire_at,
+        ) {
+            DueFireDecision::Fire(fired) => fired,
+            other => panic!("expected retry fire, got {other:?}"),
+        };
+    }
+
+    assert!(pane
+        .rearm_after_delivery_failure(fired, now(), "PTY unavailable".to_owned())
         .is_none());
     assert!(pane.armed().is_none());
+    assert_eq!(pane.delivery_error(), Some("PTY unavailable"));
 }
 
 #[test]
@@ -306,7 +375,14 @@ fn test_session(agent: CLIAgent) -> CLIAgentSession {
         input_state: CLIAgentInputState::Closed,
         should_auto_toggle_input: false,
         listener: None,
-        plugin_version: None,
+        plugin_version: Some(
+            match agent {
+                CLIAgent::Claude => "2.3.0",
+                CLIAgent::Codex => "0.5.0",
+                _ => "0.0.0",
+            }
+            .to_owned(),
+        ),
         remote_host: None,
         draft_text: None,
         custom_command_prefix: None,
@@ -329,7 +405,10 @@ fn stop_event(agent: CLIAgent) -> CLIAgentEvent {
         session_id: Some("sess-1".to_owned()),
         cwd: None,
         project: None,
-        payload: CLIAgentEventPayload::default(),
+        payload: CLIAgentEventPayload {
+            stop_reason: Some(CLIAgentStopReason::UsageLimit),
+            ..Default::default()
+        },
     }
 }
 
@@ -348,11 +427,11 @@ fn codex_osc9_stop_event() -> CLIAgentEvent {
 }
 
 #[cfg(target_os = "macos")]
-fn exhausted_snapshot(agent: CLIAgent, reset_at: DateTime<Utc>) -> UsageSnapshot {
+fn plan_snapshot(agent: CLIAgent, percent: f64, reset_at: DateTime<Utc>) -> UsageSnapshot {
     let provider = Provider {
         plan: Some(PlanLimits {
             session: Some(LimitWindow {
-                percent: 100.0,
+                percent,
                 resets_at: Some(reset_at),
                 severity: Severity::Critical,
             }),
@@ -374,6 +453,63 @@ fn exhausted_snapshot(agent: CLIAgent, reset_at: DateTime<Utc>) -> UsageSnapshot
     }
 }
 
+#[cfg(target_os = "macos")]
+fn exhausted_snapshot(agent: CLIAgent, reset_at: DateTime<Utc>) -> UsageSnapshot {
+    plan_snapshot(agent, 100.0, reset_at)
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn availability_requires_local_current_plugin_identity_and_plan_data() {
+    let reset = Utc::now() + Duration::hours(1);
+    for (agent, show_plan_limits) in [(CLIAgent::Claude, true), (CLIAgent::Codex, false)] {
+        let session = test_session(agent);
+        let snapshot = plan_snapshot(agent, 50.0, reset);
+        assert_eq!(
+            auto_continue_availability(&session, &snapshot, show_plan_limits, false),
+            AutoContinueAvailability::Ready
+        );
+        assert_eq!(
+            auto_continue_availability(
+                &session,
+                &UsageSnapshot::default(),
+                show_plan_limits,
+                false,
+            ),
+            AutoContinueAvailability::WaitingForUsageData
+        );
+        assert_eq!(
+            auto_continue_availability(&session, &snapshot, show_plan_limits, true),
+            AutoContinueAvailability::Unsupported
+        );
+
+        let mut remote = session.clone();
+        remote.remote_host = Some("host".to_owned());
+        assert_eq!(
+            auto_continue_availability(&remote, &snapshot, show_plan_limits, false),
+            AutoContinueAvailability::Unsupported
+        );
+
+        let mut outdated = session;
+        outdated.plugin_version = Some("0.0.1".to_owned());
+        assert_eq!(
+            auto_continue_availability(&outdated, &snapshot, show_plan_limits, false),
+            AutoContinueAvailability::Unsupported
+        );
+    }
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn causal_stop_can_use_a_known_reset_from_a_rounded_near_full_snapshot() {
+    let reset = Utc::now() + Duration::hours(1);
+    let snapshot = plan_snapshot(CLIAgent::Claude, 99.0, reset);
+    assert_eq!(
+        reset_for_causal_limit_stop(&snapshot, CLIAgent::Claude),
+        Some(reset)
+    );
+}
+
 #[test]
 #[cfg(target_os = "macos")]
 fn late_usage_snapshot_arms_an_enabled_stopped_session() {
@@ -385,6 +521,12 @@ fn late_usage_snapshot_arms_an_enabled_stopped_session() {
         let auto_continue = app.add_singleton_model(AutoContinueModel::new);
         let terminal_view_id = EntityId::new();
 
+        usage.update(&mut app, |model, ctx| {
+            model.update_snapshot_for_test(
+                plan_snapshot(CLIAgent::Claude, 98.0, Utc::now() + Duration::hours(1)),
+                ctx,
+            );
+        });
         sessions.update(&mut app, |model, ctx| {
             model.set_session(terminal_view_id, test_session(CLIAgent::Claude), ctx);
         });
@@ -411,6 +553,106 @@ fn late_usage_snapshot_arms_an_enabled_stopped_session() {
                 Some(reset_at + Duration::seconds(AUTO_CONTINUE_RESET_SLACK_SECS))
             );
         });
+    });
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn normal_success_does_not_arm_even_when_the_account_is_exhausted() {
+    App::test((), |mut app| async move {
+        initialize_settings_for_tests(&mut app);
+        set_plan_limits_enabled(&mut app, true);
+        let usage = app.add_singleton_model(|_| CliAgentUsageModel::new_for_test());
+        let sessions = app.add_singleton_model(|_| CLIAgentSessionsModel::new());
+        let auto_continue = app.add_singleton_model(AutoContinueModel::new);
+        let terminal_view_id = EntityId::new();
+
+        usage.update(&mut app, |model, ctx| {
+            model.update_snapshot_for_test(
+                exhausted_snapshot(CLIAgent::Claude, Utc::now() + Duration::hours(1)),
+                ctx,
+            );
+        });
+        sessions.update(&mut app, |model, ctx| {
+            model.set_session(terminal_view_id, test_session(CLIAgent::Claude), ctx);
+        });
+        auto_continue.update(&mut app, |model, ctx| model.toggle(terminal_view_id, ctx));
+        let mut ordinary_stop = stop_event(CLIAgent::Claude);
+        ordinary_stop.payload.stop_reason = None;
+        sessions.update(&mut app, |model, ctx| {
+            model.update_from_event(terminal_view_id, &ordinary_stop, ctx);
+        });
+
+        auto_continue.read(&app, |model, _| {
+            assert!(model.is_enabled(terminal_view_id));
+            assert!(!model.is_armed(terminal_view_id));
+        });
+    });
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn explicit_session_opt_in_restores_and_explicit_off_removes_it() {
+    App::test((), |mut app| async move {
+        initialize_settings_for_tests(&mut app);
+        set_plan_limits_enabled(&mut app, true);
+        let usage = app.add_singleton_model(|_| CliAgentUsageModel::new_for_test());
+        let sessions = app.add_singleton_model(|_| CLIAgentSessionsModel::new());
+        let auto_continue = app.add_singleton_model(AutoContinueModel::new);
+        let terminal_view_id = EntityId::new();
+        let key = "claude:sess-1";
+
+        usage.update(&mut app, |model, ctx| {
+            model.update_snapshot_for_test(
+                plan_snapshot(CLIAgent::Claude, 50.0, Utc::now() + Duration::hours(1)),
+                ctx,
+            );
+        });
+        sessions.update(&mut app, |model, ctx| {
+            model.set_session(terminal_view_id, test_session(CLIAgent::Claude), ctx);
+        });
+        auto_continue.update(&mut app, |model, ctx| model.toggle(terminal_view_id, ctx));
+        assert!(
+            CliAgentUsageSettings::handle(&app).read(&app, |settings, _| settings
+                .auto_continue_sessions
+                .contains_key(key))
+        );
+
+        usage.update(&mut app, |model, ctx| {
+            model.update_snapshot_for_test(
+                exhausted_snapshot(CLIAgent::Claude, Utc::now() + Duration::hours(1)),
+                ctx,
+            );
+        });
+        sessions.update(&mut app, |model, ctx| {
+            model.update_from_event(terminal_view_id, &stop_event(CLIAgent::Claude), ctx);
+        });
+        assert!(
+            CliAgentUsageSettings::handle(&app).read(&app, |settings, _| settings
+                .auto_continue_armed_sessions
+                .contains_key(key))
+        );
+
+        sessions.update(&mut app, |model, ctx| {
+            model.remove_session(terminal_view_id, ctx);
+            model.set_session(terminal_view_id, test_session(CLIAgent::Claude), ctx);
+        });
+        auto_continue.read(&app, |model, _| {
+            assert!(model.is_enabled(terminal_view_id));
+            assert!(model.is_armed(terminal_view_id));
+        });
+
+        auto_continue.update(&mut app, |model, ctx| model.toggle(terminal_view_id, ctx));
+        assert!(
+            !CliAgentUsageSettings::handle(&app).read(&app, |settings, _| settings
+                .auto_continue_sessions
+                .contains_key(key))
+        );
+        assert!(
+            !CliAgentUsageSettings::handle(&app).read(&app, |settings, _| settings
+                .auto_continue_armed_sessions
+                .contains_key(key))
+        );
     });
 }
 
@@ -446,10 +688,10 @@ fn disabling_plan_limits_cancels_and_disables_an_armed_pane() {
 
         set_plan_limits_enabled(&mut app, false);
 
-        auto_continue.update(&mut app, |model, ctx| {
+        auto_continue.update(&mut app, |model, _ctx| {
             assert!(!model.is_enabled(terminal_view_id));
             assert!(!model.is_armed(terminal_view_id));
-            assert_eq!(model.take_due_fire(terminal_view_id, 1, ctx), None);
+            assert!(model.armed_for_generation(terminal_view_id, 1).is_none());
         });
     });
 }
@@ -465,6 +707,12 @@ fn codex_arms_from_codex_usage_even_when_claude_plan_limits_are_disabled() {
         let auto_continue = app.add_singleton_model(AutoContinueModel::new);
         let terminal_view_id = EntityId::new();
 
+        usage.update(&mut app, |model, ctx| {
+            model.update_snapshot_for_test(
+                plan_snapshot(CLIAgent::Codex, 98.0, Utc::now() + Duration::hours(2)),
+                ctx,
+            );
+        });
         sessions.update(&mut app, |model, ctx| {
             model.set_session(terminal_view_id, test_session(CLIAgent::Codex), ctx);
         });
@@ -503,7 +751,7 @@ fn codex_arms_from_codex_usage_even_when_claude_plan_limits_are_disabled() {
 
 #[test]
 #[cfg(target_os = "macos")]
-fn codex_osc9_fallback_arms_without_a_reported_session_id() {
+fn codex_osc9_fallback_without_identity_is_not_offerable() {
     App::test((), |mut app| async move {
         initialize_settings_for_tests(&mut app);
         set_plan_limits_enabled(&mut app, false);
@@ -530,12 +778,8 @@ fn codex_osc9_fallback_arms_without_a_reported_session_id() {
         });
 
         auto_continue.read(&app, |model, _| {
-            assert!(model.is_enabled(terminal_view_id));
-            assert!(model.is_armed(terminal_view_id));
-            assert_eq!(
-                model.armed_fire_at(terminal_view_id),
-                Some(reset_at + Duration::seconds(AUTO_CONTINUE_RESET_SLACK_SECS))
-            );
+            assert!(!model.is_enabled(terminal_view_id));
+            assert!(!model.is_armed(terminal_view_id));
         });
     });
 }

@@ -1,6 +1,9 @@
 use serde::Deserialize;
 
-use super::{CLIAgentEvent, CLIAgentEventPayload, CLIAgentEventSource, CLIAgentEventType};
+use super::{
+    infer_stop_reason, CLIAgentEvent, CLIAgentEventPayload, CLIAgentEventSource, CLIAgentEventType,
+    CLIAgentStopReason,
+};
 use crate::terminal::CLIAgent;
 
 /// Resolves a CLI agent from the `"agent"` string in a CLI agent event.
@@ -20,6 +23,7 @@ pub(super) fn parse(body: &str) -> Option<CLIAgentEvent> {
         "subagent_start" => CLIAgentEventType::SubagentStart,
         "subagent_stop" => CLIAgentEventType::SubagentStop,
         "stop" => CLIAgentEventType::Stop,
+        "stop_failure" => CLIAgentEventType::StopFailure,
         "permission_request" => CLIAgentEventType::PermissionRequest,
         "permission_replied" => CLIAgentEventType::PermissionReplied,
         "question_asked" => CLIAgentEventType::QuestionAsked,
@@ -40,6 +44,24 @@ pub(super) fn parse(body: &str) -> Option<CLIAgentEvent> {
         .and_then(resolve_agent)
         .unwrap_or(CLIAgent::Unknown);
 
+    let stop_reason = match raw.stop_reason.as_deref() {
+        Some("usage_limit") => Some(CLIAgentStopReason::UsageLimit),
+        _ if matches!(
+            event,
+            CLIAgentEventType::Stop | CLIAgentEventType::StopFailure
+        ) =>
+        {
+            infer_stop_reason(
+                agent,
+                [
+                    raw.response.as_deref().unwrap_or_default(),
+                    raw.summary.as_deref().unwrap_or_default(),
+                ],
+            )
+        }
+        _ => None,
+    };
+
     Some(CLIAgentEvent {
         v: raw.v.unwrap_or(1),
         agent,
@@ -56,6 +78,7 @@ pub(super) fn parse(body: &str) -> Option<CLIAgentEvent> {
             tool_input_preview,
             subagent_id: raw.subagent_id,
             plugin_version: raw.plugin_version,
+            stop_reason,
         },
         source: CLIAgentEventSource::RichPlugin,
     })
@@ -77,4 +100,5 @@ struct RawEvent {
     tool_input: Option<serde_json::Value>,
     subagent_id: Option<String>,
     plugin_version: Option<String>,
+    stop_reason: Option<String>,
 }

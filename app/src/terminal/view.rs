@@ -361,12 +361,11 @@ use crate::settings::import::model::ImportedConfigModel;
 use crate::settings::import::view::{SettingsImportEvent, SettingsImportView};
 use crate::settings::{
     AISettings, AISettingsChangedEvent, AppEditorSettings, BlockVisibilitySettings,
-    BlockVisibilitySettingsChangedEvent, CliAgentUsageSettings, CodeSettings,
-    CompiledCommandsForCodingAgentToolbar, DebugSettings, DebugSettingsChangedEvent,
-    EmacsBindingsSettings, FontSettings, FontSettingsChangedEvent, InputModeSettings,
-    InputModeSettingsChangedEvent, InputSettings, PaneSettings, PaneSettingsChangedEvent,
-    PrivacySettings, PrivacySettingsChangedEvent, PrivacySettingsSnapshot, SelectionSettings,
-    VimBannerSettings,
+    BlockVisibilitySettingsChangedEvent, CodeSettings, CompiledCommandsForCodingAgentToolbar,
+    DebugSettings, DebugSettingsChangedEvent, EmacsBindingsSettings, FontSettings,
+    FontSettingsChangedEvent, InputModeSettings, InputModeSettingsChangedEvent, InputSettings,
+    PaneSettings, PaneSettingsChangedEvent, PrivacySettings, PrivacySettingsChangedEvent,
+    PrivacySettingsSnapshot, SelectionSettings, VimBannerSettings,
 };
 use crate::settings_view::keybindings::KeybindingChangedNotifier;
 use crate::settings_view::mcp_servers_page::MCPServersSettingsPage;
@@ -387,9 +386,7 @@ use crate::terminal::block_list_viewport::{
     ScrollState, ViewportState,
 };
 use crate::terminal::bootstrap::init_subshell_command;
-use crate::terminal::cli_agent_sessions::auto_continue::{
-    is_auto_continue_available, AutoContinueModel,
-};
+use crate::terminal::cli_agent_sessions::auto_continue::AutoContinueModel;
 use crate::terminal::cli_agent_sessions::event::{
     parse_event, CLIAgentEvent, CLIAgentEventPayload, CLIAgentEventSource, CLIAgentEventType,
     CLI_AGENT_NOTIFICATION_SENTINEL,
@@ -28441,20 +28438,17 @@ impl View for TerminalView {
             // Rate-limit auto-continue Command Palette pair. The "enabled"
             // flag picks the Enable vs Disable palette entry (see the pair
             // registration in terminal/view/init.rs).
-            let auto_continue_available = CLIAgentSessionsModel::as_ref(app)
-                .session(self.view_id)
-                .is_some_and(|session| {
-                    is_auto_continue_available(
-                        session.agent,
-                        *CliAgentUsageSettings::as_ref(app).show_plan_limits,
-                        model_lock.shared_session_status().is_viewer(),
-                    )
-                });
-            if auto_continue_available {
+            let auto_continue_enabled = AutoContinueModel::as_ref(app).is_enabled(self.view_id);
+            let auto_continue_availability = AutoContinueModel::availability(
+                self.view_id,
+                model_lock.shared_session_status().is_viewer(),
+                app,
+            );
+            if auto_continue_availability.may_render(auto_continue_enabled) {
                 context
                     .set
                     .insert(init::CLI_AGENT_AUTO_CONTINUE_AVAILABLE_KEY);
-                if AutoContinueModel::as_ref(app).is_enabled(self.view_id) {
+                if auto_continue_enabled {
                     context
                         .set
                         .insert(init::CLI_AGENT_AUTO_CONTINUE_ENABLED_KEY);

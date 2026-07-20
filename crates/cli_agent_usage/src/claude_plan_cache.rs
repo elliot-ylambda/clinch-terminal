@@ -15,10 +15,14 @@ use crate::{PlanFetchOutcome, PlanLimits};
 
 const VERSION: u32 = 1;
 
+/// Minimum cadence for fresh requests to Claude's usage endpoint. Consumers
+/// that wait for a post-stop usage confirmation must allow at least this long.
+pub const MIN_ATTEMPT_INTERVAL_SECS: i64 = 5 * 60;
+
 /// Anthropic's usage endpoint is rate-limited. This is a wall-clock throttle,
 /// independent of how long transcript scans take.
 fn min_attempt_interval() -> Duration {
-    Duration::minutes(5)
+    Duration::seconds(MIN_ATTEMPT_INTERVAL_SECS)
 }
 
 /// Plan percentages move much faster than local token totals. Keep a recent

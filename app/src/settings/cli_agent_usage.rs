@@ -39,6 +39,33 @@ define_settings_group!(CliAgentUsageSettings, settings: [
         toml_path: "ai.cli_agent_usage.header_metric_visibility",
         description: "Per-provider visibility overrides for statistics in the CLI-agent usage header.",
     }
+
+    // Exact provider session identities for which the user explicitly enabled
+    // rate-limit auto-continue. Entity IDs are intentionally not persisted:
+    // restored panes get new IDs, while Claude/Codex resume the same durable
+    // provider session ID. Values are enable timestamps for future pruning.
+    auto_continue_sessions: CliAgentAutoContinueSessions {
+        type: HashMap<String, i64>,
+        default: HashMap::default(),
+        supported_platforms: SupportedPlatforms::DESKTOP,
+        sync_to_cloud: SyncToCloud::Never,
+        private: true,
+        toml_path: "ai.cli_agent_usage.auto_continue_sessions",
+        description: "Machine-local CLI-agent sessions explicitly opted into rate-limit auto-continue.",
+    }
+
+    // Scheduled fire timestamps for causally confirmed limit stops. Kept
+    // separate from the opt-in map so a process restart can reconstruct the
+    // timer without treating every enabled session as limit-stopped.
+    auto_continue_armed_sessions: CliAgentAutoContinueArmedSessions {
+        type: HashMap<String, i64>,
+        default: HashMap::default(),
+        supported_platforms: SupportedPlatforms::DESKTOP,
+        sync_to_cloud: SyncToCloud::Never,
+        private: true,
+        toml_path: "ai.cli_agent_usage.auto_continue_armed_sessions",
+        description: "Machine-local scheduled reset times for rate-limit auto-continue.",
+    }
 ]);
 
 #[cfg(test)]

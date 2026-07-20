@@ -20,6 +20,7 @@ pub enum CLIAgentEventType {
     SubagentStart,
     SubagentStop,
     Stop,
+    StopFailure,
     PermissionRequest,
     PermissionReplied,
     QuestionAsked,
@@ -36,6 +37,15 @@ pub enum CLIAgentEventSource {
     CodexOsc9Fallback,
 }
 
+/// Provider-reported reason that a turn stopped. This is deliberately
+/// narrower than the session status: a normal successful Stop must never be
+/// mistaken for a usage-limit stop merely because another pane exhausted the
+/// same account.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CLIAgentStopReason {
+    UsageLimit,
+}
+
 /// Event-specific fields that vary by event type.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
@@ -49,6 +59,34 @@ pub struct CLIAgentEventPayload {
     /// Stable identity supplied by Claude Code's SubagentStart/SubagentStop hooks.
     pub subagent_id: Option<String>,
     pub plugin_version: Option<String>,
+    pub stop_reason: Option<CLIAgentStopReason>,
+}
+
+/// Best-effort classifier for legacy notifications that cannot carry the
+/// structured `stop_reason` field. Keep the phrases provider-specific and
+/// require an explicit quota/limit assertion; generic error text is not
+/// causal enough for an automatic PTY write.
+pub(crate) fn infer_stop_reason(
+    agent: CLIAgent,
+    texts: impl IntoIterator<Item = impl AsRef<str>>,
+) -> Option<CLIAgentStopReason> {
+    let usage_limit = texts.into_iter().any(|text| {
+        let text = text.as_ref().to_ascii_lowercase();
+        match agent {
+            CLIAgent::Claude => {
+                (text.contains("you've hit your") && text.contains("limit"))
+                    || text.contains("usage limit reached")
+                    || text.contains("rate limit reached")
+            }
+            CLIAgent::Codex => {
+                text.contains("you've hit your usage limit")
+                    || text.contains("usage limit reached")
+                    || text.contains("quota exceeded")
+            }
+            _ => false,
+        }
+    });
+    usage_limit.then_some(CLIAgentStopReason::UsageLimit)
 }
 
 /// A parsed event from a CLI agent plugin.

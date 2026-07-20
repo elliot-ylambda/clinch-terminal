@@ -58,6 +58,12 @@ app/src/persistence/schema.rs.orig
 **/.superpowers/
 **/.warp/
 **/.warpindexingignore
+
+# The bundled Codex marketplace uses the provider-required `.agents` layout;
+# unlike personal agent state, this manifest is a shipped application resource.
+!resources/bundled/agent-plugins/codex-warp/.agents/
+!resources/bundled/agent-plugins/codex-warp/.agents/plugins/
+!resources/bundled/agent-plugins/codex-warp/.agents/plugins/marketplace.json
 **/.vscode/
 AGENTS.md
 CLAUDE.md
