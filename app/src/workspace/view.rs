@@ -580,10 +580,9 @@ pub const TOTAL_TAB_BAR_HEIGHT: f32 = TAB_BAR_HEIGHT + TAB_BAR_BORDER_HEIGHT;
 
 const TAB_BAR_ICON_PADDING: f32 = 4.;
 
-const TAB_BAR_PILL_WIDTH: f32 = 100.;
+const TAB_BAR_PILL_WIDTH: f32 = 120.;
 const PILL_FONT_SIZE: f32 = 12.;
-// Keep the app identity explicit in the update button.
-const UPDATE_READY_TEXT: &str = "Update Clinch";
+const UPDATE_AVAILABLE_TEXT: &str = "Update available";
 
 const TAB_BAR_OVERFLOW_MENU_WIDTH: f32 = 300.;
 
@@ -595,6 +594,13 @@ fn manual_update_check_feedback(result: &Result<UpdateReady>) -> (&'static str, 
         Ok(UpdateReady::No) => ("Clinch is up to date", ToastFlavor::Success),
         Err(_) => ("Unable to check for updates", ToastFlavor::Error),
     }
+}
+
+fn manual_update_check_found_update(result: &Result<UpdateReady>) -> bool {
+    matches!(
+        result,
+        Ok(UpdateReady::Yes { .. } | UpdateReady::CanDownload { .. })
+    )
 }
 
 #[cfg(not(target_family = "wasm"))]
@@ -3244,13 +3250,17 @@ impl Workspace {
                 request_type: RequestType::ManualCheck,
             } if view.manual_update_check_pending => {
                 view.manual_update_check_pending = false;
-                let (message, flavor) = manual_update_check_feedback(result);
-                view.toast_stack.update(ctx, |toast_stack, ctx| {
-                    toast_stack.add_ephemeral_toast(
-                        DismissibleToast::new(message.to_owned(), flavor),
-                        ctx,
-                    );
-                });
+                if manual_update_check_found_update(result) {
+                    view.apply_update(ctx);
+                } else {
+                    let (message, flavor) = manual_update_check_feedback(result);
+                    view.toast_stack.update(ctx, |toast_stack, ctx| {
+                        toast_stack.add_ephemeral_toast(
+                            DismissibleToast::new(message.to_owned(), flavor),
+                            ctx,
+                        );
+                    });
+                }
             }
             AutoupdateStateEvent::CheckComplete { .. } => {}
         });
@@ -22590,10 +22600,10 @@ impl Workspace {
             },
         );
 
-        // Render the subtle autoupdate UI if autoupdate is ready and there is no incoming prominent update version.
+        // Keep a durable notification visible as soon as authenticated metadata is available.
         let autoupdate_stage = autoupdate::get_update_state(ctx);
         if FeatureFlag::AutoupdateUIRevamp.is_enabled()
-            && autoupdate_stage.ready_for_update()
+            && autoupdate_stage.has_actionable_update()
             && autoupdate_stage
                 .available_new_version()
                 .map(|version| {
@@ -22954,9 +22964,11 @@ impl Workspace {
         }
 
         let autoupdate_stage = autoupdate::get_update_state(app);
-        // Render the prominent autoupdate pill if autoupdate is ready and the current version is behind a prominent update version.
-        if autoupdate_stage.ready_for_update()
-            && (!FeatureFlag::AutoupdateUIRevamp.is_enabled()
+        // Clinch releases always get a persistent header affordance as soon as their signed
+        // metadata is available. Preserve Warp's prominence rules for its own provider.
+        if autoupdate_stage.has_actionable_update()
+            && (ChannelState::uses_clinch_updater()
+                || !FeatureFlag::AutoupdateUIRevamp.is_enabled()
                 || autoupdate_stage
                     .available_new_version()
                     .map(|version| {
@@ -22969,7 +22981,7 @@ impl Workspace {
                     Flex::row()
                         .with_child(
                             Text::new_inline(
-                                UPDATE_READY_TEXT,
+                                UPDATE_AVAILABLE_TEXT,
                                 appearance.ui_font_family(),
                                 PILL_FONT_SIZE,
                             )

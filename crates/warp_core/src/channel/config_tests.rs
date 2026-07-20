@@ -53,13 +53,19 @@ fn no_backend_has_backend_is_false() {
 }
 
 #[test]
-fn clinch_public_preview_disables_automatic_updates() {
+fn clinch_enables_only_the_signed_github_updater() {
     let config = ChannelConfig::clinch(AppId::new("sh", "clinch", "Clinch"), "clinch.log");
 
     assert!(!config.has_backend);
     assert!(config.telemetry_config.is_none());
-    assert!(config.autoupdate_config.is_none());
     assert!(config.crash_reporting_config.is_none());
+    let updater = config.autoupdate_config.expect("Clinch updater config");
+    assert_eq!(updater.provider, AutoupdateProvider::ClinchGithub);
+    assert!(updater.show_autoupdate_menu_items);
+    assert_eq!(
+        updater.releases_base_url,
+        "https://api.github.com/repos/elliot-ylambda/clinch-terminal/releases"
+    );
 }
 
 #[test]

@@ -31,14 +31,15 @@ The implementation is based on commit `387288b418353f0e7f920bb3a2c44df5f3cb1149`
    dialog and only then starts the download. A consented download transitions to `UpdateReady` and
    initiates the existing cancellable relaunch workflow.
 
-4. Bundle a narrow updater helper and AppleScript authorization shim. Before termination, the
-   helper runs the existing live-agent repair and recovery snapshot routines, validates all paths,
-   executes from the installed signed bundle, copies the authenticated ZIP into a private
-   same-filesystem transaction directory, verifies its signed size and SHA-256 identity, writes a
-   readiness marker, and waits for the old PID. The authorized and unprivileged paths use the same
-   helper. Installation uses a same-directory backup/rename transaction, a first-frame success
-   marker, rollback on failure, and scrubbed relaunch environment. Cancellation uses a per-update
-   marker checked by the waiting helper.
+4. Bundle a narrow unprivileged updater helper and universal atomic-swap utility; do not bundle or
+   invoke an AppleScript authorization shim. Before termination, the helper runs the existing
+   live-agent repair and recovery snapshot routines, validates all paths, executes from the
+   installed signed bundle, copies the authenticated ZIP into a private same-filesystem transaction
+   directory, verifies its signed size and SHA-256 identity, writes a readiness marker, and waits
+   for the old PID. Installation is allowed only when the app and its parent are user-writable and
+   uses a same-directory atomic bundle exchange, first-frame success marker, rollback on failure,
+   and scrubbed relaunch environment. Non-writable installations use the authenticated manual
+   installer. Cancellation uses a per-update marker checked by the waiting helper.
 
 5. Generate `Clinch.update.json` and `Clinch.update.sig` during packaging. The canonical JSON
    contains schema/tag/sequence/minimum macOS/bundle identity/archive size and hash/release notes,
@@ -66,11 +67,11 @@ The implementation is based on commit `387288b418353f0e7f920bb3a2c44df5f3cb1149`
 
 ## Risks and mitigations
 
-- An elevated helper is a security boundary. It accepts only fixed subcommands, numeric IDs,
+- The updater intentionally has no elevated path. It accepts only fixed subcommands, numeric IDs,
   authenticated archives in the current user's isolated Clinch app-state directory, and a
-  destination matching the installed bundle identity. The helper itself and authorization shim run
-  directly from the installed bundle instead of a user-writable copy; AppleScript performs argument
-  quoting rather than interpolating remote strings.
+  destination matching the installed bundle identity. A same-directory atomic exchange ensures
+  interruption never leaves the installed app path empty; the old bundle remains available until
+  the new app acknowledges its first frame.
 - Ad-hoc app signing does not authenticate the publisher. The signed manifest supplies publisher
   authentication now; Developer ID signing/notarization remains the preferred future hardening.
 - Multiple windows observe one update model. State transitions are idempotent, so only the first

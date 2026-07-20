@@ -16,8 +16,8 @@ The current path has five material release risks:
 - Clinch has no telemetry destination, but the collector can still schedule work and persist its
   queue because shared Warp privacy defaults are true.
 - the self-signed bundle inherits unused privacy and development entitlements.
-- local Make targets can publish a release before the complete CI suite finishes, while the
-  privileged in-app update helper has root symlink and interrupted-swap failure modes.
+- local Make targets can publish a release before the complete CI suite finishes, while the former
+  privileged in-app update path has root symlink and interrupted-swap failure modes.
 
 ## Design
 
@@ -96,11 +96,12 @@ unavailable path it drains memory and deletes only Clinch's current and legacy t
 files. Every persistence and send entry point also checks availability, so shutdown cannot recreate
 the queue and macros avoid constructing unused events.
 
-Set Clinch's `autoupdate_config` to `None`. That removes the automatic release-check request and
-keeps the known privileged helper outside the preview's reachable surface. The UI and documentation
-point to authenticated manual updates. The helper is not re-enabled until it uses
-root-owned control state, an atomic bundle exchange or externally recoverable journal, fault
-injection tests, and independent review.
+Configure Clinch's `autoupdate_config` for the pinned signed GitHub release provider. Automatic
+checks fetch metadata only and occur at most once per active calendar day; a persistent header
+indicator and the macOS **Check for Updates…** action require explicit install consent. Bundle only
+the unprivileged helper and atomic-swap utility. The AppleScript administrator-authorization path
+remains excluded, and non-writable installations fall back to the authenticated manual installer.
+Release verification requires the unprivileged components and rejects the authorization shim.
 
 ### 4. Bundle permissions and platform contract
 
@@ -200,7 +201,8 @@ or Keychain credentials.
 `README.md`, `SECURITY.md`, release notes, installer messages, and the separate Clinch website use
 the same terminology and limits. Manual DMG/ZIP download is primary; the authenticated shell
 installer is a convenience. All surfaces explain the unnotarized Open Anyway flow, manual updates,
-network-capable optional features, exact side effects, and residual review gaps.
+the one-time updater bootstrap and non-writable-install fallback, network-capable optional
+features, exact side effects, and residual review gaps.
 
 ## Testing
 
@@ -212,14 +214,16 @@ network-capable optional features, exact side effects, and residual review gaps.
   enable/status/disable/re-enable/purge idempotence, invalid
   third-party config, Claude and Codex structural preservation, receipt modes, and launch repair
   gated by the persisted enabled state.
-- Rust unit tests cover unavailable telemetry beating stored and forced values, disabled
-  auto-update, and agent-resume default/opt-out state selection; stable compilation exercises the
-  guarded collector, settings action, and backend-free plugin paths.
+- Rust unit tests cover unavailable telemetry beating stored and forced values, signed-GitHub
+  updater configuration and consent states, and agent-resume default/opt-out state selection;
+  stable compilation exercises the guarded collector, settings action, and backend-free plugin
+  paths.
 - Release verification mounts the DMG read-only and recursively compares its app with the verified
-  ZIP, validates the plist, entitlements, signatures, architectures, authenticated manifest, and
-  default-on and opt-out/re-enable integration lifecycle. The signed validation record contains
-  only automated results and local builder metadata. The universal artifact verifier requires both
-  architecture slices.
+  ZIP, validates the plist, entitlements, signatures, architectures, authenticated manifest,
+  unprivileged universal updater components, excluded authorization shim, and default-on and
+  opt-out/re-enable integration lifecycle. The signed validation record contains only automated
+  results and local builder metadata. The universal artifact verifier requires both architecture
+  slices.
 - Release orchestration fixtures stub every `gh` and Git mutation and prove that automated failures
   cannot create a tag or draft, remote staging requires the exact interactive confirmation, retries
   accept only a matching signed tag/private draft, uploaded assets are re-downloaded and verified,
@@ -243,8 +247,9 @@ network-capable optional features, exact side effects, and residual review gaps.
   reproducibility are the compensating controls. Removing the protected publication job also
   removes independent environment approval: the release workstation and authenticated operator
   are the sole publication authority.
-- Disabling the in-app updater trades convenience for a smaller privileged attack surface. The
-  preview must make manual update availability visible without performing a background check.
+- Restricting the in-app updater to user-writable installations trades universal replacement for a
+  smaller attack surface. The preview performs a quiet authenticated metadata check, requires
+  explicit consent, and falls back to the manual installer rather than elevating.
 - CI and self-authored tests are not an independent audit. Promotion remains a public preview until
   outside reviewers and beta users validate the documented release checks.
 

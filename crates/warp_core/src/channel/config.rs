@@ -57,10 +57,17 @@ impl ChannelConfig {
         }
     }
 
-    /// Builds the backend-free public Clinch channel. Automatic updates remain disabled for the
-    /// unnotarized public preview while the privileged swap helper is redesigned and reviewed.
+    /// Builds the backend-free public Clinch channel with its independently hosted, signed GitHub
+    /// release feed. The updater remains independent of every Warp backend service.
     pub fn clinch(app_id: AppId, logfile_name: impl Into<Cow<'static, str>>) -> Self {
-        Self::no_backend(app_id, logfile_name)
+        let mut config = Self::no_backend(app_id, logfile_name);
+        config.autoupdate_config = Some(AutoupdateConfig {
+            releases_base_url:
+                "https://api.github.com/repos/elliot-ylambda/clinch-terminal/releases".into(),
+            show_autoupdate_menu_items: true,
+            provider: AutoupdateProvider::ClinchGithub,
+        });
+        config
     }
 }
 

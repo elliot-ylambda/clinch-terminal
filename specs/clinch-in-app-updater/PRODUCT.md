@@ -40,18 +40,20 @@ platform-native confirmation dialog.
 7. A normal update cannot downgrade Clinch. An older release is accepted only when its signed
    metadata explicitly marks it as a rollback and its monotonic release sequence is valid.
 
-8. If the current installation is writable, the verified update installs without an authorization
-   prompt. If it is not writable, macOS requests administrator authorization after download and
-   before Clinch quits. Canceling or failing authorization leaves Clinch running and unchanged.
+8. If the current installation and its parent directory are writable by the current user, the
+   verified update installs without an authorization prompt. Clinch never elevates the in-app
+   updater. A non-writable installation remains running and directs the user to the authenticated
+   manual installer instead.
 
 9. Once the installer helper is ready, Clinch refreshes agent ownership, snapshots recovery data,
    requests a normal cancellable quit, and saves the final physical-window, project-tab,
    terminal-tab, split-pane, and Claude/Codex restore state. Canceling that quit cancels the helper
    and leaves the verified update available for a later attempt.
 
-10. The helper waits for the exact old Clinch process to exit before touching its bundle. It keeps
-    the previous bundle as a rollback candidate, installs the staged bundle atomically, clears the
-    quarantine flag, and relaunches Clinch with a clean Dock-like environment.
+10. The unprivileged helper waits for the exact old Clinch process to exit before touching its
+    bundle. It atomically exchanges the installed and staged bundles, keeps the previous bundle as
+    a rollback candidate, and relaunches Clinch with a clean Dock-like environment. It does not
+    remove quarantine data or change Gatekeeper settings.
 
 11. A successful first frame from the new app acknowledges the update. The helper then removes the
     rollback bundle and temporary update files. Clinch restores the saved windows, projects, tabs,
@@ -70,4 +72,5 @@ platform-native confirmation dialog.
     asset cannot be verified. `make update` remains a maintainer-only local workflow.
 
 15. Existing builds without the updater require one final manual installation. The curl installer
-    remains a supported bootstrap and recovery path and refuses to replace a running Clinch app.
+    remains the bootstrap, non-writable-install fallback, and recovery path, and refuses to replace
+    a running Clinch app.

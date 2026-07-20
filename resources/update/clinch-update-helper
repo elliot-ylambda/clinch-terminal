@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Narrow, fail-closed installer for a bundle already authenticated and staged by Clinch.
+# Narrow, fail-closed, unprivileged installer for a bundle already authenticated by Clinch.
 set -euo pipefail
 
 BUNDLE_ID="sh.clinch.Clinch"
@@ -116,6 +116,7 @@ bundle_is_running() {
 
 launch_as_user() {
   local uid="$1" home="$2" destination="$3" success_marker="${4:-}" finish="${5:-1}"
+  [[ "$uid" == "$EUID" ]] || fail "update user does not match the current user"
   local -a environment=(/usr/bin/env -i "HOME=$home" "PATH=/usr/bin:/bin:/usr/sbin:/sbin")
   [[ -z "$success_marker" ]] || environment+=("CLINCH_UPDATE_SUCCESS_MARKER=$success_marker")
   local -a launch=(/usr/bin/open -n "$destination")
@@ -124,11 +125,7 @@ launch_as_user() {
     "$CLINCH_UPDATE_OPEN_BIN" "$destination" "$success_marker" "$finish"
     return
   fi
-  if [[ "$EUID" -eq 0 ]]; then
-    /bin/launchctl asuser "$uid" /usr/bin/sudo -u "#$uid" "${environment[@]}" "${launch[@]}"
-  else
-    "${environment[@]}" "${launch[@]}"
-  fi
+  "${environment[@]}" "${launch[@]}"
 }
 
 quit_bundle() {
@@ -137,7 +134,7 @@ quit_bundle() {
 }
 
 rollback_bundle() {
-  local uid="$1" home="$2" destination="$3" backup="$4" failed="$5"
+  local uid="$1" home="$2" destination="$3" backup="$4" swap_tool="$5"
   quit_bundle
   local waited=0
   while bundle_is_running "$destination"; do
@@ -146,31 +143,30 @@ rollback_bundle() {
     [[ "$waited" -lt 50 ]] \
       || fail "new Clinch is still running; previous bundle preserved at $backup"
   done
-  mv "$destination" "$failed" || fail "could not preserve the failed Clinch bundle"
-  if ! mv "$backup" "$destination"; then
-    mv "$failed" "$destination" 2>/dev/null || true
-    fail "could not restore the previous Clinch bundle"
-  fi
+  "$swap_tool" "$destination" "$backup" \
+    || fail "could not atomically restore the previous Clinch bundle"
   rm -f "$home/.warp/agent-resume/.app-terminating"
   launch_as_user "$uid" "$home" "$destination" "" 0 \
     || fail "previous Clinch was restored but could not be relaunched"
-  rm -rf "$failed"
+  rm -rf "$backup"
 }
 
 install_update() {
-  [[ $# -eq 13 ]] \
-    || fail "usage: install <archive> <destination> <old-pid> <uid> <home> <id> <version> <sequence> <sha256> <size> <ready> <cancel> <success>"
-  local archive="$1" destination="$2" old_pid="$3" uid="$4" home="$5"
-  local update_id="$6" version="$7" sequence="$8" sha256="$9" size="${10}"
-  local ready="${11}" cancel="${12}" success="${13}"
+  [[ $# -eq 14 ]] \
+    || fail "usage: install <swap-tool> <archive> <destination> <old-pid> <uid> <home> <id> <version> <sequence> <sha256> <size> <ready> <cancel> <success>"
+  local swap_tool="$1" archive="$2" destination="$3" old_pid="$4" uid="$5" home="$6"
+  local update_id="$7" version="$8" sequence="$9" sha256="${10}" size="${11}"
+  local ready="${12}" cancel="${13}" success="${14}"
   local support="$home/Library/Application Support/$BUNDLE_ID"
   local update_dir="$support/autoupdate/$update_id" parent transaction protected_archive
-  local extracted candidate backup failed log actual_sha256 actual_size
+  local extracted candidate backup rollback_swap_tool log actual_sha256 actual_size
 
-  for path in "$archive" "$destination" "$home" "$ready" "$cancel" "$success"; do
+  [[ "$EUID" -ne 0 ]] || fail "privileged updater execution is disabled"
+  for path in "$swap_tool" "$archive" "$destination" "$home" "$ready" "$cancel" "$success"; do
     require_absolute_path "$path"
   done
   [[ "$old_pid" =~ ^[1-9][0-9]*$ && "$uid" =~ ^[0-9]+$ ]] || fail "invalid process identity"
+  [[ "$uid" == "$EUID" ]] || fail "update user does not match the current user"
   [[ "$update_id" =~ ^[A-Za-z0-9_-]{4,64}$ ]] || fail "invalid update identifier"
   [[ "$version" =~ ^v[0-9A-Za-z._-]+$ ]] || fail "invalid update version"
   [[ "$sequence" =~ ^[0-9]+$ ]] || fail "invalid update sequence"
@@ -182,6 +178,9 @@ install_update() {
     || fail "control marker is outside the update directory"
   [[ "$success" == "$support/update-success-$update_id" ]] || fail "invalid success marker"
   [[ "$(basename "$destination")" == "Clinch.app" ]] || fail "unexpected destination name"
+  [[ "$swap_tool" == "$destination/Contents/Resources/update/clinch-update-swap" ]] \
+    || fail "atomic swap tool is outside the installed Clinch bundle"
+  [[ -x "$swap_tool" ]] || fail "atomic swap tool is missing or not executable"
   [[ -d "$destination" ]] || fail "installed Clinch bundle is missing"
   [[ "$(bundle_value "$destination" CFBundleIdentifier)" == "$BUNDLE_ID" ]] \
     || fail "destination is not Clinch"
@@ -194,10 +193,8 @@ install_update() {
   protected_archive="$transaction/Clinch.app.zip"
   extracted="$transaction/extracted"
   candidate="$parent/.Clinch.app.update-$update_id"
-  backup="$parent/.Clinch.app.previous-$update_id"
-  failed="$parent/.Clinch.app.failed-$update_id"
   log="$support/update-$update_id.log"
-  [[ ! -e "$transaction" && ! -e "$candidate" && ! -e "$backup" && ! -e "$failed" ]] \
+  [[ ! -e "$transaction" && ! -e "$candidate" ]] \
     || fail "stale update transaction paths exist"
   local preinstall_cleanup=1
   trap 'if [[ "${preinstall_cleanup:-0}" == "1" ]]; then /bin/rm -rf -- "${transaction:-}" "${candidate:-}"; fi' EXIT
@@ -220,7 +217,6 @@ install_update() {
   /bin/rm -rf "$transaction"
   mkdir -p "$update_dir" "$support"
   : > "$ready"
-  [[ "$EUID" -eq 0 ]] && /usr/sbin/chown "$uid" "$ready" 2>/dev/null || true
 
   local waited=0
   while /bin/kill -0 "$old_pid" 2>/dev/null; do
@@ -251,18 +247,19 @@ install_update() {
   rm -f "$home/.warp/agent-resume/.app-terminating" "$success"
   {
     echo "Installing authenticated Clinch $version"
-    if ! mv "$destination" "$backup"; then
+    if ! "$swap_tool" "$destination" "$candidate"; then
+      launch_as_user "$uid" "$home" "$destination" "" 0 || true
       rm -rf "$candidate"
-      launch_as_user "$uid" "$home" "$destination" "" 0 || true
-      fail "could not preserve the installed Clinch bundle"
+      fail "could not atomically install the staged Clinch bundle"
     fi
-    if ! mv "$candidate" "$destination"; then
-      mv "$backup" "$destination" || true
-      launch_as_user "$uid" "$home" "$destination" "" 0 || true
-      fail "could not move the staged bundle into place"
-    fi
+    # The atomic exchange leaves the previous app at the candidate path until first-frame
+    # acknowledgement, making that path the rollback bundle without an empty-destination window.
+    backup="$candidate"
+    rollback_swap_tool="$backup/Contents/Resources/update/clinch-update-swap"
+    [[ -x "$rollback_swap_tool" ]] \
+      || fail "previous Clinch bundle lost its atomic rollback tool"
     if ! launch_as_user "$uid" "$home" "$destination" "$success" 1; then
-      rollback_bundle "$uid" "$home" "$destination" "$backup" "$failed"
+      rollback_bundle "$uid" "$home" "$destination" "$backup" "$rollback_swap_tool"
       rm -rf "$update_dir"
       fail "new Clinch could not be launched; restored the previous bundle"
     fi
@@ -284,7 +281,7 @@ install_update() {
     fi
 
     echo "New Clinch did not acknowledge startup; rolling back" >&2
-    rollback_bundle "$uid" "$home" "$destination" "$backup" "$failed"
+    rollback_bundle "$uid" "$home" "$destination" "$backup" "$rollback_swap_tool"
     rm -rf "$update_dir"
     exit 1
   } >> "$log" 2>&1

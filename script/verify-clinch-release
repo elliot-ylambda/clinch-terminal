@@ -120,8 +120,16 @@ verify_app() {
   done
   [[ ! -e "$app/Contents/Resources/agent-resume/install-agent-plugins.sh" ]] \
     || fail "$label bundled the floating provider-plugin installer"
-  [[ ! -e "$app/Contents/Resources/update/clinch-update-helper" ]] \
-    || fail "$label bundled the disabled privileged updater helper"
+  for item in \
+    "$app/Contents/Resources/update/clinch-update-helper" \
+    "$app/Contents/Resources/update/clinch-update-swap"; do
+    [[ -x "$item" ]] || fail "$label omitted executable ${item#"$app/"}"
+  done
+  [[ ! -e "$app/Contents/Resources/update/clinch-update-authorizer.applescript" ]] \
+    || fail "$label bundled the disabled privileged update authorizer"
+  swap_description="$(/usr/bin/file -b "$app/Contents/Resources/update/clinch-update-swap")"
+  [[ "$swap_description" == *arm64* && "$swap_description" == *x86_64* ]] \
+    || fail "$label updater swap utility is not universal: $swap_description"
 
   resources="$app/Contents/Resources"
   for item in LICENSE-AGPL LICENSE-MIT NOTICE; do

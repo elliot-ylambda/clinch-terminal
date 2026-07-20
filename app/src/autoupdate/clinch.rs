@@ -1,4 +1,5 @@
 use std::cmp::Ordering;
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -488,6 +489,18 @@ async fn validate_staged_bundle(path: &Path, manifest: &Manifest) -> Result<()> 
         executable_path.is_file(),
         "staged app executable is missing"
     );
+    for relative_path in [
+        "Contents/Resources/update/clinch-update-helper",
+        "Contents/Resources/update/clinch-update-swap",
+    ] {
+        let updater_component = path.join(relative_path);
+        let metadata = std::fs::metadata(&updater_component)
+            .with_context(|| format!("staged app omitted {relative_path}"))?;
+        ensure!(
+            metadata.is_file() && metadata.permissions().mode() & 0o111 != 0,
+            "staged app has an invalid {relative_path}"
+        );
+    }
 
     let signature = Command::new("/usr/bin/codesign")
         .args(["--verify", "--deep", "--strict"])

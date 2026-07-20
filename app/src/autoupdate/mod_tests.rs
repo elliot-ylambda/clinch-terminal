@@ -18,6 +18,27 @@ fn clinch_release_notes_are_safe_for_native_dialogs() {
 }
 
 #[test]
+fn clinch_discovery_state_keeps_an_actionable_update_visible() {
+    let version = VersionInfo::new("v0.2099.01.02.0002".to_owned());
+    assert!(AutoupdateStage::UpdateAvailable {
+        new_version: version.clone(),
+        update_id: "available".to_owned(),
+    }
+    .has_actionable_update());
+    assert!(AutoupdateStage::UpdateReady {
+        new_version: version.clone(),
+        update_id: "ready".to_owned(),
+    }
+    .has_actionable_update());
+    assert!(AutoupdateStage::UpdatedPendingRestart {
+        new_version: version,
+    }
+    .has_actionable_update());
+    assert!(!AutoupdateStage::NoUpdateAvailable.has_actionable_update());
+    assert!(!AutoupdateStage::DownloadingUpdate.has_actionable_update());
+}
+
+#[test]
 fn clinch_records_every_successful_automatic_check_as_the_daily_check() {
     assert!(should_record_daily_success(
         RequestType::Poll,

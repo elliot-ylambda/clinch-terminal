@@ -125,14 +125,16 @@ disabled in the public Clinch channel.
 
 The stable channel is created by
 [`ChannelConfig::clinch()`](crates/warp_core/src/channel/config.rs). It has no Warp server,
-RudderStack telemetry, Sentry crash reporting, bundled MCP credentials, or automatic updater
-configuration. When telemetry is unavailable, the runtime does not schedule telemetry tasks,
-persist a queue, or send it; stale Clinch telemetry queues are deleted without upload. The public
-bundle carries no Clinch-specific privacy entitlement and does not include the privileged update
-helper.
+RudderStack telemetry, Sentry crash reporting, or bundled MCP credentials. Its signed GitHub
+updater fetches release metadata at most once per active calendar day; it does not download an app
+until the user explicitly approves the update. When telemetry is unavailable, the runtime does not
+schedule telemetry tasks, persist a queue, or send it; stale Clinch telemetry queues are deleted
+without upload. The public bundle carries no Clinch-specific privacy entitlement or privileged
+update authorizer.
 
-Stable Clinch starts no Warp account session, telemetry/crash reporter, or automatic release
-check. Network activity still occurs when the user asks for it or launches software that uses it.
+Stable Clinch starts no Warp account session or telemetry/crash reporter. Its automatic GitHub
+release check authenticates signed metadata and stays quiet when no update is available or a check
+fails. Other network activity occurs when the user asks for it or launches software that uses it.
 Examples include Claude Code, Codex, SSH, MCP servers, remote assets, language/package tooling,
 provider plugin commands, and the optional Claude plan-limit gauge. Those tools have their own
 privacy and security behavior.
@@ -143,9 +145,19 @@ credentials during uninstall.
 
 ## Updates and removal
 
-Automatic and in-app updates are disabled for the public preview. The existing privileged helper
-is not shipped because its bundle-swap design still needs additional hardening and review. Quit
-Clinch and install a newer authenticated release manually.
+Updater-enabled builds check automatically and show **Update available** in the header. You can
+also choose **Clinch → Check for Updates…**. Clinch authenticates the release and presents its
+version and notes; **Download and Install** then verifies the archive, saves restorable state,
+quits, atomically replaces the app, relaunches, and rolls back if the new app does not start.
+
+The updater never requests administrator privileges. The public installer places Clinch in a
+user-writable `/Applications` or `~/Applications` location; unusual non-writable installations
+open the authenticated release for manual installation instead. Builds released before the updater
+was enabled need one final bootstrap install:
+
+```bash
+curl -fsSL https://clinch.sh/install | sh
+```
 
 The release asset `uninstall.sh` supports selective removal:
 

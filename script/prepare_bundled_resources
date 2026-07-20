@@ -105,9 +105,23 @@ if [ "$(uname -s)" = "Darwin" ]; then
     "$REPO_ROOT/resources/third-party/jq/jq-macos-universal" \
     "$DEST_DIR/bin/jq"
 
-  # The public preview uses authenticated manual updates. Do not ship the privileged update
-  # authorizer/helper until its atomic swap and root-owned control state have been redesigned.
-  rm -rf "$DEST_DIR/update"
+  UPDATE_DEST="$DEST_DIR/update"
+  rm -rf "$UPDATE_DEST"
+  if [ "$CHANNEL" = "stable" ]; then
+    # Stable Clinch ships an unprivileged updater only. Non-writable installations fall back to
+    # the authenticated manual installer; the AppleScript authorization shim stays excluded.
+    echo "Compiling unprivileged Clinch updater resources to $UPDATE_DEST"
+    mkdir -p "$UPDATE_DEST"
+    install -m 0755 "$REPO_ROOT/resources/update/clinch-update-helper" \
+      "$UPDATE_DEST/clinch-update-helper"
+    CLANG_BIN="${CLINCH_UPDATE_CC:-$(xcrun --find clang)}"
+    "$CLANG_BIN" -std=c11 -Os -Wall -Wextra -Werror \
+      -arch arm64 -arch x86_64 \
+      -mmacosx-version-min="${MACOSX_DEPLOYMENT_TARGET:-14.0}" \
+      "$REPO_ROOT/resources/update/clinch-update-swap.c" \
+      -o "$UPDATE_DEST/clinch-update-swap"
+    chmod 0755 "$UPDATE_DEST/clinch-update-swap"
+  fi
 fi
 
 if [ -n "$GIT_RELEASE_TAG" ]; then

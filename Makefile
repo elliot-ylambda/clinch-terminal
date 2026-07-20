@@ -43,9 +43,12 @@ SHA-256, and drag Clinch to Applications; then use System Settings > Privacy & S
 Open Anyway when macOS blocks the browser-downloaded first launch.
 
 Session restore is enabled by default, using managed local Claude Code and Codex hooks. You can
-turn session capture off or back on from Clinch Settings. Automatic updates are disabled for this
-preview; install a newer authenticated release manually. Agent completion alerts use standard
-macOS notifications and are never sent through Messages or AppleScript.
+turn session capture off or back on from Clinch Settings. This release checks signed update
+metadata at most daily and shows **Update available** in the header; installation requires explicit
+consent. Builds older than this updater bridge need one final authenticated manual install. An app
+that is not user-writable also uses the manual installer instead of requesting administrator
+access. Agent completion alerts use standard macOS notifications and are never sent through
+Messages or AppleScript.
 
 Complete Corresponding Source for this exact release, including locked Cargo dependencies, is
 attached to the same GitHub release as `Clinch.source.tar.gz`.

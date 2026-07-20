@@ -35,8 +35,9 @@ Clinch adds its own release controls:
 - the convenience installer authenticates the manifest before parsing it and downloads only from
   the authenticated exact tag;
 - the local release gate verifies the app, ZIP, and mounted DMG, including their identity,
-  architectures, absence of unused privacy entitlements and excluded helpers, code-signature
-  structure, and matching app files;
+  architectures, absence of unused privacy entitlements and the privileged update authorizer,
+  presence of the universal unprivileged update components, code-signature structure, and matching
+  app files;
 - the release workstation publishes a CycloneDX SBOM, signed validation record, signed checksum
   list, and release-key-signed local provenance for the exact gated commit;
 - the local release command downloads and independently verifies the private draft before making
@@ -65,7 +66,7 @@ The release review treats these as security-sensitive:
   credentials;
 - plugin sources and provider CLI commands;
 - optional SSH, MCP, remote assets, language servers, and other user-launched network clients; and
-- any future privileged update helper.
+- the unprivileged in-app updater and any future privileged update helper.
 
 Clinch is a terminal, so it intentionally is not App Sandbox constrained. It launches arbitrary
 user commands and needs normal filesystem, PTY, process, and network access. The current public
@@ -75,10 +76,11 @@ entitlements are rejected by release verification.
 
 ## Privacy posture
 
-The stable Clinch channel has no Warp backend, telemetry destination, crash-reporting destination,
-or automatic updater. Unavailable telemetry overrides stored defaults and experiment or enterprise
-flags. The collector drains memory, removes stale Clinch queue files without upload, and does not
-start telemetry timers or write a shutdown queue.
+The stable Clinch channel has no Warp backend, telemetry destination, or crash-reporting
+destination. Its updater makes a quiet, at-most-daily GitHub request for signed release metadata;
+automatic checks do not download an archive. Unavailable telemetry overrides stored defaults and
+experiment or enterprise flags. The collector drains memory, removes stale Clinch queue files
+without upload, and does not start telemetry timers or write a shutdown queue.
 
 Local session capture is enabled on first launch so Claude Code and Codex conversations can be
 restored by default. Its managed hooks write local pane mappings, a journal, and prompt mirrors.
@@ -99,9 +101,11 @@ handle credentials according to their own policies.
   maintenance debt and should be replaced as upstream dependency chains allow.
 - The convenience installer is a bootstrap: users must obtain or review a script containing the
   correct project public key. Manual versioned DMG download remains the primary path.
-- Automatic updates are disabled. The old privileged helper is not bundled while its root-owned
-  control files, atomic swap, interruption recovery, and symlink defenses await redesign and
-  independent review.
+- In-app replacement is limited to app bundles and parent directories writable by the current
+  user. It uses an unprivileged helper and atomic same-directory exchange; non-writable installs
+  fall back to the authenticated manual installer. No administrator authorization shim is bundled.
+- The updater and release controls have not received an independent audit. A client released before
+  the updater bridge cannot discover it and needs one final authenticated manual installation.
 - Restoring a pane intentionally executes a captured provider resume command. A compromised local
   account, provider config, transcript, hook, plugin, or Clinch state file can affect that command.
 - Ad-hoc signing verifies internal bundle consistency, not publisher identity. Anyone can create a

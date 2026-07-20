@@ -914,17 +914,21 @@ fn test_manual_update_check_feedback_covers_every_result() {
         manual_update_check_feedback(&update_available),
         ("A Clinch update is available", ToastFlavor::Default)
     );
+    assert!(manual_update_check_found_update(&update_available));
 
+    let no_update = Ok(UpdateReady::No);
     assert_eq!(
-        manual_update_check_feedback(&Ok(UpdateReady::No)),
+        manual_update_check_feedback(&no_update),
         ("Clinch is up to date", ToastFlavor::Success)
     );
+    assert!(!manual_update_check_found_update(&no_update));
 
     let failure = Err(anyhow::anyhow!("release metadata is unavailable"));
     assert_eq!(
         manual_update_check_feedback(&failure),
         ("Unable to check for updates", ToastFlavor::Error)
     );
+    assert!(!manual_update_check_found_update(&failure));
 }
 
 #[test]

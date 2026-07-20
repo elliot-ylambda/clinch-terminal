@@ -112,8 +112,9 @@ when the app cannot use Apple's Developer ID and notarization trust path.
     telemetry at shutdown, or retry telemetry left by an older build. Obsolete Clinch telemetry
     queue files are deleted locally without being uploaded.
 
-19. Stable Clinch configures no Warp account/backend request, telemetry/crash destination, or
-    automatic release check at startup. Optional Claude plan-limit gauges contact Anthropic only
+19. Stable Clinch configures no Warp account/backend request or telemetry/crash destination. Its
+    only automatic project-owned network request is a quiet, at-most-daily check of authenticated
+    stable release metadata on GitHub. Optional Claude plan-limit gauges contact Anthropic only
     after the user enables them; other network-capable integrations remain attributable to an
     explicit user action or a process the user launched.
 
@@ -129,10 +130,11 @@ when the app cannot use Apple's Developer ID and notarization trust path.
     Development-only entitlements are forbidden. Any privacy-sensitive entitlement retained for
     terminal child-process compatibility is recorded in the release security documentation.
 
-23. In-app updating is unavailable in the public preview. The existing privileged updater remains
-    disabled until its root-owned control files and atomic bundle swap have been independently
-    reviewed and tested against interruption and symlink attacks. Users update with the same
-    authenticated, exact-version manual or convenience-install path used for first installation.
+23. In-app updating is available only for installations writable by the current user. It uses an
+    unprivileged helper and same-directory atomic bundle exchange; the public preview never invokes
+    the existing AppleScript administrator-authorization path. Non-writable installations use the
+    same authenticated, exact-version manual installer used for first installation. Builds shipped
+    before this bridge release require that manual installer once before they can discover updates.
 
 24. The DMG and ZIP attached to one release contain the same Clinch app bytes and identity. Release
     verification mounts the DMG and compares its app with the verified ZIP instead of checking

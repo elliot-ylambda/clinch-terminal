@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 TMP="$(mktemp -d -t clinch-update-helper-test)"
+TMP="$(cd "$TMP" && pwd -P)"
 trap 'rm -rf "$TMP"' EXIT
 
 source "$ROOT/resources/update/clinch-update-helper"
@@ -20,7 +21,7 @@ if (preflight "$HOME_DIR" "$TMP/wrong-support") >/dev/null 2>&1; then
   echo "unexpected support directory was accepted" >&2
   exit 1
 fi
-if (install_update /tmp/archive /Applications/Clinch.app not-a-pid 501 "$HOME_DIR" \
+if (install_update /tmp/swap /tmp/archive /Applications/Clinch.app not-a-pid 501 "$HOME_DIR" \
     update v1 1 "$(printf '0%.0s' {1..64})" 1 /tmp/ready /tmp/cancel \
     /tmp/success) >/dev/null 2>&1; then
   echo "invalid updater process identity was accepted" >&2
@@ -29,10 +30,23 @@ fi
 
 echo "clinch update helper validation tests passed"
 
+SWAP_BIN="$TMP/clinch-update-swap"
+/usr/bin/clang -std=c11 -Os -Wall -Wextra -Werror \
+  "$ROOT/resources/update/clinch-update-swap.c" -o "$SWAP_BIN"
+
+mkdir -p "$TMP/symlink-swap/real/Clinch.app" "$TMP/symlink-swap/.Clinch.app.update-test"
+ln -s "$TMP/symlink-swap/real/Clinch.app" "$TMP/symlink-swap/Clinch.app"
+if "$SWAP_BIN" "$TMP/symlink-swap/Clinch.app" \
+    "$TMP/symlink-swap/.Clinch.app.update-test" >/dev/null 2>&1; then
+  echo "atomic updater unexpectedly followed a symbolic-link bundle" >&2
+  exit 1
+fi
+
 make_app() {
   local app="$1" version="$2" sequence="$3"
-  mkdir -p "$app/Contents/MacOS"
+  mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/update"
   cp /bin/sleep "$app/Contents/MacOS/stable"
+  cp "$SWAP_BIN" "$app/Contents/Resources/update/clinch-update-swap"
   /usr/bin/plutil -create xml1 "$app/Contents/Info.plist"
   /usr/bin/plutil -insert CFBundleIdentifier -string sh.clinch.Clinch "$app/Contents/Info.plist"
   /usr/bin/plutil -insert CFBundleExecutable -string stable "$app/Contents/Info.plist"
@@ -89,6 +103,7 @@ run_transaction() {
   CLINCH_UPDATE_OPEN_LOG="$open_log" \
   CLINCH_UPDATE_MOCK_ACK="$acknowledge" \
     "$ROOT/resources/update/clinch-update-helper" install \
+      "$destination/Contents/Resources/update/clinch-update-swap" \
       "$archive" "$destination" "$old_pid" "$(id -u)" "$transaction_home" \
       "$update_id" v0.2099.01.02.0002 200 "$sha256" "$size" \
       "$ready" "$cancel" "$success" &
@@ -124,7 +139,10 @@ run_transaction() {
   kill "$old_pid"
   wait "$old_pid" 2>/dev/null || true
   if [[ "$acknowledge" == "1" ]]; then
-    wait "$helper_pid"
+    if ! wait "$helper_pid"; then
+      cat "$transaction_support/update-$update_id.log" >&2 || true
+      fail "acknowledged update helper failed"
+    fi
   elif wait "$helper_pid"; then
     fail "unacknowledged update unexpectedly succeeded"
   fi

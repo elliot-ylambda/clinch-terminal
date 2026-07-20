@@ -284,6 +284,29 @@ async fn needs_authorization(bundle_path: &Path) -> Result<bool> {
     Ok(false)
 }
 
+/// Clinch intentionally has no privileged updater path. Installations created by the public
+/// installer are placed in a user-writable Applications directory; other ownership layouts use
+/// the authenticated manual installer instead.
+pub(super) async fn clinch_install_is_writable() -> Result<bool> {
+    let bundle_path = PathBuf::from(get_bundle_path()?);
+    let metadata = fs::symlink_metadata(&bundle_path)?;
+    if metadata.file_type().is_symlink()
+        || !metadata.is_dir()
+        || metadata.uid() != getuid().as_raw()
+    {
+        log::info!("Clinch app bundle is not a user-owned real directory");
+        return Ok(false);
+    }
+    let Some(parent) = bundle_path.parent() else {
+        return Ok(false);
+    };
+    if fs::canonicalize(parent)? != parent {
+        log::info!("Clinch app parent contains a symbolic link or non-canonical component");
+        return Ok(false);
+    }
+    Ok(!needs_authorization(&bundle_path).await?)
+}
+
 /// Determines if a directory is writable as part of an update. This means:
 /// * Warp can create files in the directory
 /// * Warp can modify the permissions of created files
@@ -481,9 +504,13 @@ async fn prepare_clinch_external_update(
     let resources = warp_core::paths::bundled_resources_dir()
         .context("Clinch bundle resources directory is unavailable")?;
     let helper = resources.join("update/clinch-update-helper");
-    let authorizer = resources.join("update/clinch-update-authorizer.applescript");
+    let swap_tool = resources.join("update/clinch-update-swap");
     ensure!(helper.is_file(), "Clinch update helper is missing");
-    ensure!(authorizer.is_file(), "Clinch update authorizer is missing");
+    ensure!(swap_tool.is_file(), "Clinch atomic update tool is missing");
+    ensure!(
+        clinch_install_is_writable().await?,
+        "Clinch installation is not user-writable; use the authenticated manual installer"
+    );
 
     let directory = super::clinch::update_dir(update_id);
     let archive = super::clinch::archive_path(update_id);
@@ -518,6 +545,7 @@ async fn prepare_clinch_external_update(
     let sequence = super::clinch::staged_bundle_sequence(update_id)?.to_string();
     let arguments = [
         OsString::from("install"),
+        swap_tool.as_os_str().to_owned(),
         archive.as_os_str().to_owned(),
         bundle_path.as_os_str().to_owned(),
         OsString::from(pid),
@@ -532,34 +560,21 @@ async fn prepare_clinch_external_update(
         cancel.as_os_str().to_owned(),
         success.as_os_str().to_owned(),
     ];
-    let authorization_required = needs_authorization(&bundle_path).await.unwrap_or(true);
     let log_path = support.join(format!("update-{update_id}.log"));
     let log = OpenOptions::new()
         .create(true)
         .append(true)
         .open(&log_path)?;
-    let mut process = if authorization_required {
-        let mut command = blocking::Command::new("/usr/bin/osascript");
-        command.arg(&authorizer).arg(&helper).args(&arguments);
-        command
-            .stdin(Stdio::null())
-            .stdout(Stdio::from(log.try_clone()?))
-            .stderr(Stdio::from(log))
-            .spawn()
-            .context("could not request administrator authorization for Clinch update")?
-    } else {
-        let mut command = blocking::Command::new(&helper);
-        command.args(&arguments);
-        command
-            .stdin(Stdio::null())
-            .stdout(Stdio::from(log.try_clone()?))
-            .stderr(Stdio::from(log))
-            .spawn()
-            .context("could not launch Clinch update helper")?
-    };
+    let mut command = blocking::Command::new(&helper);
+    command.args(&arguments);
+    let mut process = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(log.try_clone()?))
+        .stderr(Stdio::from(log))
+        .spawn()
+        .context("could not launch Clinch update helper")?;
 
     // The helper copies and re-verifies the same-filesystem candidate before signalling ready.
-    // A cancelled authorization prompt exits without the marker, leaving the app untouched.
     for _ in 0..1500 {
         if ready.is_file() {
             return Ok(());
@@ -573,7 +588,7 @@ async fn prepare_clinch_external_update(
         Timer::after(Duration::from_millis(200)).await;
     }
     let _ = fs::write(&cancel, b"cancelled\n");
-    bail!("timed out waiting for Clinch update authorization")
+    bail!("timed out waiting for the Clinch update helper")
 }
 
 pub(super) fn cancel_clinch_update(update_id: &str) {

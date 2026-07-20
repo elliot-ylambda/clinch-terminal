@@ -83,11 +83,13 @@ pub enum AutoupdateStage {
 }
 
 impl AutoupdateStage {
-    /// Returns `true` if we're ready to relaunch and apply an update.
-    pub fn ready_for_update(&self) -> bool {
+    /// Returns `true` when the UI should keep a persistent install affordance visible.
+    pub fn has_actionable_update(&self) -> bool {
         matches!(
             self,
-            AutoupdateStage::UpdateReady { .. } | AutoupdateStage::UpdatedPendingRestart { .. }
+            AutoupdateStage::UpdateAvailable { .. }
+                | AutoupdateStage::UpdateReady { .. }
+                | AutoupdateStage::UpdatedPendingRestart { .. }
         )
     }
 
@@ -160,7 +162,10 @@ impl AutoupdateState {
         if self.polling_started {
             return;
         }
-        if FeatureFlag::Autoupdate.is_enabled() && AppExecutionMode::as_ref(ctx).can_autoupdate() {
+        if FeatureFlag::Autoupdate.is_enabled()
+            && ChannelState::autoupdate_provider().is_some()
+            && AppExecutionMode::as_ref(ctx).can_autoupdate()
+        {
             log::info!("Starting autoupdate polling loop");
             self.polling_started = true;
             // Initiate the polling loop.
@@ -934,6 +939,17 @@ pub fn clinch_update_prompt(app: &AppContext) -> Option<ClinchUpdatePrompt> {
     None
 }
 
+#[cfg(target_os = "macos")]
+fn clinch_manual_release_url(app: &AppContext) -> Option<String> {
+    if !ChannelState::uses_clinch_updater() {
+        return None;
+    }
+    AutoupdateState::as_ref(app)
+        .available_clinch_release
+        .as_ref()
+        .map(|release| clinch::release_url(release).to_owned())
+}
+
 #[cfg(feature = "integration_tests")]
 pub(crate) fn set_clinch_update_available_for_integration(app: &mut AppContext) {
     let new_version = VersionInfo::new("v0.2099.01.02.0304".to_owned());
@@ -1073,9 +1089,13 @@ async fn download_update(
     cfg_if::cfg_if! {
         if #[cfg(target_os = "macos")] {
             if let Some(release) = clinch_release {
-                let result = clinch::download_and_stage(&release, &update_id, server_api.http_client())
-                    .await
-                    .map(|_| DownloadReady::Yes);
+                let result = if mac::clinch_install_is_writable().await? {
+                    clinch::download_and_stage(&release, &update_id, server_api.http_client())
+                        .await
+                        .map(|_| DownloadReady::Yes)
+                } else {
+                    Ok(DownloadReady::NeedsAuthorization)
+                };
                 if result.is_err() {
                     mac::cleanup_all_except(last_successful_update_id.as_deref()).await;
                 }
@@ -1258,8 +1278,8 @@ where
                     },
                     Err(err) => {
                         if ChannelState::uses_clinch_updater() {
-                            // Authorization cancellation or a pre-quit helper failure leaves the
-                            // authenticated archive staged so the user can retry later.
+                            // A pre-quit helper failure leaves the authenticated archive staged so
+                            // the user can retry later.
                             autoupdate_state.clinch_install_failed(ctx);
                         } else {
                             autoupdate_state.relaunch_failed(ctx);
@@ -1353,6 +1373,11 @@ pub fn manually_download_new_version(ctx: &mut AppContext) {
     match get_update_state(ctx) {
         AutoupdateStage::UnableToUpdateToNewVersion { new_version }
         | AutoupdateStage::UnableToLaunchNewVersion { new_version } => {
+            #[cfg(target_os = "macos")]
+            if let Some(url) = clinch_manual_release_url(ctx) {
+                ctx.open_url(&url);
+                return;
+            }
             manually_download_version(&ChannelState::channel(), &new_version, ctx)
         }
         _ => {
