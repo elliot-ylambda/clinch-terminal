@@ -27,6 +27,13 @@ pub enum CliAgentUsageProvider {
     Codex,
 }
 
+/// UI state for Claude's opt-in plan-limit collection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlanLimitsState {
+    pub enabled: bool,
+    pub authorization_pending: bool,
+}
+
 /// A statistic that can be independently shown or hidden in the tab-bar usage
 /// header. The focused provider panel always shows every statistic; its
 /// checkboxes control only the compact, at-a-glance header presentation.
@@ -228,17 +235,16 @@ impl CliAgentUsageProvider {
     /// Codex limits come from local files and need neither.
     fn plan_limits_affordance(
         self,
-        plan_limits_enabled: bool,
+        plan_limits: PlanLimitsState,
         provider: &Provider,
-        authorization_pending: bool,
     ) -> Option<PlanLimitsAffordance> {
         if self != Self::Claude {
             return None;
         }
-        if !plan_limits_enabled {
+        if !plan_limits.enabled {
             return Some(PlanLimitsAffordance::TurnOn);
         }
-        if authorization_pending {
+        if plan_limits.authorization_pending {
             return Some(PlanLimitsAffordance::Authorizing);
         }
         provider
@@ -247,9 +253,10 @@ impl CliAgentUsageProvider {
     }
 }
 
-/// See [`CliAgentUsageProvider::plan_limits_affordance`]. Both variants
-/// dispatch the same `EnableCliAgentPlanLimits` gesture: ensure the setting is
-/// on and sanction one Keychain read (with its prompt, if macOS raises one).
+/// See [`CliAgentUsageProvider::plan_limits_affordance`]. The clickable
+/// variants dispatch the same `EnableCliAgentPlanLimits` gesture: ensure the
+/// setting is on and sanction one Keychain read (with its prompt, if macOS
+/// raises one).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlanLimitsAffordance {
     TurnOn,
@@ -322,7 +329,7 @@ mod cli_agent_usage_provider_tests {
 
     use super::{
         CliAgentUsageHeaderVisibility, CliAgentUsageMetric, CliAgentUsageProvider,
-        PlanLimitsAffordance, CLAUDE_USAGE_URL, CODEX_USAGE_URL,
+        PlanLimitsAffordance, PlanLimitsState, CLAUDE_USAGE_URL, CODEX_USAGE_URL,
     };
 
     #[test]
@@ -344,30 +351,42 @@ mod cli_agent_usage_provider_tests {
             plan_needs_authorization: true,
             ..Provider::default()
         };
+        let disabled = PlanLimitsState {
+            enabled: false,
+            authorization_pending: false,
+        };
+        let enabled = PlanLimitsState {
+            enabled: true,
+            authorization_pending: false,
+        };
+        let authorizing = PlanLimitsState {
+            enabled: true,
+            authorization_pending: true,
+        };
 
         // Setting off: Claude offers "Turn on" regardless of poller state.
         assert_eq!(
-            claude.plan_limits_affordance(false, &idle, false),
+            claude.plan_limits_affordance(disabled, &idle),
             Some(PlanLimitsAffordance::TurnOn)
         );
         assert_eq!(
-            claude.plan_limits_affordance(false, &needs_auth, true),
+            claude.plan_limits_affordance(disabled, &needs_auth),
             Some(PlanLimitsAffordance::TurnOn)
         );
         // Setting on: Authorize appears only while the poller reports that
         // reading the Keychain would prompt.
-        assert_eq!(claude.plan_limits_affordance(true, &idle, false), None);
+        assert_eq!(claude.plan_limits_affordance(enabled, &idle), None);
         assert_eq!(
-            claude.plan_limits_affordance(true, &needs_auth, false),
+            claude.plan_limits_affordance(enabled, &needs_auth),
             Some(PlanLimitsAffordance::Authorize)
         );
         assert_eq!(
-            claude.plan_limits_affordance(true, &needs_auth, true),
+            claude.plan_limits_affordance(authorizing, &needs_auth),
             Some(PlanLimitsAffordance::Authorizing)
         );
         // Codex limits come from local files; no affordance ever.
-        assert_eq!(codex.plan_limits_affordance(false, &idle, false), None);
-        assert_eq!(codex.plan_limits_affordance(true, &needs_auth, true), None);
+        assert_eq!(codex.plan_limits_affordance(disabled, &idle), None);
+        assert_eq!(codex.plan_limits_affordance(authorizing, &needs_auth), None);
     }
 
     #[test]

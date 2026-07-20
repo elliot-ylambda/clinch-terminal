@@ -211,6 +211,7 @@ use crate::ai::blocklist::suggested_rule_modal::{
 use crate::ai::blocklist::usage::{
     render_cli_agent_usage_header, render_cli_agent_usage_panel, CliAgentUsageHeaderVisibility,
     CliAgentUsageMetric, CliAgentUsageModel, CliAgentUsagePanelMouseStates, CliAgentUsageProvider,
+    PlanLimitsState,
 };
 use crate::ai::blocklist::{
     BlocklistAIHistoryEvent, PendingAttachment, PendingQueryState, QueuedQueryOrigin,
@@ -21934,7 +21935,10 @@ impl Workspace {
             let snapshot = usage_model.latest().clone();
             let authorization_pending = usage_model.authorization_pending();
             let usage_settings = CliAgentUsageSettings::as_ref(ctx);
-            let plan_limits_enabled = *usage_settings.show_plan_limits;
+            let plan_limits = PlanLimitsState {
+                enabled: *usage_settings.show_plan_limits,
+                authorization_pending,
+            };
             let visibility = CliAgentUsageHeaderVisibility::from_overrides(
                 &usage_settings.header_metric_visibility,
             );
@@ -21945,8 +21949,7 @@ impl Workspace {
             ];
             if let Some(widget) = render_cli_agent_usage_header(
                 &snapshot,
-                plan_limits_enabled,
-                authorization_pending,
+                plan_limits,
                 &visibility,
                 appearance,
                 bg,
@@ -27368,7 +27371,10 @@ impl View for Workspace {
             let authorization_pending = usage_model.authorization_pending();
             if cli_agent_usage::format::chip_halves(&snapshot).is_some() {
                 let usage_settings = CliAgentUsageSettings::as_ref(app);
-                let plan_limits_enabled = *usage_settings.show_plan_limits;
+                let plan_limits = PlanLimitsState {
+                    enabled: *usage_settings.show_plan_limits,
+                    authorization_pending,
+                };
                 let visibility = CliAgentUsageHeaderVisibility::from_overrides(
                     &usage_settings.header_metric_visibility,
                 );
@@ -27391,8 +27397,7 @@ impl View for Workspace {
                         &snapshot,
                         appearance,
                         provider,
-                        plan_limits_enabled,
-                        authorization_pending,
+                        plan_limits,
                         &visibility,
                         CliAgentUsagePanelMouseStates {
                             metric_checkboxes: metric_mouse_states,

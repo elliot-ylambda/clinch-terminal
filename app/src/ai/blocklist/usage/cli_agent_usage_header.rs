@@ -12,7 +12,8 @@ use warpui::Element;
 
 use super::cli_agent_usage_chip::{plan_limits_affordance_link, severity_fill, span};
 use super::{
-    CliAgentUsageHeaderVisibility, CliAgentUsageMetric, CliAgentUsageProvider, PlanLimitsAffordance,
+    CliAgentUsageHeaderVisibility, CliAgentUsageMetric, CliAgentUsageProvider,
+    PlanLimitsAffordance, PlanLimitsState,
 };
 use crate::appearance::Appearance;
 use crate::workspace::WorkspaceAction;
@@ -167,8 +168,7 @@ fn token_text(totals: &WindowTotals) -> String {
 /// for the "Turn on"/"Authorize" affordance rendered in their place while the
 /// gauges are off or the Keychain read awaits a sanctioning click.
 struct PlanLimitsGate<'a> {
-    enabled: bool,
-    authorization_pending: bool,
+    state: PlanLimitsState,
     turn_on_mouse_state: &'a MouseStateHandle,
 }
 
@@ -180,7 +180,7 @@ impl PlanLimitsGate<'_> {
         kind: CliAgentUsageProvider,
         provider: &Provider,
     ) -> Option<(PlanLimitsAffordance, MouseStateHandle)> {
-        kind.plan_limits_affordance(self.enabled, provider, self.authorization_pending)
+        kind.plan_limits_affordance(self.state, provider)
             .map(|affordance| (affordance, self.turn_on_mouse_state.clone()))
     }
 }
@@ -480,8 +480,7 @@ fn compact_row(
 /// `SizeConstraintSwitch`; `None` when neither provider has data (widget hidden).
 pub fn render_cli_agent_usage_header(
     snapshot: &UsageSnapshot,
-    plan_limits_enabled: bool,
-    authorization_pending: bool,
+    plan_limits: PlanLimitsState,
     visibility: &CliAgentUsageHeaderVisibility,
     appearance: &Appearance,
     bg: Fill,
@@ -494,8 +493,7 @@ pub fn render_cli_agent_usage_header(
         now: Utc::now(),
         visibility,
         gate: PlanLimitsGate {
-            enabled: plan_limits_enabled,
-            authorization_pending,
+            state: plan_limits,
             turn_on_mouse_state,
         },
         appearance,

@@ -13,7 +13,8 @@ use warpui::ui_components::components::UiComponent;
 use warpui::Element;
 
 use super::{
-    CliAgentUsageHeaderVisibility, CliAgentUsageMetric, CliAgentUsageProvider, PlanLimitsAffordance,
+    CliAgentUsageHeaderVisibility, CliAgentUsageMetric, CliAgentUsageProvider,
+    PlanLimitsAffordance, PlanLimitsState,
 };
 use crate::appearance::Appearance;
 use crate::workspace::WorkspaceAction;
@@ -104,8 +105,7 @@ pub fn render_cli_agent_usage_panel(
     snapshot: &UsageSnapshot,
     appearance: &Appearance,
     kind: CliAgentUsageProvider,
-    plan_limits_enabled: bool,
-    authorization_pending: bool,
+    plan_limits: PlanLimitsState,
     visibility: &CliAgentUsageHeaderVisibility,
     mouse_states: CliAgentUsagePanelMouseStates<'_>,
 ) -> Box<dyn Element> {
@@ -132,9 +132,7 @@ pub fn render_cli_agent_usage_panel(
 
     // Claude's live plan data is opt-in, but its visibility controls remain
     // available even while collection is off.
-    if let Some(affordance) =
-        kind.plan_limits_affordance(plan_limits_enabled, provider, authorization_pending)
-    {
+    if let Some(affordance) = kind.plan_limits_affordance(plan_limits, provider) {
         col.add_child(panel_row(
             span("Limits", sub, appearance),
             plan_limits_affordance_link(affordance, appearance, bg, turn_on_mouse_state),
