@@ -300,9 +300,8 @@ fn test_moving_inner_tab_to_new_project_preserves_live_pane_group() {
         let project_window = root_view
             .read(&app, |root_view, _| root_view.project_window())
             .expect("backendless root view should contain a project window");
-        let source_workspace = project_window.read(&app, |project_window, _| {
-            project_window.active_workspace()
-        });
+        let source_workspace =
+            project_window.read(&app, |project_window, _| project_window.active_workspace());
 
         let transferred_pane_group_id = source_workspace.update(&mut app, |workspace, ctx| {
             workspace.add_terminal_tab(false, ctx);

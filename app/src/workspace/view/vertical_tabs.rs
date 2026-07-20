@@ -35,7 +35,10 @@ use warpui::ui_components::components::{UiComponent, UiComponentStyles};
 use warpui::ui_components::text_input::TextInput;
 use warpui::{AppContext, EntityId, SingletonEntity, ViewHandle, WindowId};
 
-use super::{render_group_member_icon_collage, select_unique_pane_kinds};
+use super::{
+    project_cli_agent_activity, render_group_member_icon_collage, select_unique_pane_kinds,
+    ProjectCliAgentActivity,
+};
 use crate::ai::agent::conversation::{ConversationStatus, StatusColorStyle};
 use crate::ai::agent::icons::yellow_stop_icon;
 use crate::ai::agent_management::AgentNotificationsModel;
@@ -59,7 +62,9 @@ use crate::pane_group::{
 use crate::safe_triangle::SafeTriangle;
 use crate::settings::ClinchSettings;
 use crate::tab::{tab_position_id, SelectedTabColor, TabData};
-use crate::terminal::cli_agent_sessions::{session_context_enabled, CLIAgentSessionsModel};
+use crate::terminal::cli_agent_sessions::{
+    session_context_enabled, CLIAgentSessionStatus, CLIAgentSessionsModel,
+};
 use crate::terminal::session_settings::SessionSettings;
 use crate::terminal::view::TerminalViewState;
 use crate::terminal::{CLIAgent, TerminalView};
@@ -70,7 +75,7 @@ use crate::ui_components::agent_icon::{
 use crate::ui_components::buttons::{combo_inner_button, icon_button_with_color};
 use crate::ui_components::icon_with_status::{render_icon_with_status, IconWithStatusVariant};
 use crate::ui_components::icons::Icon as UiIcon;
-use crate::ui_components::CLINCH_DONE_BLUE;
+use crate::ui_components::{CLINCH_DONE_BLUE, CLINCH_LOGO_GREEN};
 use crate::util::bindings::keybinding_name_to_display_string;
 use crate::util::color::Opacity;
 use crate::workspace::action::{NewSessionMenuAnchor, WorkspaceAction};
@@ -132,6 +137,12 @@ pub(super) const VERTICAL_TABS_DETAIL_SIDECAR_POSITION_ID: &str = "vertical_tabs
 /// Total size of the icon-with-status component rendered for each vertical-tabs row.
 /// Sub-components (circle, badge, cloud) are derived inside `render_icon_with_status`.
 const VERTICAL_TABS_ICON_SIZE: f32 = 24.;
+/// Diameter of the local Claude/Codex activity dot overlaid on the agent logo.
+const VERTICAL_TABS_AGENT_ACTIVITY_DOT_SIZE: f32 = 6.;
+/// Background cutout around the activity dot keeps it legible over either brand color.
+const VERTICAL_TABS_AGENT_ACTIVITY_DOT_RING_PADDING: f32 = 1.;
+/// Match the existing status badge's bottom-right placement within the 24px icon box.
+const VERTICAL_TABS_AGENT_ACTIVITY_DOT_CORNER_OFFSET: f32 = -1.;
 
 /// Icon size for the per-line conversation status pill in Summary mode. Pairs with
 /// `STATUS_ELEMENT_PADDING` (2px) for an overall ~14px element next to a 12pt title.
@@ -283,16 +294,126 @@ fn oz_icon_fill(theme: &WarpTheme) -> WarpThemeFill {
 }
 
 fn render_pane_icon_with_status(
-    variant: IconWithStatusVariant,
-    theme: &WarpTheme,
+    typed: &TypedPane<'_>,
+    title: &str,
+    appearance: &Appearance,
+    app: &AppContext,
 ) -> Box<dyn Element> {
-    render_icon_with_status(
+    let theme = appearance.theme();
+    let variant = resolve_icon_with_status_variant(typed, title, appearance, app);
+    let activity = vertical_tab_cli_agent_activity(typed, app);
+    let (variant, activity) = match (variant, activity) {
+        (
+            IconWithStatusVariant::CLIAgent {
+                agent,
+                is_ambient: false,
+                ..
+            },
+            Some(activity),
+        ) => (
+            IconWithStatusVariant::CLIAgent {
+                agent,
+                status: None,
+                is_ambient: false,
+            },
+            Some(activity),
+        ),
+        (variant, _) => (variant, None),
+    };
+    let icon = render_icon_with_status(
         variant,
         VERTICAL_TABS_ICON_SIZE,
         0.,
         theme,
         theme.background(),
+    );
+    let Some(activity) = activity else {
+        return icon;
+    };
+
+    let dot_color = vertical_tab_activity_dot_color(activity, theme);
+    let dot = Container::new(
+        ConstrainedBox::new(
+            WarpIcon::CircleFilled
+                .to_warpui_icon(WarpThemeFill::Solid(dot_color))
+                .finish(),
+        )
+        .with_width(VERTICAL_TABS_AGENT_ACTIVITY_DOT_SIZE)
+        .with_height(VERTICAL_TABS_AGENT_ACTIVITY_DOT_SIZE)
+        .finish(),
     )
+    .with_uniform_padding(VERTICAL_TABS_AGENT_ACTIVITY_DOT_RING_PADDING)
+    .with_background(theme.background())
+    .with_corner_radius(CornerRadius::with_all(Radius::Percentage(50.)))
+    .finish();
+
+    let mut stack = Stack::new().with_child(icon);
+    stack.add_positioned_child(
+        dot,
+        OffsetPositioning::offset_from_parent(
+            vec2f(
+                VERTICAL_TABS_AGENT_ACTIVITY_DOT_CORNER_OFFSET,
+                VERTICAL_TABS_AGENT_ACTIVITY_DOT_CORNER_OFFSET,
+            ),
+            ParentOffsetBounds::Unbounded,
+            ParentAnchor::BottomRight,
+            ChildAnchor::BottomRight,
+        ),
+    );
+    ConstrainedBox::new(stack.finish())
+        .with_width(VERTICAL_TABS_ICON_SIZE)
+        .with_height(VERTICAL_TABS_ICON_SIZE)
+        .finish()
+}
+
+fn vertical_tab_activity_dot_color(activity: ProjectCliAgentActivity, theme: &WarpTheme) -> ColorU {
+    match activity {
+        ProjectCliAgentActivity::Working => CLINCH_LOGO_GREEN,
+        ProjectCliAgentActivity::Done | ProjectCliAgentActivity::NeedsAttention => CLINCH_DONE_BLUE,
+        ProjectCliAgentActivity::Idle => theme.disabled_text_color(theme.background()).into_solid(),
+    }
+}
+
+/// Returns the same Claude/Codex activity classification used by the project-tab hover card.
+/// Ambient runs keep their cloud/status treatment, and disabling agent status on tabs preserves
+/// the existing plain-terminal fallback.
+fn vertical_tab_cli_agent_activity(
+    typed: &TypedPane<'_>,
+    app: &AppContext,
+) -> Option<ProjectCliAgentActivity> {
+    let TypedPane::Terminal(terminal_pane) = typed else {
+        return None;
+    };
+    let terminal_view = terminal_pane.terminal_view(app);
+    let terminal_view = terminal_view.as_ref(app);
+    let IconWithStatusVariant::CLIAgent {
+        agent,
+        is_ambient: false,
+        ..
+    } = terminal_view_agent_icon_variant_respecting_tab_setting(terminal_view, app)?
+    else {
+        return None;
+    };
+    if !matches!(agent, CLIAgent::Claude | CLIAgent::Codex) {
+        return None;
+    }
+
+    let sessions = CLIAgentSessionsModel::as_ref(app);
+    let session = sessions.session(terminal_view.id())?;
+    let notifications = AgentNotificationsModel::as_ref(app).notifications();
+    Some(project_cli_agent_activity(
+        session.is_actively_working(),
+        matches!(session.status, CLIAgentSessionStatus::Blocked { .. }),
+        notifications.has_unread_completed_project_cli_agent_for_terminal_view(terminal_view.id()),
+        notifications.has_other_unread_project_activity_for_terminal_view(terminal_view.id()),
+    ))
+}
+
+fn should_render_separate_activity_indicator(
+    has_unread_activity: bool,
+    icon_activity: Option<ProjectCliAgentActivity>,
+) -> bool {
+    has_unread_activity && icon_activity.is_none()
 }
 
 #[derive(Clone, Default)]
@@ -3473,10 +3594,7 @@ fn render_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn Element> {
     let theme = appearance.theme();
     let font_family = appearance.ui_font_family();
 
-    let icon = render_pane_icon_with_status(
-        resolve_icon_with_status_variant(&props.typed, &props.title, appearance, app),
-        theme,
-    );
+    let icon = render_pane_icon_with_status(&props.typed, &props.title, appearance, app);
 
     // Top-align the icon when there are multiple lines of content so it sits next to
     // the first line; center it for single-line rows (Settings, Notebook with no subtitle, etc.).
@@ -4466,7 +4584,10 @@ fn render_terminal_row_content(
     };
 
     let model_label = tab_agent_model_label(app, terminal_view.id());
-    let has_activity_indicator = has_unread_activity(&props.typed, app);
+    let has_activity_indicator = should_render_separate_activity_indicator(
+        has_unread_activity(&props.typed, app),
+        vertical_tab_cli_agent_activity(&props.typed, app),
+    );
 
     let first_line_element = if model_label.is_some() || has_activity_indicator {
         let mut trailing = Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center);
@@ -4710,10 +4831,7 @@ fn render_summary_tab_item(
     let icon = summary_pane_kind_icons
         .map(|icons| render_summary_pane_kind_icons(icons, VERTICAL_TABS_ICON_SIZE, appearance))
         .unwrap_or_else(|| {
-            render_pane_icon_with_status(
-                resolve_icon_with_status_variant(&props.typed, &props.title, appearance, app),
-                theme,
-            )
+            render_pane_icon_with_status(&props.typed, &props.title, appearance, app)
         });
 
     let mut text_col = Flex::column()
@@ -7222,7 +7340,11 @@ fn render_compact_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn El
     let main_text_color = theme.main_text_color(theme.background());
     let sub_text_color = theme.sub_text_color(theme.background());
     let font_family = appearance.ui_font_family();
-    let has_indicator = props.typed.badge(app).is_some() || has_unread_activity(&props.typed, app);
+    let has_indicator = props.typed.badge(app).is_some()
+        || should_render_separate_activity_indicator(
+            has_unread_activity(&props.typed, app),
+            vertical_tab_cli_agent_activity(&props.typed, app),
+        );
     let is_linked_worktree = match &props.typed {
         TypedPane::Terminal(terminal_pane) => terminal_pane
             .terminal_view(app)
@@ -7231,10 +7353,7 @@ fn render_compact_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn El
         _ => false,
     };
 
-    let icon = render_pane_icon_with_status(
-        resolve_icon_with_status_variant(&props.typed, &props.title, appearance, app),
-        theme,
-    );
+    let icon = render_pane_icon_with_status(&props.typed, &props.title, appearance, app);
 
     let primary_info = *TabSettings::as_ref(app).vertical_tabs_primary_info.value();
     let compact_subtitle = resolve_compact_subtitle(

@@ -19,8 +19,8 @@ use warpui::presenter::ChildView;
 use warpui::text_layout::ClipConfig;
 use warpui::windowing::WindowManager;
 use warpui::{
-    id, AppContext, Element, Entity, FocusContext, SingletonEntity, TypedActionView, View,
-    ViewContext, ViewHandle, WindowId,
+    id, AppContext, Element, Entity, EntityId, FocusContext, SingletonEntity, TypedActionView,
+    View, ViewContext, ViewHandle, WindowId,
 };
 
 use crate::appearance::Appearance;
@@ -149,6 +149,10 @@ const PROJECT_TAB_VERTICAL_PADDING: f32 = 6.;
 const PROJECT_TAB_BORDER_WIDTH: f32 = 1.;
 const PROJECT_AGENT_COUNT_BADGE_BORDER_WIDTH: f32 = 1.;
 const PROJECT_AGENT_HOVER_CARD_WIDTH: f32 = 320.;
+const PROJECT_AGENT_HOVER_CARD_PADDING: f32 = 10.;
+const PROJECT_AGENT_HOVER_CARD_BORDER_WIDTH: f32 = 1.;
+const PROJECT_AGENT_HOVER_CARD_CONTENT_WIDTH: f32 = PROJECT_AGENT_HOVER_CARD_WIDTH
+    - 2. * (PROJECT_AGENT_HOVER_CARD_PADDING + PROJECT_AGENT_HOVER_CARD_BORDER_WIDTH);
 const PROJECT_AGENT_HOVER_CARD_MAX_ROWS: usize = 8;
 
 fn project_agent_hover_summary(
@@ -307,14 +311,24 @@ fn render_project_agent_hover_card(
                 )
                 .with_child(metadata)
                 .finish();
+            // Positioned overlays inside the horizontally scrolling project
+            // strip are initially measured with an unbounded width. This row
+            // contains a flexible label, so give it the hover card's known
+            // inner width before Flex lays it out. Without this constraint,
+            // beginning a project-tab drag can hit Flex's infinite-constraint
+            // assertion and crash the app.
             rows.add_child(
-                Flex::row()
-                    .with_main_axis_size(MainAxisSize::Max)
-                    .with_cross_axis_alignment(CrossAxisAlignment::Start)
-                    .with_spacing(8.)
-                    .with_child(Container::new(icon).with_margin_top(1.).finish())
-                    .with_child(Shrinkable::new(1., labels).finish())
-                    .finish(),
+                ConstrainedBox::new(
+                    Flex::row()
+                        .with_main_axis_size(MainAxisSize::Max)
+                        .with_cross_axis_alignment(CrossAxisAlignment::Start)
+                        .with_spacing(8.)
+                        .with_child(Container::new(icon).with_margin_top(1.).finish())
+                        .with_child(Shrinkable::new(1., labels).finish())
+                        .finish(),
+                )
+                .with_width(PROJECT_AGENT_HOVER_CARD_CONTENT_WIDTH)
+                .finish(),
             );
         }
         if agents.len() > PROJECT_AGENT_HOVER_CARD_MAX_ROWS {
@@ -337,9 +351,12 @@ fn render_project_agent_hover_card(
     ConstrainedBox::new(
         Container::new(content.finish())
             .with_background(background)
-            .with_border(Border::all(1.).with_border_fill(theme.outline()))
+            .with_border(
+                Border::all(PROJECT_AGENT_HOVER_CARD_BORDER_WIDTH)
+                    .with_border_fill(theme.outline()),
+            )
             .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
-            .with_padding(Padding::uniform(10.))
+            .with_padding(Padding::uniform(PROJECT_AGENT_HOVER_CARD_PADDING))
             .with_drop_shadow(DropShadow::default())
             .finish(),
     )
@@ -736,6 +753,38 @@ impl ProjectWindow {
         id
     }
 
+    /// Commits a deferred inner-tab promotion after the source workspace's
+    /// action update has completed. ProjectWindow owns this transaction so it
+    /// can update the source child and then create the destination without a
+    /// child-to-parent re-entrant view borrow.
+    fn promote_inner_tab(
+        &mut self,
+        source_workspace_id: EntityId,
+        pane_group_id: EntityId,
+        insertion_index: usize,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        if !self.supports_project_tabs(ctx) {
+            return false;
+        }
+        let Some(source_workspace) = self
+            .projects
+            .iter()
+            .find(|project| project.workspace.id() == source_workspace_id)
+            .map(|project| project.workspace.clone())
+        else {
+            return false;
+        };
+        let Some(transferred_tab) = source_workspace.update(ctx, |workspace, ctx| {
+            workspace.take_tab_for_new_project(pane_group_id, ctx)
+        }) else {
+            return false;
+        };
+
+        self.add_project_from_transferred_tab(transferred_tab, insertion_index, ctx);
+        true
+    }
+
     pub(crate) fn activate_project(&mut self, id: ProjectId, ctx: &mut ViewContext<Self>) {
         if let Some(index) = self.projects.iter().position(|project| project.id == id) {
             self.activate_project_index(index, ctx);
@@ -964,7 +1013,10 @@ impl ProjectWindow {
         tab_position: GeometryRect,
         app: &AppContext,
     ) -> Option<usize> {
-        if !self.supports_project_tabs(app) {
+        // The caller is the active Workspace and may currently be removed
+        // from AppContext for its action update. Avoid reading it back through
+        // `supports_project_tabs`; Workspace validates its own preview state.
+        if !self.supports_project_container() {
             return None;
         }
         let header_bounds = self.project_header_drop_bounds(app)?;
@@ -978,12 +1030,8 @@ impl ProjectWindow {
         ))
     }
 
-    pub(crate) fn can_promote_tab_from_workspace(
-        &self,
-        workspace_id: warpui::EntityId,
-        app: &AppContext,
-    ) -> bool {
-        self.supports_project_tabs(app)
+    pub(crate) fn can_promote_tab_from_workspace(&self, workspace_id: warpui::EntityId) -> bool {
+        self.supports_project_container()
             && self
                 .projects
                 .iter()
@@ -1407,10 +1455,14 @@ impl ProjectWindow {
         true
     }
 
-    pub(crate) fn supports_project_tabs(&self, app: &AppContext) -> bool {
+    fn supports_project_container(&self) -> bool {
         !self.projects.is_empty()
             && !cfg!(target_family = "wasm")
             && crate::root_view::quake_mode_window_id() != Some(self.window_id)
+    }
+
+    pub(crate) fn supports_project_tabs(&self, app: &AppContext) -> bool {
+        self.supports_project_container()
             && !self.active_workspace().as_ref(app).is_tab_drag_preview()
     }
 
@@ -1815,6 +1867,11 @@ pub(crate) enum ProjectWindowAction {
     MoveActiveRight,
     ActivatePrevious,
     ActivateNext,
+    PromoteInnerTab {
+        source_workspace_id: EntityId,
+        pane_group_id: EntityId,
+        insertion_index: usize,
+    },
 }
 
 impl TypedActionView for ProjectWindow {
@@ -1888,6 +1945,13 @@ impl TypedActionView for ProjectWindow {
                     self.skip_next_notification_read_interaction(ctx);
                 }
             }
+            ProjectWindowAction::PromoteInnerTab {
+                source_workspace_id,
+                pane_group_id,
+                insertion_index,
+            } => {
+                self.promote_inner_tab(*source_workspace_id, *pane_group_id, *insertion_index, ctx);
+            }
         }
     }
 
@@ -1936,7 +2000,9 @@ impl TypedActionView for ProjectWindow {
                     WarpA11yRole::UserAction,
                 ))
             }
-            ProjectWindowAction::Reorder { .. } => ActionAccessibilityContent::Empty,
+            ProjectWindowAction::Reorder { .. } | ProjectWindowAction::PromoteInnerTab { .. } => {
+                ActionAccessibilityContent::Empty
+            }
         }
     }
 }

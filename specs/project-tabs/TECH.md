@@ -111,6 +111,12 @@ Project close should reuse the existing close-session confirmation policy. Gener
 
 ### 5. Add live project drag and transfer
 
+Inner-tab promotion shares the existing live `TransferredTab` representation without entering the cross-window state machine. `WorkspaceAction::DropTab` carries both the dragged pane-group identity and final tab rectangle so the workspace can resolve a stable tab after any mid-drag reorder. Before starting a cross-window preview, `Workspace::on_tab_drag` hit-tests the tab center against the containing `ProjectWindow`'s complete saved header bounds and updates its project insertion indicator. A matching drop defers an internal `ProjectWindowAction` until the source workspace update has completed, avoiding a child-to-parent re-entrant view borrow. `ProjectWindow` then owns the transaction: it removes the source tab without close teardown, creates a destination workspace from `NewWorkspaceSource::TransferredTab`, reparents the live `PaneGroup` to that workspace inside the same native window, and calls `adopt_transferred_pane_group` to replace the temporary pane group and restore subscriptions. The destination project is then activated. This preserves live view identities and avoids an unnecessary native-window transfer (PRODUCT 43 and 45).
+
+The ordinary tab context menu exposes `WorkspaceAction::MoveTabToNewProject(index)` only when the source has more than one tab and belongs to a compatible project window. With no pointer-selected insertion position, the destination defaults immediately after the source project. Both action paths validate eligibility again before mutation so stale menu actions and singleton sources are safe no-ops (PRODUCT 44).
+
+The project-tab drag visual must also remain layout-safe while hosted by the horizontally unbounded project-strip scroller. Agent rows in the positioned project hover card contain a flexible label, so each row is explicitly constrained to the card's finite inner width before Flex layout. This prevents the infinite-main-axis assertion observed when beginning a project-tab drag; the project transfer path remains responsible for moving the same live workspace into the destination window (PRODUCT 21–24).
+
 Keep the drag state on the source `ProjectWindow`. A project remains owned by its committed source for the duration of pointer movement; WarpUI's `Draggable` supplies the floating tab preview, while screen-space hit testing against each compatible project's saved strip bounds supplies target insertion markers. This avoids creating a duplicate preview owner or transferring a large workspace tree during hover.
 
 For a source containing multiple projects:
@@ -195,6 +201,8 @@ For notification navigation, terminal identity resolves to a workspace/project, 
 ### Automated coverage
 
 - `project_window_tests.rs` covers macOS shortcut ownership, previous/next wrapping and singleton no-ops, close-neighbor selection, and preserving active-project identity when an inactive project is removed.
+- Root/project-window tests cover promoting an inner tab without changing its live pane-group identity or creating an OS window, and detaching a project into a new window without losing its project/workspace identity.
+- Workspace menu tests cover **Move Tab to New Project** eligibility independently from the existing new-window feature gate.
 - Clinch settings-page tests cover toggling only the new worktree preference and its default-on value.
 - Tab-config tests cover the source directory, managed destination, shell-quoted commands, base ref, and terminal-versus-Agent pane type.
 - Git utility tests cover primary-checkout resolution from both a main checkout and a linked worktree, plus local/remote `main` ref selection and missing-ref fallback.

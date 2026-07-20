@@ -309,6 +309,7 @@ use crate::pane_group::{
     TabBarHoverIndex, TerminalPaneId,
 };
 use crate::persistence::ModelEvent;
+use crate::project_window::ProjectWindowAction;
 use crate::projects::ProjectManagementModel;
 use crate::prompt::editor_modal::{
     EditorModal as PromptEditorModal, EditorModalEvent as PromptEditorModalEvent,
@@ -12504,7 +12505,7 @@ impl Workspace {
     }
 
     fn can_move_tab_to_new_project(&self, ctx: &mut ViewContext<Self>) -> bool {
-        if self.tabs.len() <= 1 {
+        if self.tabs.len() <= 1 || self.is_tab_drag_preview() {
             return false;
         }
         let workspace_id = ctx.handle().id();
@@ -12512,7 +12513,7 @@ impl Workspace {
             .is_some_and(|project_window| {
                 project_window
                     .as_ref(ctx)
-                    .can_promote_tab_from_workspace(workspace_id, ctx)
+                    .can_promote_tab_from_workspace(workspace_id)
             })
     }
 
@@ -25847,6 +25848,10 @@ impl TypedActionView for Workspace {
                     .then(|| self.project_drop_insertion_index(*tab_position, ctx))
                     .flatten();
                 self.set_inner_tab_project_drop_indicator(None, ctx);
+                // In vertical-tabs mode the project strip is rendered by this
+                // workspace, so clearing the parent-owned indicator must also
+                // invalidate the active child workspace.
+                ctx.notify();
                 let handed_off_tab_index =
                     CrossWindowTabDrag::as_ref(ctx)
                         .handed_off_target()
@@ -29025,7 +29030,9 @@ impl Workspace {
         };
         let insertion_index = {
             let project_window_ref = project_window.as_ref(ctx);
-            if !project_window_ref.can_promote_tab_from_workspace(workspace_id, ctx) {
+            if self.is_tab_drag_preview()
+                || !project_window_ref.can_promote_tab_from_workspace(workspace_id)
+            {
                 return false;
             }
             requested_insertion_index
@@ -29034,17 +29041,42 @@ impl Workspace {
         let Some(insertion_index) = insertion_index else {
             return false;
         };
-        let Some(transferred_tab) = self.get_tab_transfer_info(tab_index, ctx) else {
+        let Some(pane_group_id) = self.tabs.get(tab_index).map(|tab| tab.pane_group.id()) else {
             return false;
         };
 
+        // This action begins in a Workspace but mutates its ProjectWindow
+        // parent. Defer it until this child update has been reinserted into the
+        // app; the parent then owns the source-removal + destination-creation
+        // transaction and can safely update both children.
+        ctx.dispatch_typed_action_deferred(ProjectWindowAction::PromoteInnerTab {
+            source_workspace_id: workspace_id,
+            pane_group_id,
+            insertion_index,
+        });
+        true
+    }
+
+    /// Removes and returns a tab for a ProjectWindow-owned promotion
+    /// transaction. This is called parent-to-child after the original
+    /// Workspace action has completed, avoiding a circular view update.
+    pub(crate) fn take_tab_for_new_project(
+        &mut self,
+        pane_group_id: EntityId,
+        ctx: &mut ViewContext<Self>,
+    ) -> Option<TransferredTab> {
+        if self.tabs.len() <= 1 {
+            return None;
+        }
+        let tab_index = self
+            .tabs
+            .iter()
+            .position(|tab| tab.pane_group.id() == pane_group_id)?;
+        let transferred_tab = self.get_tab_transfer_info(tab_index, ctx)?;
         ctx.unsubscribe_to_view(&transferred_tab.pane_group);
         self.remove_tab_without_undo(tab_index, ctx);
-        project_window.update(ctx, move |project_window, ctx| {
-            project_window.add_project_from_transferred_tab(transferred_tab, insertion_index, ctx);
-        });
         ctx.notify();
-        true
+        Some(transferred_tab)
     }
 
     /// Replaces the placeholder pane group (created by

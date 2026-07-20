@@ -12,12 +12,13 @@ use super::{
     pane_ids_for_display_granularity, pane_search_text_fragments, preferred_agent_tab_titles,
     push_normalized_unique_summary_label, search_fragments_contain_query,
     select_summary_pane_kind_icons, should_keep_detail_sidecar_visible_for_mouse_position,
-    sort_summary_primary_labels_status_first, summary_overflow_count,
-    summary_search_text_fragments, terminal_command_status, terminal_kind_badge_label,
-    terminal_primary_line_data, terminal_pull_request_badge_label, terminal_search_text_fragments,
-    terminal_title_fallback_font, uses_outer_group_container, visible_pane_ids_for_detail_target,
-    vtab_diff_stats_text, AgentTabTextPreference, SummaryPaneKind, SummaryPaneKindIcons,
-    TerminalAgentText, TerminalPrimaryLineData, TerminalPrimaryLineFont, VerticalTabsDetailTarget,
+    should_render_separate_activity_indicator, sort_summary_primary_labels_status_first,
+    summary_overflow_count, summary_search_text_fragments, terminal_command_status,
+    terminal_kind_badge_label, terminal_primary_line_data, terminal_pull_request_badge_label,
+    terminal_search_text_fragments, terminal_title_fallback_font, uses_outer_group_container,
+    vertical_tab_activity_dot_color, visible_pane_ids_for_detail_target, vtab_diff_stats_text,
+    AgentTabTextPreference, SummaryPaneKind, SummaryPaneKindIcons, TerminalAgentText,
+    TerminalPrimaryLineData, TerminalPrimaryLineFont, VerticalTabsDetailTarget,
     VerticalTabsDetailTargetKind, VerticalTabsSummaryBranchEntry, VerticalTabsSummaryData,
     VerticalTabsSummaryPrimaryLabel,
 };
@@ -28,7 +29,9 @@ use crate::pane_group::{PaneId, TerminalPaneId};
 use crate::safe_triangle::SafeTriangle;
 use crate::terminal::view::TerminalViewState;
 use crate::terminal::CLIAgent;
+use crate::ui_components::{CLINCH_DONE_BLUE, CLINCH_LOGO_GREEN};
 use crate::workspace::tab_settings::VerticalTabsDisplayGranularity;
+use crate::workspace::view::ProjectCliAgentActivity;
 
 fn label(text: &str) -> VerticalTabsSummaryPrimaryLabel {
     VerticalTabsSummaryPrimaryLabel {
@@ -66,6 +69,38 @@ fn terminal_command_status_is_in_progress_only_while_command_is_running() {
     );
     assert_eq!(terminal_command_status(TerminalViewState::Normal), None);
     assert_eq!(terminal_command_status(TerminalViewState::Errored), None);
+}
+
+#[test]
+fn agent_activity_dots_match_project_tab_working_and_done_colors() {
+    let theme = crate::themes::default_themes::dark_theme();
+
+    assert_eq!(
+        vertical_tab_activity_dot_color(ProjectCliAgentActivity::Working, &theme),
+        CLINCH_LOGO_GREEN
+    );
+    assert_eq!(
+        vertical_tab_activity_dot_color(ProjectCliAgentActivity::Done, &theme),
+        CLINCH_DONE_BLUE
+    );
+    assert_eq!(
+        vertical_tab_activity_dot_color(ProjectCliAgentActivity::NeedsAttention, &theme),
+        CLINCH_DONE_BLUE
+    );
+    assert_eq!(
+        vertical_tab_activity_dot_color(ProjectCliAgentActivity::Idle, &theme),
+        theme.disabled_text_color(theme.background()).into_solid()
+    );
+}
+
+#[test]
+fn agent_activity_dot_replaces_the_separate_unread_indicator() {
+    assert!(!should_render_separate_activity_indicator(
+        true,
+        Some(ProjectCliAgentActivity::Done)
+    ));
+    assert!(should_render_separate_activity_indicator(true, None));
+    assert!(!should_render_separate_activity_indicator(false, None));
 }
 
 #[test]
