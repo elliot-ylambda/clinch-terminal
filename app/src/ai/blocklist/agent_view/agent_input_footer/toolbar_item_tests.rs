@@ -25,6 +25,14 @@ fn terminal_default_left_contains_exact_quick_actions() {
                 label: "Open".to_owned(),
                 text: "open .".to_owned(),
             },
+            AgentToolbarItemKind::CustomInsert {
+                label: "Commit & Push".to_owned(),
+                text: "git add -A && printf 'Commit message [Update changes]: ' && IFS= read -r clinch_commit_message && git commit -m \"${clinch_commit_message:-Update changes}\" && git push".to_owned(),
+            },
+            AgentToolbarItemKind::CustomInsert {
+                label: "Commit".to_owned(),
+                text: "git add -A && printf 'Commit message [Update changes]: ' && IFS= read -r clinch_commit_message && git commit -m \"${clinch_commit_message:-Update changes}\"".to_owned(),
+            },
         ]
     );
     assert!(AgentToolbarItemKind::terminal_default_right().is_empty());

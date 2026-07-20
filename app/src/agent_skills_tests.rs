@@ -12,7 +12,7 @@ fn bundled_skill_contents() -> String {
 fn bundled_skill_carries_a_managed_marker() {
     let contents = bundled_skill_contents();
     assert!(
-        contents.contains("<!-- managed-by: Clinch; version: 1.1.0 -->"),
+        contents.contains("<!-- managed-by: Clinch; version: 1.2.0 -->"),
         "the bundled skill must carry the Clinch managed marker"
     );
 }
@@ -30,12 +30,16 @@ fn bundled_skill_lists_every_default_custom_insert() {
         .chain(AgentToolbarItemKind::terminal_default_left());
     for item in defaults {
         if let AgentToolbarItemKind::CustomInsert { label, text } = item {
+            // JSON and TOML basic strings use the same escaping for these
+            // button labels and commands, including embedded double quotes.
+            let label = serde_json::to_string(&label).unwrap();
+            let text = serde_json::to_string(&text).unwrap();
             assert!(
-                contents.contains(&format!("label = \"{label}\"")),
+                contents.contains(&format!("label = {label}")),
                 "SKILL.md is missing default button label {label:?}"
             );
             assert!(
-                contents.contains(&format!("text = \"{text}\"")),
+                contents.contains(&format!("text = {text}")),
                 "SKILL.md is missing default button text {text:?}"
             );
         }

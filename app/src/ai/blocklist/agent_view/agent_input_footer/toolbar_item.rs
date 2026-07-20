@@ -95,6 +95,9 @@ pub enum AgentToolbarItemKind {
     HandoffToCloud,
 }
 
+const TERMINAL_GIT_COMMIT_COMMAND: &str = "git add -A && printf 'Commit message [Update changes]: ' && IFS= read -r clinch_commit_message && git commit -m \"${clinch_commit_message:-Update changes}\"";
+const TERMINAL_GIT_COMMIT_AND_PUSH_COMMAND: &str = "git add -A && printf 'Commit message [Update changes]: ' && IFS= read -r clinch_commit_message && git commit -m \"${clinch_commit_message:-Update changes}\" && git push";
+
 impl AgentToolbarItemKind {
     pub fn available_in(&self) -> ToolbarAvailability {
         match self {
@@ -397,6 +400,8 @@ impl AgentToolbarItemKind {
             ),
             ("Codex resume", "codex resume"),
             ("Open", "open ."),
+            ("Commit & Push", TERMINAL_GIT_COMMIT_AND_PUSH_COMMAND),
+            ("Commit", TERMINAL_GIT_COMMIT_COMMAND),
         ]
         .into_iter()
         .map(|(label, text)| Self::CustomInsert {

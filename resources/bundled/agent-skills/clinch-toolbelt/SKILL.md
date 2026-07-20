@@ -3,7 +3,7 @@ name: clinch-toolbelt
 description: Add, edit, or remove quick-insert buttons in the Clinch terminal's footer toolbelts. Use when the user asks for a new Clinch button, quick-insert button, footer or toolbelt button, or wants to change what a Clinch footer button inserts — for the Claude Code/Codex agent footer or the plain terminal footer.
 ---
 
-<!-- managed-by: Clinch; version: 1.1.0 -->
+<!-- managed-by: Clinch; version: 1.2.0 -->
 
 # Clinch toolbelt quick-insert buttons
 
@@ -109,6 +109,8 @@ left = [
   { custom_insert = { label = "Claude resume", text = "claude --dangerously-skip-permissions --resume" } },
   { custom_insert = { label = "Codex resume", text = "codex resume" } },
   { custom_insert = { label = "Open", text = "open ." } },
+  { custom_insert = { label = "Commit & Push", text = "git add -A && printf 'Commit message [Update changes]: ' && IFS= read -r clinch_commit_message && git commit -m \"${clinch_commit_message:-Update changes}\" && git push" } },
+  { custom_insert = { label = "Commit", text = "git add -A && printf 'Commit message [Update changes]: ' && IFS= read -r clinch_commit_message && git commit -m \"${clinch_commit_message:-Update changes}\"" } },
 ]
 right = []
 ```
