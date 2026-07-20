@@ -1,5 +1,4 @@
-use std::sync::mpsc;
-use std::sync::Arc;
+use std::sync::{mpsc, Arc};
 
 use parking_lot::FairMutex;
 use warpui::App;
