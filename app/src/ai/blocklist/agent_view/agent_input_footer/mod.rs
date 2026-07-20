@@ -1615,9 +1615,9 @@ impl AgentInputFooter {
 
                 let label = format!("Transfer to {}", target.display_name());
                 let tooltip = format!(
-                    "Exit {} and continue this conversation in {}",
-                    session.agent.display_name(),
-                    target.display_name()
+                    "Continue this conversation in a new {} tab without closing {}",
+                    target.display_name(),
+                    session.agent.display_name()
                 );
                 Some(
                     ActionButton::new(label, QuickInsertButtonTheme)
@@ -2807,7 +2807,7 @@ pub enum AgentInputFooterAction {
     SendContinue,
     /// Submit "Looks good to me, continue" to the running CLI agent.
     SendLooksGood,
-    /// Exit Claude Code or Codex and continue the captured conversation in the other agent.
+    /// Continue the captured conversation in the other agent in a new tab.
     TransferAgent,
     /// Toggle this pane's "auto-continue when the CLI agent's rate limit resets" opt-in.
     ToggleAutoContinue,
@@ -3133,7 +3133,7 @@ pub enum AgentInputFooterEvent {
     /// Submit a fixed prompt string to this pane's live CLI agent using the
     /// per-agent submission strategy (types the text, then presses Enter).
     SubmitTextToCliAgent(String),
-    /// Exit Claude Code or Codex and continue the captured conversation in the other agent.
+    /// Continue the captured conversation in the other agent in a new tab.
     TransferAgent,
     /// Open the "Create quick-insert button" modal (footer "+ Add" button).
     OpenQuickInsertModal,

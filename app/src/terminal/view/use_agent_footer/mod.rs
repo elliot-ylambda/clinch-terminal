@@ -51,8 +51,6 @@ use warpui::{
     ViewContext, ViewHandle,
 };
 
-#[cfg(feature = "local_tty")]
-use super::PendingCliAgentTransfer;
 use super::{RichContentInsertionPosition, TerminalAction, TerminalView};
 use crate::agent_resume::{agent_session_seed_from_restore_command, AgentResumeProvider};
 use crate::ai::blocklist::agent_view::agent_view_bg_fill;
@@ -173,18 +171,26 @@ fn default_transfer_transcript_hint(source_agent: CLIAgent, session_id: &str) ->
     }
 }
 
-/// Builds the fresh target-agent command before asking the source TUI to exit.
+/// A ready-to-run target-agent command and the directory for its new tab.
+#[cfg(feature = "local_tty")]
+struct CliAgentTransferLaunch {
+    launch_command: String,
+    cwd: Option<String>,
+}
+
+/// Builds the fresh target-agent command without modifying the source TUI.
 /// Clinch's provider hooks already persist native transcripts, so the handoff
-/// can reference that durable record instead of racing Claude Code's `/export`.
+/// can reference that durable record from a separate tab.
 #[cfg(feature = "local_tty")]
 fn build_cli_agent_transfer(
     source_agent: CLIAgent,
     session_context: &CLIAgentSessionContext,
     shell_type: ShellType,
-) -> Option<PendingCliAgentTransfer> {
+) -> Option<CliAgentTransferLaunch> {
     let target_agent = source_agent.transfer_target()?;
     let session_id = nonempty(session_context.session_id.as_deref());
     let transcript_path = nonempty(session_context.transcript_path.as_deref());
+    let cwd = nonempty(session_context.cwd.as_deref()).map(ToOwned::to_owned);
     if session_id.is_none() && transcript_path.is_none() {
         return None;
     }
@@ -203,7 +209,7 @@ fn build_cli_agent_transfer(
         prompt.push_str(&default_transfer_transcript_hint(source_agent, session_id));
         prompt.push('\n');
     }
-    if let Some(cwd) = nonempty(session_context.cwd.as_deref()) {
+    if let Some(cwd) = cwd.as_deref() {
         prompt.push_str(&format!("Previous working directory: {cwd}\n"));
     }
     prompt.push_str(
@@ -222,9 +228,9 @@ fn build_cli_agent_transfer(
         _ => return None,
     };
 
-    Some(PendingCliAgentTransfer {
-        source_agent,
+    Some(CliAgentTransferLaunch {
         launch_command,
+        cwd,
     })
 }
 
@@ -343,7 +349,7 @@ impl TerminalView {
             }
             UseAgentToolbarEvent::TransferAgent => {
                 #[cfg(feature = "local_tty")]
-                self.begin_cli_agent_transfer(ctx);
+                self.open_cli_agent_transfer_in_new_tab(ctx);
             }
             UseAgentToolbarEvent::OpenQuickInsertModal => {
                 // Route the footer "+ Add" click up to the workspace via a queued
@@ -913,15 +919,10 @@ impl TerminalView {
         true
     }
 
-    /// Starts a one-shot Claude Code ↔ Codex transfer. The launch command is
-    /// held until the source command's block completes, then written into the
-    /// returned shell by `complete_cli_agent_transfer`.
+    /// Opens a one-shot Claude Code ↔ Codex transfer in a new tab, leaving the
+    /// source agent and its tab untouched.
     #[cfg(feature = "local_tty")]
-    fn begin_cli_agent_transfer(&mut self, ctx: &mut ViewContext<Self>) {
-        if self.pending_cli_agent_transfer.is_some() {
-            return;
-        }
-
+    fn open_cli_agent_transfer_in_new_tab(&mut self, ctx: &mut ViewContext<Self>) {
         let Some((source_agent, session_context)) = CLIAgentSessionsModel::as_ref(ctx)
             .session(self.view_id)
             .map(|session| (session.agent, session.session_context.clone()))
@@ -944,33 +945,10 @@ impl TerminalView {
             return;
         };
 
-        self.pending_cli_agent_transfer = Some(transfer);
-        self.submit_text_to_cli_agent_pty("/exit".to_string(), ctx);
-    }
-
-    /// Launches a pending transfer only when the exact source provider exits.
-    /// Waiting for `Ended` keeps the target command out of the old TUI's input
-    /// buffer and lets the shell create a normal command block for it.
-    #[cfg(feature = "local_tty")]
-    pub(super) fn complete_cli_agent_transfer(
-        &mut self,
-        ended_agent: CLIAgent,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        if !self
-            .pending_cli_agent_transfer
-            .as_ref()
-            .is_some_and(|transfer| transfer.source_agent == ended_agent)
-        {
-            return;
-        }
-        let transfer = self
-            .pending_cli_agent_transfer
-            .take()
-            .expect("pending transfer checked above");
-        let mut bytes = transfer.launch_command.into_bytes();
-        bytes.push(b'\r');
-        self.write_user_bytes_to_pty(bytes, ctx);
+        ctx.emit(super::Event::TransferCliAgentSession {
+            command: transfer.launch_command,
+            cwd: transfer.cwd,
+        });
     }
 
     /// Simulates clipboard image paste for each pending image attachment by
@@ -1617,7 +1595,7 @@ pub enum UseAgentToolbarEvent {
     /// Submit a fixed prompt string to this pane's live CLI agent using the
     /// per-agent submission strategy (types the text, then presses Enter).
     SubmitTextToCliAgent(String),
-    /// Exit Claude Code or Codex and continue the captured conversation in the other agent.
+    /// Continue the captured conversation in the other agent in a new tab.
     TransferAgent,
     /// Open the "Create quick-insert button" modal (footer "+ Add" button).
     OpenQuickInsertModal,

@@ -214,6 +214,7 @@ impl TabData {
         &self,
         index: usize,
         tabs_len: usize,
+        can_move_to_new_project: bool,
         tab_groups: &HashMap<TabGroupId, TabGroup>,
         can_move_left: bool,
         can_move_right: bool,
@@ -222,6 +223,7 @@ impl TabData {
         self.menu_items_with_pane_name_target(
             index,
             tabs_len,
+            can_move_to_new_project,
             tab_groups,
             can_move_left,
             can_move_right,
@@ -235,6 +237,7 @@ impl TabData {
         &self,
         index: usize,
         tabs_len: usize,
+        can_move_to_new_project: bool,
         tab_groups: &HashMap<TabGroupId, TabGroup>,
         can_move_left: bool,
         can_move_right: bool,
@@ -253,6 +256,7 @@ impl TabData {
             self.modify_tab_menu_items(
                 index,
                 tabs_len,
+                can_move_to_new_project,
                 can_move_left,
                 can_move_right,
                 pane_name_target,
@@ -462,6 +466,7 @@ impl TabData {
         &self,
         index: usize,
         tabs_len: usize,
+        can_move_to_new_project: bool,
         can_move_left: bool,
         can_move_right: bool,
         pane_name_target: Option<PaneNameMenuTarget>,
@@ -520,6 +525,13 @@ impl TabData {
             menu_items.push(
                 MenuItemFields::new("Move Tab to New Window")
                     .with_on_select_action(WorkspaceAction::MoveTabToNewWindow(index))
+                    .into_item(),
+            );
+        }
+        if can_move_to_new_project && tabs_len > 1 {
+            menu_items.push(
+                MenuItemFields::new("Move Tab to New Project")
+                    .with_on_select_action(WorkspaceAction::MoveTabToNewProject(index))
                     .into_item(),
             );
         }
@@ -1959,6 +1971,7 @@ impl UiComponent for TabComponent<'_> {
         let sole_grouped_member = self.sole_grouped_member;
         let locator = self.locator;
         let is_in_multi_tab_selection = self.is_in_multi_tab_selection;
+        let pane_group_id = self.tab.pane_group.id();
 
         // Extract values before moving self into closure
         let tooltip_text = self.tooltip_message.clone();
@@ -2189,7 +2202,12 @@ impl UiComponent for TabComponent<'_> {
                         tab_position: rect,
                     });
                 })
-                .on_drop(|ctx, _, _, _| ctx.dispatch_typed_action(WorkspaceAction::DropTab));
+                .on_drop(move |ctx, _, tab_position, _| {
+                    ctx.dispatch_typed_action(WorkspaceAction::DropTab {
+                        pane_group_id,
+                        tab_position,
+                    });
+                });
             let draggable = if FeatureFlag::DragTabsToWindows.is_enabled() {
                 draggable
             } else {

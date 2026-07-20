@@ -8017,11 +8017,13 @@ impl Workspace {
 
         let can_move_left = self.can_move_tab(tab_index, TabMovement::Left);
         let can_move_right = self.can_move_tab(tab_index, TabMovement::Right);
+        let can_move_to_new_project = self.can_move_tab_to_new_project(ctx);
         let menu_items = {
             let tab = &self.tabs[tab_index];
             tab.menu_items(
                 tab_index,
                 self.tabs.len(),
+                can_move_to_new_project,
                 &self.tab_groups,
                 can_move_left,
                 can_move_right,
@@ -8100,10 +8102,12 @@ impl Workspace {
         };
         let can_move_left = self.can_move_tab(tab_index, TabMovement::Left);
         let can_move_right = self.can_move_tab(tab_index, TabMovement::Right);
+        let can_move_to_new_project = self.can_move_tab_to_new_project(ctx);
         let tab = &self.tabs[tab_index];
         let menu_items = tab.menu_items_with_pane_name_target(
             tab_index,
             self.tabs.len(),
+            can_move_to_new_project,
             &self.tab_groups,
             can_move_left,
             can_move_right,
@@ -8930,6 +8934,18 @@ impl Workspace {
         self.launch_cli_agent_in_new_tab(fork.command, fork.cwd, ctx);
     }
 
+    /// Opens a Claude Code ↔ Codex transfer in a new tab while preserving the
+    /// source tab and its running agent.
+    fn transfer_cli_agent_session(
+        &mut self,
+        command: String,
+        cwd: Option<String>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let cwd = cwd.filter(|cwd| Path::new(cwd).is_dir());
+        self.launch_cli_agent_in_new_tab(command, cwd, ctx);
+    }
+
     /// Reopens a past CLI-agent conversation (picked in the "Reopen agent conversation"
     /// palette) in a NEW tab that auto-runs its resume command. Reuses the same launch
     /// path as the Fork footer button. Opening a conversation never touches other panes'
@@ -8949,8 +8965,8 @@ impl Workspace {
     }
 
     /// Opens a NEW tab at `cwd` and auto-runs `command` once its shell bootstraps,
-    /// reusing the agent-resume restore-replay path. Shared by the Fork footer button
-    /// and the "Reopen agent conversation" palette command.
+    /// reusing the agent-resume restore-replay path. Shared by the Fork and Transfer
+    /// footer buttons and the "Reopen agent conversation" palette command.
     fn launch_cli_agent_in_new_tab(
         &mut self,
         command: String,
@@ -12477,6 +12493,56 @@ impl Workspace {
             .find_map(|(project_id, workspace)| {
                 (workspace.id() == workspace_id).then_some(project_id)
             })
+    }
+
+    fn containing_project_window(
+        &self,
+        ctx: &AppContext,
+    ) -> Option<ViewHandle<crate::project_window::ProjectWindow>> {
+        let root_view = ctx.root_view::<RootView>(self.window_id)?;
+        root_view.as_ref(ctx).project_window()
+    }
+
+    fn can_move_tab_to_new_project(&self, ctx: &mut ViewContext<Self>) -> bool {
+        if self.tabs.len() <= 1 {
+            return false;
+        }
+        let workspace_id = ctx.handle().id();
+        self.containing_project_window(ctx)
+            .is_some_and(|project_window| {
+                project_window
+                    .as_ref(ctx)
+                    .can_promote_tab_from_workspace(workspace_id, ctx)
+            })
+    }
+
+    fn project_drop_insertion_index(
+        &self,
+        tab_position: RectF,
+        ctx: &mut ViewContext<Self>,
+    ) -> Option<usize> {
+        if !self.can_move_tab_to_new_project(ctx) {
+            return None;
+        }
+        self.containing_project_window(ctx)
+            .and_then(|project_window| {
+                project_window
+                    .as_ref(ctx)
+                    .inner_tab_drop_insertion_index(tab_position, ctx)
+            })
+    }
+
+    fn set_inner_tab_project_drop_indicator(
+        &self,
+        insertion_index: Option<usize>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let Some(project_window) = self.containing_project_window(ctx) else {
+            return;
+        };
+        project_window.update(ctx, |project_window, ctx| {
+            project_window.set_inner_tab_drop_indicator(insertion_index, ctx);
+        });
     }
 
     fn prepare_and_finalize_project_close(
@@ -16952,6 +17018,9 @@ impl Workspace {
             }
             pane_group::Event::ForkCliAgentSession { terminal_view_id } => {
                 self.fork_cli_agent_session(&pane_group, *terminal_view_id, ctx);
+            }
+            pane_group::Event::TransferCliAgentSession { command, cwd } => {
+                self.transfer_cli_agent_session(command.clone(), cwd.clone(), ctx);
             }
             pane_group::Event::RunWorkflow {
                 workflow,
@@ -24750,6 +24819,9 @@ impl TypedActionView for Workspace {
             MoveTabToNewWindow(index) => {
                 self.move_tab_to_new_window(*index, ctx);
             }
+            MoveTabToNewProject(index) => {
+                self.move_tab_to_new_project(*index, None, ctx);
+            }
             RenameTab(index) => self.rename_tab(*index, ctx),
             ResetTabName(index) => self.clear_tab_name(*index, ctx),
             RenamePane(locator) => self.rename_pane(*locator, ctx),
@@ -25346,6 +25418,7 @@ impl TypedActionView for Workspace {
                 // If we are renaming a tab, finish the rename before dragging.
                 self.finish_tab_rename(ctx);
                 self.current_workspace_state.is_tab_being_dragged = true;
+                self.set_inner_tab_project_drop_indicator(None, ctx);
             }
             StartGroupDrag(_group_id) => {
                 self.clear_tab_multi_selection(ctx);
@@ -25765,8 +25838,15 @@ impl TypedActionView for Workspace {
                 tab_index,
                 tab_position,
             } => self.on_tab_drag(*tab_index, *tab_position, ctx),
-            DropTab => {
+            DropTab {
+                pane_group_id,
+                tab_position,
+            } => {
                 let is_cross_window = CrossWindowTabDrag::as_ref(ctx).is_active();
+                let project_insertion_index = (!is_cross_window)
+                    .then(|| self.project_drop_insertion_index(*tab_position, ctx))
+                    .flatten();
+                self.set_inner_tab_project_drop_indicator(None, ctx);
                 let handed_off_tab_index =
                     CrossWindowTabDrag::as_ref(ctx)
                         .handed_off_target()
@@ -25796,6 +25876,16 @@ impl TypedActionView for Workspace {
                     }
                 }
                 send_telemetry_from_ctx!(TelemetryEvent::DragAndDropTab, ctx);
+                if let Some(insertion_index) = project_insertion_index {
+                    if let Some(tab_index) = self
+                        .tabs
+                        .iter()
+                        .position(|tab| tab.pane_group.id() == *pane_group_id)
+                    {
+                        self.move_tab_to_new_project(tab_index, Some(insertion_index), ctx);
+                    }
+                    return;
+                }
                 if is_cross_window {
                     let drop_result =
                         CrossWindowTabDrag::handle(ctx).update(ctx, |drag, ctx| drag.on_drop(ctx));
@@ -28917,6 +29007,46 @@ impl Workspace {
         Some(new_window_id)
     }
 
+    /// Moves a live inner tab into a new project hosted by this physical
+    /// window. The pane group never leaves the native window, so terminals,
+    /// editors, and agent state retain their existing identities.
+    pub(crate) fn move_tab_to_new_project(
+        &mut self,
+        tab_index: usize,
+        requested_insertion_index: Option<usize>,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        if self.tabs.len() <= 1 {
+            return false;
+        }
+        let workspace_id = ctx.handle().id();
+        let Some(project_window) = self.containing_project_window(ctx) else {
+            return false;
+        };
+        let insertion_index = {
+            let project_window_ref = project_window.as_ref(ctx);
+            if !project_window_ref.can_promote_tab_from_workspace(workspace_id, ctx) {
+                return false;
+            }
+            requested_insertion_index
+                .or_else(|| project_window_ref.insertion_index_after_workspace(workspace_id))
+        };
+        let Some(insertion_index) = insertion_index else {
+            return false;
+        };
+        let Some(transferred_tab) = self.get_tab_transfer_info(tab_index, ctx) else {
+            return false;
+        };
+
+        ctx.unsubscribe_to_view(&transferred_tab.pane_group);
+        self.remove_tab_without_undo(tab_index, ctx);
+        project_window.update(ctx, move |project_window, ctx| {
+            project_window.add_project_from_transferred_tab(transferred_tab, insertion_index, ctx);
+        });
+        ctx.notify();
+        true
+    }
+
     /// Replaces the placeholder pane group (created by
     /// `create_transferred_window`) with the real pane group transferred from
     /// the source window, detaching and dropping the placeholder.
@@ -29155,6 +29285,20 @@ impl Workspace {
         };
         if current_index >= self.tabs.len() {
             return;
+        }
+
+        // The project header is a first-class destination for an inner tab.
+        // Check it before the perpendicular-axis detach threshold so dragging
+        // upward can promote the tab without briefly creating a preview window.
+        if !CrossWindowTabDrag::as_ref(ctx).is_active() {
+            let project_insertion_index = self.project_drop_insertion_index(position, ctx);
+            self.set_inner_tab_project_drop_indicator(project_insertion_index, ctx);
+            if project_insertion_index.is_some() {
+                ctx.notify();
+                return;
+            }
+        } else {
+            self.set_inner_tab_project_drop_indicator(None, ctx);
         }
         // Only detach when the drag leaves the active tab presentation on its
         // perpendicular axis. `tab_bar_rects_for_window` returns just the rect

@@ -30,7 +30,8 @@ use crate::ui_components::icons::Icon;
 use crate::ui_components::{CLINCH_DONE_BLUE, CLINCH_LOGO_GREEN};
 use crate::util::bindings::{self, CustomAction};
 use crate::workspace::view::{
-    ProjectCliAgentActivity, ProjectCliAgentCounts, ProjectCliAgentSummary,
+    ProjectCliAgentActivity, ProjectCliAgentCounts, ProjectCliAgentSummary, TransferredTab,
+    TAB_BAR_POSITION_ID,
 };
 use crate::workspace::{Workspace, WorkspaceEvent, WorkspaceRegistry};
 use crate::GlobalResourceHandles;
@@ -137,6 +138,7 @@ fn project_tab_position_id(id: ProjectId) -> String {
 }
 
 const PROJECT_TAB_STRIP_POSITION_ID: &str = "project-window:tab-strip";
+const PROJECT_HEADER_DROP_TARGET_POSITION_ID: &str = "project-window:header-drop-target";
 const PROJECT_TAB_CLOSE_BUTTON_SIZE: f32 = 16.;
 const PROJECT_TAB_CLOSE_BUTTON_GAP: f32 = 6.;
 // Preserve enough label space after the symmetric close-button reservation and
@@ -654,6 +656,19 @@ impl ProjectWindow {
         source: NewWorkspaceSource,
         ctx: &mut ViewContext<Self>,
     ) -> ProjectId {
+        let insertion_index = self.projects.len();
+        let (id, _, insertion_index) =
+            self.insert_project_from_source(source, insertion_index, ctx);
+        self.activate_project_index(insertion_index, ctx);
+        id
+    }
+
+    fn insert_project_from_source(
+        &mut self,
+        source: NewWorkspaceSource,
+        insertion_index: usize,
+        ctx: &mut ViewContext<Self>,
+    ) -> (ProjectId, ViewHandle<Workspace>, usize) {
         let workspace = ctx.add_typed_action_view(|ctx| {
             Workspace::new(
                 self.global_resource_handles.clone(),
@@ -664,14 +679,60 @@ impl ProjectWindow {
         });
         Self::subscribe_to_workspace_metadata(&workspace, ctx);
         let id = ProjectId::new();
-        self.projects.push(Project {
-            id,
-            workspace,
-            mouse_state: Default::default(),
-            close_mouse_state: Default::default(),
-            draggable_state: Default::default(),
+        let insertion_index = insertion_index.min(self.projects.len());
+        self.projects.insert(
+            insertion_index,
+            Project {
+                id,
+                workspace: workspace.clone(),
+                mouse_state: Default::default(),
+                close_mouse_state: Default::default(),
+                draggable_state: Default::default(),
+            },
+        );
+        (id, workspace, insertion_index)
+    }
+
+    /// Creates a project around an existing live tab without moving it through
+    /// a temporary native window. The destination workspace starts with the
+    /// same transfer placeholder used by cross-window tab drag, then adopts the
+    /// source pane group after its structural parent is updated.
+    pub(crate) fn add_project_from_transferred_tab(
+        &mut self,
+        transferred_tab: TransferredTab,
+        insertion_index: usize,
+        ctx: &mut ViewContext<Self>,
+    ) -> ProjectId {
+        let TransferredTab {
+            pane_group,
+            color,
+            custom_title,
+            left_panel_open,
+            vertical_tabs_panel_open,
+            right_panel_open,
+            is_right_panel_maximized,
+            draggable_state,
+        } = transferred_tab;
+        draggable_state.cancel_drag();
+
+        let (id, workspace, insertion_index) = self.insert_project_from_source(
+            NewWorkspaceSource::TransferredTab {
+                tab_color: color,
+                custom_title,
+                left_panel_open,
+                vertical_tabs_panel_open,
+                right_panel_open,
+                is_right_panel_maximized,
+                is_tab_drag_preview: false,
+            },
+            insertion_index,
+            ctx,
+        );
+        ctx.reparent_view(self.window_id, pane_group.id(), workspace.id());
+        workspace.update(ctx, |workspace, ctx| {
+            workspace.adopt_transferred_pane_group(pane_group, ctx);
         });
-        self.activate_project_index(self.projects.len() - 1, ctx);
+        self.activate_project_index(insertion_index, ctx);
         id
     }
 
@@ -883,6 +944,75 @@ impl ProjectWindow {
             vec2f(min_x, min_y),
             vec2f(max_x - min_x, max_y - min_y),
         ))
+    }
+
+    fn project_header_drop_bounds(&self, app: &AppContext) -> Option<GeometryRect> {
+        let position_id = if crate::tab::uses_vertical_tabs() {
+            TAB_BAR_POSITION_ID
+        } else {
+            PROJECT_HEADER_DROP_TARGET_POSITION_ID
+        };
+        app.element_position_by_id_at_last_frame(self.window_id, position_id)
+            .or_else(|| self.project_strip_bounds(app))
+    }
+
+    /// Returns the project insertion index for an inner tab dragged over this
+    /// window's header. The complete header is accepted so users need not aim
+    /// at the narrow project pills themselves.
+    pub(crate) fn inner_tab_drop_insertion_index(
+        &self,
+        tab_position: GeometryRect,
+        app: &AppContext,
+    ) -> Option<usize> {
+        if !self.supports_project_tabs(app) {
+            return None;
+        }
+        let header_bounds = self.project_header_drop_bounds(app)?;
+        if !header_bounds.contains_point(tab_position.center()) {
+            return None;
+        }
+        let window_bounds = app.window_bounds(&self.window_id)?;
+        Some(self.insertion_index_at_screen_position(
+            window_bounds.origin() + tab_position.center(),
+            app,
+        ))
+    }
+
+    pub(crate) fn can_promote_tab_from_workspace(
+        &self,
+        workspace_id: warpui::EntityId,
+        app: &AppContext,
+    ) -> bool {
+        self.supports_project_tabs(app)
+            && self
+                .projects
+                .iter()
+                .any(|project| project.workspace.id() == workspace_id)
+    }
+
+    pub(crate) fn insertion_index_after_workspace(
+        &self,
+        workspace_id: warpui::EntityId,
+    ) -> Option<usize> {
+        self.projects
+            .iter()
+            .position(|project| project.workspace.id() == workspace_id)
+            .map(|index| index + 1)
+    }
+
+    pub(crate) fn set_inner_tab_drop_indicator(
+        &mut self,
+        insertion_index: Option<usize>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        if self.active_drag.is_some() || self.incoming_drag_insertion_index == insertion_index {
+            return;
+        }
+        self.incoming_drag_insertion_index = insertion_index;
+        // The active Workspace also requests a redraw from its drag handler.
+        // Avoid updating it from here because this method is called while that
+        // child workspace is already handling the pointer action.
+        ctx.notify();
     }
 
     fn handle_project_drag(
@@ -1653,9 +1783,13 @@ impl ProjectWindow {
                     .with_border_fill(appearance.theme().outline()),
             )
             .finish();
-        ConstrainedBox::new(header)
-            .with_height(crate::workspace::view::TAB_BAR_HEIGHT)
-            .finish()
+        SavePosition::new(
+            ConstrainedBox::new(header)
+                .with_height(crate::workspace::view::TAB_BAR_HEIGHT)
+                .finish(),
+            PROJECT_HEADER_DROP_TARGET_POSITION_ID,
+        )
+        .finish()
     }
 }
 

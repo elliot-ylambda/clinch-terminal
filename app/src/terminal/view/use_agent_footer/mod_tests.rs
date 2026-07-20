@@ -43,7 +43,7 @@ fn claude_transfer_launches_codex_with_session_transcript_hint() {
     )
     .expect("Claude session should be transferable");
 
-    assert_eq!(transfer.source_agent, CLIAgent::Claude);
+    assert_eq!(transfer.cwd.as_deref(), Some("/tmp/project"));
     assert!(transfer
         .launch_command
         .starts_with("codex --dangerously-bypass-approvals-and-sandbox "));
@@ -67,7 +67,7 @@ fn codex_transfer_launches_claude_with_exact_transcript_path() {
     )
     .expect("Codex session should be transferable");
 
-    assert_eq!(transfer.source_agent, CLIAgent::Codex);
+    assert_eq!(transfer.cwd, None);
     assert!(transfer
         .launch_command
         .starts_with("claude --dangerously-skip-permissions "));

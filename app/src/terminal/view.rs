@@ -1759,6 +1759,11 @@ pub enum Event {
     ForkCliAgentSession {
         terminal_view_id: EntityId,
     },
+    /// Open the other CLI agent in a new tab with context from this conversation.
+    TransferCliAgentSession {
+        command: String,
+        cwd: Option<String>,
+    },
     InsertCodeReviewComments {
         repo_path: LocalOrRemotePath,
         comments: Vec<PendingImportedReviewComment>,
@@ -2386,15 +2391,6 @@ pub enum CliAgentRouting {
     Pty,
 }
 
-/// A one-shot local provider transfer waiting for the source TUI to exit.
-/// The target command is only written after the shell reports that source
-/// command's block as complete, so it cannot be swallowed by the old TUI.
-#[cfg(feature = "local_tty")]
-struct PendingCliAgentTransfer {
-    source_agent: CLIAgent,
-    launch_command: String,
-}
-
 /// An enum representing the different states that a terminal view can be in,
 /// based on any commands it's actively running and the result of the most
 /// recent command that it finished.
@@ -2761,10 +2757,6 @@ pub struct TerminalView {
     /// When true, automatically stop the shared session when the CLI agent session ends.
     /// Set when sharing is started from the remote control entrypoint.
     auto_stop_sharing_on_cli_end: bool,
-
-    /// One-shot Claude Code ↔ Codex transfer to launch after the source CLI exits.
-    #[cfg(feature = "local_tty")]
-    pending_cli_agent_transfer: Option<PendingCliAgentTransfer>,
 
     /// The inserted conversation-ended tombstone, if this view currently has one.
     conversation_ended_tombstone_view_id: Option<EntityId>,
@@ -4523,8 +4515,6 @@ impl TerminalView {
             shared_session: None,
             pending_share_source: None,
             auto_stop_sharing_on_cli_end: false,
-            #[cfg(feature = "local_tty")]
-            pending_cli_agent_transfer: None,
             conversation_ended_tombstone_view_id: None,
             ai_input_model,
             ai_context_model,
@@ -13473,17 +13463,13 @@ impl TerminalView {
                 self.mark_active_block_as_cli_agent_tui();
             }
             CLIAgentSessionsModelEvent::Ended {
-                terminal_view_id,
-                agent,
+                terminal_view_id, ..
             } if *terminal_view_id == self.view_id => {
                 let mut model = self.model.lock();
                 let active_block = model.block_list_mut().active_block_mut();
                 if FeatureFlag::TrimTrailingBlankLines.is_enabled() {
                     active_block.set_trim_trailing_blank_rows(false);
                 }
-                drop(model);
-                #[cfg(feature = "local_tty")]
-                self.complete_cli_agent_transfer(*agent, ctx);
             }
             _ => {}
         }

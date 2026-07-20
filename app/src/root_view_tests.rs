@@ -281,6 +281,57 @@ fn test_closing_only_tab_in_project_preserves_sibling_project() {
 }
 
 #[test]
+fn test_moving_inner_tab_to_new_project_preserves_live_pane_group() {
+    App::test((), |mut app| async move {
+        initialize_backendless_workspace_app(&mut app);
+
+        let global_resource_handles = GlobalResourceHandles::mock(&mut app);
+        let active_window_id = app.read(|ctx| ctx.windows().active_window());
+        let (window_id, root_view) = app.add_window(WindowStyle::NotStealFocus, |ctx| {
+            RootView::new(
+                global_resource_handles,
+                NewWorkspaceSource::Empty {
+                    previous_active_window: active_window_id,
+                    shell: None,
+                },
+                ctx,
+            )
+        });
+        let project_window = root_view
+            .read(&app, |root_view, _| root_view.project_window())
+            .expect("backendless root view should contain a project window");
+        let source_workspace = project_window.read(&app, |project_window, _| {
+            project_window.active_workspace()
+        });
+
+        let transferred_pane_group_id = source_workspace.update(&mut app, |workspace, ctx| {
+            workspace.add_terminal_tab(false, ctx);
+            assert_eq!(workspace.tab_count(), 2);
+            let pane_group_id = workspace.active_tab_pane_group().id();
+            assert!(workspace.move_tab_to_new_project(1, None, ctx));
+            pane_group_id
+        });
+
+        app.read(|ctx| {
+            assert_eq!(ctx.window_ids().collect::<Vec<_>>(), vec![window_id]);
+            let projects = project_window
+                .as_ref(ctx)
+                .projects()
+                .map(|(_, workspace)| workspace.clone())
+                .collect::<Vec<_>>();
+            assert_eq!(projects.len(), 2);
+            assert_eq!(projects[0].as_ref(ctx).tab_count(), 1);
+            assert_eq!(projects[1].as_ref(ctx).tab_count(), 1);
+            assert_eq!(
+                projects[1].as_ref(ctx).active_tab_pane_group().id(),
+                transferred_pane_group_id
+            );
+            assert_eq!(project_window.as_ref(ctx).active_project_index(), 1);
+        });
+    });
+}
+
+#[test]
 fn test_project_close_with_long_running_process_waits_for_confirmation() {
     App::test((), |mut app| async move {
         crate::workspace::view::tests::initialize_app(&mut app);

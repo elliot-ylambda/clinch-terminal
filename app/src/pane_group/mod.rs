@@ -578,6 +578,11 @@ pub enum Event {
     ForkCliAgentSession {
         terminal_view_id: EntityId,
     },
+    /// Open a transferred CLI-agent conversation in a new tab.
+    TransferCliAgentSession {
+        command: String,
+        cwd: Option<String>,
+    },
     /// Tell the workspace to run a workflow in the active tab's active session.
     RunWorkflow {
         workflow: Arc<WorkflowType>,

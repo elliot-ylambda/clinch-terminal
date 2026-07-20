@@ -1235,6 +1235,12 @@ fn handle_terminal_view_event(
                     terminal_view_id: *terminal_view_id,
                 });
             }
+            Event::TransferCliAgentSession { command, cwd } => {
+                ctx.emit(pane_group::Event::TransferCliAgentSession {
+                    command: command.clone(),
+                    cwd: cwd.clone(),
+                });
+            }
             Event::OpenShareSessionModal { open_source } => {
                 group.open_share_session_modal(terminal_pane_id, *open_source, ctx)
             }

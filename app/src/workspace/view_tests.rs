@@ -1984,6 +1984,44 @@ fn active_terminal_id_is_readable_while_terminal_view_is_leased() {
     });
 }
 
+#[test]
+fn cli_agent_transfer_opens_new_tab_without_replacing_source_tab() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+
+        let workspace = mock_workspace(&mut app);
+        let (source_tab, source_terminal, initial_tab_count) =
+            workspace.read(&app, |workspace, ctx| {
+                let source_tab = workspace
+                    .get_pane_group_view(workspace.active_tab_index())
+                    .expect("mock workspace should have an active tab")
+                    .clone();
+                let source_terminal = source_tab
+                    .read(ctx, |pane_group, ctx| pane_group.active_session_view(ctx))
+                    .expect("mock workspace should have an active terminal");
+                (source_tab, source_terminal, workspace.tab_count())
+            });
+
+        source_terminal.update(&mut app, |_terminal, ctx| {
+            ctx.emit(crate::terminal::view::Event::TransferCliAgentSession {
+                command: "true".to_owned(),
+                cwd: None,
+            });
+        });
+
+        workspace.read(&app, |workspace, ctx| {
+            assert_eq!(workspace.tab_count(), initial_tab_count + 1);
+            assert!(workspace
+                .tabs
+                .iter()
+                .any(|tab| tab.pane_group.id() == source_tab.id()));
+            assert!(source_tab
+                .as_ref(ctx)
+                .contains_terminal_view(source_terminal.id(), ctx));
+        });
+    });
+}
+
 fn number_of_shared_sessions_in_tab(
     workspace: &Workspace,
     index: usize,
@@ -2807,7 +2845,8 @@ fn test_tab_context_menu_share_session_items() {
         // When there's a single shared session in a tab (focused), the options
         // for sharing are "Stop sharing" and "Stop sharing all".
         workspace.read(&app, |workspace, ctx| {
-            let items = workspace.tabs[1].menu_items(1, 3, &workspace.tab_groups, true, true, ctx);
+            let items =
+                workspace.tabs[1].menu_items(1, 3, false, &workspace.tab_groups, true, true, ctx);
             assert!(items[0]
                 .is_approximately_same_item_as(&MenuItemFields::new("Stop sharing").into_item()));
             assert!(items[1].is_approximately_same_item_as(
@@ -2828,7 +2867,8 @@ fn test_tab_context_menu_share_session_items() {
         // When there's a single shared session in a tab (unfocused), the options
         // for sharing are "Share session" and "Stop sharing all".
         workspace.read(&app, |workspace, ctx| {
-            let items = workspace.tabs[1].menu_items(1, 3, &workspace.tab_groups, true, true, ctx);
+            let items =
+                workspace.tabs[1].menu_items(1, 3, false, &workspace.tab_groups, true, true, ctx);
             assert!(items[0]
                 .is_approximately_same_item_as(&MenuItemFields::new("Share session").into_item()));
             assert!(items[1].is_approximately_same_item_as(
@@ -2844,7 +2884,8 @@ fn test_tab_context_menu_share_session_items() {
 
         // When there's no shared sessions in a tab, the only option is "Share session".
         workspace.read(&app, |workspace, ctx| {
-            let items = workspace.tabs[1].menu_items(1, 3, &workspace.tab_groups, true, true, ctx);
+            let items =
+                workspace.tabs[1].menu_items(1, 3, false, &workspace.tab_groups, true, true, ctx);
             assert!(items[0]
                 .is_approximately_same_item_as(&MenuItemFields::new("Share session").into_item()));
             assert!(items[1].is_approximately_same_item_as(&MenuItem::Separator));
@@ -2868,13 +2909,16 @@ fn test_tab_context_menu_move_to_new_window_gating() {
 
         workspace.read(&app, |workspace, ctx| {
             // Multi-tab window: the entry is offered.
-            let items = workspace.tabs[0].menu_items(0, 3, &workspace.tab_groups, true, true, ctx);
+            let items =
+                workspace.tabs[0].menu_items(0, 3, true, &workspace.tab_groups, true, true, ctx);
             assert!(menu_contains_item(&items, "Move Tab to New Window"));
+            assert!(menu_contains_item(&items, "Move Tab to New Project"));
 
             // Single-tab window: moving the only tab is pointless; hidden.
             let items =
-                workspace.tabs[0].menu_items(0, 1, &workspace.tab_groups, false, false, ctx);
+                workspace.tabs[0].menu_items(0, 1, true, &workspace.tab_groups, false, false, ctx);
             assert!(!menu_contains_item(&items, "Move Tab to New Window"));
+            assert!(!menu_contains_item(&items, "Move Tab to New Project"));
         });
     });
 }
@@ -2888,8 +2932,10 @@ fn test_tab_context_menu_move_to_new_window_hidden_when_flag_off() {
         let workspace = mock_workspace(&mut app);
 
         workspace.read(&app, |workspace, ctx| {
-            let items = workspace.tabs[0].menu_items(0, 3, &workspace.tab_groups, true, true, ctx);
+            let items =
+                workspace.tabs[0].menu_items(0, 3, true, &workspace.tab_groups, true, true, ctx);
             assert!(!menu_contains_item(&items, "Move Tab to New Window"));
+            assert!(menu_contains_item(&items, "Move Tab to New Project"));
         });
     });
 }

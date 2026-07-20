@@ -138,6 +138,10 @@ pub enum WorkspaceAction {
     /// Detaches the tab at the given index into its own window. Gated by
     /// `FeatureFlag::DragTabsToWindows`; no-ops on single-tab windows.
     MoveTabToNewWindow(usize),
+    /// Moves the tab at the given index into a new project in the current
+    /// physical window. No-ops when the current project has only one tab or
+    /// the window does not support project tabs.
+    MoveTabToNewProject(usize),
     RenameTab(usize),
     ResetTabName(usize),
     RenamePane(PaneViewLocator),
@@ -345,7 +349,10 @@ pub enum WorkspaceAction {
         tab_index: usize,
         tab_position: RectF,
     },
-    DropTab,
+    DropTab {
+        pane_group_id: EntityId,
+        tab_position: RectF,
+    },
     StartGroupDrag(TabGroupId),
     DragGroup {
         group_id: TabGroupId,
@@ -917,7 +924,8 @@ impl WorkspaceAction {
             | MoveTabLeft(_)
             | MoveTabRight(_)
             | MoveTabToNewWindow(_)
-            | DropTab
+            | MoveTabToNewProject(_)
+            | DropTab { .. }
             | DropGroup
             | RenameTab(_)
             | ResetTabName(_)

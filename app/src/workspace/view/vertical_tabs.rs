@@ -2697,8 +2697,11 @@ fn render_tab_group_internal(
                     tab_position: rect,
                 });
             })
-            .on_drop(|ctx, _, _, _| {
-                ctx.dispatch_typed_action(WorkspaceAction::DropTab);
+            .on_drop(move |ctx, _, tab_position, _| {
+                ctx.dispatch_typed_action(WorkspaceAction::DropTab {
+                    pane_group_id,
+                    tab_position,
+                });
             });
         // Only lock the drag to the vertical axis when cross-window tab drag is
         // disabled. When it is enabled, the user needs to be able to drag
