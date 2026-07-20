@@ -238,6 +238,76 @@ impl Default for MockOptions {
     }
 }
 
+struct TestTerminalManager {
+    model: Arc<FairMutex<TerminalModel>>,
+    view: ViewHandle<TerminalView>,
+}
+
+impl crate::terminal::TerminalManager for TestTerminalManager {
+    fn model(&self) -> Arc<FairMutex<TerminalModel>> {
+        self.model.clone()
+    }
+
+    fn view(&self) -> ViewHandle<TerminalView> {
+        self.view.clone()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+fn new_test_terminal_pane(
+    tips_model: ModelHandle<TipsCompleted>,
+    ctx: &mut ViewContext<PaneGroup>,
+) -> TerminalPane {
+    let terminal_view =
+        ctx.add_typed_action_view(|ctx| TerminalView::new_for_test(tips_model, None, ctx));
+    let terminal_model = terminal_view.as_ref(ctx).model.clone();
+    let manager_view = terminal_view.clone();
+    let terminal_manager = ctx.add_model(move |_| {
+        let manager: Box<dyn crate::terminal::TerminalManager> = Box::new(TestTerminalManager {
+            model: terminal_model,
+            view: manager_view,
+        });
+        manager
+    });
+
+    TerminalPane::new(
+        Uuid::new_v4().into_bytes().to_vec(),
+        terminal_manager,
+        terminal_view,
+        None,
+        ctx,
+    )
+}
+
+/// Creates two fully bootstrapped in-memory terminal panes. Focus tests do not
+/// need a live shell, and depending on one makes them vulnerable to unrelated
+/// shell startup failures on a busy test runner.
+fn new_test_pane_group_with_two_terminals(
+    tips_model: ModelHandle<TipsCompleted>,
+    user_default_shell_changed_banner_dismissal_model_handle: ModelHandle<BannerState>,
+    ctx: &mut ViewContext<PaneGroup>,
+) -> PaneGroup {
+    let first_pane = new_test_terminal_pane(tips_model.clone(), ctx);
+    let mut pane_group = PaneGroup::new_from_existing_pane(
+        Box::new(first_pane),
+        tips_model.clone(),
+        user_default_shell_changed_banner_dismissal_model_handle,
+        ServerApiProvider::as_ref(ctx).get(),
+        None,
+        ctx,
+    );
+    let second_pane = new_test_terminal_pane(tips_model, ctx);
+    pane_group.add_pane_with_direction(Direction::Right, second_pane, false, ctx);
+    pane_group
+}
+
 fn mock_pane_group(app: &mut App, options: MockOptions) -> ViewHandle<PaneGroup> {
     let tips_model = app.add_model(|_| TipsCompleted::default());
     let (_, pane_group) =
@@ -2934,55 +3004,20 @@ fn test_pane_focus_does_not_have_an_infinite_event_loop() {
     App::test((), |mut app| async move {
         initialize_app(&mut app);
 
-        // Create a pane group with two terminal panes that will fight for
-        // focus.
-        let mock_options = MockOptions {
-            layout: PanesLayout::Template(PaneTemplateType::PaneBranchTemplate {
-                split_direction: crate::launch_configs::launch_config::SplitDirection::Horizontal,
-                panes: vec![
-                    PaneTemplateType::PaneTemplate {
-                        is_focused: Some(true),
-                        cwd: "/".into(),
-                        commands: vec![],
-                        pane_mode: PaneMode::Terminal,
-                        shell: None,
-                    },
-                    PaneTemplateType::PaneTemplate {
-                        is_focused: None,
-                        cwd: "/".into(),
-                        commands: vec![],
-                        pane_mode: PaneMode::Terminal,
-                        shell: None,
-                    },
-                ],
-            }),
-            ..Default::default()
-        };
-        let pane_group = mock_pane_group(&mut app, mock_options);
-
-        // The cycle requires that we are constantly trying to focus the input.
-        // An active and long-running block causes focus to move to the
-        // terminal instead of the input, so we need to wait until we've
-        // finished bootstrapping to ensure no such block will exist.
-        loop {
-            let mut all_terminals_bootstrapped = true;
-            pane_group.update(&mut app, |pane_group, ctx| {
-                pane_group.for_all_terminal_panes(|terminal_view, _ctx| {
-                    let model = terminal_view.model.lock();
-                    let active_block = model.block_list().active_block();
-                    if active_block.bootstrap_stage() != crate::terminal::model::bootstrap::BootstrapStage::PostBootstrapPrecmd ||
-                        active_block.is_active_and_long_running() {
-                        all_terminals_bootstrapped = false;
-                    }
-                }, ctx);
+        // Create two bootstrapped terminal panes that will fight for focus.
+        // In-memory terminals keep this regression test independent of shell
+        // startup, which is not part of the behavior under test.
+        let tips_model = app.add_model(|_| TipsCompleted::default());
+        let (_, pane_group) =
+            app.add_window_with_bounds(WindowStyle::NotStealFocus, WindowBounds::Default, |ctx| {
+                let user_default_shell_changed_banner_dismissal_model_handle =
+                    ctx.add_model(|_| BannerState::default());
+                new_test_pane_group_with_two_terminals(
+                    tips_model,
+                    user_default_shell_changed_banner_dismissal_model_handle,
+                    ctx,
+                )
             });
-            if all_terminals_bootstrapped {
-                break;
-            }
-            // Return control back to the executor briefly so we can make
-            // progress.
-            futures_lite::future::yield_now().await;
-        }
 
         pane_group.update(&mut app, |pane_group, ctx| {
             // Switch panes twice in quick succession.  We want to make
@@ -3061,42 +3096,15 @@ fn test_focused_pane_is_synchronized_with_application_focus() {
     App::test((), |mut app| async move {
         initialize_app(&mut app);
 
-        // Create a pane group with two terminal panes, so that we can move
-        // focus and observe the effects.
-        let panes_layout = PanesLayout::Template(PaneTemplateType::PaneBranchTemplate {
-            split_direction: crate::launch_configs::launch_config::SplitDirection::Horizontal,
-            panes: vec![
-                PaneTemplateType::PaneTemplate {
-                    is_focused: Some(true),
-                    cwd: "/".into(),
-                    commands: vec![],
-                    pane_mode: PaneMode::Terminal,
-                    shell: None,
-                },
-                PaneTemplateType::PaneTemplate {
-                    is_focused: None,
-                    cwd: "/".into(),
-                    commands: vec![],
-                    pane_mode: PaneMode::Terminal,
-                    shell: None,
-                },
-            ],
-        });
-
         let tips_model = app.add_model(|_| TipsCompleted::default());
         let (_, root_view) =
             app.add_window_with_bounds(WindowStyle::NotStealFocus, WindowBounds::Default, |ctx| {
                 let user_default_shell_changed_banner_dismissal_model_handle =
                     ctx.add_model(|_| BannerState::default());
-                let block_lists = Arc::new(HashMap::new());
                 let pane_group = ctx.add_typed_action_view(|ctx| {
-                    PaneGroup::new_with_panes_layout(
+                    new_test_pane_group_with_two_terminals(
                         tips_model,
                         user_default_shell_changed_banner_dismissal_model_handle,
-                        ServerApiProvider::as_ref(ctx).get(),
-                        panes_layout,
-                        block_lists,
-                        None,
                         ctx,
                     )
                 });
