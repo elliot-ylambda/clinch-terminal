@@ -210,6 +210,7 @@ impl TabData {
     }
 
     /// Returns the menu items for the context menu on right mouse click.
+    #[allow(clippy::too_many_arguments)]
     pub fn menu_items(
         &self,
         index: usize,
@@ -462,6 +463,7 @@ impl TabData {
         value.filter(|value| !value.trim().is_empty())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn modify_tab_menu_items(
         &self,
         index: usize,
