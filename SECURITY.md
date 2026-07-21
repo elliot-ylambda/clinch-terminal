@@ -105,7 +105,8 @@ handle credentials according to their own policies.
   user. It uses an unprivileged helper and atomic same-directory exchange; non-writable installs
   fall back to the authenticated manual installer. No administrator authorization shim is bundled.
 - The updater and release controls have not received an independent audit. A client released before
-  the updater bridge cannot discover it and needs one final authenticated manual installation.
+  the updater bridge in `v0.2026.07.20.1643` cannot discover it and needs one final authenticated
+  manual installation.
 - Restoring a pane intentionally executes a captured provider resume command. A compromised local
   account, provider config, transcript, hook, plugin, or Clinch state file can affect that command.
 - Ad-hoc signing verifies internal bundle consistency, not publisher identity. Anyone can create a

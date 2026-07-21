@@ -368,7 +368,10 @@ say "This public preview is ad-hoc signed and not notarized by Apple."
 say "The installer did not remove quarantine data or change Gatekeeper settings."
 say "Command-line downloads are not quarantined, so no Gatekeeper approval is needed."
 say "Session restore is enabled on first launch; you can turn capture off in Clinch Settings."
-say "Updates are manual for this preview; rerun this installer for a signed newer version."
+say "Clinch checks signed update metadata at most daily and shows Update available in the header."
+say "Choose Clinch → Check for Updates… to check now; Clinch installs only after you approve it."
+say "If this app location is not user-writable, Clinch opens the authenticated manual update path."
+say "This install bootstraps automatic discovery for builds older than v0.2026.07.20.1643."
 
 if [ "$OPEN_APP" = 1 ]; then
     say ""

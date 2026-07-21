@@ -109,7 +109,9 @@ More implementation detail is in
 
 ## Main features
 
-- Project tabs that keep independent terminal workspaces in one window.
+- Project tabs that keep independent terminal workspaces in one window, including live tab
+  promotion by dragging into the project header or choosing **Move Tab to New Project**, plus
+  project detach and cross-window transfer.
 - Persistence for project order, working directories, terminal tabs, splits, and panels.
 - Optional Claude Code and Codex session capture and pane-level resume.
 - Local agent-status badges and macOS notification routing when a compatible provider signal is
@@ -153,7 +155,7 @@ quits, atomically replaces the app, relaunches, and rolls back if the new app do
 The updater never requests administrator privileges. The public installer places Clinch in a
 user-writable `/Applications` or `~/Applications` location; unusual non-writable installations
 open the authenticated release for manual installation instead. Builds released before the updater
-was enabled need one final bootstrap install:
+bridge in `v0.2026.07.20.1643` need one final bootstrap install:
 
 ```bash
 curl -fsSL https://clinch.sh/install | sh

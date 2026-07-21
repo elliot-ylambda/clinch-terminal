@@ -200,9 +200,10 @@ or Keychain credentials.
 
 `README.md`, `SECURITY.md`, release notes, installer messages, and the separate Clinch website use
 the same terminology and limits. Manual DMG/ZIP download is primary; the authenticated shell
-installer is a convenience. All surfaces explain the unnotarized Open Anyway flow, manual updates,
-the one-time updater bootstrap and non-writable-install fallback, network-capable optional
-features, exact side effects, and residual review gaps.
+installer is a convenience. All surfaces explain the unnotarized Open Anyway flow, signed
+at-most-daily metadata checks, explicit update consent, the one-time updater bootstrap and
+non-writable-install fallback, network-capable optional features, exact side effects, and residual
+review gaps.
 
 ## Testing
 
