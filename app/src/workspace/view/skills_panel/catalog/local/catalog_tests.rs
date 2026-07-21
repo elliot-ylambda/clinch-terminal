@@ -1,8 +1,7 @@
-use tempfile::TempDir;
-use warpui::App;
-
 use repo_metadata::repositories::DetectedRepositories;
 use repo_metadata::{DirectoryWatcher, RepoMetadataModel};
+use tempfile::TempDir;
+use warpui::App;
 use watcher::HomeDirectoryWatcher;
 
 use super::*;
