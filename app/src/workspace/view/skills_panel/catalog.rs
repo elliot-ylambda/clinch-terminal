@@ -160,7 +160,7 @@ mod local {
     use repo_metadata::repositories::DetectedRepositories;
     use serde_json::Value as JsonValue;
     use toml::Value as TomlValue;
-    use walkdir::{DirEntry, WalkDir};
+    use walkdir::WalkDir;
     use warpui::SingletonEntity;
 
     use super::*;
@@ -319,6 +319,9 @@ mod local {
             .collect();
 
         if let Some(cwd) = working_directory {
+            // Descendant project skills are populated asynchronously by SkillManager's
+            // repository index. Do not walk `cwd` here: catalog construction runs on the UI
+            // thread, and `cwd` may be a broad directory such as the user's home directory.
             entries.extend(
                 manager
                     .descendant_file_skill_variants_for_provider(cwd, SkillProvider::Claude, app)
@@ -350,15 +353,6 @@ mod local {
         let local_cwd = working_directory.and_then(LocalOrRemotePath::to_local_path);
         let local_repo_root = repo_root.and_then(LocalOrRemotePath::to_local_path);
         let settings = read_claude_settings(home, local_repo_root);
-
-        if let (Some(cwd), Some(working_directory)) = (local_cwd, working_directory) {
-            entries.extend(discover_local_claude_project_skills(
-                cwd,
-                working_directory,
-                repo_root,
-                home,
-            ));
-        }
 
         for managed_root in claude_managed_roots() {
             entries.extend(discover_recursive_skills(
@@ -762,89 +756,6 @@ mod local {
             current = path.parent();
         }
         out
-    }
-
-    fn discover_local_claude_project_skills(
-        scan_root: &Path,
-        working_directory: &LocalOrRemotePath,
-        repo_root: Option<&LocalOrRemotePath>,
-        home: &Path,
-    ) -> Vec<CatalogSkill> {
-        let mut entries = Vec::new();
-        let mut walker = WalkDir::new(scan_root).follow_links(false).into_iter();
-        while let Some(entry) = walker.next() {
-            let Ok(entry) = entry else {
-                continue;
-            };
-            if should_skip_nested_skill_scan_entry(&entry) {
-                if entry.file_type().is_dir() {
-                    walker.skip_current_dir();
-                }
-                continue;
-            }
-            if !entry.file_type().is_dir() || !entry.path().ends_with(".claude/skills") {
-                continue;
-            }
-
-            for skill_path in skill_files_in_component_path(entry.path()) {
-                let Some(descriptor) = parse_markdown_descriptor(
-                    &skill_path,
-                    None,
-                    SkillProvider::Claude,
-                    SkillScope::Project,
-                ) else {
-                    continue;
-                };
-                let owner = skill_path
-                    .parent()
-                    .and_then(Path::parent)
-                    .and_then(Path::parent)
-                    .and_then(Path::parent);
-                let nested = owner.is_some_and(|owner| owner != scan_root);
-                entries.push(entry_from_descriptor(
-                    descriptor,
-                    nested,
-                    Some(working_directory),
-                    repo_root,
-                    Some(home),
-                    CatalogKind::Skill,
-                ));
-            }
-            // A provider root's direct children are the skill directories. Supporting files
-            // within those skills cannot define additional skills, so avoid walking them.
-            walker.skip_current_dir();
-        }
-        entries
-    }
-
-    fn should_skip_nested_skill_scan_entry(entry: &DirEntry) -> bool {
-        if entry.depth() == 0 || !entry.file_type().is_dir() {
-            return false;
-        }
-        let name = entry.file_name().to_string_lossy();
-        if matches!(
-            name.as_ref(),
-            ".git"
-                | "target"
-                | "node_modules"
-                | "vendor"
-                | "dist"
-                | "build"
-                | ".next"
-                | ".cache"
-                | ".venv"
-        ) {
-            return true;
-        }
-        if name.starts_with('.') && name != ".claude" {
-            return true;
-        }
-        entry
-            .path()
-            .parent()
-            .and_then(Path::file_name)
-            .and_then(|name| name.to_str())
-            .is_some_and(|parent| parent == ".claude" && name != "skills")
     }
 
     fn parse_markdown_descriptor(

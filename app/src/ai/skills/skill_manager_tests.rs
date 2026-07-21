@@ -43,7 +43,7 @@ fn get_skills_for_working_directory_scopes_subdirectory_skills() {
     // Create mock skills
     let root_skill_path = LocalOrRemotePath::Local(repo.join(".agents/skills/root-skill/SKILL.md"));
     let frontend_skill_path =
-        LocalOrRemotePath::Local(frontend_dir.join(".agents/skills/frontend-skill/SKILL.md"));
+        LocalOrRemotePath::Local(frontend_dir.join(".claude/skills/frontend-skill/SKILL.md"));
 
     let root_skill = ParsedSkill {
         name: "root-skill".to_string(),
@@ -61,7 +61,7 @@ fn get_skills_for_working_directory_scopes_subdirectory_skills() {
         path: frontend_skill_path.clone(),
         content: "# Frontend skill".to_string(),
         line_range: None,
-        provider: SkillProvider::Agents,
+        provider: SkillProvider::Claude,
         scope: SkillScope::Project,
     };
 
@@ -161,11 +161,13 @@ fn get_skills_for_working_directory_scopes_subdirectory_skills() {
             "Frontend skill should NOT be visible from repo root"
         );
 
-        // Inspectors can separately show descendant skills that Claude discovers on demand.
+        // Inspectors can separately show indexed descendant Claude skills without rescanning
+        // the working directory. The SKILL.md path is intentionally not present on disk: this
+        // assertion verifies that the catalog can rely on SkillManager's repository index.
         let descendant_skills = skill_manager_handle.read(&app, |manager, ctx| {
             manager.descendant_file_skill_variants_for_provider(
                 &LocalOrRemotePath::Local(repo.clone()),
-                SkillProvider::Agents,
+                SkillProvider::Claude,
                 ctx,
             )
         });

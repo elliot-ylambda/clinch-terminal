@@ -1,6 +1,13 @@
 use tempfile::TempDir;
+use warpui::App;
+
+use repo_metadata::repositories::DetectedRepositories;
+use repo_metadata::{DirectoryWatcher, RepoMetadataModel};
+use watcher::HomeDirectoryWatcher;
 
 use super::*;
+use crate::settings::AISettings;
+use crate::warp_managed_paths_watcher::WarpManagedPathsWatcher;
 
 fn write(path: &Path, content: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -281,40 +288,37 @@ fn codex_home_catalog_separates_personal_system_and_runtime_skills() {
 }
 
 #[test]
-fn discovers_nested_claude_project_skills_before_entering_the_subdirectory() {
+fn claude_catalog_uses_the_skill_index_instead_of_scanning_the_working_directory() {
     let temp = TempDir::new().unwrap();
     write(
-        &temp.path().join(".claude/skills/root/SKILL.md"),
-        "---\nname: root\ndescription: Root skill\n---\nUse it.",
-    );
-    write(
         &temp
             .path()
-            .join("packages/web/.claude/skills/deploy/SKILL.md"),
-        "---\nname: Pretty deploy\ndescription: Deploy web\n---\nDeploy it.",
-    );
-    write(
-        &temp
-            .path()
-            .join("target/generated/.claude/skills/ignored/SKILL.md"),
-        "---\nname: ignored\ndescription: Ignore\n---\nIgnore it.",
+            .join("large/project/.claude/skills/must-not-scan/SKILL.md"),
+        "---\nname: must-not-scan\ndescription: Sentinel skill\n---\nDo not read this.",
     );
     let cwd = LocalOrRemotePath::Local(temp.path().to_path_buf());
+    let home = temp.path().to_path_buf();
 
-    let entries = discover_local_claude_project_skills(temp.path(), &cwd, Some(&cwd), temp.path());
+    App::test((), |app| async move {
+        app.add_singleton_model(DirectoryWatcher::new);
+        app.add_singleton_model(AISettings::new_with_defaults);
+        app.add_singleton_model(|_| DetectedRepositories::default());
+        app.add_singleton_model(RepoMetadataModel::new);
+        app.add_singleton_model(HomeDirectoryWatcher::new_for_test);
+        app.add_singleton_model(WarpManagedPathsWatcher::new_for_testing);
+        let manager = app.add_singleton_model(SkillManager::new);
 
-    assert_eq!(entries.len(), 2);
-    assert!(entries.iter().any(|entry| {
-        entry.display_name == "root" && matches!(entry.status, CatalogStatus::Active)
-    }));
-    assert!(entries.iter().any(|entry| {
-        entry.display_name == "deploy"
-            && matches!(
-                &entry.status,
-                CatalogStatus::Contextual { invocation }
-                    if invocation == "packages/web:deploy"
-            )
-    }));
+        let entries = manager.read(&app, |manager, ctx| {
+            claude_catalog(manager, Some(&cwd), None, Some(&home), ctx)
+        });
+
+        assert!(
+            entries
+                .iter()
+                .all(|entry| entry.display_name != "must-not-scan"),
+            "catalog construction must not recursively scan the working directory"
+        );
+    });
 }
 
 #[test]
