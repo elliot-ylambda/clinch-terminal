@@ -27,8 +27,9 @@ const PLATFORM_PLUGIN_KEY: &str = "orchestration@codex-warp";
 const CODEX_CONFIG_DIR: &str = ".codex";
 const CODEX_HOME_ENV: &str = "CODEX_HOME";
 
-// Keep in sync with the bundled plugin version in resources/bundled/agent-plugins/codex-warp.
-// 0.5.0 adds causal usage-limit stop reasons used by rate-limit auto-continue.
+// 0.5.0 adds causal usage-limit stop reasons used by rate-limit auto-continue. The bundled
+// snapshot may carry later runtime-hardening patch versions without raising this compatibility
+// floor for users of Warp's upstream marketplace.
 pub(crate) const MINIMUM_PLUGIN_VERSION: &str = "0.5.0";
 // Keep in sync with the orchestration plugin version in warpdotdev/codex-warp.
 const MINIMUM_PLATFORM_PLUGIN_VERSION: &str = "0.4.0";

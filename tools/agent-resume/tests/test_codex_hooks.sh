@@ -59,6 +59,19 @@ grep -q 'owner-stays' "$f" || { echo "FAIL: prompt hook rewrote pane registry"; 
 [[ "$(stat -f '%Lp' "$mf")" == "600" ]] || { echo "FAIL: Codex mirror not private"; exit 1; }
 [[ "$(stat -f '%Lp' "$(dirname "$mf")")" == "700" ]] || { echo "FAIL: Codex mirror dir not private"; exit 1; }
 
+# Prompt capture is auxiliary and must fail open even when a hook runner omits HOME or a
+# first-launch helper refresh is incomplete.
+printf '%s\n' '{"session_id":"no-home","cwd":"/tmp","hook_event_name":"UserPromptSubmit","prompt":"secret"}' \
+  | env -u HOME -u WARP_AGENT_RESUME_DIR \
+      WARP_TERMINAL_SESSION_UUID="bb22" bash "$HERE/codex-prompt-submit.sh"
+failing_bin="$TMP/failing-prompt-bin"
+mkdir -p "$failing_bin"
+cp "$HERE/codex-prompt-submit.sh" "$failing_bin/"
+printf '#!/bin/sh\nexit 1\n' > "$failing_bin/prompt-mirror.sh"
+chmod 755 "$failing_bin/prompt-mirror.sh"
+printf '%s\n' '{"session_id":"helper-fails","hook_event_name":"UserPromptSubmit","prompt":"secret"}' \
+  | bash "$failing_bin/codex-prompt-submit.sh"
+
 # Repeated identical messages are separate turns; Stop appends a boundary and empty prompts append
 # nothing. The boundary lets the reader preserve an intentional repeat after a completed turn.
 jq -cn --arg p "$prompt_in" '{session_id:"sess-prompt",cwd:"/tmp/repo",hook_event_name:"UserPromptSubmit",prompt:$p}' \

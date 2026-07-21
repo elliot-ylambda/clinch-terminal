@@ -47,6 +47,9 @@ bash -n tools/agent-resume/*.sh \
   tools/agent-resume/warp-agent-resume
 zsh -n tools/agent-resume/claude.zsh \
   tools/agent-resume/clinch_agent_resume_launch
+while IFS= read -r plugin_script; do
+  bash -n "$plugin_script"
+done < <(find resources/bundled/agent-plugins -type f -name '*.sh' -print | LC_ALL=C sort)
 
 echo "==> Release dispatcher tests"
 for test in script/tests/test_*.sh; do
@@ -62,6 +65,16 @@ for test in tools/agent-resume/tests/test_*.sh; do
   else
     bash "$test"
   fi
+done
+
+echo "==> Bundled notification plugin tests"
+for test in resources/bundled/agent-plugins/*/plugins/warp/tests/test*.sh; do
+  echo "running $test"
+  # Provider hooks run detached from a controlling terminal. Reproduce that environment even when
+  # the interactive release command itself owns a TTY, so pane-path fallback tests stay meaningful.
+  /usr/bin/python3 -c \
+    'import subprocess, sys; raise SystemExit(subprocess.run(["bash", sys.argv[1]], start_new_session=True).returncode)' \
+    "$test"
 done
 
 echo "==> Stable Clinch build configuration"

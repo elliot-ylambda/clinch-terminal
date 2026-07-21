@@ -31,7 +31,13 @@ _clinch_prompt_mirror_main() {
     "$bridge" 2>/dev/null)" || return 0
   [[ -n "$line" ]] || return 0
 
-  registry="${WARP_AGENT_RESUME_DIR:-$HOME/.warp/agent-resume}"
+  if [[ -n "${WARP_AGENT_RESUME_DIR:-}" ]]; then
+    registry="$WARP_AGENT_RESUME_DIR"
+  elif [[ -n "${HOME:-}" ]]; then
+    registry="$HOME/.warp/agent-resume"
+  else
+    return 0
+  fi
   root="$registry/prompts"
   dir="$root/$provider"
   file="$dir/$sid.jsonl"
