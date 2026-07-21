@@ -9,6 +9,21 @@ fn new_task_id() -> AmbientAgentTaskId {
     Uuid::new_v4().to_string().parse().unwrap()
 }
 
+#[test]
+fn restored_cwd_fallback_is_replaced_by_the_first_live_cwd() {
+    let fallback = RefCell::new(Some("/restored/project".to_string()));
+
+    assert_eq!(
+        local_cwd_for_snapshot(None, &fallback).as_deref(),
+        Some("/restored/project")
+    );
+    assert_eq!(
+        local_cwd_for_snapshot(Some("/live/project".to_string()), &fallback).as_deref(),
+        Some("/live/project")
+    );
+    assert_eq!(local_cwd_for_snapshot(None, &fallback), None);
+}
+
 fn user_source(task_id: Option<&str>) -> SharedSessionSource {
     SharedSessionSource::user(task_id.map(str::to_owned))
 }

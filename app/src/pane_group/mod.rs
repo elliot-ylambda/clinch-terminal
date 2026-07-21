@@ -1630,6 +1630,9 @@ impl PaneGroup {
                     .cwd
                     .map(PathBuf::from)
                     .filter(|path| path.is_dir());
+                let restored_local_cwd_fallback = startup_directory
+                    .as_ref()
+                    .map(|path| path.to_string_lossy().into_owned());
 
                 // Filter conversation IDs to only include those that have task messages
                 // and are not entirely passive (ignored suggestions).
@@ -1701,7 +1704,8 @@ impl PaneGroup {
                     terminal_view,
                     model_event_sender,
                     ctx,
-                );
+                )
+                .with_restored_local_cwd_fallback(restored_local_cwd_fallback);
 
                 // Auto-resume agent sessions: if this pane had a live agent session
                 // captured at snapshot time, run its resume command (e.g.

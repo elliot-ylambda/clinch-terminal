@@ -99,6 +99,11 @@ pub struct TerminalPane {
     /// Used to uniquely identify the pane, even across separate runs of the app.
     uuid: Vec<u8>,
 
+    /// The persisted local CWD, retained only until a restored shell reports its live CWD.
+    /// Shell registration is asynchronous, so snapshots taken during restore otherwise replace
+    /// a valid persisted path with `None`.
+    restored_local_cwd_fallback: RefCell<Option<String>>,
+
     /// Set when this pane's PTY is shut down on close so that, if the tab is
     /// reopened within the undo grace period, the session is re-created and the
     /// agent conversation resumed. `None` for panes that keep their live PTY.
@@ -141,6 +146,19 @@ fn resolve_runtime_skills(
 
 fn serialize_proto_to_base64<M: prost::Message>(message: &M) -> String {
     BASE64_STANDARD.encode(message.encode_to_vec())
+}
+
+fn local_cwd_for_snapshot(
+    live_cwd: Option<String>,
+    restored_cwd_fallback: &RefCell<Option<String>>,
+) -> Option<String> {
+    match live_cwd {
+        Some(cwd) => {
+            restored_cwd_fallback.borrow_mut().take();
+            Some(cwd)
+        }
+        None => restored_cwd_fallback.borrow().clone(),
+    }
 }
 
 /// Overrides the child's preferred agent-mode LLM. `None` is a no-op
@@ -227,10 +245,19 @@ impl TerminalPane {
         Self {
             model_event_sender,
             uuid,
+            restored_local_cwd_fallback: RefCell::new(None),
             restart_spec: RefCell::new(None),
             pane_configuration,
             view,
         }
+    }
+
+    pub(in crate::pane_group) fn with_restored_local_cwd_fallback(
+        self,
+        cwd: Option<String>,
+    ) -> Self {
+        *self.restored_local_cwd_fallback.borrow_mut() = cwd;
+        self
     }
 
     /// Records how to rebuild this pane's session if its tab is reopened after
@@ -619,7 +646,10 @@ impl PaneContent for TerminalPane {
 
             LeafContents::Terminal(TerminalPaneSnapshot {
                 uuid: self.uuid.clone(),
-                cwd: view.pwd_if_local(app),
+                cwd: local_cwd_for_snapshot(
+                    view.pwd_if_local(app),
+                    &self.restored_local_cwd_fallback,
+                ),
                 is_active,
                 is_read_only: view.model.lock().is_read_only(),
                 shell_launch_data: view.shell_launch_data_if_local(app),

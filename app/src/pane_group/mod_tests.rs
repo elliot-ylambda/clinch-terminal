@@ -2202,6 +2202,52 @@ fn test_add_pane_aborts_cleanly_when_pre_attach_returns_false() {
 }
 
 #[test]
+fn restored_pane_snapshot_preserves_cwd_before_shell_registration() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+
+        let restored_cwd = std::env::temp_dir().to_string_lossy().into_owned();
+        let restored_layout =
+            PanesLayout::Snapshot(Box::new(PaneNodeSnapshot::Leaf(LeafSnapshot {
+                is_focused: true,
+                custom_vertical_tabs_title: None,
+                contents: LeafContents::Terminal(TerminalPaneSnapshot {
+                    uuid: Uuid::new_v4().as_bytes().to_vec(),
+                    cwd: Some(restored_cwd.clone()),
+                    shell_launch_data: None,
+                    is_active: true,
+                    is_read_only: false,
+                    input_config: None,
+                    llm_model_override: None,
+                    active_profile_id: None,
+                    conversation_ids_to_restore: Vec::new(),
+                    active_conversation_id: None,
+                    on_restore_command: None,
+                }),
+            })));
+        let pane_group = mock_pane_group(
+            &mut app,
+            MockOptions {
+                layout: restored_layout,
+                ..Default::default()
+            },
+        );
+
+        // Restored shells register asynchronously. A workspace save in this window must retain
+        // the persisted CWD instead of replacing it with NULL.
+        let immediate_snapshot = pane_group.read(&app, |panes, ctx| panes.snapshot(ctx));
+        let PaneNodeSnapshot::Leaf(LeafSnapshot {
+            contents: LeafContents::Terminal(terminal),
+            ..
+        }) = immediate_snapshot
+        else {
+            panic!("expected a restored terminal leaf");
+        };
+        assert_eq!(terminal.cwd.as_deref(), Some(restored_cwd.as_str()));
+    });
+}
+
+#[test]
 fn test_focus_notebook() {
     App::test((), |mut app| async move {
         initialize_app(&mut app);
