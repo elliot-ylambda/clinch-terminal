@@ -114,8 +114,10 @@ if [ "$(uname -s)" = "Darwin" ]; then
     mkdir -p "$UPDATE_DEST"
     install -m 0755 "$REPO_ROOT/resources/update/clinch-update-helper" \
       "$UPDATE_DEST/clinch-update-helper"
-    CLANG_BIN="${CLINCH_UPDATE_CC:-$(xcrun --find clang)}"
+    CLANG_BIN="${CLINCH_UPDATE_CC:-$(xcrun --sdk macosx --find clang)}"
+    MACOS_SDK="${CLINCH_UPDATE_SDKROOT:-$(xcrun --sdk macosx --show-sdk-path)}"
     "$CLANG_BIN" -std=c11 -Os -Wall -Wextra -Werror \
+      -isysroot "$MACOS_SDK" \
       -arch arm64 -arch x86_64 \
       -mmacosx-version-min="${MACOSX_DEPLOYMENT_TARGET:-14.0}" \
       "$REPO_ROOT/resources/update/clinch-update-swap.c" \
