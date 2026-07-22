@@ -17722,6 +17722,22 @@ impl Workspace {
                     toast_stack.add_ephemeral_toast(toast, ctx);
                 });
             }
+            pane_group::Event::ShowToastForFocusedPane {
+                message,
+                flavor,
+                pane_id,
+            } => {
+                let is_focused = pane_group.id() == self.active_tab_pane_group().id()
+                    && pane_group.as_ref(ctx).focused_pane_id(ctx) == *pane_id;
+                if !is_focused {
+                    return;
+                }
+
+                self.toast_stack.update(ctx, |toast_stack, ctx| {
+                    toast_stack
+                        .add_ephemeral_toast(DismissibleToast::new(message.clone(), *flavor), ctx);
+                });
+            }
             pane_group::Event::SignupAnonymousUser { entrypoint } => {
                 self.initiate_user_signup(*entrypoint, ctx);
             }

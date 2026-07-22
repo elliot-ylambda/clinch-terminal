@@ -694,6 +694,12 @@ pub enum Event {
         flavor: ToastFlavor,
         pane_id: Option<PaneId>,
     },
+    /// Shows a toast only if the originating pane is focused in the active tab.
+    ShowToastForFocusedPane {
+        message: String,
+        flavor: ToastFlavor,
+        pane_id: PaneId,
+    },
     SignupAnonymousUser {
         entrypoint: AnonymousUserSignupEntrypoint,
     },

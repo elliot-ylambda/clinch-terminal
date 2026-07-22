@@ -1627,6 +1627,53 @@ fn empty_buffer_enter_skips_locked_initial_cloud_mode_head() {
     });
 }
 
+#[test]
+fn command_rejection_emits_a_terminal_scoped_toast_for_the_attempted_command() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+
+        let terminal = add_window_with_bootstrapped_terminal(&mut app, None, None).await;
+        let input = terminal.read(&app, |view, _| view.input().clone());
+        terminal.update(&mut app, |view, _| {
+            view.model
+                .lock()
+                .simulate_long_running_block("cx", "running");
+        });
+
+        let emitted_toast = Rc::new(RefCell::new(None));
+        let emitted_toast_for_subscription = emitted_toast.clone();
+        app.update(|ctx| {
+            ctx.subscribe_to_view(&input, move |_, event: &super::Event, _| {
+                if let super::Event::ShowToast { message, flavor } = event {
+                    *emitted_toast_for_subscription.borrow_mut() = Some((message.clone(), *flavor));
+                }
+            });
+        });
+
+        let global_toast_count = Rc::new(RefCell::new(0));
+        let global_toast_count_for_subscription = global_toast_count.clone();
+        app.update(|ctx| {
+            ctx.subscribe_to_model(&ToastStack::handle(ctx), move |_, _, _| {
+                *global_toast_count_for_subscription.borrow_mut() += 1;
+            });
+        });
+
+        let executed = input.update(&mut app, |input, ctx| {
+            input.try_execute_command("make webapp-dev", ctx)
+        });
+
+        assert!(!executed);
+        assert_eq!(
+            emitted_toast.borrow().as_ref(),
+            Some(&(
+                "Cannot run `make webapp-dev` (command already running).".to_owned(),
+                ToastFlavor::Error,
+            ))
+        );
+        assert_eq!(*global_toast_count.borrow(), 0);
+    });
+}
+
 /// Seeds an in-progress conversation for `terminal`.
 fn seed_in_progress_conversation(
     app: &mut App,

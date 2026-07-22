@@ -7164,15 +7164,9 @@ impl Input {
                 let truncated_command = truncate_from_end(command, MAX_COMMAND_LENGTH);
 
                 // Block user submissions while a requested command is actively running
-                let window_id = ctx.window_id();
-                ToastStack::handle(ctx).update(ctx, |toast_stack, ctx| {
-                    toast_stack.add_ephemeral_toast(
-                        DismissibleToast::error(format!(
-                            "Cannot run `{truncated_command}` (command already running)."
-                        )),
-                        window_id,
-                        ctx,
-                    );
+                ctx.emit(Event::ShowToast {
+                    message: format!("Cannot run `{truncated_command}` (command already running)."),
+                    flavor: ToastFlavor::Error,
                 });
             }
 

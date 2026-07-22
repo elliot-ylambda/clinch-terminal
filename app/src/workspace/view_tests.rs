@@ -958,6 +958,52 @@ fn test_manual_update_check_feedback_only_appears_in_initiating_workspace() {
 }
 
 #[test]
+fn terminal_input_toast_only_appears_for_the_focused_tab() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.add_terminal_tab(false, ctx);
+        });
+
+        let (inactive_terminal, active_terminal) = workspace.read(&app, |workspace, ctx| {
+            let inactive_pane_group = workspace.tabs[0].pane_group.clone();
+            let active_pane_group = workspace.active_tab_pane_group().clone();
+            let inactive_terminal = inactive_pane_group
+                .as_ref(ctx)
+                .active_session_view(ctx)
+                .expect("inactive tab should have a terminal");
+            let active_terminal = active_pane_group
+                .as_ref(ctx)
+                .active_session_view(ctx)
+                .expect("active tab should have a terminal");
+            (inactive_terminal, active_terminal)
+        });
+
+        inactive_terminal.update(&mut app, |_, ctx| {
+            ctx.emit(crate::terminal::view::Event::ShowToast {
+                message: "inactive terminal error".to_owned(),
+                flavor: ToastFlavor::Error,
+            });
+        });
+        workspace.read(&app, |workspace, ctx| {
+            assert!(!workspace.toast_stack.as_ref(ctx).has_toasts());
+        });
+
+        active_terminal.update(&mut app, |_, ctx| {
+            ctx.emit(crate::terminal::view::Event::ShowToast {
+                message: "active terminal error".to_owned(),
+                flavor: ToastFlavor::Error,
+            });
+        });
+        workspace.read(&app, |workspace, ctx| {
+            assert!(workspace.toast_stack.as_ref(ctx).has_toasts());
+        });
+    });
+}
+
+#[test]
 fn test_tab_bar_traffic_light_space_regression_for_resource_center_overlap() {
     // Regression for #10139: the Resource Center/right panel can be open on
     // Windows/Linux, but vertical-tabs and right-panel state should not decide
