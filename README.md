@@ -1,20 +1,53 @@
-# Clinch
+<p align="center">
+  <img src="app/assets/bundled/svg/clinch-logo.svg" width="144" alt="Clinch logo">
+</p>
 
-Clinch is a local-first macOS terminal focused on reopening Claude Code and Codex work across
-projects, tabs, and panes. It is an independent AGPL fork of Warp.
+<h1 align="center">Clinch</h1>
 
-**macOS 14+ · Intel and Apple Silicon · no Clinch account · no Warp backend ·
-[clinch.sh](https://clinch.sh)**
+<p align="center">
+  <strong>The local-first macOS terminal for Claude Code and Codex.</strong>
+</p>
 
-## Public preview
+<p align="center">
+  Keep projects, panes, and AI coding sessions organized—and return to the conversation,
+  not just the directory.
+</p>
 
-Clinch is distributed as an **unnotarized public preview**. The app is ad-hoc signed with the
-macOS hardened runtime, but it has no Apple-issued Developer ID and Apple has not notarized it.
-macOS may block the first launch. That warning is expected and is not evidence that Apple has
-reviewed the app.
+<p align="center">
+  <a href="https://clinch.sh"><strong>Website</strong></a> ·
+  <a href="#install"><strong>Install</strong></a> ·
+  <a href="https://clinch.sh/docs"><strong>Docs</strong></a> ·
+  <a href="https://github.com/elliot-ylambda/clinch-terminal/releases"><strong>Releases</strong></a>
+</p>
 
-This repository has automated security checks and a documented release process. It has not had an
-independent security audit. See [SECURITY.md](SECURITY.md) for the trust model and known limits.
+<p align="center">
+  <sub>macOS 14+ · Intel and Apple Silicon · free and open source · no Clinch or Warp account ·
+  <a href="#public-preview">public preview</a></sub>
+</p>
+
+---
+
+Clinch is an independent AGPL fork of Warp designed for people who keep several AI coding threads
+moving at once. Project tabs keep terminal tabs, splits, working directories, panels, and local
+agent state grouped as durable workspaces. With session capture enabled, Clinch can reopen a
+recoverable Claude Code or Codex conversation in the pane that owned it.
+
+The stable app runs without a Clinch or Warp account and without a configured Warp backend,
+telemetry destination, or crash reporter. Clinch keeps its own UI configuration, so it can run
+alongside Warp without inheriting Warp's settings.
+
+## Why Clinch
+
+- **Pick up where the agent left off.** Reopen captured Claude Code and Codex conversations in
+  their original panes when the provider transcript is still recoverable.
+- **Keep parallel projects separate.** Preserve project order, working directories, terminal
+  tabs, splits, and panels—and move live tabs between projects or windows.
+- **See what needs attention.** Local agent-status badges and macOS notifications help surface a
+  waiting or completed agent without sending Clinch telemetry.
+- **Stay close to the work.** Browse skills and files, preview common image formats, and monitor
+  optional Claude plan limits without leaving the terminal.
+- **Stay local-first.** Stable Clinch has no Warp account flow, Warp backend, RudderStack
+  destination, Sentry crash reporter, or bundled MCP credentials.
 
 ## Install
 
@@ -107,21 +140,15 @@ deleted transcripts, changed CLIs, and abrupt power loss can prevent an exact re
 More implementation detail is in
 [tools/agent-resume/README.md](tools/agent-resume/README.md).
 
-## Main features
+## Public preview
 
-- Project tabs that keep independent terminal workspaces in one window, including live tab
-  promotion by dragging into the project header or choosing **Move Tab to New Project**, plus
-  project detach and cross-window transfer.
-- Persistence for project order, working directories, terminal tabs, splits, and panels.
-- Optional Claude Code and Codex session capture and pane-level resume.
-- Local agent-status badges and macOS notification routing when a compatible provider signal is
-  available.
-- Optional Claude Code plan-limit gauges; they are off by default and contact Anthropic only after
-  the user enables them.
-- Skills browser, file explorer, and previews for common image formats.
+Clinch is distributed as an **unnotarized public preview**. The app is ad-hoc signed with the
+macOS hardened runtime, but it has no Apple-issued Developer ID and Apple has not notarized it.
+macOS may block the first launch. That warning is expected and is not evidence that Apple has
+reviewed the app.
 
-Some upstream Warp features depend on a Warp account or private Warp services. Those surfaces are
-disabled in the public Clinch channel.
+This repository has automated security checks and a documented release process. It has not had an
+independent security audit. See [SECURITY.md](SECURITY.md) for the trust model and known limits.
 
 ## Privacy and network behavior
 
