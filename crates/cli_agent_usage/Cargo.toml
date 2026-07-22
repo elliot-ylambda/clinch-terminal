@@ -17,3 +17,6 @@ libc = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 command = { workspace = true }
+core-foundation-sys = "0.8.7"
+instant = { workspace = true }
+security-framework-sys = "2.0.0"

@@ -2835,8 +2835,11 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "command",
+ "core-foundation-sys",
+ "instant",
  "libc",
  "reqwest",
+ "security-framework-sys",
  "serde",
  "serde_json",
  "walkdir",

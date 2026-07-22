@@ -10,8 +10,7 @@ use std::time::Duration;
 use chrono::Utc;
 use cli_agent_usage::http::{FetchUsage, ReqwestUsage};
 use cli_agent_usage::keychain::{
-    parse_claude_token, plan_token_read, read_claude_token, should_read_keychain, ClaudeToken,
-    KeychainTrust, MacKeychain, ReadSecret, TokenReadPlan, CLAUDE_SERVICE,
+    acquire_claude_token, should_read_keychain, ClaudeToken, MacKeychain, TokenAcquisition,
 };
 use cli_agent_usage::{
     claude_plan_cache, fetch_plan_for_token_outcome, scan_local, snapshot_cache, Caches, Paths,
@@ -214,13 +213,12 @@ impl CliAgentUsageModel {
 /// `enabled` is false the Keychain is never read at all and the plan gauges
 /// clear.
 ///
-/// Prompt policy: before any read the poller has decided on its own, it
-/// probes the item's ACL (metadata-only, never prompts) and reads only when
-/// the read is provably silent. When the ACL would make macOS raise its
-/// credential prompt — old native-API readers can rewrite the item's
-/// partition list out from under us — the poller instead publishes
-/// `plan_needs_authorization` and goes quiet; the widget's Authorize click
-/// (the `authorize` flag) is the only thing that sanctions a prompting read.
+/// Prompt policy: reads the poller decides on its own first probe the item's
+/// ACL and proceed only when the read is provably silent. A metadata probe has
+/// a hard deadline and is retried on the normal backoff, so temporary Keychain
+/// trouble cannot strand the UI. The widget's Authorize click (the `authorize`
+/// flag) bypasses that probe and is the only thing that sanctions a prompting
+/// read.
 fn producer_loop(
     paths: Paths,
     tx: async_channel::Sender<ProducerUpdate>,
@@ -232,9 +230,9 @@ fn producer_loop(
     let fetch = ReqwestUsage;
     let mut cached_token: Option<ClaudeToken> = None;
     let mut last_read_ms: Option<i64> = None;
-    // Sticky "reading would prompt": while set, the poller never touches the
-    // Keychain on its own. Cleared by disabling the gauges or by a gesture
-    // read that yields a secret.
+    // Whether the most recent bounded attempt needs a user-sanctioned read.
+    // This is intentionally non-sticky: background ticks re-probe on the
+    // normal backoff so a repaired/unlocked Keychain self-heals.
     let mut needs_authorization = false;
 
     // Stale-while-revalidate: the widget hides until a snapshot has data, and
@@ -290,32 +288,25 @@ fn producer_loop(
                 now_ms,
                 REREAD_BACKOFF_MS,
             );
-            if gesture || (!needs_authorization && read_due) {
-                let trust = keychain.probe_trust(CLAUDE_SERVICE, &paths.os_account);
-                match plan_token_read(trust, gesture) {
-                    TokenReadPlan::ReadAllowingPrompt | TokenReadPlan::ReadSilently => {
-                        let secret = keychain.read(CLAUDE_SERVICE, &paths.os_account);
-                        // The item exists, so a read yielding no secret means
-                        // the credential prompt was denied/cancelled (a silent
-                        // read either succeeds or couldn't have prompted): go
-                        // quiet until the next gesture instead of re-prompting
-                        // on a timer. A secret that fails to parse is not an
-                        // authorization problem; retry on the normal backoff.
-                        needs_authorization = secret.is_none();
-                        cached_token = secret.as_deref().and_then(parse_claude_token);
+            if gesture || read_due {
+                let acquisition = acquire_claude_token(&keychain, &paths.os_account, gesture);
+                authorized_token = gesture && matches!(&acquisition, TokenAcquisition::Token(_));
+                match acquisition {
+                    TokenAcquisition::Token(token) => {
+                        cached_token = Some(token);
+                        needs_authorization = false;
                     }
-                    TokenReadPlan::SkipItemMissing => {
+                    TokenAcquisition::ItemMissing | TokenAcquisition::RetryLater => {
                         cached_token = None;
                         needs_authorization = false;
                     }
-                    TokenReadPlan::SkipNeedsAuthorization => {
+                    TokenAcquisition::NeedsAuthorization => {
                         cached_token = None;
                         needs_authorization = true;
                     }
                 }
                 last_read_ms = Some(now_ms);
                 authorization_attempt_finished = gesture;
-                authorized_token = gesture && cached_token.is_some();
             }
 
             last_plan = if needs_authorization {
@@ -335,17 +326,28 @@ fn producer_loop(
                     // Claude Code may rotate a still-nominally-valid token. A 401
                     // is the one signal that our cached copy is no longer usable;
                     // boundedly re-read the Keychain and retry only when the token
-                    // actually changed — and only when the ACL proves the re-read
-                    // cannot prompt.
+                    // actually changed. The shared acquisition path still proves
+                    // this background re-read silent and applies hard deadlines.
                     if matches!(outcome, PlanFetchOutcome::Unauthorized)
                         && last_read_ms
                             .map(|last| now_ms.saturating_sub(last) >= REREAD_BACKOFF_MS)
                             .unwrap_or(true)
-                        && keychain.probe_trust(CLAUDE_SERVICE, &paths.os_account)
-                            == KeychainTrust::Trusted
                     {
                         let refreshed =
-                            read_claude_token(&keychain as &dyn ReadSecret, &paths.os_account);
+                            match acquire_claude_token(&keychain, &paths.os_account, false) {
+                                TokenAcquisition::Token(token) => {
+                                    needs_authorization = false;
+                                    Some(token)
+                                }
+                                TokenAcquisition::ItemMissing | TokenAcquisition::RetryLater => {
+                                    needs_authorization = false;
+                                    None
+                                }
+                                TokenAcquisition::NeedsAuthorization => {
+                                    needs_authorization = true;
+                                    None
+                                }
+                            };
                         let changed = match (&cached_token, &refreshed) {
                             (Some(old), Some(new)) => old.access_token != new.access_token,
                             (None, Some(_)) => true,
@@ -368,7 +370,7 @@ fn producer_loop(
                     }
                     outcome
                 };
-                if authorized_token {
+                let refreshed_plan = if authorized_token {
                     claude_plan_cache::refresh_shared_after_authorization(
                         &paths.snapshot_cache,
                         now,
@@ -376,6 +378,14 @@ fn producer_loop(
                     )
                 } else {
                     claude_plan_cache::refresh_shared(&paths.snapshot_cache, now, fetch_plan)
+                };
+                if needs_authorization {
+                    // A 401-triggered refresh may discover that the current
+                    // credential now needs a gesture. Never leave a stale plan
+                    // beside the Authorize affordance.
+                    None
+                } else {
+                    refreshed_plan
                 }
             };
         }

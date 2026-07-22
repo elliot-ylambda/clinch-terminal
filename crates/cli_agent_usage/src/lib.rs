@@ -546,8 +546,8 @@ mod tests {
     fn refresh_is_fail_soft_with_no_files_and_no_token() {
         struct NoSecret;
         impl crate::keychain::ReadSecret for NoSecret {
-            fn read(&self, _: &str, _: &str) -> Option<String> {
-                None
+            fn read(&self, _: &str, _: &str) -> crate::keychain::SecretRead {
+                crate::keychain::SecretRead::ItemMissing
             }
         }
         struct NoFetch;
@@ -576,8 +576,8 @@ mod tests {
 
         struct Secret(&'static str);
         impl ReadSecret for Secret {
-            fn read(&self, _: &str, _: &str) -> Option<String> {
-                Some(self.0.to_string())
+            fn read(&self, _: &str, _: &str) -> crate::keychain::SecretRead {
+                crate::keychain::SecretRead::Secret(self.0.to_string())
             }
         }
         struct Fetch(Result<&'static str, &'static str>);
@@ -737,15 +737,15 @@ mod tests {
 
         struct NoSecret;
         impl ReadSecret for NoSecret {
-            fn read(&self, _: &str, _: &str) -> Option<String> {
-                None
+            fn read(&self, _: &str, _: &str) -> crate::keychain::SecretRead {
+                crate::keychain::SecretRead::ItemMissing
             }
         }
         struct Secret;
         impl ReadSecret for Secret {
-            fn read(&self, _: &str, _: &str) -> Option<String> {
+            fn read(&self, _: &str, _: &str) -> crate::keychain::SecretRead {
                 // Non-expired token blob (expiresAt far in the future).
-                Some(
+                crate::keychain::SecretRead::Secret(
                     r#"{"claudeAiOauth":{"accessToken":"tok","expiresAt":95617584000000}}"#
                         .to_string(),
                 )
