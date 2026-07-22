@@ -1,7 +1,5 @@
 //! Read Claude Code's OAuth token from the OS secret store (macOS Keychain).
 
-use serde::Deserialize;
-
 #[cfg(target_os = "macos")]
 use std::io::{self, Read};
 #[cfg(target_os = "macos")]
@@ -13,6 +11,7 @@ use std::time::Duration;
 
 #[cfg(target_os = "macos")]
 use instant::Instant;
+use serde::Deserialize;
 
 pub const CLAUDE_SERVICE: &str = "Claude Code-credentials";
 
@@ -472,8 +471,7 @@ fn read_security_secret(service: &str, account: &str, timeout: Duration) -> Secr
 #[cfg(target_os = "macos")]
 mod native_acl {
     use std::ffi::{c_char, c_void};
-    use std::ptr;
-    use std::slice;
+    use std::{ptr, slice};
 
     use core_foundation_sys::array::{CFArrayGetCount, CFArrayGetValueAtIndex, CFArrayRef};
     use core_foundation_sys::base::{CFEqual, CFRelease, CFTypeRef, OSStatus};
@@ -1015,9 +1013,9 @@ mod tests {
 
         use instant::Instant;
 
+        use super::super::native_acl::partition_allows_apple_tools;
         use super::super::{
-            keychain_path_from_find_stdout, native_acl::partition_allows_apple_tools,
-            output_with_timeout, secret_from_security_stdout,
+            keychain_path_from_find_stdout, output_with_timeout, secret_from_security_stdout,
         };
 
         #[test]
