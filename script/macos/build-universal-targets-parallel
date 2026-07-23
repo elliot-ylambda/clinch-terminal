@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Build the native app/schema binaries and the secondary-architecture app
-# binary concurrently when the host has enough CPU and memory.
+# binary concurrently when the host has enough CPU and memory. Cargo holds a
+# lock for an entire target directory while building, so the secondary target
+# uses its own persistent Cargo root. Its finished artifacts are staged back
+# into the canonical target tree for the existing bundling/lipo code.
 #
 # Exit status 2 means the guard selected the sequential fallback. Any other
 # nonzero status is a real build failure.
@@ -56,26 +59,86 @@ JOBS_PER_ARCH="${CLINCH_PARALLEL_ARCH_JOBS:-$default_jobs}"
 [[ "$JOBS_PER_ARCH" =~ ^[1-9][0-9]*$ ]] \
   || { echo "CLINCH_PARALLEL_ARCH_JOBS must be positive" >&2; exit 64; }
 
+resolve_target_dir() {
+  local target_dir="$1"
+  if [[ "$target_dir" != /* ]]; then
+    target_dir="$WORKSPACE_ROOT/$target_dir"
+  fi
+  mkdir -p "$target_dir"
+  (cd "$target_dir" && pwd -P)
+}
+
+BASE_TARGET_DIR="$(resolve_target_dir "${CARGO_TARGET_DIR:-target}")"
+ADDITIONAL_TARGET_DIR="$(resolve_target_dir \
+  "${CLINCH_PARALLEL_ARCH_TARGET_DIR:-$BASE_TARGET_DIR/parallel-arch-cache/$ADDITIONAL_TARGET}")"
+if [[ "$BASE_TARGET_DIR" == "$ADDITIONAL_TARGET_DIR" ]]; then
+  echo "Parallel architecture builds require distinct Cargo target directories" >&2
+  exit 64
+fi
+
+PROFILE_DIR="$PROFILE"
+[[ "$PROFILE" == dev ]] && PROFILE_DIR=debug
+
+# Preserve the already-warm secondary-architecture cache when upgrading from
+# the former shared-target implementation. APFS clone copies are copy-on-write,
+# so this one-time migration is fast and does not duplicate unchanged data.
+if [[ ! -d "$ADDITIONAL_TARGET_DIR/$ADDITIONAL_TARGET/$PROFILE_DIR" ]]; then
+  for cache_entry in "$PROFILE_DIR" "$ADDITIONAL_TARGET"; do
+    source_path="$BASE_TARGET_DIR/$cache_entry"
+    destination_path="$ADDITIONAL_TARGET_DIR/$cache_entry"
+    if [[ -d "$source_path" && ! -e "$destination_path" ]]; then
+      echo "Seeding isolated $ADDITIONAL_TARGET cache from $source_path"
+      cp -cR "$source_path" "$destination_path"
+    fi
+  done
+fi
+
 LOG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/clinch-parallel-build.XXXXXX")"
+default_pid=
+additional_pid=
 cleanup() {
+  for pid in "$default_pid" "$additional_pid"; do
+    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+    fi
+  done
   rm -rf "$LOG_DIR"
 }
 trap cleanup EXIT
 
 echo "Building $DEFAULT_TARGET and $ADDITIONAL_TARGET concurrently ($JOBS_PER_ARCH Cargo jobs each)."
+echo "Cargo target directories:"
+echo "  $DEFAULT_TARGET: $BASE_TARGET_DIR"
+echo "  $ADDITIONAL_TARGET: $ADDITIONAL_TARGET_DIR"
+wall_start="$(date +%s)"
 (
   cd "$WORKSPACE_ROOT/app"
-  cargo build --profile "$PROFILE" \
-    --bin "$APP_BIN" --bin generate_settings_schema \
-    --target "$DEFAULT_TARGET" --features "$FEATURES" --jobs "$JOBS_PER_ARCH"
+  build_start="$(date +%s)"
+  if CARGO_TARGET_DIR="$BASE_TARGET_DIR" cargo build --profile "$PROFILE" \
+      --bin "$APP_BIN" --bin generate_settings_schema \
+      --target "$DEFAULT_TARGET" --features "$FEATURES" --jobs "$JOBS_PER_ARCH"; then
+    build_status=0
+  else
+    build_status=$?
+  fi
+  echo "$(($(date +%s) - build_start))" > "$LOG_DIR/default.seconds"
+  exit "$build_status"
 ) > "$LOG_DIR/default.log" 2>&1 &
 default_pid=$!
 
 (
   cd "$WORKSPACE_ROOT/app"
-  cargo build --profile "$PROFILE" \
-    --bin "$APP_BIN" \
-    --target "$ADDITIONAL_TARGET" --features "$FEATURES" --jobs "$JOBS_PER_ARCH"
+  build_start="$(date +%s)"
+  if CARGO_TARGET_DIR="$ADDITIONAL_TARGET_DIR" cargo build --profile "$PROFILE" \
+      --bin "$APP_BIN" \
+      --target "$ADDITIONAL_TARGET" --features "$FEATURES" --jobs "$JOBS_PER_ARCH"; then
+    build_status=0
+  else
+    build_status=$?
+  fi
+  echo "$(($(date +%s) - build_start))" > "$LOG_DIR/additional.seconds"
+  exit "$build_status"
 ) > "$LOG_DIR/additional.log" 2>&1 &
 additional_pid=$!
 
@@ -84,10 +147,39 @@ additional_status=0
 wait "$default_pid" || default_status=$?
 wait "$additional_pid" || additional_status=$?
 
-cat "$LOG_DIR/default.log"
-cat "$LOG_DIR/additional.log"
-
 if (( default_status != 0 || additional_status != 0 )); then
+  cat "$LOG_DIR/default.log"
+  cat "$LOG_DIR/additional.log"
   echo "Parallel architecture build failed (default=$default_status, additional=$additional_status)." >&2
   exit 1
+fi
+
+default_seconds="$(<"$LOG_DIR/default.seconds")"
+additional_seconds="$(<"$LOG_DIR/additional.seconds")"
+wall_seconds="$(($(date +%s) - wall_start))"
+echo "Architecture build timings: $DEFAULT_TARGET=${default_seconds}s, $ADDITIONAL_TARGET=${additional_seconds}s, wall=${wall_seconds}s"
+grep -E 'Finished .* profile' "$LOG_DIR/default.log" | tail -1 || true
+grep -E 'Finished .* profile' "$LOG_DIR/additional.log" | tail -1 || true
+
+additional_output_dir="$ADDITIONAL_TARGET_DIR/$ADDITIONAL_TARGET/$PROFILE_DIR"
+canonical_output_dir="$BASE_TARGET_DIR/$ADDITIONAL_TARGET/$PROFILE_DIR"
+additional_binary="$additional_output_dir/$APP_BIN"
+if [[ ! -f "$additional_binary" ]]; then
+  echo "Missing completed $ADDITIONAL_TARGET binary: $additional_binary" >&2
+  exit 1
+fi
+
+mkdir -p "$canonical_output_dir"
+staged_binary="$canonical_output_dir/.$APP_BIN.clinch-stage.$$"
+cp -p "$additional_binary" "$staged_binary"
+mv -f "$staged_binary" "$canonical_output_dir/$APP_BIN"
+
+additional_dsym="$additional_output_dir/$APP_BIN.dSYM"
+canonical_dsym="$canonical_output_dir/$APP_BIN.dSYM"
+if [[ -e "$additional_dsym" ]]; then
+  additional_dsym="$(realpath "$additional_dsym")"
+  if [[ -e "$canonical_dsym" || -L "$canonical_dsym" ]]; then
+    rm -rf -- "$canonical_dsym"
+  fi
+  ln -s "$additional_dsym" "$canonical_dsym"
 fi

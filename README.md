@@ -243,9 +243,12 @@ revalidates existing candidate or staged artifacts and skips completed build pha
 checks still pass. Set `CLINCH_RELEASE_RESUME=0` to force a fresh run.
 
 On hosts with at least 32 GiB of RAM and 8 logical CPUs, Intel and Apple Silicon builds run in
-parallel with half of the Cargo job budget assigned to each architecture. Smaller hosts fall back
-to sequential builds. Set `CLINCH_PARALLEL_ARCH_BUILDS=0` to force sequential builds or `=1` to
-force parallel builds; `CLINCH_PARALLEL_ARCH_JOBS` controls the per-architecture Cargo job count.
+parallel with half of the Cargo job budget assigned to each architecture. The secondary target uses
+its own persistent Cargo root under `target/release-worktree-cache/parallel-arch-cache/` so Cargo's
+target-directory lock cannot silently serialize the builds; its final binary and dSYM are staged
+back into the canonical target tree for universal bundling. Smaller hosts fall back to sequential
+builds. Set `CLINCH_PARALLEL_ARCH_BUILDS=0` to force sequential builds or `=1` to force parallel
+builds; `CLINCH_PARALLEL_ARCH_JOBS` controls the per-architecture Cargo job count.
 The native build also produces the settings-schema generator, which bundling executes directly
 instead of launching a second release-LTO Cargo build. The universal artifact verifier always
 checks that both Intel and Apple Silicon slices are present.
