@@ -180,23 +180,27 @@ fn project_command_count_excludes_cli_agent_sessions_and_non_running_commands() 
 #[test]
 fn project_agent_activity_prioritizes_live_work_then_attention_then_done() {
     assert_eq!(
-        project_cli_agent_activity(true, false, true, true),
+        project_cli_agent_activity(true, false, true, true, true),
         ProjectCliAgentActivity::Working
     );
     assert_eq!(
-        project_cli_agent_activity(false, true, false, false),
+        project_cli_agent_activity(false, true, true, false, false),
         ProjectCliAgentActivity::NeedsAttention
     );
     assert_eq!(
-        project_cli_agent_activity(false, false, true, true),
+        project_cli_agent_activity(false, false, false, true, true),
         ProjectCliAgentActivity::NeedsAttention
     );
     assert_eq!(
-        project_cli_agent_activity(false, false, true, false),
+        project_cli_agent_activity(false, false, false, true, false),
         ProjectCliAgentActivity::Done
     );
     assert_eq!(
-        project_cli_agent_activity(false, false, false, false),
+        project_cli_agent_activity(false, false, true, false, false),
+        ProjectCliAgentActivity::Done
+    );
+    assert_eq!(
+        project_cli_agent_activity(false, false, false, false, false),
         ProjectCliAgentActivity::Idle
     );
 }

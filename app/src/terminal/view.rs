@@ -3057,6 +3057,17 @@ fn cli_agent_history_menu_item_fields(
         )
 }
 
+/// Whether a PTY write represents a user interrupt gesture for a CLI agent turn.
+///
+/// Agent TUIs can enable the Kitty keyboard protocol's disambiguation mode. In that mode a
+/// physical Escape key is encoded as `CSI 27 u` instead of the legacy single ESC byte.
+fn is_cli_agent_interrupt_sequence(bytes: &[u8]) -> bool {
+    matches!(
+        bytes,
+        [escape_sequences::C0::ESC] | [escape_sequences::C0::ETX]
+    ) || bytes == b"\x1b[27u"
+}
+
 fn cli_agent_history_label(
     history: &AgentPromptHistory,
     load_state: &PromptHistoryLoadState,
@@ -9381,14 +9392,9 @@ impl TerminalView {
         // so this is a no-op for that path.
         self.cancel_auto_continue_on_user_input(ctx);
 
-        // A lone Esc or Ctrl-C is the interrupt gesture for agent TUIs (multi-byte key
-        // encodings like arrow keys arrive as a single larger write, so they never match).
-        // Neither Claude Code nor Codex fires a hook for an aborted turn, so the keystroke
-        // itself is the only signal that the in-flight turn ended.
-        if matches!(
-            &bytes[..],
-            [escape_sequences::C0::ESC] | [escape_sequences::C0::ETX]
-        ) {
+        // Neither Claude Code nor Codex fires a hook for an aborted turn, so the interrupt
+        // keystroke itself is the only signal that the in-flight turn ended.
+        if is_cli_agent_interrupt_sequence(&bytes) {
             CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions_model, ctx| {
                 sessions_model
                     .mark_project_cli_agent_turn_interrupted_from_user_input(self.view_id, ctx);

@@ -6206,6 +6206,51 @@ fn raw_terminal_input_does_not_mark_idle_cli_agents_as_working() {
     })
 }
 
+#[test]
+fn kitty_escape_marks_a_working_cli_agent_turn_interrupted() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let terminal = add_window_with_terminal(&mut app, None);
+
+        terminal.update(&mut app, |view, ctx| {
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                sessions.set_session(
+                    view.view_id,
+                    CLIAgentSession {
+                        agent: CLIAgent::Codex,
+                        status: CLIAgentSessionStatus::InProgress,
+                        session_context: CLIAgentSessionContext::default(),
+                        input_state: CLIAgentInputState::Closed,
+                        should_auto_toggle_input: false,
+                        listener: None,
+                        remote_host: None,
+                        plugin_version: None,
+                        draft_text: None,
+                        custom_command_prefix: None,
+                        received_rich_notification: false,
+                        has_observed_turn_activity: true,
+                        turn_interrupted_by_user: false,
+                        prompt_history: Default::default(),
+                        prompt_history_load_state: Default::default(),
+                        prompt_history_generation: 0,
+                    },
+                    ctx,
+                );
+            });
+
+            // Kitty keyboard disambiguation encodes the physical Escape key as CSI 27 u.
+            view.write_user_bytes_to_pty(b"\x1b[27u".to_vec(), ctx);
+
+            let session = CLIAgentSessionsModel::as_ref(ctx)
+                .session(view.view_id)
+                .expect("CLI agent session should remain registered");
+            assert!(!session.is_actively_working());
+            assert!(matches!(session.status, CLIAgentSessionStatus::Success));
+            assert!(session.turn_interrupted_by_user);
+        });
+    })
+}
+
 /// Verifies that Ctrl-G closes CLI agent rich input when dispatched from the
 /// focused editor context. This is a regression test for #9286 where the
 /// keybinding only matched the terminal context, not the embedded editor.

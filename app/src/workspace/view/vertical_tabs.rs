@@ -404,6 +404,7 @@ fn vertical_tab_cli_agent_activity(
     Some(project_cli_agent_activity(
         session.is_actively_working(),
         matches!(session.status, CLIAgentSessionStatus::Blocked { .. }),
+        session.turn_interrupted_by_user,
         notifications.has_unread_completed_project_cli_agent_for_terminal_view(terminal_view.id()),
         notifications.has_other_unread_project_activity_for_terminal_view(terminal_view.id()),
     ))

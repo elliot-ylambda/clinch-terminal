@@ -1338,6 +1338,7 @@ pub(crate) struct ProjectCliAgentSummary {
 fn project_cli_agent_activity(
     is_working: bool,
     is_blocked: bool,
+    was_interrupted_by_user: bool,
     has_unread_completed: bool,
     has_other_unread: bool,
 ) -> ProjectCliAgentActivity {
@@ -1345,7 +1346,7 @@ fn project_cli_agent_activity(
         ProjectCliAgentActivity::Working
     } else if is_blocked || has_other_unread {
         ProjectCliAgentActivity::NeedsAttention
-    } else if has_unread_completed {
+    } else if was_interrupted_by_user || has_unread_completed {
         ProjectCliAgentActivity::Done
     } else {
         ProjectCliAgentActivity::Idle
@@ -22328,6 +22329,7 @@ impl Workspace {
                 let activity = project_cli_agent_activity(
                     session.is_actively_working(),
                     matches!(session.status, CLIAgentSessionStatus::Blocked { .. }),
+                    session.turn_interrupted_by_user,
                     has_unread_completed,
                     has_other_unread,
                 );
