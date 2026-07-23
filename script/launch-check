@@ -83,7 +83,9 @@ echo "==> Stable Clinch build configuration"
 cargo check --locked --bin stable
 
 echo "==> Shipped component tests"
-cargo nextest run --locked -p warp -p warpui -p cli_agent_usage
+cargo nextest run --locked -p warp -p warpui -p cli_agent_usage \
+  --no-fail-fast --failure-output immediate-final --status-level fail \
+  --show-progress none
 
 echo "==> Shipped component lints"
 # Do not select the inherited dev/preview binaries: they require Warp's private channel config

@@ -27,10 +27,11 @@ set -euo pipefail
 grep -Fq shared-cache target/cache-marker
 touch "$CLINCH_RELEASE_CALLER_ROOT/concurrent-edit"
 [[ -z "$(git status --porcelain)" ]]
+pwd -P >> "$CLINCH_RELEASE_CALLER_ROOT/release-worktree-paths"
 printf '%s\n' "$CLINCH_RELEASE_PINNED_COMMIT" > "$CLINCH_RELEASE_CALLER_ROOT/released-commit"
 STUB
 chmod +x "$FIXTURE/script/"*
-printf '/target\n/released-commit\n' > "$FIXTURE/.gitignore"
+printf '/target\n/concurrent-edit\n/released-commit\n/release-worktree-paths\n' > "$FIXTURE/.gitignore"
 printf 'fixture\n' > "$FIXTURE/tracked"
 git -C "$FIXTURE" add .
 git -C "$FIXTURE" commit -q -m fixture
@@ -38,10 +39,13 @@ mkdir -p "$FIXTURE/target"
 printf 'shared-cache\n' > "$FIXTURE/target/cache-marker"
 
 "$FIXTURE/script/release-from-clean-worktree" > "$TMP/output.log"
+"$FIXTURE/script/release-from-clean-worktree" >> "$TMP/output.log"
 
 grep -Fq "$(git -C "$FIXTURE" rev-parse HEAD)" "$FIXTURE/released-commit"
 [[ -f "$FIXTURE/concurrent-edit" ]]
 [[ "$(git -C "$FIXTURE" worktree list --porcelain | grep -c '^worktree ')" == 1 ]]
+[[ "$(wc -l < "$FIXTURE/release-worktree-paths" | tr -d ' ')" == 2 ]]
+[[ "$(sort -u "$FIXTURE/release-worktree-paths" | wc -l | tr -d ' ')" == 1 ]]
 grep -Fq 'from an isolated clean worktree' "$TMP/output.log"
 
 echo "PASS"

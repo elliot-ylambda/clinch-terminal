@@ -220,9 +220,10 @@ before the first release; `make release` checks every required command, signing 
 40 GiB of free space before starting the expensive gate.
 
 Run `make release` from a clean, current `main` checkout. It selects the next version, records the
-exact commit, and creates a detached worktree pinned to that commit. The worktree shares the
-ignored `target` directory for incremental Cargo artifacts, but edits made in the caller's checkout
-after the release starts cannot dirty or change the release source. The command runs the full local
+exact commit, and creates a detached worktree pinned to that commit at a stable per-repository path.
+The worktree shares the ignored `target` directory, and its stable source path keeps incremental
+Cargo fingerprints reusable across releases. Edits made in the caller's checkout after the release
+starts cannot dirty or change the release source. The command runs the full local
 gate, builds and verifies both macOS architectures, generates a CycloneDX SBOM, a vendored
 offline-buildable Corresponding Source archive, and signed local provenance, then assembles the
 exact signed asset set under `target/release-stage/<version>/`.

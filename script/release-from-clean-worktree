@@ -17,8 +17,14 @@ COMMIT_SHA="$(git rev-parse HEAD)"
 SHARED_TARGET="$ROOT/target"
 mkdir -p "$SHARED_TARGET"
 
-WORKTREE_PARENT="$(mktemp -d "${TMPDIR:-/tmp}/clinch-release-worktree.XXXXXX")"
+ROOT_KEY="$(printf '%s' "$ROOT" | cksum | awk '{print $1}')"
+WORKTREE_PARENT="${TMPDIR:-/tmp}/clinch-release-worktree.${UID:-user}.$ROOT_KEY"
 WORKTREE_ROOT="$WORKTREE_PARENT/repo"
+
+if ! mkdir "$WORKTREE_PARENT"; then
+  echo "local release failed: another release worktree is active at $WORKTREE_PARENT" >&2
+  exit 1
+fi
 
 cleanup() {
   local status=$?
