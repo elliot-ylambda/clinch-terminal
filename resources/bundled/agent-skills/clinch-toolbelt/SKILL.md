@@ -3,7 +3,7 @@ name: clinch-toolbelt
 description: Add, edit, or remove quick-insert buttons in the Clinch terminal's footer toolbelts. Use when the user asks for a new Clinch button, quick-insert button, footer or toolbelt button, or wants to change what a Clinch footer button inserts — for the Claude Code/Codex agent footer or the plain terminal footer.
 ---
 
-<!-- managed-by: Clinch; version: 1.2.0 -->
+<!-- managed-by: Clinch; version: 1.3.0 -->
 
 # Clinch toolbelt quick-insert buttons
 
@@ -87,6 +87,8 @@ left = [
   "transfer_agent",
   { custom_insert = { label = "/codex", text = "/codex" } },
   { custom_insert = { label = "Make No Mistakes", text = "Do it all for me. I'm stepping away. Don't make any mistakes." } },
+  { custom_insert = { label = "Create a Plan", text = "Create a Plan" } },
+  { custom_insert = { label = "Build w/ Sub-agents", text = "Build w/ Sub-agents" } },
   { custom_insert = { label = "Create a PR", text = "Create a PR, then merge main into this PR" } },
   { custom_insert = { label = "Worktree-Build", text = "OK go into an isolated work tree. Plan this out, then implement it and create a pull request." } },
   { custom_insert = { label = "Review w/ Codex Sol Max", text = "Review w/ Codex Sol Max" } },

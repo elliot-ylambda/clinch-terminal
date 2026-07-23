@@ -165,7 +165,7 @@ fn agent_transfer_is_a_default_cli_host_control() {
 fn cli_default_left_includes_expected_quick_inserts() {
     let items = AgentToolbarItemKind::cli_default_left();
     assert_eq!(
-        &items[5..13],
+        &items[5..15],
         &[
             AgentToolbarItemKind::CustomInsert {
                 label: "/codex".to_owned(),
@@ -174,6 +174,14 @@ fn cli_default_left_includes_expected_quick_inserts() {
             AgentToolbarItemKind::CustomInsert {
                 label: "Make No Mistakes".to_owned(),
                 text: "Do it all for me. I'm stepping away. Don't make any mistakes.".to_owned(),
+            },
+            AgentToolbarItemKind::CustomInsert {
+                label: "Create a Plan".to_owned(),
+                text: "Create a Plan".to_owned(),
+            },
+            AgentToolbarItemKind::CustomInsert {
+                label: "Build w/ Sub-agents".to_owned(),
+                text: "Build w/ Sub-agents".to_owned(),
             },
             AgentToolbarItemKind::CustomInsert {
                 label: "Create a PR".to_owned(),
