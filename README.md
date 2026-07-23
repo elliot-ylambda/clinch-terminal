@@ -228,6 +228,9 @@ change the release source. The command runs the full local
 gate, builds and verifies both macOS architectures, generates a CycloneDX SBOM, a vendored
 offline-buildable Corresponding Source archive, and signed local provenance, then assembles the
 exact signed asset set under `target/release-worktree-cache/release-stage/<version>/`.
+The release-only Nextest profile permits up to 120 seconds for macOS UI tests whose first system-font
+scan can consume most of the stricter 60-second local timeout; test assertions and selection are
+unchanged.
 After a version-and-commit-specific publication confirmation,
 it pushes the signed tag, creates or refreshes a private draft release, downloads the uploaded
 assets into a fresh directory, verifies them again, and publishes the draft. The command does not

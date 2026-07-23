@@ -84,6 +84,7 @@ cargo check --locked --bin stable
 
 echo "==> Shipped component tests"
 cargo nextest run --locked -p warp -p warpui -p cli_agent_usage \
+  --profile clinch-release \
   --no-fail-fast --failure-output immediate-final --status-level fail \
   --show-progress none
 
