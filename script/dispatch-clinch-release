@@ -15,8 +15,16 @@ ALLOWED_SIGNERS="$ROOT/resources/release/clinch-release-allowed-signers"
 MINIMUM_FREE_KIB=$((40 * 1024 * 1024))
 GH_RETRY_ATTEMPTS="${CLINCH_GH_RETRY_ATTEMPTS:-12}"
 GH_RETRY_DELAY_SECONDS="${CLINCH_GH_RETRY_DELAY_SECONDS:-5}"
+ISOLATED_WORKTREE="${CLINCH_RELEASE_ISOLATED_WORKTREE:-0}"
+PINNED_COMMIT="${CLINCH_RELEASE_PINNED_COMMIT:-}"
+RESUME_ENABLED="${CLINCH_RELEASE_RESUME:-1}"
 
 publish_tmp=
+RESUME_DIR=
+RESUME_STATE=
+RESUME_PHASE=
+RELEASE_STARTED_AT=
+UPDATE_SEQUENCE=
 
 fail() {
   echo "local release failed: $*" >&2
@@ -70,6 +78,61 @@ increment_version() {
   prefix="${version%.*}"
   last="${version##*.}"
   printf '%s.%s\n' "$prefix" "$((10#$last + 1))"
+}
+
+load_resume_state() {
+  local state_commit state_version state_sequence state_started_at state_phase
+  [[ "$RESUME_ENABLED" == 1 && -f "$RESUME_STATE" ]] || return 1
+
+  state_commit="$(jq -er '.commit | strings' "$RESUME_STATE")" || return 1
+  state_version="$(jq -er '.version | strings' "$RESUME_STATE")" || return 1
+  state_sequence="$(jq -er '.sequence | numbers' "$RESUME_STATE")" || return 1
+  state_started_at="$(jq -er '.release_started_at | strings' "$RESUME_STATE")" || return 1
+  state_phase="$(jq -er '.phase | strings' "$RESUME_STATE")" || return 1
+
+  [[ "$state_commit" == "$COMMIT_SHA" ]] || return 1
+  validate_version "$state_version" || return 1
+  [[ "$state_sequence" =~ ^[0-9]+$ && "$state_sequence" -gt 0 ]] || return 1
+  [[ "$state_started_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] \
+    || return 1
+  case "$state_phase" in
+    initialized|candidate_verified|stage_verified) ;;
+    *) return 1 ;;
+  esac
+
+  if [[ "$AUTO_VERSION" == 0 && -n "$REQUESTED_VERSION" \
+      && "$REQUESTED_VERSION" != "$state_version" ]]; then
+    echo "Ignoring resumable release $state_version because explicit version $REQUESTED_VERSION was requested."
+    return 1
+  fi
+
+  REQUESTED_VERSION="$state_version"
+  UPDATE_SEQUENCE="$state_sequence"
+  RELEASE_STARTED_AT="$state_started_at"
+  RESUME_PHASE="$state_phase"
+  echo "==> Resuming $REQUESTED_VERSION for ${COMMIT_SHA:0:12} from phase $RESUME_PHASE"
+}
+
+write_resume_state() {
+  local phase="$1" tmp
+  mkdir -p "$RESUME_DIR"
+  tmp="$(mktemp "$RESUME_DIR/state.json.tmp.XXXXXX")"
+  jq -n \
+    --arg commit "$COMMIT_SHA" \
+    --arg version "$REQUESTED_VERSION" \
+    --argjson sequence "$UPDATE_SEQUENCE" \
+    --arg release_started_at "$RELEASE_STARTED_AT" \
+    --arg phase "$phase" \
+    '{schema: 1, commit: $commit, version: $version, sequence: $sequence,
+      release_started_at: $release_started_at, phase: $phase}' > "$tmp"
+  mv "$tmp" "$RESUME_STATE"
+  RESUME_PHASE="$phase"
+}
+
+clear_resume_state() {
+  [[ -n "$RESUME_STATE" ]] || return 0
+  rm -f "$RESUME_STATE"
+  rmdir "$RESUME_DIR" >/dev/null 2>&1 || true
 }
 
 require_command() {
@@ -129,8 +192,14 @@ verify_release_key() {
 }
 
 verify_source_state() {
-  local expected_commit="$1" remote_main
-  [[ "$(git rev-parse --abbrev-ref HEAD)" == main ]] || fail "release checkout is not on main"
+  local expected_commit="$1" remote_main checkout_branch
+  checkout_branch="$(git rev-parse --abbrev-ref HEAD)"
+  if [[ "$ISOLATED_WORKTREE" == 1 ]]; then
+    [[ "$checkout_branch" == HEAD ]] \
+      || fail "isolated release checkout is not detached at its pinned commit"
+  else
+    [[ "$checkout_branch" == main ]] || fail "release checkout is not on main"
+  fi
   [[ -z "$(git status --porcelain)" ]] || fail "release checkout is dirty"
   [[ "$(git rev-parse HEAD)" == "$expected_commit" ]] || fail "release source commit changed"
   [[ "$(git rev-parse "$REMOTE/main")" == "$expected_commit" ]] \
@@ -337,6 +406,10 @@ done
   || fail "authenticated artifacts are fixed to elliot-ylambda/clinch-terminal"
 [[ "$AUTO_VERSION" == 0 || "$AUTO_VERSION" == 1 ]] \
   || fail "CLINCH_AUTO_VERSION must be 0 or 1"
+[[ "$ISOLATED_WORKTREE" == 0 || "$ISOLATED_WORKTREE" == 1 ]] \
+  || fail "CLINCH_RELEASE_ISOLATED_WORKTREE must be 0 or 1"
+[[ "$RESUME_ENABLED" == 0 || "$RESUME_ENABLED" == 1 ]] \
+  || fail "CLINCH_RELEASE_RESUME must be 0 or 1"
 [[ "$GH_RETRY_ATTEMPTS" =~ ^[1-9][0-9]*$ ]] \
   || fail "CLINCH_GH_RETRY_ATTEMPTS must be a positive integer"
 [[ "$GH_RETRY_DELAY_SECONDS" =~ ^[0-9]+$ ]] \
@@ -354,9 +427,20 @@ available_kib="$(df -Pk "$ROOT" | awk 'NR == 2 {print $4}')"
 (( available_kib >= MINIMUM_FREE_KIB )) \
   || fail "at least 40 GiB of free disk space is required for a universal local release"
 
-./script/require-latest-main
-COMMIT_SHA="$(git rev-parse HEAD)"
+if [[ "$ISOLATED_WORKTREE" == 1 ]]; then
+  [[ "$PINNED_COMMIT" =~ ^[0-9a-f]{40}$ ]] \
+    || fail "isolated release is missing a valid pinned commit"
+  COMMIT_SHA="$(git rev-parse HEAD)"
+  [[ "$COMMIT_SHA" == "$PINNED_COMMIT" ]] \
+    || fail "isolated release checkout does not match its pinned commit"
+else
+  ./script/require-latest-main
+  COMMIT_SHA="$(git rev-parse HEAD)"
+fi
 verify_source_state "$COMMIT_SHA"
+RESUME_DIR="target/release-resume/$COMMIT_SHA"
+RESUME_STATE="$RESUME_DIR/state.json"
+load_resume_state || RESUME_PHASE=
 
 latest_release_version="$(
   gh_with_retry api "repos/$REPO/releases?per_page=100" \
@@ -386,57 +470,104 @@ while IFS= read -r remote_version; do
   fi
 done <<< "$remote_versions"
 
-if [[ -z "$REQUESTED_VERSION" || "$REQUESTED_VERSION" == auto ]]; then
-  REQUESTED_VERSION="v0.$(date -u +%Y.%m.%d.%H%M)"
-  AUTO_VERSION=1
-fi
-validate_version "$REQUESTED_VERSION" || fail "invalid version '$REQUESTED_VERSION'"
-if [[ -n "$latest_version" ]] && ! version_is_newer "$REQUESTED_VERSION" "$latest_version"; then
-  if [[ "$AUTO_VERSION" == 1 ]]; then
-    REQUESTED_VERSION="$(increment_version "$latest_version")"
-  else
-    fail "requested version $REQUESTED_VERSION is not newer than $latest_version"
+if [[ -z "$RESUME_PHASE" ]]; then
+  if [[ -z "$REQUESTED_VERSION" || "$REQUESTED_VERSION" == auto ]]; then
+    REQUESTED_VERSION="v0.$(date -u +%Y.%m.%d.%H%M)"
+    AUTO_VERSION=1
+  fi
+  validate_version "$REQUESTED_VERSION" || fail "invalid version '$REQUESTED_VERSION'"
+  if [[ -n "$latest_version" ]] && ! version_is_newer "$REQUESTED_VERSION" "$latest_version"; then
+    if [[ "$AUTO_VERSION" == 1 ]]; then
+      REQUESTED_VERSION="$(increment_version "$latest_version")"
+    else
+      fail "requested version $REQUESTED_VERSION is not newer than $latest_version"
+    fi
+  fi
+else
+  validate_version "$REQUESTED_VERSION" || fail "resumable release has an invalid version"
+  if [[ -n "$latest_version" && "$latest_version" != "$REQUESTED_VERSION" ]] \
+      && version_is_newer "$latest_version" "$REQUESTED_VERSION"; then
+    fail "a newer release or reserved tag ($latest_version) supersedes resumable $REQUESTED_VERSION"
   fi
 fi
 
-echo "==> Running the complete local release gate for ${COMMIT_SHA:0:12}"
-RELEASE_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-make release-check
-verify_source_state "$COMMIT_SHA"
-
-echo "==> Deriving the authenticated update sequence"
-UPDATE_SEQUENCE="$(
-  CLINCH_REPO="$REPO" \
-  CLINCH_ALLOW_NO_PREVIOUS_RELEASE="$ALLOW_NO_PREVIOUS_RELEASE" \
-    ./script/next-clinch-update-sequence
-)"
-[[ "$UPDATE_SEQUENCE" =~ ^[0-9]+$ && "$UPDATE_SEQUENCE" -gt 0 ]] \
-  || fail "sequence helper returned an invalid value"
-
-echo "==> Building and verifying the universal release candidate"
-make _verify \
-  VERSION="$REQUESTED_VERSION" \
-  UPDATE_SEQUENCE="$UPDATE_SEQUENCE" \
-  UNIVERSAL=1 \
-  CLINCH_UPDATE_SIGNING_KEY="$UPDATE_KEY" \
-  CLINCH_RELEASE_SIGNING_KEY="$RELEASE_KEY"
-verify_source_state "$COMMIT_SHA"
-
-echo "==> Assembling signed local release provenance and draft assets"
+[[ -n "$RELEASE_STARTED_AT" ]] \
+  || RELEASE_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 STAGE="target/release-stage/$REQUESTED_VERSION"
-CLINCH_RELEASE_SIGNING_KEY="$RELEASE_KEY" \
-CLINCH_RELEASE_STARTED_AT="$RELEASE_STARTED_AT" \
-./script/assemble-clinch-release-stage \
-  "$REQUESTED_VERSION" "$COMMIT_SHA" "$UPDATE_SEQUENCE"
-./script/verify-clinch-release-stage \
-  "$STAGE/dist" "$REQUESTED_VERSION" "$COMMIT_SHA" "$UPDATE_SEQUENCE"
-verify_source_state "$COMMIT_SHA"
+stage_ready=0
+candidate_ready=0
+
+if [[ "$RESUME_PHASE" == stage_verified ]]; then
+  echo "==> Verifying commit-keyed staged assets before resuming publication"
+  if ./script/verify-clinch-release-stage \
+      "$STAGE/dist" "$REQUESTED_VERSION" "$COMMIT_SHA" "$UPDATE_SEQUENCE"; then
+    stage_ready=1
+  else
+    echo "Cached staged assets are no longer valid; checking the verified candidate cache."
+    RESUME_PHASE=candidate_verified
+  fi
+fi
+
+if [[ "$stage_ready" == 0 && "$RESUME_PHASE" == candidate_verified ]]; then
+  echo "==> Verifying commit-keyed candidate artifacts before resuming assembly"
+  if make _verify-existing \
+      VERSION="$REQUESTED_VERSION" \
+      UPDATE_SEQUENCE="$UPDATE_SEQUENCE" \
+      UNIVERSAL=1; then
+    candidate_ready=1
+  else
+    echo "Cached candidate artifacts are no longer valid; rebuilding them."
+    RESUME_PHASE=initialized
+  fi
+fi
+
+if [[ "$stage_ready" == 0 && "$candidate_ready" == 0 ]]; then
+  echo "==> Running the complete local release gate for ${COMMIT_SHA:0:12}"
+  make release-check
+  verify_source_state "$COMMIT_SHA"
+
+  if [[ -z "$UPDATE_SEQUENCE" ]]; then
+    echo "==> Deriving the authenticated update sequence"
+    UPDATE_SEQUENCE="$(
+      CLINCH_REPO="$REPO" \
+      CLINCH_ALLOW_NO_PREVIOUS_RELEASE="$ALLOW_NO_PREVIOUS_RELEASE" \
+        ./script/next-clinch-update-sequence
+    )"
+    [[ "$UPDATE_SEQUENCE" =~ ^[0-9]+$ && "$UPDATE_SEQUENCE" -gt 0 ]] \
+      || fail "sequence helper returned an invalid value"
+  fi
+  write_resume_state initialized
+
+  echo "==> Building and verifying the universal release candidate"
+  make _verify \
+    VERSION="$REQUESTED_VERSION" \
+    UPDATE_SEQUENCE="$UPDATE_SEQUENCE" \
+    UNIVERSAL=1 \
+    CLINCH_UPDATE_SIGNING_KEY="$UPDATE_KEY" \
+    CLINCH_RELEASE_SIGNING_KEY="$RELEASE_KEY"
+  verify_source_state "$COMMIT_SHA"
+  write_resume_state candidate_verified
+  candidate_ready=1
+fi
+
+if [[ "$stage_ready" == 0 ]]; then
+  echo "==> Assembling signed local release provenance and draft assets"
+  CLINCH_RELEASE_SIGNING_KEY="$RELEASE_KEY" \
+  CLINCH_RELEASE_STARTED_AT="$RELEASE_STARTED_AT" \
+  ./script/assemble-clinch-release-stage \
+    "$REQUESTED_VERSION" "$COMMIT_SHA" "$UPDATE_SEQUENCE"
+  ./script/verify-clinch-release-stage \
+    "$STAGE/dist" "$REQUESTED_VERSION" "$COMMIT_SHA" "$UPDATE_SEQUENCE"
+  verify_source_state "$COMMIT_SHA"
+  write_resume_state stage_verified
+fi
 
 confirm_publication "$REQUESTED_VERSION" "$COMMIT_SHA"
 verify_source_state "$COMMIT_SHA"
 ensure_signed_remote_tag "$REQUESTED_VERSION" "$COMMIT_SHA"
 stage_private_draft "$REQUESTED_VERSION" "$COMMIT_SHA" "$STAGE"
 publish_verified_draft "$REQUESTED_VERSION" "$COMMIT_SHA" "$UPDATE_SEQUENCE"
+clear_resume_state
 
 trap - EXIT
 echo "✓ Locally built, verified, signed, and published $REQUESTED_VERSION."

@@ -220,9 +220,12 @@ before the first release; `make release` checks every required command, signing 
 40 GiB of free space before starting the expensive gate.
 
 Run `make release` from a clean, current `main` checkout. It selects the next version, records the
-exact commit, runs the full local gate, builds and verifies both macOS architectures, generates a
-CycloneDX SBOM, a vendored offline-buildable Corresponding Source archive, and signed local
-provenance, then assembles the exact signed asset set under `target/release-stage/<version>/`.
+exact commit, and creates a detached worktree pinned to that commit. The worktree shares the
+ignored `target` directory for incremental Cargo artifacts, but edits made in the caller's checkout
+after the release starts cannot dirty or change the release source. The command runs the full local
+gate, builds and verifies both macOS architectures, generates a CycloneDX SBOM, a vendored
+offline-buildable Corresponding Source archive, and signed local provenance, then assembles the
+exact signed asset set under `target/release-stage/<version>/`.
 After a version-and-commit-specific publication confirmation,
 it pushes the signed tag, creates or refreshes a private draft release, downloads the uploaded
 assets into a fresh directory, verifies them again, and publishes the draft. The command does not
@@ -232,8 +235,17 @@ Release publication runs no GitHub Actions job. Immediately before publication, 
 rechecks the signed remote tag, current `main`, both manifest signatures, exact asset set and
 digests, SBOM, validation record, local provenance, and monotonic update sequence. It also rejects
 a draft whose metadata changes during or after download. A failure leaves the draft private and
-safe to retry. The universal artifact verifier always checks that both Intel and Apple Silicon
-slices are present.
+safe to retry. Verified progress is stored by commit under `target/release-resume/`: a retry first
+revalidates existing candidate or staged artifacts and skips completed build phases only when those
+checks still pass. Set `CLINCH_RELEASE_RESUME=0` to force a fresh run.
+
+On hosts with at least 32 GiB of RAM and 8 logical CPUs, Intel and Apple Silicon builds run in
+parallel with half of the Cargo job budget assigned to each architecture. Smaller hosts fall back
+to sequential builds. Set `CLINCH_PARALLEL_ARCH_BUILDS=0` to force sequential builds or `=1` to
+force parallel builds; `CLINCH_PARALLEL_ARCH_JOBS` controls the per-architecture Cargo job count.
+The native build also produces the settings-schema generator, which bundling executes directly
+instead of launching a second release-LTO Cargo build. The universal artifact verifier always
+checks that both Intel and Apple Silicon slices are present.
 
 After these changes land on `main`, run `make configure-release-repository` once. It validates both
 workstation key copies before deleting the obsolete GitHub signing secrets and `public-release`

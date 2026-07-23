@@ -440,14 +440,49 @@ rm -R -- "${OUT_DIR:?}/${FINAL_DMG_NAME:?}" || echo "No old dmg to remove"
 ###########################
 
 if [[ "$ARTIFACT" == "app" ]]; then
+  DEFAULT_TARGET_PREBUILT=false
+  UNIVERSAL_TARGETS_PREBUILT=false
+
   if [[ $BUILD_BINARY != true ]]; then
     echo "Skipping binary build due to --skip-build flag"
     export CARGO_BUNDLE_SKIP_BUILD=1
+  else
+    if [[ $UNIVERSAL_BINARY = true ]]; then
+      if "$WORKSPACE_ROOT_DIR/script/macos/build-universal-targets-parallel" \
+          "$CARGO_PROFILE" "$WARP_BIN" "$DEFAULT_TARGET" "$ADDITIONAL_TARGET" \
+          "$FEATURES" "$WORKSPACE_ROOT_DIR"; then
+        DEFAULT_TARGET_PREBUILT=true
+        UNIVERSAL_TARGETS_PREBUILT=true
+      else
+        parallel_status=$?
+        if [[ $parallel_status -ne 2 ]]; then
+          exit "$parallel_status"
+        fi
+        echo "Building architectures sequentially."
+      fi
+    fi
+
+    if [[ $DEFAULT_TARGET_PREBUILT != true ]]; then
+      echo "Building $DEFAULT_TARGET app and settings schema generator with profile $CARGO_PROFILE"
+      pushd app > /dev/null
+      cargo build --profile "$CARGO_PROFILE" \
+        --bin "$WARP_BIN" --bin generate_settings_schema \
+        --target "$DEFAULT_TARGET" --features "$FEATURES"
+      popd > /dev/null
+      DEFAULT_TARGET_PREBUILT=true
+    fi
   fi
 
   pushd app > /dev/null
   echo "Building and bundling $DEFAULT_TARGET for channel $RELEASE_CHANNEL and bundle id $BUNDLE_ID with profile $CARGO_PROFILE"
-  cargo bundle --profile "$CARGO_PROFILE" --bin "$WARP_BIN" --target "$DEFAULT_TARGET" --features "$FEATURES"
+  if [[ $DEFAULT_TARGET_PREBUILT = true ]]; then
+    CARGO_BUNDLE_SKIP_BUILD=1 \
+      cargo bundle --profile "$CARGO_PROFILE" --bin "$WARP_BIN" \
+        --target "$DEFAULT_TARGET" --features "$FEATURES"
+  else
+    cargo bundle --profile "$CARGO_PROFILE" --bin "$WARP_BIN" \
+      --target "$DEFAULT_TARGET" --features "$FEATURES"
+  fi
   popd > /dev/null
 
   /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName $WARP_DISPLAY_NAME" \
@@ -515,7 +550,7 @@ if [[ "$ARTIFACT" == "app" ]]; then
   plutil -insert SMAuthorizedClients -xml "<array><string>$BUNDLE_ID</string></array>" "$BUNDLE_DIR/$WARP_APP_NAME.app/Contents/Info.plist"
 
   if [[ $UNIVERSAL_BINARY = true ]]; then
-      if [[ $BUILD_BINARY = true ]]; then
+      if [[ $BUILD_BINARY = true && $UNIVERSAL_TARGETS_PREBUILT != true ]]; then
           echo "Building $ADDITIONAL_TARGET to include in universal binary"
 
           pushd app > /dev/null
@@ -579,7 +614,15 @@ if [[ "$ARTIFACT" == "app" ]]; then
 
   BUNDLED_RESOURCES_DIR="$BUNDLE_DIR/$WARP_APP_NAME.app/Contents/Resources"
   echo "Preparing bundled resources..."
-  "$WORKSPACE_ROOT_DIR/script/prepare_bundled_resources" "$BUNDLED_RESOURCES_DIR" "$RELEASE_CHANNEL" "$CARGO_PROFILE"
+  SETTINGS_SCHEMA_GENERATOR_PATH="$WORKSPACE_ROOT_DIR/target/$DEFAULT_TARGET/$TARGET_PROFILE_DIR/generate_settings_schema"
+  if [[ -x "$SETTINGS_SCHEMA_GENERATOR_PATH" ]]; then
+    SETTINGS_SCHEMA_GENERATOR="$SETTINGS_SCHEMA_GENERATOR_PATH" \
+      "$WORKSPACE_ROOT_DIR/script/prepare_bundled_resources" \
+        "$BUNDLED_RESOURCES_DIR" "$RELEASE_CHANNEL" "$CARGO_PROFILE"
+  else
+    "$WORKSPACE_ROOT_DIR/script/prepare_bundled_resources" \
+      "$BUNDLED_RESOURCES_DIR" "$RELEASE_CHANNEL" "$CARGO_PROFILE"
+  fi
 
   "$WORKSPACE_ROOT_DIR/script/compile_icon" "$RELEASE_CHANNEL" "$BUNDLE_DIR/$WARP_APP_NAME.app"
 

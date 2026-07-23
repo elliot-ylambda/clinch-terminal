@@ -57,7 +57,8 @@ export RELEASE_NOTES
 
 .DEFAULT_GOAL := help
 .PHONY: help dev dev-app dev-open candidate release update release-check require-latest-main \
-	_require-create-dmg _bundle _package _verify agent-resume-enable configure-release-repository
+	_require-create-dmg _bundle _package _verify _verify-existing agent-resume-enable \
+	configure-release-repository
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -105,11 +106,15 @@ _package: _bundle
 	ssh-keygen -Y sign -f "$(CLINCH_RELEASE_SIGNING_KEY)" -n clinch-install - \
 	  < "$(RELEASE_MANIFEST)" > "$(RELEASE_SSHSIG)"
 
-_verify: _package
+_verify-existing:
 	REQUIRE_NOTARIZATION=0 REQUIRE_UNIVERSAL="$(UNIVERSAL)" \
 	  ./script/verify-clinch-release \
 	  "$(STABLE_BUNDLE)" "$(RELEASE_ZIP)" "$(RELEASE_SHA)" "$(RELEASE_DMG)" "$(VERSION)" \
 	  "$(RELEASE_MANIFEST)" "$(RELEASE_SIGNATURE)" "$(RELEASE_SSHSIG)" "$(UPDATE_SEQUENCE)"
+
+_verify: _package
+	$(MAKE) _verify-existing VERSION="$(VERSION)" UPDATE_SEQUENCE="$(UPDATE_SEQUENCE)" \
+	  UNIVERSAL="$(UNIVERSAL)"
 
 candidate: release-check ## Build and verify a universal candidate without publishing
 	@sequence="$(UPDATE_SEQUENCE)"; \
@@ -123,7 +128,7 @@ release: ## Build, sign, remotely verify, and publish without GitHub Actions
 	  CLINCH_RELEASE_SIGNING_KEY="$(CLINCH_RELEASE_SIGNING_KEY)" \
 	  VERSION="$(VERSION)" \
 	  CLINCH_AUTO_VERSION="$(CLINCH_AUTO_VERSION)" \
-	  ./script/dispatch-clinch-release
+	  ./script/release-from-clean-worktree
 
 update: ## Install the latest authenticated public release (Clinch must be quit)
 	./install.sh

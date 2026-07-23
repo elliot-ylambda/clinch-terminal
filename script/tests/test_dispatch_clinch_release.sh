@@ -458,6 +458,19 @@ if run_release VERIFY_STAGE_FAIL=1 > "$TMP/stage-fail.out" 2>&1; then
   exit 1
 fi
 assert_no_remote_mutation
+: > "$TMP/ops.log"
+: > "$TMP/git.log"
+: > "$TMP/gh.log"
+run_release_tty "PUBLISH $VERSION ${COMMIT:0:12}" > "$TMP/candidate-resume.out"
+grep -Fq "Resuming $VERSION" "$TMP/candidate-resume.out"
+grep -Fq "make _verify-existing VERSION=$VERSION UPDATE_SEQUENCE=$SEQUENCE UNIVERSAL=1" \
+  "$TMP/ops.log"
+if grep -Fq 'make release-check' "$TMP/ops.log" \
+    || grep -Fq "make _verify VERSION=$VERSION" "$TMP/ops.log"; then
+  echo "FAIL: candidate resume reran the source gate or candidate build" >&2
+  exit 1
+fi
+[[ ! -e "$FIXTURE/target/release-resume/$COMMIT/state.json" ]]
 
 reset_state
 if run_release VERSION="$LATEST" > "$TMP/stale.out" 2>&1; then
@@ -475,6 +488,19 @@ fi
 grep -Fq 'publication requires an interactive terminal' "$TMP/noninteractive.out"
 grep -Fq 'assemble-stage' "$TMP/ops.log"
 assert_no_remote_mutation
+: > "$TMP/ops.log"
+: > "$TMP/git.log"
+: > "$TMP/gh.log"
+run_release_tty "PUBLISH $VERSION ${COMMIT:0:12}" > "$TMP/stage-resume.out"
+grep -Fq "from phase stage_verified" "$TMP/stage-resume.out"
+grep -Fq 'Verifying commit-keyed staged assets' "$TMP/stage-resume.out"
+if grep -Fq 'make release-check' "$TMP/ops.log" \
+    || grep -Fq 'make _verify' "$TMP/ops.log" \
+    || grep -Fq 'assemble-stage' "$TMP/ops.log"; then
+  echo "FAIL: staged release resume repeated local build work" >&2
+  exit 1
+fi
+[[ ! -e "$FIXTURE/target/release-resume/$COMMIT/state.json" ]]
 
 reset_state
 touch "$TMP/remote-tag" "$TMP/draft"

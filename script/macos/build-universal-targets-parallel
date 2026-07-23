@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# Build the native app/schema binaries and the secondary-architecture app
+# binary concurrently when the host has enough CPU and memory.
+#
+# Exit status 2 means the guard selected the sequential fallback. Any other
+# nonzero status is a real build failure.
+set -euo pipefail
+
+if [[ $# -ne 6 ]]; then
+  echo "usage: $0 <profile> <app-bin> <default-target> <additional-target> <features> <workspace-root>" >&2
+  exit 64
+fi
+
+PROFILE="$1"
+APP_BIN="$2"
+DEFAULT_TARGET="$3"
+ADDITIONAL_TARGET="$4"
+FEATURES="$5"
+WORKSPACE_ROOT="$6"
+MODE="${CLINCH_PARALLEL_ARCH_BUILDS:-auto}"
+MIN_MEMORY_GIB="${CLINCH_PARALLEL_ARCH_MIN_MEMORY_GIB:-32}"
+MIN_CPUS="${CLINCH_PARALLEL_ARCH_MIN_CPUS:-8}"
+
+[[ "$MIN_MEMORY_GIB" =~ ^[1-9][0-9]*$ ]] \
+  || { echo "CLINCH_PARALLEL_ARCH_MIN_MEMORY_GIB must be positive" >&2; exit 64; }
+[[ "$MIN_CPUS" =~ ^[1-9][0-9]*$ ]] \
+  || { echo "CLINCH_PARALLEL_ARCH_MIN_CPUS must be positive" >&2; exit 64; }
+
+case "$MODE" in
+  1|true|yes) enabled=1 ;;
+  0|false|no) enabled=0 ;;
+  auto)
+    memory_bytes="${CLINCH_PARALLEL_ARCH_MEMORY_BYTES:-$(sysctl -n hw.memsize 2>/dev/null || echo 0)}"
+    logical_cpus="${CLINCH_PARALLEL_ARCH_CPU_COUNT:-$(sysctl -n hw.logicalcpu 2>/dev/null || echo 1)}"
+    [[ "$memory_bytes" =~ ^[0-9]+$ ]] || memory_bytes=0
+    [[ "$logical_cpus" =~ ^[0-9]+$ ]] || logical_cpus=1
+    if (( memory_bytes >= MIN_MEMORY_GIB * 1024 * 1024 * 1024 && logical_cpus >= MIN_CPUS )); then
+      enabled=1
+    else
+      enabled=0
+      echo "Parallel architecture builds disabled by resource guard (${logical_cpus} CPUs, $((memory_bytes / 1024 / 1024 / 1024)) GiB RAM)."
+    fi
+    ;;
+  *)
+    echo "CLINCH_PARALLEL_ARCH_BUILDS must be auto, 1, or 0" >&2
+    exit 64
+    ;;
+esac
+(( enabled == 1 )) || exit 2
+
+logical_cpus="${CLINCH_PARALLEL_ARCH_CPU_COUNT:-$(sysctl -n hw.logicalcpu 2>/dev/null || echo 2)}"
+[[ "$logical_cpus" =~ ^[1-9][0-9]*$ ]] || logical_cpus=2
+default_jobs=$((logical_cpus / 2))
+(( default_jobs >= 1 )) || default_jobs=1
+JOBS_PER_ARCH="${CLINCH_PARALLEL_ARCH_JOBS:-$default_jobs}"
+[[ "$JOBS_PER_ARCH" =~ ^[1-9][0-9]*$ ]] \
+  || { echo "CLINCH_PARALLEL_ARCH_JOBS must be positive" >&2; exit 64; }
+
+LOG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/clinch-parallel-build.XXXXXX")"
+cleanup() {
+  rm -rf "$LOG_DIR"
+}
+trap cleanup EXIT
+
+echo "Building $DEFAULT_TARGET and $ADDITIONAL_TARGET concurrently ($JOBS_PER_ARCH Cargo jobs each)."
+(
+  cd "$WORKSPACE_ROOT/app"
+  cargo build --profile "$PROFILE" \
+    --bin "$APP_BIN" --bin generate_settings_schema \
+    --target "$DEFAULT_TARGET" --features "$FEATURES" --jobs "$JOBS_PER_ARCH"
+) > "$LOG_DIR/default.log" 2>&1 &
+default_pid=$!
+
+(
+  cd "$WORKSPACE_ROOT/app"
+  cargo build --profile "$PROFILE" \
+    --bin "$APP_BIN" \
+    --target "$ADDITIONAL_TARGET" --features "$FEATURES" --jobs "$JOBS_PER_ARCH"
+) > "$LOG_DIR/additional.log" 2>&1 &
+additional_pid=$!
+
+default_status=0
+additional_status=0
+wait "$default_pid" || default_status=$?
+wait "$additional_pid" || additional_status=$?
+
+cat "$LOG_DIR/default.log"
+cat "$LOG_DIR/additional.log"
+
+if (( default_status != 0 || additional_status != 0 )); then
+  echo "Parallel architecture build failed (default=$default_status, additional=$additional_status)." >&2
+  exit 1
+fi

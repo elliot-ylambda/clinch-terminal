@@ -31,6 +31,8 @@ bash -n \
   script/configure-clinch-release-repository \
   script/dispatch-clinch-release \
   script/launch-check \
+  script/release-from-clean-worktree \
+  script/macos/build-universal-targets-parallel \
   script/macos/bundle \
   script/macos/run \
   script/next-clinch-update-sequence \
