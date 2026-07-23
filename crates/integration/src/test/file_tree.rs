@@ -1,3 +1,4 @@
+use pathfinder_geometry::vector::vec2f;
 use regex::Regex;
 use warp::features::FeatureFlag;
 use warp::integration_testing::step::new_step_with_default_assertions;
@@ -5,6 +6,7 @@ use warp::integration_testing::tab::assert_pane_title;
 use warp::integration_testing::terminal::wait_until_bootstrapped_single_pane_for_tab;
 use warp::integration_testing::view_getters::{pane_group_view, workspace_view};
 use warp::workspace::WorkspaceAction;
+use warpui_core::event::{Event, ModifiersState};
 use warpui_core::integration::TestStep;
 use warpui_core::{async_assert, async_assert_eq, App};
 
@@ -25,6 +27,31 @@ fn open_file_tree_panel(app: &mut App) {
             &WorkspaceAction::ToggleProjectExplorer,
         );
     });
+}
+
+fn image_pane_close_button_position(
+    app: &mut App,
+    window_id: warpui_core::WindowId,
+) -> pathfinder_geometry::vector::Vector2F {
+    let pane_group = pane_group_view(app, window_id, 0);
+    let image_pane_id = pane_group.read(app, |pane_group, _ctx| {
+        pane_group
+            .pane_id_from_index(1)
+            .expect("image pane should be present")
+    });
+    let pane_bounds = app
+        .presenter(window_id)
+        .expect("presenter should be present")
+        .borrow()
+        .position_cache()
+        .get_position(&image_pane_id.position_id())
+        .expect("image pane should have a saved position");
+
+    // The close button is the right-most 24px control in the 34px pane header.
+    vec2f(
+        pane_bounds.lower_right().x() - 12.,
+        pane_bounds.origin().y() + 17.,
+    )
 }
 
 /// Test that clicking a file in the file tree opens it in Warp's editor.
@@ -310,6 +337,29 @@ pub fn test_file_tree_opens_image_in_image_pane() -> Builder {
         .with_step(
             new_step_with_default_assertions("Verify image pane title is the file name")
                 .add_assertion(assert_pane_title(0, 1, Regex::new(r"logo\.svg$").unwrap())),
+        )
+        .with_step(
+            new_step_with_default_assertions("Close image pane from its header button")
+                .with_event_fn(|app, window_id| Event::LeftMouseDown {
+                    position: image_pane_close_button_position(app, window_id),
+                    modifiers: ModifiersState::default(),
+                    click_count: 1,
+                    is_first_mouse: false,
+                })
+                .with_event_fn(|app, window_id| Event::LeftMouseUp {
+                    position: image_pane_close_button_position(app, window_id),
+                    modifiers: ModifiersState::default(),
+                })
+                .add_named_assertion("image pane closed", |app, window_id| {
+                    let pane_group = pane_group_view(app, window_id, 0);
+                    pane_group.read(app, |pane_group, _ctx| {
+                        async_assert_eq!(
+                            pane_group.visible_pane_count(),
+                            1,
+                            "Expected only the terminal pane to remain after closing the image pane"
+                        )
+                    })
+                }),
         )
 }
 

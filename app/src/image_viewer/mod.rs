@@ -930,13 +930,10 @@ impl BackingView for ImageView {
             .as_ref()
             .is_some_and(|h| h.is_in_split_pane(app));
 
-        right_row.add_child(render_pane_header_buttons::<ImageViewAction, ()>(
-            ctx,
-            appearance,
-            show_close_button,
-            None,
-            None,
-        ));
+        right_row.add_child(render_pane_header_buttons::<
+            Self::PaneHeaderOverflowMenuAction,
+            Self::CustomAction,
+        >(ctx, appearance, show_close_button, None, None));
 
         let button_count = 4 // zoom: fit, out, 100%, in
             + 1 // backdrop button
