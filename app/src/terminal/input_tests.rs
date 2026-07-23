@@ -1098,6 +1098,72 @@ fn test_history_up() {
 }
 
 #[test]
+fn test_inline_history_up_is_deferred_while_menu_view_is_updating() {
+    let _inline_history_menu = FeatureFlag::InlineHistoryMenu.override_enabled(true);
+
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+
+        let terminal = add_window_with_bootstrapped_terminal(&mut app, None, None).await;
+        let input = terminal.read(&app, |view, _| view.input().clone());
+        let session_id = terminal.read(&app, |view, ctx| {
+            view.active_session()
+                .as_ref(ctx)
+                .session(ctx)
+                .expect("terminal should have an active session")
+                .id()
+        });
+        let now = Local::now();
+        History::handle(&app).update(&mut app, |history, _| {
+            history.append_commands(
+                session_id,
+                vec![
+                    HistoryEntry::command_at_time(
+                        "echo first".to_string(),
+                        now - chrono::Duration::seconds(1),
+                        Some(session_id),
+                        false,
+                    ),
+                    HistoryEntry::command_at_time(
+                        "echo second".to_string(),
+                        now,
+                        Some(session_id),
+                        false,
+                    ),
+                ],
+            );
+        });
+
+        input.update(&mut app, |input, ctx| {
+            input.editor_up(ctx);
+        });
+        input.read(&app, |input, ctx| {
+            assert!(input
+                .suggestions_mode_model
+                .as_ref(ctx)
+                .is_inline_history_menu());
+            assert_eq!(input.buffer_text(ctx), "echo second");
+        });
+
+        let inline_history_menu =
+            input.read(&app, |input, _| input.inline_history_menu_view.clone());
+
+        // Reproduce a macOS History action arriving while an inline-history
+        // subscription has the wrapper view leased. Updating the wrapper
+        // synchronously from `editor_up` used to panic with "Circular view update".
+        inline_history_menu.update(&mut app, |_, ctx| {
+            input.update(ctx, |input, ctx| {
+                input.handle_action(&InputAction::Up, ctx);
+            });
+        });
+
+        input.read(&app, |input, ctx| {
+            assert_eq!(input.buffer_text(ctx), "echo first");
+        });
+    });
+}
+
+#[test]
 fn test_history_up_buffer_restoration() {
     App::test((), |mut app| async move {
         initialize_app(&mut app);

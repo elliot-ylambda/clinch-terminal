@@ -1132,6 +1132,8 @@ pub enum InputAction {
     CtrlR,
     CtrlD,
     Up,
+    /// Selects the previous inline-history result after the current view update completes.
+    SelectPreviousInlineHistoryItem,
     PageUp,
     PageDown,
     ClearScreen,
@@ -8820,17 +8822,12 @@ impl Input {
                 true
             }
             InputSuggestionsMode::InlineHistoryMenu { .. } => {
-                if self.is_cloud_mode_input_v2_composing(ctx) {
-                    if let Some(view) = self.cloud_mode_v2_history_menu_view.clone() {
-                        view.update(ctx, |view, ctx| {
-                            view.select_up(ctx);
-                        });
-                    }
-                } else {
-                    self.inline_history_menu_view.update(ctx, |view, ctx| {
-                        view.select_up(ctx);
-                    });
-                }
+                // `InlineHistoryMenuView` can already be leased by one of its model/event
+                // subscriptions when a macOS History menu action arrives. Updating it here
+                // synchronously would re-enter the leased view and panic with "Circular view
+                // update". Dispatch a distinct action after the current update/effect chain
+                // completes; deferring `InputAction::Up` itself would just requeue forever.
+                ctx.dispatch_typed_action_deferred(InputAction::SelectPreviousInlineHistoryItem);
                 true
             }
             InputSuggestionsMode::IndexedReposMenu => {
@@ -15664,6 +15661,27 @@ impl TypedActionView for Input {
         match action {
             InputAction::FocusInputBox => self.focus_input_box(ctx),
             InputAction::Up => self.editor_up(ctx),
+            InputAction::SelectPreviousInlineHistoryItem => {
+                if !self
+                    .suggestions_mode_model
+                    .as_ref(ctx)
+                    .is_inline_history_menu()
+                {
+                    return;
+                }
+
+                if self.is_cloud_mode_input_v2_composing(ctx) {
+                    if let Some(view) = self.cloud_mode_v2_history_menu_view.clone() {
+                        view.update(ctx, |view, ctx| {
+                            view.select_up(ctx);
+                        });
+                    }
+                } else {
+                    self.inline_history_menu_view.update(ctx, |view, ctx| {
+                        view.select_up(ctx);
+                    });
+                }
+            }
             InputAction::PageUp => self.editor_page_up(ctx),
             InputAction::PageDown => self.editor_page_down(ctx),
             InputAction::CtrlD => self.ctrl_d(ctx),
