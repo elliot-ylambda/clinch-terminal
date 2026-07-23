@@ -1,7 +1,9 @@
 use std::collections::HashMap;
+use std::time::Duration;
 
 use warp_core::features::FeatureFlag;
 use warp_core::send_telemetry_from_ctx;
+use warpui::r#async::Timer;
 use warpui::{AppContext, Entity, EntityId, ModelContext, SingletonEntity, ViewHandle, WindowId};
 
 use crate::ai::active_agent_views_model::{ActiveAgentViewsEvent, ActiveAgentViewsModel};
@@ -22,6 +24,8 @@ use crate::terminal::{CLIAgent, TerminalView};
 use crate::workspace::util::is_terminal_view_in_same_tab;
 use crate::workspace::WorkspaceRegistry;
 use crate::BlocklistAIHistoryModel;
+
+const VISIBLE_TERMINAL_COMMAND_READ_DELAY: Duration = Duration::from_secs(1);
 
 /// Singleton model responsible for triggering in-app notifications on blocking conversation
 /// status updates and tracking/storing these notifications for the notifications mailbox.
@@ -439,8 +443,9 @@ impl AgentNotificationsModel {
         }
     }
 
-    /// Adds a completed ordinary shell command to the shared notification center. The terminal's
-    /// visibility determines whether the item starts read, matching agent notifications.
+    /// Adds a completed ordinary shell command to the shared notification center. A visible
+    /// terminal briefly keeps the item unread so its completion dot can render, then acknowledges
+    /// it automatically if the user is still looking at the tab.
     pub(crate) fn terminal_command_completed(
         &mut self,
         terminal_view_id: EntityId,
@@ -453,7 +458,7 @@ impl AgentNotificationsModel {
         }
 
         let metadata = TerminalViewMetadata::lookup(terminal_view_id, ctx);
-        self.add_notification(
+        let (id, terminal_was_visible) = self.add_notification(
             notification.title,
             notification.body,
             if succeeded {
@@ -468,6 +473,19 @@ impl AgentNotificationsModel {
             metadata.branch,
             ctx,
         );
+
+        if terminal_was_visible {
+            let _ = ctx.spawn(
+                Timer::after(VISIBLE_TERMINAL_COMMAND_READ_DELAY),
+                move |model, _, ctx| {
+                    // If the user switched away during the brief completion flash, preserve the
+                    // unread notification so it still leads them back to the finished command.
+                    if is_terminal_view_visible(terminal_view_id, ctx) {
+                        model.mark_item_read(id, ctx);
+                    }
+                },
+            );
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -482,7 +500,7 @@ impl AgentNotificationsModel {
         artifacts: Vec<Artifact>,
         branch: Option<String>,
         ctx: &mut ModelContext<Self>,
-    ) {
+    ) -> (NotificationId, bool) {
         let show_agent_notifications = *AISettings::as_ref(ctx).show_agent_notifications;
 
         let is_visible = is_terminal_view_visible(terminal_view_id, ctx);
@@ -492,7 +510,7 @@ impl AgentNotificationsModel {
             category,
             agent,
             origin,
-            is_visible,
+            notification_starts_read(agent, is_visible),
             terminal_view_id,
             artifacts,
             branch,
@@ -508,7 +526,11 @@ impl AgentNotificationsModel {
 
         let id = item.id;
         self.notifications.push(item);
-        ctx.emit(AgentManagementEvent::NotificationAdded { id });
+        ctx.emit(AgentManagementEvent::NotificationAdded {
+            id,
+            show_toast: !is_visible,
+        });
+        (id, is_visible)
     }
 }
 
@@ -522,7 +544,12 @@ pub enum AgentManagementEvent {
         conversation_id: AIConversationId,
     },
     /// A new notification was added to the persistent notification center.
-    NotificationAdded { id: NotificationId },
+    NotificationAdded {
+        id: NotificationId,
+        /// Visible terminal commands briefly remain unread for their tab dot, but should retain
+        /// the existing behavior of not showing an in-app toast over the command output.
+        show_toast: bool,
+    },
     /// A notification's read state changed.
     NotificationUpdated,
     /// All notifications were marked as read.
@@ -557,6 +584,10 @@ fn is_terminal_view_visible(terminal_view_id: EntityId, app: &AppContext) -> boo
     };
     active_id == terminal_view_id
         || is_terminal_view_in_same_tab(&active_id, &terminal_view_id, app)
+}
+
+fn notification_starts_read(agent: NotificationSourceAgent, terminal_is_visible: bool) -> bool {
+    terminal_is_visible && !matches!(agent, NotificationSourceAgent::TerminalCommand)
 }
 
 fn window_and_tab_idx_id_for_conversation(

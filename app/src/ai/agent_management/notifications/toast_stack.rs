@@ -65,8 +65,10 @@ impl AgentNotificationToastStack {
     pub fn new(ctx: &mut ViewContext<Self>) -> Self {
         let model_handle = AgentNotificationsModel::handle(ctx);
         ctx.subscribe_to_model(&model_handle, |me, _handle, event, ctx| match event {
-            AgentManagementEvent::NotificationAdded { id } => {
-                me.on_notification_added(*id, ctx);
+            AgentManagementEvent::NotificationAdded { id, show_toast } => {
+                if *show_toast {
+                    me.on_notification_added(*id, ctx);
+                }
             }
             AgentManagementEvent::NotificationUpdated
             | AgentManagementEvent::AllNotificationsMarkedRead => {

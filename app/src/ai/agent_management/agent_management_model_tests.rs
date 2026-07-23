@@ -2,7 +2,7 @@ use settings::Setting as _;
 use warp_core::features::FeatureFlag;
 use warpui::{App, EntityId, ModelHandle, SingletonEntity};
 
-use super::AgentNotificationsModel;
+use super::{notification_starts_read, AgentNotificationsModel};
 use crate::ai::active_agent_views_model::ActiveAgentViewsModel;
 use crate::ai::agent::conversation::{AIConversation, AIConversationId, ConversationStatus};
 use crate::ai::agent_management::notifications::{
@@ -55,6 +55,22 @@ fn make_plan_artifact(doc_uid: &str, title: &str) -> Artifact {
         notebook_uid: None,
         title: Some(title.to_string()),
     }
+}
+
+#[test]
+fn visible_terminal_command_starts_unread_for_completion_flash() {
+    assert!(!notification_starts_read(
+        NotificationSourceAgent::TerminalCommand,
+        true,
+    ));
+    assert!(notification_starts_read(
+        NotificationSourceAgent::Oz { is_ambient: false },
+        true,
+    ));
+    assert!(!notification_starts_read(
+        NotificationSourceAgent::Oz { is_ambient: false },
+        false,
+    ));
 }
 
 #[test]

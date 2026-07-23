@@ -36,8 +36,8 @@ use warpui::ui_components::text_input::TextInput;
 use warpui::{AppContext, EntityId, SingletonEntity, ViewHandle, WindowId};
 
 use super::{
-    project_cli_agent_activity, render_group_member_icon_collage, select_unique_pane_kinds,
-    ProjectCliAgentActivity,
+    is_running_project_command, project_cli_agent_activity, render_group_member_icon_collage,
+    select_unique_pane_kinds, ProjectCliAgentActivity,
 };
 use crate::ai::agent::conversation::{ConversationStatus, StatusColorStyle};
 use crate::ai::agent::icons::yellow_stop_icon;
@@ -414,6 +414,26 @@ fn should_render_separate_activity_indicator(
     icon_activity: Option<ProjectCliAgentActivity>,
 ) -> bool {
     has_unread_activity && icon_activity.is_none()
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TitleIndicatorKind {
+    Unread,
+    RunningCommand,
+}
+
+fn separate_title_indicator_kind(
+    has_unread_activity: bool,
+    icon_activity: Option<ProjectCliAgentActivity>,
+    has_running_command: bool,
+) -> Option<TitleIndicatorKind> {
+    if should_render_separate_activity_indicator(has_unread_activity, icon_activity) {
+        Some(TitleIndicatorKind::Unread)
+    } else if has_running_command {
+        Some(TitleIndicatorKind::RunningCommand)
+    } else {
+        None
+    }
 }
 
 #[derive(Clone, Default)]
@@ -1100,6 +1120,7 @@ struct VerticalTabsSummaryData {
     working_directories: Vec<String>,
     branch_entries: Vec<VerticalTabsSummaryBranchEntry>,
     has_unread_activity: bool,
+    has_running_command: bool,
 }
 
 impl TabGroupColorMode {
@@ -3563,17 +3584,49 @@ fn has_unread_activity_for_terminal_view(terminal_view_id: EntityId, app: &AppCo
 
 const INDICATOR_DOT_SIZE: f32 = 8.;
 
-// Unread/attention dots are always "done blue", never the theme accent: an
-// accent that resolves to lime would collide with the green working badge.
-fn render_title_indicator() -> Box<dyn Element> {
+fn title_indicator_color(kind: TitleIndicatorKind, theme: &WarpTheme) -> ColorU {
+    match kind {
+        // Unread/attention dots are always "done blue", never the theme accent: an accent that
+        // resolves to lime would collide with the green working badge.
+        TitleIndicatorKind::Unread => CLINCH_DONE_BLUE,
+        TitleIndicatorKind::RunningCommand => {
+            theme.disabled_text_color(theme.background()).into_solid()
+        }
+    }
+}
+
+fn render_title_indicator(kind: TitleIndicatorKind, theme: &WarpTheme) -> Box<dyn Element> {
     ConstrainedBox::new(
         WarpIcon::CircleFilled
-            .to_warpui_icon(WarpThemeFill::Solid(CLINCH_DONE_BLUE))
+            .to_warpui_icon(WarpThemeFill::Solid(title_indicator_color(kind, theme)))
             .finish(),
     )
     .with_width(INDICATOR_DOT_SIZE)
     .with_height(INDICATOR_DOT_SIZE)
     .finish()
+}
+
+fn terminal_title_indicator_kind(
+    typed: &TypedPane<'_>,
+    app: &AppContext,
+) -> Option<TitleIndicatorKind> {
+    let TypedPane::Terminal(terminal_pane) = typed else {
+        return None;
+    };
+    let terminal_view = terminal_pane.terminal_view(app);
+    let terminal_view = terminal_view.as_ref(app);
+    let has_cli_agent_session = CLIAgentSessionsModel::as_ref(app)
+        .session(terminal_view.id())
+        .is_some();
+
+    separate_title_indicator_kind(
+        has_unread_activity_for_terminal_view(terminal_view.id(), app),
+        vertical_tab_cli_agent_activity(typed, app),
+        is_running_project_command(
+            has_cli_agent_session,
+            terminal_view.is_long_running_and_user_controlled(),
+        ),
+    )
 }
 
 /// The model chip label for a terminal tab running a CLI agent, or `None`.
@@ -3641,7 +3694,7 @@ fn render_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn Element> {
         );
         if has_indicator {
             title_row.add_child(
-                Container::new(render_title_indicator())
+                Container::new(render_title_indicator(TitleIndicatorKind::Unread, theme))
                     .with_margin_left(4.)
                     .finish(),
             );
@@ -3846,6 +3899,7 @@ fn build_vertical_tabs_summary_data(
     let mut working_directory_seen = HashMap::new();
     let mut branch_entries = Vec::new();
     let mut has_unread_activity = false;
+    let mut has_running_command = false;
 
     for pane_id in visible_pane_ids {
         let Some(pane) = pane_group.pane_by_id(*pane_id) else {
@@ -3866,6 +3920,12 @@ fn build_vertical_tabs_summary_data(
                 let terminal_view = terminal_view.as_ref(app);
                 has_unread_activity |=
                     has_unread_activity_for_terminal_view(terminal_view.id(), app);
+                has_running_command |= is_running_project_command(
+                    CLIAgentSessionsModel::as_ref(app)
+                        .session(terminal_view.id())
+                        .is_some(),
+                    terminal_view.is_long_running_and_user_controlled(),
+                );
                 let title_text = terminal_view.terminal_title_from_shell();
                 let working_directory = resolved_terminal_working_directory(terminal_view, app);
                 let working_directory_text = working_directory
@@ -3962,6 +4022,7 @@ fn build_vertical_tabs_summary_data(
         working_directories,
         branch_entries: coalesce_summary_branch_entries(branch_entries),
         has_unread_activity,
+        has_running_command,
     }
 }
 
@@ -4584,12 +4645,9 @@ fn render_terminal_row_content(
     };
 
     let model_label = tab_agent_model_label(app, terminal_view.id());
-    let has_activity_indicator = should_render_separate_activity_indicator(
-        has_unread_activity(&props.typed, app),
-        vertical_tab_cli_agent_activity(&props.typed, app),
-    );
+    let title_indicator = terminal_title_indicator_kind(&props.typed, app);
 
-    let first_line_element = if model_label.is_some() || has_activity_indicator {
+    let first_line_element = if model_label.is_some() || title_indicator.is_some() {
         let mut trailing = Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center);
         if let Some(label) = model_label {
             trailing.add_child(
@@ -4607,9 +4665,9 @@ fn render_terminal_row_content(
                 .finish(),
             );
         }
-        if has_activity_indicator {
+        if let Some(indicator) = title_indicator {
             trailing.add_child(
-                Container::new(render_title_indicator())
+                Container::new(render_title_indicator(indicator, theme))
                     .with_margin_left(4.)
                     .finish(),
             );
@@ -4898,7 +4956,12 @@ fn render_summary_tab_item(
         }
     }
     let title_region = title_region.finish();
-    if summary.has_unread_activity {
+    let title_indicator = separate_title_indicator_kind(
+        summary.has_unread_activity,
+        None,
+        summary.has_running_command,
+    );
+    if let Some(indicator) = title_indicator {
         text_col.add_child(
             Flex::row()
                 .with_main_axis_size(MainAxisSize::Max)
@@ -4906,7 +4969,7 @@ fn render_summary_tab_item(
                 .with_cross_axis_alignment(CrossAxisAlignment::Center)
                 .with_child(Shrinkable::new(1., title_region).finish())
                 .with_child(
-                    Container::new(render_title_indicator())
+                    Container::new(render_title_indicator(indicator, theme))
                         .with_margin_left(4.)
                         .finish(),
                 )
@@ -7340,11 +7403,9 @@ fn render_compact_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn El
     let main_text_color = theme.main_text_color(theme.background());
     let sub_text_color = theme.sub_text_color(theme.background());
     let font_family = appearance.ui_font_family();
-    let has_indicator = props.typed.badge(app).is_some()
-        || should_render_separate_activity_indicator(
-            has_unread_activity(&props.typed, app),
-            vertical_tab_cli_agent_activity(&props.typed, app),
-        );
+    let has_badge_indicator = props.typed.badge(app).is_some();
+    let title_indicator = terminal_title_indicator_kind(&props.typed, app);
+    let has_indicator = has_badge_indicator || title_indicator.is_some();
     let is_linked_worktree = match &props.typed {
         TypedPane::Terminal(terminal_pane) => terminal_pane
             .terminal_view(app)
@@ -7501,8 +7562,10 @@ fn render_compact_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn El
         if is_linked_worktree {
             trailing.add_child(render_passive_worktree_badge(appearance));
         }
-        if has_indicator {
-            trailing.add_child(render_title_indicator());
+        if has_badge_indicator {
+            trailing.add_child(render_title_indicator(TitleIndicatorKind::Unread, theme));
+        } else if let Some(indicator) = title_indicator {
+            trailing.add_child(render_title_indicator(indicator, theme));
         }
 
         Flex::row()

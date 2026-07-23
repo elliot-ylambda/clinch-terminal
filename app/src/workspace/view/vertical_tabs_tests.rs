@@ -11,14 +11,16 @@ use super::{
     detail_target_for_hovered_row, non_terminal_search_text_fragments,
     pane_ids_for_display_granularity, pane_search_text_fragments, preferred_agent_tab_titles,
     push_normalized_unique_summary_label, search_fragments_contain_query,
-    select_summary_pane_kind_icons, should_keep_detail_sidecar_visible_for_mouse_position,
+    select_summary_pane_kind_icons, separate_title_indicator_kind,
+    should_keep_detail_sidecar_visible_for_mouse_position,
     should_render_separate_activity_indicator, sort_summary_primary_labels_status_first,
     summary_overflow_count, summary_search_text_fragments, terminal_command_status,
     terminal_kind_badge_label, terminal_primary_line_data, terminal_pull_request_badge_label,
-    terminal_search_text_fragments, terminal_title_fallback_font, uses_outer_group_container,
-    vertical_tab_activity_dot_color, visible_pane_ids_for_detail_target, vtab_diff_stats_text,
-    AgentTabTextPreference, SummaryPaneKind, SummaryPaneKindIcons, TerminalAgentText,
-    TerminalPrimaryLineData, TerminalPrimaryLineFont, VerticalTabsDetailTarget,
+    terminal_search_text_fragments, terminal_title_fallback_font, title_indicator_color,
+    uses_outer_group_container, vertical_tab_activity_dot_color,
+    visible_pane_ids_for_detail_target, vtab_diff_stats_text, AgentTabTextPreference,
+    SummaryPaneKind, SummaryPaneKindIcons, TerminalAgentText, TerminalPrimaryLineData,
+    TerminalPrimaryLineFont, TitleIndicatorKind, VerticalTabsDetailTarget,
     VerticalTabsDetailTargetKind, VerticalTabsSummaryBranchEntry, VerticalTabsSummaryData,
     VerticalTabsSummaryPrimaryLabel,
 };
@@ -101,6 +103,28 @@ fn agent_activity_dot_replaces_the_separate_unread_indicator() {
     ));
     assert!(should_render_separate_activity_indicator(true, None));
     assert!(!should_render_separate_activity_indicator(false, None));
+}
+
+#[test]
+fn ordinary_running_command_gets_muted_trailing_indicator() {
+    let theme = crate::themes::default_themes::dark_theme();
+
+    assert_eq!(
+        separate_title_indicator_kind(false, None, true),
+        Some(TitleIndicatorKind::RunningCommand)
+    );
+    assert_eq!(
+        title_indicator_color(TitleIndicatorKind::RunningCommand, &theme),
+        theme.disabled_text_color(theme.background()).into_solid()
+    );
+    assert_eq!(
+        separate_title_indicator_kind(true, None, true),
+        Some(TitleIndicatorKind::Unread)
+    );
+    assert_eq!(
+        title_indicator_color(TitleIndicatorKind::Unread, &theme),
+        CLINCH_DONE_BLUE
+    );
 }
 
 #[test]
@@ -1190,6 +1214,7 @@ fn summary_search_fragments_include_hidden_overflow_values() {
             },
         ],
         has_unread_activity: false,
+        has_running_command: false,
     };
 
     let fragments = summary_search_text_fragments(&summary, Some("Custom tab"));
