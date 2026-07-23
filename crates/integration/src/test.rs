@@ -151,7 +151,7 @@ use warp::integration_testing::window::{
     add_and_save_window, add_window, add_window_and_check_bounds, close_window,
     save_active_window_id,
 };
-use warp::integration_testing::workspace::assert_tab_count;
+use warp::integration_testing::workspace::{assert_tab_count, trigger_undo_close};
 use warp::integration_testing::{self, view_of_type};
 use warp::pane_group::AGENT_MODE_PANE_DEFAULT_MINIMUM_WIDTH;
 use warp::settings::{
@@ -187,7 +187,8 @@ use warpui_core::platform::{OperatingSystem, TerminationMode};
 use warpui_core::units::Lines;
 use warpui_core::windowing::WindowManager;
 use warpui_core::{
-    async_assert, async_assert_eq, AssetProvider, Event, SingletonEntity, UpdateView, ViewHandle,
+    async_assert, async_assert_eq, AssetProvider, Event, SingletonEntity, TypedActionView,
+    UpdateView, ViewHandle,
 };
 pub use websockets::*;
 pub use workflows::*;
@@ -6789,24 +6790,17 @@ pub fn test_pass_control_sequences_to_long_running_block() -> Builder {
         )
 }
 
-/// Test that undo close stack cleanup works safely when a window is closed
-/// before the grace period expires. This reproduces the specific bug scenario:
+/// Test layered undo-close history when a tab is closed and then its window is closed.
 /// 1. Open a new window
 /// 2. In that window open a new tab
 /// 3. Close that tab (adds it to undo close stack)
-/// 4. Close the window before grace period expires
-/// 5. Verify cleanup handles missing window gracefully
-pub fn test_undo_close_stack_timeout_cleanup() -> Builder {
+/// 4. Force-close the window (adds it above the tab in the stack)
+/// 5. Undo the window close, then undo the earlier tab close
+pub fn test_undo_close_reopens_window_then_tab() -> Builder {
     FeatureFlag::UndoClosedPanes.set_enabled(true);
     new_builder()
         // This test is Mac-only due to differences in window management on Linux
         .set_should_run_test(|| cfg!(target_os = "macos"))
-        // Set a 5-second grace period to give time to close the window before it expires
-        .with_user_defaults(HashMap::from([(
-            "UndoCloseGracePeriod".to_owned(),
-            serde_json::to_string(&Duration::from_secs(5))
-                .expect("Duration should serialize to JSON"),
-        )]))
         .with_step(wait_until_bootstrapped_single_pane_for_tab(0))
         .with_step(
             new_step_with_default_assertions("Assert we have only 1 window open at start")
@@ -6820,14 +6814,21 @@ pub fn test_undo_close_stack_timeout_cleanup() -> Builder {
         .with_step(wait_until_bootstrapped_single_pane_for_tab(0))
         .with_step(
             new_step_with_default_assertions("Add a new tab in the new window")
-                .with_click_on_saved_position(NEW_TAB_BUTTON_POSITION_ID)
+                .with_action(|app, window_id, _| {
+                    workspace_view(app, window_id).update(app, |workspace, ctx| {
+                        workspace.add_terminal_tab(false, ctx);
+                    });
+                })
                 .add_assertion(assert_tab_count(2)),
         )
         .with_step(wait_until_bootstrapped_single_pane_for_tab(1))
         .with_step(
             new_step_with_default_assertions("Close the tab to trigger undo close stack")
-                .with_hover_over_saved_position("close_tab_button:1")
-                .with_click_on_saved_position("close_tab_button:1")
+                .with_action(|app, window_id, _| {
+                    workspace_view(app, window_id).update(app, |workspace, ctx| {
+                        workspace.handle_action(&WorkspaceAction::CloseTab(1), ctx);
+                    });
+                })
                 .add_assertion(assert_tab_count(1)),
         )
         .with_step(
@@ -6852,17 +6853,12 @@ pub fn test_undo_close_stack_timeout_cleanup() -> Builder {
                     async_assert_eq!(app.window_ids().len(), 1)
                 }),
         )
-        .with_step(
-            TestStep::new("Wait for undo close grace period to expire and trigger cleanup")
-                .set_timeout(Duration::from_secs(8))
-                .with_action(|_app, _, _data| {
-                    // Wait longer than the grace period to ensure cleanup is triggered
-                    std::thread::sleep(Duration::from_secs(6));
-                })
-                // After waiting, verify the application is still stable
-                .add_assertion(|app, _| {
-                    // Simple stability check - ensure we still have 1 window
-                    async_assert_eq!(app.window_ids().len(), 1)
-                }),
-        )
+        .with_step(trigger_undo_close().add_assertion(|app, _| {
+            async_assert_eq!(
+                app.window_ids().len(),
+                2,
+                "undo close should reopen the window"
+            )
+        }))
+        .with_step(trigger_undo_close().add_assertion(assert_tab_count(2)))
 }

@@ -14,6 +14,7 @@ use warp::integration_testing::terminal::{
     wait_until_bootstrapped_single_pane_for_tab,
 };
 use warp::integration_testing::workspace::{assert_tab_count, trigger_undo_close};
+use warpui_core::integration::TestStep;
 
 use super::{new_builder, Builder};
 
@@ -161,15 +162,17 @@ pub fn test_restore_multiple_closed_panes() -> Builder {
         )
 }
 
-/// Tests that panes are properly cleaned up after the grace period expires:
+/// Tests that closed panes remain available without a time limit:
 /// 1. Split off a pane and run a command in it
 /// 2. Close the pane
-/// 3. Wait for the grace period to expire (5 seconds in test)
-/// 4. Attempt to restore the pane with cmd+shift+t
-/// 5. Assert the pane is NOT restored because it was cleaned up
-pub fn test_undo_close_grace_period_cleanup() -> Builder {
+/// 3. Wait longer than the legacy grace period (5 seconds in test preferences)
+/// 4. Restore the pane with cmd+shift+t
+/// 5. Assert the pane is restored because elapsed time no longer expires it
+pub fn test_undo_close_has_no_time_limit() -> Builder {
     FeatureFlag::UndoClosedPanes.set_enabled(true);
     new_builder()
+        // Keep a legacy value in this regression test so an existing synced
+        // preference cannot accidentally reinstate time-based expiry.
         .with_user_defaults(HashMap::from([(
             "UndoCloseGracePeriod".to_owned(),
             serde_json::to_string(&Duration::from_secs(5))
@@ -195,34 +198,56 @@ pub fn test_undo_close_grace_period_cleanup() -> Builder {
                 .add_assertion(assert_focused_pane_index(0, 0)),
         )
         .with_step(
-            new_step_with_default_assertions("Wait for grace period to expire")
-                .set_timeout(Duration::from_secs(7)), // Wait 7 seconds for 5 second grace period
-        )
-        .with_step(
-            new_step_with_default_assertions("Check pane count before undo close")
-                .add_assertion(move |app, window_id| {
-                    let workspace_view = warp::integration_testing::view_getters::workspace_view(app, window_id);
-                    let initial_pane_count = workspace_view.read(app, |workspace, ctx| {
-                        let pane_group_view = workspace.get_pane_group_view(0).expect("should have tab 0");
-                        pane_group_view.read(ctx, |pane_group, _| pane_group.pane_count())
-                    });
-                    warpui_core::async_assert_eq!(initial_pane_count, 1, "Should have exactly one pane after grace period expires - closed pane should be cleaned up")
+            TestStep::new("Wait past the legacy grace period")
+                .set_timeout(Duration::from_secs(8))
+                .with_action(|_app, _, _| {
+                    std::thread::sleep(Duration::from_secs(6));
                 }),
         )
-        .with_step(trigger_undo_close()
-            .add_assertion(assert_focused_pane_index(0, 0)) // Should still be focused on original pane
-            .add_assertion(move |app, window_id| {
-                // Assert we still only have one pane (no restoration occurred)
-                let workspace_view = warp::integration_testing::view_getters::workspace_view(app, window_id);
-                workspace_view.read(app, |workspace, ctx| {
-                    let pane_group_view = workspace.get_pane_group_view(0).expect("should have tab 0");
-                    let pane_count = pane_group_view.read(ctx, |pane_group, _| pane_group.pane_count());
-                    warpui_core::async_assert_eq!(pane_count, 1, "Should still have only one pane after attempted restore - no pane should be restored")
-                })
-            }),
+        .with_step(
+            new_step_with_default_assertions("Check pane count before undo close").add_assertion(
+                move |app, window_id| {
+                    let workspace_view =
+                        warp::integration_testing::view_getters::workspace_view(app, window_id);
+                    let (visible_pane_count, total_pane_count) =
+                        workspace_view.read(app, |workspace, ctx| {
+                            let pane_group_view =
+                                workspace.get_pane_group_view(0).expect("should have tab 0");
+                            pane_group_view.read(ctx, |pane_group, _| {
+                                (pane_group.visible_pane_count(), pane_group.pane_count())
+                            })
+                        });
+                    warpui_core::async_assert_eq!(
+                        (visible_pane_count, total_pane_count),
+                        (1, 2),
+                        "Closed pane should remain hidden and retained after the legacy timeout"
+                    )
+                },
+            ),
         )
         .with_step(
-            new_step_with_default_assertions("Verify we still have one tab after failed restore attempt")
+            trigger_undo_close()
+                .add_assertion(assert_focused_pane_index(0, 1))
+                .add_assertion(move |app, window_id| {
+                    let workspace_view =
+                        warp::integration_testing::view_getters::workspace_view(app, window_id);
+                    workspace_view.read(app, |workspace, ctx| {
+                        let pane_group_view =
+                            workspace.get_pane_group_view(0).expect("should have tab 0");
+                        let (visible_pane_count, total_pane_count) =
+                            pane_group_view.read(ctx, |pane_group, _| {
+                                (pane_group.visible_pane_count(), pane_group.pane_count())
+                            });
+                        warpui_core::async_assert_eq!(
+                            (visible_pane_count, total_pane_count),
+                            (2, 2),
+                            "Closed pane should still restore after the legacy timeout"
+                        )
+                    })
+                }),
+        )
+        .with_step(
+            new_step_with_default_assertions("Verify restoring the pane keeps one tab")
                 .add_assertion(assert_tab_count(1)),
         )
 }

@@ -1,5 +1,3 @@
-use uuid::Uuid;
-use warpui::r#async::SpawnedFutureHandle;
 use warpui::{
     AppContext, ClosedWindowData, Entity, EntityId, ModelContext, ModelHandle, SingletonEntity,
     ViewHandle, WeakViewHandle, WindowId,
@@ -16,35 +14,9 @@ use crate::server::telemetry::{TelemetryEvent, UndoCloseItemType};
 use crate::tab::TabData;
 use crate::workspace::{Workspace, WorkspaceRegistry};
 
-/// A unique identifier for an item in the undo close stack.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-struct ItemId(Uuid);
-
-impl ItemId {
-    /// Constructs a new ItemId.
-    fn new() -> Self {
-        Self(Uuid::new_v4())
-    }
-}
-
-/// Data for an item in the undo close stack.
-struct UndoData {
-    closed_item: ClosedItem,
-    expiry_data: ExpiryData,
-}
-
-/// Data needed to handle expiration for items in the undo close stack.
-struct ExpiryData {
-    id: ItemId,
-    task_handle: SpawnedFutureHandle,
-}
-
-impl std::ops::Drop for ExpiryData {
-    fn drop(&mut self) {
-        // Make sure we abort the expiry task when we drop the expiry data.
-        self.task_handle.abort();
-    }
-}
+/// Keep closed items for the lifetime of the app, but bound the retained view
+/// trees so repeated closes cannot grow memory usage without limit.
+pub(crate) const MAX_RETAINED_CLOSED_ITEMS: usize = 25;
 
 /// Data needed to restore a closed pane.
 pub(super) struct PaneData {
@@ -155,7 +127,7 @@ pub enum UndoCloseStackEvent {
 
 /// A stack of closed items which can be re-opened in LIFO order.
 pub struct UndoCloseStack {
-    stack: Vec<UndoData>,
+    stack: Vec<ClosedItem>,
 }
 
 impl UndoCloseStack {
@@ -180,7 +152,7 @@ impl UndoCloseStack {
     pub fn is_pane_group_tab_in_stack(&self, pane_group_id: EntityId) -> bool {
         self.stack
             .iter()
-            .any(|undo_data| matches!(&undo_data.closed_item, ClosedItem::Tab { data, .. } if data.pane_group.id() == pane_group_id))
+            .any(|closed_item| matches!(closed_item, ClosedItem::Tab { data, .. } if data.pane_group.id() == pane_group_id))
     }
 
     /// Discards a pane group from the undo close stack early.
@@ -189,18 +161,12 @@ impl UndoCloseStack {
         pane_group_id: EntityId,
         ctx: &mut ModelContext<Self>,
     ) {
-        if let Some(pos) = self
-            .stack
-            .iter()
-            .position(|undo_data| match &undo_data.closed_item {
-                ClosedItem::Tab { data, .. } => data.pane_group.id() == pane_group_id,
-                ClosedItem::Pane { data } => data.pane_group.id() == pane_group_id,
-                _ => false,
-            })
-        {
-            let removed_item = self.stack.remove(pos);
-            removed_item.expiry_data.task_handle.abort();
-            removed_item.closed_item.discard(ctx);
+        if let Some(pos) = self.stack.iter().position(|closed_item| match closed_item {
+            ClosedItem::Tab { data, .. } => data.pane_group.id() == pane_group_id,
+            ClosedItem::Pane { data } => data.pane_group.id() == pane_group_id,
+            _ => false,
+        }) {
+            self.stack.remove(pos).discard(ctx);
         }
     }
 
@@ -245,46 +211,55 @@ impl UndoCloseStack {
     }
 
     /// Undoes the last close action in the stack, if possible.
-    pub fn undo_close(&mut self, ctx: &mut AppContext) {
-        let Some(UndoData { closed_item, .. }) = self.stack.pop() else {
-            return;
-        };
+    pub fn undo_close(&mut self, ctx: &mut ModelContext<Self>) {
+        // A retained item's owner can disappear independently (for example,
+        // its project may be closed later). Skip stale entries so one cannot
+        // make the shortcut appear to do nothing while older entries remain.
+        while let Some(closed_item) = self.stack.pop() {
+            match closed_item {
+                ClosedItem::Window(data) => {
+                    send_telemetry_from_app_ctx!(
+                        TelemetryEvent::UndoClose {
+                            item_type: UndoCloseItemType::Window,
+                        },
+                        ctx
+                    );
 
-        match closed_item {
-            ClosedItem::Window(data) => {
-                send_telemetry_from_app_ctx!(
-                    TelemetryEvent::UndoClose {
-                        item_type: UndoCloseItemType::Window,
-                    },
-                    ctx
-                );
+                    let window_id = data.window_id;
+                    ctx.reopen_closed_window(*data);
 
-                let window_id = data.window_id;
-                ctx.reopen_closed_window(*data);
-
-                if let Some(project_window) = ctx
-                    .root_view::<RootView>(window_id)
-                    .and_then(|root_view| root_view.as_ref(ctx).project_window())
-                {
-                    project_window.update(ctx, |project_window, ctx| {
-                        project_window.handle_reopen(ctx);
-                    });
-                } else {
-                    for workspace in window_workspaces(window_id, ctx) {
-                        workspace.update(ctx, |workspace, ctx| workspace.handle_reopen(ctx));
+                    if let Some(project_window) = ctx
+                        .root_view::<RootView>(window_id)
+                        .and_then(|root_view| root_view.as_ref(ctx).project_window())
+                    {
+                        project_window.update(ctx, |project_window, ctx| {
+                            project_window.handle_reopen(ctx);
+                        });
+                    } else {
+                        for workspace in window_workspaces(window_id, ctx) {
+                            workspace.update(ctx, |workspace, ctx| workspace.handle_reopen(ctx));
+                        }
                     }
-                }
 
-                // Make sure we update our session restoration state now that the
-                // window has been reopened.
-                ctx.dispatch_global_action("workspace:save_app", &());
-            }
-            ClosedItem::Tab {
-                workspace,
-                tab_index,
-                data,
-            } => {
-                if let Some(workspace) = workspace.upgrade(ctx) {
+                    // Make sure we update our session restoration state now that the
+                    // window has been reopened.
+                    ctx.dispatch_global_action("workspace:save_app", ());
+                    return;
+                }
+                ClosedItem::Tab {
+                    workspace,
+                    tab_index,
+                    data,
+                } => {
+                    let Some(workspace) = workspace.upgrade(ctx) else {
+                        ClosedItem::Tab {
+                            workspace,
+                            tab_index,
+                            data,
+                        }
+                        .discard(ctx);
+                        continue;
+                    };
                     let window_id = workspace.window_id(ctx);
                     let pane_group_id = data.pane_group.id();
                     let pane_id = data.pane_group.as_ref(ctx).focused_pane_id(ctx);
@@ -298,13 +273,16 @@ impl UndoCloseStack {
                         workspace.restore_closed_tab(tab_index, data, ctx);
                     });
                     focus_pane_in_project(window_id, pane_group_id, pane_id, ctx);
+                    // Make sure we update our session restoration state now that the
+                    // tab has been reopened.
+                    ctx.dispatch_global_action("workspace:save_app", ());
+                    return;
                 }
-                // Make sure we update our session restoration state now that the
-                // tab has been reopened.
-                ctx.dispatch_global_action("workspace:save_app", &());
-            }
-            ClosedItem::Pane { data } => {
-                if let Some(pane_group) = data.pane_group.upgrade(ctx) {
+                ClosedItem::Pane { data } => {
+                    let Some(pane_group) = data.pane_group.upgrade(ctx) else {
+                        ClosedItem::Pane { data }.discard(ctx);
+                        continue;
+                    };
                     let pane_id = data.pane_id;
                     let window_id = pane_group.window_id(ctx);
                     let pane_group_id = pane_group.id();
@@ -312,22 +290,26 @@ impl UndoCloseStack {
                         pane_group.restore_closed_pane(pane_id, ctx)
                     });
 
-                    if restored {
-                        send_telemetry_from_app_ctx!(
-                            TelemetryEvent::UndoClose {
-                                item_type: UndoCloseItemType::Pane,
-                            },
-                            ctx
-                        );
-
-                        // Focus the window first
-                        ctx.windows().show_window_and_focus_app(window_id);
-
-                        // Now properly focus the restored pane by activating its tab and focusing the pane
-                        focus_pane_in_project(window_id, pane_group_id, pane_id, ctx);
-
-                        ctx.dispatch_global_action("workspace:save_app", &());
+                    if !restored {
+                        ClosedItem::Pane { data }.discard(ctx);
+                        continue;
                     }
+
+                    send_telemetry_from_app_ctx!(
+                        TelemetryEvent::UndoClose {
+                            item_type: UndoCloseItemType::Pane,
+                        },
+                        ctx
+                    );
+
+                    // Focus the window first
+                    ctx.windows().show_window_and_focus_app(window_id);
+
+                    // Now properly focus the restored pane by activating its tab and focusing the pane
+                    focus_pane_in_project(window_id, pane_group_id, pane_id, ctx);
+
+                    ctx.dispatch_global_action("workspace:save_app", ());
+                    return;
                 }
             }
         }
@@ -343,8 +325,8 @@ impl UndoCloseStack {
             UndoCloseSettingsChangedEvent::UndoCloseEnabled { .. } => {
                 let settings = UndoCloseSettings::as_ref(ctx);
                 if !*settings.enabled {
-                    for undo_data in self.stack.drain(..) {
-                        undo_data.closed_item.discard(ctx);
+                    for closed_item in self.stack.drain(..) {
+                        closed_item.discard(ctx);
                     }
                 }
             }
@@ -360,32 +342,10 @@ impl UndoCloseStack {
             return;
         }
 
-        let id = ItemId::new();
-        let grace_period = *settings.grace_period;
-        let task_handle = ctx.spawn_abortable(
-            warpui::r#async::Timer::after(grace_period),
-            move |me, _, ctx| {
-                let initial_len = me.stack.len();
-                if let Some(pos) = me.stack.iter().position(|item| item.expiry_data.id == id) {
-                    let removed_item = me.stack.remove(pos);
-                    removed_item.closed_item.discard(ctx);
-                }
-                // Log errors if the expired item was not found or multiple items were found
-                if me.stack.len() == initial_len {
-                    log::error!("Undo close expiry task did not find item in stack!");
-                } else if me.stack.len() < initial_len - 1 {
-                    log::error!("Undo close expiry task found multiple matching items in stack!");
-                } else {
-                    log::debug!("Removed expired item from undo stack");
-                }
-            },
-            |_, _| {},
-        );
-
-        self.stack.push(UndoData {
-            closed_item,
-            expiry_data: ExpiryData { id, task_handle },
-        })
+        while self.stack.len() >= MAX_RETAINED_CLOSED_ITEMS {
+            self.stack.remove(0).discard(ctx);
+        }
+        self.stack.push(closed_item);
     }
 }
 

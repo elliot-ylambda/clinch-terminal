@@ -5521,7 +5521,7 @@ impl SettingsWidget for UndoCloseWidget {
     type View = FeaturesPageView;
 
     fn search_terms(&self) -> &str {
-        "reopen restore recover closed tab session"
+        "reopen restore recover closed tab session forever no timeout"
     }
 
     fn render(

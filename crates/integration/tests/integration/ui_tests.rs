@@ -229,7 +229,7 @@ integration_tests! {
 
     test_restore_single_closed_pane,
     test_restore_multiple_closed_panes,
-    test_undo_close_grace_period_cleanup,
+    test_undo_close_has_no_time_limit,
     test_closed_panes_cleared_on_rearrangement,
     test_tab_closes_when_last_visible_pane_closed,
 
@@ -316,7 +316,7 @@ integration_tests! {
     test_rule_creation,
     test_rule_update,
     test_rule_pane_opening,
-    test_undo_close_stack_timeout_cleanup,
+    test_undo_close_reopens_window_then_tab,
 
     test_file_tree_opens_files_in_warp,
     test_file_tree_open_in_new_pane,

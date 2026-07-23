@@ -1785,11 +1785,11 @@ impl crate::terminal::TerminalManager for TerminalManager {
     fn on_view_detached(&self, detach_type: DetachType, app: &mut AppContext) {
         // Keep the network + shared-session state — and the orchestration
         // viewer model (OVM) — alive for non-permanent detaches:
-        // - `HiddenForClose`: the pane may be restored from the undo-close stack within the
-        //   grace window (~60s default). We deliberately leave the OVM (and its ancestor
+        // - `HiddenForClose`: the pane may be restored from the undo-close stack. We
+        //   deliberately leave the OVM (and its ancestor
         //   streamer registration) in place so undo-close-tab restores the pill bar
         //   seamlessly. If the tab is never restored, we'll be invoked again with `Closed`
-        //   from the grace-period expiry and tear down then.
+        //   when the bounded undo history discards the item and tear down then.
         // - `Moved`: the same `TerminalManager` is reused in the target pane group (the
         //   `Box<dyn AnyPaneContent>` is transferred via `remove_pane_for_move` and then
         //   immediately re-attached), so tearing down the network or OVM would break the

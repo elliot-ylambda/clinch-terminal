@@ -18,6 +18,7 @@ use crate::launch_configs::launch_config::{
 };
 use crate::server::server_api::ServerApiProvider;
 use crate::server::telemetry::LaunchConfigUiLocation;
+use crate::undo_close::UndoCloseStack;
 use crate::workspace::WorkspaceAction;
 
 fn initialize_app(app: &mut App) {
@@ -276,6 +277,70 @@ fn test_closing_only_tab_in_project_preserves_sibling_project() {
                 assert!(!project_ids.contains(&closing_project_id));
                 assert_eq!(project_window.active_project_index(), 0);
             });
+        });
+    });
+}
+
+#[test]
+fn reopening_tab_from_inactive_project_activates_its_project() {
+    App::test((), |mut app| async move {
+        initialize_backendless_workspace_app(&mut app);
+
+        let global_resource_handles = GlobalResourceHandles::mock(&mut app);
+        let active_window_id = app.read(|ctx| ctx.windows().active_window());
+        let (_, root_view) = app.add_window(WindowStyle::NotStealFocus, |ctx| {
+            RootView::new(
+                global_resource_handles,
+                NewWorkspaceSource::Empty {
+                    previous_active_window: active_window_id,
+                    shell: None,
+                },
+                ctx,
+            )
+        });
+        let project_window = root_view
+            .read(&app, |root_view, _| root_view.project_window())
+            .expect("backendless root view should contain a project window");
+        let (first_project_id, first_workspace) = project_window.read(&app, |project_window, _| {
+            project_window
+                .projects()
+                .next()
+                .map(|(id, workspace)| (id, workspace.clone()))
+                .expect("project window should contain its initial project")
+        });
+
+        let closed_pane_group_id = first_workspace.update(&mut app, |workspace, ctx| {
+            workspace.add_terminal_tab(false, ctx);
+            workspace.active_tab_pane_group().id()
+        });
+        let second_project_id = project_window.update(&mut app, |project_window, ctx| {
+            project_window.add_project(ctx)
+        });
+
+        project_window.update(&mut app, |project_window, ctx| {
+            project_window.activate_project(first_project_id, ctx);
+        });
+        first_workspace.update(&mut app, |workspace, ctx| {
+            workspace.handle_action(&WorkspaceAction::CloseTab(1), ctx);
+            assert_eq!(workspace.tab_count(), 1);
+        });
+        project_window.update(&mut app, |project_window, ctx| {
+            project_window.activate_project(second_project_id, ctx);
+        });
+
+        UndoCloseStack::handle(&app).update(&mut app, |stack, ctx| {
+            stack.undo_close(ctx);
+        });
+
+        app.read(|ctx| {
+            assert_eq!(project_window.as_ref(ctx).active_project_index(), 0);
+            assert_eq!(first_workspace.as_ref(ctx).tab_count(), 2);
+            assert!(
+                first_workspace
+                    .as_ref(ctx)
+                    .contains_pane_group(closed_pane_group_id),
+                "the restored tab should return to its original project"
+            );
         });
     });
 }

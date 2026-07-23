@@ -11,8 +11,10 @@ define_settings_group!(UndoCloseSettings, settings: [
         sync_to_cloud: SyncToCloud::Globally(RespectUserSyncSetting::Yes),
         private: false,
         toml_path: "general.undo_close.enabled",
-        description: "Whether the undo close feature is enabled.",
+        description: "Whether closed sessions are retained without a time limit so they can be reopened.",
     },
+    // Kept so existing synced settings files remain valid. This value is no
+    // longer used; undo-close history has no elapsed-time expiration.
     grace_period: UndoCloseGracePeriod {
         type: Duration,
         default: Duration::from_secs(60),
@@ -20,6 +22,6 @@ define_settings_group!(UndoCloseSettings, settings: [
         sync_to_cloud: SyncToCloud::Globally(RespectUserSyncSetting::Yes),
         private: false,
         toml_path: "general.undo_close.grace_period",
-        description: "How long after closing a tab you can still undo the close.",
+        description: "Deprecated compatibility setting; no longer limits how long closed sessions can be reopened.",
     },
 ]);

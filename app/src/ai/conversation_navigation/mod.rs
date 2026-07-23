@@ -28,7 +28,7 @@ pub struct ConversationNavigationData {
     pub is_selected: bool,
     pub is_in_active_pane: bool,
     /// The conversation is hidden on the undo stack if its parent view (either the tab or the split pane)
-    /// has been recently closed, and this closure can still be undone. We should still show the conversation
+    /// was closed and is still retained for undo. We should still show the conversation
     /// as historical even though the pane group still "exists", as the pane group is still hidden to the user.
     pub is_closed: bool,
     /// The server-generated conversation token, used to reference this conversation in context tags.

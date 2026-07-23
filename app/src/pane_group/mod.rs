@@ -5485,7 +5485,7 @@ impl PaneGroup {
         }
     }
 
-    /// Clean up a close-hidden pane completely (used when grace period expires)
+    /// Clean up a close-hidden pane completely when its undo entry is discarded.
     /// Returns true if the pane was successfully cleaned up, false if it was already cleaned up
     pub fn cleanup_closed_pane(&mut self, pane_id: PaneId, ctx: &mut ViewContext<Self>) -> bool {
         self.panes.remove_hidden_pane(pane_id);

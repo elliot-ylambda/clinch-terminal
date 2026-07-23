@@ -1,5 +1,10 @@
 # REMOTE-926: Reopening a closed cloud-mode tab should rejoin the session
 
+> Historical note (2026-07-23): undo-close entries no longer expire by elapsed
+> time. Clinch now retains a bounded history of 25 closed items for the app's
+> lifetime. Grace-period references below describe the behavior when this
+> feature was originally specified.
+
 ## 1. Summary
 When a user closes a tab that is viewing a cloud conversation (ambient agent / shared-session viewer) and then undoes the close via `Cmd-Shift-T` within the grace period, the restored tab should be live again: the viewer reconnects to the ongoing conversation, new blocks continue to stream in, the input is interactive (if the viewer had an editor role), and the "session ended" affordances do not appear. If the grace period expires without a restore, behavior is unchanged from today.
 

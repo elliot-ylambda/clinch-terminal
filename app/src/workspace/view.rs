@@ -13856,7 +13856,7 @@ impl Workspace {
             (pane_view_locator, window_id, terminal_view_id)
         {
             // The pane group will be in the undo stack if its parent view (either the tab or the split pane)
-            // has been recently closed, and this closure can still be undone.
+            // was closed and is still retained for undo.
             let is_pane_in_undo_stack = UndoCloseStack::as_ref(ctx)
                 .is_pane_group_tab_in_stack(pane_view_locator.pane_group_id)
                 || ctx

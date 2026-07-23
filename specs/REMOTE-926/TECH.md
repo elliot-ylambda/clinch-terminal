@@ -1,5 +1,10 @@
 # REMOTE-926: Reopening a closed cloud-mode tab should rejoin the session — Tech Spec
 
+> Historical note (2026-07-23): `UndoCloseStack` no longer schedules expiry
+> timers. Clinch now discards entries only when they are restored, invalidated,
+> explicitly cleared, or evicted from its 25-item history. Timer references
+> below document the implementation this spec originally targeted.
+
 ## 1. Problem
 `TerminalPane::detach` unconditionally invokes `TerminalManager::on_view_closed` on every detach, including the "reversible" `DetachType::HiddenForClose` case that is used when a tab is closed but remains on the `UndoCloseStack`. For the shared-session viewer `TerminalManager`, `on_view_closed` is destructive: it closes the WebSocket with `close_without_reconnection`, flips `SharedSessionStatus` to `FinishedViewer`, and calls `TerminalView::on_session_share_ended` (which drops `shared_session`, inserts the ended banner, unregisters peers, and makes input read-only). None of this is reversed by `restore_closed_tab` / `PaneGroup::reattach_panes`, so restoring a cloud-mode tab yields a frozen, read-only snapshot instead of a live viewer.
 

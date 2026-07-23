@@ -8,7 +8,7 @@
 //! shared [`OrchestrationEventStreamer`] — leaked until the app exited.
 //! `TerminalManager::on_view_detached` now tears down the OVM on
 //! `DetachType::Closed`, while deliberately preserving it on
-//! `HiddenForClose` (undo-close grace window) and `Moved`.
+//! `HiddenForClose` (retained for undo close) and `Moved`.
 
 use async_broadcast::broadcast;
 use warpui::App;
@@ -176,8 +176,8 @@ fn on_view_detached_closed_clears_orchestration_viewer_model_slot() {
 
 #[test]
 fn on_view_detached_hidden_for_close_keeps_orchestration_viewer_model_alive() {
-    // Negative case: HiddenForClose is part of the undo-close grace
-    // window. OVM (and the ancestor SSE registration) must stay alive so
+    // Negative case: HiddenForClose is retained in the undo-close history.
+    // OVM (and the ancestor SSE registration) must stay alive so
     // the pill bar restores seamlessly if the user undoes the close.
     App::test((), |mut app| async move {
         let _streamer = FeatureFlag::OrchestrationViewerStreamer.override_enabled(true);
@@ -191,7 +191,7 @@ fn on_view_detached_hidden_for_close_keeps_orchestration_viewer_model_alive() {
 
         assert!(
             slot.lock().is_some(),
-            "HiddenForClose must NOT clear the OVM slot (undo-close grace window)"
+            "HiddenForClose must NOT clear the OVM slot while retained for undo close"
         );
         let streamer = OrchestrationEventStreamer::handle(&app);
         streamer.read(&app, |me, _| {

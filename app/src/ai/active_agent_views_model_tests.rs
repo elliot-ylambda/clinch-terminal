@@ -278,7 +278,7 @@ fn remove_focused_state_for_window_cleans_up() {
             model.handle_pane_focus_change(window_b, Some(terminal_b), Some(task_b), ctx);
         });
 
-        // Remove window A's state (simulating undo-close expiry).
+        // Remove window A's state (simulating undo-history eviction).
         model.update(&mut app, |model, ctx| {
             model.remove_focused_state_for_window(window_a, ctx);
         });

@@ -5,6 +5,7 @@ use warpui::keymap::EditableBinding;
 use warpui::AppContext;
 
 pub use self::settings::UndoCloseSettings;
+pub(crate) use self::stack::MAX_RETAINED_CLOSED_ITEMS;
 pub use self::stack::{UndoCloseStack, UndoCloseStackEvent};
 use crate::util::bindings::CustomAction;
 use crate::workspace::WorkspaceAction;

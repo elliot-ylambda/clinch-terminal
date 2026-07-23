@@ -105,7 +105,7 @@ pub struct TerminalPane {
     restored_local_cwd_fallback: RefCell<Option<String>>,
 
     /// Set when this pane's PTY is shut down on close so that, if the tab is
-    /// reopened within the undo grace period, the session is re-created and the
+    /// reopened from the undo-close history, the session is re-created and the
     /// agent conversation resumed. `None` for panes that keep their live PTY.
     restart_spec: RefCell<Option<RestartSpec>>,
 

@@ -367,7 +367,7 @@ fn register_tests() -> HashMap<&'static str, BoxedBuilderFn> {
 
     register_test!(test_restore_single_closed_pane);
     register_test!(test_restore_multiple_closed_panes);
-    register_test!(test_undo_close_grace_period_cleanup);
+    register_test!(test_undo_close_has_no_time_limit);
     register_test!(test_closed_panes_cleared_on_rearrangement);
     register_test!(test_tab_closes_when_last_visible_pane_closed);
 
@@ -440,7 +440,7 @@ fn register_tests() -> HashMap<&'static str, BoxedBuilderFn> {
     register_test!(test_rule_creation);
     register_test!(test_rule_update);
     register_test!(test_rule_pane_opening);
-    register_test!(test_undo_close_stack_timeout_cleanup);
+    register_test!(test_undo_close_reopens_window_then_tab);
 
     // File tree tests
     register_test!(test_file_tree_opens_files_in_warp);
