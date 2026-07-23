@@ -3,7 +3,7 @@ name: clinch-toolbelt
 description: Add, edit, or remove quick-insert buttons in the Clinch terminal's footer toolbelts. Use when the user asks for a new Clinch button, quick-insert button, footer or toolbelt button, or wants to change what a Clinch footer button inserts — for the Claude Code/Codex agent footer or the plain terminal footer.
 ---
 
-<!-- managed-by: Clinch; version: 1.3.0 -->
+<!-- managed-by: Clinch; version: 1.4.0 -->
 
 # Clinch toolbelt quick-insert buttons
 
@@ -95,6 +95,8 @@ left = [
   { custom_insert = { label = "Review w/ Claude Code Fable", text = "Review w/ Claude Code Fable" } },
   { custom_insert = { label = "Debug w/ Ultracode", text = "Investigate with Ultra Code and use subagents" } },
   { custom_insert = { label = "Git Worktree", text = "Move our current work and code into an isolated git work tree. And create a branch. Work out of the git worktree" } },
+  { custom_insert = { label = "Fix & Verify", text = "Implement the requested fix, run the most relevant checks, and summarize what changed." } },
+  { custom_insert = { label = "Simplify", text = "Simplify the current implementation without changing behavior, then run the relevant tests." } },
   "voice_input",
   { custom_insert = { label = "Push2Main", text = "Push all these changes to main." } },
 ]
@@ -113,6 +115,7 @@ left = [
   { custom_insert = { label = "Open", text = "open ." } },
   { custom_insert = { label = "Commit & Push", text = "git add -A && printf 'Commit message [Update changes]: ' && IFS= read -r clinch_commit_message && git commit -m \"${clinch_commit_message:-Update changes}\" && git push" } },
   { custom_insert = { label = "Commit", text = "git add -A && printf 'Commit message [Update changes]: ' && IFS= read -r clinch_commit_message && git commit -m \"${clinch_commit_message:-Update changes}\"" } },
+  { custom_insert = { label = "Status", text = "git status --short --branch" } },
 ]
 right = []
 ```

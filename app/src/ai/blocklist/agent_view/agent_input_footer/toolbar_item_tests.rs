@@ -33,6 +33,10 @@ fn terminal_default_left_contains_exact_quick_actions() {
                 label: "Commit".to_owned(),
                 text: "git add -A && printf 'Commit message [Update changes]: ' && IFS= read -r clinch_commit_message && git commit -m \"${clinch_commit_message:-Update changes}\"".to_owned(),
             },
+            AgentToolbarItemKind::CustomInsert {
+                label: "Status".to_owned(),
+                text: "git status --short --branch".to_owned(),
+            },
         ]
     );
     assert!(AgentToolbarItemKind::terminal_default_right().is_empty());
@@ -165,7 +169,7 @@ fn agent_transfer_is_a_default_cli_host_control() {
 fn cli_default_left_includes_expected_quick_inserts() {
     let items = AgentToolbarItemKind::cli_default_left();
     assert_eq!(
-        &items[5..15],
+        &items[5..17],
         &[
             AgentToolbarItemKind::CustomInsert {
                 label: "/codex".to_owned(),
@@ -206,6 +210,14 @@ fn cli_default_left_includes_expected_quick_inserts() {
             AgentToolbarItemKind::CustomInsert {
                 label: "Git Worktree".to_owned(),
                 text: "Move our current work and code into an isolated git work tree. And create a branch. Work out of the git worktree".to_owned(),
+            },
+            AgentToolbarItemKind::CustomInsert {
+                label: "Fix & Verify".to_owned(),
+                text: "Implement the requested fix, run the most relevant checks, and summarize what changed.".to_owned(),
+            },
+            AgentToolbarItemKind::CustomInsert {
+                label: "Simplify".to_owned(),
+                text: "Simplify the current implementation without changing behavior, then run the relevant tests.".to_owned(),
             },
         ]
     );

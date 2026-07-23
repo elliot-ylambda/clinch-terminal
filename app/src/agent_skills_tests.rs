@@ -12,7 +12,7 @@ fn bundled_skill_contents() -> String {
 fn bundled_skill_carries_a_managed_marker() {
     let contents = bundled_skill_contents();
     assert!(
-        contents.contains("<!-- managed-by: Clinch; version: 1.3.0 -->"),
+        contents.contains("<!-- managed-by: Clinch; version: 1.4.0 -->"),
         "the bundled skill must carry the Clinch managed marker"
     );
 }

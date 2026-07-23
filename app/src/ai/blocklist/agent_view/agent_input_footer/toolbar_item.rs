@@ -374,6 +374,14 @@ impl AgentToolbarItemKind {
                 label: "Git Worktree".to_owned(),
                 text: "Move our current work and code into an isolated git work tree. And create a branch. Work out of the git worktree".to_owned(),
             },
+            Self::CustomInsert {
+                label: "Fix & Verify".to_owned(),
+                text: "Implement the requested fix, run the most relevant checks, and summarize what changed.".to_owned(),
+            },
+            Self::CustomInsert {
+                label: "Simplify".to_owned(),
+                text: "Simplify the current implementation without changing behavior, then run the relevant tests.".to_owned(),
+            },
             Self::VoiceInput,
             Self::CustomInsert {
                 label: "Push2Main".to_owned(),
@@ -410,6 +418,7 @@ impl AgentToolbarItemKind {
             ("Open", "open ."),
             ("Commit & Push", TERMINAL_GIT_COMMIT_AND_PUSH_COMMAND),
             ("Commit", TERMINAL_GIT_COMMIT_COMMAND),
+            ("Status", "git status --short --branch"),
         ]
         .into_iter()
         .map(|(label, text)| Self::CustomInsert {
