@@ -221,12 +221,13 @@ before the first release; `make release` checks every required command, signing 
 
 Run `make release` from a clean, current `main` checkout. It selects the next version, records the
 exact commit, and creates a detached worktree pinned to that commit at a stable per-repository path.
-The worktree shares the ignored `target` directory, and its stable source path keeps incremental
-Cargo fingerprints reusable across releases. Edits made in the caller's checkout after the release
-starts cannot dirty or change the release source. The command runs the full local
+The worktree uses the dedicated `target/release-worktree-cache/` directory, and its stable source
+path keeps incremental Cargo fingerprints reusable across releases without conflicting with normal
+development builds. Edits made in the caller's checkout after the release starts cannot dirty or
+change the release source. The command runs the full local
 gate, builds and verifies both macOS architectures, generates a CycloneDX SBOM, a vendored
 offline-buildable Corresponding Source archive, and signed local provenance, then assembles the
-exact signed asset set under `target/release-stage/<version>/`.
+exact signed asset set under `target/release-worktree-cache/release-stage/<version>/`.
 After a version-and-commit-specific publication confirmation,
 it pushes the signed tag, creates or refreshes a private draft release, downloads the uploaded
 assets into a fresh directory, verifies them again, and publishes the draft. The command does not
@@ -236,7 +237,8 @@ Release publication runs no GitHub Actions job. Immediately before publication, 
 rechecks the signed remote tag, current `main`, both manifest signatures, exact asset set and
 digests, SBOM, validation record, local provenance, and monotonic update sequence. It also rejects
 a draft whose metadata changes during or after download. A failure leaves the draft private and
-safe to retry. Verified progress is stored by commit under `target/release-resume/`: a retry first
+safe to retry. Verified progress is stored by commit under
+`target/release-worktree-cache/release-resume/`: a retry first
 revalidates existing candidate or staged artifacts and skips completed build phases only when those
 checks still pass. Set `CLINCH_RELEASE_RESUME=0` to force a fresh run.
 

@@ -2,10 +2,10 @@
 # Run the local release dispatcher from a detached, commit-pinned worktree.
 #
 # The caller's checkout is used only to select and sync the release commit. The
-# release itself runs from an isolated worktree with the caller's ignored
-# target directory symlinked in, so incremental Cargo artifacts and resumable
-# release state are shared without allowing concurrent edits to dirty the
-# release checkout.
+# release itself runs from an isolated worktree with a dedicated ignored
+# release target symlinked in, so incremental Cargo artifacts and resumable
+# release state persist without conflicting with builds from the caller's
+# checkout or allowing concurrent edits to dirty the release source.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -14,8 +14,8 @@ cd "$ROOT"
 ./script/require-latest-main
 
 COMMIT_SHA="$(git rev-parse HEAD)"
-SHARED_TARGET="$ROOT/target"
-mkdir -p "$SHARED_TARGET"
+RELEASE_TARGET="$ROOT/target/release-worktree-cache"
+mkdir -p "$RELEASE_TARGET"
 
 ROOT_KEY="$(printf '%s' "$ROOT" | cksum | awk '{print $1}')"
 WORKTREE_PARENT="${TMPDIR:-/tmp}/clinch-release-worktree.${UID:-user}.$ROOT_KEY"
@@ -38,7 +38,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 git worktree add --quiet --detach "$WORKTREE_ROOT" "$COMMIT_SHA"
-ln -s "$SHARED_TARGET" "$WORKTREE_ROOT/target"
+ln -s "$RELEASE_TARGET" "$WORKTREE_ROOT/target"
 
 echo "==> Releasing pinned commit ${COMMIT_SHA:0:12} from an isolated clean worktree"
 (

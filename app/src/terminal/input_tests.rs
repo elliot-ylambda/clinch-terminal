@@ -1137,6 +1137,12 @@ fn test_inline_history_up_is_deferred_while_menu_view_is_updating() {
         input.update(&mut app, |input, ctx| {
             input.editor_up(ctx);
         });
+        for _ in 0..20 {
+            if input.read(&app, |input, ctx| input.buffer_text(ctx)) == "echo second" {
+                break;
+            }
+            futures_lite::future::yield_now().await;
+        }
         input.read(&app, |input, ctx| {
             assert!(input
                 .suggestions_mode_model
@@ -1157,6 +1163,12 @@ fn test_inline_history_up_is_deferred_while_menu_view_is_updating() {
             });
         });
 
+        for _ in 0..20 {
+            if input.read(&app, |input, ctx| input.buffer_text(ctx)) == "echo first" {
+                break;
+            }
+            futures_lite::future::yield_now().await;
+        }
         input.read(&app, |input, ctx| {
             assert_eq!(input.buffer_text(ctx), "echo first");
         });

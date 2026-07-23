@@ -35,8 +35,8 @@ printf '/target\n/concurrent-edit\n/released-commit\n/release-worktree-paths\n' 
 printf 'fixture\n' > "$FIXTURE/tracked"
 git -C "$FIXTURE" add .
 git -C "$FIXTURE" commit -q -m fixture
-mkdir -p "$FIXTURE/target"
-printf 'shared-cache\n' > "$FIXTURE/target/cache-marker"
+mkdir -p "$FIXTURE/target/release-worktree-cache"
+printf 'shared-cache\n' > "$FIXTURE/target/release-worktree-cache/cache-marker"
 
 "$FIXTURE/script/release-from-clean-worktree" > "$TMP/output.log"
 "$FIXTURE/script/release-from-clean-worktree" >> "$TMP/output.log"
