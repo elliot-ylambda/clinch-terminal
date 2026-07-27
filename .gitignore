@@ -89,3 +89,8 @@ __pycache__/
 
 # Project notes
 .note/
+
+# Agent session transcripts exported to the repo root. Kept locally, never
+# committed: they contain raw prompts, unshipped design work, and local paths.
+# Anchored to the root so bundled/test .txt fixtures are unaffected.
+/20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.txt

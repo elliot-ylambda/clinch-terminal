@@ -61,12 +61,16 @@ brew update
 brew install jq
 brew install clang-format
 brew install create-dmg
-brew install powershell
 brew install pkgconf
 brew install llvm
 
-# Install PSScriptAnalyzer for PowerShell linting.
-pwsh -Command "Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser"
+# PowerShell is intentionally not installed here. It is only needed to lint the
+# Windows packaging scripts under script/windows, which macOS builds never run.
+# script/presubmit skips PSScriptAnalyzer when pwsh is absent, so contributors
+# who do touch those scripts can install it themselves:
+#
+#   brew install powershell
+#   pwsh -Command "Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser"
 
 # Needed for building for Mac ARM machines (e.g. M1)
 rustup target add aarch64-apple-darwin
