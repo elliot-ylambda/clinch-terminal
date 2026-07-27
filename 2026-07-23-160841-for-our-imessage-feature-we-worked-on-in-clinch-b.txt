@@ -1,0 +1,702 @@
+ ▐▛███▜▌   Claude Code v2.1.218
+▝▜█████▛▘  Opus 4.8 · Claude Max
+  ▘▘ ▝▝    ~/projects/clinch-terminal
+
+
+❯ For our iMessage feature we worked on in Clinch but we ended up not including 
+  it in this version. Could we use this to get our own to give Clinch its own   
+  phone number to text with the user so they don't need to text themselves?     
+  https://zernio.com/                                                           
+
+⏺ I'll research this properly — first understanding what Zernio offers, then how
+  the existing iMessage feature in Clinch works, so I can give you a grounded
+  feasibility assessment.
+
+⏺ Fetch(https://zernio.com/)
+  ⎿  Received 2.3KB (200 OK)
+
+⏺ Explore(Find iMessage feature in Clinch)
+  ⎿  Done (33 tool uses · 107.6k tokens · 6m 22s)
+  (ctrl+o to expand)
+
+⏺ Let me verify what Zernio actually is with a quick search — the user's premise
+  is that it's a messaging/phone-number service, and I want to be certain
+  before contradicting that.
+
+⏺ Web Search("zernio.com iMessage phone number API messaging")
+  ⎿  Did 1 search in 9s
+
+⏺ The quick fetch undersold it — the search shows Zernio actually does provision
+  phone numbers (for SMS/calls/WhatsApp). The critical question is whether any
+  of that is iMessage. Let me pull the docs to confirm the exact channels.
+
+⏺ Fetch(https://docs.zernio.com/)
+  ⎿  Received 1MB (200 OK)
+
+⏺ Fetch(https://chat-sdk.dev/adapters/vendor-official/zernio)
+  ⎿  Received 13.4KB (200 OK)
+
+⏺ Verified across three sources now, and the answer is clearer than the first
+  fetch suggested. Here's the grounded assessment.
+
+  Short answer
+
+  Zernio can give Clinch its own phone number — but only for SMS / MMS / 
+  WhatsApp / voice. It does not do iMessage. I confirmed this three ways:
+  Zernio's own docs list the phone channels as "SMS, MMS, WhatsApp, and voice
+  calls" (no iMessage/RCS), the send endpoint is POST /api/v1/sms/messages, and
+  the Chat SDK adapter's platform list (Instagram, Facebook, X, Telegram,
+  WhatsApp, Bluesky, Reddit) has no iMessage entry.
+
+  So whether Zernio solves your problem depends entirely on one thing: do you 
+  actually need iMessage (blue bubbles), or do you just need a real second 
+  number the user can text?
+
+  Why "text yourself" happens today
+
+  ★ Insight ─────────────────────────────────────
+  Both the native Clinch feature and the installed plugin work the same way:
+  they drive the Mac's local Messages.app via osascript and read 
+  ~/Library/Messages/chat.db read-only to catch replies. Crucially, they send
+  from the Apple ID already signed into that Mac — there's no separate identity.
+  So the only number Clinch can be is you, which forces a self-conversation
+  (one logical message becomes a sent row + a received row with different
+  GUIDs). Most of the code's complexity — the GUID echo-suppression, the
+  MirroredMessageFingerprint twin-row coalescing, the 15s echo window — exists
+  purely to survive texting yourself.
+  ─────────────────────────────────────────────────
+
+  That's the constraint you're trying to break. A dedicated number breaks it —
+  the question is which technology backs that number.
+
+  The real fork in the road
+
+  Path A — Accept SMS (green bubbles). Zernio works here.
+  Provision a Zernio number, Clinch sends completions via POST 
+  /api/v1/sms/messages, inbound replies arrive on a message.received webhook.
+  This cleanly deletes the whole self-chat problem: the user texts a genuine
+  second number, no Full Disk Access, no chat.db polling, no osascript, no GUID
+  dedup. Architecturally it's dramatically simpler than what's on the feature
+  branches.
+
+  Path B — Keep iMessage (blue bubbles). Zernio can't help.
+  There is no clean API for a new, independent iMessage identity — Apple doesn't
+  sell one. The "iMessage API" vendors that showed up in the search
+  (LoopMessage, Sendblue, Blooio) get blue bubbles by running a real Apple ID on
+  a dedicated Mac/device and relaying through it — i.e. the same
+  osascript+chat.db trick Clinch already does, just hosted. To get a separate
+  iMessage number you'd need a separate Apple ID + a dedicated device/relay,
+  typically a paid monthly SaaS, and it stays fragile and ToS-gray.
+
+  The trade-off worth flagging before you pick
+
+  ★ Insight ─────────────────────────────────────
+  The feature was deliberately built local-only and private: its config is a
+  SecureSetting with sync_to_cloud() = SyncToCloud::Never, is_private() = true,
+  and routing state is persisted with owner-only 0o600 permissions. Zernio
+  inverts that — your agent output (and whatever context is in those completion
+  messages) would now transit a third-party cloud API. That's not a blocker, but
+  it's a genuine philosophy change from "nothing leaves the Mac" to "messages
+  relay through a vendor," and it's the kind of thing worth deciding on purpose
+  rather than by accident.
+  ─────────────────────────────────────────────────
+
+  My recommendation
+
+  If iMessage-specifically was never the point — you just wanted the assistant
+  to reach the user's phone without the self-texting hack — Path A with a cloud 
+  SMS provider is the right move, and Zernio is a plausible pick (though I'd
+  weigh it against Twilio, which is the incumbent for exactly this: mature
+  webhooks, number provisioning, and it's not primarily a social-media tool with
+  SMS bolted on). If blue-bubble iMessage is a hard product requirement, Zernio
+  is simply the wrong tool and you're looking at a dedicated-Apple-ID relay
+  instead.
+
+  So before any building: is the requirement "iMessage," or is it "a dedicated 
+  number so the user stops texting themselves"? That answer decides everything
+  downstream. If it's the latter, I'm happy to brainstorm the Zernio-vs-Twilio
+  integration against the existing coordinator architecture.
+
+  Sources:
+  - Zernio homepage (https://zernio.com/) · Zernio API docs
+  (https://docs.zernio.com/) · Zernio pricing (https://zernio.com/pricing)
+  - Zernio Chat SDK adapter
+  (https://chat-sdk.dev/adapters/vendor-official/zernio) · Zernio on Product
+  Hunt (https://www.producthunt.com/products/zernio)
+  - iMessage-relay alternatives for Path B: LoopMessage
+  (https://loopmessage.com/) · Blooio iMessage API
+  (https://blooio.com/integrations/api)
+
+✻ Cogitated for 8m 21s
+
+※ recap: You want Clinch to text users from its own number instead of them texting themselves. Zernio can provision a number but only for SMS/WhatsApp, not iMessage. Next: decide whether you need blue-bubble iMessage or just a dedicated number. (disable recaps in /config)
+
+❯ That's okay if it's not iMessage.                                             
+
+⏺ Good — that opens up the clean path. Since we're now moving from "is this
+  feasible" toward actually designing how Clinch gets its own number, let me
+  pull in the brainstorming skill before we start shaping a solution, so we lock
+  down the requirements and trade-offs deliberately rather than jumping to an
+  implementation.
+
+⏺ Skill(superpowers:brainstorming)
+  ⎿  Successfully loaded skill
+  ⎿  Interrupted · What should Claude do instead?
+
+❯ Continue                                                                      
+⏺ I've got solid context on the existing feature already, so let me start
+  refining requirements — one question at a time.
+
+  The biggest fork first, since it determines how much of the old machinery
+  survives:
+  ⎿  Interrupted · What should Claude do instead?
+
+❯ One of the nicest things would be that we auto-name the group. We create new  
+  chat sessions and we change the conversation name to be the name of the       
+  project tab. That way we know what project tab we're talking about. If we     
+  have multiple chat sessions in one project tab, we have to have some clear    
+  way of figuring those out too so it's easy for the user. Maybe each project   
+  and each session gets its own conversation.                                   
+
+⏺ This is a really good instinct — and it surfaces something important that I
+  should flag before we lock a direction, because it directly collides with the
+  "SMS is fine" decision.
+
+  ★ Insight ─────────────────────────────────────
+  Auto-naming a conversation and splitting one contact into several separate 
+  threads are rich-messaging features, not SMS features. Over plain SMS, the
+  recipient's phone groups every message from one number into a single thread 
+  that the sender cannot rename or split — you have zero control over the
+  thread's title or how many threads exist. So "each project/session gets its
+  own named conversation" is native to iMessage / Telegram / WhatsApp, but
+  structurally impossible over bare SMS from one number. Your feature idea is
+  lovely — it just quietly requires a richer channel than SMS.
+  ─────────────────────────────────────────────────
+
+  The original (removed) feature actually could have done named group chats —
+  because it ran through Messages.app — but it was crippled by the
+  single-Apple-ID "text yourself" problem, not by naming. So your idea reopens
+  the channel choice rather than settling it.
+
+  On granularity: I'd recommend per-session conversations with the project name 
+  as a prefix in the title (e.g. clinch-terminal · fix-auth). That way multiple
+  sessions in one project become distinct threads that still visually cluster by
+  their shared prefix — you get both "which project" and "which session" at a
+  glance, which is exactly the disambiguation you're after.
+
+  Here's how each channel actually delivers your vision:
+
+⏺ User answered Claude's questions:
+  ⎿  · Named, separate conversations per session is a rich-channel feature — 
+     plain SMS structurally can't name or split threads. Which channel should 
+     Clinch text you through? → Telegram bot
+
+⏺ Telegram is a genuinely clean fit — it maps your vision almost perfectly. But
+  the whole design hinges on one capability (a bot creating named "topics"
+  inside a group), so per my own working rules I want to verify that against the
+  current Telegram Bot API before we build on it, rather than trust my memory.
+
+⏺ Fetch(https://core.telegram.org/bots/api)
+  ⎿  Received 817.1KB (200 OK)
+
+⏺ Verified — the capability is real and works exactly as your vision needs:
+
+  - createForumTopic(chat_id, name, icon_color, …) creates a named topic;
+  editForumTopic renames it; closeForumTopic / reopenForumTopic /
+  deleteForumTopic manage its lifecycle.
+  - Outbound: send with message_thread_id to drop a message into a specific
+  topic.
+  - Inbound: replies carry message_thread_id + is_topic_message, so Clinch can
+  map a reply straight back to the right session — no route codes needed.
+  - Prereq: the group must be a supergroup with Topics enabled, and the Clinch
+  bot must be an admin with can_manage_topics.
+
+  ★ Insight ─────────────────────────────────────
+  This is a big architectural simplification over the old iMessage feature.
+  Telegram is just HTTPS calls to api.telegram.org — so the whole Swift helper,
+  osascript, chat.db polling, Full Disk Access, and Apple Events entitlement all
+  disappear. And a bot can't DM a user first, but it can post freely once it's
+  an admin in a group the user added it to — so the group-based setup sidesteps
+  that limitation cleanly. It also stays backendless: the user brings their own
+  bot token, and Clinch talks to Telegram directly from the Mac — no Clinch
+  server in the middle.
+
+  That last point is exactly why I'd steer away from Zernio here.
+  ─────────────────────────────────────────────────
+
+  Now the integration question — and this circles back to your original Zernio
+  link:
+
+⏺ User answered Claude's questions:
+  ⎿  · Should Clinch talk to Telegram directly, or route through Zernio? → 
+     Direct Telegram Bot API
+
+⏺ Direct it is — that keeps the whole thing free, private, and backendless.
+
+  One more genuine UX decision before I lay out the full design, because it
+  affects how your Telegram group feels day to day:
+
+⏺ User answered Claude's questions:
+  ⎿  · When a chat session ends or you close its tab, what should happen to its 
+     Telegram topic? → Close, reopen on resume
+
+⏺ Every key decision is locked in. Let me mark the questioning phase done and
+  start presenting the design — I'll go in two checkpoints so you can
+  course-correct as we go.
+⏺ Design — Checkpoint 1 of 2: core architecture
+
+  Overview & scope
+
+  Clinch gets its own Telegram bot that the user runs from their own @BotFather
+  token. In a private Telegram supergroup (Topics enabled, bot as admin), Clinch
+  maintains one named forum topic per agent session, titled project · session
+  (e.g. clinch-terminal · fix-auth). Agents post updates into their topic; the
+  user replies inside a topic and the reply is injected straight back into that
+  exact live session. Topics close when a session ends and reopen if it resumes.
+  Fully two-way, fully backendless — the Mac talks directly to
+  api.telegram.org, no Clinch server, no third party.
+
+  This is a fresh build on main, not a revival of the removed iMessage code. It
+  borrows proven concepts from the old app/src/imessage/domain.rs (session
+  routing, dedup, FIFO queues, long-message splitting) but drops everything
+  platform-specific to Apple: no Swift helper, no osascript, no chat.db, no Full
+  Disk Access, no Apple Events entitlement. The transport is just HTTPS.
+
+  Architecture & components
+
+  New module app/src/telegram/, mirroring the old module's clean split of pure 
+  domain vs side-effecting transport:
+
+  File: mod.rs
+  Responsibility: Module root, exports coordinator
+  Reuses / replaces: new
+  ────────────────────────────────────────
+  File: coordinator.rs
+  Responsibility: TelegramCoordinator singleton: owns config, the outbound
+  queue,
+  the inbound long-poll task, and the session↔topic map. Subscribes to agent
+  StatusChanged events.
+  Reuses / replaces: adapts old imessage/coordinator.rs orchestration
+  ────────────────────────────────────────
+  File: domain.rs
+  Responsibility: Pure, side-effect-free: topic-title formatting, session↔topic
+  routing, reply classification, dedup, FIFO queue, message splitting. Fully
+  unit-testable.
+  Reuses / replaces: adapts old imessage/domain.rs
+  ────────────────────────────────────────
+  File: client.rs
+  Responsibility: Thin async Telegram Bot API client:
+  create/edit/close/reopen/deleteForumTopic, sendMessage(message_thread_id),
+  getUpdates(offset). All HTTPS. Behind a TelegramTransport trait so tests
+  inject a fake and no test hits the network.
+  Reuses / replaces: replaces old bridge.rs + Swift helper
+  ────────────────────────────────────────
+  File: store.rs
+  Responsibility: Atomic, owner-only (0o600) JSON persistence of the
+  session↔topic map, update offset, and group id.
+  Reuses / replaces: reuses old imessage/store.rs pattern verbatim
+  ────────────────────────────────────────
+  File: tests.rs
+  Responsibility: Domain + coordinator tests against the fake transport.
+  Reuses / replaces: adapts old imessage/tests.rs
+
+  Settings: new TelegramConfiguration + TelegramConfigurationSetting in
+  app/src/settings/clinch.rs, copying the old IMessageConfiguration's security
+  posture exactly — SecureSetting, sync_to_cloud() = Never, is_private() = true,
+  Mac-local. Fields: bot_token (secret), group_chat_id, allowed_user_ids,
+  enabled.
+
+  ★ Insight ─────────────────────────────────────
+  The old feature needed a separate Swift process because Apple gives no
+  send/receive API — you had to drive the GUI app and scrape SQLite. Telegram is
+  an API, so the entire bridge.rs subprocess + 688-line Swift helper collapses
+  into one in-process client.rs making HTTPS calls. That's why hiding the
+  transport behind a TelegramTransport trait is worth it: it's the one seam
+  where the network lives, so it's the one thing tests must fake.
+  ─────────────────────────────────────────────────
+
+  Data flow
+
+  Outbound (agent → you):
+  Agent session turn completes / needs input
+        │  StatusChanged  (existing event)
+        ▼
+  TelegramCoordinator
+    • look up session → topic id in the map
+    • none? client.createForumTopic("project · session") → store id
+    • topic closed (session was resumed)? client.reopenForumTopic
+    • split body to ≤4096 chars → FIFO OutboundJob(s)
+        ▼
+  client.sendMessage(chat_id, text, message_thread_id = topic)
+
+  Inbound (you → agent):
+  Background task: client.getUpdates(offset) long-poll  ── loops while app runs
+        ▼  Message with message_thread_id + is_topic_message
+  TelegramCoordinator
+    • sender in allowed_user_ids?  (else drop)
+    • message_thread_id → session key   (the topic IS the routing key — no route
+  codes)
+    • session live? → TerminalView::submit_external_reply into that exact pane
+    • session gone? → reply in-topic: "session ended" (optionally offer resume)
+    • advance stored offset only after handling
+
+  No route codes, no menus, no calibration handshake for routing — the topic a
+  message sits in is the address. That's the whole payoff of the topic model.
+
+  ---
+  Does this core — module layout, the TelegramTransport seam, and the two
+  data-flow paths — look right before I detail setup, lifecycle, access, errors,
+  and testing?
+
+✻ Churned for 5m 41s
+
+※ recap: Goal: give Clinch its own Telegram bot so agents text you per-session named topics instead of texting yourself. We've locked all key decisions and I've presented the core architecture. Next: you approve Checkpoint 1 so I can detail setup, lifecycle, access, errors, and testing. (disable recaps in /config)
+
+❯ Looks good to me, continue                                                    
+
+⏺ Design — Checkpoint 2 of 2: setup, lifecycle, safety, errors, testing
+
+  Setup / onboarding UX
+
+  A one-time flow in Clinch settings (new "Telegram" section), designed so the
+  fiddly Telegram steps are guided, not guessed:
+
+  1. Create bot — link out to @BotFather; user pastes the token into a secret
+  field. Clinch calls getMe to validate and show the bot's @handle.
+  2. Create the group — Clinch shows exact steps: new group → enable Topics
+  (making it a supergroup) → add the bot → promote to admin with Manage Topics.
+  3. Auto-discover the group id (handshake) — instead of asking the user to find
+  a chat id, Clinch long-polls getUpdates and waits for the bot to be added.
+  When it sees a my_chat_member / group update, it captures group_chat_id and
+  posts a confirmation topic "✅ Clinch connected". Clinch then verifies
+  is_forum: true and its own admin can_manage_topics right, surfacing a fix-it
+  message if either is missing.
+  4. Auto-capture allowed user — the first person to reply in that confirmation
+  topic is offered as the allowed user id (one tap to approve). This is the
+  Telegram-native replacement for the old calibration code.
+
+  ★ Insight ─────────────────────────────────────
+  This reuses the shape of the old feature's calibration handshake (prove
+  control of the channel before trusting it) but gets it for free from
+  Telegram's update stream — no one-time-code round trip. The bot literally
+  cannot be added to your group by anyone but you, so "who added me" is already
+  a trust signal.
+  ─────────────────────────────────────────────────
+
+  Topic naming, lifecycle & dedup
+
+  - Title: project · session, from the existing project-tab name + the session
+  label (the same source the tab bar uses). Renamed via editForumTopic if the
+  tab is renamed.
+  - Collision / uniqueness: the session↔topic map is keyed by the durable
+  session key (CLIAgentSessionKey), never by title — two sessions with identical
+  titles still get distinct topics; a duplicate title just gets a  (2) suffix
+  for human readability.
+  - Lifecycle state machine (persisted in store.rs): Active → (session ends) → 
+  closeForumTopic → Closed → (session resumes) → reopenForumTopic → Active.
+  History always preserved. deleteForumTopic is never called automatically —
+  only via an explicit user "forget this session" action.
+  - Orphans: on startup Clinch reconciles the map against live sessions; a
+  mapped topic whose session no longer exists is closed (not deleted).
+
+  Access control & privacy
+
+  - Scope: Clinch only ever posts to / reads from the one configured
+  group_chat_id. Updates from any other chat are ignored.
+  - Allowlist: inbound replies are honored only from allowed_user_ids;
+  everything else is dropped (mirrors the plugin's allowFrom model). Group is
+  private, so this is defense-in-depth.
+  - Secrets: bot_token lives in the same SecureSetting / SyncToCloud::Never /
+  owner-only-file regime as the old iMessage config — never cloud-synced, 0o600
+  on disk.
+  - Privacy disclosure (documented, not hidden): unlike the removed local-only
+  iMessage feature, message content now transits Telegram's cloud. This is
+  inherent to any remote-notification channel and you've chosen it deliberately;
+  the design just states it plainly in the settings UI and spec so it's a
+  conscious trade, and keeps the feature off by default.
+
+  Error handling
+
+  ┌────────────────────────┬────────────────────────────────────────────────┐
+  │       Condition        │                    Behavior                    │
+  ├────────────────────────┼────────────────────────────────────────────────┤
+  │ Invalid/revoked token  │ Mark config unhealthy, surface in settings,    │
+  │ (getMe 401)            │ stop the poll loop                             │
+  ├────────────────────────┼────────────────────────────────────────────────┤
+  │ Bot not admin / Topics │ Detected at connect + on first                 │
+  │  disabled              │ createForumTopic failure; show precise fix-it  │
+  │                        │ guidance                                       │
+  ├────────────────────────┼────────────────────────────────────────────────┤
+  │ Rate limit (HTTP 429)  │ Honor retry_after from Telegram, back off,     │
+  │                        │ keep FIFO order                                │
+  ├────────────────────────┼────────────────────────────────────────────────┤
+  │ Network down /         │ Exponential backoff on the poll loop; outbound │
+  │ api.telegram.org       │  jobs stay queued (24h TTL)                    │
+  │ unreachable            │                                                │
+  ├────────────────────────┼────────────────────────────────────────────────┤
+  │                        │ Telegram retains updates ~24h; on relaunch     │
+  │ App closed / offline   │ getUpdates(offset) drains the backlog.         │
+  │                        │ Outbound jobs older than TTL are dropped with  │
+  │                        │ a log                                          │
+  ├────────────────────────┼────────────────────────────────────────────────┤
+  │ Reply to an ended      │ Post "session ended" in the topic rather than  │
+  │ session                │ silently dropping                              │
+  ├────────────────────────┼────────────────────────────────────────────────┤
+  │ Send to a              │ Recreate topic, remap, resend                  │
+  │ since-deleted topic    │                                                │
+  └────────────────────────┴────────────────────────────────────────────────┘
+
+  Code reuse & dead-code removal
+
+  Per repo hygiene, the plan will be explicit about what not to leave behind:
+
+  - Build fresh on main under app/src/telegram/. The old app/src/imessage/ and
+  tools/imessage-bridge/ exist only on stale feature branches and are already
+  absent from main — we do not merge or revive them; those branches get pruned
+  once this lands.
+  - Supersede the old specs:
+  specs/two-way-imessage-agent-notifications/{PRODUCT,TECH}.md (marked
+  "removed") are replaced by the new spec, cross-linked so history is clear.
+  Release tests that currently assert the Swift helper and Apple entitlement are
+  absent stay valid (we're not reintroducing them) — I'll confirm none need
+  updating.
+  - No new Cargo feature flag / no Apple entitlement / no Swift target — a
+  deliberate reduction in surface area versus the old design.
+
+  Testing
+
+  - Domain (domain.rs) — pure unit tests: title formatting,  (2) de-collision,
+  reply→session routing by message_thread_id, dedup, FIFO ordering, ≤4096
+  splitting, the lifecycle state machine transitions.
+  - Coordinator — against a fake TelegramTransport (in-memory): full outbound
+  (create→send, reopen-on-resume) and inbound (allowlisted
+  reply→submit_external_reply, dropped non-allowlisted, ended-session path)
+  flows. No test touches the network.
+  - Settings — TelegramConfiguration round-trips, secret redaction,
+  SyncToCloud::Never respected.
+  - Connect handshake — simulated getUpdates sequence drives group-id capture +
+  admin-right verification.
+
+  ---
+  That's the complete design. If this looks right, I'll write it up as a spec at
+  docs/superpowers/specs/2026-07-23-clinch-telegram-agent-channel-design.md,
+  commit it, and then we move to the implementation plan. Anything you want
+  changed or added first?
+
+✻ Worked for 39s
+
+❯  Looks good to me, continue                                                   
+
+⏺ Approved — I'll write the spec now. First let me check the repo state, since
+  this checkout can be shared by concurrent sessions and I don't want to branch
+  on top of someone else's uncommitted work.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Clean tree on main, in sync with clinch/main. Since this checkout is shared
+  with other sessions, I'll isolate this feature in its own worktree (matching
+  the repo's existing .claude/worktrees/ convention) rather than branching the
+  shared checkout — then write and commit the spec there.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Worktree ready at .claude/worktrees/telegram-agent-channel. Now writing the
+  spec there.
+
+⏺ Write(.claude/worktrees/telegram-agent-channel/docs/superpowers/specs/2026-07-
+       23-clinch-telegram-agent-channel-design.md)
+  ⎿  Wrote 234 lines to .claude/worktrees/telegram-agent-channel/docs/super
+     powers/specs/2026-07-23-clinch-telegram-agent-channel-design.md
+       1 # Clinch Telegram Agent Channel — Design
+       2 
+       3 - **Date:** 2026-07-23
+       5 - **Supersedes:** `specs/two-way-imessage-agent-notifications/{P
+         RODUCT,TECH}.md` (both marked "removed")
+       6 - **Branch / worktree:** `telegram-agent-channel`
+       7 
+       9 
+      10 Clinch should be able to reach the user on their phone when a CL
+         I-agent session
+     … +338 lines (ctrl+o to expand)
+
+⏺ Let me self-review the spec before committing
+  (placeholder/consistency/scope/ambiguity scan):
+
+  - Placeholders: none — no TBD/TODO.
+  - Consistency: architecture, data flow, settings fields, and lifecycle all
+  align.
+  - Scope: single feature, right size for one implementation plan.
+  - Ambiguity: one spot worth noting — I referenced
+  TerminalView::submit_external_reply generically (the old code had
+  submit_external_imessage_reply); the implementation plan will decide whether
+  to rename/reuse or add a new method. Not blocking for a design doc.
+
+  No inline fixes needed. Committing it now to the worktree branch.
+
+  Made 1 scratchpad edit +11 (ctrl+o to expand)
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ docs/ is gitignored in this repo. The repo's actual tracked spec home is
+  specs/ (where the old specs/two-way-imessage-agent-notifications/ lives) —
+  that's both the native convention and exactly what this design supersedes. Let
+  me relocate there.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+⏺ Now committing from the tracked location.
+
+  Committed e58f31a11 (ctrl+o to expand)
+⏺ Spec written, self-reviewed, and committed.
+
+  - Branch/worktree: telegram-agent-channel (isolated at
+  .claude/worktrees/telegram-agent-channel, based on clinch/main)
+  - Path: specs/telegram-agent-channel/DESIGN.md — note I put it under the
+  repo's tracked specs/ (its native spec home, alongside the old
+  two-way-imessage-agent-notifications/ this supersedes) rather than the skill's
+  default docs/, because docs/ is gitignored here.
+  - Commit: e58f31a11 — "Add Telegram agent channel design spec"
+
+  ★ Insight ─────────────────────────────────────
+  Worth flagging that docs/ being gitignored means the whole
+  docs/superpowers/specs/ convention silently wouldn't have persisted anything —
+  the first git add got refused, which is exactly why committing (not just
+  writing) is the real verification step. The spec now lives beside the feature
+  it replaces, so the "supersedes" relationship is legible right in the tree.
+  ─────────────────────────────────────────────────
+
+  The spec captures everything we agreed: the Telegram-bot-with-forum-topics
+  architecture, direct Bot API (no Zernio), two-way routing via
+  message_thread_id, per-session topics titled project · session,
+  close-on-end/reopen-on-resume lifecycle, the guided setup handshake,
+  access/privacy posture, error handling, the dead-code/no-Swift-helper
+  reductions, and the testing plan. There's a decisions log at the bottom.
+
+  Please give specs/telegram-agent-channel/DESIGN.md a read and let me know if 
+  you want any changes before I turn it into a step-by-step implementation plan.
+  If it looks good as-is, say the word and I'll invoke the writing-plans skill
+  to break it into build phases.
+
+✻ Worked for 3m 55s
+
+※ recap: Goal: give Clinch its own Telegram bot so agents notify and are steered remotely, one named topic per session. The design spec is written and committed on the telegram-agent-channel branch. Next: you review it, then I write the implementation plan. (disable recaps in /config)
+
+❯ Looks good to me, continue                                                    
+
+⏺ Approved. Per the brainstorming flow, the next and final step is turning this
+  spec into a concrete, step-by-step implementation plan. Let me invoke the
+  writing-plans skill to do that properly.
+
+⏺ Skill(superpowers:writing-plans)
+  ⎿  Successfully loaded skill
+
+⏺ I'm using the writing-plans skill to create the implementation plan.
+
+  To write a plan with real code and exact signatures (not placeholders), I need
+  the concrete integration points and the proven patterns from the removed
+  iMessage module. The old code still exists in the
+  agent-resume-phantom-block-fix worktree — it's the ideal template — and the
+  integration points (events, settings, terminal submit, HTTP/async deps) live
+  on clinch/main. Let me extract those precisely.
+
+⏺ Explore(Extract Telegram plan integration details)
+  ⎿  Done (37 tool uses · 167.8k tokens · 7m 24s)
+  (ctrl+o to expand)
+
+⏺ This reference is everything I need — exact signatures, the
+  settings/event/store patterns, the release guardrails, and confirmation that
+  reqwest is already a dependency (no new crates). One especially useful
+  finding: the old code had no transport trait, so I'll improve on it with a
+  TelegramTransport seam plus a pure "plan operations, then execute" design that
+  makes the core fully unit-testable without driving async.
+
+  Now writing the plan. It's a sizable feature, so it's a long plan with
+  bite-sized TDD tasks. Putting it alongside the spec (since docs/ is gitignored
+  here).
+
+⏺ Write(.claude/worktrees/telegram-agent-channel/specs/telegram-agent-channel/PL
+       AN.md)
+  ⎿  Wrote 2858 lines to .claude/worktrees/telegram-agent-channel/specs/tel
+     egram-agent-channel/PLAN.md
+      1 # Clinch Telegram Agent Channel — Implementation Plan
+      3 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:su
+        bagent-driven-development (recommended) or superpowers:executing-
+         [ ]`) syntax for tracking.
+      4 
+        orum topic per CLI-agent session (`project · session`), so agents
+         can notify the user and receive steering replies remotely — two-
+      6 
+      7 **Architecture:** New Rust module `app/src/telegram/` mirroring t
+         HTTPS to `api.telegram.org` via the a
+     … +3415 lines (ctrl+o to expand)
+
+⏺ The plan is written. Let me run the required self-review before committing.
+
+  Self-review against the spec:
+  - Spec coverage: Every spec section maps to a task (channel/topics, direct Bot
+  API, two-way routing, project · session titles, close/reopen/orphan
+  lifecycle, connect handshake, allowlist + secure token, off-by-default
+  privacy, no-Swift-helper guardrails, testing). ✅
+  - Type consistency: I traced the shared types across tasks — TelegramState,
+  TelegramSessionKey, TopicRequirement/OutboundPlan (Task 5→11),
+  InboundMessage/InboundOutcome (Task 6→13), the FakeTelegramTransport
+  field/method names (Task 9→11/13). Consistent. ✅
+  - Placeholder scan — two honest soft spots I'm flagging rather than faking:
+    - Task 12's test and Task 17 (settings UI) describe steps instead of giving
+  compile-ready code, because they depend on the internal warpui GUI/view test 
+  harness and an existing settings-page module that lives only on the
+  removed-iMessage branch. Inventing code there would produce non-compiling
+  guesses. Instead I gave the exact grep to find the template + the real
+  method/impl code where it's knowable. These two are the areas that need
+  on-the-ground verification during execution — the pure-logic core (Tasks 1–11,
+  13–15) is fully code-complete and TDD'd.
+    - Several integration tasks carry inline > notes to re-confirm exact warpui
+  import paths against cited template lines. That's deliberate honesty about
+  adapting code from a different branch.
+
+  Committing the plan now.
+
+  Made 1 scratchpad edit +12, committed 6772e533a (ctrl+o to expand)
+
+  Recalled 1 memory, wrote 2 memories (ctrl+o to expand)
+
+⏺ Everything's committed and captured. Here's where we landed:
+
+  Summary
+
+  Starting from your Zernio question, we established that Zernio (and SMS
+  generally) can't do what you actually want — named, separate conversations per
+  session — so we pivoted to a Telegram bot with one forum topic per session,
+  direct Bot API, fully backendless, reviving the value of the removed iMessage
+  feature without any of its Apple baggage.
+
+  Committed on branch/worktree telegram-agent-channel (isolated from the shared
+  checkout):
+  - e58f31a11 — specs/telegram-agent-channel/DESIGN.md (approved design)
+  - 6772e533a — specs/telegram-agent-channel/PLAN.md (17-task TDD plan, 2858
+  lines)
+
+  I also verified the load-bearing assumption against the live Telegram Bot API
+  (forum topics: create/edit/close/reopen + message_thread_id routing) and
+  extracted every real integration point from the codebase, so the plan's core
+  is code-complete rather than sketched. Saved a project memory so a future
+  session can pick this up.
+
+  Execution options
+
+  Plan complete and saved to specs/telegram-agent-channel/PLAN.md. How do you
+  want to build it?
+
+  1. Subagent-driven (recommended) — I dispatch a fresh subagent per task with a
+  two-stage review between each. Fast iteration, isolated context per task, and
+  I catch the two flagged soft spots (Task 12 view-harness test, Task 17
+  settings UI) as we hit them.
+  2. Inline execution — I execute the tasks in this session in batches with
+  checkpoints for your review.
+  3. Hand to Codex — per your usual workflow (many Clinch features were
+  Codex-built), I can hand the committed plan to Codex via /codex-build.
+
+  Which approach do you want? Or if you'd rather review the plan yourself first,
+  say the word and I'll hold.
+
+✻ Crunched for 20m 5s
