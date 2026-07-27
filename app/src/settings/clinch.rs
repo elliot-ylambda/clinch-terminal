@@ -22,6 +22,21 @@ define_settings_group!(ClinchSettings, settings: [
         toml_path: "clinch.agent_conversation_finder.scope",
         description: "The default project scope for the agent conversation finder.",
     },
+    // Gates Clinch's automatic weekly check against its signed GitHub release feed. On by
+    // default so security fixes reach users who never open Settings. Turning it off leaves the
+    // app making no automatic network requests at all; Clinch → Check for Updates… still works,
+    // and CLINCH_NO_UPDATE_CHECK overrides this setting for headless or managed machines.
+    //
+    // `SyncToCloud::Never`: Clinch ships with no backend, and this is a per-machine choice.
+    automatic_update_check: ClinchAutomaticUpdateCheck {
+        type: bool,
+        default: true,
+        supported_platforms: SupportedPlatforms::MAC,
+        sync_to_cloud: SyncToCloud::Never,
+        private: false,
+        toml_path: "clinch.updates.automatic_check",
+        description: "Check GitHub once a week for a signed Clinch update. When off, Clinch makes no automatic network requests; you can still check on demand from Clinch → Check for Updates…",
+    },
     agent_conversation_finder_agent: AgentConversationFinderAgent {
         type: String,
         default: "all".to_string(),

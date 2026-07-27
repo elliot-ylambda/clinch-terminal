@@ -21,7 +21,8 @@
 </p>
 
 <p align="center">
-  <sub>macOS 14+ · Intel and Apple Silicon · free and open source · no Clinch or Warp account ·
+  <sub>macOS 14+ · Intel and Apple Silicon · free and open source · no account ·
+  <a href="#privacy-and-network-behavior"><strong>no telemetry</strong></a> ·
   <a href="#public-preview">public preview</a></sub>
 </p>
 
@@ -46,8 +47,11 @@ alongside Warp without inheriting Warp's settings.
   waiting or completed agent without sending Clinch telemetry.
 - **Stay close to the work.** Browse skills and files, preview common image formats, and monitor
   optional Claude plan limits without leaving the terminal.
-- **Stay local-first.** Stable Clinch has no Warp account flow, Warp backend, RudderStack
-  destination, Sentry crash reporter, or bundled MCP credentials.
+- **Stay local-first.** No telemetry, no analytics, no crash reporting, no account. Clinch
+  collects nothing about you or your work, and the only thing it reaches for on its own is a
+  weekly update check against this repository—which you can turn off. See
+  [Privacy and network behavior](#privacy-and-network-behavior)—including how to verify it
+  yourself.
 
 ## Install
 
@@ -152,21 +156,86 @@ independent security audit. See [SECURITY.md](SECURITY.md) for the trust model a
 
 ## Privacy and network behavior
 
-The stable channel is created by
-[`ChannelConfig::clinch()`](crates/warp_core/src/channel/config.rs). It has no Warp server,
-RudderStack telemetry, Sentry crash reporting, or bundled MCP credentials. Its signed GitHub
-updater fetches release metadata at most once per active calendar day; it does not download an app
-until the user explicitly approves the update. When telemetry is unavailable, the runtime does not
-schedule telemetry tasks, persist a queue, or send it; stale Clinch telemetry queues are deleted
-without upload. The public bundle carries no Clinch-specific privacy entitlement or privileged
-update authorizer.
+**Clinch has no telemetry, no analytics, no crash reporting, and no account.** It does not
+collect or transmit anything about you, your commands, your files, or how you use the app. No
+usage data, no event stream, and no identifier ever leaves your machine. This is a property of
+how the app is built, not a preference you have to find and switch off.
 
-Stable Clinch starts no Warp account session or telemetry/crash reporter. Its automatic GitHub
-release check authenticates signed metadata and stays quiet when no update is available or a check
-fails. Other network activity occurs when the user asks for it or launches software that uses it.
-Examples include Claude Code, Codex, SSH, MCP servers, remote assets, language/package tooling,
-provider plugin commands, and the optional Claude plan-limit gauge. Those tools have their own
-privacy and security behavior.
+The stable channel is created by
+[`ChannelConfig::clinch()`](crates/warp_core/src/channel/config.rs), which ships
+`telemetry_config: None`, `crash_reporting_config: None`, and no bundled MCP credentials. Every
+inherited Warp backend URL—application server, real-time server, and Oz—is replaced with an
+unroutable [RFC 5737](https://www.rfc-editor.org/rfc/rfc5737) black-hole address rather than
+merely left unused, so no code path can deliver data to a Warp service even by accident. Account
+login, onboarding, Warp Drive, session sharing, and Warp's own AI are gated behind
+`ChannelState::has_backend()` and are inert. Every telemetry entry point—including the innermost
+send—returns early when telemetry is unavailable, so the runtime schedules no telemetry task,
+writes no queue to disk, and deletes stale Clinch telemetry queues without uploading them.
+
+The shipped binary links no crash-reporting framework and contains no RudderStack destination,
+Sentry DSN, or analytics SDK. The bundle requests no entitlements at all, and carries no
+privileged update authorizer.
+
+### What talks to the network
+
+| Activity | Runs when | Destination |
+| --- | --- | --- |
+| Update check | Automatically, at most once a week — **and you can turn it off** | `api.github.com`, this repository's releases |
+| Update download | Only after you approve the update | GitHub release assets |
+| Claude plan-limit gauges | **Off by default**; only if you enable them in Settings | `api.anthropic.com` |
+| Language servers, MCP servers, remote assets | Only when you start them | Wherever you point them |
+| Claude Code, Codex, SSH, package tooling | Only when you run them | Their own services |
+
+The update check is an ordinary HTTPS GET for signed release metadata. Clinch attaches no
+identifier, machine fingerprint, or usage data to it, and it downloads nothing until you approve
+the update. A successful check is not repeated for another week; a failed one backs off for six
+hours rather than retrying on every window focus.
+
+**To make Clinch issue no automatic network requests at all**, turn off **Settings → Clinch →
+Updates → Check for updates automatically**. Checking on demand from **Clinch → Check for
+Updates…** keeps working, so turning this off does not strand you on an old build. The equivalent
+without opening the GUI:
+
+```bash
+# In ~/.warp/settings.toml
+[clinch.updates]
+automatic_check = false
+
+# Or per-launch, which overrides the setting
+CLINCH_NO_UPDATE_CHECK=1 open -a Clinch
+```
+
+Software you launch inside Clinch is outside this statement. Provider CLIs, MCP servers, SSH, and
+package tooling reach their own services under your own accounts, with their own privacy behavior.
+
+### Verify it yourself
+
+None of the above has to be taken on trust:
+
+```bash
+# No crash reporter linked, and no bundled frameworks at all
+otool -L /Applications/Clinch.app/Contents/MacOS/stable | grep -i sentry
+ls /Applications/Clinch.app/Contents/Frameworks
+
+# No analytics destination or crash-reporting DSN compiled in
+strings -a /Applications/Clinch.app/Contents/MacOS/stable \
+  | grep -Ei 'rudderstack\.com|ingest\.sentry\.io|segment\.io|amplitude\.com'
+
+# No entitlements requested (prints an empty <dict/>)
+codesign -d --entitlements - /Applications/Clinch.app
+
+# Every socket the running app holds open
+lsof -nP -i -a -p "$(ps -Ao pid,comm | awk '/Clinch.app\/Contents\/MacOS\/stable/{print $1; exit}')"
+```
+
+Expected results: the two `grep` commands match nothing, `ls` reports that no `Frameworks`
+directory exists, `codesign` prints an empty `<dict/>`, and `lsof` shows no sockets most of the
+time—only GitHub connections around a daily update check. Nothing should ever resolve to a Warp
+service or an analytics host.
+
+These invariants are also locked by tests in
+[`config_tests.rs`](crates/warp_core/src/channel/config_tests.rs): a change that reintroduced a
+telemetry destination, a crash reporter, or a live backend URL fails the build.
 
 Session-capture data stays in local Clinch-owned files. Claude Code and Codex continue to manage
 their own transcripts and credentials. Clinch does not delete provider transcripts or Keychain

@@ -15,7 +15,8 @@ use super::{SettingsSection, ToggleState};
 use crate::appearance::Appearance;
 use crate::report_if_error;
 use crate::settings::{
-    AutoCreateWorktreesForNewTabs, CliAgentUsageSettings, ClinchSettings, ShowCliAgentPlanLimits,
+    AutoCreateWorktreesForNewTabs, CliAgentUsageSettings, ClinchAutomaticUpdateCheck,
+    ClinchSettings, ShowCliAgentPlanLimits,
 };
 use crate::terminal::session_settings::{NotificationsSettings, SessionSettings};
 
@@ -25,6 +26,7 @@ pub enum ClinchSettingsPageAction {
     AgentStatusOnTabs,
     AutoCreateWorktreesForNewTabs,
     CliAgentPlanLimits,
+    AutomaticUpdateCheck,
 }
 
 pub struct ClinchSettingsPageView {
@@ -60,6 +62,14 @@ impl ClinchSettingsPageView {
             usage_widgets.push(Box::new(CliAgentPlanLimitsWidget::default()));
         }
 
+        let mut updates_widgets: Vec<Box<dyn SettingsWidget<View = Self>>> = vec![];
+        if ClinchSettings::as_ref(ctx)
+            .automatic_update_check
+            .is_supported_on_current_platform()
+        {
+            updates_widgets.push(Box::new(AutomaticUpdateCheckWidget::default()));
+        }
+
         let mut categories = vec![];
         if !project_widgets.is_empty() {
             categories.push(Category::new("Projects", project_widgets));
@@ -67,6 +77,9 @@ impl ClinchSettingsPageView {
         categories.push(Category::new("Agents", agent_widgets));
         if !usage_widgets.is_empty() {
             categories.push(Category::new("Usage", usage_widgets));
+        }
+        if !updates_widgets.is_empty() {
+            categories.push(Category::new("Updates", updates_widgets));
         }
 
         Self {
@@ -138,6 +151,12 @@ impl TypedActionView for ClinchSettingsPageView {
             ClinchSettingsPageAction::CliAgentPlanLimits => {
                 CliAgentUsageSettings::handle(ctx).update(ctx, |settings, ctx| {
                     report_if_error!(settings.show_plan_limits.toggle_and_save_value(ctx));
+                });
+                ctx.notify();
+            }
+            ClinchSettingsPageAction::AutomaticUpdateCheck => {
+                ClinchSettings::handle(ctx).update(ctx, |settings, ctx| {
+                    report_if_error!(settings.automatic_update_check.toggle_and_save_value(ctx));
                 });
                 ctx.notify();
             }
@@ -323,6 +342,58 @@ impl SettingsWidget for AutoCreateWorktreesWidget {
             Some(
                 "When the active project is a local Git repository with a main branch, create \
                  ordinary new terminal and Agent tabs in isolated linked worktrees."
+                    .into(),
+            ),
+        )
+    }
+}
+
+#[derive(Default)]
+struct AutomaticUpdateCheckWidget {
+    switch_state: SwitchStateHandle,
+}
+
+impl SettingsWidget for AutomaticUpdateCheckWidget {
+    type View = ClinchSettingsPageView;
+
+    fn search_terms(&self) -> &str {
+        "clinch update updates automatic check weekly github network privacy offline telemetry \
+         disable"
+    }
+
+    fn render(
+        &self,
+        view: &Self::View,
+        appearance: &Appearance,
+        app: &AppContext,
+    ) -> Box<dyn Element> {
+        let enabled = *ClinchSettings::as_ref(app).automatic_update_check;
+        render_body_item::<ClinchSettingsPageAction>(
+            "Check for updates automatically".into(),
+            None,
+            LocalOnlyIconState::for_setting(
+                ClinchAutomaticUpdateCheck::storage_key(),
+                ClinchAutomaticUpdateCheck::sync_to_cloud(),
+                &mut view.local_only_icon_tooltip_states.borrow_mut(),
+                app,
+            ),
+            ToggleState::Enabled,
+            appearance,
+            appearance
+                .ui_builder()
+                .switch(self.switch_state.clone())
+                .check(enabled)
+                .build()
+                .on_click(|ctx, _, _| {
+                    ctx.dispatch_typed_action(ClinchSettingsPageAction::AutomaticUpdateCheck);
+                })
+                .finish(),
+            Some(
+                "Ask GitHub once a week whether a signed Clinch update exists. Nothing is \
+                 downloaded until you approve it, and no identifier or usage data is sent. Turn \
+                 this off and Clinch makes no automatic network requests at all — you can still \
+                 check on demand from Clinch → Check for Updates…. Setting \
+                 CLINCH_NO_UPDATE_CHECK=1 in the environment also turns it off."
                     .into(),
             ),
         )

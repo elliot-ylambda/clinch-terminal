@@ -1,6 +1,8 @@
 use chrono::{Local, TimeZone};
+use settings::{PrivatePreferences, PublicPreferences, Setting as _, SettingsManager};
 use warp_core::execution_mode::{AppExecutionMode, ExecutionMode};
 use warpui::{App, ModelHandle, ReadModel, UpdateModel};
+use warpui_extras::user_preferences;
 
 use super::*;
 use crate::auth::{AuthManager, AuthStateProvider};
@@ -39,7 +41,7 @@ fn clinch_discovery_state_keeps_an_actionable_update_visible() {
 }
 
 #[test]
-fn clinch_records_every_successful_automatic_check_as_the_daily_check() {
+fn clinch_records_every_successful_automatic_check() {
     assert!(should_record_daily_success(
         RequestType::Poll,
         false,
@@ -108,6 +110,16 @@ fn initialize_app(app: &mut App) -> ModelHandle<AutoupdateState> {
     app.add_singleton_model(|_| AuthStateProvider::new_for_test());
     app.add_singleton_model(AppTelemetryContextProvider::new_context_provider);
     app.add_singleton_model(AuthManager::new_for_test);
+    // `get_next_request` consults `clinch.updates.automatic_check`, which needs a backing
+    // preference store and manager before the settings group can register.
+    app.add_singleton_model(|_| {
+        PublicPreferences::new(Box::<user_preferences::in_memory::InMemoryPreferences>::default())
+    });
+    app.add_singleton_model(|_| -> PrivatePreferences {
+        PrivatePreferences::new(Box::<user_preferences::in_memory::InMemoryPreferences>::default())
+    });
+    app.add_singleton_model(|_| SettingsManager::default());
+    ClinchSettings::register(app);
 
     let server_api = app.read_model(&server_api_provider, |server_api_provider, _| {
         server_api_provider.get()
@@ -679,4 +691,93 @@ fn test_should_update() {
             }
         });
     });
+}
+
+#[test]
+fn clinch_records_failed_automatic_checks_so_they_back_off() {
+    assert!(should_record_failed_check(RequestType::Poll, true, false));
+    assert!(should_record_failed_check(
+        RequestType::DailyCheck,
+        true,
+        false
+    ));
+    // A check the user explicitly asked for must not impose a backoff on automatic checks.
+    assert!(!should_record_failed_check(
+        RequestType::ManualCheck,
+        true,
+        false
+    ));
+    // Successes are recorded by should_record_daily_success instead.
+    assert!(!should_record_failed_check(RequestType::Poll, true, true));
+    // Upstream Warp's updater keeps its own cadence bookkeeping.
+    assert!(!should_record_failed_check(RequestType::Poll, false, false));
+}
+
+#[test]
+fn the_update_check_env_var_disables_automatic_checks() {
+    for raw in ["1", "true", "TRUE", " yes ", "on"] {
+        assert!(
+            env_disables_update_check(Some(raw)),
+            "expected {raw:?} to disable automatic checks"
+        );
+    }
+    for raw in ["", "0", "false", "no", "  "] {
+        assert!(
+            !env_disables_update_check(Some(raw)),
+            "expected {raw:?} to leave automatic checks enabled"
+        );
+    }
+    assert!(!env_disables_update_check(None));
+}
+
+#[test]
+fn the_env_var_overrides_the_automatic_check_setting() {
+    assert!(automatic_checks_allowed(None, true));
+    assert!(!automatic_checks_allowed(None, false));
+    // Env var wins over an enabled setting.
+    assert!(!automatic_checks_allowed(Some("1"), true));
+    // ...but a falsy env var does not force checks back on against the setting.
+    assert!(automatic_checks_allowed(Some("0"), true));
+    assert!(!automatic_checks_allowed(Some("0"), false));
+}
+
+#[test]
+fn disabling_automatic_checks_drops_polls_but_keeps_manual_checks() {
+    App::test((), |mut app| async move {
+        app.add_singleton_model(|ctx| AppExecutionMode::new(ExecutionMode::App, false, ctx));
+        let autoupdate_state = initialize_app(&mut app);
+
+        ClinchSettings::handle(&app).update(&mut app, |settings, ctx| {
+            settings
+                .automatic_update_check
+                .set_value(false, ctx)
+                .expect("disable automatic update checks");
+        });
+
+        app.update_model(&autoupdate_state, |autoupdate, ctx| {
+            autoupdate.polling_started = true;
+
+            // Automatic requests are dropped rather than left to accumulate.
+            autoupdate.request_queue.push_back(RequestType::Poll);
+            autoupdate.request_queue.push_back(RequestType::DailyCheck);
+            assert_eq!(autoupdate.get_next_request(ctx), None);
+            assert!(autoupdate.request_queue.is_empty());
+
+            // Clinch → Check for Updates… must keep working with the setting off.
+            autoupdate.request_queue.push_back(RequestType::ManualCheck);
+            assert_eq!(
+                autoupdate.get_next_request(ctx),
+                Some(RequestType::ManualCheck)
+            );
+        });
+    });
+}
+
+#[test]
+fn clinch_records_successful_checks_including_manual_ones() {
+    // A manual check that succeeds must reset the weekly clock too, otherwise an automatic check
+    // fires seconds later for metadata the user just fetched by hand.
+    assert!(should_record_clinch_success(true, true));
+    assert!(!should_record_clinch_success(true, false));
+    assert!(!should_record_clinch_success(false, true));
 }

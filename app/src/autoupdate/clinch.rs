@@ -6,7 +6,7 @@ use std::time::Duration;
 use anyhow::{anyhow, ensure, Context as _, Result};
 use async_fs::File;
 use base64::prelude::{Engine as _, BASE64_STANDARD};
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
 use command::r#async::Command;
 use futures::StreamExt as _;
 use futures_lite::io::AsyncWriteExt as _;
@@ -28,26 +28,107 @@ const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const EMBEDDED_PUBLIC_KEY: &str =
     include_str!("../../../resources/update/clinch-update-public-key.json");
 
+/// How long a successful automatic check suppresses the next one.
+const AUTOMATIC_CHECK_INTERVAL_SECS: i64 = 7 * 24 * 60 * 60;
+/// How long a failed automatic check suppresses the next one. Short enough to recover the same
+/// day from a brief outage, long enough that a persistently failing check costs a handful of
+/// requests per day rather than one per window focus.
+const FAILED_CHECK_BACKOFF_SECS: i64 = 6 * 60 * 60;
+
 fn last_check_path() -> PathBuf {
     warp_core::paths::state_dir().join("last-update-check")
 }
 
-pub(super) fn automatic_check_due(today: NaiveDate) -> bool {
-    std::fs::read_to_string(last_check_path())
-        .map(|value| value.trim() != today.format("%Y-%m-%d").to_string())
-        .unwrap_or(true)
+/// Cadence state for Clinch's automatic update check.
+///
+/// Both fields are instants rather than calendar dates, so the cadence is timezone-independent
+/// and does not depend on when the local day happens to roll over. `retry_after` is written only
+/// when a check fails; without it a failing check records nothing and re-fires on every window
+/// focus.
+#[derive(Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+pub(super) struct UpdateCheckRecord {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_success: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    retry_after: Option<DateTime<Utc>>,
 }
 
-pub(super) fn record_successful_check(today: NaiveDate) {
+impl UpdateCheckRecord {
+    /// Reads a stored record, tolerating both unreadable content and the legacy `YYYY-MM-DD`
+    /// format written when the cadence was daily. Anything unrecognized means "no check
+    /// recorded", which errs toward checking rather than silently never checking again.
+    pub(super) fn parse(raw: &str) -> Self {
+        let raw = raw.trim();
+        if let Ok(record) = serde_json::from_str::<Self>(raw) {
+            return record;
+        }
+        if let Ok(date) = NaiveDate::parse_from_str(raw, "%Y-%m-%d") {
+            return Self {
+                last_success: date.and_hms_opt(0, 0, 0).map(|naive| naive.and_utc()),
+                retry_after: None,
+            };
+        }
+        Self::default()
+    }
+
+    pub(super) fn to_json(&self) -> String {
+        serde_json::to_string(self).unwrap_or_else(|_| "{}".to_owned())
+    }
+
+    pub(super) fn automatic_check_due(&self, now: DateTime<Utc>) -> bool {
+        if self
+            .retry_after
+            .is_some_and(|retry_after| now < retry_after)
+        {
+            return false;
+        }
+        self.last_success.is_none_or(|last_success| {
+            now - last_success >= chrono::Duration::seconds(AUTOMATIC_CHECK_INTERVAL_SECS)
+        })
+    }
+
+    pub(super) fn record_success(&mut self, now: DateTime<Utc>) {
+        self.last_success = Some(now);
+        self.retry_after = None;
+    }
+
+    pub(super) fn record_failure(&mut self, now: DateTime<Utc>) {
+        self.retry_after = Some(now + chrono::Duration::seconds(FAILED_CHECK_BACKOFF_SECS));
+    }
+}
+
+fn read_record() -> UpdateCheckRecord {
+    std::fs::read_to_string(last_check_path())
+        .map(|raw| UpdateCheckRecord::parse(&raw))
+        .unwrap_or_default()
+}
+
+fn write_record(record: &UpdateCheckRecord) {
     let path = last_check_path();
     let Some(parent) = path.parent() else { return };
     if let Err(error) = std::fs::create_dir_all(parent).and_then(|_| {
         let temporary = path.with_extension(format!("tmp.{}", std::process::id()));
-        std::fs::write(&temporary, format!("{}\n", today.format("%Y-%m-%d")))?;
+        std::fs::write(&temporary, format!("{}\n", record.to_json()))?;
         std::fs::rename(temporary, path)
     }) {
-        log::warn!("could not record the daily Clinch update check: {error}");
+        log::warn!("could not record the Clinch update check: {error}");
     }
+}
+
+pub(super) fn automatic_check_due(now: DateTime<Utc>) -> bool {
+    read_record().automatic_check_due(now)
+}
+
+pub(super) fn record_successful_check(now: DateTime<Utc>) {
+    let mut record = read_record();
+    record.record_success(now);
+    write_record(&record);
+}
+
+pub(super) fn record_failed_check(now: DateTime<Utc>) {
+    let mut record = read_record();
+    record.record_failure(now);
+    write_record(&record);
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

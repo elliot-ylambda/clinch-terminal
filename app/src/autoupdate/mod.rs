@@ -31,10 +31,15 @@ use crate::channel::Channel;
 use crate::features::FeatureFlag;
 use crate::server::server_api::ServerApi;
 use crate::server::telemetry::TelemetryEvent;
+use crate::settings::ClinchSettings;
 use crate::workspace::Workspace;
 use crate::{
     report_if_error, send_telemetry_from_ctx, send_telemetry_sync_from_app_ctx, ChannelState,
 };
+
+/// Disables Clinch's automatic update check without launching the GUI. Overrides
+/// `clinch.updates.automatic_check`; see [`automatic_checks_allowed`].
+const NO_UPDATE_CHECK_ENV_VAR: &str = "CLINCH_NO_UPDATE_CHECK";
 
 /// A successfully downloaded and unpacked target update.
 #[derive(Clone, Debug)]
@@ -209,11 +214,19 @@ impl AutoupdateState {
             return None;
         }
 
+        // Evaluated per request rather than once at startup, so toggling the setting takes effect
+        // without a relaunch. `ManualCheck` returns above this, which is what keeps
+        // Clinch → Check for Updates… working when automatic checks are off.
+        let automatic_allowed = automatic_checks_allowed(
+            std::env::var(NO_UPDATE_CHECK_ENV_VAR).ok().as_deref(),
+            *ClinchSettings::as_ref(ctx).automatic_update_check,
+        );
+
         while let Some(request) = self.request_queue.pop_front() {
             match request {
                 RequestType::ManualCheck => return Some(request),
                 RequestType::Poll | RequestType::DailyCheck => {
-                    if AppExecutionMode::as_ref(ctx).can_autoupdate() {
+                    if automatic_allowed && AppExecutionMode::as_ref(ctx).can_autoupdate() {
                         return Some(request);
                     }
                 }
@@ -308,7 +321,7 @@ impl AutoupdateState {
         #[cfg(target_os = "macos")]
         if ChannelState::uses_clinch_updater()
             && request_type != RequestType::ManualCheck
-            && !clinch::automatic_check_due(current_date)
+            && !clinch::automatic_check_due(chrono::Utc::now())
         {
             return;
         }
@@ -458,10 +471,20 @@ impl AutoupdateState {
         );
         if successful_automatic_check {
             self.last_successful_daily_update_check = Some(chrono::Local::now().fixed_offset());
-            #[cfg(target_os = "macos")]
-            if ChannelState::uses_clinch_updater() {
-                clinch::record_successful_check(chrono::Local::now().date_naive());
-            }
+        }
+
+        #[cfg(target_os = "macos")]
+        if should_record_clinch_success(ChannelState::uses_clinch_updater(), version.is_ok()) {
+            clinch::record_successful_check(chrono::Utc::now());
+        }
+
+        #[cfg(target_os = "macos")]
+        if should_record_failed_check(
+            request_type,
+            ChannelState::uses_clinch_updater(),
+            version.is_ok(),
+        ) {
+            clinch::record_failed_check(chrono::Utc::now());
         }
 
         // If one update was already applied, we cannot apply another.
@@ -862,6 +885,46 @@ fn should_record_daily_success(
         } else {
             is_daily
         }
+}
+
+/// Whether a completed check should stamp the Clinch cadence record as successful.
+///
+/// Unlike [`should_record_daily_success`], which governs Warp's in-memory daily bookkeeping, this
+/// includes manual checks: metadata the user just fetched by hand is no staler than metadata an
+/// automatic check would fetch, so a manual success resets the weekly clock rather than leaving an
+/// automatic check to re-fetch it moments later.
+fn should_record_clinch_success(uses_clinch_updater: bool, succeeded: bool) -> bool {
+    uses_clinch_updater && succeeded
+}
+
+/// Whether a completed check should record a failure backoff.
+///
+/// Without this, a check that fails records nothing, so the next window focus or poll re-fires it
+/// immediately. Manual checks are excluded: a check the user asked for should not suppress
+/// automatic ones. Only the Clinch updater keeps this record; upstream Warp has its own cadence.
+fn should_record_failed_check(
+    request_type: RequestType,
+    uses_clinch_updater: bool,
+    succeeded: bool,
+) -> bool {
+    uses_clinch_updater && !succeeded && request_type != RequestType::ManualCheck
+}
+
+/// Whether `CLINCH_NO_UPDATE_CHECK` asks for automatic checks to be off.
+///
+/// Only affirmative values disable; anything else (including unset, empty, `0`, and `false`)
+/// leaves the setting in charge.
+fn env_disables_update_check(raw: Option<&str>) -> bool {
+    raw.map(|value| value.trim().to_ascii_lowercase())
+        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
+}
+
+/// Whether automatic (non-manual) update checks may run at all.
+///
+/// The environment variable overrides the setting so the check can be disabled without launching
+/// the GUI, but it only ever disables — it never forces checks on against the user's setting.
+fn automatic_checks_allowed(env_override: Option<&str>, setting_enabled: bool) -> bool {
+    !env_disables_update_check(env_override) && setting_enabled
 }
 
 // We only want to announce autoupdates when there's manual check. Otherwise, the autoupdate check
