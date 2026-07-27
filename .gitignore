@@ -94,3 +94,7 @@ __pycache__/
 # committed: they contain raw prompts, unshipped design work, and local paths.
 # Anchored to the root so bundled/test .txt fixtures are unaffected.
 /20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.txt
+
+# Product and technical specs. Internal design material, not a build input:
+# nothing in the app, the scripts, or the release gate reads from here.
+/specs/
