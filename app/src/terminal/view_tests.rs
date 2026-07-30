@@ -188,7 +188,7 @@ fn cli_agent_history_prompt_label_stays_on_one_line() {
 }
 
 #[test]
-fn cli_agent_history_prompt_tooltip_shows_full_text_and_caps_pathological_prompts() {
+fn cli_agent_history_prompt_tooltip_shows_full_text_without_truncating() {
     let short = AgentPrompt {
         timestamp: None,
         text: "  a full\nmulti-line message  ".to_owned(),
@@ -200,14 +200,9 @@ fn cli_agent_history_prompt_tooltip_shows_full_text_and_caps_pathological_prompt
 
     let long = AgentPrompt {
         timestamp: None,
-        text: "é".repeat(CLI_AGENT_HISTORY_TOOLTIP_MAX_CHARS + 1),
+        text: "é".repeat(2_001),
     };
-    let tooltip = cli_agent_history_prompt_tooltip(&long);
-    assert_eq!(
-        tooltip.chars().count(),
-        CLI_AGENT_HISTORY_TOOLTIP_MAX_CHARS + 1
-    );
-    assert!(tooltip.ends_with('…'));
+    assert_eq!(cli_agent_history_prompt_tooltip(&long), long.text);
 }
 
 #[test]
