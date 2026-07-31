@@ -127,6 +127,107 @@ fn invitation_is_single_use_and_requires_desktop_approval() {
 }
 
 #[test]
+fn rescanning_the_same_phone_key_reuses_its_device_record() {
+    let manager = PairingManager::new(DeviceRegistry::default()).unwrap();
+    let now = Utc::now();
+    let first_invitation = manager
+        .create_invitation("https://mac.example.ts.net", now)
+        .unwrap();
+    let first_receipt = manager
+        .claim(claim_request(&first_invitation), now)
+        .unwrap();
+    let first = manager
+        .approve(first_receipt.claim_id, vec![Capability::View], now)
+        .unwrap();
+
+    let retried_at = now + Duration::seconds(1);
+    let second_invitation = manager
+        .create_invitation("https://mac.example.ts.net", retried_at)
+        .unwrap();
+    let second_receipt = manager
+        .claim(claim_request(&second_invitation), retried_at)
+        .unwrap();
+    let second = manager
+        .approve(
+            second_receipt.claim_id,
+            vec![Capability::View, Capability::Control],
+            retried_at,
+        )
+        .unwrap();
+
+    assert_eq!(second.id, first.id);
+    assert_eq!(second.paired_at, retried_at);
+    assert_eq!(
+        second.capabilities,
+        vec![Capability::View, Capability::Control]
+    );
+    assert_eq!(manager.registry_snapshot().unwrap().devices.len(), 1);
+    assert!(matches!(
+        manager
+            .pairing_status(
+                PairingStatusRequest {
+                    claim_id: second_receipt.claim_id,
+                    claim_secret: second_receipt.claim_secret,
+                },
+                retried_at,
+            )
+            .unwrap(),
+        PairingStatus::Approved { device_id, .. } if device_id == first.id
+    ));
+}
+
+#[test]
+fn valid_approval_polling_does_not_consume_the_security_attempt_budget() {
+    let manager = PairingManager::new(DeviceRegistry::default()).unwrap();
+    let now = Utc::now();
+    let invitation = manager
+        .create_invitation("https://mac.example.ts.net", now)
+        .unwrap();
+    let receipt = manager.claim(claim_request(&invitation), now).unwrap();
+    let request = PairingStatusRequest {
+        claim_id: receipt.claim_id,
+        claim_secret: receipt.claim_secret,
+    };
+
+    for _ in 0..(MAX_SECURITY_ATTEMPTS_PER_MINUTE * 2) {
+        assert_eq!(
+            manager.pairing_status(request.clone(), now).unwrap(),
+            PairingStatus::Pending
+        );
+    }
+}
+
+#[test]
+fn registry_validation_keeps_the_newest_record_for_a_phone_key() {
+    let now = Utc::now();
+    let older_id = DeviceId::new();
+    let newer_id = DeviceId::new();
+    let record = |id, paired_at| PairedDeviceRecord {
+        id,
+        name: "Phone".to_owned(),
+        platform: DevicePlatform::Ios,
+        capabilities: vec![Capability::View],
+        public_key_p256_raw: valid_public_key(),
+        paired_at,
+        last_seen_at: None,
+        revoked_at: None,
+    };
+    let registry = DeviceRegistry {
+        version: REGISTRY_VERSION,
+        route_id: random_route_id(),
+        devices: vec![
+            record(older_id, now),
+            record(newer_id, now + Duration::seconds(1)),
+        ],
+    }
+    .validate()
+    .unwrap();
+
+    assert_eq!(registry.devices.len(), 1);
+    assert_eq!(registry.devices[0].id, newer_id);
+}
+
+#[test]
 fn wrong_invitation_secret_consumes_the_invitation() {
     let manager = PairingManager::new(DeviceRegistry::default()).unwrap();
     let now = Utc::now();

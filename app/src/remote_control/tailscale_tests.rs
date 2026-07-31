@@ -144,6 +144,44 @@ async fn reports_sign_in_and_consent_urls_without_enabling_funnel() {
 }
 
 #[tokio::test]
+async fn first_time_setup_surfaces_serve_consent_without_launching_serve() {
+    let route = "/clinch-remote-0123456789abcdef01234567";
+    let client = client(FakeRunner::with_outputs(vec![output(
+        true,
+        r#"{"BackendState":"Running","CertDomains":null,"Self":{"ID":"nRi8c6fHQP11CNTRL","Online":true,"DNSName":"mac.tail.ts.net"}}"#,
+    )]));
+
+    assert_eq!(
+        client.configure_private_route(route, 4567).await.unwrap(),
+        TailscaleSetupOutcome::ConsentRequired {
+            action_url: Some(
+                "https://login.tailscale.com/f/serve?node=nRi8c6fHQP11CNTRL".to_owned()
+            ),
+        }
+    );
+    let calls = client.runner.calls.lock().unwrap();
+    assert_eq!(
+        calls.as_slice(),
+        &[vec!["status".to_owned(), "--json".to_owned()]]
+    );
+}
+
+#[tokio::test]
+async fn first_time_setup_rejects_an_unsafe_node_id() {
+    let route = "/clinch-remote-0123456789abcdef01234567";
+    let client = client(FakeRunner::with_outputs(vec![output(
+        true,
+        r#"{"BackendState":"Running","CertDomains":[],"Self":{"ID":"bad&node=other","Online":true,"DNSName":"mac.tail.ts.net"}}"#,
+    )]));
+
+    assert_eq!(
+        client.configure_private_route(route, 4567).await.unwrap(),
+        TailscaleSetupOutcome::ConsentRequired { action_url: None }
+    );
+    assert_eq!(client.runner.calls.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
 async fn distinguishes_a_stopped_daemon_from_signed_out() {
     let route = "/clinch-remote-0123456789abcdef01234567";
     let stopped = client(FakeRunner::with_outputs(vec![output(

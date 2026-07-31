@@ -368,6 +368,22 @@
           "type": "object",
           "properties": {
             "data": {
+              "$ref": "#/$defs/CreateProject"
+            },
+            "type": {
+              "type": "string",
+              "const": "create_project"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
               "$ref": "#/$defs/CreateSession"
             },
             "type": {
@@ -510,6 +526,36 @@
         "version_incompatible"
       ]
     },
+    "CreateProject": {
+      "type": "object",
+      "properties": {
+        "app_instance_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "cwd": {
+          "description": "An exact local directory for the first terminal, or `None` for Clinch's default.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project_id": {
+          "description": "The currently selected project anchors the new project to the same native window.",
+          "type": "string"
+        },
+        "workspace_revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "app_instance_id",
+        "workspace_revision",
+        "project_id"
+      ]
+    },
     "CreateSession": {
       "type": "object",
       "properties": {
@@ -518,7 +564,11 @@
           "format": "uuid"
         },
         "cwd": {
-          "type": "string"
+          "description": "An exact local directory, or `None` to use Clinch's normal new-tab directory.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "initial_prompt": {
           "type": [
@@ -542,8 +592,7 @@
         "app_instance_id",
         "workspace_revision",
         "project_id",
-        "kind",
-        "cwd"
+        "kind"
       ]
     },
     "DevicePlatform": {

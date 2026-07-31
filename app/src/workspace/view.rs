@@ -110,7 +110,7 @@ use warpui::platform::{
 #[cfg(feature = "local_tty")]
 use warpui::r#async::Timer;
 use warpui::text_layout::ClipConfig;
-use warpui::ui_components::button::{Button, ButtonVariant};
+use warpui::ui_components::button::{Button, ButtonVariant, TextAndIcon, TextAndIconAlignment};
 use warpui::ui_components::components::{Coords, UiComponent, UiComponentStyles};
 use warpui::windowing::state::ApplicationStage;
 use warpui::windowing::{StateEvent, WindowManager};
@@ -365,9 +365,7 @@ use crate::settings_view::handoff_environment_creation_modal::{
 use crate::settings_view::keybindings::{KeybindingChangedEvent, KeybindingChangedNotifier};
 use crate::settings_view::mcp_servers_page::MCPServersSettingsPage;
 use crate::settings_view::pane_manager::SettingsPaneManager;
-use crate::settings_view::{
-    flags, remote_control_setup_widget_id, SettingsSection, SettingsView, SettingsViewEvent,
-};
+use crate::settings_view::{flags, SettingsSection, SettingsView, SettingsViewEvent};
 #[cfg(all(target_os = "windows", feature = "local_tty"))]
 use crate::shell_indicator::ShellIndicatorType;
 use crate::tab::{
@@ -1357,6 +1355,11 @@ fn project_cli_agent_activity(
 
 fn should_show_remote_control_button(has_backend: bool) -> bool {
     !has_backend
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn remote_control_settings_action() -> WorkspaceAction {
+    WorkspaceAction::ShowSettingsPage(SettingsSection::Clinch)
 }
 
 impl Workspace {
@@ -8934,10 +8937,19 @@ impl Workspace {
     /// Opens an exact local directory in a new terminal tab for Remote Control.
     pub(crate) fn remote_control_open_terminal(
         &mut self,
-        path: PathBuf,
+        path: Option<PathBuf>,
         ctx: &mut ViewContext<Self>,
     ) {
-        self.open_directory_in_new_tab(path, ctx);
+        if let Some(path) = path {
+            self.open_directory_in_new_tab(path, ctx);
+        } else {
+            self.add_tab_with_pane_layout(
+                PanesLayout::SingleTerminal(Box::default()),
+                Arc::new(HashMap::new()),
+                None,
+                ctx,
+            );
+        }
     }
 
     /// Opens a typed Claude Code or Codex command in a new tab.
@@ -8948,7 +8960,7 @@ impl Workspace {
     pub(crate) fn remote_control_open_cli_agent(
         &mut self,
         provider: crate::agent_resume::AgentResumeProvider,
-        cwd: PathBuf,
+        cwd: Option<PathBuf>,
         initial_prompt: Option<String>,
         ctx: &mut ViewContext<Self>,
     ) {
@@ -8957,7 +8969,11 @@ impl Workspace {
             command.push(' ');
             command.push_str(&shell_words::quote(&prompt));
         }
-        self.launch_cli_agent_in_new_tab(command, Some(cwd.to_string_lossy().into_owned()), ctx);
+        self.launch_cli_agent_in_new_tab(
+            command,
+            cwd.map(|cwd| cwd.to_string_lossy().into_owned()),
+            ctx,
+        );
     }
 
     #[cfg(feature = "local_tty")]
@@ -21702,13 +21718,23 @@ impl Workspace {
                 }
             };
 
-            let tab_bar = Flex::row()
+            let mut tab_bar = Flex::row()
                 .with_main_axis_size(MainAxisSize::Max)
                 .with_cross_axis_alignment(CrossAxisAlignment::Center)
                 .with_child(tab_bar.finish())
-                .with_child(center_slot)
-                .with_child(right_controls.finish())
-                .finish();
+                .with_child(center_slot);
+
+            #[cfg(not(target_family = "wasm"))]
+            if should_show_remote_control_button(ChannelState::has_backend()) {
+                tab_bar.add_child(
+                    Container::new(self.render_remote_control_button(appearance))
+                        .with_margin_left(4.)
+                        .with_margin_right(4.)
+                        .finish(),
+                );
+            }
+            tab_bar.add_child(right_controls.finish());
+            let tab_bar = tab_bar.finish();
 
             return EventHandler::new(
                 Container::new(tab_bar)
@@ -21863,6 +21889,16 @@ impl Workspace {
 
         // Placeholder to make sure the flex row expands across the entire width of the app.
         tab_bar.add_child(Shrinkable::new(0.5, Empty::new().finish()).finish());
+
+        #[cfg(not(target_family = "wasm"))]
+        if should_show_remote_control_button(ChannelState::has_backend()) {
+            tab_bar.add_child(
+                Container::new(self.render_remote_control_button(appearance))
+                    .with_margin_left(4.)
+                    .with_margin_right(4.)
+                    .finish(),
+            );
+        }
 
         self.add_configurable_right_side_tab_bar_controls(
             &mut tab_bar,
@@ -22055,15 +22091,6 @@ impl Workspace {
             if let Some(button) = self.render_header_toolbar_button(&item, appearance, ctx) {
                 target.add_child(button);
             }
-        }
-
-        #[cfg(not(target_family = "wasm"))]
-        if should_show_remote_control_button(ChannelState::has_backend()) {
-            target.add_child(
-                Container::new(self.render_remote_control_button(appearance))
-                    .with_margin_left(TAB_BAR_PADDING_LEFT)
-                    .finish(),
-            );
         }
 
         // Legacy AI assistant button (non-agent-mode only)
@@ -22782,23 +22809,40 @@ impl Workspace {
 
     #[cfg(not(target_family = "wasm"))]
     fn render_remote_control_button(&self, appearance: &Appearance) -> Box<dyn Element> {
-        Align::new(
-            self.render_tab_bar_icon_button(
-                appearance,
-                icons::Icon::Phone01,
-                &self.mouse_states.remote_control_icon,
-                WorkspaceAction::ScrollToSettingsWidget {
-                    page: SettingsSection::Clinch,
-                    widget_id: remote_control_setup_widget_id(),
-                },
-                "Remote Control".to_string(),
-                Some("Set up secure phone access (Preview)".to_string()),
-                false,
-                false,
+        let theme = appearance.theme();
+        let button = appearance
+            .ui_builder()
+            .button(
+                ButtonVariant::Basic,
+                self.mouse_states.remote_control_icon.clone(),
             )
-            .finish(),
-        )
-        .finish()
+            .with_text_and_icon_label(
+                TextAndIcon::new(
+                    TextAndIconAlignment::IconFirst,
+                    "Remote Control",
+                    icons::Icon::Phone01.to_warpui_icon(theme.active_ui_text_color()),
+                    MainAxisSize::Min,
+                    MainAxisAlignment::Center,
+                    vec2f(14., 14.),
+                )
+                .with_inner_padding(6.),
+            )
+            .with_style(UiComponentStyles {
+                font_size: Some(11.),
+                font_weight: Some(Weight::Semibold),
+                padding: Some(Coords::default().top(5.).bottom(5.).left(9.).right(9.)),
+                border_radius: Some(CornerRadius::with_all(Radius::Pixels(6.))),
+                ..UiComponentStyles::default()
+            })
+            .with_tooltip(self.render_tab_bar_icon_button_tooltip(
+                appearance,
+                "Remote Control (Preview)".to_string(),
+                Some("Securely access Clinch from your phone".to_string()),
+            ))
+            .build()
+            .on_click(|ctx, _, _| ctx.dispatch_typed_action(remote_control_settings_action()));
+
+        Align::new(button.finish()).finish()
     }
 
     fn render_web_anonymous_user_sign_in_button(

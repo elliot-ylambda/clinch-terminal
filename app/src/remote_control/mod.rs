@@ -4,7 +4,7 @@ mod status;
 mod tailscale;
 mod workspace_adapter;
 
-use std::time::Duration as StdDuration;
+use std::time::{Duration as StdDuration, Instant as StdInstant};
 
 use chrono::Utc;
 use clinch_companion_protocol::{Capability, DeviceId, PairingClaimId, PairingInvitation};
@@ -21,6 +21,7 @@ use self::workspace_adapter::WorkspaceAdapter;
 use crate::settings::{RemoteControlMode, RemoteControlSettings};
 
 const DEVICE_REGISTRY_STORAGE_KEY: &str = "ClinchRemoteControlDeviceRegistryV1";
+const TAILSCALE_SETUP_TIMEOUT: StdDuration = StdDuration::from_secs(20);
 
 pub fn register(ctx: &mut AppContext) {
     let registry = if ChannelState::has_backend() {
@@ -122,6 +123,52 @@ impl RemoteControlService {
             .create_invitation(base_origin, Utc::now())
             .map_err(|error| error.to_string())?;
         self.view_state.active_invitation = Some(invitation.clone());
+        if let Some(runtime) = &self.runtime {
+            let generation = self.generation;
+            let invitation_id = invitation.id;
+            let spawner = ctx.spawner();
+            runtime.spawn(async move {
+                loop {
+                    tokio::time::sleep(StdDuration::from_millis(500)).await;
+                    let Ok(should_continue) = spawner
+                        .spawn(move |service, ctx| {
+                            if service.generation != generation
+                                || !service
+                                    .view_state
+                                    .active_invitation
+                                    .as_ref()
+                                    .is_some_and(|active| active.id == invitation_id)
+                            {
+                                return false;
+                            }
+                            service.refresh_pairing_state();
+                            let pending = !service.view_state.pending_claims.is_empty();
+                            if pending {
+                                log::info!(
+                                    "Remote Control approval watcher found {} pending phone(s)",
+                                    service.view_state.pending_claims.len()
+                                );
+                            }
+                            let active = service
+                                .view_state
+                                .active_invitation
+                                .as_ref()
+                                .is_some_and(|active| active.id == invitation_id);
+                            if pending || !active {
+                                ctx.notify();
+                            }
+                            active && !pending
+                        })
+                        .await
+                    else {
+                        break;
+                    };
+                    if !should_continue {
+                        break;
+                    }
+                }
+            });
+        }
         ctx.notify();
         Ok(invitation)
     }
@@ -150,6 +197,7 @@ impl RemoteControlService {
                 Utc::now(),
             )
             .map_err(|error| error.to_string())?;
+        self.view_state.active_invitation = None;
         persist_registry(&self.pairing, ctx);
         self.refresh_pairing_state();
         ctx.notify();
@@ -164,6 +212,7 @@ impl RemoteControlService {
         self.pairing
             .reject(claim_id, Utc::now())
             .map_err(|error| error.to_string())?;
+        self.view_state.active_invitation = None;
         self.refresh_pairing_state();
         ctx.notify();
         Ok(())
@@ -277,14 +326,17 @@ impl RemoteControlService {
             }
         };
         let port = gateway.port;
+        log::info!("Remote Control companion started on loopback; configuring Tailscale");
         let spawner = ctx.spawner();
         runtime.spawn(async move {
             while let Ok(event) = event_rx.recv().await {
+                log::info!("Remote Control received gateway event: {event:?}");
                 if spawner
                     .spawn(move |service, ctx| service.handle_gateway_event(event, ctx))
                     .await
                     .is_err()
                 {
+                    log::warn!("Remote Control gateway event model was dropped");
                     break;
                 }
             }
@@ -310,7 +362,28 @@ impl RemoteControlService {
         };
         let setup_spawner = ctx.spawner();
         runtime.spawn(async move {
-            let result = client.configure_private_route(&route_path, port).await;
+            let started_at = StdInstant::now();
+            let result = match tokio::time::timeout(
+                TAILSCALE_SETUP_TIMEOUT,
+                client.configure_private_route(&route_path, port),
+            )
+            .await
+            {
+                Ok(result) => result,
+                Err(_) => Err(TailscaleError::TimedOut),
+            };
+            let outcome = match &result {
+                Ok(TailscaleSetupOutcome::Ready(_)) => "ready",
+                Ok(TailscaleSetupOutcome::Stopped) => "stopped",
+                Ok(TailscaleSetupOutcome::SignInRequired { .. }) => "sign-in-required",
+                Ok(TailscaleSetupOutcome::ConsentRequired { .. }) => "consent-required",
+                Err(TailscaleError::TimedOut) => "timed-out",
+                Err(_) => "error",
+            };
+            log::info!(
+                "Remote Control Tailscale setup finished in {} ms ({outcome})",
+                started_at.elapsed().as_millis()
+            );
             let _ = setup_spawner
                 .spawn(move |service, ctx| {
                     service.finish_tailscale_setup(generation, port, result, ctx)
@@ -377,10 +450,25 @@ impl RemoteControlService {
     fn handle_gateway_event(&mut self, event: GatewayEvent, ctx: &mut ModelContext<Self>) {
         match event {
             GatewayEvent::DeviceRegistryChanged => persist_registry(&self.pairing, ctx),
-            GatewayEvent::PendingPairingChanged => self.view_state.active_invitation = None,
+            GatewayEvent::PendingPairingChanged => {
+                // Keep the just-scanned QR visible as the anchor for the approval panel. The
+                // invitation has already been consumed server-side and cannot be replayed.
+            }
             GatewayEvent::ClientConnected | GatewayEvent::ClientDisconnected => {}
         }
         self.refresh_pairing_state();
+        let connected = self
+            .view_state
+            .paired_devices
+            .iter()
+            .filter(|device| device.connected)
+            .count();
+        log::info!(
+            "Remote Control pairing state changed ({} pending, {} paired, {} connected)",
+            self.view_state.pending_claims.len(),
+            self.view_state.paired_devices.len(),
+            connected,
+        );
         ctx.notify();
     }
 

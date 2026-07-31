@@ -3,7 +3,8 @@
 //! Invitation secrets, challenges, session cookies, and failed-attempt state intentionally never
 //! leave this process. Only approved device public keys and metadata are serializable.
 
-use std::collections::{HashMap, VecDeque};
+use std::cmp::Reverse;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use base64::engine::general_purpose::{STANDARD as BASE64_STANDARD, URL_SAFE_NO_PAD};
@@ -64,11 +65,21 @@ impl DeviceRegistry {
             return Err(PairingError::InvalidRegistry);
         }
 
-        self.devices.sort_by_key(|device| device.paired_at);
-        self.devices.dedup_by_key(|device| device.id);
         for device in &self.devices {
             device.validate()?;
         }
+
+        // A browser can retry pairing with the same non-exportable key after Safari reloads.
+        // Treat that key as the stable device identity and retain the newest approved record. This
+        // also repairs registries written by older previews that allowed duplicate phone rows.
+        self.devices.sort_by_key(|device| Reverse(device.paired_at));
+        let mut seen_ids = HashSet::new();
+        let mut seen_public_keys = HashSet::new();
+        self.devices.retain(|device| {
+            seen_ids.insert(device.id)
+                && seen_public_keys.insert(device.public_key_p256_raw.clone())
+        });
+        self.devices.sort_by_key(|device| device.paired_at);
         Ok(self)
     }
 
@@ -432,6 +443,30 @@ impl PairingManager {
             )
         };
 
+        // Re-scanning after a browser refresh must complete the existing phone authorization,
+        // not create another device row for the same non-exportable key.
+        if let Some(index) = state.registry.devices.iter().position(|device| {
+            device.revoked_at.is_none() && device.public_key_p256_raw == public_key_p256_raw
+        }) {
+            let record = {
+                let record = &mut state.registry.devices[index];
+                record.name = device_name;
+                record.platform = platform;
+                record.capabilities = capabilities.clone();
+                record.paired_at = now;
+                record.clone()
+            };
+            state
+                .claims
+                .get_mut(&claim_id)
+                .expect("claim was checked above")
+                .resolution = ClaimResolution::Approved {
+                device_id: record.id,
+                capabilities,
+            };
+            return Ok(record);
+        }
+
         // Revoked records are retained long enough to reject stale keys explicitly, but they must
         // not make the bounded registry grow forever as phones are replaced over time.
         while state.registry.devices.len() >= MAX_PAIRED_DEVICES {
@@ -491,15 +526,20 @@ impl PairingManager {
             .validate()
             .map_err(|_| PairingError::InvalidRequest)?;
         let mut state = self.lock()?;
-        check_rate_limit(&mut state, now)?;
         prune(&mut state, now);
+        let Some(claim) = state.claims.get(&request.claim_id) else {
+            check_rate_limit(&mut state, now)?;
+            return Err(PairingError::NotFound);
+        };
+        let secret_matches = secrets_match(&claim.claim_secret_hash, &request.claim_secret);
+        if !secret_matches {
+            check_rate_limit(&mut state, now)?;
+            return Err(PairingError::Unauthorized);
+        }
         let claim = state
             .claims
             .get(&request.claim_id)
-            .ok_or(PairingError::NotFound)?;
-        if !secrets_match(&claim.claim_secret_hash, &request.claim_secret) {
-            return Err(PairingError::Unauthorized);
-        }
+            .expect("claim was checked above");
         Ok(match &claim.resolution {
             ClaimResolution::Pending => PairingStatus::Pending,
             ClaimResolution::Approved {

@@ -181,8 +181,11 @@ this repo owns the feature contract and in-app links.
     disconnect/inactivity, and allow the desktop to preempt. Broadcast lease state to all viewers.
 
 19. Add typed creation commands:
-    - `TerminalCreate { app_instance_id, workspace_revision, project_id, cwd }`
-    - `AgentSessionCreate { app_instance_id, workspace_revision, project_id, provider, cwd,
+    - `ProjectCreate { app_instance_id, workspace_revision, project_id, cwd? }`, where `project_id`
+      anchors the new project to the same native project window and the command opens its first
+      Terminal.
+    - `TerminalCreate { app_instance_id, workspace_revision, project_id, cwd? }`
+    - `AgentSessionCreate { app_instance_id, workspace_revision, project_id, provider, cwd?,
       initial_prompt }`
     - `AgentSessionResume { app_instance_id, workspace_revision, project_id, provider,
       durable_session_id, cwd }`

@@ -1,6 +1,36 @@
 use super::*;
 
 #[test]
+fn pane_ids_are_protocol_safe_and_stable() {
+    let pane_id: PaneId = crate::pane_group::TerminalPaneId::dummy_terminal_pane_id().into();
+    let encoded = pane_opaque_id(pane_id);
+
+    assert!(encoded.len() <= MAX_OPAQUE_ID_BYTES);
+    assert_eq!(pane_opaque_id(pane_id), encoded);
+    TargetRef {
+        app_instance_id: AppInstanceId::new(),
+        project_id: "project".to_owned(),
+        tab_id: "tab".to_owned(),
+        pane_id: encoded,
+    }
+    .validate()
+    .unwrap();
+}
+
+#[test]
+fn project_creation_uses_the_session_creation_capability() {
+    assert_eq!(
+        required_capability(&ClientMessage::CreateProject(CreateProject {
+            app_instance_id: AppInstanceId::new(),
+            workspace_revision: 1,
+            project_id: "project".to_owned(),
+            cwd: None,
+        })),
+        Some(Capability::CreateSession)
+    );
+}
+
+#[test]
 fn activity_aggregation_keeps_attention_and_work_visible() {
     assert_eq!(
         merge_activity(ProjectActivity::Working, ProjectActivity::NeedsAttention),
@@ -14,6 +44,7 @@ fn activity_aggregation_keeps_attention_and_work_visible() {
 
 #[test]
 fn local_directory_validation_rejects_relative_and_file_paths() {
+    assert_eq!(optional_local_directory(None).unwrap(), None);
     assert!(canonical_local_directory("relative/path").is_err());
     let directory = tempfile::tempdir().unwrap();
     assert_eq!(

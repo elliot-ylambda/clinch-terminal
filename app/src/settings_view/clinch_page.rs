@@ -18,14 +18,14 @@ use warpui::ui_components::switch::SwitchStateHandle;
 use warpui::{AppContext, Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle};
 
 use super::settings_page::{
-    render_body_item, render_settings_info_banner, Category, LocalOnlyIconState, MatchData,
+    render_body_item, render_sub_header_with_description, Category, LocalOnlyIconState, MatchData,
     PageType, SettingsPageMeta, SettingsPageViewHandle, SettingsWidget, CONTENT_FONT_SIZE,
 };
 use super::{SettingsSection, ToggleState};
 use crate::appearance::Appearance;
 use crate::drive::sharing::qr_code::{qr_matrix_for_url, QrMatrix, QUIET_ZONE_MODULES};
 #[cfg(feature = "local_fs")]
-use crate::remote_control::{RemoteControlService, RemoteControlStatus};
+use crate::remote_control::{RemoteControlService, RemoteControlStatus, RemoteControlViewState};
 use crate::report_if_error;
 use crate::settings::{
     AutoCreateWorktreesForNewTabs, CliAgentUsageSettings, ClinchAutomaticUpdateCheck,
@@ -115,16 +115,10 @@ impl ClinchSettingsPageView {
         let mut categories = vec![];
         #[cfg(feature = "local_fs")]
         if !ChannelState::has_backend() {
-            categories.push(
-                Category::new(
-                    "Remote Control (Preview)",
-                    vec![Box::new(RemoteControlSetupWidget::default())],
-                )
-                .with_subtitle(
-                    "Securely connect your phone through your own Tailscale network — no Clinch \
-                     account or hosted Clinch relay.",
-                ),
-            );
+            categories.push(Category::new(
+                "",
+                vec![Box::new(RemoteControlSetupWidget::default())],
+            ));
         }
         if !project_widgets.is_empty() {
             categories.push(Category::new("Projects", project_widgets));
@@ -284,6 +278,7 @@ impl TypedActionView for ClinchSettingsPageView {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn remote_control_setup_widget_id() -> &'static str {
     RemoteControlSetupWidget::static_widget_id()
 }
@@ -297,6 +292,7 @@ struct RemoteControlSetupWidget {
     retry_mouse_state: MouseStateHandle,
     revoke_all_mouse_state: MouseStateHandle,
     copy_link_mouse_state: MouseStateHandle,
+    browser_pairing_mouse_state: MouseStateHandle,
     cancel_pairing_mouse_state: MouseStateHandle,
     enable_switch_state: SwitchStateHandle,
     dynamic_mouse_states: RefCell<HashMap<String, MouseStateHandle>>,
@@ -314,7 +310,7 @@ impl RemoteControlSetupWidget {
         appearance
             .ui_builder()
             .button(ButtonVariant::Secondary, mouse_state)
-            .with_text_label(label)
+            .with_text_label(label.to_owned())
             .with_style(UiComponentStyles {
                 font_size: Some(CONTENT_FONT_SIZE),
                 padding: Some(Coords::default().top(6.).bottom(6.).left(12.).right(12.)),
@@ -353,6 +349,197 @@ impl RemoteControlSetupWidget {
         }
     }
 
+    fn render_pairing_decision_button(
+        label: &'static str,
+        action: ClinchSettingsPageAction,
+        mouse_state: MouseStateHandle,
+        appearance: &Appearance,
+        primary: bool,
+    ) -> Box<dyn Element> {
+        appearance
+            .ui_builder()
+            .button(
+                if primary {
+                    ButtonVariant::Accent
+                } else {
+                    ButtonVariant::Secondary
+                },
+                mouse_state,
+            )
+            .with_text_label(label.to_owned())
+            .with_style(UiComponentStyles {
+                font_size: Some(CONTENT_FONT_SIZE + 1.),
+                font_weight: Some(Weight::Semibold),
+                padding: Some(Coords::default().top(10.).bottom(10.).left(18.).right(18.)),
+                border_radius: Some(CornerRadius::with_all(Radius::Pixels(6.))),
+                ..Default::default()
+            })
+            .build()
+            .on_click(move |ctx, _, _| ctx.dispatch_typed_action(action.clone()))
+            .finish()
+    }
+
+    fn grouped_fingerprint(fingerprint: &str) -> String {
+        let mut grouped = String::with_capacity(fingerprint.len() + fingerprint.len() / 4);
+        for (index, character) in fingerprint.chars().enumerate() {
+            if index > 0 && index % 4 == 0 {
+                grouped.push(' ');
+            }
+            grouped.push(character);
+        }
+        grouped
+    }
+
+    #[cfg(feature = "local_fs")]
+    fn render_pending_pairing_panel(
+        &self,
+        state: &RemoteControlViewState,
+        appearance: &Appearance,
+    ) -> Box<dyn Element> {
+        let theme = appearance.theme();
+        let mut panel = Flex::column()
+            .with_child(
+                Flex::row()
+                    .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                    .with_child(
+                        ConstrainedBox::new(
+                            Icon::Phone
+                                .to_warpui_icon(theme.active_ui_text_color())
+                                .finish(),
+                        )
+                        .with_width(24.)
+                        .with_height(24.)
+                        .finish(),
+                    )
+                    .with_child(
+                        Container::new(
+                            Text::new_inline(
+                                "Approve this phone",
+                                appearance.ui_font_family(),
+                                CONTENT_FONT_SIZE + 4.,
+                            )
+                            .with_style(Properties::default().weight(Weight::Bold))
+                            .with_color(theme.active_ui_text_color().into())
+                            .finish(),
+                        )
+                        .with_margin_left(10.)
+                        .finish(),
+                    )
+                    .finish(),
+            )
+            .with_child(
+                Container::new(
+                    Text::new(
+                        "The QR code was scanned. Confirm the device name and key fingerprint \
+                         before giving this phone access to your terminals.",
+                        appearance.ui_font_family(),
+                        CONTENT_FONT_SIZE,
+                    )
+                    .with_color(theme.nonactive_ui_text_color().into())
+                    .finish(),
+                )
+                .with_margin_top(8.)
+                .with_margin_bottom(12.)
+                .finish(),
+            );
+
+        for claim in &state.pending_claims {
+            let platform = match &claim.platform {
+                clinch_companion_protocol::DevicePlatform::Ios => "iPhone",
+                clinch_companion_protocol::DevicePlatform::Ipados => "iPad",
+                clinch_companion_protocol::DevicePlatform::Macos => "Mac",
+                clinch_companion_protocol::DevicePlatform::Android => "Android",
+                clinch_companion_protocol::DevicePlatform::Other => "Other device",
+            };
+            let approve = Self::render_pairing_decision_button(
+                "Approve phone",
+                ClinchSettingsPageAction::RemoteControlApprove(claim.id),
+                self.dynamic_mouse_state(format!("approve-{}", claim.id)),
+                appearance,
+                true,
+            );
+            let reject = Self::render_pairing_decision_button(
+                "Reject",
+                ClinchSettingsPageAction::RemoteControlReject(claim.id),
+                self.dynamic_mouse_state(format!("reject-{}", claim.id)),
+                appearance,
+                false,
+            );
+            panel.add_child(
+                Container::new(
+                    Flex::column()
+                        .with_child(
+                            Text::new_inline(
+                                format!("{} · {platform}", claim.device_name),
+                                appearance.ui_font_family(),
+                                CONTENT_FONT_SIZE + 2.,
+                            )
+                            .with_style(Properties::default().weight(Weight::Semibold))
+                            .with_color(theme.active_ui_text_color().into())
+                            .finish(),
+                        )
+                        .with_child(
+                            Container::new(
+                                Text::new(
+                                    format!(
+                                        "Device key\n{}",
+                                        Self::grouped_fingerprint(&claim.public_key_fingerprint)
+                                    ),
+                                    appearance.ui_font_family(),
+                                    CONTENT_FONT_SIZE,
+                                )
+                                .with_color(theme.nonactive_ui_text_color().into())
+                                .finish(),
+                            )
+                            .with_margin_top(8.)
+                            .finish(),
+                        )
+                        .with_child(
+                            Container::new(
+                                Text::new_inline(
+                                    format!(
+                                        "Approval expires at {} UTC",
+                                        claim.expires_at.format("%H:%M:%S")
+                                    ),
+                                    appearance.ui_font_family(),
+                                    CONTENT_FONT_SIZE - 1.,
+                                )
+                                .with_color(theme.nonactive_ui_text_color().into())
+                                .finish(),
+                            )
+                            .with_margin_top(8.)
+                            .finish(),
+                        )
+                        .with_child(
+                            Container::new(
+                                Flex::row()
+                                    .with_child(approve)
+                                    .with_child(
+                                        Container::new(reject).with_margin_left(8.).finish(),
+                                    )
+                                    .finish(),
+                            )
+                            .with_margin_top(14.)
+                            .finish(),
+                        )
+                        .finish(),
+                )
+                .with_background(theme.surface_1())
+                .with_border(Border::all(1.).with_border_fill(theme.outline()))
+                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(7.)))
+                .with_uniform_padding(14.)
+                .finish(),
+            );
+        }
+
+        Container::new(panel.finish())
+            .with_background(theme.surface_2())
+            .with_border(Border::all(2.).with_border_fill(theme.active_ui_text_color()))
+            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(9.)))
+            .with_uniform_padding(18.)
+            .finish()
+    }
+
     fn dynamic_mouse_state(&self, key: String) -> MouseStateHandle {
         self.dynamic_mouse_states
             .borrow_mut()
@@ -378,12 +565,12 @@ impl RemoteControlSetupWidget {
                         CONTENT_FONT_SIZE,
                     )
                     .with_style(Properties::default().weight(Weight::Bold))
-                    .with_color(theme.main_text_color(theme.accent()).into())
+                    .with_color(theme.main_text_color(theme.surface_2()).into())
                     .finish(),
                 )
                 .finish(),
             )
-            .with_background(theme.accent())
+            .with_background(theme.surface_2())
             .with_corner_radius(CornerRadius::with_all(Radius::Percentage(50.)))
             .finish(),
         )
@@ -436,11 +623,92 @@ impl RemoteControlSetupWidget {
         }
 
         Container::new(row.finish())
-            .with_border(Border::all(1.).with_border_fill(theme.outline()))
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
             .with_uniform_padding(12.)
-            .with_margin_bottom(8.)
+            .with_margin_bottom(4.)
             .finish()
+    }
+
+    fn render_section_header(appearance: &Appearance) -> Box<dyn Element> {
+        Container::new(render_sub_header_with_description(
+            appearance,
+            "Remote Control (Preview)",
+            "Securely connect your phone through your own Tailscale network — no Clinch account \
+             or hosted Clinch relay.",
+        ))
+        .with_border(Border::bottom(1.).with_border_fill(appearance.theme().outline()))
+        .with_margin_top(16.)
+        .with_margin_bottom(12.)
+        .finish()
+    }
+
+    fn render_status(
+        title: &str,
+        description: &str,
+        is_starting: bool,
+        appearance: &Appearance,
+    ) -> Box<dyn Element> {
+        let theme = appearance.theme();
+        let copy = Flex::column()
+            .with_child(
+                Text::new_inline(
+                    title.to_owned(),
+                    appearance.ui_font_family(),
+                    CONTENT_FONT_SIZE,
+                )
+                .with_style(Properties::default().weight(Weight::Semibold))
+                .with_color(theme.active_ui_text_color().into())
+                .finish(),
+            )
+            .with_child(
+                Container::new(
+                    Text::new(
+                        description.to_owned(),
+                        appearance.ui_font_family(),
+                        CONTENT_FONT_SIZE,
+                    )
+                    .with_color(theme.nonactive_ui_text_color().into())
+                    .finish(),
+                )
+                .with_margin_top(4.)
+                .finish(),
+            )
+            .finish();
+
+        let icon = if is_starting {
+            Icon::Loading
+        } else {
+            Icon::AlertCircle
+        };
+        let icon_color = if is_starting {
+            theme.active_ui_text_color()
+        } else {
+            theme.nonactive_ui_text_color()
+        };
+        let mut container = Container::new(
+            Flex::row()
+                .with_main_axis_size(MainAxisSize::Max)
+                .with_cross_axis_alignment(CrossAxisAlignment::Start)
+                .with_child(
+                    ConstrainedBox::new(icon.to_warpui_icon(icon_color).finish())
+                        .with_width(if is_starting { 18. } else { 16. })
+                        .with_height(if is_starting { 18. } else { 16. })
+                        .finish(),
+                )
+                .with_child(Container::new(copy).with_margin_left(8.).finish())
+                .finish(),
+        )
+        .with_background(if is_starting {
+            theme.surface_2()
+        } else {
+            theme.surface_1()
+        })
+        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+        .with_uniform_padding(if is_starting { 14. } else { 12. });
+        if is_starting {
+            container = container
+                .with_border(Border::all(1.).with_border_fill(theme.active_ui_text_color()));
+        }
+        container.finish()
     }
 
     fn render_qr_matrix(matrix: &QrMatrix) -> Box<dyn Element> {
@@ -527,8 +795,10 @@ impl RemoteControlSetupWidget {
                     .to_owned(),
             ),
             RemoteControlStatus::Starting => (
-                "Starting private access…".to_owned(),
-                "Clinch is checking Tailscale and creating a loopback-only companion.".to_owned(),
+                "Starting Remote Control…".to_owned(),
+                "Clinch is checking Tailscale and creating a private, loopback-only companion. \
+                 This should only take a few seconds."
+                    .to_owned(),
             ),
             RemoteControlStatus::TailscaleNotInstalled => (
                 "Install Tailscale to continue".to_owned(),
@@ -556,15 +826,7 @@ impl RemoteControlSetupWidget {
                 ("Remote Control needs attention".to_owned(), message.clone())
             }
         };
-        let mut content = Flex::column().with_child(
-            Container::new(render_settings_info_banner(
-                &status_title,
-                Some(&status_description),
-                appearance,
-            ))
-            .with_margin_bottom(12.)
-            .finish(),
-        );
+        let mut content = Flex::column().with_child(Self::render_section_header(appearance));
 
         content.add_child(Self::render_step(
             1,
@@ -610,6 +872,20 @@ impl RemoteControlSetupWidget {
             Some(enable_switch),
             appearance,
         ));
+
+        if !matches!(state.status, RemoteControlStatus::Disabled) {
+            content.add_child(
+                Container::new(Self::render_status(
+                    &status_title,
+                    &status_description,
+                    matches!(state.status, RemoteControlStatus::Starting),
+                    appearance,
+                ))
+                .with_margin_top(4.)
+                .with_margin_bottom(10.)
+                .finish(),
+            );
+        }
 
         let status_action = match &state.status {
             RemoteControlStatus::TailscaleSignInRequired {
@@ -679,7 +955,9 @@ impl RemoteControlSetupWidget {
              nothing is authorized until you approve its name and fingerprint below. Safari \
              works immediately, and Add to Home Screen is optional.",
             Some(Self::render_typed_action_button(
-                if state.active_invitation.is_some() {
+                if !state.pending_claims.is_empty() {
+                    "Waiting for approval"
+                } else if state.active_invitation.is_some() {
                     "Refresh QR code"
                 } else {
                     "Pair phone"
@@ -687,14 +965,15 @@ impl RemoteControlSetupWidget {
                 ClinchSettingsPageAction::RemoteControlPair,
                 self.pair_mouse_state.clone(),
                 appearance,
-                !state.status.is_ready(),
+                !state.status.is_ready() || !state.pending_claims.is_empty(),
             )),
             appearance,
         ));
 
-        if let Some(invitation) = &state.active_invitation {
-            if let Ok(matrix) = qr_matrix_for_url(&invitation.pairing_url) {
-                content.add_child(
+        let qr_card: Option<Box<dyn Element>> =
+            state.active_invitation.as_ref().and_then(|invitation| {
+                let matrix = qr_matrix_for_url(&invitation.pairing_url).ok()?;
+                Some(
                     Container::new(
                         Flex::column()
                             .with_cross_axis_alignment(CrossAxisAlignment::Center)
@@ -708,10 +987,14 @@ impl RemoteControlSetupWidget {
                             .with_child(
                                 Container::new(
                                     Text::new(
-                                        format!(
-                                            "Scan with your phone. Expires at {}.",
-                                            invitation.expires_at.format("%H:%M:%S UTC")
-                                        ),
+                                        if state.pending_claims.is_empty() {
+                                            format!(
+                                                "Scan with your phone. Expires at {}.",
+                                                invitation.expires_at.format("%H:%M:%S UTC")
+                                            )
+                                        } else {
+                                            "QR scanned — approve the phone beside it.".to_owned()
+                                        },
                                         appearance.ui_font_family(),
                                         CONTENT_FONT_SIZE,
                                     )
@@ -723,101 +1006,90 @@ impl RemoteControlSetupWidget {
                             )
                             .finish(),
                     )
-                    .with_margin_bottom(12.)
                     .finish(),
-                );
-            }
-            content.add_child(
-                Container::new(
-                    Flex::row()
-                        .with_child(Self::render_typed_action_button(
-                            "Copy pairing link",
-                            ClinchSettingsPageAction::CopyText(invitation.pairing_url.clone()),
-                            self.copy_link_mouse_state.clone(),
-                            appearance,
-                            false,
-                        ))
-                        .with_child(
-                            Container::new(Self::render_typed_action_button(
-                                "Cancel QR code",
-                                ClinchSettingsPageAction::RemoteControlCancelPairing,
-                                self.cancel_pairing_mouse_state.clone(),
-                                appearance,
-                                false,
-                            ))
-                            .with_margin_left(6.)
-                            .finish(),
-                        )
-                        .finish(),
                 )
-                .with_margin_bottom(12.)
-                .finish(),
-            );
-        }
+            });
 
-        if !state.pending_claims.is_empty() {
-            content.add_child(
-                Container::new(
-                    Text::new_inline(
-                        "Waiting for your approval",
-                        appearance.ui_font_family(),
-                        CONTENT_FONT_SIZE,
-                    )
-                    .with_style(Properties::default().weight(Weight::Semibold))
-                    .with_color(appearance.theme().active_ui_text_color().into())
-                    .finish(),
-                )
-                .with_margin_bottom(8.)
-                .finish(),
-            );
-        }
-        for claim in &state.pending_claims {
-            let fingerprint: String = claim.public_key_fingerprint.chars().take(20).collect();
-            let approve = Self::render_typed_action_button(
-                "Approve",
-                ClinchSettingsPageAction::RemoteControlApprove(claim.id),
-                self.dynamic_mouse_state(format!("approve-{}", claim.id)),
-                appearance,
-                false,
-            );
-            let reject = Self::render_typed_action_button(
-                "Reject",
-                ClinchSettingsPageAction::RemoteControlReject(claim.id),
-                self.dynamic_mouse_state(format!("reject-{}", claim.id)),
-                appearance,
-                false,
-            );
-            content.add_child(
-                Container::new(
-                    Flex::row()
-                        .with_main_axis_size(MainAxisSize::Max)
-                        .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                        .with_child(
-                            Expanded::new(
-                                1.,
-                                Text::new(
-                                    format!(
-                                        "{} · {:?}\nKey {}…",
-                                        claim.device_name, claim.platform, fingerprint
-                                    ),
-                                    appearance.ui_font_family(),
-                                    CONTENT_FONT_SIZE,
+        match (qr_card, state.pending_claims.is_empty()) {
+            (Some(qr_card), false) => {
+                content.add_child(
+                    Container::new(
+                        Flex::row()
+                            .with_main_axis_size(MainAxisSize::Max)
+                            .with_cross_axis_alignment(CrossAxisAlignment::Start)
+                            .with_child(ConstrainedBox::new(qr_card).with_width(240.).finish())
+                            .with_child(
+                                Container::new(
+                                    Expanded::new(
+                                        1.,
+                                        self.render_pending_pairing_panel(&state, appearance),
+                                    )
+                                    .finish(),
                                 )
-                                .with_color(appearance.theme().active_ui_text_color().into())
+                                .with_margin_left(20.)
                                 .finish(),
                             )
                             .finish(),
-                        )
-                        .with_child(approve)
-                        .with_child(Container::new(reject).with_margin_left(6.).finish())
+                    )
+                    .with_margin_top(4.)
+                    .with_margin_bottom(16.)
+                    .finish(),
+                );
+            }
+            (Some(qr_card), true) => {
+                content.add_child(
+                    Container::new(qr_card)
+                        .with_margin_top(4.)
+                        .with_margin_bottom(12.)
                         .finish(),
-                )
-                .with_border(Border::all(1.).with_border_fill(appearance.theme().outline()))
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
-                .with_uniform_padding(10.)
-                .with_margin_bottom(8.)
-                .finish(),
-            );
+                );
+                let invitation = state
+                    .active_invitation
+                    .as_ref()
+                    .expect("a QR card requires an invitation");
+                let mut pairing_actions = Flex::row().with_child(Self::render_typed_action_button(
+                    "Copy pairing link",
+                    ClinchSettingsPageAction::CopyText(invitation.pairing_url.clone()),
+                    self.copy_link_mouse_state.clone(),
+                    appearance,
+                    false,
+                ));
+                pairing_actions.add_child(
+                    Container::new(Self::render_action_button(
+                        "Open pairing link in browser",
+                        invitation.pairing_url.clone(),
+                        self.browser_pairing_mouse_state.clone(),
+                        appearance,
+                    ))
+                    .with_margin_left(6.)
+                    .finish(),
+                );
+                pairing_actions.add_child(
+                    Container::new(Self::render_typed_action_button(
+                        "Cancel QR code",
+                        ClinchSettingsPageAction::RemoteControlCancelPairing,
+                        self.cancel_pairing_mouse_state.clone(),
+                        appearance,
+                        false,
+                    ))
+                    .with_margin_left(6.)
+                    .finish(),
+                );
+                content.add_child(
+                    Container::new(pairing_actions.finish())
+                        .with_margin_bottom(12.)
+                        .finish(),
+                );
+            }
+            (None, false) => {
+                content.add_child(
+                    Container::new(self.render_pending_pairing_panel(&state, appearance))
+                        .with_margin_top(4.)
+                        .with_margin_bottom(16.)
+                        .finish(),
+                );
+            }
+            (None, true) => {}
         }
 
         if !state.paired_devices.is_empty() {
@@ -947,9 +1219,11 @@ impl SettingsWidget for RemoteControlSetupWidget {
         {
             let _ = app;
             Flex::column()
-                .with_child(render_settings_info_banner(
+                .with_child(Self::render_section_header(appearance))
+                .with_child(Self::render_status(
                     "Remote Control requires the native Clinch app",
-                    Some("Install Clinch on macOS to host the private companion."),
+                    "Install Clinch on macOS to host the private companion.",
+                    false,
                     appearance,
                 ))
                 .with_child(Self::render_privacy_note(appearance))

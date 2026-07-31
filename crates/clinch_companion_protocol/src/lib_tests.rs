@@ -139,6 +139,37 @@ fn raw_input_requires_bounded_valid_base64() {
 }
 
 #[test]
+fn project_and_terminal_creation_allow_clinchs_default_directory() {
+    let app_instance_id = AppInstanceId::new();
+    for payload in [
+        ClientMessage::CreateProject(CreateProject {
+            app_instance_id,
+            workspace_revision: 7,
+            project_id: "project-1".to_owned(),
+            cwd: None,
+        }),
+        ClientMessage::CreateSession(CreateSession {
+            app_instance_id,
+            workspace_revision: 7,
+            project_id: "project-1".to_owned(),
+            kind: SessionKind::Terminal,
+            cwd: None,
+            initial_prompt: None,
+        }),
+    ] {
+        assert_eq!(
+            ClientEnvelope {
+                version: PROTOCOL_VERSION,
+                request_id: RequestId::new(),
+                payload,
+            }
+            .validate(),
+            Ok(())
+        );
+    }
+}
+
+#[test]
 fn binary_frame_rejects_oversized_chunks() {
     let error =
         encode_upload_chunk(UploadId::new(), 0, &vec![0; MAX_UPLOAD_CHUNK_BYTES + 1]).unwrap_err();

@@ -1,6 +1,7 @@
 //! Minimal, injectable adapter for configuring one path-scoped Tailscale Serve route.
 
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -76,16 +77,26 @@ impl TailscaleCommandRunner for RealTailscaleCommandRunner {
         installation: &TailscaleInstallation,
         args: &[String],
     ) -> Result<CommandOutput, TailscaleError> {
-        let mut command = command::r#async::Command::new(&installation.executable);
-        command.args(args).kill_on_drop(true);
+        let mut command =
+            command::r#async::Command::new_with_process_group(&installation.executable);
+        command
+            .args(args)
+            .kill_on_drop(true)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
         if installation.force_be_cli {
             command.env("TAILSCALE_BE_CLI", "1");
         }
 
-        let output = tokio::time::timeout(COMMAND_TIMEOUT, command.output())
+        let child = command
+            .spawn()
+            .map_err(|error| TailscaleError::Command(error.to_string()))?;
+        let mut process_group = ProcessGroupGuard::new(child.id());
+        let output = tokio::time::timeout(COMMAND_TIMEOUT, child.output())
             .await
             .map_err(|_| TailscaleError::TimedOut)?
             .map_err(|error| TailscaleError::Command(error.to_string()))?;
+        process_group.disarm();
         if output.stdout.len().saturating_add(output.stderr.len()) > MAX_COMMAND_OUTPUT_BYTES {
             return Err(TailscaleError::OutputTooLarge);
         }
@@ -106,8 +117,8 @@ pub struct TailscaleClient<R = RealTailscaleCommandRunner> {
 impl TailscaleClient<RealTailscaleCommandRunner> {
     pub fn discover() -> Result<Self, TailscaleError> {
         let installation = discover_installation(&[
-            (Path::new(STANDALONE_CLI), false),
             (Path::new(APP_BUNDLED_CLI), true),
+            (Path::new(STANDALONE_CLI), false),
         ])
         .ok_or(TailscaleError::NotInstalled)?;
         Ok(Self {
@@ -141,6 +152,14 @@ impl<R: TailscaleCommandRunner> TailscaleClient<R> {
         {
             return Ok(TailscaleSetupOutcome::SignInRequired {
                 action_url: node.action_url,
+            });
+        }
+        if node.cert_domains == CertDomainsState::Disabled {
+            return Ok(TailscaleSetupOutcome::ConsentRequired {
+                action_url: node
+                    .self_node
+                    .as_ref()
+                    .and_then(|node| tailscale_serve_consent_url(node.id.as_deref())),
             });
         }
         let dns_name = node
@@ -213,9 +232,18 @@ impl<R: TailscaleCommandRunner> TailscaleClient<R> {
                 },
                 self_node: None,
                 action_url,
+                cert_domains: CertDomainsState::Unknown,
             })
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum CertDomainsState {
+    #[default]
+    Unknown,
+    Disabled,
+    Enabled,
 }
 
 #[derive(Debug, Deserialize)]
@@ -227,16 +255,87 @@ struct NodeStatus {
     self_node: Option<SelfNode>,
     #[serde(default, alias = "AuthURL", alias = "LoginURL")]
     action_url: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_cert_domains")]
+    cert_domains: CertDomainsState,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct SelfNode {
+    #[serde(rename = "ID")]
+    id: Option<String>,
     #[serde(default)]
     online: bool,
     #[serde(rename = "DNSName", alias = "DnsName")]
     dns_name: Option<String>,
 }
+
+fn deserialize_cert_domains<'de, D>(deserializer: D) -> Result<CertDomainsState, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let domains = Option::<Vec<String>>::deserialize(deserializer)?;
+    Ok(match domains {
+        Some(domains) if !domains.is_empty() => CertDomainsState::Enabled,
+        _ => CertDomainsState::Disabled,
+    })
+}
+
+fn tailscale_serve_consent_url(node_id: Option<&str>) -> Option<String> {
+    let node_id = node_id?.trim();
+    if node_id.is_empty()
+        || node_id.len() > 128
+        || !node_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+    {
+        return None;
+    }
+    Some(format!(
+        "https://login.tailscale.com/f/serve?node={node_id}"
+    ))
+}
+
+struct ProcessGroupGuard {
+    pid: Option<u32>,
+}
+
+impl ProcessGroupGuard {
+    fn new(pid: u32) -> Self {
+        Self { pid: Some(pid) }
+    }
+
+    fn disarm(&mut self) {
+        self.pid = None;
+    }
+}
+
+impl Drop for ProcessGroupGuard {
+    fn drop(&mut self) {
+        let Some(pid) = self.pid else {
+            return;
+        };
+        terminate_process_group(pid);
+    }
+}
+
+#[cfg(unix)]
+fn terminate_process_group(pid: u32) {
+    let Ok(pid) = i32::try_from(pid) else {
+        return;
+    };
+    if let Err(error) = nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(-pid),
+        nix::sys::signal::Signal::SIGKILL,
+    ) {
+        if error != nix::errno::Errno::ESRCH {
+            log::warn!("could not terminate timed-out Tailscale process group: {error}");
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn terminate_process_group(_: u32) {}
 
 fn discover_installation(candidates: &[(&Path, bool)]) -> Option<TailscaleInstallation> {
     candidates.iter().find_map(|(path, force_be_cli)| {
