@@ -1175,6 +1175,8 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@clinch/remote-control@workspace:."
   dependencies:
+    "@fontsource-variable/inter": "npm:5.3.0"
+    "@fontsource-variable/jetbrains-mono": "npm:5.3.0"
     "@playwright/test": "npm:1.61.1"
     "@types/node": "npm:24.10.1"
     "@types/react": "npm:19.2.17"
@@ -1291,6 +1293,20 @@ __metadata:
     "@noble/hashes":
       optional: true
   checksum: 10c0/333056a6953bbf875d9f3b86c32314de29458d842e5f56f6ef8034b18c2d9660184550093d1bae5de0064043d5e23f54cc03148798d9d29cf5167ac03f2e9f8c
+  languageName: node
+  linkType: hard
+
+"@fontsource-variable/inter@npm:5.3.0":
+  version: 5.3.0
+  resolution: "@fontsource-variable/inter@npm:5.3.0"
+  checksum: 10c0/46fbe41e8482a718f99634c8254346c6081d615415059be12e177224c903d688199125967825e75d4b8122668fd83f70880e11d4e02d08c20b503c65fe2a96d1
+  languageName: node
+  linkType: hard
+
+"@fontsource-variable/jetbrains-mono@npm:5.3.0":
+  version: 5.3.0
+  resolution: "@fontsource-variable/jetbrains-mono@npm:5.3.0"
+  checksum: 10c0/ba983321b530a56696b12390a377c79a962376a33359eeda37c9a2141450802e0b630e6c232d90aab0281179e623d01c77d1bc8059ce595fe865fbc6d6022ffb
   languageName: node
   linkType: hard
 

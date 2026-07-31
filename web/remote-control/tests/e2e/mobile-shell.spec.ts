@@ -115,6 +115,13 @@ async function installPairedPhone(page: import("@playwright/test").Page) {
             }],
           }],
         }],
+      }, {
+        id: "project-empty",
+        title: "Empty project",
+        order: 1,
+        active: false,
+        activity: "idle",
+        tabs: [],
       }],
       active_target: target,
       usage: [{
@@ -158,6 +165,7 @@ async function installPairedPhone(page: import("@playwright/test").Page) {
       onerror: ((event: Event) => void) | null = null;
       onclose: ((event: CloseEvent) => void) | null = null;
       private sequence = 0;
+      private selectAttempts = 0;
 
       constructor(_url: string | URL) {
         window.setTimeout(() => {
@@ -171,13 +179,30 @@ async function installPairedPhone(page: import("@playwright/test").Page) {
       send(data: string | ArrayBufferLike | Blob | ArrayBufferView) {
         if (typeof data !== "string") return;
         const envelope = JSON.parse(data) as { request_id: string; payload: { type: string; data?: { target?: typeof target } } };
+        const commands = JSON.parse(localStorage.getItem("remote-command-types") ?? "[]") as string[];
+        commands.push(envelope.payload.type);
+        localStorage.setItem("remote-command-types", JSON.stringify(commands));
         if (envelope.payload.type === "select_target") {
+          this.selectAttempts += 1;
+          if (this.selectAttempts === 1) {
+            snapshot.revision += 1;
+            this.emit({
+              type: "error",
+              data: {
+                code: "revision_conflict",
+                message: "The workspace changed; refresh before sending input.",
+                retryable: true,
+                current_revision: snapshot.revision,
+              },
+            }, envelope.request_id);
+            return;
+          }
           this.emit({
             type: "terminal_snapshot",
             data: {
               target: envelope.payload.data?.target ?? target,
               stream_id: "55555555-5555-4555-8555-555555555555",
-              workspace_revision: 7,
+              workspace_revision: snapshot.revision,
               terminal_sequence: 0,
               data_base64: btoa("$ echo connected\r\nconnected\r\n"),
               dimensions: { columns: 80, rows: 24 },
@@ -217,6 +242,23 @@ async function installPairedPhone(page: import("@playwright/test").Page) {
 test("unpaired phone gets a focused setup screen without horizontal overflow", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByText("Open Clinch Settings", { exact: false })).toBeVisible();
+  const mark = page.getByRole("img", { name: "Clinch" });
+  await expect(mark).toBeVisible();
+  await expect(mark).toHaveAttribute("src", "./clinch-logo.svg");
+  expect(await mark.evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0)).toBe(true);
+  const brand = await page.evaluate(() => {
+    const root = getComputedStyle(document.documentElement);
+    return {
+      accent: root.getPropertyValue("--accent").trim().toLowerCase(),
+      background: root.getPropertyValue("--background").trim().toLowerCase(),
+      fontFamily: root.fontFamily,
+    };
+  });
+  expect(brand).toEqual({
+    accent: "#bfff00",
+    background: "#050712",
+    fontFamily: expect.stringContaining("Inter Variable"),
+  });
   const dimensions = await page.evaluate(() => ({
     client: document.documentElement.clientWidth,
     scroll: document.documentElement.scrollWidth,
@@ -224,13 +266,60 @@ test("unpaired phone gets a focused setup screen without horizontal overflow", a
   expect(dimensions.scroll).toBeLessThanOrEqual(dimensions.client);
 });
 
+test("a first-time QR scan creates a phone key and waits for explicit Mac approval", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.fetch = async (input: RequestInfo | URL) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.includes("/api/v1/pair/claim")) {
+        localStorage.setItem("pair-claim-count", String(Number(localStorage.getItem("pair-claim-count") ?? "0") + 1));
+        return new Response(JSON.stringify({
+          claim_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          claim_secret: "single-use-claim-secret",
+          device_name: "iPhone",
+          public_key_fingerprint: "0123456789abcdef".repeat(4),
+          expires_at: "2099-01-01T00:00:00Z",
+        }), { status: 201, headers: { "content-type": "application/json" } });
+      }
+      if (url.includes("/api/v1/pair/status")) {
+        return new Response(JSON.stringify({ status: "pending" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    };
+  });
+
+  await page.goto("/#bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb:qr-secret");
+  await expect(page.getByRole("heading", { name: "Approve on your Mac" })).toBeVisible();
+  await expect(page.getByText("Approve “iPhone” in Clinch on your Mac.")).toBeVisible();
+  await expect(page.getByRole("img", { name: "Clinch" })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => location.hash)).toBe("");
+
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Approve on your Mac" })).toBeVisible();
+  await expect(page.getByText("Approve “iPhone” in Clinch on your Mac.")).toBeVisible();
+  expect(await page.evaluate(() => localStorage.getItem("pair-claim-count"))).toBe("1");
+});
+
 test("paired phone exposes projects, drawer, usage, and recent-session resume", async ({ page }) => {
   await installPairedPhone(page);
 
   await expect(page.getByRole("button", { name: "Demo" })).toBeVisible();
+  await expect(page.getByLabel("Selected Clinch terminal output")).toBeVisible();
+  await expect(page.getByText("The workspace changed; refresh before sending input.")).toHaveCount(0);
+  await expect(page.getByLabel("Terminal keys")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "＋ New" }).click();
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("remote-command-types"))).toContain("create_session");
+
+  await page.getByRole("button", { name: "New project", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("remote-command-types"))).toContain("create_project");
+
   await page.getByRole("button", { name: "Open project and tab drawer" }).click();
-  const drawer = page.getByRole("complementary", { name: "Projects and open tabs" });
+  const drawer = page.getByRole("complementary", { name: "Current project sessions" });
   await expect(drawer.getByText("Ship remote control", { exact: true })).toBeVisible();
+  await expect(drawer.getByText("Empty project", { exact: true })).toHaveCount(0);
 
   await drawer.getByRole("button", { name: "Close drawer" }).click();
   await page.getByRole("button", { name: "Usage and settings" }).click();
@@ -239,7 +328,8 @@ test("paired phone exposes projects, drawer, usage, and recent-session resume", 
   await expect(usage.getByText("Test iPhone · Test Mac", { exact: false })).toBeVisible();
   await usage.getByRole("button", { name: "Close" }).click();
 
-  await page.getByRole("button", { name: "＋ New" }).click();
+  await page.getByRole("button", { name: "Open project and tab drawer" }).click();
+  await page.getByRole("button", { name: "＋ New session" }).click();
   const newSession = page.getByRole("dialog", { name: "New session" });
   await newSession.getByRole("button", { name: "Resume recent" }).click();
   await expect(newSession.getByText("Fix pairing flow", { exact: true })).toBeVisible();
@@ -249,4 +339,27 @@ test("paired phone exposes projects, drawer, usage, and recent-session resume", 
     scroll: document.documentElement.scrollWidth,
   }));
   expect(dimensions.scroll).toBeLessThanOrEqual(dimensions.client);
+});
+
+test("empty-project focus mode stays centered within a phone viewport", async ({ page }) => {
+  await installPairedPhone(page);
+  await page.evaluate(() => localStorage.setItem("remote-command-types", "[]"));
+  await page.getByRole("button", { name: "Empty project" }).click();
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("remote-command-types"))).toContain("create_session");
+  const heading = page.getByRole("heading", { name: "Choose a live session" });
+  await expect(heading).toBeVisible();
+
+  const layout = await heading.evaluate((element) => {
+    const headingBounds = element.getBoundingClientRect();
+    const shellBounds = document.querySelector(".app-shell")!.getBoundingClientRect();
+    return {
+      viewportWidth: innerWidth,
+      headingCenter: headingBounds.left + headingBounds.width / 2,
+      shellLeft: shellBounds.left,
+      shellRight: shellBounds.right,
+    };
+  });
+  expect(Math.abs(layout.headingCenter - layout.viewportWidth / 2)).toBeLessThan(2);
+  expect(layout.shellLeft).toBeGreaterThanOrEqual(0);
+  expect(layout.shellRight).toBeLessThanOrEqual(layout.viewportWidth);
 });

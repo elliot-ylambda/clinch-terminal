@@ -2,4 +2,8 @@
 import type { AppInstanceId } from "./AppInstanceId";
 import type { SessionKind } from "./SessionKind";
 
-export type CreateSession = { app_instance_id: AppInstanceId, workspace_revision: number, project_id: string, kind: SessionKind, cwd: string, initial_prompt: string | null, };
+export type CreateSession = { app_instance_id: AppInstanceId, workspace_revision: number, project_id: string, kind: SessionKind,
+/**
+ * An exact local directory, or `None` to use Clinch's normal new-tab directory.
+ */
+cwd: string | null, initial_prompt: string | null, };

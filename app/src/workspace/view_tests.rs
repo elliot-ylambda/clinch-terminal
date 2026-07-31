@@ -814,13 +814,7 @@ fn remote_control_header_action_opens_clinch_settings() {
         let workspace = mock_workspace(&mut app);
 
         workspace.update(&mut app, |workspace, ctx| {
-            workspace.handle_action(
-                &WorkspaceAction::ScrollToSettingsWidget {
-                    page: SettingsSection::Clinch,
-                    widget_id: crate::settings_view::remote_control_setup_widget_id(),
-                },
-                ctx,
-            );
+            workspace.handle_action(&remote_control_settings_action(), ctx);
         });
 
         workspace.read(&app, |workspace, ctx| {

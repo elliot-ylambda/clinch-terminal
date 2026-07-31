@@ -560,8 +560,20 @@ pub struct CreateSession {
     pub workspace_revision: u64,
     pub project_id: String,
     pub kind: SessionKind,
-    pub cwd: String,
+    /// An exact local directory, or `None` to use Clinch's normal new-tab directory.
+    pub cwd: Option<String>,
     pub initial_prompt: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize, TS)]
+pub struct CreateProject {
+    pub app_instance_id: AppInstanceId,
+    #[ts(type = "number")]
+    pub workspace_revision: u64,
+    /// The currently selected project anchors the new project to the same native window.
+    pub project_id: String,
+    /// An exact local directory for the first terminal, or `None` for Clinch's default.
+    pub cwd: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize, TS)]
@@ -659,6 +671,7 @@ pub enum ClientMessage {
     InterruptTerminal(InterruptTerminal),
     TerminalResize(TerminalResize),
     TerminalKey(TerminalKeyInput),
+    CreateProject(CreateProject),
     CreateSession(CreateSession),
     ResumeSession(ResumeSession),
     QuickInsertPreview(QuickInsertPreviewRequest),
@@ -762,9 +775,17 @@ impl ClientEnvelope {
                 validate_dimensions(&message.dimensions)?;
             }
             ClientMessage::TerminalKey(message) => message.target.validate()?,
+            ClientMessage::CreateProject(message) => {
+                validate_opaque_id("project_id", &message.project_id)?;
+                if let Some(cwd) = &message.cwd {
+                    validate_path(cwd)?;
+                }
+            }
             ClientMessage::CreateSession(message) => {
                 validate_opaque_id("project_id", &message.project_id)?;
-                validate_path(&message.cwd)?;
+                if let Some(cwd) = &message.cwd {
+                    validate_path(cwd)?;
+                }
                 if let Some(prompt) = &message.initial_prompt {
                     validate_text("initial_prompt", prompt, 0, MAX_PROMPT_BYTES)?;
                 }

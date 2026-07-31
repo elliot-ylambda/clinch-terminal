@@ -7,17 +7,17 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration as StdDuration;
 
-use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::engine::general_purpose::{STANDARD as BASE64_STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine as _;
 use chrono::{Duration, Utc};
 use clinch_companion_protocol::{
     AcquireWriterLease, AgentProvider, AgentState, AppInstanceId, AuthSessionId, Capability,
-    ClientEnvelope, ClientMessage, ConnectionPath, CreateSession, HostSnapshot, InterruptTerminal,
-    PaneKind, PaneSnapshot, ProjectActivity, ProjectSnapshot, ProtocolError, ProtocolErrorCode,
-    QuickInsertDescriptor, QuickInsertKind, QuickInsertPreviewRequest, QuickInsertSubmit,
-    RawTerminalInput, RecentAgentSessionSnapshot, RequestId, ResumeSession, ServerEnvelope,
-    ServerMessage, SessionKind, SubmitComposerText, TabKind, TabSnapshot, TargetRef,
-    TerminalDimensions, TerminalKey, TerminalKeyInput, TerminalResize, TerminalSnapshot,
+    ClientEnvelope, ClientMessage, ConnectionPath, CreateProject, CreateSession, HostSnapshot,
+    InterruptTerminal, PaneKind, PaneSnapshot, ProjectActivity, ProjectSnapshot, ProtocolError,
+    ProtocolErrorCode, QuickInsertDescriptor, QuickInsertKind, QuickInsertPreviewRequest,
+    QuickInsertSubmit, RawTerminalInput, RecentAgentSessionSnapshot, RequestId, ResumeSession,
+    ServerEnvelope, ServerMessage, SessionKind, SubmitComposerText, TabKind, TabSnapshot,
+    TargetRef, TerminalDimensions, TerminalKey, TerminalKeyInput, TerminalResize, TerminalSnapshot,
     TerminalStreamId, UploadBegin, UploadId, UploadReady, UsageLimitWindowSnapshot, UsageSnapshot,
     UsageState, UsageTokenWindowSnapshot, WorkspaceChanged, WorkspaceSnapshot, WriterLeaseSnapshot,
     MAX_IDEMPOTENCY_RESULTS_PER_SESSION, MAX_OPAQUE_ID_BYTES, MAX_PATH_BYTES,
@@ -134,6 +134,8 @@ struct ResolvedTarget {
 
 #[derive(Clone)]
 struct ResolvedProject {
+    project_window: ViewHandle<ProjectWindow>,
+    project_id: ProjectId,
     workspace: ViewHandle<Workspace>,
 }
 
@@ -267,6 +269,7 @@ impl WorkspaceAdapter {
             ClientMessage::TerminalKey(message) => {
                 self.terminal_key(request_id, message, authorization.clone(), ctx)
             }
+            ClientMessage::CreateProject(message) => self.create_project(request_id, message, ctx),
             ClientMessage::CreateSession(message) => self.create_session(request_id, message, ctx),
             ClientMessage::ResumeSession(message) => self.resume_session(request_id, message, ctx),
             ClientMessage::QuickInsertPreview(message) => {
@@ -387,10 +390,10 @@ impl WorkspaceAdapter {
         &mut self,
         request_id: RequestId,
         target: TargetRef,
-        expected_revision: u64,
+        _expected_revision: u64,
         ctx: &mut ModelContext<Self>,
     ) -> AdapterReply {
-        let resolved = match self.resolve_valid_target(&target, Some(expected_revision), ctx) {
+        let resolved = match self.resolve_valid_target(&target, None, ctx) {
             Ok(resolved) => resolved,
             Err((code, message, retryable)) => {
                 return AdapterReply::envelope(self.error(
@@ -448,7 +451,7 @@ impl WorkspaceAdapter {
         ctx: &mut ModelContext<Self>,
     ) -> AdapterReply {
         if let Err((code, message_text, retryable)) =
-            self.resolve_valid_target(&message.target, Some(message.workspace_revision), ctx)
+            self.resolve_valid_target(&message.target, None, ctx)
         {
             return AdapterReply::envelope(self.error(
                 Some(request_id),
@@ -635,12 +638,10 @@ impl WorkspaceAdapter {
         authorization: SessionAuthorization,
         ctx: &mut ModelContext<Self>,
     ) -> AdapterReply {
-        let resolved =
-            match self.resolve_valid_target(&message.target, Some(message.workspace_revision), ctx)
-            {
-                Ok(resolved) => resolved,
-                Err(error) => return AdapterReply::envelope(self.target_error(request_id, error)),
-            };
+        let resolved = match self.resolve_valid_target(&message.target, None, ctx) {
+            Ok(resolved) => resolved,
+            Err(error) => return AdapterReply::envelope(self.target_error(request_id, error)),
+        };
         if let Err(error) = self.ensure_writer(&message.target, &authorization, Some(request_id)) {
             return AdapterReply::envelope(*error);
         }
@@ -663,13 +664,13 @@ impl WorkspaceAdapter {
         let project = match self.resolve_valid_project(
             message.app_instance_id,
             &message.project_id,
-            message.workspace_revision,
+            None,
             ctx,
         ) {
             Ok(project) => project,
             Err(error) => return AdapterReply::envelope(self.target_error(request_id, error)),
         };
-        let cwd = match canonical_local_directory(&message.cwd) {
+        let cwd = match optional_local_directory(message.cwd) {
             Ok(cwd) => cwd,
             Err(message) => {
                 return AdapterReply::envelope(self.error(
@@ -681,6 +682,9 @@ impl WorkspaceAdapter {
             }
         };
 
+        project.project_window.update(ctx, |project_window, ctx| {
+            project_window.activate_project(project.project_id, ctx);
+        });
         match message.kind {
             SessionKind::Terminal => project.workspace.update(ctx, |workspace, ctx| {
                 workspace.remote_control_open_terminal(cwd, ctx);
@@ -714,6 +718,54 @@ impl WorkspaceAdapter {
         AdapterReply::envelope(self.command_accepted(request_id))
     }
 
+    fn create_project(
+        &mut self,
+        request_id: RequestId,
+        message: CreateProject,
+        ctx: &mut ModelContext<Self>,
+    ) -> AdapterReply {
+        let anchor = match self.resolve_valid_project(
+            message.app_instance_id,
+            &message.project_id,
+            None,
+            ctx,
+        ) {
+            Ok(project) => project,
+            Err(error) => return AdapterReply::envelope(self.target_error(request_id, error)),
+        };
+        let cwd = match optional_local_directory(message.cwd) {
+            Ok(cwd) => cwd,
+            Err(message) => {
+                return AdapterReply::envelope(self.error(
+                    Some(request_id),
+                    ProtocolErrorCode::InvalidRequest,
+                    message,
+                    false,
+                ));
+            }
+        };
+        let workspace = anchor.project_window.update(ctx, |project_window, ctx| {
+            let project_id = project_window.add_project(ctx);
+            project_window
+                .projects()
+                .find(|(id, _)| *id == project_id)
+                .map(|(_, workspace)| workspace.clone())
+        });
+        let Some(workspace) = workspace else {
+            return AdapterReply::envelope(self.error(
+                Some(request_id),
+                ProtocolErrorCode::Internal,
+                "Clinch created the project but could not open its first terminal.".to_owned(),
+                true,
+            ));
+        };
+        workspace.update(ctx, |workspace, ctx| {
+            workspace.remote_control_open_terminal(cwd, ctx);
+        });
+        self.bump_topology_revision();
+        AdapterReply::envelope(self.command_accepted(request_id))
+    }
+
     fn resume_session(
         &mut self,
         request_id: RequestId,
@@ -723,7 +775,7 @@ impl WorkspaceAdapter {
         let project = match self.resolve_valid_project(
             message.app_instance_id,
             &message.project_id,
-            message.workspace_revision,
+            None,
             ctx,
         ) {
             Ok(project) => project,
@@ -740,6 +792,9 @@ impl WorkspaceAdapter {
                 ));
             }
         };
+        project.project_window.update(ctx, |project_window, ctx| {
+            project_window.activate_project(project.project_id, ctx);
+        });
         #[cfg(feature = "local_tty")]
         let opened = project.workspace.update(ctx, |workspace, ctx| {
             workspace.remote_control_resume_cli_agent(
@@ -1003,7 +1058,7 @@ impl WorkspaceAdapter {
                             .visible_pane_ids()
                             .into_iter()
                             .find_map(|pane_id| {
-                                if pane_id.to_string() != target.pane_id {
+                                if pane_opaque_id(pane_id) != target.pane_id {
                                     return None;
                                 }
                                 pane_group
@@ -1056,11 +1111,14 @@ impl WorkspaceAdapter {
             let Some(project_window) = root.as_ref(ctx).project_window() else {
                 continue;
             };
+            let project_window_handle = project_window.clone();
             let found = project_window.read(ctx, |project_window, _| {
                 project_window
                     .projects()
                     .find(|(id, _)| id.opaque_id() == project_id)
-                    .map(|(_, workspace)| ResolvedProject {
+                    .map(|(id, workspace)| ResolvedProject {
+                        project_window: project_window_handle.clone(),
+                        project_id: id,
                         workspace: workspace.clone(),
                     })
             });
@@ -1075,7 +1133,7 @@ impl WorkspaceAdapter {
         &self,
         app_instance_id: AppInstanceId,
         project_id: &str,
-        expected_revision: u64,
+        expected_revision: Option<u64>,
         ctx: &ModelContext<Self>,
     ) -> Result<ResolvedProject, (ProtocolErrorCode, String, bool)> {
         if app_instance_id != self.app_instance_id {
@@ -1085,7 +1143,7 @@ impl WorkspaceAdapter {
                 true,
             ));
         }
-        if expected_revision != self.revision {
+        if expected_revision.is_some_and(|revision| revision != self.revision) {
             return Err((
                 ProtocolErrorCode::RevisionConflict,
                 "Projects changed on the Mac; refresh before creating a session.".to_owned(),
@@ -1201,7 +1259,7 @@ impl WorkspaceAdapter {
                         let mut remote_host = None;
 
                         for pane_id in pane_group.visible_pane_ids() {
-                            let pane_id_string = pane_id.to_string();
+                            let pane_id_string = pane_opaque_id(pane_id);
                             pane_id_string.hash(&mut topology);
                             let pane_active = pane_id == focused_pane;
                             let target = TargetRef {
@@ -1529,6 +1587,18 @@ impl WorkspaceAdapter {
     }
 }
 
+fn pane_opaque_id(pane_id: PaneId) -> String {
+    format!(
+        "pane_{}",
+        URL_SAFE_NO_PAD.encode(pane_id.to_string().as_bytes())
+    )
+}
+
+fn optional_local_directory(path: Option<String>) -> Result<Option<PathBuf>, String> {
+    path.map(|path| canonical_local_directory(&path))
+        .transpose()
+}
+
 fn canonical_local_directory(path: &str) -> Result<PathBuf, String> {
     let path = PathBuf::from(path);
     if !path.is_absolute() {
@@ -1760,9 +1830,9 @@ fn required_capability(message: &ClientMessage) -> Option<Capability> {
         | ClientMessage::TerminalKey(_)
         | ClientMessage::QuickInsertPreview(_)
         | ClientMessage::QuickInsertSubmit(_) => Some(Capability::Control),
-        ClientMessage::CreateSession(_) | ClientMessage::ResumeSession(_) => {
-            Some(Capability::CreateSession)
-        }
+        ClientMessage::CreateProject(_)
+        | ClientMessage::CreateSession(_)
+        | ClientMessage::ResumeSession(_) => Some(Capability::CreateSession),
         ClientMessage::UploadBegin(_)
         | ClientMessage::UploadCommit(_)
         | ClientMessage::UploadCancel(_) => Some(Capability::Upload),
@@ -1780,6 +1850,7 @@ fn is_idempotent_mutation(message: &ClientMessage) -> bool {
             | ClientMessage::InterruptTerminal(_)
             | ClientMessage::TerminalResize(_)
             | ClientMessage::TerminalKey(_)
+            | ClientMessage::CreateProject(_)
             | ClientMessage::CreateSession(_)
             | ClientMessage::ResumeSession(_)
             | ClientMessage::QuickInsertSubmit(_)

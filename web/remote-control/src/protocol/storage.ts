@@ -1,9 +1,11 @@
 import type { Capability } from "../generated/types/Capability";
 import type { DeviceId } from "../generated/types/DeviceId";
+import type { PairingClaimReceipt } from "../generated/types/PairingClaimReceipt";
 
 const DATABASE = "clinch-remote-control";
 const STORE = "local-device";
 const IDENTITY_KEY = "identity";
+const PENDING_PAIRING_KEY = "pending-pairing";
 const PREFERENCES_KEY = "preferences";
 
 export interface DeviceIdentity {
@@ -18,6 +20,11 @@ export interface DeviceIdentity {
 export interface MobilePreferences {
   key: typeof PREFERENCES_KEY;
   oneTapQuickInserts: boolean;
+}
+
+interface PendingPairingRecord {
+  key: typeof PENDING_PAIRING_KEY;
+  receipt: PairingClaimReceipt;
 }
 
 function database(): Promise<IDBDatabase> {
@@ -60,22 +67,32 @@ async function write<T>(value: T): Promise<void> {
   }
 }
 
-export const loadIdentity = () => read<DeviceIdentity>(IDENTITY_KEY);
-export const saveIdentity = (identity: DeviceIdentity) => write(identity);
-
-export async function clearIdentity(): Promise<void> {
+async function remove(key: string): Promise<void> {
   const db = await database();
   try {
     await new Promise<void>((resolve, reject) => {
       const transaction = db.transaction(STORE, "readwrite");
-      transaction.objectStore(STORE).delete(IDENTITY_KEY);
+      transaction.objectStore(STORE).delete(key);
       transaction.oncomplete = () => resolve();
-      transaction.onerror = () => reject(transaction.error ?? new Error("Could not clear local device"));
+      transaction.onerror = () => reject(transaction.error ?? new Error("Could not update local device storage"));
     });
   } finally {
     db.close();
   }
 }
+
+export const loadIdentity = () => read<DeviceIdentity>(IDENTITY_KEY);
+export const saveIdentity = (identity: DeviceIdentity) => write(identity);
+export const clearIdentity = () => remove(IDENTITY_KEY);
+
+export async function loadPendingPairing(): Promise<PairingClaimReceipt | undefined> {
+  return (await read<PendingPairingRecord>(PENDING_PAIRING_KEY))?.receipt;
+}
+
+export const savePendingPairing = (receipt: PairingClaimReceipt) =>
+  write<PendingPairingRecord>({ key: PENDING_PAIRING_KEY, receipt });
+
+export const clearPendingPairing = () => remove(PENDING_PAIRING_KEY);
 
 export async function loadPreferences(): Promise<MobilePreferences> {
   return (

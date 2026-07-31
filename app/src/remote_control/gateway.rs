@@ -23,8 +23,8 @@ use axum::{Json, Router};
 use chrono::Utc;
 use clinch_companion_protocol::{
     decode_upload_chunk, encode_terminal_output, AuthChallengeRequest, Authenticate,
-    ClientEnvelope, ClientMessage, PairingClaimRequest, PairingStatusRequest, ProtocolError,
-    ProtocolErrorCode, RequestId, ServerEnvelope, ServerMessage, UploadProgress,
+    ClientEnvelope, ClientMessage, PairingClaimRequest, PairingStatus, PairingStatusRequest,
+    ProtocolError, ProtocolErrorCode, RequestId, ServerEnvelope, ServerMessage, UploadProgress,
     AUTH_SESSION_TTL_SECS, MAX_JSON_MESSAGE_BYTES, MAX_TERMINAL_FRAME_BYTES,
     MAX_UPLOAD_CHUNK_BYTES, PROTOCOL_VERSION,
 };
@@ -253,7 +253,16 @@ async fn pair_claim(
     }
     match state.pairing.claim(request, Utc::now()) {
         Ok(receipt) => {
-            let _ = state.events.send(GatewayEvent::PendingPairingChanged).await;
+            if state
+                .events
+                .send(GatewayEvent::PendingPairingChanged)
+                .await
+                .is_err()
+            {
+                log::warn!("Remote Control could not publish a pending phone approval");
+            } else {
+                log::info!("Remote Control received a phone pairing claim");
+            }
             api_json(StatusCode::CREATED, &receipt)
         }
         Err(error) => pairing_error(error),
@@ -273,8 +282,16 @@ async fn pair_status(
         );
     }
     match state.pairing.pairing_status(request, Utc::now()) {
-        Ok(status) => api_json(StatusCode::OK, &status),
-        Err(error) => pairing_error(error),
+        Ok(status) => {
+            if !matches!(status, PairingStatus::Pending) {
+                log::info!("Remote Control phone observed pairing status: {status:?}");
+            }
+            api_json(StatusCode::OK, &status)
+        }
+        Err(error) => {
+            log::warn!("Remote Control pairing status request failed: {error}");
+            pairing_error(error)
+        }
     }
 }
 

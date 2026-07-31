@@ -136,20 +136,22 @@ tested on iPhone and iPad sizes before the live terminal transport is finalized.
     - A compact header row with a tab-drawer button, current target/connection state, and a
       trailing overflow button.
     - The selected terminal or agent session as the focus area.
-    - A bottom composer with quick inserts, explicit Send, attachment affordance, and terminal
-      control keys.
+    - A bottom composer with quick inserts, explicit Send, and an attachment affordance.
 
 21. The project strip mirrors the Mac’s project order and active project. It scrolls horizontally,
     keeps the selected project visible, and displays the same meaningful working, done, waiting,
-    unread, and running-command indicators that are available on desktop.
+    unread, and running-command indicators that are available on desktop. A compact plus button
+    creates and activates a real shared Clinch project in the same native window and opens its first
+    Terminal tab; it never creates mobile-only project state.
 
 22. The leading header button opens a left drawer. On phones the drawer overlays the focus area;
     on wider tablets it may be pinned. Closing it restores focus mode without changing the active
     project or tab.
 
-23. The drawer groups every open tab under its project and shows each tab’s provider/type, title,
-    agent or command status, unread state, and remote-host marker where relevant. Selecting a tab
-    activates that exact desktop target and closes the overlay drawer on phones.
+23. The drawer shows only tabs and sessions belonging to the currently selected project. It shows
+    each tab’s provider/type, title, agent or command status, unread state, and remote-host marker
+    where relevant. Selecting a tab activates that exact desktop target and closes the overlay
+    drawer on phones; the top strip remains the only project switcher.
 
 24. The trailing overflow button opens a bottom sheet containing:
     - Claude Code and Codex usage summaries and their last-updated time.
@@ -165,18 +167,22 @@ tested on iPhone and iPad sizes before the live terminal transport is finalized.
     terminal text selection, links, ANSI color, resize, and follow-output behavior appropriate for
     a touch screen. Reconnecting does not duplicate or reorder output.
 
-27. When there is no active session, the focus area provides a purposeful empty state with actions
-    to create a terminal, Claude Code session, or Codex session in a selected project.
+27. When the selected project has no controllable session, mobile creates one Terminal tab in that
+    real project exactly once and follows it on both Mac and mobile. The focus area may show a brief
+    purposeful opening state with explicit Terminal, Claude Code, and Codex alternatives while the
+    Mac completes creation.
 
 28. The mobile app honors the iPhone/iPad safe area, remains usable when the software keyboard is
-    visible, supports portrait and landscape, and never places Send or interrupt controls under a
-    browser or Home Screen gesture area.
+    visible, supports portrait and landscape, and never places Send under a browser or Home Screen
+    gesture area.
 
 ### Navigation, session creation, and input
 
-29. A New action lets the person create a terminal, Claude Code, or Codex tab. The form requires a
-    project/working directory and shows the exact Mac target before submission. Agent creation can
-    include an initial prompt or select a recoverable recent conversation to resume.
+29. The header New action creates a Terminal tab immediately in the selected project, using the
+    current pane directory when available and Clinch’s normal new-tab directory otherwise. The
+    drawer’s advanced New session action can create Terminal, Claude Code, or Codex tabs, optionally
+    override the working directory, include an initial agent prompt, or select a recoverable recent
+    conversation to resume.
 
 30. Newly created tabs appear in both desktop and mobile navigation. If creation fails, the mobile
     app leaves the previous target selected and reports the exact failure without creating a

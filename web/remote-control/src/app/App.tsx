@@ -3,13 +3,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ClientMessage } from "../generated/types/ClientMessage";
 import type { ConnectionState } from "../generated/types/ConnectionState";
 import type { PaneSnapshot } from "../generated/types/PaneSnapshot";
+import type { ProtocolErrorCode } from "../generated/types/ProtocolErrorCode";
 import type { ProjectSnapshot } from "../generated/types/ProjectSnapshot";
 import type { ServerEnvelope } from "../generated/types/ServerEnvelope";
-import type { ServerMessage } from "../generated/types/ServerMessage";
 import type { SessionKind } from "../generated/types/SessionKind";
 import type { TabSnapshot } from "../generated/types/TabSnapshot";
 import type { TargetRef } from "../generated/types/TargetRef";
-import type { TerminalKey } from "../generated/types/TerminalKey";
 import type { TerminalSnapshot } from "../generated/types/TerminalSnapshot";
 import type { WorkspaceSnapshot } from "../generated/types/WorkspaceSnapshot";
 import { MAX_UPLOAD_CHUNK_BYTES } from "../generated/constants";
@@ -19,9 +18,12 @@ import { claimPhone, finishPairing, waitForApproval } from "../protocol/pairing"
 import {
   bytesToBase64,
   clearIdentity,
+  clearPendingPairing,
   createIdentity,
   loadIdentity,
+  loadPendingPairing,
   loadPreferences,
+  savePendingPairing,
   savePreferences,
   type DeviceIdentity,
   type MobilePreferences,
@@ -46,6 +48,10 @@ const connectionLabels: Record<ConnectionState, string> = {
 // component twice. The secret never becomes part of an HTTP request or referrer.
 const initialPairingFragment = takePairingFragment(location);
 if (initialPairingFragment) clearPairingFragment();
+
+function ClinchMark({ className }: { className: string }) {
+  return <img className={className} src="./clinch-logo.svg" alt="Clinch" />;
+}
 
 function targetKey(target: TargetRef): string {
   return `${target.app_instance_id}:${target.project_id}:${target.tab_id}:${target.pane_id}`;
@@ -83,6 +89,34 @@ function resolveTarget(snapshot: WorkspaceSnapshot | undefined, target: TargetRe
   return { project, tab, pane };
 }
 
+export function synchronizedSelection(
+  snapshot: WorkspaceSnapshot,
+  currentProjectId: string | undefined,
+  currentTarget: TargetRef | undefined,
+): { projectId: string | undefined; target: TargetRef | undefined } {
+  const active = resolveTarget(snapshot, snapshot.active_target ?? undefined);
+  if (snapshot.active_target && active.project && active.pane?.dimensions) {
+    return { projectId: active.project.id, target: snapshot.active_target };
+  }
+
+  const current = resolveTarget(snapshot, currentTarget);
+  const activeProject = snapshot.projects.find((project) => project.active);
+  const preferredProject =
+    activeProject ??
+    snapshot.projects.find((project) => project.id === currentProjectId) ??
+    current.project ??
+    snapshot.projects[0];
+  if (!preferredProject) return { projectId: undefined, target: undefined };
+  if (current.project?.id === preferredProject.id && current.pane?.dimensions) {
+    return { projectId: preferredProject.id, target: currentTarget };
+  }
+  return { projectId: preferredProject.id, target: firstTarget(snapshot, preferredProject) };
+}
+
+export function shouldResynchronizeWorkspace(code: ProtocolErrorCode): boolean {
+  return code === "revision_conflict" || code === "target_gone" || code === "resync_required";
+}
+
 function defaultDeviceName(): string {
   if (/iPad/i.test(navigator.userAgent)) return "iPad";
   if (/iPhone/i.test(navigator.userAgent)) return "iPhone";
@@ -116,6 +150,8 @@ export function App() {
   const selectedProjectIdRef = useRef<string | undefined>(undefined);
   selectedProjectIdRef.current = selectedProjectId;
   const [selectedTarget, setSelectedTarget] = useState<TargetRef>();
+  const selectedTargetRef = useRef<TargetRef | undefined>(undefined);
+  selectedTargetRef.current = selectedTarget;
   const [terminalSnapshot, setTerminalSnapshot] = useState<TerminalSnapshot>();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [usageOpen, setUsageOpen] = useState(false);
@@ -125,8 +161,8 @@ export function App() {
   const [newCwd, setNewCwd] = useState("");
   const [newPrompt, setNewPrompt] = useState("");
   const [newResumeId, setNewResumeId] = useState("");
+  const [creating, setCreating] = useState(false);
   const [composer, setComposer] = useState("");
-  const [moreKeys, setMoreKeys] = useState(false);
   const [resyncing, setResyncing] = useState(false);
   const [notice, setNotice] = useState<string>();
   const [uploadProgress, setUploadProgress] = useState<number>();
@@ -137,6 +173,9 @@ export function App() {
   const fileInput = useRef<HTMLInputElement>(null);
   const activeUploadId = useRef<string | undefined>(undefined);
   const uploadCancelled = useRef(false);
+  const resyncRequested = useRef(false);
+  const creationInFlight = useRef(false);
+  const autoOpenedProjects = useRef(new Set<string>());
 
   useEffect(() => {
     let cancelled = false;
@@ -144,23 +183,40 @@ export function App() {
       try {
         setPreferences(await loadPreferences());
         let localIdentity = await loadIdentity();
+        let pendingReceipt = await loadPendingPairing();
+        if (pendingReceipt && new Date(pendingReceipt.expires_at).getTime() <= Date.now()) {
+          await clearPendingPairing();
+          pendingReceipt = undefined;
+        }
+        if (localIdentity?.deviceId && pendingReceipt) {
+          await clearPendingPairing();
+          pendingReceipt = undefined;
+        }
         const invitation = pairingFragment.current;
         if (invitation) {
           setBootMessage("Creating this phone's private device key…");
           localIdentity ??= await createIdentity(defaultDeviceName());
           setIdentity(localIdentity);
           setBootMessage("Sending the one-time pairing request…");
-          const receipt = await claimPhone(invitation, localIdentity);
+          pendingReceipt = await claimPhone(invitation, localIdentity);
+          await savePendingPairing(pendingReceipt);
+        }
+        if (pendingReceipt && localIdentity) {
           setBoot("waiting_approval");
-          setBootMessage(`Approve “${receipt.device_name}” in Clinch on your Mac.`);
-          const status = await waitForApproval(receipt);
+          setBootMessage(`Approve “${pendingReceipt.device_name}” in Clinch on your Mac.`);
+          const status = await waitForApproval(pendingReceipt);
           if (status.status === "approved") {
             localIdentity = await finishPairing(localIdentity, status);
+            await clearPendingPairing();
           } else if (status.status === "rejected") {
+            await clearPendingPairing();
             throw new Error("The pairing request was rejected on the Mac.");
           } else {
+            await clearPendingPairing();
             throw new Error("The pairing QR code expired. Generate a new one in Clinch.");
           }
+        } else if (pendingReceipt) {
+          await clearPendingPairing();
         }
         if (cancelled) return;
         if (localIdentity?.deviceId) {
@@ -186,36 +242,35 @@ export function App() {
     const payload = envelope.payload;
     switch (payload.type) {
       case "snapshot":
+        resyncRequested.current = false;
+        setResyncing(false);
         setSnapshot(payload.data);
         {
-          const preferredProject =
-            payload.data.projects.find((project) => project.id === selectedProjectIdRef.current) ??
-            payload.data.projects.find((project) => project.active) ??
-            payload.data.projects[0];
-          selectedProjectIdRef.current = preferredProject?.id;
-          setSelectedProjectId(preferredProject?.id);
-          setSelectedTarget((current) => {
-            if (resolveTarget(payload.data, current).pane) return current;
-            return preferredProject ? firstTarget(payload.data, preferredProject) : undefined;
-          });
+          const selection = synchronizedSelection(
+            payload.data,
+            selectedProjectIdRef.current,
+            selectedTargetRef.current,
+          );
+          selectedProjectIdRef.current = selection.projectId;
+          selectedTargetRef.current = selection.target;
+          setSelectedProjectId(selection.projectId);
+          setSelectedTarget(selection.target);
         }
         break;
       case "workspace_changed":
+        resyncRequested.current = false;
+        setResyncing(false);
         setSnapshot(payload.data.snapshot);
         {
-          const preferredProject =
-            payload.data.snapshot.projects.find((project) => project.id === selectedProjectIdRef.current) ??
-            payload.data.snapshot.projects.find((project) => project.active) ??
-            payload.data.snapshot.projects[0];
-          selectedProjectIdRef.current = preferredProject?.id;
-          setSelectedProjectId(preferredProject?.id);
-          setSelectedTarget((current) =>
-            resolveTarget(payload.data.snapshot, current).pane
-              ? current
-              : preferredProject
-                ? firstTarget(payload.data.snapshot, preferredProject)
-                : undefined,
+          const selection = synchronizedSelection(
+            payload.data.snapshot,
+            selectedProjectIdRef.current,
+            selectedTargetRef.current,
           );
+          selectedProjectIdRef.current = selection.projectId;
+          selectedTargetRef.current = selection.target;
+          setSelectedProjectId(selection.projectId);
+          setSelectedTarget(selection.target);
         }
         break;
       case "terminal_snapshot":
@@ -244,7 +299,21 @@ export function App() {
         setConnection(payload.data);
         break;
       case "error":
-        setNotice(payload.data.message);
+        if (payload.data.retryable && shouldResynchronizeWorkspace(payload.data.code)) {
+          setResyncing(true);
+          setTerminalSnapshot(undefined);
+          if (!resyncRequested.current) {
+            resyncRequested.current = true;
+            try {
+              client.current?.send({ type: "request_snapshot" });
+            } catch (error) {
+              resyncRequested.current = false;
+              setNotice(error instanceof Error ? error.message : String(error));
+            }
+          }
+        } else {
+          setNotice(payload.data.message);
+        }
         break;
       default:
         break;
@@ -273,6 +342,7 @@ export function App() {
 
   const selected = resolveTarget(snapshot, selectedTarget);
   const selectedProject = snapshot?.projects.find((project) => project.id === selectedProjectId) ?? selected.project;
+  const selectedLocalCwd = selected.tab?.remote_host ? undefined : selected.pane?.cwd ?? undefined;
   const ownsWriterLease = selected.pane?.writer_lease?.device_id === identity?.deviceId;
   const canWrite =
     connection === "connected" &&
@@ -284,8 +354,7 @@ export function App() {
     if (connection !== "connected" || !snapshot || !selectedTarget) return;
     if (
       terminalSnapshot &&
-      targetKey(terminalSnapshot.target) === targetKey(selectedTarget) &&
-      terminalSnapshot.workspace_revision === snapshot.revision
+      targetKey(terminalSnapshot.target) === targetKey(selectedTarget)
     ) {
       return;
     }
@@ -315,6 +384,7 @@ export function App() {
         selectedProjectIdRef.current = target.project_id;
         setSelectedProjectId(target.project_id);
       }
+      selectedTargetRef.current = target;
       setSelectedTarget(target);
       setDrawerOpen(false);
       setTerminalSnapshot(undefined);
@@ -350,33 +420,6 @@ export function App() {
     }
   }, [acquireLease, canWrite, composer, selectedTarget, snapshot]);
 
-  const sendKey = useCallback(
-    (key: TerminalKey) => {
-      if (!snapshot || !selectedTarget || !canWrite) return;
-      try {
-        client.current?.send({
-          type: "terminal_key",
-          data: { target: selectedTarget, workspace_revision: snapshot.revision, key },
-        });
-      } catch (error) {
-        setNotice(error instanceof Error ? error.message : String(error));
-      }
-    },
-    [canWrite, selectedTarget, snapshot],
-  );
-
-  const interrupt = useCallback(() => {
-    if (!snapshot || !selectedTarget || !canWrite) return;
-    try {
-      client.current?.send({
-        type: "interrupt_terminal",
-        data: { target: selectedTarget, workspace_revision: snapshot.revision },
-      });
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : String(error));
-    }
-  }, [canWrite, selectedTarget, snapshot]);
-
   const previewQuickInsert = useCallback(
     async (itemId: string, configurationRevision: number) => {
       if (!snapshot || !selectedTarget || !canWrite) return;
@@ -409,49 +452,111 @@ export function App() {
     [canWrite, preferences.oneTapQuickInserts, selectedTarget, snapshot],
   );
 
+  const runCreation = useCallback(async (message: ClientMessage): Promise<boolean> => {
+    if (creationInFlight.current) return false;
+    creationInFlight.current = true;
+    setCreating(true);
+    try {
+      const response = await client.current?.sendAndWait(message);
+      if (!response) throw new Error("The Mac is not connected");
+      if (response.payload.type === "error") {
+        if (response.payload.data.retryable && shouldResynchronizeWorkspace(response.payload.data.code)) {
+          return false;
+        }
+        throw new Error(response.payload.data.message);
+      }
+      return true;
+    } finally {
+      creationInFlight.current = false;
+      setCreating(false);
+    }
+  }, []);
+
+  const createTab = useCallback(
+    async (projectId: string, kind: SessionKind, cwd?: string | null, initialPrompt?: string) => {
+      if (!snapshot) return false;
+      return runCreation({
+        type: "create_session",
+        data: {
+          app_instance_id: snapshot.host.app_instance_id,
+          workspace_revision: snapshot.revision,
+          project_id: projectId,
+          kind,
+          cwd: cwd?.trim() || null,
+          initial_prompt: initialPrompt?.trim() || null,
+        },
+      });
+    },
+    [runCreation, snapshot],
+  );
+
+  const createProject = useCallback(async () => {
+    if (!snapshot || !selectedProject) return;
+    try {
+      await runCreation({
+        type: "create_project",
+        data: {
+          app_instance_id: snapshot.host.app_instance_id,
+          workspace_revision: snapshot.revision,
+          project_id: selectedProject.id,
+          cwd: selectedLocalCwd?.trim() || null,
+        },
+      });
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    }
+  }, [runCreation, selectedLocalCwd, selectedProject, snapshot]);
+
   const createSession = useCallback(async () => {
     if (!snapshot) return;
     const projectId = selectedProject?.id ?? snapshot.projects[0]?.id;
-    if (!projectId || !newCwd.trim()) {
-      setNotice("Choose a project and working directory first.");
+    if (!projectId) {
+      setNotice("Choose a project first.");
       return;
     }
     try {
       const recent = snapshot.recent_agent_sessions.find(
         (session) => session.durable_session_id === newResumeId.trim(),
       );
-      const response = await client.current?.sendAndWait(
-        newMode === "resume"
-          ? {
-              type: "resume_session",
-              data: {
-                app_instance_id: snapshot.host.app_instance_id,
-                workspace_revision: snapshot.revision,
-                project_id: projectId,
-                provider: recent?.provider ?? (newKind === "codex" ? "codex" : "claude_code"),
-                durable_session_id: newResumeId.trim(),
-                cwd: newCwd,
-              },
-            }
-          : {
-              type: "create_session",
-              data: {
-                app_instance_id: snapshot.host.app_instance_id,
-                workspace_revision: snapshot.revision,
-                project_id: projectId,
-                kind: newKind,
-                cwd: newCwd,
-                initial_prompt: newPrompt || null,
-              },
+      const created = newMode === "resume"
+        ? await runCreation({
+            type: "resume_session",
+            data: {
+              app_instance_id: snapshot.host.app_instance_id,
+              workspace_revision: snapshot.revision,
+              project_id: projectId,
+              provider: recent?.provider ?? (newKind === "codex" ? "codex" : "claude_code"),
+              durable_session_id: newResumeId.trim(),
+              cwd: newCwd,
             },
-      );
-      if (response?.payload.type === "error") throw new Error(response.payload.data.message);
-      setNewOpen(false);
-      setNewPrompt("");
+          })
+        : await createTab(projectId, newKind, newCwd, newPrompt);
+      if (created) {
+        setNewOpen(false);
+        setNewPrompt("");
+      }
     } catch (error) {
       setNotice(error instanceof Error ? error.message : String(error));
     }
-  }, [newCwd, newKind, newMode, newPrompt, newResumeId, selectedProject?.id, snapshot]);
+  }, [createTab, newCwd, newKind, newMode, newPrompt, newResumeId, runCreation, selectedProject?.id, snapshot]);
+
+  useEffect(() => {
+    if (connection !== "connected" || resyncing || !snapshot || !selectedProject) return;
+    const hasLiveSession = selectedProject.tabs.some((tab) =>
+      tab.panes.some((pane) => Boolean(pane.dimensions)),
+    );
+    const key = `${snapshot.host.app_instance_id}:${selectedProject.id}`;
+    if (hasLiveSession || autoOpenedProjects.current.has(key)) return;
+    autoOpenedProjects.current.add(key);
+    void createTab(selectedProject.id, "terminal")
+      .then((created) => {
+        if (!created) autoOpenedProjects.current.delete(key);
+      })
+      .catch((error) => {
+        autoOpenedProjects.current.delete(key);
+        setNotice(error instanceof Error ? error.message : String(error));
+      });
+  }, [connection, createTab, resyncing, selectedProject, snapshot]);
 
   const upload = useCallback(
     async (file: File) => {
@@ -541,7 +646,7 @@ export function App() {
   return (
     <div className="app-shell">
       <header className="project-strip" aria-label="Projects">
-        <div className="wordmark" aria-label="Clinch">C</div>
+        <ClinchMark className="wordmark" />
         <div className="project-scroll">
           {projects.map((project) => (
             <button
@@ -563,6 +668,12 @@ export function App() {
               {project.title}
             </button>
           ))}
+          <button
+            className="project-add-button"
+            aria-label="New project"
+            disabled={!selectedProject || connection !== "connected" || creating}
+            onClick={() => void createProject()}
+          >＋</button>
         </div>
         <button className="icon-button" aria-label="Usage and settings" onClick={() => setUsageOpen(true)}>•••</button>
       </header>
@@ -576,11 +687,16 @@ export function App() {
         <div className={`connection-chip ${connection}`} role="status">
           <span />{resyncing ? "Resyncing" : connectionLabels[connection]}
         </div>
-        <button className="new-button" onClick={() => {
-          setNewMode("create");
-          setNewCwd(selected.pane?.cwd ?? "");
-          setNewOpen(true);
-        }}>＋ New</button>
+        <button
+          className="new-button"
+          disabled={!selectedProject || connection !== "connected" || creating}
+          onClick={() => {
+            if (!selectedProject) return;
+            void createTab(selectedProject.id, "terminal", selectedLocalCwd).catch((error) => {
+              setNotice(error instanceof Error ? error.message : String(error));
+            });
+          }}
+        >{creating ? "Opening…" : "＋ New"}</button>
       </header>
 
       <main className="focus-area">
@@ -629,7 +745,7 @@ export function App() {
             onNew={(kind) => {
               setNewMode("create");
               setNewKind(kind);
-              setNewCwd(selected.pane?.cwd ?? "");
+              setNewCwd(selectedLocalCwd ?? "");
               setNewOpen(true);
             }}
           />
@@ -646,19 +762,6 @@ export function App() {
             ))}
           </div>
         )}
-        <div className="key-row" aria-label="Terminal keys">
-          <button onClick={() => sendKey("escape")} disabled={!canWrite}>esc</button>
-          <button onClick={() => sendKey("tab")} disabled={!canWrite}>tab</button>
-          <button onClick={() => sendKey("arrow_left")} disabled={!canWrite}>←</button>
-          <button onClick={() => sendKey("arrow_up")} disabled={!canWrite}>↑</button>
-          <button onClick={() => sendKey("arrow_down")} disabled={!canWrite}>↓</button>
-          <button onClick={() => sendKey("arrow_right")} disabled={!canWrite}>→</button>
-          <button className="interrupt" onClick={interrupt} disabled={!canWrite}>control-c</button>
-          <button onClick={() => setMoreKeys((value) => !value)} aria-expanded={moreKeys}>⌄</button>
-          {moreKeys && ["control_d", "home", "end", "page_up", "page_down", "delete"].map((key) => (
-            <button key={key} onClick={() => sendKey(key as TerminalKey)} disabled={!canWrite}>{key.replace("_", "-")}</button>
-          ))}
-        </div>
         <div className="composer-row">
           <input
             ref={fileInput}
@@ -698,16 +801,16 @@ export function App() {
       {drawerOpen && (
         <>
           <button className="drawer-scrim" aria-label="Close tab drawer" onClick={() => setDrawerOpen(false)} />
-          <aside className="tab-drawer" aria-label="Projects and open tabs">
+          <aside className="tab-drawer" aria-label="Current project sessions">
             <div className="drawer-heading"><strong>Open sessions</strong><button aria-label="Close drawer" onClick={() => setDrawerOpen(false)}>×</button></div>
-            {projects.map((project) => (
-              <section key={project.id}>
-                <h2><span className={`activity-dot ${project.activity}`} />{project.title}</h2>
-                {project.tabs.map((tab) => (
+            {selectedProject ? (
+              <section key={selectedProject.id}>
+                <h2><span className={`activity-dot ${selectedProject.activity}`} />{selectedProject.title}</h2>
+                {selectedProject.tabs.map((tab) => (
                   <div className="drawer-tab-group" key={tab.id}>
                     <div className="drawer-tab-meta"><span>{tab.kind.replace("_", " ")}</span>{tab.unread && <i />}</div>
                     {tab.panes.map((pane) => {
-                      const target = targetFor(project, tab, pane, snapshot!.host.app_instance_id);
+                      const target = targetFor(selectedProject, tab, pane, snapshot!.host.app_instance_id);
                       return (
                         <button className={selectedTarget && targetKey(target) === targetKey(selectedTarget) ? "active" : ""} key={pane.id} disabled={!pane.dimensions} onClick={() => pane.dimensions && selectTarget(target)}>
                           <span>{pane.title || tab.title}</span>
@@ -717,11 +820,12 @@ export function App() {
                     })}
                   </div>
                 ))}
+                {selectedProject.tabs.length === 0 && <p className="muted">No sessions in this project yet.</p>}
               </section>
-            ))}
+            ) : <p className="muted">Choose a project to see its sessions.</p>}
             <button className="drawer-new" onClick={() => {
               setNewMode("create");
-              setNewCwd(selected.pane?.cwd ?? "");
+              setNewCwd(selectedLocalCwd ?? "");
               setNewOpen(true);
             }}>＋ New session</button>
           </aside>
@@ -841,9 +945,9 @@ export function App() {
             </>
           )}
           <label className="field-label">Project<select value={selectedProject?.id ?? ""} disabled><option>{selectedProject?.title ?? "Select a project from the top bar"}</option></select></label>
-          <label className="field-label">Working directory<input value={newCwd} onChange={(event) => setNewCwd(event.target.value)} placeholder="/Users/you/project" /></label>
+          <label className="field-label">Working directory (optional)<input value={newCwd} onChange={(event) => setNewCwd(event.target.value)} placeholder="Use Clinch's default directory" /></label>
           {newMode === "create" && newKind !== "terminal" && <label className="field-label">Initial prompt (optional)<textarea value={newPrompt} onChange={(event) => setNewPrompt(event.target.value)} rows={4} /></label>}
-          <button className="primary-wide" onClick={() => void createSession()} disabled={!newCwd.trim() || (newMode === "resume" && !newResumeId.trim())}>{newMode === "resume" ? "Resume" : "Create"} on {snapshot?.host.name ?? "Mac"}</button>
+          <button className="primary-wide" onClick={() => void createSession()} disabled={creating || (newMode === "resume" && (!newResumeId.trim() || !newCwd.trim()))}>{creating ? "Opening…" : newMode === "resume" ? "Resume" : "Create"} on {snapshot?.host.name ?? "Mac"}</button>
         </Sheet>
       )}
 
@@ -855,7 +959,7 @@ export function App() {
 function PairingScreen({ state, message }: { state: BootState; message: string }) {
   return (
     <main className="pairing-screen">
-      <div className="pairing-mark">C</div>
+      <ClinchMark className="pairing-mark" />
       <p className="eyebrow">Clinch Remote Control</p>
       <h1>{state === "needs_qr" ? "Scan once. Stay connected." : state === "error" ? "Couldn’t connect" : state === "waiting_approval" ? "Approve on your Mac" : "Securing this phone"}</h1>
       <p>{message}</p>
