@@ -4,8 +4,8 @@ use std::path::PathBuf;
 
 use clinch_companion_protocol::{
     AUTH_CHALLENGE_TTL_SECS, AUTH_SESSION_TTL_SECS, BINARY_FRAME_HEADER_BYTES, BINARY_FRAME_MAGIC,
-    CompanionProtocolSchema, MAX_IDEMPOTENCY_RESULTS_PER_SESSION, MAX_JSON_MESSAGE_BYTES,
-    MAX_TERMINAL_FRAME_BYTES, MAX_UPLOAD_BYTES, MAX_UPLOAD_CHUNK_BYTES,
+    CompanionProtocolSchema, MAX_IDEMPOTENCY_RESULTS_PER_SESSION, MAX_JAVASCRIPT_SAFE_INTEGER,
+    MAX_JSON_MESSAGE_BYTES, MAX_TERMINAL_FRAME_BYTES, MAX_UPLOAD_BYTES, MAX_UPLOAD_CHUNK_BYTES,
     PAIRING_INVITATION_TTL_SECS, PROTOCOL_VERSION, WRITER_LEASE_TTL_SECS,
 };
 use schemars::schema_for;
@@ -67,6 +67,7 @@ fn main() -> Result<(), Box<dyn Error>> {
              export const AUTH_CHALLENGE_TTL_SECS = {AUTH_CHALLENGE_TTL_SECS} as const;\n\
              export const AUTH_SESSION_TTL_SECS = {AUTH_SESSION_TTL_SECS} as const;\n\
              export const WRITER_LEASE_TTL_SECS = {WRITER_LEASE_TTL_SECS} as const;\n\
+             export const MAX_JAVASCRIPT_SAFE_INTEGER = {MAX_JAVASCRIPT_SAFE_INTEGER} as const;\n\
              export const MAX_JSON_MESSAGE_BYTES = {MAX_JSON_MESSAGE_BYTES} as const;\n\
              export const MAX_UPLOAD_BYTES = {MAX_UPLOAD_BYTES} as const;\n\
              export const MAX_UPLOAD_CHUNK_BYTES = {MAX_UPLOAD_CHUNK_BYTES} as const;\n\

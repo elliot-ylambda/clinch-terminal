@@ -68,3 +68,11 @@ fn mobile_titles_are_nonempty_collapsed_and_bounded() {
         120
     );
 }
+
+#[test]
+fn workspace_revisions_remain_exact_javascript_numbers() {
+    assert_eq!(initial_workspace_revision(0), 1);
+    assert!(initial_workspace_revision(u64::MAX) <= MAX_JAVASCRIPT_SAFE_INTEGER);
+    assert_eq!(next_workspace_revision(41), 42);
+    assert_eq!(next_workspace_revision(MAX_JAVASCRIPT_SAFE_INTEGER), 1);
+}

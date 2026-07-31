@@ -171,6 +171,9 @@ this repo owns the feature contract and in-app links.
     - On an in-connection sequence gap or terminal receiver overflow, stop accepting input and
       request/reselect an authoritative snapshot instead of presenting stale output as live.
     - Keep input disabled until the target and current snapshot revision are validated.
+    - Keep every Rust integer that the browser must echo back at or below JavaScript's largest
+      exact integer (`2^53 - 1`). Normalize random workspace seeds and quick-insert configuration
+      hashes before JSON serialization so exact revision checks survive `JSON.parse`.
 
 ### Milestone 3 — control, new sessions, usage, and toolbelts
 
@@ -202,8 +205,10 @@ this repo owns the feature contract and in-app links.
 
 21. Resolve the effective toolbelt on the Mac and send descriptors with opaque item IDs and a
     configuration revision. A tap sends the item ID/revision back; the Mac re-resolves it and
-    returns preview text. Explicit Send performs the normal terminal or CLI-agent submission. A
-    per-device one-tap preference remains local to that device.
+    returns preview text. Mirror single-line composer edits to the exact selected PTY using raw
+    terminal input; Enter, Command+Enter, and explicit Send write carriage return. Keep multiline
+    paste local until explicit agent-aware submission. Treat a stale toolbelt revision as an
+    automatic snapshot resync. A per-device one-tap preference remains local to that device.
 
 ### Milestone 4 — attachment pipeline and hardening
 
@@ -289,18 +294,21 @@ flow.
   only when retained replay is implemented.
 - Terminal-view tests proving private shell bootstrap stages never enter Remote Control scrollback.
 - Workspace tests for project/tab/pane activation, target deletion races, revision conflicts, and the
-  invariant that no command falls back to a different target (PRODUCT 21–23, 29–34).
+  invariant that no command falls back to a different target. Cover exact JavaScript-safe revision
+  generation and wraparound (PRODUCT 21–23, 29–34).
 - Writer-lease tests for concurrent phones, desktop preemption, disconnect, and timeout.
 - Terminal/Claude/Codex create and resume tests with typed arguments and failure cleanup.
 - Usage tests that redact provider credentials and never initiate Keychain access.
 - Toolbelt tests for default/custom items, terminal vs agent semantics, hot reload, stale revisions,
-  preview-then-send, and optional one-tap mode (PRODUCT 35–37).
+  automatic stale-toolbelt resync, live preview mirroring, preview-then-send, and optional one-tap
+  mode (PRODUCT 35–37).
 
 ### PWA and website
 
 - Playwright component/e2e coverage at representative iPhone and iPad viewports for drawer/focus,
   project overflow, bottom sheet, safe areas, software keyboard geometry, orientation, offline and
-  reconnect states, and reduced motion (PRODUCT 19–28, 49).
+  reconnect states, live composer mirroring, Enter and Command+Enter submission, and reduced motion
+  (PRODUCT 19–28, 32, 49).
 - Real-device Safari checks for Add to Home Screen, WebCrypto key persistence, WebSocket suspension,
   clipboard/selection, external keyboard, and clearing website data.
 - Accessibility audit for names, focus order, contrast, target sizes, screen-reader status updates,

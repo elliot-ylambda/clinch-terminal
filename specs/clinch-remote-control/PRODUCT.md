@@ -195,12 +195,14 @@ tested on iPhone and iPad sizes before the live terminal transport is finalized.
     composer. If that target closes or changes before submission, Clinch rejects the input and asks
     the person to select a live target; it never falls back to the newest pane or another provider.
 
-32. Text entry uses an explicit Send action. Terminal input, Claude Code prompts, and Codex prompts
-    preserve their normal desktop semantics, including multiline text where supported.
+32. Single-line text entry mirrors into the selected desktop terminal as the person types so the
+    phone and Mac show the same in-progress command or agent prompt. Enter, Command+Enter, and the
+    explicit Send action submit it with normal Terminal, Claude Code, or Codex semantics. Multiline
+    paste remains local until explicit submission so embedded newlines cannot execute early.
 
-33. The composer includes touch controls for Escape, Tab, arrow keys, Control-C, and an expandable
-    set of less-common terminal keys. Destructive interrupt actions are visually distinct from
-    normal text insertion.
+33. The primary mobile composer stays focused on quick inserts, attachment, text entry, and Send;
+    it does not reserve scarce phone height for a permanent row of terminal-key buttons. The live
+    terminal itself remains available for direct keyboard input when a person needs terminal keys.
 
 34. A pane has at most one remote writer lease. The desktop remains authoritative and can preempt
     the phone. When the phone is read-only or loses the lease, output continues but input controls
@@ -212,12 +214,14 @@ tested on iPhone and iPad sizes before the live terminal transport is finalized.
     for the selected pane, including built-in actions and custom labels. Changing the configuration
     on the Mac updates the phone without a reload.
 
-36. By default, tapping a quick insert puts its current text into the composer for review; the
-    person then presses Send. A per-device preference may enable one-tap submission, but Clinch
-    never enables it silently.
+36. By default, tapping a quick insert puts its current text into both the composer and selected
+    desktop terminal for review; the person then presses Send. A per-device preference may enable
+    one-tap submission, but Clinch never enables it silently.
 
 37. Quick inserts are identified and validated by the Mac at activation time. A stale phone cannot
-    invoke a removed or changed action merely by replaying its old label or text.
+    invoke a removed or changed action merely by replaying its old label or text. If the toolbelt
+    changes during a tap, mobile silently refreshes the authoritative workspace instead of asking
+    the person to reload the page.
 
 38. The attachment affordance is visible from the first mobile design but may explain that uploads
     are not yet available in the first milestone. When uploads ship, the same control accepts

@@ -188,6 +188,9 @@ async function installPairedPhone(page: import("@playwright/test").Page) {
         const commands = JSON.parse(localStorage.getItem("remote-command-types") ?? "[]") as string[];
         commands.push(envelope.payload.type);
         localStorage.setItem("remote-command-types", JSON.stringify(commands));
+        const payloads = JSON.parse(localStorage.getItem("remote-command-payloads") ?? "[]") as object[];
+        payloads.push(envelope.payload);
+        localStorage.setItem("remote-command-payloads", JSON.stringify(payloads));
         if (envelope.payload.type === "select_target") {
           this.selectAttempts += 1;
           if (this.selectAttempts === 1) {
@@ -339,8 +342,39 @@ test("paired phone exposes projects, drawer, usage, and recent-session resume", 
   await page.getByRole("button", { name: "＋ New" }).click();
   await expect.poll(() => page.evaluate(() => localStorage.getItem("remote-command-types"))).toContain("create_session");
   await page.getByRole("button", { name: "Codex", exact: true }).click();
-  await expect(page.getByRole("textbox", { name: "Command or agent prompt" })).toHaveValue("codex");
+  const composer = page.getByRole("textbox", { name: "Command or agent prompt" });
+  await expect(composer).toHaveValue("codex");
   await expect(page.getByText("The workspace changed; refresh before sending input.")).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => {
+    const payloads = JSON.parse(localStorage.getItem("remote-command-payloads") ?? "[]") as Array<{
+      type: string;
+      data?: { data_base64?: string };
+    }>;
+    return {
+      commandTypes: payloads.map((payload) => payload.type),
+      rawInput: payloads
+        .filter((payload) => payload.type === "raw_terminal_input")
+        .map((payload) => atob(payload.data?.data_base64 ?? "")),
+    };
+  })).toEqual(expect.objectContaining({ rawInput: expect.arrayContaining(["codex"]) }));
+
+  await composer.fill("echo from phone");
+  await composer.press("Enter");
+  await expect(composer).toHaveValue("");
+  await composer.fill("pwd");
+  await composer.press("Meta+Enter");
+  await expect(composer).toHaveValue("");
+  await expect.poll(() => page.evaluate(() => {
+    const payloads = JSON.parse(localStorage.getItem("remote-command-payloads") ?? "[]") as Array<{
+      type: string;
+      data?: { data_base64?: string };
+    }>;
+    return payloads
+      .filter((payload) => payload.type === "raw_terminal_input")
+      .map((payload) => atob(payload.data?.data_base64 ?? ""))
+      .filter((data) => data === "\r")
+      .length;
+  })).toBe(2);
 
   const projectAdd = page.getByRole("button", { name: "New project", exact: true });
   expect(await projectAdd.evaluate((button) => {

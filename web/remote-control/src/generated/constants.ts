@@ -6,6 +6,7 @@ export const PAIRING_INVITATION_TTL_SECS = 300 as const;
 export const AUTH_CHALLENGE_TTL_SECS = 60 as const;
 export const AUTH_SESSION_TTL_SECS = 900 as const;
 export const WRITER_LEASE_TTL_SECS = 30 as const;
+export const MAX_JAVASCRIPT_SAFE_INTEGER = 9007199254740991 as const;
 export const MAX_JSON_MESSAGE_BYTES = 262144 as const;
 export const MAX_UPLOAD_BYTES = 26214400 as const;
 export const MAX_UPLOAD_CHUNK_BYTES = 262144 as const;
