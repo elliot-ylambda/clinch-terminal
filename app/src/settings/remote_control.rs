@@ -4,6 +4,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use settings::macros::define_settings_group;
 use settings::{SecureSetting, Setting, SupportedPlatforms, SyncToCloud};
+use warp_core::channel::ChannelState;
 use warpui::{AppContext, ModelContext};
 use warpui_extras::secure_storage;
 
@@ -153,7 +154,13 @@ impl Setting for RemoteControlModeSetting {
     }
 
     fn new_from_storage(ctx: &mut AppContext) -> Self {
-        Self::new(Self::read_from_secure_storage(ctx))
+        // Remote Control belongs only to backend-free Clinch channels. Avoid even reading its
+        // local Keychain entry while an inherited account-backed channel is running.
+        if ChannelState::has_backend() {
+            Self::new(None)
+        } else {
+            Self::new(Self::read_from_secure_storage(ctx))
+        }
     }
 
     fn is_supported_on_current_platform(&self) -> bool {

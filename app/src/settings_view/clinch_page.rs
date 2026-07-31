@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use ::settings::{Setting, ToggleableSetting};
 #[cfg(feature = "local_fs")]
 use clinch_companion_protocol::{DeviceId, PairingClaimId};
+#[cfg(feature = "local_fs")]
+use warp_core::channel::ChannelState;
 use warpui::color::ColorU;
 use warpui::elements::{
     Align, Border, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Element, Empty,
@@ -77,9 +79,11 @@ impl ClinchSettingsPageView {
         });
         ctx.subscribe_to_model(&ClinchSettings::handle(ctx), |_, _, _, ctx| ctx.notify());
         #[cfg(feature = "local_fs")]
-        ctx.subscribe_to_model(&RemoteControlService::handle(ctx), |_, _, _, ctx| {
-            ctx.notify()
-        });
+        if !ChannelState::has_backend() {
+            ctx.subscribe_to_model(&RemoteControlService::handle(ctx), |_, _, _, ctx| {
+                ctx.notify()
+            });
+        }
 
         let agent_widgets: Vec<Box<dyn SettingsWidget<View = Self>>> = vec![
             Box::new(SessionCaptureWidget::default()),
@@ -109,16 +113,19 @@ impl ClinchSettingsPageView {
         }
 
         let mut categories = vec![];
-        categories.push(
-            Category::new(
-                "Remote Control (Preview)",
-                vec![Box::new(RemoteControlSetupWidget::default())],
-            )
-            .with_subtitle(
-                "Securely connect your phone through your own Tailscale network — no Clinch \
-                 account or hosted Clinch relay.",
-            ),
-        );
+        #[cfg(feature = "local_fs")]
+        if !ChannelState::has_backend() {
+            categories.push(
+                Category::new(
+                    "Remote Control (Preview)",
+                    vec![Box::new(RemoteControlSetupWidget::default())],
+                )
+                .with_subtitle(
+                    "Securely connect your phone through your own Tailscale network — no Clinch \
+                     account or hosted Clinch relay.",
+                ),
+            );
+        }
         if !project_widgets.is_empty() {
             categories.push(Category::new("Projects", project_widgets));
         }
