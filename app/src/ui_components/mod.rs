@@ -3,6 +3,7 @@
 //! of colors (aka blended colors from the figma designs derived from Warp theme) and icons used
 //! within the app.
 use pathfinder_color::ColorU;
+use warp_core::ui::theme::Fill;
 
 pub(crate) mod agent_icon;
 pub(crate) mod avatar;
@@ -39,5 +40,18 @@ pub(crate) const CLINCH_DONE_BLUE: ColorU = ColorU {
     b: 0xE9,
     a: 0xFF,
 };
+
+/// Thickness of the accent rules that tie the app chrome together: the
+/// highlighted project tab's outline, the CLI-agent message-history header
+/// underline, and the agent/terminal footer's top rule. Shared so the three
+/// always read as one system.
+pub(crate) const ACCENT_CHROME_RULE_WIDTH: f32 = 1.;
+
+/// Fill for those same rules — the theme accent at full opacity, flattened to a
+/// solid so a gradient accent still paints an even line. Pass
+/// `theme.accent()`.
+pub(crate) fn accent_chrome_rule_fill(accent: Fill) -> Fill {
+    Fill::Solid(accent.into_solid())
+}
 
 const BORDER_RADIUS: f32 = 4.;
