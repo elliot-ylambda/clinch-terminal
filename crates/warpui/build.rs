@@ -9,6 +9,10 @@ use std::process::Command;
 
 use cfg_aliases::cfg_aliases;
 
+mod build_support;
+
+use build_support::native_xcrun;
+
 fn main() {
     cfg_aliases! {
         macos: { target_os = "macos" },
@@ -106,7 +110,7 @@ fn compile_metal_shaders() {
         compile_args.push("-frecord-sources");
         compile_args.push("-gline-tables-only");
     }
-    let result = Command::new("xcrun")
+    let result = native_xcrun()
         .args(&compile_args)
         .output()
         .expect("error compiling metal shaders to .air");
@@ -116,7 +120,7 @@ fn compile_metal_shaders() {
         std::str::from_utf8(&result.stderr).unwrap(),
     );
 
-    let result = Command::new("xcrun")
+    let result = native_xcrun()
         .args(["-sdk", "macosx", "metallib", air_path, "-o", lib_path])
         .output()
         .expect("error compiling metal shaders to .metallib");
