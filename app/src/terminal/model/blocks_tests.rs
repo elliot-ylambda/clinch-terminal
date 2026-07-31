@@ -2396,3 +2396,172 @@ fn abort_active_block_start_is_noop_for_stale_block_id() {
     assert!(!block_list.abort_active_block_start_if_unexecuted(&stale_block_id));
     assert!(block_list.active_block().started());
 }
+
+/// Output long enough that a block is worth reclaiming, i.e. comfortably more
+/// than [`RECLAIMED_BLOCK_ROWS_KEPT`].
+fn long_output() -> String {
+    (0..(RECLAIMED_BLOCK_ROWS_KEPT + 100))
+        .map(|i| format!("line {i}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// A block list whose retention budget is so small that every eligible block
+/// is reclaimed, so tests do not have to generate megabytes of output.
+fn block_list_with_tiny_retention_budget() -> BlockList {
+    let block_sizes = BlockSize {
+        max_retained_scrollback_rows: 1,
+        ..test_utils::block_size()
+    };
+    new_bootstrapped_block_list(
+        Some(block_sizes),
+        None,
+        ChannelEventListener::new_for_test(),
+    )
+}
+
+/// The indices of blocks that have had output released.
+///
+/// Assertions go through this rather than fixed positions because the list
+/// starts with bootstrap blocks, which carry no output and are therefore
+/// correctly skipped by reclamation.
+fn reclaimed_block_indices(block_list: &BlockList) -> Vec<usize> {
+    block_list
+        .blocks
+        .iter()
+        .enumerate()
+        .filter(|(_, block)| block.output_grid().grid_handler().num_lines_truncated() > 0)
+        .map(|(i, _)| i)
+        .collect()
+}
+
+#[test]
+fn test_reclaim_releases_output_from_oldest_blocks() {
+    let mut block_list = block_list_with_tiny_retention_budget();
+    let output = long_output();
+
+    let num_blocks = RECENT_BLOCKS_PROTECTED_FROM_RECLAIM + 5;
+    for i in 0..num_blocks {
+        insert_block(&mut block_list, &format!("command {i}"), &output);
+    }
+
+    // Every block is still in the list: reclamation releases content, it never
+    // removes entries, because BlockIndex is positional.
+    assert!(
+        block_list.blocks.len() > num_blocks,
+        "expected at least {num_blocks} blocks plus the active one, got {}",
+        block_list.blocks.len()
+    );
+
+    let reclaimed = reclaimed_block_indices(&block_list);
+    assert!(
+        !reclaimed.is_empty(),
+        "a pane this far over budget should have reclaimed something"
+    );
+
+    for i in reclaimed {
+        let block = &block_list.blocks[i];
+        assert!(
+            block.retained_output_rows() <= RECLAIMED_BLOCK_ROWS_KEPT,
+            "reclaimed block {i} should retain at most {RECLAIMED_BLOCK_ROWS_KEPT} \
+             rows, but retains {}",
+            block.retained_output_rows()
+        );
+    }
+}
+
+#[test]
+fn test_reclaim_protects_the_most_recent_blocks() {
+    let mut block_list = block_list_with_tiny_retention_budget();
+    let output = long_output();
+
+    let num_blocks = RECENT_BLOCKS_PROTECTED_FROM_RECLAIM + 5;
+    for i in 0..num_blocks {
+        insert_block(&mut block_list, &format!("command {i}"), &output);
+    }
+
+    // The tail of the list is what the user is still reading, so it keeps its
+    // output no matter how far over budget the pane is.
+    let protected_from = block_list
+        .blocks
+        .len()
+        .saturating_sub(RECENT_BLOCKS_PROTECTED_FROM_RECLAIM);
+    for (i, block) in block_list.blocks.iter().enumerate().skip(protected_from) {
+        assert_eq!(
+            block.output_grid().grid_handler().num_lines_truncated(),
+            0,
+            "recent block {i} should not have been reclaimed"
+        );
+    }
+}
+
+#[test]
+fn test_reclaim_is_disabled_by_a_zero_budget() {
+    // `test_utils::block_size()` disables reclamation, which is also the
+    // documented meaning of a zero budget in settings.
+    let mut block_list =
+        new_bootstrapped_block_list(None, None, ChannelEventListener::new_for_test());
+    let output = long_output();
+
+    for i in 0..(RECENT_BLOCKS_PROTECTED_FROM_RECLAIM + 5) {
+        insert_block(&mut block_list, &format!("command {i}"), &output);
+    }
+
+    assert!(
+        reclaimed_block_indices(&block_list).is_empty(),
+        "no block should be touched when the budget is zero"
+    );
+}
+
+#[test]
+fn test_reclaim_preserves_block_identity_and_exit_code() {
+    let mut block_list = block_list_with_tiny_retention_budget();
+    let output = long_output();
+
+    let first_index = insert_block(&mut block_list, "the first command", &output);
+    for i in 0..(RECENT_BLOCKS_PROTECTED_FROM_RECLAIM + 5) {
+        insert_block(&mut block_list, &format!("command {i}"), &output);
+    }
+
+    let block = block_list
+        .block_at(first_index)
+        .expect("the reclaimed block should still be addressable by its index");
+
+    // The command itself lives in the header grid, which reclamation never
+    // touches, so history and block navigation still work.
+    assert!(
+        block
+            .prompt_and_command_grid()
+            .contents_to_string(
+                false, /* include_escape_sequences */
+                None   /* max_rows */
+            )
+            .contains("the first command"),
+        "the command text should survive reclamation"
+    );
+    assert!(block.finished(), "the block should still be finished");
+}
+
+#[test]
+fn test_lowering_the_budget_reclaims_immediately() {
+    // Start with reclamation off, build up output, then lower the budget and
+    // confirm it applies without waiting for another command to finish.
+    let mut block_list =
+        new_bootstrapped_block_list(None, None, ChannelEventListener::new_for_test());
+    let output = long_output();
+
+    for i in 0..(RECENT_BLOCKS_PROTECTED_FROM_RECLAIM + 5) {
+        insert_block(&mut block_list, &format!("command {i}"), &output);
+    }
+    assert!(
+        reclaimed_block_indices(&block_list).is_empty(),
+        "nothing should be reclaimed while the budget is zero"
+    );
+
+    block_list.update_max_retained_scrollback_rows(1);
+
+    assert!(
+        !reclaimed_block_indices(&block_list).is_empty(),
+        "lowering the budget should reclaim right away"
+    );
+}

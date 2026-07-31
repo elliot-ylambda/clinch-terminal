@@ -469,7 +469,96 @@ fn setup_database(database_path: &Path) -> Result<SqliteConnection> {
     conn.run_pending_migrations(persistence::MIGRATIONS)
         .map_err(|e| anyhow!(e))
         .context("Failed to perform migrations")?;
+
+    perform_startup_maintenance(&mut conn);
+
     Ok(conn)
+}
+
+/// A single-column pragma result.
+///
+/// Pragmas are read through their table-valued function form
+/// (`pragma_page_count()` rather than `PRAGMA page_count`) so the column can be
+/// aliased, letting one struct serve every counter we read.
+#[derive(diesel::QueryableByName)]
+struct PragmaValue {
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    value: i64,
+}
+
+/// The fraction of the database that must be free space before a `VACUUM` is
+/// worth its startup cost.
+const VACUUM_FREELIST_FRACTION: f64 = 0.25;
+
+/// The amount that must actually be reclaimable before vacuuming, so we never
+/// rewrite the whole database to save a trivial amount.
+const VACUUM_MIN_RECLAIMABLE_BYTES: i64 = 32 * 1024 * 1024;
+
+/// Reclaims disk and page-cache space that ordinary operation leaves behind.
+///
+/// Two things accumulate over a long-lived install:
+///
+/// * **The WAL.** `wal_autocheckpoint` only resets the log when no reader holds
+///   an older snapshot.  An app that stays open for days keeps read connections
+///   alive continuously, so the log can grow far past the autocheckpoint
+///   threshold and never shrink.  Here, before any reader has attached, a
+///   `TRUNCATE` checkpoint is guaranteed to be able to reset it.
+/// * **Free pages.** Deleting rows returns pages to a freelist for reuse but
+///   never shrinks the file, so a database that has churned a lot of blocks can
+///   be mostly free space.
+///
+/// This runs on the single write connection at startup, before session restore
+/// attaches readers, and never fails startup: a database that cannot be
+/// maintained is still perfectly usable.
+fn perform_startup_maintenance(conn: &mut SqliteConnection) {
+    /// `name` is both the pragma and its result column, e.g. `page_count`
+    /// reads `SELECT page_count AS value FROM pragma_page_count()`.
+    fn read_pragma(conn: &mut SqliteConnection, name: &str) -> Option<i64> {
+        diesel::sql_query(format!("SELECT {name} AS value FROM pragma_{name}()"))
+            .get_result::<PragmaValue>(conn)
+            .map_err(|err| log::warn!("Failed to read pragma {name}: {err}"))
+            .ok()
+            .map(|row| row.value)
+    }
+
+    // Reset the write-ahead log.  This is the only point at which we can be
+    // confident no other connection is holding a snapshot open.
+    if let Err(err) = conn.batch_execute("PRAGMA wal_checkpoint(TRUNCATE);") {
+        log::warn!("Failed to checkpoint the WAL: {err}");
+    }
+
+    let (Some(page_count), Some(freelist_count), Some(page_size)) = (
+        read_pragma(conn, "page_count"),
+        read_pragma(conn, "freelist_count"),
+        read_pragma(conn, "page_size"),
+    ) else {
+        log::warn!("Could not read database page counts; skipping vacuum check");
+        return;
+    };
+
+    if page_count <= 0 {
+        return;
+    }
+
+    let reclaimable_bytes = freelist_count.saturating_mul(page_size);
+    let free_fraction = freelist_count as f64 / page_count as f64;
+    if free_fraction < VACUUM_FREELIST_FRACTION || reclaimable_bytes < VACUUM_MIN_RECLAIMABLE_BYTES
+    {
+        return;
+    }
+
+    log::info!(
+        "Vacuuming database: {freelist_count} of {page_count} pages free \
+         ({:.0}%, ~{} MB reclaimable)",
+        free_fraction * 100.,
+        reclaimable_bytes / (1024 * 1024),
+    );
+
+    // VACUUM rebuilds into a temporary file and swaps atomically, so an
+    // interrupted vacuum leaves the original database intact.
+    if let Err(err) = conn.batch_execute("VACUUM;") {
+        log::warn!("Failed to vacuum the database: {err}");
+    }
 }
 
 /// The path at which the sqlite database is located for the given scope.

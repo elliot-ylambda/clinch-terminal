@@ -17,7 +17,20 @@ use crate::terminal::TerminalView;
 use crate::{send_telemetry_from_app_ctx, send_telemetry_sync_from_ctx, TelemetryEvent};
 
 /// The threshold at which we emit a memory usage warning.
-const MEMORY_USAGE_WARNING_THRESHOLD: Option<Byte> = byte_unit::Byte::GIGABYTE.multiply(10);
+///
+/// This is deliberately far below a level that would threaten the machine.  A
+/// terminal that has crossed 2 GB has almost always accumulated scrollback it
+/// will never show again, and the per-pane retention budget
+/// (see [`crate::terminal::model::blocks`]) should have reclaimed it.  Firing
+/// here means that budget is not keeping up, which is worth surfacing.
+const MEMORY_USAGE_WARNING_THRESHOLD: Option<Byte> = byte_unit::Byte::GIGABYTE.multiply(2);
+
+/// How far the footprint must fall below [`MEMORY_USAGE_WARNING_THRESHOLD`]
+/// before the warning re-arms.
+///
+/// Without this hysteresis, a footprint hovering at the threshold would emit a
+/// warning on every refresh tick.
+const MEMORY_USAGE_REARM_THRESHOLD: Option<Byte> = byte_unit::Byte::MEGABYTE.multiply(1_500);
 
 /// The refresh interval for system information, in seconds.
 const REFRESH_INTERVAL_S: usize = 5;
@@ -168,21 +181,32 @@ impl SystemInfo {
     /// and compressed pages) so we actually detect high memory situations.
     /// The Rudderstack telemetry event still reports `rss` so existing
     /// dashboards are unaffected.
+    ///
+    /// The warning re-arms once the footprint drops back below
+    /// [`MEMORY_USAGE_REARM_THRESHOLD`], so a session that grows, is reclaimed,
+    /// and grows again reports each occurrence rather than only the first.
     fn check_for_excessive_memory_usage(
         &mut self,
         rss: Byte,
         memory_footprint: Byte,
         ctx: &mut ModelContext<Self>,
     ) {
-        if self.has_emitted_memory_warning_event {
-            return;
-        }
-
         // Use footprint (not RSS) for the threshold so we catch memory
         // that has been swapped out or compressed by the OS.
         if memory_footprint
             < MEMORY_USAGE_WARNING_THRESHOLD.expect("Threshold should not overflow u64")
         {
+            // Re-arm only after dropping clear of the threshold, so a
+            // footprint sitting right at the line does not warn every tick.
+            if memory_footprint
+                < MEMORY_USAGE_REARM_THRESHOLD.expect("Threshold should not overflow u64")
+            {
+                self.has_emitted_memory_warning_event = false;
+            }
+            return;
+        }
+
+        if self.has_emitted_memory_warning_event {
             return;
         }
 

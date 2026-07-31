@@ -150,12 +150,27 @@ define_settings_group!(TerminalSettings, settings: [
     }
     maximum_grid_size: MaximumGridSize {
         type: usize,
-        default: 50_000,
+        default: 10_000,
         supported_platforms: SupportedPlatforms::ALL,
         sync_to_cloud: SyncToCloud::Globally(RespectUserSyncSetting::Yes),
         private: false,
         toml_path: "terminal.maximum_grid_size",
-        description: "The maximum number of rows in the terminal grid.",
+        description: "The maximum number of rows in the terminal grid, per block.",
+    },
+    maximum_retained_scrollback_rows: MaximumRetainedScrollbackRows {
+        type: usize,
+        default: 100_000,
+        supported_platforms: SupportedPlatforms::ALL,
+        sync_to_cloud: SyncToCloud::Globally(RespectUserSyncSetting::Yes),
+        private: false,
+        toml_path: "terminal.maximum_retained_scrollback_rows",
+        description: "The total number of output rows retained across all blocks in a single \
+                      pane. Where maximum_grid_size bounds one block, this bounds the pane as a \
+                      whole, so a long-lived session does not grow without limit as blocks \
+                      accumulate. When a pane exceeds this, output from its oldest blocks is \
+                      released; those blocks keep their command, exit code and position, and show \
+                      the same \"output truncated\" marker used when a command exceeds the grid \
+                      size. Set to 0 to retain output indefinitely.",
     },
     alt_screen_padding: AltScreenPadding {
         type: AltScreenPaddingMode,

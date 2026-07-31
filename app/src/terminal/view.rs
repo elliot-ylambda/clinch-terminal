@@ -3662,6 +3662,14 @@ impl TerminalView {
                         *terminal_settings.as_ref(ctx).maximum_grid_size.value(),
                     );
                 }
+                TerminalSettingsChangedEvent::MaximumRetainedScrollbackRows { .. } => {
+                    let budget_rows = *terminal_settings
+                        .as_ref(ctx)
+                        .maximum_retained_scrollback_rows
+                        .value();
+                    let mut model = me.model.lock();
+                    model.update_max_retained_scrollback_rows(budget_rows);
+                }
                 TerminalSettingsChangedEvent::Spacing { .. } => {
                     let appearance = Appearance::as_ref(ctx);
                     let terminal_spacing = terminal_settings

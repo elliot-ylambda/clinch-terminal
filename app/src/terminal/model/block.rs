@@ -603,6 +603,9 @@ pub struct BlockSize {
     pub block_padding: BlockPadding,
     pub size: SizeInfo,
     pub max_block_scroll_limit: usize,
+    /// Total output rows retained across a pane's blocks before the oldest are
+    /// released. Zero disables reclamation.
+    pub max_retained_scrollback_rows: usize,
     pub warp_prompt_height_lines: f32,
 }
 
@@ -1573,6 +1576,10 @@ impl Block {
         self.rprompt_grid.finish();
         self.output_grid.finish();
 
+        // Finished grids are immutable, so this is the last chance to hand
+        // back the capacity they over-reserved while growing.
+        self.shrink_finished_grids_to_fit();
+
         self.exit_code = exit_code.into();
 
         if self.completed_ts.is_none() {
@@ -2245,6 +2252,17 @@ impl Block {
         .into_iter()
     }
 
+    /// Mutable counterpart to [`Self::all_grids_iter`].
+    ///
+    /// Built by chaining the header's grids with this block's own rather than
+    /// by calling the `_mut` accessors in an array literal, which would borrow
+    /// `self.header_grid` mutably twice.
+    pub fn all_grids_iter_mut(&mut self) -> impl Iterator<Item = &mut BlockGrid> {
+        self.header_grid
+            .all_grids_iter_mut()
+            .chain([&mut self.rprompt_grid, &mut self.output_grid])
+    }
+
     /// Returns the contents of this block as a string, with the given lime limit enforced on each
     /// grid within the block.
     pub fn contents_to_string_with_line_limit(&self, line_limit: usize) -> String {
@@ -2887,6 +2905,54 @@ impl Block {
         std::mem::size_of_val(self)
             // size of heap-allocated data
             + self.estimated_heap_usage_bytes()
+    }
+
+    /// Releases retained output scrollback, keeping at most `rows_to_keep` of
+    /// the most recent rows.  Returns the number of rows released.
+    ///
+    /// Released rows are recorded as truncated, so the block renders the same
+    /// "output truncated" affordance it already shows when a single command
+    /// exceeds `terminal.maximum_grid_size`.  Nothing else about the block
+    /// changes: the command, exit code, timestamps, working directory and
+    /// index all survive, so history, find and block navigation are unaffected.
+    ///
+    /// Only the output grid is touched.  The prompt and command grids are
+    /// bounded by the length of the command itself and are what block
+    /// navigation renders, so releasing them would cost visible fidelity for
+    /// almost no memory.
+    pub fn release_output_scrollback(&mut self, rows_to_keep: usize) -> usize {
+        let flat_storage = &mut self.output_grid.grid_handler_mut().flat_storage;
+        let excess_rows = flat_storage.total_rows().saturating_sub(rows_to_keep);
+        if excess_rows == 0 {
+            return 0;
+        }
+        flat_storage.truncate_rows_front(excess_rows);
+        // Truncating pops from a `VecDeque`, which keeps its capacity, so
+        // without this the rows would be dropped but the memory retained.
+        flat_storage.shrink_to_fit();
+
+        excess_rows
+    }
+
+    /// The number of output rows currently retained in flat storage.
+    ///
+    /// This is a length lookup, cheap enough for the retention sweep to call on
+    /// every block.  Note that [`Self::estimated_memory_usage_bytes`] is *not*:
+    /// it walks the style interval maps, which for heavily-coloured output can
+    /// hold an entry per character.
+    pub fn retained_output_rows(&self) -> usize {
+        self.output_grid.flat_storage_lines()
+    }
+
+    /// Releases capacity that the block's grids reserved but are not using.
+    ///
+    /// Called once when a block finishes.  Finished grids are immutable, so
+    /// the slack left over from `Vec` growth doubling is never reclaimed
+    /// otherwise, and on a long-lived pane it accumulates across every block.
+    pub fn shrink_finished_grids_to_fit(&mut self) {
+        for grid in self.all_grids_iter_mut() {
+            grid.grid_handler_mut().flat_storage.shrink_to_fit();
+        }
     }
 
     pub fn grid_storage_lines(&self) -> usize {
