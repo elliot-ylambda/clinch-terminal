@@ -391,7 +391,7 @@ impl TerminalDriver {
     /// Used to send exit commands to third-party harnesses.
     pub(super) fn send_text_to_cli(&self, text: String, ctx: &mut ModelContext<Self>) {
         self.terminal_view.update(ctx, |terminal, ctx| {
-            terminal.submit_text_to_cli_agent_pty(text, ctx);
+            terminal.submit_external_text_to_cli_agent_pty(text, ctx);
         });
     }
 

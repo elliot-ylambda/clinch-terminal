@@ -107,6 +107,14 @@ impl ProjectId {
     fn new() -> Self {
         Self(Uuid::new_v4())
     }
+
+    /// Returns an opaque, process-local identifier suitable for internal integrations.
+    ///
+    /// The string must not be persisted across application launches. Remote Control includes an
+    /// app-instance identifier alongside it so stale phone targets fail closed after a restart.
+    pub(crate) fn opaque_id(self) -> String {
+        self.0.to_string()
+    }
 }
 
 #[derive(Clone)]

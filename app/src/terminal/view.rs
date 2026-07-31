@@ -1672,6 +1672,10 @@ pub enum Event {
     /// Event used to propagate a state change for one of the terminal views
     /// inside this pane group.
     TerminalViewStateChanged,
+    /// A person typed into this terminal from the desktop UI. Remote-control writer leases use
+    /// this signal to yield immediately to the Mac without treating automation or remote viewers
+    /// as desktop input.
+    DesktopInput,
     ShowCommandSearch(CommandSearchOptions),
     // Tell the pane group to open the workflow modal.
     OpenWorkflowModalWithCommand(String),
@@ -9342,7 +9346,7 @@ impl TerminalView {
 
     /// Writes a shared session viewer's bytes to the pty
     pub fn write_viewer_bytes_to_pty(&mut self, bytes: Vec<u8>, ctx: &mut ViewContext<Self>) {
-        self.write_user_bytes_to_pty(bytes, ctx);
+        self.write_user_bytes_to_pty_inner(bytes.into(), ctx);
     }
 
     /// Ends the current line before writing the given bytes to the PTY.
@@ -9370,7 +9374,15 @@ impl TerminalView {
         data: B,
         ctx: &mut ViewContext<Self>,
     ) {
-        let bytes = data.into();
+        ctx.emit(Event::DesktopInput);
+        self.write_user_bytes_to_pty_inner(data.into(), ctx);
+    }
+
+    fn write_user_bytes_to_pty_inner(
+        &mut self,
+        bytes: Cow<'static, [u8]>,
+        ctx: &mut ViewContext<Self>,
+    ) {
         {
             let mut terminal_model = self.model.lock();
             let active_block = terminal_model.block_list().active_block();
@@ -16350,6 +16362,143 @@ impl TerminalView {
 
     pub fn size_info(&self) -> &SizeInfo {
         &self.size_info
+    }
+
+    /// Current terminal dimensions for the private Remote Control companion.
+    pub(crate) fn remote_control_dimensions(&self) -> (u16, u16) {
+        (
+            self.size_info.columns().min(u16::MAX as usize) as u16,
+            self.size_info.rows().min(u16::MAX as usize) as u16,
+        )
+    }
+
+    pub(crate) fn remote_control_remote_host<C: ModelAsRef>(&self, ctx: &C) -> Option<String> {
+        self.active_session_remote_host(ctx)
+    }
+
+    /// Produces a bounded, ANSI-preserving scrollback snapshot with secrets still obfuscated.
+    pub(crate) fn remote_control_scrollback_bytes(&self, max_bytes: usize) -> Vec<u8> {
+        use std::collections::VecDeque;
+
+        if max_bytes == 0 {
+            return Vec::new();
+        }
+
+        let model = self.model.lock();
+        let mut chunks = VecDeque::new();
+        let mut total = 0usize;
+        for block in model.block_list().blocks().iter().rev() {
+            let prompt = block
+                .prompt_and_command_grid()
+                .contents_to_string_force_full_grid_contents(true, Some(1_000));
+            let output = block
+                .output_grid()
+                .contents_to_string_force_full_grid_contents(true, Some(4_000));
+            let mut bytes = Vec::with_capacity(prompt.len() + output.len() + 4);
+            bytes.extend_from_slice(prompt.as_bytes());
+            if !prompt.is_empty() && !output.is_empty() {
+                bytes.extend_from_slice(b"\r\n");
+            }
+            bytes.extend_from_slice(output.as_bytes());
+            if !bytes.ends_with(b"\n") {
+                bytes.extend_from_slice(b"\r\n");
+            }
+
+            let remaining = max_bytes.saturating_sub(total);
+            if remaining == 0 {
+                break;
+            }
+            if bytes.len() > remaining {
+                bytes = bytes.split_off(bytes.len() - remaining);
+            }
+            total += bytes.len();
+            chunks.push_front(bytes);
+            if total >= max_bytes {
+                break;
+            }
+        }
+
+        let mut snapshot = Vec::with_capacity(total);
+        for chunk in chunks {
+            snapshot.extend_from_slice(&chunk);
+        }
+        snapshot
+    }
+
+    /// Subscribes to raw bytes read from this exact terminal after a snapshot is taken.
+    pub(crate) fn remote_control_pty_reads(&self) -> async_broadcast::Receiver<Arc<Vec<u8>>> {
+        self.model.lock().event_proxy.subscribe_pty_reads()
+    }
+
+    /// Submits composer text using the same agent-aware path as the desktop UI.
+    pub(crate) fn remote_control_submit_text(
+        &mut self,
+        text: String,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        if CLIAgentSessionsModel::as_ref(ctx)
+            .session(self.view_id)
+            .is_some()
+        {
+            #[cfg(feature = "local_tty")]
+            return self.submit_external_text_to_cli_agent_pty(text, ctx);
+            #[cfg(not(feature = "local_tty"))]
+            return false;
+        }
+
+        let mut bytes = text.into_bytes();
+        bytes.push(b'\r');
+        self.write_viewer_bytes_to_pty(bytes, ctx);
+        true
+    }
+
+    /// Inserts text at the active prompt without submitting it.
+    pub(crate) fn remote_control_insert_text(&mut self, text: String, ctx: &mut ViewContext<Self>) {
+        self.write_viewer_bytes_to_pty(text.into_bytes(), ctx);
+    }
+
+    pub(crate) fn remote_control_escape_inserted_path(
+        &mut self,
+        path: &str,
+        ctx: &mut ViewContext<Self>,
+    ) -> String {
+        if CLIAgentSessionsModel::as_ref(ctx)
+            .session(self.view_id)
+            .is_some()
+        {
+            path.to_owned()
+        } else {
+            self.shell_family(ctx).shell_escape(path).into_owned()
+        }
+    }
+
+    pub(crate) fn remote_control_write_bytes(
+        &mut self,
+        bytes: Vec<u8>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        self.write_viewer_bytes_to_pty(bytes, ctx);
+    }
+
+    /// Temporarily makes the PTY match the phone viewport while the phone owns the writer lease.
+    pub(crate) fn remote_control_resize(
+        &mut self,
+        rows: usize,
+        columns: usize,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        self.active_viewer_driven_size = Some((rows.max(1), columns.max(1)));
+        self.resize_internal(
+            SizeUpdateBuilder::for_viewer_size_report(*self.size_info, rows.max(1), columns.max(1))
+                .build(self, ctx),
+            ctx,
+        );
+    }
+
+    pub(crate) fn remote_control_restore_desktop_size(&mut self, ctx: &mut ViewContext<Self>) {
+        if self.active_viewer_driven_size.take().is_some() {
+            self.refresh_size(ctx);
+        }
     }
 
     pub fn colors(&self) -> &color::List {

@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Builds the production Remote Control PWA and its bundled dependency notices.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+WEB="$ROOT/web/remote-control"
+
+for command in node corepack; do
+  command -v "$command" >/dev/null 2>&1 || {
+    echo "error: $command is required to build Clinch Remote Control" >&2
+    exit 1
+  }
+done
+
+corepack yarn --cwd "$WEB" install --immutable
+corepack yarn --cwd "$WEB" build
+/usr/bin/python3 "$ROOT/script/generate-clinch-remote-control-notices" \
+  "$WEB/node_modules" "$WEB/dist/THIRD_PARTY_LICENSES.txt"
+
+for asset in index.html sw.js manifest.webmanifest THIRD_PARTY_LICENSES.txt; do
+  test -s "$WEB/dist/$asset" || {
+    echo "error: Remote Control build omitted $asset" >&2
+    exit 1
+  }
+done
+
+if find "$WEB/dist" -type f -name '*.map' -print -quit | grep -q .; then
+  echo "error: Remote Control production assets include source maps" >&2
+  exit 1
+fi
+
+echo "Built Clinch Remote Control at $WEB/dist"

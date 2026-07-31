@@ -95,6 +95,16 @@ __pycache__/
 # Anchored to the root so bundled/test .txt fixtures are unaffected.
 /20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.txt
 
-# Product and technical specs. Internal design material, not a build input:
-# nothing in the app, the scripts, or the release gate reads from here.
-/specs/
+# Product and technical specs for substantial features are reviewed alongside
+# the implementation, even though they are not build inputs.
+
+# Clinch Remote Control web-app build and package-manager artifacts.
+/web/remote-control/node_modules/
+/web/remote-control/dist/
+/web/remote-control/test-results/
+/web/remote-control/playwright-report/
+/web/remote-control/tsconfig.tsbuildinfo
+/web/remote-control/.pnp.*
+/web/remote-control/.yarn/cache/
+/web/remote-control/.yarn/install-state.gz
+/web/remote-control/.yarn/unplugged/

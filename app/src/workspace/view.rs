@@ -365,7 +365,9 @@ use crate::settings_view::handoff_environment_creation_modal::{
 use crate::settings_view::keybindings::{KeybindingChangedEvent, KeybindingChangedNotifier};
 use crate::settings_view::mcp_servers_page::MCPServersSettingsPage;
 use crate::settings_view::pane_manager::SettingsPaneManager;
-use crate::settings_view::{flags, SettingsSection, SettingsView, SettingsViewEvent};
+use crate::settings_view::{
+    flags, remote_control_setup_widget_id, SettingsSection, SettingsView, SettingsViewEvent,
+};
 #[cfg(all(target_os = "windows", feature = "local_tty"))]
 use crate::shell_indicator::ShellIndicatorType;
 use crate::tab::{
@@ -1351,6 +1353,10 @@ fn project_cli_agent_activity(
     } else {
         ProjectCliAgentActivity::Idle
     }
+}
+
+fn should_show_remote_control_button(has_backend: bool) -> bool {
+    !has_backend
 }
 
 impl Workspace {
@@ -8923,6 +8929,52 @@ impl Workspace {
             None,
             ctx,
         );
+    }
+
+    /// Opens an exact local directory in a new terminal tab for Remote Control.
+    pub(crate) fn remote_control_open_terminal(
+        &mut self,
+        path: PathBuf,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        self.open_directory_in_new_tab(path, ctx);
+    }
+
+    /// Opens a typed Claude Code or Codex command in a new tab.
+    ///
+    /// All user-provided values are shell-quoted as single arguments before reaching the existing
+    /// one-shot bootstrap command path.
+    #[cfg(feature = "local_tty")]
+    pub(crate) fn remote_control_open_cli_agent(
+        &mut self,
+        provider: crate::agent_resume::AgentResumeProvider,
+        cwd: PathBuf,
+        initial_prompt: Option<String>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let mut command = provider.as_str().to_owned();
+        if let Some(prompt) = initial_prompt.filter(|prompt| !prompt.trim().is_empty()) {
+            command.push(' ');
+            command.push_str(&shell_words::quote(&prompt));
+        }
+        self.launch_cli_agent_in_new_tab(command, Some(cwd.to_string_lossy().into_owned()), ctx);
+    }
+
+    #[cfg(feature = "local_tty")]
+    pub(crate) fn remote_control_resume_cli_agent(
+        &mut self,
+        provider: crate::agent_resume::AgentResumeProvider,
+        durable_session_id: &str,
+        cwd: PathBuf,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        let Some(command) =
+            crate::agent_resume::build_remote_resume_command(provider, durable_session_id)
+        else {
+            return false;
+        };
+        self.launch_cli_agent_in_new_tab(command, Some(cwd.to_string_lossy().into_owned()), ctx);
+        true
     }
 
     /// Forks the Claude/Codex session in the pane owning `terminal_view_id` into a NEW tab.
@@ -22005,6 +22057,15 @@ impl Workspace {
             }
         }
 
+        #[cfg(not(target_family = "wasm"))]
+        if should_show_remote_control_button(ChannelState::has_backend()) {
+            target.add_child(
+                Container::new(self.render_remote_control_button(appearance))
+                    .with_margin_left(TAB_BAR_PADDING_LEFT)
+                    .finish(),
+            );
+        }
+
         // Legacy AI assistant button (non-agent-mode only)
         if is_online
             && !FeatureFlag::AgentMode.is_enabled()
@@ -22736,6 +22797,27 @@ impl Workspace {
                 WorkspaceAction::ShowSettings,
                 "Clinch settings".to_string(),
                 self.cached_keybindings[SHOW_SETTINGS_KEYBINDING_NAME].clone(),
+                false,
+                false,
+            )
+            .finish(),
+        )
+        .finish()
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    fn render_remote_control_button(&self, appearance: &Appearance) -> Box<dyn Element> {
+        Align::new(
+            self.render_tab_bar_icon_button(
+                appearance,
+                icons::Icon::Phone01,
+                &self.mouse_states.remote_control_icon,
+                WorkspaceAction::ScrollToSettingsWidget {
+                    page: SettingsSection::Clinch,
+                    widget_id: remote_control_setup_widget_id(),
+                },
+                "Remote Control".to_string(),
+                Some("Set up secure phone access (Preview)".to_string()),
                 false,
                 false,
             )

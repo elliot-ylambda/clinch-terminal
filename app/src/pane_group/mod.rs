@@ -5166,6 +5166,17 @@ impl PaneGroup {
         self.custom_title(ctx).unwrap_or_else(|| self.title(ctx))
     }
 
+    /// Returns the title for one exact pane without changing focus.
+    pub(crate) fn pane_title(&self, pane_id: PaneId, ctx: &AppContext) -> Option<String> {
+        self.pane_contents.get(&pane_id).map(|pane| {
+            pane.as_pane()
+                .pane_configuration()
+                .as_ref(ctx)
+                .title()
+                .to_owned()
+        })
+    }
+
     /// The tab-level custom title, if one has been set via the rename-tab flow.
     pub fn custom_title(&self, _ctx: &AppContext) -> Option<String> {
         self.custom_title.clone()

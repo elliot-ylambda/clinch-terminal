@@ -74,6 +74,19 @@ fi
 # Clinch's macOS distribution carries the local agent-resume runtime. The GUI enables its managed
 # capture hooks on first launch, refreshes them while enabled, and honors a persisted user opt-out.
 if [ "$(uname -s)" = "Darwin" ]; then
+  REMOTE_CONTROL_DEST="$DEST_DIR/remote-control-web"
+  REMOTE_CONTROL_SOURCE="${CLINCH_REMOTE_CONTROL_WEB_DIST:-$REPO_ROOT/web/remote-control/dist}"
+  if [ -z "${CLINCH_REMOTE_CONTROL_WEB_DIST:-}" ]; then
+    "$REPO_ROOT/script/build-clinch-remote-control-web"
+  fi
+  if [ ! -s "$REMOTE_CONTROL_SOURCE/index.html" ]; then
+    echo "Error: Remote Control web assets are missing at $REMOTE_CONTROL_SOURCE" >&2
+    exit 1
+  fi
+  echo "Copying Clinch Remote Control PWA to $REMOTE_CONTROL_DEST"
+  rm -rf "$REMOTE_CONTROL_DEST"
+  cp -R "$REMOTE_CONTROL_SOURCE" "$REMOTE_CONTROL_DEST"
+
   AGENT_RESUME_SRC="$REPO_ROOT/tools/agent-resume"
   AGENT_RESUME_DEST="$DEST_DIR/agent-resume"
   echo "Copying Clinch agent-resume runtime to $AGENT_RESUME_DEST"

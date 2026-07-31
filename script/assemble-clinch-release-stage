@@ -136,6 +136,7 @@ primary_assets=(
 /usr/bin/python3 - \
   "$DIST/Clinch.build-provenance.json" "$DIST" "$VERSION" "$COMMIT" \
   "$UPDATE_SEQUENCE" "$started_at" "$created_at" "$ROOT/Cargo.lock" \
+  "$ROOT/web/remote-control/yarn.lock" \
   "${primary_assets[@]}" <<'PY'
 import hashlib
 import json
@@ -150,7 +151,8 @@ sequence = int(sys.argv[5])
 started_at = sys.argv[6]
 finished_at = sys.argv[7]
 lockfile = pathlib.Path(sys.argv[8])
-asset_names = sys.argv[9:]
+yarn_lockfile = pathlib.Path(sys.argv[9])
+asset_names = sys.argv[10:]
 
 
 def digest(path):
@@ -185,6 +187,10 @@ value = {
                 {
                     "digest": {"sha256": digest(lockfile)},
                     "uri": "file:Cargo.lock",
+                },
+                {
+                    "digest": {"sha256": digest(yarn_lockfile)},
+                    "uri": "file:web/remote-control/yarn.lock",
                 },
             ],
         },

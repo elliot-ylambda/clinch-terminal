@@ -133,6 +133,25 @@ struct RegistryEntry {
 const CLINCH_RESUME_LAUNCHER: &str = "clinch_agent_resume_launch";
 const LEGACY_WARP_RESUME_LAUNCHER: &str = "warp_agent_resume_launch";
 
+/// Constructs the only restore command accepted from the Remote Control protocol.
+///
+/// Provider selection is typed and the opaque durable ID must satisfy the same strict identifier
+/// grammar as persisted restore commands. This keeps the existing restore/replay machinery while
+/// preventing phone-supplied text from being interpreted as shell syntax.
+pub(crate) fn build_remote_resume_command(
+    provider: AgentResumeProvider,
+    durable_session_id: &str,
+) -> Option<String> {
+    let durable_session_id = durable_session_id.trim();
+    if durable_session_id.len() > 256 || !is_safe_session_id(durable_session_id) {
+        return None;
+    }
+    Some(format!(
+        "{CLINCH_RESUME_LAUNCHER} {} {durable_session_id}",
+        provider.as_str()
+    ))
+}
+
 fn app_id_enables_runtime(app_id: &str) -> bool {
     matches!(app_id, "sh.clinch.Clinch" | "sh.clinch.ClinchDev")
 }

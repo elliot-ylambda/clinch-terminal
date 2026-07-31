@@ -74,6 +74,14 @@ impl ChannelEventListener {
             }
         }
     }
+
+    /// Subscribes to future PTY reads without changing terminal ownership or sharing state.
+    ///
+    /// Remote Control uses this after sending an authoritative scrollback snapshot. A lagged
+    /// receiver is treated as a resync boundary rather than silently dropping terminal bytes.
+    pub(crate) fn subscribe_pty_reads(&self) -> async_broadcast::Receiver<Arc<Vec<u8>>> {
+        self.pty_reads_tx.new_receiver()
+    }
 }
 
 #[cfg(test)]

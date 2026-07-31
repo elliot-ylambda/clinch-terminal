@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+EXPECTED="$REPO_ROOT/web/remote-control/src/generated"
+GENERATED="$(mktemp -d "${TMPDIR:-/tmp}/clinch-protocol.XXXXXX")"
+trap 'rm -rf "$GENERATED"' EXIT
+
+cd "$REPO_ROOT"
+cargo run -p clinch_companion_protocol --bin generate --quiet -- --out-dir "$GENERATED"
+diff -ru "$EXPECTED" "$GENERATED"

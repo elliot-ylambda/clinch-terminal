@@ -281,12 +281,12 @@ if parameters != {"update_sequence": sequence, "version": version}:
 if definition.get("internalParameters") != {}:
     fail("provenance internal parameters mismatch")
 dependencies = definition.get("resolvedDependencies")
-if not isinstance(dependencies, list) or len(dependencies) != 2:
+if not isinstance(dependencies, list) or len(dependencies) != 3:
     fail("provenance resolved dependencies are not exact")
 if any(not isinstance(entry, dict) or set(entry) != {"uri", "digest"} for entry in dependencies):
     fail("provenance resolved dependency is malformed")
 dependency_map = {entry["uri"]: entry["digest"] for entry in dependencies}
-if len(dependency_map) != 2:
+if len(dependency_map) != 3:
     fail("provenance resolved dependencies are duplicated")
 source_uri = f"git+https://github.com/elliot-ylambda/clinch-terminal@{commit}"
 if dependency_map.get(source_uri) != {"sha1": commit}:
@@ -294,6 +294,11 @@ if dependency_map.get(source_uri) != {"sha1": commit}:
 lock_digest = digest(root / "Cargo.lock")
 if dependency_map.get("file:Cargo.lock") != {"sha256": lock_digest}:
     fail("provenance Cargo.lock digest mismatch")
+yarn_lock_digest = digest(root / "web/remote-control/yarn.lock")
+if dependency_map.get("file:web/remote-control/yarn.lock") != {
+    "sha256": yarn_lock_digest
+}:
+    fail("provenance Remote Control yarn.lock digest mismatch")
 run_details = predicate.get("runDetails", {})
 builder_id = run_details.get("builder", {}).get("id", "")
 if commit not in builder_id or not builder_id.endswith("/script/assemble-clinch-release-stage"):

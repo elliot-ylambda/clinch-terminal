@@ -398,7 +398,7 @@ publish_verified_draft() {
 }
 
 for command in gh git make cargo cargo-nextest cargo-deny cargo-bundle cargo-about syft jq curl \
-    ssh-keygen shasum hdiutil cmp; do
+    ssh-keygen shasum hdiutil cmp node corepack; do
   require_command "$command" "see README release prerequisites"
 done
 [[ -x /usr/bin/python3 ]] || fail "/usr/bin/python3 is required"

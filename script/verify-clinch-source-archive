@@ -15,7 +15,7 @@ fail() {
 [[ -f "$ARCHIVE" && ! -L "$ARCHIVE" ]] || fail "archive is not a regular file"
 [[ "$VERSION" =~ ^v[0-9]+(\.[0-9]+)+$ ]] || fail "invalid version $VERSION"
 [[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]] || fail "invalid commit"
-for item in Cargo.lock LICENSE-AGPL LICENSE-MIT NOTICE; do
+for item in Cargo.lock LICENSE-AGPL LICENSE-MIT NOTICE web/remote-control/yarn.lock; do
   [[ -f "$ROOT/$item" ]] || fail "missing comparison file $ROOT/$item"
 done
 
@@ -90,6 +90,10 @@ with source:
         ".cargo/config.toml",
         ".clinch-source.json",
         "CORRESPONDING_SOURCE.md",
+        "web/remote-control/package.json",
+        "web/remote-control/yarn.lock",
+        "web/remote-control/.yarnrc.yml",
+        "web/remote-control/.yarn/releases/yarn-4.18.0.cjs",
     }
     for relative in required:
         member = by_name.get(f"{prefix}/{relative}")
@@ -105,7 +109,13 @@ with source:
             fail(f"could not read {relative}")
         return handle.read()
 
-    for relative in ("LICENSE-AGPL", "LICENSE-MIT", "NOTICE", "Cargo.lock"):
+    for relative in (
+        "LICENSE-AGPL",
+        "LICENSE-MIT",
+        "NOTICE",
+        "Cargo.lock",
+        "web/remote-control/yarn.lock",
+    ):
         if read(relative) != (root / relative).read_bytes():
             fail(f"{relative} differs from the release checkout")
 
@@ -116,8 +126,11 @@ with source:
     expected_marker = {
         "cargo_lock_sha256": digest((root / "Cargo.lock").read_bytes()),
         "commit": commit,
-        "schema_version": 1,
+        "schema_version": 2,
         "version": version,
+        "yarn_lock_sha256": digest(
+            (root / "web/remote-control/yarn.lock").read_bytes()
+        ),
     }
     if marker != expected_marker:
         fail("source identity marker does not match the release")
@@ -137,7 +150,13 @@ with source:
     ):
         fail("Cargo is not configured to use isolated bundled vendor sources")
     guide = read("CORRESPONDING_SOURCE.md").decode("utf-8")
-    if version not in guide or commit not in guide or "--offline" not in guide:
+    if (
+        version not in guide
+        or commit not in guide
+        or "--offline" not in guide
+        or "YARN_ENABLE_NETWORK=0" not in guide
+        or "--immutable-cache" not in guide
+    ):
         fail("Corresponding Source instructions are incomplete")
 
     vendor_prefix = f"{prefix}/vendor/"
@@ -153,5 +172,30 @@ with source:
         if not any(name.startswith(directory_prefix) for name in by_name):
             fail(f"configured vendor source is absent: {directory}")
 
+    yarn_cache_prefix = f"{prefix}/web/remote-control/.yarn/cache/"
+    yarn_archives = [
+        member
+        for name, member in by_name.items()
+        if name.startswith(yarn_cache_prefix) and name.endswith(".zip")
+    ]
+    if not yarn_archives or any(not member.isfile() for member in yarn_archives):
+        fail("archive has no verifiable Yarn package cache")
+
 print(f"✓ Verified complete Corresponding Source for {version} at {commit[:12]}")
 PY
+
+for command in corepack node tar; do
+  command -v "$command" >/dev/null 2>&1 || fail "$command is required"
+done
+verify_work="$(mktemp -d "${TMPDIR:-/tmp}/clinch-source-verify.XXXXXX")"
+cleanup() {
+  rm -rf "$verify_work"
+}
+trap cleanup EXIT
+COPYFILE_DISABLE=1 tar -xzf "$ARCHIVE" -C "$verify_work"
+source_root="$verify_work/Clinch-${VERSION#v}-source"
+YARN_ENABLE_NETWORK=0 corepack yarn --cwd "$source_root/web/remote-control" \
+  install --immutable --immutable-cache --mode=skip-build >/dev/null
+rm -rf "$source_root/web/remote-control/node_modules"
+rm -f "$source_root/web/remote-control/.yarn/install-state.gz"
+echo "✓ Verified offline Remote Control dependencies for $VERSION"
