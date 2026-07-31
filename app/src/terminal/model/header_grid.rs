@@ -510,6 +510,15 @@ impl HeaderGrid {
         &mut self.prompt_grid
     }
 
+    /// Mutable counterpart to [`Self::all_grids_iter`].
+    ///
+    /// Yields both grids from a single borrow, which the immutable accessors
+    /// cannot do — calling `prompt_grid_mut` and `prompt_and_command_grid_mut`
+    /// in sequence would borrow `self` mutably twice.
+    pub fn all_grids_iter_mut(&mut self) -> impl Iterator<Item = &mut BlockGrid> {
+        [&mut self.prompt_grid, &mut self.prompt_and_command_grid].into_iter()
+    }
+
     // TODO(advait): remove once we remove GridType::Prompt.
     pub fn set_saved_cursor_for_prompt(&mut self, cursor: Cursor) {
         self.prompt_grid.grid_storage_mut().saved_cursor = cursor;

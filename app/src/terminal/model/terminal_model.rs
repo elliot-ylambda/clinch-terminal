@@ -1443,6 +1443,11 @@ impl TerminalModel {
         self.block_list_mut().update_max_grid_size(new_size);
     }
 
+    pub fn update_max_retained_scrollback_rows(&mut self, new_budget: usize) {
+        self.block_list_mut()
+            .update_max_retained_scrollback_rows(new_budget);
+    }
+
     #[cfg(any(test, feature = "integration_tests"))]
     pub fn are_any_events_pending(&self) -> bool {
         self.event_proxy.are_any_events_pending()

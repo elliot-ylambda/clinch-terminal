@@ -274,6 +274,18 @@ impl FlatStorage {
         self.truncate(0);
     }
 
+    /// Releases reserved-but-unused capacity back to the allocator.
+    ///
+    /// The content chunks and attribute maps are `BTreeMap`s that free their
+    /// nodes as entries are removed, so the row index is the only structure
+    /// that holds on to capacity after rows are dropped.
+    ///
+    /// This reallocates, so call it when a grid is finished or when
+    /// reclaiming — not on the output hot path.
+    pub fn shrink_to_fit(&mut self) {
+        self.index.shrink_to_fit();
+    }
+
     /// Updates the width of the grid.
     pub fn set_columns(&mut self, new_columns: usize) {
         if self.columns == new_columns {
