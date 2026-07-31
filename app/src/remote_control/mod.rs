@@ -9,11 +9,10 @@ use std::time::Duration as StdDuration;
 use chrono::Utc;
 use clinch_companion_protocol::{Capability, DeviceId, PairingClaimId, PairingInvitation};
 use settings::Setting as _;
+pub use status::{RemoteControlStatus, RemoteControlViewState};
 use warp_core::channel::ChannelState;
 use warpui::{AppContext, Entity, ModelContext, SingletonEntity};
 use warpui_extras::secure_storage;
-
-pub use status::{RemoteControlStatus, RemoteControlViewState};
 
 use self::gateway::{GatewayEvent, GatewayHandle};
 use self::pairing::{DeviceRegistry, PairingManager};
