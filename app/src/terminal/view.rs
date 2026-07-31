@@ -2995,7 +2995,10 @@ enum BlockMetadataUpdateSource {
     Osc7,
 }
 
-const CLI_AGENT_HISTORY_FONT_SIZE_INCREASE: f32 = 1.;
+/// Bump over the UI font for the message-history header and its menu rows.
+/// 12 + 3 = 15px: the tallest line that still clears the 30px trigger bar
+/// (`CLI_AGENT_HISTORY_TOP_BAR_HEIGHT`) after its 4px vertical padding.
+const CLI_AGENT_HISTORY_FONT_SIZE_INCREASE: f32 = 3.;
 const CLI_AGENT_HISTORY_TOP_BAR_HEIGHT: f32 = 30.;
 const CLI_AGENT_HISTORY_TOP_BAR_VERTICAL_PADDING: f32 = 4.;
 const CLI_AGENT_HISTORY_TOP_BAR_HORIZONTAL_PADDING: f32 = 10.;

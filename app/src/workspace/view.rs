@@ -22226,24 +22226,6 @@ impl Workspace {
         }
     }
 
-    /// The subtle per-project tint for this window's header (the tab-bar
-    /// strip), following the active tab. An explicit tab color (a manual choice
-    /// or a configured directory color) wins; otherwise the active tab's
-    /// git/project root is hashed to a stable palette color. `None` when there
-    /// is no active tab or no local working directory (e.g. a remote session).
-    fn window_header_tint(&self, appearance: &Appearance, ctx: &AppContext) -> Option<Fill> {
-        let explicit = self
-            .tabs
-            .get(self.active_tab_index)
-            .and_then(|tab| tab.color());
-        let project_dir = self.active_header_project_dir(ctx);
-        let color_id = super::header_color::resolve_header_color(explicit, project_dir.as_deref())?;
-        Some(super::header_color::header_tint_fill(
-            appearance.theme(),
-            color_id,
-        ))
-    }
-
     /// The active tab's project directory: the git/repo root of its working
     /// directory when known (so the color stays stable across subdirectories of
     /// the same project), falling back to the working directory itself. `None`
@@ -22428,10 +22410,10 @@ impl Workspace {
         .with_height(TAB_BAR_HEIGHT)
         .finish();
 
-        let tab_bar_border =
-            Border::bottom(TAB_BAR_BORDER_HEIGHT).with_border_fill(appearance.theme().outline());
+        let tab_bar_border = Border::bottom(TAB_BAR_BORDER_HEIGHT)
+            .with_border_fill(super::chrome_divider_fill(appearance.theme()));
 
-        let mut tab_bar_container = Container::new(
+        let tab_bar_element = Container::new(
             EventHandler::new(Clipped::new(self.render_tab_bar_hoverable(bar_contents)).finish())
                 .on_back_mouse_down(move |ctx, _app, _position| {
                     ctx.dispatch_typed_action(WorkspaceAction::ActivatePrevTab);
@@ -22443,19 +22425,12 @@ impl Workspace {
                 })
                 .finish(),
         )
-        .with_border(tab_bar_border);
-        if FeatureFlag::NewTabStyling.is_enabled() {
-            tab_bar_container = tab_bar_container
-                .with_background(internal_colors::fg_overlay_1(appearance.theme()));
-        }
-        // A subtle per-project tint on top of any base styling, so windows for
-        // different projects are distinguishable at a glance.
-        if FeatureFlag::WindowHeaderColors.is_enabled() {
-            if let Some(tint) = self.window_header_tint(appearance, ctx) {
-                tab_bar_container = tab_bar_container.with_background(tint);
-            }
-        }
-        let tab_bar_element = tab_bar_container.finish();
+        .with_border(tab_bar_border)
+        // One fixed header color, shared with the terminal and the vertical tabs
+        // rail. The header used to carry a per-project tint, which meant the
+        // window's top edge changed hue every time you switched project tabs.
+        .with_background(appearance.theme().background())
+        .finish();
 
         let dimming_color = appearance.theme().background().into();
         SavePosition::new(

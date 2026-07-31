@@ -27,7 +27,9 @@ use crate::appearance::Appearance;
 use crate::root_view::NewWorkspaceSource;
 use crate::server::server_api::ServerTime;
 use crate::ui_components::icons::Icon;
-use crate::ui_components::{CLINCH_DONE_BLUE, CLINCH_LOGO_GREEN};
+use crate::ui_components::{
+    accent_chrome_rule_fill, ACCENT_CHROME_RULE_WIDTH, CLINCH_DONE_BLUE, CLINCH_LOGO_GREEN,
+};
 use crate::util::bindings::{self, CustomAction};
 use crate::workspace::view::{
     ProjectCliAgentActivity, ProjectCliAgentCounts, ProjectCliAgentSummary, TransferredTab,
@@ -154,7 +156,9 @@ const PROJECT_TAB_CLOSE_BUTTON_GAP: f32 = 6.;
 const PROJECT_TAB_MIN_WIDTH: f32 = 96.;
 const PROJECT_TAB_VERTICAL_NUDGE: f32 = 2.;
 const PROJECT_TAB_VERTICAL_PADDING: f32 = 6.;
-const PROJECT_TAB_BORDER_WIDTH: f32 = 1.;
+// The active tab's outline is the reference for every accent rule in the app
+// chrome (agent header underline, footer top rule) — keep it on the shared width.
+const PROJECT_TAB_BORDER_WIDTH: f32 = ACCENT_CHROME_RULE_WIDTH;
 const PROJECT_AGENT_COUNT_BADGE_BORDER_WIDTH: f32 = 1.;
 const PROJECT_AGENT_HOVER_CARD_WIDTH: f32 = 320.;
 const PROJECT_AGENT_HOVER_CARD_PADDING: f32 = 10.;
@@ -1702,7 +1706,7 @@ impl ProjectWindow {
                     inactive_background
                 };
                 let border_fill = if is_active {
-                    Fill::Solid(accent.into_solid())
+                    accent_chrome_rule_fill(accent)
                 } else if mouse_state.is_hovered() {
                     outline
                 } else {
@@ -1840,7 +1844,7 @@ impl ProjectWindow {
             .with_padding_right(8.)
             .with_border(
                 Border::bottom(crate::tab::TAB_BAR_BORDER_HEIGHT)
-                    .with_border_fill(appearance.theme().outline()),
+                    .with_border_fill(crate::workspace::chrome_divider_fill(appearance.theme())),
             )
             .finish();
         SavePosition::new(

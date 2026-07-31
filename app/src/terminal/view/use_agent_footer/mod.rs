@@ -71,8 +71,8 @@ use crate::terminal::session_settings::{SessionSettings, SessionSettingsChangedE
 use crate::terminal::shell::ShellType;
 pub use crate::terminal::CLIAgent;
 use crate::terminal::TerminalModel;
-use crate::ui_components::blended_colors;
 use crate::ui_components::icons::Icon;
+use crate::ui_components::{accent_chrome_rule_fill, blended_colors, ACCENT_CHROME_RULE_WIDTH};
 use crate::view_components::action_button::{
     ActionButton, ActionButtonTheme, ButtonSize, KeystrokeSource, TooltipAlignment,
 };
@@ -1672,12 +1672,9 @@ impl View for UseAgentToolbar {
         if self.cli_agent(app).is_some() {
             let mut container = Container::new(ChildView::new(&self.agent_input_footer).finish())
                 .with_horizontal_padding(*super::PADDING_LEFT)
-                .with_border(
-                    Border::top(1.).with_border_fill(
-                        ThemeFill::Solid(Appearance::as_ref(app).theme().accent().into_solid())
-                            .with_opacity(50),
-                    ),
-                );
+                .with_border(Border::top(ACCENT_CHROME_RULE_WIDTH).with_border_fill(
+                    accent_chrome_rule_fill(Appearance::as_ref(app).theme().accent()),
+                ));
 
             // Apply the alt screen background on this outer container so it covers
             // the horizontal padding area as well, preventing a visible color mismatch
@@ -1705,12 +1702,9 @@ impl View for UseAgentToolbar {
                 ChildView::new(&self.terminal_mode_footer_action_relay).finish(),
             )
             .with_horizontal_padding(*super::PADDING_LEFT)
-            .with_border(
-                Border::top(1.).with_border_fill(
-                    ThemeFill::Solid(Appearance::as_ref(app).theme().accent().into_solid())
-                        .with_opacity(50),
-                ),
-            )
+            .with_border(Border::top(ACCENT_CHROME_RULE_WIDTH).with_border_fill(
+                accent_chrome_rule_fill(Appearance::as_ref(app).theme().accent()),
+            ))
             .finish();
         }
 

@@ -9,7 +9,6 @@ mod close_session_confirmation_dialog;
 pub(crate) mod cross_window_tab_drag;
 pub mod delete_conversation_confirmation_dialog;
 pub(crate) mod global_actions;
-mod header_color;
 pub mod header_toolbar_editor;
 pub mod header_toolbar_item;
 pub mod hoa_onboarding;
@@ -60,6 +59,19 @@ use crate::{code, modal, notebooks, tab_configs};
 // Helper function to access panel header corner radius from other modules
 pub fn panel_header_corner_radius() -> warpui::elements::CornerRadius {
     warpui::elements::CornerRadius::with_top(warpui::elements::Radius::Pixels(8.))
+}
+
+/// The hairline that separates the window's chrome surfaces from each other.
+///
+/// The header, the vertical tabs rail, and the terminal all share one background,
+/// so these lines are the only thing giving the window its structure. They all
+/// have to be the same weight and color or the frame looks accidental.
+pub(crate) fn chrome_divider_fill(
+    theme: &warp_core::ui::theme::WarpTheme,
+) -> warp_core::ui::theme::Fill {
+    warp_core::ui::theme::Fill::Solid(warp_core::ui::theme::color::internal_colors::neutral_4(
+        theme,
+    ))
 }
 
 pub use one_time_modal_model::OneTimeModalModel;
