@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher as _};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration as StdDuration, Instant};
+use std::time::Duration as StdDuration;
 
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
@@ -23,6 +23,7 @@ use clinch_companion_protocol::{
     MAX_IDEMPOTENCY_RESULTS_PER_SESSION, MAX_OPAQUE_ID_BYTES, MAX_PATH_BYTES,
     MAX_TERMINAL_SNAPSHOT_BYTES, MAX_UPLOAD_CHUNK_BYTES, PROTOCOL_VERSION, WRITER_LEASE_TTL_SECS,
 };
+use instant::Instant;
 use rand::rngs::OsRng;
 use rand::RngCore as _;
 use warpui::{
@@ -74,6 +75,15 @@ pub struct UploadPlan {
     pub filename: String,
     pub size: u64,
     pub sha256: String,
+}
+
+pub struct UploadCompletion {
+    pub request_id: Option<RequestId>,
+    pub upload_id: UploadId,
+    pub target: TargetRef,
+    pub expected_directory: PathBuf,
+    pub final_path: String,
+    pub authorization: SessionAuthorization,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -292,14 +302,17 @@ impl WorkspaceAdapter {
 
     pub fn complete_upload(
         &mut self,
-        request_id: Option<RequestId>,
-        upload_id: UploadId,
-        target: TargetRef,
-        expected_directory: PathBuf,
-        final_path: String,
-        authorization: SessionAuthorization,
+        completion: UploadCompletion,
         ctx: &mut ModelContext<Self>,
     ) -> ServerEnvelope {
+        let UploadCompletion {
+            request_id,
+            upload_id,
+            target,
+            expected_directory,
+            final_path,
+            authorization,
+        } = completion;
         let resolved = match self.resolve_valid_target(&target, None, ctx) {
             Ok(resolved) => resolved,
             Err((code, message, retryable)) => {
@@ -307,7 +320,7 @@ impl WorkspaceAdapter {
             }
         };
         if let Err(envelope) = self.ensure_writer(&target, &authorization, request_id) {
-            return envelope;
+            return *envelope;
         }
         let current_directory = resolved
             .terminal
@@ -452,7 +465,7 @@ impl WorkspaceAdapter {
                     lease: Some(lease),
                 },
             )),
-            Err(error) => AdapterReply::envelope(error),
+            Err(error) => AdapterReply::envelope(*error),
         }
     }
 
@@ -499,7 +512,7 @@ impl WorkspaceAdapter {
                 Err(error) => return AdapterReply::envelope(self.target_error(request_id, error)),
             };
         if let Err(error) = self.ensure_writer(&message.target, &authorization, Some(request_id)) {
-            return AdapterReply::envelope(error);
+            return AdapterReply::envelope(*error);
         }
         let submitted = resolved.terminal.update(ctx, |terminal, ctx| {
             terminal.remote_control_submit_text(message.text, ctx)
@@ -529,7 +542,7 @@ impl WorkspaceAdapter {
                 Err(error) => return AdapterReply::envelope(self.target_error(request_id, error)),
             };
         if let Err(error) = self.ensure_writer(&message.target, &authorization, Some(request_id)) {
-            return AdapterReply::envelope(error);
+            return AdapterReply::envelope(*error);
         }
         let Ok(bytes) = BASE64_STANDARD.decode(message.data_base64) else {
             return AdapterReply::envelope(self.error(
@@ -607,7 +620,7 @@ impl WorkspaceAdapter {
             Err(error) => return AdapterReply::envelope(self.target_error(request_id, error)),
         };
         if let Err(error) = self.ensure_writer(&target, &authorization, Some(request_id)) {
-            return AdapterReply::envelope(error);
+            return AdapterReply::envelope(*error);
         }
         resolved.terminal.update(ctx, |terminal, ctx| {
             terminal.remote_control_write_bytes(bytes, ctx);
@@ -629,7 +642,7 @@ impl WorkspaceAdapter {
                 Err(error) => return AdapterReply::envelope(self.target_error(request_id, error)),
             };
         if let Err(error) = self.ensure_writer(&message.target, &authorization, Some(request_id)) {
-            return AdapterReply::envelope(error);
+            return AdapterReply::envelope(*error);
         }
         resolved.terminal.update(ctx, |terminal, ctx| {
             terminal.remote_control_resize(
@@ -802,7 +815,7 @@ impl WorkspaceAdapter {
                 Err(error) => return AdapterReply::envelope(self.target_error(request_id, error)),
             };
         if let Err(error) = self.ensure_writer(&message.target, &authorization, Some(request_id)) {
-            return AdapterReply::envelope(error);
+            return AdapterReply::envelope(*error);
         }
         let Some(item) = self.resolve_quick_insert(
             &resolved.terminal,
@@ -845,7 +858,7 @@ impl WorkspaceAdapter {
                 Err(error) => return AdapterReply::envelope(self.target_error(request_id, error)),
             };
         if let Err(error) = self.ensure_writer(&message.target, &authorization, Some(request_id)) {
-            return AdapterReply::envelope(error);
+            return AdapterReply::envelope(*error);
         }
         let Some(cwd) = resolved
             .terminal
@@ -1093,7 +1106,7 @@ impl WorkspaceAdapter {
         target: &TargetRef,
         authorization: &SessionAuthorization,
         request_id: Option<RequestId>,
-    ) -> Result<WriterLeaseSnapshot, ServerEnvelope> {
+    ) -> Result<WriterLeaseSnapshot, Box<ServerEnvelope>> {
         let key = TargetKey::from(target);
         if self
             .writer_leases
@@ -1105,12 +1118,12 @@ impl WorkspaceAdapter {
         if let Some(lease) = self.writer_leases.get(&key) {
             if lease.session_id != authorization.session_id {
                 let holder = lease.device_name.clone();
-                return Err(self.error(
+                return Err(Box::new(self.error(
                     request_id,
                     ProtocolErrorCode::WriterLeaseHeld,
                     format!("{holder} currently has control of this terminal."),
                     true,
-                ));
+                )));
             }
         }
         let lease = WriterLease {
@@ -1774,44 +1787,5 @@ fn is_idempotent_mutation(message: &ClientMessage) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn activity_aggregation_keeps_attention_and_work_visible() {
-        assert_eq!(
-            merge_activity(ProjectActivity::Working, ProjectActivity::NeedsAttention),
-            ProjectActivity::NeedsAttention
-        );
-        assert_eq!(
-            merge_activity(ProjectActivity::Done, ProjectActivity::RunningCommand),
-            ProjectActivity::RunningCommand
-        );
-    }
-
-    #[test]
-    fn local_directory_validation_rejects_relative_and_file_paths() {
-        assert!(canonical_local_directory("relative/path").is_err());
-        let directory = tempfile::tempdir().unwrap();
-        assert_eq!(
-            canonical_local_directory(directory.path().to_str().unwrap()).unwrap(),
-            std::fs::canonicalize(directory.path()).unwrap()
-        );
-        let file = directory.path().join("file.txt");
-        std::fs::write(&file, b"x").unwrap();
-        assert!(canonical_local_directory(file.to_str().unwrap()).is_err());
-    }
-
-    #[test]
-    fn mobile_titles_are_nonempty_collapsed_and_bounded() {
-        assert_eq!(
-            nonempty_title("  hello   world  ".to_owned(), "fallback"),
-            "hello world"
-        );
-        assert_eq!(nonempty_title("   ".to_owned(), "fallback"), "fallback");
-        assert_eq!(
-            nonempty_title("x".repeat(500), "fallback").chars().count(),
-            120
-        );
-    }
-}
+#[path = "workspace_adapter_tests.rs"]
+mod tests;
