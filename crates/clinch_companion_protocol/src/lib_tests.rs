@@ -184,3 +184,13 @@ fn protocol_schema_serializes() {
     assert!(json.contains("PairingClaimRequest"));
     assert!(json.contains("UploadBegin"));
 }
+
+#[test]
+fn browser_round_tripped_integers_are_normalized_to_javascript_precision() {
+    assert_eq!(MAX_JAVASCRIPT_SAFE_INTEGER, 9_007_199_254_740_991);
+    assert_eq!(
+        javascript_safe_integer(11_376_811_224_137_922_435),
+        718_565_400_049_539
+    );
+    assert!(javascript_safe_integer(u64::MAX) <= MAX_JAVASCRIPT_SAFE_INTEGER);
+}

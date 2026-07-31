@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import type { TargetRef } from "../generated/types/TargetRef";
 import type { WorkspaceSnapshot } from "../generated/types/WorkspaceSnapshot";
-import { isRetryableWorkspaceResponse, shouldResynchronizeWorkspace, synchronizedSelection } from "./App";
+import {
+  isRetryableWorkspaceResponse,
+  shouldResynchronizeWorkspace,
+  synchronizedSelection,
+  terminalComposerTransition,
+} from "./App";
 
 const appInstanceId = "11111111-1111-4111-8111-111111111111";
 
@@ -96,6 +101,7 @@ describe("bidirectional workspace selection", () => {
     expect(shouldResynchronizeWorkspace("revision_conflict")).toBe(true);
     expect(shouldResynchronizeWorkspace("target_gone")).toBe(true);
     expect(shouldResynchronizeWorkspace("resync_required")).toBe(true);
+    expect(shouldResynchronizeWorkspace("stale_quick_insert")).toBe(true);
     expect(shouldResynchronizeWorkspace("capability_denied")).toBe(false);
   });
 
@@ -114,5 +120,30 @@ describe("bidirectional workspace selection", () => {
         },
       },
     })).toBe(true);
+  });
+});
+
+describe("live terminal composer", () => {
+  it("mirrors suffix typing and backspacing without replaying the full value", () => {
+    expect(terminalComposerTransition("", "codex")).toEqual({ data: "codex", mirrored: "codex" });
+    expect(terminalComposerTransition("codex", "codex resume")).toEqual({
+      data: " resume",
+      mirrored: "codex resume",
+    });
+    expect(terminalComposerTransition("codex", "code")).toEqual({ data: "\x7f", mirrored: "code" });
+  });
+
+  it("replays mobile autocorrect replacements from a known end cursor", () => {
+    expect(terminalComposerTransition("codex", "claude")).toEqual({
+      data: `${"\x7f".repeat(5)}claude`,
+      mirrored: "claude",
+    });
+  });
+
+  it("keeps multiline text local until explicit safe submission", () => {
+    expect(terminalComposerTransition("hello", "hello\nworld")).toEqual({
+      data: "\x7f".repeat(5),
+      mirrored: "",
+    });
   });
 });

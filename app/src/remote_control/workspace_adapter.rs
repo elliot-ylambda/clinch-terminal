@@ -11,17 +11,18 @@ use base64::engine::general_purpose::{STANDARD as BASE64_STANDARD, URL_SAFE_NO_P
 use base64::Engine as _;
 use chrono::{Duration, Utc};
 use clinch_companion_protocol::{
-    AcquireWriterLease, AgentProvider, AgentState, AppInstanceId, AuthSessionId, Capability,
-    ClientEnvelope, ClientMessage, ConnectionPath, CreateProject, CreateSession, HostSnapshot,
-    InterruptTerminal, PaneKind, PaneSnapshot, ProjectActivity, ProjectSnapshot, ProtocolError,
-    ProtocolErrorCode, QuickInsertDescriptor, QuickInsertKind, QuickInsertPreviewRequest,
-    QuickInsertSubmit, RawTerminalInput, RecentAgentSessionSnapshot, RequestId, ResumeSession,
-    ServerEnvelope, ServerMessage, SessionKind, SubmitComposerText, TabKind, TabSnapshot,
-    TargetRef, TerminalDimensions, TerminalKey, TerminalKeyInput, TerminalResize, TerminalSnapshot,
-    TerminalStreamId, UploadBegin, UploadId, UploadReady, UsageLimitWindowSnapshot, UsageSnapshot,
-    UsageState, UsageTokenWindowSnapshot, WorkspaceChanged, WorkspaceSnapshot, WriterLeaseSnapshot,
-    MAX_IDEMPOTENCY_RESULTS_PER_SESSION, MAX_OPAQUE_ID_BYTES, MAX_PATH_BYTES,
-    MAX_TERMINAL_SNAPSHOT_BYTES, MAX_UPLOAD_CHUNK_BYTES, PROTOCOL_VERSION, WRITER_LEASE_TTL_SECS,
+    javascript_safe_integer, AcquireWriterLease, AgentProvider, AgentState, AppInstanceId,
+    AuthSessionId, Capability, ClientEnvelope, ClientMessage, ConnectionPath, CreateProject,
+    CreateSession, HostSnapshot, InterruptTerminal, PaneKind, PaneSnapshot, ProjectActivity,
+    ProjectSnapshot, ProtocolError, ProtocolErrorCode, QuickInsertDescriptor, QuickInsertKind,
+    QuickInsertPreviewRequest, QuickInsertSubmit, RawTerminalInput, RecentAgentSessionSnapshot,
+    RequestId, ResumeSession, ServerEnvelope, ServerMessage, SessionKind, SubmitComposerText,
+    TabKind, TabSnapshot, TargetRef, TerminalDimensions, TerminalKey, TerminalKeyInput,
+    TerminalResize, TerminalSnapshot, TerminalStreamId, UploadBegin, UploadId, UploadReady,
+    UsageLimitWindowSnapshot, UsageSnapshot, UsageState, UsageTokenWindowSnapshot,
+    WorkspaceChanged, WorkspaceSnapshot, WriterLeaseSnapshot, MAX_IDEMPOTENCY_RESULTS_PER_SESSION,
+    MAX_JAVASCRIPT_SAFE_INTEGER, MAX_OPAQUE_ID_BYTES, MAX_PATH_BYTES, MAX_TERMINAL_SNAPSHOT_BYTES,
+    MAX_UPLOAD_CHUNK_BYTES, PROTOCOL_VERSION, WRITER_LEASE_TTL_SECS,
 };
 use instant::Instant;
 use rand::rngs::OsRng;
@@ -168,10 +169,7 @@ impl SingletonEntity for WorkspaceAdapter {}
 
 impl WorkspaceAdapter {
     pub fn new(pairing: PairingManager, _ctx: &mut ModelContext<Self>) -> Self {
-        let mut revision = OsRng.next_u64();
-        if revision == 0 {
-            revision = 1;
-        }
+        let revision = initial_workspace_revision(OsRng.next_u64());
         Self {
             app_instance_id: AppInstanceId::new(),
             revision,
@@ -1396,7 +1394,7 @@ impl WorkspaceAdapter {
         let fingerprint = topology.finish();
         if let Some(previous) = self.last_topology_fingerprint {
             if previous != fingerprint {
-                self.revision = self.revision.saturating_add(1).max(1);
+                self.revision = next_workspace_revision(self.revision);
             }
         }
         self.last_topology_fingerprint = Some(fingerprint);
@@ -1464,7 +1462,9 @@ impl WorkspaceAdapter {
         };
         let mut config_hasher = DefaultHasher::new();
         items.hash(&mut config_hasher);
-        let configuration_revision = config_hasher.finish();
+        // This value crosses JSON twice (Rust -> browser -> Rust). Keep it in JavaScript's exact
+        // integer range or every button will look stale after `JSON.parse` rounds the hash.
+        let configuration_revision = javascript_safe_integer(config_hasher.finish());
 
         items
             .into_iter()
@@ -1581,7 +1581,7 @@ impl WorkspaceAdapter {
     }
 
     fn bump_topology_revision(&mut self) {
-        self.revision = self.revision.saturating_add(1).max(1);
+        self.revision = next_workspace_revision(self.revision);
         self.last_topology_fingerprint = None;
     }
 
@@ -1603,6 +1603,18 @@ impl WorkspaceAdapter {
             entries.pop_front();
         }
         entries.push_back((request_id, response));
+    }
+}
+
+fn initial_workspace_revision(random: u64) -> u64 {
+    javascript_safe_integer(random).max(1)
+}
+
+fn next_workspace_revision(current: u64) -> u64 {
+    if current >= MAX_JAVASCRIPT_SAFE_INTEGER {
+        1
+    } else {
+        current + 1
     }
 }
 

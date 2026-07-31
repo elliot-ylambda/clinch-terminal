@@ -18,6 +18,17 @@ use uuid::Uuid;
 pub const PROTOCOL_VERSION: u16 = 1;
 pub const SUPPORTED_PROTOCOL_VERSIONS: &[u16] = &[PROTOCOL_VERSION];
 
+/// Largest integer JavaScript can represent exactly in a JSON `number`.
+///
+/// Every protocol integer that a browser must send back to Clinch must stay at or below this
+/// value. Otherwise `JSON.parse` rounds it before the client can echo it back for exact revision
+/// checks.
+pub const MAX_JAVASCRIPT_SAFE_INTEGER: u64 = (1u64 << 53) - 1;
+
+pub const fn javascript_safe_integer(value: u64) -> u64 {
+    value & MAX_JAVASCRIPT_SAFE_INTEGER
+}
+
 pub const PAIRING_INVITATION_TTL_SECS: u64 = 5 * 60;
 pub const AUTH_CHALLENGE_TTL_SECS: u64 = 60;
 pub const AUTH_SESSION_TTL_SECS: u64 = 15 * 60;

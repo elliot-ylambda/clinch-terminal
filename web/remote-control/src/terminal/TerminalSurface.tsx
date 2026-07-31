@@ -62,6 +62,11 @@ export function TerminalSurface({ snapshot, bus, canResize, onResize, onData, on
     instance.loadAddon(fitAddon);
     instance.loadAddon(new WebLinksAddon((_event, uri) => window.open(uri, "_blank", "noopener,noreferrer")));
     instance.open(container.current);
+    const helperTextarea = container.current.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea");
+    if (helperTextarea) {
+      helperTextarea.id = "remote-control-terminal-input";
+      helperTextarea.name = "remote-control-terminal-input";
+    }
     terminal.current = instance;
     fit.current = fitAddon;
 

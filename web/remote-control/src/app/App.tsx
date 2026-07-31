@@ -114,13 +114,42 @@ export function synchronizedSelection(
 }
 
 export function shouldResynchronizeWorkspace(code: ProtocolErrorCode): boolean {
-  return code === "revision_conflict" || code === "target_gone" || code === "resync_required";
+  return code === "revision_conflict"
+    || code === "target_gone"
+    || code === "resync_required"
+    || code === "stale_quick_insert";
 }
 
 export function isRetryableWorkspaceResponse(response: ServerEnvelope | undefined): boolean {
   return response?.payload.type === "error"
     && response.payload.data.retryable
     && shouldResynchronizeWorkspace(response.payload.data.code);
+}
+
+export interface TerminalComposerTransition {
+  data: string;
+  mirrored: string;
+}
+
+/**
+ * Converts an editable composer value into raw terminal input while keeping the PTY cursor at the
+ * end of the mirrored text. Arbitrary mobile autocorrect replacements are handled by erasing the
+ * previous value and replaying the new one. Multiline values stay local until explicit submission
+ * so pasted newlines can never execute early.
+ */
+export function terminalComposerTransition(previous: string, next: string): TerminalComposerTransition {
+  const erasePrevious = "\x7f".repeat(Array.from(previous).length);
+  if (/\r|\n/.test(next)) return { data: erasePrevious, mirrored: "" };
+  if (next.startsWith(previous)) {
+    return { data: next.slice(previous.length), mirrored: next };
+  }
+  if (previous.startsWith(next)) {
+    return {
+      data: "\x7f".repeat(Array.from(previous.slice(next.length)).length),
+      mirrored: next,
+    };
+  }
+  return { data: `${erasePrevious}${next}`, mirrored: next };
 }
 
 function defaultDeviceName(): string {
@@ -169,6 +198,7 @@ export function App() {
   const [newResumeId, setNewResumeId] = useState("");
   const [creating, setCreating] = useState(false);
   const [composer, setComposer] = useState("");
+  const mirroredComposer = useRef("");
   const [resyncing, setResyncing] = useState(false);
   const [notice, setNotice] = useState<string>();
   const [uploadProgress, setUploadProgress] = useState<number>();
@@ -285,9 +315,6 @@ export function App() {
       case "terminal_stream_closed":
         setNotice(payload.data.reason);
         setTerminalSnapshot(undefined);
-        break;
-      case "quick_insert_preview":
-        setComposer(payload.data.text);
         break;
       case "command_accepted":
         // Mutation responses carry the new authoritative revision even though the full topology
@@ -419,27 +446,80 @@ export function App() {
     }
   }, [connection, selectedTarget, snapshot]);
 
+  const sendRawInput = useCallback((data: string): boolean => {
+    if (!data) return true;
+    if (!snapshot || !selectedTarget || !canWrite) return false;
+    acquireLease();
+    try {
+      client.current?.send({
+        type: "raw_terminal_input",
+        data: {
+          target: selectedTarget,
+          workspace_revision: snapshot.revision,
+          data_base64: bytesToBase64(new TextEncoder().encode(data)),
+        },
+      });
+      return true;
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+      return false;
+    }
+  }, [acquireLease, canWrite, selectedTarget, snapshot]);
+
+  const mirrorComposer = useCallback((next: string): boolean => {
+    const transition = terminalComposerTransition(mirroredComposer.current, next);
+    if (transition.data && !sendRawInput(transition.data)) return false;
+    mirroredComposer.current = transition.mirrored;
+    return transition.mirrored === next;
+  }, [sendRawInput]);
+
+  const updateComposer = useCallback((next: string) => {
+    setComposer(next);
+    mirrorComposer(next);
+  }, [mirrorComposer]);
+
+  const selectedTargetKey = selectedTarget ? targetKey(selectedTarget) : undefined;
+  useEffect(() => {
+    mirroredComposer.current = "";
+    setComposer("");
+  }, [selectedTargetKey]);
+
   const sendComposer = useCallback(async () => {
     if (!snapshot || !selectedTarget || !composer.trim() || !canWrite) return;
     const text = composer;
     try {
       acquireLease();
-      const response = await client.current?.sendAndWait({
-        type: "submit_composer_text",
-        data: { target: selectedTarget, workspace_revision: snapshot.revision, text },
-      });
+      const fullyMirrored = mirrorComposer(text);
+      if (!fullyMirrored && mirroredComposer.current) return;
+      const response = await client.current?.sendAndWait(
+        fullyMirrored
+          ? {
+              type: "raw_terminal_input",
+              data: {
+                target: selectedTarget,
+                workspace_revision: snapshot.revision,
+                data_base64: bytesToBase64(new TextEncoder().encode("\r")),
+              },
+            }
+          : {
+              type: "submit_composer_text",
+              data: { target: selectedTarget, workspace_revision: snapshot.revision, text },
+            },
+      );
       if (isRetryableWorkspaceResponse(response)) return;
       if (response?.payload.type === "error") throw new Error(response.payload.data.message);
+      mirroredComposer.current = "";
       setComposer("");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : String(error));
     }
-  }, [acquireLease, canWrite, composer, selectedTarget, snapshot]);
+  }, [acquireLease, canWrite, composer, mirrorComposer, selectedTarget, snapshot]);
 
   const previewQuickInsert = useCallback(
     async (itemId: string, configurationRevision: number) => {
       if (!snapshot || !selectedTarget || !canWrite) return;
       try {
+        if (preferences.oneTapQuickInserts && !mirrorComposer("")) return;
         const request: ClientMessage = preferences.oneTapQuickInserts
           ? {
               type: "quick_insert_submit",
@@ -462,11 +542,17 @@ export function App() {
         const response = await client.current?.sendAndWait(request);
         if (isRetryableWorkspaceResponse(response)) return;
         if (response?.payload.type === "error") throw new Error(response.payload.data.message);
+        if (response?.payload.type === "quick_insert_preview") {
+          updateComposer(response.payload.data.text);
+        } else if (preferences.oneTapQuickInserts) {
+          mirroredComposer.current = "";
+          setComposer("");
+        }
       } catch (error) {
         setNotice(error instanceof Error ? error.message : String(error));
       }
     },
-    [canWrite, preferences.oneTapQuickInserts, selectedTarget, snapshot],
+    [canWrite, mirrorComposer, preferences.oneTapQuickInserts, selectedTarget, snapshot, updateComposer],
   );
 
   const runCreation = useCallback(async (message: ClientMessage): Promise<boolean> => {
@@ -724,20 +810,7 @@ export function App() {
             canResize={ownsWriterLease}
             onFocus={acquireLease}
             onData={(data) => {
-              if (!snapshot || !selectedTarget || !canWrite) return;
-              acquireLease();
-              try {
-                client.current?.send({
-                  type: "raw_terminal_input",
-                  data: {
-                    target: selectedTarget,
-                    workspace_revision: snapshot.revision,
-                    data_base64: bytesToBase64(new TextEncoder().encode(data)),
-                  },
-                });
-              } catch (error) {
-                setNotice(error instanceof Error ? error.message : String(error));
-              }
+              sendRawInput(data);
             }}
             onResize={(columns, rows) => {
               if (!snapshot || !selectedTarget || connection !== "connected" || !ownsWriterLease) return;
@@ -785,6 +858,8 @@ export function App() {
         <div className="composer-row">
           <input
             ref={fileInput}
+            id="remote-control-attachment"
+            name="remote-control-attachment"
             type="file"
             hidden
             accept="image/*,.txt,.md,.json,.csv,.pdf,.zip"
@@ -796,11 +871,19 @@ export function App() {
           />
           <button className="attach-button" aria-label="Attach photo or file" disabled={!canWrite || uploadActive} onClick={() => fileInput.current?.click()}>＋</button>
           <textarea
+            id="remote-control-composer"
+            name="remote-control-composer"
             value={composer}
-            onChange={(event) => setComposer(event.target.value)}
+            onChange={(event) => updateComposer(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+              event.preventDefault();
+              void sendComposer();
+            }}
             onFocus={acquireLease}
             placeholder={canWrite ? "Type for this exact session…" : leaseMessage ?? connectionLabels[connection]}
             aria-label="Command or agent prompt"
+            enterKeyHint="send"
             disabled={!canWrite}
             rows={1}
           />
