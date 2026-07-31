@@ -8229,3 +8229,24 @@ fn cmd_k_in_agent_view_cancels_in_progress_conversation_and_starts_new_one() {
         });
     })
 }
+
+#[test]
+fn remote_control_hides_private_shell_bootstrap_stages() {
+    use crate::terminal::model::bootstrap::BootstrapStage;
+
+    assert!(remote_control_bootstrap_stage_is_visible(
+        BootstrapStage::RestoreBlocks
+    ));
+    assert!(!remote_control_bootstrap_stage_is_visible(
+        BootstrapStage::WarpInput
+    ));
+    assert!(remote_control_bootstrap_stage_is_visible(
+        BootstrapStage::ScriptExecution
+    ));
+    assert!(!remote_control_bootstrap_stage_is_visible(
+        BootstrapStage::Bootstrapped
+    ));
+    assert!(remote_control_bootstrap_stage_is_visible(
+        BootstrapStage::PostBootstrapPrecmd
+    ));
+}

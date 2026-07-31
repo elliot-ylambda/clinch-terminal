@@ -404,6 +404,18 @@ impl WorkspaceAdapter {
                 ));
             }
         };
+        if !resolved
+            .terminal
+            .read(ctx, |terminal, _| terminal.remote_control_is_ready())
+        {
+            return AdapterReply::envelope(self.error(
+                Some(request_id),
+                ProtocolErrorCode::ResyncRequired,
+                "This terminal is still starting. Clinch will connect it automatically when it is ready."
+                    .to_owned(),
+                true,
+            ));
+        }
 
         resolved.project_window.update(ctx, |project_window, ctx| {
             project_window.activate_project(resolved.project_id, ctx);
@@ -827,12 +839,13 @@ impl WorkspaceAdapter {
         message: QuickInsertPreviewRequest,
         ctx: &mut ModelContext<Self>,
     ) -> AdapterReply {
-        let resolved =
-            match self.resolve_valid_target(&message.target, Some(message.workspace_revision), ctx)
-            {
-                Ok(resolved) => resolved,
-                Err(error) => return AdapterReply::envelope(self.target_error(request_id, error)),
-            };
+        // Preview only returns text to the composer; it does not write to the PTY. Re-resolve the
+        // exact target but tolerate a harmless topology revision change (for example, immediately
+        // after opening a new tab). Submission remains revision-gated below.
+        let resolved = match self.resolve_valid_target(&message.target, None, ctx) {
+            Ok(resolved) => resolved,
+            Err(error) => return AdapterReply::envelope(self.target_error(request_id, error)),
+        };
         let Some(item) = self.resolve_quick_insert(
             &resolved.terminal,
             &message.item_id,
@@ -1298,7 +1311,13 @@ impl WorkspaceAdapter {
                                     let cwd = terminal_ref
                                         .pwd_if_local(ctx)
                                         .or_else(|| terminal_ref.pwd());
-                                    let (columns, rows) = terminal_ref.remote_control_dimensions();
+                                    let dimensions = terminal_ref
+                                        .remote_control_is_ready()
+                                        .then(|| {
+                                            let (columns, rows) =
+                                                terminal_ref.remote_control_dimensions();
+                                            TerminalDimensions { columns, rows }
+                                        });
                                     let quick_inserts = self
                                         .quick_inserts_for_terminal(&terminal, ctx)
                                         .into_iter()
@@ -1309,7 +1328,7 @@ impl WorkspaceAdapter {
                                         activity,
                                         agent_state,
                                         cwd,
-                                        Some(TerminalDimensions { columns, rows }),
+                                        dimensions,
                                         quick_inserts,
                                     )
                                 } else {

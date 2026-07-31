@@ -142,7 +142,8 @@ tested on iPhone and iPad sizes before the live terminal transport is finalized.
     keeps the selected project visible, and displays the same meaningful working, done, waiting,
     unread, and running-command indicators that are available on desktop. A compact plus button
     creates and activates a real shared Clinch project in the same native window and opens its first
-    Terminal tab; it never creates mobile-only project state.
+    Terminal tab; it never creates mobile-only project state. The plus button remains fixed and
+    visible when project tabs overflow horizontally.
 
 22. The leading header button opens a left drawer. On phones the drawer overlays the focus area;
     on wider tablets it may be pinned. Closing it restores focus mode without changing the active
@@ -165,7 +166,9 @@ tested on iPhone and iPad sizes before the live terminal transport is finalized.
 
 26. The focus area shows the selected session’s current scrollback and live output. It maintains
     terminal text selection, links, ANSI color, resize, and follow-output behavior appropriate for
-    a touch screen. Reconnecting does not duplicate or reorder output.
+    a touch screen. Clinch does not expose private shell-integration bootstrap input or output to
+    the phone, and does not make a new terminal selectable until that bootstrap has completed.
+    Reconnecting does not duplicate or reorder output.
 
 27. When the selected project has no controllable session, mobile creates one Terminal tab in that
     real project exactly once and follows it on both Mac and mobile. The focus area may show a brief

@@ -117,6 +117,12 @@ export function shouldResynchronizeWorkspace(code: ProtocolErrorCode): boolean {
   return code === "revision_conflict" || code === "target_gone" || code === "resync_required";
 }
 
+export function isRetryableWorkspaceResponse(response: ServerEnvelope | undefined): boolean {
+  return response?.payload.type === "error"
+    && response.payload.data.retryable
+    && shouldResynchronizeWorkspace(response.payload.data.code);
+}
+
 function defaultDeviceName(): string {
   if (/iPad/i.test(navigator.userAgent)) return "iPad";
   if (/iPhone/i.test(navigator.userAgent)) return "iPhone";
@@ -283,6 +289,14 @@ export function App() {
       case "quick_insert_preview":
         setComposer(payload.data.text);
         break;
+      case "command_accepted":
+        // Mutation responses carry the new authoritative revision even though the full topology
+        // snapshot arrives on the next gateway poll. Advancing it immediately prevents a second
+        // exact-target action from being rejected during that short window.
+        setSnapshot((current) => current && payload.data.workspace_revision > current.revision
+          ? { ...current, revision: payload.data.workspace_revision }
+          : current);
+        break;
       case "upload_progress":
         if (activeUploadId.current === payload.data.upload_id) {
           setUploadProgress(payload.data.total ? payload.data.received / payload.data.total : 0);
@@ -300,6 +314,7 @@ export function App() {
         break;
       case "error":
         if (payload.data.retryable && shouldResynchronizeWorkspace(payload.data.code)) {
+          setNotice(undefined);
           setResyncing(true);
           setTerminalSnapshot(undefined);
           if (!resyncRequested.current) {
@@ -413,6 +428,7 @@ export function App() {
         type: "submit_composer_text",
         data: { target: selectedTarget, workspace_revision: snapshot.revision, text },
       });
+      if (isRetryableWorkspaceResponse(response)) return;
       if (response?.payload.type === "error") throw new Error(response.payload.data.message);
       setComposer("");
     } catch (error) {
@@ -444,6 +460,7 @@ export function App() {
               },
             };
         const response = await client.current?.sendAndWait(request);
+        if (isRetryableWorkspaceResponse(response)) return;
         if (response?.payload.type === "error") throw new Error(response.payload.data.message);
       } catch (error) {
         setNotice(error instanceof Error ? error.message : String(error));
@@ -542,11 +559,11 @@ export function App() {
 
   useEffect(() => {
     if (connection !== "connected" || resyncing || !snapshot || !selectedProject) return;
-    const hasLiveSession = selectedProject.tabs.some((tab) =>
-      tab.panes.some((pane) => Boolean(pane.dimensions)),
-    );
+    // A newly-created terminal exists before its private shell bootstrap is safe to stream.
+    // Count that pane now so reloads cannot create duplicate terminals while it starts.
+    const hasSession = selectedProject.tabs.some((tab) => tab.panes.length > 0);
     const key = `${snapshot.host.app_instance_id}:${selectedProject.id}`;
-    if (hasLiveSession || autoOpenedProjects.current.has(key)) return;
+    if (hasSession || autoOpenedProjects.current.has(key)) return;
     autoOpenedProjects.current.add(key);
     void createTab(selectedProject.id, "terminal")
       .then((created) => {
@@ -668,13 +685,13 @@ export function App() {
               {project.title}
             </button>
           ))}
-          <button
-            className="project-add-button"
-            aria-label="New project"
-            disabled={!selectedProject || connection !== "connected" || creating}
-            onClick={() => void createProject()}
-          >＋</button>
         </div>
+        <button
+          className="project-add-button"
+          aria-label="New project"
+          disabled={!selectedProject || connection !== "connected" || creating}
+          onClick={() => void createProject()}
+        >＋</button>
         <button className="icon-button" aria-label="Usage and settings" onClick={() => setUsageOpen(true)}>•••</button>
       </header>
 
@@ -742,6 +759,9 @@ export function App() {
           <EmptyFocus
             connected={connection === "connected"}
             hasProjects={projects.length > 0}
+            startingSession={Boolean(selectedProject?.tabs.some((tab) =>
+              tab.panes.some((pane) => !pane.dimensions),
+            ))}
             onNew={(kind) => {
               setNewMode("create");
               setNewKind(kind);
@@ -970,13 +990,25 @@ function PairingScreen({ state, message }: { state: BootState; message: string }
   );
 }
 
-function EmptyFocus({ connected, hasProjects, onNew }: { connected: boolean; hasProjects: boolean; onNew: (kind: SessionKind) => void }) {
+function EmptyFocus({ connected, hasProjects, startingSession, onNew }: { connected: boolean; hasProjects: boolean; startingSession: boolean; onNew: (kind: SessionKind) => void }) {
+  const heading = !connected
+    ? "Waiting for your Mac"
+    : startingSession
+      ? "Starting terminal…"
+      : hasProjects
+        ? "Choose a live session"
+        : "Your Mac is ready";
+  const detail = !connected
+    ? "Clinch will reconnect automatically when the Mac wakes and comes online."
+    : startingSession
+      ? "Clinch is finishing the private shell setup before terminal output is shared."
+      : "Open an existing tab from the drawer or start something new without leaving focus mode.";
   return (
     <div className="empty-focus">
       <div className="empty-orbit"><i /><i /><i /></div>
-      <h1>{connected ? (hasProjects ? "Choose a live session" : "Your Mac is ready") : "Waiting for your Mac"}</h1>
-      <p>{connected ? "Open an existing tab from the drawer or start something new without leaving focus mode." : "Clinch will reconnect automatically when the Mac wakes and comes online."}</p>
-      {connected && <div className="empty-actions"><button onClick={() => onNew("terminal")}>Terminal</button><button onClick={() => onNew("claude_code")}>Claude Code</button><button onClick={() => onNew("codex")}>Codex</button></div>}
+      <h1>{heading}</h1>
+      <p>{detail}</p>
+      {connected && !startingSession && <div className="empty-actions"><button onClick={() => onNew("terminal")}>Terminal</button><button onClick={() => onNew("claude_code")}>Claude Code</button><button onClick={() => onNew("codex")}>Codex</button></div>}
     </div>
   );
 }

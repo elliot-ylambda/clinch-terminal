@@ -109,7 +109,7 @@ async function installPairedPhone(page: import("@playwright/test").Page) {
             quick_inserts: [{
               id: "qi-1234",
               configuration_revision: 1,
-              label: "Continue",
+              label: "Codex",
               kind: "built_in",
               submits_immediately: false,
             }],
@@ -178,7 +178,13 @@ async function installPairedPhone(page: import("@playwright/test").Page) {
 
       send(data: string | ArrayBufferLike | Blob | ArrayBufferView) {
         if (typeof data !== "string") return;
-        const envelope = JSON.parse(data) as { request_id: string; payload: { type: string; data?: { target?: typeof target } } };
+        const envelope = JSON.parse(data) as {
+          request_id: string;
+          payload: {
+            type: string;
+            data?: { target?: typeof target; workspace_revision?: number };
+          };
+        };
         const commands = JSON.parse(localStorage.getItem("remote-command-types") ?? "[]") as string[];
         commands.push(envelope.payload.type);
         localStorage.setItem("remote-command-types", JSON.stringify(commands));
@@ -212,8 +218,28 @@ async function installPairedPhone(page: import("@playwright/test").Page) {
           this.emit({ type: "pong" }, envelope.request_id);
         } else if (envelope.payload.type === "request_snapshot") {
           this.emit({ type: "snapshot", data: snapshot }, envelope.request_id);
+        } else if (envelope.payload.type === "create_session" || envelope.payload.type === "create_project") {
+          snapshot.revision += 1;
+          this.emit({ type: "command_accepted", data: { workspace_revision: snapshot.revision } }, envelope.request_id);
+        } else if (envelope.payload.type === "quick_insert_preview") {
+          if (envelope.payload.data?.workspace_revision !== snapshot.revision) {
+            this.emit({
+              type: "error",
+              data: {
+                code: "revision_conflict",
+                message: "The workspace changed; refresh before sending input.",
+                retryable: true,
+                current_revision: snapshot.revision,
+              },
+            }, envelope.request_id);
+            return;
+          }
+          this.emit({
+            type: "quick_insert_preview",
+            data: { item_id: "qi-1234", configuration_revision: 1, text: "codex" },
+          }, envelope.request_id);
         } else {
-          this.emit({ type: "command_accepted", data: { workspace_revision: 7 } }, envelope.request_id);
+          this.emit({ type: "command_accepted", data: { workspace_revision: snapshot.revision } }, envelope.request_id);
         }
       }
 
@@ -312,8 +338,16 @@ test("paired phone exposes projects, drawer, usage, and recent-session resume", 
 
   await page.getByRole("button", { name: "＋ New" }).click();
   await expect.poll(() => page.evaluate(() => localStorage.getItem("remote-command-types"))).toContain("create_session");
+  await page.getByRole("button", { name: "Codex", exact: true }).click();
+  await expect(page.getByRole("textbox", { name: "Command or agent prompt" })).toHaveValue("codex");
+  await expect(page.getByText("The workspace changed; refresh before sending input.")).toHaveCount(0);
 
-  await page.getByRole("button", { name: "New project", exact: true }).click();
+  const projectAdd = page.getByRole("button", { name: "New project", exact: true });
+  expect(await projectAdd.evaluate((button) => {
+    const bounds = button.getBoundingClientRect();
+    return bounds.left >= 0 && bounds.right <= innerWidth;
+  })).toBe(true);
+  await projectAdd.click();
   await expect.poll(() => page.evaluate(() => localStorage.getItem("remote-command-types"))).toContain("create_project");
 
   await page.getByRole("button", { name: "Open project and tab drawer" }).click();

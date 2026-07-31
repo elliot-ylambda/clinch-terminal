@@ -145,7 +145,8 @@ this repo owns the feature contract and in-app links.
     - Use IndexedDB for non-secret UI preferences and the browser key store for device identity.
 
 13. Build the mobile navigation shell before write access:
-    - Horizontal project strip.
+    - Horizontal project strip with a fixed, always-visible project-create affordance outside its
+      scroll container.
     - Overlay/pinnable grouped tab drawer.
     - Focus region with connection/target header.
     - Usage/connection bottom sheet.
@@ -158,6 +159,9 @@ this repo owns the feature contract and in-app links.
 
 15. Synchronize with authoritative snapshots plus ordered live streams:
     - Send an authoritative workspace snapshot after authentication.
+    - Keep a newly created terminal unselectable until Clinch shell integration is bootstrapped.
+      Build initial scrollback only from blocks visible in the desktop terminal, excluding private
+      bootstrap input/output stages, before permitting a subscription or input.
     - Give JSON events monotonically increasing per-connection sequence numbers and terminal frames
       monotonically increasing per-stream sequence numbers.
     - In V1, reauthentication always starts a fresh authoritative snapshot and a newly selected
@@ -283,6 +287,7 @@ flow.
 - Snapshot/event tests for fresh reconnect snapshots, duplicate/reordered/gapped frames, terminal
   overflow fallback, and resync before input (PRODUCT 26, 40–42). Add bounded-buffer eviction tests
   only when retained replay is implemented.
+- Terminal-view tests proving private shell bootstrap stages never enter Remote Control scrollback.
 - Workspace tests for project/tab/pane activation, target deletion races, revision conflicts, and the
   invariant that no command falls back to a different target (PRODUCT 21–23, 29–34).
 - Writer-lease tests for concurrent phones, desktop preemption, disconnect, and timeout.
