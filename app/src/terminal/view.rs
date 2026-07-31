@@ -435,6 +435,7 @@ use crate::terminal::model::blocks::{
     BlockFilter, BlockHeight, BlockHeightItem, BlockHeightSummary, BlockList, BlockListPoint, Gap,
     RemovableBlocklistItem,
 };
+use crate::terminal::model::bootstrap::BootstrapStage;
 use crate::terminal::model::escape_sequences::{self, EscCodes, ToEscapeSequence, C1};
 use crate::terminal::model::grid::grid_handler::{FragmentBoundary, TermMode};
 use crate::terminal::model::index::{Point, Side};
@@ -3082,6 +3083,15 @@ fn cli_agent_history_label(
     } else {
         format!("Message history ({})", history.prompts.len())
     }
+}
+
+fn remote_control_bootstrap_stage_is_visible(stage: BootstrapStage) -> bool {
+    matches!(
+        stage,
+        BootstrapStage::RestoreBlocks
+            | BootstrapStage::ScriptExecution
+            | BootstrapStage::PostBootstrapPrecmd
+    )
 }
 
 impl TerminalView {
@@ -16396,6 +16406,13 @@ impl TerminalView {
         self.active_session_remote_host(ctx)
     }
 
+    /// The raw PTY includes Clinch's private shell-integration bootstrap. Do not let a companion
+    /// subscribe until that exchange has completed, because those bytes are intentionally hidden
+    /// by the desktop block list and are not user terminal output.
+    pub(crate) fn remote_control_is_ready(&self) -> bool {
+        self.model.lock().block_list().is_bootstrapped()
+    }
+
     /// Produces a bounded, ANSI-preserving scrollback snapshot with secrets still obfuscated.
     pub(crate) fn remote_control_scrollback_bytes(&self, max_bytes: usize) -> Vec<u8> {
         use std::collections::VecDeque;
@@ -16407,7 +16424,13 @@ impl TerminalView {
         let model = self.model.lock();
         let mut chunks = VecDeque::new();
         let mut total = 0usize;
-        for block in model.block_list().blocks().iter().rev() {
+        let block_list = model.block_list();
+        for block in block_list.blocks().iter().rev() {
+            if !remote_control_bootstrap_stage_is_visible(block.bootstrap_stage())
+                || block.should_hide_block(block_list.agent_view_state())
+            {
+                continue;
+            }
             let prompt = block
                 .prompt_and_command_grid()
                 .contents_to_string_force_full_grid_contents(true, Some(1_000));

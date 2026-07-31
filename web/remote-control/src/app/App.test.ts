@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { TargetRef } from "../generated/types/TargetRef";
 import type { WorkspaceSnapshot } from "../generated/types/WorkspaceSnapshot";
-import { shouldResynchronizeWorkspace, synchronizedSelection } from "./App";
+import { isRetryableWorkspaceResponse, shouldResynchronizeWorkspace, synchronizedSelection } from "./App";
 
 const appInstanceId = "11111111-1111-4111-8111-111111111111";
 
@@ -97,5 +97,22 @@ describe("bidirectional workspace selection", () => {
     expect(shouldResynchronizeWorkspace("target_gone")).toBe(true);
     expect(shouldResynchronizeWorkspace("resync_required")).toBe(true);
     expect(shouldResynchronizeWorkspace("capability_denied")).toBe(false);
+  });
+
+  it("does not surface a retryable stale-revision response as an action error", () => {
+    expect(isRetryableWorkspaceResponse({
+      version: 1,
+      request_id: "22222222-2222-4222-8222-222222222222",
+      sequence: 3,
+      payload: {
+        type: "error",
+        data: {
+          code: "revision_conflict",
+          message: "The workspace changed; refresh before sending input.",
+          retryable: true,
+          current_revision: 9,
+        },
+      },
+    })).toBe(true);
   });
 });
