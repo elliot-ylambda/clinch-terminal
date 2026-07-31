@@ -19,7 +19,9 @@ struct RectVertexShaderInput {
     @location(3) background_start_color: vec4<f32>,
     @location(4) background_end: vec2<f32>,
     @location(5) background_end_color: vec4<f32>,
-    // Width of the border in the order top, left, right, bottom.
+    // Width of the border in the order top, right, bottom, left — matching the
+    // packing in `BorderWidth` on the Rust side, and the order this shader reads
+    // below.
     @location(6) border_width: vec4<f32>,
     @location(7) border_start: vec2<f32>,
     @location(8) border_start_color: vec4<f32>,

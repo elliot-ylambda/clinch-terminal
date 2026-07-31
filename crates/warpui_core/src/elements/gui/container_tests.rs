@@ -116,3 +116,53 @@ fn test_container_element_overlay_click_handling() {
         });
     });
 }
+
+#[test]
+fn snapping_gives_both_edges_of_a_frame_the_same_pixel_alignment() {
+    // A flex row dividing leftover space, or text measured to a fraction of a
+    // point, leaves a container's right edge mid-pixel while its left edge sits
+    // on a boundary. Unsnapped, the border on that edge antialiases to partial
+    // coverage and reads as a thinner line.
+    let scale_factor = 2.;
+    let rect = RectF::new(vec2f(10., 5.), vec2f(159.6, 28.4));
+    let snapped = snap_to_device_pixels(rect, scale_factor);
+
+    for edge in [
+        snapped.min_x(),
+        snapped.min_y(),
+        snapped.max_x(),
+        snapped.max_y(),
+    ] {
+        let device_pixels = edge * scale_factor;
+        assert_eq!(
+            device_pixels,
+            device_pixels.round(),
+            "edge {edge} does not land on a device pixel"
+        );
+    }
+    // Snapping moves an edge by less than half a device pixel, so the frame
+    // stays where the layout put it.
+    assert!((snapped.max_x() - rect.max_x()).abs() <= 0.5 / scale_factor);
+    assert!((snapped.max_y() - rect.max_y()).abs() <= 0.5 / scale_factor);
+}
+
+#[test]
+fn snapping_keeps_a_sliver_thinner_than_a_device_pixel_visible() {
+    let scale_factor = 2.;
+    // A 0.2pt divider would otherwise round away to nothing and vanish.
+    let sliver = RectF::new(vec2f(10., 5.), vec2f(0.2, 40.));
+    let snapped = snap_to_device_pixels(sliver, scale_factor);
+
+    assert!(
+        snapped.width() > 0.,
+        "a visible sliver must not snap away to zero width"
+    );
+    assert_eq!(snapped.width(), 1. / scale_factor);
+}
+
+#[test]
+fn snapping_is_a_no_op_for_an_unknown_scale_factor() {
+    let rect = RectF::new(vec2f(10.3, 5.7), vec2f(159.6, 28.4));
+    assert_eq!(snap_to_device_pixels(rect, 0.), rect);
+    assert_eq!(snap_to_device_pixels(rect, f32::NAN), rect);
+}

@@ -259,6 +259,42 @@ impl Container {
     }
 }
 
+/// Snaps a rect's edges to whole device pixels.
+///
+/// Layout sizes are frequently fractional — text measures to fractions of a
+/// point, and a flex row divides leftover space evenly — so a container's edge
+/// often lands mid-pixel. A 1px border there gets antialiased across two pixels
+/// at partial coverage and reads as a thinner, dimmer line than the border on
+/// the opposite edge, which happened to land on a boundary. Snapping the frame
+/// makes all four sides the same weight.
+///
+/// Only the drawn frame moves (by at most half a device pixel); the child is
+/// still painted at its unsnapped origin, so content never shifts.
+fn snap_to_device_pixels(rect: RectF, scale_factor: f32) -> RectF {
+    if !scale_factor.is_finite() || scale_factor <= 0. {
+        return rect;
+    }
+    let snap = |value: f32| (value * scale_factor).round() / scale_factor;
+    let snapped = RectF::from_points(
+        vec2f(snap(rect.min_x()), snap(rect.min_y())),
+        vec2f(snap(rect.max_x()), snap(rect.max_y())),
+    );
+    // A sliver thinner than a device pixel would snap away to nothing. Keep it
+    // visible at one device pixel instead of dropping it from the frame.
+    let device_pixel = 1. / scale_factor;
+    let width = if rect.width() > 0. && snapped.width() <= 0. {
+        device_pixel
+    } else {
+        snapped.width()
+    };
+    let height = if rect.height() > 0. && snapped.height() <= 0. {
+        device_pixel
+    } else {
+        snapped.height()
+    };
+    RectF::new(snapped.origin(), vec2f(width, height))
+}
+
 impl Element for Container {
     fn layout(
         &mut self,
@@ -293,9 +329,19 @@ impl Element for Container {
         ctx.scene
             .set_location_for_panic_logging(self.construction_location);
 
+        // Snap only when a border is actually drawn: that is where a mid-pixel
+        // edge is visible as a half-strength line. Unbordered containers are left
+        // alone so nothing shifts under scrolling or animation.
+        let draws_border = self.border.width > 0.
+            && (self.border.top || self.border.right || self.border.bottom || self.border.left);
+        let mut bounds = RectF::new(origin, size);
+        if draws_border {
+            bounds = snap_to_device_pixels(bounds, ctx.scene.scale_factor());
+        }
+
         let rect = ctx
             .scene
-            .draw_rect_with_hit_recording(RectF::new(origin, size))
+            .draw_rect_with_hit_recording(bounds)
             .with_background(self.background)
             .with_border(self.border)
             .with_corner_radius(self.corner_radius);
@@ -324,7 +370,7 @@ impl Element for Container {
                 .set_location_for_panic_logging(self.construction_location);
 
             ctx.scene
-                .draw_rect_with_hit_recording(RectF::new(origin, size))
+                .draw_rect_with_hit_recording(bounds)
                 .with_background(overlay)
                 .with_corner_radius(self.corner_radius);
             ctx.scene.stop_layer();
