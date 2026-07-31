@@ -104,7 +104,14 @@ const GROUP_HEADER_VERTICAL_PADDING: f32 = 4.;
 const GROUP_HORIZONTAL_PADDING: f32 = 8.;
 const GROUP_BODY_BOTTOM_PADDING: f32 = 8.;
 const GROUP_ITEM_SPACING: f32 = 4.;
-const TABS_MODE_ITEM_SPACING: f32 = 4.;
+/// Gap between tab cards in the rail.
+const TAB_CARD_GAP: f32 = 4.;
+/// Inset from the panel's edges to a tab card's outline. Matches the control bar's
+/// horizontal padding so the search row and the cards below it share one left edge.
+const TAB_CARD_INSET: f32 = GROUP_HORIZONTAL_PADDING;
+/// Margin between a tab card's outline and the rows inside it. Rows bring their own
+/// padding, so this only has to keep a row's rounded highlight off the outline.
+const TAB_CARD_BODY_PADDING: f32 = 2.;
 const GROUP_ACTION_BUTTON_ICON_SIZE: f32 = 12.;
 const TAB_GROUP_HEADER_ACTION_ICON_SIZE: f32 = 14.;
 const PIN_INDICATOR_ICON_SIZE: f32 = 16.;
@@ -517,6 +524,57 @@ fn pane_row_background(
     }
 }
 
+/// Visual state of a tab card in the rail.
+///
+/// Cards are delineated by an outline rather than by hairline separators, so the
+/// outline is what carries state: it brightens from resting to hovered to active.
+/// The fill only reinforces it, which keeps the rail readable when the panel and
+/// the terminal share the same background color.
+#[derive(Clone, Copy)]
+enum TabCardState {
+    Resting,
+    Hovered,
+    Active,
+    DropTarget,
+}
+
+impl TabCardState {
+    fn resolve(is_drop_target: bool, is_active: bool, is_hovered: bool) -> Self {
+        if is_drop_target {
+            Self::DropTarget
+        } else if is_active {
+            Self::Active
+        } else if is_hovered {
+            Self::Hovered
+        } else {
+            Self::Resting
+        }
+    }
+
+    /// Outline color. `neutral_*` tokens are pre-blended into the background, so an
+    /// outline lands on the same value whether or not the card underneath is filled.
+    /// The steps are wide apart on purpose: on a near-black rail, adjacent 5% steps
+    /// are indistinguishable, which is what made the old hairlines read as grain.
+    fn border(self, theme: &WarpTheme) -> ThemeFill {
+        match self {
+            Self::DropTarget => ThemeFill::Solid(theme.accent().into()),
+            Self::Active => ThemeFill::Solid(internal_colors::neutral_5(theme)),
+            Self::Hovered => ThemeFill::Solid(internal_colors::neutral_4(theme)),
+            Self::Resting => ThemeFill::Solid(internal_colors::neutral_3(theme)),
+        }
+    }
+
+    fn background(self, theme: &WarpTheme) -> ThemeFill {
+        match self {
+            // Two overlay steps: matches the gray the active tab had back when the
+            // whole panel was tinted, now that the panel itself is plain background.
+            Self::DropTarget | Self::Active => internal_colors::fg_overlay_2(theme),
+            Self::Hovered => internal_colors::fg_overlay_1(theme),
+            Self::Resting => ThemeFill::Solid(ColorU::transparent_black()),
+        }
+    }
+}
+
 fn render_pane_row_element(
     props: PaneProps<'_>,
     padding: Padding,
@@ -586,13 +644,10 @@ fn render_pane_row_element(
             container = container.with_background(background);
         }
 
-        let pane: Box<dyn Element> = container
-            .with_border(Border::all(1.).with_border_fill(if is_selected {
-                internal_colors::fg_overlay_3(theme).into()
-            } else {
-                ElementFill::None
-            }))
-            .finish();
+        // No outline here: the tab card around this row already draws one, and a
+        // second frame a few pixels inside it reads as noise. A selected row is
+        // carried by its fill and by the accent spine added below.
+        let pane: Box<dyn Element> = container.finish();
 
         // Overlays that live outside the row's content clip: the active-tab accent
         // "spine" on the left edge and the pin indicator at the top-right corner.
@@ -1464,9 +1519,11 @@ fn render_ghost_vertical_tab_slot(workspace: &Workspace, app: &AppContext) -> Bo
         })
         .map(|rect| rect.height())
         .unwrap_or(40.);
+    // Shaped like the card that will land here: same outline, same radius.
     ConstrainedBox::new(
         Container::new(Empty::new().finish())
-            .with_background(internal_colors::fg_overlay_1(theme))
+            .with_background(TabCardState::Hovered.background(theme))
+            .with_border(Border::all(1.).with_border_fill(TabCardState::Resting.border(theme)))
             .with_corner_radius(CornerRadius::with_all(Radius::Pixels(ROW_CORNER_RADIUS)))
             .finish(),
     )
@@ -1496,17 +1553,11 @@ fn render_vertical_tab_hover_indicator(theme: &WarpTheme) -> Box<dyn Element> {
 }
 
 fn render_vertical_tab_insertion_target_content(content: Box<dyn Element>) -> Box<dyn Element> {
-    ConstrainedBox::new(
-        Container::new(content)
-            .with_padding(
-                Padding::uniform(0.)
-                    .with_left(GROUP_HORIZONTAL_PADDING)
-                    .with_right(GROUP_HORIZONTAL_PADDING),
-            )
-            .finish(),
-    )
-    .with_height(GROUP_INSERTION_TARGET_HEIGHT)
-    .finish()
+    // Overlaid on a tab card, which the list already insets from the panel edges,
+    // so the drop indicator spans the card's full width.
+    ConstrainedBox::new(Container::new(content).finish())
+        .with_height(GROUP_INSERTION_TARGET_HEIGHT)
+        .finish()
 }
 
 fn render_vertical_tab_insertion_target(
@@ -2053,11 +2104,23 @@ fn render_vertical_tabs_panel(
         super::PanelPosition::Left => DragBarSide::Right,
         super::PanelPosition::Right => DragBarSide::Left,
     };
+    // The rail shares the terminal's background so the window reads as one surface;
+    // a single hairline on the terminal-facing edge is what separates them. It also
+    // gives the resize drag bar something visible to grab.
+    let (divider_on_left, divider_on_right) = match side {
+        super::PanelPosition::Left => (false, true),
+        super::PanelPosition::Right => (true, false),
+    };
     // Wrap the panel in a `Hoverable` so right-clicking the empty area of the
     // vertical tabs panel opens the tab configs dropdown.
-    let inner = Hoverable::new(state.panel_right_click_mouse_state.clone(), |_| {
+    let inner = Hoverable::new(state.panel_right_click_mouse_state.clone(), move |_| {
         Container::new(panel_with_popup)
-            .with_background(internal_colors::fg_overlay_1(theme))
+            .with_background(theme.background())
+            .with_border(
+                Border::new(1.)
+                    .with_sides(false, divider_on_left, false, divider_on_right)
+                    .with_border_fill(crate::workspace::chrome_divider_fill(theme)),
+            )
             .finish()
     })
     .on_right_click(|ctx, _, position| {
@@ -2249,10 +2312,8 @@ fn render_groups(
     let ghost_insertion_index = ghost_state.as_ref().map(|g| g.insertion_index);
     let mut groups = Flex::column()
         .with_main_axis_size(MainAxisSize::Min)
-        .with_cross_axis_alignment(CrossAxisAlignment::Stretch);
-    if !uses_outer_group_container {
-        groups = groups.with_spacing(TABS_MODE_ITEM_SPACING);
-    }
+        .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .with_spacing(TAB_CARD_GAP);
 
     // Consecutive tabs sharing a group_id collapse into a single group container.
     // TODO(johnturcoo) adopt horizontal tabs 'tab slot' pattern to remove this while loop.
@@ -2337,14 +2398,9 @@ fn render_groups(
         .borrow_mut()
         .retain(|id, _| all_pane_ids.contains(id));
 
-    let groups = groups.finish();
-    if uses_outer_group_container {
-        groups
-    } else {
-        Container::new(groups)
-            .with_padding(Padding::uniform(8.).with_top(0.))
-            .finish()
-    }
+    Container::new(groups.finish())
+        .with_padding(Padding::uniform(TAB_CARD_INSET).with_top(0.))
+        .finish()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2448,8 +2504,6 @@ fn render_tab_group_internal(
         && !workspace
             .current_workspace_state
             .is_agent_management_view_open;
-    let has_top_border = tab_index > 0;
-    let is_first_tab = tab_index == 0;
     let is_last_tab = tab_index + 1 == workspace.tabs.len();
     let is_this_tab_dragging = tab.draggable_state.is_dragging();
     // Panes inherit multi-selection status from the tab they belong to.
@@ -2638,36 +2692,30 @@ fn render_tab_group_internal(
             }
 
             let show_header = has_custom_title || is_being_renamed;
+            // The rows carry their own padding, so the card only needs enough of a
+            // margin to keep a row's rounded highlight off the card's outline.
             let mut body_padding = Padding::uniform(0.)
-                .with_left(GROUP_HORIZONTAL_PADDING)
-                .with_right(GROUP_HORIZONTAL_PADDING)
-                .with_bottom(GROUP_BODY_BOTTOM_PADDING);
+                .with_left(TAB_CARD_BODY_PADDING)
+                .with_right(TAB_CARD_BODY_PADDING)
+                .with_bottom(TAB_CARD_BODY_PADDING);
             if !show_header {
-                body_padding = body_padding.with_top(GROUP_BODY_BOTTOM_PADDING);
+                body_padding = body_padding.with_top(TAB_CARD_BODY_PADDING);
             }
             group.add_child(
                 Container::new(build_rows())
                     .with_padding(body_padding)
                     .finish(),
             );
-            let background = if is_drag_target {
-                internal_colors::fg_overlay_2(theme)
-            } else if is_active || group_state.is_hovered() {
-                internal_colors::fg_overlay_1(theme)
-            } else {
-                ThemeFill::Solid(ColorU::transparent_black())
-            };
-            let mut container = Container::new(group.finish()).with_background(background);
-            if is_drag_target {
-                container = container.with_border(
-                    Border::all(1.).with_border_fill(ThemeFill::Solid(theme.accent().into())),
-                );
-            } else if has_top_border || is_first_tab || is_last_tab {
-                container = container.with_border(
-                    Border::new(1.)
-                        .with_sides(has_top_border || is_first_tab, false, is_last_tab, false)
-                        .with_border_fill(internal_colors::fg_overlay_1(theme)),
-                );
+            let card_state =
+                TabCardState::resolve(is_drag_target, is_active, group_state.is_hovered());
+            let mut container = Container::new(group.finish())
+                .with_background(card_state.background(theme))
+                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(ROW_CORNER_RADIUS)));
+            // A tab nested in a group is enclosed by the group's own card, so it
+            // stays outline-free to avoid stacking two frames a few pixels apart.
+            if !in_tab_group {
+                container = container
+                    .with_border(Border::all(1.).with_border_fill(card_state.border(theme)));
             }
             container.finish()
         } else {
@@ -2676,13 +2724,11 @@ fn render_tab_group_internal(
             // per-tab background here and let each row show its own
             // selected/hovered state.
             let allow_per_tab_highlight = !in_tab_group || FeatureFlag::GroupedTabs.is_enabled();
-            let background = if is_drag_target {
-                internal_colors::fg_overlay_2(theme)
-            } else if allow_per_tab_highlight && (is_active || group_state.is_hovered()) {
-                internal_colors::fg_overlay_1(theme)
-            } else {
-                ThemeFill::Solid(ColorU::transparent_black())
-            };
+            let card_state = TabCardState::resolve(
+                is_drag_target,
+                allow_per_tab_highlight && is_active,
+                allow_per_tab_highlight && group_state.is_hovered(),
+            );
             // Top band reserved for the per-tab action buttons.
             const GROUPED_TAB_ACTION_BUTTON_BAND: f32 = 4.;
             let needs_action_button_band = in_tab_group
@@ -2692,15 +2738,14 @@ fn render_tab_group_internal(
             } else {
                 GROUP_BODY_BOTTOM_PADDING
             };
-            let mut container = Container::new(build_rows()).with_background(background);
-            if FeatureFlag::GroupedTabs.is_enabled() && stack_panes_flush {
+            let mut container = Container::new(build_rows())
+                .with_background(card_state.background(theme))
+                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(ROW_CORNER_RADIUS)));
+            // Same rule as the grouped-container branch: only a top-level tab is
+            // outlined, so a nested tab doesn't double up on its group's frame.
+            if !in_tab_group {
                 container = container
-                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(ROW_CORNER_RADIUS)));
-            }
-            if is_drag_target {
-                container = container.with_border(
-                    Border::all(1.).with_border_fill(ThemeFill::Solid(theme.accent().into())),
-                );
+                    .with_border(Border::all(1.).with_border_fill(card_state.border(theme)));
             }
             if needs_action_button_band {
                 container = container.with_margin_top(action_button_band);
@@ -3267,13 +3312,13 @@ fn render_grouped_tab_container(
     });
 
     // GroupedTabs: zero inter-tab gap in Panes mode (each tab already has
-    // its own wrapper). Other modes keep `TABS_MODE_ITEM_SPACING`.
+    // its own wrapper). Other modes keep the standard card gap.
     let member_tab_spacing = if FeatureFlag::GroupedTabs.is_enabled()
         && matches!(resolved_mode, VerticalTabsResolvedMode::Panes)
     {
         0.
     } else {
-        TABS_MODE_ITEM_SPACING
+        TAB_CARD_GAP
     };
     let container = Hoverable::new(mouse_states.container.clone(), |hover_state| {
         let mut content = Flex::column()
@@ -3341,11 +3386,9 @@ fn render_grouped_tab_container(
             }
         }
 
-        let background = if hover_state.is_hovered() || any_member_active {
-            internal_colors::fg_overlay_1(theme)
-        } else {
-            ThemeFill::Solid(ColorU::transparent_black())
-        };
+        // A group is one card holding several tabs, so it takes the same outline
+        // treatment as a standalone tab card.
+        let card_state = TabCardState::resolve(false, any_member_active, hover_state.is_hovered());
 
         // Pane view: uniform `GROUP_HORIZONTAL_PADDING` matches ungrouped-tab body padding.
         // Tab view: only apply bottom padding when expanded so a collapsed group has no trailing band.
@@ -3358,7 +3401,8 @@ fn render_grouped_tab_container(
 
         Container::new(content.finish())
             .with_padding(padding)
-            .with_background(background)
+            .with_background(card_state.background(theme))
+            .with_border(Border::all(1.).with_border_fill(card_state.border(theme)))
             .with_corner_radius(CornerRadius::with_all(Radius::Pixels(ROW_CORNER_RADIUS)))
             .finish()
     })

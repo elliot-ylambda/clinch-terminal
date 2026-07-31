@@ -1832,7 +1832,7 @@ impl ProjectWindow {
             .with_padding_right(8.)
             .with_border(
                 Border::bottom(crate::tab::TAB_BAR_BORDER_HEIGHT)
-                    .with_border_fill(appearance.theme().outline()),
+                    .with_border_fill(crate::workspace::chrome_divider_fill(appearance.theme())),
             )
             .finish();
         SavePosition::new(

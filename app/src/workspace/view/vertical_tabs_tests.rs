@@ -19,8 +19,8 @@ use super::{
     terminal_search_text_fragments, terminal_title_fallback_font, title_indicator_color,
     uses_outer_group_container, vertical_tab_activity_dot_color,
     visible_pane_ids_for_detail_target, vtab_diff_stats_text, AgentTabTextPreference,
-    SummaryPaneKind, SummaryPaneKindIcons, TerminalAgentText, TerminalPrimaryLineData,
-    TerminalPrimaryLineFont, TitleIndicatorKind, VerticalTabsDetailTarget,
+    SummaryPaneKind, SummaryPaneKindIcons, TabCardState, TerminalAgentText,
+    TerminalPrimaryLineData, TerminalPrimaryLineFont, TitleIndicatorKind, VerticalTabsDetailTarget,
     VerticalTabsDetailTargetKind, VerticalTabsSummaryBranchEntry, VerticalTabsSummaryData,
     VerticalTabsSummaryPrimaryLabel,
 };
@@ -92,6 +92,64 @@ fn agent_activity_dots_match_project_tab_working_and_done_colors() {
     assert_eq!(
         vertical_tab_activity_dot_color(ProjectCliAgentActivity::Idle, &theme),
         theme.disabled_text_color(theme.background()).into_solid()
+    );
+}
+
+/// Distance of a fill from the rail's background, summed over RGB. Direction-agnostic
+/// so the same assertions hold on light themes, where contrast runs the other way.
+fn contrast_against_background(
+    fill: crate::themes::theme::Fill,
+    theme: &warp_core::ui::theme::WarpTheme,
+) -> u32 {
+    let color = fill.into_solid();
+    let background = theme.background().into_solid();
+    u32::from(color.r).abs_diff(u32::from(background.r))
+        + u32::from(color.g).abs_diff(u32::from(background.g))
+        + u32::from(color.b).abs_diff(u32::from(background.b))
+}
+
+#[test]
+fn tab_card_outlines_separate_resting_hovered_and_active() {
+    let theme = crate::themes::default_themes::dark_theme();
+    let contrast = |state: TabCardState| contrast_against_background(state.border(&theme), &theme);
+
+    let resting = contrast(TabCardState::Resting);
+    let hovered = contrast(TabCardState::Hovered);
+    let active = contrast(TabCardState::Active);
+
+    // The rail shares the terminal's background, so a resting outline is the only
+    // thing marking where a tab starts and ends. It has to clear the background by
+    // more than the 5% overlay the old hairline separators used.
+    assert!(
+        resting > 40,
+        "resting outline is too close to the background to read as an outline: {resting}"
+    );
+    assert!(
+        resting < hovered && hovered < active,
+        "outline steps must stay ordered resting < hovered < active, got {resting} < {hovered} < {active}"
+    );
+}
+
+#[test]
+fn active_tab_card_fill_stays_the_gray_it_had_over_a_tinted_panel() {
+    let theme = crate::themes::default_themes::dark_theme();
+    // Card fills are foreground overlays, so their strength lives in the alpha
+    // channel; the RGB is the same foreground color for every step.
+    let overlay_strength = |state: TabCardState| state.background(&theme).into_solid().a;
+
+    // The panel used to be painted with one 5% overlay and the active tab with a
+    // second one on top. Now that the panel is plain background, the active fill
+    // carries both steps itself, so the selected tab keeps its familiar gray.
+    let active = overlay_strength(TabCardState::Active);
+    let hovered = overlay_strength(TabCardState::Hovered);
+    assert!(
+        hovered > 0 && active >= 2 * hovered - 1,
+        "active fill should be about two overlay steps to hover's one, got {active} vs {hovered}"
+    );
+    assert_eq!(
+        overlay_strength(TabCardState::Resting),
+        0,
+        "a resting card is defined by its outline alone, with no fill"
     );
 }
 
