@@ -3036,17 +3036,10 @@ fn cli_agent_history_prompt_label(ordinal: usize, prompt: &AgentPrompt) -> Strin
         .unwrap_or_else(|| format!("{ordinal} | {message}"))
 }
 
-/// Rows are ellipsis-clipped to one line, so hovering shows the full prompt in
-/// a tooltip. Capped so a pathological multi-kilobyte prompt can't blanket the
-/// window (the tooltip soft-wraps within window bounds).
-const CLI_AGENT_HISTORY_TOOLTIP_MAX_CHARS: usize = 2000;
-
 fn cli_agent_history_prompt_tooltip(prompt: &AgentPrompt) -> String {
-    let text = prompt.text.trim();
-    match text.char_indices().nth(CLI_AGENT_HISTORY_TOOLTIP_MAX_CHARS) {
-        Some((byte_index, _)) => format!("{}…", &text[..byte_index]),
-        None => text.to_owned(),
-    }
+    // History rows stay ellipsis-clipped to one line, while the tooltip soft-wraps
+    // within the window and can therefore show the complete prompt.
+    prompt.text.trim().to_owned()
 }
 
 fn cli_agent_history_menu_item_fields(
