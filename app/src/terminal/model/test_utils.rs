@@ -36,6 +36,10 @@ pub fn block_size() -> BlockSize {
         size: SizeInfo::new_without_font_metrics(10, 7),
         block_padding: block_padding(),
         max_block_scroll_limit: 1000,
+        // Reclamation off by default in tests so that assertions about block
+        // contents are not affected by retention policy.  Tests that exercise
+        // reclamation set this explicitly.
+        max_retained_scrollback_rows: 0,
         warp_prompt_height_lines: 0.6,
     }
 }

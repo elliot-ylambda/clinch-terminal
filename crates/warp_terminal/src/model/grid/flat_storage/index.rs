@@ -186,6 +186,20 @@ impl Index {
         new_start_offset
     }
 
+    /// Releases reserved-but-unused row capacity back to the allocator.
+    ///
+    /// [`Self::truncate_front`] pops from a [`VecDeque`], which keeps its
+    /// capacity.  A grid that grew to the row limit and was then truncated
+    /// therefore holds a full-size allocation containing very few rows, and
+    /// never gives it back.  Callers that have just dropped a large number of
+    /// rows should call this to actually return the memory.
+    ///
+    /// This reallocates, so it is not appropriate on a hot path — call it when
+    /// a grid is finished or when reclaiming, not per row.
+    pub fn shrink_to_fit(&mut self) {
+        self.rows.shrink_to_fit();
+    }
+
     pub fn start_row(&mut self) -> EntryBuilder {
         EntryBuilder::new()
     }

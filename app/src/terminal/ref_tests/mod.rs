@@ -119,6 +119,9 @@ fn ref_test(dir: &Path) {
         block_padding,
         size,
         max_block_scroll_limit: history_size as usize,
+        // Reference tests compare full rendered output, so retention must not
+        // release anything mid-test.
+        max_retained_scrollback_rows: 0,
         warp_prompt_height_lines: 0.1,
     };
     let mut terminal = TerminalModel::new(
