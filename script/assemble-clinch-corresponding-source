@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds a version-matched Corresponding Source archive with all Cargo sources vendored.
+# Builds a version-matched Corresponding Source archive with all Cargo and web sources vendored.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -17,10 +17,13 @@ fail() {
 [[ "$VERSION" =~ ^v[0-9]+(\.[0-9]+)+$ ]] || fail "invalid version $VERSION"
 [[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]] || fail "invalid commit"
 [[ "$(git rev-parse HEAD)" == "$COMMIT" ]] || fail "source checkout is not at $COMMIT"
-for item in Cargo.toml Cargo.lock LICENSE-AGPL LICENSE-MIT NOTICE .cargo/config.toml; do
+for item in \
+  Cargo.toml Cargo.lock LICENSE-AGPL LICENSE-MIT NOTICE .cargo/config.toml \
+  web/remote-control/package.json web/remote-control/yarn.lock \
+  web/remote-control/.yarnrc.yml web/remote-control/.yarn/releases/yarn-4.18.0.cjs; do
   [[ -f "$item" ]] || fail "missing $item"
 done
-for command in cargo git shasum tar; do
+for command in cargo corepack git node shasum tar; do
   command -v "$command" >/dev/null 2>&1 || fail "$command is required"
 done
 [[ -x /usr/bin/python3 ]] || fail "/usr/bin/python3 is required"
@@ -55,12 +58,28 @@ cat >> "$source_root/.cargo/config.toml" <<'EOF'
 EOF
 cat "$work/vendor-config.toml" >> "$source_root/.cargo/config.toml"
 
+echo "==> Caching locked Remote Control web dependency sources"
+cat >> "$source_root/web/remote-control/.yarnrc.yml" <<'EOF'
+
+# Complete Corresponding Source releases carry the exact Yarn package archives
+# next to the web source so dependency resolution does not contact the network.
+enableGlobalCache: false
+cacheFolder: .yarn/cache
+EOF
+corepack yarn --cwd "$source_root/web/remote-control" \
+  install --immutable --mode=skip-build
+rm -rf "$source_root/web/remote-control/node_modules"
+rm -f "$source_root/web/remote-control/.yarn/install-state.gz"
+[[ -n "$(find "$source_root/web/remote-control/.yarn/cache" -type f -name '*.zip' -print -quit)" ]] \
+  || fail "Yarn produced no offline dependency cache"
+
 cat > "$source_root/CORRESPONDING_SOURCE.md" <<EOF
 # Clinch $VERSION Corresponding Source
 
-This archive contains the source tree for commit \`$COMMIT\` and a vendored
-copy of every Cargo dependency selected by \`Cargo.lock\`. It accompanies the
-Clinch $VERSION binaries distributed from the release with the same tag.
+This archive contains the source tree for commit \`$COMMIT\`, a vendored copy
+of every Cargo dependency selected by \`Cargo.lock\`, and the package archives
+selected by \`web/remote-control/yarn.lock\`. It accompanies the Clinch
+$VERSION binaries distributed from the release with the same tag.
 
 The main program is licensed under AGPL-3.0-only. The \`warpui\` and
 \`warpui_core\` crates remain MIT-licensed, and other dependency terms are
@@ -73,11 +92,14 @@ without network access:
 \`\`\`sh
 cargo metadata --locked --offline --all-features --format-version 1
 cargo build --locked --offline --release --bin stable
+YARN_ENABLE_NETWORK=0 corepack yarn --cwd web/remote-control install \
+  --immutable --immutable-cache --mode=skip-build
+YARN_ENABLE_NETWORK=0 corepack yarn --cwd web/remote-control build
 \`\`\`
 EOF
 
 /usr/bin/python3 - "$source_root/.clinch-source.json" "$VERSION" "$COMMIT" \
-  "$source_root/Cargo.lock" <<'PY'
+  "$source_root/Cargo.lock" "$source_root/web/remote-control/yarn.lock" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -85,11 +107,13 @@ import sys
 
 output = pathlib.Path(sys.argv[1])
 lockfile = pathlib.Path(sys.argv[4])
+yarn_lockfile = pathlib.Path(sys.argv[5])
 value = {
     "cargo_lock_sha256": hashlib.sha256(lockfile.read_bytes()).hexdigest(),
     "commit": sys.argv[3],
-    "schema_version": 1,
+    "schema_version": 2,
     "version": sys.argv[2],
+    "yarn_lock_sha256": hashlib.sha256(yarn_lockfile.read_bytes()).hexdigest(),
 }
 output.write_text(
     json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n",
@@ -102,6 +126,13 @@ echo "==> Proving the vendored source graph resolves offline"
   cd "$source_root"
   CARGO_NET_OFFLINE=true cargo metadata \
     --locked --offline --all-features --format-version 1 >/dev/null
+)
+(
+  cd "$source_root"
+  YARN_ENABLE_NETWORK=0 corepack yarn --cwd web/remote-control \
+    install --immutable --immutable-cache --mode=skip-build >/dev/null
+  rm -rf web/remote-control/node_modules
+  rm -f web/remote-control/.yarn/install-state.gz
 )
 
 archive_tmp="$work/Clinch.source.tar.gz"

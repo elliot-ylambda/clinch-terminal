@@ -37,8 +37,8 @@ pub fn initialize_settings_for_tests_with_mode(
         CliAgentUsageSettings, ClinchSettings, CloudPreferencesSettings, CodeSettings,
         DebugSettings, EmacsBindingsSettings, FontSettings, GPUSettings, InputModeSettings,
         InputSettings, LocalControlSettings, NativePreferenceSettings, PaneSettings,
-        SameLinePromptBlockSettings, ScrollSettings, SelectionSettings, SshSettings, ThemeSettings,
-        VimBannerSettings,
+        RemoteControlSettings, SameLinePromptBlockSettings, ScrollSettings, SelectionSettings,
+        SshSettings, ThemeSettings, VimBannerSettings,
     };
     use crate::terminal::general_settings::GeneralSettings;
     use crate::terminal::keys_settings::KeysSettings;
@@ -114,6 +114,7 @@ pub fn initialize_settings_for_tests_with_mode(
     TabSettings::register(app);
     TerminalSettings::register(app);
     PaneSettings::register(app);
+    RemoteControlSettings::register(app);
     ThemeSettings::register(app);
     UndoCloseSettings::register(app);
     VimBannerSettings::register(app);

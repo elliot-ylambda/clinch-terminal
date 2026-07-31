@@ -2072,7 +2072,7 @@ impl TerminalManager {
                     // strategies are applied. Bypasses the rich-input-UI side effects 
   					// (telemetry, draft clear, editor buffer clear, pending-image consumption).
                     terminal_view.update(ctx, |view, ctx| {
-                        view.submit_text_to_cli_agent_pty(request.prompt.clone(), ctx);
+                        view.submit_external_text_to_cli_agent_pty(request.prompt.clone(), ctx);
                     });
                     return;
                 }

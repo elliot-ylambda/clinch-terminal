@@ -1,0 +1,2103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CompanionProtocolSchema",
+  "description": "Schema root used by the checked-in JSON Schema and TypeScript generator.",
+  "type": "object",
+  "properties": {
+    "auth_challenge": {
+      "$ref": "#/$defs/AuthChallenge"
+    },
+    "auth_challenge_request": {
+      "$ref": "#/$defs/AuthChallengeRequest"
+    },
+    "authenticate": {
+      "$ref": "#/$defs/Authenticate"
+    },
+    "client_envelope": {
+      "$ref": "#/$defs/ClientEnvelope"
+    },
+    "pairing_claim_receipt": {
+      "$ref": "#/$defs/PairingClaimReceipt"
+    },
+    "pairing_claim_request": {
+      "$ref": "#/$defs/PairingClaimRequest"
+    },
+    "pairing_invitation": {
+      "$ref": "#/$defs/PairingInvitation"
+    },
+    "pairing_status": {
+      "$ref": "#/$defs/PairingStatus"
+    },
+    "pairing_status_request": {
+      "$ref": "#/$defs/PairingStatusRequest"
+    },
+    "server_envelope": {
+      "$ref": "#/$defs/ServerEnvelope"
+    }
+  },
+  "required": [
+    "client_envelope",
+    "server_envelope",
+    "pairing_claim_request",
+    "pairing_claim_receipt",
+    "pairing_status_request",
+    "pairing_status",
+    "auth_challenge_request",
+    "auth_challenge",
+    "authenticate",
+    "pairing_invitation"
+  ],
+  "$defs": {
+    "AcquireWriterLease": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "$ref": "#/$defs/TargetRef"
+        },
+        "workspace_revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "target",
+        "workspace_revision"
+      ]
+    },
+    "AgentProvider": {
+      "type": "string",
+      "enum": [
+        "claude_code",
+        "codex"
+      ]
+    },
+    "AgentState": {
+      "type": "string",
+      "enum": [
+        "working",
+        "done",
+        "needs_attention",
+        "idle",
+        "rate_limited",
+        "unknown"
+      ]
+    },
+    "AuthChallenge": {
+      "type": "object",
+      "properties": {
+        "challenge": {
+          "type": "string"
+        },
+        "device_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "required": [
+        "id",
+        "device_id",
+        "challenge",
+        "expires_at"
+      ]
+    },
+    "AuthChallengeRequest": {
+      "type": "object",
+      "properties": {
+        "device_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "required": [
+        "device_id"
+      ]
+    },
+    "Authenticate": {
+      "type": "object",
+      "properties": {
+        "challenge_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "device_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "last_seen_sequence": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "signature": {
+          "description": "Base64-encoded IEEE P1363 ECDSA P-256 signature (r || s).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "device_id",
+        "challenge_id",
+        "signature",
+        "last_seen_sequence"
+      ]
+    },
+    "Authenticated": {
+      "type": "object",
+      "properties": {
+        "device": {
+          "$ref": "#/$defs/DeviceSummary"
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "replayed_from_sequence": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "session_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "required": [
+        "session_id",
+        "device",
+        "expires_at"
+      ]
+    },
+    "Capability": {
+      "type": "string",
+      "enum": [
+        "view",
+        "control",
+        "create_session",
+        "upload"
+      ]
+    },
+    "ClientEnvelope": {
+      "type": "object",
+      "properties": {
+        "payload": {
+          "$ref": "#/$defs/ClientMessage"
+        },
+        "request_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "version": {
+          "type": "integer",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0
+        }
+      },
+      "required": [
+        "version",
+        "request_id",
+        "payload"
+      ]
+    },
+    "ClientMessage": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "ping"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "request_snapshot"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/SelectTarget"
+            },
+            "type": {
+              "type": "string",
+              "const": "select_target"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/AcquireWriterLease"
+            },
+            "type": {
+              "type": "string",
+              "const": "acquire_writer_lease"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/ReleaseWriterLease"
+            },
+            "type": {
+              "type": "string",
+              "const": "release_writer_lease"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/SubmitComposerText"
+            },
+            "type": {
+              "type": "string",
+              "const": "submit_composer_text"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/RawTerminalInput"
+            },
+            "type": {
+              "type": "string",
+              "const": "raw_terminal_input"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/InterruptTerminal"
+            },
+            "type": {
+              "type": "string",
+              "const": "interrupt_terminal"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/TerminalResize"
+            },
+            "type": {
+              "type": "string",
+              "const": "terminal_resize"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/TerminalKeyInput"
+            },
+            "type": {
+              "type": "string",
+              "const": "terminal_key"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/CreateSession"
+            },
+            "type": {
+              "type": "string",
+              "const": "create_session"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/ResumeSession"
+            },
+            "type": {
+              "type": "string",
+              "const": "resume_session"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/QuickInsertPreviewRequest"
+            },
+            "type": {
+              "type": "string",
+              "const": "quick_insert_preview"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/QuickInsertSubmit"
+            },
+            "type": {
+              "type": "string",
+              "const": "quick_insert_submit"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/UploadBegin"
+            },
+            "type": {
+              "type": "string",
+              "const": "upload_begin"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/UploadCommit"
+            },
+            "type": {
+              "type": "string",
+              "const": "upload_commit"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/UploadCancel"
+            },
+            "type": {
+              "type": "string",
+              "const": "upload_cancel"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "disconnect"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        }
+      ]
+    },
+    "ConnectionPath": {
+      "type": "string",
+      "enum": [
+        "tailnet_direct",
+        "tailnet_relay",
+        "loopback_development",
+        "unknown"
+      ]
+    },
+    "ConnectionState": {
+      "type": "string",
+      "enum": [
+        "connected",
+        "reconnecting",
+        "mac_offline",
+        "tailscale_needed",
+        "authorization_revoked",
+        "version_incompatible"
+      ]
+    },
+    "CreateSession": {
+      "type": "object",
+      "properties": {
+        "app_instance_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "initial_prompt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "$ref": "#/$defs/SessionKind"
+        },
+        "project_id": {
+          "type": "string"
+        },
+        "workspace_revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "app_instance_id",
+        "workspace_revision",
+        "project_id",
+        "kind",
+        "cwd"
+      ]
+    },
+    "DevicePlatform": {
+      "type": "string",
+      "enum": [
+        "ios",
+        "ipados",
+        "macos",
+        "android",
+        "other"
+      ]
+    },
+    "DeviceSummary": {
+      "type": "object",
+      "properties": {
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Capability"
+          }
+        },
+        "connected": {
+          "type": "boolean"
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "last_seen_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "name": {
+          "type": "string"
+        },
+        "platform": {
+          "$ref": "#/$defs/DevicePlatform"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "platform",
+        "capabilities",
+        "connected"
+      ]
+    },
+    "HostSnapshot": {
+      "type": "object",
+      "properties": {
+        "app_instance_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Capability"
+          }
+        },
+        "connection_path": {
+          "$ref": "#/$defs/ConnectionPath"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "app_instance_id",
+        "name",
+        "connection_path",
+        "capabilities"
+      ]
+    },
+    "InterruptTerminal": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "$ref": "#/$defs/TargetRef"
+        },
+        "workspace_revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "target",
+        "workspace_revision"
+      ]
+    },
+    "PairingClaimReceipt": {
+      "type": "object",
+      "properties": {
+        "claim_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "claim_secret": {
+          "type": "string"
+        },
+        "device_name": {
+          "type": "string"
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "public_key_fingerprint": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "claim_id",
+        "claim_secret",
+        "device_name",
+        "public_key_fingerprint",
+        "expires_at"
+      ]
+    },
+    "PairingClaimRequest": {
+      "type": "object",
+      "properties": {
+        "device_name": {
+          "type": "string"
+        },
+        "invitation_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "platform": {
+          "$ref": "#/$defs/DevicePlatform"
+        },
+        "public_key_p256_raw": {
+          "description": "Base64-encoded 65-byte uncompressed SEC1 point for an ECDSA P-256 public key.",
+          "type": "string"
+        },
+        "secret": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "invitation_id",
+        "secret",
+        "device_name",
+        "platform",
+        "public_key_p256_raw"
+      ]
+    },
+    "PairingInvitation": {
+      "type": "object",
+      "properties": {
+        "expires_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "pairing_url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "pairing_url",
+        "expires_at"
+      ]
+    },
+    "PairingStatus": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "const": "pending"
+            }
+          },
+          "required": [
+            "status"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "object",
+              "properties": {
+                "capabilities": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/Capability"
+                  }
+                },
+                "device_id": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              },
+              "required": [
+                "device_id",
+                "capabilities"
+              ]
+            },
+            "status": {
+              "type": "string",
+              "const": "approved"
+            }
+          },
+          "required": [
+            "status",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "const": "rejected"
+            }
+          },
+          "required": [
+            "status"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "const": "expired"
+            }
+          },
+          "required": [
+            "status"
+          ]
+        }
+      ]
+    },
+    "PairingStatusRequest": {
+      "type": "object",
+      "properties": {
+        "claim_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "claim_secret": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "claim_id",
+        "claim_secret"
+      ]
+    },
+    "PaneKind": {
+      "type": "string",
+      "enum": [
+        "terminal",
+        "claude_code",
+        "codex",
+        "notebook",
+        "other"
+      ]
+    },
+    "PaneSnapshot": {
+      "type": "object",
+      "properties": {
+        "active": {
+          "type": "boolean"
+        },
+        "agent_state": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentState"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dimensions": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TerminalDimensions"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/PaneKind"
+        },
+        "quick_inserts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/QuickInsertDescriptor"
+          }
+        },
+        "title": {
+          "type": "string"
+        },
+        "writer_lease": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WriterLeaseSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "kind",
+        "active",
+        "quick_inserts"
+      ]
+    },
+    "ProjectActivity": {
+      "type": "string",
+      "enum": [
+        "working",
+        "done",
+        "needs_attention",
+        "idle",
+        "running_command"
+      ]
+    },
+    "ProjectSnapshot": {
+      "type": "object",
+      "properties": {
+        "active": {
+          "type": "boolean"
+        },
+        "activity": {
+          "$ref": "#/$defs/ProjectActivity"
+        },
+        "id": {
+          "type": "string"
+        },
+        "order": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "tabs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TabSnapshot"
+          }
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "order",
+        "active",
+        "activity",
+        "tabs"
+      ]
+    },
+    "ProtocolError": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/ProtocolErrorCode"
+        },
+        "current_revision": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "message": {
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable"
+      ]
+    },
+    "ProtocolErrorCode": {
+      "type": "string",
+      "enum": [
+        "unauthorized",
+        "capability_denied",
+        "invalid_request",
+        "unsupported_version",
+        "target_gone",
+        "revision_conflict",
+        "writer_lease_held",
+        "stale_quick_insert",
+        "upload_rejected",
+        "rate_limited",
+        "resync_required",
+        "internal"
+      ]
+    },
+    "QuickInsertDescriptor": {
+      "type": "object",
+      "properties": {
+        "configuration_revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/QuickInsertKind"
+        },
+        "label": {
+          "type": "string"
+        },
+        "submits_immediately": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "configuration_revision",
+        "label",
+        "kind",
+        "submits_immediately"
+      ]
+    },
+    "QuickInsertKind": {
+      "type": "string",
+      "enum": [
+        "built_in",
+        "custom"
+      ]
+    },
+    "QuickInsertPreview": {
+      "type": "object",
+      "properties": {
+        "configuration_revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "item_id": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "item_id",
+        "configuration_revision",
+        "text"
+      ]
+    },
+    "QuickInsertPreviewRequest": {
+      "type": "object",
+      "properties": {
+        "configuration_revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "item_id": {
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/TargetRef"
+        },
+        "workspace_revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "target",
+        "workspace_revision",
+        "item_id",
+        "configuration_revision"
+      ]
+    },
+    "QuickInsertSubmit": {
+      "type": "object",
+      "properties": {
+        "configuration_revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "item_id": {
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/TargetRef"
+        },
+        "workspace_revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "target",
+        "workspace_revision",
+        "item_id",
+        "configuration_revision"
+      ]
+    },
+    "RawTerminalInput": {
+      "type": "object",
+      "properties": {
+        "data_base64": {
+          "description": "Base64-encoded PTY bytes for an interactive terminal/TUI.",
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/TargetRef"
+        },
+        "workspace_revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "target",
+        "workspace_revision",
+        "data_base64"
+      ]
+    },
+    "RecentAgentSessionSnapshot": {
+      "type": "object",
+      "properties": {
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "durable_session_id": {
+          "type": "string"
+        },
+        "provider": {
+          "$ref": "#/$defs/AgentProvider"
+        },
+        "started_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "durable_session_id",
+        "provider",
+        "title"
+      ]
+    },
+    "ReleaseWriterLease": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "$ref": "#/$defs/TargetRef"
+        }
+      },
+      "required": [
+        "target"
+      ]
+    },
+    "ResumeSession": {
+      "type": "object",
+      "properties": {
+        "app_instance_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "durable_session_id": {
+          "type": "string"
+        },
+        "project_id": {
+          "type": "string"
+        },
+        "provider": {
+          "$ref": "#/$defs/AgentProvider"
+        },
+        "workspace_revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "app_instance_id",
+        "workspace_revision",
+        "project_id",
+        "provider",
+        "durable_session_id",
+        "cwd"
+      ]
+    },
+    "SelectTarget": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "$ref": "#/$defs/TargetRef"
+        },
+        "workspace_revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "target",
+        "workspace_revision"
+      ]
+    },
+    "ServerEnvelope": {
+      "type": "object",
+      "properties": {
+        "payload": {
+          "$ref": "#/$defs/ServerMessage"
+        },
+        "request_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "sequence": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "version": {
+          "type": "integer",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0
+        }
+      },
+      "required": [
+        "version",
+        "payload"
+      ]
+    },
+    "ServerMessage": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "object",
+              "properties": {
+                "host_name": {
+                  "type": "string"
+                },
+                "supported_versions": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "uint16",
+                    "maximum": 65535,
+                    "minimum": 0
+                  }
+                }
+              },
+              "required": [
+                "supported_versions",
+                "host_name"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "hello"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/Authenticated"
+            },
+            "type": {
+              "type": "string",
+              "const": "authenticated"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "pong"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/WorkspaceSnapshot"
+            },
+            "type": {
+              "type": "string",
+              "const": "snapshot"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/WorkspaceChanged"
+            },
+            "type": {
+              "type": "string",
+              "const": "workspace_changed"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/TerminalSnapshot"
+            },
+            "type": {
+              "type": "string",
+              "const": "terminal_snapshot"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "object",
+              "properties": {
+                "reason": {
+                  "type": "string"
+                },
+                "stream_id": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              },
+              "required": [
+                "stream_id",
+                "reason"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "terminal_stream_closed"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "object",
+              "properties": {
+                "lease": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/WriterLeaseSnapshot"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "target": {
+                  "$ref": "#/$defs/TargetRef"
+                }
+              },
+              "required": [
+                "target"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "writer_lease_changed"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/QuickInsertPreview"
+            },
+            "type": {
+              "type": "string",
+              "const": "quick_insert_preview"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/UploadReady"
+            },
+            "type": {
+              "type": "string",
+              "const": "upload_ready"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/UploadProgress"
+            },
+            "type": {
+              "type": "string",
+              "const": "upload_progress"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/UploadCompleted"
+            },
+            "type": {
+              "type": "string",
+              "const": "upload_completed"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "object",
+              "properties": {
+                "workspace_revision": {
+                  "type": "integer",
+                  "format": "uint64",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "workspace_revision"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "command_accepted"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/ConnectionState"
+            },
+            "type": {
+              "type": "string",
+              "const": "connection_state"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/ProtocolError"
+            },
+            "type": {
+              "type": "string",
+              "const": "error"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        }
+      ]
+    },
+    "SessionKind": {
+      "type": "string",
+      "enum": [
+        "terminal",
+        "claude_code",
+        "codex"
+      ]
+    },
+    "SubmitComposerText": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "$ref": "#/$defs/TargetRef"
+        },
+        "text": {
+          "type": "string"
+        },
+        "workspace_revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "target",
+        "workspace_revision",
+        "text"
+      ]
+    },
+    "TabKind": {
+      "type": "string",
+      "enum": [
+        "terminal",
+        "claude_code",
+        "codex",
+        "notebook",
+        "other"
+      ]
+    },
+    "TabSnapshot": {
+      "type": "object",
+      "properties": {
+        "active": {
+          "type": "boolean"
+        },
+        "activity": {
+          "$ref": "#/$defs/ProjectActivity"
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/TabKind"
+        },
+        "panes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PaneSnapshot"
+          }
+        },
+        "remote_host": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "unread": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "kind",
+        "active",
+        "activity",
+        "unread",
+        "panes"
+      ]
+    },
+    "TargetRef": {
+      "type": "object",
+      "properties": {
+        "app_instance_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "pane_id": {
+          "type": "string"
+        },
+        "project_id": {
+          "type": "string"
+        },
+        "tab_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "app_instance_id",
+        "project_id",
+        "tab_id",
+        "pane_id"
+      ]
+    },
+    "TerminalDimensions": {
+      "type": "object",
+      "properties": {
+        "columns": {
+          "type": "integer",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "rows": {
+          "type": "integer",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0
+        }
+      },
+      "required": [
+        "columns",
+        "rows"
+      ]
+    },
+    "TerminalKey": {
+      "type": "string",
+      "enum": [
+        "escape",
+        "tab",
+        "arrow_up",
+        "arrow_down",
+        "arrow_left",
+        "arrow_right",
+        "control_d",
+        "home",
+        "end",
+        "page_up",
+        "page_down",
+        "delete"
+      ]
+    },
+    "TerminalKeyInput": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "$ref": "#/$defs/TerminalKey"
+        },
+        "target": {
+          "$ref": "#/$defs/TargetRef"
+        },
+        "workspace_revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "target",
+        "workspace_revision",
+        "key"
+      ]
+    },
+    "TerminalResize": {
+      "type": "object",
+      "properties": {
+        "dimensions": {
+          "$ref": "#/$defs/TerminalDimensions"
+        },
+        "target": {
+          "$ref": "#/$defs/TargetRef"
+        },
+        "workspace_revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "target",
+        "workspace_revision",
+        "dimensions"
+      ]
+    },
+    "TerminalSnapshot": {
+      "type": "object",
+      "properties": {
+        "data_base64": {
+          "description": "Base64-encoded raw PTY bytes. Subsequent bytes use binary terminal-output frames.",
+          "type": "string"
+        },
+        "dimensions": {
+          "$ref": "#/$defs/TerminalDimensions"
+        },
+        "stream_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "target": {
+          "$ref": "#/$defs/TargetRef"
+        },
+        "terminal_sequence": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "workspace_revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "target",
+        "stream_id",
+        "workspace_revision",
+        "terminal_sequence",
+        "data_base64",
+        "dimensions"
+      ]
+    },
+    "UploadBegin": {
+      "type": "object",
+      "properties": {
+        "filename": {
+          "type": "string"
+        },
+        "mime": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "target": {
+          "$ref": "#/$defs/TargetRef"
+        },
+        "workspace_revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "target",
+        "workspace_revision",
+        "filename",
+        "mime",
+        "size",
+        "sha256"
+      ]
+    },
+    "UploadCancel": {
+      "type": "object",
+      "properties": {
+        "upload_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "required": [
+        "upload_id"
+      ]
+    },
+    "UploadCommit": {
+      "type": "object",
+      "properties": {
+        "upload_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "required": [
+        "upload_id"
+      ]
+    },
+    "UploadCompleted": {
+      "type": "object",
+      "properties": {
+        "inserted_path": {
+          "type": "string"
+        },
+        "upload_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "required": [
+        "upload_id",
+        "inserted_path"
+      ]
+    },
+    "UploadProgress": {
+      "type": "object",
+      "properties": {
+        "received": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "total": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "upload_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "required": [
+        "upload_id",
+        "received",
+        "total"
+      ]
+    },
+    "UploadReady": {
+      "type": "object",
+      "properties": {
+        "chunk_size": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "upload_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "required": [
+        "upload_id",
+        "chunk_size"
+      ]
+    },
+    "UsageLimitWindowSnapshot": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "resets_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "used_percent": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "label",
+        "used_percent"
+      ]
+    },
+    "UsageSnapshot": {
+      "type": "object",
+      "properties": {
+        "limit_windows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UsageLimitWindowSnapshot"
+          }
+        },
+        "live_plan_gauges_enabled_on_mac": {
+          "type": "boolean"
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provider": {
+          "$ref": "#/$defs/AgentProvider"
+        },
+        "reset_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "source": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/UsageState"
+        },
+        "token_windows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UsageTokenWindowSnapshot"
+          }
+        },
+        "updated_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "used_percent": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "required": [
+        "provider",
+        "state",
+        "limit_windows",
+        "token_windows",
+        "source",
+        "live_plan_gauges_enabled_on_mac"
+      ]
+    },
+    "UsageState": {
+      "type": "string",
+      "enum": [
+        "available",
+        "stale",
+        "unavailable"
+      ]
+    },
+    "UsageTokenWindowSnapshot": {
+      "type": "object",
+      "properties": {
+        "cache_read_tokens": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "cache_write_tokens": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "estimated_cost_usd": {
+          "type": "number",
+          "format": "double"
+        },
+        "input_tokens": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "label": {
+          "type": "string"
+        },
+        "output_tokens": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "label",
+        "input_tokens",
+        "output_tokens",
+        "cache_read_tokens",
+        "cache_write_tokens",
+        "estimated_cost_usd"
+      ]
+    },
+    "WorkspaceChanged": {
+      "type": "object",
+      "properties": {
+        "snapshot": {
+          "$ref": "#/$defs/WorkspaceSnapshot"
+        }
+      },
+      "required": [
+        "snapshot"
+      ]
+    },
+    "WorkspaceSnapshot": {
+      "type": "object",
+      "properties": {
+        "active_target": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TargetRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "host": {
+          "$ref": "#/$defs/HostSnapshot"
+        },
+        "paired_devices": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DeviceSummary"
+          }
+        },
+        "projects": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProjectSnapshot"
+          }
+        },
+        "recent_agent_sessions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RecentAgentSessionSnapshot"
+          }
+        },
+        "revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "sequence": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "usage": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UsageSnapshot"
+          }
+        }
+      },
+      "required": [
+        "revision",
+        "sequence",
+        "host",
+        "projects",
+        "usage",
+        "recent_agent_sessions",
+        "paired_devices"
+      ]
+    },
+    "WriterLeaseSnapshot": {
+      "type": "object",
+      "properties": {
+        "device_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "device_name": {
+          "type": "string"
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "device_id",
+        "device_name",
+        "expires_at"
+      ]
+    }
+  }
+}

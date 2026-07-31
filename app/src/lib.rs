@@ -71,6 +71,8 @@ mod projects;
 mod prompt;
 mod quit_warning;
 mod referral_theme_status;
+#[cfg(feature = "local_fs")]
+mod remote_control;
 #[allow(dead_code)]
 mod remote_server;
 mod resource_limits;
@@ -2191,6 +2193,13 @@ pub(crate) fn initialize_app(
     {
         ctx.add_singleton_model(local_control::LocalControlBridge::new);
         ctx.add_singleton_model(local_control::LocalControlServer::new);
+    }
+    #[cfg(feature = "local_fs")]
+    if matches!(
+        launch_mode,
+        LaunchMode::App { .. } | LaunchMode::Test { .. }
+    ) {
+        remote_control::register(ctx);
     }
 
     app_state

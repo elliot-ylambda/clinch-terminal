@@ -21,7 +21,7 @@ use crate::workspaces::user_profiles::UserProfiles;
 use crate::workspaces::user_workspaces::UserWorkspaces;
 
 pub mod dialog;
-mod qr_code;
+pub(crate) mod qr_code;
 mod style;
 
 // Re-export types from cloud_objects.

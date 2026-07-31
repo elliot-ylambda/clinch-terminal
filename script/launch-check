@@ -8,7 +8,7 @@ set -euo pipefail
 unset RELEASE_NOTES MAKEFLAGS MFLAGS GNUMAKEFLAGS MAKELEVEL MAKEOVERRIDES \
   MAKE_TERMOUT MAKE_TERMERR
 
-for tool in cargo cargo-nextest cargo-deny; do
+for tool in cargo cargo-nextest cargo-deny node corepack; do
   command -v "$tool" >/dev/null 2>&1 || {
     echo "error: $tool is required for the launch gate" >&2
     echo "run ./script/bootstrap and ./script/install_cargo_test_deps first" >&2
@@ -26,6 +26,7 @@ sh -n install.sh
 bash -n \
   uninstall.sh \
   script/assemble-clinch-corresponding-source \
+  script/build-clinch-remote-control-web \
   script/check_license_config_sync \
   script/assemble-clinch-release-stage \
   script/configure-clinch-release-repository \
@@ -43,6 +44,8 @@ bash -n \
   script/verify-clinch-release \
   script/verify-clinch-source-archive \
   script/verify-clinch-release-stage
+/usr/bin/python3 -c \
+  'compile(open("script/generate-clinch-remote-control-notices", encoding="utf-8").read(), "script/generate-clinch-remote-control-notices", "exec")'
 bash -n resources/update/clinch-update-helper
 bash -n tools/agent-resume/*.sh \
   tools/agent-resume/clinch-agent-resume \
@@ -81,6 +84,11 @@ done
 
 echo "==> Stable Clinch build configuration"
 cargo check --locked --bin stable
+
+echo "==> Remote Control protocol and mobile PWA"
+./script/check-clinch-companion-protocol
+./script/build-clinch-remote-control-web
+corepack yarn --cwd web/remote-control test
 
 echo "==> Shipped component tests"
 cargo nextest run --locked -p warp -p warpui -p cli_agent_usage \

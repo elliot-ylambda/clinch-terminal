@@ -159,7 +159,8 @@ impl TerminalView {
         // Enter strategy). If initiation fails, retain a visible error and
         // retry a bounded number of times instead of losing the one-shot.
         #[cfg(feature = "local_tty")]
-        let submitted = self.submit_text_to_cli_agent_pty(AUTO_CONTINUE_PROMPT.to_string(), ctx);
+        let submitted =
+            self.submit_external_text_to_cli_agent_pty(AUTO_CONTINUE_PROMPT.to_string(), ctx);
         #[cfg(not(feature = "local_tty"))]
         let submitted = false;
         if !submitted {

@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use cli_agent_usage::http::{FetchUsage, ReqwestUsage};
 use cli_agent_usage::keychain::{
     acquire_claude_token, should_read_keychain, ClaudeToken, MacKeychain, TokenAcquisition,
@@ -40,6 +40,7 @@ struct ProducerUpdate {
 
 pub struct CliAgentUsageModel {
     latest: UsageSnapshot,
+    last_updated_at: Option<DateTime<Utc>>,
     /// One-shot gesture flag consumed by the producer thread: the user just
     /// clicked Turn on / Authorize, sanctioning one Keychain read even if
     /// macOS will raise its credential prompt for it.
@@ -114,6 +115,7 @@ impl CliAgentUsageModel {
         ctx.spawn_stream_local(rx, Self::on_update, |_, _| {});
         Self {
             latest: UsageSnapshot::default(),
+            last_updated_at: None,
             authorize,
             producer_thread,
             authorization_pending: false,
@@ -147,6 +149,7 @@ impl CliAgentUsageModel {
     pub fn new_for_test() -> Self {
         Self {
             latest: UsageSnapshot::default(),
+            last_updated_at: None,
             authorize: Arc::new(AtomicBool::new(false)),
             producer_thread: None,
             authorization_pending: false,
@@ -174,6 +177,10 @@ impl CliAgentUsageModel {
         &self.latest
     }
 
+    pub fn last_updated_at(&self) -> Option<DateTime<Utc>> {
+        self.last_updated_at
+    }
+
     fn on_update(&mut self, update: ProducerUpdate, ctx: &mut ModelContext<Self>) {
         let pending_changed = update.authorization_attempt_finished && self.authorization_pending;
         if pending_changed {
@@ -198,6 +205,7 @@ impl CliAgentUsageModel {
             return;
         }
         self.latest = snap;
+        self.last_updated_at = Some(Utc::now());
         ctx.emit(CliAgentUsageModelEvent::Updated);
         ctx.notify();
     }

@@ -892,6 +892,27 @@ impl TerminalView {
         text: String,
         ctx: &mut ViewContext<Self>,
     ) -> bool {
+        self.submit_text_to_cli_agent_pty_with_origin(text, true, ctx)
+    }
+
+    /// Submits text produced by Remote Control, a shared-session viewer, or automation without
+    /// representing it as physical input from the Mac's keyboard.
+    #[cfg(feature = "local_tty")]
+    pub(crate) fn submit_external_text_to_cli_agent_pty(
+        &mut self,
+        text: String,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        self.submit_text_to_cli_agent_pty_with_origin(text, false, ctx)
+    }
+
+    #[cfg(feature = "local_tty")]
+    fn submit_text_to_cli_agent_pty_with_origin(
+        &mut self,
+        text: String,
+        is_desktop_input: bool,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
         let Some(agent) = CLIAgentSessionsModel::as_ref(ctx)
             .session(self.view_id)
             .map(|s| s.agent)
@@ -914,7 +935,7 @@ impl TerminalView {
         }
 
         let strategy = rich_input_submit_strategy(agent);
-        self.write_cli_agent_text_then_submit(text_bytes, strategy, ctx);
+        self.write_cli_agent_text_then_submit(text_bytes, strategy, is_desktop_input, ctx);
         true
     }
 
@@ -972,7 +993,7 @@ impl TerminalView {
         }
 
         if images.is_empty() {
-            self.write_cli_agent_text_then_submit(text_bytes, strategy, ctx);
+            self.write_cli_agent_text_then_submit(text_bytes, strategy, true, ctx);
             return;
         }
 
@@ -1028,7 +1049,7 @@ impl TerminalView {
                 if !ok || !me.has_active_cli_agent_input_session(ctx) {
                     return;
                 }
-                me.write_cli_agent_text_then_submit(text_bytes, strategy, ctx);
+                me.write_cli_agent_text_then_submit(text_bytes, strategy, true, ctx);
             },
         );
     }
@@ -1146,6 +1167,7 @@ impl TerminalView {
         &mut self,
         text_bytes: Vec<u8>,
         strategy: RichInputSubmitStrategy,
+        is_desktop_input: bool,
         ctx: &mut ViewContext<Self>,
     ) {
         // This pipeline is only reached with a known, non-empty agent prompt. Mark it directly
@@ -1160,7 +1182,7 @@ impl TerminalView {
             RichInputSubmitStrategy::Inline => {
                 let mut bytes = text_bytes;
                 bytes.extend_from_slice(b"\r");
-                self.write_user_bytes_to_pty(bytes, ctx);
+                self.write_cli_agent_bytes(bytes, is_desktop_input, ctx);
                 self.maybe_close_rich_input_after_submit(ctx);
             }
             RichInputSubmitStrategy::BracketedPaste => {
@@ -1170,16 +1192,16 @@ impl TerminalView {
                 bytes.extend_from_slice(BRACKETED_PASTE_START);
                 bytes.extend_from_slice(&text_bytes);
                 bytes.extend_from_slice(BRACKETED_PASTE_END);
-                self.write_user_bytes_to_pty(bytes, ctx);
-                self.write_user_bytes_to_pty(b"\r".to_vec(), ctx);
+                self.write_cli_agent_bytes(bytes, is_desktop_input, ctx);
+                self.write_cli_agent_bytes(b"\r".to_vec(), is_desktop_input, ctx);
                 self.maybe_close_rich_input_after_submit(ctx);
             }
             RichInputSubmitStrategy::DelayedEnter => {
-                self.write_user_bytes_to_pty(text_bytes, ctx);
+                self.write_cli_agent_bytes(text_bytes, is_desktop_input, ctx);
                 ctx.spawn(
                     Timer::after(CLI_AGENT_PTY_WRITE_DELAY),
                     move |me, _, ctx| {
-                        me.write_user_bytes_to_pty(b"\r".to_vec(), ctx);
+                        me.write_cli_agent_bytes(b"\r".to_vec(), is_desktop_input, ctx);
                         me.maybe_close_rich_input_after_submit(ctx);
                     },
                 );
@@ -1191,15 +1213,28 @@ impl TerminalView {
                 bytes.extend_from_slice(BRACKETED_PASTE_START);
                 bytes.extend_from_slice(&text_bytes);
                 bytes.extend_from_slice(BRACKETED_PASTE_END);
-                self.write_user_bytes_to_pty(bytes, ctx);
+                self.write_cli_agent_bytes(bytes, is_desktop_input, ctx);
                 ctx.spawn(
                     Timer::after(CLI_AGENT_BRACKETED_PASTE_ENTER_DELAY),
                     move |me, _, ctx| {
-                        me.write_user_bytes_to_pty(b"\r".to_vec(), ctx);
+                        me.write_cli_agent_bytes(b"\r".to_vec(), is_desktop_input, ctx);
                         me.maybe_close_rich_input_after_submit(ctx);
                     },
                 );
             }
+        }
+    }
+
+    fn write_cli_agent_bytes(
+        &mut self,
+        bytes: Vec<u8>,
+        is_desktop_input: bool,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        if is_desktop_input {
+            self.write_user_bytes_to_pty(bytes, ctx);
+        } else {
+            self.write_viewer_bytes_to_pty(bytes, ctx);
         }
     }
 

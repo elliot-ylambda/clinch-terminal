@@ -219,6 +219,31 @@ fn derives_codex_fork_command() {
 }
 
 #[test]
+fn remote_resume_command_is_typed_and_rejects_shell_syntax() {
+    assert_eq!(
+        build_remote_resume_command(AgentResumeProvider::Claude, "abc-123").as_deref(),
+        Some("clinch_agent_resume_launch claude abc-123")
+    );
+    assert_eq!(
+        build_remote_resume_command(AgentResumeProvider::Codex, "019a1234-5678").as_deref(),
+        Some("clinch_agent_resume_launch codex 019a1234-5678")
+    );
+    for rejected in [
+        "",
+        "has space",
+        "id;touch-pwned",
+        "$(command)",
+        "../session",
+    ] {
+        assert_eq!(
+            build_remote_resume_command(AgentResumeProvider::Claude, rejected),
+            None,
+            "{rejected}"
+        );
+    }
+}
+
+#[test]
 fn fork_command_carries_launch_flags() {
     assert_eq!(
         derive_fork_command(

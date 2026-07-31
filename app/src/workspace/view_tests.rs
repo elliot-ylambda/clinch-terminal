@@ -801,6 +801,41 @@ fn clinch_settings_keeps_native_settings_actions_dispatchable() {
 }
 
 #[test]
+fn remote_control_header_button_only_shows_in_backend_free_channels() {
+    assert!(should_show_remote_control_button(false));
+    assert!(!should_show_remote_control_button(true));
+}
+
+#[test]
+fn remote_control_header_action_opens_clinch_settings() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        app.update(crate::remote_control::register);
+        let workspace = mock_workspace(&mut app);
+
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.handle_action(
+                &WorkspaceAction::ScrollToSettingsWidget {
+                    page: SettingsSection::Clinch,
+                    widget_id: crate::settings_view::remote_control_setup_widget_id(),
+                },
+                ctx,
+            );
+        });
+
+        workspace.read(&app, |workspace, ctx| {
+            assert_eq!(
+                workspace
+                    .settings_pane
+                    .as_ref(ctx)
+                    .current_settings_section(),
+                SettingsSection::Clinch
+            );
+        });
+    });
+}
+
+#[test]
 fn project_workspaces_in_one_window_open_independent_settings_panes() {
     App::test((), |mut app| async move {
         initialize_app(&mut app);

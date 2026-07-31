@@ -2,15 +2,41 @@ use settings::Setting as _;
 use warpui::platform::WindowStyle;
 use warpui::{App, SingletonEntity, TypedActionView};
 
-use super::{ClinchSettingsPageAction, ClinchSettingsPageView};
+use super::{
+    remote_control_setup_widget_id, ClinchSettingsPageAction, ClinchSettingsPageView,
+    RemoteControlSetupWidget, CLINCH_REMOTE_CONTROL_GUIDE_URL, TAILSCALE_IOS_DOWNLOAD_URL,
+    TAILSCALE_MAC_DOWNLOAD_URL,
+};
 use crate::appearance::Appearance;
 use crate::auth::AuthStateProvider;
 #[cfg(target_os = "macos")]
 use crate::settings::CliAgentUsageSettings;
 use crate::settings::ClinchSettings;
 use crate::settings_view::keybindings::KeybindingChangedNotifier;
+use crate::settings_view::settings_page::SettingsWidget;
 use crate::terminal::session_settings::SessionSettings;
 use crate::test_util::settings::initialize_settings_for_tests;
+
+#[test]
+fn remote_control_setup_widget_has_stable_discovery_metadata() {
+    let widget = RemoteControlSetupWidget::default();
+
+    assert_eq!(remote_control_setup_widget_id(), widget.widget_id());
+    assert!(widget.search_terms().contains("remote control"));
+    assert!(widget.search_terms().contains("tailscale"));
+    assert_eq!(
+        TAILSCALE_MAC_DOWNLOAD_URL,
+        "https://tailscale.com/download/mac"
+    );
+    assert_eq!(
+        TAILSCALE_IOS_DOWNLOAD_URL,
+        "https://tailscale.com/download/ios"
+    );
+    assert_eq!(
+        CLINCH_REMOTE_CONTROL_GUIDE_URL,
+        "https://clinch.sh/remote-control"
+    );
+}
 
 #[test]
 fn agent_status_action_toggles_only_the_clinch_badge_setting() {

@@ -35,6 +35,7 @@ asset_cache = { path = "crates/asset_cache" }
 asset_macro = { path = "crates/asset_macro" }
 channel_versions = { path = "crates/channel_versions", default-features = false }
 cli_agent_usage = { path = "crates/cli_agent_usage" }
+clinch_companion_protocol = { path = "crates/clinch_companion_protocol" }
 command = { path = "crates/command" }
 command-signatures-v2 = { path = "crates/command-signatures-v2" }
 cloud_objects = { path = "crates/cloud_objects" }
@@ -104,7 +105,7 @@ websocket = { path = "crates/websocket" }
 
 # Workspace-level dependencies used by multiple crates. Prefer adding dependencies
 # here to copying-and-pasting versions.
-axum = "0.8.4"
+axum = { version = "0.8.4", features = ["ws"] }
 anyhow = "1.0"
 arboard = { version = "3.6.1", default-features = false }
 arrayvec = "0.7.4"
@@ -210,6 +211,7 @@ opentelemetry-otlp = { version = "0.32.0", default-features = false, features = 
 opentelemetry_sdk = { version = "0.32.1", default-features = false, features = ["trace"] }
 openh264 = "0.8"
 static_assertions = "1.1.0"
+subtle = "2.6"
 url = "2.5.4"
 urlocator = "0.1.4"
 mockall = "0.13.1"
@@ -252,7 +254,7 @@ resvg = "0.47.0"
 rust-embed = { version = "8.7.0", features = ["include-exclude"] }
 rustc-hash = "2.1.1"
 rustls = "0.23.39"
-schemars = { version = "1", features = ["chrono04"] }
+schemars = { version = "1", features = ["chrono04", "uuid1"] }
 sentry = { version = "0.47.0", default-features = false, features = [
   "anyhow",
   "backtrace",
@@ -281,6 +283,7 @@ strum = "0.27"
 strum_macros = "0.27"
 tempfile = "3.8.0"
 thiserror = "2.0.17"
+ts-rs = { version = "12.0.1", features = ["chrono-impl", "no-serde-warnings", "uuid-impl"] }
 tokio = "1.47.1"
 tokio-util = { version = "0.7", features = ["io"] }
 toml_edit = "0.25.5"

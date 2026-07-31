@@ -1,0 +1,70 @@
+#!/usr/bin/env python3
+"""Generate deterministic notices for JavaScript packages present in node_modules."""
+
+import json
+import pathlib
+import sys
+
+
+def fail(message: str) -> None:
+    raise SystemExit(f"Remote Control notice generation failed: {message}")
+
+
+if len(sys.argv) != 3:
+    fail("usage: generate-clinch-remote-control-notices <node_modules> <output>")
+
+node_modules = pathlib.Path(sys.argv[1])
+output = pathlib.Path(sys.argv[2])
+if not node_modules.is_dir():
+    fail(f"missing dependency directory {node_modules}")
+
+packages: dict[tuple[str, str], tuple[str, str]] = {}
+for package_json in sorted(node_modules.rglob("package.json")):
+    if ".cache" in package_json.parts or package_json.parent.name == ".bin":
+        continue
+    try:
+        metadata = json.loads(package_json.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        continue
+    name = metadata.get("name")
+    version = metadata.get("version")
+    if not isinstance(name, str) or not isinstance(version, str):
+        continue
+    license_value = metadata.get("license", "See package license")
+    if isinstance(license_value, dict):
+        license_value = license_value.get("type", "See package license")
+    if not isinstance(license_value, str):
+        license_value = "See package license"
+    license_text = ""
+    for candidate in ("LICENSE", "LICENSE.md", "LICENSE.txt", "COPYING"):
+        path = package_json.parent / candidate
+        if path.is_file():
+            try:
+                license_text = path.read_text(encoding="utf-8", errors="replace").strip()
+            except OSError:
+                pass
+            break
+    packages[(name, version)] = (license_value, license_text)
+
+if not packages:
+    fail("no JavaScript packages were discovered")
+
+parts = [
+    "Clinch Remote Control — JavaScript Third-Party Licenses",
+    "=" * 66,
+    "",
+    "This report is generated from the exact installed dependency tree used to build the PWA.",
+    "",
+]
+for (name, version), (license_value, license_text) in sorted(packages.items()):
+    parts.extend(
+        [
+            f"{name} {version} ({license_value})",
+            "-" * 66,
+            license_text or "The package declares the license above; no standalone license file was present.",
+            "",
+        ]
+    )
+
+output.parent.mkdir(parents=True, exist_ok=True)
+output.write_text("\n".join(parts).rstrip() + "\n", encoding="utf-8")

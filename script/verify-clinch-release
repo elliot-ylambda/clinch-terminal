@@ -110,6 +110,21 @@ verify_app() {
     "$app/Contents/Resources/bin/warp_agent_resume_launch"; do
     [[ -f "$item" ]] || fail "$label omitted ${item#"$app/"}"
   done
+  for item in \
+    "$app/Contents/Resources/remote-control-web/index.html" \
+    "$app/Contents/Resources/remote-control-web/sw.js" \
+    "$app/Contents/Resources/remote-control-web/manifest.webmanifest" \
+    "$app/Contents/Resources/remote-control-web/THIRD_PARTY_LICENSES.txt"; do
+    [[ -s "$item" ]] || fail "$label omitted ${item#"$app/"}"
+  done
+  [[ -z "$(find "$app/Contents/Resources/remote-control-web" -type f -name '*.map' -print -quit)" ]] \
+    || fail "$label bundled Remote Control source maps"
+  grep -Fq '@xterm/xterm' \
+    "$app/Contents/Resources/remote-control-web/THIRD_PARTY_LICENSES.txt" \
+    || fail "$label omitted xterm.js attribution"
+  grep -Fq 'react ' \
+    "$app/Contents/Resources/remote-control-web/THIRD_PARTY_LICENSES.txt" \
+    || fail "$label omitted React attribution"
   [[ -x "$app/Contents/Resources/agent-resume/install.sh" ]] \
     || fail "$label integration manager is not executable"
   for item in \
