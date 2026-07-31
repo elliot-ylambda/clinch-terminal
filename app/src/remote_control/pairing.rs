@@ -16,7 +16,8 @@ use clinch_companion_protocol::{
     PairingStatusRequest, AUTH_CHALLENGE_TTL_SECS, AUTH_SESSION_TTL_SECS,
     DEVICE_INACTIVITY_LIMIT_DAYS, MAX_CONNECTIONS_PER_DEVICE, PAIRING_INVITATION_TTL_SECS,
 };
-use rand::{rngs::OsRng, RngCore as _};
+use rand::rngs::OsRng;
+use rand::RngCore as _;
 use ring::signature;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};

@@ -1,12 +1,14 @@
 //! Main-thread command boundary between the companion gateway and Clinch's UI models.
 
-use std::collections::{hash_map::DefaultHasher, HashMap, HashSet, VecDeque};
+use std::collections::hash_map::DefaultHasher;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher as _};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration as StdDuration, Instant};
 
-use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine as _;
 use chrono::{Duration, Utc};
 use clinch_companion_protocol::{
     AcquireWriterLease, AgentProvider, AgentState, AppInstanceId, AuthSessionId, Capability,
@@ -21,7 +23,8 @@ use clinch_companion_protocol::{
     MAX_IDEMPOTENCY_RESULTS_PER_SESSION, MAX_OPAQUE_ID_BYTES, MAX_PATH_BYTES,
     MAX_TERMINAL_SNAPSHOT_BYTES, MAX_UPLOAD_CHUNK_BYTES, PROTOCOL_VERSION, WRITER_LEASE_TTL_SECS,
 };
-use rand::{rngs::OsRng, RngCore as _};
+use rand::rngs::OsRng;
+use rand::RngCore as _;
 use warpui::{
     AppContext, Entity, EntityId, ModelContext, SingletonEntity, TypedActionView, ViewHandle,
 };

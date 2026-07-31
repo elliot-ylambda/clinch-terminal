@@ -2,6 +2,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use ::settings::{Setting, ToggleableSetting};
+#[cfg(feature = "local_fs")]
+use clinch_companion_protocol::{DeviceId, PairingClaimId};
 use warpui::color::ColorU;
 use warpui::elements::{
     Align, Border, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Element, Empty,
@@ -20,6 +22,8 @@ use super::settings_page::{
 use super::{SettingsSection, ToggleState};
 use crate::appearance::Appearance;
 use crate::drive::sharing::qr_code::{qr_matrix_for_url, QrMatrix, QUIET_ZONE_MODULES};
+#[cfg(feature = "local_fs")]
+use crate::remote_control::{RemoteControlService, RemoteControlStatus};
 use crate::report_if_error;
 use crate::settings::{
     AutoCreateWorktreesForNewTabs, CliAgentUsageSettings, ClinchAutomaticUpdateCheck,
@@ -27,11 +31,6 @@ use crate::settings::{
 };
 use crate::terminal::session_settings::{NotificationsSettings, SessionSettings};
 use crate::ui_components::icons::Icon;
-
-#[cfg(feature = "local_fs")]
-use crate::remote_control::{RemoteControlService, RemoteControlStatus};
-#[cfg(feature = "local_fs")]
-use clinch_companion_protocol::{DeviceId, PairingClaimId};
 
 const TAILSCALE_MAC_DOWNLOAD_URL: &str = "https://tailscale.com/download/mac";
 const TAILSCALE_IOS_DOWNLOAD_URL: &str = "https://tailscale.com/download/ios";

@@ -11,8 +11,7 @@ use std::time::{Duration, Instant};
 
 use axum::body::Body;
 use axum::extract::ws::{close_code, CloseFrame, Message, WebSocket, WebSocketUpgrade};
-use axum::extract::DefaultBodyLimit;
-use axum::extract::{Path as AxumPath, State};
+use axum::extract::{DefaultBodyLimit, Path as AxumPath, State};
 use axum::http::header::{
     ACCEPT, CACHE_CONTROL, CONTENT_SECURITY_POLICY, CONTENT_TYPE, COOKIE, HOST, ORIGIN,
     REFERRER_POLICY, SET_COOKIE, X_CONTENT_TYPE_OPTIONS,

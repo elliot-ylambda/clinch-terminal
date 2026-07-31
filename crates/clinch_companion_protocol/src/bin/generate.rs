@@ -1,4 +1,6 @@
-use std::{error::Error, fs, path::PathBuf};
+use std::error::Error;
+use std::fs;
+use std::path::PathBuf;
 
 use clinch_companion_protocol::{
     AUTH_CHALLENGE_TTL_SECS, AUTH_SESSION_TTL_SECS, BINARY_FRAME_HEADER_BYTES, BINARY_FRAME_MAGIC,
