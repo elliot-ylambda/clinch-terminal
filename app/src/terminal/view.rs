@@ -430,14 +430,15 @@ use crate::terminal::model::ansi::{ClearMode, Handler};
 use crate::terminal::model::block::{
     AgentInteractionMetadata, Block, BlockId, BlockMetadata, LONG_RUNNING_BOTTOM_PADDING_LINES,
 };
-use crate::terminal::model::blockgrid::BlockGrid;
+use crate::terminal::model::blockgrid::{BlockGrid, CursorDisplayPoint};
 use crate::terminal::model::blocks::{
     BlockFilter, BlockHeight, BlockHeightItem, BlockHeightSummary, BlockList, BlockListPoint, Gap,
     RemovableBlocklistItem,
 };
 use crate::terminal::model::bootstrap::BootstrapStage;
 use crate::terminal::model::escape_sequences::{self, EscCodes, ToEscapeSequence, C1};
-use crate::terminal::model::grid::grid_handler::{FragmentBoundary, TermMode};
+use crate::terminal::model::grid::grid_handler::{FragmentBoundary, GridHandler, TermMode};
+use crate::terminal::model::grid::{Dimensions, RespectDisplayedOutput};
 use crate::terminal::model::index::{Point, Side};
 use crate::terminal::model::mouse::MouseState;
 use crate::terminal::model::selection::{SelectAction, SelectionDirection};
@@ -3087,6 +3088,117 @@ fn remote_control_bootstrap_stage_is_visible(stage: BootstrapStage) -> bool {
             | BootstrapStage::ScriptExecution
             | BootstrapStage::PostBootstrapPrecmd
     )
+}
+
+fn remote_control_cursor_escape(
+    terminal_rows: usize,
+    terminal_columns: usize,
+    grid_height: usize,
+    point: Point,
+) -> Option<String> {
+    if terminal_rows == 0 || terminal_columns == 0 {
+        return None;
+    }
+
+    // A block grid is bottom-aligned within the visible terminal. Convert its cursor into an
+    // absolute VT cursor position so future raw PTY frames continue from the same place as the
+    // native terminal. This is especially important for full-screen Codex and Claude Code TUIs:
+    // their next redraw is relative to the cursor captured in this snapshot.
+    let grid_height = grid_height.max(point.row.saturating_add(1));
+    let rows_below_cursor = grid_height.saturating_sub(point.row.saturating_add(1));
+    let screen_row = terminal_rows
+        .saturating_sub(rows_below_cursor.saturating_add(1))
+        .min(terminal_rows - 1);
+    let screen_column = point.col.min(terminal_columns - 1);
+    Some(format!(
+        "\x1b[0m\x1b[{};{}H",
+        screen_row + 1,
+        screen_column + 1
+    ))
+}
+
+fn remote_control_live_grid_snapshot(
+    grid: &GridHandler,
+    terminal_rows: usize,
+    terminal_columns: usize,
+    max_bytes: usize,
+    enter_alternate_screen: bool,
+) -> Vec<u8> {
+    if max_bytes == 0 || grid.visible_rows() == 0 || grid.columns() == 0 {
+        return Vec::new();
+    }
+    // GridHandler's combined row coordinates begin with retained flat-storage history. Alternate
+    // screens can accumulate that history across desktop/mobile resizes even though only the
+    // current viewport is painted. Replaying total_rows() duplicated old TUI redraws and even the
+    // launch command into xterm. Serialize exactly the native viewport instead.
+    let first_visible_row = grid.history_size();
+    let last_visible_row = first_visible_row + grid.visible_rows() - 1;
+    let mut snapshot = Vec::with_capacity(
+        grid.visible_rows()
+            .saturating_mul(grid.columns())
+            .saturating_add(80),
+    );
+    if enter_alternate_screen {
+        snapshot.extend_from_slice(b"\x1b[?1049h");
+    }
+    snapshot.extend_from_slice(b"\x1b[2J\x1b[H");
+    snapshot.extend_from_slice(if grid.is_mode_set(TermMode::APP_CURSOR) {
+        b"\x1b[?1h"
+    } else {
+        b"\x1b[?1l"
+    });
+    snapshot.extend_from_slice(if grid.is_mode_set(TermMode::LINE_WRAP) {
+        b"\x1b[?7h"
+    } else {
+        b"\x1b[?7l"
+    });
+    snapshot.extend_from_slice(if grid.is_mode_set(TermMode::BRACKETED_PASTE) {
+        b"\x1b[?2004h"
+    } else {
+        b"\x1b[?2004l"
+    });
+    // Position every row absolutely. A full-screen CLI can leave WRAPLINE flags behind when the
+    // PTY changes between a wide desktop and a narrow phone; replaying those flags as implicit
+    // line continuation makes xterm join unrelated rows and produces the clipped right-edge text
+    // seen after refresh. Absolute rows reproduce the painted cells, independent of stale wrap
+    // metadata.
+    for (visible_row, grid_row) in (first_visible_row..=last_visible_row).enumerate() {
+        snapshot.extend_from_slice(format!("\x1b[{};1H", visible_row + 1).as_bytes());
+        let contents = grid.bounds_to_string(
+            Point::new(grid_row, 0),
+            Point::new(grid_row, grid.columns() - 1),
+            true,
+            RespectObfuscatedSecrets::Yes,
+            true,
+            RespectDisplayedOutput::No,
+        );
+        // `bounds_to_string` terminates even a single absolute row with CRLF. The next row is
+        // already positioned explicitly, so replaying that terminator is redundant. Worse, when
+        // a row occupies the final column, xterm first performs the pending wrap and then applies
+        // the linefeed. Repeating that through the viewport progressively scrolls and clips a
+        // full-screen Codex/Claude prompt on mobile. Keep the painted cells, but never advance the
+        // replay cursor implicitly between absolute rows.
+        snapshot.extend_from_slice(contents.trim_end_matches(&['\r', '\n'][..]).as_bytes());
+    }
+    let cursor = grid.cursor_render_point();
+    let visible_cursor = Point::new(cursor.row.saturating_sub(first_visible_row), cursor.col);
+    if let Some(cursor_escape) = remote_control_cursor_escape(
+        terminal_rows,
+        terminal_columns,
+        grid.visible_rows(),
+        visible_cursor,
+    ) {
+        snapshot.extend_from_slice(cursor_escape.as_bytes());
+    }
+    snapshot.extend_from_slice(if grid.is_mode_set(TermMode::SHOW_CURSOR) {
+        b"\x1b[?25h"
+    } else {
+        b"\x1b[?25l"
+    });
+    if snapshot.len() > max_bytes {
+        snapshot.drain(..snapshot.len() - max_bytes);
+    }
+    snapshot
 }
 
 impl TerminalView {
@@ -16406,9 +16518,35 @@ impl TerminalView {
         }
 
         let model = self.model.lock();
+        if model.is_alt_screen_active() {
+            return remote_control_live_grid_snapshot(
+                model.alt_screen().grid_handler(),
+                self.size_info.rows(),
+                self.size_info.columns(),
+                max_bytes,
+                true,
+            );
+        }
+
         let mut chunks = VecDeque::new();
         let mut total = 0usize;
         let block_list = model.block_list();
+        let active_block = block_list.active_block();
+        if remote_control_bootstrap_stage_is_visible(active_block.bootstrap_stage())
+            && !active_block.should_hide_block(block_list.agent_view_state())
+            && active_block
+                .output_grid()
+                .grid_handler()
+                .uses_full_grid_clear_behavior()
+        {
+            return remote_control_live_grid_snapshot(
+                active_block.output_grid().grid_handler(),
+                self.size_info.rows(),
+                self.size_info.columns(),
+                max_bytes,
+                false,
+            );
+        }
         for block in block_list.blocks().iter().rev() {
             if !remote_control_bootstrap_stage_is_visible(block.bootstrap_stage())
                 || block.should_hide_block(block_list.agent_view_state())
@@ -16445,9 +16583,46 @@ impl TerminalView {
             }
         }
 
+        let cursor_escape = block_list
+            .blocks()
+            .iter()
+            .rev()
+            .find(|block| {
+                remote_control_bootstrap_stage_is_visible(block.bootstrap_stage())
+                    && !block.should_hide_block(block_list.agent_view_state())
+            })
+            .and_then(|block| {
+                let grid = match block.active_grid_type() {
+                    GridType::Output => block.output_grid(),
+                    _ => block.prompt_and_command_grid(),
+                };
+                let point = match grid.cursor_display_point()? {
+                    CursorDisplayPoint::Visible(point) | CursorDisplayPoint::HiddenCache(point) => {
+                        point
+                    }
+                };
+                remote_control_cursor_escape(
+                    self.size_info.rows(),
+                    self.size_info.columns(),
+                    grid.len_displayed(),
+                    point,
+                )
+            });
+
         let mut snapshot = Vec::with_capacity(total);
         for chunk in chunks {
             snapshot.extend_from_slice(&chunk);
+        }
+        if let Some(cursor_escape) = cursor_escape {
+            let cursor_escape = cursor_escape.as_bytes();
+            let excess = snapshot
+                .len()
+                .saturating_add(cursor_escape.len())
+                .saturating_sub(max_bytes);
+            if excess > 0 {
+                snapshot.drain(..excess.min(snapshot.len()));
+            }
+            snapshot.extend_from_slice(cursor_escape);
         }
         snapshot
     }
@@ -16526,6 +16701,12 @@ impl TerminalView {
         if self.active_viewer_driven_size.take().is_some() {
             self.refresh_size(ctx);
         }
+    }
+
+    /// Re-emits the current PTY size so an already-active shell or full-screen CLI repaints after
+    /// Remote Control subscribes. This changes no dimensions or ownership state.
+    pub(crate) fn remote_control_refresh_size(&mut self, ctx: &mut ViewContext<Self>) {
+        self.refresh_size(ctx);
     }
 
     pub fn colors(&self) -> &color::List {

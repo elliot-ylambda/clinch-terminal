@@ -4,6 +4,7 @@ import type { ClientMessage } from "../generated/types/ClientMessage";
 import type { ConnectionState } from "../generated/types/ConnectionState";
 import type { PaneSnapshot } from "../generated/types/PaneSnapshot";
 import type { ProtocolErrorCode } from "../generated/types/ProtocolErrorCode";
+import type { ProjectBadgeSnapshot } from "../generated/types/ProjectBadgeSnapshot";
 import type { ProjectSnapshot } from "../generated/types/ProjectSnapshot";
 import type { ServerEnvelope } from "../generated/types/ServerEnvelope";
 import type { SessionKind } from "../generated/types/SessionKind";
@@ -11,6 +12,7 @@ import type { TabSnapshot } from "../generated/types/TabSnapshot";
 import type { TargetRef } from "../generated/types/TargetRef";
 import type { TerminalSnapshot } from "../generated/types/TerminalSnapshot";
 import type { WorkspaceSnapshot } from "../generated/types/WorkspaceSnapshot";
+import type { WriterLeaseSnapshot } from "../generated/types/WriterLeaseSnapshot";
 import { MAX_UPLOAD_CHUNK_BYTES } from "../generated/constants";
 import { encodeUploadChunk } from "../protocol/binary";
 import { CompanionClient } from "../protocol/client";
@@ -30,7 +32,7 @@ import {
 } from "../protocol/storage";
 import { clearPairingFragment, takePairingFragment, type PairingFragment } from "../protocol/urls";
 import { TerminalBus } from "../terminal/bus";
-import { TerminalSurface } from "../terminal/TerminalSurface";
+import { TerminalSurface, type TerminalSurfaceHandle } from "../terminal/TerminalSurface";
 
 type BootState = "loading" | "waiting_approval" | "needs_qr" | "ready" | "error";
 type NewSessionMode = "create" | "resume";
@@ -57,6 +59,33 @@ function targetKey(target: TargetRef): string {
   return `${target.app_instance_id}:${target.project_id}:${target.tab_id}:${target.pane_id}`;
 }
 
+const LAST_TARGETS_STORAGE_KEY = "clinch-remote-control:last-target-by-project";
+
+export function parseRememberedTargets(serialized: string | null): Map<string, TargetRef> {
+  if (!serialized) return new Map();
+  try {
+    const candidates = JSON.parse(serialized) as unknown;
+    if (!Array.isArray(candidates)) return new Map();
+    const targets = new Map<string, TargetRef>();
+    for (const candidate of candidates) {
+      if (
+        typeof candidate === "object"
+        && candidate !== null
+        && typeof (candidate as TargetRef).app_instance_id === "string"
+        && typeof (candidate as TargetRef).project_id === "string"
+        && typeof (candidate as TargetRef).tab_id === "string"
+        && typeof (candidate as TargetRef).pane_id === "string"
+      ) {
+        const target = candidate as TargetRef;
+        targets.set(target.project_id, target);
+      }
+    }
+    return targets;
+  } catch {
+    return new Map();
+  }
+}
+
 function targetFor(project: ProjectSnapshot, tab: TabSnapshot, pane: PaneSnapshot, appInstanceId: string): TargetRef {
   return {
     app_instance_id: appInstanceId,
@@ -79,6 +108,20 @@ function firstTarget(snapshot: WorkspaceSnapshot, project?: ProjectSnapshot): Ta
     if (pane) return targetFor(selectedProject, tab, pane, snapshot.host.app_instance_id);
   }
   return undefined;
+}
+
+export function preferredTargetForProject(
+  snapshot: WorkspaceSnapshot,
+  project: ProjectSnapshot,
+  rememberedTarget: TargetRef | undefined,
+): TargetRef | undefined {
+  if (rememberedTarget?.project_id === project.id) {
+    const remembered = resolveTarget(snapshot, rememberedTarget);
+    if (remembered.project?.id === project.id && remembered.pane?.dimensions) {
+      return rememberedTarget;
+    }
+  }
+  return firstTarget(snapshot, project);
 }
 
 function resolveTarget(snapshot: WorkspaceSnapshot | undefined, target: TargetRef | undefined) {
@@ -113,6 +156,29 @@ export function synchronizedSelection(
   return { projectId: preferredProject.id, target: firstTarget(snapshot, preferredProject) };
 }
 
+export function workspaceWithWriterLease(
+  snapshot: WorkspaceSnapshot,
+  target: TargetRef,
+  lease: WriterLeaseSnapshot | null,
+): WorkspaceSnapshot {
+  if (snapshot.host.app_instance_id !== target.app_instance_id) return snapshot;
+  let changed = false;
+  const projects = snapshot.projects.map((project) => {
+    if (project.id !== target.project_id) return project;
+    const tabs = project.tabs.map((tab) => {
+      if (tab.id !== target.tab_id) return tab;
+      const panes = tab.panes.map((pane) => {
+        if (pane.id !== target.pane_id) return pane;
+        changed = true;
+        return { ...pane, writer_lease: lease };
+      });
+      return { ...tab, panes };
+    });
+    return { ...project, tabs };
+  });
+  return changed ? { ...snapshot, projects } : snapshot;
+}
+
 export function shouldResynchronizeWorkspace(code: ProtocolErrorCode): boolean {
   return code === "revision_conflict"
     || code === "target_gone"
@@ -124,32 +190,6 @@ export function isRetryableWorkspaceResponse(response: ServerEnvelope | undefine
   return response?.payload.type === "error"
     && response.payload.data.retryable
     && shouldResynchronizeWorkspace(response.payload.data.code);
-}
-
-export interface TerminalComposerTransition {
-  data: string;
-  mirrored: string;
-}
-
-/**
- * Converts an editable composer value into raw terminal input while keeping the PTY cursor at the
- * end of the mirrored text. Arbitrary mobile autocorrect replacements are handled by erasing the
- * previous value and replaying the new one. Multiline values stay local until explicit submission
- * so pasted newlines can never execute early.
- */
-export function terminalComposerTransition(previous: string, next: string): TerminalComposerTransition {
-  const erasePrevious = "\x7f".repeat(Array.from(previous).length);
-  if (/\r|\n/.test(next)) return { data: erasePrevious, mirrored: "" };
-  if (next.startsWith(previous)) {
-    return { data: next.slice(previous.length), mirrored: next };
-  }
-  if (previous.startsWith(next)) {
-    return {
-      data: "\x7f".repeat(Array.from(previous.slice(next.length)).length),
-      mirrored: next,
-    };
-  }
-  return { data: `${erasePrevious}${next}`, mirrored: next };
 }
 
 function defaultDeviceName(): string {
@@ -171,6 +211,52 @@ function connectionPathLabel(path: WorkspaceSnapshot["host"]["connection_path"] 
   return "Private Tailscale path";
 }
 
+/** Keeps a newly updated web bundle usable for one refresh while an older dev gateway restarts. */
+export function badgesForProject(project: ProjectSnapshot): ProjectBadgeSnapshot {
+  const snapshotBadges = (project as ProjectSnapshot & { badges?: ProjectBadgeSnapshot }).badges;
+  if (snapshotBadges) return snapshotBadges;
+
+  let done = 0;
+  let working = 0;
+  let runningCommands = 0;
+  let hasOtherUnread = false;
+  for (const tab of project.tabs) {
+    const doneInTab = tab.panes.filter((pane) => pane.agent_state === "done").length;
+    working += tab.panes.filter((pane) => pane.agent_state === "working").length;
+    if (tab.unread) done += doneInTab;
+    if (tab.activity === "running_command") runningCommands += 1;
+    if (tab.unread && doneInTab === 0) hasOtherUnread = true;
+  }
+  return {
+    has_other_unread: hasOtherUnread,
+    done,
+    working,
+    running_commands: runningCommands,
+  };
+}
+
+function projectBadgeLabel(project: ProjectSnapshot): string {
+  const badges = badgesForProject(project);
+  const labels = [
+    badges.done > 0 ? `${badges.done} done` : undefined,
+    badges.working > 0 ? `${badges.working} working` : undefined,
+    badges.running_commands > 0 ? `${badges.running_commands} commands running` : undefined,
+    badges.has_other_unread ? "unread activity" : undefined,
+  ].filter(Boolean);
+  return labels.length > 0 ? `${project.title}, ${labels.join(", ")}` : project.title;
+}
+
+function drawerTabActivity(tab: TabSnapshot): { className: string; label: string } | undefined {
+  if (tab.activity === "working") return { className: "working", label: "Working" };
+  if (tab.activity === "done") return { className: "done", label: "Done" };
+  if (tab.activity === "needs_attention") return { className: "done", label: "Needs attention" };
+  if (tab.activity === "running_command") return { className: "command", label: "Command running" };
+  if (tab.kind === "claude_code" || tab.kind === "codex") {
+    return { className: "idle", label: "Idle" };
+  }
+  return undefined;
+}
+
 export function App() {
   const pairingFragment = useRef<PairingFragment | null>(initialPairingFragment);
 
@@ -181,12 +267,24 @@ export function App() {
   const [connection, setConnection] = useState<ConnectionState>("reconnecting");
   const [connectionDetail, setConnectionDetail] = useState<string>();
   const [snapshot, setSnapshot] = useState<WorkspaceSnapshot>();
+  const snapshotRef = useRef<WorkspaceSnapshot | undefined>(undefined);
+  snapshotRef.current = snapshot;
   const [selectedProjectId, setSelectedProjectId] = useState<string>();
   const selectedProjectIdRef = useRef<string | undefined>(undefined);
   selectedProjectIdRef.current = selectedProjectId;
   const [selectedTarget, setSelectedTarget] = useState<TargetRef>();
   const selectedTargetRef = useRef<TargetRef | undefined>(undefined);
   selectedTargetRef.current = selectedTarget;
+  const lastTargetByProject = useRef(new Map<string, TargetRef>());
+  const loadedRememberedTargets = useRef(false);
+  if (!loadedRememberedTargets.current) {
+    loadedRememberedTargets.current = true;
+    try {
+      lastTargetByProject.current = parseRememberedTargets(localStorage.getItem(LAST_TARGETS_STORAGE_KEY));
+    } catch {
+      // Storage can be unavailable in private browser modes; in-memory project history still works.
+    }
+  }
   const [terminalSnapshot, setTerminalSnapshot] = useState<TerminalSnapshot>();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [usageOpen, setUsageOpen] = useState(false);
@@ -197,8 +295,7 @@ export function App() {
   const [newPrompt, setNewPrompt] = useState("");
   const [newResumeId, setNewResumeId] = useState("");
   const [creating, setCreating] = useState(false);
-  const [composer, setComposer] = useState("");
-  const mirroredComposer = useRef("");
+  const [quickInsertBusy, setQuickInsertBusy] = useState(false);
   const [resyncing, setResyncing] = useState(false);
   const [notice, setNotice] = useState<string>();
   const [uploadProgress, setUploadProgress] = useState<number>();
@@ -206,12 +303,24 @@ export function App() {
   const [uploadRetryFile, setUploadRetryFile] = useState<File>();
   const client = useRef<CompanionClient | undefined>(undefined);
   const terminalBus = useMemo(() => new TerminalBus(), []);
+  const terminalSurface = useRef<TerminalSurfaceHandle>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const activeUploadId = useRef<string | undefined>(undefined);
   const uploadCancelled = useRef(false);
   const resyncRequested = useRef(false);
   const creationInFlight = useRef(false);
+  const quickInsertInFlight = useRef(false);
+  const targetSelectionInFlight = useRef<string | undefined>(undefined);
   const autoOpenedProjects = useRef(new Set<string>());
+
+  const rememberTarget = useCallback((target: TargetRef) => {
+    lastTargetByProject.current.set(target.project_id, target);
+    try {
+      localStorage.setItem(LAST_TARGETS_STORAGE_KEY, JSON.stringify([...lastTargetByProject.current.values()]));
+    } catch {
+      // Remembering targets is an optional local convenience, never a connection requirement.
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -280,6 +389,7 @@ export function App() {
       case "snapshot":
         resyncRequested.current = false;
         setResyncing(false);
+        snapshotRef.current = payload.data;
         setSnapshot(payload.data);
         {
           const selection = synchronizedSelection(
@@ -296,8 +406,10 @@ export function App() {
       case "workspace_changed":
         resyncRequested.current = false;
         setResyncing(false);
+        snapshotRef.current = payload.data.snapshot;
         setSnapshot(payload.data.snapshot);
         {
+          const previousTarget = selectedTargetRef.current;
           const selection = synchronizedSelection(
             payload.data.snapshot,
             selectedProjectIdRef.current,
@@ -307,22 +419,47 @@ export function App() {
           selectedTargetRef.current = selection.target;
           setSelectedProjectId(selection.projectId);
           setSelectedTarget(selection.target);
+          if (
+            selection.target
+            && previousTarget
+            && targetKey(previousTarget) !== targetKey(selection.target)
+          ) rememberTarget(selection.target);
         }
         break;
       case "terminal_snapshot":
+        if (
+          selectedTargetRef.current
+          && targetKey(selectedTargetRef.current) === targetKey(payload.data.target)
+        ) {
+          targetSelectionInFlight.current = undefined;
+        }
         setTerminalSnapshot(payload.data);
         break;
       case "terminal_stream_closed":
+        targetSelectionInFlight.current = undefined;
         setNotice(payload.data.reason);
         setTerminalSnapshot(undefined);
+        break;
+      case "writer_lease_changed":
+        if (snapshotRef.current) {
+          const next = workspaceWithWriterLease(
+            snapshotRef.current,
+            payload.data.target,
+            payload.data.lease,
+          );
+          snapshotRef.current = next;
+          setSnapshot(next);
+        }
         break;
       case "command_accepted":
         // Mutation responses carry the new authoritative revision even though the full topology
         // snapshot arrives on the next gateway poll. Advancing it immediately prevents a second
         // exact-target action from being rejected during that short window.
-        setSnapshot((current) => current && payload.data.workspace_revision > current.revision
-          ? { ...current, revision: payload.data.workspace_revision }
-          : current);
+        if (snapshotRef.current && payload.data.workspace_revision > snapshotRef.current.revision) {
+          const next = { ...snapshotRef.current, revision: payload.data.workspace_revision };
+          snapshotRef.current = next;
+          setSnapshot(next);
+        }
         break;
       case "upload_progress":
         if (activeUploadId.current === payload.data.upload_id) {
@@ -337,9 +474,11 @@ export function App() {
         setNotice(`Inserted ${payload.data.inserted_path} without pressing Enter.`);
         break;
       case "connection_state":
+        if (payload.data !== "connected") targetSelectionInFlight.current = undefined;
         setConnection(payload.data);
         break;
       case "error":
+        targetSelectionInFlight.current = undefined;
         if (payload.data.retryable && shouldResynchronizeWorkspace(payload.data.code)) {
           setNotice(undefined);
           setResyncing(true);
@@ -360,7 +499,7 @@ export function App() {
       default:
         break;
     }
-  }, []);
+  }, [rememberTarget]);
 
   useEffect(() => {
     if (boot !== "ready" || !identity?.deviceId) return;
@@ -368,7 +507,10 @@ export function App() {
       connection: (state, detail) => {
         setConnection(state);
         setConnectionDetail(detail);
-        if (state !== "connected") setTerminalSnapshot(undefined);
+        if (state !== "connected") {
+          targetSelectionInFlight.current = undefined;
+          setTerminalSnapshot(undefined);
+        }
       },
       envelope: handleEnvelope,
       terminal: (frame) => terminalBus.emit(frame),
@@ -400,12 +542,18 @@ export function App() {
     ) {
       return;
     }
+    const selectionKey = `${targetKey(selectedTarget)}:${snapshot.revision}`;
+    if (targetSelectionInFlight.current === selectionKey) return;
+    targetSelectionInFlight.current = selectionKey;
     try {
       client.current?.send({
         type: "select_target",
         data: { target: selectedTarget, workspace_revision: snapshot.revision },
       });
     } catch (error) {
+      if (targetSelectionInFlight.current === selectionKey) {
+        targetSelectionInFlight.current = undefined;
+      }
       setNotice(error instanceof Error ? error.message : String(error));
     }
   }, [connection, selectedTarget, snapshot, terminalSnapshot]);
@@ -423,23 +571,27 @@ export function App() {
         }
       }
       if (target) {
+        rememberTarget(target);
         selectedProjectIdRef.current = target.project_id;
         setSelectedProjectId(target.project_id);
       }
       selectedTargetRef.current = target;
+      targetSelectionInFlight.current = undefined;
       setSelectedTarget(target);
       setDrawerOpen(false);
       setTerminalSnapshot(undefined);
     },
-    [selectedTarget],
+    [rememberTarget, selectedTarget],
   );
 
   const acquireLease = useCallback(() => {
-    if (!snapshot || !selectedTarget || connection !== "connected") return;
+    const currentSnapshot = snapshotRef.current ?? snapshot;
+    const currentTarget = selectedTargetRef.current ?? selectedTarget;
+    if (!currentSnapshot || !currentTarget || connection !== "connected") return;
     try {
       client.current?.send({
         type: "acquire_writer_lease",
-        data: { target: selectedTarget, workspace_revision: snapshot.revision },
+        data: { target: currentTarget, workspace_revision: currentSnapshot.revision },
       });
     } catch {
       // Connection state already explains why input is unavailable.
@@ -448,14 +600,15 @@ export function App() {
 
   const sendRawInput = useCallback((data: string): boolean => {
     if (!data) return true;
-    if (!snapshot || !selectedTarget || !canWrite) return false;
-    acquireLease();
+    const currentSnapshot = snapshotRef.current ?? snapshot;
+    const currentTarget = selectedTargetRef.current ?? selectedTarget;
+    if (!currentSnapshot || !currentTarget || !canWrite) return false;
     try {
       client.current?.send({
         type: "raw_terminal_input",
         data: {
-          target: selectedTarget,
-          workspace_revision: snapshot.revision,
+          target: currentTarget,
+          workspace_revision: currentSnapshot.revision,
           data_base64: bytesToBase64(new TextEncoder().encode(data)),
         },
       });
@@ -464,68 +617,30 @@ export function App() {
       setNotice(error instanceof Error ? error.message : String(error));
       return false;
     }
-  }, [acquireLease, canWrite, selectedTarget, snapshot]);
-
-  const mirrorComposer = useCallback((next: string): boolean => {
-    const transition = terminalComposerTransition(mirroredComposer.current, next);
-    if (transition.data && !sendRawInput(transition.data)) return false;
-    mirroredComposer.current = transition.mirrored;
-    return transition.mirrored === next;
-  }, [sendRawInput]);
-
-  const updateComposer = useCallback((next: string) => {
-    setComposer(next);
-    mirrorComposer(next);
-  }, [mirrorComposer]);
-
-  const selectedTargetKey = selectedTarget ? targetKey(selectedTarget) : undefined;
-  useEffect(() => {
-    mirroredComposer.current = "";
-    setComposer("");
-  }, [selectedTargetKey]);
-
-  const sendComposer = useCallback(async () => {
-    if (!snapshot || !selectedTarget || !composer.trim() || !canWrite) return;
-    const text = composer;
-    try {
-      acquireLease();
-      const fullyMirrored = mirrorComposer(text);
-      if (!fullyMirrored && mirroredComposer.current) return;
-      const response = await client.current?.sendAndWait(
-        fullyMirrored
-          ? {
-              type: "raw_terminal_input",
-              data: {
-                target: selectedTarget,
-                workspace_revision: snapshot.revision,
-                data_base64: bytesToBase64(new TextEncoder().encode("\r")),
-              },
-            }
-          : {
-              type: "submit_composer_text",
-              data: { target: selectedTarget, workspace_revision: snapshot.revision, text },
-            },
-      );
-      if (isRetryableWorkspaceResponse(response)) return;
-      if (response?.payload.type === "error") throw new Error(response.payload.data.message);
-      mirroredComposer.current = "";
-      setComposer("");
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : String(error));
-    }
-  }, [acquireLease, canWrite, composer, mirrorComposer, selectedTarget, snapshot]);
+  }, [canWrite, selectedTarget, snapshot]);
 
   const previewQuickInsert = useCallback(
     async (itemId: string, configurationRevision: number) => {
-      if (!snapshot || !selectedTarget || !canWrite) return;
+      const currentSnapshot = snapshotRef.current ?? snapshot;
+      const currentTarget = selectedTargetRef.current ?? selectedTarget;
+      if (
+        quickInsertInFlight.current
+        || !currentSnapshot
+        || !currentTarget
+        || !canWrite
+      ) return;
+      // Keep the native iOS keyboard activation inside the original tap event. The returned text
+      // is pasted through xterm's bracketed-paste-aware path, exactly like direct terminal input.
+      terminalSurface.current?.focus();
+      quickInsertInFlight.current = true;
+      setQuickInsertBusy(true);
       try {
-        if (preferences.oneTapQuickInserts && !mirrorComposer("")) return;
         const request: ClientMessage = preferences.oneTapQuickInserts
           ? {
               type: "quick_insert_submit",
               data: {
-                target: selectedTarget,
-                workspace_revision: snapshot.revision,
+                target: currentTarget,
+                workspace_revision: currentSnapshot.revision,
                 item_id: itemId,
                 configuration_revision: configurationRevision,
               },
@@ -533,8 +648,8 @@ export function App() {
           : {
               type: "quick_insert_preview",
               data: {
-                target: selectedTarget,
-                workspace_revision: snapshot.revision,
+                target: currentTarget,
+                workspace_revision: currentSnapshot.revision,
                 item_id: itemId,
                 configuration_revision: configurationRevision,
               },
@@ -543,16 +658,21 @@ export function App() {
         if (isRetryableWorkspaceResponse(response)) return;
         if (response?.payload.type === "error") throw new Error(response.payload.data.message);
         if (response?.payload.type === "quick_insert_preview") {
-          updateComposer(response.payload.data.text);
-        } else if (preferences.oneTapQuickInserts) {
-          mirroredComposer.current = "";
-          setComposer("");
+          terminalSurface.current?.paste(response.payload.data.text);
         }
       } catch (error) {
         setNotice(error instanceof Error ? error.message : String(error));
+      } finally {
+        quickInsertInFlight.current = false;
+        setQuickInsertBusy(false);
       }
     },
-    [canWrite, mirrorComposer, preferences.oneTapQuickInserts, selectedTarget, snapshot, updateComposer],
+    [
+      canWrite,
+      preferences.oneTapQuickInserts,
+      selectedTarget,
+      snapshot,
+    ],
   );
 
   const runCreation = useCallback(async (message: ClientMessage): Promise<boolean> => {
@@ -734,6 +854,23 @@ export function App() {
     }
   }, []);
 
+  const resizeSelectedTerminal = useCallback((columns: number, rows: number) => {
+    const currentSnapshot = snapshotRef.current ?? snapshot;
+    const target = selectedTargetRef.current ?? selectedTarget;
+    const companion = client.current;
+    if (!currentSnapshot || !target || !companion || connection !== "connected" || !ownsWriterLease) return;
+    void companion.sendAndWait({
+      type: "terminal_resize",
+      data: {
+        target,
+        workspace_revision: currentSnapshot.revision,
+        dimensions: { columns, rows },
+      },
+    }, 5_000).catch(() => {
+      // Resizing is best-effort and must never queue or delay terminal input.
+    });
+  }, [connection, ownsWriterLease, selectedTarget, snapshot]);
+
   if (boot !== "ready") {
     return <PairingScreen state={boot} message={bootMessage} />;
   }
@@ -749,28 +886,52 @@ export function App() {
   return (
     <div className="app-shell">
       <header className="project-strip" aria-label="Projects">
-        <ClinchMark className="wordmark" />
+        <button
+          className="project-drawer-button"
+          aria-label="Open project and tab drawer"
+          aria-expanded={drawerOpen}
+          onClick={() => setDrawerOpen(true)}
+        >
+          <ClinchMark className="wordmark" />
+        </button>
         <div className="project-scroll">
-          {projects.map((project) => (
-            <button
-              className={`project-pill ${project.id === selectedProject?.id ? "active" : ""}`}
-              key={project.id}
-              onClick={() => {
-                if (!snapshot) return;
-                selectedProjectIdRef.current = project.id;
-                setSelectedProjectId(project.id);
-                const target = firstTarget(snapshot, project);
-                if (target) {
-                  selectTarget(target);
-                } else {
-                  selectTarget(undefined);
-                }
-              }}
-            >
-              <span className={`activity-dot ${project.activity}`} />
-              {project.title}
-            </button>
-          ))}
+          {projects.map((project) => {
+            const badges = badgesForProject(project);
+            return (
+              <button
+                aria-label={projectBadgeLabel(project)}
+                className={`project-pill ${project.id === selectedProject?.id ? "active" : ""}`}
+                key={project.id}
+                onClick={() => {
+                  if (project.id === selectedProject?.id) {
+                    setDrawerOpen(true);
+                    return;
+                  }
+                  if (!snapshot) return;
+                  selectedProjectIdRef.current = project.id;
+                  setSelectedProjectId(project.id);
+                  const target = preferredTargetForProject(
+                    snapshot,
+                    project,
+                    lastTargetByProject.current.get(project.id),
+                  );
+                  if (target) {
+                    selectTarget(target);
+                  } else {
+                    selectTarget(undefined);
+                  }
+                }}
+              >
+                <span className="project-badges" aria-hidden="true">
+                  {badges.has_other_unread && <i className="project-unread-dot" />}
+                  {badges.done > 0 && <i className="project-count done">{badges.done}</i>}
+                  {badges.working > 0 && <i className="project-count working">{badges.working}</i>}
+                  {badges.running_commands > 0 && <i className="project-count command">{badges.running_commands}</i>}
+                </span>
+                <span className="project-label">{project.title}</span>
+              </button>
+            );
+          })}
         </div>
         <button
           className="project-add-button"
@@ -778,54 +939,32 @@ export function App() {
           disabled={!selectedProject || connection !== "connected" || creating}
           onClick={() => void createProject()}
         >＋</button>
+        <span
+          className={`header-connection ${connection}`}
+          role="status"
+          aria-label={resyncing ? "Resyncing" : connectionLabels[connection]}
+          title={resyncing ? "Resyncing" : connectionLabels[connection]}
+        ><span className={`activity-dot ${resyncing ? "reconnecting" : connection}`} /></span>
         <button className="icon-button" aria-label="Usage and settings" onClick={() => setUsageOpen(true)}>•••</button>
-      </header>
-
-      <header className="session-header">
-        <button className="icon-button" aria-label="Open project and tab drawer" onClick={() => setDrawerOpen(true)}>☰</button>
-        <div className="target-title">
-          <strong>{selected.tab?.title ?? "Clinch Remote Control"}</strong>
-          <span>{selectedProject?.title ?? snapshot?.host.name ?? "Waiting for Mac"}</span>
-        </div>
-        <div className={`connection-chip ${connection}`} role="status">
-          <span />{resyncing ? "Resyncing" : connectionLabels[connection]}
-        </div>
-        <button
-          className="new-button"
-          disabled={!selectedProject || connection !== "connected" || creating}
-          onClick={() => {
-            if (!selectedProject) return;
-            void createTab(selectedProject.id, "terminal", selectedLocalCwd).catch((error) => {
-              setNotice(error instanceof Error ? error.message : String(error));
-            });
-          }}
-        >{creating ? "Opening…" : "＋ New"}</button>
       </header>
 
       <main className="focus-area">
         {terminalSnapshot ? (
           <TerminalSurface
+            ref={terminalSurface}
             snapshot={terminalSnapshot}
             bus={terminalBus}
             canResize={ownsWriterLease}
             onFocus={acquireLease}
+            onStreamGap={() => {
+              targetSelectionInFlight.current = undefined;
+              setTerminalSnapshot(undefined);
+            }}
             onData={(data) => {
               sendRawInput(data);
             }}
             onResize={(columns, rows) => {
-              if (!snapshot || !selectedTarget || connection !== "connected" || !ownsWriterLease) return;
-              try {
-                client.current?.send({
-                  type: "terminal_resize",
-                  data: {
-                    target: selectedTarget,
-                    workspace_revision: snapshot.revision,
-                    dimensions: { columns, rows },
-                  },
-                });
-              } catch {
-                // Resizing is best-effort and must never queue input.
-              }
+              void resizeSelectedTerminal(columns, rows);
             }}
           />
         ) : (
@@ -845,52 +984,33 @@ export function App() {
         )}
       </main>
 
-      <footer className="composer-shell">
-        {quickInserts.length > 0 && (
+      <footer className="keyboard-accessory" aria-label="Terminal keyboard tools">
+        <input
+          ref={fileInput}
+          id="remote-control-attachment"
+          name="remote-control-attachment"
+          type="file"
+          hidden
+          accept="image/*,.txt,.md,.json,.csv,.pdf,.zip"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (file) void upload(file);
+            event.target.value = "";
+          }}
+        />
+        <div className="keyboard-accessory-row">
+          <button className="attach-button" aria-label="Attach photo or file" disabled={!canWrite || uploadActive} onClick={() => fileInput.current?.click()}>＋</button>
           <div className="quick-inserts" aria-label="Clinch quick inserts">
             {quickInserts.map((item) => (
-              <button key={`${item.id}:${item.configuration_revision}`} onClick={() => void previewQuickInsert(item.id, item.configuration_revision)} disabled={!canWrite}>
+              <button key={`${item.id}:${item.configuration_revision}`} onClick={() => void previewQuickInsert(item.id, item.configuration_revision)} disabled={!canWrite || quickInsertBusy}>
                 {item.label}
               </button>
             ))}
           </div>
-        )}
-        <div className="composer-row">
-          <input
-            ref={fileInput}
-            id="remote-control-attachment"
-            name="remote-control-attachment"
-            type="file"
-            hidden
-            accept="image/*,.txt,.md,.json,.csv,.pdf,.zip"
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (file) void upload(file);
-              event.target.value = "";
-            }}
-          />
-          <button className="attach-button" aria-label="Attach photo or file" disabled={!canWrite || uploadActive} onClick={() => fileInput.current?.click()}>＋</button>
-          <textarea
-            id="remote-control-composer"
-            name="remote-control-composer"
-            value={composer}
-            onChange={(event) => updateComposer(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
-              event.preventDefault();
-              void sendComposer();
-            }}
-            onFocus={acquireLease}
-            placeholder={canWrite ? "Type for this exact session…" : leaseMessage ?? connectionLabels[connection]}
-            aria-label="Command or agent prompt"
-            enterKeyHint="send"
-            disabled={!canWrite}
-            rows={1}
-          />
-          <button className="send-button" onClick={() => void sendComposer()} disabled={!canWrite || !composer.trim()}>Send</button>
+          <button className="keyboard-dismiss" aria-label="Close keyboard" disabled={!terminalSnapshot} onClick={() => terminalSurface.current?.blur()}>⌄</button>
         </div>
         {(leaseMessage || uploadActive || uploadRetryFile) && (
-          <div className="composer-status">
+          <div className="keyboard-status">
             <span>{uploadActive ? `Uploading ${Math.round((uploadProgress ?? 0) * 100)}%` : uploadRetryFile ? `Ready to retry ${uploadRetryFile.name}` : leaseMessage}</span>
             {uploadActive ? (
               <button onClick={cancelUpload}>Cancel</button>
@@ -908,10 +1028,15 @@ export function App() {
             <div className="drawer-heading"><strong>Open sessions</strong><button aria-label="Close drawer" onClick={() => setDrawerOpen(false)}>×</button></div>
             {selectedProject ? (
               <section key={selectedProject.id}>
-                <h2><span className={`activity-dot ${selectedProject.activity}`} />{selectedProject.title}</h2>
-                {selectedProject.tabs.map((tab) => (
+                <h2>{selectedProject.title}</h2>
+                {selectedProject.tabs.map((tab) => {
+                  const activity = drawerTabActivity(tab);
+                  return (
                   <div className="drawer-tab-group" key={tab.id}>
-                    <div className="drawer-tab-meta"><span>{tab.kind.replace("_", " ")}</span>{tab.unread && <i />}</div>
+                    <div className="drawer-tab-meta">
+                      <span>{tab.kind.replace("_", " ")}</span>
+                      {activity && <i className={activity.className} aria-label={activity.label} title={activity.label} />}
+                    </div>
                     {tab.panes.map((pane) => {
                       const target = targetFor(selectedProject, tab, pane, snapshot!.host.app_instance_id);
                       return (
@@ -922,12 +1047,15 @@ export function App() {
                       );
                     })}
                   </div>
-                ))}
+                  );
+                })}
                 {selectedProject.tabs.length === 0 && <p className="muted">No sessions in this project yet.</p>}
               </section>
             ) : <p className="muted">Choose a project to see its sessions.</p>}
             <button className="drawer-new" onClick={() => {
+              setDrawerOpen(false);
               setNewMode("create");
+              setNewKind("terminal");
               setNewCwd(selectedLocalCwd ?? "");
               setNewOpen(true);
             }}>＋ New session</button>
@@ -977,7 +1105,7 @@ export function App() {
             </div>
           ))}
           <label className="preference-row">
-            <span><strong>One-tap quick inserts</strong><small>Off by default. Review text in the composer before Send.</small></span>
+            <span><strong>One-tap quick inserts</strong><small>Off by default. Quick inserts paste into the live prompt; press the keyboard&apos;s Enter to submit.</small></span>
             <input type="checkbox" checked={preferences.oneTapQuickInserts} onChange={(event) => {
               const next = { ...preferences, oneTapQuickInserts: event.target.checked };
               setPreferences(next);
@@ -985,7 +1113,7 @@ export function App() {
             }} />
           </label>
           <p className="privacy-copy">Terminal data travels directly through your tailnet. Clinch has no account, analytics, or hosted relay in this connection.</p>
-          <p className="muted">On iPhone or iPad, use Safari&apos;s Share menu → Add to Home Screen for an app-like launch. Installation is optional.</p>
+          <p className="muted">On iPhone or iPad, use Chrome or Safari&apos;s Share menu → Add to Home Screen, then open the Clinch icon for a full-screen app without browser bars. Installation is optional.</p>
           <a className="connection-help" href="https://clinch.sh/remote-control" target="_blank" rel="noreferrer">Connection help & security guide ↗</a>
           <button className="secondary-wide" onClick={() => {
             client.current?.stop();

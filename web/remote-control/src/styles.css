@@ -14,6 +14,8 @@
   --faint: #5c647d;
   --accent: #bfff00;
   --accent-dim: #212b00;
+  --done-blue: #3780e9;
+  --command-gray: #747987;
   --violet: var(--accent);
   --violet-bright: var(--accent);
   --green: #05df72;
@@ -68,7 +70,7 @@ button:disabled {
 .app-shell {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   width: 100%;
   max-width: 100vw;
   height: 100dvh;
@@ -77,8 +79,7 @@ button:disabled {
   background: var(--background);
 }
 
-.project-strip,
-.session-header {
+.project-strip {
   display: flex;
   align-items: center;
   gap: 9px;
@@ -94,11 +95,6 @@ button:disabled {
   padding: env(safe-area-inset-top) 10px 0;
 }
 
-.session-header {
-  min-height: 55px;
-  padding: 7px 10px;
-}
-
 .wordmark,
 .pairing-mark {
   display: block;
@@ -111,6 +107,24 @@ button:disabled {
   width: 28px;
   height: 28px;
   border-radius: 8px;
+}
+
+.project-drawer-button {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  padding: 2px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+}
+
+.project-drawer-button:active,
+.project-drawer-button[aria-expanded="true"] {
+  border-color: var(--stroke);
+  background: rgba(255, 255, 255, 0.07);
 }
 
 .project-scroll {
@@ -141,13 +155,60 @@ button:disabled {
 .project-pill {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   height: 31px;
   padding: 0 11px;
   border-radius: 9px;
   color: var(--muted);
   font-size: 12px;
   font-weight: 650;
+}
+
+.project-badges {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.project-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.project-unread-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--done-blue);
+}
+
+.project-count {
+  display: inline-flex;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  color: var(--command-gray);
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 750;
+  line-height: 1;
+}
+
+.project-count.done {
+  color: var(--done-blue);
+}
+
+.project-count.working {
+  color: var(--accent);
+}
+
+.project-count.command {
+  color: var(--command-gray);
 }
 
 .project-pill.active {
@@ -199,6 +260,14 @@ button:disabled {
 .activity-dot.error,
 .activity-dot.authorization_revoked {
   background: var(--red);
+}
+
+.header-connection {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 32px;
 }
 
 .icon-button {
@@ -318,7 +387,7 @@ button:disabled {
   scrollbar-width: thin;
 }
 
-.composer-shell {
+.keyboard-accessory {
   min-width: 0;
   overflow: hidden;
   padding: 6px 8px calc(7px + env(safe-area-inset-bottom));
@@ -329,13 +398,11 @@ button:disabled {
 
 .quick-inserts {
   display: flex;
+  flex: 1;
   gap: 6px;
+  min-width: 0;
   overflow-x: auto;
   scrollbar-width: none;
-}
-
-.quick-inserts {
-  margin-bottom: 6px;
 }
 
 .quick-inserts button {
@@ -349,43 +416,15 @@ button:disabled {
   font-weight: 650;
 }
 
-.composer-row {
+.keyboard-accessory-row {
   display: flex;
-  align-items: flex-end;
-  gap: 7px;
-  min-height: 42px;
-  padding: 5px;
-  border: 1px solid var(--stroke-strong);
-  border-radius: 13px;
-  background: var(--raised);
-  box-shadow: inset 0 1px rgba(255, 255, 255, 0.025);
-}
-
-.composer-row:focus-within {
-  border-color: rgba(191, 255, 0, 0.48);
-  box-shadow: 0 0 0 3px rgba(191, 255, 0, 0.08);
-}
-
-.composer-row textarea {
-  flex: 1;
-  min-width: 0;
-  max-height: 106px;
-  padding: 7px 2px 5px;
-  resize: none;
-  border: 0;
-  outline: 0;
-  color: var(--ink);
-  background: transparent;
-  font-size: 13px;
-  line-height: 1.38;
-}
-
-.composer-row textarea::placeholder {
-  color: #707480;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
 }
 
 .attach-button,
-.send-button {
+.keyboard-dismiss {
   display: grid;
   place-items: center;
   flex: 0 0 auto;
@@ -400,15 +439,15 @@ button:disabled {
   font-size: 18px;
 }
 
-.send-button {
-  padding: 0 11px;
-  color: var(--background);
-  background: var(--accent);
-  font-size: 11px;
-  font-weight: 800;
+.keyboard-dismiss {
+  width: 32px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.045);
+  font-size: 18px;
+  line-height: 1;
 }
 
-.composer-status {
+.keyboard-status {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -419,7 +458,7 @@ button:disabled {
   text-align: center;
 }
 
-.composer-status button {
+.keyboard-status button {
   color: var(--violet-bright);
   background: transparent;
   font-size: 9px;
@@ -515,8 +554,17 @@ button:disabled {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--violet);
+  background: var(--command-gray);
+}
+
+.drawer-tab-meta i.working {
+  background: var(--accent);
   box-shadow: 0 0 7px rgba(191, 255, 0, 0.45);
+}
+
+.drawer-tab-meta i.done {
+  background: var(--done-blue);
+  box-shadow: 0 0 7px rgba(55, 128, 233, 0.36);
 }
 
 .drawer-tab-group > button {
@@ -1079,13 +1127,12 @@ button:disabled {
     border-left: 1px solid var(--stroke);
   }
 
-  .project-strip,
-  .session-header {
+  .project-strip {
     padding-right: 16px;
     padding-left: 16px;
   }
 
-  .composer-shell {
+  .keyboard-accessory {
     padding-right: 16px;
     padding-left: 16px;
   }
@@ -1100,15 +1147,7 @@ button:disabled {
 }
 
 @media (max-width: 380px) {
-  .connection-chip {
-    max-width: 72px;
-  }
-
-  .new-button {
-    padding: 0 7px;
-  }
-
-  .session-header {
+  .project-strip {
     gap: 6px;
   }
 }

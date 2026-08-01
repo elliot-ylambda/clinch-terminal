@@ -2,11 +2,15 @@ import { describe, expect, it } from "vitest";
 
 import type { TargetRef } from "../generated/types/TargetRef";
 import type { WorkspaceSnapshot } from "../generated/types/WorkspaceSnapshot";
+import { isSafeTerminalResize } from "../terminal/TerminalSurface";
 import {
+  badgesForProject,
   isRetryableWorkspaceResponse,
+  parseRememberedTargets,
+  preferredTargetForProject,
   shouldResynchronizeWorkspace,
   synchronizedSelection,
-  terminalComposerTransition,
+  workspaceWithWriterLease,
 } from "./App";
 
 const appInstanceId = "11111111-1111-4111-8111-111111111111";
@@ -36,6 +40,7 @@ function workspace(activeTarget: TargetRef): WorkspaceSnapshot {
       order: 0,
       active: true,
       activity: "working",
+      badges: { has_other_unread: true, done: 2, working: 3, running_commands: 4 },
       tabs: [
         {
           id: "tab-a",
@@ -87,6 +92,16 @@ function workspace(activeTarget: TargetRef): WorkspaceSnapshot {
 }
 
 describe("bidirectional workspace selection", () => {
+  it("uses the Mac's desktop-derived project badge counts", () => {
+    const project = workspace(target("tab-b", "pane-b")).projects[0];
+    expect(project && badgesForProject(project)).toEqual({
+      has_other_unread: true,
+      done: 2,
+      working: 3,
+      running_commands: 4,
+    });
+  });
+
   it("follows the Mac's new active target instead of reactivating the phone's stale tab", () => {
     const stalePhoneTarget = target("tab-a", "pane-a");
     const activeMacTarget = target("tab-b", "pane-b");
@@ -97,12 +112,43 @@ describe("bidirectional workspace selection", () => {
     });
   });
 
+  it("restores the last live tab when returning to a project", () => {
+    const activeMacTarget = target("tab-b", "pane-b");
+    const rememberedPhoneTarget = target("tab-a", "pane-a");
+    const snapshot = workspace(activeMacTarget);
+    const project = snapshot.projects[0];
+    expect(project && preferredTargetForProject(snapshot, project, rememberedPhoneTarget))
+      .toEqual(rememberedPhoneTarget);
+
+    const closedTarget = target("tab-closed", "pane-closed");
+    expect(project && preferredTargetForProject(snapshot, project, closedTarget))
+      .toEqual(activeMacTarget);
+  });
+
+  it("persists only valid opaque targets for refresh-safe project memory", () => {
+    const remembered = target("tab-a", "pane-a");
+    expect(parseRememberedTargets(JSON.stringify([remembered, { project_id: "incomplete" }])).get("project"))
+      .toEqual(remembered);
+    expect(parseRememberedTargets("not-json").size).toBe(0);
+  });
+
   it("silently resynchronizes stale workspace navigation errors", () => {
     expect(shouldResynchronizeWorkspace("revision_conflict")).toBe(true);
     expect(shouldResynchronizeWorkspace("target_gone")).toBe(true);
     expect(shouldResynchronizeWorkspace("resync_required")).toBe(true);
     expect(shouldResynchronizeWorkspace("stale_quick_insert")).toBe(true);
     expect(shouldResynchronizeWorkspace("capability_denied")).toBe(false);
+  });
+
+  it("applies a writer lease response immediately without changing workspace revision", () => {
+    const snapshot = workspace(target("tab-b", "pane-b"));
+    const next = workspaceWithWriterLease(snapshot, target("tab-b", "pane-b"), {
+      device_id: "phone",
+      device_name: "iPhone",
+      expires_at: "2026-07-31T18:15:00Z",
+    });
+    expect(next.revision).toBe(snapshot.revision);
+    expect(next.projects[0]?.tabs[1]?.panes[0]?.writer_lease?.device_id).toBe("phone");
   });
 
   it("does not surface a retryable stale-revision response as an action error", () => {
@@ -123,27 +169,10 @@ describe("bidirectional workspace selection", () => {
   });
 });
 
-describe("live terminal composer", () => {
-  it("mirrors suffix typing and backspacing without replaying the full value", () => {
-    expect(terminalComposerTransition("", "codex")).toEqual({ data: "codex", mirrored: "codex" });
-    expect(terminalComposerTransition("codex", "codex resume")).toEqual({
-      data: " resume",
-      mirrored: "codex resume",
-    });
-    expect(terminalComposerTransition("codex", "code")).toEqual({ data: "\x7f", mirrored: "code" });
-  });
-
-  it("replays mobile autocorrect replacements from a known end cursor", () => {
-    expect(terminalComposerTransition("codex", "claude")).toEqual({
-      data: `${"\x7f".repeat(5)}claude`,
-      mirrored: "claude",
-    });
-  });
-
-  it("keeps multiline text local until explicit safe submission", () => {
-    expect(terminalComposerTransition("hello", "hello\nworld")).toEqual({
-      data: "\x7f".repeat(5),
-      mirrored: "",
-    });
+describe("mobile terminal sizing", () => {
+  it("rejects transient startup geometry before it can narrow the Mac PTY", () => {
+    expect(isSafeTerminalResize(2, 36, 12, 900)).toBe(false);
+    expect(isSafeTerminalResize(53, 2, 400, 24)).toBe(false);
+    expect(isSafeTerminalResize(53, 36, 400, 900)).toBe(true);
   });
 });

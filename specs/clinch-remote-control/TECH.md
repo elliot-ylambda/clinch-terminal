@@ -73,7 +73,7 @@ this repo owns the feature contract and in-app links.
    - Add `/remote-control` with setup, pricing caveat, privacy model, network requirements, and
      current availability.
    - Ship a clearly labeled interactive concept with project switching, the grouped tab drawer,
-     the usage/connection sheet, quick-insert preview, and explicit Send behavior. It uses mock
+     the usage/connection sheet, direct terminal typing, and quick-insert preview. It uses mock
      state only and is not the production companion PWA or a terminal data path.
    - Update metadata and structured feature copy only when the corresponding public build ships.
    - Do not route terminal traffic through the public Next.js site.
@@ -147,10 +147,11 @@ this repo owns the feature contract and in-app links.
 13. Build the mobile navigation shell before write access:
     - Horizontal project strip with a fixed, always-visible project-create affordance outside its
       scroll container.
-    - Overlay/pinnable grouped tab drawer.
-    - Focus region with connection/target header.
+    - Overlay current-project session drawer opened from the Clinch mark or active project tab.
+    - Full-height focus region beneath the single project strip, with connection state in that strip.
     - Usage/connection bottom sheet.
-    - Composer/toolbelt geometry and keyboard/safe-area states, disabled in read-only mode.
+    - Touch-native xterm focus plus keyboard-accessory/toolbelt geometry and safe-area states,
+      disabled in read-only mode.
 
 14. Use xterm.js for the first terminal vertical slice because it is mature, MIT-licensed, and
     minimizes time to a usable touch terminal. Feed it ordered PTY/scrollback events through a
@@ -170,6 +171,10 @@ this repo owns the feature contract and in-app links.
       after a WebSocket closes merely to make replay available.
     - On an in-connection sequence gap or terminal receiver overflow, stop accepting input and
       request/reselect an authoritative snapshot instead of presenting stale output as live.
+    - Subscribe to the target PTY before activating its desktop project/tab/pane, then request a
+      same-size repaint after activation. This closes the snapshot-to-stream gap and also makes an
+      already-active idle prompt redraw after a hard refresh without changing terminal ownership or
+      dimensions.
     - Keep input disabled until the target and current snapshot revision are validated.
     - Keep every Rust integer that the browser must echo back at or below JavaScript's largest
       exact integer (`2^53 - 1`). Normalize random workspace seeds and quick-insert configuration
@@ -182,7 +187,9 @@ this repo owns the feature contract and in-app links.
 
 17. Route every mutation through stable project/tab/pane identifiers and revalidate immediately
     before execution. Closing/moving a target returns `target_gone` or `revision_conflict`; there is
-    no “latest terminal” fallback.
+    no “latest terminal” fallback. Keep the last selected opaque target per project in local mobile
+    storage; validate it against each authoritative snapshot before restoring it and fall back to a
+    currently controllable target when it no longer exists.
 
 18. Add one writer lease per pane. Grant it to an authorized phone on focused input, expire it on
     disconnect/inactivity, and allow the desktop to preempt. Broadcast lease state to all viewers.
@@ -205,10 +212,20 @@ this repo owns the feature contract and in-app links.
 
 21. Resolve the effective toolbelt on the Mac and send descriptors with opaque item IDs and a
     configuration revision. A tap sends the item ID/revision back; the Mac re-resolves it and
-    returns preview text. Mirror single-line composer edits to the exact selected PTY using raw
-    terminal input; Enter, Command+Enter, and explicit Send write carriage return. Keep multiline
-    paste local until explicit agent-aware submission. Treat a stale toolbelt revision as an
-    automatic snapshot resync. A per-device one-tap preference remains local to that device.
+    returns preview text. Focus xterm directly from the originating touch event, route its keyboard
+    input to the exact selected PTY, and let the keyboard Enter travel once through that interactive
+    path. Paste preview text through xterm so terminal bracketed-paste mode is honored. Guard each
+    quick-insert activation until its acknowledgement. Reject transient terminal measurements below
+    20 columns, four rows, or a usable container size, deduplicate equal resize reports, and refit
+    after two animation frames so refresh cannot collapse the Mac PTY. Let the resized PTY's live
+    redraw update xterm instead of reselecting the target and replacing a correctly reflowed wide
+    snapshot with a native grid that the CLI may not have repainted yet. Serialize the active
+    alternate-screen grid or mutable CLI-agent primary-screen grid, relevant terminal input modes,
+    and native cursor position when Codex or Claude Code owns the screen. Position serialized rows
+    absolutely and omit implicit linefeeds between them so an exact-width row cannot wrap and scroll
+    later rows. Append the native block-grid cursor to ordinary ANSI-preserving snapshots as well so
+    later relative redraw frames continue at the correct viewport cell. Treat a stale toolbelt
+    revision as an automatic snapshot resync. A per-device one-tap preference remains local.
 
 ### Milestone 4 — attachment pipeline and hardening
 
@@ -292,7 +309,8 @@ flow.
 - Snapshot/event tests for fresh reconnect snapshots, duplicate/reordered/gapped frames, terminal
   overflow fallback, and resync before input (PRODUCT 26, 40–42). Add bounded-buffer eviction tests
   only when retained replay is implemented.
-- Terminal-view tests proving private shell bootstrap stages never enter Remote Control scrollback.
+- Terminal-view tests proving private shell bootstrap stages never enter Remote Control scrollback
+  and snapshot cursors are clamped and restored in the mobile viewport.
 - Workspace tests for project/tab/pane activation, target deletion races, revision conflicts, and the
   invariant that no command falls back to a different target. Cover exact JavaScript-safe revision
   generation and wraparound (PRODUCT 21–23, 29–34).
@@ -307,7 +325,8 @@ flow.
 
 - Playwright component/e2e coverage at representative iPhone and iPad viewports for drawer/focus,
   project overflow, bottom sheet, safe areas, software keyboard geometry, orientation, offline and
-  reconnect states, live composer mirroring, Enter and Command+Enter submission, and reduced motion
+  reconnect states, direct xterm typing, exactly-once Enter, quick-insert paste, safe resize bounds,
+  alternate-screen restoration, per-project target restoration, and reduced motion
   (PRODUCT 19–28, 32, 49).
 - Real-device Safari checks for Add to Home Screen, WebCrypto key persistence, WebSocket suspension,
   clipboard/selection, external keyboard, and clearing website data.

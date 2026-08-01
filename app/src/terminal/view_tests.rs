@@ -66,7 +66,6 @@ use crate::terminal::cli_agent_sessions::{
 use crate::terminal::model::ansi::{self, BootstrappedValue, InitShellValue, PreexecValue};
 use crate::terminal::model::block::AgentViewVisibility;
 use crate::terminal::model::blocks::{insert_block, TotalIndex};
-use crate::terminal::model::grid::Dimensions as _;
 use crate::terminal::model::terminal_model::WithinBlock;
 use crate::terminal::session_settings::{AgentToolbarChipSelection, CLIAgentToolbarChipSelection};
 use crate::terminal::shared_session::shared_handlers::{
@@ -8249,4 +8248,85 @@ fn remote_control_hides_private_shell_bootstrap_stages() {
     assert!(remote_control_bootstrap_stage_is_visible(
         BootstrapStage::PostBootstrapPrecmd
     ));
+}
+
+#[test]
+fn remote_control_restores_the_native_cursor_in_the_mobile_viewport() {
+    assert_eq!(
+        remote_control_cursor_escape(48, 53, 48, Point::new(44, 17)).as_deref(),
+        Some("\x1b[0m\x1b[45;18H")
+    );
+    assert_eq!(
+        remote_control_cursor_escape(48, 53, 2, Point::new(1, 80)).as_deref(),
+        Some("\x1b[0m\x1b[48;53H")
+    );
+    assert_eq!(
+        remote_control_cursor_escape(0, 53, 1, Point::new(0, 0)),
+        None
+    );
+}
+
+#[test]
+fn remote_control_snapshot_restores_alternate_screen_modes() {
+    let grid = GridHandler::new_for_alt_screen_test(2, 3);
+    let snapshot = remote_control_live_grid_snapshot(&grid, 2, 3, 1_000, true);
+    let snapshot = String::from_utf8_lossy(&snapshot);
+
+    assert!(snapshot.starts_with("\x1b[?1049h\x1b[2J\x1b[H"));
+    assert!(snapshot.contains("\x1b[?7h"));
+    assert!(snapshot.contains("\x1b[?2004l"));
+    assert!(snapshot.ends_with("\x1b[?25h"));
+}
+
+#[test]
+fn remote_control_alternate_snapshot_excludes_retained_resize_history() {
+    let mut grid = GridHandler::new_for_test_with_scroll_limit(2, 12, 10);
+    for character in "historical".chars() {
+        grid.input(character);
+    }
+    grid.carriage_return();
+    grid.linefeed();
+    for character in "current-one".chars() {
+        grid.input(character);
+    }
+    grid.carriage_return();
+    grid.linefeed();
+    for character in "current-two".chars() {
+        grid.input(character);
+    }
+    assert!(grid.history_size() > 0);
+
+    let snapshot = remote_control_live_grid_snapshot(&grid, 2, 12, 1_000, true);
+    let snapshot = String::from_utf8_lossy(&snapshot);
+    assert!(!snapshot.contains("historical"));
+    assert!(snapshot.contains("current-one"));
+    assert!(snapshot.contains("current-two"));
+}
+
+#[test]
+fn remote_control_alternate_snapshot_positions_wrapped_rows_independently() {
+    let mut grid = GridHandler::new_for_alt_screen_test(2, 3);
+    for character in "abcdef".chars() {
+        grid.input(character);
+    }
+
+    let snapshot = remote_control_live_grid_snapshot(&grid, 2, 3, 1_000, true);
+    let snapshot = String::from_utf8_lossy(&snapshot);
+    assert!(snapshot.contains("\x1b[1;1Habc\x1b[2;1Hdef"));
+    assert!(!snapshot.contains('\n'));
+}
+
+#[test]
+fn remote_control_primary_cli_snapshot_stays_on_the_primary_screen() {
+    let mut grid = GridHandler::new_for_test_with_scroll_limit(2, 12, 10);
+    grid.enable_full_grid_clear_behavior();
+    for character in "agent prompt".chars() {
+        grid.input(character);
+    }
+
+    let snapshot = remote_control_live_grid_snapshot(&grid, 2, 12, 1_000, false);
+    let snapshot = String::from_utf8_lossy(&snapshot);
+    assert!(snapshot.starts_with("\x1b[2J\x1b[H"));
+    assert!(!snapshot.contains("\x1b[?1049h"));
+    assert!(snapshot.contains("\x1b[1;1Hagent prompt"));
 }

@@ -491,6 +491,15 @@ impl GridHandler {
         self.full_grid_clear_behavior = FullGridClearBehavior::Clear;
     }
 
+    /// Whether this primary-screen grid is being used as a mutable full-screen redraw surface.
+    ///
+    /// CLI agents such as Codex and Claude Code can intentionally stay on the primary screen while
+    /// painting a terminal UI in place. Remote Control needs to snapshot those grids like a screen,
+    /// rather than replaying their logical block scrollback as if it were ordinary command output.
+    pub(in crate::terminal) fn uses_full_grid_clear_behavior(&self) -> bool {
+        self.full_grid_clear_behavior == FullGridClearBehavior::Clear
+    }
+
     pub(crate) fn set_supports_emoji_presentation_selector(
         &mut self,
         supports_emoji_presentation_selector: bool,
