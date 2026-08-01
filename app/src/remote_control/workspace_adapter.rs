@@ -14,15 +14,16 @@ use clinch_companion_protocol::{
     javascript_safe_integer, AcquireWriterLease, AgentProvider, AgentState, AppInstanceId,
     AuthSessionId, Capability, ClientEnvelope, ClientMessage, ConnectionPath, CreateProject,
     CreateSession, HostSnapshot, InterruptTerminal, PaneKind, PaneSnapshot, ProjectActivity,
-    ProjectSnapshot, ProtocolError, ProtocolErrorCode, QuickInsertDescriptor, QuickInsertKind,
-    QuickInsertPreviewRequest, QuickInsertSubmit, RawTerminalInput, RecentAgentSessionSnapshot,
-    RequestId, ResumeSession, ServerEnvelope, ServerMessage, SessionKind, SubmitComposerText,
-    TabKind, TabSnapshot, TargetRef, TerminalDimensions, TerminalKey, TerminalKeyInput,
-    TerminalResize, TerminalSnapshot, TerminalStreamId, UploadBegin, UploadId, UploadReady,
-    UsageLimitWindowSnapshot, UsageSnapshot, UsageState, UsageTokenWindowSnapshot,
-    WorkspaceChanged, WorkspaceSnapshot, WriterLeaseSnapshot, MAX_IDEMPOTENCY_RESULTS_PER_SESSION,
-    MAX_JAVASCRIPT_SAFE_INTEGER, MAX_OPAQUE_ID_BYTES, MAX_PATH_BYTES, MAX_TERMINAL_SNAPSHOT_BYTES,
-    MAX_UPLOAD_CHUNK_BYTES, PROTOCOL_VERSION, WRITER_LEASE_TTL_SECS,
+    ProjectBadgeSnapshot, ProjectSnapshot, ProtocolError, ProtocolErrorCode, QuickInsertDescriptor,
+    QuickInsertKind, QuickInsertPreviewRequest, QuickInsertSubmit, RawTerminalInput,
+    RecentAgentSessionSnapshot, RequestId, ResumeSession, ServerEnvelope, ServerMessage,
+    SessionKind, SubmitComposerText, TabKind, TabSnapshot, TargetRef, TerminalDimensions,
+    TerminalKey, TerminalKeyInput, TerminalResize, TerminalSnapshot, TerminalStreamId, UploadBegin,
+    UploadId, UploadReady, UsageLimitWindowSnapshot, UsageSnapshot, UsageState,
+    UsageTokenWindowSnapshot, WorkspaceChanged, WorkspaceSnapshot, WriterLeaseSnapshot,
+    MAX_IDEMPOTENCY_RESULTS_PER_SESSION, MAX_JAVASCRIPT_SAFE_INTEGER, MAX_OPAQUE_ID_BYTES,
+    MAX_PATH_BYTES, MAX_TERMINAL_SNAPSHOT_BYTES, MAX_UPLOAD_CHUNK_BYTES, PROTOCOL_VERSION,
+    WRITER_LEASE_TTL_SECS,
 };
 use instant::Instant;
 use rand::rngs::OsRng;
@@ -415,6 +416,18 @@ impl WorkspaceAdapter {
             ));
         }
 
+        let stream_id = TerminalStreamId::new();
+        let (data, dimensions, receiver) = resolved.terminal.read(ctx, |terminal, _| {
+            // Subscribe before activating the desktop target. Activating an inactive terminal can
+            // make its shell or full-screen CLI repaint immediately; subscribing afterwards made
+            // that first redraw timing-dependent and occasionally left a restored phone tab blank.
+            // The snapshot is captured before activation, so every subsequent activation byte is
+            // represented exactly once by the stream rather than duplicated in both handoffs.
+            let receiver = terminal.remote_control_pty_reads();
+            let data = terminal.remote_control_scrollback_bytes(MAX_TERMINAL_SNAPSHOT_BYTES);
+            let (columns, rows) = terminal.remote_control_dimensions();
+            (data, TerminalDimensions { columns, rows }, receiver)
+        });
         resolved.project_window.update(ctx, |project_window, ctx| {
             project_window.activate_project(resolved.project_id, ctx);
         });
@@ -427,14 +440,14 @@ impl WorkspaceAdapter {
                 ctx,
             );
         });
-
-        let stream_id = TerminalStreamId::new();
-        let (data, dimensions, receiver) = resolved.terminal.read(ctx, |terminal, _| {
-            let receiver = terminal.remote_control_pty_reads();
-            let data = terminal.remote_control_scrollback_bytes(MAX_TERMINAL_SNAPSHOT_BYTES);
-            let (columns, rows) = terminal.remote_control_dimensions();
-            (data, TerminalDimensions { columns, rows }, receiver)
+        // Selecting the already-active desktop target does not otherwise produce any PTY bytes.
+        // Ask the PTY to repaint at its existing size so a sparse block snapshot (for example an
+        // idle shell prompt) is still visible after a browser refresh. The receiver above is
+        // already active, so this redraw is part of the new stream with no handoff gap.
+        resolved.terminal.update(ctx, |terminal, ctx| {
+            terminal.remote_control_refresh_size(ctx);
         });
+
         let snapshot = TerminalSnapshot {
             target: target.clone(),
             stream_id,
@@ -837,9 +850,9 @@ impl WorkspaceAdapter {
         message: QuickInsertPreviewRequest,
         ctx: &mut ModelContext<Self>,
     ) -> AdapterReply {
-        // Preview only returns text to the composer; it does not write to the PTY. Re-resolve the
-        // exact target but tolerate a harmless topology revision change (for example, immediately
-        // after opening a new tab). Submission remains revision-gated below.
+        // Preview only returns text to the client for an xterm paste; it does not write to the PTY.
+        // Re-resolve the exact target but tolerate a harmless topology revision change (for example,
+        // immediately after opening a new tab). Submission remains revision-gated below.
         let resolved = match self.resolve_valid_target(&message.target, None, ctx) {
             Ok(resolved) => resolved,
             Err(error) => return AdapterReply::envelope(self.target_error(request_id, error)),
@@ -1378,12 +1391,20 @@ impl WorkspaceAdapter {
                         tabs.iter().fold(ProjectActivity::Idle, |activity, tab| {
                             merge_activity(activity, tab.activity.clone())
                         });
+                    let agent_counts = workspace.project_cli_agent_counts(ctx);
                     projects.push(ProjectSnapshot {
                         id: project_id_string,
                         title: nonempty_title(project_title, "New project"),
                         order,
                         active: project_active,
                         activity: project_activity,
+                        badges: ProjectBadgeSnapshot {
+                            has_other_unread: workspace.has_other_unread_project_activity(ctx),
+                            done: u32::try_from(agent_counts.done).unwrap_or(u32::MAX),
+                            working: u32::try_from(agent_counts.working).unwrap_or(u32::MAX),
+                            running_commands: u32::try_from(agent_counts.running_commands)
+                                .unwrap_or(u32::MAX),
+                        },
                         tabs,
                     });
                     order = order.saturating_add(1);

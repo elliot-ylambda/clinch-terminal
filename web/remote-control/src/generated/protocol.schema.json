@@ -940,6 +940,35 @@
         "running_command"
       ]
     },
+    "ProjectBadgeSnapshot": {
+      "type": "object",
+      "properties": {
+        "done": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "has_other_unread": {
+          "type": "boolean"
+        },
+        "running_commands": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "working": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "has_other_unread",
+        "done",
+        "working",
+        "running_commands"
+      ]
+    },
     "ProjectSnapshot": {
       "type": "object",
       "properties": {
@@ -948,6 +977,15 @@
         },
         "activity": {
           "$ref": "#/$defs/ProjectActivity"
+        },
+        "badges": {
+          "$ref": "#/$defs/ProjectBadgeSnapshot",
+          "default": {
+            "done": 0,
+            "has_other_unread": false,
+            "running_commands": 0,
+            "working": 0
+          }
         },
         "id": {
           "type": "string"

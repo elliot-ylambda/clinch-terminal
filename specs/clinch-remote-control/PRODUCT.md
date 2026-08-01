@@ -32,8 +32,8 @@ sessions.
 - Exposing a Mac directly to the public internet or using Tailscale Funnel.
 - Reproducing every desktop setting and panel in the first mobile release.
 - Running anything while the Mac is powered off, asleep, offline, or unable to run Clinch.
-- Shipping photo/file upload in the first control milestone. The design reserves a composer
-  attachment entry point and adds the shared upload pipeline in a later milestone.
+- Shipping photo/file upload in the first control milestone. The design reserves an attachment
+  entry point in the keyboard accessory row and adds the shared upload pipeline later.
 
 ## Figma
 
@@ -127,16 +127,15 @@ tested on iPhone and iPad sizes before the live terminal transport is finalized.
 
 ### Mobile application shell
 
-19. The pairing link opens a responsive web app over private HTTPS. The app can be installed from
-    Safari as a Home Screen app; installing it is optional and the same experience works in a
-    normal browser tab.
+19. The pairing link opens a responsive web app over private HTTPS. It can be installed from
+    Chrome or Safari as a standalone Home Screen app without browser bars; installing it is
+    optional and the same control experience works in a normal browser tab.
 
-20. The primary mobile layout has four stable regions:
-    - A top horizontal project tab strip.
-    - A compact header row with a tab-drawer button, current target/connection state, and a
-      trailing overflow button.
+20. The primary mobile layout has three stable regions:
+    - One top horizontal project tab strip with the Clinch drawer button, project creation,
+      connection state, and trailing overflow action.
     - The selected terminal or agent session as the focus area.
-    - A bottom composer with quick inserts, explicit Send, and an attachment affordance.
+    - A bottom keyboard accessory row with attachment, quick inserts, and keyboard dismissal.
 
 21. The project strip mirrors the Mac’s project order and active project. It scrolls horizontally,
     keeps the selected project visible, and displays the same meaningful working, done, waiting,
@@ -145,9 +144,11 @@ tested on iPhone and iPad sizes before the live terminal transport is finalized.
     Terminal tab; it never creates mobile-only project state. The plus button remains fixed and
     visible when project tabs overflow horizontally.
 
-22. The leading header button opens a left drawer. On phones the drawer overlays the focus area;
-    on wider tablets it may be pinned. Closing it restores focus mode without changing the active
-    project or tab.
+22. The Clinch logo opens the left drawer. Tapping the already-selected project tab opens the same
+    drawer; tapping another project switches projects and restores the last live tab selected in
+    that project. That per-project target is remembered locally across a mobile refresh, but stale
+    opaque IDs safely fall back to the project’s current live tab. On phones the drawer overlays
+    the focus area. Closing it restores focus mode without changing the active project or tab.
 
 23. The drawer shows only tabs and sessions belonging to the currently selected project. It shows
     each tab’s provider/type, title, agent or command status, unread state, and remote-host marker
@@ -168,7 +169,16 @@ tested on iPhone and iPad sizes before the live terminal transport is finalized.
     terminal text selection, links, ANSI color, resize, and follow-output behavior appropriate for
     a touch screen. Clinch does not expose private shell-integration bootstrap input or output to
     the phone, and does not make a new terminal selectable until that bootstrap has completed.
-    Reconnecting does not duplicate or reorder output.
+    Reconnecting does not duplicate or reorder output. A mobile resize rejects transient tiny
+    geometry so it cannot collapse the Mac PTY. After a real resize, live PTY redraws update the
+    already-refit mobile buffer without replacing its complete pre-resize contents with a grid that
+    the CLI has not repainted yet. Every authoritative snapshot restores the native cursor, and when
+    a CLI uses either the terminal’s alternate screen or a mutable primary-screen grid, its current
+    grid and input modes—not merely the shell command that launched it—form that snapshot. Clinch
+    subscribes before activating the target and requests an in-place repaint after selection, so an
+    idle prompt cannot disappear when revisiting a project or hard-refreshing an already-active tab.
+    A hard refresh therefore cannot leave Codex or Claude Code wrapped, cropped, or drawing from the
+    wrong cursor position.
 
 27. When the selected project has no controllable session, mobile creates one Terminal tab in that
     real project exactly once and follows it on both Mac and mobile. The focus area may show a brief
@@ -176,33 +186,32 @@ tested on iPhone and iPad sizes before the live terminal transport is finalized.
     Mac completes creation.
 
 28. The mobile app honors the iPhone/iPad safe area, remains usable when the software keyboard is
-    visible, supports portrait and landscape, and never places Send under a browser or Home Screen
-    gesture area.
+    visible, supports portrait and landscape, and keeps the keyboard accessory row above browser
+    or Home Screen gesture areas.
 
 ### Navigation, session creation, and input
 
-29. The header New action creates a Terminal tab immediately in the selected project, using the
-    current pane directory when available and Clinch’s normal new-tab directory otherwise. The
-    drawer’s advanced New session action can create Terminal, Claude Code, or Codex tabs, optionally
-    override the working directory, include an initial agent prompt, or select a recoverable recent
-    conversation to resume.
+29. The drawer’s New session action defaults to a Terminal tab in the selected project, using the
+    current pane directory when available and Clinch’s normal new-tab directory otherwise. Its
+    advanced sheet can instead create Claude Code or Codex tabs, override the working directory,
+    include an initial agent prompt, or select a recoverable recent conversation to resume.
 
 30. Newly created tabs appear in both desktop and mobile navigation. If creation fails, the mobile
     app leaves the previous target selected and reports the exact failure without creating a
     phantom tab.
 
-31. Mobile input always targets the project, tab, and pane displayed immediately above the
-    composer. If that target closes or changes before submission, Clinch rejects the input and asks
-    the person to select a live target; it never falls back to the newest pane or another provider.
+31. Mobile input always targets the project, tab, and pane backing the visible terminal surface.
+    If that target closes or changes before input, Clinch rejects it and asks the person to select
+    a live target; it never falls back to the newest pane or another provider.
 
-32. Single-line text entry mirrors into the selected desktop terminal as the person types so the
-    phone and Mac show the same in-progress command or agent prompt. Enter, Command+Enter, and the
-    explicit Send action submit it with normal Terminal, Claude Code, or Codex semantics. Multiline
-    paste remains local until explicit submission so embedded newlines cannot execute early.
+32. Tapping the live terminal—or the visible Codex or Claude Code prompt within it—focuses xterm’s
+    native mobile input and opens the software keyboard. Each key is sent directly to the exact PTY
+    so the phone and Mac show the same in-progress text; the keyboard’s Enter submits exactly once
+    with the CLI’s normal interactive semantics. There is no separate mobile text box or Send action.
 
-33. The primary mobile composer stays focused on quick inserts, attachment, text entry, and Send;
-    it does not reserve scarce phone height for a permanent row of terminal-key buttons. The live
-    terminal itself remains available for direct keyboard input when a person needs terminal keys.
+33. A compact row directly above the software keyboard contains attachment, the selected pane’s
+    quick inserts, and a control that dismisses the keyboard. It does not reserve scarce phone
+    height for a separate composer or a permanent row of terminal-key buttons.
 
 34. A pane has at most one remote writer lease. The desktop remains authoritative and can preempt
     the phone. When the phone is read-only or loses the lease, output continues but input controls
@@ -210,13 +219,13 @@ tested on iPhone and iPad sizes before the live terminal transport is finalized.
 
 ### Quick inserts and attachments
 
-35. The row above the composer mirrors the effective Clinch quick-insert/toolbelt configuration
+35. The keyboard accessory row mirrors the effective Clinch quick-insert/toolbelt configuration
     for the selected pane, including built-in actions and custom labels. Changing the configuration
     on the Mac updates the phone without a reload.
 
-36. By default, tapping a quick insert puts its current text into both the composer and selected
-    desktop terminal for review; the person then presses Send. A per-device preference may enable
-    one-tap submission, but Clinch never enables it silently.
+36. By default, tapping a quick insert focuses the live terminal and pastes its current text through
+    xterm’s bracketed-paste-aware input path for review; the person then presses the keyboard’s
+    Enter. A per-device preference may enable one-tap submission, but Clinch never enables it silently.
 
 37. Quick inserts are identified and validated by the Mac at activation time. A stale phone cannot
     invoke a removed or changed action merely by replaying its old label or text. If the toolbelt

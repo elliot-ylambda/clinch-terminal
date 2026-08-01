@@ -293,6 +293,14 @@ pub struct TabSnapshot {
     pub panes: Vec<PaneSnapshot>,
 }
 
+#[derive(Clone, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize, TS)]
+pub struct ProjectBadgeSnapshot {
+    pub has_other_unread: bool,
+    pub done: u32,
+    pub working: u32,
+    pub running_commands: u32,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize, TS)]
 pub struct ProjectSnapshot {
     pub id: String,
@@ -300,6 +308,8 @@ pub struct ProjectSnapshot {
     pub order: u32,
     pub active: bool,
     pub activity: ProjectActivity,
+    #[serde(default)]
+    pub badges: ProjectBadgeSnapshot,
     pub tabs: Vec<TabSnapshot>,
 }
 
