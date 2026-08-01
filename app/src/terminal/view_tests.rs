@@ -8330,3 +8330,34 @@ fn remote_control_primary_cli_snapshot_stays_on_the_primary_screen() {
     assert!(!snapshot.contains("\x1b[?1049h"));
     assert!(snapshot.contains("\x1b[1;1Hagent prompt"));
 }
+
+#[test]
+fn remote_control_primary_snapshot_keeps_cursor_at_the_logical_prompt_end() {
+    let mut model = TerminalModel::mock(None, None);
+    model.precmd(ansi::PrecmdValue {
+        ps1: Some(hex::encode("➜  magister-marketing git:(main) ")),
+        honor_ps1: Some(true),
+        ..Default::default()
+    });
+    model.prompt_marker(ansi::PromptMarker::StartPrompt {
+        kind: ansi::PromptKind::Initial,
+    });
+    model.process_bytes("➜  magister-marketing git:(main) ");
+    model.prompt_marker(ansi::PromptMarker::EndPrompt);
+    model.process_bytes("h");
+
+    let block = model.block_list().active_block();
+    let grid = block.prompt_and_command_grid();
+    let mut snapshot = grid
+        .contents_to_string_force_full_grid_contents(true, Some(1_000))
+        .into_bytes();
+
+    // The tiny test grid wraps this prompt across five native rows. A wider phone will reflow it
+    // back onto fewer rows, so an absolute native row/column cannot represent its mobile cursor.
+    assert_eq!(grid.grid_handler().cursor_render_point(), Point::new(4, 5));
+    remote_control_trim_final_row_terminator(&mut snapshot);
+    assert_eq!(
+        String::from_utf8(snapshot).unwrap(),
+        "➜  magister-marketing git:(main) "
+    );
+}

@@ -1,6 +1,9 @@
 import { expect, test } from "@playwright/test";
 
-async function installPairedPhone(page: import("@playwright/test").Page) {
+async function installPairedPhone(
+  page: import("@playwright/test").Page,
+  initialTerminal: "full-screen" | "wrapped-shell" = "full-screen",
+) {
   await page.goto("/");
   await page.evaluate(async () => {
     const keys = (await crypto.subtle.generateKey(
@@ -37,7 +40,7 @@ async function installPairedPhone(page: import("@playwright/test").Page) {
     db.close();
   });
 
-  await page.addInitScript(() => {
+  await page.addInitScript(({ initialTerminal }) => {
     const originalFetch = window.fetch.bind(window);
     window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input instanceof Request ? input.url : String(input);
@@ -95,6 +98,15 @@ async function installPairedPhone(page: import("@playwright/test").Page) {
       `\x1b[10;1H  Press enter to confirm or esc to go back${" ".repeat(278)}`,
       "\x1b[10;320H\x1b[?25l",
     ].join("");
+    // Mirrors the native primary-screen serializer after it removes its synthetic final CRLF.
+    // At 31 columns this prompt wraps at a different cell than it does in the phone viewport.
+    // Keeping the cursor attached to the logical text end is the regression under test.
+    const wrappedShellSnapshot = "➜  magister-marketing git:(main) ";
+    const bytesToBase64 = (bytes: Uint8Array) => {
+      let binary = "";
+      for (const byte of bytes) binary += String.fromCharCode(byte);
+      return btoa(binary);
+    };
     const snapshot = {
       revision: 7,
       sequence: 0,
@@ -235,6 +247,7 @@ async function installPairedPhone(page: import("@playwright/test").Page) {
       onclose: ((event: CloseEvent) => void) | null = null;
       private sequence = 0;
       private selectAttempts = 0;
+      private terminalSequence = 0;
 
       constructor(_url: string | URL) {
         window.setTimeout(() => {
@@ -290,8 +303,12 @@ async function installPairedPhone(page: import("@playwright/test").Page) {
               stream_id: "55555555-5555-4555-8555-555555555555",
               workspace_revision: snapshot.revision,
               terminal_sequence: 0,
-              data_base64: btoa(wideTerminalSnapshot),
-              dimensions: { columns: 320, rows: 93 },
+              data_base64: bytesToBase64(new TextEncoder().encode(
+                initialTerminal === "wrapped-shell" ? wrappedShellSnapshot : wideTerminalSnapshot,
+              )),
+              dimensions: initialTerminal === "wrapped-shell"
+                ? { columns: 31, rows: 10 }
+                : { columns: 320, rows: 93 },
             },
           }, envelope.request_id);
         } else if (envelope.payload.type === "ping") {
@@ -334,6 +351,11 @@ async function installPairedPhone(page: import("@playwright/test").Page) {
             type: "quick_insert_preview",
             data: { item_id: "qi-1234", configuration_revision: 1, text: "codex" },
           }, envelope.request_id);
+        } else if (envelope.payload.type === "raw_terminal_input" && initialTerminal === "wrapped-shell") {
+          const input = envelope.payload.data as unknown as { data_base64: string };
+          const binary = atob(input.data_base64);
+          this.emitTerminal(Uint8Array.from(binary, (character) => character.charCodeAt(0)));
+          this.emit({ type: "command_accepted", data: { workspace_revision: snapshot.revision } }, envelope.request_id);
         } else {
           this.emit({ type: "command_accepted", data: { workspace_revision: snapshot.revision } }, envelope.request_id);
         }
@@ -351,13 +373,29 @@ async function installPairedPhone(page: import("@playwright/test").Page) {
           data: JSON.stringify({ version: 1, request_id: requestId, sequence: this.sequence, payload }),
         }));
       }
+
+      private emitTerminal(payload: Uint8Array) {
+        this.terminalSequence += 1;
+        const frame = new Uint8Array(32 + payload.length);
+        const view = new DataView(frame.buffer);
+        frame.set([67, 82], 0);
+        view.setUint16(2, 1);
+        frame[4] = 1;
+        frame.set(Uint8Array.from(
+          "55555555555545558555555555555555".match(/.{2}/g) ?? [],
+          (part) => Number.parseInt(part, 16),
+        ), 8);
+        view.setBigUint64(24, BigInt(this.terminalSequence));
+        frame.set(payload, 32);
+        this.onmessage?.(new MessageEvent("message", { data: frame.buffer }));
+      }
     }
 
     Object.defineProperty(window, "WebSocket", {
       configurable: true,
       value: MockWebSocket as unknown as typeof WebSocket,
     });
-  });
+  }, { initialTerminal });
   await page.reload();
 }
 
@@ -609,6 +647,24 @@ test("paired phone exposes projects, drawer, usage, and recent-session resume", 
     scroll: document.documentElement.scrollWidth,
   }));
   expect(dimensions.scroll).toBeLessThanOrEqual(dimensions.client);
+});
+
+test("typing stays after a shell prompt that reflows from a narrower Mac pane", async ({ page }) => {
+  await installPairedPhone(page, "wrapped-shell");
+
+  const terminalInput = page.getByRole("textbox", { name: "Terminal input" });
+  await terminalInput.click();
+  await expect(page.getByText("This phone has control", { exact: true })).toBeVisible();
+  await terminalInput.pressSequentially("hi");
+
+  await expect.poll(() => page.locator(".xterm-rows > div").evaluateAll((rows) => {
+    const visible = rows.map((row) => row.textContent ?? "");
+    const screen = visible.join("");
+    return {
+      correct: Number(screen.includes("➜  magister-marketing git:(main) hi")),
+      overwritten: visible.filter((line) => line.includes("hi➜") || line.includes("himagister-marketing")).length,
+    };
+  })).toEqual({ correct: 1, overwritten: 0 });
 });
 
 test("empty-project focus mode stays centered within a phone viewport", async ({ page }) => {

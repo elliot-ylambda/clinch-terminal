@@ -430,7 +430,7 @@ use crate::terminal::model::ansi::{ClearMode, Handler};
 use crate::terminal::model::block::{
     AgentInteractionMetadata, Block, BlockId, BlockMetadata, LONG_RUNNING_BOTTOM_PADDING_LINES,
 };
-use crate::terminal::model::blockgrid::{BlockGrid, CursorDisplayPoint};
+use crate::terminal::model::blockgrid::BlockGrid;
 use crate::terminal::model::blocks::{
     BlockFilter, BlockHeight, BlockHeightItem, BlockHeightSummary, BlockList, BlockListPoint, Gap,
     RemovableBlocklistItem,
@@ -3115,6 +3115,22 @@ fn remote_control_cursor_escape(
         screen_row + 1,
         screen_column + 1
     ))
+}
+
+fn remote_control_trim_final_row_terminator(snapshot: &mut Vec<u8>) {
+    // `BlockGrid::contents_to_string_*` terminates its final represented row with CRLF even when
+    // the native cursor is sitting directly after that row's last character. Leaving that
+    // synthetic terminator in a primary-screen snapshot moves xterm onto a blank row. Restoring
+    // the native block's absolute row/column instead is also incorrect: when a narrow Mac pane
+    // wrapped the prompt but the phone is wider, that coordinate points back into the prompt and
+    // the first mobile keystrokes overwrite it. Remove exactly the serializer-owned final row
+    // terminator. Xterm then keeps the cursor attached to the logical end of the prompt while it
+    // reflows from the Mac's dimensions to the phone's dimensions.
+    if snapshot.ends_with(b"\r\n") {
+        snapshot.truncate(snapshot.len() - 2);
+    } else if snapshot.ends_with(b"\n") {
+        snapshot.truncate(snapshot.len() - 1);
+    }
 }
 
 fn remote_control_live_grid_snapshot(
@@ -16568,6 +16584,12 @@ impl TerminalView {
             if !bytes.ends_with(b"\n") {
                 bytes.extend_from_slice(b"\r\n");
             }
+            if chunks.is_empty() {
+                // This is the newest visible block and therefore the live primary-screen cursor.
+                // Let xterm derive that cursor from the serialized logical line so its reflow can
+                // carry the cursor across different Mac and phone widths.
+                remote_control_trim_final_row_terminator(&mut bytes);
+            }
 
             let remaining = max_bytes.saturating_sub(total);
             if remaining == 0 {
@@ -16583,46 +16605,9 @@ impl TerminalView {
             }
         }
 
-        let cursor_escape = block_list
-            .blocks()
-            .iter()
-            .rev()
-            .find(|block| {
-                remote_control_bootstrap_stage_is_visible(block.bootstrap_stage())
-                    && !block.should_hide_block(block_list.agent_view_state())
-            })
-            .and_then(|block| {
-                let grid = match block.active_grid_type() {
-                    GridType::Output => block.output_grid(),
-                    _ => block.prompt_and_command_grid(),
-                };
-                let point = match grid.cursor_display_point()? {
-                    CursorDisplayPoint::Visible(point) | CursorDisplayPoint::HiddenCache(point) => {
-                        point
-                    }
-                };
-                remote_control_cursor_escape(
-                    self.size_info.rows(),
-                    self.size_info.columns(),
-                    grid.len_displayed(),
-                    point,
-                )
-            });
-
         let mut snapshot = Vec::with_capacity(total);
         for chunk in chunks {
             snapshot.extend_from_slice(&chunk);
-        }
-        if let Some(cursor_escape) = cursor_escape {
-            let cursor_escape = cursor_escape.as_bytes();
-            let excess = snapshot
-                .len()
-                .saturating_add(cursor_escape.len())
-                .saturating_sub(max_bytes);
-            if excess > 0 {
-                snapshot.drain(..excess.min(snapshot.len()));
-            }
-            snapshot.extend_from_slice(cursor_escape);
         }
         snapshot
     }
