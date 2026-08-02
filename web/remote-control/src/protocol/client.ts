@@ -216,11 +216,19 @@ export class CompanionClient {
   }
 
   private visibilityChanged = (): void => {
-    if (document.visibilityState === "visible" && this.socket?.readyState !== WebSocket.OPEN) {
-      window.clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = undefined;
-      void this.connect();
+    if (document.visibilityState === "visible") {
+      if (this.socket?.readyState !== WebSocket.OPEN) {
+        window.clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = undefined;
+        void this.connect();
+      }
+      return;
     }
+    // A hidden page cannot display the terminal, and a frozen mobile tab would otherwise
+    // linger as a zombie session holding its writer lease. Closing eagerly releases control
+    // and restores desktop sizing the moment the phone is pocketed; becoming visible again
+    // reconnects, and the Mac lets the same device adopt its old lease on the next input.
+    this.socket?.close();
   };
 
   private online = (): void => {
