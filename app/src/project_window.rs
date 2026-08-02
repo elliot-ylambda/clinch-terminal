@@ -152,7 +152,6 @@ const PROJECT_TAB_CLOSE_BUTTON_GAP: f32 = 6.;
 // Preserve enough label space after the symmetric close-button reservation and
 // tab chrome so short directory names do not collapse into an empty clip.
 const PROJECT_TAB_MIN_WIDTH: f32 = 96.;
-const PROJECT_TAB_VERTICAL_NUDGE: f32 = 2.;
 const PROJECT_TAB_VERTICAL_PADDING: f32 = 6.;
 const PROJECT_TAB_BORDER_WIDTH: f32 = 1.;
 const PROJECT_AGENT_COUNT_BADGE_BORDER_WIDTH: f32 = 1.;
@@ -1818,18 +1817,15 @@ impl ProjectWindow {
             vec2f(0., 4.),
         );
 
-        Container::new(
-            Flex::row()
-                .with_main_axis_size(MainAxisSize::Max)
-                .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                .with_child(Shrinkable::new(1., scrollable).finish())
-                .with_child(Container::new(add_button).with_margin_left(4.).finish())
-                .finish(),
-        )
-        // The strip is geometrically centered, but its pills read slightly high
-        // beside the surrounding title-bar controls. Nudge the whole strip down.
-        .with_margin_top(PROJECT_TAB_VERTICAL_NUDGE)
-        .finish()
+        // No vertical margin here: the header row centers its children, and any
+        // asymmetric margin grows the box before centering, which splits the
+        // header's small free space unevenly above and below the pills.
+        Flex::row()
+            .with_main_axis_size(MainAxisSize::Max)
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_child(Shrinkable::new(1., scrollable).finish())
+            .with_child(Container::new(add_button).with_margin_left(4.).finish())
+            .finish()
     }
 
     fn render_horizontal_project_header(&self, app: &AppContext) -> Box<dyn Element> {
