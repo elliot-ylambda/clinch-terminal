@@ -391,18 +391,13 @@ impl AgentToolbarItemKind {
     }
 
     /// Default right-side items for the CLI agent footer.
+    /// The CLI agent footer's right side is empty by default: the working-directory
+    /// and branch chips duplicate what the shell prompt and window chrome already
+    /// show, and the remaining items earned less than the width they cost. Every one
+    /// of them is still offered by `all_available_for_cli_input`, so the configurator
+    /// can put any of them back.
     pub fn cli_default_right() -> Vec<Self> {
-        let mut items = vec![
-            Self::ContextChip(ContextChipKind::WorkingDirectory),
-            Self::ContextChip(ContextChipKind::ShellGitBranch),
-            Self::Settings,
-        ];
-        if FeatureFlag::CreatingSharedSessions.is_enabled()
-            && FeatureFlag::HOARemoteControl.is_enabled()
-        {
-            items.push(Self::ShareSession);
-        }
-        items
+        Vec::new()
     }
 
     /// Default left-side items for the plain terminal footer.

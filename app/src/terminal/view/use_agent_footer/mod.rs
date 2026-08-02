@@ -41,8 +41,7 @@ use warp_core::{report_error, send_telemetry_from_ctx};
 use warp_terminal::model::escape_sequences::{BRACKETED_PASTE_END, BRACKETED_PASTE_START};
 use warpify_footer::{WarpifyFooterView, WarpifyFooterViewEvent};
 use warpui::elements::{
-    Border, ChildView, Container, CrossAxisAlignment, Empty, Expanded, Flex, MainAxisSize,
-    ParentElement,
+    ChildView, Container, CrossAxisAlignment, Empty, Expanded, Flex, MainAxisSize, ParentElement,
 };
 use warpui::keymap::Keystroke;
 use warpui::r#async::Timer;
@@ -71,8 +70,8 @@ use crate::terminal::session_settings::{SessionSettings, SessionSettingsChangedE
 use crate::terminal::shell::ShellType;
 pub use crate::terminal::CLIAgent;
 use crate::terminal::TerminalModel;
+use crate::ui_components::blended_colors;
 use crate::ui_components::icons::Icon;
-use crate::ui_components::{accent_chrome_rule_fill, blended_colors, ACCENT_CHROME_RULE_WIDTH};
 use crate::view_components::action_button::{
     ActionButton, ActionButtonTheme, ButtonSize, KeystrokeSource, TooltipAlignment,
 };
@@ -1667,14 +1666,10 @@ impl View for UseAgentToolbar {
 
         // If a CLI agent is detected, delegate rendering to the CLI agent footer view.
         // Wrap with horizontal padding matching the terminal view padding so the footer
-        // aligns consistently with the input context (which inherits terminal padding). The
-        // subtle accent-colored top rule separates this persistent toolbelt from the agent UI.
+        // aligns consistently with the input context (which inherits terminal padding).
         if self.cli_agent(app).is_some() {
             let mut container = Container::new(ChildView::new(&self.agent_input_footer).finish())
-                .with_horizontal_padding(*super::PADDING_LEFT)
-                .with_border(Border::top(ACCENT_CHROME_RULE_WIDTH).with_border_fill(
-                    accent_chrome_rule_fill(Appearance::as_ref(app).theme().accent()),
-                ));
+                .with_horizontal_padding(*super::PADDING_LEFT);
 
             // Apply the alt screen background on this outer container so it covers
             // the horizontal padding area as well, preventing a visible color mismatch
@@ -1702,9 +1697,6 @@ impl View for UseAgentToolbar {
                 ChildView::new(&self.terminal_mode_footer_action_relay).finish(),
             )
             .with_horizontal_padding(*super::PADDING_LEFT)
-            .with_border(Border::top(ACCENT_CHROME_RULE_WIDTH).with_border_fill(
-                accent_chrome_rule_fill(Appearance::as_ref(app).theme().accent()),
-            ))
             .finish();
         }
 

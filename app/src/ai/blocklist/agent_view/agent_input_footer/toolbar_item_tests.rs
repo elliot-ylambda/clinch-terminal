@@ -237,14 +237,34 @@ fn cli_default_left_includes_expected_quick_inserts() {
 }
 
 #[test]
-fn cli_default_places_remote_control_at_the_end_of_the_right_side() {
+fn cli_default_right_side_is_empty_even_with_remote_control_enabled() {
     let _creating_shared_sessions = FeatureFlag::CreatingSharedSessions.override_enabled(true);
     let _remote_control = FeatureFlag::HOARemoteControl.override_enabled(true);
     let left = AgentToolbarItemKind::cli_default_left();
     let right = AgentToolbarItemKind::cli_default_right();
 
+    // The feature flags must not reintroduce a right-side item; the defaults are
+    // empty regardless, and nothing migrated to the left side either.
+    assert!(right.is_empty());
     assert!(!left.contains(&AgentToolbarItemKind::ShareSession));
-    assert_eq!(right.last(), Some(&AgentToolbarItemKind::ShareSession));
+    assert!(!left.contains(&AgentToolbarItemKind::Settings));
+}
+
+#[test]
+fn cli_configurator_still_offers_the_removed_right_side_items() {
+    let _creating_shared_sessions = FeatureFlag::CreatingSharedSessions.override_enabled(true);
+    let _remote_control = FeatureFlag::HOARemoteControl.override_enabled(true);
+    let available = AgentToolbarItemKind::all_available_for_cli_input();
+
+    // Dropping them from the defaults must not make them unreachable.
+    assert!(available.contains(&AgentToolbarItemKind::Settings));
+    assert!(available.contains(&AgentToolbarItemKind::ShareSession));
+    assert!(available.contains(&AgentToolbarItemKind::ContextChip(
+        ContextChipKind::WorkingDirectory
+    )));
+    assert!(available.contains(&AgentToolbarItemKind::ContextChip(
+        ContextChipKind::ShellGitBranch
+    )));
 }
 
 #[test]
