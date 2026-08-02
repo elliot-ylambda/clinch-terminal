@@ -135,7 +135,8 @@ tested on iPhone and iPad sizes before the live terminal transport is finalized.
     - One top horizontal project tab strip with the Clinch drawer button, project creation,
       connection state, and trailing overflow action.
     - The selected terminal or agent session as the focus area.
-    - A bottom keyboard accessory row with attachment, quick inserts, and keyboard dismissal.
+    - A bottom keyboard accessory with attachment, quick inserts, keyboard dismissal, and compact
+      Esc, Tab, and directional-key controls.
 
 21. The project strip mirrors the Mac’s project order and active project. It scrolls horizontally,
     keeps the selected project visible, and displays the same meaningful working, done, waiting,
@@ -209,9 +210,9 @@ tested on iPhone and iPad sizes before the live terminal transport is finalized.
     so the phone and Mac show the same in-progress text; the keyboard’s Enter submits exactly once
     with the CLI’s normal interactive semantics. There is no separate mobile text box or Send action.
 
-33. A compact row directly above the software keyboard contains attachment, the selected pane’s
-    quick inserts, and a control that dismisses the keyboard. It does not reserve scarce phone
-    height for a separate composer or a permanent row of terminal-key buttons.
+33. A compact accessory directly above the software keyboard contains attachment, the selected
+    pane’s quick inserts, a control that dismisses the keyboard, and a second small row for Esc,
+    Tab, Left, Up, Down, and Right. It does not reserve scarce phone height for a separate composer.
 
 34. A pane has at most one remote writer lease. The desktop remains authoritative and can preempt
     the phone. When the phone is read-only or loses the lease, output continues but input controls
@@ -223,9 +224,9 @@ tested on iPhone and iPad sizes before the live terminal transport is finalized.
     for the selected pane, including built-in actions and custom labels. Changing the configuration
     on the Mac updates the phone without a reload.
 
-36. By default, tapping a quick insert focuses the live terminal and pastes its current text through
-    xterm’s bracketed-paste-aware input path for review; the person then presses the keyboard’s
-    Enter. A per-device preference may enable one-tap submission, but Clinch never enables it silently.
+36. Tapping a quick insert submits it immediately and exactly once to the visible target. The Mac
+    re-resolves the opaque item and uses the same provider-aware submission path for Terminal,
+    Claude Code, and Codex; the phone never reconstructs or separately sends the command text.
 
 37. Quick inserts are identified and validated by the Mac at activation time. A stale phone cannot
     invoke a removed or changed action merely by replaying its old label or text. If the toolbelt
