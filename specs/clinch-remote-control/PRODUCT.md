@@ -44,21 +44,21 @@ tested on iPhone and iPad sizes before the live terminal transport is finalized.
 
 ### Desktop discovery and setup
 
-1. Every backend-free Clinch window displays a phone-shaped **Remote Control** affordance in the
-   right side of its header. It remains visible whether the person uses horizontal or vertical
-   tabs and does not depend on a signed-in Warp account.
+1. Every backend-free Clinch window displays a phone-shaped **Remotely Control Clinch on Mobile!**
+   affordance in the right side of its header. It remains visible whether the person uses
+   horizontal or vertical tabs and does not depend on a signed-in Warp account.
 
-2. Hovering or focusing the affordance identifies it as “Remote Control” and explains that it
-   connects a phone to this Mac. The affordance has an accessible name and a keyboard-reachable
-   click target.
+2. With no live companion connection, hovering or focusing the affordance explains that it connects
+   a phone to this Mac. While one or more companions are connected, the button changes to a compact
+   green-dot status such as **iPhone connected**, using the most recently seen live device. The
+   affordance has an accessible name and a keyboard-reachable click target.
 
 3. Activating the affordance opens **Clinch Settings** with **Remote Control** as the first visible
    section. Opening the same page from the normal settings menu produces the same section and
    setup state.
 
-4. Before live pairing ships, the header affordance and settings section are labeled Preview and
-   clearly say that pairing is not yet available in that build. No disabled or unfinished control
-   is described as connected or ready.
+4. The settings section remains labeled Preview while the feature is being validated. The header
+   describes a device as connected only while that device has a live authenticated connection.
 
 5. The setup section explains, before the person opts in, that:
    - Tailscale must be installed and signed in on both the Mac and phone.
