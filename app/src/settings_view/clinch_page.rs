@@ -1,5 +1,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
+#[cfg(feature = "local_fs")]
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use ::settings::{Setting, ToggleableSetting};
 #[cfg(feature = "local_fs")]
@@ -37,6 +39,12 @@ use crate::ui_components::icons::Icon;
 const TAILSCALE_MAC_DOWNLOAD_URL: &str = "https://tailscale.com/download/mac";
 const TAILSCALE_IOS_DOWNLOAD_URL: &str = "https://tailscale.com/download/ios";
 const CLINCH_REMOTE_CONTROL_GUIDE_URL: &str = "https://clinch.sh/remote-control";
+
+#[cfg(feature = "local_fs")]
+fn remote_control_browser_url(remote_url: &str, refresh_nonce: u128) -> String {
+    let separator = if remote_url.contains('?') { '&' } else { '?' };
+    format!("{remote_url}{separator}clinch_refresh={refresh_nonce}")
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ClinchSettingsPageAction {
@@ -291,6 +299,8 @@ struct RemoteControlSetupWidget {
     pair_mouse_state: MouseStateHandle,
     retry_mouse_state: MouseStateHandle,
     revoke_all_mouse_state: MouseStateHandle,
+    copy_browser_link_mouse_state: MouseStateHandle,
+    open_browser_mouse_state: MouseStateHandle,
     copy_link_mouse_state: MouseStateHandle,
     browser_pairing_mouse_state: MouseStateHandle,
     cancel_pairing_mouse_state: MouseStateHandle,
@@ -899,12 +909,31 @@ impl RemoteControlSetupWidget {
                 self.retry_mouse_state.clone(),
                 appearance,
             )),
-            RemoteControlStatus::Ready { remote_url, .. } => Some(Self::render_action_button(
-                "Open mobile app",
-                remote_url.clone(),
-                self.retry_mouse_state.clone(),
-                appearance,
-            )),
+            RemoteControlStatus::Ready { remote_url, .. } => {
+                let refresh_nonce = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis();
+                let browser_url = remote_control_browser_url(remote_url, refresh_nonce);
+                let mut actions = Flex::row().with_child(Self::render_typed_action_button(
+                    "Copy browser link",
+                    ClinchSettingsPageAction::CopyText(browser_url.clone()),
+                    self.copy_browser_link_mouse_state.clone(),
+                    appearance,
+                    false,
+                ));
+                actions.add_child(
+                    Container::new(Self::render_action_button(
+                        "Open in browser",
+                        browser_url,
+                        self.open_browser_mouse_state.clone(),
+                        appearance,
+                    ))
+                    .with_margin_left(6.)
+                    .finish(),
+                );
+                Some(actions.finish())
+            }
             RemoteControlStatus::Error {
                 retryable: true, ..
             }

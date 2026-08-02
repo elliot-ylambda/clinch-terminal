@@ -3,9 +3,9 @@ use warpui::platform::WindowStyle;
 use warpui::{App, SingletonEntity, TypedActionView};
 
 use super::{
-    remote_control_setup_widget_id, ClinchSettingsPageAction, ClinchSettingsPageView,
-    RemoteControlSetupWidget, CLINCH_REMOTE_CONTROL_GUIDE_URL, TAILSCALE_IOS_DOWNLOAD_URL,
-    TAILSCALE_MAC_DOWNLOAD_URL,
+    remote_control_browser_url, remote_control_setup_widget_id, ClinchSettingsPageAction,
+    ClinchSettingsPageView, RemoteControlSetupWidget, CLINCH_REMOTE_CONTROL_GUIDE_URL,
+    TAILSCALE_IOS_DOWNLOAD_URL, TAILSCALE_MAC_DOWNLOAD_URL,
 };
 use crate::appearance::Appearance;
 use crate::auth::AuthStateProvider;
@@ -35,6 +35,18 @@ fn remote_control_setup_widget_has_stable_discovery_metadata() {
     assert_eq!(
         CLINCH_REMOTE_CONTROL_GUIDE_URL,
         "https://clinch.sh/remote-control"
+    );
+}
+
+#[test]
+fn remote_control_browser_link_gets_a_fresh_load_marker() {
+    assert_eq!(
+        remote_control_browser_url("https://mac.example/clinch-remote", 1234),
+        "https://mac.example/clinch-remote?clinch_refresh=1234"
+    );
+    assert_eq!(
+        remote_control_browser_url("https://mac.example/clinch-remote?source=settings", 1234),
+        "https://mac.example/clinch-remote?source=settings&clinch_refresh=1234"
     );
 }
 
