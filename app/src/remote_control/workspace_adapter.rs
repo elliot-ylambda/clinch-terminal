@@ -135,6 +135,13 @@ fn writer_lease_expired(
     lease.expires_at <= now && !connected_sessions.contains(&lease.session_id)
 }
 
+/// A lease only blocks OTHER devices. The same device reconnecting under a new session (a page
+/// reload, a phone returning from background) adopts its own lease instead of being locked out
+/// by a session it can no longer resume.
+fn writer_lease_blocks(lease: &WriterLease, authorization: &SessionAuthorization) -> bool {
+    lease.session_id != authorization.session_id && lease.device_id != authorization.device_id
+}
+
 #[derive(Clone)]
 struct ResolvedTarget {
     project_window: ViewHandle<ProjectWindow>,
@@ -1230,7 +1237,7 @@ impl WorkspaceAdapter {
             self.writer_leases.remove(&key);
         }
         if let Some(lease) = self.writer_leases.get(&key) {
-            if lease.session_id != authorization.session_id {
+            if writer_lease_blocks(lease, authorization) {
                 let holder = lease.device_name.clone();
                 return Err(Box::new(self.error(
                     request_id,

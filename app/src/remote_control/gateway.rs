@@ -42,6 +42,11 @@ use super::workspace_adapter::{
 
 const SESSION_COOKIE_NAME: &str = "clinch_remote_session";
 const MAX_CLIENT_MESSAGES_PER_SECOND: usize = 128;
+/// A backgrounded phone browser freezes without closing its socket, and writer leases now live
+/// for as long as their session stays connected. Protocol-level pings surface those zombie
+/// connections so their sessions disconnect and release leases within about a minute.
+const KEEPALIVE_PING_SECS: u64 = 15;
+const MAX_UNANSWERED_KEEPALIVE_PINGS: u8 = 2;
 /// Hash of the single inline script in `web/remote-control/index.html` (the trailing-slash
 /// self-correct guard, which must run before any relative asset is requested). Vite emits
 /// classic inline scripts verbatim, so the source file is the authority; the
@@ -459,6 +464,11 @@ async fn websocket_loop(mut socket: WebSocket, state: GatewayState, cookie_token
     let mut snapshot_interval = tokio::time::interval(Duration::from_secs(1));
     snapshot_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     snapshot_interval.tick().await;
+    let mut keepalive_interval =
+        tokio::time::interval(Duration::from_secs(KEEPALIVE_PING_SECS));
+    keepalive_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    keepalive_interval.tick().await;
+    let mut unanswered_pings = 0u8;
     let mut terminal_stream: Option<TerminalOutputStream> = None;
     let mut terminal_sequence = 0u64;
     let mut active_upload: Option<ActiveUpload> = None;
@@ -723,7 +733,9 @@ async fn websocket_loop(mut socket: WebSocket, state: GatewayState, cookie_token
                     break;
                 }
             }
-            Ok(Message::Pong(_)) => {}
+            Ok(Message::Pong(_)) => {
+                unanswered_pings = 0;
+            }
             Ok(Message::Close(_)) | Err(_) => break,
                 }
             }
@@ -773,6 +785,15 @@ async fn websocket_loop(mut socket: WebSocket, state: GatewayState, cookie_token
                             if send_json(&mut socket, &mut connection_sequence, &closed).await.is_err() { break; }
                         }
                     }
+                }
+            }
+            _ = keepalive_interval.tick() => {
+                if unanswered_pings >= MAX_UNANSWERED_KEEPALIVE_PINGS {
+                    break;
+                }
+                unanswered_pings += 1;
+                if socket.send(Message::Ping(Vec::new().into())).await.is_err() {
+                    break;
                 }
             }
             _ = snapshot_interval.tick() => {

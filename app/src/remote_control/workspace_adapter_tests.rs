@@ -108,3 +108,47 @@ fn writer_leases_survive_expiry_while_their_session_stays_connected() {
     };
     assert!(!writer_lease_expired(&HashSet::new(), &fresh, Utc::now()));
 }
+
+#[test]
+fn writer_leases_are_adopted_by_the_same_device_but_block_other_devices() {
+    let device_id = clinch_companion_protocol::DeviceId::new();
+    let lease = WriterLease {
+        session_id: AuthSessionId::new(),
+        device_id,
+        device_name: "Elliot's phone".to_owned(),
+        expires_at: Utc::now() + Duration::seconds(WRITER_LEASE_TTL_SECS as i64),
+    };
+
+    // The same session keeps writing.
+    assert!(!writer_lease_blocks(
+        &lease,
+        &SessionAuthorization {
+            session_id: lease.session_id,
+            device_id,
+            device_name: "Elliot's phone".to_owned(),
+            capabilities: Vec::new(),
+        }
+    ));
+
+    // The same device under a fresh session (page reload) adopts its own lease.
+    assert!(!writer_lease_blocks(
+        &lease,
+        &SessionAuthorization {
+            session_id: AuthSessionId::new(),
+            device_id,
+            device_name: "Elliot's phone".to_owned(),
+            capabilities: Vec::new(),
+        }
+    ));
+
+    // A different device stays blocked while the lease is live.
+    assert!(writer_lease_blocks(
+        &lease,
+        &SessionAuthorization {
+            session_id: AuthSessionId::new(),
+            device_id: clinch_companion_protocol::DeviceId::new(),
+            device_name: "Other phone".to_owned(),
+            capabilities: Vec::new(),
+        }
+    ));
+}

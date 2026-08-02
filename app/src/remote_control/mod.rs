@@ -156,6 +156,7 @@ impl RemoteControlService {
                                 .is_some_and(|active| active.id == invitation_id);
                             if pending || !active {
                                 ctx.notify();
+                                request_window_repaints(ctx);
                             }
                             active && !pending
                         })
@@ -473,6 +474,7 @@ impl RemoteControlService {
             connected,
         );
         ctx.notify();
+        request_window_repaints(ctx);
     }
 
     fn refresh_pairing_state(&mut self) {
@@ -551,6 +553,21 @@ impl Drop for RemoteControlService {
         self.gateway = None;
         if let Some(runtime) = self.runtime.take() {
             runtime.shutdown_background();
+        }
+    }
+}
+
+/// Gateway-driven pairing updates arrive from background tasks while the user is often just
+/// watching the settings screen without touching anything. A plain view notification can be
+/// deferred by the idle-redraw gate when it misses the last frame's mounted set, which left the
+/// scan-approval panel invisible for tens of seconds until unrelated input forced a frame.
+/// Nudging each window's always-mounted root view guarantees a prompt frame, which also drains
+/// any deferred view invalidations for that window.
+fn request_window_repaints(ctx: &mut ModelContext<RemoteControlService>) {
+    let window_ids = ctx.window_ids().collect::<Vec<_>>();
+    for window_id in window_ids {
+        if let Some(root) = ctx.root_view::<crate::root_view::RootView>(window_id) {
+            root.update(ctx, |_, ctx| ctx.notify());
         }
     }
 }
