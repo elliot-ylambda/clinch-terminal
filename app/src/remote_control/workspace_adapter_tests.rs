@@ -76,3 +76,35 @@ fn workspace_revisions_remain_exact_javascript_numbers() {
     assert_eq!(next_workspace_revision(41), 42);
     assert_eq!(next_workspace_revision(MAX_JAVASCRIPT_SAFE_INTEGER), 1);
 }
+
+#[test]
+fn writer_leases_survive_expiry_while_their_session_stays_connected() {
+    let session_id = AuthSessionId::new();
+    let lease = WriterLease {
+        session_id,
+        device_id: clinch_companion_protocol::DeviceId::new(),
+        device_name: "Elliot's phone".to_owned(),
+        expires_at: Utc::now() - Duration::seconds(120),
+    };
+    let mut connected = HashSet::new();
+
+    // An expired lease from a vanished session is pruned by the TTL backstop.
+    assert!(writer_lease_expired(&connected, &lease, Utc::now()));
+
+    // The same lease stays valid while its holder's WebSocket is still connected, so an idle
+    // phone reading a long response never loses the PTY's viewer-driven dimensions.
+    connected.insert(session_id);
+    assert!(!writer_lease_expired(&connected, &lease, Utc::now()));
+
+    // A different connected session does not keep someone else's lease alive.
+    connected.clear();
+    connected.insert(AuthSessionId::new());
+    assert!(writer_lease_expired(&connected, &lease, Utc::now()));
+
+    // An unexpired lease is valid regardless of connectivity.
+    let fresh = WriterLease {
+        expires_at: Utc::now() + Duration::seconds(WRITER_LEASE_TTL_SECS as i64),
+        ..lease
+    };
+    assert!(!writer_lease_expired(&HashSet::new(), &fresh, Utc::now()));
+}

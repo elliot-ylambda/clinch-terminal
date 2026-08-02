@@ -42,8 +42,18 @@ const CLINCH_REMOTE_CONTROL_GUIDE_URL: &str = "https://clinch.sh/remote-control"
 
 #[cfg(feature = "local_fs")]
 fn remote_control_browser_url(remote_url: &str, refresh_nonce: u128) -> String {
-    let separator = if remote_url.contains('?') { '&' } else { '?' };
-    format!("{remote_url}{separator}clinch_refresh={refresh_nonce}")
+    // A path-mounted web app needs its trailing slash: without it the browser resolves the
+    // app's relative assets outside the Tailscale Serve mount and the page loads blank.
+    // Normalize here so every link Clinch opens or copies is immune to that papercut.
+    let (base, query) = match remote_url.split_once('?') {
+        Some((base, query)) => (base, Some(query)),
+        None => (remote_url, None),
+    };
+    let slash = if base.ends_with('/') { "" } else { "/" };
+    match query {
+        Some(query) => format!("{base}{slash}?{query}&clinch_refresh={refresh_nonce}"),
+        None => format!("{base}{slash}?clinch_refresh={refresh_nonce}"),
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

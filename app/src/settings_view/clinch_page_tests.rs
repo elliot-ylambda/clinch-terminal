@@ -42,11 +42,15 @@ fn remote_control_setup_widget_has_stable_discovery_metadata() {
 fn remote_control_browser_link_gets_a_fresh_load_marker() {
     assert_eq!(
         remote_control_browser_url("https://mac.example/clinch-remote", 1234),
-        "https://mac.example/clinch-remote?clinch_refresh=1234"
+        "https://mac.example/clinch-remote/?clinch_refresh=1234"
+    );
+    assert_eq!(
+        remote_control_browser_url("https://mac.example/clinch-remote/", 1234),
+        "https://mac.example/clinch-remote/?clinch_refresh=1234"
     );
     assert_eq!(
         remote_control_browser_url("https://mac.example/clinch-remote?source=settings", 1234),
-        "https://mac.example/clinch-remote?source=settings&clinch_refresh=1234"
+        "https://mac.example/clinch-remote/?source=settings&clinch_refresh=1234"
     );
 }
 

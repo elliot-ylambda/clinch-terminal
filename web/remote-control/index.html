@@ -2,6 +2,14 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <script>
+      // Deployed behind a Tailscale Serve path mount, every asset below uses a relative URL.
+      // Without the trailing slash they resolve against the domain root, outside the mount,
+      // and the page loads blank. Self-correct before any of them are requested.
+      if (!location.pathname.endsWith("/")) {
+        location.replace(location.pathname + "/" + location.search + location.hash);
+      }
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#050712" />
     <meta name="mobile-web-app-capable" content="yes" />
