@@ -79,7 +79,6 @@ pub enum ClinchSettingsPageAction {
     RemoteControlRevoke(DeviceId),
     #[cfg(feature = "local_fs")]
     RemoteControlRevokeAll,
-    CopyText(String),
     OpenUrl(String),
 }
 
@@ -288,9 +287,6 @@ impl TypedActionView for ClinchSettingsPageView {
                     }
                 });
             }
-            ClinchSettingsPageAction::CopyText(text) => ctx.dispatch_typed_action(
-                &crate::workspace::WorkspaceAction::CopyTextToClipboard(text.clone()),
-            ),
             ClinchSettingsPageAction::OpenUrl(url) => ctx.open_url(url),
         }
     }
@@ -309,11 +305,7 @@ struct RemoteControlSetupWidget {
     pair_mouse_state: MouseStateHandle,
     retry_mouse_state: MouseStateHandle,
     revoke_all_mouse_state: MouseStateHandle,
-    copy_browser_link_mouse_state: MouseStateHandle,
     open_browser_mouse_state: MouseStateHandle,
-    copy_link_mouse_state: MouseStateHandle,
-    browser_pairing_mouse_state: MouseStateHandle,
-    cancel_pairing_mouse_state: MouseStateHandle,
     enable_switch_state: SwitchStateHandle,
     dynamic_mouse_states: RefCell<HashMap<String, MouseStateHandle>>,
 }
@@ -925,24 +917,12 @@ impl RemoteControlSetupWidget {
                     .unwrap_or_default()
                     .as_millis();
                 let browser_url = remote_control_browser_url(remote_url, refresh_nonce);
-                let mut actions = Flex::row().with_child(Self::render_typed_action_button(
-                    "Copy browser link",
-                    ClinchSettingsPageAction::CopyText(browser_url.clone()),
-                    self.copy_browser_link_mouse_state.clone(),
+                Some(Self::render_action_button(
+                    "Open the link",
+                    browser_url,
+                    self.open_browser_mouse_state.clone(),
                     appearance,
-                    false,
-                ));
-                actions.add_child(
-                    Container::new(Self::render_action_button(
-                        "Open in browser",
-                        browser_url,
-                        self.open_browser_mouse_state.clone(),
-                        appearance,
-                    ))
-                    .with_margin_left(6.)
-                    .finish(),
-                );
-                Some(actions.finish())
+                ))
             }
             RemoteControlStatus::Error {
                 retryable: true, ..
@@ -987,24 +967,37 @@ impl RemoteControlSetupWidget {
             );
         }
 
+        let (pair_label, pair_action, pair_disabled) = if !state.pending_claims.is_empty() {
+            (
+                "Waiting for approval",
+                ClinchSettingsPageAction::RemoteControlPair,
+                true,
+            )
+        } else if state.active_invitation.is_some() {
+            (
+                "Hide QR code",
+                ClinchSettingsPageAction::RemoteControlCancelPairing,
+                false,
+            )
+        } else {
+            (
+                "Show QR code",
+                ClinchSettingsPageAction::RemoteControlPair,
+                !state.status.is_ready(),
+            )
+        };
         content.add_child(Self::render_step(
             4,
-            "Pair this phone",
-            "Generate a five-minute, single-use QR code. The phone creates a non-exportable key; \
-             nothing is authorized until you approve its name and fingerprint below. Safari \
-             works immediately, and Add to Home Screen is optional.",
+            "Pair a phone",
+            "Show the QR code and scan it with your phone. The code is single-use and expires \
+             after five minutes; nothing is authorized until you approve the phone's name and \
+             key fingerprint below.",
             Some(Self::render_typed_action_button(
-                if !state.pending_claims.is_empty() {
-                    "Waiting for approval"
-                } else if state.active_invitation.is_some() {
-                    "Refresh QR code"
-                } else {
-                    "Pair phone"
-                },
-                ClinchSettingsPageAction::RemoteControlPair,
+                pair_label,
+                pair_action,
                 self.pair_mouse_state.clone(),
                 appearance,
-                !state.status.is_ready() || !state.pending_claims.is_empty(),
+                pair_disabled,
             )),
             appearance,
         ));
@@ -1079,44 +1072,7 @@ impl RemoteControlSetupWidget {
                 content.add_child(
                     Container::new(qr_card)
                         .with_margin_top(4.)
-                        .with_margin_bottom(12.)
-                        .finish(),
-                );
-                let invitation = state
-                    .active_invitation
-                    .as_ref()
-                    .expect("a QR card requires an invitation");
-                let mut pairing_actions = Flex::row().with_child(Self::render_typed_action_button(
-                    "Copy pairing link",
-                    ClinchSettingsPageAction::CopyText(invitation.pairing_url.clone()),
-                    self.copy_link_mouse_state.clone(),
-                    appearance,
-                    false,
-                ));
-                pairing_actions.add_child(
-                    Container::new(Self::render_action_button(
-                        "Open pairing link in browser",
-                        invitation.pairing_url.clone(),
-                        self.browser_pairing_mouse_state.clone(),
-                        appearance,
-                    ))
-                    .with_margin_left(6.)
-                    .finish(),
-                );
-                pairing_actions.add_child(
-                    Container::new(Self::render_typed_action_button(
-                        "Cancel QR code",
-                        ClinchSettingsPageAction::RemoteControlCancelPairing,
-                        self.cancel_pairing_mouse_state.clone(),
-                        appearance,
-                        false,
-                    ))
-                    .with_margin_left(6.)
-                    .finish(),
-                );
-                content.add_child(
-                    Container::new(pairing_actions.finish())
-                        .with_margin_bottom(12.)
+                        .with_margin_bottom(16.)
                         .finish(),
                 );
             }
