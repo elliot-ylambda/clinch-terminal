@@ -8332,6 +8332,46 @@ fn remote_control_primary_cli_snapshot_stays_on_the_primary_screen() {
 }
 
 #[test]
+fn remote_control_ignores_a_stale_empty_cli_surface_after_shell_prompt_returns() {
+    let mut model = TerminalModel::mock(None, None);
+    model.precmd(ansi::PrecmdValue {
+        ps1: Some(hex::encode("➜  magister-marketing git:(main) ")),
+        honor_ps1: Some(true),
+        ..Default::default()
+    });
+    model.prompt_marker(ansi::PromptMarker::StartPrompt {
+        kind: ansi::PromptKind::Initial,
+    });
+    model.process_bytes("➜  magister-marketing git:(main) ");
+    model.prompt_marker(ansi::PromptMarker::EndPrompt);
+    model
+        .block_list_mut()
+        .active_block_mut()
+        .enable_full_grid_clear_behavior();
+
+    let active_block = model.block_list().active_block();
+    assert!(active_block
+        .prompt_and_command_grid()
+        .rightmost_visible_nonempty_cell()
+        .is_some());
+    assert!(active_block
+        .output_grid()
+        .rightmost_visible_nonempty_cell()
+        .is_none());
+    assert!(!remote_control_has_visible_live_primary_grid(active_block));
+
+    let mut active_agent = TerminalModel::mock(None, None);
+    active_agent.simulate_long_running_block("codex", "agent prompt");
+    active_agent
+        .block_list_mut()
+        .active_block_mut()
+        .enable_full_grid_clear_behavior();
+    assert!(remote_control_has_visible_live_primary_grid(
+        active_agent.block_list().active_block()
+    ));
+}
+
+#[test]
 fn remote_control_primary_snapshot_keeps_cursor_at_the_logical_prompt_end() {
     let mut model = TerminalModel::mock(None, None);
     model.precmd(ansi::PrecmdValue {
