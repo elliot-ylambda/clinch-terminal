@@ -101,7 +101,7 @@ async function installPairedPhone(
     // Mirrors the native primary-screen serializer after it removes its synthetic final CRLF.
     // At 31 columns this prompt wraps at a different cell than it does in the phone viewport.
     // Keeping the cursor attached to the logical text end is the regression under test.
-    const wrappedShellSnapshot = "➜  magister-marketing git:(main) ";
+    const wrappedShellSnapshot = "\x1b]133;A\x07➜  magister-marketing git:(main) \x1b]133;B\x07";
     const bytesToBase64 = (bytes: Uint8Array) => {
       let binary = "";
       for (const byte of bytes) binary += String.fromCharCode(byte);
@@ -249,6 +249,7 @@ async function installPairedPhone(
       private selectAttempts = 0;
       private terminalSequence = 0;
       private terminalResizeReady = initialTerminal !== "wrapped-shell";
+      private shellInput = "";
 
       constructor(_url: string | URL) {
         window.setTimeout(() => {
@@ -310,6 +311,7 @@ async function installPairedPhone(
               dimensions: initialTerminal === "wrapped-shell"
                 ? { columns: 31, rows: 10 }
                 : { columns: 320, rows: 93 },
+              zero_width_prompt: initialTerminal === "wrapped-shell",
             },
           }, envelope.request_id);
         } else if (envelope.payload.type === "ping") {
@@ -358,10 +360,12 @@ async function installPairedPhone(
           localStorage.setItem("wrapped-resize-acked", "true");
           this.emit({ type: "command_accepted", data: { workspace_revision: snapshot.revision } }, envelope.request_id);
           window.setTimeout(() => {
-            this.emitTerminal(new TextEncoder().encode("\r\x1b[2K➜  magister-marketing git:(main)"));
+            this.emitTerminal(new TextEncoder().encode(
+              "\r\x1b[2K\x1b]133;A\x07➜  magister-marketing git:(main)",
+            ));
           }, 80);
           window.setTimeout(() => {
-            this.emitTerminal(new TextEncoder().encode(" "));
+            this.emitTerminal(new TextEncoder().encode(" \x1b]133;B\x07"));
             this.terminalResizeReady = true;
             localStorage.setItem("wrapped-resize-redrawn", "true");
           }, 105);
@@ -369,7 +373,13 @@ async function installPairedPhone(
           if (!this.terminalResizeReady) localStorage.setItem("wrapped-input-before-resize", "true");
           const input = envelope.payload.data as unknown as { data_base64: string };
           const binary = atob(input.data_base64);
-          this.emitTerminal(Uint8Array.from(binary, (character) => character.charCodeAt(0)));
+          this.shellInput += binary;
+          // Clinch's built-in prompt is zero-width to zsh. Its syntax-highlighting redraws start
+          // with a bare carriage return and only the command grid, exactly like the real PTY trace
+          // that originally overwrote the prompt in the browser.
+          this.emitTerminal(new TextEncoder().encode(
+            `\r\x1b[1;31m${this.shellInput}\x1b[0m`,
+          ));
           this.emit({ type: "command_accepted", data: { workspace_revision: snapshot.revision } }, envelope.request_id);
         } else {
           this.emit({ type: "command_accepted", data: { workspace_revision: snapshot.revision } }, envelope.request_id);
@@ -674,23 +684,26 @@ test("typing stays after a shell prompt that reflows from a narrower Mac pane", 
   await terminalInput.click();
   // Type immediately: the browser must retain every byte until the post-ack shell redraw above
   // has finished, without requiring a second click or dropping or duplicating keyboard input.
-  const typed = "hiiiiiii";
+  // Longer than the space left beside this prompt on a phone, but shorter than the full command
+  // grid. This catches implementations that merely offset carriage returns and break at wrap.
+  const typed = `h${"i".repeat(29)}`;
   await terminalInput.pressSequentially(typed);
   await expect(page.getByText("This phone has control", { exact: true })).toBeVisible();
   await expect.poll(() => page.evaluate(() => localStorage.getItem("wrapped-resize-acked"))).toBe("true");
   await expect.poll(() => page.evaluate(() => localStorage.getItem("wrapped-resize-redrawn"))).toBe("true");
   expect(await page.evaluate(() => localStorage.getItem("wrapped-input-before-resize"))).toBeNull();
-
   await expect.poll(() => page.locator(".xterm-rows > div").evaluateAll((rows, expectedInput) => {
     const visible = rows.map((row) => row.textContent ?? "");
     const screen = visible.join("");
+    const prompt = "➜  magister-marketing git:(main) ";
     return {
-      correct: Number(screen.includes(`➜  magister-marketing git:(main) ${expectedInput}`)),
+      correct: Number(screen.includes(`${prompt}${expectedInput}`)),
+      promptCount: screen.split(prompt).length - 1,
       overwritten: visible.filter((line) =>
         line.includes(`${expectedInput}➜`) || line.includes(`${expectedInput}magister-marketing`)
       ).length,
     };
-  }, typed)).toEqual({ correct: 1, overwritten: 0 });
+  }, typed)).toEqual({ correct: 1, promptCount: 1, overwritten: 0 });
 });
 
 test("empty-project focus mode stays centered within a phone viewport", async ({ page }) => {

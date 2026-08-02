@@ -400,6 +400,9 @@ pub struct TerminalSnapshot {
     /// Base64-encoded raw PTY bytes. Subsequent bytes use binary terminal-output frames.
     pub data_base64: String,
     pub dimensions: TerminalDimensions,
+    /// Clinch's built-in prompt is painted beside a zero-width shell command grid. A standard
+    /// terminal emulator must keep that command grid at column zero when replaying ZLE redraws.
+    pub zero_width_prompt: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize, TS)]

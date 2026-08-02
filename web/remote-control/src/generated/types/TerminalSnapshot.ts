@@ -7,4 +7,9 @@ export type TerminalSnapshot = { target: TargetRef, stream_id: TerminalStreamId,
 /**
  * Base64-encoded raw PTY bytes. Subsequent bytes use binary terminal-output frames.
  */
-data_base64: string, dimensions: TerminalDimensions, };
+data_base64: string, dimensions: TerminalDimensions,
+/**
+ * Clinch's built-in prompt is painted beside a zero-width shell command grid. A standard
+ * terminal emulator must keep that command grid at column zero when replaying ZLE redraws.
+ */
+zero_width_prompt: boolean, };

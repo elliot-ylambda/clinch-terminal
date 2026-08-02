@@ -417,17 +417,24 @@ impl WorkspaceAdapter {
         }
 
         let stream_id = TerminalStreamId::new();
-        let (data, dimensions, receiver) = resolved.terminal.read(ctx, |terminal, _| {
-            // Subscribe before activating the desktop target. Activating an inactive terminal can
-            // make its shell or full-screen CLI repaint immediately; subscribing afterwards made
-            // that first redraw timing-dependent and occasionally left a restored phone tab blank.
-            // The snapshot is captured before activation, so every subsequent activation byte is
-            // represented exactly once by the stream rather than duplicated in both handoffs.
-            let receiver = terminal.remote_control_pty_reads();
-            let data = terminal.remote_control_scrollback_bytes(MAX_TERMINAL_SNAPSHOT_BYTES);
-            let (columns, rows) = terminal.remote_control_dimensions();
-            (data, TerminalDimensions { columns, rows }, receiver)
-        });
+        let (data, dimensions, receiver, zero_width_prompt) =
+            resolved.terminal.read(ctx, |terminal, _| {
+                // Subscribe before activating the desktop target. Activating an inactive terminal can
+                // make its shell or full-screen CLI repaint immediately; subscribing afterwards made
+                // that first redraw timing-dependent and occasionally left a restored phone tab blank.
+                // The snapshot is captured before activation, so every subsequent activation byte is
+                // represented exactly once by the stream rather than duplicated in both handoffs.
+                let receiver = terminal.remote_control_pty_reads();
+                let data = terminal.remote_control_scrollback_bytes(MAX_TERMINAL_SNAPSHOT_BYTES);
+                let (columns, rows) = terminal.remote_control_dimensions();
+                let zero_width_prompt = terminal.remote_control_zero_width_prompt();
+                (
+                    data,
+                    TerminalDimensions { columns, rows },
+                    receiver,
+                    zero_width_prompt,
+                )
+            });
         resolved.project_window.update(ctx, |project_window, ctx| {
             project_window.activate_project(resolved.project_id, ctx);
         });
@@ -455,6 +462,7 @@ impl WorkspaceAdapter {
             terminal_sequence: 0,
             data_base64: BASE64_STANDARD.encode(data),
             dimensions,
+            zero_width_prompt,
         };
         AdapterReply {
             envelope: self.response(Some(request_id), ServerMessage::TerminalSnapshot(snapshot)),

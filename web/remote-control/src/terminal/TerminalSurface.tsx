@@ -34,6 +34,107 @@ export function isSafeTerminalResize(
   return columns >= 20 && rows >= 4 && width >= 160 && height >= 72;
 }
 
+const SHELL_INTEGRATION_OSC_PREFIX = new Uint8Array([0x1b, 0x5d, 0x31, 0x33, 0x33, 0x3b]);
+const PROMPT_START_MARKER = 0x41;
+const PROMPT_END_MARKER = 0x42;
+const COMMAND_START_MARKER = 0x43;
+const COMMAND_END_MARKER = 0x44;
+const SAVE_CURSOR = [0x1b, 0x5b, 0x73];
+const RESTORE_AND_CLEAR_CURSOR = [0x1b, 0x5b, 0x75, 0x1b, 0x5b, 0x4a];
+
+/**
+ * Clinch's built-in prompt is deliberately zero-width to zsh because the Mac paints it beside a
+ * separate command grid. Present that prompt on the preceding line in xterm so zsh's command grid
+ * still begins at column zero and retains its full PTY width. This keeps partial redraws and long
+ * wrapped commands byte-for-byte compatible with a conventional terminal. The marker recognizer
+ * is incremental because a WebSocket frame may split an OSC sequence at any byte.
+ */
+export class ZeroWidthPromptTransformer {
+  private prefixIndex = 0;
+  private awaitingMarkerKind = false;
+  private insideMarker = false;
+  private markerKind: number | undefined;
+  private markerEscape = false;
+  private activePromptRendered = false;
+
+  reset() {
+    this.prefixIndex = 0;
+    this.awaitingMarkerKind = false;
+    this.insideMarker = false;
+    this.markerKind = undefined;
+    this.markerEscape = false;
+    this.activePromptRendered = false;
+  }
+
+  markPromptComplete() {
+    this.activePromptRendered = false;
+  }
+
+  transform(bytes: Uint8Array, enabled: boolean): Uint8Array {
+    if (!enabled) {
+      this.reset();
+      return bytes;
+    }
+
+    const output: number[] = [];
+    let changed = false;
+    for (const byte of bytes) {
+      output.push(byte);
+      if (this.insideMarker) {
+        if (byte === 0x07 || (this.markerEscape && byte === 0x5c)) {
+          if (this.markerKind === PROMPT_START_MARKER) {
+            if (this.activePromptRendered) {
+              output.push(...RESTORE_AND_CLEAR_CURSOR);
+            }
+            output.push(...SAVE_CURSOR);
+            changed = true;
+          } else if (this.markerKind === PROMPT_END_MARKER) {
+            output.push(0x0d, 0x0a);
+            this.activePromptRendered = true;
+            changed = true;
+          } else if (
+            this.markerKind === COMMAND_START_MARKER
+            || this.markerKind === COMMAND_END_MARKER
+          ) {
+            this.activePromptRendered = false;
+          }
+          this.insideMarker = false;
+          this.markerKind = undefined;
+          this.markerEscape = false;
+        } else {
+          this.markerEscape = byte === 0x1b;
+        }
+        continue;
+      }
+
+      if (this.awaitingMarkerKind) {
+        this.awaitingMarkerKind = false;
+        this.insideMarker = true;
+        this.markerKind = byte;
+        this.markerEscape = false;
+        continue;
+      }
+
+      if (byte === 0x0a) {
+        // A line break received from the PTY ends the currently editable prompt. This also covers
+        // commands and interrupts entered on the Mac, whose input does not pass through onData.
+        this.activePromptRendered = false;
+      }
+
+      if (byte === SHELL_INTEGRATION_OSC_PREFIX[this.prefixIndex]) {
+        this.prefixIndex += 1;
+        if (this.prefixIndex === SHELL_INTEGRATION_OSC_PREFIX.length) {
+          this.prefixIndex = 0;
+          this.awaitingMarkerKind = true;
+        }
+      } else {
+        this.prefixIndex = byte === SHELL_INTEGRATION_OSC_PREFIX[0] ? 1 : 0;
+      }
+    }
+    return changed ? Uint8Array.from(output) : bytes;
+  }
+}
+
 export const TerminalSurface = forwardRef<TerminalSurfaceHandle, Props>(function TerminalSurface(
   { snapshot, bus, canResize, onViewport, onResize, onData, onFocus, onStreamGap },
   ref,
@@ -57,6 +158,8 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, Props>(function
   const snapshotWriteGeneration = useRef(0);
   const snapshotWriteInFlight = useRef(false);
   const revealLatestSnapshot = useRef(false);
+  const zeroWidthPrompt = useRef(false);
+  const zeroWidthPromptTransformer = useRef(new ZeroWidthPromptTransformer());
   const dataCallback = useRef(onData);
   dataCallback.current = onData;
   const focusCallback = useRef(onFocus);
@@ -146,7 +249,10 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, Props>(function
       sequence.current = frame.sequence;
     }
     bus.discardThrough(streamId, sequence.current);
-    instance.write(payload, () => drain(streamId, writeGeneration));
+    instance.write(
+      zeroWidthPromptTransformer.current.transform(payload, zeroWidthPrompt.current),
+      () => drain(streamId, writeGeneration),
+    );
   }, [bus, fitAndReport]);
 
   useEffect(() => {
@@ -207,9 +313,16 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, Props>(function
       }
       sequence.current = frame.sequence;
       bus.discardThrough(frame.streamId, frame.sequence);
-      instance.write(frame.payload);
+      instance.write(
+        zeroWidthPromptTransformer.current.transform(frame.payload, zeroWidthPrompt.current),
+      );
     });
-    const dataSubscription = instance.onData((data) => dataCallback.current?.(data));
+    const dataSubscription = instance.onData((data) => {
+      if (/[\r\n\x03\x04]/u.test(data)) {
+        zeroWidthPromptTransformer.current.markPromptComplete();
+      }
+      dataCallback.current?.(data);
+    });
     const focusListener = () => focusCallback.current?.();
     container.current.addEventListener("focusin", focusListener);
     requestAnimationFrame(() => requestAnimationFrame(fitAndReport));
@@ -238,6 +351,8 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, Props>(function
       lastReportedTarget.current = snapshotTarget;
     }
     const snapshotBytes = base64ToBytes(snapshot.data_base64);
+    zeroWidthPrompt.current = snapshot.zero_width_prompt;
+    zeroWidthPromptTransformer.current.reset();
     snapshotDimensions.current = `${snapshot.dimensions.columns}:${snapshot.dimensions.rows}`;
     snapshotUsesAlternateScreen.current = snapshotBytes.length >= 8
       && snapshotBytes[0] === 0x1b
@@ -258,14 +373,22 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, Props>(function
     // Parse an authoritative snapshot at the dimensions of the native grid that produced it.
     // Writing a 320-column Codex/Claude alternate screen into xterm's 80-column default causes
     // hard wraps before the first mobile fit and leaves duplicated suffixes after the CLI redraws.
-    if (
+    if (snapshot.zero_width_prompt) {
+      // This snapshot is a logical prompt + command assembled from Clinch's separate grids, not
+      // a native full-screen framebuffer. Parse it at the browser's fitted width so an OSC marker
+      // at the prompt boundary cannot turn the Mac's old hard wrap into a stale phone row.
+      fit.current?.fit();
+    } else if (
       instance.cols !== snapshot.dimensions.columns
       || instance.rows !== snapshot.dimensions.rows
     ) {
       instance.resize(snapshot.dimensions.columns, snapshot.dimensions.rows);
     }
     instance.reset();
-    instance.write(snapshotBytes, () => {
+    instance.write(zeroWidthPromptTransformer.current.transform(
+      snapshotBytes,
+      snapshot.zero_width_prompt,
+    ), () => {
       if (
         stream.current !== snapshot.stream_id
         || snapshotWriteGeneration.current !== writeGeneration
