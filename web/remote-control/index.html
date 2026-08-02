@@ -4,9 +4,12 @@
     <meta charset="UTF-8" />
     <script>
       // Deployed behind a Tailscale Serve path mount, every asset below uses a relative URL.
-      // Without the trailing slash they resolve against the domain root, outside the mount,
-      // and the page loads blank. Self-correct before any of them are requested.
-      if (!location.pathname.endsWith("/")) {
+      // A slash-less MOUNT ROOT resolves them against the domain root, outside the mount, and
+      // the page loads blank — self-correct that case before any asset is requested. Sub-routes
+      // like /pair must NOT be redirected: their relative assets already resolve to the mount
+      // root, and appending a slash would break them. The mount prefix is fixed by
+      // PairingRegistry::route_path in app/src/remote_control/pairing.rs.
+      if (/\/clinch-remote-[^/]+$/.test(location.pathname)) {
         location.replace(location.pathname + "/" + location.search + location.hash);
       }
     </script>

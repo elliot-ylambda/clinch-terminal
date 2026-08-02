@@ -46,9 +46,9 @@ const MAX_CLIENT_MESSAGES_PER_SECOND: usize = 128;
 /// self-correct guard, which must run before any relative asset is requested). Vite emits
 /// classic inline scripts verbatim, so the source file is the authority; the
 /// `csp_allows_the_index_inline_script` test recomputes this from that file.
-const INDEX_INLINE_SCRIPT_SHA256: &str = "sha256-oJaMPPxbe4jRSak6lGfklinxg8m6PdctW1hxGB0LfNA=";
+const INDEX_INLINE_SCRIPT_SHA256: &str = "sha256-HwYi09bvykqNvJPBnjdMWb3r6TG0/0ayke02XIY/DM4=";
 const STATIC_CSP: &str = "default-src 'self'; script-src 'self' \
-    'sha256-oJaMPPxbe4jRSak6lGfklinxg8m6PdctW1hxGB0LfNA='; style-src 'self' 'unsafe-inline'; \
+    'sha256-HwYi09bvykqNvJPBnjdMWb3r6TG0/0ayke02XIY/DM4='; style-src 'self' 'unsafe-inline'; \
     img-src 'self' data: blob:; font-src 'self'; connect-src 'self' wss:; object-src 'none'; \
     base-uri 'none'; frame-ancestors 'none'; form-action 'self'; manifest-src 'self'; worker-src 'self'";
 
