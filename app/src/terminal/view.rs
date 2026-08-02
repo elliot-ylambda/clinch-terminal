@@ -2995,6 +2995,11 @@ enum BlockMetadataUpdateSource {
 /// 12 + 3 = 15px: the tallest line that still clears the 30px trigger bar
 /// (`CLI_AGENT_HISTORY_TOP_BAR_HEIGHT`) after its 4px vertical padding.
 const CLI_AGENT_HISTORY_FONT_SIZE_INCREASE: f32 = 3.;
+/// Opacity of the history box's outline, as a percentage of the theme
+/// foreground. The stock `theme.outline()` is 10; this is deliberately far
+/// brighter because the box no longer sits between two accent rules, so its
+/// outline is the only thing marking it out from the pane header.
+const CLI_AGENT_HISTORY_OUTLINE_OPACITY: u8 = 45;
 const CLI_AGENT_HISTORY_TOP_BAR_HEIGHT: f32 = 30.;
 const CLI_AGENT_HISTORY_TOP_BAR_VERTICAL_PADDING: f32 = 4.;
 const CLI_AGENT_HISTORY_TOP_BAR_HORIZONTAL_PADDING: f32 = 10.;
@@ -4014,6 +4019,17 @@ impl TerminalView {
             // text is always painted, mirroring `render_pane_header_title_text`.
             dropdown.set_font_color(header_text_color.into(), ctx);
             dropdown.set_font_size(header_font_size, ctx);
+            // Brighter than the stock `theme.outline()` (foreground @ 10%): with no
+            // rules above or below it, this outline is the only thing separating the
+            // history box from the pane header, so it carries that weight alone.
+            dropdown.set_border_color(
+                Appearance::as_ref(ctx)
+                    .theme()
+                    .foreground()
+                    .with_opacity(CLI_AGENT_HISTORY_OUTLINE_OPACITY)
+                    .into(),
+                ctx,
+            );
             dropdown
         });
         ctx.subscribe_to_view(&cli_agent_message_history_dropdown, |me, _, event, ctx| {

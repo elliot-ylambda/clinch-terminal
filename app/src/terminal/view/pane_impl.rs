@@ -3,8 +3,8 @@
 use settings::Setting as _;
 use warp_core::context_flag::ContextFlag;
 use warpui::elements::{
-    Border, ConstrainedBox, CrossAxisAlignment, Empty, Expanded, Flex, MainAxisAlignment,
-    MainAxisSize, ParentElement, Shrinkable,
+    ConstrainedBox, CrossAxisAlignment, Empty, Expanded, Flex, MainAxisAlignment, MainAxisSize,
+    ParentElement, Shrinkable,
 };
 use warpui::prelude::{ChildView, Container};
 use warpui::text_layout::ClipConfig;
@@ -50,9 +50,7 @@ use crate::terminal::{TerminalManager, TerminalView};
 use crate::ui_components::agent_icon::terminal_view_agent_icon_variant_respecting_tab_setting;
 use crate::ui_components::buttons::icon_button_with_color;
 use crate::ui_components::icon_with_status::render_icon_with_status;
-use crate::ui_components::{
-    accent_chrome_rule_fill, blended_colors, icons, ACCENT_CHROME_RULE_WIDTH,
-};
+use crate::ui_components::{blended_colors, icons};
 use crate::util::bindings::keybinding_name_to_display_string;
 use crate::workspace::tab_settings::TabSettings;
 
@@ -643,21 +641,9 @@ impl TerminalView {
             app,
         );
 
-        let header = if is_fullscreen_agent_view {
+        if is_fullscreen_agent_view {
             Container::new(header)
                 .with_background(agent_view_bg_fill(app))
-                .finish()
-        } else {
-            header
-        };
-
-        if use_cli_agent_history_header {
-            // Same width and full-opacity accent as the highlighted project tab's
-            // outline and the footer's top rule — one accent chrome treatment.
-            Container::new(header)
-                .with_border(Border::bottom(ACCENT_CHROME_RULE_WIDTH).with_border_fill(
-                    accent_chrome_rule_fill(Appearance::as_ref(app).theme().accent()),
-                ))
                 .finish()
         } else {
             header
