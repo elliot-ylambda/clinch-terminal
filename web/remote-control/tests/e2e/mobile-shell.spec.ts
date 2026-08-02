@@ -200,7 +200,13 @@ async function installPairedPhone(
             agent_state: null,
             dimensions: { columns: 80, rows: 24 },
             writer_lease: null,
-            quick_inserts: [],
+            quick_inserts: [{
+              id: "qi-1234",
+              configuration_revision: 1,
+              label: "Codex",
+              kind: "built_in",
+              submits_immediately: true,
+            }],
           }],
         }],
       }],
@@ -319,7 +325,13 @@ async function installPairedPhone(
         } else if (envelope.payload.type === "request_snapshot") {
           this.emit({ type: "snapshot", data: snapshot }, envelope.request_id);
         } else if (envelope.payload.type === "acquire_writer_lease") {
-          (snapshot.projects[0].tabs[0].panes[0] as unknown as {
+          const leaseTarget = envelope.payload.data?.target ?? target;
+          const leasePane = snapshot.projects
+            .find((project) => project.id === leaseTarget.project_id)?.tabs
+            .find((tab) => tab.id === leaseTarget.tab_id)?.panes
+            .find((pane) => pane.id === leaseTarget.pane_id);
+          if (!leasePane) return;
+          (leasePane as unknown as {
             writer_lease: { device_id: string; device_name: string; expires_at: string } | null;
           }).writer_lease = {
             device_id: "11111111-1111-4111-8111-111111111111",
@@ -329,15 +341,15 @@ async function installPairedPhone(
           this.emit({
             type: "writer_lease_changed",
             data: {
-              target,
-              lease: snapshot.projects[0].tabs[0].panes[0].writer_lease,
+              target: leaseTarget,
+              lease: leasePane.writer_lease,
             },
           }, envelope.request_id);
           window.setTimeout(() => this.emit({ type: "workspace_changed", data: { snapshot } }), 0);
         } else if (envelope.payload.type === "create_session" || envelope.payload.type === "create_project") {
           snapshot.revision += 1;
           this.emit({ type: "command_accepted", data: { workspace_revision: snapshot.revision } }, envelope.request_id);
-        } else if (envelope.payload.type === "quick_insert_preview") {
+        } else if (envelope.payload.type === "quick_insert_submit") {
           if (envelope.payload.data?.workspace_revision !== snapshot.revision) {
             this.emit({
               type: "error",
@@ -350,10 +362,7 @@ async function installPairedPhone(
             }, envelope.request_id);
             return;
           }
-          this.emit({
-            type: "quick_insert_preview",
-            data: { item_id: "qi-1234", configuration_revision: 1, text: "codex" },
-          }, envelope.request_id);
+          this.emit({ type: "command_accepted", data: { workspace_revision: snapshot.revision } }, envelope.request_id);
         } else if (envelope.payload.type === "terminal_resize" && initialTerminal === "wrapped-shell") {
           // The gateway acknowledges its resize ioctl before a real shell asynchronously handles
           // SIGWINCH. Repaint afterward, in multiple PTY reads, to catch input released on the ack.
@@ -510,7 +519,7 @@ test("paired phone exposes projects, drawer, usage, and recent-session resume", 
     };
   })).toEqual({ title: 1, instructions: 1, duplicatedTail: 0 });
   await expect(page.getByText("The workspace changed; refresh before sending input.")).toHaveCount(0);
-  await expect(page.getByLabel("Terminal keys")).toHaveCount(0);
+  await expect(page.getByLabel("Terminal keys")).toBeVisible();
   await expect(page.locator(".session-header")).toHaveCount(0);
 
   const drawerToggle = page.getByRole("button", { name: "Open project and tab drawer" });
@@ -540,13 +549,14 @@ test("paired phone exposes projects, drawer, usage, and recent-session resume", 
       data?: { data_base64?: string; dimensions?: { columns: number; rows: number } };
     }>;
     return {
+      quickInsertSubmits: payloads.filter((payload) => payload.type === "quick_insert_submit").length,
       quickInsertPreviews: payloads.filter((payload) => payload.type === "quick_insert_preview").length,
-      pastedCodex: payloads
-        .filter((payload) => payload.type === "raw_terminal_input")
-        .map((payload) => atob(payload.data?.data_base64 ?? ""))
-        .filter((input) => input === "codex").length,
+      pastedCodex: payloads.filter((payload) =>
+        payload.type === "raw_terminal_input"
+        && atob(payload.data?.data_base64 ?? "") === "codex",
+      ).length,
     };
-  })).toEqual({ quickInsertPreviews: 1, pastedCodex: 1 });
+  })).toEqual({ quickInsertSubmits: 1, quickInsertPreviews: 0, pastedCodex: 0 });
 
   const terminalInput = page.getByRole("textbox", { name: "Terminal input" });
   await expect(terminalInput).toBeFocused();
@@ -562,11 +572,24 @@ test("paired phone exposes projects, drawer, usage, and recent-session resume", 
       .filter((payload) => payload.type === "raw_terminal_input")
       .map((payload) => atob(payload.data?.data_base64 ?? ""))
       .join("");
-  })).toBe("codex\recho from phone\r");
+  })).toBe("\recho from phone\r");
 
   const keyboardTools = page.getByRole("contentinfo", { name: "Terminal keyboard tools" });
   await expect(keyboardTools.getByRole("button", { name: "Attach photo or file" })).toBeVisible();
   await expect(keyboardTools.getByRole("button", { name: "Codex", exact: true })).toBeVisible();
+  const terminalKeys = keyboardTools.getByLabel("Terminal keys");
+  for (const label of ["Escape", "Tab", "Left arrow", "Up arrow", "Down arrow", "Right arrow"]) {
+    await terminalKeys.getByRole("button", { name: label }).click();
+  }
+  await expect.poll(() => page.evaluate(() => {
+    const payloads = JSON.parse(localStorage.getItem("remote-command-payloads") ?? "[]") as Array<{
+      type: string;
+      data?: { key?: string };
+    }>;
+    return payloads
+      .filter((payload) => payload.type === "terminal_key")
+      .map((payload) => payload.data?.key);
+  })).toEqual(["escape", "tab", "arrow_left", "arrow_up", "arrow_down", "arrow_right"]);
   await keyboardTools.getByRole("button", { name: "Close keyboard" }).click();
   await expect(terminalInput).not.toBeFocused();
   await expect.poll(() => page.evaluate(() => {
@@ -623,6 +646,16 @@ test("paired phone exposes projects, drawer, usage, and recent-session resume", 
     .getByRole("button", { name: /Review docs/ })
     .click();
   await page.getByRole("button", { name: "Other project", exact: true }).click();
+  await page.evaluate(() => localStorage.setItem("remote-command-payloads", "[]"));
+  await keyboardTools.getByRole("button", { name: "Codex", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => {
+    const payloads = JSON.parse(localStorage.getItem("remote-command-payloads") ?? "[]") as Array<{
+      type: string;
+      data?: { target?: { project_id?: string } };
+    }>;
+    const submission = payloads.find((payload) => payload.type === "quick_insert_submit");
+    return submission?.data?.target?.project_id;
+  })).toBe("project-other");
   await demoProject.click();
   await expect.poll(() => page.evaluate(() => {
     const payloads = JSON.parse(localStorage.getItem("remote-command-payloads") ?? "[]") as Array<{

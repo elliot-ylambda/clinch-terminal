@@ -10,6 +10,7 @@ import type { ServerEnvelope } from "../generated/types/ServerEnvelope";
 import type { SessionKind } from "../generated/types/SessionKind";
 import type { TabSnapshot } from "../generated/types/TabSnapshot";
 import type { TargetRef } from "../generated/types/TargetRef";
+import type { TerminalKey } from "../generated/types/TerminalKey";
 import type { TerminalSnapshot } from "../generated/types/TerminalSnapshot";
 import type { WorkspaceSnapshot } from "../generated/types/WorkspaceSnapshot";
 import type { WriterLeaseSnapshot } from "../generated/types/WriterLeaseSnapshot";
@@ -24,11 +25,8 @@ import {
   createIdentity,
   loadIdentity,
   loadPendingPairing,
-  loadPreferences,
   savePendingPairing,
-  savePreferences,
   type DeviceIdentity,
-  type MobilePreferences,
 } from "../protocol/storage";
 import { clearPairingFragment, takePairingFragment, type PairingFragment } from "../protocol/urls";
 import { TerminalBus } from "../terminal/bus";
@@ -280,7 +278,6 @@ export function App() {
   const [identity, setIdentity] = useState<DeviceIdentity>();
   const identityRef = useRef<DeviceIdentity | undefined>(undefined);
   identityRef.current = identity;
-  const [preferences, setPreferences] = useState<MobilePreferences>({ key: "preferences", oneTapQuickInserts: false });
   const [connection, setConnection] = useState<ConnectionState>("reconnecting");
   const connectionRef = useRef<ConnectionState>("reconnecting");
   connectionRef.current = connection;
@@ -361,7 +358,6 @@ export function App() {
     let cancelled = false;
     void (async () => {
       try {
-        setPreferences(await loadPreferences());
         let localIdentity = await loadIdentity();
         let pendingReceipt = await loadPendingPairing();
         if (pendingReceipt && new Date(pendingReceipt.expires_at).getTime() <= Date.now()) {
@@ -707,6 +703,7 @@ export function App() {
     if (existing?.generation === generation) return existing.promise;
 
     const promise = (async () => {
+      const viewportDeadline = Date.now() + 1_500;
       try {
         const initialLease = resolveTarget(currentSnapshot, currentTarget).pane?.writer_lease;
         if (initialLease && initialLease.device_id !== deviceId) {
@@ -730,7 +727,14 @@ export function App() {
           // TerminalSurface only marks a viewport resizable after React has committed writer
           // ownership and, for alternate-screen CLIs, cleared the stale desktop-sized buffer.
           const viewport = terminalResizableViewport.current;
-          if (!viewport || viewport.targetKey !== expectedTargetKey) return false;
+          if (!viewport || viewport.targetKey !== expectedTargetKey) {
+            // Acquiring the lease triggers a React commit before TerminalSurface can report the
+            // writer-owned viewport. Keep the originating tap alive through that short handoff so
+            // accessory keys and one-tap quick inserts cannot disappear on first use.
+            if (Date.now() >= viewportDeadline) return false;
+            await new Promise<void>((resolve) => window.setTimeout(resolve, 16));
+            continue;
+          }
           const viewportKey = fittedViewportKey(viewport);
           if (terminalReadyViewport.current === viewportKey) {
             flushQueuedTerminalInput(expectedTargetKey);
@@ -820,47 +824,58 @@ export function App() {
     return true;
   }, [prepareTerminalForInput, sendRawInputNow]);
 
-  const previewQuickInsert = useCallback(
+  const sendTerminalKey = useCallback(
+    async (key: TerminalKey) => {
+      if (!canWrite) return;
+      // Keep the iOS keyboard open while an accessory key takes focus long enough to activate.
+      terminalSurface.current?.focus();
+      if (!(await prepareTerminalForInput())) return;
+      const currentSnapshot = snapshotRef.current;
+      const currentTarget = selectedTargetRef.current;
+      if (!currentSnapshot || !currentTarget || connectionRef.current !== "connected") return;
+      try {
+        client.current?.send({
+          type: "terminal_key",
+          data: {
+            target: currentTarget,
+            workspace_revision: currentSnapshot.revision,
+            key,
+          },
+        });
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : String(error));
+      }
+    },
+    [canWrite, prepareTerminalForInput],
+  );
+
+  const submitQuickInsert = useCallback(
     async (itemId: string, configurationRevision: number) => {
-      const currentSnapshot = snapshotRef.current ?? snapshot;
-      const currentTarget = selectedTargetRef.current ?? selectedTarget;
       if (
         quickInsertInFlight.current
-        || !currentSnapshot
-        || !currentTarget
         || !canWrite
       ) return;
-      // Keep the native iOS keyboard activation inside the original tap event. The returned text
-      // is pasted through xterm's bracketed-paste-aware path, exactly like direct terminal input.
+      // Keep native keyboard activation inside the originating tap, then serialize submission
+      // behind the exact target's lease and phone-sized PTY handoff.
       terminalSurface.current?.focus();
       quickInsertInFlight.current = true;
       setQuickInsertBusy(true);
       try {
-        const request: ClientMessage = preferences.oneTapQuickInserts
-          ? {
-              type: "quick_insert_submit",
-              data: {
-                target: currentTarget,
-                workspace_revision: currentSnapshot.revision,
-                item_id: itemId,
-                configuration_revision: configurationRevision,
-              },
-            }
-          : {
-              type: "quick_insert_preview",
-              data: {
-                target: currentTarget,
-                workspace_revision: currentSnapshot.revision,
-                item_id: itemId,
-                configuration_revision: configurationRevision,
-              },
-            };
-        const response = await client.current?.sendAndWait(request);
+        if (!(await prepareTerminalForInput())) return;
+        const currentSnapshot = snapshotRef.current;
+        const currentTarget = selectedTargetRef.current;
+        if (!currentSnapshot || !currentTarget || connectionRef.current !== "connected") return;
+        const response = await client.current?.sendAndWait({
+          type: "quick_insert_submit",
+          data: {
+            target: currentTarget,
+            workspace_revision: currentSnapshot.revision,
+            item_id: itemId,
+            configuration_revision: configurationRevision,
+          },
+        });
         if (isRetryableWorkspaceResponse(response)) return;
         if (response?.payload.type === "error") throw new Error(response.payload.data.message);
-        if (response?.payload.type === "quick_insert_preview") {
-          terminalSurface.current?.paste(response.payload.data.text);
-        }
       } catch (error) {
         setNotice(error instanceof Error ? error.message : String(error));
       } finally {
@@ -870,9 +885,7 @@ export function App() {
     },
     [
       canWrite,
-      preferences.oneTapQuickInserts,
-      selectedTarget,
-      snapshot,
+      prepareTerminalForInput,
     ],
   );
 
@@ -1215,12 +1228,36 @@ export function App() {
           <button className="attach-button" aria-label="Attach photo or file" disabled={!canWrite || uploadActive} onClick={() => fileInput.current?.click()}>＋</button>
           <div className="quick-inserts" aria-label="Clinch quick inserts">
             {quickInserts.map((item) => (
-              <button key={`${item.id}:${item.configuration_revision}`} onClick={() => void previewQuickInsert(item.id, item.configuration_revision)} disabled={!canWrite || quickInsertBusy}>
+              <button
+                key={`${item.id}:${item.configuration_revision}`}
+                onPointerDown={(event) => event.preventDefault()}
+                onClick={() => void submitQuickInsert(item.id, item.configuration_revision)}
+                disabled={!canWrite || quickInsertBusy}
+              >
                 {item.label}
               </button>
             ))}
           </div>
           <button className="keyboard-dismiss" aria-label="Close keyboard" disabled={!terminalSnapshot} onClick={() => terminalSurface.current?.blur()}>⌄</button>
+        </div>
+        <div className="terminal-key-row" aria-label="Terminal keys">
+          {([
+            ["escape", "esc", "Escape"],
+            ["tab", "tab", "Tab"],
+            ["arrow_left", "←", "Left arrow"],
+            ["arrow_up", "↑", "Up arrow"],
+            ["arrow_down", "↓", "Down arrow"],
+            ["arrow_right", "→", "Right arrow"],
+          ] as const).map(([key, label, accessibleLabel]) => (
+            <button
+              key={key}
+              aria-label={accessibleLabel}
+              className={label.length > 1 ? "text-key" : undefined}
+              disabled={!canWrite}
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={() => void sendTerminalKey(key)}
+            >{label}</button>
+          ))}
         </div>
         {(leaseMessage || uploadActive || uploadRetryFile) && (
           <div className="keyboard-status">
@@ -1317,14 +1354,6 @@ export function App() {
               <small>{usage.updated_at ? `Updated ${new Date(usage.updated_at).toLocaleTimeString()}` : usage.source}</small>
             </div>
           ))}
-          <label className="preference-row">
-            <span><strong>One-tap quick inserts</strong><small>Off by default. Quick inserts paste into the live prompt; press the keyboard&apos;s Enter to submit.</small></span>
-            <input type="checkbox" checked={preferences.oneTapQuickInserts} onChange={(event) => {
-              const next = { ...preferences, oneTapQuickInserts: event.target.checked };
-              setPreferences(next);
-              void savePreferences(next);
-            }} />
-          </label>
           <p className="privacy-copy">Terminal data travels directly through your tailnet. Clinch has no account, analytics, or hosted relay in this connection.</p>
           <p className="muted">On iPhone or iPad, use Chrome or Safari&apos;s Share menu → Add to Home Screen, then open the Clinch icon for a full-screen app without browser bars. Installation is optional.</p>
           <a className="connection-help" href="https://clinch.sh/remote-control" target="_blank" rel="noreferrer">Connection help & security guide ↗</a>
