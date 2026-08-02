@@ -16,7 +16,7 @@ use super::{
     active_index_after_removal, close_project_decision, next_project_index, previous_project_index,
     project_agent_hover_summary, render_project_agent_hover_card, CloseProjectDecision,
     ACTIVATE_NEXT_PROJECT_MAC_KEY_BINDING, ACTIVATE_PREVIOUS_PROJECT_MAC_KEY_BINDING,
-    PROJECT_TAB_BORDER_WIDTH, PROJECT_TAB_VERTICAL_NUDGE, PROJECT_TAB_VERTICAL_PADDING,
+    PROJECT_TAB_BORDER_WIDTH, PROJECT_TAB_VERTICAL_PADDING,
 };
 use crate::appearance::Appearance;
 use crate::root_view::{NewWorkspaceSource, RootView};
@@ -186,7 +186,6 @@ fn close_project_guard_distinguishes_missing_singleton_and_grouped_projects() {
 #[test]
 fn project_tab_label_height_budget_fits_one_ui_line() {
     let label_budget = crate::workspace::view::TAB_BAR_HEIGHT
-        - PROJECT_TAB_VERTICAL_NUDGE
         - 2. * (PROJECT_TAB_VERTICAL_PADDING + PROJECT_TAB_BORDER_WIDTH);
     let ui_line_height = warp_core::ui::appearance::DEFAULT_UI_FONT_SIZE
         * warpui::elements::DEFAULT_UI_LINE_HEIGHT_RATIO;
