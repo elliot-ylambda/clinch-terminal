@@ -838,6 +838,26 @@ export function App() {
     void prepareTerminalForInput();
   }, [prepareTerminalForInput]);
 
+  const autoPreparedSnapshot = useRef<TerminalSnapshot | undefined>(undefined);
+  useEffect(() => {
+    // Attaching (first load, a page refresh, or reconnecting after the phone was pocketed)
+    // paints whatever size the Mac grid currently has — after a long absence that is the
+    // desktop layout, whose bottom rows are mostly blank on a phone-height terminal. Nothing
+    // used to correct that until the first tap, which read as "refresh does nothing". Run the
+    // lease/resize handshake as soon as a terminal snapshot for the selected pane is showing,
+    // at most once per attach: re-running on later dependency churn could snatch the lease
+    // back after the Mac's keyboard deliberately evicted this device.
+    if (connection !== "connected" || resyncing || !terminalSnapshot || !selectedTarget) return;
+    if (targetKey(terminalSnapshot.target) !== targetKey(selectedTarget)) return;
+    if (autoPreparedSnapshot.current === terminalSnapshot) return;
+    autoPreparedSnapshot.current = terminalSnapshot;
+    if (document.visibilityState === "hidden") return;
+    // Viewing must never steal control from another device.
+    const lease = resolveTarget(snapshotRef.current, selectedTarget).pane?.writer_lease;
+    if (lease && lease.device_id !== identityRef.current?.deviceId) return;
+    void prepareTerminalForInput();
+  }, [connection, prepareTerminalForInput, resyncing, selectedTarget, terminalSnapshot]);
+
   const sendRawInput = useCallback((data: string): boolean => {
     if (!data) return true;
     const currentSnapshot = snapshotRef.current;

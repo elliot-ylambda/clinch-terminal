@@ -118,9 +118,12 @@ fn writer_leases_are_adopted_by_the_same_device_but_block_other_devices() {
         device_name: "Elliot's phone".to_owned(),
         expires_at: Utc::now() + Duration::seconds(WRITER_LEASE_TTL_SECS as i64),
     };
+    let mut connected = HashSet::new();
+    connected.insert(lease.session_id);
 
     // The same session keeps writing.
     assert!(!writer_lease_blocks(
+        &connected,
         &lease,
         &SessionAuthorization {
             session_id: lease.session_id,
@@ -132,6 +135,7 @@ fn writer_leases_are_adopted_by_the_same_device_but_block_other_devices() {
 
     // The same device under a fresh session (page reload) adopts its own lease.
     assert!(!writer_lease_blocks(
+        &connected,
         &lease,
         &SessionAuthorization {
             session_id: AuthSessionId::new(),
@@ -141,14 +145,16 @@ fn writer_leases_are_adopted_by_the_same_device_but_block_other_devices() {
         }
     ));
 
-    // A different device stays blocked while the lease is live.
-    assert!(writer_lease_blocks(
-        &lease,
-        &SessionAuthorization {
-            session_id: AuthSessionId::new(),
-            device_id: clinch_companion_protocol::DeviceId::new(),
-            device_name: "Other phone".to_owned(),
-            capabilities: Vec::new(),
-        }
-    ));
+    // A different device stays blocked while the holder is connected.
+    let other_device = SessionAuthorization {
+        session_id: AuthSessionId::new(),
+        device_id: clinch_companion_protocol::DeviceId::new(),
+        device_name: "Other phone".to_owned(),
+        capabilities: Vec::new(),
+    };
+    assert!(writer_lease_blocks(&connected, &lease, &other_device));
+
+    // Once the holder disconnects, its grace-window lease never makes another device wait.
+    connected.clear();
+    assert!(!writer_lease_blocks(&connected, &lease, &other_device));
 }

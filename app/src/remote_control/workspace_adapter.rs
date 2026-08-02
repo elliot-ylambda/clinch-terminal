@@ -135,11 +135,19 @@ fn writer_lease_expired(
     lease.expires_at <= now && !connected_sessions.contains(&lease.session_id)
 }
 
-/// A lease only blocks OTHER devices. The same device reconnecting under a new session (a page
-/// reload, a phone returning from background) adopts its own lease instead of being locked out
-/// by a session it can no longer resume.
-fn writer_lease_blocks(lease: &WriterLease, authorization: &SessionAuthorization) -> bool {
-    lease.session_id != authorization.session_id && lease.device_id != authorization.device_id
+/// A lease only blocks OTHER devices, and only while its holder is still connected. The same
+/// device reconnecting under a new session (a page reload, a phone returning from background)
+/// adopts its own lease instead of being locked out by a session it can no longer resume, and
+/// a lease riding out the disconnect grace window never makes a second device wait for a
+/// holder whose socket is already gone.
+fn writer_lease_blocks(
+    connected_sessions: &HashSet<AuthSessionId>,
+    lease: &WriterLease,
+    authorization: &SessionAuthorization,
+) -> bool {
+    lease.session_id != authorization.session_id
+        && lease.device_id != authorization.device_id
+        && connected_sessions.contains(&lease.session_id)
 }
 
 #[derive(Clone)]
@@ -375,31 +383,53 @@ impl WorkspaceAdapter {
     /// is merely reading. Renewing only on writes made an idle phone lose the lease after
     /// `WRITER_LEASE_TTL_SECS`, which silently reverted the PTY to desktop dimensions
     /// mid-conversation and garbled every subsequent CLI repaint on the phone.
-    pub fn session_connected(&mut self, session_id: AuthSessionId) {
+    ///
+    /// A returning device usually arrives under a fresh auth session while its leases still
+    /// reference the old one, so rebind them here; otherwise an adopted lease would silently
+    /// lapse on the TTL backstop mid-use even though its holder is connected.
+    pub fn session_connected(
+        &mut self,
+        session_id: AuthSessionId,
+        device_id: clinch_companion_protocol::DeviceId,
+    ) {
         self.connected_sessions.insert(session_id);
+        let now = Utc::now();
+        for lease in self.writer_leases.values_mut() {
+            if lease.device_id == device_id && !self.connected_sessions.contains(&lease.session_id)
+            {
+                lease.session_id = session_id;
+                lease.expires_at = now + Duration::seconds(WRITER_LEASE_TTL_SECS as i64);
+            }
+        }
     }
 
+    /// Phones close their socket for something as small as a notification peek, so a
+    /// disconnect must not restore desktop PTY sizing immediately: every restore-and-resize
+    /// round trip makes full-screen CLIs repaint while dimensions are in flux, which bakes
+    /// word-splits into the transcript. Instead the disconnect re-arms the lease TTL as a
+    /// grace window; `prune_writer_leases` restores desktop dimensions only if the device
+    /// stays away, and the gateway schedules a delayed sweep so that happens even when no
+    /// other client is left polling.
     pub fn session_disconnected(
         &mut self,
         session_id: AuthSessionId,
-        ctx: &mut ModelContext<Self>,
+        _ctx: &mut ModelContext<Self>,
     ) {
         self.connected_sessions.remove(&session_id);
-        let targets = self
-            .writer_leases
-            .iter()
-            .filter(|(_, lease)| lease.session_id == session_id)
-            .map(|(target, _)| target.clone())
-            .collect::<Vec<_>>();
-        for target in targets {
-            self.writer_leases.remove(&target);
-            if let Some(resolved) = self.resolve_target_key(&target, ctx) {
-                resolved.terminal.update(ctx, |terminal, ctx| {
-                    terminal.remote_control_restore_desktop_size(ctx);
-                });
+        let now = Utc::now();
+        for lease in self.writer_leases.values_mut() {
+            if lease.session_id == session_id {
+                lease.expires_at = now + Duration::seconds(WRITER_LEASE_TTL_SECS as i64);
             }
         }
         self.idempotency.remove(&session_id);
+    }
+
+    /// Restores desktop sizing for leases whose grace window lapsed. Connected clients drive
+    /// pruning through their snapshot polls, but after the last client disconnects nothing
+    /// polls, so the gateway schedules one of these per disconnect.
+    pub fn sweep_writer_leases(&mut self, ctx: &mut ModelContext<Self>) {
+        self.prune_writer_leases(ctx);
     }
 
     pub fn all_sessions_disconnected(&mut self, ctx: &mut ModelContext<Self>) {
@@ -1237,7 +1267,7 @@ impl WorkspaceAdapter {
             self.writer_leases.remove(&key);
         }
         if let Some(lease) = self.writer_leases.get(&key) {
-            if writer_lease_blocks(lease, authorization) {
+            if writer_lease_blocks(&self.connected_sessions, lease, authorization) {
                 let holder = lease.device_name.clone();
                 return Err(Box::new(self.error(
                     request_id,

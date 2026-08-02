@@ -26,7 +26,7 @@ use clinch_companion_protocol::{
     ClientEnvelope, ClientMessage, PairingClaimRequest, PairingStatus, PairingStatusRequest,
     ProtocolError, ProtocolErrorCode, RequestId, ServerEnvelope, ServerMessage, UploadProgress,
     AUTH_SESSION_TTL_SECS, MAX_JSON_MESSAGE_BYTES, MAX_TERMINAL_FRAME_BYTES,
-    MAX_UPLOAD_CHUNK_BYTES, PROTOCOL_VERSION,
+    MAX_UPLOAD_CHUNK_BYTES, PROTOCOL_VERSION, WRITER_LEASE_TTL_SECS,
 };
 use instant::Instant;
 use serde::Serialize;
@@ -409,12 +409,14 @@ async fn websocket_loop(mut socket: WebSocket, state: GatewayState, cookie_token
         }
     };
     let session_id = initial_authorization.session_id;
+    let device_id = initial_authorization.device_id;
     let _ = state.events.send(GatewayEvent::ClientConnected).await;
     // Register the live socket before any lease can be acquired: writer leases stay valid for
-    // as long as their holder remains connected, not just while it is actively writing.
+    // as long as their holder remains connected, not just while it is actively writing. The
+    // device id lets the adapter rebind this device's grace-window leases to the new session.
     let _ = state
         .workspace_spawner
-        .spawn(move |adapter, _| adapter.session_connected(session_id))
+        .spawn(move |adapter, _| adapter.session_connected(session_id, device_id))
         .await;
     let mut connection_sequence = 0u64;
     let hello = ServerEnvelope {
@@ -827,6 +829,17 @@ async fn websocket_loop(mut socket: WebSocket, state: GatewayState, cookie_token
         .workspace_spawner
         .spawn(move |adapter, ctx| adapter.session_disconnected(session_id, ctx))
         .await;
+    // Disconnects re-arm writer leases as a grace window instead of restoring desktop sizing.
+    // Connected clients drive the expiry sweep through their snapshot polls, but when this was
+    // the last client nothing polls anymore, so schedule one sweep for just after the grace
+    // window can first lapse.
+    let sweep_spawner = state.workspace_spawner.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(WRITER_LEASE_TTL_SECS + 2)).await;
+        let _ = sweep_spawner
+            .spawn(|adapter, ctx| adapter.sweep_writer_leases(ctx))
+            .await;
+    });
     let _ = state.pairing.end_session(session_id);
     let _ = state.events.send(GatewayEvent::ClientDisconnected).await;
 }
