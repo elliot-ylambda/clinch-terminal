@@ -8388,9 +8388,7 @@ fn remote_control_primary_snapshot_keeps_cursor_at_the_logical_prompt_end() {
 
     let block = model.block_list().active_block();
     let grid = block.prompt_and_command_grid();
-    let mut snapshot = grid
-        .contents_to_string_force_full_grid_contents(true, Some(1_000))
-        .into_bytes();
+    let mut snapshot = remote_control_prompt_and_command_bytes(block, true);
 
     // The tiny test grid wraps this prompt across five native rows. A wider phone will reflow it
     // back onto fewer rows, so an absolute native row/column cannot represent its mobile cursor.
@@ -8399,5 +8397,34 @@ fn remote_control_primary_snapshot_keeps_cursor_at_the_logical_prompt_end() {
     assert_eq!(
         String::from_utf8(snapshot).unwrap(),
         "➜  magister-marketing git:(main) "
+    );
+}
+
+#[test]
+fn remote_control_zero_width_prompt_snapshot_includes_visible_prompt_and_command() {
+    let mut model = TerminalModel::mock(None, None);
+    model.precmd(ansi::PrecmdValue {
+        ps1: Some(hex::encode("➜  magister-marketing git:(main) ")),
+        honor_ps1: Some(false),
+        ..Default::default()
+    });
+    model.prompt_marker(ansi::PromptMarker::StartPrompt {
+        kind: ansi::PromptKind::Initial,
+    });
+    model.process_bytes("➜  magister-marketing git:(main) ");
+    model.prompt_marker(ansi::PromptMarker::EndPrompt);
+    model.block_list_mut().active_block_mut().start();
+    model.process_bytes("slowtest");
+
+    let mut snapshot =
+        remote_control_prompt_and_command_bytes(model.block_list().active_block(), true);
+    remote_control_trim_final_row_terminator(&mut snapshot);
+    let visible_snapshot = String::from_utf8(snapshot)
+        .unwrap()
+        .replace("\x1b[1m", "")
+        .replace("\x1b[0m", "");
+    assert_eq!(
+        visible_snapshot,
+        "\x1b]133;A\x07➜  magister-marketing git:(main) \x1b]133;B\x07slowtest"
     );
 }

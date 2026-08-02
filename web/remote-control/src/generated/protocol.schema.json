@@ -1830,6 +1830,10 @@
           "type": "integer",
           "format": "uint64",
           "minimum": 0
+        },
+        "zero_width_prompt": {
+          "description": "Clinch's built-in prompt is painted beside a zero-width shell command grid. A standard\nterminal emulator must keep that command grid at column zero when replaying ZLE redraws.",
+          "type": "boolean"
         }
       },
       "required": [
@@ -1838,7 +1842,8 @@
         "workspace_revision",
         "terminal_sequence",
         "data_base64",
-        "dimensions"
+        "dimensions",
+        "zero_width_prompt"
       ]
     },
     "UploadBegin": {

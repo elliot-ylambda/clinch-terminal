@@ -3138,6 +3138,45 @@ fn remote_control_trim_final_row_terminator(snapshot: &mut Vec<u8>) {
     }
 }
 
+const REMOTE_CONTROL_PROMPT_START: &[u8] = b"\x1b]133;A\x07";
+const REMOTE_CONTROL_PROMPT_END: &[u8] = b"\x1b]133;B\x07";
+
+/// Serializes the prompt and editable command as one conventional terminal line. Clinch's
+/// built-in prompt normally lives in a separate preview grid and is declared zero-width to the
+/// shell, while the command lives in the active command grid. A browser xterm needs both pieces
+/// in its initial snapshot; the OSC markers let the browser place the command grid on the next
+/// row so later ZLE carriage-return redraws retain their native column-zero coordinate system.
+fn remote_control_prompt_and_command_bytes(block: &Block, is_active: bool) -> Vec<u8> {
+    let command = block
+        .prompt_and_command_grid()
+        .contents_to_string_force_full_grid_contents(true, Some(1_000));
+    if block.honor_ps1() {
+        return command.into_bytes();
+    }
+
+    let mut prompt = block
+        .prompt_grid()
+        .contents_to_string_force_full_grid_contents(true, Some(1_000))
+        .into_bytes();
+    remote_control_trim_final_row_terminator(&mut prompt);
+
+    let marker_bytes = if is_active {
+        REMOTE_CONTROL_PROMPT_START.len() + REMOTE_CONTROL_PROMPT_END.len()
+    } else {
+        0
+    };
+    let mut bytes = Vec::with_capacity(prompt.len() + command.len() + marker_bytes);
+    if is_active {
+        bytes.extend_from_slice(REMOTE_CONTROL_PROMPT_START);
+    }
+    bytes.extend_from_slice(&prompt);
+    if is_active {
+        bytes.extend_from_slice(REMOTE_CONTROL_PROMPT_END);
+    }
+    bytes.extend_from_slice(command.as_bytes());
+    bytes
+}
+
 fn remote_control_has_visible_live_primary_grid(block: &Block) -> bool {
     block
         .output_grid()
@@ -16601,14 +16640,13 @@ impl TerminalView {
             {
                 continue;
             }
-            let prompt = block
-                .prompt_and_command_grid()
-                .contents_to_string_force_full_grid_contents(true, Some(1_000));
+            let prompt =
+                remote_control_prompt_and_command_bytes(block, block.id() == active_block.id());
             let output = block
                 .output_grid()
                 .contents_to_string_force_full_grid_contents(true, Some(4_000));
             let mut bytes = Vec::with_capacity(prompt.len() + output.len() + 4);
-            bytes.extend_from_slice(prompt.as_bytes());
+            bytes.extend_from_slice(&prompt);
             if !prompt.is_empty() && !output.is_empty() {
                 bytes.extend_from_slice(b"\r\n");
             }
@@ -16642,6 +16680,18 @@ impl TerminalView {
             snapshot.extend_from_slice(&chunk);
         }
         snapshot
+    }
+
+    /// Whether the active shell has declared its visible prompt zero-width so Clinch can paint
+    /// the command in a separate grid. Remote xterm mirrors use this to keep that command grid
+    /// independent from the visible prompt while replaying ZLE redraws.
+    pub(crate) fn remote_control_zero_width_prompt(&self) -> bool {
+        let model = self.model.lock();
+        if model.is_alt_screen_active() {
+            return false;
+        }
+        let active_block = model.block_list().active_block();
+        !active_block.honor_ps1() && !remote_control_has_visible_live_primary_grid(active_block)
     }
 
     /// Subscribes to raw bytes read from this exact terminal after a snapshot is taken.
