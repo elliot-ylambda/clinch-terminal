@@ -585,6 +585,12 @@ export function App() {
   const selectedProject = snapshot?.projects.find((project) => project.id === selectedProjectId) ?? selected.project;
   const selectedLocalCwd = selected.tab?.remote_host ? undefined : selected.pane?.cwd ?? undefined;
   const ownsWriterLease = selected.pane?.writer_lease?.device_id === identity?.deviceId;
+  useEffect(() => {
+    // Losing the writer lease (disconnect cleanup, the TTL backstop, or another device taking
+    // over) lets the Mac restore desktop PTY sizing, so a previously confirmed viewport can no
+    // longer be trusted; the next input must re-run the full lease/resize handshake.
+    if (!ownsWriterLease) terminalReadyViewport.current = undefined;
+  }, [ownsWriterLease]);
   const canWrite =
     connection === "connected" &&
     !resyncing &&
@@ -684,6 +690,20 @@ export function App() {
     }
   }, [sendRawInputNow]);
 
+  const refreshTerminalSnapshot = useCallback(() => {
+    const currentSnapshot = snapshotRef.current;
+    const currentTarget = selectedTargetRef.current;
+    if (!currentSnapshot || !currentTarget || connectionRef.current !== "connected") return;
+    try {
+      client.current?.send({
+        type: "select_target",
+        data: { target: currentTarget, workspace_revision: currentSnapshot.revision },
+      });
+    } catch {
+      // The refresh is cosmetic cleanup; input already works at the confirmed dimensions.
+    }
+  }, []);
+
   const prepareTerminalForInput = useCallback((): Promise<boolean> => {
     const currentSnapshot = snapshotRef.current;
     const currentTarget = selectedTargetRef.current;
@@ -711,6 +731,10 @@ export function App() {
           return false;
         }
         if (!initialLease) {
+          // A fresh lease grant means the Mac may have restored desktop PTY dimensions since
+          // this device last held control (leases drop on disconnect or the TTL backstop).
+          // Any cached ready viewport is stale until a new resize handshake confirms it.
+          terminalReadyViewport.current = undefined;
           const response = await companion.sendAndWait({
             type: "acquire_writer_lease",
             data: { target: currentTarget, workspace_revision: currentSnapshot.revision },
@@ -779,6 +803,18 @@ export function App() {
           ) {
             terminalReadyViewport.current = viewportKey;
             flushQueuedTerminalInput(expectedTargetKey);
+            if (
+              !activeTerminalSnapshot.zero_width_prompt
+              && (activeTerminalSnapshot.dimensions.columns !== viewport.columns
+                || activeTerminalSnapshot.dimensions.rows !== viewport.rows)
+            ) {
+              // The visible xterm content is a local reflow of a grid the Mac painted at its
+              // old dimensions, and full-screen CLI frames do not survive that reflow. The Mac
+              // grid just repainted at the confirmed size, so re-select the target to replace
+              // the local buffer with that authoritative render. The refreshed snapshot arrives
+              // at the fitted dimensions, so this cannot re-trigger itself.
+              refreshTerminalSnapshot();
+            }
             return true;
           }
           // The iOS keyboard or an orientation change altered the viewport while the Mac was
@@ -796,7 +832,7 @@ export function App() {
       if (terminalPreparation.current?.promise === promise) terminalPreparation.current = undefined;
     });
     return promise;
-  }, [flushQueuedTerminalInput, terminalBus]);
+  }, [flushQueuedTerminalInput, refreshTerminalSnapshot, terminalBus]);
 
   const acquireLease = useCallback(() => {
     void prepareTerminalForInput();

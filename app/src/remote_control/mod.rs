@@ -415,10 +415,13 @@ impl RemoteControlService {
                     } else {
                         self.base_origin = Some(ready.base_url.clone());
                         RemoteControlStatus::Ready {
+                            // The trailing slash is load-bearing: the web app's assets use
+                            // relative URLs, and without it the browser resolves them against
+                            // the domain root, outside the Tailscale Serve path mount.
                             remote_url: format!(
-                                "{}/{}",
+                                "{}/{}/",
                                 ready.base_url.trim_end_matches('/'),
-                                ready.route_path.trim_start_matches('/')
+                                ready.route_path.trim_matches('/')
                             ),
                             loopback_port: port,
                         }

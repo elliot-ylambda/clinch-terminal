@@ -42,7 +42,13 @@ use super::workspace_adapter::{
 
 const SESSION_COOKIE_NAME: &str = "clinch_remote_session";
 const MAX_CLIENT_MESSAGES_PER_SECOND: usize = 128;
-const STATIC_CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
+/// Hash of the single inline script in `web/remote-control/index.html` (the trailing-slash
+/// self-correct guard, which must run before any relative asset is requested). Vite emits
+/// classic inline scripts verbatim, so the source file is the authority; the
+/// `csp_allows_the_index_inline_script` test recomputes this from that file.
+const INDEX_INLINE_SCRIPT_SHA256: &str = "sha256-oJaMPPxbe4jRSak6lGfklinxg8m6PdctW1hxGB0LfNA=";
+const STATIC_CSP: &str = "default-src 'self'; script-src 'self' \
+    'sha256-oJaMPPxbe4jRSak6lGfklinxg8m6PdctW1hxGB0LfNA='; style-src 'self' 'unsafe-inline'; \
     img-src 'self' data: blob:; font-src 'self'; connect-src 'self' wss:; object-src 'none'; \
     base-uri 'none'; frame-ancestors 'none'; form-action 'self'; manifest-src 'self'; worker-src 'self'";
 
@@ -399,6 +405,12 @@ async fn websocket_loop(mut socket: WebSocket, state: GatewayState, cookie_token
     };
     let session_id = initial_authorization.session_id;
     let _ = state.events.send(GatewayEvent::ClientConnected).await;
+    // Register the live socket before any lease can be acquired: writer leases stay valid for
+    // as long as their holder remains connected, not just while it is actively writing.
+    let _ = state
+        .workspace_spawner
+        .spawn(move |adapter, _| adapter.session_connected(session_id))
+        .await;
     let mut connection_sequence = 0u64;
     let hello = ServerEnvelope {
         version: PROTOCOL_VERSION,

@@ -276,6 +276,22 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, Props>(function
     resizeCallback.current(instance.cols, instance.rows);
   }, [beginVisualResize]);
 
+  const scheduleFitAndReport = useCallback(() => {
+    // The double rAF defers fitting until after the pending React commit has laid out — but
+    // rAF never fires in hidden or suspended tabs (a backgrounded phone PWA returning to the
+    // foreground, a covered browser tab), which silently stalls the lease/resize handshake.
+    // Race a timer that provides the same post-commit scheduling without depending on paint.
+    let completed = false;
+    const run = () => {
+      if (completed) return;
+      completed = true;
+      window.clearTimeout(timer);
+      fitAndReport();
+    };
+    const timer = window.setTimeout(run, 60);
+    requestAnimationFrame(() => requestAnimationFrame(run));
+  }, [fitAndReport]);
+
   const drainBufferedFrames = useCallback(function drain(
     streamId: string,
     writeGeneration: number,
@@ -289,7 +305,7 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, Props>(function
     const frames = bus.framesAfter(streamId, sequence.current);
     if (!frames.length) {
       snapshotWriteInFlight.current = false;
-      requestAnimationFrame(() => requestAnimationFrame(fitAndReport));
+      scheduleFitAndReport();
       return;
     }
     if (frames[0]?.sequence !== sequence.current + 1) {
@@ -315,7 +331,7 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, Props>(function
       zeroWidthPromptTransformer.current.transform(payload, zeroWidthPrompt.current),
       () => drain(streamId, writeGeneration),
     );
-  }, [bus, fitAndReport]);
+  }, [bus, scheduleFitAndReport]);
 
   useEffect(() => {
     if (!container.current) return;
@@ -401,7 +417,7 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, Props>(function
     });
     const focusListener = () => focusCallback.current?.();
     container.current.addEventListener("focusin", focusListener);
-    requestAnimationFrame(() => requestAnimationFrame(fitAndReport));
+    scheduleFitAndReport();
     return () => {
       window.clearTimeout(resizeTimer);
       unsubscribe();
@@ -412,7 +428,7 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, Props>(function
       instance.dispose();
       terminal.current = undefined;
     };
-  }, [bus, clearVisualResize, fitAndReport, revealVisualResizeAfterQuiet]);
+  }, [bus, clearVisualResize, fitAndReport, revealVisualResizeAfterQuiet, scheduleFitAndReport]);
 
   useEffect(() => {
     const instance = terminal.current;
@@ -480,8 +496,8 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, Props>(function
       lastReportedDimensions.current = undefined;
       return;
     }
-    requestAnimationFrame(() => requestAnimationFrame(fitAndReport));
-  }, [canResize, fitAndReport]);
+    scheduleFitAndReport();
+  }, [canResize, scheduleFitAndReport]);
 
   return <div className="terminal-surface" ref={container} aria-label="Selected Clinch terminal output" />;
 });

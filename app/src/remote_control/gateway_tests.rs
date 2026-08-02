@@ -119,3 +119,42 @@ fn client_message_rate_is_bounded_and_recovers() {
         start + Duration::from_secs(2)
     ));
 }
+
+#[test]
+fn csp_allows_the_index_inline_script() {
+    use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+    use base64::Engine as _;
+
+    let index = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../web/remote-control/index.html"),
+    )
+    .expect("web/remote-control/index.html is part of this repository");
+    let inline_scripts: Vec<&str> = index
+        .split("<script>")
+        .skip(1)
+        .map(|rest| {
+            rest.split_once("</script>")
+                .expect("every inline <script> is closed")
+                .0
+        })
+        .collect();
+    assert_eq!(
+        inline_scripts.len(),
+        1,
+        "STATIC_CSP hashes exactly one inline script; update INDEX_INLINE_SCRIPT_SHA256 and \
+         STATIC_CSP together when index.html changes"
+    );
+    let digest = format!(
+        "sha256-{}",
+        BASE64_STANDARD.encode(Sha256::digest(inline_scripts[0].as_bytes()))
+    );
+    assert_eq!(
+        digest, INDEX_INLINE_SCRIPT_SHA256,
+        "the inline script in web/remote-control/index.html changed; update \
+         INDEX_INLINE_SCRIPT_SHA256 and STATIC_CSP in gateway.rs to this hash"
+    );
+    assert!(
+        STATIC_CSP.contains(INDEX_INLINE_SCRIPT_SHA256),
+        "STATIC_CSP must include INDEX_INLINE_SCRIPT_SHA256 in script-src"
+    );
+}

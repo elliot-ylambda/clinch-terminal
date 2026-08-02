@@ -123,6 +123,18 @@ impl WriterLease {
     }
 }
 
+/// A lease never expires while its holder's session is still connected: a phone that is reading
+/// a long CLI response sends no writes, and dropping its lease would revert the PTY to desktop
+/// dimensions mid-conversation. `expires_at` is therefore only honored once the holder is no
+/// longer in the connected set (an unclean disconnect that skipped `session_disconnected`).
+fn writer_lease_expired(
+    connected_sessions: &HashSet<AuthSessionId>,
+    lease: &WriterLease,
+    now: chrono::DateTime<Utc>,
+) -> bool {
+    lease.expires_at <= now && !connected_sessions.contains(&lease.session_id)
+}
+
 #[derive(Clone)]
 struct ResolvedTarget {
     project_window: ViewHandle<ProjectWindow>,
@@ -155,6 +167,7 @@ pub struct WorkspaceAdapter {
     last_topology_fingerprint: Option<u64>,
     pairing: PairingManager,
     writer_leases: HashMap<TargetKey, WriterLease>,
+    connected_sessions: HashSet<AuthSessionId>,
     terminal_subscriptions: HashSet<EntityId>,
     idempotency: HashMap<AuthSessionId, VecDeque<(RequestId, ServerEnvelope)>>,
     recent_agent_sessions: Vec<RecentAgentSessionSnapshot>,
@@ -179,6 +192,7 @@ impl WorkspaceAdapter {
             last_topology_fingerprint: None,
             pairing,
             writer_leases: HashMap::new(),
+            connected_sessions: HashSet::new(),
             terminal_subscriptions: HashSet::new(),
             idempotency: HashMap::new(),
             recent_agent_sessions: Vec::new(),
@@ -350,11 +364,20 @@ impl WorkspaceAdapter {
         )
     }
 
+    /// Marks a companion session's WebSocket as live so its writer leases stay valid while it
+    /// is merely reading. Renewing only on writes made an idle phone lose the lease after
+    /// `WRITER_LEASE_TTL_SECS`, which silently reverted the PTY to desktop dimensions
+    /// mid-conversation and garbled every subsequent CLI repaint on the phone.
+    pub fn session_connected(&mut self, session_id: AuthSessionId) {
+        self.connected_sessions.insert(session_id);
+    }
+
     pub fn session_disconnected(
         &mut self,
         session_id: AuthSessionId,
         ctx: &mut ModelContext<Self>,
     ) {
+        self.connected_sessions.remove(&session_id);
         let targets = self
             .writer_leases
             .iter()
@@ -373,6 +396,7 @@ impl WorkspaceAdapter {
     }
 
     pub fn all_sessions_disconnected(&mut self, ctx: &mut ModelContext<Self>) {
+        self.connected_sessions.clear();
         let targets = self.writer_leases.keys().cloned().collect::<Vec<_>>();
         self.writer_leases.clear();
         self.idempotency.clear();
@@ -1201,7 +1225,7 @@ impl WorkspaceAdapter {
         if self
             .writer_leases
             .get(&key)
-            .is_some_and(|lease| lease.expires_at <= Utc::now())
+            .is_some_and(|lease| writer_lease_expired(&self.connected_sessions, lease, Utc::now()))
         {
             self.writer_leases.remove(&key);
         }
@@ -1227,12 +1251,16 @@ impl WorkspaceAdapter {
         Ok(snapshot)
     }
 
+    /// Removes leases whose holder is gone. Holders that disconnect cleanly are handled by
+    /// `session_disconnected` immediately; the TTL here is only a backstop for sessions that
+    /// vanished without one. Clients learn about a pruned lease through the next workspace
+    /// snapshot push, since `PaneSnapshot::writer_lease` participates in the change fingerprint.
     fn prune_writer_leases(&mut self, ctx: &mut ModelContext<Self>) {
         let now = Utc::now();
         let expired = self
             .writer_leases
             .iter()
-            .filter(|(_, lease)| lease.expires_at <= now)
+            .filter(|(_, lease)| writer_lease_expired(&self.connected_sessions, lease, now))
             .map(|(target, _)| target.clone())
             .collect::<Vec<_>>();
         for target in expired {

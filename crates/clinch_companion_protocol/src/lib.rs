@@ -33,6 +33,9 @@ pub const PAIRING_INVITATION_TTL_SECS: u64 = 5 * 60;
 pub const AUTH_CHALLENGE_TTL_SECS: u64 = 60;
 pub const AUTH_SESSION_TTL_SECS: u64 = 15 * 60;
 pub const DEVICE_INACTIVITY_LIMIT_DAYS: i64 = 90;
+/// Backstop lifetime of a writer lease after its holder's session stops being connected. While
+/// the holding session's WebSocket remains open the lease does not expire, so an idle reader
+/// keeps the PTY at its reported viewport; a clean disconnect releases the lease immediately.
 pub const WRITER_LEASE_TTL_SECS: u64 = 30;
 
 pub const MAX_JSON_MESSAGE_BYTES: usize = 256 * 1024;
