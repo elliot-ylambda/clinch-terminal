@@ -980,6 +980,34 @@ export function App() {
     }
   }, [runCreation, selectedLocalCwd, selectedProject, snapshot]);
 
+  const createBlankTerminal = useCallback(async () => {
+    const currentSnapshot = snapshotRef.current;
+    const project = currentSnapshot?.projects.find(
+      (candidate) => candidate.id === selectedProjectIdRef.current,
+    ) ?? currentSnapshot?.projects.find((candidate) => candidate.active);
+    if (!currentSnapshot || !project) return;
+    const knownTabIds = new Set(project.tabs.map((tab) => tab.id));
+    try {
+      if (!(await createTab(project.id, "terminal", selectedLocalCwd))) return;
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+      return;
+    }
+    // The Mac only replies "accepted"; the created tab arrives with a later workspace snapshot.
+    // Select it once its pane is controllable so the button behaves like a desktop new tab.
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const latest = snapshotRef.current;
+      const latestProject = latest?.projects.find((candidate) => candidate.id === project.id);
+      const createdTab = latestProject?.tabs.find((tab) => !knownTabIds.has(tab.id));
+      const pane = createdTab?.panes.find((candidate) => candidate.dimensions);
+      if (latest && latestProject && createdTab && pane) {
+        selectTarget(targetFor(latestProject, createdTab, pane, latest.host.app_instance_id));
+        return;
+      }
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 250));
+    }
+  }, [createTab, selectTarget, selectedLocalCwd]);
+
   const createSession = useCallback(async () => {
     if (!snapshot) return;
     const projectId = selectedProject?.id ?? snapshot.projects[0]?.id;
@@ -1312,6 +1340,10 @@ export function App() {
           <button className="drawer-scrim" aria-label="Close tab drawer" onClick={() => setDrawerOpen(false)} />
           <aside className="tab-drawer" aria-label="Current project sessions">
             <div className="drawer-heading"><strong>Open sessions</strong><button aria-label="Close drawer" onClick={() => setDrawerOpen(false)}>×</button></div>
+            <button className="drawer-new" onClick={() => {
+              setDrawerOpen(false);
+              void createBlankTerminal();
+            }}>＋ New tab</button>
             {selectedProject ? (
               <section key={selectedProject.id}>
                 <h2>{selectedProject.title}</h2>
@@ -1338,13 +1370,6 @@ export function App() {
                 {selectedProject.tabs.length === 0 && <p className="muted">No sessions in this project yet.</p>}
               </section>
             ) : <p className="muted">Choose a project to see its sessions.</p>}
-            <button className="drawer-new" onClick={() => {
-              setDrawerOpen(false);
-              setNewMode("create");
-              setNewKind("terminal");
-              setNewCwd(selectedLocalCwd ?? "");
-              setNewOpen(true);
-            }}>＋ New session</button>
           </aside>
         </>
       )}
