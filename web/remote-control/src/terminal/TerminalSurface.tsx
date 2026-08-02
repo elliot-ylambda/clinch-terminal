@@ -158,6 +158,10 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, Props>(function
   const snapshotWriteGeneration = useRef(0);
   const snapshotWriteInFlight = useRef(false);
   const revealLatestSnapshot = useRef(false);
+  const visualResizeSequence = useRef<number | undefined>(undefined);
+  const visualResizeOverlay = useRef<HTMLDivElement | undefined>(undefined);
+  const visualResizeQuietTimer = useRef<number | undefined>(undefined);
+  const visualResizeDeadlineTimer = useRef<number | undefined>(undefined);
   const zeroWidthPrompt = useRef(false);
   const zeroWidthPromptTransformer = useRef(new ZeroWidthPromptTransformer());
   const dataCallback = useRef(onData);
@@ -173,6 +177,51 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, Props>(function
     paste: (text) => terminal.current?.paste(text),
   }), []);
 
+  const clearVisualResize = useCallback(() => {
+    if (visualResizeQuietTimer.current !== undefined) {
+      window.clearTimeout(visualResizeQuietTimer.current);
+      visualResizeQuietTimer.current = undefined;
+    }
+    if (visualResizeDeadlineTimer.current !== undefined) {
+      window.clearTimeout(visualResizeDeadlineTimer.current);
+      visualResizeDeadlineTimer.current = undefined;
+    }
+    visualResizeOverlay.current?.remove();
+    visualResizeOverlay.current = undefined;
+    visualResizeSequence.current = undefined;
+  }, []);
+
+  const beginVisualResize = useCallback((preserveCurrentFrame: boolean) => {
+    clearVisualResize();
+    const owner = container.current?.querySelector<HTMLElement>(".xterm");
+    if (!owner) return;
+    const overlay = document.createElement("div");
+    overlay.className = "terminal-resize-freeze";
+    overlay.setAttribute("aria-hidden", "true");
+    if (preserveCurrentFrame) {
+      const rows = owner.querySelector<HTMLElement>(".xterm-rows");
+      if (rows) overlay.append(rows.cloneNode(true));
+    } else {
+      const status = document.createElement("span");
+      status.textContent = "Fitting session…";
+      overlay.append(status);
+    }
+    owner.append(overlay);
+    visualResizeOverlay.current = overlay;
+    // Some programs do not repaint for SIGWINCH. Never leave a stale cover over a live terminal.
+    visualResizeDeadlineTimer.current = window.setTimeout(clearVisualResize, 700);
+  }, [clearVisualResize]);
+
+  const revealVisualResizeAfterQuiet = useCallback(() => {
+    if (!visualResizeOverlay.current) return;
+    if (visualResizeQuietTimer.current !== undefined) {
+      window.clearTimeout(visualResizeQuietTimer.current);
+    }
+    // xterm write callbacks run only after each repaint fragment is parsed. Reveal once the final
+    // fragment has remained quiet long enough to paint as one complete Claude/Codex frame.
+    visualResizeQuietTimer.current = window.setTimeout(clearVisualResize, 90);
+  }, [clearVisualResize]);
+
   const fitAndReport = useCallback(() => {
     const element = container.current;
     const instance = terminal.current;
@@ -181,6 +230,18 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, Props>(function
     if (snapshotWriteInFlight.current) return;
     const bounds = element.getBoundingClientRect();
     if (bounds.width < 160 || bounds.height < 72) return;
+    const proposed = fitAddon.proposeDimensions();
+    if (
+      proposed
+      && resizeEnabled.current
+      && snapshotUsesAlternateScreen.current
+      && snapshotDimensions.current !== `${proposed.cols}:${proposed.rows}`
+      && lastClearedAlternateScreenDimensions.current !== `${proposed.cols}:${proposed.rows}`
+    ) {
+      // A full-screen CLI repaints across several PTY reads after SIGWINCH. Preserve an already
+      // settled phone frame (or show a neutral first-fit state) until that repaint is complete.
+      beginVisualResize(lastClearedAlternateScreenDimensions.current !== undefined);
+    }
     fitAddon.fit();
     if (revealLatestSnapshot.current) {
       // A desktop-sized primary-screen snapshot can retain a scrollback viewport above its live
@@ -211,8 +272,9 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, Props>(function
       instance.write("\x1b[2J\x1b[H");
     }
     lastReportedDimensions.current = dimensions;
+    if (visualResizeOverlay.current) visualResizeSequence.current = sequence.current;
     resizeCallback.current(instance.cols, instance.rows);
-  }, []);
+  }, [beginVisualResize]);
 
   const drainBufferedFrames = useCallback(function drain(
     streamId: string,
@@ -315,6 +377,12 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, Props>(function
       bus.discardThrough(frame.streamId, frame.sequence);
       instance.write(
         zeroWidthPromptTransformer.current.transform(frame.payload, zeroWidthPrompt.current),
+        () => {
+          if (
+            visualResizeSequence.current !== undefined
+            && frame.sequence > visualResizeSequence.current
+          ) revealVisualResizeAfterQuiet();
+        },
       );
     });
     const dataSubscription = instance.onData((data) => {
@@ -332,14 +400,16 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, Props>(function
       dataSubscription.dispose();
       container.current?.removeEventListener("focusin", focusListener);
       observer.disconnect();
+      clearVisualResize();
       instance.dispose();
       terminal.current = undefined;
     };
-  }, [bus, fitAndReport]);
+  }, [bus, clearVisualResize, fitAndReport, revealVisualResizeAfterQuiet]);
 
   useEffect(() => {
     const instance = terminal.current;
     if (!instance || !snapshot) return;
+    clearVisualResize();
     const snapshotTarget = [
       snapshot.target.app_instance_id,
       snapshot.target.project_id,
@@ -395,7 +465,7 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, Props>(function
       ) return;
       drainBufferedFrames(snapshot.stream_id, writeGeneration);
     });
-  }, [drainBufferedFrames, snapshot]);
+  }, [clearVisualResize, drainBufferedFrames, snapshot]);
 
   useEffect(() => {
     if (!canResize) {
