@@ -3138,6 +3138,17 @@ fn remote_control_trim_final_row_terminator(snapshot: &mut Vec<u8>) {
     }
 }
 
+fn remote_control_has_visible_live_primary_grid(block: &Block) -> bool {
+    block
+        .output_grid()
+        .grid_handler()
+        .uses_full_grid_clear_behavior()
+        && block
+            .output_grid()
+            .rightmost_visible_nonempty_cell()
+            .is_some()
+}
+
 fn remote_control_live_grid_snapshot(
     grid: &GridHandler,
     terminal_rows: usize,
@@ -16535,10 +16546,14 @@ impl TerminalView {
     }
 
     /// The raw PTY includes Clinch's private shell-integration bootstrap. Do not let a companion
-    /// subscribe until that exchange has completed, because those bytes are intentionally hidden
-    /// by the desktop block list and are not user terminal output.
+    /// subscribe until the post-bootstrap precmd has created the first visible prompt; the earlier
+    /// `Bootstrapped` stage is private and can otherwise produce a valid but completely blank
+    /// initial snapshot that only becomes visible after a later phone-driven resize.
     pub(crate) fn remote_control_is_ready(&self) -> bool {
-        self.model.lock().block_list().is_bootstrapped()
+        self.model
+            .lock()
+            .block_list()
+            .is_bootstrapping_precmd_done()
     }
 
     /// Produces a bounded, ANSI-preserving scrollback snapshot with secrets still obfuscated.
@@ -16564,12 +16579,13 @@ impl TerminalView {
         let mut total = 0usize;
         let block_list = model.block_list();
         let active_block = block_list.active_block();
+        // A completed CLI can leave full-grid behavior attached to the block after returning to
+        // an ordinary shell prompt. If its output surface is now blank, serializing only that
+        // surface hides the prompt until SIGWINCH forces a repaint. Fall through to the logical
+        // prompt/output snapshot instead.
         if remote_control_bootstrap_stage_is_visible(active_block.bootstrap_stage())
             && !active_block.should_hide_block(block_list.agent_view_state())
-            && active_block
-                .output_grid()
-                .grid_handler()
-                .uses_full_grid_clear_behavior()
+            && remote_control_has_visible_live_primary_grid(active_block)
         {
             return remote_control_live_grid_snapshot(
                 active_block.output_grid().grid_handler(),

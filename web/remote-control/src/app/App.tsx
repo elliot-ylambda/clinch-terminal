@@ -738,7 +738,17 @@ export function App() {
           }
           const latestSnapshot = snapshotRef.current;
           const latestTarget = selectedTargetRef.current;
-          if (!latestSnapshot || !latestTarget) return false;
+          const activeTerminalSnapshot = terminalSnapshotRef.current;
+          if (
+            !latestSnapshot
+            || !latestTarget
+            || !activeTerminalSnapshot
+            || targetKey(activeTerminalSnapshot.target) !== expectedTargetKey
+          ) return false;
+          const sequenceBeforeResize = Math.max(
+            activeTerminalSnapshot.terminal_sequence,
+            terminalBus.sequenceFor(activeTerminalSnapshot.stream_id),
+          );
           const response = await companion.sendAndWait({
             type: "terminal_resize",
             data: {
@@ -748,6 +758,14 @@ export function App() {
             },
           }, 5_000);
           if (response.payload.type === "error") throw new Error(response.payload.data.message);
+          if (terminalPreparationGeneration.current !== generation) return false;
+          // The Mac's resize response confirms the ioctl, but zsh/Codex/Claude can repaint on the
+          // PTY just afterward. Wait for that stream activity to settle before releasing queued
+          // keys, otherwise a late cursor redraw can split one word across the existing prompt.
+          await terminalBus.waitForQuiescenceAfter(
+            activeTerminalSnapshot.stream_id,
+            sequenceBeforeResize,
+          );
 
           const latestViewport = terminalResizableViewport.current;
           if (
@@ -774,7 +792,7 @@ export function App() {
       if (terminalPreparation.current?.promise === promise) terminalPreparation.current = undefined;
     });
     return promise;
-  }, [flushQueuedTerminalInput]);
+  }, [flushQueuedTerminalInput, terminalBus]);
 
   const acquireLease = useCallback(() => {
     void prepareTerminalForInput();
