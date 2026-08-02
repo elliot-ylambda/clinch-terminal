@@ -12,6 +12,7 @@ interface Props {
   snapshot?: TerminalSnapshot;
   bus: TerminalBus;
   canResize: boolean;
+  onViewport: (columns: number, rows: number) => void;
   onResize: (columns: number, rows: number) => void;
   onData?: (data: string) => void;
   onFocus?: () => void;
@@ -34,7 +35,7 @@ export function isSafeTerminalResize(
 }
 
 export const TerminalSurface = forwardRef<TerminalSurfaceHandle, Props>(function TerminalSurface(
-  { snapshot, bus, canResize, onResize, onData, onFocus, onStreamGap },
+  { snapshot, bus, canResize, onViewport, onResize, onData, onFocus, onStreamGap },
   ref,
 ) {
   const container = useRef<HTMLDivElement>(null);
@@ -44,6 +45,8 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, Props>(function
   const sequence = useRef(0);
   const resizeCallback = useRef(onResize);
   resizeCallback.current = onResize;
+  const viewportCallback = useRef(onViewport);
+  viewportCallback.current = onViewport;
   const resizeEnabled = useRef(canResize);
   resizeEnabled.current = canResize;
   const lastReportedDimensions = useRef<string | undefined>(undefined);
@@ -53,6 +56,7 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, Props>(function
   const lastClearedAlternateScreenDimensions = useRef<string | undefined>(undefined);
   const snapshotWriteGeneration = useRef(0);
   const snapshotWriteInFlight = useRef(false);
+  const revealLatestSnapshot = useRef(false);
   const dataCallback = useRef(onData);
   dataCallback.current = onData;
   const focusCallback = useRef(onFocus);
@@ -75,6 +79,18 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, Props>(function
     const bounds = element.getBoundingClientRect();
     if (bounds.width < 160 || bounds.height < 72) return;
     fitAddon.fit();
+    if (revealLatestSnapshot.current) {
+      // A desktop-sized primary-screen snapshot can retain a scrollback viewport above its live
+      // prompt after it reflows into the shorter phone grid. Always reveal the newest snapshot
+      // once, without forcing someone who intentionally scrolled up back to the bottom later.
+      instance.scrollToBottom();
+      revealLatestSnapshot.current = false;
+    }
+    if (isSafeTerminalResize(instance.cols, instance.rows, bounds.width, bounds.height)) {
+      // Report the fitted phone viewport before this device owns the writer lease. The app uses
+      // it to prepare the lease/resize handoff, but does not resize the Mac until control is held.
+      viewportCallback.current(instance.cols, instance.rows);
+    }
     if (
       !resizeEnabled.current
       || !isSafeTerminalResize(instance.cols, instance.rows, bounds.width, bounds.height)
@@ -238,6 +254,7 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, Props>(function
     const writeGeneration = snapshotWriteGeneration.current + 1;
     snapshotWriteGeneration.current = writeGeneration;
     snapshotWriteInFlight.current = true;
+    revealLatestSnapshot.current = true;
     // Parse an authoritative snapshot at the dimensions of the native grid that produced it.
     // Writing a 320-column Codex/Claude alternate screen into xterm's 80-column default causes
     // hard wraps before the first mobile fit and leaves duplicated suffixes after the CLI redraws.

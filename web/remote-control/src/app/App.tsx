@@ -37,6 +37,17 @@ import { TerminalSurface, type TerminalSurfaceHandle } from "../terminal/Termina
 type BootState = "loading" | "waiting_approval" | "needs_qr" | "ready" | "error";
 type NewSessionMode = "create" | "resume";
 
+interface FittedTerminalViewport {
+  targetKey: string;
+  columns: number;
+  rows: number;
+}
+
+interface QueuedTerminalInput {
+  targetKey: string;
+  data: string;
+}
+
 const connectionLabels: Record<ConnectionState, string> = {
   connected: "Connected",
   reconnecting: "Reconnecting",
@@ -57,6 +68,10 @@ function ClinchMark({ className }: { className: string }) {
 
 function targetKey(target: TargetRef): string {
   return `${target.app_instance_id}:${target.project_id}:${target.tab_id}:${target.pane_id}`;
+}
+
+function fittedViewportKey(viewport: FittedTerminalViewport): string {
+  return `${viewport.targetKey}:${viewport.columns}:${viewport.rows}`;
 }
 
 const LAST_TARGETS_STORAGE_KEY = "clinch-remote-control:last-target-by-project";
@@ -263,8 +278,12 @@ export function App() {
   const [boot, setBoot] = useState<BootState>("loading");
   const [bootMessage, setBootMessage] = useState("Opening your private Clinch connection…");
   const [identity, setIdentity] = useState<DeviceIdentity>();
+  const identityRef = useRef<DeviceIdentity | undefined>(undefined);
+  identityRef.current = identity;
   const [preferences, setPreferences] = useState<MobilePreferences>({ key: "preferences", oneTapQuickInserts: false });
   const [connection, setConnection] = useState<ConnectionState>("reconnecting");
+  const connectionRef = useRef<ConnectionState>("reconnecting");
+  connectionRef.current = connection;
   const [connectionDetail, setConnectionDetail] = useState<string>();
   const [snapshot, setSnapshot] = useState<WorkspaceSnapshot>();
   const snapshotRef = useRef<WorkspaceSnapshot | undefined>(undefined);
@@ -286,6 +305,7 @@ export function App() {
     }
   }
   const [terminalSnapshot, setTerminalSnapshot] = useState<TerminalSnapshot>();
+  const terminalSnapshotRef = useRef<TerminalSnapshot | undefined>(undefined);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [usageOpen, setUsageOpen] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
@@ -312,6 +332,21 @@ export function App() {
   const quickInsertInFlight = useRef(false);
   const targetSelectionInFlight = useRef<string | undefined>(undefined);
   const autoOpenedProjects = useRef(new Set<string>());
+  const terminalViewport = useRef<FittedTerminalViewport | undefined>(undefined);
+  const terminalResizableViewport = useRef<FittedTerminalViewport | undefined>(undefined);
+  const terminalReadyViewport = useRef<string | undefined>(undefined);
+  const terminalPreparation = useRef<{ generation: number; promise: Promise<boolean> } | undefined>(undefined);
+  const terminalPreparationGeneration = useRef(0);
+  const queuedTerminalInput = useRef<QueuedTerminalInput[]>([]);
+
+  const resetTerminalPreparation = useCallback((discardInput = true) => {
+    terminalPreparationGeneration.current += 1;
+    terminalPreparation.current = undefined;
+    terminalViewport.current = undefined;
+    terminalResizableViewport.current = undefined;
+    terminalReadyViewport.current = undefined;
+    if (discardInput) queuedTerminalInput.current = [];
+  }, []);
 
   const rememberTarget = useCallback((target: TargetRef) => {
     lastTargetByProject.current.set(target.project_id, target);
@@ -392,11 +427,16 @@ export function App() {
         snapshotRef.current = payload.data;
         setSnapshot(payload.data);
         {
+          const previousTarget = selectedTargetRef.current;
           const selection = synchronizedSelection(
             payload.data,
             selectedProjectIdRef.current,
             selectedTargetRef.current,
           );
+          if (
+            previousTarget
+            && (!selection.target || targetKey(previousTarget) !== targetKey(selection.target))
+          ) resetTerminalPreparation();
           selectedProjectIdRef.current = selection.projectId;
           selectedTargetRef.current = selection.target;
           setSelectedProjectId(selection.projectId);
@@ -415,6 +455,10 @@ export function App() {
             selectedProjectIdRef.current,
             selectedTargetRef.current,
           );
+          if (
+            previousTarget
+            && (!selection.target || targetKey(previousTarget) !== targetKey(selection.target))
+          ) resetTerminalPreparation();
           selectedProjectIdRef.current = selection.projectId;
           selectedTargetRef.current = selection.target;
           setSelectedProjectId(selection.projectId);
@@ -428,19 +472,32 @@ export function App() {
         break;
       case "terminal_snapshot":
         if (
+          !terminalSnapshotRef.current
+          || terminalSnapshotRef.current.stream_id !== payload.data.stream_id
+          || targetKey(terminalSnapshotRef.current.target) !== targetKey(payload.data.target)
+        ) resetTerminalPreparation();
+        if (
           selectedTargetRef.current
           && targetKey(selectedTargetRef.current) === targetKey(payload.data.target)
         ) {
           targetSelectionInFlight.current = undefined;
         }
+        terminalSnapshotRef.current = payload.data;
         setTerminalSnapshot(payload.data);
         break;
       case "terminal_stream_closed":
         targetSelectionInFlight.current = undefined;
+        terminalSnapshotRef.current = undefined;
+        resetTerminalPreparation();
         setNotice(payload.data.reason);
         setTerminalSnapshot(undefined);
         break;
       case "writer_lease_changed":
+        if (
+          selectedTargetRef.current
+          && targetKey(selectedTargetRef.current) === targetKey(payload.data.target)
+          && payload.data.lease?.device_id !== identity?.deviceId
+        ) resetTerminalPreparation();
         if (snapshotRef.current) {
           const next = workspaceWithWriterLease(
             snapshotRef.current,
@@ -482,6 +539,8 @@ export function App() {
         if (payload.data.retryable && shouldResynchronizeWorkspace(payload.data.code)) {
           setNotice(undefined);
           setResyncing(true);
+          terminalSnapshotRef.current = undefined;
+          resetTerminalPreparation();
           setTerminalSnapshot(undefined);
           if (!resyncRequested.current) {
             resyncRequested.current = true;
@@ -499,7 +558,7 @@ export function App() {
       default:
         break;
     }
-  }, [rememberTarget]);
+  }, [identity?.deviceId, rememberTarget, resetTerminalPreparation]);
 
   useEffect(() => {
     if (boot !== "ready" || !identity?.deviceId) return;
@@ -509,6 +568,8 @@ export function App() {
         setConnectionDetail(detail);
         if (state !== "connected") {
           targetSelectionInFlight.current = undefined;
+          terminalSnapshotRef.current = undefined;
+          resetTerminalPreparation();
           setTerminalSnapshot(undefined);
         }
       },
@@ -522,7 +583,7 @@ export function App() {
       companion.stop();
       if (client.current === companion) client.current = undefined;
     };
-  }, [boot, handleEnvelope, identity, terminalBus]);
+  }, [boot, handleEnvelope, identity, resetTerminalPreparation, terminalBus]);
 
   const selected = resolveTarget(snapshot, selectedTarget);
   const selectedProject = snapshot?.projects.find((project) => project.id === selectedProjectId) ?? selected.project;
@@ -577,32 +638,32 @@ export function App() {
       }
       selectedTargetRef.current = target;
       targetSelectionInFlight.current = undefined;
+      terminalSnapshotRef.current = undefined;
+      resetTerminalPreparation();
       setSelectedTarget(target);
       setDrawerOpen(false);
       setTerminalSnapshot(undefined);
     },
-    [rememberTarget, selectedTarget],
+    [rememberTarget, resetTerminalPreparation, selectedTarget],
   );
 
-  const acquireLease = useCallback(() => {
-    const currentSnapshot = snapshotRef.current ?? snapshot;
-    const currentTarget = selectedTargetRef.current ?? selectedTarget;
-    if (!currentSnapshot || !currentTarget || connection !== "connected") return;
-    try {
-      client.current?.send({
-        type: "acquire_writer_lease",
-        data: { target: currentTarget, workspace_revision: currentSnapshot.revision },
-      });
-    } catch {
-      // Connection state already explains why input is unavailable.
-    }
-  }, [connection, selectedTarget, snapshot]);
-
-  const sendRawInput = useCallback((data: string): boolean => {
+  const sendRawInputNow = useCallback((expectedTargetKey: string, data: string): boolean => {
     if (!data) return true;
-    const currentSnapshot = snapshotRef.current ?? snapshot;
-    const currentTarget = selectedTargetRef.current ?? selectedTarget;
-    if (!currentSnapshot || !currentTarget || !canWrite) return false;
+    const currentSnapshot = snapshotRef.current;
+    const currentTarget = selectedTargetRef.current;
+    const activeTerminalSnapshot = terminalSnapshotRef.current;
+    const deviceId = identityRef.current?.deviceId;
+    if (
+      !currentSnapshot
+      || !currentTarget
+      || !activeTerminalSnapshot
+      || !deviceId
+      || connectionRef.current !== "connected"
+      || targetKey(currentTarget) !== expectedTargetKey
+      || targetKey(activeTerminalSnapshot.target) !== expectedTargetKey
+    ) return false;
+    const lease = resolveTarget(currentSnapshot, currentTarget).pane?.writer_lease;
+    if (lease?.device_id !== deviceId) return false;
     try {
       client.current?.send({
         type: "raw_terminal_input",
@@ -617,7 +678,129 @@ export function App() {
       setNotice(error instanceof Error ? error.message : String(error));
       return false;
     }
-  }, [canWrite, selectedTarget, snapshot]);
+  }, []);
+
+  const flushQueuedTerminalInput = useCallback((expectedTargetKey: string) => {
+    const queued = queuedTerminalInput.current;
+    queuedTerminalInput.current = [];
+    for (const input of queued) {
+      if (input.targetKey === expectedTargetKey) sendRawInputNow(expectedTargetKey, input.data);
+    }
+  }, [sendRawInputNow]);
+
+  const prepareTerminalForInput = useCallback((): Promise<boolean> => {
+    const currentSnapshot = snapshotRef.current;
+    const currentTarget = selectedTargetRef.current;
+    const companion = client.current;
+    const deviceId = identityRef.current?.deviceId;
+    if (
+      !currentSnapshot
+      || !currentTarget
+      || !companion
+      || !deviceId
+      || connectionRef.current !== "connected"
+    ) return Promise.resolve(false);
+
+    const expectedTargetKey = targetKey(currentTarget);
+    const existing = terminalPreparation.current;
+    const generation = terminalPreparationGeneration.current;
+    if (existing?.generation === generation) return existing.promise;
+
+    const promise = (async () => {
+      try {
+        const initialLease = resolveTarget(currentSnapshot, currentTarget).pane?.writer_lease;
+        if (initialLease && initialLease.device_id !== deviceId) {
+          setNotice(`${initialLease.device_name} currently has control of this terminal.`);
+          return false;
+        }
+        if (!initialLease) {
+          const response = await companion.sendAndWait({
+            type: "acquire_writer_lease",
+            data: { target: currentTarget, workspace_revision: currentSnapshot.revision },
+          }, 5_000);
+          if (response.payload.type === "error") throw new Error(response.payload.data.message);
+        }
+
+        while (
+          terminalPreparationGeneration.current === generation
+          && connectionRef.current === "connected"
+          && selectedTargetRef.current
+          && targetKey(selectedTargetRef.current) === expectedTargetKey
+        ) {
+          // TerminalSurface only marks a viewport resizable after React has committed writer
+          // ownership and, for alternate-screen CLIs, cleared the stale desktop-sized buffer.
+          const viewport = terminalResizableViewport.current;
+          if (!viewport || viewport.targetKey !== expectedTargetKey) return false;
+          const viewportKey = fittedViewportKey(viewport);
+          if (terminalReadyViewport.current === viewportKey) {
+            flushQueuedTerminalInput(expectedTargetKey);
+            return true;
+          }
+          const latestSnapshot = snapshotRef.current;
+          const latestTarget = selectedTargetRef.current;
+          if (!latestSnapshot || !latestTarget) return false;
+          const response = await companion.sendAndWait({
+            type: "terminal_resize",
+            data: {
+              target: latestTarget,
+              workspace_revision: latestSnapshot.revision,
+              dimensions: { columns: viewport.columns, rows: viewport.rows },
+            },
+          }, 5_000);
+          if (response.payload.type === "error") throw new Error(response.payload.data.message);
+
+          const latestViewport = terminalResizableViewport.current;
+          if (
+            latestViewport
+            && latestViewport.targetKey === expectedTargetKey
+            && fittedViewportKey(latestViewport) === viewportKey
+          ) {
+            terminalReadyViewport.current = viewportKey;
+            flushQueuedTerminalInput(expectedTargetKey);
+            return true;
+          }
+          // The iOS keyboard or an orientation change altered the viewport while the Mac was
+          // acknowledging this resize. Loop once more so input can never overtake the new size.
+        }
+      } catch (error) {
+        if (terminalPreparationGeneration.current === generation) {
+          setNotice(error instanceof Error ? error.message : String(error));
+        }
+      }
+      return false;
+    })();
+    terminalPreparation.current = { generation, promise };
+    void promise.finally(() => {
+      if (terminalPreparation.current?.promise === promise) terminalPreparation.current = undefined;
+    });
+    return promise;
+  }, [flushQueuedTerminalInput]);
+
+  const acquireLease = useCallback(() => {
+    void prepareTerminalForInput();
+  }, [prepareTerminalForInput]);
+
+  const sendRawInput = useCallback((data: string): boolean => {
+    if (!data) return true;
+    const currentSnapshot = snapshotRef.current;
+    const currentTarget = selectedTargetRef.current;
+    const deviceId = identityRef.current?.deviceId;
+    if (!currentSnapshot || !currentTarget || !deviceId || connectionRef.current !== "connected") {
+      return false;
+    }
+    const lease = resolveTarget(currentSnapshot, currentTarget).pane?.writer_lease;
+    if (lease && lease.device_id !== deviceId) return false;
+    const expectedTargetKey = targetKey(currentTarget);
+    const viewport = terminalResizableViewport.current;
+    if (
+      viewport?.targetKey === expectedTargetKey
+      && terminalReadyViewport.current === fittedViewportKey(viewport)
+    ) return sendRawInputNow(expectedTargetKey, data);
+
+    queuedTerminalInput.current.push({ targetKey: expectedTargetKey, data });
+    void prepareTerminalForInput();
+    return true;
+  }, [prepareTerminalForInput, sendRawInputNow]);
 
   const previewQuickInsert = useCallback(
     async (itemId: string, configurationRevision: number) => {
@@ -854,22 +1037,31 @@ export function App() {
     }
   }, []);
 
+  const rememberTerminalViewport = useCallback((columns: number, rows: number) => {
+    const target = selectedTargetRef.current;
+    if (!target) return;
+    const viewport = { targetKey: targetKey(target), columns, rows };
+    const previous = terminalViewport.current;
+    terminalViewport.current = viewport;
+    if (!previous || fittedViewportKey(previous) !== fittedViewportKey(viewport)) {
+      // Gate input immediately when the browser starts fitting a new viewport. onResize marks the
+      // same dimensions safe only after the writer-owned xterm buffer is ready for the Mac redraw.
+      terminalResizableViewport.current = undefined;
+      terminalReadyViewport.current = undefined;
+    }
+  }, []);
+
   const resizeSelectedTerminal = useCallback((columns: number, rows: number) => {
-    const currentSnapshot = snapshotRef.current ?? snapshot;
-    const target = selectedTargetRef.current ?? selectedTarget;
-    const companion = client.current;
-    if (!currentSnapshot || !target || !companion || connection !== "connected" || !ownsWriterLease) return;
-    void companion.sendAndWait({
-      type: "terminal_resize",
-      data: {
-        target,
-        workspace_revision: currentSnapshot.revision,
-        dimensions: { columns, rows },
-      },
-    }, 5_000).catch(() => {
-      // Resizing is best-effort and must never queue or delay terminal input.
-    });
-  }, [connection, ownsWriterLease, selectedTarget, snapshot]);
+    const target = selectedTargetRef.current;
+    if (!target) return;
+    const viewport = { targetKey: targetKey(target), columns, rows };
+    terminalViewport.current = viewport;
+    terminalResizableViewport.current = viewport;
+    if (terminalReadyViewport.current !== fittedViewportKey(viewport)) {
+      terminalReadyViewport.current = undefined;
+    }
+    void prepareTerminalForInput();
+  }, [prepareTerminalForInput]);
 
   if (boot !== "ready") {
     return <PairingScreen state={boot} message={bootMessage} />;
@@ -955,16 +1147,19 @@ export function App() {
             snapshot={terminalSnapshot}
             bus={terminalBus}
             canResize={ownsWriterLease}
+            onViewport={rememberTerminalViewport}
             onFocus={acquireLease}
             onStreamGap={() => {
               targetSelectionInFlight.current = undefined;
+              terminalSnapshotRef.current = undefined;
+              resetTerminalPreparation();
               setTerminalSnapshot(undefined);
             }}
             onData={(data) => {
               sendRawInput(data);
             }}
             onResize={(columns, rows) => {
-              void resizeSelectedTerminal(columns, rows);
+              resizeSelectedTerminal(columns, rows);
             }}
           />
         ) : (

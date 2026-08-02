@@ -248,6 +248,7 @@ async function installPairedPhone(
       private sequence = 0;
       private selectAttempts = 0;
       private terminalSequence = 0;
+      private terminalResizeReady = initialTerminal !== "wrapped-shell";
 
       constructor(_url: string | URL) {
         window.setTimeout(() => {
@@ -351,7 +352,17 @@ async function installPairedPhone(
             type: "quick_insert_preview",
             data: { item_id: "qi-1234", configuration_revision: 1, text: "codex" },
           }, envelope.request_id);
+        } else if (envelope.payload.type === "terminal_resize" && initialTerminal === "wrapped-shell") {
+          // A real shell repaints asynchronously after SIGWINCH. Delay the acknowledgement and
+          // redraw so this fixture catches input that incorrectly overtakes first-phone resize.
+          window.setTimeout(() => {
+            this.emitTerminal(new TextEncoder().encode("\r\x1b[2K➜  magister-marketing git:(main) "));
+            this.terminalResizeReady = true;
+            localStorage.setItem("wrapped-resize-acked", "true");
+            this.emit({ type: "command_accepted", data: { workspace_revision: snapshot.revision } }, envelope.request_id);
+          }, 250);
         } else if (envelope.payload.type === "raw_terminal_input" && initialTerminal === "wrapped-shell") {
+          if (!this.terminalResizeReady) localStorage.setItem("wrapped-input-before-resize", "true");
           const input = envelope.payload.data as unknown as { data_base64: string };
           const binary = atob(input.data_base64);
           this.emitTerminal(Uint8Array.from(binary, (character) => character.charCodeAt(0)));
@@ -652,10 +663,17 @@ test("paired phone exposes projects, drawer, usage, and recent-session resume", 
 test("typing stays after a shell prompt that reflows from a narrower Mac pane", async ({ page }) => {
   await installPairedPhone(page, "wrapped-shell");
 
+  await expect.poll(() => page.locator(".xterm-rows > div").evaluateAll((rows) =>
+    rows.map((row) => row.textContent ?? "").join("").includes("➜  magister-marketing git:(main)"),
+  )).toBe(true);
   const terminalInput = page.getByRole("textbox", { name: "Terminal input" });
   await terminalInput.click();
-  await expect(page.getByText("This phone has control", { exact: true })).toBeVisible();
+  // Type immediately: the browser must retain these bytes until the delayed resize/redraw above
+  // is acknowledged, without requiring a second click or dropping local keyboard input.
   await terminalInput.pressSequentially("hi");
+  await expect(page.getByText("This phone has control", { exact: true })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("wrapped-resize-acked"))).toBe("true");
+  expect(await page.evaluate(() => localStorage.getItem("wrapped-input-before-resize"))).toBeNull();
 
   await expect.poll(() => page.locator(".xterm-rows > div").evaluateAll((rows) => {
     const visible = rows.map((row) => row.textContent ?? "");
