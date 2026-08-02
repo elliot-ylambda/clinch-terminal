@@ -317,6 +317,10 @@ use crate::prompt::editor_modal::{
 };
 use crate::quit_warning::UnsavedStateSummary;
 use crate::referral_theme_status::ReferralThemeEvent;
+#[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
+use crate::remote_control::RemoteControlService;
+#[cfg(not(target_family = "wasm"))]
+use crate::remote_control::RemoteControlViewState;
 use crate::remote_server::manager::RemoteServerManager;
 use crate::resource_center::{
     mark_feature_used_and_write_to_user_defaults, skip_tips_and_write_to_user_defaults,
@@ -1355,6 +1359,40 @@ fn project_cli_agent_activity(
 
 fn should_show_remote_control_button(has_backend: bool) -> bool {
     !has_backend
+}
+
+#[cfg(not(target_family = "wasm"))]
+const REMOTE_CONTROL_DISCOVERY_LABEL: &str = "Remotely Control Clinch on Mobile!";
+
+#[cfg(not(target_family = "wasm"))]
+#[derive(Debug, Eq, PartialEq)]
+struct RemoteControlHeaderPresentation {
+    label: String,
+    connected_device_name: Option<String>,
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn remote_control_header_presentation(
+    state: Option<&RemoteControlViewState>,
+) -> RemoteControlHeaderPresentation {
+    let connected_device_name = state
+        .and_then(|state| {
+            state
+                .paired_devices
+                .iter()
+                .filter(|device| device.connected && !device.name.trim().is_empty())
+                .max_by(|left, right| left.last_seen_at.cmp(&right.last_seen_at))
+        })
+        .map(|device| device.name.clone());
+    let label = connected_device_name
+        .as_ref()
+        .map(|name| format!("{name} connected"))
+        .unwrap_or_else(|| REMOTE_CONTROL_DISCOVERY_LABEL.to_owned());
+
+    RemoteControlHeaderPresentation {
+        label,
+        connected_device_name,
+    }
 }
 
 #[cfg(not(target_family = "wasm"))]
@@ -3023,6 +3061,11 @@ impl Workspace {
         });
         ctx.subscribe_to_model(&CliAgentUsageSettings::handle(ctx), |_, _, _, ctx| {
             // Re-render when this or another window changes header visibility.
+            ctx.notify();
+        });
+        #[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
+        ctx.subscribe_to_model(&RemoteControlService::handle(ctx), |_, _, _, ctx| {
+            // Reflect live phone connections in every Clinch window header.
             ctx.notify();
         });
 
@@ -21727,7 +21770,7 @@ impl Workspace {
             #[cfg(not(target_family = "wasm"))]
             if should_show_remote_control_button(ChannelState::has_backend()) {
                 tab_bar.add_child(
-                    Container::new(self.render_remote_control_button(appearance))
+                    Container::new(self.render_remote_control_button(appearance, ctx))
                         .with_margin_left(4.)
                         .with_margin_right(4.)
                         .finish(),
@@ -21893,7 +21936,7 @@ impl Workspace {
         #[cfg(not(target_family = "wasm"))]
         if should_show_remote_control_button(ChannelState::has_backend()) {
             tab_bar.add_child(
-                Container::new(self.render_remote_control_button(appearance))
+                Container::new(self.render_remote_control_button(appearance, ctx))
                     .with_margin_left(4.)
                     .with_margin_right(4.)
                     .finish(),
@@ -22808,24 +22851,24 @@ impl Workspace {
     }
 
     #[cfg(not(target_family = "wasm"))]
-    fn render_remote_control_button(&self, appearance: &Appearance) -> Box<dyn Element> {
+    fn render_remote_control_button(
+        &self,
+        appearance: &Appearance,
+        ctx: &AppContext,
+    ) -> Box<dyn Element> {
         let theme = appearance.theme();
-        let button = appearance
+        #[cfg(feature = "local_fs")]
+        let presentation = remote_control_header_presentation(Some(
+            RemoteControlService::as_ref(ctx).view_state(),
+        ));
+        #[cfg(not(feature = "local_fs"))]
+        let presentation = remote_control_header_presentation(None);
+
+        let mut button = appearance
             .ui_builder()
             .button(
                 ButtonVariant::Basic,
                 self.mouse_states.remote_control_icon.clone(),
-            )
-            .with_text_and_icon_label(
-                TextAndIcon::new(
-                    TextAndIconAlignment::IconFirst,
-                    "Remote Control",
-                    icons::Icon::Phone01.to_warpui_icon(theme.active_ui_text_color()),
-                    MainAxisSize::Min,
-                    MainAxisAlignment::Center,
-                    vec2f(14., 14.),
-                )
-                .with_inner_padding(6.),
             )
             .with_style(UiComponentStyles {
                 font_size: Some(11.),
@@ -22833,11 +22876,54 @@ impl Workspace {
                 padding: Some(Coords::default().top(5.).bottom(5.).left(9.).right(9.)),
                 border_radius: Some(CornerRadius::with_all(Radius::Pixels(6.))),
                 ..UiComponentStyles::default()
-            })
+            });
+
+        if presentation.connected_device_name.is_some() {
+            let dot = ConstrainedBox::new(
+                Container::new(Empty::new().finish())
+                    .with_background_color(theme.ansi_fg_green())
+                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(3.5)))
+                    .finish(),
+            )
+            .with_width(7.)
+            .with_height(7.)
+            .finish();
+            let text =
+                Text::new_inline(presentation.label.clone(), appearance.ui_font_family(), 11.)
+                    .with_color(theme.active_ui_text_color().into_solid())
+                    .with_style(Properties::default().weight(Weight::Semibold))
+                    .finish();
+            button = button.with_custom_label(
+                Flex::row()
+                    .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                    .with_child(dot)
+                    .with_child(Container::new(text).with_margin_left(6.).finish())
+                    .finish(),
+            );
+        } else {
+            button = button.with_text_and_icon_label(
+                TextAndIcon::new(
+                    TextAndIconAlignment::IconFirst,
+                    presentation.label.clone(),
+                    icons::Icon::Phone01.to_warpui_icon(theme.active_ui_text_color()),
+                    MainAxisSize::Min,
+                    MainAxisAlignment::Center,
+                    vec2f(14., 14.),
+                )
+                .with_inner_padding(6.),
+            );
+        }
+
+        let tooltip_description = if presentation.connected_device_name.is_some() {
+            Some("Connected securely through your private tailnet".to_string())
+        } else {
+            Some("Securely access Clinch from your phone".to_string())
+        };
+        let button = button
             .with_tooltip(self.render_tab_bar_icon_button_tooltip(
                 appearance,
-                "Remote Control (Preview)".to_string(),
-                Some("Securely access Clinch from your phone".to_string()),
+                presentation.label,
+                tooltip_description,
             ))
             .build()
             .on_click(|ctx, _, _| ctx.dispatch_typed_action(remote_control_settings_action()));

@@ -49,6 +49,9 @@ this repo owns the feature contract and in-app links.
 
 1. Add a fixed Remote Control button to backend-free Clinch window headers.
    - Use the existing `Phone01` icon and header-button renderer.
+   - Show `Remotely Control Clinch on Mobile!` when no companion is live. Subscribe each workspace
+     header to the local Remote Control service; while connected, replace the discovery copy with a
+     green dot and `<device name> connected` for the live device with the newest `last_seen_at`.
    - Gate it on `!ChannelState::has_backend()` so inherited Warp channels are unchanged.
    - Dispatch the existing `WorkspaceAction::ScrollToSettingsWidget` with
      `SettingsSection::Clinch` and the setup widget's stable ID, so the destination is selected,
@@ -285,8 +288,9 @@ flow.
 
 ### Milestone 0
 
-- Unit-test that the header affordance is included only for backend-free Clinch configuration and
-  dispatches the Clinch settings section (PRODUCT 1–4).
+- Unit-test that the header affordance is included only for backend-free Clinch configuration,
+  selects the latest live device for its connected label, and dispatches the Clinch settings
+  section (PRODUCT 1–4).
 - Unit-test Remote Control widget search terms and action URLs; verify Preview labeling and that Pair
   follows the live service readiness state (PRODUCT 4–7, 48).
 - Run Rust formatting and focused app settings/workspace tests, then `cargo check -p warp` (or the

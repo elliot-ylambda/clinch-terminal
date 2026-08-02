@@ -598,6 +598,7 @@ pub(crate) fn initialize_app(app: &mut App) {
     app.add_singleton_model(|_| PricingInfoModel::new());
     app.add_singleton_model(AIDocumentModel::new);
     app.add_singleton_model(|_| History::new(vec![]));
+    app.update(crate::remote_control::register);
 
     // SkillManager is registered after `HomeDirectoryWatcher`, `DirectoryWatcher`,
     // `WarpManagedPathsWatcher`, `DetectedRepositories`, and `RepoMetadataModel`
@@ -807,10 +808,56 @@ fn remote_control_header_button_only_shows_in_backend_free_channels() {
 }
 
 #[test]
+fn remote_control_header_uses_discovery_copy_without_a_live_device() {
+    assert_eq!(
+        remote_control_header_presentation(None),
+        RemoteControlHeaderPresentation {
+            label: "Remotely Control Clinch on Mobile!".to_owned(),
+            connected_device_name: None,
+        }
+    );
+}
+
+#[test]
+fn remote_control_header_uses_the_latest_live_device() {
+    let now = chrono::Utc::now();
+    let device =
+        |name: &str, connected: bool, last_seen_at: Option<chrono::DateTime<chrono::Utc>>| {
+            clinch_companion_protocol::DeviceSummary {
+                id: clinch_companion_protocol::DeviceId::new(),
+                name: name.to_owned(),
+                platform: clinch_companion_protocol::DevicePlatform::Ios,
+                capabilities: vec![clinch_companion_protocol::Capability::View],
+                connected,
+                last_seen_at,
+            }
+        };
+    let state = RemoteControlViewState {
+        paired_devices: vec![
+            device("Disconnected iPad", false, Some(now)),
+            device(
+                "Older iPhone",
+                true,
+                Some(now - chrono::Duration::minutes(1)),
+            ),
+            device("Elliot's iPhone", true, Some(now)),
+        ],
+        ..RemoteControlViewState::default()
+    };
+
+    assert_eq!(
+        remote_control_header_presentation(Some(&state)),
+        RemoteControlHeaderPresentation {
+            label: "Elliot's iPhone connected".to_owned(),
+            connected_device_name: Some("Elliot's iPhone".to_owned()),
+        }
+    );
+}
+
+#[test]
 fn remote_control_header_action_opens_clinch_settings() {
     App::test((), |mut app| async move {
         initialize_app(&mut app);
-        app.update(crate::remote_control::register);
         let workspace = mock_workspace(&mut app);
 
         workspace.update(&mut app, |workspace, ctx| {
