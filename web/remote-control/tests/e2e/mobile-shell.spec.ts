@@ -88,8 +88,13 @@ async function installPairedPhone(
       tab_id: "tab-other",
       pane_id: "pane-other",
     };
+    const streamIdFor = (selectedTarget: typeof target) => {
+      if (selectedTarget.project_id === otherTarget.project_id) return "77777777-7777-4777-8777-777777777777";
+      if (selectedTarget.tab_id === reviewTarget.tab_id) return "66666666-6666-4666-8666-666666666666";
+      return "55555555-5555-4555-8555-555555555555";
+    };
     const wideTerminalSnapshot = [
-      "\x1b[2J\x1b[H\x1b[?7h\x1b[2;1H  Hooks need review",
+      "\x1b[?1049h\x1b[2J\x1b[H\x1b[?7h\x1b[2;1H  Hooks need review",
       "\x1b[3;1H  8 hooks are new or changed.",
       "\x1b[4;1H  Hooks can run outside the sandbox after you trust them.",
       "\x1b[6;1H> 1. Review hooks",
@@ -97,6 +102,11 @@ async function installPairedPhone(
       "\x1b[8;1H  3. Continue without trusting (hooks won't run)",
       `\x1b[10;1H  Press enter to confirm or esc to go back${" ".repeat(278)}`,
       "\x1b[10;320H\x1b[?25l",
+    ].join("");
+    const settledMobileRedraw = [
+      "\x1b[2J\x1b[H\x1b[2;1H  Claude frame settled",
+      "\x1b[4;1H  Hooks need review",
+      "\x1b[6;1H  Press enter to confirm or esc to go back",
     ].join("");
     // Mirrors the native primary-screen serializer after it removes its synthetic final CRLF.
     // At 31 columns this prompt wraps at a different cell than it does in the phone viewport.
@@ -254,6 +264,7 @@ async function installPairedPhone(
       private sequence = 0;
       private selectAttempts = 0;
       private terminalSequence = 0;
+      private activeStreamId = streamIdFor(target);
       private terminalResizeReady = initialTerminal !== "wrapped-shell";
       private shellInput = "";
 
@@ -297,6 +308,8 @@ async function installPairedPhone(
             return;
           }
           const selectedTarget = envelope.payload.data?.target ?? target;
+          this.activeStreamId = streamIdFor(selectedTarget);
+          this.terminalSequence = 0;
           snapshot.active_target = selectedTarget;
           for (const project of snapshot.projects) {
             project.active = project.id === selectedTarget.project_id;
@@ -308,7 +321,7 @@ async function installPairedPhone(
             type: "terminal_snapshot",
             data: {
               target: selectedTarget,
-              stream_id: "55555555-5555-4555-8555-555555555555",
+              stream_id: this.activeStreamId,
               workspace_revision: snapshot.revision,
               terminal_sequence: 0,
               data_base64: bytesToBase64(new TextEncoder().encode(
@@ -363,6 +376,16 @@ async function installPairedPhone(
             return;
           }
           this.emit({ type: "command_accepted", data: { workspace_revision: snapshot.revision } }, envelope.request_id);
+        } else if (envelope.payload.type === "terminal_resize" && initialTerminal === "full-screen") {
+          this.emit({ type: "command_accepted", data: { workspace_revision: snapshot.revision } }, envelope.request_id);
+          window.setTimeout(() => {
+            localStorage.setItem("alternate-redraw-started", "true");
+            this.emitTerminal(new TextEncoder().encode("\x1b[2J\x1b[H  Partial Claude repaint"));
+          }, 90);
+          window.setTimeout(() => {
+            this.emitTerminal(new TextEncoder().encode(settledMobileRedraw));
+            localStorage.setItem("alternate-redraw-settled", "true");
+          }, 180);
         } else if (envelope.payload.type === "terminal_resize" && initialTerminal === "wrapped-shell") {
           // The gateway acknowledges its resize ioctl before a real shell asynchronously handles
           // SIGWINCH. Repaint afterward, in multiple PTY reads, to catch input released on the ack.
@@ -416,7 +439,7 @@ async function installPairedPhone(
         view.setUint16(2, 1);
         frame[4] = 1;
         frame.set(Uint8Array.from(
-          "55555555555545558555555555555555".match(/.{2}/g) ?? [],
+          this.activeStreamId.replaceAll("-", "").match(/.{2}/g) ?? [],
           (part) => Number.parseInt(part, 16),
         ), 8);
         view.setBigUint64(24, BigInt(this.terminalSequence));
@@ -540,6 +563,16 @@ test("paired phone exposes projects, drawer, usage, and recent-session resume", 
     button.click();
     button.click();
   });
+  const resizeFreeze = page.locator(".terminal-resize-freeze");
+  await expect(resizeFreeze).toBeVisible();
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("alternate-redraw-started"))).toBe("true");
+  await expect(resizeFreeze).toContainText("Fitting session…");
+  await expect(resizeFreeze).not.toContainText("Partial Claude repaint");
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("alternate-redraw-settled"))).toBe("true");
+  await expect(resizeFreeze).toBeHidden();
+  await expect.poll(() => page.locator(".xterm-screen > .xterm-rows").evaluate((rows) =>
+    rows.textContent?.includes("Claude frame settled"),
+  )).toBe(true);
   await expect(page.getByRole("textbox", { name: "Command or agent prompt" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Send", exact: true })).toHaveCount(0);
   await expect(page.getByText("The workspace changed; refresh before sending input.")).toHaveCount(0);
@@ -559,6 +592,11 @@ test("paired phone exposes projects, drawer, usage, and recent-session resume", 
   })).toEqual({ quickInsertSubmits: 1, quickInsertPreviews: 0, pastedCodex: 0 });
 
   const terminalInput = page.getByRole("textbox", { name: "Terminal input" });
+  await expect(terminalInput).toHaveAttribute("autocomplete", "off");
+  await expect(terminalInput).toHaveAttribute("autocapitalize", "off");
+  await expect(terminalInput).toHaveAttribute("autocorrect", "off");
+  await expect(terminalInput).toHaveAttribute("spellcheck", "false");
+  await expect(terminalInput).not.toHaveAttribute("name", /.+/);
   await expect(terminalInput).toBeFocused();
   await terminalInput.press("Enter");
   await terminalInput.pressSequentially("echo from phone");
@@ -645,7 +683,9 @@ test("paired phone exposes projects, drawer, usage, and recent-session resume", 
   await page.getByRole("complementary", { name: "Current project sessions" })
     .getByRole("button", { name: /Review docs/ })
     .click();
+  await expect(page.getByLabel("Selected Clinch terminal output")).toBeVisible();
   await page.getByRole("button", { name: "Other project", exact: true }).click();
+  await expect(page.getByLabel("Selected Clinch terminal output")).toBeVisible();
   await page.evaluate(() => localStorage.setItem("remote-command-payloads", "[]"));
   await keyboardTools.getByRole("button", { name: "Codex", exact: true }).click();
   await expect.poll(() => page.evaluate(() => {

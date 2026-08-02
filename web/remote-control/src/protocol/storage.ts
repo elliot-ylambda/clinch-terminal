@@ -6,7 +6,6 @@ const DATABASE = "clinch-remote-control";
 const STORE = "local-device";
 const IDENTITY_KEY = "identity";
 const PENDING_PAIRING_KEY = "pending-pairing";
-const PREFERENCES_KEY = "preferences";
 
 export interface DeviceIdentity {
   key: typeof IDENTITY_KEY;
@@ -15,11 +14,6 @@ export interface DeviceIdentity {
   deviceName: string;
   deviceId?: DeviceId;
   capabilities?: Capability[];
-}
-
-export interface MobilePreferences {
-  key: typeof PREFERENCES_KEY;
-  oneTapQuickInserts: boolean;
 }
 
 interface PendingPairingRecord {
@@ -93,17 +87,6 @@ export const savePendingPairing = (receipt: PairingClaimReceipt) =>
   write<PendingPairingRecord>({ key: PENDING_PAIRING_KEY, receipt });
 
 export const clearPendingPairing = () => remove(PENDING_PAIRING_KEY);
-
-export async function loadPreferences(): Promise<MobilePreferences> {
-  return (
-    (await read<MobilePreferences>(PREFERENCES_KEY)) ?? {
-      key: PREFERENCES_KEY,
-      oneTapQuickInserts: false,
-    }
-  );
-}
-
-export const savePreferences = (preferences: MobilePreferences) => write(preferences);
 
 export async function createIdentity(deviceName: string): Promise<DeviceIdentity> {
   const keys = (await crypto.subtle.generateKey(

@@ -56,7 +56,9 @@ quick inserts, attachments, and security hardening.
   commands use typed providers, shell-quoted prompts, and the strict existing durable-session ID
   grammar.
 - Effective terminal/CLI-agent footer settings are re-resolved on every quick-insert action.
-  Mobile previews by default; one-tap send remains a phone-local opt-in.
+  Mobile submits the opaque action exactly once through the Mac's terminal/agent-aware path.
+- The touch keyboard accessory includes compact Esc, Tab, and directional controls, and hides
+  partial Claude/Codex alternate-screen repaint frames during mobile resize handoffs.
 - Uploads are local-terminal-only in V1. They stage with owner-only permissions, enforce ordered
   chunks and declared size, verify SHA-256, publish without overwrite, revalidate the exact target
   and CWD, and then insert a shell-aware path without pressing Enter. SSH upload is explicitly

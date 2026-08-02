@@ -350,7 +350,15 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, Props>(function
     const helperTextarea = container.current.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea");
     if (helperTextarea) {
       helperTextarea.id = "remote-control-terminal-input";
-      helperTextarea.name = "remote-control-terminal-input";
+      // This is a raw PTY input surface, never a profile, credential, payment, or address field.
+      // Suppress browser writing aids where they are honored and avoid semantic names that can
+      // trigger AutoFill heuristics. iOS may still show its system-owned AutoFill shortcut bar.
+      helperTextarea.removeAttribute("name");
+      helperTextarea.autocomplete = "off";
+      helperTextarea.autocapitalize = "off";
+      helperTextarea.setAttribute("autocorrect", "off");
+      helperTextarea.spellcheck = false;
+      helperTextarea.setAttribute("aria-autocomplete", "none");
     }
     terminal.current = instance;
     fit.current = fitAddon;

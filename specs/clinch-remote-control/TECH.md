@@ -211,12 +211,13 @@ this repo owns the feature contract and in-app links.
     enabled on desktop. Mobile never triggers Keychain access.
 
 21. Resolve the effective toolbelt on the Mac and send descriptors with opaque item IDs and a
-    configuration revision. A tap sends the item ID/revision back; the Mac re-resolves it and
-    returns preview text. Focus xterm directly from the originating touch event, route its keyboard
-    input to the exact selected PTY, and let the keyboard Enter travel once through that interactive
-    path. Paste preview text through xterm so terminal bracketed-paste mode is honored. Guard each
-    quick-insert activation until its acknowledgement. Reject transient terminal measurements below
-    20 columns, four rows, or a usable container size, deduplicate equal resize reports, and refit
+    configuration revision. A tap focuses xterm in the originating touch event, prepares the exact
+    target's writer lease and phone-sized PTY, then sends one `quick_insert_submit`; the Mac
+    re-resolves and submits it through its terminal/CLI-agent-aware path. Guard each quick-insert
+    activation until its acknowledgement. Send Esc, Tab, and directional accessory controls as
+    typed `terminal_key` messages only after the same target preparation. Reject transient terminal
+    measurements below 20 columns, four rows, or a usable container size, deduplicate equal resize
+    reports, and refit
     after two animation frames so refresh cannot collapse the Mac PTY. Let the resized PTY's live
     redraw update xterm instead of reselecting the target and replacing a correctly reflowed wide
     snapshot with a native grid that the CLI may not have repainted yet. Serialize the active
@@ -224,8 +225,10 @@ this repo owns the feature contract and in-app links.
     and native cursor position when Codex or Claude Code owns the screen. Position serialized rows
     absolutely and omit implicit linefeeds between them so an exact-width row cannot wrap and scroll
     later rows. Append the native block-grid cursor to ordinary ANSI-preserving snapshots as well so
-    later relative redraw frames continue at the correct viewport cell. Treat a stale toolbelt
-    revision as an automatic snapshot resync. A per-device one-tap preference remains local.
+    later relative redraw frames continue at the correct viewport cell. Freeze the last settled
+    alternate-screen frame (or a neutral first-fit state) while split SIGWINCH repaint frames arrive,
+    then reveal the new frame after xterm has parsed a quiet boundary. Treat a stale toolbelt
+    revision as an automatic snapshot resync.
 
 ### Milestone 4 — attachment pipeline and hardening
 
@@ -317,16 +320,16 @@ flow.
 - Writer-lease tests for concurrent phones, desktop preemption, disconnect, and timeout.
 - Terminal/Claude/Codex create and resume tests with typed arguments and failure cleanup.
 - Usage tests that redact provider credentials and never initiate Keychain access.
-- Toolbelt tests for default/custom items, terminal vs agent semantics, hot reload, stale revisions,
-  automatic stale-toolbelt resync, live preview mirroring, preview-then-send, and optional one-tap
-  mode (PRODUCT 35–37).
+- Toolbelt tests for default/custom items, terminal vs agent one-tap semantics, exactly-once taps,
+  hot reload, stale revisions, and automatic stale-toolbelt resync (PRODUCT 35–37).
 
 ### PWA and website
 
 - Playwright component/e2e coverage at representative iPhone and iPad viewports for drawer/focus,
   project overflow, bottom sheet, safe areas, software keyboard geometry, orientation, offline and
-  reconnect states, direct xterm typing, exactly-once Enter, quick-insert paste, safe resize bounds,
-  alternate-screen restoration, per-project target restoration, and reduced motion
+  reconnect states, direct xterm typing, exactly-once Enter, typed accessory keys, one-tap quick
+  inserts, safe resize bounds, alternate-screen restoration without partial-frame flicker,
+  per-project target restoration, and reduced motion
   (PRODUCT 19–28, 32, 49).
 - Real-device Safari checks for Add to Home Screen, WebCrypto key persistence, WebSocket suspension,
   clipboard/selection, external keyboard, and clearing website data.
