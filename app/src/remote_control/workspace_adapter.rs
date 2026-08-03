@@ -350,7 +350,7 @@ impl WorkspaceAdapter {
                 return self.error(request_id, code, message, retryable);
             }
         };
-        if let Err(envelope) = self.ensure_writer(&target, &authorization, request_id) {
+        if let Err(envelope) = self.ensure_writer(&target, &authorization, request_id, false) {
             return *envelope;
         }
         let current_directory = resolved
@@ -552,7 +552,8 @@ impl WorkspaceAdapter {
                 retryable,
             ));
         }
-        match self.ensure_writer(&message.target, &authorization, Some(request_id)) {
+        match self.ensure_writer(&message.target, &authorization, Some(request_id), message.takeover)
+        {
             Ok(lease) => AdapterReply::envelope(self.response(
                 Some(request_id),
                 ServerMessage::WriterLeaseChanged {
@@ -606,7 +607,7 @@ impl WorkspaceAdapter {
                 Ok(resolved) => resolved,
                 Err(error) => return AdapterReply::envelope(self.target_error(request_id, error)),
             };
-        if let Err(error) = self.ensure_writer(&message.target, &authorization, Some(request_id)) {
+        if let Err(error) = self.ensure_writer(&message.target, &authorization, Some(request_id), false) {
             return AdapterReply::envelope(*error);
         }
         let submitted = resolved.terminal.update(ctx, |terminal, ctx| {
@@ -636,7 +637,7 @@ impl WorkspaceAdapter {
                 Ok(resolved) => resolved,
                 Err(error) => return AdapterReply::envelope(self.target_error(request_id, error)),
             };
-        if let Err(error) = self.ensure_writer(&message.target, &authorization, Some(request_id)) {
+        if let Err(error) = self.ensure_writer(&message.target, &authorization, Some(request_id), false) {
             return AdapterReply::envelope(*error);
         }
         let Ok(bytes) = BASE64_STANDARD.decode(message.data_base64) else {
@@ -714,7 +715,7 @@ impl WorkspaceAdapter {
             Ok(resolved) => resolved,
             Err(error) => return AdapterReply::envelope(self.target_error(request_id, error)),
         };
-        if let Err(error) = self.ensure_writer(&target, &authorization, Some(request_id)) {
+        if let Err(error) = self.ensure_writer(&target, &authorization, Some(request_id), false) {
             return AdapterReply::envelope(*error);
         }
         resolved.terminal.update(ctx, |terminal, ctx| {
@@ -734,7 +735,7 @@ impl WorkspaceAdapter {
             Ok(resolved) => resolved,
             Err(error) => return AdapterReply::envelope(self.target_error(request_id, error)),
         };
-        if let Err(error) = self.ensure_writer(&message.target, &authorization, Some(request_id)) {
+        if let Err(error) = self.ensure_writer(&message.target, &authorization, Some(request_id), false) {
             return AdapterReply::envelope(*error);
         }
         resolved.terminal.update(ctx, |terminal, ctx| {
@@ -962,7 +963,7 @@ impl WorkspaceAdapter {
                 Ok(resolved) => resolved,
                 Err(error) => return AdapterReply::envelope(self.target_error(request_id, error)),
             };
-        if let Err(error) = self.ensure_writer(&message.target, &authorization, Some(request_id)) {
+        if let Err(error) = self.ensure_writer(&message.target, &authorization, Some(request_id), false) {
             return AdapterReply::envelope(*error);
         }
         let Some(item) = self.resolve_quick_insert(
@@ -1005,7 +1006,7 @@ impl WorkspaceAdapter {
                 Ok(resolved) => resolved,
                 Err(error) => return AdapterReply::envelope(self.target_error(request_id, error)),
             };
-        if let Err(error) = self.ensure_writer(&message.target, &authorization, Some(request_id)) {
+        if let Err(error) = self.ensure_writer(&message.target, &authorization, Some(request_id), false) {
             return AdapterReply::envelope(*error);
         }
         let Some(cwd) = resolved
@@ -1252,11 +1253,16 @@ impl WorkspaceAdapter {
         })
     }
 
+    /// `allow_takeover` is only true for an explicit `acquire_writer_lease` request that the
+    /// client marked as deliberate user input; every implicit write path keeps it false so a
+    /// client that wrongly believes it still owns the lease cannot silently displace the
+    /// device that actually holds it.
     fn ensure_writer(
         &mut self,
         target: &TargetRef,
         authorization: &SessionAuthorization,
         request_id: Option<RequestId>,
+        allow_takeover: bool,
     ) -> Result<WriterLeaseSnapshot, Box<ServerEnvelope>> {
         let key = TargetKey::from(target);
         if self
@@ -1267,7 +1273,8 @@ impl WorkspaceAdapter {
             self.writer_leases.remove(&key);
         }
         if let Some(lease) = self.writer_leases.get(&key) {
-            if writer_lease_blocks(&self.connected_sessions, lease, authorization) {
+            if !allow_takeover && writer_lease_blocks(&self.connected_sessions, lease, authorization)
+            {
                 let holder = lease.device_name.clone();
                 return Err(Box::new(self.error(
                     request_id,

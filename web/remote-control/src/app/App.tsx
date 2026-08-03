@@ -704,7 +704,8 @@ export function App() {
     }
   }, []);
 
-  const prepareTerminalForInput = useCallback((): Promise<boolean> => {
+  const prepareTerminalForInput = useCallback((options?: { takeover?: boolean }): Promise<boolean> => {
+    const takeover = options?.takeover ?? false;
     const currentSnapshot = snapshotRef.current;
     const currentTarget = selectedTargetRef.current;
     const companion = client.current;
@@ -726,18 +727,24 @@ export function App() {
       const viewportDeadline = Date.now() + 1_500;
       try {
         const initialLease = resolveTarget(currentSnapshot, currentTarget).pane?.writer_lease;
-        if (initialLease && initialLease.device_id !== deviceId) {
-          setNotice(`${initialLease.device_name} currently has control of this terminal.`);
+        const heldElsewhere = Boolean(initialLease && initialLease.device_id !== deviceId);
+        if (heldElsewhere && !takeover) {
+          setNotice(`${initialLease?.device_name} currently has control of this terminal.`);
           return false;
         }
-        if (!initialLease) {
-          // A fresh lease grant means the Mac may have restored desktop PTY dimensions since
-          // this device last held control (leases drop on disconnect or the TTL backstop).
-          // Any cached ready viewport is stale until a new resize handshake confirms it.
+        if (!initialLease || heldElsewhere) {
+          // A fresh grant (or a deliberate takeover from another device) means the PTY is
+          // sized for someone else — desktop dimensions after a lease lapse, the other
+          // device's viewport after a takeover. Any cached ready viewport is stale until a
+          // new resize handshake confirms it.
           terminalReadyViewport.current = undefined;
           const response = await companion.sendAndWait({
             type: "acquire_writer_lease",
-            data: { target: currentTarget, workspace_revision: currentSnapshot.revision },
+            data: {
+              target: currentTarget,
+              workspace_revision: currentSnapshot.revision,
+              takeover: heldElsewhere,
+            },
           }, 5_000);
           if (response.payload.type === "error") throw new Error(response.payload.data.message);
         }
@@ -835,7 +842,9 @@ export function App() {
   }, [flushQueuedTerminalInput, refreshTerminalSnapshot, terminalBus]);
 
   const acquireLease = useCallback(() => {
-    void prepareTerminalForInput();
+    // A tap on the terminal is deliberate input: like the Mac's own keyboard, it may take
+    // control over from whichever remote device currently holds the pane.
+    void prepareTerminalForInput({ takeover: true });
   }, [prepareTerminalForInput]);
 
   const autoPreparedSnapshot = useRef<TerminalSnapshot | undefined>(undefined);
@@ -884,8 +893,9 @@ export function App() {
     async (key: TerminalKey) => {
       if (!canWrite) return;
       // Keep the iOS keyboard open while an accessory key takes focus long enough to activate.
+      // Accessory keys are deliberate input, so they may take control over like a tap does.
       terminalSurface.current?.focus();
-      if (!(await prepareTerminalForInput())) return;
+      if (!(await prepareTerminalForInput({ takeover: true }))) return;
       const currentSnapshot = snapshotRef.current;
       const currentTarget = selectedTargetRef.current;
       if (!currentSnapshot || !currentTarget || connectionRef.current !== "connected") return;
@@ -917,7 +927,7 @@ export function App() {
       quickInsertInFlight.current = true;
       setQuickInsertBusy(true);
       try {
-        if (!(await prepareTerminalForInput())) return;
+        if (!(await prepareTerminalForInput({ takeover: true }))) return;
         const currentSnapshot = snapshotRef.current;
         const currentTarget = selectedTargetRef.current;
         if (!currentSnapshot || !currentTarget || connectionRef.current !== "connected") return;

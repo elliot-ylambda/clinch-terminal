@@ -533,6 +533,12 @@ pub struct AcquireWriterLease {
     pub target: TargetRef,
     #[ts(type = "number")]
     pub workspace_revision: u64,
+    /// Explicit user input (a tap on the terminal) may take the lease over from another
+    /// remote device, mirroring how the Mac's own keyboard preempts remote holders. Attach
+    /// and viewing flows leave this false so that merely looking at a pane never wrests
+    /// control away from the device that is actually using it.
+    #[serde(default)]
+    pub takeover: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize, TS)]
