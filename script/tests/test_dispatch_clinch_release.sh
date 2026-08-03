@@ -453,6 +453,21 @@ if run_release MAKE_FAIL_ON=_verify > "$TMP/package-fail.out" 2>&1; then
 fi
 assert_no_remote_mutation
 
+# The candidate build above failed after the gate had already passed for this
+# commit, so resuming must rebuild the candidate without repeating the gate.
+: > "$TMP/ops.log"
+: > "$TMP/git.log"
+: > "$TMP/gh.log"
+run_release_tty "PUBLISH $VERSION ${COMMIT:0:12}" > "$TMP/gate-resume.out"
+grep -Fq 'from phase initialized' "$TMP/gate-resume.out"
+grep -Fq 'Reusing the launch gate' "$TMP/gate-resume.out"
+grep -Fq "make _verify VERSION=$VERSION" "$TMP/ops.log"
+if grep -Fq 'make release-check' "$TMP/ops.log"; then
+  echo "FAIL: initialized resume reran the source gate" >&2
+  exit 1
+fi
+[[ ! -e "$FIXTURE/target/release-resume/$COMMIT/state.json" ]]
+
 reset_state
 if run_release VERIFY_STAGE_FAIL=1 > "$TMP/stage-fail.out" 2>&1; then
   echo "FAIL: staged-asset verification failure was accepted" >&2

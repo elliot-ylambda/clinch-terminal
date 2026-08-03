@@ -442,6 +442,18 @@ RESUME_DIR="target/release-resume/$COMMIT_SHA"
 RESUME_STATE="$RESUME_DIR/state.json"
 load_resume_state || RESUME_PHASE=
 
+# Every recorded phase is written only after the gate has passed for this exact
+# commit, and resume state is keyed by that commit, so a resume that still has to
+# rebuild the candidate does not have to re-run the gate. Without this a build
+# failure costs a full gate re-run on every retry. verify_source_state still
+# re-checks the worktree before each step, so this cannot ship unreviewed source;
+# the one thing it does not repeat is the live dependency-advisory query, which a
+# resume from candidate_verified already skipped.
+GATE_ALREADY_PASSED=0
+case "$RESUME_PHASE" in
+  initialized | candidate_verified | stage_verified) GATE_ALREADY_PASSED=1 ;;
+esac
+
 latest_release_version="$(
   gh_with_retry api "repos/$REPO/releases?per_page=100" \
     --jq '[.[] | select(.draft == false and .prerelease == false)][0].tag_name // empty'
@@ -522,8 +534,12 @@ if [[ "$stage_ready" == 0 && "$RESUME_PHASE" == candidate_verified ]]; then
 fi
 
 if [[ "$stage_ready" == 0 && "$candidate_ready" == 0 ]]; then
-  echo "==> Running the complete local release gate for ${COMMIT_SHA:0:12}"
-  make release-check
+  if [[ "$GATE_ALREADY_PASSED" == 1 ]]; then
+    echo "==> Reusing the launch gate already passed for ${COMMIT_SHA:0:12}"
+  else
+    echo "==> Running the complete local release gate for ${COMMIT_SHA:0:12}"
+    make release-check
+  fi
   verify_source_state "$COMMIT_SHA"
 
   if [[ -z "$UPDATE_SEQUENCE" ]]; then
