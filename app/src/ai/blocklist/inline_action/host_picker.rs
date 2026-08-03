@@ -121,6 +121,8 @@ impl HostPicker {
                     ctx.emit(HostPickerEvent::Closed);
                     ctx.notify();
                 }
+                // Rows here carry typed actions, so the dropdown never reports an index.
+                DropdownEvent::ItemSelected(_) => {}
             }
         });
 

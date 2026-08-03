@@ -386,6 +386,7 @@ use crate::terminal::block_list_viewport::{
     ScrollState, ViewportState,
 };
 use crate::terminal::bootstrap::init_subshell_command;
+use crate::terminal::cli_agent_prompt_locator;
 use crate::terminal::cli_agent_sessions::auto_continue::AutoContinueModel;
 use crate::terminal::cli_agent_sessions::event::{
     parse_event, CLIAgentEvent, CLIAgentEventPayload, CLIAgentEventSource, CLIAgentEventType,
@@ -3013,6 +3014,9 @@ const CLI_AGENT_HISTORY_ITEM_VERTICAL_PADDING: f32 = 6.;
 const CLI_AGENT_HISTORY_ITEM_HORIZONTAL_PADDING: f32 = 16.;
 const CLI_AGENT_HISTORY_MENU_MAX_HEIGHT: f32 = 420.;
 const CLI_AGENT_HISTORY_TOOLTIP_MAX_WIDTH: f32 = 640.;
+/// Rows left above a message jumped to from the history dropdown, so it reads as the top of a
+/// section rather than being flush against the pane header.
+const CLI_AGENT_HISTORY_JUMP_BUFFER_LINES: Lines = Lines::new(2.0);
 
 fn cli_agent_history_trigger(history: &AgentPromptHistory, fallback: String) -> String {
     history
@@ -4226,8 +4230,12 @@ impl TerminalView {
             dropdown
         });
         ctx.subscribe_to_view(&cli_agent_message_history_dropdown, |me, _, event, ctx| {
-            if matches!(event, DropdownEvent::Close) {
-                me.redetermine_global_focus(ctx);
+            match event {
+                DropdownEvent::Close => me.redetermine_global_focus(ctx),
+                // Carries the index into the agent's prompt history, set in
+                // `sync_cli_agent_message_history_dropdown`.
+                DropdownEvent::ItemSelected(index) => me.jump_to_agent_prompt(*index, ctx),
+                DropdownEvent::ToggleExpanded => {}
             }
         });
 
@@ -13859,7 +13867,11 @@ impl TerminalView {
                         .with_tooltip_max_width(CLI_AGENT_HISTORY_TOOLTIP_MAX_WIDTH)
                         .with_tooltip_position(MenuTooltipPosition::Above);
                 }
-                fields.into_item()
+                // Carries the prompt's index in `history.prompts`, not its row position in the
+                // menu — the menu has a header row above these, and trailing status rows below.
+                fields
+                    .with_on_select_action(DropdownAction::SelectIndexAndClose(index))
+                    .into_item()
             },
         ));
         if is_loading {
@@ -13883,10 +13895,67 @@ impl TerminalView {
         self.cli_agent_message_history_dropdown
             .update(ctx, |dropdown, ctx| {
                 dropdown.set_rich_items(items, ctx);
-                // The model-backed header provider supplies the latest prompt independently of
-                // menu selection. History rows are informational and should not become selected.
+                // Picking a history row jumps the viewport to that message; it never changes what
+                // the collapsed header shows. The model-backed header provider supplies the latest
+                // prompt independently of menu selection, so the dropdown keeps no selected item.
                 dropdown.set_selected_to_none(ctx);
             });
+    }
+
+    /// Scrolls this pane to where `index` in the agent's prompt history was painted.
+    ///
+    /// The history list comes from the agent's transcript file, so a listed prompt is not
+    /// guaranteed to be on screen: it may predate this pane (a resumed or bridged session), or
+    /// have been dropped by scrollback eviction, session-restore truncation, `/clear`, or
+    /// compaction. Those cases are reported rather than silently ignored.
+    fn jump_to_agent_prompt(&mut self, index: usize, ctx: &mut ViewContext<Self>) {
+        // Agent TUIs painting on the alt screen have no blocklist scrollback to jump to, and the
+        // grid holds only the current frame.
+        if self.model.lock().is_alt_screen_active() {
+            self.show_agent_prompt_jump_toast(
+                "Can't jump to a message while a full-screen app is running",
+                ctx,
+            );
+            return;
+        }
+
+        let Some(prompt_text) = CLIAgentSessionsModel::as_ref(ctx)
+            .session(self.view_id)
+            .and_then(|session| session.prompt_history.prompts.get(index))
+            .map(|prompt| prompt.text.clone())
+        else {
+            return;
+        };
+
+        // Scans the blocklist under the model lock, as the find bar's own runs do. Bounded by the
+        // pane's retained scrollback rather than the conversation's true length, and only ever
+        // triggered by a click.
+        let location = {
+            let model = self.model.lock();
+            cli_agent_prompt_locator::locate_agent_prompt(model.block_list(), &prompt_text)
+        };
+
+        let Some(location) = location else {
+            self.show_agent_prompt_jump_toast("That message isn't in this pane's scrollback", ctx);
+            return;
+        };
+
+        self.update_scroll_position_locking(
+            ScrollPositionUpdate::ScrollToBlockSectionAtTop {
+                block_index: location.block_index,
+                section: BlockSection::OutputGrid(location.range.start().row.into_lines()),
+                buffer_lines: CLI_AGENT_HISTORY_JUMP_BUFFER_LINES,
+            },
+            ctx,
+        );
+        ctx.notify();
+    }
+
+    fn show_agent_prompt_jump_toast(&self, message: &str, ctx: &mut ViewContext<Self>) {
+        ctx.emit(Event::ShowToast {
+            message: message.to_owned(),
+            flavor: ToastFlavor::Default,
+        });
     }
 
     /// Handles the initialization of a session within this terminal pane.

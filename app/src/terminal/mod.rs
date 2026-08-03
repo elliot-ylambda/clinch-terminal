@@ -32,6 +32,7 @@ pub mod blockgrid_element;
 mod blockgrid_renderer;
 mod bootstrap;
 mod buy_credits_banner;
+pub mod cli_agent_prompt_locator;
 pub mod color;
 mod command_corrections_denylist;
 pub mod dynamic_enum_suggestions;
