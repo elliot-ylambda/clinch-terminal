@@ -386,7 +386,9 @@ use crate::terminal::block_list_viewport::{
     ScrollState, ViewportState,
 };
 use crate::terminal::bootstrap::init_subshell_command;
-use crate::terminal::cli_agent_prompt_locator;
+use crate::terminal::cli_agent_prompt_locator::{
+    self, PromptLookupFailure, UnsearchablePrompt,
+};
 use crate::terminal::cli_agent_sessions::auto_continue::AutoContinueModel;
 use crate::terminal::cli_agent_sessions::event::{
     parse_event, CLIAgentEvent, CLIAgentEventPayload, CLIAgentEventSource, CLIAgentEventType,
@@ -13935,9 +13937,22 @@ impl TerminalView {
             cli_agent_prompt_locator::locate_agent_prompt(model.block_list(), &prompt_text)
         };
 
-        let Some(location) = location else {
-            self.show_agent_prompt_jump_toast("That message isn't in this pane's scrollback", ctx);
-            return;
+        let location = match location {
+            Ok(location) => location,
+            Err(PromptLookupFailure::Unsearchable(UnsearchablePrompt::TooShort)) => {
+                // The message is very likely right there on screen — saying it isn't would be a
+                // lie. It just has no text distinctive enough to find it by.
+                self.show_agent_prompt_jump_toast("That message is too short to jump to", ctx);
+                return;
+            }
+            Err(PromptLookupFailure::Unsearchable(UnsearchablePrompt::Empty)) => return,
+            Err(PromptLookupFailure::NotPainted) => {
+                self.show_agent_prompt_jump_toast(
+                    "That message isn't in this pane's scrollback",
+                    ctx,
+                );
+                return;
+            }
         };
 
         self.update_scroll_position_locking(
