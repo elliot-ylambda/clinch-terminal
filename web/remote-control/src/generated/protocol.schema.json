@@ -51,6 +51,11 @@
     "AcquireWriterLease": {
       "type": "object",
       "properties": {
+        "takeover": {
+          "description": "Explicit user input (a tap on the terminal) may take the lease over from another\nremote device, mirroring how the Mac's own keyboard preempts remote holders. Attach\nand viewing flows leave this false so that merely looking at a pane never wrests\ncontrol away from the device that is actually using it.",
+          "type": "boolean",
+          "default": false
+        },
         "target": {
           "$ref": "#/$defs/TargetRef"
         },
