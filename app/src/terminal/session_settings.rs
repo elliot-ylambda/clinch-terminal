@@ -226,9 +226,11 @@ fn merge_toolbar_defaults_and_custom_items(
         .chain(&default_right)
         .cloned()
         .collect::<Vec<_>>();
-    let effective_hidden = inherit_defaults
-        .then_some(hidden_defaults)
-        .unwrap_or_default();
+    let effective_hidden = if inherit_defaults {
+        hidden_defaults
+    } else {
+        Default::default()
+    };
 
     let mut left = default_left
         .into_iter()
@@ -564,7 +566,7 @@ mod toolbar_chip_selection_tests {
             ],
             vec![],
             &[old_default],
-            &[custom.clone()],
+            std::slice::from_ref(&custom),
             &[hidden_default],
             true,
         );
@@ -612,7 +614,7 @@ mod toolbar_chip_selection_tests {
         };
 
         assert!(*inherit_defaults);
-        assert_eq!(hidden_defaults, &[removed.clone()]);
+        assert_eq!(hidden_defaults, std::slice::from_ref(&removed));
         assert!(!contains_toolbar_item_identity(
             &selection.left_items(),
             &removed
