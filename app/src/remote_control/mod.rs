@@ -4,10 +4,11 @@ mod status;
 mod tailscale;
 mod workspace_adapter;
 
-use std::time::{Duration as StdDuration, Instant as StdInstant};
+use std::time::Duration as StdDuration;
 
 use chrono::Utc;
 use clinch_companion_protocol::{Capability, DeviceId, PairingClaimId, PairingInvitation};
+use instant::Instant;
 use settings::Setting as _;
 pub use status::{RemoteControlStatus, RemoteControlViewState};
 use warp_core::channel::ChannelState;
@@ -133,11 +134,11 @@ impl RemoteControlService {
                     let Ok(should_continue) = spawner
                         .spawn(move |service, ctx| {
                             if service.generation != generation
-                                || !service
+                                || service
                                     .view_state
                                     .active_invitation
                                     .as_ref()
-                                    .is_some_and(|active| active.id == invitation_id)
+                                    .is_none_or(|active| active.id != invitation_id)
                             {
                                 return false;
                             }
@@ -363,7 +364,7 @@ impl RemoteControlService {
         };
         let setup_spawner = ctx.spawner();
         runtime.spawn(async move {
-            let started_at = StdInstant::now();
+            let started_at = Instant::now();
             let result = match tokio::time::timeout(
                 TAILSCALE_SETUP_TIMEOUT,
                 client.configure_private_route(&route_path, port),
