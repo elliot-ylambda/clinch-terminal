@@ -1038,6 +1038,19 @@ fn test_manual_update_check_feedback_only_appears_in_initiating_workspace() {
 }
 
 #[test]
+fn test_clinch_install_progress_popup_is_visible() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.show_clinch_install_progress(ctx);
+            assert!(workspace.toast_stack.as_ref(ctx).has_toasts());
+        });
+    });
+}
+
+#[test]
 fn terminal_input_toast_only_appears_for_the_focused_tab() {
     App::test((), |mut app| async move {
         initialize_app(&mut app);

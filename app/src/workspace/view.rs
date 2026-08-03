@@ -587,6 +587,9 @@ const TAB_BAR_ICON_PADDING: f32 = 4.;
 const TAB_BAR_PILL_WIDTH: f32 = 120.;
 const PILL_FONT_SIZE: f32 = 12.;
 const UPDATE_AVAILABLE_TEXT: &str = "Update available";
+const CLINCH_INSTALL_PROGRESS_TOAST_ID: &str = "clinch_update_install_progress";
+const CLINCH_INSTALL_PROGRESS_MESSAGE: &str =
+    "Clinch is installing the update… It will close and reopen automatically.";
 
 const TAB_BAR_OVERFLOW_MENU_WIDTH: f32 = 300.;
 
@@ -3297,7 +3300,15 @@ impl Workspace {
         let autoupdate_handle = AutoupdateState::handle(ctx);
         ctx.subscribe_to_model(&autoupdate_handle, |view, _handle, evt, ctx| match evt {
             AutoupdateStateEvent::UpdateAvailable => ctx.notify(),
-            AutoupdateStateEvent::InstallReady => autoupdate::initiate_relaunch_for_update(ctx),
+            AutoupdateStateEvent::InstallReady => {
+                // Refresh the progress pop-up when the verified download moves into the actual
+                // installation phase. Only the active window needs to show it; every workspace
+                // observes this singleton event and may attempt the idempotent relaunch below.
+                if ctx.windows().active_window() == Some(ctx.window_id()) {
+                    view.show_clinch_install_progress(ctx);
+                }
+                autoupdate::initiate_relaunch_for_update(ctx);
+            }
             AutoupdateStateEvent::CheckComplete {
                 result,
                 request_type: RequestType::ManualCheck,
@@ -19318,13 +19329,16 @@ impl Workspace {
             );
             #[cfg(feature = "integration_tests")]
             {
+                let workspace = ctx.handle();
                 let dialog = AlertDialogWithCallbacks::for_app(
                     format!("Install Clinch {}?", prompt.new_version),
                     information.clone(),
                     vec![
-                        ModalButton::for_app("Download and Install", |ctx| {
-                            if let Err(error) = autoupdate::approve_clinch_update(ctx) {
-                                log::error!("Could not start Clinch update: {error:#}");
+                        ModalButton::for_app("Download and Install", move |ctx| {
+                            if let Some(workspace) = workspace.upgrade(ctx) {
+                                workspace.update(ctx, |workspace, ctx| {
+                                    workspace.start_clinch_update(ctx);
+                                });
                             }
                         }),
                         ModalButton::for_app("Later", |_| {}),
@@ -19338,11 +19352,12 @@ impl Workspace {
                 format!("Install Clinch {}?", prompt.new_version),
                 information,
                 vec![
-                    ModalButton::for_view("Download and Install", |_workspace, ctx| {
-                        if let Err(error) = autoupdate::approve_clinch_update(ctx) {
-                            log::error!("Could not start Clinch update: {error:#}");
-                        }
-                    }),
+                    ModalButton::for_view(
+                        "Download and Install",
+                        |workspace: &mut Workspace, ctx| {
+                            workspace.start_clinch_update(ctx);
+                        },
+                    ),
                     ModalButton::for_view("Later", |_, _| {}),
                 ],
                 |_, _| {},
@@ -19356,6 +19371,23 @@ impl Workspace {
             autoupdate::initiate_relaunch_for_update(ctx);
         }
         self.close_tab_bar_overflow_menu(ctx);
+    }
+
+    fn start_clinch_update(&mut self, ctx: &mut ViewContext<Self>) {
+        match autoupdate::approve_clinch_update(ctx) {
+            Ok(()) => self.show_clinch_install_progress(ctx),
+            Err(error) => log::error!("Could not start Clinch update: {error:#}"),
+        }
+    }
+
+    fn show_clinch_install_progress(&mut self, ctx: &mut ViewContext<Self>) {
+        self.toast_stack.update(ctx, |toast_stack, ctx| {
+            toast_stack.add_ephemeral_toast(
+                DismissibleToast::default(CLINCH_INSTALL_PROGRESS_MESSAGE.to_owned())
+                    .with_object_id(CLINCH_INSTALL_PROGRESS_TOAST_ID.to_owned()),
+                ctx,
+            );
+        });
     }
 
     fn download_new_version(&mut self, ctx: &mut ViewContext<Self>) {
