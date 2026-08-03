@@ -317,6 +317,14 @@ impl WorkspaceAdapter {
                     false,
                 ))
             }
+            // The gateway answers unpairing before the adapter ever sees it; reaching here
+            // means a bug in the gateway dispatch, so fail loudly rather than pretend.
+            ClientMessage::UnpairDevice => AdapterReply::envelope(self.error(
+                Some(request_id),
+                ProtocolErrorCode::Internal,
+                "Unpairing is handled by the connection, not the workspace.".to_owned(),
+                false,
+            )),
             ClientMessage::Disconnect => AdapterReply::envelope(self.response(
                 Some(request_id),
                 ServerMessage::CommandAccepted {
@@ -1968,7 +1976,9 @@ fn required_capability(message: &ClientMessage) -> Option<Capability> {
         ClientMessage::UploadBegin(_)
         | ClientMessage::UploadCommit(_)
         | ClientMessage::UploadCancel(_) => Some(Capability::Upload),
-        ClientMessage::Disconnect => None,
+        // Unpairing needs no capability beyond being the authenticated device itself, and it
+        // never reaches the adapter: the gateway answers it directly.
+        ClientMessage::UnpairDevice | ClientMessage::Disconnect => None,
     }
 }
 

@@ -712,6 +712,10 @@ pub enum ClientMessage {
     UploadBegin(UploadBegin),
     UploadCommit(UploadCommit),
     UploadCancel(UploadCancel),
+    /// Revokes THIS session's device on the Mac and ends the connection. The phone offers it
+    /// as "Unpair this phone"; the Mac needs no target because the authenticated session
+    /// already identifies exactly one device.
+    UnpairDevice,
     Disconnect,
 }
 
@@ -769,6 +773,9 @@ pub enum ServerMessage {
         #[ts(type = "number")]
         workspace_revision: u64,
     },
+    /// Acknowledges `UnpairDevice`: the device is revoked on the Mac and the socket closes
+    /// right after this reply, so the phone can safely discard its local identity.
+    DeviceUnpaired,
     ConnectionState(ConnectionState),
     Error(ProtocolError),
 }
@@ -858,6 +865,7 @@ impl ClientEnvelope {
             | ClientMessage::RequestSnapshot
             | ClientMessage::UploadCommit(_)
             | ClientMessage::UploadCancel(_)
+            | ClientMessage::UnpairDevice
             | ClientMessage::Disconnect => {}
         }
 

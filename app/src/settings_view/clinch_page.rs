@@ -880,7 +880,7 @@ impl RemoteControlSetupWidget {
             "Enable Remote Control",
             "This local-only choice starts Clinch's private companion and gives it one isolated \
              Tailscale Serve path. Turning it off ends live sessions and removes only that path; \
-             paired phones stay authorized for the next enable unless you revoke them below.",
+             paired phones stay authorized for the next enable unless you disconnect them below.",
             Some(enable_switch),
             appearance,
         ));
@@ -1106,7 +1106,7 @@ impl RemoteControlSetupWidget {
         }
         for device in &state.paired_devices {
             let revoke = Self::render_typed_action_button(
-                "Revoke",
+                "Disconnect",
                 ClinchSettingsPageAction::RemoteControlRevoke(device.id),
                 self.dynamic_mouse_state(format!("revoke-{}", device.id)),
                 appearance,
@@ -1165,7 +1165,7 @@ impl RemoteControlSetupWidget {
                     if state.enabled {
                         "Turn off & revoke all phones"
                     } else {
-                        "Revoke all paired phones"
+                        "Disconnect all phones"
                     },
                     ClinchSettingsPageAction::RemoteControlRevokeAll,
                     self.revoke_all_mouse_state.clone(),

@@ -498,6 +498,19 @@
           ]
         },
         {
+          "description": "Revokes THIS session's device on the Mac and ends the connection. The phone offers it\nas \"Unpair this phone\"; the Mac needs no target because the authenticated session\nalready identifies exactly one device.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "unpair_device"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
           "type": "object",
           "properties": {
             "type": {
@@ -1586,6 +1599,19 @@
           "required": [
             "type",
             "data"
+          ]
+        },
+        {
+          "description": "Acknowledges `UnpairDevice`: the device is revoked on the Mac and the socket closes\nright after this reply, so the phone can safely discard its local identity.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "device_unpaired"
+            }
+          },
+          "required": [
+            "type"
           ]
         },
         {
