@@ -466,8 +466,7 @@ async fn websocket_loop(mut socket: WebSocket, state: GatewayState, cookie_token
     let mut snapshot_interval = tokio::time::interval(Duration::from_secs(1));
     snapshot_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     snapshot_interval.tick().await;
-    let mut keepalive_interval =
-        tokio::time::interval(Duration::from_secs(KEEPALIVE_PING_SECS));
+    let mut keepalive_interval = tokio::time::interval(Duration::from_secs(KEEPALIVE_PING_SECS));
     keepalive_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     keepalive_interval.tick().await;
     let mut unanswered_pings = 0u8;
