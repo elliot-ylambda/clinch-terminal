@@ -53,6 +53,7 @@ app/src/persistence/schema.rs.orig
 **/.claude/
 **/.codex/
 **/.cursor/
+**/.gradient/
 **/.mcp.json
 **/.remember/
 **/.superpowers/
