@@ -52,38 +52,53 @@ fn main() -> Result<()> {
 
         let min_macos_version = env::var("MACOSX_DEPLOYMENT_TARGET")
             .expect("MACOSX_DEPLOYMENT_TARGET must be set for macos builds");
+
+        // Build into OUT_DIR rather than the source tree. Architectures are built
+        // concurrently against one checkout, so a shared output directory means one
+        // build can delete or overwrite the bundle another is still linking into
+        // (`lipo: can't create temporary output file`). OUT_DIR is unique per target
+        // and profile, so each build gets its own scratch space.
+        let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR must be set"));
+        let plugin_build_dir = out_dir.join("docktileplugin");
+        fs::create_dir_all(&plugin_build_dir).expect("Failed to create plugin build directory");
+
         let status = Command::new("make")
             .current_dir("DockTilePlugin")
             .env("MACOSX_DEPLOYMENT_TARGET", min_macos_version)
+            .env("BUNDLE_DIR", &plugin_build_dir)
             .status()
             .expect("Failed to build dock tile plugin");
         if !status.success() {
             panic!("Dock tile plugin build failed");
         }
 
-        // Copy the dock tile plugin to the output directory
+        // Publish the plugin where the bundler expects it.
         let profile = get_build_profile_name();
         let target_dir = app_target_dir(&profile).expect("Failed to get app target directory");
-        let plugin_src = Path::new("DockTilePlugin/ClinchDockTilePlugin.docktileplugin");
+        let plugin_src = plugin_build_dir.join("ClinchDockTilePlugin.docktileplugin");
         let plugin_dst = target_dir.join("ClinchDockTilePlugin.docktileplugin");
 
-        if !status.success() {
-            fs::remove_dir_all(plugin_src).expect("Failed to clean up plugin directory");
-            panic!("Dock tile plugin build failed");
-        }
-
         if plugin_src.exists() {
-            fs::remove_dir_all(&plugin_dst).ok(); // Remove existing if any
-            fs::create_dir_all(&plugin_dst).expect("Failed to create plugin directory");
+            // This destination is shared by every architecture of a profile, and
+            // `app_target_dir` deliberately ignores CARGO_TARGET_DIR. Copying in place
+            // would let a concurrent build observe a half-written bundle, so stage a
+            // complete copy alongside it and move it into position instead. clang emits
+            // one universal binary per build, so every architecture stages identical
+            // bytes and whichever lands last is equally correct.
+            fs::create_dir_all(&target_dir).expect("Failed to create target directory");
+            let staging = tempfile::Builder::new()
+                .prefix(".ClinchDockTilePlugin.staging-")
+                .tempdir_in(&target_dir)
+                .expect("Failed to create plugin staging directory");
+            let staged = staging.path().join("ClinchDockTilePlugin.docktileplugin");
 
-            // Copy the plugin directory recursively
-            for entry in WalkDir::new(plugin_src) {
+            for entry in WalkDir::new(&plugin_src) {
                 let entry = entry.expect("Failed to read plugin directory");
                 let path = entry.path();
                 let relative = path
-                    .strip_prefix(plugin_src)
+                    .strip_prefix(&plugin_src)
                     .expect("Failed to strip path prefix");
-                let target = plugin_dst.join(relative);
+                let target = staged.join(relative);
 
                 if path.is_dir() {
                     fs::create_dir_all(target).expect("Failed to create plugin subdirectory");
@@ -92,8 +107,17 @@ fn main() -> Result<()> {
                 }
             }
 
-            // Clean up the source plugin directory after copying
-            fs::remove_dir_all(plugin_src).expect("Failed to clean up plugin directory");
+            // Retire any previous bundle before the swap: renaming onto a non-empty
+            // directory fails. A concurrent build may have already moved it, and it may
+            // have already installed its own identical bundle, so neither step is fatal.
+            let retired = staging.path().join("previous");
+            fs::rename(&plugin_dst, &retired).ok();
+            if let Err(error) = fs::rename(&staged, &plugin_dst) {
+                assert!(
+                    plugin_dst.is_dir(),
+                    "Failed to install dock tile plugin: {error}"
+                );
+            }
         }
 
         // In standalone mode, embed the Info.plist file. We don't use embed_plist! for this

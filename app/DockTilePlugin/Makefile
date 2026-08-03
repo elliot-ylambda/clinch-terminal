@@ -1,5 +1,10 @@
 BUNDLE_NAME = ClinchDockTilePlugin.docktileplugin
-PLUGIN_BINARY = $(BUNDLE_NAME)/Contents/MacOS/ClinchDockTilePlugin
+# Where the built bundle lands. The app's build script points this at its own
+# OUT_DIR so concurrently built architectures never share an output tree; it
+# defaults to the source directory for a bare `make` run.
+BUNDLE_DIR ?= .
+BUNDLE_ROOT = $(BUNDLE_DIR)/$(BUNDLE_NAME)
+PLUGIN_BINARY = $(BUNDLE_ROOT)/Contents/MacOS/ClinchDockTilePlugin
 OBJC_FILES = ClinchDockTilePlugin.m
 FRAMEWORKS = -framework Cocoa -framework AppKit -framework Foundation
 MACOSX_DEPLOYMENT_TARGET ?= 10.14
@@ -12,12 +17,12 @@ LDFLAGS = -ObjC
 all: $(PLUGIN_BINARY)
 
 $(PLUGIN_BINARY): $(OBJC_FILES) ClinchDockTilePlugin.h Info.plist $(wildcard Resources/*) ../channels/stable/icon/no-padding/512x512.png
-	mkdir -p $(BUNDLE_NAME)/Contents/MacOS
-	clang $(CFLAGS) $(LDFLAGS) $(FRAMEWORKS) $(OBJC_FILES) -o $(BUNDLE_NAME)/Contents/MacOS/ClinchDockTilePlugin
-	cp Info.plist $(BUNDLE_NAME)/Contents/
-	mkdir -p $(BUNDLE_NAME)/Contents/Resources
-	cp Resources/* $(BUNDLE_NAME)/Contents/Resources/
-	cp ../channels/stable/icon/no-padding/512x512.png $(BUNDLE_NAME)/Contents/Resources/clinch.png
+	mkdir -p $(BUNDLE_ROOT)/Contents/MacOS
+	clang $(CFLAGS) $(LDFLAGS) $(FRAMEWORKS) $(OBJC_FILES) -o $(PLUGIN_BINARY)
+	cp Info.plist $(BUNDLE_ROOT)/Contents/
+	mkdir -p $(BUNDLE_ROOT)/Contents/Resources
+	cp Resources/* $(BUNDLE_ROOT)/Contents/Resources/
+	cp ../channels/stable/icon/no-padding/512x512.png $(BUNDLE_ROOT)/Contents/Resources/clinch.png
 
 clean:
-	rm -rf $(BUNDLE_NAME)
+	rm -rf $(BUNDLE_ROOT)
