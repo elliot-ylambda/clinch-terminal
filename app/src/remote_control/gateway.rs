@@ -524,6 +524,39 @@ async fn websocket_loop(mut socket: WebSocket, state: GatewayState, cookie_token
                     let _ = socket.send(Message::Close(None)).await;
                     break;
                 }
+                if matches!(envelope.payload, ClientMessage::UnpairDevice) {
+                    // Self-service unpairing from the phone's own settings sheet. Revocation
+                    // also drops the device's other sessions and challenges, so acknowledge,
+                    // let the service persist the registry, and end this connection.
+                    let reply = match state
+                        .pairing
+                        .revoke_device(authorization.device_id, Utc::now())
+                    {
+                        Ok(()) => {
+                            let _ = state.events.send(GatewayEvent::DeviceRegistryChanged).await;
+                            ServerEnvelope {
+                                version: PROTOCOL_VERSION,
+                                request_id: Some(envelope.request_id),
+                                sequence: None,
+                                payload: ServerMessage::DeviceUnpaired,
+                            }
+                        }
+                        Err(error) => protocol_error(
+                            Some(envelope.request_id),
+                            ProtocolErrorCode::Internal,
+                            &format!("Could not unpair this phone: {error}"),
+                        ),
+                    };
+                    let unpaired = matches!(reply.payload, ServerMessage::DeviceUnpaired);
+                    if send_json(&mut socket, &mut connection_sequence, &reply).await.is_err() {
+                        break;
+                    }
+                    if unpaired {
+                        let _ = socket.send(Message::Close(None)).await;
+                        break;
+                    }
+                    continue;
+                }
                 if let Some(cached) = completed_upload_requests.get(&envelope.request_id) {
                     if send_json(&mut socket, &mut connection_sequence, cached).await.is_err() {
                         break;

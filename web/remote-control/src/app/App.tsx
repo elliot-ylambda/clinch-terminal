@@ -305,6 +305,8 @@ export function App() {
   const terminalSnapshotRef = useRef<TerminalSnapshot | undefined>(undefined);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [usageOpen, setUsageOpen] = useState(false);
+  const [unpairArmed, setUnpairArmed] = useState(false);
+  const [unpairing, setUnpairing] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
   const [newMode, setNewMode] = useState<NewSessionMode>("create");
   const [newKind, setNewKind] = useState<SessionKind>("terminal");
@@ -1405,7 +1407,7 @@ export function App() {
       )}
 
       {usageOpen && (
-        <Sheet title="Usage & connection" onClose={() => setUsageOpen(false)}>
+        <Sheet title="Usage & connection" onClose={() => { setUsageOpen(false); setUnpairArmed(false); }}>
           <div className="sheet-connection">
             <span className={`activity-dot ${connection}`} />{connectionLabels[connection]}
             <small>
@@ -1448,13 +1450,45 @@ export function App() {
           <p className="privacy-copy">Terminal data travels directly through your tailnet. Clinch has no account, analytics, or hosted relay in this connection.</p>
           <p className="muted">On iPhone or iPad, use Chrome or Safari&apos;s Share menu → Add to Home Screen, then open the Clinch icon for a full-screen app without browser bars. Installation is optional.</p>
           <a className="connection-help" href="https://clinch.sh/remote-control" target="_blank" rel="noreferrer">Connection help & security guide ↗</a>
+          <button className="secondary-wide" onClick={() => location.reload()}>Refresh this page</button>
           <button className="secondary-wide" onClick={() => {
             client.current?.stop();
             setConnection("mac_offline");
             setConnectionDetail("Disconnected on this phone until the page is reopened.");
             setUsageOpen(false);
           }}>Disconnect for now</button>
-          <button className="danger-wide" onClick={() => void clearIdentity().then(() => location.reload())}>Forget this phone&apos;s key</button>
+          <button
+            className="danger-wide"
+            disabled={unpairing || connection !== "connected"}
+            onClick={() => {
+              if (!unpairArmed) {
+                setUnpairArmed(true);
+                return;
+              }
+              // Revoke on the Mac first so its paired-phones list stays truthful, then drop
+              // the local key. Reloading lands on the pairing screen.
+              setUnpairing(true);
+              void (async () => {
+                try {
+                  const companion = client.current;
+                  if (!companion) throw new Error("Mac is not connected");
+                  const response = await companion.sendAndWait({ type: "unpair_device" }, 10_000);
+                  if (response.payload.type === "error") throw new Error(response.payload.data.message);
+                  companion.stop();
+                  await clearIdentity();
+                  await clearPendingPairing();
+                  location.reload();
+                } catch (error) {
+                  setUnpairing(false);
+                  setUnpairArmed(false);
+                  setNotice(error instanceof Error ? error.message : String(error));
+                }
+              })();
+            }}
+          >
+            {unpairing ? "Unpairing…" : unpairArmed ? "Tap again to unpair" : "Unpair this phone"}
+          </button>
+          {connection !== "connected" && <p className="muted">Unpairing needs a live connection so the Mac forgets this phone too.</p>}
         </Sheet>
       )}
 
