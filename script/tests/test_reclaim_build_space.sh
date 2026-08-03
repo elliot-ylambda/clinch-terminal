@@ -40,6 +40,11 @@ build_fixture() {
   mkdir -p "$TARGET/release-worktree-cache/release-stage"
   mkdir -p "$TARGET/release-resume/0123456789ab"
 
+  # Where a parallel two-architecture release build puts the secondary
+  # architecture: five levels down, deeper than a naive walk reaches.
+  mkdir -p \
+    "$TARGET/release-worktree-cache/parallel-arch-cache/x86_64-apple-darwin/debug/incremental"
+
   # Expensive artifacts that must survive: these are what keep a release fast.
   mkdir -p "$TARGET/debug/deps"
   mkdir -p "$TARGET/debug/build"
@@ -57,7 +62,8 @@ build_fixture() {
     "$TARGET/aarch64-apple-darwin/release-lto/incremental" \
     "$TARGET/release-worktree-cache/debug/incremental" \
     "$TARGET/release-worktree-cache/release-stage" \
-    "$TARGET/release-resume/0123456789ab"
+    "$TARGET/release-resume/0123456789ab" \
+    "$TARGET/release-worktree-cache/parallel-arch-cache/x86_64-apple-darwin/debug/incremental"
 }
 
 # --- cold caches are removed, warm caches and real artifacts are not ---------
@@ -67,6 +73,7 @@ PATH="$IDLE_PATH" "$RECLAIM" --root "$TARGET" --days 7 > "$TMP/prune.log"
 [[ ! -d "$TARGET/debug/incremental" ]]
 [[ ! -d "$TARGET/aarch64-apple-darwin/release-lto/incremental" ]]
 [[ ! -d "$TARGET/release-worktree-cache/debug/incremental" ]]
+[[ ! -d "$TARGET/release-worktree-cache/parallel-arch-cache/x86_64-apple-darwin/debug/incremental" ]]
 [[ ! -d "$TARGET/release-worktree-cache/release-stage" ]]
 [[ ! -d "$TARGET/release-resume/0123456789ab" ]]
 
@@ -80,7 +87,7 @@ PATH="$IDLE_PATH" "$RECLAIM" --root "$TARGET" --days 7 > "$TMP/prune.log"
 [[ -d "$TARGET/debug/build" ]]
 
 grep -Fq "Reclaimed" "$TMP/prune.log"
-grep -Fq "5 cache(s)" "$TMP/prune.log"
+grep -Fq "6 cache(s)" "$TMP/prune.log"
 
 # --- --days 0 also takes the warm cache -------------------------------------
 build_fixture
@@ -123,7 +130,7 @@ PATH="$IDLE_PATH" "$RECLAIM" --root "$TMP/empty-target" --days 7 --quiet > "$TMP
 build_fixture
 ln -s "$TARGET" "$TMP/target-link"
 PATH="$IDLE_PATH" "$RECLAIM" --root "$TARGET" --root "$TMP/target-link" --days 7 > "$TMP/dedupe.log"
-[[ "$(grep -c '^removing' "$TMP/dedupe.log")" == 5 ]]
+[[ "$(grep -c '^removing' "$TMP/dedupe.log")" == 6 ]]
 
 # --- a missing root is not an error ------------------------------------------
 PATH="$IDLE_PATH" "$RECLAIM" --root "$TMP/does-not-exist" --days 7 > "$TMP/missing.log"

@@ -147,11 +147,15 @@ find_aged() {
 candidates_in() {
   local root="$1"
 
-  # -maxdepth 3 reaches target/<profile>/incremental,
-  # target/<triple>/<profile>/incremental and
-  # target/release-worktree-cache/<profile>/incremental. find does not follow
-  # symlinks by default, so the release worktree's target symlink is inert.
-  find_aged "$root" -maxdepth 3 -type d -name incremental
+  # Caches nest deeper than they first appear. The shallowest is
+  # target/<profile>/incremental, and the deepest currently reachable is
+  # target/release-worktree-cache/parallel-arch-cache/<triple>/<profile>/incremental,
+  # five levels down, which is where a parallel two-architecture release build
+  # puts the secondary architecture. -prune stops the walk at each match instead
+  # of descending through the thousands of files inside one. find does not
+  # follow symlinks by default, so the release worktree's target symlink, which
+  # points back at a directory already being scanned, is inert.
+  find_aged "$root" -maxdepth 6 -type d -name incremental -prune
 
   if [[ -d "$root/release-resume" ]]; then
     find_aged "$root/release-resume" -mindepth 1 -maxdepth 1 -type d
