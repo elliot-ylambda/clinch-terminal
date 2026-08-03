@@ -176,6 +176,12 @@ runtime for JSON handling. There is no `jq`, Homebrew, repository-clone, `.zshrc
 requirement. On later launches Clinch runs `repair --quiet` while enabled. `disable` writes a
 durable opt-out marker, and older disabled installations are recognized by their retained receipt.
 
+Refreshing the Codex block replaces only the hook tables Clinch owns. Codex appends its own
+tables (`[hooks.state]` hook-trust records, `[plugins.*]`) at the end of the document, which puts
+them inside the managed markers because the block ends with a comment; `enable`, `repair`, and
+`disable` re-home anything third-party above the block instead of deleting it. Dropping those
+records made Codex re-prompt `N hooks are new or changed` after every Clinch launch.
+
 The hooks only record when launched inside a Clinch pane (`WARP_TERMINAL_SESSION_UUID` set).
 New Claude and Codex sessions are captured immediately.
 
