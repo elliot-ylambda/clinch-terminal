@@ -178,6 +178,104 @@ pub trait ToolbarChipSelection {
     }
 }
 
+/// Toolbar defaults are live product-owned entries, while a user's custom entries are an
+/// overlay. Custom inserts use their label as their stable identity so a shipped prompt can be
+/// revised without resurrecting a button the user explicitly hid.
+fn toolbar_items_have_same_identity(
+    left: &AgentToolbarItemKind,
+    right: &AgentToolbarItemKind,
+) -> bool {
+    match (left, right) {
+        (
+            AgentToolbarItemKind::CustomInsert {
+                label: left_label, ..
+            },
+            AgentToolbarItemKind::CustomInsert {
+                label: right_label, ..
+            },
+        ) => left_label == right_label,
+        _ => left == right,
+    }
+}
+
+fn contains_toolbar_item_identity(
+    items: &[AgentToolbarItemKind],
+    candidate: &AgentToolbarItemKind,
+) -> bool {
+    items
+        .iter()
+        .any(|item| toolbar_items_have_same_identity(item, candidate))
+}
+
+/// Resolves a persisted toolbar overlay against the defaults in this build.
+///
+/// Legacy `custom` settings stored a full snapshot and did not carry `inherit_defaults`. Treat
+/// those snapshots as an overlay on first load so defaults added by newer Clinch releases appear
+/// immediately. New settings additionally persist `hidden_defaults`, which distinguishes an
+/// intentional removal from a default that simply did not exist when the snapshot was written.
+fn merge_toolbar_defaults_and_custom_items(
+    default_left: Vec<AgentToolbarItemKind>,
+    default_right: Vec<AgentToolbarItemKind>,
+    saved_left: &[AgentToolbarItemKind],
+    saved_right: &[AgentToolbarItemKind],
+    hidden_defaults: &[AgentToolbarItemKind],
+    inherit_defaults: bool,
+) -> (Vec<AgentToolbarItemKind>, Vec<AgentToolbarItemKind>) {
+    let all_defaults = default_left
+        .iter()
+        .chain(&default_right)
+        .cloned()
+        .collect::<Vec<_>>();
+    let effective_hidden = inherit_defaults
+        .then_some(hidden_defaults)
+        .unwrap_or_default();
+
+    let mut left = default_left
+        .into_iter()
+        .filter(|item| !contains_toolbar_item_identity(effective_hidden, item))
+        .collect::<Vec<_>>();
+    let mut right = default_right
+        .into_iter()
+        .filter(|item| !contains_toolbar_item_identity(effective_hidden, item))
+        .collect::<Vec<_>>();
+
+    // Saved default entries are snapshots, not custom buttons. Drop them here so current shipped
+    // definitions and ordering win, then append only the user's additions after the defaults.
+    left.extend(
+        saved_left
+            .iter()
+            .filter(|item| !contains_toolbar_item_identity(&all_defaults, item))
+            .cloned(),
+    );
+    right.extend(
+        saved_right
+            .iter()
+            .filter(|item| !contains_toolbar_item_identity(&all_defaults, item))
+            .cloned(),
+    );
+
+    (left, right)
+}
+
+fn hidden_toolbar_defaults(
+    default_left: &[AgentToolbarItemKind],
+    default_right: &[AgentToolbarItemKind],
+    selected_left: &[AgentToolbarItemKind],
+    selected_right: &[AgentToolbarItemKind],
+) -> Vec<AgentToolbarItemKind> {
+    let selected = selected_left
+        .iter()
+        .chain(selected_right)
+        .cloned()
+        .collect::<Vec<_>>();
+    default_left
+        .iter()
+        .chain(default_right)
+        .filter(|item| !contains_toolbar_item_identity(&selected, item))
+        .cloned()
+        .collect()
+}
+
 #[derive(
     Clone,
     Debug,
@@ -251,7 +349,53 @@ pub enum CLIAgentToolbarChipSelection {
     Custom {
         left: Vec<AgentToolbarItemKind>,
         right: Vec<AgentToolbarItemKind>,
+        /// Shipped defaults the user explicitly removed. Kept separate from custom entries so
+        /// defaults introduced by future releases can still appear automatically.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        hidden_defaults: Vec<AgentToolbarItemKind>,
+        /// Absent in legacy full-snapshot settings. New settings opt into live default merging.
+        #[serde(default)]
+        inherit_defaults: bool,
     },
+}
+
+impl CLIAgentToolbarChipSelection {
+    pub(crate) fn custom_from_effective_items(
+        left: Vec<AgentToolbarItemKind>,
+        right: Vec<AgentToolbarItemKind>,
+    ) -> Self {
+        let default_left = AgentToolbarItemKind::cli_default_left();
+        let default_right = AgentToolbarItemKind::cli_default_right();
+        let hidden_defaults = hidden_toolbar_defaults(&default_left, &default_right, &left, &right);
+        Self::Custom {
+            left,
+            right,
+            hidden_defaults,
+            inherit_defaults: true,
+        }
+    }
+
+    fn effective_items(&self) -> (Vec<AgentToolbarItemKind>, Vec<AgentToolbarItemKind>) {
+        match self {
+            Self::Default => (
+                AgentToolbarItemKind::cli_default_left(),
+                AgentToolbarItemKind::cli_default_right(),
+            ),
+            Self::Custom {
+                left,
+                right,
+                hidden_defaults,
+                inherit_defaults,
+            } => merge_toolbar_defaults_and_custom_items(
+                AgentToolbarItemKind::cli_default_left(),
+                AgentToolbarItemKind::cli_default_right(),
+                left,
+                right,
+                hidden_defaults,
+                *inherit_defaults,
+            ),
+        }
+    }
 }
 
 impl ToolbarChipSelection for CLIAgentToolbarChipSelection {
@@ -264,17 +408,11 @@ impl ToolbarChipSelection for CLIAgentToolbarChipSelection {
     }
 
     fn left_items(&self) -> Vec<AgentToolbarItemKind> {
-        match self {
-            Self::Default => Self::default_left_items(),
-            Self::Custom { left, .. } => left.clone(),
-        }
+        self.effective_items().0
     }
 
     fn right_items(&self) -> Vec<AgentToolbarItemKind> {
-        match self {
-            Self::Default => Self::default_right_items(),
-            Self::Custom { right, .. } => right.clone(),
-        }
+        self.effective_items().1
     }
 }
 
@@ -301,7 +439,50 @@ pub enum TerminalToolbarChipSelection {
     Custom {
         left: Vec<AgentToolbarItemKind>,
         right: Vec<AgentToolbarItemKind>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        hidden_defaults: Vec<AgentToolbarItemKind>,
+        #[serde(default)]
+        inherit_defaults: bool,
     },
+}
+
+impl TerminalToolbarChipSelection {
+    pub(crate) fn custom_from_effective_items(
+        left: Vec<AgentToolbarItemKind>,
+        right: Vec<AgentToolbarItemKind>,
+    ) -> Self {
+        let default_left = AgentToolbarItemKind::terminal_default_left();
+        let default_right = AgentToolbarItemKind::terminal_default_right();
+        let hidden_defaults = hidden_toolbar_defaults(&default_left, &default_right, &left, &right);
+        Self::Custom {
+            left,
+            right,
+            hidden_defaults,
+            inherit_defaults: true,
+        }
+    }
+
+    fn effective_items(&self) -> (Vec<AgentToolbarItemKind>, Vec<AgentToolbarItemKind>) {
+        match self {
+            Self::Default => (
+                AgentToolbarItemKind::terminal_default_left(),
+                AgentToolbarItemKind::terminal_default_right(),
+            ),
+            Self::Custom {
+                left,
+                right,
+                hidden_defaults,
+                inherit_defaults,
+            } => merge_toolbar_defaults_and_custom_items(
+                AgentToolbarItemKind::terminal_default_left(),
+                AgentToolbarItemKind::terminal_default_right(),
+                left,
+                right,
+                hidden_defaults,
+                *inherit_defaults,
+            ),
+        }
+    }
 }
 
 impl ToolbarChipSelection for TerminalToolbarChipSelection {
@@ -314,17 +495,137 @@ impl ToolbarChipSelection for TerminalToolbarChipSelection {
     }
 
     fn left_items(&self) -> Vec<AgentToolbarItemKind> {
-        match self {
-            Self::Default => Self::default_left_items(),
-            Self::Custom { left, .. } => left.clone(),
-        }
+        self.effective_items().0
     }
 
     fn right_items(&self) -> Vec<AgentToolbarItemKind> {
-        match self {
-            Self::Default => Self::default_right_items(),
-            Self::Custom { right, .. } => right.clone(),
+        self.effective_items().1
+    }
+}
+
+#[cfg(test)]
+mod toolbar_chip_selection_tests {
+    use settings_value::SettingsValue;
+
+    use super::*;
+
+    fn custom_insert(label: &str, text: &str) -> AgentToolbarItemKind {
+        AgentToolbarItemKind::CustomInsert {
+            label: label.to_owned(),
+            text: text.to_owned(),
         }
+    }
+
+    #[test]
+    fn legacy_cli_snapshot_gains_live_defaults_and_keeps_custom_items_last() {
+        let legacy = CLIAgentToolbarChipSelection::Custom {
+            left: vec![
+                AgentToolbarItemKind::ForkSession,
+                custom_insert("Mine", "mine"),
+            ],
+            right: vec![AgentToolbarItemKind::ContextChip(
+                ContextChipKind::WorkingDirectory,
+            )],
+            hidden_defaults: vec![],
+            inherit_defaults: false,
+        };
+        let mut serialized = legacy.to_file_value();
+        let custom = serialized
+            .get_mut("custom")
+            .and_then(serde_json::Value::as_object_mut)
+            .unwrap();
+        custom.remove("hidden_defaults");
+        custom.remove("inherit_defaults");
+
+        let migrated = CLIAgentToolbarChipSelection::from_file_value(&serialized).unwrap();
+        let mut expected_left = AgentToolbarItemKind::cli_default_left();
+        expected_left.push(custom_insert("Mine", "mine"));
+        assert_eq!(migrated.left_items(), expected_left);
+        assert_eq!(
+            migrated.right_items(),
+            vec![AgentToolbarItemKind::ContextChip(
+                ContextChipKind::WorkingDirectory
+            )]
+        );
+    }
+
+    #[test]
+    fn hidden_defaults_survive_while_new_defaults_are_added() {
+        let old_default = AgentToolbarItemKind::ForkSession;
+        let hidden_default = AgentToolbarItemKind::Compact;
+        let future_default = AgentToolbarItemKind::ContinuePrompt;
+        let custom = custom_insert("Mine", "mine");
+
+        let (left, right) = merge_toolbar_defaults_and_custom_items(
+            vec![
+                old_default.clone(),
+                hidden_default.clone(),
+                future_default.clone(),
+            ],
+            vec![],
+            &[old_default],
+            &[custom.clone()],
+            &[hidden_default],
+            true,
+        );
+
+        assert_eq!(
+            left,
+            vec![AgentToolbarItemKind::ForkSession, future_default]
+        );
+        assert_eq!(right, vec![custom]);
+    }
+
+    #[test]
+    fn current_default_definition_wins_over_saved_snapshot_with_same_label() {
+        let current = custom_insert("Review", "new prompt");
+        let saved = custom_insert("Review", "old prompt");
+        let custom = custom_insert("Mine", "mine");
+
+        let (left, _) = merge_toolbar_defaults_and_custom_items(
+            vec![current.clone()],
+            vec![],
+            &[saved, custom.clone()],
+            &[],
+            &[],
+            false,
+        );
+
+        assert_eq!(left, vec![current, custom]);
+    }
+
+    #[test]
+    fn effective_selection_records_intentional_default_removals() {
+        let mut selected = AgentToolbarItemKind::cli_default_left();
+        let removed = selected.remove(0);
+        let custom = custom_insert("Mine", "mine");
+        selected.push(custom.clone());
+
+        let selection = CLIAgentToolbarChipSelection::custom_from_effective_items(selected, vec![]);
+        let CLIAgentToolbarChipSelection::Custom {
+            hidden_defaults,
+            inherit_defaults,
+            ..
+        } = &selection
+        else {
+            unreachable!();
+        };
+
+        assert!(*inherit_defaults);
+        assert_eq!(hidden_defaults, &[removed.clone()]);
+        assert!(!contains_toolbar_item_identity(
+            &selection.left_items(),
+            &removed
+        ));
+        assert_eq!(selection.left_items().last(), Some(&custom));
+
+        let restored =
+            CLIAgentToolbarChipSelection::from_file_value(&selection.to_file_value()).unwrap();
+        assert_eq!(restored, selection);
+        assert!(!contains_toolbar_item_identity(
+            &restored.left_items(),
+            &removed
+        ));
     }
 }
 

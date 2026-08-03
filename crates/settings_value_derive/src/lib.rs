@@ -164,26 +164,30 @@ pub fn derive_settings_value(input: TokenStream) -> TokenStream {
                         }
                     }
                     Fields::Named(fields) => {
-                        let field_idents: Vec<_> = fields.named.iter()
-                            .map(|f| f.ident.as_ref().unwrap())
-                            .collect();
-                        let field_keys: Vec<_> = fields.named.iter()
-                            .map(|f| {
-                                let ident = f.ident.as_ref().unwrap();
-                                get_serde_rename(&f.attrs).unwrap_or_else(|| ident.to_string())
-                            })
-                            .collect();
-                        let field_types: Vec<_> = fields.named.iter()
-                            .map(|f| &f.ty)
-                            .collect();
+                        let field_initializers = fields.named.iter().map(|field| {
+                            let ident = field.ident.as_ref().unwrap();
+                            let key = get_serde_rename(&field.attrs)
+                                .unwrap_or_else(|| ident.to_string());
+                            let ty = &field.ty;
+                            if has_serde_default(&field.attrs) {
+                                quote! {
+                                    #ident: match inner_obj.get(#key) {
+                                        Some(value) => <#ty as ::settings_value::SettingsValue>::from_file_value(value)?,
+                                        None => ::std::default::Default::default(),
+                                    }
+                                }
+                            } else {
+                                quote! {
+                                    #ident: <#ty as ::settings_value::SettingsValue>::from_file_value(inner_obj.get(#key)?)?
+                                }
+                            }
+                        });
                         quote! {
                             #(#cfg_attrs)*
                             serde_json::Value::Object(obj) if obj.contains_key(#file_name) => {
                                 let inner_obj = obj.get(#file_name)?.as_object()?;
                                 Some(#name::#variant_ident {
-                                    #(
-                                        #field_idents: <#field_types as ::settings_value::SettingsValue>::from_file_value(inner_obj.get(#field_keys)?)?,
-                                    )*
+                                    #(#field_initializers),*
                                 })
                             }
                         }

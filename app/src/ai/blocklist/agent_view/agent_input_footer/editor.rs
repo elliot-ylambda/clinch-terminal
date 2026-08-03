@@ -275,8 +275,8 @@ pub fn init(app: &mut AppContext) {
     )]);
 }
 
-/// Materializes `Default → Custom` (snapshotting the CLI footer's default left
-/// and right items) then appends a new `CustomInsert` button to the left list.
+/// Appends a new `CustomInsert` button after the CLI footer's effective defaults and custom
+/// entries, then persists the selection as a live-default overlay.
 ///
 /// Pure so it can be unit-tested without touching global settings; the
 /// persisting wrapper `append_cli_custom_button` reads/writes the setting
@@ -286,15 +286,10 @@ pub fn next_selection_with_custom_button(
     label: String,
     text: String,
 ) -> CLIAgentToolbarChipSelection {
-    let (mut left, right) = match current {
-        CLIAgentToolbarChipSelection::Default => (
-            AgentToolbarItemKind::cli_default_left(),
-            AgentToolbarItemKind::cli_default_right(),
-        ),
-        CLIAgentToolbarChipSelection::Custom { left, right } => (left, right),
-    };
+    let mut left = current.left_items();
+    let right = current.right_items();
     left.push(AgentToolbarItemKind::CustomInsert { label, text });
-    CLIAgentToolbarChipSelection::Custom { left, right }
+    CLIAgentToolbarChipSelection::custom_from_effective_items(left, right)
 }
 
 /// Persists a new custom quick-insert button into the CLI agent footer's
@@ -318,15 +313,10 @@ pub fn next_terminal_selection_with_custom_button(
     label: String,
     text: String,
 ) -> TerminalToolbarChipSelection {
-    let (mut left, right) = match current {
-        TerminalToolbarChipSelection::Default => (
-            AgentToolbarItemKind::terminal_default_left(),
-            AgentToolbarItemKind::terminal_default_right(),
-        ),
-        TerminalToolbarChipSelection::Custom { left, right } => (left, right),
-    };
+    let mut left = current.left_items();
+    let right = current.right_items();
     left.push(AgentToolbarItemKind::CustomInsert { label, text });
-    TerminalToolbarChipSelection::Custom { left, right }
+    TerminalToolbarChipSelection::custom_from_effective_items(left, right)
 }
 
 pub fn append_terminal_custom_button<V: View>(
@@ -367,7 +357,7 @@ fn save_toolbar_selection<V: View>(
             let selection = if is_default {
                 CLIAgentToolbarChipSelection::Default
             } else {
-                CLIAgentToolbarChipSelection::Custom { left, right }
+                CLIAgentToolbarChipSelection::custom_from_effective_items(left, right)
             };
             SessionSettings::handle(ctx).update(ctx, |settings, ctx| {
                 report_if_error!(settings
@@ -379,7 +369,7 @@ fn save_toolbar_selection<V: View>(
             let selection = if is_default {
                 TerminalToolbarChipSelection::Default
             } else {
-                TerminalToolbarChipSelection::Custom { left, right }
+                TerminalToolbarChipSelection::custom_from_effective_items(left, right)
             };
             SessionSettings::handle(ctx).update(ctx, |settings, ctx| {
                 report_if_error!(settings

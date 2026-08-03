@@ -108,3 +108,33 @@ fn no_container_default_all_present_succeeds() {
     assert_eq!(result.name, "hello");
     assert_eq!(result.count, 42);
 }
+
+// -- named enum variant fields with #[serde(default)] ------------------------
+
+#[derive(Debug, PartialEq, Serialize, Deserialize, SettingsValue)]
+enum EnumWithNamedFieldDefaults {
+    Custom {
+        name: String,
+        #[serde(default)]
+        hidden: Vec<String>,
+        #[serde(default)]
+        enabled: bool,
+    },
+}
+
+#[test]
+fn named_enum_variant_missing_default_fields_use_defaults() {
+    let result = EnumWithNamedFieldDefaults::from_file_value(&json!({
+        "custom": { "name": "toolbar" }
+    }))
+    .unwrap();
+
+    assert_eq!(
+        result,
+        EnumWithNamedFieldDefaults::Custom {
+            name: "toolbar".to_owned(),
+            hidden: vec![],
+            enabled: false,
+        }
+    );
+}

@@ -12,55 +12,24 @@ fn bundled_skill_contents() -> String {
 fn bundled_skill_carries_a_managed_marker() {
     let contents = bundled_skill_contents();
     assert!(
-        contents.contains("<!-- managed-by: Clinch; version: 1.4.0 -->"),
+        contents.contains("<!-- managed-by: Clinch; version: 1.5.0 -->"),
         "the bundled skill must carry the Clinch managed marker"
     );
 }
 
-/// The skill tells agents to materialize the shipped defaults before switching a
-/// footer from `default` to `custom`. If the defaults change in code but not in
-/// the skill, agents would delete buttons from user footers. Keep them in sync.
 #[test]
-fn bundled_skill_lists_every_default_custom_insert() {
-    use crate::ai::blocklist::agent_view::toolbar_item::AgentToolbarItemKind;
-
+fn bundled_skill_uses_clinch_paths_and_live_default_overlays() {
     let contents = bundled_skill_contents();
-    let defaults = AgentToolbarItemKind::cli_default_left()
-        .into_iter()
-        .chain(AgentToolbarItemKind::terminal_default_left());
-    for item in defaults {
-        if let AgentToolbarItemKind::CustomInsert { label, text } = item {
-            // JSON and TOML basic strings use the same escaping for these
-            // button labels and commands, including embedded double quotes.
-            let label = serde_json::to_string(&label).unwrap();
-            let text = serde_json::to_string(&text).unwrap();
-            assert!(
-                contents.contains(&format!("label = {label}")),
-                "SKILL.md is missing default button label {label:?}"
-            );
-            assert!(
-                contents.contains(&format!("text = {text}")),
-                "SKILL.md is missing default button text {text:?}"
-            );
-        }
-    }
-    // Spot-check the non-custom CLI defaults agents must materialize as well.
-    for name in [
-        "\"fork_session\"",
-        "\"compact\"",
-        "\"continue_prompt\"",
-        "\"looks_good_prompt\"",
-        "\"transfer_agent\"",
-        "\"voice_input\"",
-    ] {
-        assert!(
-            contents.contains(name),
-            "SKILL.md is missing default item {name}"
-        );
-    }
+    assert!(contents.contains("Stable Clinch: `~/.clinch/settings.toml`"));
+    assert!(contents.contains("inherit_defaults = true"));
+    assert!(contents.contains("hidden_defaults"));
     assert!(
-        !contents.contains("/codex-build"),
-        "personal /codex-build skill must not be shipped as a default button"
+        contents.contains("do not materialize shipped defaults"),
+        "the skill must not freeze a release's default buttons into user settings"
+    );
+    assert!(
+        !contents.contains("Stable Clinch: `~/.warp/settings.toml`"),
+        "Clinch must not edit Warp-owned settings"
     );
 }
 

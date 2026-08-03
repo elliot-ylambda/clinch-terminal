@@ -1,11 +1,12 @@
 use pathfinder_color::ColorU;
 
-use crate::elements::{Border, Container, Element, Flex, ParentElement, Text};
+use crate::elements::{Border, ConstrainedBox, Container, Element, Flex, ParentElement, Text};
 use crate::ui_components::components::{UiComponent, UiComponentStyles};
 
 pub struct Tooltip {
     label: String,
     styles: UiComponentStyles,
+    max_width: Option<f32>,
 }
 
 const FORTY_PERCENT_OPACITY: u8 = (255. * 0.4) as u8;
@@ -14,15 +15,18 @@ impl UiComponent for Tooltip {
     type ElementType = Container;
     fn build(self) -> Container {
         let styles = self.styles;
-        let mut container = Container::new(
-            Text::new(
-                self.label,
-                styles.font_family_id.unwrap(),
-                styles.font_size.unwrap_or_default(),
-            )
-            .with_color(styles.font_color.unwrap_or_default())
-            .finish(),
-        );
+        let text = Text::new(
+            self.label,
+            styles.font_family_id.unwrap(),
+            styles.font_size.unwrap_or_default(),
+        )
+        .with_color(styles.font_color.unwrap_or_default())
+        .finish();
+        let content = match self.max_width {
+            Some(max_width) => ConstrainedBox::new(text).with_max_width(max_width).finish(),
+            None => text,
+        };
+        let mut container = Container::new(content);
 
         if let Some(corner) = styles.border_radius {
             container = container.with_corner_radius(corner);
@@ -66,7 +70,17 @@ impl UiComponent for Tooltip {
 
 impl Tooltip {
     pub fn new(label: String, styles: UiComponentStyles) -> Self {
-        Tooltip { label, styles }
+        Tooltip {
+            label,
+            styles,
+            max_width: None,
+        }
+    }
+
+    /// Constrains the tooltip's text so soft wrapping happens before window-bound positioning.
+    pub fn with_max_width(mut self, max_width: f32) -> Self {
+        self.max_width = Some(max_width);
+        self
     }
 }
 

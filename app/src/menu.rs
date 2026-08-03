@@ -457,6 +457,7 @@ pub struct MenuItemFields<A: Action + Clone> {
     vertical_padding_override: Option<f32>,
     horizontal_padding_override: Option<f32>,
     tooltip: Option<String>,
+    tooltip_max_width: Option<f32>,
     tooltip_position: MenuTooltipPosition,
     right_side_label: Option<RightSideLabel>,
     right_side_icon: Option<RightSideIconConfig<A>>,
@@ -508,6 +509,7 @@ impl<A: Action + Clone> MenuItemFields<A> {
             horizontal_padding_override: None,
             has_submenu: false,
             tooltip: None,
+            tooltip_max_width: None,
             tooltip_position: MenuTooltipPosition::default(),
             right_side_label: None,
             right_side_icon: None,
@@ -538,6 +540,7 @@ impl<A: Action + Clone> MenuItemFields<A> {
             horizontal_padding_override: None,
             has_submenu: true,
             tooltip: None,
+            tooltip_max_width: None,
             tooltip_position: MenuTooltipPosition::default(),
             right_side_label: None,
             right_side_icon: None,
@@ -571,6 +574,7 @@ impl<A: Action + Clone> MenuItemFields<A> {
             horizontal_padding_override: None,
             has_submenu: false,
             tooltip: None,
+            tooltip_max_width: None,
             tooltip_position: MenuTooltipPosition::default(),
             right_side_label: None,
             right_side_icon: None,
@@ -607,6 +611,7 @@ impl<A: Action + Clone> MenuItemFields<A> {
             horizontal_padding_override: None,
             has_submenu: false,
             tooltip: None,
+            tooltip_max_width: None,
             tooltip_position: MenuTooltipPosition::default(),
             right_side_label: None,
             right_side_icon: None,
@@ -641,6 +646,7 @@ impl<A: Action + Clone> MenuItemFields<A> {
             horizontal_padding_override: None,
             has_submenu: false,
             tooltip: None,
+            tooltip_max_width: None,
             tooltip_position: MenuTooltipPosition::default(),
             right_side_label: None,
             right_side_icon: None,
@@ -674,6 +680,7 @@ impl<A: Action + Clone> MenuItemFields<A> {
             horizontal_padding_override: None,
             has_submenu: false,
             tooltip: None,
+            tooltip_max_width: None,
             tooltip_position: MenuTooltipPosition::default(),
             right_side_label: None,
             right_side_icon: None,
@@ -704,6 +711,7 @@ impl<A: Action + Clone> MenuItemFields<A> {
             horizontal_padding_override: None,
             has_submenu: false,
             tooltip: None,
+            tooltip_max_width: None,
             tooltip_position: MenuTooltipPosition::default(),
             right_side_label: None,
             right_side_icon: None,
@@ -750,6 +758,7 @@ impl<A: Action + Clone> MenuItemFields<A> {
             horizontal_padding_override: self.horizontal_padding_override,
             has_submenu: self.has_submenu,
             tooltip: self.tooltip,
+            tooltip_max_width: self.tooltip_max_width,
             tooltip_position: self.tooltip_position,
             right_side_label: self.right_side_label,
             // The right-side icon action is `Option<A>`; we can't safely map
@@ -864,6 +873,12 @@ impl<A: Action + Clone> MenuItemFields<A> {
     /// Set a tooltip to display when hovering over this menu item.
     pub fn with_tooltip(mut self, tooltip: impl Into<String>) -> Self {
         self.tooltip = Some(tooltip.into());
+        self
+    }
+
+    /// Constrain tooltip text to this width so long labels wrap instead of being window-clipped.
+    pub fn with_tooltip_max_width(mut self, max_width: f32) -> Self {
+        self.tooltip_max_width = Some(max_width);
         self
     }
 
@@ -1344,11 +1359,11 @@ impl<A: Action + Clone> MenuItemFields<A> {
             // Render tooltip if present and hovered
             if let Some(tooltip_text) = &self.tooltip {
                 if state.is_hovered() {
-                    let tooltip_element = appearance
-                        .ui_builder()
-                        .tool_tip(tooltip_text.clone())
-                        .build()
-                        .finish();
+                    let mut tooltip = appearance.ui_builder().tool_tip(tooltip_text.clone());
+                    if let Some(max_width) = self.tooltip_max_width {
+                        tooltip = tooltip.with_max_width(max_width);
+                    }
+                    let tooltip_element = tooltip.build().finish();
                     let positioning = match self.tooltip_position {
                         MenuTooltipPosition::Right => OffsetPositioning::offset_from_parent(
                             vec2f(4., 0.),

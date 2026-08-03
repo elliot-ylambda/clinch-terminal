@@ -6922,10 +6922,10 @@ fn status_blocked_auto_closes_rich_input() {
         // auto_toggle_rich_input defaults to true.
         SessionSettings::handle(&app).update(&mut app, |settings, ctx| {
             let _ = settings.cli_agent_footer_chip_selection.set_value(
-                CLIAgentToolbarChipSelection::Custom {
-                    left: vec![AgentToolbarItemKind::RichInput],
-                    right: vec![],
-                },
+                CLIAgentToolbarChipSelection::custom_from_effective_items(
+                    vec![AgentToolbarItemKind::RichInput],
+                    vec![],
+                ),
                 ctx,
             );
         });
@@ -7015,10 +7015,10 @@ fn status_in_progress_auto_opens_rich_input_after_blocked() {
         let _cli_rich = FeatureFlag::CLIAgentRichInput.override_enabled(true);
         SessionSettings::handle(&app).update(&mut app, |settings, ctx| {
             let _ = settings.cli_agent_footer_chip_selection.set_value(
-                CLIAgentToolbarChipSelection::Custom {
-                    left: vec![AgentToolbarItemKind::RichInput],
-                    right: vec![],
-                },
+                CLIAgentToolbarChipSelection::custom_from_effective_items(
+                    vec![AgentToolbarItemKind::RichInput],
+                    vec![],
+                ),
                 ctx,
             );
         });

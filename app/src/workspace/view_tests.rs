@@ -631,14 +631,13 @@ fn terminal_targeted_quick_insert_save_updates_only_terminal_toolbar() {
     App::test((), |mut app| async move {
         initialize_app(&mut app);
         let workspace = mock_workspace(&mut app);
-        let cli_selection =
-            crate::terminal::session_settings::CLIAgentToolbarChipSelection::Custom {
-                left: vec![AgentToolbarItemKind::CustomInsert {
+        let cli_selection = crate::terminal::session_settings::CLIAgentToolbarChipSelection::custom_from_effective_items(
+                vec![AgentToolbarItemKind::CustomInsert {
                     label: "CLI only".to_owned(),
                     text: "/review".to_owned(),
                 }],
-                right: Vec::new(),
-            };
+                Vec::new(),
+            );
         SessionSettings::handle(&app).update(&mut app, |settings, ctx| {
             settings
                 .cli_agent_footer_chip_selection
@@ -665,6 +664,7 @@ fn terminal_targeted_quick_insert_save_updates_only_terminal_toolbar() {
             let crate::terminal::session_settings::TerminalToolbarChipSelection::Custom {
                 left,
                 right,
+                ..
             } = settings.terminal_footer_chip_selection.value()
             else {
                 panic!("expected custom terminal toolbar selection");

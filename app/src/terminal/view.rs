@@ -3012,6 +3012,7 @@ const CLI_AGENT_HISTORY_TOP_BAR_HORIZONTAL_PADDING: f32 = 10.;
 const CLI_AGENT_HISTORY_ITEM_VERTICAL_PADDING: f32 = 6.;
 const CLI_AGENT_HISTORY_ITEM_HORIZONTAL_PADDING: f32 = 16.;
 const CLI_AGENT_HISTORY_MENU_MAX_HEIGHT: f32 = 420.;
+const CLI_AGENT_HISTORY_TOOLTIP_MAX_WIDTH: f32 = 640.;
 
 fn cli_agent_history_trigger(history: &AgentPromptHistory, fallback: String) -> String {
     history
@@ -13855,6 +13856,7 @@ impl TerminalView {
                 if !tooltip.is_empty() {
                     fields = fields
                         .with_tooltip(tooltip)
+                        .with_tooltip_max_width(CLI_AGENT_HISTORY_TOOLTIP_MAX_WIDTH)
                         .with_tooltip_position(MenuTooltipPosition::Above);
                 }
                 fields.into_item()

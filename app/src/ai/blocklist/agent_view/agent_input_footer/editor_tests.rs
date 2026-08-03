@@ -5,7 +5,7 @@ use super::*;
 use crate::test_util::settings::initialize_settings_for_tests;
 
 #[test]
-fn next_selection_with_custom_button_appends_and_materializes_default() {
+fn next_selection_with_custom_button_appends_after_live_defaults() {
     let next = next_selection_with_custom_button(
         CLIAgentToolbarChipSelection::Default,
         "Ship".into(),
@@ -14,7 +14,7 @@ fn next_selection_with_custom_button_appends_and_materializes_default() {
     let CLIAgentToolbarChipSelection::Custom { left, .. } = next else {
         panic!("expected Custom");
     };
-    // Default left items are materialized, then the new button is appended last.
+    // Defaults remain live and the new button is persisted after them.
     assert_eq!(
         left.last(),
         Some(&AgentToolbarItemKind::CustomInsert {
@@ -22,7 +22,7 @@ fn next_selection_with_custom_button_appends_and_materializes_default() {
             text: "/deploy".into()
         })
     );
-    assert!(left.contains(&AgentToolbarItemKind::ForkSession)); // materialized default
+    assert!(left.contains(&AgentToolbarItemKind::ForkSession));
 }
 
 #[test]
@@ -39,10 +39,10 @@ fn next_terminal_selection_with_custom_button_preserves_defaults_and_appends() {
             "Status".into(),
             "git status".into(),
         ),
-        TerminalToolbarChipSelection::Custom {
-            left: expected_left,
-            right: AgentToolbarItemKind::terminal_default_right(),
-        }
+        TerminalToolbarChipSelection::custom_from_effective_items(
+            expected_left,
+            AgentToolbarItemKind::terminal_default_right(),
+        )
     );
 }
 
@@ -80,10 +80,10 @@ fn terminal_editor_defaults_match_and_save_round_trip() {
         SessionSettings::handle(&app).read(&app, |settings, _| {
             assert_eq!(
                 settings.terminal_footer_chip_selection.value(),
-                &TerminalToolbarChipSelection::Custom {
-                    left: custom_left,
-                    right: defaults_right.clone(),
-                }
+                &TerminalToolbarChipSelection::custom_from_effective_items(
+                    custom_left,
+                    defaults_right.clone(),
+                )
             );
         });
 
