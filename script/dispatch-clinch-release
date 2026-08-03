@@ -5,6 +5,12 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+# A release builds one pinned commit once. Incremental compilation only pays off
+# across repeated builds of an edited tree, so here it buys nothing and costs
+# tens of gigabytes in the shared release cache. See script/launch-check, which
+# sets the same for the gate it runs.
+export CARGO_INCREMENTAL=0
+
 REPO="${CLINCH_REPO:-elliot-ylambda/clinch-terminal}"
 REMOTE="${CLINCH_REMOTE:-clinch}"
 REQUESTED_VERSION="${VERSION:-}"
