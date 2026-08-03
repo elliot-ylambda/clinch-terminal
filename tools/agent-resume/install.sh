@@ -101,9 +101,29 @@ remove_runtime() {
   rmdir "$BIN" 2>/dev/null || true
 }
 
-strip_codex_managed_blocks() {
-  local source="$1" output="$2"
-  /usr/bin/awk '
+# Every managed block this installer has ever written declares exactly these Codex hook tables.
+# Anything else between the markers was put there by Codex or by hand and is not Clinch's to
+# delete.
+CODEX_MANAGED_TABLES='[[hooks.SessionStart]] [[hooks.SessionStart.hooks]] '
+CODEX_MANAGED_TABLES+='[[hooks.UserPromptSubmit]] [[hooks.UserPromptSubmit.hooks]] '
+CODEX_MANAGED_TABLES+='[[hooks.SessionEnd]] [[hooks.SessionEnd.hooks]]'
+
+# Separates the Codex config into everything outside Clinch's markers and the third-party TOML
+# that ended up inside them.
+#
+# The managed block ends with a comment, and a TOML writer treats a trailing comment as document
+# trivia: Codex appends its own tables *above* the end marker, so its `[hooks.state]` hook-trust
+# records and `[plugins.*]` enablement land inside a region Clinch used to delete wholesale. That
+# made Codex re-prompt "N hooks are new or changed" after every launch, and left the bundled
+# notification plugin disabled until its own installer re-enabled it.
+split_codex_managed_blocks() {
+  local source="$1" outside="$2" foreign="$3"
+  rm -f "$foreign"
+  /usr/bin/awk -v foreign_out="$foreign" -v managed_tables="$CODEX_MANAGED_TABLES" '
+      BEGIN {
+        total = split(managed_tables, names, " ")
+        for (i = 1; i <= total; i++) ours[names[i]] = 1
+      }
       function flush_blanks() {
         for (i = 0; i < pending_blanks; i++) print ""
         pending_blanks = 0
@@ -111,6 +131,7 @@ strip_codex_managed_blocks() {
       /^# >>> (clinch|warp) agent-resume >>>$/ {
         if (managed) exit 42
         managed = 1
+        keep = 0
         next
       }
       /^# <<< (clinch|warp) agent-resume <<<$/{
@@ -118,16 +139,43 @@ strip_codex_managed_blocks() {
         managed = 0
         next
       }
-      !managed && $0 == "" { pending_blanks++; next }
-      !managed { flush_blanks(); print }
-      END { if (managed) exit 42 }
-    ' "$source" > "$output"
+      managed {
+        # A table header decides who owns every line up to the next header. The block always
+        # opens with a Clinch header, so nothing foreign can precede the first decision.
+        header = $0
+        sub(/[ \t]+$/, "", header)
+        if (header ~ /^\[/) keep = (header in ours) ? 0 : 1
+        if (keep) foreign_lines[++foreign_count] = $0
+        next
+      }
+      $0 == "" { pending_blanks++; next }
+      { flush_blanks(); print }
+      END {
+        if (managed) exit 42
+        last = 0
+        for (i = 1; i <= foreign_count; i++) if (foreign_lines[i] != "") last = i
+        for (i = 1; i <= last; i++) print foreign_lines[i] > foreign_out
+      }
+    ' "$source" > "$outside"
+}
+
+# Rewrites the Codex config without Clinch's managed block, re-homing any rescued third-party
+# tables above where the block used to start. Codex updates keys it already owns in place, so
+# once its state lives outside the markers a later refresh leaves it alone.
+write_codex_without_managed_block() {
+  local output="$1" foreign="$1.foreign" status=0
+  split_codex_managed_blocks "$CODEX_CFG" "$output" "$foreign" || status=$?
+  if (( status == 0 )) && [[ -s "$foreign" ]]; then
+    { printf '\n'; cat "$foreign"; } >> "$output"
+  fi
+  rm -f "$foreign"
+  return "$status"
 }
 
 write_codex_config() {
   local output="$1"
   if [[ -f "$CODEX_CFG" ]]; then
-    strip_codex_managed_blocks "$CODEX_CFG" "$output"
+    write_codex_without_managed_block "$output"
   else
     : > "$output"
   fi
@@ -148,11 +196,6 @@ write_codex_config() {
     printf 'command = "%s/codex-session-end.sh"\n' "$BIN"
     printf '# <<< clinch agent-resume <<<\n'
   } >> "$output"
-}
-
-write_codex_without_managed_block() {
-  local output="$1"
-  strip_codex_managed_blocks "$CODEX_CFG" "$output"
 }
 
 apply_staged_file() {
