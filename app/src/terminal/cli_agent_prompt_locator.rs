@@ -28,28 +28,36 @@ const MAX_PATTERN_TOKENS: usize = 8;
 /// Cap on the pattern's source text, in characters.
 const MAX_PATTERN_CHARS: usize = 64;
 
-/// Shortest prompt prefix worth searching for.
+/// Shortest prompt that can be searched for on its own.
 ///
-/// Even anchored on word boundaries, a prompt this short ("hi", "ok", "go") occurs too often in a
-/// transcript's ordinary prose for the top hit to mean anything. Reporting it as unlocatable beats
-/// scrolling somewhere wrong, which the user has no way to recognize as wrong.
-const MIN_PATTERN_CHARS: usize = 4;
+/// Below this ("hi", "ok", "go") the text occurs too often in a transcript's ordinary prose for a
+/// standalone top hit to mean anything. Such a prompt is still locatable when the surrounding
+/// history pins down *where* to look — see [`locate_agent_prompt_in_history`] — so this bound only
+/// governs an unconstrained search.
+const MIN_STANDALONE_PATTERN_CHARS: usize = 4;
 
 /// Why a prompt could not be turned into a search.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnsearchablePrompt {
     /// No non-whitespace content at all.
     Empty,
-    /// Real content, but too short to identify a unique location.
-    TooShort,
+    /// Real content, but too short to identify a location without a surrounding anchor.
+    TooShortToSearchAlone,
 }
 
-/// Builds the regex used to find `prompt_text` in the grid.
-pub fn agent_prompt_search_pattern(prompt_text: &str) -> Result<String, UnsearchablePrompt> {
-    let first_line = prompt_text
-        .lines()
-        .find(|line| !line.trim().is_empty())
-        .ok_or(UnsearchablePrompt::Empty)?;
+/// Whether `prompt_text` is distinctive enough to locate without help from its neighbours.
+fn is_distinctive(prompt_text: &str) -> bool {
+    pattern_tokens(prompt_text)
+        .map(|tokens| {
+            tokens.iter().map(|token| token.chars().count()).sum::<usize>()
+                >= MIN_STANDALONE_PATTERN_CHARS
+        })
+        .unwrap_or(false)
+}
+
+/// The leading tokens of the prompt's first non-empty line, bounded in count and length.
+fn pattern_tokens(prompt_text: &str) -> Option<Vec<&str>> {
+    let first_line = prompt_text.lines().find(|line| !line.trim().is_empty())?;
 
     let mut tokens = Vec::new();
     let mut chars_used = 0;
@@ -60,14 +68,16 @@ pub fn agent_prompt_search_pattern(prompt_text: &str) -> Result<String, Unsearch
         chars_used += token.chars().count();
         tokens.push(token);
     }
+    (!tokens.is_empty()).then_some(tokens)
+}
 
-    let Some((first, last)) = tokens.first().zip(tokens.last()) else {
-        return Err(UnsearchablePrompt::Empty);
-    };
-    let significant_chars: usize = tokens.iter().map(|token| token.chars().count()).sum();
-    if significant_chars < MIN_PATTERN_CHARS {
-        return Err(UnsearchablePrompt::TooShort);
-    }
+/// Builds the regex used to find `prompt_text` in the grid, regardless of how short it is.
+///
+/// Callers that search without a positional anchor must reject non-[`is_distinctive`] prompts
+/// themselves; this builds a pattern for anything with content.
+fn unbounded_search_pattern(prompt_text: &str) -> Result<String, UnsearchablePrompt> {
+    let tokens = pattern_tokens(prompt_text).ok_or(UnsearchablePrompt::Empty)?;
+    let (first, last) = (tokens[0], tokens[tokens.len() - 1]);
 
     // `\s*`, not `\s+`. The grid search walks a wrap-transparent grapheme cursor, so a soft wrap
     // contributes *no* separator character between the last cell of one row and the first of the
@@ -86,6 +96,15 @@ pub fn agent_prompt_search_pattern(prompt_text: &str) -> Result<String, Unsearch
         if starts_on_word { "\\b" } else { "" },
         if ends_on_word { "\\b" } else { "" },
     ))
+}
+
+/// Builds the regex used to find `prompt_text` on its own, with no positional anchor.
+pub fn agent_prompt_search_pattern(prompt_text: &str) -> Result<String, UnsearchablePrompt> {
+    let pattern = unbounded_search_pattern(prompt_text)?;
+    if !is_distinctive(prompt_text) {
+        return Err(UnsearchablePrompt::TooShortToSearchAlone);
+    }
+    Ok(pattern)
 }
 
 /// Where a prompt was found in the blocklist.
@@ -109,32 +128,7 @@ pub fn locate_agent_prompt(
     block_list: &BlockList,
     prompt_text: &str,
 ) -> Result<PromptLocation, PromptLookupFailure> {
-    let pattern = agent_prompt_search_pattern(prompt_text)
-        .map_err(PromptLookupFailure::Unsearchable)?;
-    let dfas = RegexDFAs::new_with_config(
-        &pattern,
-        FindConfig {
-            is_regex_enabled: true,
-            // Prompts render verbatim, so matching case costs nothing and rules out false hits.
-            is_case_sensitive: true,
-        },
-    )
-    .map_err(|_| PromptLookupFailure::NotPainted)?;
-
-    let agent_view_state = block_list.agent_view_state();
-    (0..block_list.blocks().len())
-        .rev()
-        .find_map(|index| {
-            let block_index = BlockIndex::from(index);
-            let block = block_list
-                .block_at(block_index)
-                .filter(|block| !block.is_empty(agent_view_state))?;
-            // `find` walks the grid from the end backwards, so matches arrive bottom-most first.
-            // Taking the first one lands on the newest painting of this prompt within the block.
-            let range = block.find_output_grid_matches(&dfas).into_iter().next()?;
-            Some(PromptLocation { block_index, range })
-        })
-        .ok_or(PromptLookupFailure::NotPainted)
+    locate_agent_prompt_in_history(block_list, &[prompt_text], 0)
 }
 
 /// Why a jump could not be performed. Distinct cases because they need to be reported differently:
@@ -145,6 +139,138 @@ pub enum PromptLookupFailure {
     Unsearchable(UnsearchablePrompt),
     /// A real search ran and found nothing painted in this pane.
     NotPainted,
+}
+
+/// A match's position in the blocklist, ordered the way the conversation reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct DocumentPosition {
+    block: usize,
+    row: usize,
+    col: usize,
+}
+
+impl DocumentPosition {
+    fn of(block_index: BlockIndex, range: &Match) -> Self {
+        Self {
+            block: block_index.0,
+            row: range.start().row,
+            col: range.start().col,
+        }
+    }
+}
+
+/// Every match for `pattern`, ordered as the conversation reads: oldest first.
+fn matches_in_reading_order(
+    block_list: &BlockList,
+    pattern: &str,
+) -> Option<Vec<(BlockIndex, Match)>> {
+    let dfas = RegexDFAs::new_with_config(
+        pattern,
+        FindConfig {
+            is_regex_enabled: true,
+            // Prompts render verbatim, so matching case costs nothing and rules out false hits.
+            is_case_sensitive: true,
+        },
+    )
+    .ok()?;
+
+    let agent_view_state = block_list.agent_view_state();
+    let mut found = Vec::new();
+    for index in 0..block_list.blocks().len() {
+        let block_index = BlockIndex::from(index);
+        let Some(block) = block_list
+            .block_at(block_index)
+            .filter(|block| !block.is_empty(agent_view_state))
+        else {
+            continue;
+        };
+        let mut ranges = block.find_output_grid_matches(&dfas);
+        // `find` walks the grid from the end backwards, so it yields bottom-most first.
+        ranges.reverse();
+        found.extend(ranges.into_iter().map(|range| (block_index, range)));
+    }
+    Some(found)
+}
+
+/// Locates prompt `index` of `prompt_texts`, using its neighbours to pin down where to look.
+///
+/// A prompt's own text is not always distinctive — "hi" or "ok" occurs throughout a transcript's
+/// ordinary prose, and searching for it alone would land somewhere arbitrary. But its *position* in
+/// the conversation is known exactly: it falls after the previous prompt and before the next one.
+/// Resolving the nearest distinctive neighbours first turns an ambiguous search into a bounded one,
+/// which is what makes short messages jumpable at all.
+///
+/// Falls back to an unanchored search when no neighbour resolves, so a lone distinctive prompt
+/// still works.
+pub fn locate_agent_prompt_in_history(
+    block_list: &BlockList,
+    prompt_texts: &[&str],
+    index: usize,
+) -> Result<PromptLocation, PromptLookupFailure> {
+    let target = prompt_texts.get(index).copied().unwrap_or_default();
+    let pattern =
+        unbounded_search_pattern(target).map_err(PromptLookupFailure::Unsearchable)?;
+    let candidates =
+        matches_in_reading_order(block_list, &pattern).ok_or(PromptLookupFailure::NotPainted)?;
+    if candidates.is_empty() {
+        return Err(PromptLookupFailure::NotPainted);
+    }
+
+    // The nearest neighbour on each side that can be found on its own bounds the search window.
+    let lower = prompt_texts[..index]
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, text)| is_distinctive(text))
+        .and_then(|(_, text)| resolve_distinctive(block_list, text))
+        .map(|(block_index, range)| DocumentPosition::of(block_index, &range));
+    let upper = prompt_texts
+        .get(index + 1..)
+        .unwrap_or_default()
+        .iter()
+        .find(|text| is_distinctive(text))
+        .and_then(|text| resolve_distinctive(block_list, text))
+        .map(|(block_index, range)| DocumentPosition::of(block_index, &range));
+
+    let in_window = |candidate: &(BlockIndex, Match)| {
+        let position = DocumentPosition::of(candidate.0, &candidate.1);
+        lower.is_none_or(|bound| position > bound) && upper.is_none_or(|bound| position < bound)
+    };
+
+    // Only when a neighbour actually resolved. With no bound every match "fits", which would turn
+    // the search below into an unanchored first-match guess — exactly what this path exists to
+    // avoid.
+    if lower.is_some() || upper.is_some() {
+        // Within the window the prompt precedes the agent's reply to it, so the earliest match is
+        // the prompt itself rather than a later echo of the same words.
+        if let Some((block_index, range)) = candidates.iter().find(|c| in_window(c)) {
+            return Ok(PromptLocation {
+                block_index: *block_index,
+                range: range.clone(),
+            });
+        }
+    }
+
+    // No window, or nothing inside it. Only a prompt distinctive on its own can be trusted here;
+    // for anything shorter an unbounded guess is worse than admitting we cannot place it.
+    if !is_distinctive(target) {
+        return Err(PromptLookupFailure::Unsearchable(
+            UnsearchablePrompt::TooShortToSearchAlone,
+        ));
+    }
+    // Newest painting wins: after a restart the same prompt appears in both the restored block and
+    // the resumed agent's replay, and the live copy is the one the user means.
+    let (block_index, range) = candidates.last().expect("checked non-empty above");
+    Ok(PromptLocation {
+        block_index: *block_index,
+        range: range.clone(),
+    })
+}
+
+/// Resolves a prompt that is distinctive on its own, to its newest painting.
+fn resolve_distinctive(block_list: &BlockList, text: &str) -> Option<(BlockIndex, Match)> {
+    let pattern = unbounded_search_pattern(text).ok()?;
+    matches_in_reading_order(block_list, &pattern)?.pop()
 }
 
 #[cfg(test)]

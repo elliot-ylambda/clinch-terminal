@@ -13921,25 +13921,39 @@ impl TerminalView {
             return;
         }
 
-        let Some(prompt_text) = CLIAgentSessionsModel::as_ref(ctx)
+        // The whole history, not just the clicked prompt: a message too generic to find on its own
+        // ("hi") is still pinned down by where its neighbours landed.
+        let Some(prompt_texts) = CLIAgentSessionsModel::as_ref(ctx)
             .session(self.view_id)
-            .and_then(|session| session.prompt_history.prompts.get(index))
-            .map(|prompt| prompt.text.clone())
+            .map(|session| {
+                session
+                    .prompt_history
+                    .prompts
+                    .iter()
+                    .map(|prompt| prompt.text.clone())
+                    .collect_vec()
+            })
+            .filter(|prompts| index < prompts.len())
         else {
             return;
         };
+        let prompt_texts = prompt_texts.iter().map(String::as_str).collect_vec();
 
         // Scans the blocklist under the model lock, as the find bar's own runs do. Bounded by the
         // pane's retained scrollback rather than the conversation's true length, and only ever
         // triggered by a click.
         let location = {
             let model = self.model.lock();
-            cli_agent_prompt_locator::locate_agent_prompt(model.block_list(), &prompt_text)
+            cli_agent_prompt_locator::locate_agent_prompt_in_history(
+                model.block_list(),
+                &prompt_texts,
+                index,
+            )
         };
 
         let location = match location {
             Ok(location) => location,
-            Err(PromptLookupFailure::Unsearchable(UnsearchablePrompt::TooShort)) => {
+            Err(PromptLookupFailure::Unsearchable(UnsearchablePrompt::TooShortToSearchAlone)) => {
                 // The message is very likely right there on screen — saying it isn't would be a
                 // lie. It just has no text distinctive enough to find it by.
                 self.show_agent_prompt_jump_toast("That message is too short to jump to", ctx);

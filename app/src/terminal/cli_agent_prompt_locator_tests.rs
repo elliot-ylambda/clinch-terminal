@@ -51,11 +51,11 @@ fn distinguishes_too_short_from_empty() {
     // These must not be reported as "not in scrollback" — they are on screen, just unfindable.
     assert_eq!(
         agent_prompt_search_pattern("hi"),
-        Err(UnsearchablePrompt::TooShort)
+        Err(UnsearchablePrompt::TooShortToSearchAlone)
     );
     assert_eq!(
         agent_prompt_search_pattern("ok"),
-        Err(UnsearchablePrompt::TooShort)
+        Err(UnsearchablePrompt::TooShortToSearchAlone)
     );
     assert_eq!(
         agent_prompt_search_pattern("  \n  "),
@@ -163,26 +163,48 @@ fn ignores_the_command_that_launched_the_agent() {
 }
 
 /// Reproduces a real Codex session: prompts "hi", "Tell me a short story.", "Longer story.".
-/// Clicking "hi" reported "isn't in this pane's scrollback" while it sat plainly on screen. The
-/// refusal is right — two characters cannot be located — but it has to say so accurately.
+/// Clicking "hi" refused to jump, because searching for two characters on their own is hopeless.
+/// Its *position* was never ambiguous though — it precedes prompt 2 — so the surrounding history
+/// resolves it.
 #[test]
-fn short_first_prompt_reports_too_short_not_missing_from_scrollback() {
+fn short_first_prompt_is_located_via_its_neighbours() {
     App::test((), |mut _app| async move {
         let mut model = TerminalModel::mock(None, None);
         model.simulate_long_running_block(
             "cx",
-            "› hi\r\nHello! How can I help?\r\n\
+            "› hi\r\nHello! How can I help? This is which and behind.\r\n\
              › Tell me a short story.\r\nOnce upon a time...\r\n\
-             › Longer story.\r\nA longer tale follows.\r\n",
+             › Longer story.\r\nA longer tale follows, hi again.\r\n",
         );
+        let prompts = ["hi", "Tell me a short story.", "Longer story."];
+
+        let first = locate_agent_prompt_in_history(model.block_list(), &prompts, 0)
+            .expect("short first prompt should resolve from its neighbours");
+        let second = locate_agent_prompt_in_history(model.block_list(), &prompts, 1).unwrap();
+        let third = locate_agent_prompt_in_history(model.block_list(), &prompts, 2).unwrap();
+
+        // Row 0 is "› hi" — not the later "hi again", and not inside "This"/"which"/"behind".
+        assert_eq!(first.range.start().row, 0);
+        // Resolution is monotonic: each message sits after the one before it.
+        assert!(first.range.start().row < second.range.start().row);
+        assert!(second.range.start().row < third.range.start().row);
+    });
+}
+
+/// Without the surrounding history there is nothing to bound the search by, so a two-character
+/// prompt still has to be refused — landing somewhere arbitrary is worse than declining.
+#[test]
+fn short_prompt_alone_is_still_refused() {
+    App::test((), |mut _app| async move {
+        let mut model = TerminalModel::mock(None, None);
+        model.simulate_long_running_block("cx", "› hi\r\nHello! This is which.\r\n");
 
         assert_eq!(
-            locate_agent_prompt(model.block_list(), "hi"),
-            Err(PromptLookupFailure::Unsearchable(UnsearchablePrompt::TooShort))
+            locate_agent_prompt_in_history(model.block_list(), &["hi"], 0),
+            Err(PromptLookupFailure::Unsearchable(
+                UnsearchablePrompt::TooShortToSearchAlone
+            ))
         );
-        // The other two are locatable, so the feature works for them in this same session.
-        assert!(locate_agent_prompt(model.block_list(), "Tell me a short story.").is_ok());
-        assert!(locate_agent_prompt(model.block_list(), "Longer story.").is_ok());
     });
 }
 
@@ -208,7 +230,7 @@ fn skips_prompts_too_short_to_locate_rather_than_matching_noise() {
         // somewhere arbitrary.
         assert_eq!(
             locate_agent_prompt(model.block_list(), "ok"),
-            Err(PromptLookupFailure::Unsearchable(UnsearchablePrompt::TooShort))
+            Err(PromptLookupFailure::Unsearchable(UnsearchablePrompt::TooShortToSearchAlone))
         );
     });
 }
