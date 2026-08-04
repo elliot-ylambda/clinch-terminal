@@ -643,7 +643,7 @@ impl RemoteControlSetupWidget {
     fn render_section_header(appearance: &Appearance) -> Box<dyn Element> {
         Container::new(render_sub_header_with_description(
             appearance,
-            "Remote Control (Preview)",
+            "Remote Control (Beta)",
             "Securely connect your phone through your own Tailscale network — no Clinch account \
              or hosted Clinch relay.",
         ))

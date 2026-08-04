@@ -1,0 +1,233 @@
+#!/usr/bin/env bash
+# Delete regenerable Cargo build artifacts so local builds stop filling the disk.
+#
+# Cargo never garbage-collects a target directory, and Clinch keeps one per
+# worktree, so build artifacts grow without bound: the main checkout reached
+# 127 GB on its own and this disk hit 98% full twice. Incremental-compilation
+# caches are the bulk of it and are pure caches — deleting one costs a slower
+# next build of that profile and nothing else.
+#
+# What this deliberately does NOT touch:
+#   * compiled dependencies (target/*/deps) — the expensive, warm part that
+#     keeps a release fast; deleting it is what turns a 40-minute release into
+#     a cold multi-hour one
+#   * the worktrees themselves — they back open Clinch session tabs, so
+#     removing one pulls the rug out from under a tab even when git reports the
+#     branch clean; only the `target` inside a worktree is ever removed
+#   * anything at all while a build is running, unless --force is passed
+#
+# Written for the bash 3.2 that ships with macOS: no mapfile, and no expansion
+# of possibly-empty arrays under `set -u`.
+#
+# Usage: script/reclaim-build-space [--days N] [--dry-run] [--force] [--quiet]
+#                                   [--root DIR]...
+set -euo pipefail
+
+DAYS=7
+DRY_RUN=0
+FORCE=0
+QUIET=0
+EXPLICIT_ROOTS=""
+
+usage() {
+  cat <<'USAGE'
+Usage: script/reclaim-build-space [options]
+
+  --days N     Only remove caches untouched for at least N days (default 7).
+               0 removes every candidate regardless of age.
+  --dry-run    Report what would be removed without deleting anything.
+  --force      Prune even while a build appears to be running.
+  --quiet      Print nothing unless something was actually removed.
+  --root DIR   Prune this target directory instead of discovering them.
+               Repeatable. Used by the tests.
+  -h, --help   Show this message.
+USAGE
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --days)
+      [[ $# -ge 2 ]] || { echo "--days needs a value" >&2; exit 64; }
+      DAYS="$2"
+      shift 2
+      ;;
+    --dry-run) DRY_RUN=1; shift ;;
+    --force) FORCE=1; shift ;;
+    --quiet) QUIET=1; shift ;;
+    --root)
+      [[ $# -ge 2 ]] || { echo "--root needs a value" >&2; exit 64; }
+      EXPLICIT_ROOTS="${EXPLICIT_ROOTS}${2}"$'\n'
+      shift 2
+      ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "unknown argument: $1" >&2; usage >&2; exit 64 ;;
+  esac
+done
+
+[[ "$DAYS" =~ ^[0-9]+$ ]] || { echo "--days must be a non-negative integer" >&2; exit 64; }
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+say() {
+  (( QUIET == 1 )) && return 0
+  echo "$@"
+}
+
+# A prune that races a build can delete a directory Cargo is actively writing.
+# Checking for any build process at all is coarser than working out which target
+# directory each one uses, but this machine runs several Clinch sessions at once
+# and losing a peer's in-flight build is far worse than skipping a prune.
+build_is_running() {
+  local process
+  for process in cargo rustc cargo-nextest lipo; do
+    if pgrep -x "$process" >/dev/null 2>&1; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Resolve to a physical path so a target reached through the release worktree's
+# `target` symlink is not counted, or pruned, twice.
+resolve() {
+  local path="$1"
+  [[ -d "$path" ]] || return 1
+  (cd "$path" 2>/dev/null && pwd -P) || return 1
+}
+
+# Emit the physical path of `$1/target`, or nothing when there is no such
+# directory. Written as an `if` so that a miss is not a failure: most worktrees
+# have never been built in, and under `set -e` a bare `resolve && printf` would
+# abort the whole prune on the first one.
+emit_target_of() {
+  local resolved
+  if resolved="$(resolve "$1")"; then
+    printf '%s\n' "$resolved"
+  fi
+}
+
+discover_roots() {
+  local worktree
+  if [[ -n "$EXPLICIT_ROOTS" ]]; then
+    printf '%s' "$EXPLICIT_ROOTS" | while IFS= read -r worktree; do
+      [[ -n "$worktree" ]] || continue
+      emit_target_of "$worktree"
+    done
+    return 0
+  fi
+
+  emit_target_of "$ROOT/target"
+
+  # Every worktree keeps its own target directory; they are frequently the
+  # largest single consumers and nothing else ever cleans them up.
+  git -C "$ROOT" worktree list --porcelain 2>/dev/null \
+    | while read -r key value; do
+        [[ "$key" == worktree ]] || continue
+        emit_target_of "$value/target"
+      done
+
+  return 0
+}
+
+# `find` with the age predicate appended only when one applies, so that bash 3.2
+# never has to expand an empty array.
+find_aged() {
+  local path="$1"
+  shift
+  if (( DAYS > 0 )); then
+    find "$path" "$@" -mtime "+$((DAYS - 1))" 2>/dev/null || true
+  else
+    find "$path" "$@" 2>/dev/null || true
+  fi
+}
+
+# Candidate caches inside one target directory. Each is regenerable: Cargo
+# rebuilds an incremental cache on demand, and the release state directories are
+# bookkeeping for a release that has already finished or been retried.
+candidates_in() {
+  local root="$1"
+
+  # Caches nest deeper than they first appear. The shallowest is
+  # target/<profile>/incremental, and the deepest currently reachable is
+  # target/release-worktree-cache/parallel-arch-cache/<triple>/<profile>/incremental,
+  # five levels down, which is where a parallel two-architecture release build
+  # puts the secondary architecture. -prune stops the walk at each match instead
+  # of descending through the thousands of files inside one. find does not
+  # follow symlinks by default, so the release worktree's target symlink, which
+  # points back at a directory already being scanned, is inert.
+  find_aged "$root" -maxdepth 6 -type d -name incremental -prune
+
+  if [[ -d "$root/release-resume" ]]; then
+    find_aged "$root/release-resume" -mindepth 1 -maxdepth 1 -type d
+  fi
+
+  find_aged "$root" -maxdepth 2 -type d -name release-stage
+}
+
+kilobytes_of() {
+  du -sk "$1" 2>/dev/null | awk '{print $1}' || echo 0
+}
+
+human_gib() {
+  awk -v kb="$1" 'BEGIN { printf "%.1f GiB", kb / 1024 / 1024 }'
+}
+
+WORK="$(mktemp -d -t clinch-reclaim)"
+trap 'rm -rf "$WORK"' EXIT
+
+discover_roots | sort -u > "$WORK/roots"
+
+if [[ ! -s "$WORK/roots" ]]; then
+  say "No target directories found; nothing to reclaim."
+  exit 0
+fi
+
+: > "$WORK/removable"
+while IFS= read -r root; do
+  [[ -n "$root" ]] || continue
+  candidates_in "$root" >> "$WORK/removable"
+done < "$WORK/roots"
+
+# A cache can be discovered twice when two roots overlap; only remove it once.
+sort -u "$WORK/removable" > "$WORK/removable.uniq"
+mv "$WORK/removable.uniq" "$WORK/removable"
+
+count="$(grep -c . < "$WORK/removable" || true)"
+count="${count//[^0-9]/}"
+: "${count:=0}"
+
+if (( count == 0 )); then
+  if (( DAYS > 0 )); then
+    say "Nothing to reclaim: no build caches older than $DAYS day(s)."
+  else
+    say "Nothing to reclaim."
+  fi
+  exit 0
+fi
+
+# Only now that there is something to remove is it worth the process check and
+# the directory walk that sizing requires.
+if build_is_running && (( FORCE == 0 )); then
+  say "Skipping prune: a build is running (cargo/rustc/nextest/lipo)."
+  say "Re-run with --force to prune anyway, once you know it is safe."
+  exit 0
+fi
+
+total_kb=0
+while IFS= read -r path; do
+  [[ -n "$path" ]] || continue
+  size_kb="$(kilobytes_of "$path")"
+  total_kb=$((total_kb + size_kb))
+  if (( DRY_RUN == 1 )); then
+    printf 'would remove %s\t%s\n' "$(human_gib "$size_kb")" "${path#"$ROOT"/}"
+  else
+    printf 'removing     %s\t%s\n' "$(human_gib "$size_kb")" "${path#"$ROOT"/}"
+    rm -rf -- "$path"
+  fi
+done < "$WORK/removable"
+
+if (( DRY_RUN == 1 )); then
+  echo "Would reclaim $(human_gib "$total_kb") from $count cache(s)."
+else
+  echo "Reclaimed $(human_gib "$total_kb") from $count cache(s)."
+fi

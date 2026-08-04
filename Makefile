@@ -4,6 +4,10 @@
 #   make release                      Build, sign, verify the uploaded draft, and publish locally.
 #   make update                       Install the latest authenticated public release manually.
 #   make dev                          Build and run isolated Clinch Dev.
+#   make prune                        Delete regenerable build caches by hand.
+#
+# The build targets prune stale caches first so a release is not aborted by the
+# 40 GiB free-space floor; CLINCH_SKIP_PRUNE=1 disables that.
 
 CLINCH_REPO ?= elliot-ylambda/clinch-terminal
 
@@ -29,6 +33,10 @@ UPDATE_SEQUENCE ?= auto
 
 CLINCH_UPDATE_SIGNING_KEY  ?= $(HOME)/.config/clinch/update-signing-key.pem
 CLINCH_RELEASE_SIGNING_KEY ?= $(HOME)/.config/clinch/release-signing-key
+
+# How cold a build cache must be before an automatic prune reclaims it. A week
+# keeps everything the current branch and the last release still benefit from.
+PRUNE_DAYS ?= 7
 SKIP_DMG_APPLESCRIPT       ?= 1
 export SKIP_DMG_APPLESCRIPT
 
@@ -57,20 +65,35 @@ export RELEASE_NOTES
 
 .DEFAULT_GOAL := help
 .PHONY: help dev dev-app dev-open candidate release update release-check require-latest-main \
-	_require-create-dmg _bundle _package _verify _verify-existing agent-resume-enable \
-	configure-release-repository
+	prune _prune _require-create-dmg _bundle _package _verify _verify-existing \
+	agent-resume-enable configure-release-repository
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 	  | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-29s\033[0m %s\n", $$1, $$2}'
 
-dev: ## Incrementally build and run isolated Clinch Dev
+# Reclaim stale build caches before anything that builds, rather than after it.
+# Pruning first is what prevents the out-of-space failure: a release aborts
+# unless 40 GiB is free, and immediately after a build every cache is warm, so a
+# post-build prune would find nothing to take anyway. Set CLINCH_SKIP_PRUNE=1 to
+# leave every cache alone.
+_prune:
+	@if [ "$(CLINCH_SKIP_PRUNE)" = "1" ]; then \
+	  echo "Skipping build-cache prune (CLINCH_SKIP_PRUNE=1)"; \
+	else \
+	  ./script/reclaim-build-space --quiet --days $(PRUNE_DAYS); \
+	fi
+
+prune: ## Delete regenerable build caches (PRUNE_DAYS=0 for every cache)
+	./script/reclaim-build-space --days $(PRUNE_DAYS)
+
+dev: _prune ## Incrementally build and run isolated Clinch Dev
 	./script/clinch-dev run
 
-dev-app: ## Incrementally build target/debug/bundle/osx/ClinchDev.app
+dev-app: _prune ## Incrementally build target/debug/bundle/osx/ClinchDev.app
 	./script/clinch-dev build
 
-dev-open: ## Rebuild and launch Clinch Dev through LaunchServices
+dev-open: _prune ## Rebuild and launch Clinch Dev through LaunchServices
 	./script/clinch-dev open
 
 release-check: ## Run the complete source gate locally
@@ -116,13 +139,13 @@ _verify: _package
 	$(MAKE) _verify-existing VERSION="$(VERSION)" UPDATE_SEQUENCE="$(UPDATE_SEQUENCE)" \
 	  UNIVERSAL="$(UNIVERSAL)"
 
-candidate: release-check ## Build and verify a universal candidate without publishing
+candidate: _prune release-check ## Build and verify a universal candidate without publishing
 	@sequence="$(UPDATE_SEQUENCE)"; \
 	if [ "$$sequence" = auto ]; then sequence="$$(./script/next-clinch-update-sequence)"; fi; \
 	$(MAKE) _verify VERSION="$(VERSION)" UPDATE_SEQUENCE="$$sequence" UNIVERSAL="$(UNIVERSAL)"
 	@echo "✓ Verified local candidate $(VERSION). No tag or release was created."
 
-release: ## Build, sign, remotely verify, and publish without GitHub Actions
+release: _prune ## Build, sign, remotely verify, and publish without GitHub Actions
 	@CLINCH_REPO="$(CLINCH_REPO)" \
 	  CLINCH_UPDATE_SIGNING_KEY="$(CLINCH_UPDATE_SIGNING_KEY)" \
 	  CLINCH_RELEASE_SIGNING_KEY="$(CLINCH_RELEASE_SIGNING_KEY)" \
@@ -132,6 +155,7 @@ release: ## Build, sign, remotely verify, and publish without GitHub Actions
 
 update: ## Install the latest authenticated public release (Clinch must be quit)
 	./install.sh
+	@$(MAKE) --no-print-directory _prune
 
 agent-resume-enable: ## Enable or repair local Claude/Codex session capture
 	bash tools/agent-resume/install.sh enable

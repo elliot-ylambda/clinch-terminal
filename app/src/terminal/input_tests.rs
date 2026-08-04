@@ -378,6 +378,23 @@ fn bootstrap_terminal(
     });
 }
 
+/// Wait for the input buffer to hold `expected`, returning as soon as it does.
+///
+/// Some input paths fill the buffer from a deferred update, so the new text is
+/// never visible on the first poll. Spinning on a fixed number of executor
+/// yields ties the wait to how busy the machine is rather than to the work
+/// itself, which makes such a test pass alone and fail inside the full release
+/// gate. Five seconds is far longer than the update needs and costs nothing
+/// when it arrives promptly.
+async fn wait_for_buffer_text(app: &mut App, input: &ViewHandle<Input>, expected: &str) {
+    for _ in 0..100 {
+        if input.read(&*app, |input, ctx| input.buffer_text(ctx)) == expected {
+            return;
+        }
+        Timer::after(Duration::from_millis(50)).await;
+    }
+}
+
 fn enable_vim_mode(app: &mut App) {
     AppEditorSettings::handle(app).update(app, |editor_settings, ctx| {
         editor_settings
@@ -1137,12 +1154,13 @@ fn test_inline_history_up_is_deferred_while_menu_view_is_updating() {
         input.update(&mut app, |input, ctx| {
             input.editor_up(ctx);
         });
-        for _ in 0..20 {
-            if input.read(&app, |input, ctx| input.buffer_text(ctx)) == "echo second" {
-                break;
-            }
-            futures_lite::future::yield_now().await;
-        }
+        // The buffer is filled from a deferred update, so it is never populated
+        // on the first poll. Waiting a fixed number of executor yields made this
+        // depend on how busy the machine is: 20 yields was ample when the test
+        // ran alone, and ran out under the full release gate, failing the run on
+        // an empty buffer. Poll against a real-time budget instead, which still
+        // returns as soon as the update lands.
+        wait_for_buffer_text(&mut app, &input, "echo second").await;
         input.read(&app, |input, ctx| {
             assert!(input
                 .suggestions_mode_model
@@ -1163,12 +1181,7 @@ fn test_inline_history_up_is_deferred_while_menu_view_is_updating() {
             });
         });
 
-        for _ in 0..20 {
-            if input.read(&app, |input, ctx| input.buffer_text(ctx)) == "echo first" {
-                break;
-            }
-            futures_lite::future::yield_now().await;
-        }
+        wait_for_buffer_text(&mut app, &input, "echo first").await;
         input.read(&app, |input, ctx| {
             assert_eq!(input.buffer_text(ctx), "echo first");
         });

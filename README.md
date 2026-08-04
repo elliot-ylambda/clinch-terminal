@@ -16,6 +16,7 @@
 <p align="center">
   <a href="https://clinch.sh"><strong>Website</strong></a> ·
   <a href="#install"><strong>Install</strong></a> ·
+  <a href="#remote-control-beta"><strong>Remote Control</strong></a> ·
   <a href="https://clinch.sh/docs"><strong>Docs</strong></a> ·
   <a href="https://github.com/elliot-ylambda/clinch-terminal/releases"><strong>Releases</strong></a>
 </p>
@@ -47,6 +48,9 @@ alongside Warp without inheriting Warp's settings.
   waiting or completed agent without sending Clinch telemetry.
 - **Stay close to the work.** Browse skills and files, preview common image formats, and monitor
   optional Claude plan limits without leaving the terminal.
+- **Reach it from your phone.** [Remote Control](#remote-control-beta) (beta) lets you check and
+  answer the sessions already running on your Mac from Safari on your phone, over your own
+  Tailscale network. Off until you turn it on.
 - **Stay local-first.** No telemetry, no analytics, no crash reporting, no account. Clinch
   collects nothing about you or your work, and the only thing it reaches for on its own is a
   weekly update check against this repository—which you can turn off. See
@@ -144,6 +148,30 @@ deleted transcripts, changed CLIs, and abrupt power loss can prevent an exact re
 More implementation detail is in
 [tools/agent-resume/README.md](tools/agent-resume/README.md).
 
+## Remote Control (Beta)
+
+Answer the agents already running on your Mac from your phone. Type a line in Safari and it runs
+in the Clinch pane that owns that session—no Clinch account, no hosted relay, and no terminal
+traffic through clinch.sh.
+
+- **Your Mac stays the host.** Nothing executes anywhere else. The phone is a view and a keyboard
+  onto the sessions that are already open, and the Mac has to be awake, online, and running Clinch.
+- **Private transport.** The connection runs over your own Tailscale network. That requires
+  Tailscale on both devices and a Tailscale account; Clinch itself still needs no sign-in.
+- **Safari-first.** The phone client is a web app you can add to the Home Screen. There is no iOS
+  app, and none is planned.
+- **Approved devices only.** Pair with a single-use QR invitation that expires in five minutes and
+  approve the phone on the Mac. A paired phone stays authorized until you revoke it or it goes 90
+  days without connecting.
+
+Remote Control is **off until you turn it on**. Open **Settings → Clinch → Remote Control**, or
+click the phone button in the window header, for guided setup and the pairing checklist.
+
+Beta means the protocol, pairing, and revocation model are settled and shipping in the current
+release, while real-device hardening continues. Report anything that misbehaves in
+[Issues](https://github.com/elliot-ylambda/clinch-terminal/issues). Full setup and threat model:
+[clinch.sh/remote-control](https://clinch.sh/remote-control).
+
 ## Public preview
 
 Clinch is distributed as an **unnotarized public preview**. The app is ad-hoc signed with the
@@ -183,6 +211,7 @@ privileged update authorizer.
 | Update check | Automatically, at most once a week — **and you can turn it off** | `api.github.com`, this repository's releases |
 | Update download | Only after you approve the update | GitHub release assets |
 | Claude plan-limit gauges | **Off by default**; only if you enable them in Settings | `api.anthropic.com` |
+| [Remote Control](#remote-control-beta) | **Off by default**; only while you have it enabled | Your own tailnet, phone to Mac — no Clinch relay |
 | Language servers, MCP servers, remote assets | Only when you start them | Wherever you point them |
 | Claude Code, Codex, SSH, package tooling | Only when you run them | Their own services |
 

@@ -1475,6 +1475,11 @@ impl<A: Action + Clone> MenuItemFields<A> {
     }
 }
 
+// `Header` carries a second optional `MenuItemFields`, which makes it larger
+// than the other variants. Menus hold a handful of items at a time, so the
+// wasted bytes per item do not matter; boxing the field would cost every
+// construction site instead.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum MenuItem<A: Action + Clone = ()> {
     Item(MenuItemFields<A>),
