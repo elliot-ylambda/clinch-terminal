@@ -204,6 +204,80 @@ fn cli_agent_history_prompt_tooltip_shows_full_text_without_truncating() {
     assert_eq!(cli_agent_history_prompt_tooltip(&long), long.text);
 }
 
+fn cli_agent_session_with_prompts(prompts: Vec<&str>) -> CLIAgentSession {
+    CLIAgentSession {
+        agent: CLIAgent::Codex,
+        status: CLIAgentSessionStatus::InProgress,
+        session_context: CLIAgentSessionContext::default(),
+        input_state: CLIAgentInputState::Closed,
+        should_auto_toggle_input: false,
+        listener: None,
+        remote_host: None,
+        plugin_version: None,
+        draft_text: None,
+        custom_command_prefix: None,
+        received_rich_notification: false,
+        has_observed_turn_activity: false,
+        turn_interrupted_by_user: false,
+        prompt_history: AgentPromptHistory {
+            prompts: prompts
+                .into_iter()
+                .map(|text| AgentPrompt {
+                    timestamp: None,
+                    text: text.to_owned(),
+                })
+                .collect(),
+            is_partial: false,
+        },
+        prompt_history_load_state: PromptHistoryLoadState::Ready,
+        prompt_history_generation: 1,
+    }
+}
+
+/// The rows carry their index into `prompt_history.prompts`, which is *not* their row position in
+/// the menu — a header row sits above them, and status rows can follow. Getting this wrong would
+/// jump to the message next to the one that was clicked.
+#[test]
+fn cli_agent_history_rows_carry_their_prompt_index_not_their_menu_row() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let terminal = add_window_with_terminal(&mut app, None);
+
+        terminal.update(&mut app, |view, ctx| {
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                sessions.set_session(
+                    view.view_id,
+                    cli_agent_session_with_prompts(vec![
+                        "Run /review on my current changes",
+                        "Implement the parser",
+                        "Now write the tests",
+                    ]),
+                    ctx,
+                );
+            });
+            view.sync_cli_agent_message_history_dropdown(ctx);
+        });
+
+        terminal.read(&app, |view, ctx| {
+            view.cli_agent_message_history_dropdown
+                .read(ctx, |dropdown, ctx| {
+                    let actions = dropdown.item_actions_for_test(ctx);
+
+                    // Row 0 is the disabled "Message history (3)" header.
+                    assert_eq!(actions.first(), Some(&None));
+                    assert_eq!(
+                        actions[1..4],
+                        [
+                            Some(DropdownAction::SelectIndexAndClose(0)),
+                            Some(DropdownAction::SelectIndexAndClose(1)),
+                            Some(DropdownAction::SelectIndexAndClose(2)),
+                        ]
+                    );
+                });
+        });
+    });
+}
+
 #[test]
 fn resumed_cli_agent_header_reads_latest_history_when_dropdown_selection_is_empty() {
     App::test((), |mut app| async move {

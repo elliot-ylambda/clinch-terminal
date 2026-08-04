@@ -101,6 +101,8 @@ impl BuyCreditsBanner {
                 ctx.emit(BuyCreditsBannerEvent::RefocusInput);
                 ctx.notify();
             }
+            // Rows here carry typed actions, so the dropdown never reports an index.
+            crate::view_components::DropdownEvent::ItemSelected(_) => {}
         });
 
         let mut me = Self {

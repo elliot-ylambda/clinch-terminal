@@ -266,6 +266,9 @@ impl<A: DropdownItemAction> TypedActionView for CompactDropdown<A> {
             DropdownAction::SelectActionAndClose(action) => {
                 self.select_action_and_close(action.as_ref(), ctx)
             }
+            // Reporting the index requires a `CompactDropdownEvent` variant that doesn't exist;
+            // build items with `SelectActionAndClose` instead. Add one here if a caller needs it.
+            DropdownAction::SelectIndexAndClose(_) => {}
             DropdownAction::ToggleExpanded => self.toggle_expanded(ctx),
         }
     }

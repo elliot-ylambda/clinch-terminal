@@ -224,6 +224,17 @@ pub enum ScrollPositionUpdate {
         row: Lines,
     },
     ScrollToFindMatchIfNotVisible(FindMatchScrollLocation),
+    /// Scrolls a position *within* a block to the top of the viewport, unconditionally.
+    ///
+    /// Distinct from [`Self::ScrollToFindMatchIfNotVisible`], which uses find-navigation
+    /// semantics: it moves as little as possible, so jumping backwards leaves the target at the
+    /// *bottom* of the viewport with its preceding context above it. Jumping to a chat message
+    /// wants the opposite — the message at the top, with the agent's response to it below.
+    ScrollToBlockSectionAtTop {
+        block_index: BlockIndex,
+        section: BlockSection,
+        buffer_lines: Lines,
+    },
     ScrollToTopOfBlockWithBuffer {
         block_index: BlockIndex,
         buffer_lines: Lines,
@@ -867,6 +878,11 @@ impl<'a> ViewportState<'a> {
             ScrollPositionUpdate::ScrollToFindMatchIfNotVisible(find_match_position) => {
                 self.scroll_to_match_if_not_visible(find_match_position)
             }
+            ScrollPositionUpdate::ScrollToBlockSectionAtTop {
+                block_index,
+                section,
+                buffer_lines,
+            } => self.scroll_to_block_section_at_top(block_index, section, buffer_lines),
             ScrollPositionUpdate::AfterFilter {
                 block_index,
                 prev_top_of_viewport,
@@ -1147,6 +1163,35 @@ impl<'a> ViewportState<'a> {
 
         ScrollPosition::FixedAtPosition {
             scroll_lines: self.scroll_lines_from_scroll_top(new_scroll_top),
+        }
+    }
+
+    /// Puts `section` of `block_index` at the top of the viewport, `buffer_lines` below the top
+    /// edge, regardless of where it currently sits.
+    ///
+    /// Unlike [`Self::scroll_to_match_if_not_visible`] this does not try to minimize movement: the
+    /// caller is jumping to a specific place and wants it in a predictable spot. Clamped to the
+    /// scrollable range, so a target near the end of the blocklist lands as close to the top as
+    /// the remaining content allows.
+    fn scroll_to_block_section_at_top(
+        &self,
+        block_index: BlockIndex,
+        section: BlockSection,
+        buffer_lines: Lines,
+    ) -> ScrollPosition {
+        let block_section_offset = self
+            .block_list
+            .block_at(block_index)
+            .map(|block| block.block_section_offset_from_top(section))
+            .unwrap_or(Lines::zero());
+        let target = self.top_of_block_in_lines(block_index) + block_section_offset.into_lines();
+
+        let scroll_top = (target - buffer_lines - self.snackbar_header_height())
+            .max(Lines::zero())
+            .min(self.max_scroll_top_in_lines());
+
+        ScrollPosition::FixedAtPosition {
+            scroll_lines: self.scroll_lines_from_scroll_top(scroll_top),
         }
     }
 

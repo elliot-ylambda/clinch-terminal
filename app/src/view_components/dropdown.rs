@@ -243,6 +243,17 @@ pub enum DropdownAction {
     Focus(usize),
     Close,
     SelectActionAndClose(Box<dyn DropdownItemAction>),
+    /// Closes the dropdown and reports the picked row's caller-supplied index through
+    /// [`DropdownEvent::ItemSelected`], rather than dispatching a typed action.
+    ///
+    /// For owners whose action type isn't a [`DropdownItemAction`] (it must be `PartialEq`, which
+    /// large action enums like `TerminalAction` are not) and whose rows are never the dropdown's
+    /// selected value. The index is opaque to the dropdown — it identifies the row in whatever
+    /// collection the owner built the items from, not the item's position in the menu.
+    ///
+    /// Only [`Dropdown`] honors this. `CompactDropdown` and `FilterableDropdown` share this action
+    /// type but have their own event enums with no equivalent variant, so they ignore it.
+    SelectIndexAndClose(usize),
     ToggleExpanded,
 }
 
@@ -264,6 +275,9 @@ impl DropdownAction {
 pub enum DropdownEvent {
     ToggleExpanded,
     Close,
+    /// A row built with [`DropdownAction::SelectIndexAndClose`] was picked. Carries that row's
+    /// caller-supplied index.
+    ItemSelected(usize),
 }
 
 impl<A> Dropdown<A>
@@ -572,6 +586,16 @@ where
         self.close(ctx);
     }
 
+    /// Closes the dropdown and reports the picked row's index to the owner.
+    ///
+    /// `close` already emits [`DropdownEvent::Close`], so owners see the close before the
+    /// selection. Emitting in the other order would have owners react to a selection while the
+    /// menu still believes it is open.
+    fn select_index_and_close(&mut self, index: usize, ctx: &mut ViewContext<Self>) {
+        self.close(ctx);
+        ctx.emit(DropdownEvent::ItemSelected(index));
+    }
+
     fn close(&mut self, ctx: &mut ViewContext<Self>) {
         self.is_expanded = false;
         ctx.emit(DropdownEvent::Close);
@@ -612,6 +636,21 @@ where
     #[cfg(test)]
     pub(crate) fn top_bar_text_for_test(&self, app: &AppContext) -> String {
         self.top_bar_text_and_font_family(app).0
+    }
+
+    /// The on-select action of every menu row, in menu order, so tests can check that rows are
+    /// wired to the right underlying item.
+    #[cfg(test)]
+    pub(crate) fn item_actions_for_test(&self, app: &AppContext) -> Vec<Option<DropdownAction>> {
+        self.dropdown.read(app, |menu, _| {
+            menu.items()
+                .iter()
+                .map(|item| match item {
+                    MenuItem::Item(fields) => fields.on_select_action().cloned(),
+                    _ => None,
+                })
+                .collect()
+        })
     }
 
     fn render_top_bar(&self, appearance: &Appearance, app: &AppContext) -> Box<dyn Element> {
@@ -720,6 +759,7 @@ where
             DropdownAction::SelectActionAndClose(action) => {
                 self.select_action_and_close(action.as_ref(), ctx)
             }
+            DropdownAction::SelectIndexAndClose(index) => self.select_index_and_close(*index, ctx),
             DropdownAction::ToggleExpanded => self.toggle_expanded(ctx),
         }
     }
