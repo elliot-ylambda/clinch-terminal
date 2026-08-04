@@ -49,7 +49,10 @@ pub enum UnsearchablePrompt {
 fn is_distinctive(prompt_text: &str) -> bool {
     pattern_tokens(prompt_text)
         .map(|tokens| {
-            tokens.iter().map(|token| token.chars().count()).sum::<usize>()
+            tokens
+                .iter()
+                .map(|token| token.chars().count())
+                .sum::<usize>()
                 >= MIN_STANDALONE_PATTERN_CHARS
         })
         .unwrap_or(false)
@@ -208,8 +211,7 @@ pub fn locate_agent_prompt_in_history(
     index: usize,
 ) -> Result<PromptLocation, PromptLookupFailure> {
     let target = prompt_texts.get(index).copied().unwrap_or_default();
-    let pattern =
-        unbounded_search_pattern(target).map_err(PromptLookupFailure::Unsearchable)?;
+    let pattern = unbounded_search_pattern(target).map_err(PromptLookupFailure::Unsearchable)?;
     let candidates =
         matches_in_reading_order(block_list, &pattern).ok_or(PromptLookupFailure::NotPainted)?;
     if candidates.is_empty() {
@@ -276,4 +278,3 @@ fn resolve_distinctive(block_list: &BlockList, text: &str) -> Option<(BlockIndex
 #[cfg(test)]
 #[path = "cli_agent_prompt_locator_tests.rs"]
 mod tests;
-

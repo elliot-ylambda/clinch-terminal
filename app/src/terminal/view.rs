@@ -386,9 +386,7 @@ use crate::terminal::block_list_viewport::{
     ScrollState, ViewportState,
 };
 use crate::terminal::bootstrap::init_subshell_command;
-use crate::terminal::cli_agent_prompt_locator::{
-    self, PromptLookupFailure, UnsearchablePrompt,
-};
+use crate::terminal::cli_agent_prompt_locator::{self, PromptLookupFailure, UnsearchablePrompt};
 use crate::terminal::cli_agent_sessions::auto_continue::AutoContinueModel;
 use crate::terminal::cli_agent_sessions::event::{
     parse_event, CLIAgentEvent, CLIAgentEventPayload, CLIAgentEventSource, CLIAgentEventType,

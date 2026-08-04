@@ -61,7 +61,10 @@ fn distinguishes_too_short_from_empty() {
         agent_prompt_search_pattern("  \n  "),
         Err(UnsearchablePrompt::Empty)
     );
-    assert_eq!(agent_prompt_search_pattern(""), Err(UnsearchablePrompt::Empty));
+    assert_eq!(
+        agent_prompt_search_pattern(""),
+        Err(UnsearchablePrompt::Empty)
+    );
 }
 
 #[test]
@@ -214,7 +217,10 @@ fn short_prompt_alone_is_still_refused() {
 fn locates_a_prompt_while_the_agent_block_is_still_running() {
     App::test((), |mut _app| async move {
         let mut model = TerminalModel::mock(None, None);
-        model.simulate_long_running_block("cx", "› Tell me a short story.\r\nOnce upon a time...\r\n");
+        model.simulate_long_running_block(
+            "cx",
+            "› Tell me a short story.\r\nOnce upon a time...\r\n",
+        );
 
         assert!(locate_agent_prompt(model.block_list(), "Tell me a short story.").is_ok());
     });
@@ -230,7 +236,9 @@ fn skips_prompts_too_short_to_locate_rather_than_matching_noise() {
         // somewhere arbitrary.
         assert_eq!(
             locate_agent_prompt(model.block_list(), "ok"),
-            Err(PromptLookupFailure::Unsearchable(UnsearchablePrompt::TooShortToSearchAlone))
+            Err(PromptLookupFailure::Unsearchable(
+                UnsearchablePrompt::TooShortToSearchAlone
+            ))
         );
     });
 }
