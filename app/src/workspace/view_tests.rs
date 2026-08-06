@@ -5346,8 +5346,28 @@ fn test_new_tab_in_group_expands_collapsed_group_non_member_active() {
                 "group should be collapsed"
             );
 
+            let tab_count = workspace.tab_count();
+            let member_count = workspace
+                .tabs
+                .iter()
+                .filter(|tab| tab.group_id == Some(group_id))
+                .count();
             workspace.handle_action(&WorkspaceAction::NewTabInGroup(group_id), ctx);
 
+            assert_eq!(workspace.tab_count(), tab_count + 1);
+            assert_eq!(
+                workspace
+                    .tabs
+                    .iter()
+                    .filter(|tab| tab.group_id == Some(group_id))
+                    .count(),
+                member_count + 1,
+                "new session should be added directly to the requested section"
+            );
+            assert_eq!(
+                workspace.tabs[workspace.active_tab_index()].group_id,
+                Some(group_id)
+            );
             assert!(
                 !workspace.tab_groups[&group_id].collapsed,
                 "group should expand when a new tab is opened in it"
@@ -5382,8 +5402,28 @@ fn test_new_tab_in_group_expands_collapsed_group_member_active() {
                 "group should be collapsed"
             );
 
+            let tab_count = workspace.tab_count();
+            let member_count = workspace
+                .tabs
+                .iter()
+                .filter(|tab| tab.group_id == Some(group_id))
+                .count();
             workspace.handle_action(&WorkspaceAction::NewTabInGroup(group_id), ctx);
 
+            assert_eq!(workspace.tab_count(), tab_count + 1);
+            assert_eq!(
+                workspace
+                    .tabs
+                    .iter()
+                    .filter(|tab| tab.group_id == Some(group_id))
+                    .count(),
+                member_count + 1,
+                "new session should inherit the active section"
+            );
+            assert_eq!(
+                workspace.tabs[workspace.active_tab_index()].group_id,
+                Some(group_id)
+            );
             assert!(
                 !workspace.tab_groups[&group_id].collapsed,
                 "group should expand when a new tab is opened in it"

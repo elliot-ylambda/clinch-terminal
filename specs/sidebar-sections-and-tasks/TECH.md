@@ -41,7 +41,9 @@ the same new-section path as the menu, creating the first session and opening th
 editor. Add `SetTabGroupColor` and a context-menu color-dot row backed by the existing six
 `TAB_COLOR_OPTIONS`. Render the chosen ANSI color as a low-opacity card fill and outline. Reuse the
 existing persisted `TabGroup.color`/`TabGroupSnapshot.color` field, so no new migration or Remote
-Control protocol field is required.
+Control protocol field is required. Show a plus action with the other section-header controls on
+hover and dispatch the existing `NewTabInGroup` path so the normal new-session behavior targets
+that section and expands it when needed.
 
 No new section persistence schema is required for this MVP: membership, names, collapsed state,
 and effective order already round-trip through `TabGroupSnapshot`, `tabs.tab_group_id`, and tab

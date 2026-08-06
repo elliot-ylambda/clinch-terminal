@@ -462,12 +462,13 @@ struct PaneGroupStateHandles {
     action_buttons: MouseStateHandle,
 }
 
-/// Hover states for a tab group's container, header, chevron, kebab, and close button.
+/// Hover states for a tab group's container, header, chevron, add, kebab, and close button.
 #[derive(Clone, Default)]
 struct TabGroupMouseStates {
     container: MouseStateHandle,
     header: MouseStateHandle,
     chevron: MouseStateHandle,
+    add: MouseStateHandle,
     kebab: MouseStateHandle,
     close: MouseStateHandle,
 }
@@ -3418,8 +3419,8 @@ fn render_tab_group_header_icon_button(
 }
 
 /// Renders the header row for a tab group: leading icon (chevron when expanded,
-/// member icon collage when collapsed), title + "N tabs", and (on hover) kebab
-/// + close buttons. Single-clicking outside the per-button regions toggles
+/// member icon collage when collapsed), title + "N tabs", and (on hover) add,
+/// kebab, and close buttons. Single-clicking outside the per-button regions toggles
 /// collapse; double-clicking opens the inline rename editor.
 ///
 /// `collapsed_member_kinds` is the deduped list of pane kinds used to build the
@@ -3505,6 +3506,14 @@ fn render_grouped_tabs_header(
         .finish();
 
     let action_buttons = if show_action_buttons {
+        let add_button = render_tab_group_header_icon_button(
+            WarpIcon::Plus,
+            TAB_GROUP_HEADER_ACTION_ICON_SIZE,
+            sub_text_color,
+            internal_colors::fg_overlay_2(theme),
+            mouse_states.add.clone(),
+            Some(WorkspaceAction::NewTabInGroup(group_id)),
+        );
         let kebab_button = SavePosition::new(
             render_tab_group_header_icon_button(
                 WarpIcon::DotsVertical,
@@ -3532,6 +3541,7 @@ fn render_grouped_tabs_header(
             .with_main_axis_size(MainAxisSize::Min)
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
             .with_spacing(GROUP_ACTION_BUTTON_GAP)
+            .with_child(add_button)
             .with_child(kebab_button)
             .with_child(close_button)
             .finish()

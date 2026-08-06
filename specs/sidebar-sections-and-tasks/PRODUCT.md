@@ -41,7 +41,9 @@ visual language for this MVP.
 4. Section cards display a clear outline, the section name, the number of contained sessions, and
    an expand/collapse affordance. Their overflow menu offers six distinct color choices plus an
    uncolored default; a selected color appears as a light card tint and colored outline rather than
-   a saturated fill. Collapsing a section hides its session rows without closing or suspending them.
+   a saturated fill. Hovering a section reveals a plus action that creates a normal new session
+   directly in that section; if the section is collapsed, it expands to reveal the new session.
+   Collapsing a section hides its session rows without closing or suspending them.
 
 5. People can drag sessions to reorder them within a section, drag them into another section, or
    drag them into the unsectioned area. A collapsed section header accepts a dropped session.
