@@ -44,6 +44,7 @@ use crate::themes::theme::AnsiColorIdentifier;
 use crate::themes::theme_chooser::ThemeChooserMode;
 use crate::workflows::{WorkflowSelectionSource, WorkflowSource, WorkflowType};
 use crate::workspace::tab_group::TabGroupId;
+use crate::workspace::task::{WorkspaceTaskAgent, WorkspaceTaskId};
 use crate::workspace::PaneViewLocator;
 
 /// This enum determines how the search query is initialized when opening command search.
@@ -244,10 +245,19 @@ pub enum WorkspaceAction {
     /// Unpins the entire tab group: clears the pinned flag on the group
     /// and moves the group block to the start of the unpinned region.
     UnpinTabGroup(TabGroupId),
+    ToggleTasksCollapsed,
+    FocusTaskInput,
+    RemoveWorkspaceTask(WorkspaceTaskId),
+    LaunchWorkspaceTask {
+        task_id: WorkspaceTaskId,
+        agent: WorkspaceTaskAgent,
+    },
     AddDefaultTab,
     AddTerminalTab {
         hide_homepage: bool,
     },
+    /// Add a terminal rooted in the active repository's primary (non-linked) checkout.
+    AddPrimaryCheckoutTab,
     AddTabWithShell {
         shell: AvailableShell,
         source: AddTabWithShellSource,
@@ -961,9 +971,13 @@ impl WorkspaceAction {
             | UnpinTab(_)
             | PinTabGroup(_)
             | UnpinTabGroup(_)
+            | ToggleTasksCollapsed
+            | RemoveWorkspaceTask(_)
+            | LaunchWorkspaceTask { .. }
             | ToggleTabColor { .. }
             | AddDefaultTab
             | AddTerminalTab { .. }
+            | AddPrimaryCheckoutTab
             | AddTabWithShell { .. }
             | AddGetStartedTab
             | AddAgentTab
@@ -1030,6 +1044,7 @@ impl WorkspaceAction {
             | ToggleNewSessionMenu { .. }
             | SelectNewSessionMenuItem(_)
             | ToggleTabBarOverflowMenu
+            | FocusTaskInput
             | CheckForUpdate
             | SetA11yVerbosityLevel(_)
             | ToggleNotifications

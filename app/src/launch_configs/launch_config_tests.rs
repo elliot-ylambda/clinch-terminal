@@ -36,6 +36,8 @@ fn single_tab_snapshot(root: PaneNodeSnapshot) -> AppState {
             right_panel_width: None,
             agent_management_filters: None,
             tab_groups: vec![],
+            tasks: vec![],
+            tasks_collapsed: false,
         })],
         active_window_index: Some(0),
         block_lists: Default::default(),
@@ -61,6 +63,8 @@ fn multi_tab_snapshot(active_tab_index: usize, tabs: Vec<TabSnapshot>) -> AppSta
             right_panel_width: None,
             agent_management_filters: None,
             tab_groups: vec![],
+            tasks: vec![],
+            tasks_collapsed: false,
         })],
         active_window_index: Some(0),
         block_lists: Default::default(),
@@ -457,6 +461,8 @@ fn terminal_project_snapshot(cwd: &str) -> WindowSnapshot {
         right_panel_width: None,
         agent_management_filters: None,
         tab_groups: vec![],
+        tasks: vec![],
+        tasks_collapsed: false,
     }
 }
 

@@ -170,6 +170,61 @@ fn project_and_terminal_creation_allow_clinchs_default_directory() {
 }
 
 #[test]
+fn workspace_task_messages_validate_project_and_task_text() {
+    let app_instance_id = AppInstanceId::new();
+    let task_id = TaskId::new();
+    for payload in [
+        ClientMessage::CreateTask(CreateTask {
+            app_instance_id,
+            workspace_revision: 7,
+            project_id: "project-1".to_owned(),
+            text: "Fix the flaky parser test".to_owned(),
+        }),
+        ClientMessage::DeleteTask(DeleteTask {
+            app_instance_id,
+            workspace_revision: 7,
+            project_id: "project-1".to_owned(),
+            task_id,
+        }),
+        ClientMessage::LaunchTask(LaunchTask {
+            app_instance_id,
+            workspace_revision: 7,
+            project_id: "project-1".to_owned(),
+            task_id,
+            provider: AgentProvider::Codex,
+        }),
+    ] {
+        assert_eq!(
+            ClientEnvelope {
+                version: PROTOCOL_VERSION,
+                request_id: RequestId::new(),
+                payload,
+            }
+            .validate(),
+            Ok(())
+        );
+    }
+
+    let empty = ClientEnvelope {
+        version: PROTOCOL_VERSION,
+        request_id: RequestId::new(),
+        payload: ClientMessage::CreateTask(CreateTask {
+            app_instance_id,
+            workspace_revision: 7,
+            project_id: "project-1".to_owned(),
+            text: String::new(),
+        }),
+    };
+    assert!(matches!(
+        empty.validate(),
+        Err(ProtocolValidationError::InvalidTextLength {
+            field: "task_text",
+            ..
+        })
+    ));
+}
+
+#[test]
 fn binary_frame_rejects_oversized_chunks() {
     let error =
         encode_upload_chunk(UploadId::new(), 0, &vec![0; MAX_UPLOAD_CHUNK_BYTES + 1]).unwrap_err();
@@ -183,6 +238,7 @@ fn protocol_schema_serializes() {
     assert!(json.contains("ClientEnvelope"));
     assert!(json.contains("PairingClaimRequest"));
     assert!(json.contains("UploadBegin"));
+    assert!(json.contains("CreateTask"));
 }
 
 #[test]

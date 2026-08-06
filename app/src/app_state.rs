@@ -21,6 +21,7 @@ use crate::tab::SelectedTabColor;
 use crate::terminal::ShellLaunchData;
 use crate::themes::theme::AnsiColorIdentifier;
 use crate::workspace::tab_group::TabGroupId;
+use crate::workspace::task::WorkspaceTask;
 use crate::workspace::view::left_panel::ToolPanelView;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -99,6 +100,8 @@ pub struct WindowSnapshot {
     /// Tab groups defined in this window. Group order is implicit from
     /// member tabs' positions, so no explicit ordering is persisted.
     pub tab_groups: Vec<TabGroupSnapshot>,
+    pub tasks: Vec<WorkspaceTask>,
+    pub tasks_collapsed: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]

@@ -31,6 +31,41 @@ fn project_creation_uses_the_session_creation_capability() {
 }
 
 #[test]
+fn task_mutations_use_control_and_session_creation_capabilities() {
+    let app_instance_id = AppInstanceId::new();
+    let task_id = TaskId::new();
+    let create = ClientMessage::CreateTask(CreateTask {
+        app_instance_id,
+        workspace_revision: 1,
+        project_id: "project".to_owned(),
+        text: "Run the parser tests".to_owned(),
+    });
+    let delete = ClientMessage::DeleteTask(DeleteTask {
+        app_instance_id,
+        workspace_revision: 1,
+        project_id: "project".to_owned(),
+        task_id,
+    });
+    let launch = ClientMessage::LaunchTask(LaunchTask {
+        app_instance_id,
+        workspace_revision: 1,
+        project_id: "project".to_owned(),
+        task_id,
+        provider: AgentProvider::ClaudeCode,
+    });
+
+    assert_eq!(required_capability(&create), Some(Capability::Control));
+    assert_eq!(required_capability(&delete), Some(Capability::Control));
+    assert_eq!(
+        required_capability(&launch),
+        Some(Capability::CreateSession)
+    );
+    assert!(is_idempotent_mutation(&create));
+    assert!(is_idempotent_mutation(&delete));
+    assert!(is_idempotent_mutation(&launch));
+}
+
+#[test]
 fn activity_aggregation_keeps_attention_and_work_visible() {
     assert_eq!(
         merge_activity(ProjectActivity::Working, ProjectActivity::NeedsAttention),

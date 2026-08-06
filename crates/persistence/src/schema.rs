@@ -456,6 +456,8 @@ diesel::table! {
         project_window_id -> Nullable<Text>,
         project_index -> Integer,
         is_active_project -> Bool,
+        tasks -> Text,
+        tasks_collapsed -> Bool,
     }
 }
 

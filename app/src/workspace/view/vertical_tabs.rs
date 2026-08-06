@@ -86,6 +86,7 @@ use crate::workspace::tab_settings::{
     TabSettings, VerticalTabsCompactSubtitle, VerticalTabsDisplayGranularity,
     VerticalTabsPrimaryInfo, VerticalTabsTabItemMode, VerticalTabsViewMode,
 };
+use crate::workspace::task::{WorkspaceTask, WorkspaceTaskAgent, WorkspaceTaskId};
 use crate::workspace::view::vertical_tabs::telemetry::{
     VerticalTabsChipEntrypoint, VerticalTabsTelemetryEvent,
 };
@@ -136,6 +137,8 @@ const DETAIL_SIDECAR_CORNER_RADIUS: f32 = 4.;
 const METADATA_ROW_HEIGHT: f32 = BADGE_ICON_SIZE + 2.;
 const TAB_COLOR_OPACITY: Opacity = 15;
 const TAB_COLOR_HOVER_OPACITY: Opacity = 50;
+const TASKS_MAX_HEIGHT: f32 = 220.;
+const TASKS_HEADER_ICON_SIZE: f32 = 14.;
 
 // Circular icon constants
 const ICON_WITH_STATUS_GAP: f32 = 8.;
@@ -461,6 +464,14 @@ struct TabGroupMouseStates {
     chevron: MouseStateHandle,
     kebab: MouseStateHandle,
     close: MouseStateHandle,
+}
+
+#[derive(Clone, Default)]
+struct WorkspaceTaskMouseStates {
+    row: MouseStateHandle,
+    claude: MouseStateHandle,
+    codex: MouseStateHandle,
+    remove: MouseStateHandle,
 }
 
 /// Describes how a pane row sits in its tab's row layout. Carried as state
@@ -921,6 +932,7 @@ impl VerticalTabsDetailHoverState {
 
 pub(super) struct VerticalTabsPanelState {
     scroll_state: ClippedScrollStateHandle,
+    task_scroll_state: ClippedScrollStateHandle,
     resizable_state: ResizableStateHandle,
     group_mouse_states: RefCell<HashMap<EntityId, PaneGroupStateHandles>>,
     /// Hover states per tab group, keyed by `TabGroupId`.
@@ -955,6 +967,9 @@ pub(super) struct VerticalTabsPanelState {
     show_details_on_hover_mouse_state: MouseStateHandle,
     panel_right_click_mouse_state: MouseStateHandle,
     attention_chip_mouse_state: MouseStateHandle,
+    tasks_header_mouse_state: MouseStateHandle,
+    tasks_add_mouse_state: MouseStateHandle,
+    task_mouse_states: RefCell<HashMap<WorkspaceTaskId, WorkspaceTaskMouseStates>>,
     pub(super) show_settings_popup: bool,
 }
 
@@ -962,6 +977,7 @@ impl Default for VerticalTabsPanelState {
     fn default() -> Self {
         Self {
             scroll_state: ClippedScrollStateHandle::default(),
+            task_scroll_state: ClippedScrollStateHandle::default(),
             resizable_state: resizable_state_handle(PANEL_WIDTH),
             group_mouse_states: RefCell::default(),
             tab_group_mouse_states: RefCell::default(),
@@ -995,6 +1011,9 @@ impl Default for VerticalTabsPanelState {
             show_details_on_hover_mouse_state: Default::default(),
             panel_right_click_mouse_state: Default::default(),
             attention_chip_mouse_state: Default::default(),
+            tasks_header_mouse_state: Default::default(),
+            tasks_add_mouse_state: Default::default(),
+            task_mouse_states: RefCell::default(),
             show_settings_popup: false,
         }
     }
@@ -2062,6 +2081,252 @@ fn render_new_tab_button(
     .finish()
 }
 
+fn render_workspace_task_action_button(
+    appearance: &Appearance,
+    icon: WarpIcon,
+    mouse_state: MouseStateHandle,
+    tooltip_text: &'static str,
+    action: WorkspaceAction,
+) -> Box<dyn Element> {
+    let theme = appearance.theme();
+    let icon_color = theme.sub_text_color(theme.background());
+    let tooltip = appearance
+        .ui_builder()
+        .clone()
+        .tool_tip(tooltip_text.to_owned())
+        .build()
+        .finish();
+
+    icon_button_with_color(appearance, icon, false, mouse_state, icon_color)
+        .with_tooltip(move || tooltip)
+        .build()
+        .on_click(move |ctx, _, _| {
+            ctx.dispatch_typed_action(action.clone());
+        })
+        .with_cursor(Cursor::PointingHand)
+        .finish()
+}
+
+fn render_workspace_task_row(
+    state: &VerticalTabsPanelState,
+    task: &WorkspaceTask,
+    app: &AppContext,
+) -> Box<dyn Element> {
+    let appearance = Appearance::as_ref(app);
+    let theme = appearance.theme();
+    let task_id = task.id;
+    let mouse_states = state
+        .task_mouse_states
+        .borrow_mut()
+        .entry(task_id)
+        .or_default()
+        .clone();
+
+    let buttons = Flex::row()
+        .with_main_axis_size(MainAxisSize::Min)
+        .with_cross_axis_alignment(CrossAxisAlignment::Center)
+        .with_spacing(2.)
+        .with_child(render_workspace_task_action_button(
+            appearance,
+            WarpIcon::ClaudeLogo,
+            mouse_states.claude,
+            "Start in Claude Code",
+            WorkspaceAction::LaunchWorkspaceTask {
+                task_id,
+                agent: WorkspaceTaskAgent::Claude,
+            },
+        ))
+        .with_child(render_workspace_task_action_button(
+            appearance,
+            WarpIcon::OpenAILogo,
+            mouse_states.codex,
+            "Start in Codex",
+            WorkspaceAction::LaunchWorkspaceTask {
+                task_id,
+                agent: WorkspaceTaskAgent::Codex,
+            },
+        ))
+        .with_child(render_workspace_task_action_button(
+            appearance,
+            WarpIcon::X,
+            mouse_states.remove,
+            "Remove task",
+            WorkspaceAction::RemoveWorkspaceTask(task_id),
+        ))
+        .finish();
+
+    let row = Flex::row()
+        .with_main_axis_size(MainAxisSize::Max)
+        .with_cross_axis_alignment(CrossAxisAlignment::Center)
+        .with_spacing(4.)
+        .with_child(
+            Shrinkable::new(
+                1.,
+                Text::new_inline(task.text.clone(), appearance.ui_font_family(), 12.)
+                    .with_clip(ClipConfig::ellipsis())
+                    .with_color(theme.main_text_color(theme.background()).into())
+                    .finish(),
+            )
+            .finish(),
+        )
+        .with_child(buttons)
+        .finish();
+
+    Hoverable::new(mouse_states.row, move |mouse_state| {
+        let mut container = Container::new(row)
+            .with_padding(Padding::uniform(6.).with_left(8.))
+            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(ROW_CORNER_RADIUS)));
+        if mouse_state.is_hovered() {
+            container = container.with_background(internal_colors::fg_overlay_1(theme));
+        }
+        container.finish()
+    })
+    .with_defer_events_to_children()
+    .finish()
+}
+
+fn render_workspace_tasks(
+    state: &VerticalTabsPanelState,
+    workspace: &Workspace,
+    app: &AppContext,
+) -> Box<dyn Element> {
+    let appearance = Appearance::as_ref(app);
+    let theme = appearance.theme();
+    let sub_text = theme.sub_text_color(theme.background());
+    let task_count = workspace.tasks.len();
+
+    let chevron = if workspace.tasks_collapsed {
+        WarpIcon::ChevronRight
+    } else {
+        WarpIcon::ChevronDown
+    };
+    let heading = Flex::row()
+        .with_main_axis_size(MainAxisSize::Min)
+        .with_cross_axis_alignment(CrossAxisAlignment::Center)
+        .with_spacing(6.)
+        .with_child(
+            ConstrainedBox::new(chevron.to_warpui_icon(sub_text).finish())
+                .with_width(TASKS_HEADER_ICON_SIZE)
+                .with_height(TASKS_HEADER_ICON_SIZE)
+                .finish(),
+        )
+        .with_child(
+            Text::new_inline("Tasks", appearance.ui_font_family(), 12.)
+                .with_style(Properties::default().weight(Weight::Semibold))
+                .with_color(theme.main_text_color(theme.background()).into())
+                .finish(),
+        )
+        .with_child(
+            Text::new_inline(task_count.to_string(), appearance.ui_font_family(), 11.)
+                .with_color(sub_text.into())
+                .finish(),
+        )
+        .finish();
+
+    let add_button = render_workspace_task_action_button(
+        appearance,
+        WarpIcon::Plus,
+        state.tasks_add_mouse_state.clone(),
+        "Add task",
+        WorkspaceAction::FocusTaskInput,
+    );
+    let header_row = Flex::row()
+        .with_main_axis_size(MainAxisSize::Max)
+        .with_main_axis_alignment(MainAxisAlignment::SpaceBetween)
+        .with_cross_axis_alignment(CrossAxisAlignment::Center)
+        .with_child(heading)
+        .with_child(add_button)
+        .finish();
+    let header = Hoverable::new(state.tasks_header_mouse_state.clone(), move |mouse_state| {
+        let mut header = Container::new(header_row).with_padding(
+            Padding::uniform(GROUP_HORIZONTAL_PADDING)
+                .with_top(6.)
+                .with_bottom(6.),
+        );
+        if mouse_state.is_hovered() {
+            header = header.with_background(internal_colors::fg_overlay_1(theme));
+        }
+        header.finish()
+    })
+    .with_cursor(Cursor::PointingHand)
+    .with_defer_events_to_children()
+    .on_click(|ctx, _, _| {
+        ctx.dispatch_typed_action(WorkspaceAction::ToggleTasksCollapsed);
+    })
+    .finish();
+
+    let mut section = Flex::column()
+        .with_main_axis_size(MainAxisSize::Min)
+        .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .with_child(header);
+
+    if !workspace.tasks_collapsed {
+        if !workspace.tasks.is_empty() {
+            let mut rows = Flex::column()
+                .with_main_axis_size(MainAxisSize::Min)
+                .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .with_spacing(2.);
+            for task in &workspace.tasks {
+                rows.add_child(render_workspace_task_row(state, task, app));
+            }
+            let scrollable = ClippedScrollable::vertical(
+                state.task_scroll_state.clone(),
+                rows.finish(),
+                ScrollbarWidth::Custom(4.),
+                theme.nonactive_ui_detail().into(),
+                theme.active_ui_detail().into(),
+                ElementFill::None,
+            )
+            .with_overlayed_scrollbar()
+            .finish();
+            section.add_child(
+                ConstrainedBox::new(scrollable)
+                    .with_max_height(TASKS_MAX_HEIGHT)
+                    .finish(),
+            );
+        }
+
+        let task_input = TextInput::new(
+            workspace.task_input_editor.clone(),
+            UiComponentStyles::default()
+                .set_background(ElementFill::None)
+                .set_border_radius(CornerRadius::with_all(Radius::Pixels(0.)))
+                .set_border_width(0.),
+        )
+        .build()
+        .finish();
+        section.add_child(
+            Container::new(task_input)
+                .with_margin_left(GROUP_HORIZONTAL_PADDING)
+                .with_margin_right(GROUP_HORIZONTAL_PADDING)
+                .with_margin_top(4.)
+                .with_margin_bottom(GROUP_HORIZONTAL_PADDING)
+                .with_padding(Padding::uniform(6.))
+                .with_background(internal_colors::fg_overlay_1(theme))
+                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(ROW_CORNER_RADIUS)))
+                .with_border(
+                    Border::all(1.).with_border_fill(crate::workspace::chrome_divider_fill(theme)),
+                )
+                .finish(),
+        );
+    }
+
+    let active_task_ids: std::collections::HashSet<WorkspaceTaskId> =
+        workspace.tasks.iter().map(|task| task.id).collect();
+    state
+        .task_mouse_states
+        .borrow_mut()
+        .retain(|task_id, _| active_task_ids.contains(task_id));
+
+    Container::new(section.finish())
+        .with_border(
+            Border::new(1.)
+                .with_sides(true, false, false, false)
+                .with_border_fill(crate::workspace::chrome_divider_fill(theme)),
+        )
+        .finish()
+}
+
 fn render_vertical_tabs_panel(
     state: &VerticalTabsPanelState,
     workspace: &Workspace,
@@ -2092,6 +2357,7 @@ fn render_vertical_tabs_panel(
             app,
         ))
         .with_child(Shrinkable::new(1., scrollable_groups).finish())
+        .with_child(render_workspace_tasks(state, workspace, app))
         .finish();
 
     // The settings popup is rendered at the workspace level (with Dismiss for click-outside-
@@ -3136,16 +3402,16 @@ fn render_grouped_tabs_header(
             let title_text = group
                 .name
                 .clone()
-                .unwrap_or_else(|| "New Group".to_string());
+                .unwrap_or_else(|| "New Section".to_string());
             Text::new_inline(title_text, font_family, 12.)
                 .with_clip(ClipConfig::ellipsis())
                 .with_color(main_text_color.into())
                 .finish()
         };
     let subtitle_text = if member_count == 1 {
-        "1 tab".to_string()
+        "1 session".to_string()
     } else {
-        format!("{member_count} tabs")
+        format!("{member_count} sessions")
     };
     let subtitle = Text::new_inline(subtitle_text, font_family, 10.)
         .with_clip(ClipConfig::ellipsis())
@@ -3181,7 +3447,7 @@ fn render_grouped_tabs_header(
             sub_text_color,
             internal_colors::fg_overlay_3(theme),
             mouse_states.close.clone(),
-            Some(WorkspaceAction::CloseTabGroup(group_id)),
+            Some(WorkspaceAction::UngroupTabs(group_id)),
         );
         Flex::row()
             .with_main_axis_size(MainAxisSize::Min)

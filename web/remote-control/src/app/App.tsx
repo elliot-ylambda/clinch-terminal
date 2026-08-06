@@ -270,6 +270,27 @@ function drawerTabActivity(tab: TabSnapshot): { className: string; label: string
   return undefined;
 }
 
+export interface DrawerSessionSection {
+  id: string | undefined;
+  name: string | undefined;
+  tabs: TabSnapshot[];
+}
+
+export function drawerSessionSections(tabs: TabSnapshot[]): DrawerSessionSection[] {
+  const sections: DrawerSessionSection[] = [];
+  for (const tab of tabs) {
+    const name = tab.section_name?.trim() || undefined;
+    const id = tab.section_id ?? (name ? `legacy:${name}` : undefined);
+    const current = sections.at(-1);
+    if (!current || current.id !== id) {
+      sections.push({ id, name, tabs: [tab] });
+    } else {
+      current.tabs.push(tab);
+    }
+  }
+  return sections;
+}
+
 export function App() {
   const pairingFragment = useRef<PairingFragment | null>(initialPairingFragment);
 
@@ -314,6 +335,7 @@ export function App() {
   const [newPrompt, setNewPrompt] = useState("");
   const [newResumeId, setNewResumeId] = useState("");
   const [creating, setCreating] = useState(false);
+  const [taskText, setTaskText] = useState("");
   const [quickInsertBusy, setQuickInsertBusy] = useState(false);
   const [resyncing, setResyncing] = useState(false);
   const [notice, setNotice] = useState<string>();
@@ -587,6 +609,9 @@ export function App() {
   const selectedProject = snapshot?.projects.find((project) => project.id === selectedProjectId) ?? selected.project;
   const selectedLocalCwd = selected.tab?.remote_host ? undefined : selected.pane?.cwd ?? undefined;
   const ownsWriterLease = selected.pane?.writer_lease?.device_id === identity?.deviceId;
+  useEffect(() => {
+    setTaskText("");
+  }, [selectedProjectId]);
   useEffect(() => {
     // Losing the writer lease (disconnect cleanup, the TTL backstop, or another device taking
     // over) lets the Mac restore desktop PTY sizing, so a previously confirmed viewport can no
@@ -1012,6 +1037,73 @@ export function App() {
     }
   }, [runCreation, selectedLocalCwd, selectedProject, snapshot]);
 
+  const createTask = useCallback(async () => {
+    const text = taskText.trim();
+    const currentSnapshot = snapshotRef.current;
+    const project = currentSnapshot?.projects.find(
+      (candidate) => candidate.id === selectedProjectIdRef.current,
+    ) ?? currentSnapshot?.projects.find((candidate) => candidate.active);
+    if (!text || !currentSnapshot || !project) return;
+    try {
+      const created = await runCreation({
+        type: "create_task",
+        data: {
+          app_instance_id: currentSnapshot.host.app_instance_id,
+          workspace_revision: currentSnapshot.revision,
+          project_id: project.id,
+          text,
+        },
+      });
+      if (created) setTaskText("");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    }
+  }, [runCreation, taskText]);
+
+  const deleteTask = useCallback(async (taskId: string) => {
+    const currentSnapshot = snapshotRef.current;
+    const project = currentSnapshot?.projects.find(
+      (candidate) => candidate.id === selectedProjectIdRef.current,
+    ) ?? currentSnapshot?.projects.find((candidate) => candidate.active);
+    if (!currentSnapshot || !project) return;
+    try {
+      await runCreation({
+        type: "delete_task",
+        data: {
+          app_instance_id: currentSnapshot.host.app_instance_id,
+          workspace_revision: currentSnapshot.revision,
+          project_id: project.id,
+          task_id: taskId,
+        },
+      });
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    }
+  }, [runCreation]);
+
+  const launchTask = useCallback(async (taskId: string, provider: "claude_code" | "codex") => {
+    const currentSnapshot = snapshotRef.current;
+    const project = currentSnapshot?.projects.find(
+      (candidate) => candidate.id === selectedProjectIdRef.current,
+    ) ?? currentSnapshot?.projects.find((candidate) => candidate.active);
+    if (!currentSnapshot || !project) return;
+    try {
+      const launched = await runCreation({
+        type: "launch_task",
+        data: {
+          app_instance_id: currentSnapshot.host.app_instance_id,
+          workspace_revision: currentSnapshot.revision,
+          project_id: project.id,
+          task_id: taskId,
+          provider,
+        },
+      });
+      if (launched) setDrawerOpen(false);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    }
+  }, [runCreation]);
+
   const createBlankTerminal = useCallback(async () => {
     const currentSnapshot = snapshotRef.current;
     const project = currentSnapshot?.projects.find(
@@ -1379,27 +1471,58 @@ export function App() {
             {selectedProject ? (
               <section key={selectedProject.id}>
                 <h2>{selectedProject.title}</h2>
-                {selectedProject.tabs.map((tab) => {
-                  const activity = drawerTabActivity(tab);
-                  return (
-                  <div className="drawer-tab-group" key={tab.id}>
-                    <div className="drawer-tab-meta">
-                      <span>{tab.kind.replace("_", " ")}</span>
-                      {activity && <i className={activity.className} aria-label={activity.label} title={activity.label} />}
-                    </div>
-                    {tab.panes.map((pane) => {
-                      const target = targetFor(selectedProject, tab, pane, snapshot!.host.app_instance_id);
+                {drawerSessionSections(selectedProject.tabs).map((section, sectionIndex) => (
+                  <div className="drawer-session-section" key={`${section.id ?? "sessions"}-${sectionIndex}`}>
+                    <h3>{section.name ?? (selectedProject.tabs.some((tab) => tab.section_name) ? "Other sessions" : "Sessions")}</h3>
+                    {section.tabs.map((tab) => {
+                      const activity = drawerTabActivity(tab);
                       return (
-                        <button className={selectedTarget && targetKey(target) === targetKey(selectedTarget) ? "active" : ""} key={pane.id} disabled={!pane.dimensions} onClick={() => pane.dimensions && selectTarget(target)}>
-                          <span>{pane.title || tab.title}</span>
-                          <small>{pane.dimensions ? pane.cwd ?? tab.remote_host ?? pane.agent_state ?? "Terminal" : "Not controllable on phone"}</small>
-                        </button>
+                        <div className="drawer-tab-group" key={tab.id}>
+                          <div className="drawer-tab-meta">
+                            <span>{tab.kind.replace("_", " ")}</span>
+                            {activity && <i className={activity.className} aria-label={activity.label} title={activity.label} />}
+                          </div>
+                          {tab.panes.map((pane) => {
+                            const target = targetFor(selectedProject, tab, pane, snapshot!.host.app_instance_id);
+                            return (
+                              <button className={selectedTarget && targetKey(target) === targetKey(selectedTarget) ? "active" : ""} key={pane.id} disabled={!pane.dimensions} onClick={() => pane.dimensions && selectTarget(target)}>
+                                <span>{pane.title || tab.title}</span>
+                                <small>{pane.dimensions ? pane.cwd ?? tab.remote_host ?? pane.agent_state ?? "Terminal" : "Not controllable on phone"}</small>
+                              </button>
+                            );
+                          })}
+                        </div>
                       );
                     })}
                   </div>
-                  );
-                })}
+                ))}
                 {selectedProject.tabs.length === 0 && <p className="muted">No sessions in this project yet.</p>}
+                <div className="drawer-task-section">
+                  <div className="drawer-task-heading"><h3>Tasks</h3><span>{selectedProject.tasks?.length ?? 0}</span></div>
+                  <form className="drawer-task-form" onSubmit={(event) => {
+                    event.preventDefault();
+                    void createTask();
+                  }}>
+                    <input
+                      aria-label="New task"
+                      placeholder="Add a task…"
+                      value={taskText}
+                      onChange={(event) => setTaskText(event.target.value)}
+                    />
+                    <button aria-label="Add task" disabled={!taskText.trim() || creating || connection !== "connected"}>＋</button>
+                  </form>
+                  {(selectedProject.tasks ?? []).map((task) => (
+                    <div className="drawer-task-row" key={task.id}>
+                      <span>{task.text}</span>
+                      <div>
+                        <button aria-label={`Start task in Claude Code: ${task.text}`} disabled={creating || connection !== "connected"} onClick={() => void launchTask(task.id, "claude_code")}>Claude</button>
+                        <button aria-label={`Start task in Codex: ${task.text}`} disabled={creating || connection !== "connected"} onClick={() => void launchTask(task.id, "codex")}>Codex</button>
+                        <button className="remove" aria-label={`Remove task: ${task.text}`} disabled={creating || connection !== "connected"} onClick={() => void deleteTask(task.id)}>×</button>
+                      </div>
+                    </div>
+                  ))}
+                  {(selectedProject.tasks?.length ?? 0) === 0 && <p className="muted">No tasks yet.</p>}
+                </div>
               </section>
             ) : <p className="muted">Choose a project to see its sessions.</p>}
           </aside>

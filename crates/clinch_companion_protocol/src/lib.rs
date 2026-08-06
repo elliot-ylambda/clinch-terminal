@@ -104,6 +104,7 @@ uuid_id!(ChallengeId);
 uuid_id!(AuthSessionId);
 uuid_id!(UploadId);
 uuid_id!(TerminalStreamId);
+uuid_id!(TaskId);
 
 #[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -288,12 +289,22 @@ pub struct PaneSnapshot {
 pub struct TabSnapshot {
     pub id: String,
     pub title: String,
+    #[serde(default)]
+    pub section_id: Option<String>,
+    #[serde(default)]
+    pub section_name: Option<String>,
     pub kind: TabKind,
     pub active: bool,
     pub activity: ProjectActivity,
     pub unread: bool,
     pub remote_host: Option<String>,
     pub panes: Vec<PaneSnapshot>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize, TS)]
+pub struct TaskSnapshot {
+    pub id: TaskId,
+    pub text: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize, TS)]
@@ -314,6 +325,8 @@ pub struct ProjectSnapshot {
     #[serde(default)]
     pub badges: ProjectBadgeSnapshot,
     pub tabs: Vec<TabSnapshot>,
+    #[serde(default)]
+    pub tasks: Vec<TaskSnapshot>,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize, TS)]
@@ -621,6 +634,34 @@ pub struct ResumeSession {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize, TS)]
+pub struct CreateTask {
+    pub app_instance_id: AppInstanceId,
+    #[ts(type = "number")]
+    pub workspace_revision: u64,
+    pub project_id: String,
+    pub text: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize, TS)]
+pub struct DeleteTask {
+    pub app_instance_id: AppInstanceId,
+    #[ts(type = "number")]
+    pub workspace_revision: u64,
+    pub project_id: String,
+    pub task_id: TaskId,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize, TS)]
+pub struct LaunchTask {
+    pub app_instance_id: AppInstanceId,
+    #[ts(type = "number")]
+    pub workspace_revision: u64,
+    pub project_id: String,
+    pub task_id: TaskId,
+    pub provider: AgentProvider,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize, TS)]
 pub struct QuickInsertPreviewRequest {
     pub target: TargetRef,
     #[ts(type = "number")]
@@ -707,6 +748,9 @@ pub enum ClientMessage {
     CreateProject(CreateProject),
     CreateSession(CreateSession),
     ResumeSession(ResumeSession),
+    CreateTask(CreateTask),
+    DeleteTask(DeleteTask),
+    LaunchTask(LaunchTask),
     QuickInsertPreview(QuickInsertPreviewRequest),
     QuickInsertSubmit(QuickInsertSubmit),
     UploadBegin(UploadBegin),
@@ -839,6 +883,16 @@ impl ClientEnvelope {
                     MAX_OPAQUE_ID_BYTES,
                 )?;
                 validate_path(&message.cwd)?;
+            }
+            ClientMessage::CreateTask(message) => {
+                validate_opaque_id("project_id", &message.project_id)?;
+                validate_text("task_text", &message.text, 1, MAX_PROMPT_BYTES)?;
+            }
+            ClientMessage::DeleteTask(message) => {
+                validate_opaque_id("project_id", &message.project_id)?;
+            }
+            ClientMessage::LaunchTask(message) => {
+                validate_opaque_id("project_id", &message.project_id)?;
             }
             ClientMessage::QuickInsertPreview(message) => {
                 message.target.validate()?;

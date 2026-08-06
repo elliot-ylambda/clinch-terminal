@@ -13,17 +13,17 @@ use chrono::{Duration, Utc};
 use clinch_companion_protocol::{
     javascript_safe_integer, AcquireWriterLease, AgentProvider, AgentState, AppInstanceId,
     AuthSessionId, Capability, ClientEnvelope, ClientMessage, ConnectionPath, CreateProject,
-    CreateSession, HostSnapshot, InterruptTerminal, PaneKind, PaneSnapshot, ProjectActivity,
-    ProjectBadgeSnapshot, ProjectSnapshot, ProtocolError, ProtocolErrorCode, QuickInsertDescriptor,
-    QuickInsertKind, QuickInsertPreviewRequest, QuickInsertSubmit, RawTerminalInput,
-    RecentAgentSessionSnapshot, RequestId, ResumeSession, ServerEnvelope, ServerMessage,
-    SessionKind, SubmitComposerText, TabKind, TabSnapshot, TargetRef, TerminalDimensions,
-    TerminalKey, TerminalKeyInput, TerminalResize, TerminalSnapshot, TerminalStreamId, UploadBegin,
-    UploadId, UploadReady, UsageLimitWindowSnapshot, UsageSnapshot, UsageState,
-    UsageTokenWindowSnapshot, WorkspaceChanged, WorkspaceSnapshot, WriterLeaseSnapshot,
-    MAX_IDEMPOTENCY_RESULTS_PER_SESSION, MAX_JAVASCRIPT_SAFE_INTEGER, MAX_OPAQUE_ID_BYTES,
-    MAX_PATH_BYTES, MAX_TERMINAL_SNAPSHOT_BYTES, MAX_UPLOAD_CHUNK_BYTES, PROTOCOL_VERSION,
-    WRITER_LEASE_TTL_SECS,
+    CreateSession, CreateTask, DeleteTask, HostSnapshot, InterruptTerminal, LaunchTask, PaneKind,
+    PaneSnapshot, ProjectActivity, ProjectBadgeSnapshot, ProjectSnapshot, ProtocolError,
+    ProtocolErrorCode, QuickInsertDescriptor, QuickInsertKind, QuickInsertPreviewRequest,
+    QuickInsertSubmit, RawTerminalInput, RecentAgentSessionSnapshot, RequestId, ResumeSession,
+    ServerEnvelope, ServerMessage, SessionKind, SubmitComposerText, TabKind, TabSnapshot,
+    TargetRef, TaskId, TaskSnapshot, TerminalDimensions, TerminalKey, TerminalKeyInput,
+    TerminalResize, TerminalSnapshot, TerminalStreamId, UploadBegin, UploadId, UploadReady,
+    UsageLimitWindowSnapshot, UsageSnapshot, UsageState, UsageTokenWindowSnapshot,
+    WorkspaceChanged, WorkspaceSnapshot, WriterLeaseSnapshot, MAX_IDEMPOTENCY_RESULTS_PER_SESSION,
+    MAX_JAVASCRIPT_SAFE_INTEGER, MAX_OPAQUE_ID_BYTES, MAX_PATH_BYTES, MAX_TERMINAL_SNAPSHOT_BYTES,
+    MAX_UPLOAD_CHUNK_BYTES, PROTOCOL_VERSION, WRITER_LEASE_TTL_SECS,
 };
 use instant::Instant;
 use rand::rngs::OsRng;
@@ -44,6 +44,7 @@ use crate::terminal::cli_agent_sessions::{CLIAgentSessionStatus, CLIAgentSession
 use crate::terminal::session_settings::{SessionSettings, ToolbarChipSelection as _};
 use crate::terminal::view::TerminalViewState;
 use crate::terminal::{CLIAgent, Event as TerminalViewEvent, TerminalView};
+use crate::workspace::task::{WorkspaceTaskAgent, WorkspaceTaskId};
 use crate::workspace::Workspace;
 use crate::AgentNotificationsModel;
 
@@ -300,6 +301,9 @@ impl WorkspaceAdapter {
             ClientMessage::CreateProject(message) => self.create_project(request_id, message, ctx),
             ClientMessage::CreateSession(message) => self.create_session(request_id, message, ctx),
             ClientMessage::ResumeSession(message) => self.resume_session(request_id, message, ctx),
+            ClientMessage::CreateTask(message) => self.create_task(request_id, message, ctx),
+            ClientMessage::DeleteTask(message) => self.delete_task(request_id, message, ctx),
+            ClientMessage::LaunchTask(message) => self.launch_task(request_id, message, ctx),
             ClientMessage::QuickInsertPreview(message) => {
                 self.quick_insert_preview(request_id, message, ctx)
             }
@@ -803,7 +807,7 @@ impl WorkspaceAdapter {
             SessionKind::ClaudeCode | SessionKind::Codex => {
                 #[cfg(feature = "local_tty")]
                 project.workspace.update(ctx, |workspace, ctx| {
-                    workspace.remote_control_open_cli_agent(
+                    let _ = workspace.remote_control_open_cli_agent(
                         if message.kind == SessionKind::ClaudeCode {
                             AgentResumeProvider::Claude
                         } else {
@@ -925,6 +929,125 @@ impl WorkspaceAdapter {
                 Some(request_id),
                 ProtocolErrorCode::InvalidRequest,
                 "The durable agent session ID is invalid for this provider.".to_owned(),
+                false,
+            ));
+        }
+        self.bump_topology_revision();
+        AdapterReply::envelope(self.command_accepted(request_id))
+    }
+
+    fn create_task(
+        &mut self,
+        request_id: RequestId,
+        message: CreateTask,
+        ctx: &mut ModelContext<Self>,
+    ) -> AdapterReply {
+        let project = match self.resolve_valid_project(
+            message.app_instance_id,
+            &message.project_id,
+            Some(message.workspace_revision),
+            ctx,
+        ) {
+            Ok(project) => project,
+            Err(error) => return AdapterReply::envelope(self.target_error(request_id, error)),
+        };
+        let added = project.workspace.update(ctx, |workspace, ctx| {
+            workspace.add_workspace_task(message.text, ctx)
+        });
+        if added.is_none() {
+            return AdapterReply::envelope(self.error(
+                Some(request_id),
+                ProtocolErrorCode::InvalidRequest,
+                "Task text must contain at least one non-whitespace character.".to_owned(),
+                false,
+            ));
+        }
+        self.bump_topology_revision();
+        AdapterReply::envelope(self.command_accepted(request_id))
+    }
+
+    fn delete_task(
+        &mut self,
+        request_id: RequestId,
+        message: DeleteTask,
+        ctx: &mut ModelContext<Self>,
+    ) -> AdapterReply {
+        let project = match self.resolve_valid_project(
+            message.app_instance_id,
+            &message.project_id,
+            Some(message.workspace_revision),
+            ctx,
+        ) {
+            Ok(project) => project,
+            Err(error) => return AdapterReply::envelope(self.target_error(request_id, error)),
+        };
+        let removed = project.workspace.update(ctx, |workspace, ctx| {
+            workspace.remove_workspace_task(WorkspaceTaskId(message.task_id.0), ctx)
+        });
+        if !removed {
+            return AdapterReply::envelope(self.error(
+                Some(request_id),
+                ProtocolErrorCode::TargetGone,
+                "That task no longer exists.".to_owned(),
+                true,
+            ));
+        }
+        self.bump_topology_revision();
+        AdapterReply::envelope(self.command_accepted(request_id))
+    }
+
+    fn launch_task(
+        &mut self,
+        request_id: RequestId,
+        message: LaunchTask,
+        ctx: &mut ModelContext<Self>,
+    ) -> AdapterReply {
+        let project = match self.resolve_valid_project(
+            message.app_instance_id,
+            &message.project_id,
+            Some(message.workspace_revision),
+            ctx,
+        ) {
+            Ok(project) => project,
+            Err(error) => return AdapterReply::envelope(self.target_error(request_id, error)),
+        };
+        let task_id = WorkspaceTaskId(message.task_id.0);
+        if !project
+            .workspace
+            .as_ref(ctx)
+            .workspace_tasks()
+            .iter()
+            .any(|task| task.id == task_id)
+        {
+            return AdapterReply::envelope(self.error(
+                Some(request_id),
+                ProtocolErrorCode::TargetGone,
+                "That task no longer exists.".to_owned(),
+                true,
+            ));
+        }
+
+        project.project_window.update(ctx, |project_window, ctx| {
+            project_window.activate_project(project.project_id, ctx);
+        });
+        #[cfg(feature = "local_tty")]
+        let launched = project.workspace.update(ctx, |workspace, ctx| {
+            workspace.launch_workspace_task(
+                task_id,
+                match message.provider {
+                    AgentProvider::ClaudeCode => WorkspaceTaskAgent::Claude,
+                    AgentProvider::Codex => WorkspaceTaskAgent::Codex,
+                },
+                ctx,
+            )
+        });
+        #[cfg(not(feature = "local_tty"))]
+        let launched = false;
+        if !launched {
+            return AdapterReply::envelope(self.error(
+                Some(request_id),
+                ProtocolErrorCode::CapabilityDenied,
+                "This build could not start a local CLI-agent session for that task.".to_owned(),
                 false,
             ));
         }
@@ -1372,6 +1495,25 @@ impl WorkspaceAdapter {
                         let pane_group = pane_group_handle.as_ref(ctx);
                         let tab_id = pane_group_handle.id().to_string();
                         tab_id.hash(&mut topology);
+                        let section = workspace
+                            .tabs
+                            .get(tab_index)
+                            .and_then(|tab| tab.group_id)
+                            .and_then(|group_id| {
+                                workspace.tab_groups.get(&group_id).map(|group| {
+                                    (
+                                        group_id.0.to_string(),
+                                        group
+                                            .name
+                                            .clone()
+                                            .unwrap_or_else(|| "New Section".to_owned()),
+                                    )
+                                })
+                            });
+                        section.hash(&mut topology);
+                        let (section_id, section_name) = section
+                            .map(|(id, name)| (Some(id), Some(name)))
+                            .unwrap_or((None, None));
                         let tab_active = tab_index == active_tab_index;
                         let focused_pane = pane_group.focused_pane_id(ctx);
                         let tab_unread = {
@@ -1481,6 +1623,8 @@ impl WorkspaceAdapter {
                         tabs.push(TabSnapshot {
                             id: tab_id,
                             title: nonempty_title(pane_group.display_title(ctx), "New tab"),
+                            section_id,
+                            section_name,
                             kind: tab_kind,
                             active: tab_active,
                             activity: tab_activity,
@@ -1495,6 +1639,18 @@ impl WorkspaceAdapter {
                             merge_activity(activity, tab.activity.clone())
                         });
                     let agent_counts = workspace.project_cli_agent_counts(ctx);
+                    let tasks = workspace
+                        .workspace_tasks()
+                        .iter()
+                        .map(|task| {
+                            task.id.hash(&mut topology);
+                            task.text.hash(&mut topology);
+                            TaskSnapshot {
+                                id: TaskId(task.id.0),
+                                text: task.text.clone(),
+                            }
+                        })
+                        .collect();
                     projects.push(ProjectSnapshot {
                         id: project_id_string,
                         title: nonempty_title(project_title, "New project"),
@@ -1509,6 +1665,7 @@ impl WorkspaceAdapter {
                                 .unwrap_or(u32::MAX),
                         },
                         tabs,
+                        tasks,
                     });
                     order = order.saturating_add(1);
                 }
@@ -1984,10 +2141,13 @@ fn required_capability(message: &ClientMessage) -> Option<Capability> {
         | ClientMessage::TerminalResize(_)
         | ClientMessage::TerminalKey(_)
         | ClientMessage::QuickInsertPreview(_)
-        | ClientMessage::QuickInsertSubmit(_) => Some(Capability::Control),
+        | ClientMessage::QuickInsertSubmit(_)
+        | ClientMessage::CreateTask(_)
+        | ClientMessage::DeleteTask(_) => Some(Capability::Control),
         ClientMessage::CreateProject(_)
         | ClientMessage::CreateSession(_)
-        | ClientMessage::ResumeSession(_) => Some(Capability::CreateSession),
+        | ClientMessage::ResumeSession(_)
+        | ClientMessage::LaunchTask(_) => Some(Capability::CreateSession),
         ClientMessage::UploadBegin(_)
         | ClientMessage::UploadCommit(_)
         | ClientMessage::UploadCancel(_) => Some(Capability::Upload),
@@ -2010,6 +2170,9 @@ fn is_idempotent_mutation(message: &ClientMessage) -> bool {
             | ClientMessage::CreateProject(_)
             | ClientMessage::CreateSession(_)
             | ClientMessage::ResumeSession(_)
+            | ClientMessage::CreateTask(_)
+            | ClientMessage::DeleteTask(_)
+            | ClientMessage::LaunchTask(_)
             | ClientMessage::QuickInsertSubmit(_)
     )
 }

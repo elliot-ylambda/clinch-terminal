@@ -2,5 +2,6 @@
 import type { ProjectActivity } from "./ProjectActivity";
 import type { ProjectBadgeSnapshot } from "./ProjectBadgeSnapshot";
 import type { TabSnapshot } from "./TabSnapshot";
+import type { TaskSnapshot } from "./TaskSnapshot";
 
-export type ProjectSnapshot = { id: string, title: string, order: number, active: boolean, activity: ProjectActivity, badges: ProjectBadgeSnapshot, tabs: Array<TabSnapshot>, };
+export type ProjectSnapshot = { id: string, title: string, order: number, active: boolean, activity: ProjectActivity, badges: ProjectBadgeSnapshot, tabs: Array<TabSnapshot>, tasks: Array<TaskSnapshot>, };

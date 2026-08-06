@@ -421,6 +421,54 @@
           "type": "object",
           "properties": {
             "data": {
+              "$ref": "#/$defs/CreateTask"
+            },
+            "type": {
+              "type": "string",
+              "const": "create_task"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/DeleteTask"
+            },
+            "type": {
+              "type": "string",
+              "const": "delete_task"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/LaunchTask"
+            },
+            "type": {
+              "type": "string",
+              "const": "launch_task"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
               "$ref": "#/$defs/QuickInsertPreviewRequest"
             },
             "type": {
@@ -613,6 +661,59 @@
         "kind"
       ]
     },
+    "CreateTask": {
+      "type": "object",
+      "properties": {
+        "app_instance_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "project_id": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "workspace_revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "app_instance_id",
+        "workspace_revision",
+        "project_id",
+        "text"
+      ]
+    },
+    "DeleteTask": {
+      "type": "object",
+      "properties": {
+        "app_instance_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "project_id": {
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "workspace_revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "app_instance_id",
+        "workspace_revision",
+        "project_id",
+        "task_id"
+      ]
+    },
     "DevicePlatform": {
       "type": "string",
       "enum": [
@@ -703,6 +804,37 @@
       "required": [
         "target",
         "workspace_revision"
+      ]
+    },
+    "LaunchTask": {
+      "type": "object",
+      "properties": {
+        "app_instance_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "project_id": {
+          "type": "string"
+        },
+        "provider": {
+          "$ref": "#/$defs/AgentProvider"
+        },
+        "task_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "workspace_revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "app_instance_id",
+        "workspace_revision",
+        "project_id",
+        "task_id",
+        "provider"
       ]
     },
     "PairingClaimReceipt": {
@@ -1017,6 +1149,13 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/TabSnapshot"
+          }
+        },
+        "tasks": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/TaskSnapshot"
           }
         },
         "title": {
@@ -1714,6 +1853,20 @@
             "null"
           ]
         },
+        "section_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "section_name": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
         "title": {
           "type": "string"
         },
@@ -1753,6 +1906,22 @@
         "project_id",
         "tab_id",
         "pane_id"
+      ]
+    },
+    "TaskSnapshot": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "text"
       ]
     },
     "TerminalDimensions": {

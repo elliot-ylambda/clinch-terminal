@@ -30,6 +30,7 @@ use crate::terminal::model::block::SerializedBlock;
 use crate::terminal::ShellLaunchData;
 use crate::themes::theme::AnsiColorIdentifier;
 use crate::workspace::tab_group::TabGroupId;
+use crate::workspace::task::WorkspaceTask;
 
 fn project_window(project: WindowSnapshot) -> ProjectWindowSnapshot {
     ProjectWindowSnapshot::singleton(project)
@@ -336,6 +337,8 @@ fn test_terminal_window_snapshot(vertical_tabs_panel_open: bool) -> WindowSnapsh
         right_panel_width: None,
         agent_management_filters: None,
         tab_groups: vec![],
+        tasks: vec![],
+        tasks_collapsed: false,
     }
 }
 
@@ -375,6 +378,36 @@ fn test_sqlite_round_trips_vertical_tabs_panel_open() {
             .collect::<Vec<_>>(),
         vec![false, true]
     );
+}
+
+#[test]
+fn test_sqlite_round_trips_workspace_tasks() {
+    let tempdir = tempfile::tempdir().expect("tempdir should be created");
+    let database_path = tempdir.path().join("warp.sqlite");
+    let mut conn = setup_database(&database_path).expect("database should initialize");
+
+    let mut window = test_terminal_window_snapshot(true);
+    window.tasks =
+        vec![WorkspaceTask::new("Fix the flaky parser test")
+            .expect("non-empty task should be accepted")];
+    window.tasks_collapsed = true;
+    let app_state = AppState {
+        windows: vec![project_window(window.clone())],
+        active_window_index: Some(0),
+        block_lists: Default::default(),
+        running_mcp_servers: Default::default(),
+    };
+
+    save_app_state(&mut conn, &app_state).expect("app state should save");
+    let restored = read_sqlite_data(&mut conn, None)
+        .expect("app state should load")
+        .app_state;
+    let restored_window = restored.windows[0]
+        .active_project()
+        .expect("project window should contain a project");
+
+    assert_eq!(restored_window.tasks, window.tasks);
+    assert!(restored_window.tasks_collapsed);
 }
 
 #[test]
@@ -495,6 +528,8 @@ fn test_sqlite_round_trips_custom_vertical_tabs_title() {
             right_panel_width: None,
             agent_management_filters: None,
             tab_groups: vec![],
+            tasks: vec![],
+            tasks_collapsed: false,
         })],
         active_window_index: Some(0),
         block_lists: Default::default(),
@@ -572,6 +607,8 @@ fn test_sqlite_round_trips_code_pane_with_multiple_tabs() {
             right_panel_width: None,
             agent_management_filters: None,
             tab_groups: vec![],
+            tasks: vec![],
+            tasks_collapsed: false,
         })],
         active_window_index: Some(0),
         block_lists: Default::default(),
@@ -697,6 +734,8 @@ fn test_sqlite_round_trips_tab_groups() {
                 collapsed: true,
                 pinned: false,
             }],
+            tasks: vec![],
+            tasks_collapsed: false,
         })],
         active_window_index: Some(0),
         block_lists: Default::default(),
@@ -861,6 +900,8 @@ fn test_sqlite_round_trips_pinned_state() {
                     pinned: false,
                 },
             ],
+            tasks: vec![],
+            tasks_collapsed: false,
         })],
         active_window_index: Some(0),
         block_lists: Default::default(),

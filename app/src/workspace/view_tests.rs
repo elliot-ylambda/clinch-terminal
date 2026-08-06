@@ -4200,6 +4200,81 @@ fn test_unified_new_session_menu_uses_new_worktree_config_label_and_order() {
 }
 
 #[test]
+fn test_unified_new_session_menu_includes_main_repo_terminal() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+
+        let workspace = mock_workspace(&mut app);
+
+        workspace.update(&mut app, |workspace, ctx| {
+            let menu_items = workspace.unified_new_session_menu_items(ctx);
+            let main_repo_item = menu_items
+                .iter()
+                .find_map(|item| match item {
+                    MenuItem::Item(fields) if fields.label() == "Terminal in main repo" => {
+                        Some(fields)
+                    }
+                    _ => None,
+                })
+                .expect("expected a main-repo terminal item in the new-session menu");
+
+            assert!(main_repo_item.is_disabled());
+            assert!(matches!(
+                main_repo_item.on_select_action(),
+                Some(WorkspaceAction::AddPrimaryCheckoutTab)
+            ));
+        });
+    });
+}
+
+#[cfg(feature = "local_fs")]
+#[test]
+fn test_primary_checkout_tab_from_linked_worktree_opens_main_repo_directory() {
+    let (_temp_dir, repo_path) = init_repo_for_automatic_worktree_test();
+    let linked_worktree = repo_path.join("linked-worktree");
+    let output = command::blocking::Command::new("git")
+        .args([
+            "worktree",
+            "add",
+            "-b",
+            "feature",
+            linked_worktree.to_string_lossy().as_ref(),
+            "main",
+        ])
+        .current_dir(&repo_path)
+        .output()
+        .expect("failed to create linked worktree");
+    assert!(
+        output.status.success(),
+        "git worktree add failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let expected_primary = dunce::canonicalize(&repo_path).expect("canonical primary checkout");
+
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+
+        workspace.update(&mut app, |workspace, ctx| {
+            let original_tab_count = workspace.tab_count();
+            assert!(workspace.add_primary_checkout_tab_for_repo(&linked_worktree, ctx));
+            assert_eq!(workspace.tab_count(), original_tab_count + 1);
+
+            let startup_path = workspace
+                .active_tab_pane_group()
+                .read(ctx, |pane_group, ctx| {
+                    pane_group.startup_path_for_new_session(pane_group.active_session_id(ctx), ctx)
+                });
+            let startup_path = startup_path.expect("new terminal should have a startup directory");
+            assert_eq!(
+                dunce::canonicalize(startup_path).expect("canonical terminal startup directory"),
+                expected_primary
+            );
+        });
+    });
+}
+
+#[test]
 fn test_unified_new_session_menu_includes_reopen_closed_session() {
     App::test((), |mut app| async move {
         initialize_app(&mut app);
@@ -4543,6 +4618,38 @@ fn test_tab_mru_order() {
 }
 
 #[test]
+fn test_workspace_tasks_add_trim_order_and_remove() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+
+        let workspace = mock_workspace(&mut app);
+        workspace.update(&mut app, |workspace, ctx| {
+            assert!(workspace
+                .add_workspace_task("   ".to_owned(), ctx)
+                .is_none());
+            let first = workspace
+                .add_workspace_task("  Fix parser  ".to_owned(), ctx)
+                .expect("non-empty task should be added");
+            let second = workspace
+                .add_workspace_task("Run tests".to_owned(), ctx)
+                .expect("second task should be added");
+
+            assert_eq!(
+                workspace
+                    .workspace_tasks()
+                    .iter()
+                    .map(|task| (task.id, task.text.as_str()))
+                    .collect::<Vec<_>>(),
+                vec![(first, "Fix parser"), (second, "Run tests")]
+            );
+            assert!(workspace.remove_workspace_task(first, ctx));
+            assert!(!workspace.remove_workspace_task(first, ctx));
+            assert_eq!(workspace.workspace_tasks()[0].id, second);
+        });
+    });
+}
+
+#[test]
 fn test_create_new_tab_group_groups_active_tab() {
     let _grouped_tabs_guard = FeatureFlag::GroupedTabs.override_enabled(true);
 
@@ -4851,6 +4958,45 @@ fn test_close_tab_group_removes_group_and_members() {
                 .tabs
                 .iter()
                 .all(|tab| tab.group_id != Some(group_id)));
+        });
+    });
+}
+
+#[test]
+fn test_ungroup_tabs_removes_section_without_closing_sessions() {
+    let _grouped_tabs_guard = FeatureFlag::GroupedTabs.override_enabled(true);
+
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+
+        let workspace = mock_workspace(&mut app);
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.handle_action(
+                &WorkspaceAction::SelectNewSessionMenuItem(NewSessionMenuItem::CreateNewTabGroup),
+                ctx,
+            );
+            let group_id = workspace.tabs[workspace.active_tab_index()]
+                .group_id
+                .expect("active tab should be in a group");
+            workspace.add_terminal_tab(false, ctx);
+
+            let tab_ids: Vec<_> = workspace
+                .tabs
+                .iter()
+                .map(|tab| tab.pane_group.id())
+                .collect();
+            workspace.handle_action(&WorkspaceAction::UngroupTabs(group_id), ctx);
+
+            assert!(!workspace.tab_groups.contains_key(&group_id));
+            assert_eq!(
+                workspace
+                    .tabs
+                    .iter()
+                    .map(|tab| tab.pane_group.id())
+                    .collect::<Vec<_>>(),
+                tab_ids
+            );
+            assert!(workspace.tabs.iter().all(|tab| tab.group_id.is_none()));
         });
     });
 }

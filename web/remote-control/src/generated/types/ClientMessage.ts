@@ -2,7 +2,10 @@
 import type { AcquireWriterLease } from "./AcquireWriterLease";
 import type { CreateProject } from "./CreateProject";
 import type { CreateSession } from "./CreateSession";
+import type { CreateTask } from "./CreateTask";
+import type { DeleteTask } from "./DeleteTask";
 import type { InterruptTerminal } from "./InterruptTerminal";
+import type { LaunchTask } from "./LaunchTask";
 import type { QuickInsertPreviewRequest } from "./QuickInsertPreviewRequest";
 import type { QuickInsertSubmit } from "./QuickInsertSubmit";
 import type { RawTerminalInput } from "./RawTerminalInput";
@@ -16,4 +19,4 @@ import type { UploadBegin } from "./UploadBegin";
 import type { UploadCancel } from "./UploadCancel";
 import type { UploadCommit } from "./UploadCommit";
 
-export type ClientMessage = { "type": "ping" } | { "type": "request_snapshot" } | { "type": "select_target", "data": SelectTarget } | { "type": "acquire_writer_lease", "data": AcquireWriterLease } | { "type": "release_writer_lease", "data": ReleaseWriterLease } | { "type": "submit_composer_text", "data": SubmitComposerText } | { "type": "raw_terminal_input", "data": RawTerminalInput } | { "type": "interrupt_terminal", "data": InterruptTerminal } | { "type": "terminal_resize", "data": TerminalResize } | { "type": "terminal_key", "data": TerminalKeyInput } | { "type": "create_project", "data": CreateProject } | { "type": "create_session", "data": CreateSession } | { "type": "resume_session", "data": ResumeSession } | { "type": "quick_insert_preview", "data": QuickInsertPreviewRequest } | { "type": "quick_insert_submit", "data": QuickInsertSubmit } | { "type": "upload_begin", "data": UploadBegin } | { "type": "upload_commit", "data": UploadCommit } | { "type": "upload_cancel", "data": UploadCancel } | { "type": "unpair_device" } | { "type": "disconnect" };
+export type ClientMessage = { "type": "ping" } | { "type": "request_snapshot" } | { "type": "select_target", "data": SelectTarget } | { "type": "acquire_writer_lease", "data": AcquireWriterLease } | { "type": "release_writer_lease", "data": ReleaseWriterLease } | { "type": "submit_composer_text", "data": SubmitComposerText } | { "type": "raw_terminal_input", "data": RawTerminalInput } | { "type": "interrupt_terminal", "data": InterruptTerminal } | { "type": "terminal_resize", "data": TerminalResize } | { "type": "terminal_key", "data": TerminalKeyInput } | { "type": "create_project", "data": CreateProject } | { "type": "create_session", "data": CreateSession } | { "type": "resume_session", "data": ResumeSession } | { "type": "create_task", "data": CreateTask } | { "type": "delete_task", "data": DeleteTask } | { "type": "launch_task", "data": LaunchTask } | { "type": "quick_insert_preview", "data": QuickInsertPreviewRequest } | { "type": "quick_insert_submit", "data": QuickInsertSubmit } | { "type": "upload_begin", "data": UploadBegin } | { "type": "upload_commit", "data": UploadCommit } | { "type": "upload_cancel", "data": UploadCancel } | { "type": "unpair_device" } | { "type": "disconnect" };
