@@ -82,10 +82,17 @@ pub enum AgentToolbarItemKind {
     // CLI agent only – exits Claude Code or Codex and continues in the other agent.
     TransferAgent,
 
-    // CLI agent only – user-defined button that inserts-and-sends saved text.
+    // CLI agent only – configurable button that either pre-fills or submits saved text.
     CustomInsert {
         label: String,
         text: String,
+        /// Whether activating the button immediately submits the text. This defaults to true so
+        /// existing settings retain their historical insert-and-send behavior.
+        #[serde(
+            default = "default_custom_insert_auto_send",
+            skip_serializing_if = "custom_insert_auto_send_is_default"
+        )]
+        auto_send: bool,
     },
 
     // Agent view only – shows fast-forward (auto-approve) toggle in the footer
@@ -99,6 +106,30 @@ const TERMINAL_GIT_COMMIT_COMMAND: &str = "git add -A && printf 'Commit message 
 const TERMINAL_GIT_COMMIT_AND_PUSH_COMMAND: &str = "git add -A && printf 'Commit message [Update changes]: ' && IFS= read -r clinch_commit_message && git commit -m \"${clinch_commit_message:-Update changes}\" && git push";
 
 impl AgentToolbarItemKind {
+    pub fn custom_insert(label: impl Into<String>, text: impl Into<String>) -> Self {
+        Self::CustomInsert {
+            label: label.into(),
+            text: text.into(),
+            auto_send: true,
+        }
+    }
+
+    /// Stable identity used when matching a persisted layout against shipped defaults. Quick
+    /// inserts use their label so prompt and auto-send edits do not turn one button into two.
+    pub fn has_same_toolbar_identity(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                Self::CustomInsert {
+                    label: left_label, ..
+                },
+                Self::CustomInsert {
+                    label: right_label, ..
+                },
+            ) => left_label == right_label,
+            _ => self == other,
+        }
+    }
+
     pub fn available_in(&self) -> ToolbarAvailability {
         match self {
             Self::ContextChip(_) | Self::VoiceInput | Self::FileAttach | Self::ShareSession => {
@@ -201,7 +232,12 @@ impl AgentToolbarItemKind {
             // The bundled `upload-cloud-01.svg` (cloud-with-upward-arrow) is the
             // closest fit among the existing icons for V0; design may swap it later.
             Self::HandoffToCloud => Some(Icon::UploadCloud),
-            Self::CustomInsert { .. } => Some(Icon::Play),
+            Self::CustomInsert {
+                auto_send: true, ..
+            } => Some(Icon::Play),
+            Self::CustomInsert {
+                auto_send: false, ..
+            } => Some(Icon::TextInput),
         }
     }
 
@@ -334,59 +370,44 @@ impl AgentToolbarItemKind {
             Self::ContinuePrompt,
             Self::LooksGoodPrompt,
             Self::TransferAgent,
-            Self::CustomInsert {
-                label: "/codex".to_owned(),
-                text: "/codex".to_owned(),
-            },
-            Self::CustomInsert {
-                label: "Make No Mistakes".to_owned(),
-                text: "Do it all for me. I'm stepping away. Don't make any mistakes.".to_owned(),
-            },
-            Self::CustomInsert {
-                label: "Create a Plan".to_owned(),
-                text: "Create a Plan".to_owned(),
-            },
-            Self::CustomInsert {
-                label: "Build w/ Sub-agents".to_owned(),
-                text: "Build w/ Sub-agents".to_owned(),
-            },
-            Self::CustomInsert {
-                label: "Create a PR".to_owned(),
-                text: "Create a PR, then merge main into this PR".to_owned(),
-            },
-            Self::CustomInsert {
-                label: "Worktree-Build".to_owned(),
-                text: "OK go into an isolated work tree. Plan this out, then implement it and create a pull request.".to_owned(),
-            },
-            Self::CustomInsert {
-                label: "Review w/ Codex Sol Max".to_owned(),
-                text: "Review w/ Codex Sol Max".to_owned(),
-            },
-            Self::CustomInsert {
-                label: "Review w/ Claude Code Fable".to_owned(),
-                text: "Review w/ Claude Code Fable".to_owned(),
-            },
-            Self::CustomInsert {
-                label: "Debug w/ Ultracode".to_owned(),
-                text: "Investigate with Ultra Code and use subagents".to_owned(),
-            },
-            Self::CustomInsert {
-                label: "Git Worktree".to_owned(),
-                text: "Move our current work and code into an isolated git work tree. And create a branch. Work out of the git worktree".to_owned(),
-            },
-            Self::CustomInsert {
-                label: "Fix & Verify".to_owned(),
-                text: "Implement the requested fix, run the most relevant checks, and summarize what changed.".to_owned(),
-            },
-            Self::CustomInsert {
-                label: "Simplify".to_owned(),
-                text: "Simplify the current implementation without changing behavior, then run the relevant tests.".to_owned(),
-            },
+            Self::custom_insert("/codex", "/codex"),
+            Self::custom_insert(
+                "Make No Mistakes",
+                "Do it all for me. I'm stepping away. Don't make any mistakes.",
+            ),
+            Self::custom_insert("Create a Plan", "Create a Plan"),
+            Self::custom_insert("Build w/ Sub-agents", "Build w/ Sub-agents"),
+            Self::custom_insert(
+                "Create a PR",
+                "Create a PR, then merge main into this PR",
+            ),
+            Self::custom_insert(
+                "Worktree-Build",
+                "OK go into an isolated work tree. Plan this out, then implement it and create a pull request.",
+            ),
+            Self::custom_insert("Review w/ Codex Sol Max", "Review w/ Codex Sol Max"),
+            Self::custom_insert(
+                "Review w/ Claude Code Fable",
+                "Review w/ Claude Code Fable",
+            ),
+            Self::custom_insert(
+                "Debug w/ Ultracode",
+                "Investigate with Ultra Code and use subagents",
+            ),
+            Self::custom_insert(
+                "Git Worktree",
+                "Move our current work and code into an isolated git work tree. And create a branch. Work out of the git worktree",
+            ),
+            Self::custom_insert(
+                "Fix & Verify",
+                "Implement the requested fix, run the most relevant checks, and summarize what changed.",
+            ),
+            Self::custom_insert(
+                "Simplify",
+                "Simplify the current implementation without changing behavior, then run the relevant tests.",
+            ),
             Self::VoiceInput,
-            Self::CustomInsert {
-                label: "Push2Main".to_owned(),
-                text: "Push all these changes to main.".to_owned(),
-            },
+            Self::custom_insert("Push2Main", "Push all these changes to main."),
         ]
     }
 
@@ -416,10 +437,7 @@ impl AgentToolbarItemKind {
             ("Status", "git status --short --branch"),
         ]
         .into_iter()
-        .map(|(label, text)| Self::CustomInsert {
-            label: label.to_owned(),
-            text: text.to_owned(),
-        })
+        .map(|(label, text)| Self::custom_insert(label, text))
         .collect()
     }
 
@@ -451,6 +469,11 @@ impl AgentToolbarItemKind {
             Self::TransferAgent,
             Self::Settings,
         ]);
+        items.extend(
+            Self::cli_default_left()
+                .into_iter()
+                .filter(|item| matches!(item, Self::CustomInsert { .. })),
+        );
         if FeatureFlag::CreatingSharedSessions.is_enabled()
             && FeatureFlag::HOARemoteControl.is_enabled()
         {
@@ -479,6 +502,14 @@ impl AgentToolbarItemKind {
             ),
         }
     }
+}
+
+fn default_custom_insert_auto_send() -> bool {
+    true
+}
+
+fn custom_insert_auto_send_is_default(value: &bool) -> bool {
+    *value
 }
 
 impl From<ContextChipKind> for AgentToolbarItemKind {

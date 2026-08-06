@@ -10,6 +10,7 @@ fn next_selection_with_custom_button_appends_after_live_defaults() {
         CLIAgentToolbarChipSelection::Default,
         "Ship".into(),
         "/deploy".into(),
+        true,
     );
     let CLIAgentToolbarChipSelection::Custom { left, .. } = next else {
         panic!("expected Custom");
@@ -19,7 +20,8 @@ fn next_selection_with_custom_button_appends_after_live_defaults() {
         left.last(),
         Some(&AgentToolbarItemKind::CustomInsert {
             label: "Ship".into(),
-            text: "/deploy".into()
+            text: "/deploy".into(),
+            auto_send: true,
         })
     );
     assert!(left.contains(&AgentToolbarItemKind::ForkSession));
@@ -31,6 +33,7 @@ fn next_terminal_selection_with_custom_button_preserves_defaults_and_appends() {
     expected_left.push(AgentToolbarItemKind::CustomInsert {
         label: "Status".into(),
         text: "git status".into(),
+        auto_send: true,
     });
 
     assert_eq!(
@@ -38,6 +41,7 @@ fn next_terminal_selection_with_custom_button_preserves_defaults_and_appends() {
             TerminalToolbarChipSelection::Default,
             "Status".into(),
             "git status".into(),
+            true,
         ),
         TerminalToolbarChipSelection::custom_from_effective_items(
             expected_left,

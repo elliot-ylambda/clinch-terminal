@@ -1752,7 +1752,7 @@ impl WorkspaceAdapter {
             .enumerate()
             .filter_map(|(index, item)| {
                 let (label, text, kind) = match item {
-                    AgentToolbarItemKind::CustomInsert { label, text } => {
+                    AgentToolbarItemKind::CustomInsert { label, text, .. } => {
                         (label, text, QuickInsertKind::Custom)
                     }
                     AgentToolbarItemKind::Compact if has_cli_agent => (

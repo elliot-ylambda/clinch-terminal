@@ -3,10 +3,15 @@ use warpui::platform::WindowStyle;
 use warpui::{App, SingletonEntity, TypedActionView};
 
 use super::{
-    remote_control_browser_url, remote_control_setup_widget_id, ClinchSettingsPageAction,
-    ClinchSettingsPageView, RemoteControlSetupWidget, CLINCH_REMOTE_CONTROL_GUIDE_URL,
-    TAILSCALE_IOS_DOWNLOAD_URL, TAILSCALE_MAC_DOWNLOAD_URL,
+    quick_inserts_widget_id, remote_control_browser_url, remote_control_setup_widget_id,
+    ClinchSettingsPageAction, ClinchSettingsPageView, QuickInsertsWidget, RemoteControlSetupWidget,
+    CLINCH_REMOTE_CONTROL_GUIDE_URL, TAILSCALE_IOS_DOWNLOAD_URL, TAILSCALE_MAC_DOWNLOAD_URL,
 };
+use crate::ai::blocklist::agent_view::agent_input_footer::editor::AgentToolbarEditorMode;
+use crate::ai::blocklist::agent_view::agent_input_footer::quick_insert_modal::{
+    QuickInsertModalEvent, QuickInsertModalTarget,
+};
+use crate::ai::blocklist::agent_view::agent_input_footer::toolbar_item::AgentToolbarItemKind;
 use crate::appearance::Appearance;
 use crate::auth::AuthStateProvider;
 #[cfg(target_os = "macos")]
@@ -14,7 +19,7 @@ use crate::settings::CliAgentUsageSettings;
 use crate::settings::ClinchSettings;
 use crate::settings_view::keybindings::KeybindingChangedNotifier;
 use crate::settings_view::settings_page::SettingsWidget;
-use crate::terminal::session_settings::SessionSettings;
+use crate::terminal::session_settings::{SessionSettings, ToolbarChipSelection};
 use crate::test_util::settings::initialize_settings_for_tests;
 
 #[test]
@@ -36,6 +41,70 @@ fn remote_control_setup_widget_has_stable_discovery_metadata() {
         CLINCH_REMOTE_CONTROL_GUIDE_URL,
         "https://clinch.sh/remote-control"
     );
+}
+
+#[test]
+fn quick_inserts_widget_has_stable_discovery_metadata() {
+    let widget = QuickInsertsWidget::default();
+
+    assert_eq!(quick_inserts_widget_id(), widget.widget_id());
+    assert!(widget.search_terms().contains("quick insert"));
+    assert!(widget.search_terms().contains("auto send"));
+}
+
+#[test]
+fn quick_insert_edit_action_updates_label_text_and_send_behavior() {
+    App::test((), |mut app| async move {
+        initialize_settings_for_tests(&mut app);
+        app.add_singleton_model(|_| AuthStateProvider::new_logged_out_for_test());
+        app.add_singleton_model(|_| KeybindingChangedNotifier::new());
+        app.add_singleton_model(|_| Appearance::mock());
+        let (_, view) = app.add_window(WindowStyle::NotStealFocus, ClinchSettingsPageView::new);
+        let location = view.read(&app, |view, ctx| {
+            view.cli_quick_insert_editor
+                .as_ref(ctx)
+                .quick_inserts()
+                .into_iter()
+                .next()
+                .expect("CLI defaults should include a quick insert")
+                .location
+        });
+
+        view.update(&mut app, |view, ctx| {
+            view.handle_action(
+                &ClinchSettingsPageAction::EditQuickInsert {
+                    mode: AgentToolbarEditorMode::CLIAgent,
+                    location,
+                },
+                ctx,
+            );
+            assert!(view.quick_insert_modal_open);
+            view.handle_quick_insert_modal_event(
+                &QuickInsertModalEvent::Save {
+                    target: QuickInsertModalTarget::CLIAgent,
+                    label: "Review carefully".to_owned(),
+                    text: "Review this without submitting yet".to_owned(),
+                    auto_send: false,
+                },
+                ctx,
+            );
+            assert!(!view.quick_insert_modal_open);
+        });
+
+        let items = SessionSettings::handle(&app).read(&app, |settings, _| {
+            settings.cli_agent_footer_chip_selection.left_items()
+        });
+        assert!(items.iter().any(|item| {
+            matches!(
+                item,
+                AgentToolbarItemKind::CustomInsert {
+                    label,
+                    text,
+                    auto_send: false,
+                } if label == "Review carefully" && text == "Review this without submitting yet"
+            )
+        }));
+    });
 }
 
 #[test]

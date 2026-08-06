@@ -5,38 +5,29 @@ fn terminal_default_left_contains_exact_quick_actions() {
     assert_eq!(
         AgentToolbarItemKind::terminal_default_left(),
         vec![
-            AgentToolbarItemKind::CustomInsert {
-                label: "Claude".to_owned(),
-                text: "claude --dangerously-skip-permissions".to_owned(),
-            },
-            AgentToolbarItemKind::CustomInsert {
-                label: "Codex".to_owned(),
-                text: "codex --dangerously-bypass-approvals-and-sandbox".to_owned(),
-            },
-            AgentToolbarItemKind::CustomInsert {
-                label: "Claude resume".to_owned(),
-                text: "claude --dangerously-skip-permissions --resume".to_owned(),
-            },
-            AgentToolbarItemKind::CustomInsert {
-                label: "Codex resume".to_owned(),
-                text: "codex resume".to_owned(),
-            },
-            AgentToolbarItemKind::CustomInsert {
-                label: "Open".to_owned(),
-                text: "open .".to_owned(),
-            },
-            AgentToolbarItemKind::CustomInsert {
-                label: "Commit & Push".to_owned(),
-                text: "git add -A && printf 'Commit message [Update changes]: ' && IFS= read -r clinch_commit_message && git commit -m \"${clinch_commit_message:-Update changes}\" && git push".to_owned(),
-            },
-            AgentToolbarItemKind::CustomInsert {
-                label: "Commit".to_owned(),
-                text: "git add -A && printf 'Commit message [Update changes]: ' && IFS= read -r clinch_commit_message && git commit -m \"${clinch_commit_message:-Update changes}\"".to_owned(),
-            },
-            AgentToolbarItemKind::CustomInsert {
-                label: "Status".to_owned(),
-                text: "git status --short --branch".to_owned(),
-            },
+            AgentToolbarItemKind::custom_insert(
+                "Claude",
+                "claude --dangerously-skip-permissions",
+            ),
+            AgentToolbarItemKind::custom_insert(
+                "Codex",
+                "codex --dangerously-bypass-approvals-and-sandbox",
+            ),
+            AgentToolbarItemKind::custom_insert(
+                "Claude resume",
+                "claude --dangerously-skip-permissions --resume",
+            ),
+            AgentToolbarItemKind::custom_insert("Codex resume", "codex resume"),
+            AgentToolbarItemKind::custom_insert("Open", "open ."),
+            AgentToolbarItemKind::custom_insert(
+                "Commit & Push",
+                "git add -A && printf 'Commit message [Update changes]: ' && IFS= read -r clinch_commit_message && git commit -m \"${clinch_commit_message:-Update changes}\" && git push",
+            ),
+            AgentToolbarItemKind::custom_insert(
+                "Commit",
+                "git add -A && printf 'Commit message [Update changes]: ' && IFS= read -r clinch_commit_message && git commit -m \"${clinch_commit_message:-Update changes}\"",
+            ),
+            AgentToolbarItemKind::custom_insert("Status", "git status --short --branch"),
         ]
     );
     assert!(AgentToolbarItemKind::terminal_default_right().is_empty());
@@ -44,10 +35,7 @@ fn terminal_default_left_contains_exact_quick_actions() {
 
 #[test]
 fn terminal_availability_admits_only_custom_insert() {
-    let custom = AgentToolbarItemKind::CustomInsert {
-        label: "Build".to_owned(),
-        text: "cargo build".to_owned(),
-    };
+    let custom = AgentToolbarItemKind::custom_insert("Build", "cargo build");
     assert!(custom.is_available_for_terminal());
 
     let unavailable = [
@@ -171,62 +159,53 @@ fn cli_default_left_includes_expected_quick_inserts() {
     assert_eq!(
         &items[5..17],
         &[
-            AgentToolbarItemKind::CustomInsert {
-                label: "/codex".to_owned(),
-                text: "/codex".to_owned(),
-            },
-            AgentToolbarItemKind::CustomInsert {
-                label: "Make No Mistakes".to_owned(),
-                text: "Do it all for me. I'm stepping away. Don't make any mistakes.".to_owned(),
-            },
-            AgentToolbarItemKind::CustomInsert {
-                label: "Create a Plan".to_owned(),
-                text: "Create a Plan".to_owned(),
-            },
-            AgentToolbarItemKind::CustomInsert {
-                label: "Build w/ Sub-agents".to_owned(),
-                text: "Build w/ Sub-agents".to_owned(),
-            },
-            AgentToolbarItemKind::CustomInsert {
-                label: "Create a PR".to_owned(),
-                text: "Create a PR, then merge main into this PR".to_owned(),
-            },
-            AgentToolbarItemKind::CustomInsert {
-                label: "Worktree-Build".to_owned(),
-                text: "OK go into an isolated work tree. Plan this out, then implement it and create a pull request.".to_owned(),
-            },
-            AgentToolbarItemKind::CustomInsert {
-                label: "Review w/ Codex Sol Max".to_owned(),
-                text: "Review w/ Codex Sol Max".to_owned(),
-            },
-            AgentToolbarItemKind::CustomInsert {
-                label: "Review w/ Claude Code Fable".to_owned(),
-                text: "Review w/ Claude Code Fable".to_owned(),
-            },
-            AgentToolbarItemKind::CustomInsert {
-                label: "Debug w/ Ultracode".to_owned(),
-                text: "Investigate with Ultra Code and use subagents".to_owned(),
-            },
-            AgentToolbarItemKind::CustomInsert {
-                label: "Git Worktree".to_owned(),
-                text: "Move our current work and code into an isolated git work tree. And create a branch. Work out of the git worktree".to_owned(),
-            },
-            AgentToolbarItemKind::CustomInsert {
-                label: "Fix & Verify".to_owned(),
-                text: "Implement the requested fix, run the most relevant checks, and summarize what changed.".to_owned(),
-            },
-            AgentToolbarItemKind::CustomInsert {
-                label: "Simplify".to_owned(),
-                text: "Simplify the current implementation without changing behavior, then run the relevant tests.".to_owned(),
-            },
+            AgentToolbarItemKind::custom_insert("/codex", "/codex"),
+            AgentToolbarItemKind::custom_insert(
+                "Make No Mistakes",
+                "Do it all for me. I'm stepping away. Don't make any mistakes.",
+            ),
+            AgentToolbarItemKind::custom_insert("Create a Plan", "Create a Plan"),
+            AgentToolbarItemKind::custom_insert("Build w/ Sub-agents", "Build w/ Sub-agents"),
+            AgentToolbarItemKind::custom_insert(
+                "Create a PR",
+                "Create a PR, then merge main into this PR",
+            ),
+            AgentToolbarItemKind::custom_insert(
+                "Worktree-Build",
+                "OK go into an isolated work tree. Plan this out, then implement it and create a pull request.",
+            ),
+            AgentToolbarItemKind::custom_insert(
+                "Review w/ Codex Sol Max",
+                "Review w/ Codex Sol Max",
+            ),
+            AgentToolbarItemKind::custom_insert(
+                "Review w/ Claude Code Fable",
+                "Review w/ Claude Code Fable",
+            ),
+            AgentToolbarItemKind::custom_insert(
+                "Debug w/ Ultracode",
+                "Investigate with Ultra Code and use subagents",
+            ),
+            AgentToolbarItemKind::custom_insert(
+                "Git Worktree",
+                "Move our current work and code into an isolated git work tree. And create a branch. Work out of the git worktree",
+            ),
+            AgentToolbarItemKind::custom_insert(
+                "Fix & Verify",
+                "Implement the requested fix, run the most relevant checks, and summarize what changed.",
+            ),
+            AgentToolbarItemKind::custom_insert(
+                "Simplify",
+                "Simplify the current implementation without changing behavior, then run the relevant tests.",
+            ),
         ]
     );
     assert_eq!(
         items.last(),
-        Some(&AgentToolbarItemKind::CustomInsert {
-            label: "Push2Main".to_owned(),
-            text: "Push all these changes to main.".to_owned(),
-        })
+        Some(&AgentToolbarItemKind::custom_insert(
+            "Push2Main",
+            "Push all these changes to main.",
+        ))
     );
     assert!(!items.iter().any(|item| {
         matches!(
@@ -283,10 +262,7 @@ fn quick_replies_absent_from_agent_view_configurator() {
 
 #[test]
 fn custom_insert_is_cli_only_and_host_only() {
-    let item = AgentToolbarItemKind::CustomInsert {
-        label: "Ship it".to_string(),
-        text: "/deploy".to_string(),
-    };
+    let item = AgentToolbarItemKind::custom_insert("Ship it", "/deploy");
     assert_eq!(item.available_in(), ToolbarAvailability::CLIAgentOnly);
     assert!(!item.available_to_session_viewer(&SharedSessionStatus::reader(), false));
     assert_eq!(item.display_label(), "Ship it");
@@ -298,10 +274,22 @@ fn custom_insert_round_trips_through_serde() {
     let item = AgentToolbarItemKind::CustomInsert {
         label: "Review".to_string(),
         text: "/review".to_string(),
+        auto_send: false,
     };
     let json = serde_json::to_string(&item).unwrap();
     let back: AgentToolbarItemKind = serde_json::from_str(&json).unwrap();
     assert_eq!(item, back);
+    assert_eq!(item.icon(), Some(Icon::TextInput));
+}
+
+#[test]
+fn custom_insert_without_auto_send_field_keeps_legacy_submit_behavior() {
+    let json = r#"{"CustomInsert":{"label":"Review","text":"/review"}}"#;
+    let item: AgentToolbarItemKind = serde_json::from_str(json).unwrap();
+    assert_eq!(
+        item,
+        AgentToolbarItemKind::custom_insert("Review", "/review")
+    );
 }
 
 /// Items intentionally dropped from the CLI footer default layout: the file
