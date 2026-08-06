@@ -13,14 +13,14 @@ use chrono::{Duration, Utc};
 use clinch_companion_protocol::{
     javascript_safe_integer, AcquireWriterLease, AgentProvider, AgentState, AppInstanceId,
     AuthSessionId, Capability, ClientEnvelope, ClientMessage, ConnectionPath, CreateProject,
-    CreateSession, HostSnapshot, InterruptTerminal, PaneKind, PaneSnapshot, ProjectActivity,
-    ProjectBadgeSnapshot, ProjectSnapshot, ProtocolError, ProtocolErrorCode, QuickInsertDescriptor,
-    QuickInsertKind, QuickInsertPreviewRequest, QuickInsertSubmit, RawTerminalInput,
-    RecentAgentSessionSnapshot, RequestId, ResumeSession, ServerEnvelope, ServerMessage,
-    SessionKind, SubmitComposerText, TabKind, TabSnapshot, TargetRef, TerminalDimensions,
-    TerminalKey, TerminalKeyInput, TerminalResize, TerminalSnapshot, TerminalStreamId, UploadBegin,
-    UploadId, UploadReady, UsageLimitWindowSnapshot, UsageSnapshot, UsageState,
-    UsageTokenWindowSnapshot, WorkspaceChanged, WorkspaceSnapshot, WriterLeaseSnapshot,
+    CreateSession, DeviceId, HostSnapshot, InterruptTerminal, PaneKind, PaneSnapshot,
+    ProjectActivity, ProjectBadgeSnapshot, ProjectSnapshot, ProtocolError, ProtocolErrorCode,
+    QuickInsertDescriptor, QuickInsertKind, QuickInsertPreviewRequest, QuickInsertSubmit,
+    RawTerminalInput, RecentAgentSessionSnapshot, RequestId, ResumeSession, ServerEnvelope,
+    ServerMessage, SessionKind, SetTerminalSizePin, SubmitComposerText, TabKind, TabSnapshot,
+    TargetRef, TerminalDimensions, TerminalKey, TerminalKeyInput, TerminalResize, TerminalSnapshot,
+    TerminalStreamId, UploadBegin, UploadId, UploadReady, UsageLimitWindowSnapshot, UsageSnapshot,
+    UsageState, UsageTokenWindowSnapshot, WorkspaceChanged, WorkspaceSnapshot, WriterLeaseSnapshot,
     MAX_IDEMPOTENCY_RESULTS_PER_SESSION, MAX_JAVASCRIPT_SAFE_INTEGER, MAX_OPAQUE_ID_BYTES,
     MAX_PATH_BYTES, MAX_TERMINAL_SNAPSHOT_BYTES, MAX_UPLOAD_CHUNK_BYTES, PROTOCOL_VERSION,
     WRITER_LEASE_TTL_SECS,
@@ -150,6 +150,22 @@ fn writer_lease_blocks(
         && connected_sessions.contains(&lease.session_id)
 }
 
+/// Whether a remote viewport may impose its own dimensions on a pane.
+///
+/// A PTY carries exactly one `winsize`, so a pane cannot be one width on the Mac and another on a
+/// phone. Whoever is looking at it on the Mac owns that width; a remote device takes it only for a
+/// pane the Mac is not showing, or after deliberately pinning it from that device.
+fn remote_may_size_pane(
+    desktop_watching: bool,
+    pinned_by: Option<&DeviceId>,
+    device_id: &DeviceId,
+) -> bool {
+    match pinned_by {
+        Some(pinned_by) => pinned_by == device_id,
+        None => !desktop_watching,
+    }
+}
+
 #[derive(Clone)]
 struct ResolvedTarget {
     project_window: ViewHandle<ProjectWindow>,
@@ -182,6 +198,10 @@ pub struct WorkspaceAdapter {
     last_topology_fingerprint: Option<u64>,
     pairing: PairingManager,
     writer_leases: HashMap<TargetKey, WriterLease>,
+    /// Panes a remote device deliberately claimed the PTY width for. Without an entry here a
+    /// remote viewport only sizes panes the Mac is not currently showing, so simply looking at
+    /// a session from a phone can never reshape the pane someone is working in.
+    remote_size_pins: HashMap<TargetKey, DeviceId>,
     connected_sessions: HashSet<AuthSessionId>,
     terminal_subscriptions: HashSet<EntityId>,
     idempotency: HashMap<AuthSessionId, VecDeque<(RequestId, ServerEnvelope)>>,
@@ -207,6 +227,7 @@ impl WorkspaceAdapter {
             last_topology_fingerprint: None,
             pairing,
             writer_leases: HashMap::new(),
+            remote_size_pins: HashMap::new(),
             connected_sessions: HashSet::new(),
             terminal_subscriptions: HashSet::new(),
             idempotency: HashMap::new(),
@@ -293,6 +314,9 @@ impl WorkspaceAdapter {
             }
             ClientMessage::TerminalResize(message) => {
                 self.resize_terminal(request_id, message, authorization.clone(), ctx)
+            }
+            ClientMessage::SetTerminalSizePin(message) => {
+                self.set_terminal_size_pin(request_id, message, authorization.clone(), ctx)
             }
             ClientMessage::TerminalKey(message) => {
                 self.terminal_key(request_id, message, authorization.clone(), ctx)
@@ -444,6 +468,7 @@ impl WorkspaceAdapter {
         self.connected_sessions.clear();
         let targets = self.writer_leases.keys().cloned().collect::<Vec<_>>();
         self.writer_leases.clear();
+        self.remote_size_pins.clear();
         self.idempotency.clear();
         for target in targets {
             if let Some(resolved) = self.resolve_target_key(&target, ctx) {
@@ -590,7 +615,7 @@ impl WorkspaceAdapter {
             .get(&key)
             .is_some_and(|lease| lease.session_id == authorization.session_id);
         if owned {
-            self.writer_leases.remove(&key);
+            self.release_pane_control(&key);
             if let Some(resolved) = self.resolve_target_key(&key, ctx) {
                 resolved.terminal.update(ctx, |terminal, ctx| {
                     terminal.remote_control_restore_desktop_size(ctx);
@@ -756,6 +781,19 @@ impl WorkspaceAdapter {
         {
             return AdapterReply::envelope(*error);
         }
+        let key = TargetKey::from(&message.target);
+        let desktop_watching = self.desktop_watched_targets(ctx).contains(&key);
+        if !remote_may_size_pane(
+            desktop_watching,
+            self.remote_size_pins.get(&key),
+            &authorization.device_id,
+        ) {
+            // Someone is looking at this pane on the Mac, and a PTY has only one width. Accept
+            // the request without reshaping the pane: the phone reads the authoritative
+            // dimensions off the next pane snapshot and mirrors them instead of imposing its
+            // own. Pinning from the phone is what makes taking that width deliberate.
+            return AdapterReply::envelope(self.command_accepted(request_id));
+        }
         resolved.terminal.update(ctx, |terminal, ctx| {
             terminal.remote_control_resize(
                 message.dimensions.rows as usize,
@@ -763,6 +801,39 @@ impl WorkspaceAdapter {
                 ctx,
             );
         });
+        AdapterReply::envelope(self.command_accepted(request_id))
+    }
+
+    /// Takes or gives back deliberate ownership of a pane's PTY width. Pinning is the only way a
+    /// remote device reshapes a pane the Mac is showing, and unpinning immediately hands the
+    /// width back if the Mac is watching.
+    fn set_terminal_size_pin(
+        &mut self,
+        request_id: RequestId,
+        message: SetTerminalSizePin,
+        authorization: SessionAuthorization,
+        ctx: &mut ModelContext<Self>,
+    ) -> AdapterReply {
+        let resolved = match self.resolve_valid_target(&message.target, None, ctx) {
+            Ok(resolved) => resolved,
+            Err(error) => return AdapterReply::envelope(self.target_error(request_id, error)),
+        };
+        if let Err(error) =
+            self.ensure_writer(&message.target, &authorization, Some(request_id), false)
+        {
+            return AdapterReply::envelope(*error);
+        }
+        let key = TargetKey::from(&message.target);
+        if message.pinned {
+            self.remote_size_pins.insert(key, authorization.device_id);
+        } else {
+            self.remote_size_pins.remove(&key);
+            if self.desktop_watched_targets(ctx).contains(&key) {
+                resolved.terminal.update(ctx, |terminal, ctx| {
+                    terminal.remote_control_restore_desktop_size(ctx);
+                });
+            }
+        }
         AdapterReply::envelope(self.command_accepted(request_id))
     }
 
@@ -1128,12 +1199,20 @@ impl WorkspaceAdapter {
             return;
         }
         for target in targets {
-            self.writer_leases.remove(&target);
+            self.release_pane_control(&target);
         }
         terminal.update(ctx, |terminal, ctx| {
             terminal.remote_control_restore_desktop_size(ctx);
         });
         ctx.notify();
+    }
+
+    /// Drops a pane's writer lease together with any remote size pin. The two are deliberately
+    /// released as one: a device that no longer holds control has no claim on the pane's width
+    /// either, so a phone that wandered off can never leave the Mac stuck at phone dimensions.
+    fn release_pane_control(&mut self, target: &TargetKey) {
+        self.writer_leases.remove(target);
+        self.remote_size_pins.remove(target);
     }
 
     fn resolve_target(
@@ -1314,6 +1393,15 @@ impl WorkspaceAdapter {
             expires_at: Utc::now() + Duration::seconds(WRITER_LEASE_TTL_SECS as i64),
         };
         let snapshot = lease.snapshot();
+        // A size pin belongs to the device that took it, so control changing hands drops it.
+        // Without this a takeover would inherit the previous phone's claim on the pane's width.
+        if self
+            .remote_size_pins
+            .get(&key)
+            .is_some_and(|pinned_by| *pinned_by != authorization.device_id)
+        {
+            self.remote_size_pins.remove(&key);
+        }
         self.writer_leases.insert(key, lease);
         Ok(snapshot)
     }
@@ -1331,7 +1419,7 @@ impl WorkspaceAdapter {
             .map(|(target, _)| target.clone())
             .collect::<Vec<_>>();
         for target in expired {
-            self.writer_leases.remove(&target);
+            self.release_pane_control(&target);
             if let Some(resolved) = self.resolve_target_key(&target, ctx) {
                 resolved.terminal.update(ctx, |terminal, ctx| {
                     terminal.remote_control_restore_desktop_size(ctx);
@@ -1340,8 +1428,84 @@ impl WorkspaceAdapter {
         }
     }
 
+    /// Panes the Mac is itself showing right now: Clinch is the frontmost app, the pane lives in
+    /// the active window, and its project and tab are the visible ones.
+    ///
+    /// A PTY carries exactly one `winsize`, so a pane cannot be one width for the Mac and another
+    /// for a phone. These panes therefore belong to the person at the keyboard, and a remote
+    /// viewport mirrors their width rather than imposing its own.
+    fn desktop_watched_targets(&self, ctx: &mut ModelContext<Self>) -> HashSet<TargetKey> {
+        let mut watched = HashSet::new();
+        if !ctx.windows().app_is_active() {
+            return watched;
+        }
+        let Some(active_window) = ctx.windows().active_window() else {
+            return watched;
+        };
+        let Some(root) = ctx.root_view::<RootView>(active_window) else {
+            return watched;
+        };
+        let Some(project_window_handle) = root.as_ref(ctx).project_window() else {
+            return watched;
+        };
+        project_window_handle.read(ctx, |project_window, ctx| {
+            let active_project_index = project_window.active_project_index();
+            for (project_index, (project_id, workspace_handle)) in
+                project_window.projects().enumerate()
+            {
+                if project_index != active_project_index {
+                    continue;
+                }
+                let workspace = workspace_handle.as_ref(ctx);
+                let active_tab_index = workspace.active_tab_index();
+                for (tab_index, pane_group_handle) in workspace.tab_views().enumerate() {
+                    if tab_index != active_tab_index {
+                        continue;
+                    }
+                    // Every visible pane in the tab counts, not just the focused one: a split
+                    // pane is equally on screen, and shrinking it would be just as disruptive.
+                    for pane_id in pane_group_handle.as_ref(ctx).visible_pane_ids() {
+                        watched.insert(TargetKey {
+                            project_id: project_id.opaque_id(),
+                            tab_id: pane_group_handle.id().to_string(),
+                            pane_id: pane_opaque_id(pane_id),
+                        });
+                    }
+                }
+            }
+        });
+        watched
+    }
+
+    /// Hands a pane's width back to the Mac as soon as the Mac is showing it again. Desktop
+    /// typing already preempts instantly through `preempt_writer_for_desktop_input`; this covers
+    /// the case the user actually notices most — switching to the tab and simply *looking* at it,
+    /// which previously left the pane stuck at phone dimensions until they typed.
+    fn reclaim_desktop_sizes(
+        &mut self,
+        watched: &HashSet<TargetKey>,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        let reclaimable = watched
+            .iter()
+            .filter(|target| !self.remote_size_pins.contains_key(*target))
+            .cloned()
+            .collect::<Vec<_>>();
+        for target in reclaimable {
+            if let Some(resolved) = self.resolve_target_key(&target, ctx) {
+                resolved.terminal.update(ctx, |terminal, ctx| {
+                    // A no-op unless a remote viewport is actually driving this pane, so this
+                    // never re-emits SIGWINCH for panes the Mac already sizes.
+                    terminal.remote_control_restore_desktop_size(ctx);
+                });
+            }
+        }
+    }
+
     fn snapshot(&mut self, ctx: &mut ModelContext<Self>) -> WorkspaceSnapshot {
         self.prune_writer_leases(ctx);
+        let desktop_watched = self.desktop_watched_targets(ctx);
+        self.reclaim_desktop_sizes(&desktop_watched, ctx);
         self.refresh_recent_agent_sessions(ctx);
         let mut projects = Vec::new();
         let mut active_target = None;
@@ -1460,6 +1624,7 @@ impl WorkspaceAdapter {
                             if project_active && tab_active && pane_active && dimensions.is_some() {
                                 active_target = Some(target.clone());
                             }
+                            let target_key = TargetKey::from(&target);
                             panes.push(PaneSnapshot {
                                 id: pane_id_string,
                                 title: pane_group
@@ -1473,9 +1638,11 @@ impl WorkspaceAdapter {
                                 dimensions,
                                 writer_lease: self
                                     .writer_leases
-                                    .get(&TargetKey::from(&target))
+                                    .get(&target_key)
                                     .map(WriterLease::snapshot),
                                 quick_inserts,
+                                desktop_watching: desktop_watched.contains(&target_key),
+                                size_pinned_by: self.remote_size_pins.get(&target_key).copied(),
                             });
                         }
                         tabs.push(TabSnapshot {
@@ -1982,6 +2149,7 @@ fn required_capability(message: &ClientMessage) -> Option<Capability> {
         | ClientMessage::RawTerminalInput(_)
         | ClientMessage::InterruptTerminal(_)
         | ClientMessage::TerminalResize(_)
+        | ClientMessage::SetTerminalSizePin(_)
         | ClientMessage::TerminalKey(_)
         | ClientMessage::QuickInsertPreview(_)
         | ClientMessage::QuickInsertSubmit(_) => Some(Capability::Control),
@@ -2006,6 +2174,7 @@ fn is_idempotent_mutation(message: &ClientMessage) -> bool {
             | ClientMessage::RawTerminalInput(_)
             | ClientMessage::InterruptTerminal(_)
             | ClientMessage::TerminalResize(_)
+            | ClientMessage::SetTerminalSizePin(_)
             | ClientMessage::TerminalKey(_)
             | ClientMessage::CreateProject(_)
             | ClientMessage::CreateSession(_)

@@ -282,6 +282,15 @@ pub struct PaneSnapshot {
     pub dimensions: Option<TerminalDimensions>,
     pub writer_lease: Option<WriterLeaseSnapshot>,
     pub quick_inserts: Vec<QuickInsertDescriptor>,
+    /// True while the Mac is itself showing this pane: its window is the active one and its
+    /// project and tab are the visible ones. A PTY carries exactly one `winsize`, so the two
+    /// screens cannot hold different widths; the person at the keyboard wins, and a remote
+    /// device mirrors the desktop width instead of imposing its own.
+    pub desktop_watching: bool,
+    /// Device that explicitly pinned this pane to its own viewport, overriding
+    /// `desktop_watching`. Cleared whenever the pane's writer lease goes away, so a phone that
+    /// wanders off cannot leave the Mac stuck at phone dimensions.
+    pub size_pinned_by: Option<DeviceId>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize, TS)]
@@ -578,6 +587,17 @@ pub struct TerminalResize {
     pub dimensions: TerminalDimensions,
 }
 
+/// Takes or gives back deliberate ownership of a pane's PTY width. Without a pin a remote
+/// device may only size a pane the Mac is not currently showing; pinning states that this
+/// device wants the pane sized for its own screen even while someone is looking at the Mac.
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize, TS)]
+pub struct SetTerminalSizePin {
+    pub target: TargetRef,
+    #[ts(type = "number")]
+    pub workspace_revision: u64,
+    pub pinned: bool,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize, TS)]
 pub struct TerminalKeyInput {
     pub target: TargetRef,
@@ -703,6 +723,7 @@ pub enum ClientMessage {
     RawTerminalInput(RawTerminalInput),
     InterruptTerminal(InterruptTerminal),
     TerminalResize(TerminalResize),
+    SetTerminalSizePin(SetTerminalSizePin),
     TerminalKey(TerminalKeyInput),
     CreateProject(CreateProject),
     CreateSession(CreateSession),
@@ -814,6 +835,7 @@ impl ClientEnvelope {
                 message.target.validate()?;
                 validate_dimensions(&message.dimensions)?;
             }
+            ClientMessage::SetTerminalSizePin(message) => message.target.validate()?,
             ClientMessage::TerminalKey(message) => message.target.validate()?,
             ClientMessage::CreateProject(message) => {
                 validate_opaque_id("project_id", &message.project_id)?;

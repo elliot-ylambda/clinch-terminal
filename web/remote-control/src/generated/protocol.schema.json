@@ -357,6 +357,22 @@
           "type": "object",
           "properties": {
             "data": {
+              "$ref": "#/$defs/SetTerminalSizePin"
+            },
+            "type": {
+              "type": "string",
+              "const": "set_terminal_size_pin"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
               "$ref": "#/$defs/TerminalKeyInput"
             },
             "type": {
@@ -904,6 +920,10 @@
             "null"
           ]
         },
+        "desktop_watching": {
+          "description": "True while the Mac is itself showing this pane: its window is the active one and its\nproject and tab are the visible ones. A PTY carries exactly one `winsize`, so the two\nscreens cannot hold different widths; the person at the keyboard wins, and a remote\ndevice mirrors the desktop width instead of imposing its own.",
+          "type": "boolean"
+        },
         "dimensions": {
           "anyOf": [
             {
@@ -926,6 +946,14 @@
             "$ref": "#/$defs/QuickInsertDescriptor"
           }
         },
+        "size_pinned_by": {
+          "description": "Device that explicitly pinned this pane to its own viewport, overriding\n`desktop_watching`. Cleared whenever the pane's writer lease goes away, so a phone that\nwanders off cannot leave the Mac stuck at phone dimensions.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
         "title": {
           "type": "string"
         },
@@ -945,7 +973,8 @@
         "title",
         "kind",
         "active",
-        "quick_inserts"
+        "quick_inserts",
+        "desktop_watching"
       ]
     },
     "ProjectActivity": {
@@ -1654,6 +1683,28 @@
         "terminal",
         "claude_code",
         "codex"
+      ]
+    },
+    "SetTerminalSizePin": {
+      "description": "Takes or gives back deliberate ownership of a pane's PTY width. Without a pin a remote\ndevice may only size a pane the Mac is not currently showing; pinning states that this\ndevice wants the pane sized for its own screen even while someone is looking at the Mac.",
+      "type": "object",
+      "properties": {
+        "pinned": {
+          "type": "boolean"
+        },
+        "target": {
+          "$ref": "#/$defs/TargetRef"
+        },
+        "workspace_revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "target",
+        "workspace_revision",
+        "pinned"
       ]
     },
     "SubmitComposerText": {
