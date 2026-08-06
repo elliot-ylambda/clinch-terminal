@@ -4681,6 +4681,54 @@ fn test_create_new_tab_group_groups_active_tab() {
 }
 
 #[test]
+fn test_create_section_action_creates_new_session_and_updates_color() {
+    let _grouped_tabs_guard = FeatureFlag::GroupedTabs.override_enabled(true);
+
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+
+        let workspace = mock_workspace(&mut app);
+        workspace.update(&mut app, |workspace, ctx| {
+            let initial_tab_count = workspace.tab_count();
+            workspace.handle_action(&WorkspaceAction::CreateNewTabGroup, ctx);
+
+            assert_eq!(workspace.tab_count(), initial_tab_count + 1);
+            let group_id = workspace.tabs[workspace.active_tab_index()]
+                .group_id
+                .expect("new session should be the first member of a section");
+            assert_eq!(
+                workspace.tab_groups[&group_id].color,
+                SelectedTabColor::Unset
+            );
+
+            workspace.handle_action(
+                &WorkspaceAction::SetTabGroupColor {
+                    group_id,
+                    color: SelectedTabColor::Color(AnsiColorIdentifier::Magenta),
+                },
+                ctx,
+            );
+            assert_eq!(
+                workspace.tab_groups[&group_id].color,
+                SelectedTabColor::Color(AnsiColorIdentifier::Magenta)
+            );
+
+            workspace.handle_action(
+                &WorkspaceAction::SetTabGroupColor {
+                    group_id,
+                    color: SelectedTabColor::Unset,
+                },
+                ctx,
+            );
+            assert_eq!(
+                workspace.tab_groups[&group_id].color,
+                SelectedTabColor::Unset
+            );
+        });
+    });
+}
+
+#[test]
 fn test_new_tab_group_from_tab_keeps_tab_in_place() {
     let _grouped_tabs_guard = FeatureFlag::GroupedTabs.override_enabled(true);
 

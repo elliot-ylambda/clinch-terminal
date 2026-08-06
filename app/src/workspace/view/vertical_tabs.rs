@@ -139,6 +139,12 @@ const TAB_COLOR_OPACITY: Opacity = 15;
 const TAB_COLOR_HOVER_OPACITY: Opacity = 50;
 const TASKS_MAX_HEIGHT: f32 = 220.;
 const TASKS_HEADER_ICON_SIZE: f32 = 14.;
+const SECTION_ACCENT_BORDER_OPACITY: Opacity = 55;
+const SECTION_ACCENT_HOVER_OPACITY: Opacity = 10;
+const SECTION_TINT_BACKGROUND_OPACITY: Opacity = 10;
+const SECTION_TINT_BACKGROUND_ACTIVE_OPACITY: Opacity = 18;
+const SECTION_TINT_BORDER_OPACITY: Opacity = 45;
+const SECTION_TINT_BORDER_ACTIVE_OPACITY: Opacity = 70;
 
 // Circular icon constants
 const ICON_WITH_STATUS_GAP: f32 = 8.;
@@ -944,6 +950,7 @@ pub(super) struct VerticalTabsPanelState {
     detail_scroll_state: ClippedScrollStateHandle,
     detail_sidecar_mouse_state: MouseStateHandle,
     detail_overlay_state: Arc<Mutex<VerticalTabsDetailOverlayState>>,
+    create_section_mouse_state: MouseStateHandle,
     new_tab_hover_state: MouseStateHandle,
     new_tab_button_state: MouseStateHandle,
     worktree_toggle_hover_state: MouseStateHandle,
@@ -988,6 +995,7 @@ impl Default for VerticalTabsPanelState {
             detail_scroll_state: ClippedScrollStateHandle::default(),
             detail_sidecar_mouse_state: Default::default(),
             detail_overlay_state: Arc::new(Mutex::new(VerticalTabsDetailOverlayState::default())),
+            create_section_mouse_state: Default::default(),
             new_tab_hover_state: Default::default(),
             new_tab_button_state: Default::default(),
             worktree_toggle_hover_state: Default::default(),
@@ -1776,6 +1784,76 @@ fn render_control_bar(
         .finish()
 }
 
+fn section_accent_border_fill() -> ThemeFill {
+    ThemeFill::Solid(coloru_with_opacity(
+        CLINCH_LOGO_GREEN,
+        SECTION_ACCENT_BORDER_OPACITY,
+    ))
+}
+
+fn render_create_section_button(
+    state: &VerticalTabsPanelState,
+    app: &AppContext,
+) -> Box<dyn Element> {
+    let appearance = Appearance::as_ref(app);
+    let theme = appearance.theme();
+    let font_family = appearance.ui_font_family();
+    let main_text = theme.main_text_color(theme.background());
+    let border_fill = section_accent_border_fill();
+
+    let button = Hoverable::new(
+        state.create_section_mouse_state.clone(),
+        move |mouse_state| {
+            let icon = ConstrainedBox::new(
+                WarpIcon::Plus
+                    .to_warpui_icon(WarpThemeFill::Solid(CLINCH_LOGO_GREEN))
+                    .finish(),
+            )
+            .with_width(14.)
+            .with_height(14.)
+            .finish();
+            let label = Text::new_inline("Create new section", font_family, 12.)
+                .with_style(Properties::default().weight(Weight::Semibold))
+                .with_color(main_text.into())
+                .finish();
+            let content = Flex::row()
+                .with_main_axis_size(MainAxisSize::Max)
+                .with_main_axis_alignment(MainAxisAlignment::Center)
+                .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                .with_spacing(6.)
+                .with_child(icon)
+                .with_child(label)
+                .finish();
+            let background = if mouse_state.is_hovered() {
+                ThemeFill::Solid(coloru_with_opacity(
+                    CLINCH_LOGO_GREEN,
+                    SECTION_ACCENT_HOVER_OPACITY,
+                ))
+            } else {
+                ThemeFill::Solid(ColorU::transparent_black())
+            };
+
+            Container::new(content)
+                .with_padding(Padding::uniform(7.))
+                .with_background(background)
+                .with_border(Border::all(1.).with_border_fill(border_fill))
+                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(ROW_CORNER_RADIUS)))
+                .finish()
+        },
+    )
+    .with_cursor(Cursor::PointingHand)
+    .on_click(|ctx, _, _| {
+        ctx.dispatch_typed_action(WorkspaceAction::CreateNewTabGroup);
+    })
+    .finish();
+
+    Container::new(button)
+        .with_margin_left(GROUP_HORIZONTAL_PADDING)
+        .with_margin_right(GROUP_HORIZONTAL_PADDING)
+        .with_margin_top(GROUP_HORIZONTAL_PADDING)
+        .finish()
+}
+
 fn render_detail_kind_badge_icon(
     props: &PaneProps<'_>,
     appearance: &Appearance,
@@ -2322,7 +2400,7 @@ fn render_workspace_tasks(
         .with_border(
             Border::new(1.)
                 .with_sides(true, false, false, false)
-                .with_border_fill(crate::workspace::chrome_divider_fill(theme)),
+                .with_border_fill(section_accent_border_fill()),
         )
         .finish()
 }
@@ -2350,6 +2428,7 @@ fn render_vertical_tabs_panel(
     let panel_content = Flex::column()
         .with_main_axis_size(MainAxisSize::Max)
         .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .with_child(render_create_section_button(state, app))
         .with_child(render_control_bar(
             state,
             workspace,
@@ -3566,6 +3645,10 @@ fn render_grouped_tab_container(
     let member_count = members.len();
     let group_id = group.id;
     let group = group.clone();
+    let group_tint = group.color.resolve(None).map(|color| {
+        let color: ColorU = color.to_ansi_color(&theme.terminal_colors().normal).into();
+        color
+    });
     let any_member_active = members
         .iter()
         .any(|(tab_index, _)| *tab_index == workspace.active_tab_index);
@@ -3655,6 +3738,25 @@ fn render_grouped_tab_container(
         // A group is one card holding several tabs, so it takes the same outline
         // treatment as a standalone tab card.
         let card_state = TabCardState::resolve(false, any_member_active, hover_state.is_hovered());
+        let (card_background, card_border) = if let Some(color) = group_tint {
+            let is_emphasized = matches!(card_state, TabCardState::Active | TabCardState::Hovered);
+            let background_opacity = if is_emphasized {
+                SECTION_TINT_BACKGROUND_ACTIVE_OPACITY
+            } else {
+                SECTION_TINT_BACKGROUND_OPACITY
+            };
+            let border_opacity = if is_emphasized {
+                SECTION_TINT_BORDER_ACTIVE_OPACITY
+            } else {
+                SECTION_TINT_BORDER_OPACITY
+            };
+            (
+                ThemeFill::Solid(coloru_with_opacity(color, background_opacity)),
+                ThemeFill::Solid(coloru_with_opacity(color, border_opacity)),
+            )
+        } else {
+            (card_state.background(theme), card_state.border(theme))
+        };
 
         // Pane view: uniform `GROUP_HORIZONTAL_PADDING` matches ungrouped-tab body padding.
         // Tab view: only apply bottom padding when expanded so a collapsed group has no trailing band.
@@ -3667,8 +3769,8 @@ fn render_grouped_tab_container(
 
         Container::new(content.finish())
             .with_padding(padding)
-            .with_background(card_state.background(theme))
-            .with_border(Border::all(1.).with_border_fill(card_state.border(theme)))
+            .with_background(card_background)
+            .with_border(Border::all(1.).with_border_fill(card_border))
             .with_corner_radius(CornerRadius::with_all(Radius::Pixels(ROW_CORNER_RADIUS)))
             .finish()
     })

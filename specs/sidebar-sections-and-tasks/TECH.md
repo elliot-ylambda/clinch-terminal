@@ -36,6 +36,13 @@ Change the group-header close affordance to dispatch `UngroupTabs`, preserving s
 `Close all sessions in section` in the overflow menu. Extend vertical drag hit testing so a
 collapsed group container accepts a session drop and appends it to that group.
 
+Add a full-width primary section action above the existing vertical-tabs control row. It dispatches
+the same new-section path as the menu, creating the first session and opening the inline name
+editor. Add `SetTabGroupColor` and a context-menu color-dot row backed by the existing six
+`TAB_COLOR_OPTIONS`. Render the chosen ANSI color as a low-opacity card fill and outline. Reuse the
+existing persisted `TabGroup.color`/`TabGroupSnapshot.color` field, so no new migration or Remote
+Control protocol field is required.
+
 No new section persistence schema is required for this MVP: membership, names, collapsed state,
 and effective order already round-trip through `TabGroupSnapshot`, `tabs.tab_group_id`, and tab
 order. Empty sections remain intentionally unsupported.
@@ -55,7 +62,8 @@ happens only after a local terminal manager accepts the one-shot command.
 
 Render the Tasks area below the sessions scroller in `vertical_tabs.rs`. Keep its own bounded
 scroll state and stable mouse handles in `VerticalTabsPanelState`. Reuse the existing theme,
-`TextInput`, provider icons, hover treatment, and chrome divider tokens.
+`TextInput`, provider icons, and hover treatment. Give the Tasks container a one-pixel green top
+border using the exact same fill helper as the full-width section button outline.
 
 ### Persistence
 
@@ -100,8 +108,8 @@ flight; authoritative snapshots always replace optimistic assumptions.
 
 - Task model and Workspace tests cover trimming, empty/oversized rejection, insertion order,
   removal, and stable UUID identity. Existing section tests cover creation, collapse, ordering,
-  pinning, and persistence; a dedicated test verifies that removing a section preserves its
-  sessions (PRODUCT 1–17).
+  pinning, persisted color, and persistence; focused coverage verifies color changes and that
+  removing a section preserves its sessions (PRODUCT 1–17).
 - A SQLite round-trip test covers task UUID/text/order and collapsed state across save/restore;
   migration defaults cover legacy rows (PRODUCT 9, 16).
 - Companion protocol tests cover all task message variants, validation, and schema generation.

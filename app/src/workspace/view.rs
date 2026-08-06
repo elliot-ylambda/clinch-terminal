@@ -457,6 +457,7 @@ use crate::tips::{TipsEvent, TipsView};
 use crate::ui_components::agent_icon::terminal_view_agent_icon_variant;
 use crate::ui_components::avatar::{Avatar, AvatarContent, StatusElementTypes};
 use crate::ui_components::buttons::{combo_inner_button, icon_button_with_color};
+use crate::ui_components::color_dot::{render_color_dot, TAB_COLOR_OPTIONS};
 use crate::ui_components::icon_with_status::IconWithStatusVariant;
 use crate::ui_components::red_notification_dot::RedNotificationDot;
 use crate::ui_components::window_focus_dimming::WindowFocusDimming;
@@ -7689,6 +7690,26 @@ impl Workspace {
         }
     }
 
+    /// Applies a light color tint to a section. `Unset` restores the default,
+    /// untinted section appearance.
+    pub fn set_tab_group_color(
+        &mut self,
+        group_id: TabGroupId,
+        color: SelectedTabColor,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let Some(group) = self.tab_groups.get_mut(&group_id) else {
+            return;
+        };
+        if group.color == color {
+            return;
+        }
+
+        group.color = color;
+        ctx.dispatch_global_action("workspace:save_app", ());
+        ctx.notify();
+    }
+
     /// Ensures the group is expanded (not collapsed). No-op if the group does
     /// not exist or is already expanded.
     fn expand_tab_group(&mut self, group_id: TabGroupId, ctx: &mut ViewContext<Self>) {
@@ -10690,6 +10711,82 @@ impl Workspace {
             vec![]
         };
 
+        let current_color = self
+            .tab_groups
+            .get(&group_id)
+            .and_then(|group| group.color.resolve(None));
+        let color_mouse_states: Vec<MouseStateHandle> = (0..TAB_COLOR_OPTIONS.len() + 1)
+            .map(|_| MouseStateHandle::default())
+            .collect();
+        let color_section = vec![MenuItem::Item(
+            MenuItemFields::new_with_custom_label(
+                Arc::new(move |_is_selected, _is_hovered, appearance, _app| {
+                    let theme = appearance.theme();
+                    let ring_color: ColorU = theme.accent().into();
+                    let mut colors = Flex::row()
+                        .with_main_axis_alignment(MainAxisAlignment::SpaceEvenly)
+                        .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                        .with_main_axis_size(MainAxisSize::Max);
+
+                    for (ansi_id, mouse_state) in std::iter::once(None)
+                        .chain(TAB_COLOR_OPTIONS.iter().copied().map(Some))
+                        .zip(color_mouse_states.iter().cloned())
+                    {
+                        let is_selected = ansi_id == current_color;
+                        let dot_color: ColorU = ansi_id
+                            .map(|id| id.to_ansi_color(&theme.terminal_colors().normal).into())
+                            .unwrap_or_else(ColorU::transparent_black);
+                        let tooltip = ansi_id
+                            .map(|id| id.to_string())
+                            .unwrap_or_else(|| "No section color".to_string());
+                        let selected_color = ansi_id
+                            .map(SelectedTabColor::Color)
+                            .unwrap_or(SelectedTabColor::Unset);
+
+                        colors.add_child(
+                            render_color_dot(
+                                mouse_state,
+                                dot_color,
+                                is_selected,
+                                ring_color,
+                                ansi_id.is_none(),
+                                theme.foreground(),
+                                tooltip,
+                                appearance,
+                            )
+                            .on_click(move |ctx, _, _| {
+                                ctx.dispatch_typed_action(WorkspaceAction::SetTabGroupColor {
+                                    group_id,
+                                    color: selected_color,
+                                });
+                                ctx.dispatch_typed_action(crate::menu::MenuAction::Close(true));
+                            })
+                            .finish(),
+                        );
+                    }
+
+                    Flex::column()
+                        .with_main_axis_size(MainAxisSize::Min)
+                        .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+                        .with_spacing(8.)
+                        .with_child(
+                            Text::new_inline(
+                                "Section color",
+                                appearance.ui_font_family(),
+                                appearance.ui_font_size(),
+                            )
+                            .with_color(theme.sub_text_color(theme.surface_2()).into())
+                            .finish(),
+                        )
+                        .with_child(colors.finish())
+                        .finish()
+                }),
+                None,
+            )
+            .no_highlight_on_hover()
+            .with_no_interaction_on_hover(),
+        )];
+
         let mut menu_items = vec![];
         for section_items in [
             pin_section,
@@ -10702,6 +10799,7 @@ impl Workspace {
                     .into_item(),
             ],
             move_section,
+            color_section,
             vec![MenuItemFields::new("Rename section")
                 .with_on_select_action(WorkspaceAction::RenameTabGroup(group_id))
                 .into_item()],
@@ -25343,6 +25441,10 @@ impl TypedActionView for Workspace {
             CloseTabGroup(group_id) => self.close_tab_group(*group_id, ctx),
             ToggleTabGroupCollapsed(group_id) => self.toggle_tab_group_collapsed(*group_id, ctx),
             RenameTabGroup(group_id) => self.rename_tab_group(*group_id, ctx),
+            CreateNewTabGroup => self.create_new_tab_group(ctx),
+            SetTabGroupColor { group_id, color } => {
+                self.set_tab_group_color(*group_id, *color, ctx)
+            }
             NewTabGroupFromTab(tab_index) => self.new_tab_group_from_tab(*tab_index, ctx),
             MoveTabToGroup {
                 tab_index,

@@ -193,6 +193,13 @@ pub enum WorkspaceAction {
     ToggleTabGroupCollapsed(TabGroupId),
     /// Opens an inline editor over the given group's header for renaming.
     RenameTabGroup(TabGroupId),
+    /// Creates a new tab group containing a fresh session and opens its name editor.
+    CreateNewTabGroup,
+    /// Sets the light color tint for a tab group, or clears it with `Unset`.
+    SetTabGroupColor {
+        group_id: TabGroupId,
+        color: SelectedTabColor,
+    },
     /// Creates a new tab group containing the tab at the given index.
     NewTabGroupFromTab(usize),
     /// Moves the tab at `tab_index` into `group_id`, appending it to the
@@ -954,6 +961,8 @@ impl WorkspaceAction {
             | CloseTabGroup(_)
             | ToggleTabGroupCollapsed(_)
             | RenameTabGroup(_)
+            | CreateNewTabGroup
+            | SetTabGroupColor { .. }
             | NewTabGroupFromTab(_)
             | MoveTabToGroup { .. }
             | RemoveTabFromGroup(_)

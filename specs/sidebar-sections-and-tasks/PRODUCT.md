@@ -28,17 +28,20 @@ visual language for this MVP.
 1. The vertical sessions panel supports named sections within each project. A section belongs only
    to the project in which it was created.
 
-2. People can create a section from the new-session menu, from an existing session, or from a
-   multi-selection of sessions. Creating a section from the new-session menu also creates its first
-   session. A section is removed automatically when its last session leaves.
+2. A full-width **Create new section** button appears at the top of the vertical sessions panel.
+   Activating it creates a normal new session as the first member of a new section and immediately
+   enters section naming. People can also create a section from the new-session menu, from an
+   existing session, or from a multi-selection of sessions. A section is removed automatically
+   when its last session leaves.
 
 3. A newly created section immediately enters inline naming. Section names must contain at least
    one non-whitespace character; canceling or submitting an empty name keeps the prior/default
    name.
 
 4. Section cards display a clear outline, the section name, the number of contained sessions, and
-   an expand/collapse affordance. Collapsing a section hides its session rows without closing or
-   suspending them.
+   an expand/collapse affordance. Their overflow menu offers six distinct color choices plus an
+   uncolored default; a selected color appears as a light card tint and colored outline rather than
+   a saturated fill. Collapsing a section hides its session rows without closing or suspending them.
 
 5. People can drag sessions to reorder them within a section, drag them into another section, or
    drag them into the unsectioned area. A collapsed section header accepts a dropped session.
@@ -51,13 +54,15 @@ visual language for this MVP.
 8. Existing session behavior is unchanged for people who do not create sections. Search, active
    session highlighting, pinned items, closing sessions, and project switching continue to work.
 
-9. Section names, membership, order, and collapsed state survive quitting and restarting Clinch.
+9. Section names, membership, order, collapsed state, and selected color survive quitting and
+   restarting Clinch.
 
 ### Tasks
 
 10. An expanded **Tasks** area appears below the session list for the current project. It has a
-    clear divider, an open-task count, a collapse affordance, and an **Add a task...** single-line
-    input.
+   clear green top divider matching the thickness, brightness, and opacity of the **Create new
+   section** button outline, an open-task count, a collapse affordance, and an **Add a task...**
+   single-line input.
 
 11. Entering non-whitespace text and pressing Enter adds one task to the end of the current
     project's list, clears the input, and saves the workspace. Empty input does nothing.
