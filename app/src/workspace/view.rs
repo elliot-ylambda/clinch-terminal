@@ -6387,13 +6387,14 @@ impl Workspace {
                 target,
                 label,
                 text,
+                auto_send,
             } => {
                 match target {
                     QuickInsertModalTarget::CLIAgent => {
-                        append_cli_custom_button(label.clone(), text.clone(), ctx)
+                        append_cli_custom_button(label.clone(), text.clone(), *auto_send, ctx)
                     }
                     QuickInsertModalTarget::Terminal => {
-                        append_terminal_custom_button(label.clone(), text.clone(), ctx)
+                        append_terminal_custom_button(label.clone(), text.clone(), *auto_send, ctx)
                     }
                 }
                 self.current_workspace_state.is_quick_insert_modal_open = false;

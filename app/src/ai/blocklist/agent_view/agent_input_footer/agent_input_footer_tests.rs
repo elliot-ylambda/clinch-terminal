@@ -4,9 +4,10 @@ use std::rc::Rc;
 use warpui::{App, SingletonEntity, TypedActionView as _};
 
 use super::*;
+use crate::ai::blocklist::{InputConfig, InputType};
 use crate::terminal::cli_agent_sessions::{
-    CLIAgentInputState, CLIAgentSession, CLIAgentSessionContext, CLIAgentSessionStatus,
-    CLIAgentSessionsModel,
+    CLIAgentInputEntrypoint, CLIAgentInputState, CLIAgentSession, CLIAgentSessionContext,
+    CLIAgentSessionStatus, CLIAgentSessionsModel,
 };
 use crate::terminal::CLIAgent;
 use crate::test_util::add_window_with_terminal;
@@ -16,6 +17,7 @@ use crate::test_util::terminal::initialize_app_for_terminal_view;
 enum ObservedEvent {
     WriteToPty(String),
     SubmitTextToCliAgent(String),
+    InsertIntoCLIRichInput(String),
 }
 
 #[test]
@@ -37,19 +39,40 @@ fn custom_insert_writes_command_in_terminal_and_submits_text_to_cli_agent() {
                 AgentInputFooterEvent::SubmitTextToCliAgent(text) => observed_for_subscription
                     .borrow_mut()
                     .push(ObservedEvent::SubmitTextToCliAgent(text.clone())),
+                AgentInputFooterEvent::InsertIntoCLIRichInput(text) => observed_for_subscription
+                    .borrow_mut()
+                    .push(ObservedEvent::InsertIntoCLIRichInput(text.clone())),
                 _ => {}
             });
         });
 
         footer.update(&mut app, |footer, ctx| {
             footer.handle_action(
-                &AgentInputFooterAction::InsertCustomText("git status".to_owned()),
+                &AgentInputFooterAction::InsertCustomText {
+                    text: "git status".to_owned(),
+                    auto_send: true,
+                },
                 ctx,
             );
         });
         assert_eq!(
             *observed.borrow(),
             vec![ObservedEvent::WriteToPty("git status\n".to_owned())]
+        );
+
+        observed.borrow_mut().clear();
+        footer.update(&mut app, |footer, ctx| {
+            footer.handle_action(
+                &AgentInputFooterAction::InsertCustomText {
+                    text: "git status".to_owned(),
+                    auto_send: false,
+                },
+                ctx,
+            );
+        });
+        assert_eq!(
+            *observed.borrow(),
+            vec![ObservedEvent::WriteToPty("git status".to_owned())]
         );
 
         observed.borrow_mut().clear();
@@ -80,7 +103,10 @@ fn custom_insert_writes_command_in_terminal_and_submits_text_to_cli_agent() {
 
         footer.update(&mut app, |footer, ctx| {
             footer.handle_action(
-                &AgentInputFooterAction::InsertCustomText("review this".to_owned()),
+                &AgentInputFooterAction::InsertCustomText {
+                    text: "review this".to_owned(),
+                    auto_send: true,
+                },
                 ctx,
             );
         });
@@ -88,6 +114,51 @@ fn custom_insert_writes_command_in_terminal_and_submits_text_to_cli_agent() {
             *observed.borrow(),
             vec![ObservedEvent::SubmitTextToCliAgent(
                 "review this".to_owned()
+            )]
+        );
+
+        observed.borrow_mut().clear();
+        footer.update(&mut app, |footer, ctx| {
+            footer.handle_action(
+                &AgentInputFooterAction::InsertCustomText {
+                    text: "review this".to_owned(),
+                    auto_send: false,
+                },
+                ctx,
+            );
+        });
+        assert_eq!(
+            *observed.borrow(),
+            vec![ObservedEvent::WriteToPty("review this".to_owned())]
+        );
+
+        observed.borrow_mut().clear();
+        CLIAgentSessionsModel::handle(&app).update(&mut app, |sessions, ctx| {
+            sessions.open_input(
+                terminal.id(),
+                CLIAgentInputEntrypoint::CtrlG,
+                InputConfig {
+                    input_type: InputType::Shell,
+                    is_locked: false,
+                },
+                false,
+                false,
+                ctx,
+            );
+        });
+        footer.update(&mut app, |footer, ctx| {
+            footer.handle_action(
+                &AgentInputFooterAction::InsertCustomText {
+                    text: "review in rich input".to_owned(),
+                    auto_send: false,
+                },
+                ctx,
+            );
+        });
+        assert_eq!(
+            *observed.borrow(),
+            vec![ObservedEvent::InsertIntoCLIRichInput(
+                "review in rich input".to_owned()
             )]
         );
     });

@@ -1,6 +1,6 @@
 //! "Create quick-insert button" modal for the CLI-agent and terminal footers.
 //!
-//! Lets the user save a piece of text as a footer button that inserts-and-sends
+//! Lets the user save a piece of text as a footer button that pre-fills or submits
 //! it to the active CLI agent. The modal has two single-line editors (the text to
 //! insert and an auto-derived, editable label) plus a scrollable pick list of the
 //! user's discovered slash commands and skills (home + project scope). Picking a
@@ -81,6 +81,7 @@ fn derive_label(text: &str) -> String {
 pub enum QuickInsertModalAction {
     Save,
     Cancel,
+    ToggleAutoSend,
     /// A pick-list row was clicked; pre-fill the text field with this default.
     SetText(String),
 }
@@ -97,6 +98,7 @@ pub enum QuickInsertModalEvent {
         target: QuickInsertModalTarget,
         label: String,
         text: String,
+        auto_send: bool,
     },
     Cancel,
 }
@@ -109,6 +111,8 @@ pub struct QuickInsertModal {
     /// user overrides the label, they diverge and auto-fill stops.
     last_auto_label: String,
     target: QuickInsertModalTarget,
+    is_editing: bool,
+    auto_send: bool,
     /// Active working directory, used to scope command + skill discovery.
     cwd: Option<PathBuf>,
     commands: Vec<DiscoveredCommand>,
@@ -119,13 +123,14 @@ pub struct QuickInsertModal {
     row_states: RefCell<HashMap<String, MouseStateHandle>>,
     scroll_state: ClippedScrollStateHandle,
     close_mouse_state: MouseStateHandle,
+    auto_send_mouse_state: MouseStateHandle,
     cancel_button: button::Button,
     save_button: button::Button,
 }
 
 impl QuickInsertModal {
     pub fn new(ctx: &mut ViewContext<Self>) -> Self {
-        let text_input = Self::make_editor("Text to insert and send", ctx);
+        let text_input = Self::make_editor("Text to insert", ctx);
         let label_input = Self::make_editor("Button label", ctx);
 
         // As the insert text changes, keep the label in sync until the user
@@ -141,12 +146,15 @@ impl QuickInsertModal {
             label_input,
             last_auto_label: String::new(),
             target: QuickInsertModalTarget::CLIAgent,
+            is_editing: false,
+            auto_send: true,
             cwd: None,
             commands: Vec::new(),
             skills: Vec::new(),
             row_states: RefCell::new(HashMap::new()),
             scroll_state: ClippedScrollStateHandle::default(),
             close_mouse_state: MouseStateHandle::default(),
+            auto_send_mouse_state: MouseStateHandle::default(),
             cancel_button: button::Button::default(),
             save_button: button::Button::default(),
         }
@@ -185,16 +193,60 @@ impl QuickInsertModal {
         let skills = SkillManager::as_ref(ctx).get_skills_for_working_directory(Some(&lor), ctx);
 
         self.cwd = Some(cwd);
-        self.target = target;
         self.commands = commands;
         self.skills = skills;
-        self.last_auto_label = String::new();
-        self.row_states.borrow_mut().clear();
+        self.seed(target, "", "", true, false, ctx);
+    }
 
+    /// Opens a blank creator from settings, where there is no active pane directory to use for
+    /// command and skill discovery.
+    pub fn open_without_discovery(
+        &mut self,
+        target: QuickInsertModalTarget,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        self.cwd = None;
+        self.commands.clear();
+        self.skills.clear();
+        self.seed(target, "", "", true, false, ctx);
+    }
+
+    pub fn open_for_edit(
+        &mut self,
+        target: QuickInsertModalTarget,
+        label: &str,
+        text: &str,
+        auto_send: bool,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        self.cwd = None;
+        self.commands.clear();
+        self.skills.clear();
+        self.seed(target, label, text, auto_send, true, ctx);
+    }
+
+    fn seed(
+        &mut self,
+        target: QuickInsertModalTarget,
+        label: &str,
+        text: &str,
+        auto_send: bool,
+        is_editing: bool,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        self.target = target;
+        self.is_editing = is_editing;
+        self.auto_send = auto_send;
+        self.last_auto_label = if label == derive_label(text) {
+            label.to_owned()
+        } else {
+            String::new()
+        };
+        self.row_states.borrow_mut().clear();
         self.text_input
-            .update(ctx, |editor, ctx| editor.set_buffer_text("", ctx));
+            .update(ctx, |editor, ctx| editor.set_buffer_text(text, ctx));
         self.label_input
-            .update(ctx, |editor, ctx| editor.set_buffer_text("", ctx));
+            .update(ctx, |editor, ctx| editor.set_buffer_text(label, ctx));
         ctx.notify();
     }
 
@@ -239,6 +291,7 @@ impl QuickInsertModal {
             target: self.target,
             label,
             text: text.to_string(),
+            auto_send: self.auto_send,
         });
     }
 
@@ -473,7 +526,11 @@ impl View for QuickInsertModal {
         let ui_builder = appearance.ui_builder();
 
         let title = FormattedTextElement::from_str(
-            "Create quick-insert button",
+            if self.is_editing {
+                "Edit quick-insert button"
+            } else {
+                "Create quick-insert button"
+            },
             appearance.ui_font_family(),
             16.,
         )
@@ -498,8 +555,14 @@ impl View for QuickInsertModal {
             .with_child(close_button)
             .finish();
 
+        let target_name = match self.target {
+            QuickInsertModalTarget::CLIAgent => "active CLI agent",
+            QuickInsertModalTarget::Terminal => "active terminal",
+        };
         let subtitle = FormattedTextElement::from_str(
-            "The button inserts and sends this text to the active CLI agent. Pick a command or skill below to pre-fill it.",
+            format!(
+                "Choose the text this button inserts into the {target_name}. Auto send submits it immediately; when off, the button only pre-fills the input."
+            ),
             appearance.ui_font_family(),
             14.,
         )
@@ -509,7 +572,30 @@ impl View for QuickInsertModal {
         .with_line_height_ratio(1.2)
         .finish();
 
-        let body = Flex::column()
+        let auto_send_checkbox = ui_builder
+            .checkbox(self.auto_send_mouse_state.clone(), None)
+            .check(self.auto_send)
+            .build()
+            .on_click(|ctx, _, _| {
+                ctx.dispatch_typed_action(QuickInsertModalAction::ToggleAutoSend);
+            })
+            .finish();
+        let auto_send_row = Flex::row()
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_child(auto_send_checkbox)
+            .with_child(
+                Container::new(
+                    FormattedTextElement::from_str("Auto send", appearance.ui_font_family(), 13.)
+                        .with_color(internal_colors::text_main(theme, dialog_surface_solid))
+                        .with_alignment(TextAlignment::Left)
+                        .finish(),
+                )
+                .with_margin_left(8.)
+                .finish(),
+            )
+            .finish();
+
+        let mut body = Flex::column()
             .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
             .with_child(Container::new(subtitle).with_margin_bottom(16.).finish())
             .with_child(self.render_field(appearance, "Text to insert", self.text_input.clone()))
@@ -522,12 +608,15 @@ impl View for QuickInsertModal {
                 .with_margin_top(16.)
                 .finish(),
             )
-            .with_child(
+            .with_child(Container::new(auto_send_row).with_margin_top(16.).finish());
+        if self.cwd.is_some() {
+            body.add_child(
                 Container::new(self.render_pick_list(appearance))
                     .with_margin_top(16.)
                     .finish(),
-            )
-            .finish();
+            );
+        }
+        let body = body.finish();
 
         let cancel_button = self.cancel_button.render(
             appearance,
@@ -546,7 +635,14 @@ impl View for QuickInsertModal {
         let save_button = self.save_button.render(
             appearance,
             button::Params {
-                content: button::Content::Label("Add button".into()),
+                content: button::Content::Label(
+                    if self.is_editing {
+                        "Save changes"
+                    } else {
+                        "Add button"
+                    }
+                    .into(),
+                ),
                 theme: &button::themes::Primary,
                 options: button::Options {
                     on_click: Some(Box::new(|ctx, _app, _pos| {
@@ -626,6 +722,10 @@ impl TypedActionView for QuickInsertModal {
             }
             QuickInsertModalAction::Cancel => {
                 ctx.emit(QuickInsertModalEvent::Cancel);
+            }
+            QuickInsertModalAction::ToggleAutoSend => {
+                self.auto_send = !self.auto_send;
+                ctx.notify();
             }
             QuickInsertModalAction::SetText(text) => {
                 self.text_input

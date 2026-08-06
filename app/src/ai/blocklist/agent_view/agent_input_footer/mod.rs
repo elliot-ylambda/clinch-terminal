@@ -232,6 +232,8 @@ pub struct AgentInputFooter {
     /// Always-present footer control that opens the "Create quick-insert
     /// button" modal (gated behind `CliAgentQuickInsertButtons`).
     quick_insert_add_button: ViewHandle<ActionButton>,
+    /// Opens the quick-insert management section in Clinch Settings.
+    quick_insert_edit_button: ViewHandle<ActionButton>,
     rich_input_button: ViewHandle<ActionButton>,
     settings_button: ViewHandle<ActionButton>,
     install_plugin_button: ViewHandle<ActionButton>,
@@ -240,7 +242,7 @@ pub struct AgentInputFooter {
     update_instructions_button: ViewHandle<ActionButton>,
     dismiss_plugin_chip_button: ViewHandle<ActionButton>,
     /// Hover/click state for user-defined `CustomInsert` buttons, keyed by
-    /// (label, text) so the same handle persists across renders as long as
+    /// (label, text, auto-send) so the same handle persists across renders as long as
     /// the button's content is unchanged. `CustomInsert` can't be a
     /// pre-built singleton (its label/text vary per item), so its
     /// `ActionButton` is built fresh in `render_cli_toolbar_item`; a `RefCell`
@@ -248,7 +250,7 @@ pub struct AgentInputFooter {
     /// WARP.md's `MouseStateHandle` guidance: a transient
     /// `MouseStateHandle::default()` recreated on every render would
     /// silently break clicks.
-    custom_insert_mouse_states: RefCell<HashMap<(String, String), MouseStateHandle>>,
+    custom_insert_mouse_states: RefCell<HashMap<(String, String, bool), MouseStateHandle>>,
     /// Hover/click state for the dynamically labelled Claude Code ↔ Codex
     /// conversation-transfer button.
     transfer_agent_mouse_state: MouseStateHandle,
@@ -477,6 +479,16 @@ impl AgentInputFooter {
                 .with_tooltip_alignment(TooltipAlignment::Left)
                 .on_click(|ctx| {
                     ctx.dispatch_typed_action(AgentInputFooterAction::OpenQuickInsertModal);
+                })
+        });
+        let quick_insert_edit_button = ctx.add_typed_action_view(|_ctx| {
+            ActionButton::new("", AgentInputButtonTheme)
+                .with_icon(Icon::Pencil)
+                .with_tooltip("Edit quick-insert buttons in Clinch Settings")
+                .with_size(cli_button_size)
+                .with_tooltip_alignment(TooltipAlignment::Left)
+                .on_click(|ctx| {
+                    ctx.dispatch_typed_action(AgentInputFooterAction::OpenQuickInsertSettings);
                 })
         });
         let rich_input_button = ctx.add_typed_action_view(|ctx| {
@@ -927,6 +939,7 @@ impl AgentInputFooter {
             continue_button,
             looks_good_button,
             quick_insert_add_button,
+            quick_insert_edit_button,
             rich_input_button,
             settings_button,
             start_remote_control_button,
@@ -1514,24 +1527,37 @@ impl AgentInputFooter {
         &self,
         label: &str,
         text: &str,
-        tooltip_verb: &str,
+        auto_send: bool,
+        auto_send_verb: &str,
         app: &AppContext,
     ) -> Box<dyn Element> {
         let mouse_state = self
             .custom_insert_mouse_states
             .borrow_mut()
-            .entry((label.to_owned(), text.to_owned()))
+            .entry((label.to_owned(), text.to_owned(), auto_send))
             .or_default()
             .clone();
         let text = text.to_owned();
+        let tooltip_verb = if auto_send {
+            auto_send_verb
+        } else {
+            "Pre-fill"
+        };
         ActionButton::new(label.to_owned(), QuickInsertButtonTheme)
-            .with_icon(Icon::Play)
+            .with_icon(if auto_send {
+                Icon::Play
+            } else {
+                Icon::TextInput
+            })
             .with_size(ButtonSize::AgentInputButtonLarge)
             .with_tooltip(format!("{tooltip_verb}: {text}"))
             .with_tooltip_alignment(TooltipAlignment::Left)
             .with_mouse_state_handle(mouse_state)
             .on_click(move |ctx| {
-                ctx.dispatch_typed_action(AgentInputFooterAction::InsertCustomText(text.clone()));
+                ctx.dispatch_typed_action(AgentInputFooterAction::InsertCustomText {
+                    text: text.clone(),
+                    auto_send,
+                });
             })
             .render(app)
     }
@@ -1548,9 +1574,11 @@ impl AgentInputFooter {
         }
 
         match item {
-            AgentToolbarItemKind::CustomInsert { label, text } => {
-                Some(self.render_custom_insert_button(label, text, "Run", app))
-            }
+            AgentToolbarItemKind::CustomInsert {
+                label,
+                text,
+                auto_send,
+            } => Some(self.render_custom_insert_button(label, text, *auto_send, "Run", app)),
             _ => None,
         }
     }
@@ -1632,11 +1660,15 @@ impl AgentInputFooter {
                         .render(app),
                 )
             }
-            AgentToolbarItemKind::CustomInsert { label, text } => {
+            AgentToolbarItemKind::CustomInsert {
+                label,
+                text,
+                auto_send,
+            } => {
                 if !FeatureFlag::CliAgentQuickInsertButtons.is_enabled() {
                     return None;
                 }
-                Some(self.render_custom_insert_button(label, text, "Insert", app))
+                Some(self.render_custom_insert_button(label, text, *auto_send, "Send", app))
             }
             AgentToolbarItemKind::RichInput => FeatureFlag::CLIAgentRichInput
                 .is_enabled()
@@ -1831,6 +1863,7 @@ impl AgentInputFooter {
         // Keep the quick-insert creator as the first actionable footer control.
         if FeatureFlag::CliAgentQuickInsertButtons.is_enabled() && self.cli_agent(app).is_some() {
             left_buttons.add_child(ChildView::new(&self.quick_insert_add_button).finish());
+            left_buttons.add_child(ChildView::new(&self.quick_insert_edit_button).finish());
         }
 
         if let Some(chip_kind) = self.plugin_chip_kind(app) {
@@ -1932,6 +1965,7 @@ impl AgentInputFooter {
 
         if FeatureFlag::CliAgentQuickInsertButtons.is_enabled() {
             left_buttons.add_child(ChildView::new(&self.quick_insert_add_button).finish());
+            left_buttons.add_child(ChildView::new(&self.quick_insert_edit_button).finish());
         }
 
         for item in &left_items {
@@ -2795,10 +2829,15 @@ pub enum AgentInputFooterAction {
     ToggleVoiceInput,
     SelectFile,
     InsertFilePath(String),
-    /// Insert-and-send a user-defined `CustomInsert` button's saved text.
-    InsertCustomText(String),
+    /// Activate a configurable quick insert, either pre-filling or immediately submitting it.
+    InsertCustomText {
+        text: String,
+        auto_send: bool,
+    },
     /// Open the "Create quick-insert button" modal (footer "+ Add" button).
     OpenQuickInsertModal,
+    /// Open the quick-insert management section in Clinch Settings.
+    OpenQuickInsertSettings,
     ToggleCodeReview,
     ToggleFileExplorer,
     Compact,
@@ -2876,15 +2915,28 @@ impl TypedActionView for AgentInputFooter {
                     ctx.emit(AgentInputFooterEvent::WriteToPty(path_with_space));
                 }
             }
-            AgentInputFooterAction::InsertCustomText(text) => {
-                if self.cli_agent(ctx).is_some() {
-                    ctx.emit(AgentInputFooterEvent::SubmitTextToCliAgent(text.clone()));
+            AgentInputFooterAction::InsertCustomText { text, auto_send } => {
+                if *auto_send {
+                    if self.cli_agent(ctx).is_some() {
+                        ctx.emit(AgentInputFooterEvent::SubmitTextToCliAgent(text.clone()));
+                    } else {
+                        ctx.emit(AgentInputFooterEvent::WriteToPty(format!("{text}\n")));
+                    }
+                } else if self.has_active_cli_agent_input_session(ctx) {
+                    ctx.emit(AgentInputFooterEvent::InsertIntoCLIRichInput(text.clone()));
                 } else {
-                    ctx.emit(AgentInputFooterEvent::WriteToPty(format!("{text}\n")));
+                    ctx.emit(AgentInputFooterEvent::WriteToPty(text.clone()));
                 }
             }
             AgentInputFooterAction::OpenQuickInsertModal => {
                 ctx.emit(AgentInputFooterEvent::OpenQuickInsertModal);
+            }
+            AgentInputFooterAction::OpenQuickInsertSettings => {
+                #[cfg(not(target_family = "wasm"))]
+                ctx.dispatch_typed_action_deferred(WorkspaceAction::ScrollToSettingsWidget {
+                    page: SettingsSection::Clinch,
+                    widget_id: crate::settings_view::quick_inserts_widget_id(),
+                });
             }
             AgentInputFooterAction::ToggleCodeReview => {
                 if let Some(agent) = self.cli_agent(ctx) {

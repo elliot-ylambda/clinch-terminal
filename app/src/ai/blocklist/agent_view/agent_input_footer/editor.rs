@@ -11,7 +11,7 @@ use super::toolbar_item::AgentToolbarItemKind;
 use crate::chip_configurator::{
     render_chip_editor_modal, render_chip_editor_sections, ChipConfigurator,
     ChipConfiguratorAction, ChipConfiguratorLayout, ChipEditorModalConfig, ChipEditorMouseHandles,
-    ChipEditorSectionsConfig,
+    ChipEditorSectionsConfig, ChipLocation,
 };
 use crate::terminal::session_settings::{
     AgentToolbarChipSelection, CLIAgentToolbarChipSelection, SessionSettings,
@@ -46,6 +46,14 @@ pub struct AgentToolbarInlineEditor {
     mouse_handles: ChipEditorMouseHandles,
     chip_configurator: ChipConfigurator,
     mode: AgentToolbarEditorMode,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EditableQuickInsert {
+    pub location: ChipLocation,
+    pub label: String,
+    pub text: String,
+    pub auto_send: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -116,7 +124,10 @@ fn open_toolbar_items_from_settings<V: View>(
     let filter_unavailable = |items: Vec<AgentToolbarItemKind>| -> Vec<AgentToolbarItemKind> {
         items
             .into_iter()
-            .filter(|item| available.contains(item))
+            .filter(|item| {
+                matches!(item, AgentToolbarItemKind::CustomInsert { .. })
+                    || available.contains(item)
+            })
             .collect()
     };
     let current_left = filter_unavailable(current_left);
@@ -213,6 +224,77 @@ impl AgentToolbarInlineEditor {
     fn is_at_defaults(&self) -> bool {
         is_toolbar_editor_at_defaults(self.mode, &self.chip_configurator)
     }
+
+    pub fn quick_inserts(&self) -> Vec<EditableQuickInsert> {
+        self.chip_configurator
+            .left_item_kinds()
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, item)| match item {
+                AgentToolbarItemKind::CustomInsert {
+                    label,
+                    text,
+                    auto_send,
+                } => Some(EditableQuickInsert {
+                    location: ChipLocation::Left { index },
+                    label,
+                    text,
+                    auto_send,
+                }),
+                _ => None,
+            })
+            .chain(
+                self.chip_configurator
+                    .right_item_kinds()
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(|(index, item)| match item {
+                        AgentToolbarItemKind::CustomInsert {
+                            label,
+                            text,
+                            auto_send,
+                        } => Some(EditableQuickInsert {
+                            location: ChipLocation::Right { index },
+                            label,
+                            text,
+                            auto_send,
+                        }),
+                        _ => None,
+                    }),
+            )
+            .collect()
+    }
+
+    pub fn replace_quick_insert(
+        &mut self,
+        location: ChipLocation,
+        label: String,
+        text: String,
+        auto_send: bool,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        if !matches!(
+            self.chip_configurator.item_kind_at(location),
+            Some(AgentToolbarItemKind::CustomInsert { .. })
+        ) {
+            return false;
+        }
+        let replacement = AgentToolbarItemKind::CustomInsert {
+            label,
+            text,
+            auto_send,
+        };
+        if !self.chip_configurator.replace_item_kind_at(
+            location,
+            replacement,
+            Appearance::as_ref(ctx),
+        ) {
+            return false;
+        }
+        self.save_current_selection(ctx);
+        ctx.notify();
+        true
+    }
 }
 
 impl Entity for AgentToolbarInlineEditor {
@@ -285,10 +367,15 @@ pub fn next_selection_with_custom_button(
     current: CLIAgentToolbarChipSelection,
     label: String,
     text: String,
+    auto_send: bool,
 ) -> CLIAgentToolbarChipSelection {
     let mut left = current.left_items();
     let right = current.right_items();
-    left.push(AgentToolbarItemKind::CustomInsert { label, text });
+    left.push(AgentToolbarItemKind::CustomInsert {
+        label,
+        text,
+        auto_send,
+    });
     CLIAgentToolbarChipSelection::custom_from_effective_items(left, right)
 }
 
@@ -296,11 +383,16 @@ pub fn next_selection_with_custom_button(
 /// toolbar selection: reads the current `cli_agent_footer_chip_selection`
 /// setting, computes the next selection via `next_selection_with_custom_button`,
 /// and writes it back via the same `set_value` path `save_toolbar_selection` uses.
-pub fn append_cli_custom_button<V: View>(label: String, text: String, ctx: &mut ViewContext<V>) {
+pub fn append_cli_custom_button<V: View>(
+    label: String,
+    text: String,
+    auto_send: bool,
+    ctx: &mut ViewContext<V>,
+) {
     let current = SessionSettings::as_ref(ctx)
         .cli_agent_footer_chip_selection
         .clone();
-    let next = next_selection_with_custom_button(current, label, text);
+    let next = next_selection_with_custom_button(current, label, text, auto_send);
     SessionSettings::handle(ctx).update(ctx, |settings, ctx| {
         report_if_error!(settings
             .cli_agent_footer_chip_selection
@@ -312,22 +404,28 @@ pub fn next_terminal_selection_with_custom_button(
     current: TerminalToolbarChipSelection,
     label: String,
     text: String,
+    auto_send: bool,
 ) -> TerminalToolbarChipSelection {
     let mut left = current.left_items();
     let right = current.right_items();
-    left.push(AgentToolbarItemKind::CustomInsert { label, text });
+    left.push(AgentToolbarItemKind::CustomInsert {
+        label,
+        text,
+        auto_send,
+    });
     TerminalToolbarChipSelection::custom_from_effective_items(left, right)
 }
 
 pub fn append_terminal_custom_button<V: View>(
     label: String,
     text: String,
+    auto_send: bool,
     ctx: &mut ViewContext<V>,
 ) {
     let current = SessionSettings::as_ref(ctx)
         .terminal_footer_chip_selection
         .clone();
-    let next = next_terminal_selection_with_custom_button(current, label, text);
+    let next = next_terminal_selection_with_custom_button(current, label, text, auto_send);
     SessionSettings::handle(ctx).update(ctx, |settings, ctx| {
         report_if_error!(settings.terminal_footer_chip_selection.set_value(next, ctx));
     });

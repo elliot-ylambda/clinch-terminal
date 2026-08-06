@@ -428,9 +428,11 @@ impl ChipConfigurator {
         self.unused_chips = available
             .into_iter()
             .filter_map(|kind| {
-                (!used_set.contains(&kind))
-                    .then(|| ConfigurableItem::from_toolbar_item(kind, appearance))
-                    .flatten()
+                (!used_set
+                    .iter()
+                    .any(|used| used.has_same_toolbar_identity(&kind)))
+                .then(|| ConfigurableItem::from_toolbar_item(kind, appearance))
+                .flatten()
             })
             .collect();
     }
@@ -455,6 +457,30 @@ impl ChipConfigurator {
             .iter()
             .filter_map(|r| r.item_kind())
             .collect()
+    }
+
+    pub fn item_kind_at(&self, location: ChipLocation) -> Option<AgentToolbarItemKind> {
+        self.chips_for_location(location)
+            .get(location.index())
+            .and_then(ConfigurableItem::item_kind)
+    }
+
+    pub fn replace_item_kind_at(
+        &mut self,
+        location: ChipLocation,
+        item: AgentToolbarItemKind,
+        appearance: &Appearance,
+    ) -> bool {
+        let index = location.index();
+        let Some(replacement) = ConfigurableItem::from_toolbar_item(item, appearance) else {
+            return false;
+        };
+        let items = self.chips_for_location_mut(location);
+        let Some(current) = items.get_mut(index) else {
+            return false;
+        };
+        *current = replacement;
+        true
     }
 
     pub fn handle_action<V: View>(

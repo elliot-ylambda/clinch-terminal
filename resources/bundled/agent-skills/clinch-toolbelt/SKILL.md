@@ -3,13 +3,14 @@ name: clinch-toolbelt
 description: Add, edit, or remove quick-insert buttons in the Clinch terminal's footer toolbelts. Use when the user asks for a new Clinch button, quick-insert button, footer or toolbelt button, or wants to change what a Clinch footer button inserts — for the Claude Code/Codex agent footer or the plain terminal footer.
 ---
 
-<!-- managed-by: Clinch; version: 1.5.0 -->
+<!-- managed-by: Clinch; version: 1.6.0 -->
 
 # Clinch toolbelt quick-insert buttons
 
 Clinch shows rows of clickable quick-insert buttons. Each custom button has a
-`label` (shown on the button) and `text` (submitted when clicked). There are two
-independent rows:
+`label` (shown on the button), `text`, and optional `auto_send` behavior. Existing
+buttons default to `auto_send = true`; set it to `false` when clicking should only
+pre-fill the active input. There are two independent rows:
 
 - **CLI agent footer** — shown under Claude Code and Codex panes. Its text is
   sent to the running agent as a prompt.
@@ -55,6 +56,7 @@ A live-default custom table has these fields:
 inherit_defaults = true
 left = [
   { custom_insert = { label = "Ship It", text = "Run the tests, then ship this." } },
+  { custom_insert = { label = "Draft", text = "Help me write this", auto_send = false } },
 ]
 right = []
 ```
@@ -88,6 +90,8 @@ the examples above. Include only the requested custom entries and
 ## 4. Edit or remove buttons
 
 - To edit a user-created button, change its matching `custom_insert` entry.
+- Set `auto_send = false` to pre-fill without submitting. Omit it or set it to
+  `true` to submit immediately, preserving the historical behavior.
 - To remove a user-created button, delete its matching entry.
 - To remove a shipped button, add its serialized toolbar item to
   `hidden_defaults`. Clinch persists that explicit removal while still adding

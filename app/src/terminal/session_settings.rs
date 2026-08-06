@@ -185,17 +185,7 @@ fn toolbar_items_have_same_identity(
     left: &AgentToolbarItemKind,
     right: &AgentToolbarItemKind,
 ) -> bool {
-    match (left, right) {
-        (
-            AgentToolbarItemKind::CustomInsert {
-                label: left_label, ..
-            },
-            AgentToolbarItemKind::CustomInsert {
-                label: right_label, ..
-            },
-        ) => left_label == right_label,
-        _ => left == right,
-    }
+    left.has_same_toolbar_identity(right)
 }
 
 fn contains_toolbar_item_identity(
@@ -259,6 +249,81 @@ fn merge_toolbar_defaults_and_custom_items(
     (left, right)
 }
 
+/// Resolves a user-saved explicit layout while keeping shipped definitions live.
+///
+/// Saved default items act as ordered references. Their current build definition is used unless
+/// the user explicitly changed that item and it appears in `overridden_defaults`. Defaults added
+/// after the layout was saved are appended to their shipped side, while `hidden_defaults` keeps
+/// intentional removals hidden.
+fn merge_ordered_toolbar_defaults_and_custom_items(
+    default_left: Vec<AgentToolbarItemKind>,
+    default_right: Vec<AgentToolbarItemKind>,
+    saved_left: &[AgentToolbarItemKind],
+    saved_right: &[AgentToolbarItemKind],
+    hidden_defaults: &[AgentToolbarItemKind],
+    overridden_defaults: &[AgentToolbarItemKind],
+    inherit_defaults: bool,
+) -> (Vec<AgentToolbarItemKind>, Vec<AgentToolbarItemKind>) {
+    let all_defaults = default_left
+        .iter()
+        .chain(&default_right)
+        .cloned()
+        .collect::<Vec<_>>();
+    let effective_hidden = if inherit_defaults {
+        hidden_defaults
+    } else {
+        Default::default()
+    };
+    let mut represented_defaults = Vec::new();
+
+    let mut resolve_side = |saved: &[AgentToolbarItemKind]| {
+        let mut resolved = Vec::with_capacity(saved.len());
+        for item in saved {
+            let Some(default_item) = all_defaults
+                .iter()
+                .find(|default| toolbar_items_have_same_identity(default, item))
+            else {
+                resolved.push(item.clone());
+                continue;
+            };
+            if contains_toolbar_item_identity(effective_hidden, default_item)
+                || contains_toolbar_item_identity(&represented_defaults, default_item)
+            {
+                continue;
+            }
+            represented_defaults.push(default_item.clone());
+            let item = overridden_defaults
+                .iter()
+                .find(|overridden| toolbar_items_have_same_identity(default_item, overridden))
+                .unwrap_or(default_item);
+            resolved.push(item.clone());
+        }
+        resolved
+    };
+
+    let mut left = resolve_side(saved_left);
+    let mut right = resolve_side(saved_right);
+
+    for default in default_left {
+        if !contains_toolbar_item_identity(effective_hidden, &default)
+            && !contains_toolbar_item_identity(&represented_defaults, &default)
+        {
+            represented_defaults.push(default.clone());
+            left.push(default);
+        }
+    }
+    for default in default_right {
+        if !contains_toolbar_item_identity(effective_hidden, &default)
+            && !contains_toolbar_item_identity(&represented_defaults, &default)
+        {
+            represented_defaults.push(default.clone());
+            right.push(default);
+        }
+    }
+
+    (left, right)
+}
+
 fn hidden_toolbar_defaults(
     default_left: &[AgentToolbarItemKind],
     default_right: &[AgentToolbarItemKind],
@@ -274,6 +339,25 @@ fn hidden_toolbar_defaults(
         .iter()
         .chain(default_right)
         .filter(|item| !contains_toolbar_item_identity(&selected, item))
+        .cloned()
+        .collect()
+}
+
+fn overridden_toolbar_defaults(
+    default_left: &[AgentToolbarItemKind],
+    default_right: &[AgentToolbarItemKind],
+    selected_left: &[AgentToolbarItemKind],
+    selected_right: &[AgentToolbarItemKind],
+) -> Vec<AgentToolbarItemKind> {
+    let defaults = default_left.iter().chain(default_right);
+    selected_left
+        .iter()
+        .chain(selected_right)
+        .filter(|selected| {
+            defaults.clone().any(|default| {
+                toolbar_items_have_same_identity(default, selected) && default != *selected
+            })
+        })
         .cloned()
         .collect()
 }
@@ -358,6 +442,12 @@ pub enum CLIAgentToolbarChipSelection {
         /// Absent in legacy full-snapshot settings. New settings opt into live default merging.
         #[serde(default)]
         inherit_defaults: bool,
+        /// Shipped items whose editable fields the user explicitly changed.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        overridden_defaults: Vec<AgentToolbarItemKind>,
+        /// Whether `left` and `right` are an explicit ordering of the effective toolbar.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        preserve_order: bool,
     },
 }
 
@@ -369,11 +459,15 @@ impl CLIAgentToolbarChipSelection {
         let default_left = AgentToolbarItemKind::cli_default_left();
         let default_right = AgentToolbarItemKind::cli_default_right();
         let hidden_defaults = hidden_toolbar_defaults(&default_left, &default_right, &left, &right);
+        let overridden_defaults =
+            overridden_toolbar_defaults(&default_left, &default_right, &left, &right);
         Self::Custom {
             left,
             right,
             hidden_defaults,
             inherit_defaults: true,
+            overridden_defaults,
+            preserve_order: true,
         }
     }
 
@@ -388,14 +482,32 @@ impl CLIAgentToolbarChipSelection {
                 right,
                 hidden_defaults,
                 inherit_defaults,
-            } => merge_toolbar_defaults_and_custom_items(
-                AgentToolbarItemKind::cli_default_left(),
-                AgentToolbarItemKind::cli_default_right(),
-                left,
-                right,
-                hidden_defaults,
-                *inherit_defaults,
-            ),
+                overridden_defaults,
+                preserve_order,
+            } => {
+                let default_left = AgentToolbarItemKind::cli_default_left();
+                let default_right = AgentToolbarItemKind::cli_default_right();
+                if *preserve_order {
+                    merge_ordered_toolbar_defaults_and_custom_items(
+                        default_left,
+                        default_right,
+                        left,
+                        right,
+                        hidden_defaults,
+                        overridden_defaults,
+                        *inherit_defaults,
+                    )
+                } else {
+                    merge_toolbar_defaults_and_custom_items(
+                        default_left,
+                        default_right,
+                        left,
+                        right,
+                        hidden_defaults,
+                        *inherit_defaults,
+                    )
+                }
+            }
         }
     }
 }
@@ -445,6 +557,10 @@ pub enum TerminalToolbarChipSelection {
         hidden_defaults: Vec<AgentToolbarItemKind>,
         #[serde(default)]
         inherit_defaults: bool,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        overridden_defaults: Vec<AgentToolbarItemKind>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        preserve_order: bool,
     },
 }
 
@@ -456,11 +572,15 @@ impl TerminalToolbarChipSelection {
         let default_left = AgentToolbarItemKind::terminal_default_left();
         let default_right = AgentToolbarItemKind::terminal_default_right();
         let hidden_defaults = hidden_toolbar_defaults(&default_left, &default_right, &left, &right);
+        let overridden_defaults =
+            overridden_toolbar_defaults(&default_left, &default_right, &left, &right);
         Self::Custom {
             left,
             right,
             hidden_defaults,
             inherit_defaults: true,
+            overridden_defaults,
+            preserve_order: true,
         }
     }
 
@@ -475,14 +595,32 @@ impl TerminalToolbarChipSelection {
                 right,
                 hidden_defaults,
                 inherit_defaults,
-            } => merge_toolbar_defaults_and_custom_items(
-                AgentToolbarItemKind::terminal_default_left(),
-                AgentToolbarItemKind::terminal_default_right(),
-                left,
-                right,
-                hidden_defaults,
-                *inherit_defaults,
-            ),
+                overridden_defaults,
+                preserve_order,
+            } => {
+                let default_left = AgentToolbarItemKind::terminal_default_left();
+                let default_right = AgentToolbarItemKind::terminal_default_right();
+                if *preserve_order {
+                    merge_ordered_toolbar_defaults_and_custom_items(
+                        default_left,
+                        default_right,
+                        left,
+                        right,
+                        hidden_defaults,
+                        overridden_defaults,
+                        *inherit_defaults,
+                    )
+                } else {
+                    merge_toolbar_defaults_and_custom_items(
+                        default_left,
+                        default_right,
+                        left,
+                        right,
+                        hidden_defaults,
+                        *inherit_defaults,
+                    )
+                }
+            }
         }
     }
 }
@@ -512,10 +650,7 @@ mod toolbar_chip_selection_tests {
     use super::*;
 
     fn custom_insert(label: &str, text: &str) -> AgentToolbarItemKind {
-        AgentToolbarItemKind::CustomInsert {
-            label: label.to_owned(),
-            text: text.to_owned(),
-        }
+        AgentToolbarItemKind::custom_insert(label, text)
     }
 
     #[test]
@@ -530,6 +665,8 @@ mod toolbar_chip_selection_tests {
             )],
             hidden_defaults: vec![],
             inherit_defaults: false,
+            overridden_defaults: vec![],
+            preserve_order: false,
         };
         let mut serialized = legacy.to_file_value();
         let custom = serialized
@@ -628,6 +765,62 @@ mod toolbar_chip_selection_tests {
             &restored.left_items(),
             &removed
         ));
+    }
+
+    #[test]
+    fn explicit_terminal_layout_preserves_reordering() {
+        let mut left = AgentToolbarItemKind::terminal_default_left();
+        left.swap(0, 1);
+        let selection =
+            TerminalToolbarChipSelection::custom_from_effective_items(left.clone(), vec![]);
+
+        assert_eq!(selection.left_items(), left);
+        let restored =
+            TerminalToolbarChipSelection::from_file_value(&selection.to_file_value()).unwrap();
+        assert_eq!(restored.left_items(), left);
+    }
+
+    #[test]
+    fn explicit_default_override_preserves_auto_send_choice() {
+        let mut left = AgentToolbarItemKind::terminal_default_left();
+        let AgentToolbarItemKind::CustomInsert { auto_send, .. } = &mut left[0] else {
+            unreachable!();
+        };
+        *auto_send = false;
+        let selection =
+            TerminalToolbarChipSelection::custom_from_effective_items(left.clone(), vec![]);
+
+        assert_eq!(selection.left_items(), left);
+        let TerminalToolbarChipSelection::Custom {
+            overridden_defaults,
+            preserve_order,
+            ..
+        } = &selection
+        else {
+            unreachable!();
+        };
+        assert!(*preserve_order);
+        assert_eq!(overridden_defaults, &left[..1]);
+        let restored =
+            TerminalToolbarChipSelection::from_file_value(&selection.to_file_value()).unwrap();
+        assert_eq!(restored.left_items(), left);
+    }
+
+    #[test]
+    fn untouched_ordered_default_uses_the_current_definition() {
+        let current = custom_insert("Review", "new prompt");
+        let saved = custom_insert("Review", "old prompt");
+        let (left, _) = merge_ordered_toolbar_defaults_and_custom_items(
+            vec![current.clone()],
+            vec![],
+            &[saved],
+            &[],
+            &[],
+            &[],
+            true,
+        );
+
+        assert_eq!(left, vec![current]);
     }
 }
 

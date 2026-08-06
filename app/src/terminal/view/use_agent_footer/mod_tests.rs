@@ -272,7 +272,10 @@ fn terminal_footer_action_relay_emits_submitted_pty_command() {
             ctx.dispatch_typed_action_for_view(
                 window_id,
                 relay.id(),
-                &AgentInputFooterAction::InsertCustomText("git status".to_owned()),
+                &AgentInputFooterAction::InsertCustomText {
+                    text: "git status".to_owned(),
+                    auto_send: true,
+                },
             );
         });
 

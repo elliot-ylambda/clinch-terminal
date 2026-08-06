@@ -632,10 +632,7 @@ fn terminal_targeted_quick_insert_save_updates_only_terminal_toolbar() {
         initialize_app(&mut app);
         let workspace = mock_workspace(&mut app);
         let cli_selection = crate::terminal::session_settings::CLIAgentToolbarChipSelection::custom_from_effective_items(
-                vec![AgentToolbarItemKind::CustomInsert {
-                    label: "CLI only".to_owned(),
-                    text: "/review".to_owned(),
-                }],
+                vec![AgentToolbarItemKind::custom_insert("CLI only", "/review")],
                 Vec::new(),
             );
         SessionSettings::handle(&app).update(&mut app, |settings, ctx| {
@@ -651,6 +648,7 @@ fn terminal_targeted_quick_insert_save_updates_only_terminal_toolbar() {
                     target: QuickInsertModalTarget::Terminal,
                     label: "Status".to_owned(),
                     text: "git status".to_owned(),
+                    auto_send: false,
                 },
                 ctx,
             );
@@ -673,6 +671,7 @@ fn terminal_targeted_quick_insert_save_updates_only_terminal_toolbar() {
             expected_left.push(AgentToolbarItemKind::CustomInsert {
                 label: "Status".to_owned(),
                 text: "git status".to_owned(),
+                auto_send: false,
             });
             assert_eq!(left, &expected_left);
             assert!(right.is_empty());
