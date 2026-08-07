@@ -380,7 +380,63 @@ button:disabled {
   width: 100%;
   height: 100%;
   padding: 8px 5px 3px 9px;
+  overflow: hidden;
   background: var(--background);
+}
+
+/*
+ * Wraps xterm so mirror mode can scale the whole grid as one box. It fills the surface normally;
+ * mirror mode replaces the size with the Mac grid's natural pixel dimensions and adds a scale
+ * transform, which leaves the scroll viewport inside intact.
+ */
+.terminal-stage {
+  width: 100%;
+  height: 100%;
+}
+
+/*
+ * Explains, at the moment it matters, why the grid looks the way it does — and offers the one
+ * tap that changes it. A PTY has a single width, so taking it for this phone visibly reshapes
+ * the pane on the Mac; that has to be a deliberate act, not a side effect of opening this app.
+ */
+.sizing-chip {
+  position: absolute;
+  z-index: 7;
+  /* Anchored to the bottom because a mirrored grid is a short box at the top of the surface: the
+     space down here is empty in exactly the case where this chip is shown most. */
+  bottom: 8px;
+  right: 8px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  max-width: calc(100% - 16px);
+  padding: 4px 4px 4px 10px;
+  border: 1px solid var(--stroke);
+  border-radius: 999px;
+  background: rgba(11, 15, 30, 0.92);
+  font-size: 11px;
+  color: var(--muted);
+  backdrop-filter: blur(6px);
+}
+
+.sizing-chip > span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sizing-chip > button {
+  flex: none;
+  padding: 4px 10px;
+  border: 1px solid var(--stroke);
+  border-radius: 999px;
+  background: var(--panel-soft);
+  font-size: 11px;
+  color: var(--ink);
+}
+
+.sizing-chip > button:disabled {
+  opacity: 0.45;
 }
 
 .terminal-resize-freeze {
@@ -414,6 +470,30 @@ button:disabled {
 .terminal-surface .xterm-viewport {
   scrollbar-color: #3c3e48 transparent;
   scrollbar-width: thin;
+}
+
+/*
+ * iOS Safari honors neither of the properties above and hides its own overlay scrollbars during
+ * touch scrolling, so this is the only scroll cue a phone gets. It lives outside .terminal-stage
+ * so mirror mode's scale transform cannot shrink it along with the grid.
+ */
+.terminal-scroll-indicator {
+  position: absolute;
+  z-index: 9;
+  right: 2px;
+  width: 3px;
+  min-height: 18px;
+  border-radius: 999px;
+  background: rgba(191, 255, 0, 0.42);
+  opacity: 0;
+  transition: opacity 220ms ease;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .terminal-scroll-indicator {
+    transition: none;
+  }
 }
 
 .keyboard-accessory {

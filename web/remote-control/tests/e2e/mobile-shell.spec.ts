@@ -3,6 +3,7 @@ import { expect, test } from "@playwright/test";
 async function installPairedPhone(
   page: import("@playwright/test").Page,
   initialTerminal: "full-screen" | "wrapped-shell" = "full-screen",
+  desktopWatching = false,
 ) {
   await page.goto("/");
   await page.evaluate(async () => {
@@ -40,7 +41,7 @@ async function installPairedPhone(
     db.close();
   });
 
-  await page.addInitScript(({ initialTerminal }) => {
+  await page.addInitScript(({ initialTerminal, desktopWatching }) => {
     const originalFetch = window.fetch.bind(window);
     window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input instanceof Request ? input.url : String(input);
@@ -150,6 +151,8 @@ async function installPairedPhone(
             agent_state: "done",
             dimensions: { columns: 80, rows: 24 },
             writer_lease: null,
+            desktop_watching: desktopWatching,
+            size_pinned_by: null,
             quick_inserts: [{
               id: "qi-1234",
               configuration_revision: 1,
@@ -175,6 +178,8 @@ async function installPairedPhone(
             agent_state: "idle",
             dimensions: { columns: 80, rows: 24 },
             writer_lease: null,
+            desktop_watching: false,
+            size_pinned_by: null,
             quick_inserts: [],
           }],
         }],
@@ -210,6 +215,8 @@ async function installPairedPhone(
             agent_state: null,
             dimensions: { columns: 80, rows: 24 },
             writer_lease: null,
+            desktop_watching: false,
+            size_pinned_by: null,
             quick_inserts: [{
               id: "qi-1234",
               configuration_revision: 1,
@@ -452,7 +459,7 @@ async function installPairedPhone(
       configurable: true,
       value: MockWebSocket as unknown as typeof WebSocket,
     });
-  }, { initialTerminal });
+  }, { initialTerminal, desktopWatching });
   await page.reload();
 }
 
@@ -533,6 +540,19 @@ test("paired phone exposes projects, drawer, usage, and recent-session resume", 
     badges.map((badge) => getComputedStyle(badge).color),
   )).toEqual(["rgb(55, 128, 233)", "rgb(191, 255, 0)", "rgb(116, 121, 135)"]);
   await expect(page.getByLabel("Selected Clinch terminal output")).toBeVisible();
+  // This pane is not on screen on the Mac, so the phone takes the width and the full-screen CLI
+  // is refitted. The freeze covers that repaint, and it happens on attach — the overlay clears
+  // itself after a beat, so nothing may be interleaved before asserting it.
+  const resizeFreeze = page.locator(".terminal-resize-freeze");
+  await expect(resizeFreeze).toBeVisible();
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("alternate-redraw-started"))).toBe("true");
+  await expect(resizeFreeze).toContainText("Fitting session…");
+  await expect(resizeFreeze).not.toContainText("Partial Claude repaint");
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("alternate-redraw-settled"))).toBe("true");
+  await expect(resizeFreeze).toBeHidden();
+  await expect.poll(() => page.locator(".xterm-screen > .xterm-rows").evaluate((rows) =>
+    rows.textContent?.includes("Claude frame settled"),
+  )).toBe(true);
   await expect.poll(() => page.locator(".xterm-rows > div").evaluateAll((rows) => {
     const lines = rows.map((row) => row.textContent ?? "");
     return {
@@ -551,28 +571,18 @@ test("paired phone exposes projects, drawer, usage, and recent-session resume", 
   await expect(page.getByRole("complementary", { name: "Current project sessions" })).toBeVisible();
   await page.getByRole("button", { name: "Close drawer" }).click();
   await drawerToggle.click();
-  await page.getByRole("complementary", { name: "Current project sessions" })
-    .getByRole("button", { name: "＋ New session" }).click();
-  const createSession = page.getByRole("dialog", { name: "New session" });
-  await createSession.getByRole("button", { name: "Create on Test Mac" }).click();
-  await expect(createSession).toBeHidden();
-  await expect.poll(() => page.evaluate(() => localStorage.getItem("remote-command-types"))).toContain("create_session");
+  // The drawer offers one-tap tab creation rather than the New session sheet. Session creation
+  // itself is covered by the focus-mode test below, which is where that sheet now lives; this
+  // test stays on the drawer's own surface so it does not also change the selected pane.
+  await expect(page.getByRole("complementary", { name: "Current project sessions" })
+    .getByRole("button", { name: "＋ New tab" })).toBeVisible();
+  await page.getByRole("button", { name: "Close drawer" }).click();
   await page.evaluate(() => localStorage.setItem("remote-command-payloads", "[]"));
   const quickInsert = page.getByRole("button", { name: "Codex", exact: true });
   await quickInsert.evaluate((button: HTMLButtonElement) => {
     button.click();
     button.click();
   });
-  const resizeFreeze = page.locator(".terminal-resize-freeze");
-  await expect(resizeFreeze).toBeVisible();
-  await expect.poll(() => page.evaluate(() => localStorage.getItem("alternate-redraw-started"))).toBe("true");
-  await expect(resizeFreeze).toContainText("Fitting session…");
-  await expect(resizeFreeze).not.toContainText("Partial Claude repaint");
-  await expect.poll(() => page.evaluate(() => localStorage.getItem("alternate-redraw-settled"))).toBe("true");
-  await expect(resizeFreeze).toBeHidden();
-  await expect.poll(() => page.locator(".xterm-screen > .xterm-rows").evaluate((rows) =>
-    rows.textContent?.includes("Claude frame settled"),
-  )).toBe(true);
   await expect(page.getByRole("textbox", { name: "Command or agent prompt" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Send", exact: true })).toHaveCount(0);
   await expect(page.getByText("The workspace changed; refresh before sending input.")).toHaveCount(0);
@@ -649,7 +659,9 @@ test("paired phone exposes projects, drawer, usage, and recent-session resume", 
     };
   })).toEqual({
     rawReturns: 2,
-    leaseRequests: 1,
+    // This phone already took control when it attached, so quick inserts and accessory keys must
+    // ride that lease rather than asking for it again on every tap.
+    leaseRequests: 0,
     composerSubmits: 0,
     unsafeResizes: 0,
   });
@@ -734,8 +746,10 @@ test("paired phone exposes projects, drawer, usage, and recent-session resume", 
     return payloads.filter((payload) => payload.type === "select_target").at(-1)?.data?.target?.tab_id;
   })).toBe("tab-review");
 
-  await page.getByRole("button", { name: "Open project and tab drawer" }).click();
-  await page.getByRole("button", { name: "＋ New session" }).click();
+  // The New session sheet lives in focus mode now, so reach it through a project with no live
+  // session rather than through the drawer.
+  await page.getByRole("button", { name: "Empty project" }).click();
+  await page.getByRole("button", { name: "Claude Code", exact: true }).click();
   const newSession = page.getByRole("dialog", { name: "New session" });
   await newSession.getByRole("button", { name: "Resume recent" }).click();
   await expect(newSession.getByText("Fix pairing flow", { exact: true })).toBeVisible();
@@ -777,6 +791,50 @@ test("typing stays after a shell prompt that reflows from a narrower Mac pane", 
       ).length,
     };
   }, typed)).toEqual({ correct: 1, promptCount: 1, overwritten: 0 });
+});
+
+test("a pane on screen on the Mac is mirrored, not resized", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("remote-command-types", "[]"));
+  await installPairedPhone(page, "full-screen", true);
+
+  await expect(page.getByText(/^Sized for the Mac/)).toBeVisible();
+
+  // The whole point: attaching must not reshape the pane someone is working in on the Mac.
+  await page.waitForTimeout(1_000);
+  expect(await page.evaluate(() => localStorage.getItem("remote-command-types")))
+    .not.toContain("terminal_resize");
+
+  const mirror = await page.evaluate(() => {
+    const stage = document.querySelector<HTMLElement>(".terminal-stage")!;
+    const surface = document.querySelector<HTMLElement>(".terminal-surface")!;
+    const style = getComputedStyle(surface);
+    const available = surface.clientWidth
+      - parseFloat(style.paddingLeft)
+      - parseFloat(style.paddingRight);
+    return {
+      columns: document.querySelectorAll(".xterm-rows > div:first-child > span").length > 0,
+      scaledWidth: stage.getBoundingClientRect().width,
+      available,
+      transform: getComputedStyle(stage).transform,
+    };
+  });
+
+  // The Mac's 80 columns are scaled down to fit rather than clamped to a narrower local grid —
+  // a scale transform is present, and the result sits inside the available width.
+  expect(mirror.transform).not.toBe("none");
+  expect(mirror.scaledWidth).toBeLessThanOrEqual(mirror.available + 1);
+  expect(mirror.scaledWidth).toBeGreaterThan(0);
+});
+
+test("taking the width for the phone is a deliberate, reversible tap", async ({ page }) => {
+  await installPairedPhone(page, "full-screen", true);
+
+  await expect(page.getByText(/^Sized for the Mac/)).toBeVisible();
+  await page.evaluate(() => localStorage.setItem("remote-command-types", "[]"));
+  await page.getByRole("button", { name: "Fit to phone" }).click();
+
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("remote-command-types")))
+    .toContain("set_terminal_size_pin");
 });
 
 test("empty-project focus mode stays centered within a phone viewport", async ({ page }) => {

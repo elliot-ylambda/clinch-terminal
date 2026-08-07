@@ -4,6 +4,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 
+import type { TerminalDimensions } from "../generated/types/TerminalDimensions";
 import type { TerminalSnapshot } from "../generated/types/TerminalSnapshot";
 import { base64ToBytes } from "../protocol/storage";
 import type { TerminalBus } from "./bus";
@@ -12,6 +13,16 @@ interface Props {
   snapshot?: TerminalSnapshot;
   bus: TerminalBus;
   canResize: boolean;
+  /**
+   * The Mac's own grid dimensions, set whenever this device is not the one sizing the PTY.
+   *
+   * A PTY carries exactly one `winsize`, so two screens cannot hold different widths. When the
+   * Mac owns that width this surface adopts its exact column count and scales the rendered grid
+   * down to fit the phone, rather than fitting its own narrower column count. Letting the local
+   * column count diverge is precisely what turns the Mac's absolute cursor positioning into
+   * characters piled up against the right edge.
+   */
+  mirror?: TerminalDimensions;
   onViewport: (columns: number, rows: number) => void;
   onResize: (columns: number, rows: number) => void;
   onData?: (data: string) => void;
@@ -32,6 +43,39 @@ export function isSafeTerminalResize(
   height: number,
 ): boolean {
   return columns >= 20 && rows >= 4 && width >= 160 && height >= 72;
+}
+
+/**
+ * How far to shrink the Mac's grid so its full width fits this screen.
+ *
+ * Never magnifies: a Mac pane narrower than the phone leaves space beside it rather than
+ * inflating the type past the size chosen for this screen. Returns `undefined` when either
+ * measurement is unusable, which happens before the first layout.
+ */
+export function mirrorScale(availableWidth: number, naturalWidth: number): number | undefined {
+  if (!(availableWidth > 0) || !(naturalWidth > 0)) return undefined;
+  return Math.min(availableWidth / naturalWidth, 1);
+}
+
+/**
+ * Where to draw the scroll indicator, as percentages of the terminal surface.
+ *
+ * Returns `undefined` when nothing has scrolled off the top yet, since there is no position to
+ * report. The thumb keeps a floor so a very long transcript still leaves something to see.
+ */
+export function scrollIndicatorGeometry(
+  rows: number,
+  baseY: number,
+  viewportY: number,
+): { heightPercent: number; topPercent: number; atBottom: boolean } | undefined {
+  const total = baseY + rows;
+  if (baseY <= 0 || total <= 0) return undefined;
+  const thumb = Math.min(Math.max(rows / total, 0.05), 1);
+  return {
+    heightPercent: thumb * 100,
+    topPercent: (Math.min(viewportY, baseY) / baseY) * (1 - thumb) * 100,
+    atBottom: viewportY >= baseY,
+  };
 }
 
 const SHELL_INTEGRATION_OSC_PREFIX = new Uint8Array([0x1b, 0x5d, 0x31, 0x33, 0x33, 0x3b]);
@@ -136,12 +180,17 @@ export class ZeroWidthPromptTransformer {
 }
 
 export const TerminalSurface = forwardRef<TerminalSurfaceHandle, Props>(function TerminalSurface(
-  { snapshot, bus, canResize, onViewport, onResize, onData, onFocus, onStreamGap },
+  { snapshot, bus, canResize, mirror, onViewport, onResize, onData, onFocus, onStreamGap },
   ref,
 ) {
   const container = useRef<HTMLDivElement>(null);
+  const stage = useRef<HTMLDivElement | undefined>(undefined);
+  const scrollIndicator = useRef<HTMLDivElement>(null);
+  const scrollIndicatorTimer = useRef<number | undefined>(undefined);
   const terminal = useRef<Terminal | undefined>(undefined);
   const fit = useRef<FitAddon | undefined>(undefined);
+  const mirrorDimensions = useRef(mirror);
+  mirrorDimensions.current = mirror;
   const stream = useRef<string | undefined>(undefined);
   const sequence = useRef(0);
   const resizeCallback = useRef(onResize);
@@ -222,12 +271,91 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, Props>(function
     visualResizeQuietTimer.current = window.setTimeout(clearVisualResize, 90);
   }, [clearVisualResize]);
 
+  /**
+   * Presents the Mac's grid at its own dimensions, shrunk to fit the phone.
+   *
+   * The column count is copied from the Mac rather than fitted locally, so absolute cursor
+   * positioning always lands where the Mac put it. Everything that would make it readable —
+   * scaling, and the reader's own pinch-zoom — happens after rendering, in CSS. xterm is on its
+   * DOM renderer here (no canvas addon is loaded), so the scaled text stays real text and
+   * survives pinch-zoom crisply instead of magnifying rasterized pixels.
+   */
+  const applyMirrorLayout = useCallback(() => {
+    const element = container.current;
+    const instance = terminal.current;
+    const surface = stage.current;
+    const dimensions = mirrorDimensions.current;
+    if (!element || !instance || !surface || !dimensions) return;
+    if (dimensions.columns < 1 || dimensions.rows < 1) return;
+    // Measure at natural scale. Deriving the ratio from an already-scaled frame would compound
+    // it on every layout pass and shrink the grid away to nothing.
+    surface.style.transform = "";
+    surface.style.width = "";
+    surface.style.height = "";
+    if (instance.cols !== dimensions.columns || instance.rows !== dimensions.rows) {
+      instance.resize(dimensions.columns, dimensions.rows);
+    }
+    if (revealLatestSnapshot.current) {
+      instance.scrollToBottom();
+      revealLatestSnapshot.current = false;
+    }
+    const screen = surface.querySelector<HTMLElement>(".xterm-screen");
+    const natural = screen?.getBoundingClientRect();
+    if (!natural?.width || !natural.height) return;
+    const style = window.getComputedStyle(element);
+    const scale = mirrorScale(
+      element.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight),
+      natural.width,
+    );
+    if (scale === undefined) return;
+    surface.style.width = `${natural.width}px`;
+    surface.style.height = `${natural.height}px`;
+    surface.style.transformOrigin = "0 0";
+    surface.style.transform = `scale(${scale})`;
+  }, []);
+
+  /**
+   * Positions the scroll indicator. iOS Safari honors neither `scrollbar-width` nor
+   * `scrollbar-color`, and hides its own overlay scrollbars during touch scrolling, so a phone
+   * scrolling through a long agent transcript otherwise has no cue at all about where it is.
+   *
+   * The indicator stays visible while scrolled back — that is exactly when "where am I" is a live
+   * question — and fades out shortly after returning to the bottom.
+   */
+  const refreshScrollIndicator = useCallback((reveal: boolean) => {
+    const indicator = scrollIndicator.current;
+    const instance = terminal.current;
+    if (!indicator || !instance) return;
+    const buffer = instance.buffer.active;
+    const geometry = scrollIndicatorGeometry(instance.rows, buffer.baseY, buffer.viewportY);
+    if (!geometry) {
+      indicator.style.opacity = "0";
+      return;
+    }
+    indicator.style.height = `${geometry.heightPercent}%`;
+    indicator.style.top = `${geometry.topPercent}%`;
+    if (!reveal && indicator.style.opacity === "0") return;
+    indicator.style.opacity = "1";
+    if (scrollIndicatorTimer.current !== undefined) {
+      window.clearTimeout(scrollIndicatorTimer.current);
+      scrollIndicatorTimer.current = undefined;
+    }
+    if (!geometry.atBottom) return;
+    scrollIndicatorTimer.current = window.setTimeout(() => {
+      if (scrollIndicator.current) scrollIndicator.current.style.opacity = "0";
+    }, 1_200);
+  }, []);
+
   const fitAndReport = useCallback(() => {
     const element = container.current;
     const instance = terminal.current;
     const fitAddon = fit.current;
     if (!element || !instance || !fitAddon) return;
     if (snapshotWriteInFlight.current) return;
+    if (mirrorDimensions.current) {
+      applyMirrorLayout();
+      return;
+    }
     const bounds = element.getBoundingClientRect();
     if (bounds.width < 160 || bounds.height < 72) return;
     const proposed = fitAddon.proposeDimensions();
@@ -274,7 +402,7 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, Props>(function
     lastReportedDimensions.current = dimensions;
     if (visualResizeOverlay.current) visualResizeSequence.current = sequence.current;
     resizeCallback.current(instance.cols, instance.rows);
-  }, [beginVisualResize]);
+  }, [applyMirrorLayout, beginVisualResize]);
 
   const scheduleFitAndReport = useCallback(() => {
     // The double rAF defers fitting until after the pending React commit has laid out — but
@@ -362,7 +490,13 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, Props>(function
     const fitAddon = new FitAddon();
     instance.loadAddon(fitAddon);
     instance.loadAddon(new WebLinksAddon((_event, uri) => window.open(uri, "_blank", "noopener,noreferrer")));
-    instance.open(container.current);
+    // xterm sizes `.xterm` from its in-flow `.xterm-screen`, so an explicitly sized wrapper is
+    // what lets mirror mode scale the grid as one box without disturbing the scroll viewport.
+    const surface = document.createElement("div");
+    surface.className = "terminal-stage";
+    container.current.append(surface);
+    stage.current = surface;
+    instance.open(surface);
     const helperTextarea = container.current.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea");
     if (helperTextarea) {
       helperTextarea.id = "remote-control-terminal-input";
@@ -417,18 +551,37 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, Props>(function
     });
     const focusListener = () => focusCallback.current?.();
     container.current.addEventListener("focusin", focusListener);
+    const scrollSubscription = instance.onScroll(() => refreshScrollIndicator(true));
+    // Streaming output changes how much scrollback exists without scrolling the viewport, so the
+    // indicator's proportions are refreshed on render — without reviving a faded-out indicator.
+    const renderSubscription = instance.onRender(() => refreshScrollIndicator(false));
     scheduleFitAndReport();
     return () => {
       window.clearTimeout(resizeTimer);
+      if (scrollIndicatorTimer.current !== undefined) {
+        window.clearTimeout(scrollIndicatorTimer.current);
+        scrollIndicatorTimer.current = undefined;
+      }
       unsubscribe();
       dataSubscription.dispose();
+      scrollSubscription.dispose();
+      renderSubscription.dispose();
       container.current?.removeEventListener("focusin", focusListener);
       observer.disconnect();
       clearVisualResize();
       instance.dispose();
+      surface.remove();
+      stage.current = undefined;
       terminal.current = undefined;
     };
-  }, [bus, clearVisualResize, fitAndReport, revealVisualResizeAfterQuiet, scheduleFitAndReport]);
+  }, [
+    bus,
+    clearVisualResize,
+    fitAndReport,
+    refreshScrollIndicator,
+    revealVisualResizeAfterQuiet,
+    scheduleFitAndReport,
+  ]);
 
   useEffect(() => {
     const instance = terminal.current;
@@ -467,10 +620,14 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, Props>(function
     // Parse an authoritative snapshot at the dimensions of the native grid that produced it.
     // Writing a 320-column Codex/Claude alternate screen into xterm's 80-column default causes
     // hard wraps before the first mobile fit and leaves duplicated suffixes after the CLI redraws.
-    if (snapshot.zero_width_prompt) {
+    if (snapshot.zero_width_prompt && !mirrorDimensions.current) {
       // This snapshot is a logical prompt + command assembled from Clinch's separate grids, not
       // a native full-screen framebuffer. Parse it at the browser's fitted width so an OSC marker
       // at the prompt boundary cannot turn the Mac's old hard wrap into a stale phone row.
+      //
+      // Mirroring is excluded because there is no width of this device's own to reflow into:
+      // the Mac owns the width, and matching it is the whole reason its cursor positioning still
+      // lands where it was meant to.
       fit.current?.fit();
     } else if (
       instance.cols !== snapshot.dimensions.columns
@@ -499,5 +656,31 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, Props>(function
     scheduleFitAndReport();
   }, [canResize, scheduleFitAndReport]);
 
-  return <div className="terminal-surface" ref={container} aria-label="Selected Clinch terminal output" />;
+  // Keyed on the dimensions themselves, not the object: the Mac re-sends a fresh pane snapshot
+  // every second, and re-running this on each identical one would restart the layout constantly.
+  const mirrorKey = mirror ? `${mirror.columns}:${mirror.rows}` : undefined;
+  useEffect(() => {
+    const surface = stage.current;
+    if (!surface) return;
+    if (!mirrorKey) {
+      // Leaving mirror mode hands the width back to this device, so drop the scaled presentation
+      // and let the next fit choose a column count for this screen again.
+      surface.style.transform = "";
+      surface.style.width = "";
+      surface.style.height = "";
+      lastReportedDimensions.current = undefined;
+    }
+    scheduleFitAndReport();
+  }, [mirrorKey, scheduleFitAndReport]);
+
+  return (
+    <div className="terminal-surface" ref={container} aria-label="Selected Clinch terminal output">
+      <div
+        className="terminal-scroll-indicator"
+        ref={scrollIndicator}
+        role="presentation"
+        aria-hidden="true"
+      />
+    </div>
+  );
 });

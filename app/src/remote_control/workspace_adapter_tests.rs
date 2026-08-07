@@ -193,3 +193,68 @@ fn writer_leases_are_adopted_by_the_same_device_but_block_other_devices() {
     connected.clear();
     assert!(!writer_lease_blocks(&connected, &lease, &other_device));
 }
+
+#[test]
+fn a_pane_on_screen_on_the_mac_keeps_its_own_width() {
+    let phone = clinch_companion_protocol::DeviceId::new();
+    let other_phone = clinch_companion_protocol::DeviceId::new();
+
+    // Nobody is looking at the pane on the Mac, so the phone's viewport shapes it freely. This
+    // is the case that matters most: the Mac left on another tab while someone works from bed.
+    assert!(remote_may_size_pane(false, None, &phone));
+
+    // The Mac is showing the pane. A PTY has one width and the person at the keyboard has it,
+    // so merely viewing from the phone must not reshape what they are working in.
+    assert!(!remote_may_size_pane(true, None, &phone));
+
+    // Pinning is the deliberate override, and it works even while the Mac is showing the pane.
+    assert!(remote_may_size_pane(true, Some(&phone), &phone));
+
+    // A pin belongs to the device that took it and never lends the width to a second phone.
+    assert!(!remote_may_size_pane(true, Some(&other_phone), &phone));
+    assert!(!remote_may_size_pane(false, Some(&other_phone), &phone));
+}
+
+#[test]
+fn losing_control_of_a_pane_also_gives_back_its_width() {
+    let mut adapter = WorkspaceAdapter {
+        app_instance_id: AppInstanceId::new(),
+        revision: 1,
+        sequence: 0,
+        quick_insert_salt: 0,
+        last_topology_fingerprint: None,
+        pairing: PairingManager::new(super::super::pairing::DeviceRegistry::default()).unwrap(),
+        writer_leases: HashMap::new(),
+        remote_size_pins: HashMap::new(),
+        connected_sessions: HashSet::new(),
+        terminal_subscriptions: HashSet::new(),
+        idempotency: HashMap::new(),
+        recent_agent_sessions: Vec::new(),
+        recent_agent_sessions_refreshed_at: None,
+        recent_agent_sessions_refresh_in_flight: false,
+    };
+    let target = TargetKey {
+        project_id: "project".to_owned(),
+        tab_id: "tab".to_owned(),
+        pane_id: "pane".to_owned(),
+    };
+    adapter.writer_leases.insert(
+        target.clone(),
+        WriterLease {
+            session_id: AuthSessionId::new(),
+            device_id: clinch_companion_protocol::DeviceId::new(),
+            device_name: "Elliot's phone".to_owned(),
+            expires_at: Utc::now() + Duration::seconds(WRITER_LEASE_TTL_SECS as i64),
+        },
+    );
+    adapter
+        .remote_size_pins
+        .insert(target.clone(), clinch_companion_protocol::DeviceId::new());
+
+    adapter.release_pane_control(&target);
+
+    // The pin must never outlive the lease. Otherwise a phone that wandered off would leave the
+    // Mac's pane stuck at phone dimensions with nothing left to hand it back.
+    assert!(!adapter.writer_leases.contains_key(&target));
+    assert!(!adapter.remote_size_pins.contains_key(&target));
+}

@@ -609,6 +609,26 @@ export function App() {
   const selectedProject = snapshot?.projects.find((project) => project.id === selectedProjectId) ?? selected.project;
   const selectedLocalCwd = selected.tab?.remote_host ? undefined : selected.pane?.cwd ?? undefined;
   const ownsWriterLease = selected.pane?.writer_lease?.device_id === identity?.deviceId;
+  // A PTY carries exactly one `winsize`, so this pane cannot be one width here and another on the
+  // Mac. Whoever is looking at it on the Mac owns that width; this phone may take it only for a
+  // pane the Mac is not showing, or when someone deliberately pinned it from here. This mirrors
+  // `remote_may_size_pane` on the Mac exactly — disagreeing with the Mac about who owns the width
+  // is what produces a divergent local column count, and that is what garbles the output.
+  const sizePinnedHere = Boolean(
+    selected.pane?.size_pinned_by && selected.pane.size_pinned_by === identity?.deviceId,
+  );
+  const sizePinnedElsewhere = Boolean(selected.pane?.size_pinned_by) && !sizePinnedHere;
+  const phoneOwnsSize = Boolean(selected.pane)
+    && !sizePinnedElsewhere
+    && (!selected.pane?.desktop_watching || sizePinnedHere);
+  // Fall back to the terminal snapshot's own dimensions: a pane snapshot omits them until the
+  // session finishes bootstrapping, and mirroring at a guessed width would be exactly the
+  // divergence this is here to prevent.
+  const mirrorSize = phoneOwnsSize
+    ? undefined
+    : selected.pane?.dimensions ?? terminalSnapshot?.dimensions;
+  const phoneOwnsSizeRef = useRef(phoneOwnsSize);
+  phoneOwnsSizeRef.current = phoneOwnsSize;
   useEffect(() => {
     setTaskText("");
   }, [selectedProjectId]);
@@ -874,6 +894,67 @@ export function App() {
     void prepareTerminalForInput({ takeover: true });
   }, [prepareTerminalForInput]);
 
+  const lastMirrorKey = useRef<string | undefined>(undefined);
+  // Keyed on the dimensions rather than the object: the Mac pushes a fresh pane snapshot every
+  // second, and identical ones must not churn this.
+  const mirrorColumns = mirrorSize?.columns;
+  const mirrorRows = mirrorSize?.rows;
+  useEffect(() => {
+    if (mirrorColumns === undefined || mirrorRows === undefined || !selectedTarget) {
+      lastMirrorKey.current = undefined;
+      return;
+    }
+    // Mirroring means the local grid is already the Mac's grid, so there is no resize to
+    // negotiate. Marking the viewport ready here is what keeps typing working while the Mac owns
+    // the width; without it every keystroke would wait forever on a handshake that never runs.
+    const viewport = {
+      targetKey: targetKey(selectedTarget),
+      columns: mirrorColumns,
+      rows: mirrorRows,
+    };
+    terminalViewport.current = viewport;
+    terminalResizableViewport.current = viewport;
+    terminalReadyViewport.current = fittedViewportKey(viewport);
+
+    const mirrorKey = `${targetKey(selectedTarget)}:${mirrorColumns}:${mirrorRows}`;
+    const previous = lastMirrorKey.current;
+    lastMirrorKey.current = mirrorKey;
+    if (previous === undefined || previous === mirrorKey) return;
+    // The Mac just changed this pane's width — control moved between the two screens. Whatever
+    // arrived in the moment before this device learned the new dimensions was painted against
+    // the old ones, so replace the local buffer with the Mac's authoritative render rather than
+    // leaving that debris in the transcript.
+    refreshTerminalSnapshot();
+  }, [mirrorColumns, mirrorRows, ownsWriterLease, refreshTerminalSnapshot, selectedTarget]);
+
+  const setSizePin = useCallback((pinned: boolean) => {
+    const currentSnapshot = snapshotRef.current;
+    const currentTarget = selectedTargetRef.current;
+    if (!currentSnapshot || !currentTarget || connectionRef.current !== "connected") return;
+    void (async () => {
+      try {
+        // Pinning writes to the pane, so it needs the lease first. Taking over is deliberate
+        // here in exactly the way a tap is: someone asked for this pane on this screen.
+        if (!(await prepareTerminalForInput({ takeover: true }))) return;
+        const response = await client.current?.sendAndWait({
+          type: "set_terminal_size_pin",
+          data: {
+            target: currentTarget,
+            workspace_revision: currentSnapshot.revision,
+            pinned,
+          },
+        }, 5_000);
+        if (response?.payload.type === "error") throw new Error(response.payload.data.message);
+        // Pinning only states the intent; the viewport still has to be reported before the Mac
+        // reshapes the pane, and unpinning has to re-run the handshake for the restored width.
+        resetTerminalPreparation(false);
+        void prepareTerminalForInput();
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : String(error));
+      }
+    })();
+  }, [prepareTerminalForInput, resetTerminalPreparation]);
+
   const autoPreparedSnapshot = useRef<TerminalSnapshot | undefined>(undefined);
   useEffect(() => {
     // Attaching (first load, a page refresh, or reconnecting after the phone was pocketed)
@@ -891,6 +972,10 @@ export function App() {
     // Viewing must never steal control from another device.
     const lease = resolveTarget(snapshotRef.current, selectedTarget).pane?.writer_lease;
     if (lease && lease.device_id !== identityRef.current?.deviceId) return;
+    // Nor must viewing reshape a pane someone is looking at on the Mac. Attaching used to run
+    // the resize handshake unconditionally, which is why simply opening this app squeezed the
+    // Mac's pane down to phone width and left it there until someone typed on the Mac.
+    if (!phoneOwnsSizeRef.current) return;
     void prepareTerminalForInput();
   }, [connection, prepareTerminalForInput, resyncing, selectedTarget, terminalSnapshot]);
 
@@ -1360,12 +1445,28 @@ export function App() {
       </header>
 
       <main className="focus-area">
+        {terminalSnapshot && (mirrorSize || sizePinnedHere) && (
+          <div className="sizing-chip" role="status">
+            <span>
+              {sizePinnedHere
+                ? "Sized for this phone"
+                : sizePinnedElsewhere
+                  ? `Sized for ${selected.pane?.writer_lease?.device_name ?? "another phone"}`
+                  : `Sized for the Mac · ${mirrorSize?.columns}×${mirrorSize?.rows}`}
+            </span>
+            <button
+              disabled={!canWrite}
+              onClick={() => setSizePin(!sizePinnedHere)}
+            >{sizePinnedHere ? "Give back" : "Fit to phone"}</button>
+          </div>
+        )}
         {terminalSnapshot ? (
           <TerminalSurface
             ref={terminalSurface}
             snapshot={terminalSnapshot}
             bus={terminalBus}
-            canResize={ownsWriterLease}
+            canResize={ownsWriterLease && phoneOwnsSize}
+            mirror={mirrorSize}
             onViewport={rememberTerminalViewport}
             onFocus={acquireLease}
             onStreamGap={() => {

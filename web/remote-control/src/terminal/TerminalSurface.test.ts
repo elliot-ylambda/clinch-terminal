@@ -1,6 +1,53 @@
 import { describe, expect, it } from "vitest";
 
-import { ZeroWidthPromptTransformer } from "./TerminalSurface";
+import {
+  mirrorScale,
+  scrollIndicatorGeometry,
+  ZeroWidthPromptTransformer,
+} from "./TerminalSurface";
+
+describe("mirroring the Mac's grid onto a phone", () => {
+  it("shrinks a wide Mac pane until its full width fits", () => {
+    // A 250-column pane on a phone: unreadable at a glance, but laid out exactly as the Mac laid
+    // it out, so pinch-zooming reveals real text instead of clamped, piled-up characters.
+    expect(mirrorScale(380, 1800)).toBeCloseTo(0.2111, 4);
+  });
+
+  it("never magnifies a Mac pane narrower than the phone", () => {
+    expect(mirrorScale(380, 200)).toBe(1);
+  });
+
+  it("reports no scale before the surface has been laid out", () => {
+    expect(mirrorScale(0, 1800)).toBeUndefined();
+    expect(mirrorScale(380, 0)).toBeUndefined();
+  });
+});
+
+describe("the phone's scroll position indicator", () => {
+  it("stays silent until something has scrolled off the top", () => {
+    expect(scrollIndicatorGeometry(40, 0, 0)).toBeUndefined();
+  });
+
+  it("sizes the thumb by how much of the transcript is on screen", () => {
+    const geometry = scrollIndicatorGeometry(40, 60, 60);
+    expect(geometry?.heightPercent).toBeCloseTo(40, 4);
+    expect(geometry?.topPercent).toBeCloseTo(60, 4);
+    expect(geometry?.atBottom).toBe(true);
+  });
+
+  it("rides to the top of the track when scrolled all the way back", () => {
+    const geometry = scrollIndicatorGeometry(40, 60, 0);
+    expect(geometry?.topPercent).toBe(0);
+    expect(geometry?.atBottom).toBe(false);
+  });
+
+  it("keeps a visible thumb in a very long transcript", () => {
+    // 10k lines of scrollback would otherwise leave a sub-pixel sliver of nothing to see.
+    const geometry = scrollIndicatorGeometry(40, 10_000, 5_000);
+    expect(geometry?.heightPercent).toBe(5);
+    expect(geometry?.topPercent).toBeCloseTo(47.5, 4);
+  });
+});
 
 const encode = (value: string) => new TextEncoder().encode(value);
 const decode = (value: Uint8Array) => new TextDecoder().decode(value);
