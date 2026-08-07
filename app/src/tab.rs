@@ -418,6 +418,20 @@ impl TabData {
 
         if let Some(terminal_view) = terminal_view {
             let terminal_view = terminal_view.as_ref(ctx);
+            if let Some((agent_name, session_id)) = CLIAgentSessionsModel::as_ref(ctx)
+                .session(terminal_view.id())
+                .and_then(|session| {
+                    session
+                        .session_key()
+                        .map(|key| (session.agent.display_name(), key.session_id))
+                })
+            {
+                Self::push_copy_metadata_menu_item(
+                    &mut menu_items,
+                    format!("Copy {agent_name} session ID"),
+                    Some(session_id),
+                );
+            }
             Self::push_copy_metadata_menu_item(
                 &mut menu_items,
                 "Copy branch",
@@ -447,7 +461,7 @@ impl TabData {
 
     fn push_copy_metadata_menu_item(
         menu_items: &mut Vec<MenuItem<WorkspaceAction>>,
-        label: &'static str,
+        label: impl Into<String>,
         value: Option<String>,
     ) {
         if let Some(value) = value {
