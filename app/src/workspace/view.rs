@@ -457,6 +457,7 @@ use crate::tips::{TipsEvent, TipsView};
 use crate::ui_components::agent_icon::terminal_view_agent_icon_variant;
 use crate::ui_components::avatar::{Avatar, AvatarContent, StatusElementTypes};
 use crate::ui_components::buttons::{combo_inner_button, icon_button_with_color};
+use crate::ui_components::color_dot::{render_color_dot, TAB_COLOR_OPTIONS};
 use crate::ui_components::icon_with_status::IconWithStatusVariant;
 use crate::ui_components::red_notification_dot::RedNotificationDot;
 use crate::ui_components::window_focus_dimming::WindowFocusDimming;
@@ -516,6 +517,7 @@ use crate::workspace::one_time_modal_model::OneTimeModalModel;
 use crate::workspace::sync_inputs::SyncedInputState;
 use crate::workspace::tab_group::{TabGroup, TabGroupId};
 use crate::workspace::tab_settings::TabCloseButtonPosition;
+use crate::workspace::task::{WorkspaceTask, WorkspaceTaskAgent, WorkspaceTaskId};
 use crate::workspace::toast_stack::{
     ToastStack, ToastStack as WorkspaceToastStack, ToastStackEvent as WorkspaceToastStackEvent,
 };
@@ -1100,11 +1102,15 @@ pub struct Workspace {
     traffic_light_mouse_states: TrafficLightMouseStates,
     /// Tab groups in this workspace, keyed by id.
     pub(crate) tab_groups: HashMap<TabGroupId, TabGroup>,
+    /// Lightweight, project-scoped tasks rendered beneath the session list.
+    pub(crate) tasks: Vec<WorkspaceTask>,
+    pub(crate) tasks_collapsed: bool,
     /// Per-group hover state for the horizontal tab bar.
     horizontal_tab_group_mouse_states: RefCell<HashMap<TabGroupId, HorizontalTabGroupMouseStates>>,
     tab_rename_editor: ViewHandle<EditorView>,
     pane_rename_editor: ViewHandle<EditorView>,
     tab_group_rename_editor: ViewHandle<EditorView>,
+    task_input_editor: ViewHandle<EditorView>,
     vertical_tabs_search_input: ViewHandle<EditorView>,
     tips_completed: ModelHandle<TipsCompleted>,
     user_default_shell_unsupported_banner_model_handle: ModelHandle<BannerState>,
@@ -1647,6 +1653,29 @@ impl Workspace {
         editor
     }
 
+    fn task_input_editor(ctx: &mut ViewContext<Self>) -> ViewHandle<EditorView> {
+        let editor = ctx.add_typed_action_view(|ctx| {
+            let appearance = Appearance::as_ref(ctx);
+            let options = SingleLineEditorOptions {
+                text: TextOptions::ui_text(Some(12.), appearance),
+                ..Default::default()
+            };
+            EditorView::single_line(options, ctx)
+        });
+        editor.update(ctx, |editor, ctx| {
+            editor.set_placeholder_text("Add a task...", ctx);
+        });
+        ctx.subscribe_to_view(&editor, |me, _, event, ctx| match event {
+            EditorEvent::Enter => me.add_workspace_task_from_editor(ctx),
+            EditorEvent::Escape => {
+                me.clear_task_input_editor(ctx);
+                me.focus_active_tab(ctx);
+            }
+            _ => {}
+        });
+        editor
+    }
+
     pub fn handle_tab_rename_editor_event(
         &mut self,
         event: &EditorEvent,
@@ -1787,6 +1816,118 @@ impl Workspace {
             self.focus_active_tab(ctx);
             ctx.notify();
         }
+    }
+
+    fn clear_task_input_editor(&mut self, ctx: &mut ViewContext<Self>) {
+        self.task_input_editor.update(ctx, |editor, ctx| {
+            editor.clear_buffer_and_reset_undo_stack(ctx);
+        });
+    }
+
+    fn add_workspace_task_from_editor(&mut self, ctx: &mut ViewContext<Self>) {
+        let text = self.task_input_editor.as_ref(ctx).buffer_text(ctx);
+        if self.add_workspace_task(text, ctx).is_some() {
+            self.clear_task_input_editor(ctx);
+        }
+    }
+
+    pub(crate) fn focus_task_input(&mut self, ctx: &mut ViewContext<Self>) {
+        self.tasks_collapsed = false;
+        ctx.dispatch_global_action("workspace:save_app", ());
+        ctx.focus(&self.task_input_editor);
+        ctx.notify();
+    }
+
+    pub(crate) fn toggle_tasks_collapsed(&mut self, ctx: &mut ViewContext<Self>) {
+        self.tasks_collapsed = !self.tasks_collapsed;
+        ctx.dispatch_global_action("workspace:save_app", ());
+        ctx.notify();
+    }
+
+    pub(crate) fn workspace_tasks(&self) -> &[WorkspaceTask] {
+        &self.tasks
+    }
+
+    pub(crate) fn add_workspace_task(
+        &mut self,
+        text: String,
+        ctx: &mut ViewContext<Self>,
+    ) -> Option<WorkspaceTaskId> {
+        let task = WorkspaceTask::new(text)?;
+        let task_id = task.id;
+        self.tasks.push(task);
+        ctx.dispatch_global_action("workspace:save_app", ());
+        ctx.notify();
+        Some(task_id)
+    }
+
+    pub(crate) fn remove_workspace_task(
+        &mut self,
+        task_id: WorkspaceTaskId,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        let previous_len = self.tasks.len();
+        self.tasks.retain(|task| task.id != task_id);
+        let removed = self.tasks.len() != previous_len;
+        if removed {
+            ctx.dispatch_global_action("workspace:save_app", ());
+            ctx.notify();
+        }
+        removed
+    }
+
+    pub(crate) fn launch_workspace_task(
+        &mut self,
+        task_id: WorkspaceTaskId,
+        agent: WorkspaceTaskAgent,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        let Some(prompt) = self
+            .tasks
+            .iter()
+            .find(|task| task.id == task_id)
+            .map(|task| task.text.clone())
+        else {
+            return false;
+        };
+
+        #[cfg(feature = "local_tty")]
+        let launched = self.remote_control_open_cli_agent(
+            match agent {
+                WorkspaceTaskAgent::Claude => crate::agent_resume::AgentResumeProvider::Claude,
+                WorkspaceTaskAgent::Codex => crate::agent_resume::AgentResumeProvider::Codex,
+            },
+            None,
+            Some(prompt),
+            ctx,
+        );
+        #[cfg(not(feature = "local_tty"))]
+        let launched = false;
+
+        if launched {
+            self.tasks.retain(|task| task.id != task_id);
+            ctx.dispatch_global_action("workspace:save_app", ());
+            ctx.notify();
+        }
+        launched
+    }
+
+    fn launch_workspace_task_from_ui(
+        &mut self,
+        task_id: WorkspaceTaskId,
+        agent: WorkspaceTaskAgent,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        if self.launch_workspace_task(task_id, agent, ctx) {
+            return;
+        }
+        self.toast_stack.update(ctx, |toast_stack, ctx| {
+            toast_stack.add_ephemeral_toast(
+                DismissibleToast::error("Could not start this task in a local agent".to_owned()),
+                ctx,
+            );
+        });
+        ctx.notify();
     }
 
     fn build_import_modal(ctx: &mut ViewContext<Self>) -> ViewHandle<ImportModal> {
@@ -3594,10 +3735,13 @@ impl Workspace {
             cli_agent_usage_turn_on_panel_mouse_state: Default::default(),
             traffic_light_mouse_states: Default::default(),
             tab_groups: HashMap::new(),
+            tasks: Vec::new(),
+            tasks_collapsed: false,
             horizontal_tab_group_mouse_states: RefCell::default(),
             tab_rename_editor: Self::tab_rename_editor(ctx),
             pane_rename_editor: Self::pane_rename_editor(ctx),
             tab_group_rename_editor: Self::tab_group_rename_editor(ctx),
+            task_input_editor: Self::task_input_editor(ctx),
             vertical_tabs_search_input: Self::vertical_tabs_search_input(ctx),
             tips_completed,
             user_default_shell_unsupported_banner_model_handle,
@@ -4314,6 +4458,8 @@ impl Workspace {
             } => {
                 let active_tab_index = window_snapshot.active_tab_index;
                 let restored_left_panel_open = window_snapshot.left_panel_open;
+                self.tasks = window_snapshot.tasks.clone();
+                self.tasks_collapsed = window_snapshot.tasks_collapsed;
 
                 // Restore groups first so per-tab `group_id` assignments
                 // below can validate membership against a populated map.
@@ -7083,6 +7229,23 @@ impl Workspace {
             }
         }
 
+        // 2b. A plain terminal in the repository's primary checkout. This is
+        // intentionally separate from the automatic-worktree new-tab path so
+        // users can always get back to the main repository directory.
+        let has_active_local_repo = self
+            .active_session_view(ctx)
+            .is_some_and(|terminal| terminal.as_ref(ctx).current_local_repo_path().is_some());
+        menu_items.push(
+            MenuItemFields::new("Terminal in main repo")
+                .with_on_select_action(WorkspaceAction::AddPrimaryCheckoutTab)
+                .with_icon(icons::Icon::Folder)
+                .with_disabled(!has_active_local_repo)
+                .with_tooltip(
+                    "Open a terminal in this repository's primary checkout without creating a worktree",
+                )
+                .into_item(),
+        );
+
         // 3. Cloud Agent (if flags enabled)
         if is_any_ai_enabled
             && FeatureFlag::AgentView.is_enabled()
@@ -7180,7 +7343,7 @@ impl Workspace {
         if FeatureFlag::GroupedTabs.is_enabled() {
             menu_items.push(MenuItem::Separator);
             menu_items.push(
-                MenuItemFields::new("New tab group")
+                MenuItemFields::new("New section")
                     .with_on_select_action(WorkspaceAction::SelectNewSessionMenuItem(
                         NewSessionMenuItem::CreateNewTabGroup,
                     ))
@@ -7528,6 +7691,26 @@ impl Workspace {
         }
     }
 
+    /// Applies a light color tint to a section. `Unset` restores the default,
+    /// untinted section appearance.
+    pub fn set_tab_group_color(
+        &mut self,
+        group_id: TabGroupId,
+        color: SelectedTabColor,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let Some(group) = self.tab_groups.get_mut(&group_id) else {
+            return;
+        };
+        if group.color == color {
+            return;
+        }
+
+        group.color = color;
+        ctx.dispatch_global_action("workspace:save_app", ());
+        ctx.notify();
+    }
+
     /// Ensures the group is expanded (not collapsed). No-op if the group does
     /// not exist or is already expanded.
     fn expand_tab_group(&mut self, group_id: TabGroupId, ctx: &mut ViewContext<Self>) {
@@ -7542,13 +7725,13 @@ impl Workspace {
         let Some(group) = self.tab_groups.get(&group_id) else {
             return;
         };
-        // Seed the editor with the existing name, or the "New Group" default
+        // Seed the editor with the existing name, or the "New Section" default
         // label when the group is unnamed. `insert_selected_text` selects the
         // seeded text so the user can type to replace it instantly.
         let seed_text = group
             .name
             .clone()
-            .unwrap_or_else(|| "New Group".to_string());
+            .unwrap_or_else(|| "New Section".to_string());
 
         self.current_workspace_state
             .set_tab_group_being_renamed(group_id);
@@ -9018,7 +9201,7 @@ impl Workspace {
         cwd: Option<PathBuf>,
         initial_prompt: Option<String>,
         ctx: &mut ViewContext<Self>,
-    ) {
+    ) -> bool {
         let mut command = provider.as_str().to_owned();
         if let Some(prompt) = initial_prompt.filter(|prompt| !prompt.trim().is_empty()) {
             command.push(' ');
@@ -9028,7 +9211,7 @@ impl Workspace {
             command,
             cwd.map(|cwd| cwd.to_string_lossy().into_owned()),
             ctx,
-        );
+        )
     }
 
     #[cfg(feature = "local_tty")]
@@ -9044,8 +9227,7 @@ impl Workspace {
         else {
             return false;
         };
-        self.launch_cli_agent_in_new_tab(command, Some(cwd.to_string_lossy().into_owned()), ctx);
-        true
+        self.launch_cli_agent_in_new_tab(command, Some(cwd.to_string_lossy().into_owned()), ctx)
     }
 
     /// Forks the Claude/Codex session in the pane owning `terminal_view_id` into a NEW tab.
@@ -9066,7 +9248,7 @@ impl Workspace {
             return;
         };
 
-        self.launch_cli_agent_in_new_tab(fork.command, fork.cwd, ctx);
+        let _ = self.launch_cli_agent_in_new_tab(fork.command, fork.cwd, ctx);
     }
 
     /// Opens a Claude Code ↔ Codex transfer in a new tab while preserving the
@@ -9078,7 +9260,7 @@ impl Workspace {
         ctx: &mut ViewContext<Self>,
     ) {
         let cwd = cwd.filter(|cwd| Path::new(cwd).is_dir());
-        self.launch_cli_agent_in_new_tab(command, cwd, ctx);
+        let _ = self.launch_cli_agent_in_new_tab(command, cwd, ctx);
     }
 
     /// Reopens a past CLI-agent conversation (picked in the "Reopen agent conversation"
@@ -9096,7 +9278,7 @@ impl Workspace {
         // to the default new-tab directory rather than failing to spawn the shell —
         // `claude --teleport`/`--resume` locate the conversation by id, not by cwd.
         let cwd = cwd.filter(|cwd| Path::new(cwd).is_dir());
-        self.launch_cli_agent_in_new_tab(command, cwd, ctx);
+        let _ = self.launch_cli_agent_in_new_tab(command, cwd, ctx);
     }
 
     /// Opens a NEW tab at `cwd` and auto-runs `command` once its shell bootstraps,
@@ -9107,7 +9289,7 @@ impl Workspace {
         command: String,
         cwd: Option<String>,
         ctx: &mut ViewContext<Self>,
-    ) {
+    ) -> bool {
         #[cfg(feature = "local_tty")]
         let agent_session_seed =
             crate::agent_resume::agent_session_seed_from_restore_command(&command);
@@ -9135,7 +9317,7 @@ impl Workspace {
         // Attach the one-shot replay command to the new (now active) tab's single pane,
         // mirroring the snapshot-restore path (pane_group/mod.rs:1672).
         #[cfg(feature = "local_tty")]
-        {
+        let command_registered = {
             let manager_handle = self
                 .active_tab_pane_group()
                 .read(ctx, |pane_group, ctx| pane_group.terminal_manager(0, ctx));
@@ -9149,23 +9331,31 @@ impl Workspace {
                         // `Bootstrapped` event fires (mirrors the snapshot-restore path,
                         // pane_group/mod.rs:1672); otherwise the replay command is lost.
                         manager.set_on_restore_command(command, ctx);
+                        true
                     } else {
                         log::warn!(
                             "agent launch: new tab's terminal manager is not a \
                              local_tty::TerminalManager; dropping agent command (opened an \
                              empty tab)"
                         );
+                        false
                     }
-                });
+                })
             } else {
                 log::warn!(
                     "agent launch: new tab has no terminal manager at pane 0; dropping agent \
                      command (opened an empty tab)"
                 );
+                false
             }
-        }
+        };
         #[cfg(not(feature = "local_tty"))]
-        let _ = command;
+        let command_registered = {
+            let _ = command;
+            false
+        };
+
+        command_registered
     }
 
     #[cfg(feature = "local_fs")]
@@ -10446,9 +10636,9 @@ impl Workspace {
             let mut items = vec![];
             if can_move_up {
                 let label = if is_vertical {
-                    "Move group up"
+                    "Move section up"
                 } else {
-                    "Move group left"
+                    "Move section left"
                 };
                 items.push(
                     MenuItemFields::new(label)
@@ -10458,9 +10648,9 @@ impl Workspace {
             }
             if can_move_down {
                 let label = if is_vertical {
-                    "Move group down"
+                    "Move section down"
                 } else {
-                    "Move group right"
+                    "Move section right"
                 };
                 items.push(
                     MenuItemFields::new(label)
@@ -10472,21 +10662,21 @@ impl Workspace {
         };
 
         let close_section = {
-            let mut items = vec![MenuItemFields::new("Close all tabs in group")
+            let mut items = vec![MenuItemFields::new("Close all sessions in section")
                 .with_on_select_action(WorkspaceAction::CloseTabGroup(group_id))
                 .into_item()];
             if has_tabs_outside {
                 items.push(
-                    MenuItemFields::new("Close other tabs")
+                    MenuItemFields::new("Close other sessions")
                         .with_on_select_action(WorkspaceAction::CloseTabsOutsideGroup(group_id))
                         .into_item(),
                 );
             }
             if has_tabs_above {
                 let label = if is_vertical {
-                    "Close tabs above"
+                    "Close sessions above"
                 } else {
-                    "Close tabs to the left"
+                    "Close sessions to the left"
                 };
                 items.push(
                     MenuItemFields::new(label)
@@ -10496,9 +10686,9 @@ impl Workspace {
             }
             if has_tabs_below {
                 let label = if is_vertical {
-                    "Close tabs below"
+                    "Close sessions below"
                 } else {
-                    "Close tabs to the right"
+                    "Close sessions to the right"
                 };
                 items.push(
                     MenuItemFields::new(label)
@@ -10511,9 +10701,9 @@ impl Workspace {
 
         let pin_section = if FeatureFlag::PinnedTabs.is_enabled() {
             let (label, action) = if self.tab_groups.get(&group_id).is_some_and(|g| g.pinned) {
-                ("Unpin group", WorkspaceAction::UnpinTabGroup(group_id))
+                ("Unpin section", WorkspaceAction::UnpinTabGroup(group_id))
             } else {
-                ("Pin group", WorkspaceAction::PinTabGroup(group_id))
+                ("Pin section", WorkspaceAction::PinTabGroup(group_id))
             };
             vec![MenuItemFields::new(label)
                 .with_on_select_action(action)
@@ -10522,19 +10712,96 @@ impl Workspace {
             vec![]
         };
 
+        let current_color = self
+            .tab_groups
+            .get(&group_id)
+            .and_then(|group| group.color.resolve(None));
+        let color_mouse_states: Vec<MouseStateHandle> = (0..TAB_COLOR_OPTIONS.len() + 1)
+            .map(|_| MouseStateHandle::default())
+            .collect();
+        let color_section = vec![MenuItem::Item(
+            MenuItemFields::new_with_custom_label(
+                Arc::new(move |_is_selected, _is_hovered, appearance, _app| {
+                    let theme = appearance.theme();
+                    let ring_color: ColorU = theme.accent().into();
+                    let mut colors = Flex::row()
+                        .with_main_axis_alignment(MainAxisAlignment::SpaceEvenly)
+                        .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                        .with_main_axis_size(MainAxisSize::Max);
+
+                    for (ansi_id, mouse_state) in std::iter::once(None)
+                        .chain(TAB_COLOR_OPTIONS.iter().copied().map(Some))
+                        .zip(color_mouse_states.iter().cloned())
+                    {
+                        let is_selected = ansi_id == current_color;
+                        let dot_color: ColorU = ansi_id
+                            .map(|id| id.to_ansi_color(&theme.terminal_colors().normal).into())
+                            .unwrap_or_else(ColorU::transparent_black);
+                        let tooltip = ansi_id
+                            .map(|id| id.to_string())
+                            .unwrap_or_else(|| "No section color".to_string());
+                        let selected_color = ansi_id
+                            .map(SelectedTabColor::Color)
+                            .unwrap_or(SelectedTabColor::Unset);
+
+                        colors.add_child(
+                            render_color_dot(
+                                mouse_state,
+                                dot_color,
+                                is_selected,
+                                ring_color,
+                                ansi_id.is_none(),
+                                theme.foreground(),
+                                tooltip,
+                                appearance,
+                            )
+                            .on_click(move |ctx, _, _| {
+                                ctx.dispatch_typed_action(WorkspaceAction::SetTabGroupColor {
+                                    group_id,
+                                    color: selected_color,
+                                });
+                                ctx.dispatch_typed_action(crate::menu::MenuAction::Close(true));
+                            })
+                            .finish(),
+                        );
+                    }
+
+                    Flex::column()
+                        .with_main_axis_size(MainAxisSize::Min)
+                        .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+                        .with_spacing(8.)
+                        .with_child(
+                            Text::new_inline(
+                                "Section color",
+                                appearance.ui_font_family(),
+                                appearance.ui_font_size(),
+                            )
+                            .with_color(theme.sub_text_color(theme.surface_2()).into())
+                            .finish(),
+                        )
+                        .with_child(colors.finish())
+                        .finish()
+                }),
+                None,
+            )
+            .no_highlight_on_hover()
+            .with_no_interaction_on_hover(),
+        )];
+
         let mut menu_items = vec![];
         for section_items in [
             pin_section,
             vec![
-                MenuItemFields::new("Ungroup tabs")
+                MenuItemFields::new("Remove section")
                     .with_on_select_action(WorkspaceAction::UngroupTabs(group_id))
                     .into_item(),
-                MenuItemFields::new("New tab in group")
+                MenuItemFields::new("New session in section")
                     .with_on_select_action(WorkspaceAction::NewTabInGroup(group_id))
                     .into_item(),
             ],
             move_section,
-            vec![MenuItemFields::new("Rename")
+            color_section,
+            vec![MenuItemFields::new("Rename section")
                 .with_on_select_action(WorkspaceAction::RenameTabGroup(group_id))
                 .into_item()],
             close_section,
@@ -12207,6 +12474,8 @@ impl Workspace {
             right_panel_width,
             agent_management_filters,
             tab_groups,
+            tasks: self.tasks.clone(),
+            tasks_collapsed: self.tasks_collapsed,
         }
     }
 
@@ -13178,6 +13447,60 @@ impl Workspace {
         ctx.open_url(
             "https://docs.warp.dev/support-and-community/troubleshooting-and-support/updating-warp",
         );
+    }
+
+    /// Returns the best local path from which to resolve the active tab's Git
+    /// repository. Prefer the detected repo root, but fall back to the current
+    /// directory so the action still works while repo metadata is loading.
+    fn active_local_repo_or_cwd(&self, ctx: &mut ViewContext<Self>) -> Option<PathBuf> {
+        self.active_session_view(ctx).and_then(|terminal| {
+            terminal.read(ctx, |terminal, ctx| {
+                terminal
+                    .current_local_repo_path()
+                    .map(Path::to_path_buf)
+                    .or_else(|| {
+                        terminal
+                            .canonical_session_pwd_if_local(ctx)
+                            .map(|path| path.as_path().to_path_buf())
+                    })
+            })
+        })
+    }
+
+    /// Opens an ordinary terminal in the primary checkout for `repo_path`,
+    /// bypassing automatic worktree creation. Returns whether a checkout was
+    /// found and a tab was opened.
+    fn add_primary_checkout_tab_for_repo(
+        &mut self,
+        repo_path: &Path,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        let Some(primary_checkout) = crate::util::git::primary_worktree_root_sync(repo_path) else {
+            return false;
+        };
+
+        self.open_directory_in_new_tab(primary_checkout, ctx);
+        ctx.notify();
+        true
+    }
+
+    fn add_primary_checkout_tab(&mut self, ctx: &mut ViewContext<Self>) {
+        let opened = self
+            .active_local_repo_or_cwd(ctx)
+            .is_some_and(|repo_path| self.add_primary_checkout_tab_for_repo(&repo_path, ctx));
+        if opened {
+            return;
+        }
+
+        self.toast_stack.update(ctx, |toast_stack, ctx| {
+            toast_stack.add_ephemeral_toast(
+                DismissibleToast::error(
+                    "Could not find the primary Git checkout for this tab".to_string(),
+                ),
+                ctx,
+            );
+        });
+        ctx.notify();
     }
 
     fn automatic_worktree_tab_config_for_repo(
@@ -20936,7 +21259,7 @@ impl Workspace {
             let title = group
                 .name
                 .clone()
-                .unwrap_or_else(|| "New Group".to_string());
+                .unwrap_or_else(|| "New Section".to_string());
             // Cap width so long names ellipsize and the tab bar's unbounded
             // measurement stays finite.
             ConstrainedBox::new(
@@ -25119,6 +25442,10 @@ impl TypedActionView for Workspace {
             CloseTabGroup(group_id) => self.close_tab_group(*group_id, ctx),
             ToggleTabGroupCollapsed(group_id) => self.toggle_tab_group_collapsed(*group_id, ctx),
             RenameTabGroup(group_id) => self.rename_tab_group(*group_id, ctx),
+            CreateNewTabGroup => self.create_new_tab_group(ctx),
+            SetTabGroupColor { group_id, color } => {
+                self.set_tab_group_color(*group_id, *color, ctx)
+            }
             NewTabGroupFromTab(tab_index) => self.new_tab_group_from_tab(*tab_index, ctx),
             MoveTabToGroup {
                 tab_index,
@@ -25147,6 +25474,14 @@ impl TypedActionView for Workspace {
             UnpinTab(tab_index) => self.unpin_tab(*tab_index, ctx),
             PinTabGroup(group_id) => self.pin_tab_group(*group_id, ctx),
             UnpinTabGroup(group_id) => self.unpin_tab_group(*group_id, ctx),
+            ToggleTasksCollapsed => self.toggle_tasks_collapsed(ctx),
+            FocusTaskInput => self.focus_task_input(ctx),
+            RemoveWorkspaceTask(task_id) => {
+                self.remove_workspace_task(*task_id, ctx);
+            }
+            LaunchWorkspaceTask { task_id, agent } => {
+                self.launch_workspace_task_from_ui(*task_id, *agent, ctx);
+            }
             AddDefaultTab => self.add_default_tab_impl(true, ctx),
             AddTerminalTab { hide_homepage } => {
                 self.add_new_session_tab_internal_with_default_session_mode_behavior(
@@ -25160,6 +25495,7 @@ impl TypedActionView for Workspace {
                 );
                 ctx.notify();
             }
+            AddPrimaryCheckoutTab => self.add_primary_checkout_tab(ctx),
             AddTabWithShell { shell, source } => {
                 self.add_tab_with_shell(shell.clone(), *source, ctx)
             }
@@ -29776,8 +30112,8 @@ impl Workspace {
 
         if groups_enabled {
             // Reassign membership when the dragged tab's midpoint enters a
-            // different expanded group. Collapsed groups are handled by the
-            // safety-net hop below so we don't drop into it.
+            // different section. The saved container rect covers both expanded
+            // cards and collapsed headers, so either presentation accepts a drop.
             let midpoint_drag = if use_vertical_tabs {
                 (position.min_y() + position.max_y()) / 2.
             } else {
@@ -29785,26 +30121,24 @@ impl Workspace {
             };
             let hovered_group = self.target_group_at_axis(midpoint_drag, use_vertical_tabs, ctx);
             let source_group = self.tabs[current_index].group_id;
-            let expanded_target =
-                hovered_group.filter(|gid| !self.tab_groups.get(gid).is_some_and(|g| g.collapsed));
             // A pinned tab keeps its individual pin while dragging over a
             // pinned group (it's committed on drop — see the `DropTab` handler).
             let was_pinned = self.tabs[current_index].pinned;
-            let target_group_pinned = expanded_target
+            let target_group_pinned = hovered_group
                 .and_then(|gid| self.tab_groups.get(&gid))
                 .is_some_and(|g| g.pinned);
             // Check if we are dragging a pinned tab into an unpinned group.
             // This is not supported as pinned items can not leave the pinned area.
             let pinned_into_unpinned_group =
-                was_pinned && expanded_target.is_some() && !target_group_pinned;
+                was_pinned && hovered_group.is_some() && !target_group_pinned;
 
-            if expanded_target != source_group && !pinned_into_unpinned_group {
+            if hovered_group != source_group && !pinned_into_unpinned_group {
                 // Check if a tab is being dragged out of a pinned group.
                 // If the tab is currently pinned, that means the user is
                 // repositioning it within the pinned area, and passed over
                 // a group as part of the drag. In that case we do not want
                 // to flag this as a tab leaving a pinned group.
-                let leaving_pinned_group = expanded_target.is_none()
+                let leaving_pinned_group = hovered_group.is_none()
                     && source_group
                         .and_then(|gid| self.tab_groups.get(&gid))
                         .is_some_and(|g| g.pinned)
@@ -29818,14 +30152,14 @@ impl Workspace {
 
                 // The bounds of the group that a tab could be dragged into.
                 let target_group_range =
-                    expanded_target.and_then(|gid| group_member_index_range(&self.tabs, gid));
+                    hovered_group.and_then(|gid| group_member_index_range(&self.tabs, gid));
 
                 // Assign the tab to the group we're dragging over (or clear its
                 // group if none). This intentionally leaves the pin untouched:
                 // a pinned tab dragged into a pinned group keeps its pin for the
                 // duration of the drag and only loses it on drop (see the
                 // `DropTab` handler).
-                self.assign_tab_to_group(current_index, expanded_target, ctx);
+                self.assign_tab_to_group(current_index, hovered_group, ctx);
 
                 // Hop into the target group's contiguous block so the group
                 // stays one rendered container. Vertical tab rendering only

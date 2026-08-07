@@ -44,6 +44,7 @@ use crate::themes::theme::AnsiColorIdentifier;
 use crate::themes::theme_chooser::ThemeChooserMode;
 use crate::workflows::{WorkflowSelectionSource, WorkflowSource, WorkflowType};
 use crate::workspace::tab_group::TabGroupId;
+use crate::workspace::task::{WorkspaceTaskAgent, WorkspaceTaskId};
 use crate::workspace::PaneViewLocator;
 
 /// This enum determines how the search query is initialized when opening command search.
@@ -192,6 +193,13 @@ pub enum WorkspaceAction {
     ToggleTabGroupCollapsed(TabGroupId),
     /// Opens an inline editor over the given group's header for renaming.
     RenameTabGroup(TabGroupId),
+    /// Creates a new tab group containing a fresh session and opens its name editor.
+    CreateNewTabGroup,
+    /// Sets the light color tint for a tab group, or clears it with `Unset`.
+    SetTabGroupColor {
+        group_id: TabGroupId,
+        color: SelectedTabColor,
+    },
     /// Creates a new tab group containing the tab at the given index.
     NewTabGroupFromTab(usize),
     /// Moves the tab at `tab_index` into `group_id`, appending it to the
@@ -244,10 +252,19 @@ pub enum WorkspaceAction {
     /// Unpins the entire tab group: clears the pinned flag on the group
     /// and moves the group block to the start of the unpinned region.
     UnpinTabGroup(TabGroupId),
+    ToggleTasksCollapsed,
+    FocusTaskInput,
+    RemoveWorkspaceTask(WorkspaceTaskId),
+    LaunchWorkspaceTask {
+        task_id: WorkspaceTaskId,
+        agent: WorkspaceTaskAgent,
+    },
     AddDefaultTab,
     AddTerminalTab {
         hide_homepage: bool,
     },
+    /// Add a terminal rooted in the active repository's primary (non-linked) checkout.
+    AddPrimaryCheckoutTab,
     AddTabWithShell {
         shell: AvailableShell,
         source: AddTabWithShellSource,
@@ -944,6 +961,8 @@ impl WorkspaceAction {
             | CloseTabGroup(_)
             | ToggleTabGroupCollapsed(_)
             | RenameTabGroup(_)
+            | CreateNewTabGroup
+            | SetTabGroupColor { .. }
             | NewTabGroupFromTab(_)
             | MoveTabToGroup { .. }
             | RemoveTabFromGroup(_)
@@ -961,9 +980,13 @@ impl WorkspaceAction {
             | UnpinTab(_)
             | PinTabGroup(_)
             | UnpinTabGroup(_)
+            | ToggleTasksCollapsed
+            | RemoveWorkspaceTask(_)
+            | LaunchWorkspaceTask { .. }
             | ToggleTabColor { .. }
             | AddDefaultTab
             | AddTerminalTab { .. }
+            | AddPrimaryCheckoutTab
             | AddTabWithShell { .. }
             | AddGetStartedTab
             | AddAgentTab
@@ -1030,6 +1053,7 @@ impl WorkspaceAction {
             | ToggleNewSessionMenu { .. }
             | SelectNewSessionMenuItem(_)
             | ToggleTabBarOverflowMenu
+            | FocusTaskInput
             | CheckForUpdate
             | SetA11yVerbosityLevel(_)
             | ToggleNotifications

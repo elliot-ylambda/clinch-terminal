@@ -1078,6 +1078,8 @@ fn save_app_state(conn: &mut SqliteConnection, app_state: &AppState) -> Result<(
                     project_window_id: Some(project_window_id.clone()),
                     project_index: project_index.try_into().unwrap_or(0),
                     is_active_project: project_index == project_window.active_project_index,
+                    tasks: serde_json::to_string(&window.tasks).unwrap_or_else(|_| "[]".to_owned()),
+                    tasks_collapsed: window.tasks_collapsed,
                 };
                 diesel::insert_into(schema::windows::dsl::windows)
                     .values(new_window)
@@ -2786,6 +2788,8 @@ fn read_sqlite_data(
                     .agent_management_filters
                     .and_then(|s| serde_json::from_str(&s).ok()),
                 tab_groups: tab_groups_snapshots,
+                tasks: serde_json::from_str(&window.tasks).unwrap_or_default(),
+                tasks_collapsed: window.tasks_collapsed,
             };
             (
                 project_window_key,

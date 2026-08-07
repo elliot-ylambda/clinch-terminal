@@ -46,6 +46,8 @@ pub struct Window {
     pub project_window_id: Option<String>,
     pub project_index: i32,
     pub is_active_project: bool,
+    pub tasks: String,
+    pub tasks_collapsed: bool,
 }
 
 #[derive(Identifiable, Insertable, Queryable)]
@@ -346,6 +348,8 @@ pub struct NewWindow {
     pub project_window_id: Option<String>,
     pub project_index: i32,
     pub is_active_project: bool,
+    pub tasks: String,
+    pub tasks_collapsed: bool,
 }
 
 #[derive(Identifiable, Queryable, Associations)]

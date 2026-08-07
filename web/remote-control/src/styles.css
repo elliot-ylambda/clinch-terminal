@@ -677,6 +677,22 @@ button:disabled {
   letter-spacing: 0.07em;
 }
 
+.drawer-session-section {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--stroke-strong);
+}
+
+.drawer-session-section > h3,
+.drawer-task-heading h3 {
+  margin: 0 3px 7px;
+  color: #9da3b2;
+  font-size: 9px;
+  font-weight: 760;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+}
+
 .drawer-tab-group {
   margin-bottom: 7px;
   padding: 7px;
@@ -757,6 +773,97 @@ button:disabled {
   background: rgba(191, 255, 0, 0.06);
   font-size: 11px;
   font-weight: 700;
+}
+
+.drawer-task-section {
+  margin-top: 16px;
+  padding-top: 13px;
+  border-top: 1px solid var(--stroke-strong);
+}
+
+.drawer-task-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.drawer-task-heading span {
+  margin-right: 4px;
+  color: var(--faint);
+  font-size: 9px;
+}
+
+.drawer-task-form {
+  display: flex;
+  gap: 7px;
+  margin-bottom: 9px;
+}
+
+.drawer-task-form input {
+  min-width: 0;
+  height: 38px;
+  flex: 1;
+  padding: 0 10px;
+  border: 1px solid var(--stroke);
+  border-radius: 9px;
+  outline: none;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 11px;
+}
+
+.drawer-task-form input:focus {
+  border-color: rgba(191, 255, 0, 0.45);
+}
+
+.drawer-task-form button {
+  width: 38px;
+  height: 38px;
+  border-radius: 9px;
+  color: var(--accent);
+  background: rgba(191, 255, 0, 0.09);
+  font-size: 17px;
+}
+
+.drawer-task-row {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 7px;
+  padding: 9px;
+  border: 1px solid var(--stroke);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.drawer-task-row > span {
+  overflow: hidden;
+  color: #c4c7d0;
+  font-size: 11px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.drawer-task-row > div {
+  display: flex;
+  gap: 6px;
+}
+
+.drawer-task-row button {
+  min-height: 30px;
+  padding: 0 9px;
+  border-radius: 7px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 9px;
+  font-weight: 720;
+}
+
+.drawer-task-row button.remove {
+  width: 30px;
+  margin-left: auto;
+  padding: 0;
+  color: var(--faint);
+  font-size: 16px;
 }
 
 .sheet {

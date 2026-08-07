@@ -5,6 +5,7 @@ import type { WorkspaceSnapshot } from "../generated/types/WorkspaceSnapshot";
 import { isSafeTerminalResize } from "../terminal/TerminalSurface";
 import {
   badgesForProject,
+  drawerSessionSections,
   isRetryableWorkspaceResponse,
   parseRememberedTargets,
   preferredTargetForProject,
@@ -45,6 +46,8 @@ function workspace(activeTarget: TargetRef): WorkspaceSnapshot {
         {
           id: "tab-a",
           title: "Old tab",
+          section_id: null,
+          section_name: null,
           kind: "terminal",
           active: false,
           activity: "idle",
@@ -67,6 +70,8 @@ function workspace(activeTarget: TargetRef): WorkspaceSnapshot {
         {
           id: "tab-b",
           title: "New desktop tab",
+          section_id: null,
+          section_name: null,
           kind: "terminal",
           active: true,
           activity: "idle",
@@ -87,6 +92,7 @@ function workspace(activeTarget: TargetRef): WorkspaceSnapshot {
           }],
         },
       ],
+      tasks: [],
     }],
     active_target: activeTarget,
     usage: [],
@@ -170,6 +176,22 @@ describe("bidirectional workspace selection", () => {
         },
       },
     })).toBe(true);
+  });
+
+  it("preserves consecutive named and unsectioned session boundaries in the drawer", () => {
+    const tabs = workspace(target("tab-b", "pane-b")).projects[0]!.tabs;
+    const sections = drawerSessionSections([
+      { ...tabs[0]!, section_id: "build", section_name: "Build" },
+      { ...tabs[1]!, section_id: "build", section_name: "Build" },
+      { ...tabs[1]!, id: "tab-review", section_id: "build-2", section_name: "Build" },
+      { ...tabs[1]!, id: "tab-other", section_name: null },
+    ]);
+
+    expect(sections.map((section) => [section.name, section.tabs.map((tab) => tab.id)])).toEqual([
+      ["Build", ["tab-a", "tab-b"]],
+      ["Build", ["tab-review"]],
+      [undefined, ["tab-other"]],
+    ]);
   });
 });
 

@@ -3,4 +3,4 @@ import type { PaneSnapshot } from "./PaneSnapshot";
 import type { ProjectActivity } from "./ProjectActivity";
 import type { TabKind } from "./TabKind";
 
-export type TabSnapshot = { id: string, title: string, kind: TabKind, active: boolean, activity: ProjectActivity, unread: boolean, remote_host: string | null, panes: Array<PaneSnapshot>, };
+export type TabSnapshot = { id: string, title: string, section_id: string | null, section_name: string | null, kind: TabKind, active: boolean, activity: ProjectActivity, unread: boolean, remote_host: string | null, panes: Array<PaneSnapshot>, };

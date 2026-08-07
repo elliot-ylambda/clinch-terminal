@@ -71,8 +71,8 @@ fn should_clip_tab_text_start(
     !has_custom_title && !has_ai_conversation_title && !has_cli_agent_prompt_title
 }
 
-/// Label for the tab right-click menu's "Move to group" submenu parent.
-pub const MOVE_TO_GROUP_LABEL: &str = "Move to group";
+/// Label for the tab right-click menu's "Move to section" submenu parent.
+pub const MOVE_TO_GROUP_LABEL: &str = "Move to section";
 
 /// Whether tabs render in the vertical left-hand panel (as opposed to a
 /// horizontal top bar). Clinch hard-locks this on: tabs can only ever live in
@@ -649,7 +649,7 @@ impl TabData {
         if !FeatureFlag::GroupedTabs.is_enabled() {
             return vec![];
         }
-        let mut menu_items = vec![MenuItemFields::new("New group with tab")
+        let mut menu_items = vec![MenuItemFields::new("New section with session")
             .with_on_select_action(WorkspaceAction::NewTabGroupFromTab(index))
             .into_item()];
         let has_other_groups = tab_groups.keys().any(|gid| Some(*gid) != self.group_id);
@@ -658,7 +658,7 @@ impl TabData {
         }
         if self.group_id.is_some() {
             menu_items.push(
-                MenuItemFields::new("Remove from group")
+                MenuItemFields::new("Remove from section")
                     .with_on_select_action(WorkspaceAction::RemoveTabFromGroup(index))
                     .into_item(),
             );
