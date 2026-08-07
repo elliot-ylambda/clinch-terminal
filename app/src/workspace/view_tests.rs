@@ -3041,6 +3041,141 @@ fn menu_contains_item(items: &[MenuItem<WorkspaceAction>], label: &str) -> bool 
         .any(|item| item.is_approximately_same_item_as(&MenuItemFields::new(label).into_item()))
 }
 
+fn cli_agent_session_with_id(
+    agent: crate::terminal::CLIAgent,
+    session_id: Option<&str>,
+) -> CLIAgentSession {
+    CLIAgentSession {
+        agent,
+        status: CLIAgentSessionStatus::InProgress,
+        session_context: CLIAgentSessionContext {
+            session_id: session_id.map(str::to_owned),
+            ..Default::default()
+        },
+        input_state: CLIAgentInputState::Closed,
+        should_auto_toggle_input: false,
+        listener: None,
+        plugin_version: None,
+        remote_host: None,
+        draft_text: None,
+        custom_command_prefix: None,
+        received_rich_notification: false,
+        has_observed_turn_activity: false,
+        turn_interrupted_by_user: false,
+        prompt_history: Default::default(),
+        prompt_history_load_state: Default::default(),
+        prompt_history_generation: 0,
+    }
+}
+
+#[test]
+fn test_tab_context_menu_copies_claude_and_codex_session_ids() {
+    let _vertical_tabs_guard = FeatureFlag::VerticalTabs.override_enabled(true);
+
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+        let terminal_view_id = workspace.read(&app, |workspace, ctx| {
+            workspace.tabs[0]
+                .pane_group
+                .as_ref(ctx)
+                .focused_session_view(ctx)
+                .expect("test tab should contain a terminal")
+                .id()
+        });
+
+        for (agent, session_id, label) in [
+            (
+                crate::terminal::CLIAgent::Claude,
+                "claude-session-123",
+                "Copy Claude Code session ID",
+            ),
+            (
+                crate::terminal::CLIAgent::Codex,
+                "codex-session-456",
+                "Copy Codex session ID",
+            ),
+        ] {
+            CLIAgentSessionsModel::handle(&app).update(&mut app, |sessions, ctx| {
+                sessions.set_session(
+                    terminal_view_id,
+                    cli_agent_session_with_id(agent, Some(session_id)),
+                    ctx,
+                );
+            });
+
+            workspace.read(&app, |workspace, ctx| {
+                let items = workspace.tabs[0].menu_items(
+                    0,
+                    1,
+                    false,
+                    &workspace.tab_groups,
+                    false,
+                    false,
+                    ctx,
+                );
+                let action = items
+                    .iter()
+                    .find(|item| item.fields().is_some_and(|fields| fields.label() == label))
+                    .and_then(MenuItem::item_on_select_action)
+                    .expect("identified agent session should expose its copy action");
+                match action {
+                    WorkspaceAction::CopyTextToClipboard(value) => {
+                        assert_eq!(value, session_id);
+                    }
+                    action => panic!("unexpected session ID action: {action:?}"),
+                }
+            });
+        }
+    });
+}
+
+#[test]
+fn test_tab_context_menu_omits_unavailable_or_unsupported_session_ids() {
+    let _vertical_tabs_guard = FeatureFlag::VerticalTabs.override_enabled(true);
+
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+        let terminal_view_id = workspace.read(&app, |workspace, ctx| {
+            workspace.tabs[0]
+                .pane_group
+                .as_ref(ctx)
+                .focused_session_view(ctx)
+                .expect("test tab should contain a terminal")
+                .id()
+        });
+
+        for (agent, session_id) in [
+            (crate::terminal::CLIAgent::Claude, None),
+            (crate::terminal::CLIAgent::Codex, Some("   ")),
+            (crate::terminal::CLIAgent::Gemini, Some("gemini-session")),
+        ] {
+            CLIAgentSessionsModel::handle(&app).update(&mut app, |sessions, ctx| {
+                sessions.set_session(
+                    terminal_view_id,
+                    cli_agent_session_with_id(agent, session_id),
+                    ctx,
+                );
+            });
+
+            workspace.read(&app, |workspace, ctx| {
+                let items = workspace.tabs[0].menu_items(
+                    0,
+                    1,
+                    false,
+                    &workspace.tab_groups,
+                    false,
+                    false,
+                    ctx,
+                );
+                assert!(!menu_contains_item(&items, "Copy Claude Code session ID"));
+                assert!(!menu_contains_item(&items, "Copy Codex session ID"));
+            });
+        }
+    });
+}
+
 #[test]
 fn test_tab_context_menu_move_to_new_window_gating() {
     let _guard = FeatureFlag::DragTabsToWindows.override_enabled(true);
