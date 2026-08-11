@@ -32,8 +32,8 @@ use crate::features::FeatureFlag;
 use crate::menu::{MenuItem, MenuItemFields};
 use crate::pane_group::focus_state::{PaneFocusHandle, PaneGroupFocusEvent, PaneGroupFocusState};
 use crate::pane_group::pane::view::header::components::{
-    header_edge_min_width, render_pane_header_buttons, render_pane_header_title_text,
-    render_three_column_header, CenteredHeaderEdgeWidth,
+    header_edge_min_width, render_pane_close_button, render_pane_header_buttons,
+    render_pane_header_title_text, render_three_column_header, CenteredHeaderEdgeWidth,
 };
 use crate::pane_group::pane::view::header::{render_pane_header_draggable, PANE_HEADER_HEIGHT};
 use crate::pane_group::pane::view::PaneHeaderAction;
@@ -427,6 +427,7 @@ impl TerminalView {
     fn render_header_actions(
         &self,
         header_ctx: &view::HeaderRenderContext,
+        show_overflow_button: bool,
         app: &AppContext,
     ) -> (Box<dyn Element>, f32) {
         let appearance = Appearance::as_ref(app);
@@ -494,17 +495,26 @@ impl TerminalView {
             .focus_handle
             .as_ref()
             .is_some_and(|h| h.is_in_split_pane(app));
-        right_row.add_child(
-            render_pane_header_buttons::<TerminalAction, TerminalAction>(
-                header_ctx,
+        if show_overflow_button {
+            right_row.add_child(
+                render_pane_header_buttons::<TerminalAction, TerminalAction>(
+                    header_ctx,
+                    appearance,
+                    show_close_button,
+                    icon_color,
+                    button_size,
+                ),
+            );
+        } else if show_close_button {
+            right_row.add_child(render_pane_close_button::<TerminalAction, TerminalAction>(
                 appearance,
-                show_close_button,
+                header_ctx.close_button_mouse_state.clone(),
                 icon_color,
                 button_size,
-            ),
-        );
+            ));
+        }
         icon_button_count += show_close_button as u32
-            + header_ctx.has_overflow_items as u32
+            + (show_overflow_button && header_ctx.has_overflow_items) as u32
             + has_sharing_element as u32;
 
         let min_width = header_edge_min_width(icon_button_count);
@@ -612,7 +622,10 @@ impl TerminalView {
         } else {
             self.render_header_title(is_fullscreen_agent_view, header_ctx, app)
         };
-        let (right, min_actions_width) = self.render_header_actions(header_ctx, app);
+        // The message-history header keeps the dedicated sharing/close controls but omits the
+        // generic ellipsis menu beside them.
+        let (right, min_actions_width) =
+            self.render_header_actions(header_ctx, !use_cli_agent_history_header, app);
 
         let header = render_three_column_header(
             left,

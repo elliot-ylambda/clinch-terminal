@@ -28,11 +28,11 @@ visual language for this MVP.
 1. The vertical sessions panel supports named sections within each project. A section belongs only
    to the project in which it was created.
 
-2. A full-width **Create new section** button appears at the top of the vertical sessions panel.
-   Activating it creates a normal new session as the first member of a new section and immediately
-   enters section naming. People can also create a section from the new-session menu, from an
-   existing session, or from a multi-selection of sessions. A section is removed automatically
-   when its last session leaves.
+2. A full-width **Create new section** button is pinned to the bottom of the vertical sessions
+   panel, below the Tasks area. Activating it creates a normal new session as the first member of a
+   new section and immediately enters section naming. People can also create a section from the
+   new-session menu, from an existing session, or from a multi-selection of sessions. A section is
+   removed automatically when its last session leaves.
 
 3. A newly created section immediately enters inline naming. Section names must contain at least
    one non-whitespace character; canceling or submitting an empty name keeps the prior/default

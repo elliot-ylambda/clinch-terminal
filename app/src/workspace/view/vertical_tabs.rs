@@ -1852,6 +1852,7 @@ fn render_create_section_button(
         .with_margin_left(GROUP_HORIZONTAL_PADDING)
         .with_margin_right(GROUP_HORIZONTAL_PADDING)
         .with_margin_top(GROUP_HORIZONTAL_PADDING)
+        .with_margin_bottom(GROUP_HORIZONTAL_PADDING)
         .finish()
 }
 
@@ -2429,15 +2430,15 @@ fn render_vertical_tabs_panel(
     let panel_content = Flex::column()
         .with_main_axis_size(MainAxisSize::Max)
         .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
-        .with_child(render_create_section_button(state, app))
         .with_child(render_control_bar(
             state,
             workspace,
             &workspace.vertical_tabs_search_input,
             app,
         ))
-        .with_child(Shrinkable::new(1., scrollable_groups).finish())
+        .with_child(Expanded::new(1., scrollable_groups).finish())
         .with_child(render_workspace_tasks(state, workspace, app))
+        .with_child(render_create_section_button(state, app))
         .finish();
 
     // The settings popup is rendered at the workspace level (with Dismiss for click-outside-

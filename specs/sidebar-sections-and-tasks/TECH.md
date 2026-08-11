@@ -36,14 +36,14 @@ Change the group-header close affordance to dispatch `UngroupTabs`, preserving s
 `Close all sessions in section` in the overflow menu. Extend vertical drag hit testing so a
 collapsed group container accepts a session drop and appends it to that group.
 
-Add a full-width primary section action above the existing vertical-tabs control row. It dispatches
-the same new-section path as the menu, creating the first session and opening the inline name
-editor. Add `SetTabGroupColor` and a context-menu color-dot row backed by the existing six
-`TAB_COLOR_OPTIONS`. Render the chosen ANSI color as a low-opacity card fill and outline. Reuse the
-existing persisted `TabGroup.color`/`TabGroupSnapshot.color` field, so no new migration or Remote
-Control protocol field is required. Show a plus action with the other section-header controls on
-hover and dispatch the existing `NewTabInGroup` path so the normal new-session behavior targets
-that section and expands it when needed.
+Add a full-width primary section action at the bottom of the vertical-tabs panel, below the Tasks
+area. It dispatches the same new-section path as the menu, creating the first session and opening
+the inline name editor. Add `SetTabGroupColor` and a context-menu color-dot row backed by the
+existing six `TAB_COLOR_OPTIONS`. Render the chosen ANSI color as a low-opacity card fill and
+outline. Reuse the existing persisted `TabGroup.color`/`TabGroupSnapshot.color` field, so no new
+migration or Remote Control protocol field is required. Show a plus action with the other
+section-header controls on hover and dispatch the existing `NewTabInGroup` path so the normal
+new-session behavior targets that section and expands it when needed.
 
 No new section persistence schema is required for this MVP: membership, names, collapsed state,
 and effective order already round-trip through `TabGroupSnapshot`, `tabs.tab_group_id`, and tab
