@@ -3208,7 +3208,7 @@ impl Workspace {
             ctx.notify();
         });
         #[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
-        ctx.subscribe_to_model(&RemoteControlService::handle(ctx), |_, _, _, ctx| {
+        ctx.observe(&RemoteControlService::handle(ctx), |_, _, ctx| {
             // Reflect live phone connections in every Clinch window header.
             ctx.notify();
         });

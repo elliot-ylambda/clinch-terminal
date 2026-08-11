@@ -122,9 +122,7 @@ impl ClinchSettingsPageView {
         ctx.subscribe_to_model(&ClinchSettings::handle(ctx), |_, _, _, ctx| ctx.notify());
         #[cfg(feature = "local_fs")]
         if !ChannelState::has_backend() {
-            ctx.subscribe_to_model(&RemoteControlService::handle(ctx), |_, _, _, ctx| {
-                ctx.notify()
-            });
+            ctx.observe(&RemoteControlService::handle(ctx), |_, _, ctx| ctx.notify());
         }
 
         let cli_quick_insert_editor = ctx.add_typed_action_view(|ctx| {

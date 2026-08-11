@@ -1,4 +1,8 @@
 use settings::Setting as _;
+#[cfg(feature = "local_fs")]
+use warp_core::channel::{Channel, ChannelConfig, ChannelState};
+#[cfg(feature = "local_fs")]
+use warp_core::AppId;
 use warpui::platform::WindowStyle;
 use warpui::{App, SingletonEntity, TypedActionView};
 
@@ -14,6 +18,8 @@ use crate::ai::blocklist::agent_view::agent_input_footer::quick_insert_modal::{
 use crate::ai::blocklist::agent_view::agent_input_footer::toolbar_item::AgentToolbarItemKind;
 use crate::appearance::Appearance;
 use crate::auth::AuthStateProvider;
+#[cfg(feature = "local_fs")]
+use crate::remote_control::RemoteControlService;
 #[cfg(target_os = "macos")]
 use crate::settings::CliAgentUsageSettings;
 use crate::settings::ClinchSettings;
@@ -121,6 +127,51 @@ fn remote_control_browser_link_gets_a_fresh_load_marker() {
         remote_control_browser_url("https://mac.example/clinch-remote?source=settings", 1234),
         "https://mac.example/clinch-remote/?source=settings&clinch_refresh=1234"
     );
+}
+
+/// This test mutates the process-global channel, so it relies on the repository's required
+/// process-per-test nextest runner for isolation.
+#[test]
+#[cfg(feature = "local_fs")]
+fn remote_control_model_notifications_redraw_the_visible_settings_page() {
+    App::test((), |mut app| async move {
+        ChannelState::set(ChannelState::new(
+            Channel::Local,
+            ChannelConfig::no_backend(AppId::new("test", "warp", "WarpTest"), "warp-test.log"),
+        ));
+        initialize_settings_for_tests(&mut app);
+        app.add_singleton_model(|_| AuthStateProvider::new_logged_out_for_test());
+        app.add_singleton_model(|_| KeybindingChangedNotifier::new());
+        app.add_singleton_model(|_| Appearance::mock());
+        app.update(crate::remote_control::register);
+
+        let (window_id, view) =
+            app.add_window(WindowStyle::NotStealFocus, ClinchSettingsPageView::new);
+        view.update(&mut app, |_, ctx| ctx.notify());
+        let frames_before = app.read(|ctx| {
+            let presenter = ctx
+                .presenter(window_id)
+                .expect("settings window should have a presenter");
+            let frame_count = presenter.borrow().frame_count();
+            frame_count
+        });
+
+        app.update(|ctx| {
+            RemoteControlService::handle(ctx).update(ctx, |_, ctx| ctx.notify());
+        });
+
+        let frames_after = app.read(|ctx| {
+            let presenter = ctx
+                .presenter(window_id)
+                .expect("settings window should have a presenter");
+            let frame_count = presenter.borrow().frame_count();
+            frame_count
+        });
+        assert!(
+            frames_after > frames_before,
+            "a background Remote Control notification must redraw the visible settings page"
+        );
+    });
 }
 
 #[test]
