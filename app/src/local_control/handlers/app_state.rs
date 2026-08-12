@@ -237,6 +237,12 @@ fn window_create(
         "target selectors",
     )?;
     let params = decode_params::<TabCreateParams>(params)?;
+    if params.cwd.is_some() || !params.command.is_empty() {
+        return Err(ControlError::new(
+            ErrorCode::InvalidParams,
+            "window.create does not support cwd or startup command options",
+        ));
+    }
     match params.tab_type {
         None | Some(TabType::Terminal | TabType::Default) => {}
         Some(TabType::Agent | TabType::CloudAgent) => {

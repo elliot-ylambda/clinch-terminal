@@ -4,8 +4,10 @@ use local_control::protocol::{
     Action, ActionKind, ActionNameParams, BindingNameParams, BooleanValueParams, ColorValueParams,
     ControlError, DirectionParams, EmptyParams, ErrorCode, FileOpenParams, KeyParams,
     KeyValueParams, PageQueryParams, QueryParams, RenameParams, RequestEnvelope, ResizeParams,
+    SectionCreateParams, SectionIdParams, SectionMoveParams, SectionUpdateParams,
     SettingListParams, TabActivateParams, TabActivationMode, TabCloseMode, TabCloseParams,
-    TabCreateParams, TextParams, ThemeNameParams,
+    TabCreateParams, TextParams, ThemeNameParams, ToolbeltButtonCreateParams,
+    ToolbeltButtonDeleteParams, ToolbeltButtonMoveParams, ToolbeltListParams,
 };
 use local_control::selection::select_instance;
 use serde::Serialize;
@@ -16,10 +18,11 @@ use crate::local_control::output::{write_json, write_json_line};
 use crate::local_control::selectors::{instance_selector, target_selector};
 use crate::local_control::{
     ActionCatalogCommand, AppCommand, AppearanceCommand, CapabilityCommand, FileCommand,
-    InputCommand, InstanceCommand, KeybindingCommand, PaneCommand, SessionCommand, SettingCommand,
-    SurfaceCommand, SurfaceOpenCommand, SurfaceOpenToggleCommand, SurfaceQueryCommand,
-    SurfaceSettingsCommand, SurfaceToggleCommand, TabActivateArgs, TabCloseArgs, TabColorCommand,
-    TabCommand, TargetArgs, ThemeCommand, WindowCommand,
+    InputCommand, InstanceCommand, KeybindingCommand, PaneCommand, SectionCommand,
+    SectionTabCommand, SessionCommand, SettingCommand, SurfaceCommand, SurfaceOpenCommand,
+    SurfaceOpenToggleCommand, SurfaceQueryCommand, SurfaceSettingsCommand, SurfaceToggleCommand,
+    TabActivateArgs, TabCloseArgs, TabColorCommand, TabCommand, TargetArgs, ThemeCommand,
+    ToolbeltButtonCommand, ToolbeltCommand, WindowCommand,
 };
 
 pub(super) fn run_surface_command(
@@ -341,6 +344,8 @@ pub(super) fn run_window_command(
             TabCreateParams {
                 tab_type: args.tab_type.map(Into::into),
                 shell: args.shell,
+                cwd: None,
+                command: Vec::new(),
             },
             output_format,
         ),
@@ -370,6 +375,8 @@ pub(super) fn run_tab_command(
             TabCreateParams {
                 tab_type: args.tab_type.map(Into::into),
                 shell: args.shell,
+                cwd: args.cwd,
+                command: args.command,
             },
             output_format,
         ),
@@ -617,6 +624,118 @@ pub(super) fn run_appearance_command(
         AppearanceCommand::ZoomReset(args) => {
             run_action(args, ActionKind::AppearanceZoomReset, output_format)
         }
+    }
+}
+
+pub(super) fn run_toolbelt_command(
+    command: ToolbeltCommand,
+    output_format: OutputFormat,
+) -> Result<(), ControlError> {
+    match command {
+        ToolbeltCommand::List(args) => run_action_with_params(
+            args.target,
+            ActionKind::ToolbeltList,
+            ToolbeltListParams {
+                footer: args.footer.into(),
+            },
+            output_format,
+        ),
+        ToolbeltCommand::Button(command) => match command {
+            ToolbeltButtonCommand::Create(args) => run_action_with_params(
+                args.target,
+                ActionKind::ToolbeltButtonCreate,
+                ToolbeltButtonCreateParams {
+                    footer: args.footer.into(),
+                    label: args.label,
+                    text: args.text,
+                    auto_send: args.auto_send,
+                    side: args.side.into(),
+                    position: args.position,
+                },
+                output_format,
+            ),
+            ToolbeltButtonCommand::Delete(args) => run_action_with_params(
+                args.target,
+                ActionKind::ToolbeltButtonDelete,
+                ToolbeltButtonDeleteParams {
+                    footer: args.footer.into(),
+                    label: args.label,
+                },
+                output_format,
+            ),
+            ToolbeltButtonCommand::Move(args) => run_action_with_params(
+                args.target,
+                ActionKind::ToolbeltButtonMove,
+                ToolbeltButtonMoveParams {
+                    footer: args.footer.into(),
+                    label: args.label,
+                    side: args.side.into(),
+                    position: args.position,
+                },
+                output_format,
+            ),
+        },
+    }
+}
+
+pub(super) fn run_section_command(
+    command: SectionCommand,
+    output_format: OutputFormat,
+) -> Result<(), ControlError> {
+    match command {
+        SectionCommand::List(args) => {
+            run_action_with_params(args, ActionKind::SectionList, EmptyParams {}, output_format)
+        }
+        SectionCommand::Create(args) => run_action_with_params(
+            args.target,
+            ActionKind::SectionCreate,
+            SectionCreateParams { name: args.name },
+            output_format,
+        ),
+        SectionCommand::Update(args) => run_action_with_params(
+            args.target,
+            ActionKind::SectionUpdate,
+            SectionUpdateParams {
+                section_id: args.section_id,
+                name: args.name,
+                collapsed: args.collapsed,
+                color: args.color,
+            },
+            output_format,
+        ),
+        SectionCommand::Delete(args) => run_action_with_params(
+            args.target,
+            ActionKind::SectionDelete,
+            SectionIdParams {
+                section_id: args.section_id,
+            },
+            output_format,
+        ),
+        SectionCommand::Move(args) => run_action_with_params(
+            args.target,
+            ActionKind::SectionMove,
+            SectionMoveParams {
+                section_id: args.section_id,
+                direction: args.direction.into(),
+            },
+            output_format,
+        ),
+        SectionCommand::Tab(command) => match command {
+            SectionTabCommand::Add(args) => run_action_with_params(
+                args.target,
+                ActionKind::SectionTabAdd,
+                SectionIdParams {
+                    section_id: args.section_id,
+                },
+                output_format,
+            ),
+            SectionTabCommand::Remove(args) => run_action_with_params(
+                args,
+                ActionKind::SectionTabRemove,
+                EmptyParams {},
+                output_format,
+            ),
+        },
     }
 }
 

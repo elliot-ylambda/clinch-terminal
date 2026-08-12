@@ -28,12 +28,19 @@ fn strict_params_serialize_without_synthetic_discriminators() {
         TabCreateParams {
             tab_type: Some(TabType::Agent),
             shell: Some("zsh".to_owned()),
+            cwd: Some("/tmp/project".to_owned()),
+            command: vec!["npm".to_owned(), "run".to_owned(), "dev".to_owned()],
         },
     )
     .expect("tab.create params serialize");
     assert_eq!(
         action.params,
-        serde_json::json!({ "tab_type": "agent", "shell": "zsh" })
+        serde_json::json!({
+            "tab_type": "agent",
+            "shell": "zsh",
+            "cwd": "/tmp/project",
+            "command": ["npm", "run", "dev"]
+        })
     );
     assert!(action.params.get("type").is_none());
 }
@@ -157,8 +164,8 @@ fn malformed_and_removed_action_names_are_not_deserialized() {
 }
 
 #[test]
-fn catalog_has_exactly_84_retained_actions() {
-    assert_eq!(ActionKind::ALL.len(), 84);
+fn catalog_has_exactly_95_retained_actions() {
+    assert_eq!(ActionKind::ALL.len(), 95);
 }
 
 #[test]

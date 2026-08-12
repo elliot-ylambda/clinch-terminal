@@ -7945,16 +7945,38 @@ impl Workspace {
     /// * If the tab was effectively pinned, clamp past the pinned region so
     ///   the new (unpinned) group doesn't land inside the pinned area.
     fn new_tab_group_from_tab(&mut self, tab_index: usize, ctx: &mut ViewContext<Self>) {
+        if let Some(group_id) = self.create_tab_group_from_tab(tab_index, None, ctx) {
+            ctx.dispatch_typed_action_deferred(WorkspaceAction::RenameTabGroup(group_id));
+        }
+    }
+
+    /// Creates a named sidebar section from an existing tab without opening the inline editor.
+    pub(crate) fn create_named_tab_group_from_tab(
+        &mut self,
+        tab_index: usize,
+        name: String,
+        ctx: &mut ViewContext<Self>,
+    ) -> Option<TabGroupId> {
+        self.create_tab_group_from_tab(tab_index, Some(name), ctx)
+    }
+
+    fn create_tab_group_from_tab(
+        &mut self,
+        tab_index: usize,
+        name: Option<String>,
+        ctx: &mut ViewContext<Self>,
+    ) -> Option<TabGroupId> {
         if !FeatureFlag::GroupedTabs.is_enabled() {
-            return;
+            return None;
         }
         let Some(tab) = self.tabs.get(tab_index) else {
             log::debug!("new_tab_group_from_tab: tab_index {tab_index} out of bounds");
-            return;
+            return None;
         };
         let previous_group_id = tab.group_id;
 
-        let group = TabGroup::new();
+        let mut group = TabGroup::new();
+        group.name = name;
         let group_id = group.id;
         self.tab_groups.insert(group_id, group);
 
@@ -7987,13 +8009,12 @@ impl Workspace {
 
         ctx.dispatch_global_action("workspace:save_app", ());
         ctx.notify();
-
-        ctx.dispatch_typed_action_deferred(WorkspaceAction::RenameTabGroup(group_id));
+        Some(group_id)
     }
 
     /// Moves the tab into `group_id`, appending it to the end of the
     /// group's contiguous run.
-    fn move_tab_to_group(
+    pub(crate) fn move_tab_to_group(
         &mut self,
         tab_index: usize,
         group_id: TabGroupId,
@@ -8032,7 +8053,7 @@ impl Workspace {
     /// Removes the tab from its current group and repositions it just past
     /// the group's last remaining member, or further if the group was pinned
     /// (the removed tab is now unpinned and must clear the pinned region).
-    fn remove_tab_from_group(&mut self, tab_index: usize, ctx: &mut ViewContext<Self>) {
+    pub(crate) fn remove_tab_from_group(&mut self, tab_index: usize, ctx: &mut ViewContext<Self>) {
         if !FeatureFlag::GroupedTabs.is_enabled() {
             return;
         }
@@ -8063,7 +8084,7 @@ impl Workspace {
         ctx.notify();
     }
 
-    fn ungroup_tabs(&mut self, group_id: TabGroupId, ctx: &mut ViewContext<Self>) {
+    pub(crate) fn ungroup_tabs(&mut self, group_id: TabGroupId, ctx: &mut ViewContext<Self>) {
         if !FeatureFlag::GroupedTabs.is_enabled() || !self.tab_groups.contains_key(&group_id) {
             return;
         }
@@ -8145,7 +8166,7 @@ impl Workspace {
     /// True when the user-initiated reorder of `group_id` in `direction`
     /// would not cross the pinned/unpinned boundary or go beyond the tab list bounds.
     /// Used for the tab group menu which supports 'move group up/down' (or for htabs left/right).
-    pub(super) fn can_move_tab_group(&self, group_id: TabGroupId, direction: TabMovement) -> bool {
+    pub(crate) fn can_move_tab_group(&self, group_id: TabGroupId, direction: TabMovement) -> bool {
         let Some((first, last)) = group_member_index_range(&self.tabs, group_id) else {
             return false;
         };
@@ -8183,7 +8204,7 @@ impl Workspace {
     /// is itself grouped, we expand to that group's full index range (via
     /// `group_member_index_range`) so the whole neighbor group is hopped over
     /// as a unit, instead of landing the group in the middle of it.
-    fn move_tab_group(
+    pub(crate) fn move_tab_group(
         &mut self,
         group_id: TabGroupId,
         direction: TabMovement,
@@ -9391,7 +9412,7 @@ impl Workspace {
             command.push(' ');
             command.push_str(&shell_words::quote(&prompt));
         }
-        self.launch_cli_agent_in_new_tab(
+        self.launch_command_in_new_tab(
             command,
             cwd.map(|cwd| cwd.to_string_lossy().into_owned()),
             ctx,
@@ -9411,7 +9432,7 @@ impl Workspace {
         else {
             return false;
         };
-        self.launch_cli_agent_in_new_tab(command, Some(cwd.to_string_lossy().into_owned()), ctx)
+        self.launch_command_in_new_tab(command, Some(cwd.to_string_lossy().into_owned()), ctx)
     }
 
     /// Forks the Claude/Codex session in the pane owning `terminal_view_id` into a NEW tab.
@@ -9435,7 +9456,7 @@ impl Workspace {
         };
 
         let cwd = cli_agent_action_cwd(source_pane_cwd, fork.cwd);
-        let _ = self.launch_cli_agent_in_new_tab(fork.command, cwd, ctx);
+        let _ = self.launch_command_in_new_tab(fork.command, cwd, ctx);
     }
 
     /// Opens a Claude Code ↔ Codex transfer in a new tab while preserving the
@@ -9447,7 +9468,7 @@ impl Workspace {
         ctx: &mut ViewContext<Self>,
     ) {
         let cwd = cli_agent_action_cwd(cwd, None);
-        let _ = self.launch_cli_agent_in_new_tab(command, cwd, ctx);
+        let _ = self.launch_command_in_new_tab(command, cwd, ctx);
     }
 
     /// Reopens a past CLI-agent conversation (picked in the "Reopen agent conversation"
@@ -9491,13 +9512,13 @@ impl Workspace {
             self.active_header_project_dir(ctx),
             cwd,
         );
-        let _ = self.launch_cli_agent_in_new_tab(command, cwd, ctx);
+        let _ = self.launch_command_in_new_tab(command, cwd, ctx);
     }
 
     /// Opens a NEW tab at `cwd` and auto-runs `command` once its shell bootstraps,
-    /// reusing the agent-resume restore-replay path. Shared by the Fork and Transfer
-    /// footer buttons and the "Reopen agent conversation" palette command.
-    fn launch_cli_agent_in_new_tab(
+    /// reusing the restore-replay path. Shared by local control, the Fork and Transfer
+    /// footer buttons, and the "Reopen agent conversation" palette command.
+    pub(crate) fn launch_command_in_new_tab(
         &mut self,
         command: String,
         cwd: Option<String>,

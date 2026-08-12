@@ -53,6 +53,14 @@ pub enum ActionParameterSpec {
     TabCreate,
     Text,
     ThemeName,
+    ToolbeltButtonCreate,
+    ToolbeltButtonDelete,
+    ToolbeltButtonMove,
+    ToolbeltList,
+    SectionCreate,
+    SectionId,
+    SectionMove,
+    SectionUpdate,
 }
 
 /// Typed result contract for a catalog action.
@@ -75,6 +83,8 @@ pub enum ActionResultSpec {
     TargetMetadata,
     ThemeList,
     ThemeState,
+    ToolbeltState,
+    SectionState,
 }
 
 /// Discoverable metadata describing one local-control action.
@@ -255,6 +265,23 @@ define_action_catalog! {
         SettingGet => { name: "setting.get", status: Implemented, target: Settings, params: Key, result: SettingValue },
         SettingSet => { name: "setting.set", status: Implemented, target: Settings, params: KeyValue, result: Acknowledgement },
         SettingToggle => { name: "setting.toggle", status: Implemented, target: Settings, params: Key, result: Acknowledgement },
+    }
+
+    toolbelt {
+        ToolbeltList => { name: "toolbelt.list", status: Implemented, target: Settings, params: ToolbeltList, result: ToolbeltState },
+        ToolbeltButtonCreate => { name: "toolbelt.button.create", status: Implemented, target: Settings, params: ToolbeltButtonCreate, result: ToolbeltState },
+        ToolbeltButtonDelete => { name: "toolbelt.button.delete", status: Implemented, target: Settings, params: ToolbeltButtonDelete, result: ToolbeltState },
+        ToolbeltButtonMove => { name: "toolbelt.button.move", status: Implemented, target: Settings, params: ToolbeltButtonMove, result: ToolbeltState },
+    }
+
+    section {
+        SectionList => { name: "section.list", status: Implemented, target: Window, params: None, result: SectionState },
+        SectionCreate => { name: "section.create", status: Implemented, target: Tab, params: SectionCreate, result: SectionState },
+        SectionUpdate => { name: "section.update", status: Implemented, target: Window, params: SectionUpdate, result: SectionState },
+        SectionDelete => { name: "section.delete", status: Implemented, target: Window, params: SectionId, result: SectionState },
+        SectionMove => { name: "section.move", status: Implemented, target: Window, params: SectionMove, result: SectionState },
+        SectionTabAdd => { name: "section.tab.add", status: Implemented, target: Tab, params: SectionId, result: SectionState },
+        SectionTabRemove => { name: "section.tab.remove", status: Implemented, target: Tab, params: None, result: SectionState },
     }
 
     keybinding {

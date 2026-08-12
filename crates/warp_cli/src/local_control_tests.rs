@@ -13,18 +13,24 @@ fn parses_typed_create_and_setting_list_params() {
         "tab",
         "create",
         "--type",
-        "agent",
-        "--shell",
-        "zsh",
+        "terminal",
+        "--cwd",
+        "/tmp/project",
         "--session",
         "session_1",
+        "--",
+        "npm",
+        "run",
+        "dev",
     ])
     .expect("tab create parses");
     let ControlCommand::Tab(TabCommand::Create(args)) = args.command else {
         panic!("expected tab create command");
     };
-    assert_eq!(args.tab_type, Some(CliTabType::Agent));
-    assert_eq!(args.shell.as_deref(), Some("zsh"));
+    assert_eq!(args.tab_type, Some(CliTabType::Terminal));
+    assert_eq!(args.shell, None);
+    assert_eq!(args.cwd.as_deref(), Some("/tmp/project"));
+    assert_eq!(args.command, ["npm", "run", "dev"]);
     assert_eq!(args.target.session.as_deref(), Some("session_1"));
 
     let args =
@@ -34,6 +40,50 @@ fn parses_typed_create_and_setting_list_params() {
         panic!("expected setting list command");
     };
     assert_eq!(args.namespace.as_deref(), Some("editor"));
+}
+
+#[test]
+fn tab_startup_command_requires_explicit_cwd() {
+    let err = ControlArgs::try_parse_from(["warpctrl", "tab", "create", "--", "npm", "run", "dev"])
+        .expect_err("startup command without cwd must be rejected");
+    assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+}
+
+#[test]
+fn parses_toolbelt_auto_send_and_section_collapsed_false() {
+    let args = ControlArgs::try_parse_from([
+        "warpctrl",
+        "toolbelt",
+        "button",
+        "create",
+        "--footer",
+        "codex",
+        "--auto-send",
+        "false",
+        "Review",
+        "Review these changes",
+    ])
+    .expect("explicit non-auto-send button parses");
+    let ControlCommand::Toolbelt(ToolbeltCommand::Button(ToolbeltButtonCommand::Create(args))) =
+        args.command
+    else {
+        panic!("expected toolbelt button create command");
+    };
+    assert!(!args.auto_send);
+
+    let args = ControlArgs::try_parse_from([
+        "warpctrl",
+        "section",
+        "update",
+        "00000000-0000-0000-0000-000000000001",
+        "--collapsed",
+        "false",
+    ])
+    .expect("explicit section expansion parses");
+    let ControlCommand::Section(SectionCommand::Update(args)) = args.command else {
+        panic!("expected section update command");
+    };
+    assert_eq!(args.collapsed, Some(false));
 }
 
 #[test]
@@ -487,6 +537,95 @@ fn retained_action_examples() -> Vec<(ActionKind, Vec<&'static str>)> {
             vec!["warpctrl", "setting", "toggle", "autosuggestions"],
         ),
         (
+            ActionKind::ToolbeltList,
+            vec!["warpctrl", "toolbelt", "list", "--footer", "codex"],
+        ),
+        (
+            ActionKind::ToolbeltButtonCreate,
+            vec![
+                "warpctrl",
+                "toolbelt",
+                "button",
+                "create",
+                "--footer",
+                "codex",
+                "Review",
+                "Review these changes",
+            ],
+        ),
+        (
+            ActionKind::ToolbeltButtonDelete,
+            vec![
+                "warpctrl", "toolbelt", "button", "delete", "--footer", "codex", "Review",
+            ],
+        ),
+        (
+            ActionKind::ToolbeltButtonMove,
+            vec![
+                "warpctrl",
+                "toolbelt",
+                "button",
+                "move",
+                "--footer",
+                "codex",
+                "--side",
+                "left",
+                "--position",
+                "0",
+                "Review",
+            ],
+        ),
+        (ActionKind::SectionList, vec!["warpctrl", "section", "list"]),
+        (
+            ActionKind::SectionCreate,
+            vec!["warpctrl", "section", "create", "Backend"],
+        ),
+        (
+            ActionKind::SectionUpdate,
+            vec![
+                "warpctrl",
+                "section",
+                "update",
+                "00000000-0000-0000-0000-000000000001",
+                "--name",
+                "Frontend",
+            ],
+        ),
+        (
+            ActionKind::SectionDelete,
+            vec![
+                "warpctrl",
+                "section",
+                "delete",
+                "00000000-0000-0000-0000-000000000001",
+            ],
+        ),
+        (
+            ActionKind::SectionMove,
+            vec![
+                "warpctrl",
+                "section",
+                "move",
+                "00000000-0000-0000-0000-000000000001",
+                "--direction",
+                "down",
+            ],
+        ),
+        (
+            ActionKind::SectionTabAdd,
+            vec![
+                "warpctrl",
+                "section",
+                "tab",
+                "add",
+                "00000000-0000-0000-0000-000000000001",
+            ],
+        ),
+        (
+            ActionKind::SectionTabRemove,
+            vec!["warpctrl", "section", "tab", "remove"],
+        ),
+        (
             ActionKind::KeybindingList,
             vec!["warpctrl", "keybinding", "list"],
         ),
@@ -665,6 +804,25 @@ fn parsed_action_kind(command: &ControlCommand) -> Option<ActionKind> {
             AppearanceCommand::ZoomIncrease(_) => Some(ActionKind::AppearanceZoomIncrease),
             AppearanceCommand::ZoomDecrease(_) => Some(ActionKind::AppearanceZoomDecrease),
             AppearanceCommand::ZoomReset(_) => Some(ActionKind::AppearanceZoomReset),
+        },
+        ControlCommand::Toolbelt(command) => match command {
+            ToolbeltCommand::List(_) => Some(ActionKind::ToolbeltList),
+            ToolbeltCommand::Button(command) => match command {
+                ToolbeltButtonCommand::Create(_) => Some(ActionKind::ToolbeltButtonCreate),
+                ToolbeltButtonCommand::Delete(_) => Some(ActionKind::ToolbeltButtonDelete),
+                ToolbeltButtonCommand::Move(_) => Some(ActionKind::ToolbeltButtonMove),
+            },
+        },
+        ControlCommand::Section(command) => match command {
+            SectionCommand::List(_) => Some(ActionKind::SectionList),
+            SectionCommand::Create(_) => Some(ActionKind::SectionCreate),
+            SectionCommand::Update(_) => Some(ActionKind::SectionUpdate),
+            SectionCommand::Delete(_) => Some(ActionKind::SectionDelete),
+            SectionCommand::Move(_) => Some(ActionKind::SectionMove),
+            SectionCommand::Tab(command) => match command {
+                SectionTabCommand::Add(_) => Some(ActionKind::SectionTabAdd),
+                SectionTabCommand::Remove(_) => Some(ActionKind::SectionTabRemove),
+            },
         },
         ControlCommand::Setting(command) => match command {
             SettingCommand::List(_) => Some(ActionKind::SettingList),

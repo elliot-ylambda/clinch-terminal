@@ -2,9 +2,11 @@
 use ::local_control::protocol::{
     ActionNameParams, ActionParameterSpec, BindingNameParams, BooleanValueParams, ColorValueParams,
     DirectionParams, EmptyParams, FileOpenParams, KeyParams, KeyValueParams, NamespaceParams,
-    PageQueryParams, PaneTarget, QueryParams, RenameParams, ResizeParams, SessionTarget,
-    TabActivateParams, TabCloseParams, TabCreateParams, TabTarget, TargetSelector, TextParams,
-    ThemeNameParams, WindowTarget,
+    PageQueryParams, PaneTarget, QueryParams, RenameParams, ResizeParams, SectionCreateParams,
+    SectionIdParams, SectionMoveParams, SectionUpdateParams, SessionTarget, TabActivateParams,
+    TabCloseParams, TabCreateParams, TabTarget, TargetSelector, TextParams, ThemeNameParams,
+    ToolbeltButtonCreateParams, ToolbeltButtonDeleteParams, ToolbeltButtonMoveParams,
+    ToolbeltListParams, WindowTarget,
 };
 use ::local_control::{ActionKind, ControlError, ErrorCode, TargetScope};
 use warpui::{AppContext, ModelContext, SingletonEntity, TypedActionView, ViewHandle, WindowId};
@@ -51,6 +53,18 @@ pub(crate) fn validate_action_params(action: &::local_control::Action) -> Result
         ActionParameterSpec::TabCreate => parse_params::<TabCreateParams>(action),
         ActionParameterSpec::Text => parse_params::<TextParams>(action),
         ActionParameterSpec::ThemeName => parse_params::<ThemeNameParams>(action),
+        ActionParameterSpec::ToolbeltButtonCreate => {
+            parse_params::<ToolbeltButtonCreateParams>(action)
+        }
+        ActionParameterSpec::ToolbeltButtonDelete => {
+            parse_params::<ToolbeltButtonDeleteParams>(action)
+        }
+        ActionParameterSpec::ToolbeltButtonMove => parse_params::<ToolbeltButtonMoveParams>(action),
+        ActionParameterSpec::ToolbeltList => parse_params::<ToolbeltListParams>(action),
+        ActionParameterSpec::SectionCreate => parse_params::<SectionCreateParams>(action),
+        ActionParameterSpec::SectionId => parse_params::<SectionIdParams>(action),
+        ActionParameterSpec::SectionMove => parse_params::<SectionMoveParams>(action),
+        ActionParameterSpec::SectionUpdate => parse_params::<SectionUpdateParams>(action),
     }
 }
 

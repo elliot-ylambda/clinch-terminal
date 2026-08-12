@@ -11,8 +11,9 @@ use clap_complete::aot::Shell;
 use commands::{
     run_action_catalog_command, run_app_command, run_appearance_command, run_capability_command,
     run_file_command, run_input_command, run_instance_command, run_keybinding_command,
-    run_pane_command, run_session_command, run_setting_command, run_surface_command,
-    run_tab_command, run_theme_command, run_window_command,
+    run_pane_command, run_section_command, run_session_command, run_setting_command,
+    run_surface_command, run_tab_command, run_theme_command, run_toolbelt_command,
+    run_window_command,
 };
 use completions::generate_completions_to_stdout;
 use output::write_control_error;
@@ -176,6 +177,14 @@ pub enum ControlCommand {
     #[command(subcommand)]
     Appearance(AppearanceCommand),
 
+    /// Manage quick-insert buttons in Clinch footer toolbelts.
+    #[command(subcommand)]
+    Toolbelt(ToolbeltCommand),
+
+    /// Manage project sidebar sections and their tabs.
+    #[command(subcommand)]
+    Section(SectionCommand),
+
     /// Inspect allowlisted settings.
     #[command(subcommand)]
     Setting(SettingCommand),
@@ -263,13 +272,25 @@ pub enum WindowCommand {
     Inspect(TargetArgs),
 
     /// Create a new window.
-    Create(TabCreateArgs),
+    Create(WindowCreateArgs),
 
     /// Focus a window.
     Focus(TargetArgs),
 
     /// Close a window.
     Close(TargetArgs),
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct WindowCreateArgs {
+    #[arg(long = "type", value_enum)]
+    pub tab_type: Option<CliTabType>,
+
+    #[arg(long = "shell")]
+    pub shell: Option<String>,
+
+    #[command(flatten)]
+    pub target: TargetArgs,
 }
 
 /// Commands that control tabs in the selected Warp app instance.
@@ -529,6 +550,59 @@ pub enum AppearanceCommand {
 }
 
 #[derive(Debug, Clone, Subcommand)]
+pub enum ToolbeltCommand {
+    /// List the buttons in a provider footer.
+    List(ToolbeltListArgs),
+
+    /// Create, delete, or move a footer button.
+    #[command(subcommand)]
+    Button(ToolbeltButtonCommand),
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum ToolbeltButtonCommand {
+    /// Create a custom quick-insert button.
+    Create(ToolbeltButtonCreateArgs),
+
+    /// Delete a visible button. Shipped buttons are hidden; custom buttons are removed.
+    Delete(ToolbeltButtonDeleteArgs),
+
+    /// Move a visible button to an exact side and zero-based position.
+    Move(ToolbeltButtonMoveArgs),
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum SectionCommand {
+    /// List sidebar sections in the target project window.
+    List(TargetArgs),
+
+    /// Create a named section containing the selected or active tab.
+    Create(SectionCreateArgs),
+
+    /// Rename, collapse, expand, or recolor a section.
+    Update(SectionUpdateArgs),
+
+    /// Remove a section while preserving its tabs.
+    Delete(SectionIdArgs),
+
+    /// Move a section one sidebar slot up or down.
+    Move(SectionMoveArgs),
+
+    /// Add or remove a selected tab from a section.
+    #[command(subcommand)]
+    Tab(SectionTabCommand),
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum SectionTabCommand {
+    /// Add the selected or active tab to a section.
+    Add(SectionIdArgs),
+
+    /// Remove the selected or active tab from its section.
+    Remove(TargetArgs),
+}
+
+#[derive(Debug, Clone, Subcommand)]
 pub enum SettingCommand {
     /// List allowlisted settings.
     List(NamespaceTargetArgs),
@@ -613,6 +687,16 @@ pub struct TabCreateArgs {
 
     #[arg(long = "shell")]
     pub shell: Option<String>,
+
+    /// Absolute working directory for the new terminal tab.
+    #[arg(long = "cwd")]
+    pub cwd: Option<String>,
+
+    /// Command and arguments to run after the new terminal shell starts.
+    ///
+    /// Pass these after `--`. A startup command requires an explicit `--cwd`.
+    #[arg(last = true, value_name = "COMMAND", num_args = 1.., requires = "cwd")]
+    pub command: Vec<String>,
 
     #[command(flatten)]
     pub target: TargetArgs,
@@ -811,6 +895,160 @@ pub struct KeybindingGetArgs {
     pub name: String,
 }
 
+#[derive(Debug, Clone, Args)]
+pub struct ToolbeltListArgs {
+    #[arg(long, value_enum)]
+    pub footer: CliToolbeltFooter,
+
+    #[command(flatten)]
+    pub target: TargetArgs,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct ToolbeltButtonCreateArgs {
+    #[arg(long, value_enum)]
+    pub footer: CliToolbeltFooter,
+
+    pub label: String,
+
+    pub text: String,
+
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+    pub auto_send: bool,
+
+    #[arg(long, value_enum, default_value_t = CliToolbeltSide::Left)]
+    pub side: CliToolbeltSide,
+
+    /// Zero-based insertion position on the selected side. Defaults to the end.
+    #[arg(long)]
+    pub position: Option<u32>,
+
+    #[command(flatten)]
+    pub target: TargetArgs,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct ToolbeltButtonDeleteArgs {
+    #[arg(long, value_enum)]
+    pub footer: CliToolbeltFooter,
+
+    pub label: String,
+
+    #[command(flatten)]
+    pub target: TargetArgs,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct ToolbeltButtonMoveArgs {
+    #[arg(long, value_enum)]
+    pub footer: CliToolbeltFooter,
+
+    pub label: String,
+
+    #[arg(long, value_enum)]
+    pub side: CliToolbeltSide,
+
+    /// Zero-based destination position on the selected side.
+    #[arg(long)]
+    pub position: u32,
+
+    #[command(flatten)]
+    pub target: TargetArgs,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct SectionCreateArgs {
+    pub name: String,
+
+    #[command(flatten)]
+    pub target: TargetArgs,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct SectionIdArgs {
+    pub section_id: String,
+
+    #[command(flatten)]
+    pub target: TargetArgs,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct SectionUpdateArgs {
+    pub section_id: String,
+
+    #[arg(long)]
+    pub name: Option<String>,
+
+    #[arg(long, action = clap::ArgAction::Set)]
+    pub collapsed: Option<bool>,
+
+    /// ANSI color name, or `default` to clear the tint.
+    #[arg(long)]
+    pub color: Option<String>,
+
+    #[command(flatten)]
+    pub target: TargetArgs,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct SectionMoveArgs {
+    pub section_id: String,
+
+    #[arg(long, value_enum)]
+    pub direction: CliSectionMoveDirection,
+
+    #[command(flatten)]
+    pub target: TargetArgs,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum CliToolbeltFooter {
+    ClaudeCode,
+    Codex,
+    Terminal,
+}
+
+impl From<CliToolbeltFooter> for local_control::protocol::ToolbeltFooter {
+    fn from(value: CliToolbeltFooter) -> Self {
+        match value {
+            CliToolbeltFooter::ClaudeCode => Self::ClaudeCode,
+            CliToolbeltFooter::Codex => Self::Codex,
+            CliToolbeltFooter::Terminal => Self::Terminal,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
+pub enum CliToolbeltSide {
+    #[default]
+    Left,
+    Right,
+}
+
+impl From<CliToolbeltSide> for local_control::protocol::ToolbeltSide {
+    fn from(value: CliToolbeltSide) -> Self {
+        match value {
+            CliToolbeltSide::Left => Self::Left,
+            CliToolbeltSide::Right => Self::Right,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum CliSectionMoveDirection {
+    Up,
+    Down,
+}
+
+impl From<CliSectionMoveDirection> for local_control::protocol::Direction {
+    fn from(value: CliSectionMoveDirection) -> Self {
+        match value {
+            CliSectionMoveDirection::Up => Self::Up,
+            CliSectionMoveDirection::Down => Self::Down,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum CliTabType {
     Terminal,
@@ -929,6 +1167,8 @@ fn run_inner(args: ControlArgs) -> Result<(), local_control::protocol::ControlEr
         ControlCommand::Input(command) => run_input_command(command, output_format),
         ControlCommand::Theme(command) => run_theme_command(command, output_format),
         ControlCommand::Appearance(command) => run_appearance_command(command, output_format),
+        ControlCommand::Toolbelt(command) => run_toolbelt_command(command, output_format),
+        ControlCommand::Section(command) => run_section_command(command, output_format),
         ControlCommand::Setting(command) => run_setting_command(command, output_format),
         ControlCommand::Keybinding(command) => run_keybinding_command(command, output_format),
         ControlCommand::File(command) => run_file_command(command, output_format),

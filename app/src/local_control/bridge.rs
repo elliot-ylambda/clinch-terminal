@@ -10,7 +10,7 @@ use ::local_control::{
 use warpui::{Entity, ModelContext, SingletonEntity};
 
 use crate::local_control::handlers::{
-    app_state, close, metadata, metadata_config, settings_surfaces,
+    app_state, close, metadata, metadata_config, sections, settings_surfaces, toolbelt,
 };
 use crate::local_control::permissions::{
     ensure_action_allowed, ensure_feature_enabled, ensure_protocol_version,
@@ -181,6 +181,19 @@ impl LocalControlBridge {
             ActionKind::SettingGet => settings_surfaces::setting_get(&request.action, ctx),
             ActionKind::SettingSet => metadata_config::setting_set(&request.action, ctx),
             ActionKind::SettingToggle => metadata_config::setting_toggle(&request.action, ctx),
+            ActionKind::ToolbeltList
+            | ActionKind::ToolbeltButtonCreate
+            | ActionKind::ToolbeltButtonDelete
+            | ActionKind::ToolbeltButtonMove => toolbelt::handle(&request.action, ctx),
+            ActionKind::SectionList
+            | ActionKind::SectionCreate
+            | ActionKind::SectionUpdate
+            | ActionKind::SectionDelete
+            | ActionKind::SectionMove
+            | ActionKind::SectionTabAdd
+            | ActionKind::SectionTabRemove => {
+                sections::handle(&request.action, &request.target, ctx)
+            }
             ActionKind::KeybindingList => settings_surfaces::keybinding_list(ctx),
             ActionKind::KeybindingGet => settings_surfaces::keybinding_get(&request.action, ctx),
             ActionKind::WindowClose => close::window_close(&self.instance_id, &request, ctx),

@@ -54,6 +54,23 @@ pub enum TabCloseMode {
     RightOf,
 }
 
+/// Footer whose quick-insert toolbelt is being managed.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolbeltFooter {
+    ClaudeCode,
+    Codex,
+    Terminal,
+}
+
+/// Side of a footer toolbelt.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolbeltSide {
+    Left,
+    Right,
+}
+
 /// Empty parameters for actions whose catalog parameter spec is `none`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -165,6 +182,10 @@ pub struct TabCloseParams {
 }
 
 /// Parameters for `tab.create` and `window.create` shell/profile options.
+///
+/// `cwd` and `command` are accepted only by `tab.create`. `command` is an
+/// argument vector rather than shell source; the app quotes every argument
+/// before registering the one-shot startup command in the new terminal.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TabCreateParams {
@@ -172,6 +193,10 @@ pub struct TabCreateParams {
     pub tab_type: Option<TabType>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shell: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub command: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -184,6 +209,71 @@ pub struct TextParams {
 #[serde(deny_unknown_fields)]
 pub struct ThemeNameParams {
     pub theme_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolbeltListParams {
+    pub footer: ToolbeltFooter,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolbeltButtonCreateParams {
+    pub footer: ToolbeltFooter,
+    pub label: String,
+    pub text: String,
+    pub auto_send: bool,
+    pub side: ToolbeltSide,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolbeltButtonDeleteParams {
+    pub footer: ToolbeltFooter,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolbeltButtonMoveParams {
+    pub footer: ToolbeltFooter,
+    pub label: String,
+    pub side: ToolbeltSide,
+    pub position: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SectionCreateParams {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SectionIdParams {
+    pub section_id: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SectionUpdateParams {
+    pub section_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collapsed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SectionMoveParams {
+    pub section_id: String,
+    pub direction: Direction,
 }
 
 pub type KeybindingGetParams = BindingNameParams;

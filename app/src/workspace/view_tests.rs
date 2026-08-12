@@ -5174,6 +5174,30 @@ fn test_new_tab_group_from_tab_keeps_tab_in_place() {
 }
 
 #[test]
+fn test_create_named_tab_group_from_tab_sets_name_without_new_session() {
+    let _grouped_tabs_guard = FeatureFlag::GroupedTabs.override_enabled(true);
+
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+
+        let workspace = mock_workspace(&mut app);
+        workspace.update(&mut app, |workspace, ctx| {
+            let tab_count = workspace.tab_count();
+            let group_id = workspace
+                .create_named_tab_group_from_tab(0, "Backend".to_owned(), ctx)
+                .expect("selected tab becomes a named section");
+
+            assert_eq!(workspace.tab_count(), tab_count);
+            assert_eq!(workspace.tabs[0].group_id, Some(group_id));
+            assert_eq!(
+                workspace.tab_groups[&group_id].name.as_deref(),
+                Some("Backend")
+            );
+        });
+    });
+}
+
+#[test]
 fn test_new_tab_group_from_selected_tabs_anchors_at_earliest_tab() {
     let _grouped_tabs_guard = FeatureFlag::GroupedTabs.override_enabled(true);
 

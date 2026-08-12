@@ -108,3 +108,22 @@ visual language for this MVP.
 
 22. When the Mac is asleep, offline, or Clinch is not running, Remote Control may show its last
     received snapshot as unavailable but cannot edit, queue, or launch tasks for later.
+
+### Local coding-agent control
+
+23. Claude Code and Codex can use Clinch's authenticated, same-user local control command to list
+    sidebar sections and manage their names, colors, collapsed state, order, and membership. Each
+    mutation can target an exact window, tab, or UUID-backed section returned by a prior list
+    command.
+
+24. Agent-driven section creation groups the selected existing tab and gives the section its final
+    name without opening inline editing. Empty sections remain unsupported. The agent can create a
+    new tab first when the user wants a new session as the section's initial member.
+
+25. Agent-driven section deletion has the same non-destructive semantics as the UI: it removes the
+    section container while preserving every contained tab and running session.
+
+26. Claude Code and Codex can independently list, create, delete, and exactly reorder buttons in
+    the Claude Code, Codex, and plain-terminal footer toolbelts. Custom button creation includes its
+    label, inserted text, auto-send choice, side, and optional zero-based position. Removing a
+    shipped button hides the live default for that footer rather than altering bundled data.

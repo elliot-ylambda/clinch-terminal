@@ -97,6 +97,30 @@ tabs by `section_name`, render the selected project's task list, add tasks inlin
 Codex, and delete actions. Buttons are disabled while disconnected or while a mutation is in
 flight; authoritative snapshots always replace optimistic assumptions.
 
+### Local coding-agent control
+
+Extend the existing `local_control` action catalog and `warpctrl` parser with typed `section.*` and
+`toolbelt.*` actions. These actions retain the existing owner-only discovery, same-UID credential
+broker, short-lived action-scoped grants, and loopback bridge; no new MCP transport or
+unauthenticated socket is introduced.
+
+Section handlers resolve the target Workspace through the normal selector resolver and reuse the
+existing `TabGroup` mutation paths. `section.create` creates a named group from the selected tab;
+update, move, add/remove-tab, and delete dispatch the normal workspace save action. List responses
+return ordered UUID-backed section IDs and member tab IDs. Delete calls the non-destructive ungroup
+path, never `close_tab_group`.
+
+Toolbelt handlers operate on the effective provider-specific `SessionSettings` selection. They
+rebuild selections through `custom_from_effective_items_and_hidden_custom_inserts`, preserving live
+defaults, explicit hidden defaults, provider isolation, and ordered overlays. Button labels are
+validated as unique exact selectors. Create and move use bounded zero-based positions; deleting a
+custom entry removes it, while deleting a shipped entry records it as hidden through the existing
+selection normalization.
+
+The managed `clinch-control` and `clinch-toolbelt` skills are installed at user scope for Claude
+Code and Codex. They teach agents to inspect before mutation, use typed commands, and never edit
+Clinch settings or SQLite as a fallback.
+
 ## End-to-end flow
 
 1. A task is added on Mac or phone and committed to the owning Workspace vector.
@@ -122,6 +146,9 @@ flight; authoritative snapshots always replace optimistic assumptions.
   production Vite build validate the complete Rust-to-browser contract (PRODUCT 18–22).
 - Rust formatting, `clinch_companion_protocol` tests, targeted Workspace/persistence/adapter tests,
   and `cargo check -p warp` are the native validation gate.
+- Local-control protocol and parser tests cover every new catalog action. Toolbelt mutation tests
+  cover exact insertion, range rejection, label ambiguity, and hiding shipped defaults; Workspace
+  coverage verifies named section creation from an existing tab and non-destructive ungrouping.
 - Manual launch remains recommended for final visual inspection of section outlines, collapsed
   drop targeting, provider buttons, restart restoration, and the narrow mobile drawer layout.
 

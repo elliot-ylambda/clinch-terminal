@@ -2,6 +2,8 @@
 #[cfg(test)]
 #[path = "layout_tests.rs"]
 mod tests;
+use std::path::{Path, PathBuf};
+
 use ::local_control::protocol::{TabCreateParams, TabType, TargetSelector};
 use ::local_control::{ActionKind, ControlError, ErrorCode, InstanceId};
 use serde::Serialize;
@@ -18,6 +20,17 @@ use crate::terminal::available_shells::AvailableShell;
 #[cfg(feature = "local_tty")]
 use crate::terminal::available_shells::AvailableShells;
 use crate::workspace::WorkspaceAction;
+
+const MAX_LAUNCH_CWD_BYTES: usize = 4 * 1024;
+const MAX_LAUNCH_ARGS: usize = 256;
+const MAX_LAUNCH_COMMAND_BYTES: usize = 32 * 1024;
+
+#[derive(Debug, PartialEq, Eq)]
+struct TerminalLaunch {
+    cwd: PathBuf,
+    command: Option<String>,
+}
+
 #[derive(Serialize)]
 struct TabCreateResponse<'a> {
     action: &'static str,
@@ -50,14 +63,43 @@ pub(crate) fn create_tab(
     validate_tab_create_target(target)?;
     let window_id = target_window_id_for_target(ctx, target, ActionKind::TabCreate)?;
     let workspace = workspace_for_window(window_id, ActionKind::TabCreate, ctx)?;
-    let action = tab_create_action(params, ctx)?;
+    let params = decode_params::<TabCreateParams>(params)?;
+    let launch = tab_create_launch(&params)?;
+    let action = if launch.is_none() {
+        Some(tab_create_action(&params, ctx)?)
+    } else {
+        None
+    };
     let (tab_id, previous_tab_count, tab_count, active_tab_index) =
         workspace.update(ctx, |workspace, ctx| {
             let previous_tab_count = workspace.tab_count();
-            if matches!(&action, WorkspaceAction::AddDefaultTab) {
-                workspace.add_default_tab_from_local_control(ctx);
-            } else {
-                workspace.handle_action(&action, ctx);
+            match (launch, action.as_ref()) {
+                (Some(TerminalLaunch { cwd, command }), _) => {
+                    if let Some(command) = command {
+                        if !workspace.launch_command_in_new_tab(
+                            command,
+                            Some(cwd.to_string_lossy().into_owned()),
+                            ctx,
+                        ) {
+                            return Err(ControlError::new(
+                                ErrorCode::Internal,
+                                "tab.create opened a terminal but could not register its startup command",
+                            ));
+                        }
+                    } else {
+                        workspace.remote_control_open_terminal(Some(cwd), ctx);
+                    }
+                }
+                (None, Some(WorkspaceAction::AddDefaultTab)) => {
+                    workspace.add_default_tab_from_local_control(ctx);
+                }
+                (None, Some(action)) => workspace.handle_action(action, ctx),
+                (None, None) => {
+                    return Err(ControlError::new(
+                        ErrorCode::Internal,
+                        "tab.create resolved neither a launch request nor a workspace action",
+                    ));
+                }
             }
             let tab_id = workspace
                 .get_pane_group_view(workspace.active_tab_index())
@@ -100,10 +142,9 @@ pub(crate) fn create_tab(
 }
 
 fn tab_create_action(
-    params: &serde_json::Value,
+    params: &TabCreateParams,
     ctx: &ModelContext<LocalControlBridge>,
 ) -> Result<WorkspaceAction, ControlError> {
-    let params = decode_params::<TabCreateParams>(params)?;
     if let Some(shell_name) = params.shell.as_deref() {
         if matches!(params.tab_type, Some(TabType::Agent | TabType::CloudAgent)) {
             return Err(ControlError::new(
@@ -127,6 +168,85 @@ fn tab_create_action(
             "tab.create does not support cloud-agent tabs",
         )),
     }
+}
+
+fn tab_create_launch(params: &TabCreateParams) -> Result<Option<TerminalLaunch>, ControlError> {
+    let has_launch_options = params.cwd.is_some() || !params.command.is_empty();
+    if !has_launch_options {
+        return Ok(None);
+    }
+    if params.shell.is_some() {
+        return Err(ControlError::new(
+            ErrorCode::InvalidParams,
+            "tab.create cannot combine --shell with --cwd or a startup command",
+        ));
+    }
+    if !matches!(params.tab_type, None | Some(TabType::Terminal)) {
+        return Err(ControlError::new(
+            ErrorCode::InvalidParams,
+            "tab.create cwd and startup command options require a terminal tab",
+        ));
+    }
+    let cwd = params.cwd.as_deref().ok_or_else(|| {
+        ControlError::new(
+            ErrorCode::InvalidParams,
+            "tab.create startup commands require an explicit cwd",
+        )
+    })?;
+    if cwd.len() > MAX_LAUNCH_CWD_BYTES || cwd.chars().any(char::is_control) {
+        return Err(ControlError::new(
+            ErrorCode::InvalidParams,
+            "tab.create cwd is too long or contains control characters",
+        ));
+    }
+    let cwd = Path::new(cwd);
+    if !cwd.is_absolute() {
+        return Err(ControlError::new(
+            ErrorCode::InvalidParams,
+            "tab.create cwd must be an absolute path",
+        ));
+    }
+    if !cwd.is_dir() {
+        return Err(ControlError::new(
+            ErrorCode::InvalidParams,
+            "tab.create cwd must be an existing local directory",
+        ));
+    }
+    if params.command.len() > MAX_LAUNCH_ARGS
+        || params
+            .command
+            .iter()
+            .map(String::len)
+            .fold(0usize, usize::saturating_add)
+            > MAX_LAUNCH_COMMAND_BYTES
+        || params
+            .command
+            .iter()
+            .any(|arg| arg.chars().any(char::is_control))
+    {
+        return Err(ControlError::new(
+            ErrorCode::InvalidParams,
+            "tab.create startup command is too large or contains control characters",
+        ));
+    }
+    if !params.command.is_empty() && !cfg!(feature = "local_tty") {
+        return Err(ControlError::new(
+            ErrorCode::UnsupportedAction,
+            "tab.create startup commands require local terminal support",
+        ));
+    }
+    let command = (!params.command.is_empty()).then(|| {
+        params
+            .command
+            .iter()
+            .map(|arg| shell_words::quote(arg).into_owned())
+            .collect::<Vec<_>>()
+            .join(" ")
+    });
+    Ok(Some(TerminalLaunch {
+        cwd: cwd.to_path_buf(),
+        command,
+    }))
 }
 
 #[cfg_attr(not(feature = "local_tty"), allow(unused_variables))]

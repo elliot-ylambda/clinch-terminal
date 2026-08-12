@@ -583,14 +583,13 @@ fn mac_editing_shortcuts_do_not_override_unrelated_fullscreen_apps() {
 
         for keystroke in ["cmd-left", "alt-left", "cmd-backspace"] {
             assert!(
-                !app
-                    .dispatch_keystroke(
-                        window_id,
-                        &[terminal.id()],
-                        &warpui::keymap::Keystroke::parse(keystroke).expect("valid keystroke"),
-                        false,
-                    )
-                    .expect("dispatch should succeed"),
+                !app.dispatch_keystroke(
+                    window_id,
+                    &[terminal.id()],
+                    &warpui::keymap::Keystroke::parse(keystroke).expect("valid keystroke"),
+                    false,
+                )
+                .expect("dispatch should succeed"),
                 "{keystroke} must remain owned by a non-agent full-screen app"
             );
         }
