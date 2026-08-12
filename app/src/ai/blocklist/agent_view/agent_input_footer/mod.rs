@@ -38,8 +38,8 @@ use warpui::elements::{
     Border, ChildAnchor, ChildView, Clipped, ConstrainedBox, Container, CornerRadius,
     CrossAxisAlignment, DispatchEventResult, Element, EventHandler, Expanded, Flex,
     MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning, ParentElement,
-    PositionedElementAnchor, PositionedElementOffsetBounds, Radius, Shrinkable, Stack, Text, Wrap,
-    WrapFill, WrapFillEntireRun, DEFAULT_UI_LINE_HEIGHT_RATIO,
+    PositionedElementAnchor, PositionedElementOffsetBounds, Radius, Rect, Shrinkable, Stack, Text,
+    Wrap, WrapFill, WrapFillEntireRun, DEFAULT_UI_LINE_HEIGHT_RATIO,
 };
 use warpui::r#async::{SpawnedFutureHandle, Timer};
 use warpui::{
@@ -108,6 +108,7 @@ use crate::terminal::view::TerminalAction;
 use crate::terminal::ShellLaunchData;
 use crate::terminal::{CLIAgent, TerminalModel};
 use crate::ui_components::icons::Icon;
+use crate::ui_components::CLINCH_LOGO_GREEN;
 use crate::view_components::action_button::{
     ActionButton, ActionButtonTheme, AdjoinedSide, ButtonSize, KeystrokeSource, NakedTheme,
     TooltipAlignment,
@@ -444,6 +445,7 @@ impl AgentInputFooter {
         let fork_button = ctx.add_typed_action_view(|_ctx| {
             ActionButton::new("Fork in New Tab", AgentInputButtonTheme)
                 .with_icon(Icon::GitBranch)
+                .with_icon_color(CLINCH_LOGO_GREEN)
                 .with_tooltip("Fork this session into a new tab")
                 .with_size(cli_button_size)
                 .with_tooltip_alignment(TooltipAlignment::Left)
@@ -452,9 +454,10 @@ impl AgentInputFooter {
                 })
         });
         let bookmark_conversation_button = ctx.add_typed_action_view(|_ctx| {
-            ActionButton::new("Bookmark convo", AgentInputButtonTheme)
+            ActionButton::new("Bookmark Session", AgentInputButtonTheme)
                 .with_icon(Icon::Bookmark)
-                .with_tooltip("Save this conversation in Bookmark convos")
+                .with_icon_color(CLINCH_LOGO_GREEN)
+                .with_tooltip("Save this conversation in Bookmarked sessions")
                 .with_size(cli_button_size)
                 .with_tooltip_alignment(TooltipAlignment::Left)
                 .on_click(|ctx| {
@@ -1672,8 +1675,9 @@ impl AgentInputFooter {
                     session.agent.display_name()
                 );
                 Some(
-                    ActionButton::new(label, QuickInsertButtonTheme)
+                    ActionButton::new(label, AgentInputButtonTheme)
                         .with_icon(Icon::SwitchHorizontal01)
+                        .with_icon_color(CLINCH_LOGO_GREEN)
                         .with_size(ButtonSize::AgentInputButtonLarge)
                         .with_tooltip(tooltip)
                         .with_tooltip_alignment(TooltipAlignment::Left)
@@ -1809,8 +1813,9 @@ impl AgentInputFooter {
             ),
         };
 
-        ActionButton::new(label, ClinchAccentButtonTheme)
+        ActionButton::new(label, AgentInputButtonTheme)
             .with_icon(Icon::Clock)
+            .with_icon_color(CLINCH_LOGO_GREEN)
             .with_size(ButtonSize::AgentInputButtonLarge)
             .with_tooltip(tooltip)
             .with_tooltip_alignment(TooltipAlignment::Left)
@@ -1819,6 +1824,23 @@ impl AgentInputFooter {
                 ctx.dispatch_typed_action(AgentInputFooterAction::ToggleAutoContinue);
             })
             .render(app)
+    }
+
+    fn render_cli_action_divider(&self, app: &AppContext) -> Box<dyn Element> {
+        let theme = Appearance::as_ref(app).theme();
+        Container::new(
+            ConstrainedBox::new(
+                Rect::new()
+                    .with_background(theme.outline().with_opacity(65))
+                    .finish(),
+            )
+            .with_width(1.)
+            .with_height(18.)
+            .finish(),
+        )
+        .with_margin_left(4.)
+        .with_margin_right(4.)
+        .finish()
     }
 
     fn render_cli_mode_footer(&self, app: &AppContext) -> Box<dyn Element> {
@@ -1856,6 +1878,10 @@ impl AgentInputFooter {
             .unwrap_or_else(|| session_settings.cli_agent_footer_chip_selection.value());
         let left_items = selection.left_items();
         let right_items = selection.right_items();
+        let configured_items = left_items
+            .into_iter()
+            .chain(right_items)
+            .collect::<Vec<_>>();
 
         let mut left_buttons = Wrap::row()
             .with_main_axis_size(MainAxisSize::Min)
@@ -1884,15 +1910,7 @@ impl AgentInputFooter {
             }
         }
 
-        // Keep the unified footer editor as the first actionable footer control.
-        if FeatureFlag::CliAgentQuickInsertButtons.is_enabled()
-            && FeatureFlag::AgentToolbarEditor.is_enabled()
-            && self.cli_agent(app).is_some()
-        {
-            left_buttons.add_child(ChildView::new(&self.quick_insert_edit_button).finish());
-        }
-
-        if let Some(chip_kind) = self.plugin_chip_kind(app) {
+        let plugin_action = self.plugin_chip_kind(app).map(|chip_kind| {
             let manual = self.should_use_manual_mode(app);
             let chip = match (chip_kind, manual) {
                 (PluginChipKind::Install, false) => {
@@ -1913,48 +1931,80 @@ impl AgentInputFooter {
                 .with_child(chip)
                 .with_child(ChildView::new(&self.dismiss_plugin_chip_button).finish())
                 .finish();
-            left_buttons.add_child(chip_with_dismiss);
-        }
+            chip_with_dismiss
+        });
 
-        for item in &left_items {
-            if let Some(element) = self.render_cli_toolbar_item(
-                item,
-                &shared_status,
-                is_conversation_transcript_context,
-                app,
-            ) {
-                left_buttons.add_child(element);
+        // Product-owned session actions form a stable leading cluster even if an older saved
+        // footer layout listed them in a different order. User prompt buttons retain their saved
+        // order in the quick-insert cluster below.
+        let mut action_buttons = Vec::new();
+        for action in [
+            AgentToolbarItemKind::BookmarkConversation,
+            AgentToolbarItemKind::ForkSession,
+            AgentToolbarItemKind::TransferAgent,
+        ] {
+            if configured_items.iter().any(|item| item == &action) {
+                if let Some(element) = self.render_cli_toolbar_item(
+                    &action,
+                    &shared_status,
+                    is_conversation_transcript_context,
+                    app,
+                ) {
+                    action_buttons.push(element);
+                }
             }
         }
 
-        // Rate-limit auto-continue toggle. Keep it with the right-side session
-        // controls so it cannot be mistaken for a quick-insert prompt button.
-        // Use the same availability predicate as the Command Palette and
-        // action handlers so hidden controls cannot remain reachable through
-        // another entry point.
+        // Auto Continue is a live per-pane action rather than a configurable prompt recipe. Use
+        // the same eligibility predicate as the Command Palette and action handler.
         let auto_continue_availability =
             AutoContinueModel::availability(self.terminal_view_id, shared_status.is_viewer(), app);
         let auto_continue_enabled =
             AutoContinueModel::as_ref(app).is_enabled(self.terminal_view_id);
+        if auto_continue_availability.may_render(auto_continue_enabled) {
+            action_buttons.push(self.render_auto_continue_toggle(auto_continue_availability, app));
+        }
+        if let Some(plugin_action) = plugin_action {
+            action_buttons.push(plugin_action);
+        }
+
+        let quick_insert_buttons = configured_items
+            .iter()
+            .filter(|item| !item.is_cli_session_action())
+            .filter_map(|item| {
+                self.render_cli_toolbar_item(
+                    item,
+                    &shared_status,
+                    is_conversation_transcript_context,
+                    app,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let has_actions = !action_buttons.is_empty();
+        let has_quick_inserts = !quick_insert_buttons.is_empty();
+        for button in action_buttons {
+            left_buttons.add_child(button);
+        }
+        if has_actions && has_quick_inserts {
+            left_buttons.add_child(self.render_cli_action_divider(app));
+        }
+        for button in quick_insert_buttons {
+            left_buttons.add_child(button);
+        }
+
         let mut right_buttons = Flex::row()
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
             .with_main_axis_size(MainAxisSize::Min)
             .with_spacing(4.);
 
-        if auto_continue_availability.may_render(auto_continue_enabled) {
-            right_buttons
-                .add_child(self.render_auto_continue_toggle(auto_continue_availability, app));
-        }
-
-        for item in &right_items {
-            if let Some(element) = self.render_cli_toolbar_item(
-                item,
-                &shared_status,
-                is_conversation_transcript_context,
-                app,
-            ) {
-                right_buttons.add_child(element);
-            }
+        // The editor is deliberately isolated at the far edge so the action and prompt clusters
+        // remain easy to scan.
+        if FeatureFlag::CliAgentQuickInsertButtons.is_enabled()
+            && FeatureFlag::AgentToolbarEditor.is_enabled()
+            && self.cli_agent(app).is_some()
+        {
+            right_buttons.add_child(ChildView::new(&self.quick_insert_edit_button).finish());
         }
 
         let content = Wrap::row()
@@ -2370,12 +2420,12 @@ impl AgentInputFooter {
         let (label, tooltip) = if is_bookmarked {
             (
                 "Bookmarked",
-                "Remove this conversation from Bookmark convos",
+                "Remove this conversation from Bookmarked sessions",
             )
         } else {
             (
-                "Bookmark convo",
-                "Save this conversation in Bookmark convos",
+                "Bookmark Session",
+                "Save this conversation in Bookmarked sessions",
             )
         };
         self.bookmark_conversation_button

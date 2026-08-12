@@ -270,7 +270,7 @@ impl AgentToolbarItemKind {
             Self::Settings => Cow::Borrowed("Settings"),
             Self::Compact => Cow::Borrowed("Compact"),
             Self::ForkSession => Cow::Borrowed("Fork in New Tab"),
-            Self::BookmarkConversation => Cow::Borrowed("Bookmark convo"),
+            Self::BookmarkConversation => Cow::Borrowed("Bookmark Session"),
             Self::ContinuePrompt => Cow::Borrowed("Continue"),
             Self::LooksGoodPrompt => Cow::Borrowed("LGTM"),
             Self::CopyAndClearDraft => Cow::Borrowed("Copy & Clear"),
@@ -355,6 +355,14 @@ impl AgentToolbarItemKind {
         matches!(self, Self::ContextChip(_))
     }
 
+    /// Session-management controls rendered in the leading CLI-footer action cluster.
+    pub fn is_cli_session_action(&self) -> bool {
+        matches!(
+            self,
+            Self::BookmarkConversation | Self::ForkSession | Self::TransferAgent
+        )
+    }
+
     pub fn context_chip_kind(&self) -> Option<&ContextChipKind> {
         match self {
             Self::ContextChip(kind) => Some(kind),
@@ -437,13 +445,13 @@ impl AgentToolbarItemKind {
     /// not in the quick-insert editor.
     pub fn cli_default_left() -> Vec<Self> {
         vec![
-            Self::ForkSession,
             Self::BookmarkConversation,
+            Self::ForkSession,
+            Self::TransferAgent,
             Self::Compact,
             Self::ContinuePrompt,
             Self::LooksGoodPrompt,
             Self::CopyAndClearDraft,
-            Self::TransferAgent,
         ]
     }
 
@@ -531,13 +539,13 @@ impl AgentToolbarItemKind {
     /// All items available for the CLI agent footer configurator.
     pub fn all_available_for_cli_input() -> Vec<Self> {
         let mut items = vec![
-            Self::ForkSession,
             Self::BookmarkConversation,
+            Self::ForkSession,
+            Self::TransferAgent,
             Self::Compact,
             Self::ContinuePrompt,
             Self::LooksGoodPrompt,
             Self::CopyAndClearDraft,
-            Self::TransferAgent,
         ];
         items.extend(Self::cli_quick_insert_presets());
         items

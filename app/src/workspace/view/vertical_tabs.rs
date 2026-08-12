@@ -141,7 +141,7 @@ const METADATA_ROW_HEIGHT: f32 = BADGE_ICON_SIZE + 2.;
 const TAB_COLOR_OPACITY: Opacity = 15;
 const TAB_COLOR_HOVER_OPACITY: Opacity = 50;
 const BOOKMARKED_SESSIONS_MAX_HEIGHT: f32 = 220.;
-const BOOKMARKED_SESSION_ICON_SIZE: f32 = 16.;
+const BOOKMARKED_SESSION_ICON_SIZE: f32 = VERTICAL_TABS_ICON_SIZE;
 const TASKS_MAX_HEIGHT: f32 = 220.;
 const TASKS_HEADER_ICON_SIZE: f32 = 14.;
 const SECTION_ACCENT_BORDER_OPACITY: Opacity = 55;
@@ -182,6 +182,10 @@ pub(crate) fn vtab_group_kebab_position_id(tab_group_id: TabGroupId) -> String {
 pub(crate) fn vtab_group_position_id(group_id: TabGroupId) -> String {
     format!("vertical_tabs:group:{group_id:?}")
 }
+
+/// Stable hit-test rect for the built-in Bookmarked sessions section.
+pub(crate) const BOOKMARKED_SESSIONS_SECTION_POSITION_ID: &str =
+    "vertical_tabs:bookmarked_sessions_section";
 
 /// Save-position id for a horizontal tab group's container rect, used for
 /// drop hit-testing and as the collapsed-group fallback in horizontal-axis
@@ -981,8 +985,9 @@ pub(super) struct VerticalTabsPanelState {
     show_details_on_hover_mouse_state: MouseStateHandle,
     panel_right_click_mouse_state: MouseStateHandle,
     attention_chip_mouse_state: MouseStateHandle,
-    bookmarked_sessions_header_mouse_state: MouseStateHandle,
+    bookmarked_section_mouse_states: TabGroupMouseStates,
     bookmarked_session_mouse_states: RefCell<HashMap<(String, String), MouseStateHandle>>,
+    pub(super) bookmarked_section_is_drop_target: bool,
     tasks_header_mouse_state: MouseStateHandle,
     tasks_add_mouse_state: MouseStateHandle,
     task_mouse_states: RefCell<HashMap<WorkspaceTaskId, WorkspaceTaskMouseStates>>,
@@ -1029,8 +1034,9 @@ impl Default for VerticalTabsPanelState {
             show_details_on_hover_mouse_state: Default::default(),
             panel_right_click_mouse_state: Default::default(),
             attention_chip_mouse_state: Default::default(),
-            bookmarked_sessions_header_mouse_state: Default::default(),
+            bookmarked_section_mouse_states: Default::default(),
             bookmarked_session_mouse_states: RefCell::default(),
+            bookmarked_section_is_drop_target: false,
             tasks_header_mouse_state: Default::default(),
             tasks_add_mouse_state: Default::default(),
             task_mouse_states: RefCell::default(),
@@ -2361,87 +2367,112 @@ fn render_bookmarked_sessions(
         .collect::<Vec<_>>();
     let count = bookmarked.len();
 
-    let chevron = if workspace.bookmarked_sessions_collapsed {
-        WarpIcon::ChevronRight
-    } else {
-        WarpIcon::ChevronDown
-    };
-    let sub_text = theme.sub_text_color(theme.background());
-    let heading = Flex::row()
-        .with_main_axis_size(MainAxisSize::Min)
-        .with_cross_axis_alignment(CrossAxisAlignment::Center)
-        .with_spacing(6.)
-        .with_child(
-            ConstrainedBox::new(chevron.to_warpui_icon(sub_text).finish())
-                .with_width(TASKS_HEADER_ICON_SIZE)
-                .with_height(TASKS_HEADER_ICON_SIZE)
-                .finish(),
-        )
-        .with_child(
-            ConstrainedBox::new(WarpIcon::Bookmark.to_warpui_icon(sub_text).finish())
-                .with_width(TASKS_HEADER_ICON_SIZE)
-                .with_height(TASKS_HEADER_ICON_SIZE)
-                .finish(),
-        )
-        .with_child(
-            Text::new_inline("Bookmarked sessions", appearance.ui_font_family(), 12.)
-                .with_style(Properties::default().weight(Weight::Semibold))
-                .with_color(theme.main_text_color(theme.background()).into())
-                .finish(),
-        )
-        .with_child(
-            Text::new_inline(count.to_string(), appearance.ui_font_family(), 11.)
-                .with_color(sub_text.into())
-                .finish(),
-        )
-        .finish();
-    let header = Hoverable::new(
-        state.bookmarked_sessions_header_mouse_state.clone(),
-        move |mouse_state| {
-            let mut header = Container::new(heading).with_padding(Padding::uniform(6.));
-            if mouse_state.is_hovered() {
-                header = header.with_background(internal_colors::fg_overlay_1(theme));
-            }
-            header.finish()
-        },
-    )
-    .with_cursor(Cursor::PointingHand)
-    .on_click(|ctx, _, _| {
-        ctx.dispatch_typed_action(WorkspaceAction::ToggleBookmarkedSessionsCollapsed);
-    })
-    .finish();
-
-    let mut content = Flex::column()
-        .with_main_axis_size(MainAxisSize::Min)
-        .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
-        .with_child(header);
-    if !workspace.bookmarked_sessions_collapsed && !bookmarked.is_empty() {
-        let mut rows = Flex::column()
-            .with_main_axis_size(MainAxisSize::Min)
-            .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
-            .with_spacing(2.);
-        for conversation in &bookmarked {
-            if let Some(row) = render_bookmarked_session_row(state, conversation, app) {
-                rows.add_child(row);
+    let mut collapsed_member_kinds = Vec::new();
+    for agent in bookmarked.iter().filter_map(|conversation| {
+        bookmarked_session_agent(conversation).map(|agent| SummaryPaneKind::CLIAgent {
+            agent,
+            is_ambient: false,
+        })
+    }) {
+        if !collapsed_member_kinds.contains(&agent) {
+            collapsed_member_kinds.push(agent);
+            if collapsed_member_kinds.len() == 4 {
+                break;
             }
         }
-        content.add_child(
-            ConstrainedBox::new(
-                ClippedScrollable::vertical(
-                    state.bookmarked_session_scroll_state.clone(),
-                    rows.finish(),
-                    ScrollbarWidth::Custom(4.),
-                    theme.nonactive_ui_detail().into(),
-                    theme.active_ui_detail().into(),
-                    ElementFill::None,
-                )
-                .with_overlayed_scrollbar()
-                .finish(),
-            )
-            .with_max_height(BOOKMARKED_SESSIONS_MAX_HEIGHT)
-            .finish(),
-        );
     }
+
+    let mouse_states = state.bookmarked_section_mouse_states.clone();
+    let is_collapsed = workspace.bookmarked_sessions_collapsed;
+    let needs_outer_horizontal_padding =
+        uses_outer_group_container(match resolve_vertical_tabs_mode(app) {
+            VerticalTabsResolvedMode::Panes => VerticalTabsDisplayGranularity::Panes,
+            _ => VerticalTabsDisplayGranularity::Tabs,
+        });
+    let member_spacing = if FeatureFlag::GroupedTabs.is_enabled()
+        && matches!(
+            resolve_vertical_tabs_mode(app),
+            VerticalTabsResolvedMode::Panes
+        ) {
+        0.
+    } else {
+        TAB_CARD_GAP
+    };
+
+    let section = Hoverable::new(mouse_states.container.clone(), |hover_state| {
+        let mut content = Flex::column()
+            .with_main_axis_size(MainAxisSize::Min)
+            .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .with_spacing(member_spacing)
+            .with_child(render_section_header(
+                SectionHeaderKind::BookmarkedSessions,
+                count,
+                &mouse_states,
+                is_collapsed,
+                false,
+                false,
+                false,
+                None,
+                is_collapsed.then_some(collapsed_member_kinds.as_slice()),
+                app,
+            ));
+
+        if !is_collapsed && !bookmarked.is_empty() {
+            let mut rows = Flex::column()
+                .with_main_axis_size(MainAxisSize::Min)
+                .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .with_spacing(member_spacing);
+            for conversation in &bookmarked {
+                if let Some(row) = render_bookmarked_session_row(state, conversation, app) {
+                    rows.add_child(
+                        Container::new(row)
+                            .with_padding(
+                                Padding::uniform(0.)
+                                    .with_left(TAB_GROUP_MEMBER_INDENT)
+                                    .with_right(TAB_GROUP_CONTENT_INSET),
+                            )
+                            .finish(),
+                    );
+                }
+            }
+            content.add_child(
+                ConstrainedBox::new(
+                    ClippedScrollable::vertical(
+                        state.bookmarked_session_scroll_state.clone(),
+                        rows.finish(),
+                        ScrollbarWidth::Custom(4.),
+                        theme.nonactive_ui_detail().into(),
+                        theme.active_ui_detail().into(),
+                        ElementFill::None,
+                    )
+                    .with_overlayed_scrollbar()
+                    .finish(),
+                )
+                .with_max_height(BOOKMARKED_SESSIONS_MAX_HEIGHT)
+                .finish(),
+            );
+        }
+
+        let mut padding = Padding::uniform(0.);
+        if needs_outer_horizontal_padding {
+            padding = Padding::uniform(GROUP_HORIZONTAL_PADDING);
+        } else if !is_collapsed {
+            padding = padding.with_bottom(TAB_GROUP_CONTENT_INSET);
+        }
+        let card_state = TabCardState::resolve(
+            state.bookmarked_section_is_drop_target,
+            false,
+            hover_state.is_hovered(),
+        );
+        Container::new(content.finish())
+            .with_padding(padding)
+            .with_background(card_state.background(theme))
+            .with_border(Border::all(1.).with_border_fill(card_state.border(theme)))
+            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(ROW_CORNER_RADIUS)))
+            .finish()
+    })
+    .with_defer_events_to_children()
+    .finish();
 
     let active_keys = bookmarked
         .iter()
@@ -2454,15 +2485,11 @@ fn render_bookmarked_sessions(
 
     // No explicit tint is applied: this is the same neutral/default color used by a newly-created
     // section before the user assigns it a color.
-    let card_state = TabCardState::resolve(false, false, false);
-    Container::new(content.finish())
+    Container::new(SavePosition::new(section, BOOKMARKED_SESSIONS_SECTION_POSITION_ID).finish())
         .with_margin_left(GROUP_HORIZONTAL_PADDING)
         .with_margin_right(GROUP_HORIZONTAL_PADDING)
         .with_margin_top(GROUP_HORIZONTAL_PADDING)
         .with_margin_bottom(4.)
-        .with_background(card_state.background(theme))
-        .with_border(Border::all(1.).with_border_fill(card_state.border(theme)))
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(ROW_CORNER_RADIUS)))
         .finish()
 }
 
@@ -3699,17 +3726,22 @@ fn render_tab_group_header_icon_button(
     .finish()
 }
 
-/// Renders the header row for a tab group: leading icon (chevron when expanded,
-/// member icon collage when collapsed), title + "N tabs", and (on hover) add,
-/// kebab, and close buttons. Single-clicking outside the per-button regions toggles
-/// collapse; double-clicking opens the inline rename editor.
+enum SectionHeaderKind<'a> {
+    TabGroup(&'a TabGroup),
+    BookmarkedSessions,
+}
+
+/// Renders the shared header row for user-created and built-in sections: leading icon (chevron
+/// when expanded, member icon collage when collapsed), title + session count, and the native
+/// section actions where applicable. This keeps the pre-created Bookmarked sessions section on
+/// exactly the same chrome path as sections the user creates.
 ///
 /// `collapsed_member_kinds` is the deduped list of pane kinds used to build the
 /// icon collage shown in place of the chevron when the group is collapsed.
 /// Pass `None` when the group is expanded; the chevron is rendered instead.
 #[allow(clippy::too_many_arguments)]
-fn render_grouped_tabs_header(
-    group: &TabGroup,
+fn render_section_header(
+    kind: SectionHeaderKind<'_>,
     member_count: usize,
     mouse_states: &TabGroupMouseStates,
     is_collapsed: bool,
@@ -3725,7 +3757,23 @@ fn render_grouped_tabs_header(
     let font_family = appearance.ui_font_family();
     let main_text_color = theme.main_text_color(theme.background());
     let sub_text_color = theme.sub_text_color(theme.background());
-    let group_id = group.id;
+    let (group_id, title_text, toggle_action, group_pinned) = match kind {
+        SectionHeaderKind::TabGroup(group) => (
+            Some(group.id),
+            group
+                .name
+                .clone()
+                .unwrap_or_else(|| "New Section".to_string()),
+            WorkspaceAction::ToggleTabGroupCollapsed(group.id),
+            FeatureFlag::PinnedTabs.is_enabled() && group.pinned,
+        ),
+        SectionHeaderKind::BookmarkedSessions => (
+            None,
+            "Bookmarked sessions".to_string(),
+            WorkspaceAction::ToggleBookmarkedSessionsCollapsed,
+            false,
+        ),
+    };
 
     // Collapsed groups show the icon collage (same component as horizontal tab
     // groups) in place of the chevron, sized to VERTICAL_TABS_ICON_SIZE so
@@ -3740,7 +3788,7 @@ fn render_grouped_tabs_header(
             main_text_color,
             internal_colors::fg_overlay_2(theme),
             mouse_states.chevron.clone(),
-            Some(WorkspaceAction::ToggleTabGroupCollapsed(group_id)),
+            Some(toggle_action.clone()),
         );
         // Center the chevron in a `VERTICAL_TABS_ICON_SIZE` slot so the
         // title aligns with member rows.
@@ -3760,10 +3808,6 @@ fn render_grouped_tabs_header(
         if let Some(editor) = rename_editor.filter(|_| is_being_renamed) {
             render_inline_tab_rename_editor(editor, appearance, app)
         } else {
-            let title_text = group
-                .name
-                .clone()
-                .unwrap_or_else(|| "New Section".to_string());
             Text::new_inline(title_text, font_family, 12.)
                 .with_clip(ClipConfig::ellipsis())
                 .with_color(main_text_color.into())
@@ -3786,7 +3830,7 @@ fn render_grouped_tabs_header(
         .with_child(subtitle)
         .finish();
 
-    let action_buttons = if show_action_buttons {
+    let action_buttons = if let Some(group_id) = group_id.filter(|_| show_action_buttons) {
         let add_button = render_tab_group_header_icon_button(
             WarpIcon::Plus,
             TAB_GROUP_HEADER_ACTION_ICON_SIZE,
@@ -3830,7 +3874,6 @@ fn render_grouped_tabs_header(
         Empty::new().finish()
     };
 
-    let group_pinned = FeatureFlag::PinnedTabs.is_enabled() && group.pinned;
     let row = Flex::row()
         .with_main_axis_size(MainAxisSize::Max)
         .with_main_axis_alignment(MainAxisAlignment::SpaceBetween)
@@ -3898,17 +3941,19 @@ fn render_grouped_tabs_header(
 
     // Click toggles collapse; double-click renames; right-click opens the group menu.
     hoverable = hoverable.on_click(move |ctx, _, _| {
-        ctx.dispatch_typed_action(WorkspaceAction::ToggleTabGroupCollapsed(group_id));
+        ctx.dispatch_typed_action(toggle_action.clone());
     });
-    hoverable = hoverable.on_double_click(move |ctx, _, _| {
-        ctx.dispatch_typed_action(WorkspaceAction::RenameTabGroup(group_id));
-    });
-    hoverable = hoverable.on_right_click(move |ctx, _, position| {
-        ctx.dispatch_typed_action(WorkspaceAction::ToggleTabGroupRightClickMenu {
-            group_id,
-            anchor: TabContextMenuAnchor::Pointer(position),
+    if let Some(group_id) = group_id {
+        hoverable = hoverable.on_double_click(move |ctx, _, _| {
+            ctx.dispatch_typed_action(WorkspaceAction::RenameTabGroup(group_id));
         });
-    });
+        hoverable = hoverable.on_right_click(move |ctx, _, position| {
+            ctx.dispatch_typed_action(WorkspaceAction::ToggleTabGroupRightClickMenu {
+                group_id,
+                anchor: TabContextMenuAnchor::Pointer(position),
+            });
+        });
+    }
     hoverable.finish()
 }
 
@@ -3976,8 +4021,8 @@ fn render_grouped_tab_container(
         // rendered then, so this skips the per-tab pane walk when expanded.
         let collapsed_member_kinds =
             is_collapsed.then(|| workspace.compute_group_member_kinds(group.id, app));
-        content.add_child(render_grouped_tabs_header(
-            &group,
+        content.add_child(render_section_header(
+            SectionHeaderKind::TabGroup(&group),
             member_count,
             &mouse_states,
             is_collapsed,

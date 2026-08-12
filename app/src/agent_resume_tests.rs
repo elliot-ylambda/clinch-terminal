@@ -510,6 +510,44 @@ fn conversation_bookmarks_toggle_persist_and_validate_session_ids() {
 }
 
 #[test]
+fn conversation_bookmarks_can_be_set_idempotently() {
+    let dir = std::env::temp_dir().join(format!(
+        "agent_resume_set_bookmarks_test_{}",
+        uuid::Uuid::new_v4()
+    ));
+
+    for _ in 0..2 {
+        assert!(set_conversation_bookmark_in(
+            &dir,
+            AgentResumeProvider::Claude,
+            "claude-session-1",
+            true,
+        )
+        .unwrap());
+    }
+    assert_eq!(read_conversation_bookmarks_in(&dir).len(), 1);
+
+    for _ in 0..2 {
+        assert!(!set_conversation_bookmark_in(
+            &dir,
+            AgentResumeProvider::Claude,
+            "claude-session-1",
+            false,
+        )
+        .unwrap());
+    }
+    assert!(read_conversation_bookmarks_in(&dir).is_empty());
+    assert!(
+        set_conversation_bookmark_in(&dir, AgentResumeProvider::Codex, "../escape", true,).is_err()
+    );
+    assert!(read_conversation_bookmarks_in(&dir).is_empty());
+
+    if dir.exists() {
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[test]
 fn finder_keeps_bookmarks_older_than_the_recent_pool_limit() {
     let dir = std::env::temp_dir().join(format!(
         "agent_resume_old_bookmark_test_{}",

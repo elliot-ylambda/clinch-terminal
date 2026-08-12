@@ -468,6 +468,30 @@ pub fn toggle_conversation_bookmark(
     toggle_conversation_bookmark_in(&dir, provider, session_id)
 }
 
+/// Sets a durable conversation bookmark to an explicit state and returns that state.
+///
+/// This is intentionally separate from [`toggle_conversation_bookmark`]: drop targets and other
+/// idempotent affordances must never remove an existing bookmark when they are activated twice.
+pub fn set_conversation_bookmark(
+    provider: AgentResumeProvider,
+    session_id: &str,
+    is_bookmarked: bool,
+) -> std::io::Result<bool> {
+    if !is_safe_session_id(session_id) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "invalid agent conversation session id",
+        ));
+    }
+    let dir = registry_dir().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "agent conversation registry is unavailable",
+        )
+    })?;
+    set_conversation_bookmark_in(&dir, provider, session_id, is_bookmarked)
+}
+
 fn toggle_conversation_bookmark_in(
     dir: &Path,
     provider: AgentResumeProvider,
@@ -491,6 +515,34 @@ fn toggle_conversation_bookmark_in(
         true
     };
     write_conversation_bookmarks_in(dir, &bookmarks)?;
+    Ok(is_bookmarked)
+}
+
+fn set_conversation_bookmark_in(
+    dir: &Path,
+    provider: AgentResumeProvider,
+    session_id: &str,
+    is_bookmarked: bool,
+) -> std::io::Result<bool> {
+    if !is_safe_session_id(session_id) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "invalid agent conversation session id",
+        ));
+    }
+    let mut bookmarks = read_conversation_bookmarks_in(dir);
+    let bookmark = ConversationBookmark {
+        provider,
+        session_id: session_id.to_owned(),
+    };
+    let changed = if is_bookmarked {
+        bookmarks.insert(bookmark)
+    } else {
+        bookmarks.remove(&bookmark)
+    };
+    if changed {
+        write_conversation_bookmarks_in(dir, &bookmarks)?;
+    }
     Ok(is_bookmarked)
 }
 

@@ -102,7 +102,7 @@ fn quick_replies_have_expected_labels_and_icons() {
     );
     assert_eq!(
         AgentToolbarItemKind::BookmarkConversation.display_label(),
-        "Bookmark convo"
+        "Bookmark Session"
     );
     assert_eq!(
         AgentToolbarItemKind::LooksGoodPrompt.display_label(),
@@ -163,26 +163,32 @@ fn quick_replies_hidden_during_handoff_compose() {
 }
 
 #[test]
-fn cli_default_left_places_bookmark_and_quick_replies_after_fork() {
+fn cli_default_left_places_session_actions_before_quick_replies() {
     let items = AgentToolbarItemKind::cli_default_left();
-    // The quick-reply buttons deterministically sit next to Fork/Compact.
     assert_eq!(
-        &items[..5],
+        &items[..7],
         &[
-            AgentToolbarItemKind::ForkSession,
             AgentToolbarItemKind::BookmarkConversation,
+            AgentToolbarItemKind::ForkSession,
+            AgentToolbarItemKind::TransferAgent,
             AgentToolbarItemKind::Compact,
             AgentToolbarItemKind::ContinuePrompt,
             AgentToolbarItemKind::LooksGoodPrompt,
+            AgentToolbarItemKind::CopyAndClearDraft,
         ]
     );
+    for action in &items[..3] {
+        assert!(action.is_cli_session_action());
+    }
+    for quick_insert in &items[3..] {
+        assert!(!quick_insert.is_cli_session_action());
+    }
 }
 
 #[test]
 fn agent_transfer_is_a_default_cli_host_control() {
     let items = AgentToolbarItemKind::cli_default_left();
-    assert_eq!(items.get(5), Some(&AgentToolbarItemKind::CopyAndClearDraft));
-    assert_eq!(items.get(6), Some(&AgentToolbarItemKind::TransferAgent));
+    assert_eq!(items.get(2), Some(&AgentToolbarItemKind::TransferAgent));
     assert_eq!(
         AgentToolbarItemKind::TransferAgent.available_in(),
         ToolbarAvailability::CLIAgentOnly
@@ -267,13 +273,13 @@ fn cli_quick_insert_presets_are_available_but_hidden_by_default() {
     assert_eq!(
         defaults,
         vec![
-            AgentToolbarItemKind::ForkSession,
             AgentToolbarItemKind::BookmarkConversation,
+            AgentToolbarItemKind::ForkSession,
+            AgentToolbarItemKind::TransferAgent,
             AgentToolbarItemKind::Compact,
             AgentToolbarItemKind::ContinuePrompt,
             AgentToolbarItemKind::LooksGoodPrompt,
             AgentToolbarItemKind::CopyAndClearDraft,
-            AgentToolbarItemKind::TransferAgent,
         ]
     );
     assert!(!defaults

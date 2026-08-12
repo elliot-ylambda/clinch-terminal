@@ -123,7 +123,8 @@ use self::vertical_tabs::telemetry::{VerticalTabsDisplayOption, VerticalTabsTele
 use self::vertical_tabs::{
     htab_group_position_id, pane_summary_kind, render_detail_sidecar, render_settings_popup,
     render_summary_pane_kind_icons, vtab_group_position_id, SummaryPaneKind, SummaryPaneKindIcons,
-    VerticalTabsPanelState, VERTICAL_TABS_SETTINGS_BUTTON_POSITION_ID,
+    VerticalTabsPanelState, BOOKMARKED_SESSIONS_SECTION_POSITION_ID,
+    VERTICAL_TABS_SETTINGS_BUTTON_POSITION_ID,
 };
 #[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
 use super::action::AutoCloudHandoffTrigger;
@@ -1916,6 +1917,70 @@ impl Workspace {
     pub(crate) fn toggle_bookmarked_sessions_collapsed(&mut self, ctx: &mut ViewContext<Self>) {
         self.bookmarked_sessions_collapsed = !self.bookmarked_sessions_collapsed;
         ctx.notify();
+    }
+
+    fn set_bookmarked_section_drop_target(
+        &mut self,
+        is_drop_target: bool,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        if self.vertical_tabs_panel.bookmarked_section_is_drop_target == is_drop_target {
+            return;
+        }
+        self.vertical_tabs_panel.bookmarked_section_is_drop_target = is_drop_target;
+        ctx.notify();
+    }
+
+    fn is_over_bookmarked_section(&self, tab_position: RectF, ctx: &mut ViewContext<Self>) -> bool {
+        uses_vertical_tabs()
+            && ctx
+                .element_position_by_id(BOOKMARKED_SESSIONS_SECTION_POSITION_ID)
+                .is_some_and(|section_rect| section_rect.contains_point(tab_position.center()))
+    }
+
+    /// Resolves one unambiguous durable Claude Code or Codex conversation from a tab. Prefer the
+    /// focused/active session, then accept a sole eligible terminal. Entity IDs are only used to
+    /// address the live model; bookmark persistence is keyed by provider + conversation ID.
+    fn bookmarkable_terminal_view_id_for_tab(
+        &self,
+        pane_group_id: EntityId,
+        ctx: &AppContext,
+    ) -> Option<EntityId> {
+        let tab = self
+            .tabs
+            .iter()
+            .find(|tab| tab.pane_group.id() == pane_group_id)?;
+        let pane_group = tab.pane_group.as_ref(ctx);
+        let sessions = CLIAgentSessionsModel::as_ref(ctx);
+        let is_bookmarkable = |terminal_view_id| {
+            sessions
+                .session(terminal_view_id)
+                .and_then(|session| session.session_key())
+                .is_some()
+        };
+
+        if let Some(terminal_view_id) = pane_group
+            .focused_session_view(ctx)
+            .map(|view| view.id())
+            .filter(|terminal_view_id| is_bookmarkable(*terminal_view_id))
+        {
+            return Some(terminal_view_id);
+        }
+        if let Some(terminal_view_id) = pane_group
+            .active_session_view(ctx)
+            .map(|view| view.id())
+            .filter(|terminal_view_id| is_bookmarkable(*terminal_view_id))
+        {
+            return Some(terminal_view_id);
+        }
+
+        let mut eligible = pane_group
+            .visible_terminal_views(ctx)
+            .into_iter()
+            .map(|view| view.id())
+            .filter(|terminal_view_id| is_bookmarkable(*terminal_view_id));
+        let terminal_view_id = eligible.next()?;
+        eligible.next().is_none().then_some(terminal_view_id)
     }
 
     pub(crate) fn workspace_tasks(&self) -> &[WorkspaceTask] {
@@ -26185,6 +26250,7 @@ impl TypedActionView for Workspace {
                 self.finish_tab_rename(ctx);
                 self.current_workspace_state.is_tab_being_dragged = true;
                 self.set_inner_tab_project_drop_indicator(None, ctx);
+                self.set_bookmarked_section_drop_target(false, ctx);
             }
             StartGroupDrag(_group_id) => {
                 self.clear_tab_multi_selection(ctx);
@@ -26609,10 +26675,16 @@ impl TypedActionView for Workspace {
                 tab_position,
             } => {
                 let is_cross_window = CrossWindowTabDrag::as_ref(ctx).is_active();
-                let project_insertion_index = (!is_cross_window)
-                    .then(|| self.project_drop_insertion_index(*tab_position, ctx))
-                    .flatten();
+                let bookmark_terminal_view_id = (!is_cross_window
+                    && self.is_over_bookmarked_section(*tab_position, ctx))
+                .then(|| self.bookmarkable_terminal_view_id_for_tab(*pane_group_id, ctx))
+                .flatten();
+                let project_insertion_index = (!is_cross_window
+                    && bookmark_terminal_view_id.is_none())
+                .then(|| self.project_drop_insertion_index(*tab_position, ctx))
+                .flatten();
                 self.set_inner_tab_project_drop_indicator(None, ctx);
+                self.set_bookmarked_section_drop_target(false, ctx);
                 // In vertical-tabs mode the project strip is rendered by this
                 // workspace, so clearing the parent-owned indicator must also
                 // invalidate the active child workspace.
@@ -26641,11 +26713,28 @@ impl TypedActionView for Workspace {
                     // to reorder pinned tabs within the pinned region, and drags
                     // over a pinned tab group. It should not lose its pinned state
                     // during the drag, so we commit it on drop.
-                    if tab.pinned && tab.group_id.is_some() {
+                    if bookmark_terminal_view_id.is_none() && tab.pinned && tab.group_id.is_some() {
                         tab.pinned = false;
                     }
                 }
                 send_telemetry_from_ctx!(TelemetryEvent::DragAndDropTab, ctx);
+                if let Some(terminal_view_id) = bookmark_terminal_view_id {
+                    let result = CLIAgentSessionsModel::handle(ctx).update(ctx, |model, ctx| {
+                        model.set_conversation_bookmark(terminal_view_id, true, ctx)
+                    });
+                    if let Err(error) = result {
+                        self.toast_stack.update(ctx, |toast_stack, ctx| {
+                            toast_stack.add_ephemeral_toast(
+                                DismissibleToast::error(format!(
+                                    "Could not bookmark this conversation: {error}"
+                                )),
+                                ctx,
+                            );
+                        });
+                    }
+                    ctx.notify();
+                    return;
+                }
                 if let Some(insertion_index) = project_insertion_index {
                     if let Some(tab_index) = self
                         .tabs
@@ -30091,6 +30180,22 @@ impl Workspace {
                 .unwrap_or(current_index)
         };
         if current_index >= self.tabs.len() {
+            return;
+        }
+
+        // The built-in bookmark section claims eligible local vertical-tab drags before project
+        // promotion, cross-window detachment, group reassignment, or ordinary reordering. Its
+        // semantics are additive: hovering it never mutates the source tab's group membership.
+        let is_cross_window_drag = CrossWindowTabDrag::as_ref(ctx).is_active();
+        let pane_group_id = self.tabs[current_index].pane_group.id();
+        let is_bookmarked_section_target = !is_cross_window_drag
+            && self.is_over_bookmarked_section(position, ctx)
+            && self
+                .bookmarkable_terminal_view_id_for_tab(pane_group_id, ctx)
+                .is_some();
+        self.set_bookmarked_section_drop_target(is_bookmarked_section_target, ctx);
+        if is_bookmarked_section_target {
+            self.set_inner_tab_project_drop_indicator(None, ctx);
             return;
         }
 

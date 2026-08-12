@@ -703,8 +703,37 @@ impl CLIAgentSessionsModel {
         terminal_view_id: EntityId,
         ctx: &mut ModelContext<Self>,
     ) -> std::io::Result<bool> {
-        let key = self
-            .sessions
+        let key = self.conversation_session_key(terminal_view_id)?;
+        let is_bookmarked =
+            crate::agent_resume::toggle_conversation_bookmark(key.provider, &key.session_id)?;
+        self.refresh_conversation_bookmarks_and_emit(&key, ctx);
+        Ok(is_bookmarked)
+    }
+
+    /// Sets this pane's durable conversation bookmark to an explicit state. This is the
+    /// idempotent path used by drag-and-drop surfaces, where repeating the same action must not
+    /// silently remove an existing bookmark.
+    pub fn set_conversation_bookmark(
+        &mut self,
+        terminal_view_id: EntityId,
+        is_bookmarked: bool,
+        ctx: &mut ModelContext<Self>,
+    ) -> std::io::Result<bool> {
+        let key = self.conversation_session_key(terminal_view_id)?;
+        let is_bookmarked = crate::agent_resume::set_conversation_bookmark(
+            key.provider,
+            &key.session_id,
+            is_bookmarked,
+        )?;
+        self.refresh_conversation_bookmarks_and_emit(&key, ctx);
+        Ok(is_bookmarked)
+    }
+
+    fn conversation_session_key(
+        &self,
+        terminal_view_id: EntityId,
+    ) -> std::io::Result<CLIAgentSessionKey> {
+        self.sessions
             .get(&terminal_view_id)
             .and_then(CLIAgentSession::session_key)
             .ok_or_else(|| {
@@ -712,15 +741,20 @@ impl CLIAgentSessionsModel {
                     std::io::ErrorKind::NotFound,
                     "the active agent has not reported a conversation id yet",
                 )
-            })?;
-        let is_bookmarked =
-            crate::agent_resume::toggle_conversation_bookmark(key.provider, &key.session_id)?;
+            })
+    }
+
+    fn refresh_conversation_bookmarks_and_emit(
+        &mut self,
+        key: &CLIAgentSessionKey,
+        ctx: &mut ModelContext<Self>,
+    ) {
         self.bookmarked_conversations = bookmarked_conversations();
         let affected_sessions = self
             .sessions
             .iter()
             .filter_map(|(view_id, session)| {
-                (session.session_key().as_ref() == Some(&key)).then_some((*view_id, session.agent))
+                (session.session_key().as_ref() == Some(key)).then_some((*view_id, session.agent))
             })
             .collect::<Vec<_>>();
         for (terminal_view_id, agent) in affected_sessions {
@@ -729,7 +763,6 @@ impl CLIAgentSessionsModel {
                 agent,
             });
         }
-        Ok(is_bookmarked)
     }
 
     /// Marks a Claude Code or Codex turn as working when Clinch submits a known, non-empty prompt

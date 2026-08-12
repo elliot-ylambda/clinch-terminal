@@ -3286,6 +3286,65 @@ fn test_tab_context_menu_copies_claude_and_codex_session_ids() {
 }
 
 #[test]
+fn bookmarked_section_drop_resolves_only_durable_claude_and_codex_sessions() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+        let (pane_group_id, terminal_view_id) = workspace.read(&app, |workspace, ctx| {
+            let tab = &workspace.tabs[0];
+            let terminal_view_id = tab
+                .pane_group
+                .as_ref(ctx)
+                .focused_session_view(ctx)
+                .expect("test tab should contain a terminal")
+                .id();
+            (tab.pane_group.id(), terminal_view_id)
+        });
+
+        workspace.read(&app, |workspace, ctx| {
+            assert_eq!(
+                workspace.bookmarkable_terminal_view_id_for_tab(pane_group_id, ctx),
+                None
+            );
+        });
+
+        CLIAgentSessionsModel::handle(&app).update(&mut app, |sessions, ctx| {
+            sessions.set_session(
+                terminal_view_id,
+                cli_agent_session_with_id(
+                    crate::terminal::CLIAgent::Claude,
+                    Some("claude-session-123"),
+                ),
+                ctx,
+            );
+        });
+        workspace.read(&app, |workspace, ctx| {
+            assert_eq!(
+                workspace.bookmarkable_terminal_view_id_for_tab(pane_group_id, ctx),
+                Some(terminal_view_id)
+            );
+        });
+
+        CLIAgentSessionsModel::handle(&app).update(&mut app, |sessions, ctx| {
+            sessions.set_session(
+                terminal_view_id,
+                cli_agent_session_with_id(
+                    crate::terminal::CLIAgent::Gemini,
+                    Some("gemini-session-123"),
+                ),
+                ctx,
+            );
+        });
+        workspace.read(&app, |workspace, ctx| {
+            assert_eq!(
+                workspace.bookmarkable_terminal_view_id_for_tab(pane_group_id, ctx),
+                None
+            );
+        });
+    });
+}
+
+#[test]
 fn test_tab_context_menu_omits_unavailable_or_unsupported_session_ids() {
     let _vertical_tabs_guard = FeatureFlag::VerticalTabs.override_enabled(true);
 

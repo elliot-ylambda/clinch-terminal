@@ -45,6 +45,8 @@ pub struct ActionButton {
     disabled: bool,
     /// An icon to show to the left of the label.
     icon: Option<Icon>,
+    /// Optional exact color override for the leading icon.
+    icon_color: Option<ColorU>,
     /// Optional override for icon color derived from the current theme's ANSI palette.
     icon_ansi_color: Option<AnsiColorIdentifier>,
     /// The text of this button.
@@ -223,6 +225,7 @@ impl ActionButton {
             focused: false,
             disabled: false,
             icon: None,
+            icon_color: None,
             icon_ansi_color: None,
             label: label.into(),
             tooltip: None,
@@ -255,6 +258,12 @@ impl ActionButton {
     /// Set the icon shown to the left of this button.
     pub fn with_icon(mut self, icon: Icon) -> Self {
         self.icon = Some(icon);
+        self
+    }
+
+    /// Set an exact color for the leading icon without changing the button label, border, or fill.
+    pub fn with_icon_color(mut self, icon_color: ColorU) -> Self {
+        self.icon_color = Some(icon_color);
         self
     }
 
@@ -768,14 +777,14 @@ impl View for ActionButton {
 
             if let Some(icon) = self.icon {
                 let icon_size = self.size.icon_size(appearance, app);
-                let icon_fill = self
-                    .icon_ansi_color
-                    .map(|ansi| {
-                        Fill::Solid(appearance.theme().ansi_fg(
-                            ansi.to_ansi_color(&appearance.theme().terminal_colors().normal),
-                        ))
-                    })
-                    .unwrap_or(Fill::Solid(text_color));
+                let icon_fill = self.icon_color.map(Fill::Solid).unwrap_or_else(|| {
+                    self.icon_ansi_color
+                        .map_or(Fill::Solid(text_color), |ansi| {
+                            Fill::Solid(appearance.theme().ansi_fg(
+                                ansi.to_ansi_color(&appearance.theme().terminal_colors().normal),
+                            ))
+                        })
+                });
                 row.add_child(
                     ConstrainedBox::new(icon.to_warpui_icon(icon_fill).finish())
                         .with_width(icon_size)
