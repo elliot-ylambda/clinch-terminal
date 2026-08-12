@@ -908,12 +908,23 @@ fn remote_control_header_uses_the_latest_live_device() {
 }
 
 #[test]
-fn remote_control_header_interaction_styles_preserve_the_ui_font() {
+fn remote_control_header_uses_compact_muted_styles() {
     let font_family_id = warpui::fonts::FamilyId(42);
-    let (default_styles, interactive_styles) = remote_control_button_styles(font_family_id);
+    let muted_color = ColorU {
+        r: 0x77,
+        g: 0x77,
+        b: 0x77,
+        a: 0xff,
+    };
+    let (default_styles, interactive_styles) =
+        remote_control_button_styles(font_family_id, muted_color);
 
     assert_eq!(default_styles.font_family_id, Some(font_family_id));
     assert_eq!(interactive_styles.font_family_id, Some(font_family_id));
+    assert_eq!(default_styles.font_color, Some(muted_color));
+    assert_eq!(default_styles.font_size, Some(11.));
+    assert_eq!(default_styles.width, None);
+    assert_eq!(default_styles.border_color, Some(muted_color.into()));
 }
 
 #[test]

@@ -589,6 +589,8 @@ const TAB_BAR_ICON_PADDING: f32 = 4.;
 
 const TAB_BAR_PILL_WIDTH: f32 = 120.;
 const PILL_FONT_SIZE: f32 = 12.;
+#[cfg(not(target_family = "wasm"))]
+const REMOTE_CONTROL_BUTTON_FONT_SIZE: f32 = 11.;
 const UPDATE_AVAILABLE_TEXT: &str = "Update available";
 const CLINCH_UPDATE_TEXT: &str = "Update Clinch";
 const UPDATE_DOWNLOADING_TEXT: &str = "Downloading…";
@@ -1429,22 +1431,22 @@ fn remote_control_header_presentation(
 #[cfg(not(target_family = "wasm"))]
 fn remote_control_button_styles(
     font_family_id: FamilyId,
+    muted_color: ColorU,
 ) -> (UiComponentStyles, UiComponentStyles) {
     let default_styles = UiComponentStyles {
-        width: Some(TAB_BAR_PILL_WIDTH),
         font_family_id: Some(font_family_id),
-        font_color: Some(CLINCH_LOGO_GREEN),
-        font_size: Some(PILL_FONT_SIZE),
+        font_color: Some(muted_color),
+        font_size: Some(REMOTE_CONTROL_BUTTON_FONT_SIZE),
         font_weight: Some(Weight::Semibold),
-        padding: Some(Coords::default().top(4.).bottom(4.).left(9.).right(9.)),
-        border_color: Some(CLINCH_LOGO_GREEN.into()),
+        padding: Some(Coords::default().top(3.).bottom(3.).left(7.).right(7.)),
+        border_color: Some(muted_color.into()),
         border_width: Some(1.),
         border_radius: Some(CornerRadius::with_all(Radius::Percentage(50.))),
         background: Some(ColorU::transparent_black().into()),
         ..UiComponentStyles::default()
     };
     let interactive_styles = UiComponentStyles {
-        background: Some(coloru_with_opacity(CLINCH_LOGO_GREEN, 20).into()),
+        background: Some(coloru_with_opacity(muted_color, 20).into()),
         ..default_styles
     };
 
@@ -22380,15 +22382,6 @@ impl Workspace {
                 .with_child(tab_bar.finish())
                 .with_child(center_slot);
 
-            #[cfg(not(target_family = "wasm"))]
-            if should_show_remote_control_button(ChannelState::has_backend()) {
-                tab_bar.add_child(
-                    Container::new(self.render_remote_control_button(appearance, ctx))
-                        .with_margin_left(4.)
-                        .with_margin_right(4.)
-                        .finish(),
-                );
-            }
             tab_bar.add_child(right_controls.finish());
             let tab_bar = tab_bar.finish();
 
@@ -22545,16 +22538,6 @@ impl Workspace {
 
         // Placeholder to make sure the flex row expands across the entire width of the app.
         tab_bar.add_child(Shrinkable::new(0.5, Empty::new().finish()).finish());
-
-        #[cfg(not(target_family = "wasm"))]
-        if should_show_remote_control_button(ChannelState::has_backend()) {
-            tab_bar.add_child(
-                Container::new(self.render_remote_control_button(appearance, ctx))
-                    .with_margin_left(4.)
-                    .with_margin_right(4.)
-                    .finish(),
-            );
-        }
 
         self.add_configurable_right_side_tab_bar_controls(
             &mut tab_bar,
@@ -22834,13 +22817,8 @@ impl Workspace {
             }
         }
 
-        if FeatureFlag::AvatarInTabBar.is_enabled() {
-            target.add_child(
-                Container::new(self.render_avatar_button(appearance, ctx))
-                    .with_margin_left(TAB_BAR_PADDING_LEFT)
-                    .finish(),
-            );
-        } else {
+        let avatar_in_tab_bar = FeatureFlag::AvatarInTabBar.is_enabled();
+        if !avatar_in_tab_bar {
             let resource_center_closed = !self.current_workspace_state.is_resource_center_open;
             if resource_center_closed && ContextFlag::WarpEssentials.is_enabled() {
                 target.add_child(
@@ -22849,7 +22827,24 @@ impl Workspace {
                         .finish(),
                 );
             }
+        }
 
+        #[cfg(not(target_family = "wasm"))]
+        if should_show_remote_control_button(ChannelState::has_backend()) {
+            target.add_child(
+                Container::new(self.render_remote_control_button(appearance, ctx))
+                    .with_margin_left(TAB_BAR_PADDING_LEFT)
+                    .finish(),
+            );
+        }
+
+        if avatar_in_tab_bar {
+            target.add_child(
+                Container::new(self.render_avatar_button(appearance, ctx))
+                    .with_margin_left(TAB_BAR_PADDING_LEFT)
+                    .finish(),
+            );
+        } else {
             target.add_child(
                 Container::new(self.render_settings_button(appearance))
                     .with_margin_left(TAB_BAR_PADDING_LEFT)
@@ -23477,8 +23472,9 @@ impl Workspace {
         #[cfg(not(feature = "local_fs"))]
         let presentation = remote_control_header_presentation(None);
 
+        let muted_color = theme.sub_text_color(theme.background()).into_solid();
         let (default_styles, interactive_styles) =
-            remote_control_button_styles(appearance.ui_font_family());
+            remote_control_button_styles(appearance.ui_font_family(), muted_color);
         let mut button = appearance.ui_builder().button_with_custom_styles(
             ButtonVariant::Text,
             self.mouse_states.remote_control_icon.clone(),
@@ -23501,9 +23497,9 @@ impl Workspace {
             let text = Text::new_inline(
                 presentation.label.clone(),
                 appearance.ui_font_family(),
-                PILL_FONT_SIZE,
+                REMOTE_CONTROL_BUTTON_FONT_SIZE,
             )
-            .with_color(CLINCH_LOGO_GREEN)
+            .with_color(muted_color)
             .with_style(Properties::default().weight(Weight::Semibold))
             .finish();
             button = button.with_custom_label(
@@ -23518,12 +23514,12 @@ impl Workspace {
                 TextAndIcon::new(
                     TextAndIconAlignment::IconFirst,
                     presentation.label.clone(),
-                    icons::Icon::Phone01.to_warpui_icon(Fill::Solid(CLINCH_LOGO_GREEN)),
+                    icons::Icon::Phone01.to_warpui_icon(Fill::Solid(muted_color)),
                     MainAxisSize::Min,
                     MainAxisAlignment::Center,
-                    vec2f(14., 14.),
+                    vec2f(12., 12.),
                 )
-                .with_inner_padding(6.),
+                .with_inner_padding(5.),
             );
         }
 
