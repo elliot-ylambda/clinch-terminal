@@ -23,8 +23,7 @@ use warpui::elements::{
 use warpui::fonts::Properties;
 use warpui::platform::Cursor;
 use warpui::ui_components::button::ButtonVariant;
-use warpui::ui_components::components::UiComponent;
-use warpui::ui_components::components::{Coords, UiComponentStyles};
+use warpui::ui_components::components::{Coords, UiComponent, UiComponentStyles};
 use warpui::{Action, SingletonEntity, View, ViewContext};
 
 use crate::ai::blocklist::agent_view::toolbar_item::AgentToolbarItemKind;
