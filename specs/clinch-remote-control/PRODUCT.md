@@ -44,7 +44,7 @@ tested on iPhone and iPad sizes before the live terminal transport is finalized.
 
 ### Desktop discovery and setup
 
-1. Every backend-free Clinch window displays a phone-shaped **Remotely Control Clinch on Mobile!**
+1. Every backend-free Clinch window displays a phone-shaped **Try Remote Control**
    affordance in the right side of its header. It remains visible whether the person uses
    horizontal or vertical tabs and does not depend on a signed-in Warp account.
 

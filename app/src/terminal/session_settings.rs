@@ -6,6 +6,7 @@ use instant::Duration;
 use lazy_static::lazy_static;
 pub use new_session_shell::*;
 use serde::{Deserialize, Serialize};
+use settings::Setting as _;
 pub use startup_shell::*;
 use warp_core::settings::macros::define_settings_group;
 use warp_core::settings::{RespectUserSyncSetting, SupportedPlatforms, SyncToCloud};
@@ -362,6 +363,29 @@ fn overridden_toolbar_defaults(
         .collect()
 }
 
+fn normalize_hidden_custom_inserts(
+    selected_left: &[AgentToolbarItemKind],
+    selected_right: &[AgentToolbarItemKind],
+    hidden_custom_inserts: Vec<AgentToolbarItemKind>,
+) -> Vec<AgentToolbarItemKind> {
+    let selected = selected_left
+        .iter()
+        .chain(selected_right)
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut normalized = Vec::new();
+    for item in hidden_custom_inserts {
+        if !matches!(item, AgentToolbarItemKind::CustomInsert { .. })
+            || contains_toolbar_item_identity(&selected, &item)
+            || contains_toolbar_item_identity(&normalized, &item)
+        {
+            continue;
+        }
+        normalized.push(item);
+    }
+    normalized
+}
+
 #[derive(
     Clone,
     Debug,
@@ -445,6 +469,9 @@ pub enum CLIAgentToolbarChipSelection {
         /// Shipped items whose editable fields the user explicitly changed.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         overridden_defaults: Vec<AgentToolbarItemKind>,
+        /// User-created quick inserts saved in the editor but not shown in the footer.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        hidden_custom_inserts: Vec<AgentToolbarItemKind>,
         /// Whether `left` and `right` are an explicit ordering of the effective toolbar.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         preserve_order: bool,
@@ -452,22 +479,44 @@ pub enum CLIAgentToolbarChipSelection {
 }
 
 impl CLIAgentToolbarChipSelection {
+    #[cfg(test)]
     pub(crate) fn custom_from_effective_items(
         left: Vec<AgentToolbarItemKind>,
         right: Vec<AgentToolbarItemKind>,
+    ) -> Self {
+        Self::custom_from_effective_items_and_hidden_custom_inserts(left, right, Vec::new())
+    }
+
+    pub(crate) fn custom_from_effective_items_and_hidden_custom_inserts(
+        left: Vec<AgentToolbarItemKind>,
+        right: Vec<AgentToolbarItemKind>,
+        hidden_custom_inserts: Vec<AgentToolbarItemKind>,
     ) -> Self {
         let default_left = AgentToolbarItemKind::cli_default_left();
         let default_right = AgentToolbarItemKind::cli_default_right();
         let hidden_defaults = hidden_toolbar_defaults(&default_left, &default_right, &left, &right);
         let overridden_defaults =
             overridden_toolbar_defaults(&default_left, &default_right, &left, &right);
+        let hidden_custom_inserts =
+            normalize_hidden_custom_inserts(&left, &right, hidden_custom_inserts);
         Self::Custom {
             left,
             right,
             hidden_defaults,
             inherit_defaults: true,
             overridden_defaults,
+            hidden_custom_inserts,
             preserve_order: true,
+        }
+    }
+
+    pub(crate) fn hidden_custom_inserts(&self) -> Vec<AgentToolbarItemKind> {
+        match self {
+            Self::Default => Vec::new(),
+            Self::Custom {
+                hidden_custom_inserts,
+                ..
+            } => hidden_custom_inserts.clone(),
         }
     }
 
@@ -483,6 +532,7 @@ impl CLIAgentToolbarChipSelection {
                 hidden_defaults,
                 inherit_defaults,
                 overridden_defaults,
+                hidden_custom_inserts: _,
                 preserve_order,
             } => {
                 let default_left = AgentToolbarItemKind::cli_default_left();
@@ -559,28 +609,52 @@ pub enum TerminalToolbarChipSelection {
         inherit_defaults: bool,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         overridden_defaults: Vec<AgentToolbarItemKind>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        hidden_custom_inserts: Vec<AgentToolbarItemKind>,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         preserve_order: bool,
     },
 }
 
 impl TerminalToolbarChipSelection {
+    #[cfg(test)]
     pub(crate) fn custom_from_effective_items(
         left: Vec<AgentToolbarItemKind>,
         right: Vec<AgentToolbarItemKind>,
+    ) -> Self {
+        Self::custom_from_effective_items_and_hidden_custom_inserts(left, right, Vec::new())
+    }
+
+    pub(crate) fn custom_from_effective_items_and_hidden_custom_inserts(
+        left: Vec<AgentToolbarItemKind>,
+        right: Vec<AgentToolbarItemKind>,
+        hidden_custom_inserts: Vec<AgentToolbarItemKind>,
     ) -> Self {
         let default_left = AgentToolbarItemKind::terminal_default_left();
         let default_right = AgentToolbarItemKind::terminal_default_right();
         let hidden_defaults = hidden_toolbar_defaults(&default_left, &default_right, &left, &right);
         let overridden_defaults =
             overridden_toolbar_defaults(&default_left, &default_right, &left, &right);
+        let hidden_custom_inserts =
+            normalize_hidden_custom_inserts(&left, &right, hidden_custom_inserts);
         Self::Custom {
             left,
             right,
             hidden_defaults,
             inherit_defaults: true,
             overridden_defaults,
+            hidden_custom_inserts,
             preserve_order: true,
+        }
+    }
+
+    pub(crate) fn hidden_custom_inserts(&self) -> Vec<AgentToolbarItemKind> {
+        match self {
+            Self::Default => Vec::new(),
+            Self::Custom {
+                hidden_custom_inserts,
+                ..
+            } => hidden_custom_inserts.clone(),
         }
     }
 
@@ -596,6 +670,7 @@ impl TerminalToolbarChipSelection {
                 hidden_defaults,
                 inherit_defaults,
                 overridden_defaults,
+                hidden_custom_inserts: _,
                 preserve_order,
             } => {
                 let default_left = AgentToolbarItemKind::terminal_default_left();
@@ -666,6 +741,7 @@ mod toolbar_chip_selection_tests {
             hidden_defaults: vec![],
             inherit_defaults: false,
             overridden_defaults: vec![],
+            hidden_custom_inserts: vec![],
             preserve_order: false,
         };
         let mut serialized = legacy.to_file_value();
@@ -807,6 +883,25 @@ mod toolbar_chip_selection_tests {
     }
 
     #[test]
+    fn cli_built_in_prompt_override_preserves_auto_send_choice() {
+        let mut left = AgentToolbarItemKind::cli_default_left();
+        let compact_index = left
+            .iter()
+            .position(|item| item == &AgentToolbarItemKind::Compact)
+            .unwrap();
+        left[compact_index] = AgentToolbarItemKind::Compact
+            .with_auto_send_behavior(false)
+            .unwrap();
+        let selection =
+            CLIAgentToolbarChipSelection::custom_from_effective_items(left.clone(), vec![]);
+
+        assert_eq!(selection.left_items(), left);
+        let restored =
+            CLIAgentToolbarChipSelection::from_file_value(&selection.to_file_value()).unwrap();
+        assert_eq!(restored.left_items(), left);
+    }
+
+    #[test]
     fn untouched_ordered_default_uses_the_current_definition() {
         let current = custom_insert("Review", "new prompt");
         let saved = custom_insert("Review", "old prompt");
@@ -935,6 +1030,24 @@ define_settings_group!(SessionSettings, settings: [
         toml_path: "agents.third_party.cli_agent_toolbar_chip_selection_setting",
         description: "Controls the layout of context chips in the CLI Agent toolbar.",
     },
+    claude_code_footer_chip_selection: ClaudeCodeToolbarChipSelectionSetting {
+        type: Option<CLIAgentToolbarChipSelection>,
+        default: None,
+        supported_platforms: SupportedPlatforms::ALL,
+        sync_to_cloud: SyncToCloud::Globally(RespectUserSyncSetting::Yes),
+        private: false,
+        toml_path: "agents.third_party.claude_code_toolbar_chip_selection_setting",
+        description: "Controls the layout of quick actions in the Claude Code toolbar.",
+    },
+    codex_footer_chip_selection: CodexToolbarChipSelectionSetting {
+        type: Option<CLIAgentToolbarChipSelection>,
+        default: None,
+        supported_platforms: SupportedPlatforms::ALL,
+        sync_to_cloud: SyncToCloud::Globally(RespectUserSyncSetting::Yes),
+        private: false,
+        toml_path: "agents.third_party.codex_toolbar_chip_selection_setting",
+        description: "Controls the layout of quick actions in the Codex toolbar.",
+    },
     terminal_footer_chip_selection: TerminalToolbarChipSelectionSetting {
         type: TerminalToolbarChipSelection,
         default: TerminalToolbarChipSelection::default(),
@@ -983,6 +1096,36 @@ define_settings_group!(SessionSettings, settings: [
         private: true,
     },
 ]);
+
+impl SessionSettings {
+    /// Claude Code and Codex originally shared the legacy CLI-agent footer setting. Keep using
+    /// that value until the user customizes a provider-specific tab so existing layouts migrate
+    /// without a one-time settings rewrite.
+    pub fn claude_code_footer_chip_selection_value(&self) -> &CLIAgentToolbarChipSelection {
+        self.claude_code_footer_chip_selection
+            .value()
+            .as_ref()
+            .unwrap_or_else(|| self.cli_agent_footer_chip_selection.value())
+    }
+
+    pub fn codex_footer_chip_selection_value(&self) -> &CLIAgentToolbarChipSelection {
+        self.codex_footer_chip_selection
+            .value()
+            .as_ref()
+            .unwrap_or_else(|| self.cli_agent_footer_chip_selection.value())
+    }
+
+    pub fn footer_chip_selection_for_cli_agent(
+        &self,
+        agent: crate::terminal::CLIAgent,
+    ) -> &CLIAgentToolbarChipSelection {
+        match agent {
+            crate::terminal::CLIAgent::Claude => self.claude_code_footer_chip_selection_value(),
+            crate::terminal::CLIAgent::Codex => self.codex_footer_chip_selection_value(),
+            _ => self.cli_agent_footer_chip_selection.value(),
+        }
+    }
+}
 
 settings::macros::implement_setting_for_enum!(
     WorkingDirectoryConfig,

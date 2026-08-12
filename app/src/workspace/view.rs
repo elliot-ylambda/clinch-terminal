@@ -1187,6 +1187,8 @@ pub struct Workspace {
     prompt_editor_modal: ViewHandle<PromptEditorModal>,
     agent_toolbar_editor_modal: ViewHandle<AgentToolbarEditorModal>,
     quick_insert_modal: ViewHandle<QuickInsertModal>,
+    /// Reopen this footer editor after the nested add-button form closes.
+    quick_insert_parent_toolbar_editor: Option<AgentToolbarEditorMode>,
     header_toolbar_editor_modal: ViewHandle<HeaderToolbarEditorModal>,
     header_toolbar_context_menu: ViewHandle<Menu<WorkspaceAction>>,
     show_header_toolbar_context_menu: Option<Vector2F>,
@@ -1371,7 +1373,7 @@ fn should_show_remote_control_button(has_backend: bool) -> bool {
 }
 
 #[cfg(not(target_family = "wasm"))]
-const REMOTE_CONTROL_DISCOVERY_LABEL: &str = "Remotely Control Clinch on Mobile!";
+const REMOTE_CONTROL_DISCOVERY_LABEL: &str = "Try Remote Control";
 
 #[cfg(not(target_family = "wasm"))]
 #[derive(Debug, Eq, PartialEq)]
@@ -3811,6 +3813,7 @@ impl Workspace {
             prompt_editor_modal,
             agent_toolbar_editor_modal,
             quick_insert_modal,
+            quick_insert_parent_toolbar_editor: None,
             header_toolbar_editor_modal: Self::build_header_toolbar_editor_modal(ctx),
             header_toolbar_context_menu: Self::build_header_toolbar_context_menu(ctx),
             show_header_toolbar_context_menu: None,
@@ -6520,6 +6523,11 @@ impl Workspace {
                 self.focus_active_tab(ctx);
                 ctx.notify();
             }
+            AgentToolbarEditorEvent::AddQuickInsert(mode) => {
+                self.current_workspace_state.is_agent_toolbar_editor_open = false;
+                self.open_quick_insert_modal_for_mode(*mode, ctx);
+                self.quick_insert_parent_toolbar_editor = Some(*mode);
+            }
         }
     }
 
@@ -6534,23 +6542,57 @@ impl Workspace {
                 label,
                 text,
                 auto_send,
+                visible,
             } => {
                 match target {
-                    QuickInsertModalTarget::CLIAgent => {
-                        append_cli_custom_button(label.clone(), text.clone(), *auto_send, ctx)
-                    }
-                    QuickInsertModalTarget::Terminal => {
-                        append_terminal_custom_button(label.clone(), text.clone(), *auto_send, ctx)
-                    }
+                    QuickInsertModalTarget::CLIAgent => append_cli_custom_button(
+                        AgentToolbarEditorMode::CLIAgent,
+                        label.clone(),
+                        text.clone(),
+                        *auto_send,
+                        *visible,
+                        ctx,
+                    ),
+                    QuickInsertModalTarget::ClaudeCode => append_cli_custom_button(
+                        AgentToolbarEditorMode::ClaudeCode,
+                        label.clone(),
+                        text.clone(),
+                        *auto_send,
+                        *visible,
+                        ctx,
+                    ),
+                    QuickInsertModalTarget::Codex => append_cli_custom_button(
+                        AgentToolbarEditorMode::Codex,
+                        label.clone(),
+                        text.clone(),
+                        *auto_send,
+                        *visible,
+                        ctx,
+                    ),
+                    QuickInsertModalTarget::Terminal => append_terminal_custom_button(
+                        label.clone(),
+                        text.clone(),
+                        *auto_send,
+                        *visible,
+                        ctx,
+                    ),
                 }
                 self.current_workspace_state.is_quick_insert_modal_open = false;
-                self.focus_active_tab(ctx);
-                ctx.notify();
+                if let Some(mode) = self.quick_insert_parent_toolbar_editor.take() {
+                    self.open_agent_toolbar_editor(mode, ctx);
+                } else {
+                    self.focus_active_tab(ctx);
+                    ctx.notify();
+                }
             }
             QuickInsertModalEvent::Cancel => {
                 self.current_workspace_state.is_quick_insert_modal_open = false;
-                self.focus_active_tab(ctx);
-                ctx.notify();
+                if let Some(mode) = self.quick_insert_parent_toolbar_editor.take() {
+                    self.open_agent_toolbar_editor(mode, ctx);
+                } else {
+                    self.focus_active_tab(ctx);
+                    ctx.notify();
+                }
             }
         }
     }
@@ -17331,7 +17373,8 @@ impl Workspace {
                 self.open_agent_toolbar_editor(AgentToolbarEditorMode::AgentView, ctx);
             }
             pane_group::Event::OpenCLIAgentToolbarEditor => {
-                self.open_agent_toolbar_editor(AgentToolbarEditorMode::CLIAgent, ctx);
+                let mode = self.active_cli_agent_toolbar_editor_mode(ctx);
+                self.open_agent_toolbar_editor(mode, ctx);
             }
             pane_group::Event::OpenTerminalToolbarEditor => {
                 self.open_agent_toolbar_editor(AgentToolbarEditorMode::Terminal, ctx);
@@ -20770,6 +20813,20 @@ impl Workspace {
         ctx.focus(&self.agent_toolbar_editor_modal);
     }
 
+    fn active_cli_agent_toolbar_editor_mode(&self, ctx: &AppContext) -> AgentToolbarEditorMode {
+        self.active_terminal_id(ctx)
+            .and_then(|terminal_view_id| {
+                CLIAgentSessionsModel::as_ref(ctx)
+                    .session(terminal_view_id)
+                    .map(|session| match session.agent {
+                        crate::terminal::CLIAgent::Codex => AgentToolbarEditorMode::Codex,
+                        crate::terminal::CLIAgent::Claude => AgentToolbarEditorMode::ClaudeCode,
+                        _ => AgentToolbarEditorMode::ClaudeCode,
+                    })
+            })
+            .unwrap_or(AgentToolbarEditorMode::ClaudeCode)
+    }
+
     /// The active pane group's most-recent local working directory, used to scope
     /// the quick-insert modal's command + skill discovery.
     fn active_quick_insert_cwd(&self, ctx: &AppContext) -> Option<PathBuf> {
@@ -20783,6 +20840,45 @@ impl Workspace {
     }
 
     fn open_quick_insert_modal(&mut self, ctx: &mut ViewContext<Self>) {
+        self.quick_insert_parent_toolbar_editor = None;
+        if !FeatureFlag::CliAgentQuickInsertButtons.is_enabled() {
+            return;
+        }
+        let target = self
+            .active_terminal_id(ctx)
+            .and_then(|terminal_view_id| {
+                CLIAgentSessionsModel::as_ref(ctx)
+                    .session(terminal_view_id)
+                    .map(|session| match session.agent {
+                        crate::terminal::CLIAgent::Claude => QuickInsertModalTarget::ClaudeCode,
+                        crate::terminal::CLIAgent::Codex => QuickInsertModalTarget::Codex,
+                        _ => QuickInsertModalTarget::CLIAgent,
+                    })
+            })
+            .unwrap_or(QuickInsertModalTarget::Terminal);
+        self.open_quick_insert_modal_for_target(target, ctx);
+    }
+
+    fn open_quick_insert_modal_for_mode(
+        &mut self,
+        mode: AgentToolbarEditorMode,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let target = match mode {
+            AgentToolbarEditorMode::CLIAgent => QuickInsertModalTarget::CLIAgent,
+            AgentToolbarEditorMode::ClaudeCode => QuickInsertModalTarget::ClaudeCode,
+            AgentToolbarEditorMode::Codex => QuickInsertModalTarget::Codex,
+            AgentToolbarEditorMode::Terminal => QuickInsertModalTarget::Terminal,
+            AgentToolbarEditorMode::AgentView => return,
+        };
+        self.open_quick_insert_modal_for_target(target, ctx);
+    }
+
+    fn open_quick_insert_modal_for_target(
+        &mut self,
+        target: QuickInsertModalTarget,
+        ctx: &mut ViewContext<Self>,
+    ) {
         if !FeatureFlag::CliAgentQuickInsertButtons.is_enabled() {
             return;
         }
@@ -20790,17 +20886,6 @@ impl Workspace {
             .active_quick_insert_cwd(ctx)
             .or_else(|| std::env::current_dir().ok())
             .unwrap_or_default();
-        let target = if self
-            .active_terminal_id(ctx)
-            .is_some_and(|terminal_view_id| {
-                CLIAgentSessionsModel::as_ref(ctx)
-                    .session(terminal_view_id)
-                    .is_some()
-            }) {
-            QuickInsertModalTarget::CLIAgent
-        } else {
-            QuickInsertModalTarget::Terminal
-        };
         self.quick_insert_modal
             .update(ctx, |modal, ctx| modal.open(cwd, target, ctx));
         self.close_all_overlays(ctx);
@@ -26631,7 +26716,8 @@ impl TypedActionView for Workspace {
                 self.open_agent_toolbar_editor(AgentToolbarEditorMode::AgentView, ctx);
             }
             OpenCLIAgentToolbarEditor => {
-                self.open_agent_toolbar_editor(AgentToolbarEditorMode::CLIAgent, ctx);
+                let mode = self.active_cli_agent_toolbar_editor_mode(ctx);
+                self.open_agent_toolbar_editor(mode, ctx);
             }
             OpenQuickInsertModal => {
                 self.open_quick_insert_modal(ctx);

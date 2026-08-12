@@ -113,6 +113,21 @@ fn quick_replies_have_expected_labels_and_icons() {
 }
 
 #[test]
+fn built_in_prompt_buttons_have_toggleable_auto_send_behavior() {
+    for item in [
+        AgentToolbarItemKind::Compact,
+        AgentToolbarItemKind::ContinuePrompt,
+        AgentToolbarItemKind::LooksGoodPrompt,
+    ] {
+        assert_eq!(item.auto_send_behavior(), Some(true));
+        let prefill = item.with_auto_send_behavior(false).unwrap();
+        assert_eq!(prefill.auto_send_behavior(), Some(false));
+        assert!(item.has_same_toolbar_identity(&prefill));
+        assert_eq!(prefill.with_auto_send_behavior(true), Some(item));
+    }
+}
+
+#[test]
 fn quick_replies_hidden_during_handoff_compose() {
     for kind in quick_reply_kinds() {
         assert!(!kind.is_available_during_handoff_compose());
@@ -122,8 +137,7 @@ fn quick_replies_hidden_during_handoff_compose() {
 #[test]
 fn cli_default_left_places_quick_replies_right_after_fork_and_compact() {
     let items = AgentToolbarItemKind::cli_default_left();
-    // The leading four are unconditional (feature flags only append later items),
-    // so the quick-reply buttons deterministically sit next to Fork/Compact.
+    // The quick-reply buttons deterministically sit next to Fork/Compact.
     assert_eq!(
         &items[..4],
         &[
@@ -154,10 +168,10 @@ fn agent_transfer_is_a_default_cli_host_control() {
 }
 
 #[test]
-fn cli_default_left_includes_expected_quick_inserts() {
-    let items = AgentToolbarItemKind::cli_default_left();
+fn cli_preset_library_includes_expected_quick_inserts() {
+    let items = AgentToolbarItemKind::cli_quick_insert_presets();
     assert_eq!(
-        &items[5..17],
+        &items[..12],
         &[
             AgentToolbarItemKind::custom_insert("/codex", "/codex"),
             AgentToolbarItemKind::custom_insert(
@@ -216,6 +230,29 @@ fn cli_default_left_includes_expected_quick_inserts() {
 }
 
 #[test]
+fn cli_quick_insert_presets_are_available_but_hidden_by_default() {
+    let defaults = AgentToolbarItemKind::cli_default_left();
+    let available = AgentToolbarItemKind::all_available_for_cli_input();
+
+    assert_eq!(
+        defaults,
+        vec![
+            AgentToolbarItemKind::ForkSession,
+            AgentToolbarItemKind::Compact,
+            AgentToolbarItemKind::ContinuePrompt,
+            AgentToolbarItemKind::LooksGoodPrompt,
+            AgentToolbarItemKind::TransferAgent,
+        ]
+    );
+    assert!(!defaults
+        .iter()
+        .any(|item| matches!(item, AgentToolbarItemKind::CustomInsert { .. })));
+    for preset in AgentToolbarItemKind::cli_quick_insert_presets() {
+        assert!(available.contains(&preset), "missing preset {preset:?}");
+    }
+}
+
+#[test]
 fn cli_default_right_side_is_empty_even_with_remote_control_enabled() {
     let _creating_shared_sessions = FeatureFlag::CreatingSharedSessions.override_enabled(true);
     let _remote_control = FeatureFlag::HOARemoteControl.override_enabled(true);
@@ -230,20 +267,26 @@ fn cli_default_right_side_is_empty_even_with_remote_control_enabled() {
 }
 
 #[test]
-fn cli_configurator_still_offers_the_removed_right_side_items() {
+fn cli_configurator_excludes_generic_toolbar_and_status_items() {
     let _creating_shared_sessions = FeatureFlag::CreatingSharedSessions.override_enabled(true);
     let _remote_control = FeatureFlag::HOARemoteControl.override_enabled(true);
     let available = AgentToolbarItemKind::all_available_for_cli_input();
 
-    // Dropping them from the defaults must not make them unreachable.
-    assert!(available.contains(&AgentToolbarItemKind::Settings));
-    assert!(available.contains(&AgentToolbarItemKind::ShareSession));
-    assert!(available.contains(&AgentToolbarItemKind::ContextChip(
-        ContextChipKind::WorkingDirectory
-    )));
-    assert!(available.contains(&AgentToolbarItemKind::ContextChip(
-        ContextChipKind::ShellGitBranch
-    )));
+    for item in [
+        AgentToolbarItemKind::Settings,
+        AgentToolbarItemKind::ShareSession,
+        AgentToolbarItemKind::FileExplorer,
+        AgentToolbarItemKind::RichInput,
+        AgentToolbarItemKind::FileAttach,
+        AgentToolbarItemKind::VoiceInput,
+        AgentToolbarItemKind::ContextChip(ContextChipKind::WorkingDirectory),
+        AgentToolbarItemKind::ContextChip(ContextChipKind::ShellGitBranch),
+    ] {
+        assert!(
+            !available.contains(&item),
+            "unexpected generic item {item:?}"
+        );
+    }
 }
 
 #[test]
@@ -292,14 +335,14 @@ fn custom_insert_without_auto_send_field_keeps_legacy_submit_behavior() {
     );
 }
 
-/// Items intentionally dropped from the CLI footer default layout: the file
-/// explorer moved to the header toolbar, and the `+` attach button, `±` git
-/// diff-stats chip, and Rich Input chip were removed as clutter.
-fn removed_cli_default_kinds() -> [AgentToolbarItemKind; 4] {
+/// Generic input and status controls intentionally kept out of the Clinch
+/// quick-insert editor.
+fn non_clinch_quick_insert_kinds() -> [AgentToolbarItemKind; 5] {
     [
         AgentToolbarItemKind::FileAttach,
         AgentToolbarItemKind::FileExplorer,
         AgentToolbarItemKind::RichInput,
+        AgentToolbarItemKind::VoiceInput,
         AgentToolbarItemKind::ContextChip(ContextChipKind::GitDiffStats),
     ]
 }
@@ -307,7 +350,7 @@ fn removed_cli_default_kinds() -> [AgentToolbarItemKind; 4] {
 #[test]
 fn removed_items_absent_from_cli_default_left() {
     let items = AgentToolbarItemKind::cli_default_left();
-    for kind in removed_cli_default_kinds() {
+    for kind in non_clinch_quick_insert_kinds() {
         assert!(
             !items.contains(&kind),
             "{kind:?} should not be in the CLI footer default layout"
@@ -316,12 +359,12 @@ fn removed_items_absent_from_cli_default_left() {
 }
 
 #[test]
-fn removed_items_still_available_in_cli_configurator() {
+fn generic_items_absent_from_cli_quick_insert_editor() {
     let available = AgentToolbarItemKind::all_available_for_cli_input();
-    for kind in removed_cli_default_kinds() {
+    for kind in non_clinch_quick_insert_kinds() {
         assert!(
-            available.contains(&kind),
-            "{kind:?} should remain re-addable via the CLI footer toolbar editor"
+            !available.contains(&kind),
+            "{kind:?} should not appear in the CLI footer toolbar editor"
         );
     }
 }

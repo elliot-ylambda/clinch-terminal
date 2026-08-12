@@ -12,7 +12,7 @@ fn bundled_skill_contents() -> String {
 fn bundled_skill_carries_a_managed_marker() {
     let contents = bundled_skill_contents();
     assert!(
-        contents.contains("<!-- managed-by: Clinch; version: 1.6.0 -->"),
+        contents.contains("<!-- managed-by: Clinch; version: 1.9.0 -->"),
         "the bundled skill must carry the Clinch managed marker"
     );
 }
@@ -23,6 +23,11 @@ fn bundled_skill_uses_clinch_paths_and_live_default_overlays() {
     assert!(contents.contains("Stable Clinch: `~/.clinch/settings.toml`"));
     assert!(contents.contains("inherit_defaults = true"));
     assert!(contents.contains("hidden_defaults"));
+    assert!(contents.contains("hidden_custom_inserts"));
+    assert!(contents.contains("agents.third_party.claude_code_toolbar_chip_selection_setting"));
+    assert!(contents.contains("agents.third_party.codex_toolbar_chip_selection_setting"));
+    assert!(contents.contains("terminal.footer_toolbar_chip_selection"));
+    assert!(contents.contains("legacy shared CLI-agent value"));
     assert!(
         contents.contains("do not materialize shipped defaults"),
         "the skill must not freeze a release's default buttons into user settings"

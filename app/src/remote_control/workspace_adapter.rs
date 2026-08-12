@@ -1896,12 +1896,12 @@ impl WorkspaceAdapter {
         terminal: &ViewHandle<TerminalView>,
         ctx: &AppContext,
     ) -> Vec<ResolvedQuickInsert> {
-        let has_cli_agent = CLIAgentSessionsModel::as_ref(ctx)
+        let cli_agent = CLIAgentSessionsModel::as_ref(ctx)
             .session(terminal.id())
-            .is_some();
-        let items = if has_cli_agent {
+            .map(|session| session.agent);
+        let items = if let Some(agent) = cli_agent {
             SessionSettings::as_ref(ctx)
-                .cli_agent_footer_chip_selection
+                .footer_chip_selection_for_cli_agent(agent)
                 .all_items()
         } else {
             SessionSettings::as_ref(ctx)
@@ -1922,17 +1922,17 @@ impl WorkspaceAdapter {
                     AgentToolbarItemKind::CustomInsert { label, text, .. } => {
                         (label, text, QuickInsertKind::Custom)
                     }
-                    AgentToolbarItemKind::Compact if has_cli_agent => (
+                    AgentToolbarItemKind::Compact if cli_agent.is_some() => (
                         "Compact".to_owned(),
                         "/compact".to_owned(),
                         QuickInsertKind::BuiltIn,
                     ),
-                    AgentToolbarItemKind::ContinuePrompt if has_cli_agent => (
+                    AgentToolbarItemKind::ContinuePrompt if cli_agent.is_some() => (
                         "Continue".to_owned(),
                         "Continue".to_owned(),
                         QuickInsertKind::BuiltIn,
                     ),
-                    AgentToolbarItemKind::LooksGoodPrompt if has_cli_agent => (
+                    AgentToolbarItemKind::LooksGoodPrompt if cli_agent.is_some() => (
                         "LGTM".to_owned(),
                         "Looks good to me, continue".to_owned(),
                         QuickInsertKind::BuiltIn,

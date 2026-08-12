@@ -10,14 +10,14 @@ use warp_core::ui::theme::Fill;
 use warpui::elements::{
     Align, Border, ChildAnchor, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment,
     Expanded, Flex, Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle,
-    OffsetPositioning, ParentAnchor, ParentElement, ParentOffsetBounds, Radius, Stack,
+    OffsetPositioning, ParentAnchor, ParentElement, ParentOffsetBounds, Radius, Stack, Text,
 };
 use warpui::platform::Cursor;
 use warpui::ui_components::button::ButtonVariant;
 use warpui::ui_components::components::{Coords, UiComponent, UiComponentStyles};
 use warpui::{Action, Element};
 
-use super::{ChipConfigurator, ChipConfiguratorAction};
+use super::{ChipConfigurator, ChipConfiguratorAction, ChipConfiguratorLayout};
 use crate::Appearance;
 
 const MODAL_WIDTH: f32 = 700.;
@@ -36,7 +36,18 @@ const RESTORE_DEFAULT_LABEL: &str = "Restore default";
 pub struct ChipEditorMouseHandles {
     pub cancel: MouseStateHandle,
     pub save: MouseStateHandle,
+    pub add: MouseStateHandle,
     pub restore_default: MouseStateHandle,
+    pub terminal_tab: MouseStateHandle,
+    pub codex_tab: MouseStateHandle,
+    pub claude_code_tab: MouseStateHandle,
+}
+
+pub struct ChipEditorTab<'a, A> {
+    pub label: &'a str,
+    pub selected: bool,
+    pub action: A,
+    pub mouse_handle: &'a MouseStateHandle,
 }
 /// Everything that varies between chip editor modal-shell consumers.
 pub struct ChipEditorModalConfig<'a, A> {
@@ -46,6 +57,8 @@ pub struct ChipEditorModalConfig<'a, A> {
     pub is_dirty: bool,
     pub cancel_action: A,
     pub save_action: A,
+    pub add_action: Option<A>,
+    pub tabs: Vec<ChipEditorTab<'a, A>>,
     pub reset_action: A,
     pub activate_action: A,
     pub chip_action_wrapper: fn(ChipConfiguratorAction) -> A,
@@ -70,31 +83,43 @@ pub fn render_chip_editor_modal<A: Action + Clone + Copy + 'static>(
 ) -> Box<dyn Element> {
     let theme = appearance.theme();
 
-    let column = Flex::column()
+    let mut column = Flex::column()
         .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
         .with_child(
-            Container::new(render_header(config.title, appearance))
-                .with_margin_bottom(MARGIN_BETWEEN_MODAL_SECTIONS)
-                .finish(),
-        )
-        .with_child(
-            Container::new(render_chip_editor_sections(
-                chip_configurator,
-                ChipEditorSectionsConfig {
-                    available_section_label: config.available_section_label,
-                    is_at_defaults: config.is_at_defaults,
-                    reset_action: config.reset_action,
-                    activate_action: config.activate_action,
-                    chip_action_wrapper: config.chip_action_wrapper,
-                    mouse_handles: config.mouse_handles,
-                },
+            Container::new(render_header(
+                config.title,
+                config.add_action,
+                &config.mouse_handles.add,
                 appearance,
             ))
             .with_margin_bottom(MARGIN_BETWEEN_MODAL_SECTIONS)
             .finish(),
-        )
-        .with_child(render_buttons(&config, appearance))
-        .finish();
+        );
+    if !config.tabs.is_empty() {
+        column.add_child(
+            Container::new(render_tabs(&config.tabs, appearance))
+                .with_margin_bottom(MARGIN_BETWEEN_MODAL_SECTIONS)
+                .finish(),
+        );
+    }
+    column.add_child(
+        Container::new(render_chip_editor_sections(
+            chip_configurator,
+            ChipEditorSectionsConfig {
+                available_section_label: config.available_section_label,
+                is_at_defaults: config.is_at_defaults,
+                reset_action: config.reset_action,
+                activate_action: config.activate_action,
+                chip_action_wrapper: config.chip_action_wrapper,
+                mouse_handles: config.mouse_handles,
+            },
+            appearance,
+        ))
+        .with_margin_bottom(MARGIN_BETWEEN_MODAL_SECTIONS)
+        .finish(),
+    );
+    column.add_child(render_buttons(&config, appearance));
+    let column = column.finish();
 
     let modal = Container::new(
         ConstrainedBox::new(column)
@@ -124,8 +149,50 @@ pub fn render_chip_editor_modal<A: Action + Clone + Copy + 'static>(
         .finish()
 }
 
-fn render_header(title: &str, appearance: &Appearance) -> Box<dyn Element> {
-    appearance
+fn render_tabs<A: Action + Clone + Copy + 'static>(
+    tabs: &[ChipEditorTab<'_, A>],
+    appearance: &Appearance,
+) -> Box<dyn Element> {
+    let mut row = Flex::row()
+        .with_main_axis_size(MainAxisSize::Max)
+        .with_cross_axis_alignment(CrossAxisAlignment::Center)
+        .with_spacing(8.);
+    for tab in tabs {
+        row.add_child(
+            appearance
+                .ui_builder()
+                .button(
+                    if tab.selected {
+                        ButtonVariant::Accent
+                    } else {
+                        ButtonVariant::Secondary
+                    },
+                    tab.mouse_handle.clone(),
+                )
+                .with_text_label(tab.label.to_owned())
+                .with_style(UiComponentStyles {
+                    font_size: Some(MODAL_CONTENT_FONT_SIZE),
+                    padding: Some(Coords::default().top(6.).bottom(6.).left(14.).right(14.)),
+                    ..Default::default()
+                })
+                .build()
+                .on_click({
+                    let action = tab.action;
+                    move |ctx, _, _| ctx.dispatch_typed_action(action)
+                })
+                .finish(),
+        );
+    }
+    row.finish()
+}
+
+fn render_header<A: Action + Clone + Copy + 'static>(
+    title: &str,
+    add_action: Option<A>,
+    add_mouse_handle: &MouseStateHandle,
+    appearance: &Appearance,
+) -> Box<dyn Element> {
+    let title = appearance
         .ui_builder()
         .span(title.to_string())
         .with_style(UiComponentStyles {
@@ -134,7 +201,29 @@ fn render_header(title: &str, appearance: &Appearance) -> Box<dyn Element> {
             ..Default::default()
         })
         .build()
-        .finish()
+        .finish();
+    let mut row = Flex::row()
+        .with_main_axis_alignment(MainAxisAlignment::SpaceBetween)
+        .with_main_axis_size(MainAxisSize::Max)
+        .with_cross_axis_alignment(CrossAxisAlignment::Center)
+        .with_child(title);
+    if let Some(add_action) = add_action {
+        row.add_child(
+            appearance
+                .ui_builder()
+                .button(ButtonVariant::Secondary, add_mouse_handle.clone())
+                .with_text_label("Add button".to_owned())
+                .with_style(UiComponentStyles {
+                    font_size: Some(MODAL_CONTENT_FONT_SIZE),
+                    padding: Some(Coords::default().top(6.).bottom(6.).left(12.).right(12.)),
+                    ..Default::default()
+                })
+                .build()
+                .on_click(move |ctx, _, _| ctx.dispatch_typed_action(add_action))
+                .finish(),
+        );
+    }
+    row.finish()
 }
 
 fn render_restore_default_button<A: Action + Clone + Copy + 'static>(
@@ -198,46 +287,72 @@ pub fn render_chip_editor_sections<A: Action + Clone + Copy + 'static>(
         .with_main_axis_size(MainAxisSize::Max)
         .finish();
 
-    let unused_chips = chip_configurator.render_unused_chips_bank(
-        config.activate_action,
-        config.chip_action_wrapper,
-        appearance,
-    );
-
-    let left_section = Flex::column()
-        .with_child(render_section_label("Left side", appearance))
-        .with_child(
-            Container::new(chip_configurator.render_left_drop_zone(
-                config.activate_action,
-                config.chip_action_wrapper,
-                appearance,
-            ))
-            .with_margin_top(8.)
-            .finish(),
+    let unused_chips = if chip_configurator.unused_item_kinds().is_empty() {
+        Text::new(
+            "Everything available is already shown.".to_owned(),
+            appearance.ui_font_family(),
+            MODAL_CONTENT_FONT_SIZE,
         )
-        .finish();
-
-    let right_section = Flex::column()
-        .with_child(render_section_label("Right side", appearance))
-        .with_child(
-            Container::new(chip_configurator.render_right_drop_zone(
-                config.activate_action,
-                config.chip_action_wrapper,
-                appearance,
-            ))
-            .with_margin_top(8.)
-            .finish(),
+        .with_color(appearance.theme().nonactive_ui_text_color().into())
+        .finish()
+    } else {
+        chip_configurator.render_unused_chips_bank(
+            config.activate_action,
+            config.chip_action_wrapper,
+            appearance,
         )
-        .finish();
+    };
 
-    let drop_zones = Flex::row()
-        .with_child(Box::new(Expanded::new(1.0, left_section)))
-        .with_child(Box::new(Expanded::new(
-            1.0,
-            Container::new(right_section).with_margin_left(8.).finish(),
-        )))
-        .with_main_axis_size(MainAxisSize::Max)
-        .finish();
+    let drop_zones = match chip_configurator.layout() {
+        ChipConfiguratorLayout::SingleZone => Flex::column()
+            .with_child(render_section_label("Footer buttons", appearance))
+            .with_child(
+                Container::new(chip_configurator.render_used_drop_zone(
+                    config.activate_action,
+                    config.chip_action_wrapper,
+                    appearance,
+                ))
+                .with_margin_top(8.)
+                .finish(),
+            )
+            .finish(),
+        ChipConfiguratorLayout::LeftRightZones => {
+            let left_section = Flex::column()
+                .with_child(render_section_label("Left side", appearance))
+                .with_child(
+                    Container::new(chip_configurator.render_left_drop_zone(
+                        config.activate_action,
+                        config.chip_action_wrapper,
+                        appearance,
+                    ))
+                    .with_margin_top(8.)
+                    .finish(),
+                )
+                .finish();
+
+            let right_section = Flex::column()
+                .with_child(render_section_label("Right side", appearance))
+                .with_child(
+                    Container::new(chip_configurator.render_right_drop_zone(
+                        config.activate_action,
+                        config.chip_action_wrapper,
+                        appearance,
+                    ))
+                    .with_margin_top(8.)
+                    .finish(),
+                )
+                .finish();
+
+            Flex::row()
+                .with_child(Box::new(Expanded::new(1.0, left_section)))
+                .with_child(Box::new(Expanded::new(
+                    1.0,
+                    Container::new(right_section).with_margin_left(8.).finish(),
+                )))
+                .with_main_axis_size(MainAxisSize::Max)
+                .finish()
+        }
+    };
 
     Container::new(
         Flex::column()

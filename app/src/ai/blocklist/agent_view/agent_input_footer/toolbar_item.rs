@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use warpui::SingletonEntity;
 
 use super::editor::AgentToolbarEditorMode;
-use crate::context_chips::{agent_footer_available_chips, available_chips, ContextChipKind};
+use crate::context_chips::{agent_footer_available_chips, ContextChipKind};
 use crate::features::FeatureFlag;
 use crate::settings::AISettings;
 use crate::terminal::shared_session::SharedSessionStatus;
@@ -117,16 +117,74 @@ impl AgentToolbarItemKind {
     /// Stable identity used when matching a persisted layout against shipped defaults. Quick
     /// inserts use their label so prompt and auto-send edits do not turn one button into two.
     pub fn has_same_toolbar_identity(&self, other: &Self) -> bool {
-        match (self, other) {
-            (
-                Self::CustomInsert {
-                    label: left_label, ..
-                },
-                Self::CustomInsert {
-                    label: right_label, ..
-                },
-            ) => left_label == right_label,
+        match (
+            self.quick_insert_identity_label(),
+            other.quick_insert_identity_label(),
+        ) {
+            (Some(left_label), Some(right_label)) => left_label == right_label,
             _ => self == other,
+        }
+    }
+
+    fn quick_insert_identity_label(&self) -> Option<&str> {
+        match self {
+            Self::Compact => Some("Compact"),
+            Self::ContinuePrompt => Some("Continue"),
+            Self::LooksGoodPrompt => Some("LGTM"),
+            Self::CustomInsert { label, .. } => Some(label),
+            _ => None,
+        }
+    }
+
+    /// Returns the current auto-send choice for controls that insert prompt text.
+    pub fn auto_send_behavior(&self) -> Option<bool> {
+        match self {
+            Self::Compact | Self::ContinuePrompt | Self::LooksGoodPrompt => Some(true),
+            Self::CustomInsert { auto_send, .. } => Some(*auto_send),
+            _ => None,
+        }
+    }
+
+    /// Returns an equivalent prompt button with the requested auto-send behavior.
+    ///
+    /// Built-in prompt actions are represented as custom inserts after the user changes their
+    /// behavior. Their stable identity still matches the shipped button, so the override survives
+    /// settings reloads without producing a duplicate.
+    pub fn with_auto_send_behavior(&self, auto_send: bool) -> Option<Self> {
+        match self {
+            Self::Compact => Some(Self::CustomInsert {
+                label: "Compact".to_owned(),
+                text: "/compact".to_owned(),
+                auto_send,
+            }),
+            Self::ContinuePrompt => Some(Self::CustomInsert {
+                label: "Continue".to_owned(),
+                text: "Continue".to_owned(),
+                auto_send,
+            }),
+            Self::LooksGoodPrompt => Some(Self::CustomInsert {
+                label: "LGTM".to_owned(),
+                text: "Looks good to me, continue".to_owned(),
+                auto_send,
+            }),
+            Self::CustomInsert { label, text, .. } => {
+                if auto_send {
+                    match (label.as_str(), text.as_str()) {
+                        ("Compact", "/compact") => return Some(Self::Compact),
+                        ("Continue", "Continue") => return Some(Self::ContinuePrompt),
+                        ("LGTM", "Looks good to me, continue") => {
+                            return Some(Self::LooksGoodPrompt);
+                        }
+                        _ => {}
+                    }
+                }
+                Some(Self::CustomInsert {
+                    label: label.clone(),
+                    text: text.clone(),
+                    auto_send,
+                })
+            }
+            _ => None,
         }
     }
 
@@ -356,13 +414,11 @@ impl AgentToolbarItemKind {
         items
     }
 
-    /// Default left-side items for the CLI agent footer.
+    /// Default items for the CLI agent footer.
     ///
-    /// `FileAttach` (+), the `GitDiffStats` (±) chip, `FileExplorer`, and
-    /// `RichInput` are intentionally omitted from the default layout — the file
-    /// explorer now lives in the header toolbar. All four remain in
-    /// `all_available_for_cli_input`, so they can be dragged back via the footer
-    /// toolbar editor.
+    /// This footer intentionally contains only Clinch session actions. Generic
+    /// input controls and context/status chips belong in their dedicated UI,
+    /// not in the quick-insert editor.
     pub fn cli_default_left() -> Vec<Self> {
         vec![
             Self::ForkSession,
@@ -370,6 +426,15 @@ impl AgentToolbarItemKind {
             Self::ContinuePrompt,
             Self::LooksGoodPrompt,
             Self::TransferAgent,
+        ]
+    }
+
+    /// Shipped quick-insert recipes offered by the CLI agent footer editor.
+    ///
+    /// These are intentionally not part of the default layout: users can opt into the prompts
+    /// they want without every preset consuming footer space on a fresh install.
+    pub fn cli_quick_insert_presets() -> Vec<Self> {
+        vec![
             Self::custom_insert("/codex", "/codex"),
             Self::custom_insert(
                 "Make No Mistakes",
@@ -406,17 +471,11 @@ impl AgentToolbarItemKind {
                 "Simplify",
                 "Simplify the current implementation without changing behavior, then run the relevant tests.",
             ),
-            Self::VoiceInput,
             Self::custom_insert("Push2Main", "Push all these changes to main."),
         ]
     }
 
     /// Default right-side items for the CLI agent footer.
-    /// The CLI agent footer's right side is empty by default: the working-directory
-    /// and branch chips duplicate what the shell prompt and window chrome already
-    /// show, and the remaining items earned less than the width they cost. Every one
-    /// of them is still offered by `all_available_for_cli_input`, so the configurator
-    /// can put any of them back.
     pub fn cli_default_right() -> Vec<Self> {
         Vec::new()
     }
@@ -453,33 +512,40 @@ impl AgentToolbarItemKind {
 
     /// All items available for the CLI agent footer configurator.
     pub fn all_available_for_cli_input() -> Vec<Self> {
-        let mut items: Vec<Self> = available_chips()
-            .into_iter()
-            .map(Self::ContextChip)
-            .collect();
-        items.extend([
-            Self::FileExplorer,
-            Self::RichInput,
-            Self::FileAttach,
-            Self::VoiceInput,
+        let mut items = vec![
             Self::ForkSession,
             Self::Compact,
             Self::ContinuePrompt,
             Self::LooksGoodPrompt,
             Self::TransferAgent,
-            Self::Settings,
-        ]);
-        items.extend(
-            Self::cli_default_left()
-                .into_iter()
-                .filter(|item| matches!(item, Self::CustomInsert { .. })),
-        );
-        if FeatureFlag::CreatingSharedSessions.is_enabled()
-            && FeatureFlag::HOARemoteControl.is_enabled()
-        {
-            items.push(Self::ShareSession);
-        }
+        ];
+        items.extend(Self::cli_quick_insert_presets());
         items
+    }
+
+    /// Whether a quick insert is supplied by Clinch rather than created by the user.
+    pub fn is_shipped_quick_insert_for_mode(&self, mode: AgentToolbarEditorMode) -> bool {
+        if !matches!(self, Self::CustomInsert { .. }) {
+            return false;
+        }
+        let mut shipped = match mode {
+            AgentToolbarEditorMode::AgentView => Vec::new(),
+            AgentToolbarEditorMode::CLIAgent
+            | AgentToolbarEditorMode::ClaudeCode
+            | AgentToolbarEditorMode::Codex => Self::cli_default_left(),
+            AgentToolbarEditorMode::Terminal => Self::terminal_default_left(),
+        };
+        if matches!(
+            mode,
+            AgentToolbarEditorMode::CLIAgent
+                | AgentToolbarEditorMode::ClaudeCode
+                | AgentToolbarEditorMode::Codex
+        ) {
+            shipped.extend(Self::cli_quick_insert_presets());
+        }
+        shipped
+            .iter()
+            .any(|item| item.has_same_toolbar_identity(self))
     }
 
     /// Returns the appropriate defaults and available items for a given editor mode.
@@ -490,7 +556,9 @@ impl AgentToolbarItemKind {
                 Self::default_right(),
                 Self::all_available(),
             ),
-            AgentToolbarEditorMode::CLIAgent => (
+            AgentToolbarEditorMode::CLIAgent
+            | AgentToolbarEditorMode::ClaudeCode
+            | AgentToolbarEditorMode::Codex => (
                 Self::cli_default_left(),
                 Self::cli_default_right(),
                 Self::all_available_for_cli_input(),

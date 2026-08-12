@@ -78,6 +78,7 @@ use crate::terminal::cli_agent_sessions::{
 use crate::terminal::history::History;
 use crate::terminal::keys::TerminalKeybindings;
 use crate::terminal::local_tty::spawner::PtySpawner;
+use crate::terminal::session_settings::ToolbarChipSelection;
 use crate::terminal::shared_session::{
     SharedSessionScrollbackType, SharedSessionSource, SharedSessionStatus,
 };
@@ -649,6 +650,7 @@ fn terminal_targeted_quick_insert_save_updates_only_terminal_toolbar() {
                     label: "Status".to_owned(),
                     text: "git status".to_owned(),
                     auto_send: false,
+                    visible: true,
                 },
                 ctx,
             );
@@ -675,6 +677,58 @@ fn terminal_targeted_quick_insert_save_updates_only_terminal_toolbar() {
             });
             assert_eq!(left, &expected_left);
             assert!(right.is_empty());
+        });
+    });
+}
+
+#[test]
+fn codex_targeted_quick_insert_save_does_not_change_claude_or_legacy_toolbar() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+        let legacy_selection = crate::terminal::session_settings::CLIAgentToolbarChipSelection::custom_from_effective_items(
+            vec![AgentToolbarItemKind::custom_insert("Shared", "shared prompt")],
+            Vec::new(),
+        );
+        SessionSettings::handle(&app).update(&mut app, |settings, ctx| {
+            settings
+                .cli_agent_footer_chip_selection
+                .set_value(legacy_selection.clone(), ctx)
+                .unwrap();
+        });
+
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.handle_quick_insert_modal_event(
+                &QuickInsertModalEvent::Save {
+                    target: QuickInsertModalTarget::Codex,
+                    label: "Codex only".to_owned(),
+                    text: "codex prompt".to_owned(),
+                    auto_send: false,
+                    visible: true,
+                },
+                ctx,
+            );
+        });
+
+        SessionSettings::handle(&app).read(&app, |settings, _| {
+            assert_eq!(
+                settings.cli_agent_footer_chip_selection.value(),
+                &legacy_selection
+            );
+            assert!(settings.claude_code_footer_chip_selection.value().is_none());
+            let codex = settings
+                .codex_footer_chip_selection
+                .value()
+                .as_ref()
+                .expect("Codex should have an independent footer after adding a button");
+            assert!(codex.left_items().iter().any(|item| matches!(
+                item,
+                AgentToolbarItemKind::CustomInsert {
+                    label,
+                    text,
+                    auto_send: false,
+                } if label == "Codex only" && text == "codex prompt"
+            )));
         });
     });
 }
@@ -811,7 +865,7 @@ fn remote_control_header_uses_discovery_copy_without_a_live_device() {
     assert_eq!(
         remote_control_header_presentation(None),
         RemoteControlHeaderPresentation {
-            label: "Remotely Control Clinch on Mobile!".to_owned(),
+            label: "Try Remote Control".to_owned(),
             connected_device_name: None,
         }
     );

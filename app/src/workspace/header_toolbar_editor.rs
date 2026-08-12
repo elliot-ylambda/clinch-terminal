@@ -345,6 +345,8 @@ impl View for HeaderToolbarEditorModal {
                 is_dirty: self.is_dirty,
                 cancel_action: HeaderToolbarEditorAction::Cancel,
                 save_action: HeaderToolbarEditorAction::Save,
+                add_action: None,
+                tabs: Vec::new(),
                 reset_action: HeaderToolbarEditorAction::ResetDefault,
                 activate_action: HeaderToolbarEditorAction::Activate,
                 chip_action_wrapper: HeaderToolbarEditorAction::Chip,

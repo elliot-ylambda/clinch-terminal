@@ -16,6 +16,7 @@ use std::time::Duration;
 
 use ai::document::{AIDocumentId, AIDocumentVersion};
 use chrono::{DateTime, Local};
+use editor::AgentToolbarEditorMode;
 use parking_lot::FairMutex;
 use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::{vec2f, Vector2F};
@@ -229,10 +230,7 @@ pub struct AgentInputFooter {
     fork_button: ViewHandle<ActionButton>,
     continue_button: ViewHandle<ActionButton>,
     looks_good_button: ViewHandle<ActionButton>,
-    /// Always-present footer control that opens the "Create quick-insert
-    /// button" modal (gated behind `CliAgentQuickInsertButtons`).
-    quick_insert_add_button: ViewHandle<ActionButton>,
-    /// Opens the quick-insert management section in Clinch Settings.
+    /// Opens the unified footer-button editor, including its add-button flow.
     quick_insert_edit_button: ViewHandle<ActionButton>,
     rich_input_button: ViewHandle<ActionButton>,
     settings_button: ViewHandle<ActionButton>,
@@ -471,24 +469,14 @@ impl AgentInputFooter {
                     ctx.dispatch_typed_action(AgentInputFooterAction::SendLooksGood);
                 })
         });
-        let quick_insert_add_button = ctx.add_typed_action_view(|_ctx| {
-            ActionButton::new("Add", ClinchAccentButtonTheme)
-                .with_icon(Icon::Plus)
-                .with_tooltip("Add quick-insert button")
-                .with_size(cli_button_size)
-                .with_tooltip_alignment(TooltipAlignment::Left)
-                .on_click(|ctx| {
-                    ctx.dispatch_typed_action(AgentInputFooterAction::OpenQuickInsertModal);
-                })
-        });
         let quick_insert_edit_button = ctx.add_typed_action_view(|_ctx| {
-            ActionButton::new("", AgentInputButtonTheme)
+            ActionButton::new("Edit buttons", ClinchAccentButtonTheme)
                 .with_icon(Icon::Pencil)
-                .with_tooltip("Edit quick-insert buttons in Clinch Settings")
+                .with_tooltip("Add, hide, reorder, or change footer buttons")
                 .with_size(cli_button_size)
                 .with_tooltip_alignment(TooltipAlignment::Left)
                 .on_click(|ctx| {
-                    ctx.dispatch_typed_action(AgentInputFooterAction::OpenQuickInsertSettings);
+                    ctx.dispatch_typed_action(AgentInputFooterAction::OpenToolbarEditor);
                 })
         });
         let rich_input_button = ctx.add_typed_action_view(|ctx| {
@@ -848,6 +836,8 @@ impl AgentInputFooter {
                 }
                 SessionSettingsChangedEvent::AgentToolbarChipSelectionSetting { .. }
                 | SessionSettingsChangedEvent::CLIAgentToolbarChipSelectionSetting { .. }
+                | SessionSettingsChangedEvent::ClaudeCodeToolbarChipSelectionSetting { .. }
+                | SessionSettingsChangedEvent::CodexToolbarChipSelectionSetting { .. }
                 | SessionSettingsChangedEvent::GithubPrChipDefaultValidation { .. } => {
                     me.update_display_chips(&prompt_for_session_settings, ctx);
                     ctx.notify();
@@ -938,7 +928,6 @@ impl AgentInputFooter {
             fork_button,
             continue_button,
             looks_good_button,
-            quick_insert_add_button,
             quick_insert_edit_button,
             rich_input_button,
             settings_button,
@@ -1826,12 +1815,12 @@ impl AgentInputFooter {
         };
 
         let session_settings = SessionSettings::as_ref(app);
-        let left_items = session_settings
-            .cli_agent_footer_chip_selection
-            .left_items();
-        let right_items = session_settings
-            .cli_agent_footer_chip_selection
-            .right_items();
+        let selection = self
+            .cli_agent(app)
+            .map(|agent| session_settings.footer_chip_selection_for_cli_agent(agent))
+            .unwrap_or_else(|| session_settings.cli_agent_footer_chip_selection.value());
+        let left_items = selection.left_items();
+        let right_items = selection.right_items();
 
         let mut left_buttons = Wrap::row()
             .with_main_axis_size(MainAxisSize::Min)
@@ -1860,9 +1849,11 @@ impl AgentInputFooter {
             }
         }
 
-        // Keep the quick-insert creator as the first actionable footer control.
-        if FeatureFlag::CliAgentQuickInsertButtons.is_enabled() && self.cli_agent(app).is_some() {
-            left_buttons.add_child(ChildView::new(&self.quick_insert_add_button).finish());
+        // Keep the unified footer editor as the first actionable footer control.
+        if FeatureFlag::CliAgentQuickInsertButtons.is_enabled()
+            && FeatureFlag::AgentToolbarEditor.is_enabled()
+            && self.cli_agent(app).is_some()
+        {
             left_buttons.add_child(ChildView::new(&self.quick_insert_edit_button).finish());
         }
 
@@ -1963,8 +1954,9 @@ impl AgentInputFooter {
             .with_run_spacing(4.)
             .with_spacing(4.);
 
-        if FeatureFlag::CliAgentQuickInsertButtons.is_enabled() {
-            left_buttons.add_child(ChildView::new(&self.quick_insert_add_button).finish());
+        if FeatureFlag::CliAgentQuickInsertButtons.is_enabled()
+            && FeatureFlag::AgentToolbarEditor.is_enabled()
+        {
             left_buttons.add_child(ChildView::new(&self.quick_insert_edit_button).finish());
         }
 
@@ -2834,10 +2826,10 @@ pub enum AgentInputFooterAction {
         text: String,
         auto_send: bool,
     },
-    /// Open the "Create quick-insert button" modal (footer "+ Add" button).
+    /// Open the standalone quick-insert creator used by the terminal context menu.
     OpenQuickInsertModal,
-    /// Open the quick-insert management section in Clinch Settings.
-    OpenQuickInsertSettings,
+    /// Open the unified editor for the active CLI-agent or terminal footer.
+    OpenToolbarEditor,
     ToggleCodeReview,
     ToggleFileExplorer,
     Compact,
@@ -2931,12 +2923,14 @@ impl TypedActionView for AgentInputFooter {
             AgentInputFooterAction::OpenQuickInsertModal => {
                 ctx.emit(AgentInputFooterEvent::OpenQuickInsertModal);
             }
-            AgentInputFooterAction::OpenQuickInsertSettings => {
-                #[cfg(not(target_family = "wasm"))]
-                ctx.dispatch_typed_action_deferred(WorkspaceAction::ScrollToSettingsWidget {
-                    page: SettingsSection::Clinch,
-                    widget_id: crate::settings_view::quick_inserts_widget_id(),
-                });
+            AgentInputFooterAction::OpenToolbarEditor => {
+                let mode = match self.cli_agent(ctx) {
+                    Some(crate::terminal::CLIAgent::Codex) => AgentToolbarEditorMode::Codex,
+                    Some(crate::terminal::CLIAgent::Claude) => AgentToolbarEditorMode::ClaudeCode,
+                    Some(_) => AgentToolbarEditorMode::ClaudeCode,
+                    None => AgentToolbarEditorMode::Terminal,
+                };
+                ctx.emit(AgentInputFooterEvent::OpenToolbarEditor(mode));
             }
             AgentInputFooterAction::ToggleCodeReview => {
                 if let Some(agent) = self.cli_agent(ctx) {
@@ -3187,8 +3181,10 @@ pub enum AgentInputFooterEvent {
     SubmitTextToCliAgent(String),
     /// Continue the captured conversation in the other agent in a new tab.
     TransferAgent,
-    /// Open the "Create quick-insert button" modal (footer "+ Add" button).
+    /// Open the legacy standalone quick-insert creator (still used by context menus).
     OpenQuickInsertModal,
+    /// Open the unified footer-button editor for this pane's current mode.
+    OpenToolbarEditor(AgentToolbarEditorMode),
     StartRemoteControl,
     StopRemoteControl,
     OpenRichInput,

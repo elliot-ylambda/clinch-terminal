@@ -82,13 +82,17 @@ pub enum QuickInsertModalAction {
     Save,
     Cancel,
     ToggleAutoSend,
+    ToggleVisible,
     /// A pick-list row was clicked; pre-fill the text field with this default.
     SetText(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QuickInsertModalTarget {
+    /// Legacy shared setting used by CLI agents other than Claude Code and Codex.
     CLIAgent,
+    ClaudeCode,
+    Codex,
     Terminal,
 }
 
@@ -99,6 +103,7 @@ pub enum QuickInsertModalEvent {
         label: String,
         text: String,
         auto_send: bool,
+        visible: bool,
     },
     Cancel,
 }
@@ -111,8 +116,8 @@ pub struct QuickInsertModal {
     /// user overrides the label, they diverge and auto-fill stops.
     last_auto_label: String,
     target: QuickInsertModalTarget,
-    is_editing: bool,
     auto_send: bool,
+    visible: bool,
     /// Active working directory, used to scope command + skill discovery.
     cwd: Option<PathBuf>,
     commands: Vec<DiscoveredCommand>,
@@ -124,6 +129,7 @@ pub struct QuickInsertModal {
     scroll_state: ClippedScrollStateHandle,
     close_mouse_state: MouseStateHandle,
     auto_send_mouse_state: MouseStateHandle,
+    visible_mouse_state: MouseStateHandle,
     cancel_button: button::Button,
     save_button: button::Button,
 }
@@ -145,9 +151,9 @@ impl QuickInsertModal {
             text_input,
             label_input,
             last_auto_label: String::new(),
-            target: QuickInsertModalTarget::CLIAgent,
-            is_editing: false,
+            target: QuickInsertModalTarget::ClaudeCode,
             auto_send: true,
+            visible: true,
             cwd: None,
             commands: Vec::new(),
             skills: Vec::new(),
@@ -155,6 +161,7 @@ impl QuickInsertModal {
             scroll_state: ClippedScrollStateHandle::default(),
             close_mouse_state: MouseStateHandle::default(),
             auto_send_mouse_state: MouseStateHandle::default(),
+            visible_mouse_state: MouseStateHandle::default(),
             cancel_button: button::Button::default(),
             save_button: button::Button::default(),
         }
@@ -195,34 +202,7 @@ impl QuickInsertModal {
         self.cwd = Some(cwd);
         self.commands = commands;
         self.skills = skills;
-        self.seed(target, "", "", true, false, ctx);
-    }
-
-    /// Opens a blank creator from settings, where there is no active pane directory to use for
-    /// command and skill discovery.
-    pub fn open_without_discovery(
-        &mut self,
-        target: QuickInsertModalTarget,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        self.cwd = None;
-        self.commands.clear();
-        self.skills.clear();
-        self.seed(target, "", "", true, false, ctx);
-    }
-
-    pub fn open_for_edit(
-        &mut self,
-        target: QuickInsertModalTarget,
-        label: &str,
-        text: &str,
-        auto_send: bool,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        self.cwd = None;
-        self.commands.clear();
-        self.skills.clear();
-        self.seed(target, label, text, auto_send, true, ctx);
+        self.seed(target, "", "", true, true, ctx);
     }
 
     fn seed(
@@ -231,12 +211,12 @@ impl QuickInsertModal {
         label: &str,
         text: &str,
         auto_send: bool,
-        is_editing: bool,
+        visible: bool,
         ctx: &mut ViewContext<Self>,
     ) {
         self.target = target;
-        self.is_editing = is_editing;
         self.auto_send = auto_send;
+        self.visible = visible;
         self.last_auto_label = if label == derive_label(text) {
             label.to_owned()
         } else {
@@ -292,6 +272,7 @@ impl QuickInsertModal {
             label,
             text: text.to_string(),
             auto_send: self.auto_send,
+            visible: self.visible,
         });
     }
 
@@ -526,11 +507,7 @@ impl View for QuickInsertModal {
         let ui_builder = appearance.ui_builder();
 
         let title = FormattedTextElement::from_str(
-            if self.is_editing {
-                "Edit quick-insert button"
-            } else {
-                "Create quick-insert button"
-            },
+            "Create quick-insert button",
             appearance.ui_font_family(),
             16.,
         )
@@ -557,11 +534,13 @@ impl View for QuickInsertModal {
 
         let target_name = match self.target {
             QuickInsertModalTarget::CLIAgent => "active CLI agent",
+            QuickInsertModalTarget::ClaudeCode => "Claude Code",
+            QuickInsertModalTarget::Codex => "Codex",
             QuickInsertModalTarget::Terminal => "active terminal",
         };
         let subtitle = FormattedTextElement::from_str(
             format!(
-                "Choose the text this button inserts into the {target_name}. Auto send submits it immediately; when off, the button only pre-fills the input."
+                "Choose the text this button inserts into the {target_name}. Save it without showing it in the footer, or make it visible now."
             ),
             appearance.ui_font_family(),
             14.,
@@ -571,6 +550,33 @@ impl View for QuickInsertModal {
         .with_alignment(TextAlignment::Left)
         .with_line_height_ratio(1.2)
         .finish();
+
+        let visible_checkbox = ui_builder
+            .checkbox(self.visible_mouse_state.clone(), None)
+            .check(self.visible)
+            .build()
+            .on_click(|ctx, _, _| {
+                ctx.dispatch_typed_action(QuickInsertModalAction::ToggleVisible);
+            })
+            .finish();
+        let visible_row = Flex::row()
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_child(visible_checkbox)
+            .with_child(
+                Container::new(
+                    FormattedTextElement::from_str(
+                        "Show in footer",
+                        appearance.ui_font_family(),
+                        13.,
+                    )
+                    .with_color(internal_colors::text_main(theme, dialog_surface_solid))
+                    .with_alignment(TextAlignment::Left)
+                    .finish(),
+                )
+                .with_margin_left(8.)
+                .finish(),
+            )
+            .finish();
 
         let auto_send_checkbox = ui_builder
             .checkbox(self.auto_send_mouse_state.clone(), None)
@@ -608,7 +614,8 @@ impl View for QuickInsertModal {
                 .with_margin_top(16.)
                 .finish(),
             )
-            .with_child(Container::new(auto_send_row).with_margin_top(16.).finish());
+            .with_child(Container::new(visible_row).with_margin_top(16.).finish())
+            .with_child(Container::new(auto_send_row).with_margin_top(12.).finish());
         if self.cwd.is_some() {
             body.add_child(
                 Container::new(self.render_pick_list(appearance))
@@ -635,14 +642,7 @@ impl View for QuickInsertModal {
         let save_button = self.save_button.render(
             appearance,
             button::Params {
-                content: button::Content::Label(
-                    if self.is_editing {
-                        "Save changes"
-                    } else {
-                        "Add button"
-                    }
-                    .into(),
-                ),
+                content: button::Content::Label("Add button".into()),
                 theme: &button::themes::Primary,
                 options: button::Options {
                     on_click: Some(Box::new(|ctx, _app, _pos| {
@@ -725,6 +725,10 @@ impl TypedActionView for QuickInsertModal {
             }
             QuickInsertModalAction::ToggleAutoSend => {
                 self.auto_send = !self.auto_send;
+                ctx.notify();
+            }
+            QuickInsertModalAction::ToggleVisible => {
+                self.visible = !self.visible;
                 ctx.notify();
             }
             QuickInsertModalAction::SetText(text) => {

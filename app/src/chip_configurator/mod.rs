@@ -5,9 +5,12 @@
 //! and the agent input footer editor.
 pub(crate) mod modal_shell;
 
+use std::cell::RefCell;
+use std::collections::HashMap;
+
 pub(crate) use modal_shell::{
     render_chip_editor_modal, render_chip_editor_sections, ChipEditorModalConfig,
-    ChipEditorMouseHandles, ChipEditorSectionsConfig,
+    ChipEditorMouseHandles, ChipEditorSectionsConfig, ChipEditorTab,
 };
 use pathfinder_geometry::rect::RectF;
 use pathfinder_geometry::vector::vec2f;
@@ -19,8 +22,10 @@ use warpui::elements::{
 };
 use warpui::fonts::Properties;
 use warpui::platform::Cursor;
+use warpui::ui_components::button::ButtonVariant;
 use warpui::ui_components::components::UiComponent;
-use warpui::{Action, View, ViewContext};
+use warpui::ui_components::components::{Coords, UiComponentStyles};
+use warpui::{Action, SingletonEntity, View, ViewContext};
 
 use crate::ai::blocklist::agent_view::toolbar_item::AgentToolbarItemKind;
 use crate::appearance::Appearance;
@@ -356,6 +361,8 @@ pub enum ChipConfiguratorAction {
     DragChip { current_position: RectF },
     DropChip { position: RectF },
     RemoveFromUsed { location: ChipLocation },
+    AddFromUnused { index: usize },
+    ToggleAutoSend { location: ChipLocation },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -372,6 +379,7 @@ pub struct ChipConfigurator {
     pub right_chips: Vec<ConfigurableItem>,
     pub unused_chips: Vec<ConfigurableItem>,
     pub current_dragging_state: Option<CurrentDraggingState>,
+    interaction_mouse_states: RefCell<HashMap<String, MouseStateHandle>>,
 }
 
 impl ChipConfigurator {
@@ -383,7 +391,12 @@ impl ChipConfigurator {
             right_chips: vec![],
             unused_chips: vec![],
             current_dragging_state: None,
+            interaction_mouse_states: RefCell::new(HashMap::new()),
         }
+    }
+
+    pub fn layout(&self) -> ChipConfiguratorLayout {
+        self.layout
     }
 
     /// Initialize for `SingleZone` layout with pre-built context chip renderers.
@@ -392,6 +405,7 @@ impl ChipConfigurator {
         used_chips: Vec<ContextChipRenderer>,
         unused_chips: Vec<ContextChipRenderer>,
     ) {
+        self.layout = ChipConfiguratorLayout::SingleZone;
         self.reset();
         self.used_chips = used_chips
             .into_iter()
@@ -403,6 +417,31 @@ impl ChipConfigurator {
             .collect();
     }
 
+    /// Initialize for `SingleZone` layout with toolbar items.
+    pub fn open_single_zone_with_items(
+        &mut self,
+        used_items: Vec<AgentToolbarItemKind>,
+        available: Vec<AgentToolbarItemKind>,
+        appearance: &Appearance,
+    ) {
+        self.layout = ChipConfiguratorLayout::SingleZone;
+        self.reset();
+        self.used_chips = used_items
+            .iter()
+            .filter_map(|kind| ConfigurableItem::from_toolbar_item(kind.clone(), appearance))
+            .collect();
+        self.unused_chips = available
+            .into_iter()
+            .filter_map(|kind| {
+                (!used_items
+                    .iter()
+                    .any(|used| used.has_same_toolbar_identity(&kind)))
+                .then(|| ConfigurableItem::from_toolbar_item(kind, appearance))
+                .flatten()
+            })
+            .collect();
+    }
+
     /// Initialize for `LeftRightZones` layout with `AgentToolbarItemKind` lists.
     pub fn open_left_right_zones_with_items(
         &mut self,
@@ -411,6 +450,7 @@ impl ChipConfigurator {
         available: Vec<AgentToolbarItemKind>,
         appearance: &Appearance,
     ) {
+        self.layout = ChipConfiguratorLayout::LeftRightZones;
         self.reset();
         self.left_chips = left_items
             .iter()
@@ -443,6 +483,14 @@ impl ChipConfigurator {
         self.right_chips.clear();
         self.unused_chips.clear();
         self.current_dragging_state = None;
+        self.interaction_mouse_states.borrow_mut().clear();
+    }
+
+    pub fn used_item_kinds(&self) -> Vec<AgentToolbarItemKind> {
+        self.used_chips
+            .iter()
+            .filter_map(|r| r.item_kind())
+            .collect()
     }
 
     pub fn left_item_kinds(&self) -> Vec<AgentToolbarItemKind> {
@@ -454,6 +502,13 @@ impl ChipConfigurator {
 
     pub fn right_item_kinds(&self) -> Vec<AgentToolbarItemKind> {
         self.right_chips
+            .iter()
+            .filter_map(|r| r.item_kind())
+            .collect()
+    }
+
+    pub fn unused_item_kinds(&self) -> Vec<AgentToolbarItemKind> {
+        self.unused_chips
             .iter()
             .filter_map(|r| r.item_kind())
             .collect()
@@ -514,6 +569,36 @@ impl ChipConfigurator {
                     ChipLocation::Unused { index: unused_len },
                 );
                 true
+            }
+            ChipConfiguratorAction::AddFromUnused { index } => {
+                if *index >= self.unused_chips.len() {
+                    return false;
+                }
+                let destination = match self.layout {
+                    ChipConfiguratorLayout::SingleZone => ChipLocation::Used {
+                        index: self.used_chips.len(),
+                    },
+                    ChipConfiguratorLayout::LeftRightZones => ChipLocation::Left {
+                        index: self.left_chips.len(),
+                    },
+                };
+                self.remove_and_insert_chip_at_location(
+                    ChipLocation::Unused { index: *index },
+                    destination,
+                );
+                true
+            }
+            ChipConfiguratorAction::ToggleAutoSend { location } => {
+                let Some(item) = self.item_kind_at(*location) else {
+                    return false;
+                };
+                let Some(auto_send) = item.auto_send_behavior() else {
+                    return false;
+                };
+                let Some(replacement) = item.with_auto_send_behavior(!auto_send) else {
+                    return false;
+                };
+                self.replace_item_kind_at(*location, replacement, Appearance::as_ref(ctx))
             }
         }
     }
@@ -858,7 +943,7 @@ impl ChipConfigurator {
         let clickable = EventHandler::new(chip)
             .on_left_mouse_down(move |ctx, _, _| {
                 ctx.dispatch_typed_action(on_click_action.clone());
-                DispatchEventResult::StopPropagation
+                DispatchEventResult::PropagateToParent
             })
             .finish();
 
@@ -889,6 +974,90 @@ impl ChipConfigurator {
         .finish()
     }
 
+    fn interaction_mouse_state(
+        &self,
+        location: ChipLocation,
+        purpose: &'static str,
+    ) -> MouseStateHandle {
+        self.interaction_mouse_states
+            .borrow_mut()
+            .entry(format!("{purpose}:{location:?}"))
+            .or_default()
+            .clone()
+    }
+
+    fn render_auxiliary_button<A: Action + Clone + 'static>(
+        &self,
+        label: String,
+        location: ChipLocation,
+        purpose: &'static str,
+        action: A,
+        appearance: &Appearance,
+    ) -> Box<dyn Element> {
+        appearance
+            .ui_builder()
+            .button(
+                ButtonVariant::Secondary,
+                self.interaction_mouse_state(location, purpose),
+            )
+            .with_text_label(label)
+            .with_style(UiComponentStyles {
+                font_size: Some(udi_font_size(appearance)),
+                padding: Some(Coords::default().top(3.).bottom(3.).left(7.).right(7.)),
+                ..Default::default()
+            })
+            .build()
+            .on_click(move |ctx, _, _| ctx.dispatch_typed_action(action.clone()))
+            .finish()
+    }
+
+    fn render_item_with_controls<A: Action + Clone + 'static>(
+        &self,
+        location: ChipLocation,
+        item: &ConfigurableItem,
+        rendered_chip: Box<dyn Element>,
+        is_used: bool,
+        wrap_chip_action: fn(ChipConfiguratorAction) -> A,
+        appearance: &Appearance,
+    ) -> Box<dyn Element> {
+        let mut row = Flex::row()
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_child(rendered_chip)
+            .with_spacing(4.);
+
+        if let Some(auto_send) = is_used
+            .then(|| item.item_kind())
+            .flatten()
+            .and_then(|item| item.auto_send_behavior())
+        {
+            row.add_child(self.render_auxiliary_button(
+                if auto_send {
+                    "Auto-send: On".to_owned()
+                } else {
+                    "Auto-send: Off".to_owned()
+                },
+                location,
+                "auto_send",
+                wrap_chip_action(ChipConfiguratorAction::ToggleAutoSend { location }),
+                appearance,
+            ));
+        }
+
+        if !is_used {
+            row.add_child(self.render_auxiliary_button(
+                "+".to_owned(),
+                location,
+                "add",
+                wrap_chip_action(ChipConfiguratorAction::AddFromUnused {
+                    index: location.index(),
+                }),
+                appearance,
+            ));
+        }
+
+        row.finish()
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn render_wrappable_chips<'a, A: Action + Clone + 'static>(
         &self,
@@ -911,12 +1080,20 @@ impl ChipConfigurator {
                 } else {
                     item.render_unused(drag_state, appearance)
                 };
-                Container::new(self.render_draggable_chip(
+                let draggable = self.render_draggable_chip(
                     location,
                     rendered_chip,
                     item,
                     on_click_action.clone(),
                     wrap_chip_action,
+                );
+                Container::new(self.render_item_with_controls(
+                    location,
+                    item,
+                    draggable,
+                    is_used,
+                    wrap_chip_action,
+                    appearance,
                 ))
                 .with_horizontal_margin(4.)
                 .finish()
@@ -976,12 +1153,20 @@ impl ChipConfigurator {
                         }),
                         appearance,
                     );
-                    Container::new(self.render_draggable_chip(
+                    let draggable = self.render_draggable_chip(
                         location,
                         rendered,
                         item,
                         on_click_action.clone(),
                         wrap_chip_action,
+                    );
+                    Container::new(self.render_item_with_controls(
+                        location,
+                        item,
+                        draggable,
+                        true,
+                        wrap_chip_action,
+                        appearance,
                     ))
                     .with_horizontal_margin(4.)
                     .finish()

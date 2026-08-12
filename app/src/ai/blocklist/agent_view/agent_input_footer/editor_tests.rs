@@ -1,7 +1,9 @@
+use settings_value::SettingsValue;
 use warpui::platform::WindowStyle;
 use warpui::App;
 
 use super::*;
+use crate::chip_configurator::ChipLocation;
 use crate::test_util::settings::initialize_settings_for_tests;
 
 #[test]
@@ -10,6 +12,7 @@ fn next_selection_with_custom_button_appends_after_live_defaults() {
         CLIAgentToolbarChipSelection::Default,
         "Ship".into(),
         "/deploy".into(),
+        true,
         true,
     );
     let CLIAgentToolbarChipSelection::Custom { left, .. } = next else {
@@ -41,6 +44,7 @@ fn next_terminal_selection_with_custom_button_preserves_defaults_and_appends() {
             TerminalToolbarChipSelection::Default,
             "Status".into(),
             "git status".into(),
+            true,
             true,
         ),
         TerminalToolbarChipSelection::custom_from_effective_items(
@@ -78,6 +82,7 @@ fn terminal_editor_defaults_match_and_save_round_trip() {
                 AgentToolbarEditorMode::Terminal,
                 custom_left.clone(),
                 defaults_right.clone(),
+                Vec::new(),
                 ctx,
             );
         });
@@ -96,6 +101,7 @@ fn terminal_editor_defaults_match_and_save_round_trip() {
                 AgentToolbarEditorMode::Terminal,
                 defaults_left,
                 defaults_right,
+                Vec::new(),
                 ctx,
             );
         });
@@ -103,6 +109,247 @@ fn terminal_editor_defaults_match_and_save_round_trip() {
             assert_eq!(
                 settings.terminal_footer_chip_selection.value(),
                 &TerminalToolbarChipSelection::Default
+            );
+        });
+    });
+}
+
+#[test]
+fn custom_button_can_be_saved_without_showing_in_footer() {
+    let button = AgentToolbarItemKind::CustomInsert {
+        label: "Later".into(),
+        text: "Review this later".into(),
+        auto_send: false,
+    };
+    let next = next_selection_with_custom_button(
+        CLIAgentToolbarChipSelection::Default,
+        "Later".into(),
+        "Review this later".into(),
+        false,
+        false,
+    );
+
+    assert!(!next.left_items().contains(&button));
+    assert_eq!(next.hidden_custom_inserts(), vec![button.clone()]);
+    let restored = CLIAgentToolbarChipSelection::from_file_value(&next.to_file_value()).unwrap();
+    assert_eq!(restored.hidden_custom_inserts(), vec![button]);
+}
+
+#[test]
+fn claude_code_editor_uses_one_footer_zone_and_persists_add_and_auto_send_controls() {
+    App::test((), |mut app| async move {
+        initialize_settings_for_tests(&mut app);
+        app.add_singleton_model(|_| Appearance::mock());
+        let (_, editor) = app.add_window(WindowStyle::NotStealFocus, AgentToolbarEditorModal::new);
+
+        editor.update(&mut app, |editor, ctx| {
+            editor.open(AgentToolbarEditorMode::ClaudeCode, ctx);
+            assert_eq!(
+                editor.chip_configurator.layout(),
+                ChipConfiguratorLayout::SingleZone
+            );
+
+            let compact_index = editor
+                .chip_configurator
+                .used_item_kinds()
+                .iter()
+                .position(|item| item == &AgentToolbarItemKind::Compact)
+                .unwrap();
+            editor.handle_action(
+                &AgentToolbarEditorAction::Chip(ChipConfiguratorAction::ToggleAutoSend {
+                    location: ChipLocation::Used {
+                        index: compact_index,
+                    },
+                }),
+                ctx,
+            );
+
+            let preset_index = editor
+                .chip_configurator
+                .unused_item_kinds()
+                .iter()
+                .position(|item| item.display_label() == "/codex")
+                .unwrap();
+            editor.handle_action(
+                &AgentToolbarEditorAction::Chip(ChipConfiguratorAction::AddFromUnused {
+                    index: preset_index,
+                }),
+                ctx,
+            );
+            editor.handle_action(&AgentToolbarEditorAction::Save, ctx);
+        });
+
+        SessionSettings::handle(&app).read(&app, |settings, _| {
+            let selection = settings.claude_code_footer_chip_selection_value();
+            assert!(selection.right_items().is_empty());
+            assert!(selection.left_items().iter().any(|item| {
+                matches!(
+                    item,
+                    AgentToolbarItemKind::CustomInsert {
+                        label,
+                        text,
+                        auto_send: false,
+                    } if label == "Compact" && text == "/compact"
+                )
+            }));
+            assert!(selection
+                .left_items()
+                .iter()
+                .any(|item| item.display_label() == "/codex"));
+        });
+    });
+}
+
+#[test]
+fn footer_tabs_preserve_independent_drafts_and_save_each_provider() {
+    App::test((), |mut app| async move {
+        initialize_settings_for_tests(&mut app);
+        app.add_singleton_model(|_| Appearance::mock());
+
+        let legacy_button = AgentToolbarItemKind::custom_insert("Legacy", "legacy prompt");
+        let mut legacy_left = AgentToolbarItemKind::cli_default_left();
+        legacy_left.push(legacy_button.clone());
+        let legacy_selection =
+            CLIAgentToolbarChipSelection::custom_from_effective_items(legacy_left, Vec::new());
+        SessionSettings::handle(&app).update(&mut app, |settings, ctx| {
+            settings
+                .cli_agent_footer_chip_selection
+                .set_value(legacy_selection.clone(), ctx)
+                .unwrap();
+        });
+
+        let (_, editor) = app.add_window(WindowStyle::NotStealFocus, AgentToolbarEditorModal::new);
+        editor.update(&mut app, |editor, ctx| {
+            editor.open(AgentToolbarEditorMode::ClaudeCode, ctx);
+            assert!(editor
+                .chip_configurator
+                .used_item_kinds()
+                .contains(&legacy_button));
+
+            let compact_index = editor
+                .chip_configurator
+                .used_item_kinds()
+                .iter()
+                .position(|item| item == &AgentToolbarItemKind::Compact)
+                .unwrap();
+            editor.handle_action(
+                &AgentToolbarEditorAction::Chip(ChipConfiguratorAction::ToggleAutoSend {
+                    location: ChipLocation::Used {
+                        index: compact_index,
+                    },
+                }),
+                ctx,
+            );
+
+            editor.handle_action(
+                &AgentToolbarEditorAction::SelectMode(AgentToolbarEditorMode::Codex),
+                ctx,
+            );
+            assert!(editor
+                .chip_configurator
+                .used_item_kinds()
+                .contains(&AgentToolbarItemKind::Compact));
+            assert!(editor
+                .chip_configurator
+                .used_item_kinds()
+                .contains(&legacy_button));
+            let preset_index = editor
+                .chip_configurator
+                .unused_item_kinds()
+                .iter()
+                .position(|item| item.display_label() == "/codex")
+                .unwrap();
+            editor.handle_action(
+                &AgentToolbarEditorAction::Chip(ChipConfiguratorAction::AddFromUnused {
+                    index: preset_index,
+                }),
+                ctx,
+            );
+
+            editor.handle_action(
+                &AgentToolbarEditorAction::SelectMode(AgentToolbarEditorMode::ClaudeCode),
+                ctx,
+            );
+            assert!(editor
+                .chip_configurator
+                .used_item_kinds()
+                .iter()
+                .any(|item| matches!(
+                    item,
+                    AgentToolbarItemKind::CustomInsert {
+                        label,
+                        text,
+                        auto_send: false,
+                    } if label == "Compact" && text == "/compact"
+                )));
+
+            editor.handle_action(
+                &AgentToolbarEditorAction::SelectMode(AgentToolbarEditorMode::Terminal),
+                ctx,
+            );
+            editor.handle_action(
+                &AgentToolbarEditorAction::Chip(ChipConfiguratorAction::RemoveFromUsed {
+                    location: ChipLocation::Used { index: 0 },
+                }),
+                ctx,
+            );
+            editor.handle_action(&AgentToolbarEditorAction::Save, ctx);
+        });
+
+        SessionSettings::handle(&app).read(&app, |settings, _| {
+            assert_eq!(
+                settings.cli_agent_footer_chip_selection.value(),
+                &legacy_selection
+            );
+
+            let claude = settings
+                .claude_code_footer_chip_selection
+                .value()
+                .as_ref()
+                .expect("Claude Code should have its own saved layout");
+            assert!(claude.left_items().iter().any(|item| matches!(
+                item,
+                AgentToolbarItemKind::CustomInsert {
+                    label,
+                    text,
+                    auto_send: false,
+                } if label == "Compact" && text == "/compact"
+            )));
+            assert!(!claude
+                .left_items()
+                .iter()
+                .any(|item| item.display_label() == "/codex"));
+
+            let codex = settings
+                .codex_footer_chip_selection
+                .value()
+                .as_ref()
+                .expect("Codex should have its own saved layout");
+            assert!(codex.left_items().contains(&AgentToolbarItemKind::Compact));
+            assert!(codex.left_items().contains(&legacy_button));
+            assert!(codex
+                .left_items()
+                .iter()
+                .any(|item| item.display_label() == "/codex"));
+            assert_eq!(
+                settings.footer_chip_selection_for_cli_agent(crate::terminal::CLIAgent::Claude),
+                claude
+            );
+            assert_eq!(
+                settings.footer_chip_selection_for_cli_agent(crate::terminal::CLIAgent::Codex),
+                codex
+            );
+            assert_eq!(
+                settings.footer_chip_selection_for_cli_agent(crate::terminal::CLIAgent::Gemini),
+                &legacy_selection
+            );
+
+            assert_eq!(
+                settings.terminal_footer_chip_selection.left_items(),
+                AgentToolbarItemKind::terminal_default_left()
+                    .into_iter()
+                    .skip(1)
+                    .collect::<Vec<_>>()
             );
         });
     });

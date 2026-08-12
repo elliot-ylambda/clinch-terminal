@@ -23884,7 +23884,9 @@ impl TerminalView {
                 // determines if we need git status updates.
                 self.update_git_status_subscription(ctx);
             }
-            SessionSettingsChangedEvent::CLIAgentToolbarChipSelectionSetting { .. } => {
+            SessionSettingsChangedEvent::CLIAgentToolbarChipSelectionSetting { .. }
+            | SessionSettingsChangedEvent::ClaudeCodeToolbarChipSelectionSetting { .. }
+            | SessionSettingsChangedEvent::CodexToolbarChipSelectionSetting { .. } => {
                 // Force-close rich input when the Rich Input chip is removed so
                 // it doesn't linger open with no toolbar button to manage it.
                 if !is_rich_input_chip_in_cli_toolbar(ctx) {

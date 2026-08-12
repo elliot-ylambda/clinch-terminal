@@ -2543,6 +2543,7 @@ impl Input {
                 | AgentInputFooterEvent::SubmitTextToCliAgent(_)
                 | AgentInputFooterEvent::TransferAgent
                 | AgentInputFooterEvent::OpenQuickInsertModal
+                | AgentInputFooterEvent::OpenToolbarEditor(_)
                 | AgentInputFooterEvent::OpenRichInput
                 | AgentInputFooterEvent::HideRichInput => {}
                 AgentInputFooterEvent::ToggledChipMenu { open } => {

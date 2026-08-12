@@ -10,9 +10,8 @@ use clinch_companion_protocol::{DeviceId, PairingClaimId};
 use warp_core::channel::ChannelState;
 use warpui::color::ColorU;
 use warpui::elements::{
-    Align, Border, ChildView, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Element,
-    Empty, Expanded, Flex, MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement,
-    Radius, Stack, Text,
+    Align, Border, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Element, Empty,
+    Expanded, Flex, MainAxisSize, MouseStateHandle, ParentElement, Radius, Text,
 };
 use warpui::fonts::{Properties, Weight};
 use warpui::ui_components::button::ButtonVariant;
@@ -25,15 +24,7 @@ use super::settings_page::{
     PageType, SettingsPageMeta, SettingsPageViewHandle, SettingsWidget, CONTENT_FONT_SIZE,
 };
 use super::{SettingsSection, ToggleState};
-use crate::ai::blocklist::agent_view::agent_input_footer::editor::{
-    append_cli_custom_button, append_terminal_custom_button, AgentToolbarEditorMode,
-    AgentToolbarInlineEditor, EditableQuickInsert,
-};
-use crate::ai::blocklist::agent_view::agent_input_footer::quick_insert_modal::{
-    QuickInsertModal, QuickInsertModalEvent, QuickInsertModalTarget,
-};
 use crate::appearance::Appearance;
-use crate::chip_configurator::ChipLocation;
 use crate::drive::sharing::qr_code::{qr_matrix_for_url, QrMatrix, QUIET_ZONE_MODULES};
 #[cfg(feature = "local_fs")]
 use crate::remote_control::{RemoteControlService, RemoteControlStatus, RemoteControlViewState};
@@ -72,11 +63,6 @@ pub enum ClinchSettingsPageAction {
     AutoCreateWorktreesForNewTabs,
     CliAgentPlanLimits,
     AutomaticUpdateCheck,
-    AddQuickInsert(AgentToolbarEditorMode),
-    EditQuickInsert {
-        mode: AgentToolbarEditorMode,
-        location: ChipLocation,
-    },
     #[cfg(feature = "local_fs")]
     RemoteControlToggle,
     #[cfg(feature = "local_fs")]
@@ -100,17 +86,6 @@ pub struct ClinchSettingsPageView {
     page: PageType<Self>,
     local_only_icon_tooltip_states: RefCell<HashMap<String, MouseStateHandle>>,
     session_capture_enabled: bool,
-    cli_quick_insert_editor: ViewHandle<AgentToolbarInlineEditor>,
-    terminal_quick_insert_editor: ViewHandle<AgentToolbarInlineEditor>,
-    quick_insert_modal: ViewHandle<QuickInsertModal>,
-    quick_insert_modal_open: bool,
-    editing_quick_insert: Option<EditingQuickInsert>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct EditingQuickInsert {
-    mode: AgentToolbarEditorMode,
-    location: ChipLocation,
 }
 
 impl ClinchSettingsPageView {
@@ -124,17 +99,6 @@ impl ClinchSettingsPageView {
         if !ChannelState::has_backend() {
             ctx.observe(&RemoteControlService::handle(ctx), |_, _, ctx| ctx.notify());
         }
-
-        let cli_quick_insert_editor = ctx.add_typed_action_view(|ctx| {
-            AgentToolbarInlineEditor::new(AgentToolbarEditorMode::CLIAgent, ctx)
-        });
-        let terminal_quick_insert_editor = ctx.add_typed_action_view(|ctx| {
-            AgentToolbarInlineEditor::new(AgentToolbarEditorMode::Terminal, ctx)
-        });
-        let quick_insert_modal = ctx.add_typed_action_view(QuickInsertModal::new);
-        ctx.subscribe_to_view(&quick_insert_modal, |me, _, event, ctx| {
-            me.handle_quick_insert_modal_event(event, ctx);
-        });
 
         let agent_widgets: Vec<Box<dyn SettingsWidget<View = Self>>> = vec![
             Box::new(SessionCaptureWidget::default()),
@@ -163,11 +127,7 @@ impl ClinchSettingsPageView {
             updates_widgets.push(Box::new(AutomaticUpdateCheckWidget::default()));
         }
 
-        let mut categories = vec![Category::new(
-            "Quick inserts",
-            vec![Box::new(QuickInsertsWidget::default())],
-        )
-        .with_subtitle("Customize the buttons shown below CLI agents and plain terminal panes.")];
+        let mut categories = Vec::new();
         #[cfg(feature = "local_fs")]
         if !ChannelState::has_backend() {
             categories.push(Category::new(
@@ -193,120 +153,6 @@ impl ClinchSettingsPageView {
             session_capture_enabled: crate::agent_resume::capture_layer_enabled(),
             #[cfg(not(target_os = "macos"))]
             session_capture_enabled: false,
-            cli_quick_insert_editor,
-            terminal_quick_insert_editor,
-            quick_insert_modal,
-            quick_insert_modal_open: false,
-            editing_quick_insert: None,
-        }
-    }
-
-    fn quick_insert_editor(
-        &self,
-        mode: AgentToolbarEditorMode,
-    ) -> Option<&ViewHandle<AgentToolbarInlineEditor>> {
-        match mode {
-            AgentToolbarEditorMode::CLIAgent => Some(&self.cli_quick_insert_editor),
-            AgentToolbarEditorMode::Terminal => Some(&self.terminal_quick_insert_editor),
-            AgentToolbarEditorMode::AgentView => None,
-        }
-    }
-
-    fn quick_insert_target(mode: AgentToolbarEditorMode) -> Option<QuickInsertModalTarget> {
-        match mode {
-            AgentToolbarEditorMode::CLIAgent => Some(QuickInsertModalTarget::CLIAgent),
-            AgentToolbarEditorMode::Terminal => Some(QuickInsertModalTarget::Terminal),
-            AgentToolbarEditorMode::AgentView => None,
-        }
-    }
-
-    fn open_new_quick_insert(&mut self, mode: AgentToolbarEditorMode, ctx: &mut ViewContext<Self>) {
-        let Some(target) = Self::quick_insert_target(mode) else {
-            return;
-        };
-        self.editing_quick_insert = None;
-        self.quick_insert_modal.update(ctx, |modal, ctx| {
-            modal.open_without_discovery(target, ctx);
-        });
-        self.quick_insert_modal_open = true;
-        ctx.focus(&self.quick_insert_modal);
-        ctx.notify();
-    }
-
-    fn open_existing_quick_insert(
-        &mut self,
-        mode: AgentToolbarEditorMode,
-        location: ChipLocation,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        let Some(target) = Self::quick_insert_target(mode) else {
-            return;
-        };
-        let Some(item) = self.quick_insert_editor(mode).and_then(|editor| {
-            editor
-                .as_ref(ctx)
-                .quick_inserts()
-                .into_iter()
-                .find(|item| item.location == location)
-        }) else {
-            return;
-        };
-        self.editing_quick_insert = Some(EditingQuickInsert { mode, location });
-        self.quick_insert_modal.update(ctx, |modal, ctx| {
-            modal.open_for_edit(target, &item.label, &item.text, item.auto_send, ctx);
-        });
-        self.quick_insert_modal_open = true;
-        ctx.focus(&self.quick_insert_modal);
-        ctx.notify();
-    }
-
-    fn handle_quick_insert_modal_event(
-        &mut self,
-        event: &QuickInsertModalEvent,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        match event {
-            QuickInsertModalEvent::Save {
-                target,
-                label,
-                text,
-                auto_send,
-            } => {
-                if let Some(editing) = self.editing_quick_insert.take() {
-                    if let Some(editor) = self.quick_insert_editor(editing.mode).cloned() {
-                        editor.update(ctx, |editor, ctx| {
-                            editor.replace_quick_insert(
-                                editing.location,
-                                label.clone(),
-                                text.clone(),
-                                *auto_send,
-                                ctx,
-                            );
-                        });
-                    }
-                } else {
-                    match target {
-                        QuickInsertModalTarget::CLIAgent => {
-                            append_cli_custom_button(label.clone(), text.clone(), *auto_send, ctx)
-                        }
-                        QuickInsertModalTarget::Terminal => append_terminal_custom_button(
-                            label.clone(),
-                            text.clone(),
-                            *auto_send,
-                            ctx,
-                        ),
-                    }
-                }
-                self.quick_insert_modal_open = false;
-                ctx.focus_self();
-                ctx.notify();
-            }
-            QuickInsertModalEvent::Cancel => {
-                self.editing_quick_insert = None;
-                self.quick_insert_modal_open = false;
-                ctx.focus_self();
-                ctx.notify();
-            }
         }
     }
 }
@@ -378,12 +224,6 @@ impl TypedActionView for ClinchSettingsPageView {
                 });
                 ctx.notify();
             }
-            ClinchSettingsPageAction::AddQuickInsert(mode) => {
-                self.open_new_quick_insert(*mode, ctx);
-            }
-            ClinchSettingsPageAction::EditQuickInsert { mode, location } => {
-                self.open_existing_quick_insert(*mode, *location, ctx);
-            }
             #[cfg(feature = "local_fs")]
             ClinchSettingsPageAction::RemoteControlToggle => {
                 RemoteControlService::handle(ctx).update(ctx, |service, ctx| {
@@ -453,10 +293,6 @@ impl TypedActionView for ClinchSettingsPageView {
 #[cfg(test)]
 pub(crate) fn remote_control_setup_widget_id() -> &'static str {
     RemoteControlSetupWidget::static_widget_id()
-}
-
-pub(crate) fn quick_inserts_widget_id() -> &'static str {
-    QuickInsertsWidget::static_widget_id()
 }
 
 #[derive(Default)]
@@ -1390,249 +1226,6 @@ impl SettingsWidget for RemoteControlSetupWidget {
 }
 
 #[derive(Default)]
-struct QuickInsertsWidget {
-    cli_add_mouse_state: MouseStateHandle,
-    terminal_add_mouse_state: MouseStateHandle,
-    edit_mouse_states: RefCell<HashMap<String, MouseStateHandle>>,
-}
-
-impl QuickInsertsWidget {
-    fn edit_mouse_state(
-        &self,
-        mode: AgentToolbarEditorMode,
-        item: &EditableQuickInsert,
-    ) -> MouseStateHandle {
-        self.edit_mouse_states
-            .borrow_mut()
-            .entry(format!(
-                "{mode:?}:{location:?}:{label}:{text}:{auto_send}",
-                location = item.location,
-                label = item.label,
-                text = item.text,
-                auto_send = item.auto_send,
-            ))
-            .or_default()
-            .clone()
-    }
-
-    fn render_quick_insert_row(
-        &self,
-        mode: AgentToolbarEditorMode,
-        item: &EditableQuickInsert,
-        appearance: &Appearance,
-    ) -> Box<dyn Element> {
-        let theme = appearance.theme();
-        let label = Text::new_inline(
-            item.label.clone(),
-            appearance.ui_font_family(),
-            CONTENT_FONT_SIZE,
-        )
-        .with_style(Properties::default().weight(Weight::Semibold))
-        .with_color(theme.active_ui_text_color().into())
-        .finish();
-        let behavior = if item.auto_send {
-            "Auto send"
-        } else {
-            "Pre-fill only"
-        };
-        let details = Text::new(
-            format!("{behavior} · {}", item.text),
-            appearance.ui_font_family(),
-            CONTENT_FONT_SIZE,
-        )
-        .with_color(theme.nonactive_ui_text_color().into())
-        .finish();
-        let location = item.location;
-        let edit_button = appearance
-            .ui_builder()
-            .button(ButtonVariant::Secondary, self.edit_mouse_state(mode, item))
-            .with_text_label("Edit".to_owned())
-            .with_style(UiComponentStyles {
-                font_size: Some(CONTENT_FONT_SIZE),
-                padding: Some(Coords::default().top(5.).bottom(5.).left(10.).right(10.)),
-                ..Default::default()
-            })
-            .build()
-            .on_click(move |ctx, _, _| {
-                ctx.dispatch_typed_action(ClinchSettingsPageAction::EditQuickInsert {
-                    mode,
-                    location,
-                });
-            })
-            .finish();
-
-        Container::new(
-            Flex::row()
-                .with_main_axis_size(MainAxisSize::Max)
-                .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                .with_child(
-                    Expanded::new(
-                        1.,
-                        Flex::column()
-                            .with_child(label)
-                            .with_child(Container::new(details).with_margin_top(3.).finish())
-                            .finish(),
-                    )
-                    .finish(),
-                )
-                .with_child(Container::new(edit_button).with_margin_left(12.).finish())
-                .finish(),
-        )
-        .with_background(theme.surface_2())
-        .with_border(Border::all(1.).with_border_fill(theme.outline()))
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(5.)))
-        .with_uniform_padding(10.)
-        .with_margin_bottom(6.)
-        .finish()
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn render_toolbar_editor(
-        &self,
-        title: &str,
-        description: &str,
-        mode: AgentToolbarEditorMode,
-        editor: &ViewHandle<AgentToolbarInlineEditor>,
-        add_mouse_state: MouseStateHandle,
-        appearance: &Appearance,
-        app: &AppContext,
-    ) -> Box<dyn Element> {
-        let add_button = appearance
-            .ui_builder()
-            .button(ButtonVariant::Secondary, add_mouse_state)
-            .with_text_label("Add button".to_owned())
-            .with_style(UiComponentStyles {
-                font_size: Some(CONTENT_FONT_SIZE),
-                padding: Some(Coords::default().top(6.).bottom(6.).left(12.).right(12.)),
-                ..Default::default()
-            })
-            .build()
-            .on_click(move |ctx, _, _| {
-                ctx.dispatch_typed_action(ClinchSettingsPageAction::AddQuickInsert(mode));
-            })
-            .finish();
-        let heading = Flex::row()
-            .with_main_axis_size(MainAxisSize::Max)
-            .with_main_axis_alignment(MainAxisAlignment::SpaceBetween)
-            .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_child(
-                Expanded::new(
-                    1.,
-                    Flex::column()
-                        .with_child(
-                            Text::new_inline(
-                                title.to_owned(),
-                                appearance.ui_font_family(),
-                                CONTENT_FONT_SIZE + 1.,
-                            )
-                            .with_style(Properties::default().weight(Weight::Semibold))
-                            .with_color(appearance.theme().active_ui_text_color().into())
-                            .finish(),
-                        )
-                        .with_child(
-                            Container::new(
-                                Text::new(
-                                    description.to_owned(),
-                                    appearance.ui_font_family(),
-                                    CONTENT_FONT_SIZE,
-                                )
-                                .with_color(appearance.theme().nonactive_ui_text_color().into())
-                                .finish(),
-                            )
-                            .with_margin_top(3.)
-                            .finish(),
-                        )
-                        .finish(),
-                )
-                .finish(),
-            )
-            .with_child(Container::new(add_button).with_margin_left(12.).finish())
-            .finish();
-
-        let instructions = Text::new(
-            "Drag buttons to reorder them or move them between sides. Use × to remove a button.",
-            appearance.ui_font_family(),
-            CONTENT_FONT_SIZE,
-        )
-        .with_color(appearance.theme().nonactive_ui_text_color().into())
-        .finish();
-
-        let mut details = Flex::column();
-        let quick_inserts = editor.as_ref(app).quick_inserts();
-        for item in &quick_inserts {
-            details.add_child(self.render_quick_insert_row(mode, item, appearance));
-        }
-        if quick_inserts.is_empty() {
-            details.add_child(
-                Text::new(
-                    "No quick-insert buttons are currently shown.",
-                    appearance.ui_font_family(),
-                    CONTENT_FONT_SIZE,
-                )
-                .with_color(appearance.theme().nonactive_ui_text_color().into())
-                .finish(),
-            );
-        }
-
-        Container::new(
-            Flex::column()
-                .with_child(heading)
-                .with_child(Container::new(instructions).with_margin_top(10.).finish())
-                .with_child(
-                    Container::new(ChildView::new(editor).finish())
-                        .with_margin_top(8.)
-                        .finish(),
-                )
-                .with_child(
-                    Container::new(details.finish())
-                        .with_margin_top(12.)
-                        .finish(),
-                )
-                .finish(),
-        )
-        .with_margin_bottom(24.)
-        .finish()
-    }
-}
-
-impl SettingsWidget for QuickInsertsWidget {
-    type View = ClinchSettingsPageView;
-
-    fn search_terms(&self) -> &str {
-        "clinch quick insert buttons footer toolbelt toolbar cli agent terminal edit remove delete \
-         reorder arrange name label value text auto send prefill"
-    }
-
-    fn render(
-        &self,
-        view: &Self::View,
-        appearance: &Appearance,
-        app: &AppContext,
-    ) -> Box<dyn Element> {
-        Flex::column()
-            .with_child(self.render_toolbar_editor(
-                "CLI agent footer",
-                "Buttons shown below Claude Code, Codex, and other CLI-agent sessions.",
-                AgentToolbarEditorMode::CLIAgent,
-                &view.cli_quick_insert_editor,
-                self.cli_add_mouse_state.clone(),
-                appearance,
-                app,
-            ))
-            .with_child(self.render_toolbar_editor(
-                "Terminal footer",
-                "Buttons shown below ordinary shell sessions.",
-                AgentToolbarEditorMode::Terminal,
-                &view.terminal_quick_insert_editor,
-                self.terminal_add_mouse_state.clone(),
-                appearance,
-                app,
-            ))
-            .finish()
-    }
-}
-
-#[derive(Default)]
 struct SessionCaptureWidget {
     switch_state: SwitchStateHandle,
 }
@@ -1689,14 +1282,7 @@ impl View for ClinchSettingsPageView {
     }
 
     fn render(&self, app: &AppContext) -> Box<dyn Element> {
-        let page = self.page.render(self, app);
-        if !self.quick_insert_modal_open {
-            return page;
-        }
-        Stack::new()
-            .with_child(page)
-            .with_child(ChildView::new(&self.quick_insert_modal).finish())
-            .finish()
+        self.page.render(self, app)
     }
 }
 

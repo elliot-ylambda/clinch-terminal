@@ -9,6 +9,7 @@ use base64::Engine;
 use warpui::clipboard::{ClipboardContent, ImageData};
 
 use crate::ai::agent::ImageContext;
+use crate::ai::blocklist::agent_view::agent_input_footer::editor::AgentToolbarEditorMode;
 use crate::ai::blocklist::agent_view::agent_input_footer::{
     AgentInputFooter, AgentInputFooterAction, AgentInputFooterEvent,
 };
@@ -359,6 +360,17 @@ impl TerminalView {
                 // open until the borrow is released. Mirrors OpenAgentToolbarEditor.
                 ctx.emit(super::Event::OpenQuickInsertModal);
             }
+            UseAgentToolbarEvent::OpenToolbarEditor(mode) => match mode {
+                AgentToolbarEditorMode::AgentView => ctx.emit(super::Event::OpenAgentToolbarEditor),
+                AgentToolbarEditorMode::CLIAgent
+                | AgentToolbarEditorMode::ClaudeCode
+                | AgentToolbarEditorMode::Codex => {
+                    ctx.emit(super::Event::OpenCLIAgentToolbarEditor)
+                }
+                AgentToolbarEditorMode::Terminal => {
+                    ctx.emit(super::Event::OpenTerminalToolbarEditor)
+                }
+            },
             UseAgentToolbarEvent::StartRemoteControl { scrollback_type } => {
                 self.auto_stop_sharing_on_cli_end =
                     *scrollback_type == SharedSessionScrollbackType::None;
@@ -1535,6 +1547,9 @@ impl UseAgentToolbar {
             AgentInputFooterEvent::OpenQuickInsertModal => {
                 ctx.emit(UseAgentToolbarEvent::OpenQuickInsertModal);
             }
+            AgentInputFooterEvent::OpenToolbarEditor(mode) => {
+                ctx.emit(UseAgentToolbarEvent::OpenToolbarEditor(*mode));
+            }
             // Non-CLI events are handled by Input's subscription, not here.
             _ => {}
         }
@@ -1631,8 +1646,10 @@ pub enum UseAgentToolbarEvent {
     SubmitTextToCliAgent(String),
     /// Continue the captured conversation in the other agent in a new tab.
     TransferAgent,
-    /// Open the "Create quick-insert button" modal (footer "+ Add" button).
+    /// Open the standalone quick-insert creator used by the terminal context menu.
     OpenQuickInsertModal,
+    /// Open the unified footer-button editor for the current pane mode.
+    OpenToolbarEditor(AgentToolbarEditorMode),
     /// Start remote control (one-click share without modal).
     StartRemoteControl {
         scrollback_type: SharedSessionScrollbackType,
