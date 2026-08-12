@@ -698,7 +698,7 @@ const DEFAULT_AI_BLOCK_HEIGHT: f32 = 96.;
 
 /// Claude Code and Codex default to a full-cell block cursor. Keep their native composers while
 /// making that cursor less visually dominant.
-const NATIVE_CLI_AGENT_BLOCK_CURSOR_WIDTH_SCALE: f32 = 0.5;
+const NATIVE_CLI_AGENT_BLOCK_CURSOR_WIDTH_SCALE: f32 = 0.4;
 
 pub const DEFAULT_ASK_AI_AUTOSUGGESTION_TEXT: &str = "What happened here?";
 
@@ -24696,8 +24696,7 @@ impl TerminalView {
             alt_screen_element = alt_screen_element.with_ligature_rendering();
         }
         if let Some(width_scale) = self.native_cli_agent_block_cursor_width_scale(app) {
-            alt_screen_element =
-                alt_screen_element.with_block_cursor_width_scale(width_scale);
+            alt_screen_element = alt_screen_element.with_block_cursor_width_scale(width_scale);
         }
         if self.should_hide_cli_agent_cursor_cell(app) {
             alt_screen_element = alt_screen_element.with_hide_cursor_cell();

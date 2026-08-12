@@ -22,7 +22,7 @@ use super::{
     SummaryPaneKind, SummaryPaneKindIcons, TabCardState, TerminalAgentText,
     TerminalPrimaryLineData, TerminalPrimaryLineFont, TitleIndicatorKind, VerticalTabsDetailTarget,
     VerticalTabsDetailTargetKind, VerticalTabsSummaryBranchEntry, VerticalTabsSummaryData,
-    VerticalTabsSummaryPrimaryLabel,
+    VerticalTabsSummaryPrimaryLabel, BOOKMARKED_SESSIONS_COLOR,
 };
 use crate::ai::agent::conversation::ConversationStatus;
 use crate::context_chips::display_chip::GitLineChanges;
@@ -31,6 +31,7 @@ use crate::pane_group::{PaneId, TerminalPaneId};
 use crate::safe_triangle::SafeTriangle;
 use crate::terminal::view::TerminalViewState;
 use crate::terminal::CLIAgent;
+use crate::ui_components::color_dot::TAB_COLOR_OPTIONS;
 use crate::ui_components::{CLINCH_DONE_BLUE, CLINCH_LOGO_GREEN};
 use crate::workspace::tab_settings::VerticalTabsDisplayGranularity;
 use crate::workspace::view::ProjectCliAgentActivity;
@@ -71,6 +72,15 @@ fn bookmarked_session_paths_are_scoped_to_the_current_project() {
         std::path::Path::new("/work/current-project-old"),
         project
     ));
+}
+
+#[test]
+fn bookmarked_sessions_section_uses_the_yellow_palette_color() {
+    assert_eq!(
+        BOOKMARKED_SESSIONS_COLOR,
+        warp_core::ui::theme::AnsiColorIdentifier::Yellow
+    );
+    assert!(TAB_COLOR_OPTIONS.contains(&BOOKMARKED_SESSIONS_COLOR));
 }
 
 fn pane_id() -> PaneId {

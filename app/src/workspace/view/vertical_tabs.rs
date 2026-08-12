@@ -142,6 +142,9 @@ const TAB_COLOR_OPACITY: Opacity = 15;
 const TAB_COLOR_HOVER_OPACITY: Opacity = 50;
 const BOOKMARKED_SESSIONS_MAX_HEIGHT: f32 = 220.;
 const BOOKMARKED_SESSION_ICON_SIZE: f32 = VERTICAL_TABS_ICON_SIZE;
+/// Keep the built-in bookmark section visually distinct using one of the same colors offered in
+/// the section color picker.
+const BOOKMARKED_SESSIONS_COLOR: AnsiColorIdentifier = AnsiColorIdentifier::Yellow;
 const TASKS_MAX_HEIGHT: f32 = 220.;
 const TASKS_HEADER_ICON_SIZE: f32 = 14.;
 const SECTION_ACCENT_BORDER_OPACITY: Opacity = 55;
@@ -599,6 +602,32 @@ impl TabCardState {
             Self::Hovered => internal_colors::fg_overlay_1(theme),
             Self::Resting => ThemeFill::Solid(ColorU::transparent_black()),
         }
+    }
+}
+
+fn section_card_colors(
+    card_state: TabCardState,
+    tint: Option<ColorU>,
+    theme: &WarpTheme,
+) -> (ThemeFill, ThemeFill) {
+    if let Some(color) = tint {
+        let is_emphasized = matches!(card_state, TabCardState::Active | TabCardState::Hovered);
+        let background_opacity = if is_emphasized {
+            SECTION_TINT_BACKGROUND_ACTIVE_OPACITY
+        } else {
+            SECTION_TINT_BACKGROUND_OPACITY
+        };
+        let border_opacity = if is_emphasized {
+            SECTION_TINT_BORDER_ACTIVE_OPACITY
+        } else {
+            SECTION_TINT_BORDER_OPACITY
+        };
+        (
+            ThemeFill::Solid(coloru_with_opacity(color, background_opacity)),
+            ThemeFill::Solid(coloru_with_opacity(color, border_opacity)),
+        )
+    } else {
+        (card_state.background(theme), card_state.border(theme))
     }
 }
 
@@ -2355,6 +2384,9 @@ fn render_bookmarked_sessions(
 ) -> Box<dyn Element> {
     let appearance = Appearance::as_ref(app);
     let theme = appearance.theme();
+    let section_tint: ColorU = BOOKMARKED_SESSIONS_COLOR
+        .to_ansi_color(&theme.terminal_colors().normal)
+        .into();
     let project_root = workspace.active_header_project_dir(app);
     let bookmarked = CLIAgentSessionsModel::as_ref(app)
         .bookmarked_conversations()
@@ -2464,10 +2496,12 @@ fn render_bookmarked_sessions(
             false,
             hover_state.is_hovered(),
         );
+        let (card_background, card_border) =
+            section_card_colors(card_state, Some(section_tint), theme);
         Container::new(content.finish())
             .with_padding(padding)
-            .with_background(card_state.background(theme))
-            .with_border(Border::all(1.).with_border_fill(card_state.border(theme)))
+            .with_background(card_background)
+            .with_border(Border::all(1.).with_border_fill(card_border))
             .with_corner_radius(CornerRadius::with_all(Radius::Pixels(ROW_CORNER_RADIUS)))
             .finish()
     })
@@ -2483,8 +2517,6 @@ fn render_bookmarked_sessions(
         .borrow_mut()
         .retain(|key, _| active_keys.contains(key));
 
-    // No explicit tint is applied: this is the same neutral/default color used by a newly-created
-    // section before the user assigns it a color.
     Container::new(SavePosition::new(section, BOOKMARKED_SESSIONS_SECTION_POSITION_ID).finish())
         .with_margin_left(GROUP_HORIZONTAL_PADDING)
         .with_margin_right(GROUP_HORIZONTAL_PADDING)
@@ -4074,25 +4106,7 @@ fn render_grouped_tab_container(
         // A group is one card holding several tabs, so it takes the same outline
         // treatment as a standalone tab card.
         let card_state = TabCardState::resolve(false, any_member_active, hover_state.is_hovered());
-        let (card_background, card_border) = if let Some(color) = group_tint {
-            let is_emphasized = matches!(card_state, TabCardState::Active | TabCardState::Hovered);
-            let background_opacity = if is_emphasized {
-                SECTION_TINT_BACKGROUND_ACTIVE_OPACITY
-            } else {
-                SECTION_TINT_BACKGROUND_OPACITY
-            };
-            let border_opacity = if is_emphasized {
-                SECTION_TINT_BORDER_ACTIVE_OPACITY
-            } else {
-                SECTION_TINT_BORDER_OPACITY
-            };
-            (
-                ThemeFill::Solid(coloru_with_opacity(color, background_opacity)),
-                ThemeFill::Solid(coloru_with_opacity(color, border_opacity)),
-            )
-        } else {
-            (card_state.background(theme), card_state.border(theme))
-        };
+        let (card_background, card_border) = section_card_colors(card_state, group_tint, theme);
 
         // Pane view: uniform `GROUP_HORIZONTAL_PADDING` matches ungrouped-tab body padding.
         // Tab view: only apply bottom padding when expanded so a collapsed group has no trailing band.

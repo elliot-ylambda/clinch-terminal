@@ -599,7 +599,7 @@ fn mac_editing_shortcuts_do_not_override_unrelated_fullscreen_apps() {
 }
 
 #[test]
-fn native_agent_block_cursor_is_half_width_only_for_claude_and_codex() {
+fn native_agent_block_cursor_is_reduced_width_only_for_claude_and_codex() {
     App::test((), |mut app| async move {
         initialize_app_for_terminal_view(&mut app);
         let terminal = add_window_with_terminal(&mut app, None);
