@@ -117,6 +117,33 @@ fn agent_conversation_all_scope_keeps_every_directory() {
 }
 
 #[test]
+fn agent_conversation_project_worktrees_scope_keeps_sibling_worktrees_only() {
+    let mut source = source_with_roots(&[
+        (
+            "alpha-main",
+            "claude",
+            Some("/repos/alpha"),
+            Some("/repos/alpha"),
+        ),
+        (
+            "alpha-feature",
+            "codex",
+            Some("/worktrees/alpha/feature"),
+            Some("/worktrees/alpha/feature"),
+        ),
+        ("beta", "claude", Some("/repos/beta"), Some("/repos/beta")),
+    ]);
+    source.scope = ScopeFilter::ProjectWorktrees;
+    source.project_root = Some(PathBuf::from("/worktrees/alpha/feature"));
+    source.project_worktree_roots = vec![
+        PathBuf::from("/repos/alpha"),
+        PathBuf::from("/worktrees/alpha/feature"),
+    ];
+
+    assert_eq!(matching_ids(&source), vec!["alpha-main", "alpha-feature"]);
+}
+
+#[test]
 fn agent_conversation_selected_folder_overrides_scope() {
     let mut source = source_with_roots(&[
         (

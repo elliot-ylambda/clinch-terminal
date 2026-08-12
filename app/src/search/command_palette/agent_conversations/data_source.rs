@@ -24,6 +24,7 @@ const MAX_DISPLAYED: usize = 50;
 pub enum ScopeFilter {
     #[default]
     ThisProject,
+    ProjectWorktrees,
     All,
 }
 
@@ -31,6 +32,7 @@ impl ScopeFilter {
     pub fn label(self) -> &'static str {
         match self {
             Self::ThisProject => "This project",
+            Self::ProjectWorktrees => "All worktrees",
             Self::All => "All",
         }
     }
@@ -79,6 +81,7 @@ pub struct DataSource {
     selected_folder: Option<PathBuf>,
     agent: AgentFilter,
     project_root: Option<PathBuf>,
+    project_worktree_roots: Vec<PathBuf>,
     roots_by_conversation: Vec<Option<PathBuf>>,
     recent_folders: Vec<FolderEntry>,
 }
@@ -108,6 +111,9 @@ impl DataSource {
     pub fn set_scope(&mut self, scope: ScopeFilter, ctx: &mut ModelContext<Self>) {
         if self.scope != scope {
             self.scope = scope;
+            if scope == ScopeFilter::ProjectWorktrees {
+                self.refresh_project_worktree_roots();
+            }
             ctx.notify();
         }
     }
@@ -135,8 +141,17 @@ impl DataSource {
         project_root: Option<PathBuf>,
         ctx: &mut ModelContext<Self>,
     ) {
-        if self.project_root != project_root {
+        let project_changed = self.project_root != project_root;
+        if project_changed {
             self.project_root = project_root;
+        }
+        let previous_worktree_roots = self.project_worktree_roots.clone();
+        if self.scope == ScopeFilter::ProjectWorktrees {
+            // Re-read even when the active directory is unchanged: linked worktrees can
+            // be added or removed between openings of the conversation finder.
+            self.refresh_project_worktree_roots();
+        }
+        if project_changed || self.project_worktree_roots != previous_worktree_roots {
             ctx.notify();
         }
     }
@@ -161,11 +176,6 @@ impl DataSource {
         &'a self,
         needle: &str,
     ) -> Vec<(&'a AgentConversation, String, FuzzyMatchResult)> {
-        let target = self.selected_folder.as_deref().or_else(|| {
-            (self.scope == ScopeFilter::ThisProject)
-                .then_some(self.project_root.as_deref())
-                .flatten()
-        });
         let selected_provider = self.agent.provider();
 
         self.conversations
@@ -176,12 +186,7 @@ impl DataSource {
                     AgentResumeProvider::from_agent_name(&conversation.agent) == Some(provider)
                 })
             })
-            .filter(|(_, root)| {
-                target.is_none_or(|target| {
-                    root.as_deref()
-                        .is_some_and(|root| paths_match(root, target))
-                })
-            })
+            .filter(|(_, root)| self.matches_directory_filter(root.as_deref()))
             .filter_map(|(conversation, _)| {
                 let command = conversation.reopen_command()?;
                 let match_result = if needle.is_empty() {
@@ -194,6 +199,41 @@ impl DataSource {
             })
             .take(MAX_DISPLAYED)
             .collect()
+    }
+
+    fn refresh_project_worktree_roots(&mut self) {
+        let Some(project_root) = self.project_root.as_deref() else {
+            self.project_worktree_roots.clear();
+            return;
+        };
+
+        self.project_worktree_roots = crate::util::git::worktree_roots_sync(project_root);
+        if self.project_worktree_roots.is_empty() {
+            // Preserve useful project-local behavior if Git is unavailable or the active
+            // project is not a repository.
+            self.project_worktree_roots.push(project_root.to_path_buf());
+        }
+    }
+
+    fn matches_directory_filter(&self, root: Option<&Path>) -> bool {
+        if let Some(selected_folder) = self.selected_folder.as_deref() {
+            return root.is_some_and(|root| paths_match(root, selected_folder));
+        }
+
+        match self.scope {
+            ScopeFilter::All => true,
+            ScopeFilter::ThisProject => self.project_root.as_deref().is_none_or(|project_root| {
+                root.is_some_and(|root| paths_match(root, project_root))
+            }),
+            ScopeFilter::ProjectWorktrees => {
+                self.project_root.is_none()
+                    || root.is_some_and(|root| {
+                        self.project_worktree_roots
+                            .iter()
+                            .any(|worktree_root| paths_match(root, worktree_root))
+                    })
+            }
+        }
     }
 }
 

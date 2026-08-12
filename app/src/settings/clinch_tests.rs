@@ -20,7 +20,11 @@ fn agent_conversation_finder_settings_round_trip_and_legacy_values_fall_back() {
     );
     assert_eq!(AgentConversationFinderAgent::default_value(), "all");
 
-    for scope in [ScopeFilter::ThisProject, ScopeFilter::All] {
+    for scope in [
+        ScopeFilter::ThisProject,
+        ScopeFilter::ProjectWorktrees,
+        ScopeFilter::All,
+    ] {
         assert_eq!(
             parse_agent_conversation_finder_scope(agent_conversation_finder_scope_value(scope)),
             scope

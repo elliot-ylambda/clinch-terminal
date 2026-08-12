@@ -25,6 +25,7 @@ pub struct SegmentedControl<T> {
     build_option_config: BuildRenderableOptionConfig<T>,
     mouse_states: Vec<MouseStateHandle>,
     styles: UiComponentStyles,
+    option_padding: Coords,
 
     /// If Some, we will set the control to disabled and use the tooltip text provided
     disabled_tooltip: Option<Cow<'static, str>>,
@@ -115,8 +116,15 @@ impl<T: SegmentedControlOption> SegmentedControl<T> {
             selected_option: default_option,
             mouse_states,
             styles,
+            option_padding: Coords::uniform(2.0),
             disabled_tooltip: None,
         }
+    }
+
+    /// Sets the padding inside each selectable segment.
+    pub fn with_option_padding(mut self, padding: Coords) -> Self {
+        self.option_padding = padding;
+        self
     }
 
     /// Get the value of the currently selected option
@@ -215,8 +223,7 @@ impl<T: SegmentedControlOption> View for SegmentedControl<T> {
 
             let button_styles = UiComponentStyles {
                 background: Some(option_config.background),
-                // Slightly tighter padding to keep controls compact in narrow headers.
-                padding: Some(Coords::uniform(2.0)),
+                padding: Some(self.option_padding),
                 border_width: None,
                 border_radius: Some(CornerRadius::with_all(Radius::Pixels(3.0))),
                 margin: None,

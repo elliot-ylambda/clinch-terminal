@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use fuzzy_match::FuzzyMatchResult;
 use ordered_float::OrderedFloat;
+use warp_core::ui::theme::Fill;
 use warpui::elements::{Container, Expanded, Flex, MainAxisSize, ParentElement, Text};
 use warpui::fonts::{Properties, Weight};
 use warpui::text_layout::ClipConfig;
@@ -92,7 +93,7 @@ impl SearchItem for AgentConversationSearchItem {
 
     fn render_icon(
         &self,
-        highlight_state: ItemHighlightState,
+        _highlight_state: ItemHighlightState,
         appearance: &Appearance,
     ) -> Box<dyn Element> {
         let agent = cli_agent_for_resume_provider(&self.conversation.agent);
@@ -102,7 +103,9 @@ impl SearchItem for AgentConversationSearchItem {
         let color = agent
             .and_then(|agent| agent.brand_color())
             .unwrap_or_else(|| appearance.theme().foreground().into_solid());
-        render_search_item_icon(appearance, icon, color, highlight_state)
+        // Conversation selection uses a neutral surface overlay, so icon contrast should
+        // be calculated against the ordinary palette surface instead of the accent color.
+        render_search_item_icon(appearance, icon, color, ItemHighlightState::Default)
     }
 
     fn icon_location(&self, appearance: &Appearance) -> IconLocation {
@@ -115,10 +118,11 @@ impl SearchItem for AgentConversationSearchItem {
 
     fn render_item(
         &self,
-        highlight_state: ItemHighlightState,
+        _highlight_state: ItemHighlightState,
         app: &AppContext,
     ) -> Box<dyn Element> {
         let appearance = Appearance::as_ref(app);
+        let theme = appearance.theme();
         let sub_text_font_size = appearance.monospace_font_size() - 2.;
 
         let title_element = Text::new_inline(
@@ -126,7 +130,7 @@ impl SearchItem for AgentConversationSearchItem {
             appearance.ui_font_family(),
             appearance.monospace_font_size(),
         )
-        .with_color(highlight_state.sub_text_fill(appearance).into_solid())
+        .with_color(theme.main_text_color(theme.surface_2()).into_solid())
         .with_style(Properties::default().weight(Weight::Bold))
         .with_clip(ClipConfig::ellipsis())
         .finish();
@@ -136,7 +140,7 @@ impl SearchItem for AgentConversationSearchItem {
             appearance.ui_font_family(),
             sub_text_font_size,
         )
-        .with_color(highlight_state.sub_text_fill(appearance).into_solid())
+        .with_color(theme.sub_text_color(theme.surface_2()).into_solid())
         .with_clip(ClipConfig::ellipsis())
         .finish();
 
@@ -152,7 +156,7 @@ impl SearchItem for AgentConversationSearchItem {
             .unwrap_or_default();
         let started_element = Container::new(
             Text::new_inline(started, appearance.ui_font_family(), sub_text_font_size)
-                .with_color(highlight_state.sub_text_fill(appearance).into_solid())
+                .with_color(theme.sub_text_color(theme.surface_2()).into_solid())
                 .finish(),
         )
         .with_padding_left(8.)
@@ -163,6 +167,18 @@ impl SearchItem for AgentConversationSearchItem {
             .with_child(started_element)
             .with_main_axis_size(MainAxisSize::Max)
             .finish()
+    }
+
+    fn item_background(
+        &self,
+        highlight_state: ItemHighlightState,
+        appearance: &Appearance,
+    ) -> Option<Fill> {
+        match highlight_state {
+            ItemHighlightState::Selected { .. } => Some(appearance.theme().surface_overlay_2()),
+            ItemHighlightState::Hovered => Some(appearance.theme().surface_overlay_1()),
+            ItemHighlightState::Default => None,
+        }
     }
 
     fn score(&self) -> OrderedFloat<f64> {

@@ -39,6 +39,47 @@ pub fn list_local_branches_sync(_repo_path: &Path) -> HashSet<String> {
     HashSet::new()
 }
 
+/// Returns every existing Git worktree for the repository containing `repo_path`.
+///
+/// `git worktree list --porcelain` includes the primary checkout and all linked
+/// worktrees, which lets callers treat those checkouts as one project.
+#[cfg(feature = "local_fs")]
+fn listed_worktree_paths_sync(repo_path: &Path) -> Vec<PathBuf> {
+    let output = command::blocking::Command::new("git")
+        .args(["worktree", "list", "--porcelain"])
+        .current_dir(repo_path)
+        .stdout(command::Stdio::piped())
+        .stderr(command::Stdio::null())
+        .output();
+    let Ok(output) = output else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+
+    let output_text = String::from_utf8_lossy(&output.stdout);
+    output_text
+        .lines()
+        .filter_map(|line| line.strip_prefix("worktree "))
+        .map(PathBuf::from)
+        .collect()
+}
+
+#[cfg(feature = "local_fs")]
+pub fn worktree_roots_sync(repo_path: &Path) -> Vec<PathBuf> {
+    listed_worktree_paths_sync(repo_path)
+        .into_iter()
+        .filter(|root| root.is_dir())
+        .map(|root| dunce::canonicalize(&root).unwrap_or(root))
+        .collect()
+}
+
+#[cfg(not(feature = "local_fs"))]
+pub fn worktree_roots_sync(_repo_path: &Path) -> Vec<PathBuf> {
+    Vec::new()
+}
+
 /// Resolves the primary checkout for the repository containing `repo_path`.
 ///
 /// `git worktree list --porcelain` always lists the primary checkout first, so
@@ -46,22 +87,7 @@ pub fn list_local_branches_sync(_repo_path: &Path) -> HashSet<String> {
 /// group Clinch-managed worktrees.
 #[cfg(feature = "local_fs")]
 pub fn primary_worktree_root_sync(repo_path: &Path) -> Option<PathBuf> {
-    let output = command::blocking::Command::new("git")
-        .args(["worktree", "list", "--porcelain"])
-        .current_dir(repo_path)
-        .stdout(command::Stdio::piped())
-        .stderr(command::Stdio::null())
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-
-    let output_text = String::from_utf8_lossy(&output.stdout);
-    let primary = output_text
-        .lines()
-        .find_map(|line| line.strip_prefix("worktree "))?;
-    let primary = PathBuf::from(primary);
+    let primary = listed_worktree_paths_sync(repo_path).into_iter().next()?;
     primary
         .is_dir()
         .then(|| dunce::canonicalize(&primary).unwrap_or(primary))

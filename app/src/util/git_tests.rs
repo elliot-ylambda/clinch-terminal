@@ -7,7 +7,7 @@ use tempfile::TempDir;
 use super::{
     detect_current_branch, detect_current_branch_display, get_pr_for_branch, is_gh_auth_error,
     is_gh_missing_error, primary_worktree_root_sync, resolve_main_worktree_base_ref_sync,
-    RepositoryInfo,
+    worktree_roots_sync, RepositoryInfo,
 };
 
 /// Helper: run a git command inside the given repo directory.
@@ -142,7 +142,14 @@ async fn automatic_worktree_preflight_resolves_primary_checkout_and_main() {
     );
     assert_eq!(
         primary_worktree_root_sync(&linked_worktree),
-        Some(canonical_repo)
+        Some(canonical_repo.clone())
+    );
+    assert_eq!(
+        worktree_roots_sync(&linked_worktree),
+        vec![
+            canonical_repo,
+            dunce::canonicalize(&linked_worktree).unwrap()
+        ]
     );
     assert_eq!(
         resolve_main_worktree_base_ref_sync(&linked_worktree).as_deref(),

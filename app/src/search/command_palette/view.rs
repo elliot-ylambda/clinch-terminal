@@ -12,8 +12,9 @@ use warp_util::path::LineAndColumnArg;
 use warpui::elements::{
     Align, Border, ChildAnchor, ChildView, Clipped, ClippedScrollStateHandle, ClippedScrollable,
     ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Dismiss, DispatchEventResult,
-    Empty, EventHandler, Fill, Flex, MainAxisAlignment, OffsetPositioning, ParentAnchor,
-    ParentElement, ParentOffsetBounds, Radius, SavePosition, Shrinkable, Stack, Text,
+    Empty, EventHandler, Fill, Flex, MainAxisAlignment, OffsetPositioning, ParentElement,
+    PositionedElementAnchor, PositionedElementOffsetBounds, Radius, SavePosition, Shrinkable,
+    Stack, Text,
 };
 use warpui::event::KeyState;
 use warpui::keymap::BindingId;
@@ -60,6 +61,7 @@ use crate::settings::{
 use crate::terminal::cli_agent::CLIAgent;
 use crate::terminal::keys_settings::KeysSettings;
 use crate::themes::theme::WarpTheme;
+use crate::util::color::{ContrastingColor, MinimumAllowedContrast};
 use crate::view_components::action_button::{ActionButton, ButtonSize, SecondaryTheme};
 use crate::view_components::DismissibleToast;
 use crate::workspace::{active_terminal_in_window, ForkedConversationDestination, WorkspaceAction};
@@ -78,6 +80,8 @@ lazy_static! {
 
 /// Position ID for the command palette list.
 const PALETTE_LIST_SAVE_POSITION_ID: &str = "command_palette:list";
+const AGENT_CONVERSATION_FOLDER_BUTTON_POSITION_ID: &str =
+    "command_palette:agent_conversation_folder_button";
 
 /// Max number of results to be returned by the search mixer. We set this to an arbitrarily
 /// large size to minimize performances issues caused by rendering the elements of the palette
@@ -94,14 +98,22 @@ fn agent_conversation_filter_styles(app: &AppContext) -> UiComponentStyles {
 
     UiComponentStyles {
         font_family_id: Some(appearance.ui_font_family()),
-        font_size: Some(appearance.ui_font_size()),
-        border_radius: Some(CornerRadius::with_all(Radius::Pixels(4.0))),
+        font_size: Some(appearance.ui_font_size() + 1.0),
+        border_radius: Some(CornerRadius::with_all(Radius::Pixels(6.0))),
         border_width: Some(1.0),
-        border_color: Some(Fill::Solid(theme.surface_3().into())),
-        background: Some(Fill::Solid(theme.background().into())),
-        height: Some(20.0),
-        padding: Some(Coords::uniform(0.0)),
+        border_color: Some(Fill::Solid(theme.outline().into())),
+        background: Some(Fill::Solid(theme.surface_1().into())),
+        height: Some(28.0),
         ..Default::default()
+    }
+}
+
+fn agent_conversation_filter_option_padding() -> Coords {
+    Coords {
+        top: 2.0,
+        bottom: 2.0,
+        left: 8.0,
+        right: 8.0,
     }
 }
 
@@ -235,22 +247,35 @@ impl warpui::View for View {
         }
         palette.add_child(Shrinkable::new(1., body).finish());
 
+        let palette = ConstrainedBox::new(palette.finish())
+            .with_width(styles::PALETTE_WIDTH)
+            .with_max_height(styles::PALETTE_HEIGHT)
+            .finish();
+        let mut palette_stack = Stack::new().with_child(palette);
+        if self.agent_conversation_folder_menu_open {
+            palette_stack.add_positioned_overlay_child(
+                ChildView::new(&self.agent_conversation_folder_menu).finish(),
+                OffsetPositioning::offset_from_save_position_element(
+                    AGENT_CONVERSATION_FOLDER_BUTTON_POSITION_ID,
+                    vec2f(0., 4.),
+                    PositionedElementOffsetBounds::WindowByPosition,
+                    PositionedElementAnchor::BottomLeft,
+                    ChildAnchor::TopLeft,
+                ),
+            );
+        }
+
         EventHandler::new(
             Align::new(
                 Dismiss::new(
-                    Container::new(
-                        ConstrainedBox::new(palette.finish())
-                            .with_width(styles::PALETTE_WIDTH)
-                            .with_max_height(styles::PALETTE_HEIGHT)
-                            .finish(),
-                    )
-                    .with_background(theme.surface_2())
-                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
-                    .with_border(Border::all(1.0).with_border_fill(theme.outline()))
-                    .with_margin_top(117.)
-                    .with_padding_bottom(10.)
-                    .with_drop_shadow(*styles::DROP_SHADOW)
-                    .finish(),
+                    Container::new(palette_stack.finish())
+                        .with_background(theme.surface_2())
+                        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+                        .with_border(Border::all(1.0).with_border_fill(theme.outline()))
+                        .with_margin_top(117.)
+                        .with_padding_bottom(10.)
+                        .with_drop_shadow(*styles::DROP_SHADOW)
+                        .finish(),
                 )
                 .on_dismiss(|ctx, _app| ctx.dispatch_typed_action(Action::Close))
                 .prevent_interaction_with_other_elements()
@@ -313,15 +338,20 @@ impl View {
 
         let agent_conversation_scope_control = ctx.add_typed_action_view(|ctx| {
             SegmentedControl::new(
-                vec![ScopeFilter::ThisProject, ScopeFilter::All],
+                vec![
+                    ScopeFilter::ThisProject,
+                    ScopeFilter::ProjectWorktrees,
+                    ScopeFilter::All,
+                ],
                 |scope, is_selected, app| {
                     let appearance = Appearance::as_ref(app);
                     let theme = appearance.theme();
-                    let color = if is_selected {
-                        theme.accent().into()
+                    let tab_background = if is_selected {
+                        theme.surface_3()
                     } else {
-                        theme.main_text_color(theme.background()).into()
+                        theme.surface_1()
                     };
+                    let color = theme.main_text_color(tab_background).into();
                     Some(RenderableOptionConfig {
                         icon_path: "",
                         icon_color: color,
@@ -341,6 +371,7 @@ impl View {
                 initial_scope,
                 agent_conversation_filter_styles(ctx),
             )
+            .with_option_padding(agent_conversation_filter_option_padding())
         });
         ctx.subscribe_to_view(&agent_conversation_scope_control, |me, _, event, ctx| {
             let SegmentedControlEvent::OptionSelected(scope) = event;
@@ -353,11 +384,12 @@ impl View {
                 |filter, is_selected, app| {
                     let appearance = Appearance::as_ref(app);
                     let theme = appearance.theme();
-                    let default_color = if is_selected {
-                        theme.accent().into()
+                    let tab_background = if is_selected {
+                        theme.surface_3()
                     } else {
-                        theme.main_text_color(theme.background()).into()
+                        theme.surface_1()
                     };
+                    let default_color = theme.main_text_color(tab_background).into();
                     let cli_agent = match filter {
                         AgentFilter::All => None,
                         AgentFilter::Claude => Some(CLIAgent::Claude),
@@ -369,6 +401,12 @@ impl View {
                         .unwrap_or("");
                     let icon_color = cli_agent
                         .and_then(|agent| agent.brand_color())
+                        .map(|color| {
+                            color.on_background(
+                                tab_background.into_solid(),
+                                MinimumAllowedContrast::NonText,
+                            )
+                        })
                         .unwrap_or(default_color);
                     Some(RenderableOptionConfig {
                         icon_path,
@@ -389,6 +427,7 @@ impl View {
                 initial_agent,
                 agent_conversation_filter_styles(ctx),
             )
+            .with_option_padding(agent_conversation_filter_option_padding())
         });
         ctx.subscribe_to_view(&agent_conversation_agent_control, |me, _, event, ctx| {
             let SegmentedControlEvent::OptionSelected(agent) = event;
@@ -397,7 +436,8 @@ impl View {
 
         let agent_conversation_folder_button = ctx.add_typed_action_view(|_| {
             ActionButton::new("Folder", SecondaryTheme)
-                .with_size(ButtonSize::XSmall)
+                .with_size(ButtonSize::Default)
+                .with_height(28.0)
                 .with_menu(true)
                 .on_click(|ctx| {
                     ctx.dispatch_typed_action(Action::ToggleAgentConversationFolderMenu)
@@ -816,19 +856,11 @@ impl View {
             .finish()
         };
 
-        let mut folder_button = Stack::new()
-            .with_child(ChildView::new(&self.agent_conversation_folder_button).finish());
-        if self.agent_conversation_folder_menu_open {
-            folder_button.add_positioned_overlay_child(
-                ChildView::new(&self.agent_conversation_folder_menu).finish(),
-                OffsetPositioning::offset_from_parent(
-                    vec2f(0., 4.),
-                    ParentOffsetBounds::WindowByPosition,
-                    ParentAnchor::BottomLeft,
-                    ChildAnchor::TopLeft,
-                ),
-            );
-        }
+        let folder_button = SavePosition::new(
+            ChildView::new(&self.agent_conversation_folder_button).finish(),
+            AGENT_CONVERSATION_FOLDER_BUTTON_POSITION_ID,
+        )
+        .finish();
 
         let row = Flex::row()
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
@@ -836,7 +868,7 @@ impl View {
             .with_spacing(6.)
             .with_child(render_label("Scope:"))
             .with_child(ChildView::new(&self.agent_conversation_scope_control).finish())
-            .with_child(folder_button.finish())
+            .with_child(folder_button)
             .with_child(
                 Container::new(render_label("Agent:"))
                     .with_padding_left(8.)
