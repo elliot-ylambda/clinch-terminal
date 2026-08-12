@@ -482,6 +482,123 @@ fn focus_reporting_writes_focus_events_in_normal_screen() {
     })
 }
 
+#[test]
+#[cfg(target_os = "macos")]
+fn mac_editing_shortcuts_reach_fullscreen_native_cli_agent_composers() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        app.add_singleton_model(ImportedConfigModel::new);
+        app.update(crate::terminal::init);
+
+        let (window_id, terminal) = add_window_with_id_and_terminal(&mut app, None);
+        let pty_writes: Rc<RefCell<Vec<Vec<u8>>>> = Rc::new(RefCell::new(Vec::new()));
+        let writes = pty_writes.clone();
+        app.update(|ctx| {
+            ctx.subscribe_to_view(&terminal, move |_, event, _| {
+                if let Event::WriteBytesToPty { bytes } = event {
+                    writes.borrow_mut().push(bytes.to_vec());
+                }
+            });
+        });
+
+        terminal.update(&mut app, |view, ctx| {
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                let mut session = cli_agent_session_with_prompts(Vec::new());
+                session.agent = CLIAgent::Claude;
+                sessions.set_session(view.view_id, session, ctx);
+            });
+            view.model
+                .lock()
+                .simulate_long_running_block("claude", "\x1b[?1049h");
+            assert!(view.model.lock().is_alt_screen_active());
+            view.focus_terminal(ctx);
+        });
+
+        for keystroke in [
+            "alt-left",
+            "alt-right",
+            "cmd-left",
+            "cmd-right",
+            "alt-backspace",
+            "cmd-backspace",
+            "cmd-delete",
+        ] {
+            assert!(
+                app.dispatch_keystroke(
+                    window_id,
+                    &[terminal.id()],
+                    &warpui::keymap::Keystroke::parse(keystroke).expect("valid keystroke"),
+                    false,
+                )
+                .expect("dispatch should succeed"),
+                "{keystroke} should be handled while a native full-screen composer is active"
+            );
+        }
+
+        assert_eq!(
+            *pty_writes.borrow(),
+            vec![
+                EscCodes::WORD_LEFT.to_vec(),
+                EscCodes::WORD_RIGHT.to_vec(),
+                vec![C0::SOH],
+                vec![C0::ENQ],
+                vec![C0::ETB],
+                vec![C0::NAK],
+                vec![C0::VT],
+            ]
+        );
+    })
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn mac_editing_shortcuts_do_not_override_unrelated_fullscreen_apps() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        app.add_singleton_model(ImportedConfigModel::new);
+        app.update(crate::terminal::init);
+
+        let (window_id, terminal) = add_window_with_id_and_terminal(&mut app, None);
+        let pty_writes: Rc<RefCell<Vec<Vec<u8>>>> = Rc::new(RefCell::new(Vec::new()));
+        let writes = pty_writes.clone();
+        app.update(|ctx| {
+            ctx.subscribe_to_view(&terminal, move |_, event, _| {
+                if let Event::WriteBytesToPty { bytes } = event {
+                    writes.borrow_mut().push(bytes.to_vec());
+                }
+            });
+        });
+
+        terminal.update(&mut app, |view, ctx| {
+            view.model
+                .lock()
+                .simulate_long_running_block("vim", "\x1b[?1049h");
+            assert!(view.model.lock().is_alt_screen_active());
+            assert!(!view
+                .keymap_context(ctx)
+                .set
+                .contains(init::CLI_AGENT_SESSION_ACTIVE_KEY));
+            view.focus_terminal(ctx);
+        });
+
+        for keystroke in ["cmd-left", "alt-left", "cmd-backspace"] {
+            assert!(
+                !app
+                    .dispatch_keystroke(
+                        window_id,
+                        &[terminal.id()],
+                        &warpui::keymap::Keystroke::parse(keystroke).expect("valid keystroke"),
+                        false,
+                    )
+                    .expect("dispatch should succeed"),
+                "{keystroke} must remain owned by a non-agent full-screen app"
+            );
+        }
+
+        assert!(pty_writes.borrow().is_empty());
+    })
+}
+
 fn input_operations_for_buffer_content(app: &mut App, content: &str) -> Vec<CrdtOperation> {
     let terminal = add_window_with_terminal(app, None);
     terminal.update(app, |view, ctx| {
