@@ -955,12 +955,16 @@ impl TerminalView {
     /// source agent and its tab untouched.
     #[cfg(feature = "local_tty")]
     fn open_cli_agent_transfer_in_new_tab(&mut self, ctx: &mut ViewContext<Self>) {
-        let Some((source_agent, session_context)) = CLIAgentSessionsModel::as_ref(ctx)
+        let Some((source_agent, mut session_context)) = CLIAgentSessionsModel::as_ref(ctx)
             .session(self.view_id)
             .map(|session| (session.agent, session.session_context.clone()))
         else {
             return;
         };
+        // Agent hook metadata can lag behind the terminal's working-directory updates.
+        // Prefer the live pane directory so the target agent starts exactly where the source
+        // conversation is running, while keeping the recorded directory as a fallback.
+        session_context.cwd = self.pwd_if_local(ctx).or(session_context.cwd);
         let Some(shell_type) = self.active_session_shell_type(ctx) else {
             self.show_error_toast(
                 "Could not detect this pane's shell for the agent transfer.".to_string(),

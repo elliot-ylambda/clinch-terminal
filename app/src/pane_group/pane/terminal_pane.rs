@@ -1267,9 +1267,13 @@ fn handle_terminal_view_event(
             Event::ToggleCodeReviewPane(arg) => {
                 ctx.emit(pane_group::Event::ToggleCodeReviewPane(arg.clone()));
             }
-            Event::ForkCliAgentSession { terminal_view_id } => {
+            Event::ForkCliAgentSession {
+                terminal_view_id,
+                cwd,
+            } => {
                 ctx.emit(pane_group::Event::ForkCliAgentSession {
                     terminal_view_id: *terminal_view_id,
+                    cwd: cwd.clone(),
                 });
             }
             Event::TransferCliAgentSession { command, cwd } => {

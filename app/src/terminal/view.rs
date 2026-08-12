@@ -1765,6 +1765,8 @@ pub enum Event {
     ToggleCodeReviewPane(CodeReviewPanelArg),
     ForkCliAgentSession {
         terminal_view_id: EntityId,
+        /// The live working directory of the pane being forked.
+        cwd: Option<String>,
     },
     /// Open the other CLI agent in a new tab with context from this conversation.
     TransferCliAgentSession {
@@ -7449,6 +7451,7 @@ impl TerminalView {
     pub fn fork_cli_agent_session(&mut self, ctx: &mut ViewContext<Self>) {
         ctx.emit(Event::ForkCliAgentSession {
             terminal_view_id: self.view_id,
+            cwd: self.pwd_if_local(ctx),
         });
     }
 

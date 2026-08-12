@@ -577,6 +577,7 @@ pub enum Event {
     ToggleCodeReviewPane(CodeReviewPanelArg),
     ForkCliAgentSession {
         terminal_view_id: EntityId,
+        cwd: Option<String>,
     },
     /// Open a transferred CLI-agent conversation in a new tab.
     TransferCliAgentSession {

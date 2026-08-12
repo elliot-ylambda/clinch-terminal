@@ -2195,6 +2195,7 @@ fn cli_agent_transfer_opens_new_tab_without_replacing_source_tab() {
         initialize_app(&mut app);
 
         let workspace = mock_workspace(&mut app);
+        let expected_cwd = std::env::current_dir().expect("test process should have a cwd");
         let (source_tab, source_terminal, initial_tab_count) =
             workspace.read(&app, |workspace, ctx| {
                 let source_tab = workspace
@@ -2210,7 +2211,7 @@ fn cli_agent_transfer_opens_new_tab_without_replacing_source_tab() {
         source_terminal.update(&mut app, |_terminal, ctx| {
             ctx.emit(crate::terminal::view::Event::TransferCliAgentSession {
                 command: "true".to_owned(),
-                cwd: None,
+                cwd: Some(expected_cwd.to_string_lossy().into_owned()),
             });
         });
 
@@ -2223,8 +2224,44 @@ fn cli_agent_transfer_opens_new_tab_without_replacing_source_tab() {
             assert!(source_tab
                 .as_ref(ctx)
                 .contains_terminal_view(source_terminal.id(), ctx));
+            let new_tab_cwd = workspace
+                .active_tab_pane_group()
+                .read(ctx, |pane_group, ctx| {
+                    pane_group
+                        .startup_path_for_new_session(pane_group.active_session_id(ctx), ctx)
+                });
+            assert_eq!(new_tab_cwd.as_deref(), Some(expected_cwd.as_path()));
         });
     });
+}
+
+#[cfg(feature = "local_fs")]
+#[test]
+fn cli_agent_action_cwd_prefers_the_live_source_pane_directory() {
+    let temp_root = TempDir::new().expect("failed to create temp dir");
+    let source_cwd = temp_root.path().join("source");
+    let recorded_cwd = temp_root.path().join("recorded");
+    std::fs::create_dir_all(&source_cwd).expect("failed to create source cwd");
+    std::fs::create_dir_all(&recorded_cwd).expect("failed to create recorded cwd");
+
+    assert_eq!(
+        cli_agent_action_cwd(
+            Some(source_cwd.to_string_lossy().into_owned()),
+            Some(recorded_cwd.to_string_lossy().into_owned()),
+        )
+        .as_deref(),
+        source_cwd.to_str()
+    );
+
+    let missing_cwd = temp_root.path().join("missing");
+    assert_eq!(
+        cli_agent_action_cwd(
+            Some(missing_cwd.to_string_lossy().into_owned()),
+            Some(recorded_cwd.to_string_lossy().into_owned()),
+        )
+        .as_deref(),
+        recorded_cwd.to_str()
+    );
 }
 
 fn number_of_shared_sessions_in_tab(

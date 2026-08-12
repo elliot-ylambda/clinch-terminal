@@ -1436,6 +1436,17 @@ fn remote_control_settings_action() -> WorkspaceAction {
     WorkspaceAction::ShowSettingsPage(SettingsSection::Clinch)
 }
 
+/// Chooses an existing directory for a CLI-agent action's new tab. The live source-pane
+/// directory wins over recorded hook/registry metadata, which may be missing or stale.
+fn cli_agent_action_cwd(
+    source_pane_cwd: Option<String>,
+    recorded_cwd: Option<String>,
+) -> Option<String> {
+    source_pane_cwd
+        .filter(|cwd| Path::new(cwd).is_dir())
+        .or_else(|| recorded_cwd.filter(|cwd| Path::new(cwd).is_dir()))
+}
+
 impl Workspace {
     pub fn is_tab_drag_preview(&self) -> bool {
         self.is_tab_drag_preview
@@ -9299,13 +9310,15 @@ impl Workspace {
 
     /// Forks the Claude/Codex session in the pane owning `terminal_view_id` into a NEW tab.
     ///
-    /// The original pane is untouched. The new tab opens in the session's original directory
-    /// and auto-runs the fork command (`claude --resume <id> --fork-session` / `codex fork <id>`)
-    /// after its shell bootstraps, reusing the agent-resume restore-replay path.
+    /// The original pane is untouched. The new tab opens in the source pane's current directory
+    /// (falling back to the session's recorded directory) and auto-runs the fork command
+    /// (`claude --resume <id> --fork-session` / `codex fork <id>`) after its shell bootstraps,
+    /// reusing the agent-resume restore-replay path.
     fn fork_cli_agent_session(
         &mut self,
         pane_group: &ViewHandle<PaneGroup>,
         terminal_view_id: EntityId,
+        source_pane_cwd: Option<String>,
         ctx: &mut ViewContext<Self>,
     ) {
         let Some(fork) = pane_group.read(ctx, |pane_group, ctx| {
@@ -9315,7 +9328,8 @@ impl Workspace {
             return;
         };
 
-        let _ = self.launch_cli_agent_in_new_tab(fork.command, fork.cwd, ctx);
+        let cwd = cli_agent_action_cwd(source_pane_cwd, fork.cwd);
+        let _ = self.launch_cli_agent_in_new_tab(fork.command, cwd, ctx);
     }
 
     /// Opens a Claude Code ↔ Codex transfer in a new tab while preserving the
@@ -9326,7 +9340,7 @@ impl Workspace {
         cwd: Option<String>,
         ctx: &mut ViewContext<Self>,
     ) {
-        let cwd = cwd.filter(|cwd| Path::new(cwd).is_dir());
+        let cwd = cli_agent_action_cwd(cwd, None);
         let _ = self.launch_cli_agent_in_new_tab(command, cwd, ctx);
     }
 
@@ -9361,8 +9375,8 @@ impl Workspace {
         let agent_session_seed =
             crate::agent_resume::agent_session_seed_from_restore_command(&command);
 
-        // Create a new tab pinned to the session's original directory (bypasses the
-        // user's working-directory setting, so `claude --resume`'s cwd-scoping holds).
+        // Create a new tab pinned to the action's resolved directory (bypasses the user's
+        // working-directory setting, so forks and transfers stay beside their source pane).
         let options = NewTerminalOptions::default()
             .with_initial_directory_opt(cwd.as_deref().map(PathBuf::from));
         self.add_tab_with_pane_layout(
@@ -17542,8 +17556,16 @@ impl Workspace {
                     });
                 }
             }
-            pane_group::Event::ForkCliAgentSession { terminal_view_id } => {
-                self.fork_cli_agent_session(&pane_group, *terminal_view_id, ctx);
+            pane_group::Event::ForkCliAgentSession {
+                terminal_view_id,
+                cwd,
+            } => {
+                self.fork_cli_agent_session(
+                    &pane_group,
+                    *terminal_view_id,
+                    cwd.clone(),
+                    ctx,
+                );
             }
             pane_group::Event::TransferCliAgentSession { command, cwd } => {
                 self.transfer_cli_agent_session(command.clone(), cwd.clone(), ctx);
