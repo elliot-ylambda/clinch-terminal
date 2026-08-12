@@ -4,6 +4,8 @@ use std::ops::RangeFrom;
 use get_size::GetSize;
 use string_offset::ByteOffset;
 
+use super::estimated_btree_heap_bytes;
+
 /// A structure that efficiently stores and retrieves the value of some grid
 /// attribute.
 ///
@@ -52,6 +54,12 @@ impl<A> AttributeMap<A> {
         } else {
             ByteOffset::zero()
         }
+    }
+
+    /// Returns a conservative estimate of heap storage without walking the
+    /// map. `BTreeMap::len` is maintained incrementally by the collection.
+    pub(super) fn estimated_heap_usage_bytes(&self) -> usize {
+        estimated_btree_heap_bytes::<ByteOffset, A>(self.map.len())
     }
 }
 

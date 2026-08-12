@@ -42,6 +42,20 @@ use crate::model::{ansi, Point};
 
 const DEFAULT_FG_COLOR: ansi::Color = ansi::Color::Named(ansi::NamedColor::Foreground);
 
+/// Conservative per-entry allowance for allocator and `BTreeMap` node
+/// bookkeeping. Keeping this separate from the inline key/value sizes makes
+/// the estimate cheap while ensuring style-dense output is charged for the
+/// nodes that actually dominate its footprint.
+const BTREE_ENTRY_OVERHEAD_BYTES: usize = 32;
+
+fn estimated_btree_heap_bytes<K, V>(len: usize) -> usize {
+    len.saturating_mul(
+        std::mem::size_of::<K>()
+            .saturating_add(std::mem::size_of::<V>())
+            .saturating_add(BTREE_ENTRY_OVERHEAD_BYTES),
+    )
+}
+
 /// A grid storage implementation that stores content in a flat buffer.
 #[derive(Debug, Clone, GetSize)]
 pub struct FlatStorage {
@@ -307,10 +321,11 @@ impl FlatStorage {
         self.max_rows
     }
 
-    /// Sets the maximum number of rows that can be stored.
-    #[cfg(any(test, feature = "test-util"))]
+    /// Sets the maximum number of rows that can be stored and immediately
+    /// applies the new limit to existing content.
     pub fn set_max_rows(&mut self, max_rows: Option<usize>) {
         self.max_rows = max_rows;
+        self.apply_max_rows();
     }
 
     /// Returns the number of rows that were truncated due to exceeding the
@@ -329,9 +344,19 @@ impl FlatStorage {
         &self.content
     }
 
-    /// Returns an estimate of the structure's total memory usage, in bytes.
+    /// Returns a conservative, constant-time estimate of the structure's total
+    /// memory usage, in bytes.
+    ///
+    /// Do not replace this with `GetSize::get_size`: that walks both style
+    /// maps, which can contain millions of entries for ANSI-dense output. This
+    /// estimate relies on counters already maintained by the backing
+    /// collections so it is cheap enough to enforce after every PTY chunk.
     pub fn estimated_memory_usage_bytes(&self) -> usize {
-        self.get_size()
+        std::mem::size_of::<Self>()
+            .saturating_add(self.content.estimated_heap_usage_bytes())
+            .saturating_add(self.index.estimated_heap_usage_bytes())
+            .saturating_add(self.fg_color_map.estimated_heap_usage_bytes())
+            .saturating_add(self.bg_and_style_map.estimated_heap_usage_bytes())
     }
 
     /// Returns the content [`ByteOffset`] for the given point.

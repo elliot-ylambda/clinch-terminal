@@ -69,11 +69,14 @@ pub(super) fn compute_block_size(initial_size: Vector2F, ctx: &mut AppContext) -
     let maximum_grid_size = *terminal_settings.maximum_grid_size.value();
     let maximum_retained_scrollback_rows =
         *terminal_settings.maximum_retained_scrollback_rows.value();
+    let maximum_retained_scrollback_bytes =
+        *terminal_settings.maximum_retained_scrollback_bytes.value();
     BlockSize {
         block_padding: terminal_spacing.block_padding,
         size: size_info,
         max_block_scroll_limit: maximum_grid_size,
         max_retained_scrollback_rows: maximum_retained_scrollback_rows,
+        max_retained_scrollback_bytes: maximum_retained_scrollback_bytes,
         warp_prompt_height_lines: WARP_PROMPT_HEIGHT_LINES,
     }
 }

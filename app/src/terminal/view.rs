@@ -3878,6 +3878,14 @@ impl TerminalView {
                     let mut model = me.model.lock();
                     model.update_max_retained_scrollback_rows(budget_rows);
                 }
+                TerminalSettingsChangedEvent::MaximumRetainedScrollbackBytes { .. } => {
+                    let budget_bytes = *terminal_settings
+                        .as_ref(ctx)
+                        .maximum_retained_scrollback_bytes
+                        .value();
+                    let mut model = me.model.lock();
+                    model.update_max_retained_scrollback_bytes(budget_bytes);
+                }
                 TerminalSettingsChangedEvent::Spacing { .. } => {
                     let appearance = Appearance::as_ref(ctx);
                     let terminal_spacing = terminal_settings
@@ -24696,8 +24704,7 @@ impl TerminalView {
             alt_screen_element = alt_screen_element.with_ligature_rendering();
         }
         if let Some(width_scale) = self.native_cli_agent_block_cursor_width_scale(app) {
-            alt_screen_element =
-                alt_screen_element.with_block_cursor_width_scale(width_scale);
+            alt_screen_element = alt_screen_element.with_block_cursor_width_scale(width_scale);
         }
         if self.should_hide_cli_agent_cursor_cell(app) {
             alt_screen_element = alt_screen_element.with_hide_cursor_cell();

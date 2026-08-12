@@ -40,6 +40,7 @@ pub fn block_size() -> BlockSize {
         // contents are not affected by retention policy.  Tests that exercise
         // reclamation set this explicitly.
         max_retained_scrollback_rows: 0,
+        max_retained_scrollback_bytes: 0,
         warp_prompt_height_lines: 0.6,
     }
 }

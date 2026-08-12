@@ -18,6 +18,15 @@ use crate::workspace::{Workspace, WorkspaceRegistry};
 /// trees so repeated closes cannot grow memory usage without limit.
 pub(crate) const MAX_RETAINED_CLOSED_ITEMS: usize = 25;
 
+fn exceeds_retention_limits(
+    item_count: usize,
+    retained_terminal_bytes: usize,
+    byte_budget: usize,
+) -> bool {
+    item_count > MAX_RETAINED_CLOSED_ITEMS
+        || (byte_budget > 0 && retained_terminal_bytes > byte_budget)
+}
+
 /// Data needed to restore a closed pane.
 pub(super) struct PaneData {
     /// The pane ID - content is retrieved from the pane group during restoration
@@ -40,6 +49,35 @@ pub enum ClosedItem {
 }
 
 impl ClosedItem {
+    /// Compacts terminal histories retained by this item and returns their
+    /// estimated grid memory. Closed terminals no longer receive PTY output,
+    /// so this value remains stable while the item stays in the stack.
+    fn compact_terminal_memory_for_retention(&self, ctx: &AppContext) -> usize {
+        match self {
+            ClosedItem::Window(data) => {
+                data.views_of_type::<PaneGroup>()
+                    .fold(0usize, |total, pane_group| {
+                        total.saturating_add(
+                            pane_group.compact_terminal_memory_for_retention(None, ctx),
+                        )
+                    })
+            }
+            ClosedItem::Tab { data, .. } => data
+                .pane_group
+                .as_ref(ctx)
+                .compact_terminal_memory_for_retention(None, ctx),
+            ClosedItem::Pane { data } => data
+                .pane_group
+                .upgrade(ctx)
+                .map(|pane_group| {
+                    pane_group
+                        .as_ref(ctx)
+                        .compact_terminal_memory_for_retention(Some(data.pane_id), ctx)
+                })
+                .unwrap_or(0),
+        }
+    }
+
     fn discard(self, ctx: &mut ModelContext<UndoCloseStack>) {
         let history_model = BlocklistAIHistoryModel::handle(ctx);
 
@@ -125,9 +163,15 @@ pub enum UndoCloseStackEvent {
     DiscardPane(PaneId),
 }
 
+struct RetainedClosedItem {
+    item: ClosedItem,
+    terminal_bytes: usize,
+}
+
 /// A stack of closed items which can be re-opened in LIFO order.
 pub struct UndoCloseStack {
-    stack: Vec<ClosedItem>,
+    stack: Vec<RetainedClosedItem>,
+    retained_terminal_bytes: usize,
 }
 
 impl UndoCloseStack {
@@ -139,6 +183,7 @@ impl UndoCloseStack {
 
         Self {
             stack: Default::default(),
+            retained_terminal_bytes: 0,
         }
     }
 
@@ -148,11 +193,16 @@ impl UndoCloseStack {
         self.stack.is_empty()
     }
 
+    /// Estimated terminal-grid memory retained by closed items.
+    pub(crate) fn retained_terminal_bytes(&self) -> usize {
+        self.retained_terminal_bytes
+    }
+
     /// Returns true only if the pane group is present in the undo close stack as part of a closed tab.
     pub fn is_pane_group_tab_in_stack(&self, pane_group_id: EntityId) -> bool {
         self.stack
             .iter()
-            .any(|closed_item| matches!(closed_item, ClosedItem::Tab { data, .. } if data.pane_group.id() == pane_group_id))
+            .any(|retained| matches!(&retained.item, ClosedItem::Tab { data, .. } if data.pane_group.id() == pane_group_id))
     }
 
     /// Discards a pane group from the undo close stack early.
@@ -161,19 +211,19 @@ impl UndoCloseStack {
         pane_group_id: EntityId,
         ctx: &mut ModelContext<Self>,
     ) {
-        if let Some(pos) = self.stack.iter().position(|closed_item| match closed_item {
+        if let Some(pos) = self.stack.iter().position(|retained| match &retained.item {
             ClosedItem::Tab { data, .. } => data.pane_group.id() == pane_group_id,
             ClosedItem::Pane { data } => data.pane_group.id() == pane_group_id,
             _ => false,
         }) {
-            self.stack.remove(pos).discard(ctx);
+            self.remove_and_discard(pos, ctx);
         }
     }
 
     /// Handles a window being closed, adding the necessary data to the undo
     /// stack.
     pub fn handle_window_closed(&mut self, data: ClosedWindowData, ctx: &mut ModelContext<Self>) {
-        self.push_item(ClosedItem::Window(Box::new(data)), ctx);
+        self.push_item(ClosedItem::Window(Box::new(data)), None, ctx);
     }
 
     /// Handles a tab being closed, adding the necessary data to the undo
@@ -191,6 +241,7 @@ impl UndoCloseStack {
                 tab_index,
                 data,
             },
+            None,
             ctx,
         );
     }
@@ -200,6 +251,7 @@ impl UndoCloseStack {
         &mut self,
         pane_group: WeakViewHandle<PaneGroup>,
         pane_id: PaneId,
+        terminal_bytes: usize,
         ctx: &mut ModelContext<Self>,
     ) {
         let pane_data = PaneData {
@@ -207,7 +259,14 @@ impl UndoCloseStack {
             pane_group,
         };
 
-        self.push_item(ClosedItem::Pane { data: pane_data }, ctx);
+        // The owning PaneGroup computes this value before updating the stack.
+        // Re-resolving the group from here would attempt to borrow the same
+        // live view while its close handler already holds a mutable borrow.
+        self.push_item(
+            ClosedItem::Pane { data: pane_data },
+            Some(terminal_bytes),
+            ctx,
+        );
     }
 
     /// Undoes the last close action in the stack, if possible.
@@ -215,7 +274,7 @@ impl UndoCloseStack {
         // A retained item's owner can disappear independently (for example,
         // its project may be closed later). Skip stale entries so one cannot
         // make the shortcut appear to do nothing while older entries remain.
-        while let Some(closed_item) = self.stack.pop() {
+        while let Some(closed_item) = self.pop_item() {
             match closed_item {
                 ClosedItem::Window(data) => {
                     send_telemetry_from_app_ctx!(
@@ -325,27 +384,86 @@ impl UndoCloseStack {
             UndoCloseSettingsChangedEvent::UndoCloseEnabled { .. } => {
                 let settings = UndoCloseSettings::as_ref(ctx);
                 if !*settings.enabled {
-                    for closed_item in self.stack.drain(..) {
-                        closed_item.discard(ctx);
+                    self.retained_terminal_bytes = 0;
+                    for retained in self.stack.drain(..) {
+                        retained.item.discard(ctx);
                     }
                 }
             }
             UndoCloseSettingsChangedEvent::UndoCloseGracePeriod { .. } => {}
+            UndoCloseSettingsChangedEvent::UndoCloseMaximumRetainedTerminalBytes { .. } => {
+                self.trim_to_limits(ctx);
+            }
         }
     }
 
     /// Pushes a new item onto the stack.
-    fn push_item(&mut self, closed_item: ClosedItem, ctx: &mut ModelContext<Self>) {
-        let settings = UndoCloseSettings::as_ref(ctx);
-        if !*settings.enabled {
+    fn push_item(
+        &mut self,
+        closed_item: ClosedItem,
+        precomputed_terminal_bytes: Option<usize>,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        let (enabled, byte_budget) = {
+            let settings = UndoCloseSettings::as_ref(ctx);
+            (*settings.enabled, *settings.maximum_retained_terminal_bytes)
+        };
+        if !enabled {
             closed_item.discard(ctx);
             return;
         }
 
-        while self.stack.len() >= MAX_RETAINED_CLOSED_ITEMS {
-            self.stack.remove(0).discard(ctx);
+        let terminal_bytes = precomputed_terminal_bytes
+            .unwrap_or_else(|| closed_item.compact_terminal_memory_for_retention(ctx));
+        if byte_budget > 0 && terminal_bytes > byte_budget {
+            log::info!(
+                "Discarding closed session that retains {terminal_bytes} estimated terminal bytes; \
+                 Undo Close budget is {byte_budget} bytes"
+            );
+            closed_item.discard(ctx);
+            return;
         }
-        self.stack.push(closed_item);
+
+        while !self.stack.is_empty()
+            && exceeds_retention_limits(
+                self.stack.len().saturating_add(1),
+                self.retained_terminal_bytes.saturating_add(terminal_bytes),
+                byte_budget,
+            )
+        {
+            self.remove_and_discard(0, ctx);
+        }
+
+        self.retained_terminal_bytes = self.retained_terminal_bytes.saturating_add(terminal_bytes);
+        self.stack.push(RetainedClosedItem {
+            item: closed_item,
+            terminal_bytes,
+        });
+    }
+
+    fn pop_item(&mut self) -> Option<ClosedItem> {
+        let retained = self.stack.pop()?;
+        self.retained_terminal_bytes = self
+            .retained_terminal_bytes
+            .saturating_sub(retained.terminal_bytes);
+        Some(retained.item)
+    }
+
+    fn remove_and_discard(&mut self, index: usize, ctx: &mut ModelContext<Self>) {
+        let retained = self.stack.remove(index);
+        self.retained_terminal_bytes = self
+            .retained_terminal_bytes
+            .saturating_sub(retained.terminal_bytes);
+        retained.item.discard(ctx);
+    }
+
+    fn trim_to_limits(&mut self, ctx: &mut ModelContext<Self>) {
+        let byte_budget = *UndoCloseSettings::as_ref(ctx).maximum_retained_terminal_bytes;
+        while !self.stack.is_empty()
+            && exceeds_retention_limits(self.stack.len(), self.retained_terminal_bytes, byte_budget)
+        {
+            self.remove_and_discard(0, ctx);
+        }
     }
 }
 
@@ -385,3 +503,19 @@ impl Entity for UndoCloseStack {
 }
 
 impl SingletonEntity for UndoCloseStack {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn undo_close_retention_is_bounded_by_items_and_terminal_bytes() {
+        assert!(!exceeds_retention_limits(25, 256, 256));
+        assert!(exceeds_retention_limits(26, 1, 256));
+        assert!(exceeds_retention_limits(2, 257, 256));
+        assert!(
+            !exceeds_retention_limits(2, usize::MAX, 0),
+            "a zero byte budget explicitly disables only the byte limit"
+        );
+    }
+}

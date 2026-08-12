@@ -1142,6 +1142,31 @@ impl PaneGroup {
         })
     }
 
+    /// Enforces terminal retention limits for the selected pane (or every
+    /// terminal pane in this group) and returns their estimated grid memory.
+    /// This is used before a hidden view tree enters Undo Close so detached
+    /// terminals cannot silently retain an oversized history.
+    pub(crate) fn compact_terminal_memory_for_retention(
+        &self,
+        pane_id: Option<PaneId>,
+        ctx: &AppContext,
+    ) -> usize {
+        self.pane_contents
+            .iter()
+            .filter(|(id, _)| pane_id.is_none_or(|target| **id == target))
+            .filter_map(|(_, pane)| pane.as_any().downcast_ref::<TerminalPane>())
+            .fold(0usize, |total, terminal_pane| {
+                terminal_pane
+                    .terminal_managers(ctx)
+                    .into_iter()
+                    .fold(total, |total, manager| {
+                        let model = manager.as_ref(ctx).model();
+                        let retained_bytes = model.lock().compact_for_retention();
+                        total.saturating_add(retained_bytes)
+                    })
+            })
+    }
+
     /// Returns true if this pane group contains any terminal panes.
     pub fn has_terminal_panes(&self) -> bool {
         self.pane_contents
@@ -4814,9 +4839,10 @@ impl PaneGroup {
                 let pane = pane_data.as_pane();
                 pane.detach(self, DetachType::HiddenForClose, ctx);
 
+                let terminal_bytes = self.compact_terminal_memory_for_retention(Some(pane_id), ctx);
                 let pane_group_handle = ctx.handle();
                 UndoCloseStack::handle(ctx).update(ctx, |stack, ctx| {
-                    stack.handle_pane_closed_by_id(pane_group_handle, pane_id, ctx);
+                    stack.handle_pane_closed_by_id(pane_group_handle, pane_id, terminal_bytes, ctx);
                 });
                 self.hide_closed_pane(pane_id, ctx);
             }

@@ -1926,12 +1926,11 @@ impl AgentInputFooter {
                     ChildView::new(&self.update_instructions_button).finish()
                 }
             };
-            let chip_with_dismiss = Flex::row()
+            Flex::row()
                 .with_cross_axis_alignment(CrossAxisAlignment::Center)
                 .with_child(chip)
                 .with_child(ChildView::new(&self.dismiss_plugin_chip_button).finish())
-                .finish();
-            chip_with_dismiss
+                .finish()
         });
 
         // Product-owned session actions form a stable leading cluster even if an older saved

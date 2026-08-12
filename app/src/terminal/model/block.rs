@@ -606,6 +606,9 @@ pub struct BlockSize {
     /// Total output rows retained across a pane's blocks before the oldest are
     /// released. Zero disables reclamation.
     pub max_retained_scrollback_rows: usize,
+    /// Approximate bytes retained by output scrollback across a pane's blocks.
+    /// Unlike the row target, this is a hard ceiling. Zero disables it.
+    pub max_retained_scrollback_bytes: usize,
     pub warp_prompt_height_lines: f32,
 }
 
@@ -2934,14 +2937,72 @@ impl Block {
         excess_rows
     }
 
+    /// Releases the oldest output rows until flat storage fits within
+    /// `max_bytes`, while retaining up to `minimum_rows_to_keep` when the
+    /// budget permits. Returns the number of rows released.
+    pub fn release_output_scrollback_to_memory_budget(
+        &mut self,
+        max_bytes: usize,
+        minimum_rows_to_keep: usize,
+    ) -> usize {
+        let flat_storage = &mut self.output_grid.grid_handler_mut().flat_storage;
+        let initial_rows = flat_storage.total_rows();
+
+        while flat_storage.estimated_memory_usage_bytes() > max_bytes
+            && flat_storage.total_rows() > minimum_rows_to_keep
+        {
+            let rows = flat_storage.total_rows();
+            let removable_rows = rows.saturating_sub(minimum_rows_to_keep);
+            let retained_bytes = flat_storage.estimated_memory_usage_bytes();
+            let excess_bytes = retained_bytes.saturating_sub(max_bytes);
+            let estimated_bytes_per_row = retained_bytes.div_ceil(rows).max(1);
+            let rows_to_release = excess_bytes
+                .div_ceil(estimated_bytes_per_row)
+                .clamp(1, removable_rows);
+            flat_storage.truncate_rows_front(rows_to_release);
+        }
+
+        let released_rows = initial_rows.saturating_sub(flat_storage.total_rows());
+        if released_rows > 0 {
+            flat_storage.shrink_to_fit();
+        }
+        released_rows
+    }
+
     /// The number of output rows currently retained in flat storage.
     ///
     /// This is a length lookup, cheap enough for the retention sweep to call on
-    /// every block.  Note that [`Self::estimated_memory_usage_bytes`] is *not*:
-    /// it walks the style interval maps, which for heavily-coloured output can
-    /// hold an entry per character.
+    /// every block. Byte-based reclamation uses the separate constant-time
+    /// [`Self::retained_output_memory_bytes`] estimate.
     pub fn retained_output_rows(&self) -> usize {
         self.output_grid.flat_storage_lines()
+    }
+
+    /// Constant-time estimate of output scrollback retained by this block.
+    pub fn retained_output_memory_bytes(&self) -> usize {
+        self.output_grid.flat_storage_bytes()
+    }
+
+    /// Applies a new per-grid row limit to already-created grids. Returns the
+    /// number of rows released across all of the block's grids.
+    pub fn update_max_grid_rows(&mut self, max_rows: usize) -> usize {
+        let rows_before = self.flat_storage_lines();
+        for grid in self.all_grids_iter_mut() {
+            let flat_storage = &mut grid.grid_handler_mut().flat_storage;
+            let grid_rows_before = flat_storage.total_rows();
+            flat_storage.set_max_rows(Some(max_rows));
+            if flat_storage.total_rows() < grid_rows_before {
+                flat_storage.shrink_to_fit();
+            }
+        }
+        rows_before.saturating_sub(self.flat_storage_lines())
+    }
+
+    /// Estimates memory retained by this block's visible grids and flat
+    /// scrollback. This is used to budget closed terminal trees.
+    pub fn estimated_terminal_memory_usage_bytes(&self) -> usize {
+        self.estimated_memory_usage_bytes()
+            .saturating_add(self.flat_storage_bytes())
     }
 
     /// Releases capacity that the block's grids reserved but are not using.

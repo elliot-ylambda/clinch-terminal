@@ -60,17 +60,14 @@ use crate::terminal::{BlockPadding, ShellHost, SizeInfo, SizeUpdate};
 const RESTORED_BLOCK_SEPARATOR_HEIGHT: f64 = 1.5;
 pub(in crate::terminal) const INLINE_BANNER_HEIGHT: f64 = 2.5;
 
-/// How many of the most recent blocks are exempt from output reclamation.
+/// How many of the most recent blocks are exempt from the soft row-based
+/// output reclamation pass.
 ///
 /// These are the blocks a user is realistically still reading or scrolling
 /// through, and they are cheap to keep: reclamation only becomes worthwhile
 /// on panes that have accumulated far more history than this.
 ///
-/// Because these blocks are exempt, the budget is a target rather than a hard
-/// ceiling: a pane whose protected blocks alone exceed it will reclaim
-/// everything it is allowed to and still sit above the limit.  In practice
-/// that needs 50 consecutive blocks near `maximum_grid_size`, which is far
-/// outside normal use — and even then growth is bounded, which is the point.
+/// The hard byte-based pass is allowed to reclaim these blocks when required.
 const RECENT_BLOCKS_PROTECTED_FROM_RECLAIM: usize = 50;
 
 /// How many rows of output a reclaimed block keeps.
@@ -274,6 +271,10 @@ pub struct BlockList {
     /// only bounds an individual block: without it, a pane's footprint grows
     /// without limit as blocks accumulate, however small each one is.
     max_retained_scrollback_rows: usize,
+
+    /// Hard, approximate byte ceiling for flat output storage across this
+    /// pane. Zero disables byte-based reclamation.
+    max_retained_scrollback_bytes: usize,
 
     /// The event proxy that proxies terminal events (such as wakeups) to the view.
     event_proxy: ChannelEventListener,
@@ -656,6 +657,7 @@ impl BlockList {
             next_gap_height_in_lines: None,
             max_grid_size_limit: sizes.max_block_scroll_limit,
             max_retained_scrollback_rows: sizes.max_retained_scrollback_rows,
+            max_retained_scrollback_bytes: sizes.max_retained_scrollback_bytes,
             event_proxy: event_proxy.clone(),
             selection: None,
             smart_select_override: None,
@@ -864,12 +866,31 @@ impl BlockList {
 
     pub fn update_max_grid_size(&mut self, new_size: usize) {
         self.max_grid_size_limit = new_size;
+        let mut truncated_any_output = false;
+        for index in 0..self.blocks.len() {
+            let released_rows = self.blocks[index].update_max_grid_rows(new_size);
+            if released_rows > 0 {
+                truncated_any_output = true;
+                self.update_block_height_at_idx(BlockIndex(index));
+            }
+        }
+        if truncated_any_output {
+            // A selection can point into any block whose existing limit was
+            // lowered, so retaining it would leave dangling grid positions.
+            self.clear_selection();
+        }
     }
 
     /// Applies a new retention budget and immediately enforces it, so lowering
     /// the setting takes effect without waiting for the next command.
     pub fn update_max_retained_scrollback_rows(&mut self, new_budget: usize) {
         self.max_retained_scrollback_rows = new_budget;
+        self.reclaim_output_to_budget();
+    }
+
+    /// Applies a new hard memory ceiling and immediately enforces it.
+    pub fn update_max_retained_scrollback_bytes(&mut self, new_budget: usize) {
+        self.max_retained_scrollback_bytes = new_budget;
         self.reclaim_output_to_budget();
     }
 
@@ -2819,6 +2840,7 @@ impl BlockList {
             size: self.size,
             max_block_scroll_limit: self.max_grid_size_limit,
             max_retained_scrollback_rows: self.max_retained_scrollback_rows,
+            max_retained_scrollback_bytes: self.max_retained_scrollback_bytes,
             warp_prompt_height_lines: self.warp_prompt_height_lines,
         }
     }
@@ -3121,15 +3143,14 @@ impl BlockList {
             self.bootstrap_stage = next_bootstrap_stage;
         }
 
-        // A block has just been finished and a fresh one created, so the list
-        // is stable here and the newly-created active block is last.  This is
-        // the only place retention is enforced: once per command, rather than
-        // per chunk of output.
+        // A block has just been finished and a fresh one created, so enforce
+        // both retention policies at this stable boundary. The hard byte
+        // ceiling is also enforced after each PTY chunk while output streams.
         self.reclaim_output_to_budget();
     }
 
-    /// Releases retained output from the oldest blocks until this pane is back
-    /// within [`Self::max_retained_scrollback_rows`].
+    /// Releases retained output until this pane is within its row target and
+    /// hard memory ceiling.
     ///
     /// Blocks are never removed from the list.  `BlockIndex` is a positional
     /// index into `self.blocks` that the blocklist, selection and find all
@@ -3139,79 +3160,147 @@ impl BlockList {
     /// code, timestamps and working directory, and reports its dropped rows
     /// through the existing truncated-output affordance.
     ///
-    /// The budget is counted in rows rather than bytes deliberately.  Row
-    /// counts are a length lookup, so this stays cheap enough to run after
-    /// every command; `estimated_memory_usage_bytes` walks the style interval
-    /// maps, which for heavily-coloured output (an agent TUI, say) can hold an
-    /// entry per character.
+    /// The row target preserves recent blocks and is intended to keep useful
+    /// history. The byte ceiling is deliberately stricter: it can reclaim
+    /// recent and unfinished blocks, because ANSI-dense output can hold a style
+    /// entry per character while remaining well below the row target.
+    /// `retained_output_memory_bytes` is constant-time, so this method is cheap
+    /// enough to run after every PTY chunk.
     fn reclaim_output_to_budget(&mut self) {
-        // A budget of zero disables reclamation entirely.
-        let budget = self.max_retained_scrollback_rows;
-        if budget == 0 {
-            return;
-        }
-
-        // An in-progress selection is anchored to points that releasing rows
-        // would invalidate.  Selections are transient, so it costs nothing to
-        // wait: reclamation runs again after the next command.
-        if self.selection.is_some() {
-            return;
-        }
-
-        let mut retained: usize = self
+        let mut retained_rows: usize = self
             .blocks
             .iter()
             .map(|block| block.retained_output_rows())
             .sum();
-        if retained <= budget {
-            return;
-        }
-
-        // Never touch the most recent blocks: they are what the user is
-        // looking at, and they are the likeliest to be scrolled back through.
-        // This also protects the active block, which is always last.
-        let protected_from = self
-            .blocks
-            .len()
-            .saturating_sub(RECENT_BLOCKS_PROTECTED_FROM_RECLAIM);
-
-        // Choose the blocks first, so the releasing pass can refresh block
-        // heights by index without holding a mutable borrow of the list.
-        let mut to_reclaim = Vec::new();
-        for (index, block) in self.blocks[..protected_from].iter().enumerate() {
-            if retained <= budget {
-                break;
-            }
-            // Skip blocks that are still producing output, and ones that are
-            // already down to their tail.
-            let rows = block.retained_output_rows();
-            if !block.finished() || rows <= RECLAIMED_BLOCK_ROWS_KEPT {
-                continue;
-            }
-
-            retained = retained.saturating_sub(rows - RECLAIMED_BLOCK_ROWS_KEPT);
-            to_reclaim.push(index);
-        }
-
-        if to_reclaim.is_empty() {
-            return;
-        }
-
         let mut released_rows = 0usize;
-        for index in &to_reclaim {
-            released_rows +=
-                self.blocks[*index].release_output_scrollback(RECLAIMED_BLOCK_ROWS_KEPT);
-            // A block's rendered height follows its row count, and the height
-            // SumTree is what positions every block below it.  Without this
-            // the blocklist would scroll to the wrong place after reclaiming.
-            self.update_block_height_at_idx(BlockIndex(*index));
+        let mut reclaimed_blocks = 0usize;
+
+        // First apply the soft row target. An in-progress selection is anchored
+        // to grid positions, so defer only this preference-based pass while a
+        // selection exists. The hard byte pass below is never deferred.
+        let row_budget = self.max_retained_scrollback_rows;
+        if row_budget > 0 && retained_rows > row_budget && self.selection.is_none() {
+            let protected_from = self
+                .blocks
+                .len()
+                .saturating_sub(RECENT_BLOCKS_PROTECTED_FROM_RECLAIM);
+
+            for index in 0..protected_from {
+                if retained_rows <= row_budget {
+                    break;
+                }
+                let rows = self.blocks[index].retained_output_rows();
+                if !self.blocks[index].finished() || rows <= RECLAIMED_BLOCK_ROWS_KEPT {
+                    continue;
+                }
+
+                let released =
+                    self.blocks[index].release_output_scrollback(RECLAIMED_BLOCK_ROWS_KEPT);
+                if released > 0 {
+                    retained_rows = retained_rows.saturating_sub(released);
+                    released_rows = released_rows.saturating_add(released);
+                    reclaimed_blocks += 1;
+                    self.update_block_height_at_idx(BlockIndex(index));
+                }
+            }
         }
 
-        log::info!(
-            "Reclaimed {released_rows} rows of output from {} block(s); \
-             pane now retains {retained} rows (budget {budget})",
-            to_reclaim.len()
-        );
+        let byte_budget = self.max_retained_scrollback_bytes;
+        let mut retained_bytes = self.retained_output_memory_bytes();
+        if byte_budget > 0 && retained_bytes > byte_budget {
+            // Unlike the soft row target, memory safety cannot wait for a
+            // selection to end. Clear it before invalidating any anchors.
+            if self.selection.is_some() {
+                self.clear_selection();
+            }
+
+            // Prefer preserving the useful tail of finished blocks, including
+            // recent ones. This is where the previous policy stopped.
+            for index in 0..self.blocks.len() {
+                if retained_bytes <= byte_budget {
+                    break;
+                }
+                if !self.blocks[index].finished()
+                    || self.blocks[index].retained_output_rows() <= RECLAIMED_BLOCK_ROWS_KEPT
+                {
+                    continue;
+                }
+
+                let block_bytes = self.blocks[index].retained_output_memory_bytes();
+                let other_bytes = retained_bytes.saturating_sub(block_bytes);
+                let block_budget = byte_budget.saturating_sub(other_bytes);
+                let released = self.blocks[index].release_output_scrollback_to_memory_budget(
+                    block_budget,
+                    RECLAIMED_BLOCK_ROWS_KEPT,
+                );
+                if released > 0 {
+                    retained_rows = retained_rows.saturating_sub(released);
+                    released_rows = released_rows.saturating_add(released);
+                    reclaimed_blocks += 1;
+                    retained_bytes = other_bytes
+                        .saturating_add(self.blocks[index].retained_output_memory_bytes());
+                    self.update_block_height_at_idx(BlockIndex(index));
+                }
+            }
+
+            // If keeping every tail still exceeds the ceiling, reclaim from
+            // the oldest blocks all the way through the active block. Visible
+            // grid rows remain intact; only scrollback is released.
+            for index in 0..self.blocks.len() {
+                if retained_bytes <= byte_budget {
+                    break;
+                }
+                if self.blocks[index].retained_output_rows() == 0 {
+                    continue;
+                }
+
+                let block_bytes = self.blocks[index].retained_output_memory_bytes();
+                let other_bytes = retained_bytes.saturating_sub(block_bytes);
+                let block_budget = byte_budget.saturating_sub(other_bytes);
+                let released =
+                    self.blocks[index].release_output_scrollback_to_memory_budget(block_budget, 0);
+                if released > 0 {
+                    retained_rows = retained_rows.saturating_sub(released);
+                    released_rows = released_rows.saturating_add(released);
+                    reclaimed_blocks += 1;
+                    retained_bytes = other_bytes
+                        .saturating_add(self.blocks[index].retained_output_memory_bytes());
+                    self.update_block_height_at_idx(BlockIndex(index));
+                }
+            }
+        }
+
+        if released_rows > 0 {
+            log::info!(
+                "Reclaimed {released_rows} rows of output from {reclaimed_blocks} pass(es); \
+                 pane now retains {retained_rows} rows and {retained_bytes} estimated bytes \
+                 (budgets: {row_budget} rows, {byte_budget} bytes)"
+            );
+        }
+    }
+
+    /// Constant-time-per-block estimate of flat output retained by this pane.
+    pub fn retained_output_memory_bytes(&self) -> usize {
+        self.blocks.iter().fold(0usize, |total, block| {
+            total.saturating_add(block.retained_output_memory_bytes())
+        })
+    }
+
+    /// Estimates terminal-grid memory retained by this pane, including visible
+    /// grids and flat scrollback.
+    pub fn estimated_terminal_memory_usage_bytes(&self) -> usize {
+        self.blocks.iter().fold(0usize, |total, block| {
+            total.saturating_add(block.estimated_terminal_memory_usage_bytes())
+        })
+    }
+
+    /// Enforces retention limits and releases spare row capacity before a
+    /// terminal tree is stored in Undo Close.
+    pub fn compact_for_retention(&mut self) {
+        self.reclaim_output_to_budget();
+        for block in &mut self.blocks {
+            block.shrink_finished_grids_to_fit();
+        }
     }
 
     /// Sends the `AfterBlockCompleted` event to the view.
@@ -3962,6 +4051,11 @@ impl ansi::Handler for BlockList {
         // at the end of a chunk instead of incrementally to improve performance.
         self.update_active_block_height();
         self.update_background_block_height();
+
+        // Enforce the hard byte ceiling while output is streaming. The memory
+        // estimator is constant-time per block, so ANSI-dense or never-ending
+        // commands cannot grow until the next prompt before being reclaimed.
+        self.reclaim_output_to_budget();
     }
 
     fn on_reset_grid(&mut self) {

@@ -2420,6 +2420,19 @@ fn block_list_with_tiny_retention_budget() -> BlockList {
     )
 }
 
+fn block_list_with_memory_budget(byte_budget: usize, columns: usize) -> BlockList {
+    let block_sizes = BlockSize {
+        size: SizeInfo::new_without_font_metrics(10, columns),
+        max_retained_scrollback_bytes: byte_budget,
+        ..test_utils::block_size()
+    };
+    new_bootstrapped_block_list(
+        Some(block_sizes),
+        None,
+        ChannelEventListener::new_for_test(),
+    )
+}
+
 /// The indices of blocks that have had output released.
 ///
 /// Assertions go through this rather than fixed positions because the list
@@ -2496,6 +2509,66 @@ fn test_reclaim_protects_the_most_recent_blocks() {
 }
 
 #[test]
+fn test_hard_memory_budget_reclaims_with_fewer_than_fifty_blocks() {
+    let byte_budget = 64 * 1024;
+    let mut block_list = block_list_with_memory_budget(byte_budget, 80);
+    let output = long_output();
+
+    // The former policy protected all of these blocks because the pane had
+    // fewer than 50. A hard byte ceiling must override that preference.
+    for i in 0..10 {
+        insert_block(&mut block_list, &format!("command {i}"), &output);
+    }
+
+    assert!(
+        !reclaimed_block_indices(&block_list).is_empty(),
+        "recent blocks should be reclaimable under hard memory pressure"
+    );
+    assert!(
+        block_list.retained_output_memory_bytes() <= byte_budget,
+        "pane should fit the hard byte ceiling"
+    );
+}
+
+#[test]
+fn test_hard_memory_budget_reclaims_style_dense_active_output_while_streaming() {
+    let byte_budget = 64 * 1024;
+    let columns = 200;
+    let mut block_list = block_list_with_memory_budget(byte_budget, columns);
+    block_list.start_active_block();
+    block_list.preexec(Default::default());
+
+    let mut output = String::new();
+    for _ in 0..150 {
+        for column in 0..columns {
+            output.push_str(if column % 2 == 0 {
+                "\x1b[31mx"
+            } else {
+                "\x1b[32mx"
+            });
+        }
+        output.push_str("\r\n");
+    }
+
+    let mut processor = Processor::new();
+    processor.parse_bytes(&mut block_list, output.as_bytes(), &mut std::io::sink());
+
+    assert!(
+        block_list
+            .active_block()
+            .output_grid()
+            .grid_handler()
+            .num_lines_truncated()
+            > 0,
+        "the unfinished active block should be truncated before command completion"
+    );
+    assert!(
+        block_list.retained_output_memory_bytes() <= byte_budget,
+        "ANSI-dense streaming output should fit the hard byte ceiling"
+    );
+}
+
+#[test]
 fn test_reclaim_is_disabled_by_a_zero_budget() {
     // `test_utils::block_size()` disables reclamation, which is also the
     // documented meaning of a zero budget in settings.
@@ -2564,4 +2637,26 @@ fn test_lowering_the_budget_reclaims_immediately() {
         !reclaimed_block_indices(&block_list).is_empty(),
         "lowering the budget should reclaim right away"
     );
+}
+
+#[test]
+fn test_lowering_per_block_row_limit_reclaims_existing_output_immediately() {
+    let mut block_list =
+        new_bootstrapped_block_list(None, None, ChannelEventListener::new_for_test());
+    let block_index = insert_block(&mut block_list, "large command", &long_output());
+    assert!(
+        block_list
+            .block_at(block_index)
+            .expect("block should exist")
+            .retained_output_rows()
+            > 10
+    );
+
+    block_list.update_max_grid_size(10);
+
+    let block = block_list
+        .block_at(block_index)
+        .expect("block should remain addressable");
+    assert!(block.retained_output_rows() <= 10);
+    assert!(block.output_grid().grid_handler().num_lines_truncated() > 0);
 }
