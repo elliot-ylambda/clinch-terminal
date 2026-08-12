@@ -1448,6 +1448,31 @@ impl TerminalModel {
             .update_max_retained_scrollback_rows(new_budget);
     }
 
+    pub fn update_max_retained_scrollback_bytes(&mut self, new_budget: usize) {
+        self.block_list_mut()
+            .update_max_retained_scrollback_bytes(new_budget);
+    }
+
+    /// Compacts retained output before this terminal model is hidden in Undo
+    /// Close and returns its estimated terminal-grid footprint.
+    pub fn compact_for_retention(&mut self) -> usize {
+        self.block_list_mut().compact_for_retention();
+        self.alt_screen
+            .grid_handler_mut()
+            .flat_storage
+            .shrink_to_fit();
+        self.estimated_terminal_memory_usage_bytes()
+    }
+
+    /// Estimates memory retained by the block list and alternate-screen grids.
+    pub fn estimated_terminal_memory_usage_bytes(&self) -> usize {
+        let alt_screen = self.alt_screen.grid_handler();
+        self.block_list()
+            .estimated_terminal_memory_usage_bytes()
+            .saturating_add(alt_screen.grid_storage().estimated_memory_usage_bytes())
+            .saturating_add(alt_screen.flat_storage.estimated_memory_usage_bytes())
+    }
+
     #[cfg(any(test, feature = "integration_tests"))]
     pub fn are_any_events_pending(&self) -> bool {
         self.event_proxy.are_any_events_pending()

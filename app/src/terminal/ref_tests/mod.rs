@@ -122,6 +122,7 @@ fn ref_test(dir: &Path) {
         // Reference tests compare full rendered output, so retention must not
         // release anything mid-test.
         max_retained_scrollback_rows: 0,
+        max_retained_scrollback_bytes: 0,
         warp_prompt_height_lines: 0.1,
     };
     let mut terminal = TerminalModel::new(

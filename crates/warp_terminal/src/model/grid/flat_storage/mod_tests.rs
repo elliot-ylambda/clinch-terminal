@@ -145,6 +145,49 @@ fn test_push_rows_with_color_and_multibyte_chars() {
 }
 
 #[test]
+fn test_memory_estimate_charges_style_dense_output_and_drops_after_truncation() {
+    let columns = 200;
+    let rows = (0..100)
+        .map(|_| {
+            let cells = (0..columns)
+                .map(|column| {
+                    let mut cell = Cell::default();
+                    cell.c = 'x';
+                    cell.fg = ansi::Color::Named(if column % 2 == 0 {
+                        ansi::NamedColor::Red
+                    } else {
+                        ansi::NamedColor::Green
+                    });
+                    cell
+                })
+                .collect();
+            Row::from_vec(cells, columns)
+        })
+        .collect_vec();
+
+    let mut styled = FlatStorage::new(columns, None, None);
+    styled.push_rows(&rows);
+    let styled_bytes = styled.estimated_memory_usage_bytes();
+
+    let plain_rows = "x".repeat(columns) + "\n";
+    let mut plain = FlatStorage::new(columns, None, None);
+    plain.push_rows_from_string(&plain_rows.repeat(rows.len()));
+    let plain_bytes = plain.estimated_memory_usage_bytes();
+
+    assert!(
+        styled_bytes > plain_bytes.saturating_mul(4),
+        "style transitions should be reflected in the estimate: styled={styled_bytes}, \
+         plain={plain_bytes}"
+    );
+
+    styled.truncate_rows_front(75);
+    assert!(
+        styled.estimated_memory_usage_bytes() < styled_bytes / 2,
+        "dropping styled rows should immediately lower the estimate"
+    );
+}
+
+#[test]
 fn test_row_roundtrip_and_resize() {
     let num_cols = 5;
     let rows = "😀😃😄ag\na😁😆~!!\n😅sdf😂\n".to_rows(num_cols);

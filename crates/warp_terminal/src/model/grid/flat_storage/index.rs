@@ -28,6 +28,7 @@ use get_size::GetSize;
 use string_offset::ByteOffset;
 use thiserror::Error;
 
+use super::estimated_btree_heap_bytes;
 use super::grapheme::Grapheme;
 use crate::model::grid::CellType;
 use crate::model::Point;
@@ -46,6 +47,10 @@ pub struct Index {
     /// Each entry in the map is a row, keyed by its start offset (so that the
     /// map is stable even if rows are dropped from the front).
     grapheme_sizing: BTreeMap<ByteOffset, GraphemeRuns>,
+
+    /// Constant-time accounting for the map entries and nested `Vec`
+    /// allocations in `grapheme_sizing`.
+    grapheme_sizing_heap_bytes: usize,
 }
 
 /// An entry in the row index.
@@ -92,6 +97,7 @@ impl Index {
             columns,
             content_len: 0,
             grapheme_sizing: Default::default(),
+            grapheme_sizing_heap_bytes: 0,
         }
     }
 
@@ -156,7 +162,10 @@ impl Index {
         // Truncate the index to the new length.
         self.rows.truncate(new_len);
         // Drop any grapheme sizing metadata for the truncated rows.
-        let _ = self.grapheme_sizing.split_off(&new_content_len);
+        let truncated_grapheme_sizing = self.grapheme_sizing.split_off(&new_content_len);
+        self.grapheme_sizing_heap_bytes = self
+            .grapheme_sizing_heap_bytes
+            .saturating_sub(grapheme_sizing_map_heap_bytes(&truncated_grapheme_sizing));
 
         self.content_len = new_content_len.as_usize();
 
@@ -181,7 +190,11 @@ impl Index {
         for _ in 0..count {
             self.rows.pop_front();
         }
-        self.grapheme_sizing = self.grapheme_sizing.split_off(&new_start_offset);
+        let mut removed_grapheme_sizing = std::mem::take(&mut self.grapheme_sizing);
+        self.grapheme_sizing = removed_grapheme_sizing.split_off(&new_start_offset);
+        self.grapheme_sizing_heap_bytes = self
+            .grapheme_sizing_heap_bytes
+            .saturating_sub(grapheme_sizing_map_heap_bytes(&removed_grapheme_sizing));
 
         new_start_offset
     }
@@ -207,6 +220,19 @@ impl Index {
     /// Returns the total number of rows in the index.
     pub fn len(&self) -> usize {
         self.rows.len()
+    }
+
+    /// Returns a conservative estimate of heap storage without walking any
+    /// retained rows or grapheme metadata.
+    pub(super) fn estimated_heap_usage_bytes(&self) -> usize {
+        // Charge live rows rather than reserved `VecDeque` slots. Reclamation
+        // calls `shrink_to_fit` after choosing how many rows to drop, so this
+        // reflects the post-reclamation footprint and lets each truncation
+        // step make forward progress.
+        self.rows
+            .len()
+            .saturating_mul(std::mem::size_of::<Entry>())
+            .saturating_add(self.grapheme_sizing_heap_bytes)
     }
 
     /// Returns the content [`ByteOffset`] for the given point.
@@ -624,9 +650,16 @@ impl EntryBuilder {
         } else if self.grapheme_runs.is_empty() {
             GraphemeSizing::EmptyRow
         } else {
-            index
-                .grapheme_sizing
-                .insert(content_offset, std::mem::take(&mut self.grapheme_runs));
+            let grapheme_runs = std::mem::take(&mut self.grapheme_runs);
+            let new_entry_bytes = grapheme_sizing_entry_heap_bytes(&grapheme_runs);
+            if let Some(replaced) = index.grapheme_sizing.insert(content_offset, grapheme_runs) {
+                index.grapheme_sizing_heap_bytes = index
+                    .grapheme_sizing_heap_bytes
+                    .saturating_sub(grapheme_sizing_entry_heap_bytes(&replaced));
+            }
+            index.grapheme_sizing_heap_bytes = index
+                .grapheme_sizing_heap_bytes
+                .saturating_add(new_entry_bytes);
             GraphemeSizing::NonUniform
         };
 
@@ -695,6 +728,25 @@ impl GetSize for GraphemeRun {}
 
 /// Type alias for a list of grapheme runs.
 type GraphemeRuns = Vec<GraphemeRun>;
+
+fn grapheme_sizing_entry_heap_bytes(runs: &GraphemeRuns) -> usize {
+    estimated_btree_heap_bytes::<ByteOffset, GraphemeRuns>(1).saturating_add(
+        runs.capacity()
+            .saturating_mul(std::mem::size_of::<GraphemeRun>()),
+    )
+}
+
+fn grapheme_sizing_map_heap_bytes(map: &BTreeMap<ByteOffset, GraphemeRuns>) -> usize {
+    map.values().fold(
+        estimated_btree_heap_bytes::<ByteOffset, GraphemeRuns>(map.len()),
+        |total, runs| {
+            total.saturating_add(
+                runs.capacity()
+                    .saturating_mul(std::mem::size_of::<GraphemeRun>()),
+            )
+        },
+    )
+}
 
 /// Information about sizing of graphemes in a single grid row.
 #[derive(Debug, Copy, Clone, PartialEq)]

@@ -4752,6 +4752,20 @@ pub struct ClosedWindowData {
     fullscreen_state: FullscreenState,
 }
 
+impl ClosedWindowData {
+    /// Returns retained views of type `T` in this closed window.
+    ///
+    /// Closed windows are removed from `AppContext::windows`, so the ordinary
+    /// `AppContext::views_of_type` lookup cannot see the view tree kept here
+    /// for reopening.
+    pub fn views_of_type<T: View>(&self) -> impl Iterator<Item = &T> {
+        self.window
+            .views
+            .values()
+            .filter_map(|view| view.as_any().downcast_ref::<T>())
+    }
+}
+
 impl AppContext {
     pub fn font_cache(&self) -> &fonts::Cache {
         fonts::Cache::as_ref(self)

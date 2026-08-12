@@ -14,6 +14,7 @@ use warpui::{App, AppContext, Entity, ModelContext, SingletonEntity};
 use crate::server::telemetry;
 use crate::system::memory_footprint;
 use crate::terminal::TerminalView;
+use crate::undo_close::UndoCloseStack;
 use crate::{send_telemetry_from_app_ctx, send_telemetry_sync_from_ctx, TelemetryEvent};
 
 /// The threshold at which we emit a memory usage warning.
@@ -227,10 +228,31 @@ impl SystemInfo {
         // Send a telemetry event indicating that memory usage is extreme.
         // Report RSS here to keep Rudderstack dashboards consistent.
         let total_application_usage_bytes = rss.as_u64();
+        let retained_open_terminal_bytes = ctx
+            .window_ids()
+            .collect_vec()
+            .into_iter()
+            .flat_map(|window_id| {
+                ctx.views_of_type::<TerminalView>(window_id)
+                    .unwrap_or_default()
+            })
+            .fold(0usize, |total, terminal_view| {
+                total.saturating_add(
+                    terminal_view
+                        .as_ref(ctx)
+                        .model
+                        .lock()
+                        .estimated_terminal_memory_usage_bytes(),
+                )
+            });
+        let retained_undo_close_terminal_bytes =
+            UndoCloseStack::as_ref(ctx).retained_terminal_bytes();
         send_telemetry_sync_from_ctx!(
             TelemetryEvent::MemoryUsageHigh {
                 total_application_usage_bytes,
                 memory_breakdown,
+                retained_open_terminal_bytes,
+                retained_undo_close_terminal_bytes,
             },
             ctx
         );

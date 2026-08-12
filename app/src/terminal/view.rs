@@ -3878,6 +3878,14 @@ impl TerminalView {
                     let mut model = me.model.lock();
                     model.update_max_retained_scrollback_rows(budget_rows);
                 }
+                TerminalSettingsChangedEvent::MaximumRetainedScrollbackBytes { .. } => {
+                    let budget_bytes = *terminal_settings
+                        .as_ref(ctx)
+                        .maximum_retained_scrollback_bytes
+                        .value();
+                    let mut model = me.model.lock();
+                    model.update_max_retained_scrollback_bytes(budget_bytes);
+                }
                 TerminalSettingsChangedEvent::Spacing { .. } => {
                     let appearance = Appearance::as_ref(ctx);
                     let terminal_spacing = terminal_settings

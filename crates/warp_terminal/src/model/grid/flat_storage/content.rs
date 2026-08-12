@@ -6,6 +6,7 @@ use std::ops::{Index, Range};
 use get_size::GetSize;
 use string_offset::ByteOffset;
 
+use super::estimated_btree_heap_bytes;
 use super::grapheme::Grapheme;
 use crate::model::char_or_str::CharOrStr;
 
@@ -119,6 +120,13 @@ impl Content {
     /// content stored.
     pub fn end_offset(&self) -> usize {
         self.active_chunk.start_offset.as_usize() + self.active_chunk.len()
+    }
+
+    /// Returns a conservative estimate of heap storage without walking the
+    /// chunk map. The active chunk is inline in `Content` and is therefore
+    /// accounted for by `size_of::<FlatStorage>()`.
+    pub(super) fn estimated_heap_usage_bytes(&self) -> usize {
+        estimated_btree_heap_bytes::<ByteOffset, Chunk>(self.filled_chunks.len())
     }
 }
 

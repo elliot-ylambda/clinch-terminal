@@ -2237,6 +2237,10 @@ pub enum TelemetryEvent {
         /// Platform-specific memory breakdown (JSON object with keys that
         /// vary by OS).  See `memory_footprint::memory_breakdown()`.
         memory_breakdown: serde_json::Value,
+        /// Estimated terminal-grid memory reachable from open windows.
+        retained_open_terminal_bytes: usize,
+        /// Estimated terminal-grid memory retained by Undo Close.
+        retained_undo_close_terminal_bytes: usize,
     },
     EnvVarCollectionInvoked(EnvVarTelemetryMetadata),
     EnvVarWorkflowParameterization(EnvVarTelemetryMetadata),
@@ -3813,9 +3817,13 @@ impl TelemetryEvent {
             TelemetryEvent::MemoryUsageHigh {
                 total_application_usage_bytes,
                 memory_breakdown,
+                retained_open_terminal_bytes,
+                retained_undo_close_terminal_bytes,
             } => Some(json!({
                 "total_application_usage_bytes": total_application_usage_bytes,
                 "memory_breakdown": memory_breakdown,
+                "retained_open_terminal_bytes": retained_open_terminal_bytes,
+                "retained_undo_close_terminal_bytes": retained_undo_close_terminal_bytes,
             })),
             TelemetryEvent::EnvVarCollectionInvoked(metadata) => Some(json!(metadata)),
             TelemetryEvent::EnvVarWorkflowParameterization(metadata) => Some(json!(metadata)),

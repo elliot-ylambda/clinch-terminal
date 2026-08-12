@@ -172,6 +172,18 @@ define_settings_group!(TerminalSettings, settings: [
                       the same \"output truncated\" marker used when a command exceeds the grid \
                       size. Set to 0 to retain output indefinitely.",
     },
+    maximum_retained_scrollback_bytes: MaximumRetainedScrollbackBytes {
+        type: usize,
+        default: 32 * 1024 * 1024,
+        supported_platforms: SupportedPlatforms::ALL,
+        sync_to_cloud: SyncToCloud::Globally(RespectUserSyncSetting::Yes),
+        private: false,
+        toml_path: "terminal.maximum_retained_scrollback_bytes",
+        description: "The approximate memory ceiling, in bytes, for terminal output retained in \
+                      a single pane. This limit applies even to recent and actively-running \
+                      blocks, preventing ANSI-dense output from evading the row-based limit. \
+                      Set to 0 to disable the memory ceiling.",
+    },
     alt_screen_padding: AltScreenPadding {
         type: AltScreenPaddingMode,
         default: AltScreenPaddingMode::default(),

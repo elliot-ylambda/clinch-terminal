@@ -19,8 +19,8 @@ use warpui::{
 #[cfg(not(target_family = "wasm"))]
 use super::local_harness_launch::{prepare_local_harness_child_launch, PreparedLocalHarnessLaunch};
 use super::{
-    DetachType, PaneConfiguration, PaneContent, PaneId, PaneStackEvent, PaneView, ShareableLink,
-    ShareableLinkError, TerminalPaneId,
+    DetachType, PaneConfiguration, PaneContent, PaneId, PaneStack, PaneStackEvent, PaneView,
+    ShareableLink, ShareableLinkError, TerminalPaneId,
 };
 use crate::ai::active_agent_views_model::ActiveAgentViewsModel;
 use crate::ai::agent::conversation::{AIConversationId, ConversationStatus};
@@ -111,11 +111,10 @@ pub struct TerminalPane {
 
     pane_configuration: ModelHandle<PaneConfiguration>,
 
-    /// Defining `terminal_manager` before `view` means that `terminal_manager`
-    /// gets dropped first (guaranteed by the language), which halts the event
-    /// loop and avoids possible deadlocks during session cleanup. This is enforced
-    /// by the `PaneStack`, since the terminal manager is the associated data for
-    /// the backing pane view.
+    /// Direct access to the stack allows retained closed windows to reach all
+    /// of their terminal managers without resolving the detached `PaneView`
+    /// through `AppContext`.
+    pane_stack: ModelHandle<PaneStack<TerminalView>>,
     view: ViewHandle<TerminalPaneView>,
 }
 
@@ -241,6 +240,7 @@ impl TerminalPane {
                 ctx,
             )
         });
+        let pane_stack = view.as_ref(ctx).pane_stack().clone();
 
         Self {
             model_event_sender,
@@ -248,6 +248,7 @@ impl TerminalPane {
             restored_local_cwd_fallback: RefCell::new(None),
             restart_spec: RefCell::new(None),
             pane_configuration,
+            pane_stack,
             view,
         }
     }
@@ -294,7 +295,20 @@ impl TerminalPane {
         &self,
         ctx: &AppContext,
     ) -> ModelHandle<Box<dyn TerminalManager>> {
-        self.view.as_ref(ctx).child_data(ctx).clone()
+        self.pane_stack.as_ref(ctx).active_data().clone()
+    }
+
+    /// Every manager retained in this pane's navigation stack.
+    pub(in crate::pane_group) fn terminal_managers(
+        &self,
+        ctx: &AppContext,
+    ) -> Vec<ModelHandle<Box<dyn TerminalManager>>> {
+        self.pane_stack
+            .as_ref(ctx)
+            .entries()
+            .iter()
+            .map(|(manager, _)| manager.clone())
+            .collect()
     }
 
     /// Instructs the SQLite thread to delete blocks for this session.

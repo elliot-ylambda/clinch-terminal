@@ -44,7 +44,7 @@ fn image_pane_close_button_position(
         .expect("presenter should be present")
         .borrow()
         .position_cache()
-        .get_position(&image_pane_id.position_id())
+        .get_position(image_pane_id.position_id())
         .expect("image pane should have a saved position");
 
     // The close button is the right-most 24px control in the 34px pane header.

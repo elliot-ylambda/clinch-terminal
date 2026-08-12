@@ -79,6 +79,7 @@ impl TerminalView {
             max_block_scroll_limit,
             // Reclamation off in view tests so rendered output is stable.
             max_retained_scrollback_rows: 0,
+            max_retained_scrollback_bytes: 0,
             warp_prompt_height_lines: WARP_PROMPT_HEIGHT_LINES,
         };
 
