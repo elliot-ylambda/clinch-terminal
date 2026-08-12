@@ -461,7 +461,7 @@ use crate::ui_components::color_dot::{render_color_dot, TAB_COLOR_OPTIONS};
 use crate::ui_components::icon_with_status::IconWithStatusVariant;
 use crate::ui_components::red_notification_dot::RedNotificationDot;
 use crate::ui_components::window_focus_dimming::WindowFocusDimming;
-use crate::ui_components::{blended_colors, icons};
+use crate::ui_components::{blended_colors, icons, CLINCH_LOGO_GREEN};
 use crate::undo_close::UndoCloseStack;
 #[cfg(target_family = "wasm")]
 use crate::uri::browser_url_handler::{parse_current_url, update_browser_url};
@@ -1373,7 +1373,7 @@ fn should_show_remote_control_button(has_backend: bool) -> bool {
 }
 
 #[cfg(not(target_family = "wasm"))]
-const REMOTE_CONTROL_DISCOVERY_LABEL: &str = "Try Remote Control";
+const REMOTE_CONTROL_DISCOVERY_LABEL: &str = "Remote Control";
 
 #[cfg(not(target_family = "wasm"))]
 #[derive(Debug, Eq, PartialEq)]
@@ -23305,19 +23305,30 @@ impl Workspace {
         #[cfg(not(feature = "local_fs"))]
         let presentation = remote_control_header_presentation(None);
 
-        let mut button = appearance
-            .ui_builder()
-            .button(
-                ButtonVariant::Basic,
-                self.mouse_states.remote_control_icon.clone(),
-            )
-            .with_style(UiComponentStyles {
-                font_size: Some(11.),
-                font_weight: Some(Weight::Semibold),
-                padding: Some(Coords::default().top(5.).bottom(5.).left(9.).right(9.)),
-                border_radius: Some(CornerRadius::with_all(Radius::Pixels(6.))),
-                ..UiComponentStyles::default()
-            });
+        let default_styles = UiComponentStyles {
+            width: Some(TAB_BAR_PILL_WIDTH),
+            font_color: Some(CLINCH_LOGO_GREEN.into()),
+            font_size: Some(PILL_FONT_SIZE),
+            font_weight: Some(Weight::Semibold),
+            padding: Some(Coords::default().top(4.).bottom(4.).left(9.).right(9.)),
+            border_color: Some(CLINCH_LOGO_GREEN.into()),
+            border_width: Some(1.),
+            border_radius: Some(CornerRadius::with_all(Radius::Percentage(50.))),
+            background: Some(ColorU::transparent_black().into()),
+            ..UiComponentStyles::default()
+        };
+        let interactive_styles = UiComponentStyles {
+            background: Some(coloru_with_opacity(CLINCH_LOGO_GREEN, 20).into()),
+            ..default_styles
+        };
+        let mut button = appearance.ui_builder().button_with_custom_styles(
+            ButtonVariant::Text,
+            self.mouse_states.remote_control_icon.clone(),
+            default_styles,
+            Some(interactive_styles),
+            Some(interactive_styles),
+            None,
+        );
 
         if presentation.connected_device_name.is_some() {
             let dot = ConstrainedBox::new(
@@ -23329,11 +23340,14 @@ impl Workspace {
             .with_width(7.)
             .with_height(7.)
             .finish();
-            let text =
-                Text::new_inline(presentation.label.clone(), appearance.ui_font_family(), 11.)
-                    .with_color(theme.active_ui_text_color().into_solid())
-                    .with_style(Properties::default().weight(Weight::Semibold))
-                    .finish();
+            let text = Text::new_inline(
+                presentation.label.clone(),
+                appearance.ui_font_family(),
+                PILL_FONT_SIZE,
+            )
+            .with_color(CLINCH_LOGO_GREEN)
+            .with_style(Properties::default().weight(Weight::Semibold))
+            .finish();
             button = button.with_custom_label(
                 Flex::row()
                     .with_cross_axis_alignment(CrossAxisAlignment::Center)
@@ -23346,7 +23360,7 @@ impl Workspace {
                 TextAndIcon::new(
                     TextAndIconAlignment::IconFirst,
                     presentation.label.clone(),
-                    icons::Icon::Phone01.to_warpui_icon(theme.active_ui_text_color()),
+                    icons::Icon::Phone01.to_warpui_icon(Fill::Solid(CLINCH_LOGO_GREEN)),
                     MainAxisSize::Min,
                     MainAxisAlignment::Center,
                     vec2f(14., 14.),
@@ -23631,14 +23645,14 @@ impl Workspace {
                                 appearance.ui_font_family(),
                                 PILL_FONT_SIZE,
                             )
-                            .with_color(Fill::warn().into())
+                            .with_color(CLINCH_LOGO_GREEN)
                             .finish(),
                         )
                         .with_main_axis_size(MainAxisSize::Max)
                         .with_main_axis_alignment(MainAxisAlignment::Center)
                         .finish(),
                 )
-                .with_border(Border::all(1.).with_border_color(Fill::warn().into()))
+                .with_border(Border::all(1.).with_border_fill(Fill::Solid(CLINCH_LOGO_GREEN)))
                 .with_corner_radius(CornerRadius::with_all(Radius::Percentage(50.)))
                 .with_uniform_margin(4.)
                 .with_uniform_padding(4.)

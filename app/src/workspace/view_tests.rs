@@ -865,7 +865,7 @@ fn remote_control_header_uses_discovery_copy_without_a_live_device() {
     assert_eq!(
         remote_control_header_presentation(None),
         RemoteControlHeaderPresentation {
-            label: "Try Remote Control".to_owned(),
+            label: "Remote Control".to_owned(),
             connected_device_name: None,
         }
     );

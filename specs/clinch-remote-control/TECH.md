@@ -49,7 +49,7 @@ this repo owns the feature contract and in-app links.
 
 1. Add a fixed Remote Control button to backend-free Clinch window headers.
    - Use the existing `Phone01` icon and header-button renderer.
-   - Show `Try Remote Control` when no companion is live. Subscribe each workspace
+   - Show `Remote Control` when no companion is live. Subscribe each workspace
      header to the local Remote Control service; while connected, replace the discovery copy with a
      green dot and `<device name> connected` for the live device with the newest `last_seen_at`.
    - Gate it on `!ChannelState::has_backend()` so inherited Warp channels are unchanged.
