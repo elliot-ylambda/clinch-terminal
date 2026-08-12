@@ -99,7 +99,7 @@ use warpui::elements::{
     ParentOffsetBounds, PositionedElementAnchor, PositionedElementOffsetBounds, Radius, Rect,
     SavePosition, Shrinkable, Stack, Text,
 };
-use warpui::fonts::{Properties, Weight};
+use warpui::fonts::{FamilyId, Properties, Weight};
 use warpui::geometry::vector::{vec2f, Vector2F};
 use warpui::keymap::Context;
 use warpui::modals::{AlertDialogWithCallbacks, AppModalCallback, ModalButton};
@@ -1404,6 +1404,31 @@ fn remote_control_header_presentation(
         label,
         connected_device_name,
     }
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn remote_control_button_styles(
+    font_family_id: FamilyId,
+) -> (UiComponentStyles, UiComponentStyles) {
+    let default_styles = UiComponentStyles {
+        width: Some(TAB_BAR_PILL_WIDTH),
+        font_family_id: Some(font_family_id),
+        font_color: Some(CLINCH_LOGO_GREEN),
+        font_size: Some(PILL_FONT_SIZE),
+        font_weight: Some(Weight::Semibold),
+        padding: Some(Coords::default().top(4.).bottom(4.).left(9.).right(9.)),
+        border_color: Some(CLINCH_LOGO_GREEN.into()),
+        border_width: Some(1.),
+        border_radius: Some(CornerRadius::with_all(Radius::Percentage(50.))),
+        background: Some(ColorU::transparent_black().into()),
+        ..UiComponentStyles::default()
+    };
+    let interactive_styles = UiComponentStyles {
+        background: Some(coloru_with_opacity(CLINCH_LOGO_GREEN, 20).into()),
+        ..default_styles
+    };
+
+    (default_styles, interactive_styles)
 }
 
 #[cfg(not(target_family = "wasm"))]
@@ -23305,22 +23330,8 @@ impl Workspace {
         #[cfg(not(feature = "local_fs"))]
         let presentation = remote_control_header_presentation(None);
 
-        let default_styles = UiComponentStyles {
-            width: Some(TAB_BAR_PILL_WIDTH),
-            font_color: Some(CLINCH_LOGO_GREEN.into()),
-            font_size: Some(PILL_FONT_SIZE),
-            font_weight: Some(Weight::Semibold),
-            padding: Some(Coords::default().top(4.).bottom(4.).left(9.).right(9.)),
-            border_color: Some(CLINCH_LOGO_GREEN.into()),
-            border_width: Some(1.),
-            border_radius: Some(CornerRadius::with_all(Radius::Percentage(50.))),
-            background: Some(ColorU::transparent_black().into()),
-            ..UiComponentStyles::default()
-        };
-        let interactive_styles = UiComponentStyles {
-            background: Some(coloru_with_opacity(CLINCH_LOGO_GREEN, 20).into()),
-            ..default_styles
-        };
+        let (default_styles, interactive_styles) =
+            remote_control_button_styles(appearance.ui_font_family());
         let mut button = appearance.ui_builder().button_with_custom_styles(
             ButtonVariant::Text,
             self.mouse_states.remote_control_icon.clone(),

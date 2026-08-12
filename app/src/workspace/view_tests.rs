@@ -908,6 +908,15 @@ fn remote_control_header_uses_the_latest_live_device() {
 }
 
 #[test]
+fn remote_control_header_interaction_styles_preserve_the_ui_font() {
+    let font_family_id = warpui::fonts::FamilyId(42);
+    let (default_styles, interactive_styles) = remote_control_button_styles(font_family_id);
+
+    assert_eq!(default_styles.font_family_id, Some(font_family_id));
+    assert_eq!(interactive_styles.font_family_id, Some(font_family_id));
+}
+
+#[test]
 fn remote_control_header_action_opens_clinch_settings() {
     App::test((), |mut app| async move {
         initialize_app(&mut app);
