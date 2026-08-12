@@ -1113,6 +1113,33 @@ fn test_clinch_install_progress_popup_is_visible() {
 }
 
 #[test]
+fn test_clinch_update_header_pill_stays_visible_during_install() {
+    let new_version = channel_versions::VersionInfo::new("v2".to_owned());
+    assert_eq!(
+        clinch_update_header_pill(&AutoupdateStage::UpdateAvailable {
+            new_version: new_version.clone(),
+            update_id: "update-id".to_owned(),
+        }),
+        Some((CLINCH_UPDATE_TEXT, true))
+    );
+    assert_eq!(
+        clinch_update_header_pill(&AutoupdateStage::DownloadingUpdate),
+        Some((UPDATE_DOWNLOADING_TEXT, false))
+    );
+    assert_eq!(
+        clinch_update_header_pill(&AutoupdateStage::Updating {
+            new_version,
+            update_id: "update-id".to_owned(),
+        }),
+        Some((UPDATE_INSTALLING_TEXT, false))
+    );
+    assert_eq!(
+        clinch_update_header_pill(&AutoupdateStage::NoUpdateAvailable),
+        None
+    );
+}
+
+#[test]
 fn terminal_input_toast_only_appears_for_the_focused_tab() {
     App::test((), |mut app| async move {
         initialize_app(&mut app);

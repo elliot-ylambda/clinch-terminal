@@ -21,6 +21,7 @@ for argument in "$@"; do
 done
 [ -n "$output" ] || exit 2
 printf '%s\n' "$url" >> "$CLINCH_TEST_REQUEST_LOG"
+printf '%s\n' "$*" >> "$CLINCH_TEST_CURL_ARGS_LOG"
 case "$url" in
   */Clinch.update.json) cp "$CLINCH_TEST_MANIFEST" "$output" ;;
   */Clinch.update.sshsig) cp "$CLINCH_TEST_SIGNATURE" "$output" ;;
@@ -41,11 +42,13 @@ chmod +x "$TMP/curl" "$TMP/lsappinfo" "$TMP/ps"
 run_installer() {
   local manifest="$1" signature="$2" output="$3"
   : > "$TMP/requests"
+  : > "$TMP/curl-args"
   if HOME="$TMP/home" \
       CLINCH_CURL_BIN="$TMP/curl" \
       CLINCH_LSAPPINFO_BIN="$TMP/lsappinfo" \
       CLINCH_PS_BIN="$TMP/ps" \
       CLINCH_TEST_REQUEST_LOG="$TMP/requests" \
+      CLINCH_TEST_CURL_ARGS_LOG="$TMP/curl-args" \
       CLINCH_TEST_MANIFEST="$manifest" \
       CLINCH_TEST_SIGNATURE="$signature" \
       "$ROOT/install.sh" --version v0.0.99 >"$output" 2>&1; then
@@ -63,6 +66,12 @@ grep -q '/v0.0.99/Clinch.app.zip$' "$TMP/requests" \
   || { echo "FAIL: valid authenticated metadata did not reach the exact archive"; cat "$TMP/valid-output"; exit 1; }
 grep -q 'archive download failed' "$TMP/valid-output" \
   || { echo "FAIL: valid fixture failed before the expected archive stub"; cat "$TMP/valid-output"; exit 1; }
+grep 'Clinch.app.zip' "$TMP/curl-args" | grep -q -- '--progress-bar' \
+  || { echo "FAIL: archive download did not enable visible progress"; cat "$TMP/curl-args"; exit 1; }
+grep 'Clinch.app.zip' "$TMP/curl-args" | grep -q -- '--max-time 1800' \
+  || { echo "FAIL: archive download retained the short metadata timeout"; cat "$TMP/curl-args"; exit 1; }
+grep -q 'Downloading the exact v0.0.99 universal app (1 MiB)' "$TMP/valid-output" \
+  || { echo "FAIL: archive download did not report its authenticated size"; cat "$TMP/valid-output"; exit 1; }
 
 # Any manifest byte change must fail before an archive is requested.
 cp "$FIXTURES/installer-manifest.json" "$TMP/tampered.json"

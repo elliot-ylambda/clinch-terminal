@@ -69,9 +69,18 @@ safe_tag() {
 download() {
     output=$1
     url=$2
-    "${CLINCH_CURL_BIN:-/usr/bin/curl}" --proto '=https' -fL --retry 3 \
-        --connect-timeout 15 --max-time 300 --silent --show-error \
-        -o "$output" "$url"
+    mode=${3:-quiet}
+    if [ "$mode" = progress ]; then
+        # Keep progress on stderr so `curl .../install | sh` can reserve stdout for the
+        # installer script while this much larger, second-stage download stays visible.
+        "${CLINCH_CURL_BIN:-/usr/bin/curl}" --proto '=https' -fL --retry 3 \
+            --connect-timeout 15 --max-time 1800 --progress-bar --show-error \
+            -o "$output" "$url"
+    else
+        "${CLINCH_CURL_BIN:-/usr/bin/curl}" --proto '=https' -fL --retry 3 \
+            --connect-timeout 15 --max-time 300 --silent --show-error \
+            -o "$output" "$url"
+    fi
 }
 
 file_size() {
@@ -284,8 +293,9 @@ CURRENT_MACOS=$(/usr/bin/sw_vers -productVersion)
 version_at_least "$CURRENT_MACOS" "$MINIMUM_MACOS" \
     || fail "Clinch $VERSION requires macOS $MINIMUM_MACOS or later; this Mac runs $CURRENT_MACOS."
 
-say "Downloading the exact $VERSION universal app..."
-download "$TMP_DIR/$ASSET" "$ARCHIVE_URL" \
+ARCHIVE_MIB=$(( (EXPECTED_SIZE + 1048575) / 1048576 ))
+say "Downloading the exact $VERSION universal app ($ARCHIVE_MIB MiB)..."
+download "$TMP_DIR/$ASSET" "$ARCHIVE_URL" progress \
     || fail "archive download failed; nothing was installed."
 ACTUAL_SIZE=$(file_size "$TMP_DIR/$ASSET")
 [ "$ACTUAL_SIZE" = "$EXPECTED_SIZE" ] \

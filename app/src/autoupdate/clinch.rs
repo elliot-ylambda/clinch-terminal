@@ -24,7 +24,9 @@ const EXPECTED_REPOSITORY: &str = "elliot-ylambda/clinch-terminal";
 const EXPECTED_BUNDLE_ID: &str = "sh.clinch.Clinch";
 const MAX_MANIFEST_SIZE: usize = 256 * 1024;
 const MAX_SIGNATURE_SIZE: usize = 4096;
-const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+// The universal archive is currently hundreds of MiB. Allow slower connections to finish rather
+// than turning a healthy, steadily progressing transfer into a failed update.
+const ARCHIVE_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const EMBEDDED_PUBLIC_KEY: &str =
     include_str!("../../../resources/update/clinch-update-public-key.json");
 
@@ -624,7 +626,7 @@ pub async fn download_and_stage(
     let archive_path = directory.join(ARCHIVE_ASSET);
     let response = client
         .get(&release.manifest.archive.url)
-        .timeout(DOWNLOAD_TIMEOUT)
+        .timeout(ARCHIVE_DOWNLOAD_TIMEOUT)
         .header("Accept", "application/octet-stream")
         .header("User-Agent", "Clinch-Updater")
         .send()

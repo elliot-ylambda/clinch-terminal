@@ -589,6 +589,9 @@ const TAB_BAR_ICON_PADDING: f32 = 4.;
 const TAB_BAR_PILL_WIDTH: f32 = 120.;
 const PILL_FONT_SIZE: f32 = 12.;
 const UPDATE_AVAILABLE_TEXT: &str = "Update available";
+const CLINCH_UPDATE_TEXT: &str = "Update Clinch";
+const UPDATE_DOWNLOADING_TEXT: &str = "Downloading…";
+const UPDATE_INSTALLING_TEXT: &str = "Installing…";
 const CLINCH_INSTALL_PROGRESS_TOAST_ID: &str = "clinch_update_install_progress";
 const CLINCH_INSTALL_PROGRESS_MESSAGE: &str =
     "Clinch is installing the update… It will close and reopen automatically.";
@@ -610,6 +613,21 @@ fn manual_update_check_found_update(result: &Result<UpdateReady>) -> bool {
         result,
         Ok(UpdateReady::Yes { .. } | UpdateReady::CanDownload { .. })
     )
+}
+
+fn clinch_update_header_pill(stage: &AutoupdateStage) -> Option<(&'static str, bool)> {
+    match stage {
+        AutoupdateStage::UpdateAvailable { .. }
+        | AutoupdateStage::UpdateReady { .. }
+        | AutoupdateStage::UpdatedPendingRestart { .. } => Some((CLINCH_UPDATE_TEXT, true)),
+        AutoupdateStage::DownloadingUpdate => Some((UPDATE_DOWNLOADING_TEXT, false)),
+        AutoupdateStage::Updating { .. } => Some((UPDATE_INSTALLING_TEXT, false)),
+        AutoupdateStage::NoUpdateAvailable
+        | AutoupdateStage::CheckingForUpdate
+        | AutoupdateStage::UnableToCheckForUpdate
+        | AutoupdateStage::UnableToUpdateToNewVersion { .. }
+        | AutoupdateStage::UnableToLaunchNewVersion { .. } => None,
+    }
 }
 
 #[cfg(not(target_family = "wasm"))]
@@ -23652,24 +23670,34 @@ impl Workspace {
         }
 
         let autoupdate_stage = autoupdate::get_update_state(app);
+        let clinch_pill = if ChannelState::uses_clinch_updater() {
+            clinch_update_header_pill(&autoupdate_stage)
+        } else {
+            None
+        };
         // Clinch releases always get a persistent header affordance as soon as their signed
-        // metadata is available. Preserve Warp's prominence rules for its own provider.
-        if autoupdate_stage.has_actionable_update()
-            && (ChannelState::uses_clinch_updater()
-                || !FeatureFlag::AutoupdateUIRevamp.is_enabled()
-                || autoupdate_stage
-                    .available_new_version()
-                    .map(|version| {
-                        is_incoming_version_past_current(version.last_prominent_update.as_deref())
-                    })
-                    .unwrap_or(false))
-        {
+        // metadata is available, and keep it visible while a consented download is progressing.
+        // Preserve Warp's prominence rules for its own provider.
+        let update_pill = clinch_pill.or_else(|| {
+            (autoupdate_stage.has_actionable_update()
+                && (!FeatureFlag::AutoupdateUIRevamp.is_enabled()
+                    || autoupdate_stage
+                        .available_new_version()
+                        .map(|version| {
+                            is_incoming_version_past_current(
+                                version.last_prominent_update.as_deref(),
+                            )
+                        })
+                        .unwrap_or(false)))
+            .then_some((UPDATE_AVAILABLE_TEXT, true))
+        });
+        if let Some((pill_text, is_actionable)) = update_pill {
             let pill = ConstrainedBox::new(
                 Container::new(
                     Flex::row()
                         .with_child(
                             Text::new_inline(
-                                UPDATE_AVAILABLE_TEXT,
+                                pill_text,
                                 appearance.ui_font_family(),
                                 PILL_FONT_SIZE,
                             )
@@ -23690,7 +23718,7 @@ impl Workspace {
             .with_width(TAB_BAR_PILL_WIDTH)
             .finish();
 
-            let button = if self.show_tab_bar_overflow_menu {
+            let button = if self.show_tab_bar_overflow_menu || !is_actionable {
                 pill
             } else {
                 // Only attach the event handler in the case where the menu isn't already showing
