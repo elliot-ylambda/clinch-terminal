@@ -680,6 +680,32 @@ impl CLIAgentSessionsModel {
         self.sessions.get(&terminal_view_id)
     }
 
+    /// Returns every open terminal currently tracking this durable provider session.
+    ///
+    /// Claude Code and Codex do not allow the same conversation to be resumed by a second
+    /// writer. Bookmark and conversation-finder opens use this lookup to focus an existing pane
+    /// instead of launching a resume command that is guaranteed to fail.
+    pub fn terminal_view_ids_for_session(
+        &self,
+        provider: AgentResumeProvider,
+        session_id: &str,
+    ) -> Vec<EntityId> {
+        let session_id = session_id.trim();
+        if session_id.is_empty() {
+            return Vec::new();
+        }
+
+        self.sessions
+            .iter()
+            .filter_map(|(terminal_view_id, session)| {
+                session.session_key().and_then(|key| {
+                    (key.provider == provider && key.session_id == session_id)
+                        .then_some(*terminal_view_id)
+                })
+            })
+            .collect()
+    }
+
     /// Global bookmark records. Callers apply their own project filter when rendering a
     /// project-local section.
     pub fn bookmarked_conversations(&self) -> &[AgentConversation] {

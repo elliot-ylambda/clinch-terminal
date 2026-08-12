@@ -6529,7 +6529,7 @@ impl Workspace {
         &self,
         terminal_view_id: EntityId,
         ctx: &mut ViewContext<Self>,
-    ) {
+    ) -> bool {
         let current_workspace_id = ctx.handle().id();
         let result = WorkspaceRegistry::as_ref(ctx)
             .all_workspaces(ctx)
@@ -6559,8 +6559,10 @@ impl Workspace {
                     "root_view:handle_pane_navigation_event",
                     &locator,
                 );
+                return true;
             }
         }
+        false
     }
 
     /// Shows the notification error in the specific pane.
@@ -9447,10 +9449,11 @@ impl Workspace {
     }
 
     /// Reopens a past CLI-agent conversation (picked in the "Reopen agent conversation"
-    /// palette) in a NEW tab that auto-runs its resume command. Reuses the same launch
-    /// path as the Fork footer button. Opening a conversation never touches other panes'
-    /// agent-resume registry entries: the new pane has a fresh UUID, and the session's
-    /// own capture hook claims that pane once the agent starts.
+    /// palette) in a NEW tab that auto-runs its resume command. If that durable conversation is
+    /// already running, focus its existing pane instead: Claude Code and Codex reject a second
+    /// writer for the same session. Otherwise this reuses the same launch path as the Fork footer
+    /// button. The new pane has a fresh UUID, and the session's own capture hook claims that pane
+    /// once the agent starts.
     fn reopen_agent_conversation(
         &mut self,
         command: String,
@@ -9458,6 +9461,27 @@ impl Workspace {
         use_current_project: bool,
         ctx: &mut ViewContext<Self>,
     ) {
+        #[cfg(feature = "local_tty")]
+        if let Some((provider, session_id)) =
+            crate::agent_resume::agent_session_seed_from_restore_command(&command)
+        {
+            let terminal_view_ids = CLIAgentSessionsModel::as_ref(ctx)
+                .terminal_view_ids_for_session(provider, &session_id);
+
+            // Prefer an open copy in this project. This keeps the common bookmark-drag flow in
+            // place instead of switching projects merely because another matching pane exists.
+            for terminal_view_id in terminal_view_ids.iter().copied() {
+                if self.focus_terminal_view_locally(terminal_view_id, ctx) {
+                    return;
+                }
+            }
+            for terminal_view_id in terminal_view_ids {
+                if self.focus_terminal_view_in_other_window(terminal_view_id, ctx) {
+                    return;
+                }
+            }
+        }
+
         // Bookmarks are global and deliberately use the project the user is looking at. Ordinary
         // recent results retain their recorded directory when it still exists.
         let cwd = agent_conversation_reopen_cwd(

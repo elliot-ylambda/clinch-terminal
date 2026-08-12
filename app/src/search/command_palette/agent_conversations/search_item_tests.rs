@@ -73,6 +73,8 @@ fn bookmarked_result_resumes_in_the_current_project() {
     ));
     assert_eq!(
         item.accessibility_help_message().as_deref(),
-        Some("Press enter to resume this conversation in a new tab in the current project.")
+        Some(
+            "Press enter to resume this conversation in the current project, or focus it if already open."
+        )
     );
 }

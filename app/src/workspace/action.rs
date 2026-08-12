@@ -632,10 +632,10 @@ pub enum WorkspaceAction {
     ContinueConversationLocally {
         conversation_id: AIConversationId,
     },
-    /// Reopen a past CLI-agent (Claude/Codex) conversation, picked in the command
-    /// palette, in a NEW tab and auto-run `command` (the conversation's
-    /// `claude --teleport`/`claude --resume`/`codex resume` command) once the shell
-    /// bootstraps. Bookmarked results use the active project instead of `cwd`.
+    /// Reopen a past CLI-agent (Claude/Codex) conversation picked in the command palette.
+    /// An already-open conversation is focused because providers allow only one live writer;
+    /// otherwise a NEW tab auto-runs `command` once its shell bootstraps. Bookmarked results use
+    /// the active project instead of `cwd`.
     ReopenAgentConversation {
         command: String,
         cwd: Option<String>,

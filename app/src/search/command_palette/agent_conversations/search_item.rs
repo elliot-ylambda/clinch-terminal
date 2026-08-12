@@ -212,9 +212,9 @@ impl SearchItem for AgentConversationSearchItem {
     fn accessibility_help_message(&self) -> Option<String> {
         Some(
             if self.reopen_in_current_project {
-                "Press enter to resume this conversation in a new tab in the current project."
+                "Press enter to resume this conversation in the current project, or focus it if already open."
             } else {
-                "Press enter to reopen this conversation in a new tab."
+                "Press enter to reopen this conversation, or focus it if already open."
             }
             .into(),
         )

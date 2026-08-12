@@ -3344,6 +3344,56 @@ fn bookmarked_section_drop_resolves_only_durable_claude_and_codex_sessions() {
     });
 }
 
+#[cfg(feature = "local_tty")]
+#[test]
+fn reopening_an_open_cli_agent_conversation_focuses_it_without_launching_a_duplicate() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+        let open_terminal_view_id = workspace.read(&app, |workspace, ctx| {
+            workspace.tabs[0]
+                .pane_group
+                .as_ref(ctx)
+                .focused_session_view(ctx)
+                .expect("test tab should contain a terminal")
+                .id()
+        });
+
+        CLIAgentSessionsModel::handle(&app).update(&mut app, |sessions, ctx| {
+            sessions.set_session(
+                open_terminal_view_id,
+                cli_agent_session_with_id(
+                    crate::terminal::CLIAgent::Codex,
+                    Some("already-open-session"),
+                ),
+                ctx,
+            );
+        });
+
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.add_terminal_tab(false, ctx);
+            assert_eq!(workspace.active_tab_index(), 1);
+
+            workspace.reopen_agent_conversation(
+                "clinch_agent_resume_launch codex already-open-session".to_owned(),
+                Some("/recorded/repository".to_owned()),
+                true,
+                ctx,
+            );
+
+            assert_eq!(workspace.tab_count(), 2);
+            assert_eq!(workspace.active_tab_index(), 0);
+            assert_eq!(
+                workspace
+                    .active_session_view(ctx)
+                    .expect("the existing Codex pane should be focused")
+                    .id(),
+                open_terminal_view_id
+            );
+        });
+    });
+}
+
 #[test]
 fn test_tab_context_menu_omits_unavailable_or_unsupported_session_ids() {
     let _vertical_tabs_guard = FeatureFlag::VerticalTabs.override_enabled(true);
