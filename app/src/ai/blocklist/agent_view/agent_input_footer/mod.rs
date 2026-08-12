@@ -231,6 +231,7 @@ pub struct AgentInputFooter {
     bookmark_conversation_button: ViewHandle<ActionButton>,
     continue_button: ViewHandle<ActionButton>,
     looks_good_button: ViewHandle<ActionButton>,
+    copy_and_clear_draft_button: ViewHandle<ActionButton>,
     /// Opens the unified footer-button editor, including its add-button flow.
     quick_insert_edit_button: ViewHandle<ActionButton>,
     rich_input_button: ViewHandle<ActionButton>,
@@ -478,6 +479,16 @@ impl AgentInputFooter {
                 .with_tooltip_alignment(TooltipAlignment::Left)
                 .on_click(|ctx| {
                     ctx.dispatch_typed_action(AgentInputFooterAction::SendLooksGood);
+                })
+        });
+        let copy_and_clear_draft_button = ctx.add_typed_action_view(|_ctx| {
+            ActionButton::new("Copy & Clear", AgentInputButtonTheme)
+                .with_icon(Icon::Copy)
+                .with_tooltip("Copy the unsent draft and clear the composer")
+                .with_size(cli_button_size)
+                .with_tooltip_alignment(TooltipAlignment::Left)
+                .on_click(|ctx| {
+                    ctx.dispatch_typed_action(AgentInputFooterAction::CopyAndClearDraft);
                 })
         });
         let quick_insert_edit_button = ctx.add_typed_action_view(|_ctx| {
@@ -941,6 +952,7 @@ impl AgentInputFooter {
             bookmark_conversation_button,
             continue_button,
             looks_good_button,
+            copy_and_clear_draft_button,
             quick_insert_edit_button,
             rich_input_button,
             settings_button,
@@ -1629,6 +1641,9 @@ impl AgentInputFooter {
             }
             AgentToolbarItemKind::LooksGoodPrompt => {
                 Some(ChildView::new(&self.looks_good_button).finish())
+            }
+            AgentToolbarItemKind::CopyAndClearDraft => {
+                Some(ChildView::new(&self.copy_and_clear_draft_button).finish())
             }
             AgentToolbarItemKind::TransferAgent => {
                 if !cfg!(feature = "local_tty") || is_conversation_transcript_context {
@@ -2594,6 +2609,7 @@ impl AgentInputFooter {
             | AgentToolbarItemKind::ForkSession
             | AgentToolbarItemKind::BookmarkConversation
             | AgentToolbarItemKind::ContinuePrompt
+            | AgentToolbarItemKind::CopyAndClearDraft
             | AgentToolbarItemKind::TransferAgent
             | AgentToolbarItemKind::CustomInsert { .. }
             | AgentToolbarItemKind::LooksGoodPrompt => None,
@@ -2883,6 +2899,8 @@ pub enum AgentInputFooterAction {
     SendContinue,
     /// Submit "Looks good to me, continue" to the running CLI agent.
     SendLooksGood,
+    /// Copy the unsent CLI-agent draft and clear the composer.
+    CopyAndClearDraft,
     /// Continue the captured conversation in the other agent in a new tab.
     TransferAgent,
     /// Toggle this pane's "auto-continue when the CLI agent's rate limit resets" opt-in.
@@ -2988,12 +3006,13 @@ impl TypedActionView for AgentInputFooter {
                 }
             }
             AgentInputFooterAction::Compact => {
-                // Type `/compact` + Enter straight into the live agent's PTY.
-                // The footer WriteToPty path writes bytes verbatim, so include the newline.
-                // Guard on a CLI agent being present (consistent with ForkSession) so a
-                // stray keybinding can't type `/compact` into a plain shell.
+                // Submit through the same per-agent path as the fixed quick replies. In
+                // particular, Codex requires bracketed paste followed by a distinct carriage
+                // return; writing a literal newline only inserts another composer line.
                 if self.cli_agent(ctx).is_some() {
-                    ctx.emit(AgentInputFooterEvent::WriteToPty("/compact\n".to_string()));
+                    ctx.emit(AgentInputFooterEvent::SubmitTextToCliAgent(
+                        "/compact".to_string(),
+                    ));
                 }
             }
             AgentInputFooterAction::ForkSession => {
@@ -3035,6 +3054,11 @@ impl TypedActionView for AgentInputFooter {
                     ctx.emit(AgentInputFooterEvent::SubmitTextToCliAgent(
                         "Looks good to me, continue".to_string(),
                     ));
+                }
+            }
+            AgentInputFooterAction::CopyAndClearDraft => {
+                if self.cli_agent(ctx).is_some() {
+                    ctx.emit(AgentInputFooterEvent::CopyAndClearDraft);
                 }
             }
             AgentInputFooterAction::TransferAgent => {
@@ -3242,6 +3266,8 @@ pub enum AgentInputFooterEvent {
     /// Submit a fixed prompt string to this pane's live CLI agent using the
     /// per-agent submission strategy (types the text, then presses Enter).
     SubmitTextToCliAgent(String),
+    /// Copy the unsent rich-input draft and clear it without closing the composer.
+    CopyAndClearDraft,
     /// Continue the captured conversation in the other agent in a new tab.
     TransferAgent,
     /// Open the legacy standalone quick-insert creator (still used by context menus).

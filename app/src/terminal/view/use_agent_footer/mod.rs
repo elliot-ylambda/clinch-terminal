@@ -39,7 +39,9 @@ use warp_core::ui::color::contrast::{
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::Fill as ThemeFill;
 use warp_core::{report_error, send_telemetry_from_ctx};
-use warp_terminal::model::escape_sequences::{BRACKETED_PASTE_END, BRACKETED_PASTE_START};
+use warp_terminal::model::escape_sequences::{
+    KeystrokeWithDetails, ToEscapeSequence, BRACKETED_PASTE_END, BRACKETED_PASTE_START, C0,
+};
 use warpify_footer::{WarpifyFooterView, WarpifyFooterViewEvent};
 use warpui::elements::{
     ChildView, Container, CrossAxisAlignment, Empty, Expanded, Flex, MainAxisSize, ParentElement,
@@ -63,6 +65,11 @@ use crate::settings::{
     AISettings, AISettingsChangedEvent, CompiledCommandsForCodingAgentToolbar, InputModeSettings,
 };
 use crate::terminal::cli_agent_sessions::CLIAgentRichInputCloseReason;
+use crate::terminal::model::cell::Flags;
+use crate::terminal::model::grid::grid_handler::{GridHandler, TermMode};
+use crate::terminal::model::grid::{Dimensions as _, RespectDisplayedOutput};
+use crate::terminal::model::index::Point;
+use crate::terminal::model::secrets::RespectObfuscatedSecrets;
 #[cfg(feature = "local_tty")]
 use crate::terminal::model::session::command_executor::shell_quote_arg;
 use crate::terminal::model_events::{ModelEvent, ModelEventDispatcher};
@@ -97,6 +104,224 @@ const CLI_AGENT_IMAGE_PASTE_DELAY: Duration = Duration::from_millis(300);
 /// before the rest of the command arrives.
 #[allow(clippy::byte_char_slices)]
 const CLI_AGENT_MODE_SWITCH_PREFIXES: &[u8] = &[b'!', b'&'];
+
+/// Claude Code's default `chat:stash` binding. Stashing is the native operation that atomically
+/// preserves the current prompt (including pasted-image state) and clears its composer.
+const CLAUDE_STASH_PROMPT_FALLBACK_BYTE: u8 = C0::XOFF;
+const CLAUDE_COMPOSER_PROMPT: char = '❯';
+const CLAUDE_COMPOSER_RULE: char = '─';
+const CODEX_COMPOSER_PROMPT: char = '›';
+
+fn grid_row_is_blank(grid: &GridHandler, row_idx: usize) -> bool {
+    grid.row(row_idx)
+        .is_some_and(|row| (0..row.len()).all(|col| matches!(row[col].c, '\0' | ' ' | '\u{a0}')))
+}
+
+fn is_claude_composer_rule(grid: &GridHandler, row_idx: usize) -> bool {
+    let Some(row) = grid.row(row_idx) else {
+        return false;
+    };
+    let columns = grid.columns();
+    if columns == 0 {
+        return false;
+    }
+
+    let mut rule_cells = 0usize;
+    for col in 0..columns.min(row.len()) {
+        match row[col].c {
+            CLAUDE_COMPOSER_RULE => rule_cells += 1,
+            '\0' | ' ' => {}
+            _ => return false,
+        }
+    }
+
+    rule_cells >= columns.min(8) && rule_cells.saturating_mul(4) >= columns.saturating_mul(3)
+}
+
+fn claude_composer_prompt_column(grid: &GridHandler, row_idx: usize) -> Option<usize> {
+    let row = grid.row(row_idx)?;
+    (0..row.len().min(5)).find(|&col| row[col].c == CLAUDE_COMPOSER_PROMPT)
+}
+
+/// Reads Claude Code's native composer from its visible terminal grid.
+///
+/// Claude brackets the composer with full-width horizontal rules and renders its prompt marker in
+/// the first row. Starting at the textarea's fixed two-cell inset avoids copying UI chrome while
+/// retaining the user's own indentation. Claude does not mark the difference between an explicit
+/// newline and a visually wrapped line, so this deliberately fails closed for multi-row drafts
+/// instead of copying altered text and then clearing the composer.
+fn claude_native_composer_draft(grid: &GridHandler) -> Option<String> {
+    let columns = grid.columns();
+    if columns == 0 {
+        return None;
+    }
+
+    let first_visible_row = grid.history_size();
+    let past_last_visible_row = first_visible_row
+        .saturating_add(grid.visible_rows())
+        .min(grid.total_rows());
+    let cursor = grid.cursor_render_point();
+    let mut lower_rule = None;
+    for upper_rule in (first_visible_row..past_last_visible_row).rev() {
+        if !is_claude_composer_rule(grid, upper_rule) {
+            continue;
+        }
+
+        if let Some(lower_rule_idx) = lower_rule {
+            if upper_rule + 1 >= lower_rule_idx
+                || !(upper_rule < cursor.row && cursor.row < lower_rule_idx)
+            {
+                lower_rule = Some(upper_rule);
+                continue;
+            }
+            let prompt_row = upper_rule + 1;
+            if let Some(prompt_col) = claude_composer_prompt_column(grid, prompt_row) {
+                if prompt_row + 1 != lower_rule_idx {
+                    return None;
+                }
+                let content_col = prompt_col + 2;
+                let first_content_is_dim = grid.row(prompt_row).is_some_and(|row| {
+                    (content_col..row.len())
+                        .find_map(|col| {
+                            let cell = &row[col];
+                            (!matches!(cell.c, '\0' | ' ' | '\u{a0}')).then_some(cell)
+                        })
+                        .is_some_and(|cell| cell.flags.contains(Flags::DIM))
+                });
+
+                // Claude paints an empty composer's suggestion as dim text under the cursor. It is
+                // presentation only and must never be mistaken for a draft.
+                if first_content_is_dim && cursor == Point::new(prompt_row, content_col) {
+                    return None;
+                }
+
+                let rendered_row = grid.bounds_to_string(
+                    Point::new(prompt_row, content_col),
+                    Point::new(prompt_row, columns - 1),
+                    false,
+                    RespectObfuscatedSecrets::Yes,
+                    false,
+                    RespectDisplayedOutput::No,
+                );
+                let draft = rendered_row.trim_end_matches(&['\r', '\n'][..]);
+
+                return (!draft.trim().is_empty()).then(|| draft.to_owned());
+            }
+        }
+
+        lower_rule = Some(upper_rule);
+    }
+
+    None
+}
+
+/// Reads an exact one-row draft from Codex's live composer.
+///
+/// Codex paints a blank inset row above and below its textarea, followed by its footer. Requiring
+/// that layout around the cursor distinguishes the editable prompt from submitted prompts in the
+/// transcript and fails closed for multiline or visually wrapped drafts.
+fn codex_native_composer_draft(grid: &GridHandler) -> Option<String> {
+    let columns = grid.columns();
+    if columns == 0 || !grid.is_mode_set(TermMode::SHOW_CURSOR) {
+        return None;
+    }
+
+    let first_visible_row = grid.history_size();
+    let past_last_visible_row = first_visible_row
+        .saturating_add(grid.visible_rows())
+        .min(grid.total_rows());
+    let cursor = grid.cursor_render_point();
+    let prompt_row = cursor.row;
+    if prompt_row <= first_visible_row
+        || prompt_row.saturating_add(2) >= past_last_visible_row
+        || !grid_row_is_blank(grid, prompt_row - 1)
+        || !grid_row_is_blank(grid, prompt_row + 1)
+        || grid_row_is_blank(grid, prompt_row + 2)
+    {
+        return None;
+    }
+
+    let row = grid.row(prompt_row)?;
+    let prompt_cell = row.get(0)?;
+    if prompt_cell.c != CODEX_COMPOSER_PROMPT
+        || !prompt_cell.flags.contains(Flags::BOLD)
+        || prompt_cell.flags.contains(Flags::DIM)
+        || !row
+            .get(1)
+            .is_some_and(|cell| matches!(cell.c, '\0' | ' ' | '\u{a0}'))
+    {
+        return None;
+    }
+
+    let content_col = 2;
+    if content_col >= columns || cursor.col < content_col {
+        return None;
+    }
+
+    let first_content_is_dim = (content_col..row.len())
+        .find_map(|col| {
+            let cell = &row[col];
+            (!matches!(cell.c, '\0' | ' ' | '\u{a0}')).then_some(cell)
+        })
+        .is_some_and(|cell| cell.flags.contains(Flags::DIM));
+    if first_content_is_dim && cursor == Point::new(prompt_row, content_col) {
+        return None;
+    }
+
+    // Codex paints the full composer width, so the grid can contain UI padding spaces after the
+    // actual draft. Bound the copy to real content, extending through the cursor so trailing spaces
+    // typed at the end of the draft are retained.
+    let last_nonblank_content_col = (content_col..row.len())
+        .rev()
+        .find(|&col| !matches!(row[col].c, '\0' | ' ' | '\u{a0}'))?;
+    let draft_end_col = last_nonblank_content_col
+        .max(cursor.col.saturating_sub(1))
+        .min(columns - 1);
+    let rendered_row = grid.bounds_to_string(
+        Point::new(prompt_row, content_col),
+        Point::new(prompt_row, draft_end_col),
+        false,
+        RespectObfuscatedSecrets::Yes,
+        false,
+        RespectDisplayedOutput::No,
+    );
+    let draft = rendered_row.trim_end_matches(&['\r', '\n'][..]);
+    (!draft.trim().is_empty()).then(|| draft.to_owned())
+}
+
+fn mode_correct_control_key_bytes(
+    model: &TerminalModel,
+    keystroke: &str,
+    key_without_modifiers: &str,
+    chars: &str,
+    legacy_fallback: u8,
+) -> Vec<u8> {
+    let keystroke = Keystroke::parse(keystroke).expect("control key must be a valid keystroke");
+    KeystrokeWithDetails {
+        keystroke: &keystroke,
+        key_without_modifiers: Some(key_without_modifiers),
+        chars: Some(chars),
+    }
+    .to_escape_sequence(model)
+    .unwrap_or_else(|| vec![legacy_fallback])
+}
+
+fn claude_stash_prompt_bytes(model: &TerminalModel) -> Vec<u8> {
+    mode_correct_control_key_bytes(
+        model,
+        "ctrl-s",
+        "s",
+        "\u{13}",
+        CLAUDE_STASH_PROMPT_FALLBACK_BYTE,
+    )
+}
+
+fn codex_clear_prompt_bytes(model: &TerminalModel) -> Vec<u8> {
+    // Codex reserves Ctrl+C: with a nonempty composer it clears all draft state and records the
+    // draft in local history instead of interrupting the active turn. Unlike editor keybindings,
+    // this action cannot be remapped.
+    mode_correct_control_key_bytes(model, "ctrl-c", "c", "\u{3}", C0::ETX)
+}
 
 /// Bytes that simulate a "paste image from clipboard" keystroke for the
 /// foreground CLI agent. `0x16` is `Ctrl+V` (SYN); on Windows Claude Code
@@ -346,6 +571,9 @@ impl TerminalView {
                 {
                     let _ = text;
                 }
+            }
+            UseAgentToolbarEvent::CopyAndClearDraft => {
+                self.copy_and_clear_cli_agent_draft(ctx);
             }
             UseAgentToolbarEvent::TransferAgent => {
                 #[cfg(feature = "local_tty")]
@@ -888,6 +1116,82 @@ impl TerminalView {
         } else {
             self.paste_images_then_submit_text(images, text_bytes, strategy, ctx);
         }
+    }
+
+    /// Copies the current unsent CLI-agent text and clears its composer.
+    ///
+    /// Clinch owns rich-input drafts directly. Native Claude Code and Codex TUIs own their editor
+    /// state, so an exact one-row draft is read from the live terminal grid and cleared with the
+    /// agent's native editor action. If neither composer has text, a saved rich-input draft is
+    /// used. Returns `false` without changing the clipboard when there is no draft text to copy.
+    pub(super) fn copy_and_clear_cli_agent_draft(&mut self, ctx: &mut ViewContext<Self>) -> bool {
+        let view_id = self.view_id;
+        if self.has_active_cli_agent_input_session(ctx) {
+            let draft = self.input.as_ref(ctx).buffer_text(ctx);
+            let has_draft = !draft.is_empty();
+            if has_draft {
+                ctx.clipboard()
+                    .write(warpui::clipboard::ClipboardContent::plain_text(draft));
+            }
+            self.input.update(ctx, |input, ctx| {
+                input.clear_buffer_and_reset_undo_stack(ctx);
+            });
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, _| {
+                sessions.clear_draft(view_id);
+            });
+            return has_draft;
+        }
+
+        let agent = CLIAgentSessionsModel::as_ref(ctx)
+            .session(view_id)
+            .map(|session| session.agent);
+        if matches!(agent, Some(CLIAgent::Claude | CLIAgent::Codex)) {
+            let native_draft_and_clear_bytes = {
+                let model = self.model.lock();
+                let grid = if model.is_alt_screen_active() {
+                    model.alt_screen().grid_handler()
+                } else {
+                    model
+                        .block_list()
+                        .active_block()
+                        .output_grid()
+                        .grid_handler()
+                };
+                match agent {
+                    Some(CLIAgent::Claude) => claude_native_composer_draft(grid)
+                        .map(|draft| (draft, claude_stash_prompt_bytes(&model))),
+                    Some(CLIAgent::Codex) => codex_native_composer_draft(grid)
+                        .map(|draft| (draft, codex_clear_prompt_bytes(&model))),
+                    _ => None,
+                }
+            };
+
+            if let Some((draft, clear_bytes)) = native_draft_and_clear_bytes {
+                // Update the clipboard before sending the command that clears the native draft.
+                ctx.clipboard()
+                    .write(warpui::clipboard::ClipboardContent::plain_text(draft));
+                if matches!(agent, Some(CLIAgent::Codex)) {
+                    // Codex interprets Ctrl+C as an editor-only clear because the composer was
+                    // validated as nonempty above. Do not mark the agent turn interrupted.
+                    self.write_user_bytes_to_pty_without_cli_agent_interrupt_tracking(
+                        clear_bytes,
+                        ctx,
+                    );
+                } else {
+                    self.write_user_bytes_to_pty(clear_bytes, ctx);
+                }
+                return true;
+            }
+        }
+
+        let Some(draft) = CLIAgentSessionsModel::handle(ctx)
+            .update(ctx, |sessions, _| sessions.take_draft(view_id))
+        else {
+            return false;
+        };
+        ctx.clipboard()
+            .write(warpui::clipboard::ClipboardContent::plain_text(draft));
+        true
     }
 
     /// Submits `text` as a prompt to the active CLI agent on this terminal by
@@ -1528,6 +1832,9 @@ impl UseAgentToolbar {
             AgentInputFooterEvent::SubmitTextToCliAgent(text) => {
                 ctx.emit(UseAgentToolbarEvent::SubmitTextToCliAgent(text.clone()));
             }
+            AgentInputFooterEvent::CopyAndClearDraft => {
+                ctx.emit(UseAgentToolbarEvent::CopyAndClearDraft);
+            }
             AgentInputFooterEvent::TransferAgent => {
                 ctx.emit(UseAgentToolbarEvent::TransferAgent);
             }
@@ -1648,6 +1955,8 @@ pub enum UseAgentToolbarEvent {
     /// Submit a fixed prompt string to this pane's live CLI agent using the
     /// per-agent submission strategy (types the text, then presses Enter).
     SubmitTextToCliAgent(String),
+    /// Copy the unsent rich-input draft and clear it without submitting.
+    CopyAndClearDraft,
     /// Continue the captured conversation in the other agent in a new tab.
     TransferAgent,
     /// Open the standalone quick-insert creator used by the terminal context menu.

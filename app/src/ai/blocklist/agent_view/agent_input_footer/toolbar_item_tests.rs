@@ -54,6 +54,7 @@ fn terminal_availability_admits_only_custom_insert() {
         AgentToolbarItemKind::BookmarkConversation,
         AgentToolbarItemKind::ContinuePrompt,
         AgentToolbarItemKind::LooksGoodPrompt,
+        AgentToolbarItemKind::CopyAndClearDraft,
         AgentToolbarItemKind::FastForwardToggle,
         AgentToolbarItemKind::HandoffToCloud,
     ];
@@ -119,6 +120,24 @@ fn quick_replies_have_expected_labels_and_icons() {
         AgentToolbarItemKind::BookmarkConversation.icon(),
         Some(Icon::Bookmark)
     );
+    assert_eq!(
+        AgentToolbarItemKind::CopyAndClearDraft.display_label(),
+        "Copy & Clear"
+    );
+    assert_eq!(
+        AgentToolbarItemKind::CopyAndClearDraft.icon(),
+        Some(Icon::Copy)
+    );
+}
+
+#[test]
+fn copy_and_clear_draft_is_a_cli_host_control() {
+    let kind = AgentToolbarItemKind::CopyAndClearDraft;
+    assert_eq!(kind.available_in(), ToolbarAvailability::CLIAgentOnly);
+    assert!(kind.available_to_session_viewer(&SharedSessionStatus::NotShared, false));
+    assert!(!kind.available_to_session_viewer(&SharedSessionStatus::reader(), false));
+    assert_eq!(kind.auto_send_behavior(), None);
+    assert!(!kind.is_available_during_handoff_compose());
 }
 
 #[test]
@@ -162,7 +181,8 @@ fn cli_default_left_places_bookmark_and_quick_replies_after_fork() {
 #[test]
 fn agent_transfer_is_a_default_cli_host_control() {
     let items = AgentToolbarItemKind::cli_default_left();
-    assert_eq!(items.get(5), Some(&AgentToolbarItemKind::TransferAgent));
+    assert_eq!(items.get(5), Some(&AgentToolbarItemKind::CopyAndClearDraft));
+    assert_eq!(items.get(6), Some(&AgentToolbarItemKind::TransferAgent));
     assert_eq!(
         AgentToolbarItemKind::TransferAgent.available_in(),
         ToolbarAvailability::CLIAgentOnly
@@ -252,6 +272,7 @@ fn cli_quick_insert_presets_are_available_but_hidden_by_default() {
             AgentToolbarItemKind::Compact,
             AgentToolbarItemKind::ContinuePrompt,
             AgentToolbarItemKind::LooksGoodPrompt,
+            AgentToolbarItemKind::CopyAndClearDraft,
             AgentToolbarItemKind::TransferAgent,
         ]
     );

@@ -9566,7 +9566,7 @@ impl TerminalView {
 
     /// Writes a shared session viewer's bytes to the pty
     pub fn write_viewer_bytes_to_pty(&mut self, bytes: Vec<u8>, ctx: &mut ViewContext<Self>) {
-        self.write_user_bytes_to_pty_inner(bytes.into(), ctx);
+        self.write_user_bytes_to_pty_inner(bytes.into(), true, ctx);
     }
 
     /// Ends the current line before writing the given bytes to the PTY.
@@ -9595,12 +9595,26 @@ impl TerminalView {
         ctx: &mut ViewContext<Self>,
     ) {
         ctx.emit(Event::DesktopInput);
-        self.write_user_bytes_to_pty_inner(data.into(), ctx);
+        self.write_user_bytes_to_pty_inner(data.into(), true, ctx);
+    }
+
+    /// Writes a native CLI-agent editor action without treating its bytes as a turn interrupt.
+    ///
+    /// Some agent TUIs reuse an interrupt byte for an editor-only action when the composer has
+    /// text. Callers must validate that editor state before using this path.
+    fn write_user_bytes_to_pty_without_cli_agent_interrupt_tracking<B: Into<Cow<'static, [u8]>>>(
+        &mut self,
+        data: B,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        ctx.emit(Event::DesktopInput);
+        self.write_user_bytes_to_pty_inner(data.into(), false, ctx);
     }
 
     fn write_user_bytes_to_pty_inner(
         &mut self,
         bytes: Cow<'static, [u8]>,
+        track_cli_agent_interrupt: bool,
         ctx: &mut ViewContext<Self>,
     ) {
         {
@@ -9626,7 +9640,7 @@ impl TerminalView {
 
         // Neither Claude Code nor Codex fires a hook for an aborted turn, so the interrupt
         // keystroke itself is the only signal that the in-flight turn ended.
-        if is_cli_agent_interrupt_sequence(&bytes) {
+        if track_cli_agent_interrupt && is_cli_agent_interrupt_sequence(&bytes) {
             CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions_model, ctx| {
                 sessions_model
                     .mark_project_cli_agent_turn_interrupted_from_user_input(self.view_id, ctx);

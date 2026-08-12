@@ -7717,6 +7717,320 @@ fn submit_cli_agent_rich_input_clears_draft() {
 }
 
 #[test]
+fn copy_and_clear_cli_agent_draft_updates_clipboard_and_keeps_composer_open() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let _agent_view = FeatureFlag::AgentView.override_enabled(true);
+        let _cli_rich = FeatureFlag::CLIAgentRichInput.override_enabled(true);
+
+        let terminal = open_cli_agent_rich_input_for_agent(&mut app, CLIAgent::Codex);
+        terminal.update(&mut app, |view, ctx| {
+            view.input.update(ctx, |input, ctx| {
+                input.replace_buffer_content("unfinished prompt\nwith details", ctx);
+            });
+
+            assert!(view.copy_and_clear_cli_agent_draft(ctx));
+            assert!(view.has_active_cli_agent_input_session(ctx));
+            assert!(view.input.as_ref(ctx).buffer_text(ctx).is_empty());
+            assert_eq!(
+                CLIAgentSessionsModel::as_ref(ctx)
+                    .session(view.view_id)
+                    .and_then(|session| session.draft_text.as_deref()),
+                None
+            );
+        });
+
+        assert_eq!(
+            app.update(|ctx| ctx.clipboard().read().plain_text),
+            "unfinished prompt\nwith details"
+        );
+
+        app.update(|ctx| {
+            ctx.clipboard()
+                .write(ClipboardContent::plain_text("keep me".to_owned()));
+        });
+        terminal.update(&mut app, |view, ctx| {
+            assert!(!view.copy_and_clear_cli_agent_draft(ctx));
+        });
+        assert_eq!(
+            app.update(|ctx| ctx.clipboard().read().plain_text),
+            "keep me"
+        );
+    })
+}
+
+#[test]
+fn copy_and_clear_native_codex_draft_copies_grid_text_and_clears_composer() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let terminal = add_window_with_terminal(&mut app, None);
+        let pty_writes: Rc<RefCell<Vec<Vec<u8>>>> = Rc::new(RefCell::new(Vec::new()));
+        let writes = pty_writes.clone();
+        app.update(|ctx| {
+            ctx.subscribe_to_view(&terminal, move |_, event, _| {
+                if let Event::WriteBytesToPty { bytes } = event {
+                    writes.borrow_mut().push(bytes.to_vec());
+                }
+            });
+        });
+
+        terminal.update(&mut app, |view, ctx| {
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                sessions.set_session(
+                    view.view_id,
+                    CLIAgentSession {
+                        agent: CLIAgent::Codex,
+                        status: CLIAgentSessionStatus::InProgress,
+                        session_context: CLIAgentSessionContext::default(),
+                        input_state: CLIAgentInputState::Closed,
+                        should_auto_toggle_input: false,
+                        listener: None,
+                        remote_host: None,
+                        plugin_version: None,
+                        draft_text: None,
+                        custom_command_prefix: None,
+                        received_rich_notification: false,
+                        has_observed_turn_activity: true,
+                        turn_interrupted_by_user: false,
+                        prompt_history: Default::default(),
+                        prompt_history_load_state: Default::default(),
+                        prompt_history_generation: 0,
+                    },
+                    ctx,
+                );
+            });
+
+            let mut model = view.model.lock();
+            let last_size = *model.block_list().size();
+            let new_size = SizeInfo::new_without_font_metrics(24, 120);
+            model.resize(SizeUpdate {
+                update_reason: SizeUpdateReason::Refresh,
+                last_size,
+                new_size,
+                new_gap_height: None,
+                natural_rows: new_size.rows(),
+                natural_cols: new_size.columns(),
+            });
+            let codex_frame = "\x1b[12;1H\x1b[1m›\x1b[22m\u{a0}unfinished prompt                    \x1b[14;1Hgpt-5.6-sol max · Ready\x1b[12;9H";
+            model.simulate_long_running_block("codex", codex_frame);
+            assert!(!model.is_alt_screen_active());
+            drop(model);
+
+            assert!(view.copy_and_clear_cli_agent_draft(ctx));
+
+            // Codex enables Kitty keyboard disambiguation in current releases. Exercise that
+            // encoding as well as the legacy Ctrl+C byte.
+            view.model
+                .lock()
+                .block_list_mut()
+                .active_block_mut()
+                .grid_handler_mut()
+                .set_keyboard_mode(
+                    warp_terminal::model::KeyboardModes::DISAMBIGUATE_ESC_CODES,
+                    warp_terminal::model::KeyboardModesApplyBehavior::Replace,
+                );
+            assert!(view.copy_and_clear_cli_agent_draft(ctx));
+            assert_eq!(
+                ctx.clipboard().read().plain_text,
+                "unfinished prompt".to_owned()
+            );
+
+            let session = CLIAgentSessionsModel::as_ref(ctx)
+                .session(view.view_id)
+                .expect("Codex session should remain registered");
+            assert!(matches!(session.status, CLIAgentSessionStatus::InProgress));
+            assert!(!session.turn_interrupted_by_user);
+
+            // An empty composer contains dim suggestion text. It must not be copied or receive
+            // contextual Ctrl+C, which could otherwise interrupt Codex instead of clearing input.
+            ctx.clipboard()
+                .write(ClipboardContent::plain_text("keep me".to_owned()));
+            view.model.lock().process_bytes(
+                "\x1b[2J\x1b[12;1H\x1b[1m›\x1b[22m\u{a0}\x1b[2mAsk Codex to do anything\x1b[22m\x1b[14;1Hgpt-5.6-sol max · Ready\x1b[12;3H",
+            );
+            assert!(!view.copy_and_clear_cli_agent_draft(ctx));
+
+            // Multiple rendered input rows are ambiguous across the PTY boundary (they may be a
+            // real newline or a soft wrap), so leave such a composer untouched.
+            view.model.lock().process_bytes(
+                "\x1b[2J\x1b[12;1H\x1b[1m›\x1b[22m\u{a0}first line\x1b[13;3Hsecond line\x1b[15;1Hgpt-5.6-sol max · Ready\x1b[12;7H",
+            );
+            assert!(!view.copy_and_clear_cli_agent_draft(ctx));
+        });
+
+        assert_eq!(
+            app.update(|ctx| ctx.clipboard().read().plain_text),
+            "keep me"
+        );
+        assert_eq!(
+            *pty_writes.borrow(),
+            vec![vec![C0::ETX], b"\x1b[99;5u".to_vec()]
+        );
+    })
+}
+
+#[test]
+fn copy_and_clear_native_claude_draft_copies_grid_text_and_stashes_prompt() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let terminal = add_window_with_terminal(&mut app, None);
+        let pty_writes: Rc<RefCell<Vec<Vec<u8>>>> = Rc::new(RefCell::new(Vec::new()));
+        let writes = pty_writes.clone();
+        app.update(|ctx| {
+            ctx.subscribe_to_view(&terminal, move |_, event, _| {
+                if let Event::WriteBytesToPty { bytes } = event {
+                    writes.borrow_mut().push(bytes.to_vec());
+                }
+            });
+        });
+
+        terminal.update(&mut app, |view, ctx| {
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                sessions.set_session(
+                    view.view_id,
+                    CLIAgentSession {
+                        agent: CLIAgent::Claude,
+                        status: CLIAgentSessionStatus::InProgress,
+                        session_context: CLIAgentSessionContext::default(),
+                        input_state: CLIAgentInputState::Closed,
+                        should_auto_toggle_input: false,
+                        listener: None,
+                        remote_host: None,
+                        plugin_version: None,
+                        draft_text: None,
+                        custom_command_prefix: None,
+                        received_rich_notification: false,
+                        has_observed_turn_activity: false,
+                        turn_interrupted_by_user: false,
+                        prompt_history: Default::default(),
+                        prompt_history_load_state: Default::default(),
+                        prompt_history_generation: 0,
+                    },
+                    ctx,
+                );
+            });
+
+            let mut model = view.model.lock();
+            let last_size = *model.block_list().size();
+            let new_size = SizeInfo::new_without_font_metrics(24, 120);
+            model.resize(SizeUpdate {
+                update_reason: SizeUpdateReason::Refresh,
+                last_size,
+                new_size,
+                new_gap_height: None,
+                natural_rows: new_size.rows(),
+                natural_cols: new_size.columns(),
+            });
+            model.enter_alt_screen(true);
+            let columns = model.alt_screen().grid_handler().columns();
+            let rule = "─".repeat(columns);
+            let claude_frame = format!(
+                "\x1b[6;1H{rule}\x1b[7;1H❯\u{a0}unfinished prompt [Image #1]\x1b[8;1H{rule}\x1b[7;10H"
+            );
+            model.process_bytes(claude_frame.as_str());
+            drop(model);
+
+            assert!(view.copy_and_clear_cli_agent_draft(ctx));
+
+            // Claude may opt into Kitty's keyboard protocol. The synthetic Ctrl+S must use the
+            // active terminal encoding instead of always writing the legacy XOFF byte.
+            view.model
+                .lock()
+                .alt_screen_mut()
+                .grid_handler_mut()
+                .set_keyboard_mode(
+                    warp_terminal::model::KeyboardModes::DISAMBIGUATE_ESC_CODES,
+                    warp_terminal::model::KeyboardModesApplyBehavior::Replace,
+                );
+            assert!(view.copy_and_clear_cli_agent_draft(ctx));
+        });
+
+        assert_eq!(
+            app.update(|ctx| ctx.clipboard().read().plain_text),
+            "unfinished prompt [Image #1]"
+        );
+        assert_eq!(
+            *pty_writes.borrow(),
+            vec![vec![C0::XOFF], b"\x1b[115;5u".to_vec()]
+        );
+    })
+}
+
+#[test]
+fn copy_and_clear_native_claude_ignores_empty_composer_suggestion() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let terminal = add_window_with_terminal(&mut app, None);
+        let pty_writes: Rc<RefCell<Vec<Vec<u8>>>> = Rc::new(RefCell::new(Vec::new()));
+        let writes = pty_writes.clone();
+        app.update(|ctx| {
+            ctx.clipboard()
+                .write(ClipboardContent::plain_text("keep me".to_owned()));
+            ctx.subscribe_to_view(&terminal, move |_, event, _| {
+                if let Event::WriteBytesToPty { bytes } = event {
+                    writes.borrow_mut().push(bytes.to_vec());
+                }
+            });
+        });
+
+        terminal.update(&mut app, |view, ctx| {
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                sessions.set_session(
+                    view.view_id,
+                    CLIAgentSession {
+                        agent: CLIAgent::Claude,
+                        status: CLIAgentSessionStatus::InProgress,
+                        session_context: CLIAgentSessionContext::default(),
+                        input_state: CLIAgentInputState::Closed,
+                        should_auto_toggle_input: false,
+                        listener: None,
+                        remote_host: None,
+                        plugin_version: None,
+                        draft_text: None,
+                        custom_command_prefix: None,
+                        received_rich_notification: false,
+                        has_observed_turn_activity: false,
+                        turn_interrupted_by_user: false,
+                        prompt_history: Default::default(),
+                        prompt_history_load_state: Default::default(),
+                        prompt_history_generation: 0,
+                    },
+                    ctx,
+                );
+            });
+
+            let mut model = view.model.lock();
+            let last_size = *model.block_list().size();
+            let new_size = SizeInfo::new_without_font_metrics(24, 120);
+            model.resize(SizeUpdate {
+                update_reason: SizeUpdateReason::Refresh,
+                last_size,
+                new_size,
+                new_gap_height: None,
+                natural_rows: new_size.rows(),
+                natural_cols: new_size.columns(),
+            });
+            model.enter_alt_screen(true);
+            let columns = model.alt_screen().grid_handler().columns();
+            let rule = "─".repeat(columns);
+            let claude_frame = format!(
+                "\x1b[6;1H{rule}\x1b[7;1H❯\u{a0}\x1b[2mTry \"fix the failing tests\"\x1b[22m\x1b[8;1H{rule}\x1b[7;3H"
+            );
+            model.process_bytes(claude_frame.as_str());
+            drop(model);
+
+            assert!(!view.copy_and_clear_cli_agent_draft(ctx));
+        });
+
+        assert_eq!(
+            app.update(|ctx| ctx.clipboard().read().plain_text),
+            "keep me"
+        );
+        assert!(pty_writes.borrow().is_empty());
+    })
+}
+
+#[test]
 fn close_cli_agent_rich_input_with_empty_buffer_stores_no_draft() {
     App::test((), |mut app| async move {
         initialize_app_for_terminal_view(&mut app);

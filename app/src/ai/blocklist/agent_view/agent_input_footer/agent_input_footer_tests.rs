@@ -18,6 +18,7 @@ enum ObservedEvent {
     WriteToPty(String),
     SubmitTextToCliAgent(String),
     InsertIntoCLIRichInput(String),
+    CopyAndClearDraft,
 }
 
 #[test]
@@ -42,6 +43,9 @@ fn custom_insert_writes_command_in_terminal_and_submits_text_to_cli_agent() {
                 AgentInputFooterEvent::InsertIntoCLIRichInput(text) => observed_for_subscription
                     .borrow_mut()
                     .push(ObservedEvent::InsertIntoCLIRichInput(text.clone())),
+                AgentInputFooterEvent::CopyAndClearDraft => observed_for_subscription
+                    .borrow_mut()
+                    .push(ObservedEvent::CopyAndClearDraft),
                 _ => {}
             });
         });
@@ -115,6 +119,27 @@ fn custom_insert_writes_command_in_terminal_and_submits_text_to_cli_agent() {
             vec![ObservedEvent::SubmitTextToCliAgent(
                 "review this".to_owned()
             )]
+        );
+
+        observed.borrow_mut().clear();
+        footer.update(&mut app, |footer, ctx| {
+            for action in [
+                AgentInputFooterAction::Compact,
+                AgentInputFooterAction::SendContinue,
+                AgentInputFooterAction::SendLooksGood,
+                AgentInputFooterAction::CopyAndClearDraft,
+            ] {
+                footer.handle_action(&action, ctx);
+            }
+        });
+        assert_eq!(
+            *observed.borrow(),
+            vec![
+                ObservedEvent::SubmitTextToCliAgent("/compact".to_owned()),
+                ObservedEvent::SubmitTextToCliAgent("Continue".to_owned()),
+                ObservedEvent::SubmitTextToCliAgent("Looks good to me, continue".to_owned()),
+                ObservedEvent::CopyAndClearDraft,
+            ]
         );
 
         observed.borrow_mut().clear();
