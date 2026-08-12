@@ -46,6 +46,23 @@ use crate::util::color::{ContrastingColor, MinimumAllowedContrast};
 // The scale factor of the cursor relative to the cursor width.
 const CURSOR_THICKNESS_SCALE_FACTOR: f32 = 0.15;
 
+/// Returns the width used to paint a block cursor, constrained to the width of its cell.
+fn scaled_block_cursor_width(cell_width: f32, width_scale: f32) -> f32 {
+    cell_width * width_scale.clamp(0., 1.)
+}
+
+/// A partial-width block cursor must not invert the entire cell underneath it. Treat it like a
+/// beam while painting the cell, then draw the partial block on top in [`render_cursor`].
+pub(crate) fn cursor_shape_for_cell_rendering(
+    cursor_shape: Option<CursorShape>,
+    block_cursor_width_scale: f32,
+) -> Option<CursorShape> {
+    match cursor_shape {
+        Some(CursorShape::Block) if block_cursor_width_scale < 1. => Some(CursorShape::Beam),
+        cursor_shape => cursor_shape,
+    }
+}
+
 // The scale factor of the underline relative to the glyph width.
 const UNDERLINE_THICKNESS_SCALE_FACTOR: f32 = 0.15;
 
@@ -2346,6 +2363,7 @@ pub fn render_cursor(
     cursor_point: Point,
     is_cursor_on_wide_char: bool,
     cursor_style: CursorStyle,
+    block_cursor_width_scale: f32,
     padding_x: Pixels,
     grid_origin: Vector2F,
     color: ColorU,
@@ -2368,6 +2386,10 @@ pub fn render_cursor(
         cell_width,
         grid_render_params.font_size * DEFAULT_UI_LINE_HEIGHT_RATIO,
     );
+    let scaled_cursor_block_size = vec2f(
+        scaled_block_cursor_width(cell_width, block_cursor_width_scale),
+        cursor_block_size.y(),
+    );
 
     ctx.position_cache.cache_position_indefinitely(
         format!("terminal_view:cursor_{terminal_view_id}"),
@@ -2379,7 +2401,10 @@ pub fn render_cursor(
     match cursor_style.shape {
         CursorShape::Block => {
             ctx.scene
-                .draw_rect_with_hit_recording(RectF::new(cursor_top_origin, cursor_block_size))
+                .draw_rect_with_hit_recording(RectF::new(
+                    cursor_top_origin,
+                    scaled_cursor_block_size,
+                ))
                 .with_background(Fill::Solid(color));
         }
         CursorShape::Underline => {
@@ -2401,7 +2426,10 @@ pub fn render_cursor(
         }
         CursorShape::HollowBlock => {
             ctx.scene
-                .draw_rect_with_hit_recording(RectF::new(cursor_top_origin, cursor_block_size))
+                .draw_rect_with_hit_recording(RectF::new(
+                    cursor_top_origin,
+                    scaled_cursor_block_size,
+                ))
                 .with_border(Border::all(thickness).with_border_color(color));
         }
         CursorShape::Hidden => {}

@@ -696,6 +696,10 @@ const MOVE_LINE_END_BINDING_NAME: &str = "editor_view:move_to_line_end";
 
 const DEFAULT_AI_BLOCK_HEIGHT: f32 = 96.;
 
+/// Claude Code and Codex default to a full-cell block cursor. Keep their native composers while
+/// making that cursor less visually dominant.
+const NATIVE_CLI_AGENT_BLOCK_CURSOR_WIDTH_SCALE: f32 = 0.5;
+
 pub const DEFAULT_ASK_AI_AUTOSUGGESTION_TEXT: &str = "What happened here?";
 
 const WARP_MD_PATH: &str = "WARP.md";
@@ -24691,6 +24695,10 @@ impl TerminalView {
         if should_use_ligature_rendering(app) {
             alt_screen_element = alt_screen_element.with_ligature_rendering();
         }
+        if let Some(width_scale) = self.native_cli_agent_block_cursor_width_scale(app) {
+            alt_screen_element =
+                alt_screen_element.with_block_cursor_width_scale(width_scale);
+        }
         if self.should_hide_cli_agent_cursor_cell(app) {
             alt_screen_element = alt_screen_element.with_hide_cursor_cell();
         }
@@ -24797,6 +24805,16 @@ impl TerminalView {
         CLIAgentSessionsModel::as_ref(app)
             .session(self.view_id)
             .is_some_and(|s| matches!(s.input_state, CLIAgentInputState::Open { .. }))
+    }
+
+    fn native_cli_agent_block_cursor_width_scale(&self, app: &AppContext) -> Option<f32> {
+        CLIAgentSessionsModel::as_ref(app)
+            .session(self.view_id)
+            .is_some_and(|session| {
+                matches!(session.agent, CLIAgent::Claude | CLIAgent::Codex)
+                    && matches!(session.input_state, CLIAgentInputState::Closed)
+            })
+            .then_some(NATIVE_CLI_AGENT_BLOCK_CURSOR_WIDTH_SCALE)
     }
 
     fn render_block_list_element(
@@ -24959,6 +24977,10 @@ impl TerminalView {
 
         if should_use_ligature_rendering(app) {
             element = element.with_ligature_rendering();
+        }
+
+        if let Some(width_scale) = self.native_cli_agent_block_cursor_width_scale(app) {
+            element = element.with_block_cursor_width_scale(width_scale);
         }
 
         if self.should_hide_cli_agent_cursor_cell(app) {

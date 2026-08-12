@@ -714,6 +714,9 @@ pub struct BlockListElement {
 
     use_ligature_rendering: bool,
 
+    /// Width of block and hollow-block cursors relative to the terminal cell width.
+    block_cursor_width_scale: f32,
+
     /// When true, suppresses cursor rendering for CLI agents when rich input is open. For agents that draw their own cursor (SHOW_CURSOR off),
     /// the cursor cell is skipped. For agents that let Warp draw the cursor
     /// (SHOW_CURSOR on), the `draw_cursor` call and cursor contrast colouring
@@ -982,6 +985,7 @@ impl BlockListElement {
             block_banner,
             hovered_secret: terminal_view_render_context.hovered_secret,
             use_ligature_rendering: false,
+            block_cursor_width_scale: 1.,
             hide_cursor_cell: false,
             active_filter_editor_block_index: None,
             filtered_blocks: None,
@@ -1012,6 +1016,11 @@ impl BlockListElement {
 
     pub fn with_ligature_rendering(mut self) -> Self {
         self.use_ligature_rendering = true;
+        self
+    }
+
+    pub fn with_block_cursor_width_scale(mut self, width_scale: f32) -> Self {
+        self.block_cursor_width_scale = width_scale;
         self
     }
 
@@ -3783,6 +3792,7 @@ impl Element for BlockListElement {
             size_info: self.size_info,
             cell_size,
             use_ligature_rendering: self.use_ligature_rendering,
+            block_cursor_width_scale: self.block_cursor_width_scale,
             hide_cursor_cell: self.hide_cursor_cell,
         };
         let block_grid_params = BlockGridParams {

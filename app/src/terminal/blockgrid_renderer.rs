@@ -12,7 +12,9 @@ use super::model::grid::RespectDisplayedOutput;
 use super::model::image_map::StoredImageMetadata;
 use super::model::SecretHandle;
 use crate::settings::EnforceMinimumContrast;
-use crate::terminal::grid_renderer::{render_cursor, render_grid, CellGlyphCache};
+use crate::terminal::grid_renderer::{
+    cursor_shape_for_cell_rendering, render_cursor, render_grid, CellGlyphCache,
+};
 use crate::terminal::model::blockgrid::{BlockGrid, CursorDisplayPoint};
 use crate::terminal::model::grid::grid_handler::Link;
 use crate::terminal::model::index::Point;
@@ -31,6 +33,8 @@ pub struct GridRenderParams {
     pub size_info: SizeInfo,
     pub cell_size: Vector2F,
     pub use_ligature_rendering: bool,
+    /// Width of block and hollow-block cursors relative to the terminal cell width.
+    pub block_cursor_width_scale: f32,
     /// When true, suppresses cursor rendering for CLI agents when rich input is open. For agents that draw their own cursor (SHOW_CURSOR off),
     /// the cursor cell is skipped. For agents that let Warp draw the cursor
     /// (SHOW_CURSOR on), the `draw_cursor` call and cursor contrast colouring
@@ -85,6 +89,12 @@ impl BlockGrid {
             .grid_render_params
             .obfuscate_secrets
             .and(&grid.get_secret_obfuscation());
+        let visible_cursor_shape = cursor_shape_for_cell_rendering(
+            visible_cursor_shape,
+            block_grid_params
+                .grid_render_params
+                .block_cursor_width_scale,
+        );
         render_grid(
             grid,
             start_row,
@@ -189,6 +199,7 @@ impl BlockGrid {
             cursor_display_point,
             is_cursor_on_wide_char,
             cursor_style,
+            grid_render_params.block_cursor_width_scale,
             grid_render_params.size_info.padding_x_px(),
             grid_origin,
             color,

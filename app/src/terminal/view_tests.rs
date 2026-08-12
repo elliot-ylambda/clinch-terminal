@@ -598,6 +598,47 @@ fn mac_editing_shortcuts_do_not_override_unrelated_fullscreen_apps() {
     })
 }
 
+#[test]
+fn native_agent_block_cursor_is_half_width_only_for_claude_and_codex() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let terminal = add_window_with_terminal(&mut app, None);
+
+        terminal.update(&mut app, |view, ctx| {
+            let view_id = view.view_id;
+            assert_eq!(view.native_cli_agent_block_cursor_width_scale(ctx), None);
+
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                let mut session = cli_agent_session_with_prompts(Vec::new());
+                session.agent = CLIAgent::Claude;
+                sessions.set_session(view_id, session, ctx);
+            });
+            assert_eq!(
+                view.native_cli_agent_block_cursor_width_scale(ctx),
+                Some(NATIVE_CLI_AGENT_BLOCK_CURSOR_WIDTH_SCALE)
+            );
+
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                let mut session = cli_agent_session_with_prompts(Vec::new());
+                session.input_state = CLIAgentInputState::Open {
+                    entrypoint: CLIAgentInputEntrypoint::FooterButton,
+                    previous_input_config: InputConfig::new(ctx),
+                    previous_was_lock_set_with_empty_buffer: false,
+                };
+                sessions.set_session(view_id, session, ctx);
+            });
+            assert_eq!(view.native_cli_agent_block_cursor_width_scale(ctx), None);
+
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                let mut session = cli_agent_session_with_prompts(Vec::new());
+                session.agent = CLIAgent::Gemini;
+                sessions.set_session(view_id, session, ctx);
+            });
+            assert_eq!(view.native_cli_agent_block_cursor_width_scale(ctx), None);
+        });
+    })
+}
+
 fn input_operations_for_buffer_content(app: &mut App, content: &str) -> Vec<CrdtOperation> {
     let terminal = add_window_with_terminal(app, None);
     terminal.update(app, |view, ctx| {

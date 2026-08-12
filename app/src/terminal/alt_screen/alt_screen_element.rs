@@ -170,6 +170,7 @@ impl AltScreenElement {
                         .as_f32(),
                 ),
                 use_ligature_rendering: false,
+                block_cursor_width_scale: 1.,
                 hide_cursor_cell: false,
             },
             presence_manager: None,
@@ -184,6 +185,11 @@ impl AltScreenElement {
 
     pub fn with_ligature_rendering(mut self) -> Self {
         self.grid_render_params.use_ligature_rendering = true;
+        self
+    }
+
+    pub fn with_block_cursor_width_scale(mut self, width_scale: f32) -> Self {
+        self.grid_render_params.block_cursor_width_scale = width_scale;
         self
     }
 
@@ -792,7 +798,10 @@ impl Element for AltScreenElement {
             obfuscate_secrets,
             self.hovered_secret,
             self.grid_render_params.use_ligature_rendering,
-            cursor_visible.then(|| model.alt_screen().cursor_style().shape),
+            grid_renderer::cursor_shape_for_cell_rendering(
+                cursor_visible.then(|| model.alt_screen().cursor_style().shape),
+                self.grid_render_params.block_cursor_width_scale,
+            ),
             RespectDisplayedOutput::Yes,
             &model.image_id_to_metadata,
             Some(&mut sampler),
@@ -810,6 +819,7 @@ impl Element for AltScreenElement {
                 grid.cursor_render_point(),
                 grid.is_cursor_on_wide_char(),
                 model.alt_screen().cursor_style(),
+                self.grid_render_params.block_cursor_width_scale,
                 padding_x,
                 adjusted_grid_origin,
                 self.grid_render_params.warp_theme.cursor().into(),
