@@ -73,6 +73,9 @@ pub enum AgentToolbarItemKind {
     // CLI agent only – forks this session into a new tab.
     ForkSession,
 
+    // CLI agent only – toggles this Claude Code or Codex conversation in finder bookmarks.
+    BookmarkConversation,
+
     // CLI agent only – submits "Continue" to the running agent.
     ContinuePrompt,
 
@@ -203,6 +206,7 @@ impl AgentToolbarItemKind {
             | Self::Settings
             | Self::Compact
             | Self::ForkSession
+            | Self::BookmarkConversation
             | Self::ContinuePrompt
             | Self::TransferAgent
             | Self::CustomInsert { .. }
@@ -228,6 +232,7 @@ impl AgentToolbarItemKind {
             | Self::FileExplorer
             | Self::Compact
             | Self::ForkSession
+            | Self::BookmarkConversation
             | Self::ContinuePrompt
             | Self::TransferAgent
             | Self::CustomInsert { .. }
@@ -260,6 +265,7 @@ impl AgentToolbarItemKind {
             Self::Settings => Cow::Borrowed("Settings"),
             Self::Compact => Cow::Borrowed("Compact"),
             Self::ForkSession => Cow::Borrowed("Fork in New Tab"),
+            Self::BookmarkConversation => Cow::Borrowed("Bookmark convo"),
             Self::ContinuePrompt => Cow::Borrowed("Continue"),
             Self::LooksGoodPrompt => Cow::Borrowed("LGTM"),
             Self::TransferAgent => Cow::Borrowed("Transfer agent"),
@@ -283,6 +289,7 @@ impl AgentToolbarItemKind {
             Self::Settings => Some(Icon::Settings),
             Self::Compact => Some(Icon::Minimize),
             Self::ForkSession => Some(Icon::GitBranch),
+            Self::BookmarkConversation => Some(Icon::Bookmark),
             Self::ContinuePrompt => Some(Icon::Play),
             Self::LooksGoodPrompt => Some(Icon::ThumbsUp),
             Self::TransferAgent => Some(Icon::SwitchHorizontal01),
@@ -318,6 +325,7 @@ impl AgentToolbarItemKind {
             | Self::Settings
             | Self::Compact
             | Self::ForkSession
+            | Self::BookmarkConversation
             | Self::ContinuePrompt
             | Self::TransferAgent
             | Self::CustomInsert { .. }
@@ -422,6 +430,7 @@ impl AgentToolbarItemKind {
     pub fn cli_default_left() -> Vec<Self> {
         vec![
             Self::ForkSession,
+            Self::BookmarkConversation,
             Self::Compact,
             Self::ContinuePrompt,
             Self::LooksGoodPrompt,
@@ -514,6 +523,7 @@ impl AgentToolbarItemKind {
     pub fn all_available_for_cli_input() -> Vec<Self> {
         let mut items = vec![
             Self::ForkSession,
+            Self::BookmarkConversation,
             Self::Compact,
             Self::ContinuePrompt,
             Self::LooksGoodPrompt,

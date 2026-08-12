@@ -228,6 +228,7 @@ pub struct AgentInputFooter {
     file_explorer_button: ViewHandle<ActionButton>,
     compact_button: ViewHandle<ActionButton>,
     fork_button: ViewHandle<ActionButton>,
+    bookmark_conversation_button: ViewHandle<ActionButton>,
     continue_button: ViewHandle<ActionButton>,
     looks_good_button: ViewHandle<ActionButton>,
     /// Opens the unified footer-button editor, including its add-button flow.
@@ -449,6 +450,16 @@ impl AgentInputFooter {
                     ctx.dispatch_typed_action(AgentInputFooterAction::ForkSession);
                 })
         });
+        let bookmark_conversation_button = ctx.add_typed_action_view(|_ctx| {
+            ActionButton::new("Bookmark convo", AgentInputButtonTheme)
+                .with_icon(Icon::Bookmark)
+                .with_tooltip("Save this conversation in Bookmark convos")
+                .with_size(cli_button_size)
+                .with_tooltip_alignment(TooltipAlignment::Left)
+                .on_click(|ctx| {
+                    ctx.dispatch_typed_action(AgentInputFooterAction::ToggleConversationBookmark);
+                })
+        });
         let continue_button = ctx.add_typed_action_view(|_ctx| {
             ActionButton::new("Continue", AgentInputButtonTheme)
                 .with_icon(Icon::Play)
@@ -579,6 +590,7 @@ impl AgentInputFooter {
                 if event.terminal_view_id() != terminal_view_id {
                     return;
                 }
+                me.sync_conversation_bookmark_button(ctx);
 
                 // Reset the debounce when a session ends so the next
                 // session gets a fresh debounce window.
@@ -926,6 +938,7 @@ impl AgentInputFooter {
             file_explorer_button,
             compact_button,
             fork_button,
+            bookmark_conversation_button,
             continue_button,
             looks_good_button,
             quick_insert_edit_button,
@@ -974,6 +987,7 @@ impl AgentInputFooter {
         };
         me.sync_fast_forward_button(ctx);
         me.sync_remote_control_button(ctx);
+        me.sync_conversation_bookmark_button(ctx);
         me.update_context_window_button(ctx);
         me.update_display_chips(&prompt, ctx);
         me.update_ftu_callout_render_state(ctx);
@@ -1604,6 +1618,12 @@ impl AgentInputFooter {
             }
             AgentToolbarItemKind::Compact => Some(ChildView::new(&self.compact_button).finish()),
             AgentToolbarItemKind::ForkSession => Some(ChildView::new(&self.fork_button).finish()),
+            AgentToolbarItemKind::BookmarkConversation => {
+                CLIAgentSessionsModel::as_ref(app)
+                    .session(self.terminal_view_id)
+                    .and_then(|session| session.session_key())?;
+                Some(ChildView::new(&self.bookmark_conversation_button).finish())
+            }
             AgentToolbarItemKind::ContinuePrompt => {
                 Some(ChildView::new(&self.continue_button).finish())
             }
@@ -2329,6 +2349,28 @@ impl AgentInputFooter {
         });
     }
 
+    fn sync_conversation_bookmark_button(&self, ctx: &mut ViewContext<Self>) {
+        let is_bookmarked =
+            CLIAgentSessionsModel::as_ref(ctx).is_conversation_bookmarked(self.terminal_view_id);
+        let (label, tooltip) = if is_bookmarked {
+            (
+                "Bookmarked",
+                "Remove this conversation from Bookmark convos",
+            )
+        } else {
+            (
+                "Bookmark convo",
+                "Save this conversation in Bookmark convos",
+            )
+        };
+        self.bookmark_conversation_button
+            .update(ctx, |button, ctx| {
+                button.set_label(label, ctx);
+                button.set_tooltip(Some(tooltip), ctx);
+                button.set_active(is_bookmarked, ctx);
+            });
+    }
+
     fn sync_fast_forward_button(&self, ctx: &mut ViewContext<Self>) {
         // In cloud agent conversations fast forward is force-enabled.
         let terminal_model = self.terminal_model.lock();
@@ -2550,6 +2592,7 @@ impl AgentInputFooter {
             | AgentToolbarItemKind::Settings
             | AgentToolbarItemKind::Compact
             | AgentToolbarItemKind::ForkSession
+            | AgentToolbarItemKind::BookmarkConversation
             | AgentToolbarItemKind::ContinuePrompt
             | AgentToolbarItemKind::TransferAgent
             | AgentToolbarItemKind::CustomInsert { .. }
@@ -2834,6 +2877,8 @@ pub enum AgentInputFooterAction {
     ToggleFileExplorer,
     Compact,
     ForkSession,
+    /// Toggle the active Claude Code or Codex conversation in the global finder bookmarks.
+    ToggleConversationBookmark,
     /// Submit "Continue" to the running CLI agent.
     SendContinue,
     /// Submit "Looks good to me, continue" to the running CLI agent.
@@ -2954,6 +2999,24 @@ impl TypedActionView for AgentInputFooter {
             AgentInputFooterAction::ForkSession => {
                 if self.cli_agent(ctx).is_some() {
                     ctx.emit(AgentInputFooterEvent::ForkSession);
+                }
+            }
+            AgentInputFooterAction::ToggleConversationBookmark => {
+                let result = CLIAgentSessionsModel::handle(ctx).update(ctx, |model, ctx| {
+                    model.toggle_conversation_bookmark(self.terminal_view_id, ctx)
+                });
+                self.sync_conversation_bookmark_button(ctx);
+                if let Err(error) = result {
+                    let window_id = ctx.window_id();
+                    ToastStack::handle(ctx).update(ctx, |toast_stack, ctx| {
+                        toast_stack.add_ephemeral_toast(
+                            DismissibleToast::error(format!(
+                                "Could not update conversation bookmark: {error}"
+                            )),
+                            window_id,
+                            ctx,
+                        );
+                    });
                 }
             }
             AgentInputFooterAction::SendContinue => {

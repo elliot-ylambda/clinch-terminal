@@ -24,6 +24,7 @@ fn agent_conversation_finder_settings_round_trip_and_legacy_values_fall_back() {
         ScopeFilter::ThisProject,
         ScopeFilter::ProjectWorktrees,
         ScopeFilter::All,
+        ScopeFilter::Bookmarked,
     ] {
         assert_eq!(
             parse_agent_conversation_finder_scope(agent_conversation_finder_scope_value(scope)),

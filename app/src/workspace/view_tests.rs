@@ -2290,6 +2290,35 @@ fn cli_agent_action_cwd_prefers_the_live_source_pane_directory() {
     );
 }
 
+#[cfg(feature = "local_fs")]
+#[test]
+fn bookmarked_conversation_reopens_in_current_project_instead_of_recorded_repo() {
+    let temp_root = TempDir::new().expect("failed to create temp dir");
+    let current_project = temp_root.path().join("current");
+    let recorded_repo = temp_root.path().join("recorded");
+    std::fs::create_dir_all(&current_project).expect("failed to create current project");
+    std::fs::create_dir_all(&recorded_repo).expect("failed to create recorded repo");
+
+    assert_eq!(
+        agent_conversation_reopen_cwd(
+            true,
+            Some(current_project.clone()),
+            Some(recorded_repo.to_string_lossy().into_owned()),
+        )
+        .as_deref(),
+        current_project.to_str()
+    );
+    assert_eq!(
+        agent_conversation_reopen_cwd(
+            false,
+            Some(current_project),
+            Some(recorded_repo.to_string_lossy().into_owned()),
+        )
+        .as_deref(),
+        recorded_repo.to_str()
+    );
+}
+
 fn number_of_shared_sessions_in_tab(
     workspace: &Workspace,
     index: usize,

@@ -342,6 +342,7 @@ impl View {
                     ScopeFilter::ThisProject,
                     ScopeFilter::ProjectWorktrees,
                     ScopeFilter::All,
+                    ScopeFilter::Bookmarked,
                 ],
                 |scope, is_selected, app| {
                     let appearance = Appearance::as_ref(app);
@@ -862,23 +863,24 @@ impl View {
         )
         .finish();
 
-        let row = Flex::row()
+        let mut row = Flex::row()
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
             .with_main_axis_alignment(MainAxisAlignment::Start)
             .with_spacing(6.)
             .with_child(render_label("Scope:"))
-            .with_child(ChildView::new(&self.agent_conversation_scope_control).finish())
-            .with_child(folder_button)
-            .with_child(
-                Container::new(render_label("Agent:"))
-                    .with_padding_left(8.)
-                    .finish(),
-            )
-            .with_child(ChildView::new(&self.agent_conversation_agent_control).finish())
-            .finish();
+            .with_child(ChildView::new(&self.agent_conversation_scope_control).finish());
+        if self.agent_conversations_data_source.as_ref(app).scope() != ScopeFilter::Bookmarked {
+            row.add_child(folder_button);
+        }
+        row.add_child(
+            Container::new(render_label("Agent:"))
+                .with_padding_left(8.)
+                .finish(),
+        );
+        row.add_child(ChildView::new(&self.agent_conversation_agent_control).finish());
 
         Some(
-            Container::new(row)
+            Container::new(row.finish())
                 .with_horizontal_padding(styles::RESULT_PADDING_HORIZONTAL)
                 .with_padding_bottom(8.)
                 .finish(),
@@ -1244,10 +1246,15 @@ impl View {
                 });
                 send_telemetry_from_app_ctx!(TelemetryEvent::SelectNavigationPaletteItem, ctx);
             }
-            CommandPaletteItemAction::ReopenAgentConversation { command, cwd } => {
+            CommandPaletteItemAction::ReopenAgentConversation {
+                command,
+                cwd,
+                use_current_project,
+            } => {
                 ctx.dispatch_typed_action(&WorkspaceAction::ReopenAgentConversation {
                     command,
                     cwd,
+                    use_current_project,
                 });
             }
             CommandPaletteItemAction::ForkConversation { conversation_id } => {

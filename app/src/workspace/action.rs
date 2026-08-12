@@ -252,6 +252,7 @@ pub enum WorkspaceAction {
     /// Unpins the entire tab group: clears the pinned flag on the group
     /// and moves the group block to the start of the unpinned region.
     UnpinTabGroup(TabGroupId),
+    ToggleBookmarkedSessionsCollapsed,
     ToggleTasksCollapsed,
     FocusTaskInput,
     RemoveWorkspaceTask(WorkspaceTaskId),
@@ -632,12 +633,13 @@ pub enum WorkspaceAction {
         conversation_id: AIConversationId,
     },
     /// Reopen a past CLI-agent (Claude/Codex) conversation, picked in the command
-    /// palette, in a NEW tab: open a shell at `cwd` and auto-run `command` (the
-    /// conversation's `claude --teleport`/`claude --resume`/`codex resume` command)
-    /// once the shell bootstraps.
+    /// palette, in a NEW tab and auto-run `command` (the conversation's
+    /// `claude --teleport`/`claude --resume`/`codex resume` command) once the shell
+    /// bootstraps. Bookmarked results use the active project instead of `cwd`.
     ReopenAgentConversation {
         command: String,
         cwd: Option<String>,
+        use_current_project: bool,
     },
     /// Insert the /fork slash command into the active terminal's input.
     InsertForkSlashCommand,
@@ -980,6 +982,7 @@ impl WorkspaceAction {
             | UnpinTab(_)
             | PinTabGroup(_)
             | UnpinTabGroup(_)
+            | ToggleBookmarkedSessionsCollapsed
             | ToggleTasksCollapsed
             | RemoveWorkspaceTask(_)
             | LaunchWorkspaceTask { .. }

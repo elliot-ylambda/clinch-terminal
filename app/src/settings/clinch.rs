@@ -52,6 +52,7 @@ pub fn parse_agent_conversation_finder_scope(value: &str) -> ScopeFilter {
     match value {
         "all" => ScopeFilter::All,
         "project_worktrees" => ScopeFilter::ProjectWorktrees,
+        "bookmarked" => ScopeFilter::Bookmarked,
         "this_project" => ScopeFilter::ThisProject,
         _ => ScopeFilter::default(),
     }
@@ -62,6 +63,7 @@ pub fn agent_conversation_finder_scope_value(scope: ScopeFilter) -> &'static str
         ScopeFilter::ThisProject => "this_project",
         ScopeFilter::ProjectWorktrees => "project_worktrees",
         ScopeFilter::All => "all",
+        ScopeFilter::Bookmarked => "bookmarked",
     }
 }
 

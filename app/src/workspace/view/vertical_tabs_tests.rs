@@ -9,9 +9,9 @@ use super::{
     automatic_worktree_toggle_tooltip, branch_label_display, coalesce_summary_branch_entries,
     code_detail_kind_label, compact_branch_subtitle_display, detail_sidecar_width_and_bounds,
     detail_target_for_hovered_row, non_terminal_search_text_fragments,
-    pane_ids_for_display_granularity, pane_search_text_fragments, preferred_agent_tab_titles,
-    push_normalized_unique_summary_label, search_fragments_contain_query,
-    select_summary_pane_kind_icons, separate_title_indicator_kind,
+    pane_ids_for_display_granularity, pane_search_text_fragments, path_belongs_to_project,
+    preferred_agent_tab_titles, push_normalized_unique_summary_label,
+    search_fragments_contain_query, select_summary_pane_kind_icons, separate_title_indicator_kind,
     should_keep_detail_sidecar_visible_for_mouse_position,
     should_render_separate_activity_indicator, sort_summary_primary_labels_status_first,
     summary_overflow_count, summary_search_text_fragments, terminal_command_status,
@@ -52,6 +52,25 @@ fn automatic_worktree_toggle_tooltip_reports_shared_setting_state() {
         automatic_worktree_toggle_tooltip(false),
         ("Automatic worktree tabs: Off", "Applies to all projects")
     );
+}
+
+#[test]
+fn bookmarked_session_paths_are_scoped_to_the_current_project() {
+    let project = std::path::Path::new("/work/current-project");
+
+    assert!(path_belongs_to_project(project, project));
+    assert!(path_belongs_to_project(
+        std::path::Path::new("/work/current-project/crates/app"),
+        project
+    ));
+    assert!(!path_belongs_to_project(
+        std::path::Path::new("/work/other-project"),
+        project
+    ));
+    assert!(!path_belongs_to_project(
+        std::path::Path::new("/work/current-project-old"),
+        project
+    ));
 }
 
 fn pane_id() -> PaneId {

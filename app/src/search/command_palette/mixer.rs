@@ -59,6 +59,8 @@ pub enum CommandPaletteItemAction {
     ReopenAgentConversation {
         command: String,
         cwd: Option<String>,
+        /// Ignore the conversation's recorded cwd and launch at the active project's root.
+        use_current_project: bool,
     },
     OpenLaunchConfiguration {
         config: Arc<LaunchConfig>,

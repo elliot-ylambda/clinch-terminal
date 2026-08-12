@@ -6,7 +6,7 @@ use std::io::{BufRead, Read};
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Local};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use unicode_segmentation::UnicodeSegmentation;
 use walkdir::WalkDir;
@@ -14,7 +14,8 @@ use walkdir::WalkDir;
 use crate::channel::ChannelState;
 
 /// A CLI-agent provider whose sessions Clinch can restore and inspect locally.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AgentResumeProvider {
     Claude,
     Codex,
@@ -392,7 +393,106 @@ fn registry_dir() -> Option<PathBuf> {
 
 const ACTIVE_PANES_FILE: &str = "active-panes";
 const APP_TERMINATING_FILE: &str = ".app-terminating";
+const CONVERSATION_BOOKMARKS_FILE: &str = "conversation-bookmarks.json";
 const TOMBSTONES_DIR: &str = "tombstones";
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+struct ConversationBookmark {
+    provider: AgentResumeProvider,
+    session_id: String,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+struct ConversationBookmarksFile {
+    #[serde(default)]
+    bookmarks: Vec<ConversationBookmark>,
+}
+
+fn read_conversation_bookmarks_in(dir: &Path) -> HashSet<ConversationBookmark> {
+    let Ok(contents) = std::fs::read_to_string(dir.join(CONVERSATION_BOOKMARKS_FILE)) else {
+        return HashSet::new();
+    };
+    let Ok(file) = serde_json::from_str::<ConversationBookmarksFile>(&contents) else {
+        return HashSet::new();
+    };
+    file.bookmarks
+        .into_iter()
+        .filter(|bookmark| is_safe_session_id(&bookmark.session_id))
+        .collect()
+}
+
+fn write_conversation_bookmarks_in(
+    dir: &Path,
+    bookmarks: &HashSet<ConversationBookmark>,
+) -> std::io::Result<()> {
+    let mut bookmarks = bookmarks.iter().cloned().collect::<Vec<_>>();
+    bookmarks.sort_by(|left, right| {
+        left.provider
+            .as_str()
+            .cmp(right.provider.as_str())
+            .then_with(|| left.session_id.cmp(&right.session_id))
+    });
+    let contents = serde_json::to_vec_pretty(&ConversationBookmarksFile { bookmarks })
+        .map_err(std::io::Error::other)?;
+    write_private_atomic(dir, CONVERSATION_BOOKMARKS_FILE, &contents)
+}
+
+/// Returns whether a durable Claude Code or Codex conversation is bookmarked.
+pub fn is_conversation_bookmarked(provider: AgentResumeProvider, session_id: &str) -> bool {
+    let Some(dir) = registry_dir() else {
+        return false;
+    };
+    read_conversation_bookmarks_in(&dir).contains(&ConversationBookmark {
+        provider,
+        session_id: session_id.to_owned(),
+    })
+}
+
+/// Toggles a durable conversation bookmark and returns its new state.
+pub fn toggle_conversation_bookmark(
+    provider: AgentResumeProvider,
+    session_id: &str,
+) -> std::io::Result<bool> {
+    if !is_safe_session_id(session_id) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "invalid agent conversation session id",
+        ));
+    }
+    let dir = registry_dir().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "agent conversation registry is unavailable",
+        )
+    })?;
+    toggle_conversation_bookmark_in(&dir, provider, session_id)
+}
+
+fn toggle_conversation_bookmark_in(
+    dir: &Path,
+    provider: AgentResumeProvider,
+    session_id: &str,
+) -> std::io::Result<bool> {
+    if !is_safe_session_id(session_id) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "invalid agent conversation session id",
+        ));
+    }
+    let mut bookmarks = read_conversation_bookmarks_in(dir);
+    let bookmark = ConversationBookmark {
+        provider,
+        session_id: session_id.to_owned(),
+    };
+    let is_bookmarked = if bookmarks.remove(&bookmark) {
+        false
+    } else {
+        bookmarks.insert(bookmark);
+        true
+    };
+    write_conversation_bookmarks_in(dir, &bookmarks)?;
+    Ok(is_bookmarked)
+}
 
 /// Atomically publish the pane UUIDs in the snapshot Clinch is about to persist. Replay
 /// consults this manifest instead of treating every historical registry file as a live
@@ -637,6 +737,8 @@ pub struct AgentConversation {
     /// Launch flags recorded with the latest journal write (leading space when
     /// non-empty), e.g. ` --dangerously-skip-permissions --model opus`.
     pub flags: String,
+    /// Whether this durable provider/session identity is saved in the conversation finder.
+    pub bookmarked: bool,
 }
 
 impl AgentConversation {
@@ -696,6 +798,45 @@ pub fn recent_conversations(limit: usize) -> Vec<AgentConversation> {
 }
 
 fn recent_conversations_in(dir: &Path, limit: usize) -> Vec<AgentConversation> {
+    recent_conversations_including_bookmarks(dir, limit, &HashSet::new())
+}
+
+/// Returns the normal recent pool plus every still-readable bookmarked conversation, even when a
+/// bookmark is older than the pool limit. This is intentionally finder-specific so API callers
+/// that request an exact recent limit keep their existing behavior.
+pub fn conversations_for_finder(limit: usize) -> Vec<AgentConversation> {
+    let Some(dir) = registry_dir() else {
+        return Vec::new();
+    };
+    let bookmarks = read_conversation_bookmarks_in(&dir);
+    recent_conversations_including_bookmarks(&dir, limit, &bookmarks)
+}
+
+/// Returns every still-readable bookmarked conversation, newest first.
+///
+/// This is the lightweight public entry point used by persistent bookmark surfaces such as the
+/// vertical-tabs section. An empty bookmark file returns before scanning the journal or native
+/// transcript trees, which keeps the default empty state effectively free for new users.
+pub fn bookmarked_conversations() -> Vec<AgentConversation> {
+    let Some(dir) = registry_dir() else {
+        return Vec::new();
+    };
+    bookmarked_conversations_in(&dir)
+}
+
+fn bookmarked_conversations_in(dir: &Path) -> Vec<AgentConversation> {
+    let bookmarks = read_conversation_bookmarks_in(dir);
+    if bookmarks.is_empty() {
+        return Vec::new();
+    }
+    recent_conversations_including_bookmarks(dir, 0, &bookmarks)
+}
+
+fn recent_conversations_including_bookmarks(
+    dir: &Path,
+    limit: usize,
+    bookmarks: &HashSet<ConversationBookmark>,
+) -> Vec<AgentConversation> {
     let mut sightings = Vec::new();
     let mut journal_session_providers = HashMap::new();
 
@@ -768,6 +909,7 @@ fn recent_conversations_in(dir: &Path, limit: usize) -> Vec<AgentConversation> {
                     first_prompt: None,
                     local_resumable: false,
                     flags: String::new(),
+                    bookmarked: false,
                 }
             });
         if let Some(agent) = sighting.agent {
@@ -792,11 +934,21 @@ fn recent_conversations_in(dir: &Path, limit: usize) -> Vec<AgentConversation> {
     let mut conversations: Vec<_> = order
         .into_iter()
         .rev()
-        .take(limit)
         .filter_map(|session_id| {
             let mut conversation = by_session.remove(&session_id)?;
             conversation.first_prompt = first_prompts.remove(&session_id);
+            let provider = AgentResumeProvider::from_agent_name(&conversation.agent);
+            conversation.bookmarked = provider.is_some_and(|provider| {
+                bookmarks.contains(&ConversationBookmark {
+                    provider,
+                    session_id: conversation.session_id.clone(),
+                })
+            });
             Some(conversation)
+        })
+        .enumerate()
+        .filter_map(|(index, conversation)| {
+            (index < limit || conversation.bookmarked).then_some(conversation)
         })
         .collect();
     enrich_conversations_from_transcripts(&mut conversations, &agent_transcript_roots());

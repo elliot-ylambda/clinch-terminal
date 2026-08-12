@@ -17,6 +17,7 @@ fn conversation_in(id: &str, agent: &str, cwd: Option<&str>) -> AgentConversatio
         first_prompt: Some("fix the flaky test".to_string()),
         local_resumable: true,
         flags: String::new(),
+        bookmarked: false,
     }
 }
 
@@ -188,6 +189,45 @@ fn agent_conversation_agent_and_directory_filters_intersect() {
     source.agent = AgentFilter::Codex;
 
     assert_eq!(matching_ids(&source), vec!["alpha-codex"]);
+}
+
+#[test]
+fn bookmarked_scope_is_global_and_ignores_project_and_folder_filters() {
+    let mut source = source_with_roots(&[
+        (
+            "current-unbookmarked",
+            "claude",
+            Some("/repos/current"),
+            Some("/repos/current"),
+        ),
+        (
+            "other-bookmarked",
+            "codex",
+            Some("/repos/other"),
+            Some("/repos/other"),
+        ),
+    ]);
+    source.conversations[1].bookmarked = true;
+    source.scope = ScopeFilter::Bookmarked;
+    source.project_root = Some(PathBuf::from("/repos/current"));
+    source.selected_folder = Some(PathBuf::from("/repos/current"));
+
+    assert_eq!(matching_ids(&source), vec!["other-bookmarked"]);
+}
+
+#[test]
+fn bookmarked_scope_still_respects_the_agent_filter() {
+    let mut source = source_with_roots(&[
+        ("claude", "claude", Some("/repos/a"), Some("/repos/a")),
+        ("codex", "codex", Some("/repos/b"), Some("/repos/b")),
+    ]);
+    for conversation in &mut source.conversations {
+        conversation.bookmarked = true;
+    }
+    source.scope = ScopeFilter::Bookmarked;
+    source.agent = AgentFilter::Claude;
+
+    assert_eq!(matching_ids(&source), vec!["claude"]);
 }
 
 #[test]

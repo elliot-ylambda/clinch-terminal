@@ -28,6 +28,8 @@ pub struct AgentConversationSearchItem {
     command: String,
     match_result: FuzzyMatchResult,
     started_at: Option<DateTime<Utc>>,
+    /// Bookmarked results always resume beside the project the user is currently viewing.
+    reopen_in_current_project: bool,
 }
 
 impl AgentConversationSearchItem {
@@ -35,6 +37,7 @@ impl AgentConversationSearchItem {
         conversation: AgentConversation,
         command: String,
         match_result: FuzzyMatchResult,
+        reopen_in_current_project: bool,
     ) -> Self {
         let started_at = DateTime::parse_from_rfc3339(&conversation.start_ts)
             .ok()
@@ -44,6 +47,7 @@ impl AgentConversationSearchItem {
             command,
             match_result,
             started_at,
+            reopen_in_current_project,
         }
     }
 
@@ -189,6 +193,7 @@ impl SearchItem for AgentConversationSearchItem {
         CommandPaletteItemAction::ReopenAgentConversation {
             command: self.command.clone(),
             cwd: self.conversation.cwd.clone(),
+            use_current_project: self.reopen_in_current_project,
         }
     }
 
@@ -205,7 +210,14 @@ impl SearchItem for AgentConversationSearchItem {
     }
 
     fn accessibility_help_message(&self) -> Option<String> {
-        Some("Press enter to reopen this conversation in a new tab.".into())
+        Some(
+            if self.reopen_in_current_project {
+                "Press enter to resume this conversation in a new tab in the current project."
+            } else {
+                "Press enter to reopen this conversation in a new tab."
+            }
+            .into(),
+        )
     }
 }
 

@@ -9,6 +9,7 @@ use languages::language_by_local_filename;
 use pathfinder_color::ColorU;
 use pathfinder_geometry::rect::RectF;
 use pathfinder_geometry::vector::{vec2f, Vector2F};
+use repo_metadata::repositories::DetectedRepositories;
 use settings::Setting as _;
 use warp_core::context_flag::ContextFlag;
 use warp_core::telemetry::TelemetryEvent as _;
@@ -17,6 +18,7 @@ use warp_core::ui::color::coloru_with_opacity;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::{AnsiColorIdentifier, Fill as WarpThemeFill, WarpTheme};
 use warp_core::ui::Icon as WarpIcon;
+use warp_util::local_or_remote_path::LocalOrRemotePath;
 use warpui::elements::{
     resizable_state_handle, Border, ChildAnchor, Clipped, ClippedScrollStateHandle,
     ClippedScrollable, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment,
@@ -39,6 +41,7 @@ use super::{
     is_running_project_command, project_cli_agent_activity, render_group_member_icon_collage,
     select_unique_pane_kinds, ProjectCliAgentActivity,
 };
+use crate::agent_resume::AgentConversation;
 use crate::ai::agent::conversation::{ConversationStatus, StatusColorStyle};
 use crate::ai::agent::icons::yellow_stop_icon;
 use crate::ai::agent_management::AgentNotificationsModel;
@@ -137,6 +140,8 @@ const DETAIL_SIDECAR_CORNER_RADIUS: f32 = 4.;
 const METADATA_ROW_HEIGHT: f32 = BADGE_ICON_SIZE + 2.;
 const TAB_COLOR_OPACITY: Opacity = 15;
 const TAB_COLOR_HOVER_OPACITY: Opacity = 50;
+const BOOKMARKED_SESSIONS_MAX_HEIGHT: f32 = 220.;
+const BOOKMARKED_SESSION_ICON_SIZE: f32 = 16.;
 const TASKS_MAX_HEIGHT: f32 = 220.;
 const TASKS_HEADER_ICON_SIZE: f32 = 14.;
 const SECTION_ACCENT_BORDER_OPACITY: Opacity = 55;
@@ -939,6 +944,7 @@ impl VerticalTabsDetailHoverState {
 
 pub(super) struct VerticalTabsPanelState {
     scroll_state: ClippedScrollStateHandle,
+    bookmarked_session_scroll_state: ClippedScrollStateHandle,
     task_scroll_state: ClippedScrollStateHandle,
     resizable_state: ResizableStateHandle,
     group_mouse_states: RefCell<HashMap<EntityId, PaneGroupStateHandles>>,
@@ -975,6 +981,8 @@ pub(super) struct VerticalTabsPanelState {
     show_details_on_hover_mouse_state: MouseStateHandle,
     panel_right_click_mouse_state: MouseStateHandle,
     attention_chip_mouse_state: MouseStateHandle,
+    bookmarked_sessions_header_mouse_state: MouseStateHandle,
+    bookmarked_session_mouse_states: RefCell<HashMap<(String, String), MouseStateHandle>>,
     tasks_header_mouse_state: MouseStateHandle,
     tasks_add_mouse_state: MouseStateHandle,
     task_mouse_states: RefCell<HashMap<WorkspaceTaskId, WorkspaceTaskMouseStates>>,
@@ -985,6 +993,7 @@ impl Default for VerticalTabsPanelState {
     fn default() -> Self {
         Self {
             scroll_state: ClippedScrollStateHandle::default(),
+            bookmarked_session_scroll_state: ClippedScrollStateHandle::default(),
             task_scroll_state: ClippedScrollStateHandle::default(),
             resizable_state: resizable_state_handle(PANEL_WIDTH),
             group_mouse_states: RefCell::default(),
@@ -1020,6 +1029,8 @@ impl Default for VerticalTabsPanelState {
             show_details_on_hover_mouse_state: Default::default(),
             panel_right_click_mouse_state: Default::default(),
             attention_chip_mouse_state: Default::default(),
+            bookmarked_sessions_header_mouse_state: Default::default(),
+            bookmarked_session_mouse_states: RefCell::default(),
             tasks_header_mouse_state: Default::default(),
             tasks_add_mouse_state: Default::default(),
             task_mouse_states: RefCell::default(),
@@ -2187,6 +2198,274 @@ fn render_workspace_task_action_button(
         .finish()
 }
 
+fn path_belongs_to_project(path: &Path, project_root: &Path) -> bool {
+    path == project_root || path.starts_with(project_root)
+}
+
+fn conversation_belongs_to_project(
+    conversation: &AgentConversation,
+    project_root: &Path,
+    app: &AppContext,
+) -> bool {
+    let Some(cwd) = conversation.cwd.as_deref().map(PathBuf::from) else {
+        return false;
+    };
+    if path_belongs_to_project(&cwd, project_root) {
+        return true;
+    }
+
+    let cwd_key = LocalOrRemotePath::Local(cwd);
+    DetectedRepositories::as_ref(app)
+        .get_root_for_path(&cwd_key)
+        .and_then(|root| root.to_local_path().map(Path::to_path_buf))
+        .is_some_and(|root| path_belongs_to_project(&root, project_root))
+}
+
+fn bookmarked_session_agent(conversation: &AgentConversation) -> Option<CLIAgent> {
+    match conversation.agent.as_str() {
+        "claude" => Some(CLIAgent::Claude),
+        "codex" => Some(CLIAgent::Codex),
+        _ => None,
+    }
+}
+
+fn bookmarked_session_title(conversation: &AgentConversation) -> String {
+    conversation.first_prompt.clone().unwrap_or_else(|| {
+        let short_id = conversation.session_id.chars().take(8).collect::<String>();
+        let provider = bookmarked_session_agent(conversation)
+            .map(|agent| agent.display_name())
+            .unwrap_or("Agent");
+        format!("{provider} session {short_id}")
+    })
+}
+
+fn bookmarked_session_subtitle(conversation: &AgentConversation) -> String {
+    let provider = bookmarked_session_agent(conversation)
+        .map(|agent| agent.display_name())
+        .unwrap_or("Agent");
+    let folder = conversation.cwd.as_deref().and_then(|cwd| {
+        Path::new(cwd)
+            .file_name()
+            .filter(|name| !name.is_empty())
+            .map(|name| name.to_string_lossy().into_owned())
+    });
+    match folder {
+        Some(folder) => format!("{provider} · {folder}"),
+        None => provider.to_string(),
+    }
+}
+
+fn render_bookmarked_session_row(
+    state: &VerticalTabsPanelState,
+    conversation: &AgentConversation,
+    app: &AppContext,
+) -> Option<Box<dyn Element>> {
+    let command = conversation.reopen_command()?;
+    let appearance = Appearance::as_ref(app);
+    let theme = appearance.theme();
+    let key = (conversation.agent.clone(), conversation.session_id.clone());
+    let mouse_state = state
+        .bookmarked_session_mouse_states
+        .borrow_mut()
+        .entry(key)
+        .or_default()
+        .clone();
+
+    let agent = bookmarked_session_agent(conversation);
+    let icon = agent
+        .and_then(|agent| agent.icon())
+        .unwrap_or(UiIcon::Conversation);
+    let icon_color = agent
+        .and_then(|agent| agent.brand_color())
+        .unwrap_or_else(|| theme.sub_text_color(theme.background()).into_solid());
+    let icon = ConstrainedBox::new(
+        icon.to_warpui_icon(WarpThemeFill::Solid(icon_color))
+            .finish(),
+    )
+    .with_width(BOOKMARKED_SESSION_ICON_SIZE)
+    .with_height(BOOKMARKED_SESSION_ICON_SIZE)
+    .finish();
+
+    let labels = Flex::column()
+        .with_main_axis_size(MainAxisSize::Min)
+        .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .with_spacing(2.)
+        .with_child(
+            Text::new_inline(
+                bookmarked_session_title(conversation),
+                appearance.ui_font_family(),
+                12.,
+            )
+            .with_clip(ClipConfig::ellipsis())
+            .with_color(theme.main_text_color(theme.background()).into())
+            .finish(),
+        )
+        .with_child(
+            Text::new_inline(
+                bookmarked_session_subtitle(conversation),
+                appearance.ui_font_family(),
+                10.,
+            )
+            .with_clip(ClipConfig::ellipsis())
+            .with_color(theme.sub_text_color(theme.background()).into())
+            .finish(),
+        )
+        .finish();
+    let row = Flex::row()
+        .with_main_axis_size(MainAxisSize::Max)
+        .with_cross_axis_alignment(CrossAxisAlignment::Center)
+        .with_spacing(8.)
+        .with_child(icon)
+        .with_child(Shrinkable::new(1., labels).finish())
+        .finish();
+
+    let cwd = conversation.cwd.clone();
+    Some(
+        Hoverable::new(mouse_state, move |mouse_state| {
+            let mut container = Container::new(row)
+                .with_padding(Padding::uniform(6.).with_left(8.))
+                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(ROW_CORNER_RADIUS)));
+            if mouse_state.is_hovered() {
+                container = container.with_background(internal_colors::fg_overlay_1(theme));
+            }
+            container.finish()
+        })
+        .with_cursor(Cursor::PointingHand)
+        .on_click(move |ctx, _, _| {
+            ctx.dispatch_typed_action(WorkspaceAction::ReopenAgentConversation {
+                command: command.clone(),
+                cwd: cwd.clone(),
+                use_current_project: true,
+            });
+        })
+        .finish(),
+    )
+}
+
+fn render_bookmarked_sessions(
+    state: &VerticalTabsPanelState,
+    workspace: &Workspace,
+    app: &AppContext,
+) -> Box<dyn Element> {
+    let appearance = Appearance::as_ref(app);
+    let theme = appearance.theme();
+    let project_root = workspace.active_header_project_dir(app);
+    let bookmarked = CLIAgentSessionsModel::as_ref(app)
+        .bookmarked_conversations()
+        .iter()
+        .filter(|conversation| {
+            project_root.as_deref().is_some_and(|project_root| {
+                conversation_belongs_to_project(conversation, project_root, app)
+            })
+        })
+        .collect::<Vec<_>>();
+    let count = bookmarked.len();
+
+    let chevron = if workspace.bookmarked_sessions_collapsed {
+        WarpIcon::ChevronRight
+    } else {
+        WarpIcon::ChevronDown
+    };
+    let sub_text = theme.sub_text_color(theme.background());
+    let heading = Flex::row()
+        .with_main_axis_size(MainAxisSize::Min)
+        .with_cross_axis_alignment(CrossAxisAlignment::Center)
+        .with_spacing(6.)
+        .with_child(
+            ConstrainedBox::new(chevron.to_warpui_icon(sub_text).finish())
+                .with_width(TASKS_HEADER_ICON_SIZE)
+                .with_height(TASKS_HEADER_ICON_SIZE)
+                .finish(),
+        )
+        .with_child(
+            ConstrainedBox::new(WarpIcon::Bookmark.to_warpui_icon(sub_text).finish())
+                .with_width(TASKS_HEADER_ICON_SIZE)
+                .with_height(TASKS_HEADER_ICON_SIZE)
+                .finish(),
+        )
+        .with_child(
+            Text::new_inline("Bookmarked sessions", appearance.ui_font_family(), 12.)
+                .with_style(Properties::default().weight(Weight::Semibold))
+                .with_color(theme.main_text_color(theme.background()).into())
+                .finish(),
+        )
+        .with_child(
+            Text::new_inline(count.to_string(), appearance.ui_font_family(), 11.)
+                .with_color(sub_text.into())
+                .finish(),
+        )
+        .finish();
+    let header = Hoverable::new(
+        state.bookmarked_sessions_header_mouse_state.clone(),
+        move |mouse_state| {
+            let mut header = Container::new(heading).with_padding(Padding::uniform(6.));
+            if mouse_state.is_hovered() {
+                header = header.with_background(internal_colors::fg_overlay_1(theme));
+            }
+            header.finish()
+        },
+    )
+    .with_cursor(Cursor::PointingHand)
+    .on_click(|ctx, _, _| {
+        ctx.dispatch_typed_action(WorkspaceAction::ToggleBookmarkedSessionsCollapsed);
+    })
+    .finish();
+
+    let mut content = Flex::column()
+        .with_main_axis_size(MainAxisSize::Min)
+        .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .with_child(header);
+    if !workspace.bookmarked_sessions_collapsed && !bookmarked.is_empty() {
+        let mut rows = Flex::column()
+            .with_main_axis_size(MainAxisSize::Min)
+            .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .with_spacing(2.);
+        for conversation in &bookmarked {
+            if let Some(row) = render_bookmarked_session_row(state, conversation, app) {
+                rows.add_child(row);
+            }
+        }
+        content.add_child(
+            ConstrainedBox::new(
+                ClippedScrollable::vertical(
+                    state.bookmarked_session_scroll_state.clone(),
+                    rows.finish(),
+                    ScrollbarWidth::Custom(4.),
+                    theme.nonactive_ui_detail().into(),
+                    theme.active_ui_detail().into(),
+                    ElementFill::None,
+                )
+                .with_overlayed_scrollbar()
+                .finish(),
+            )
+            .with_max_height(BOOKMARKED_SESSIONS_MAX_HEIGHT)
+            .finish(),
+        );
+    }
+
+    let active_keys = bookmarked
+        .iter()
+        .map(|conversation| (conversation.agent.clone(), conversation.session_id.clone()))
+        .collect::<std::collections::HashSet<_>>();
+    state
+        .bookmarked_session_mouse_states
+        .borrow_mut()
+        .retain(|key, _| active_keys.contains(key));
+
+    // No explicit tint is applied: this is the same neutral/default color used by a newly-created
+    // section before the user assigns it a color.
+    let card_state = TabCardState::resolve(false, false, false);
+    Container::new(content.finish())
+        .with_margin_left(GROUP_HORIZONTAL_PADDING)
+        .with_margin_right(GROUP_HORIZONTAL_PADDING)
+        .with_margin_top(GROUP_HORIZONTAL_PADDING)
+        .with_margin_bottom(4.)
+        .with_background(card_state.background(theme))
+        .with_border(Border::all(1.).with_border_fill(card_state.border(theme)))
+        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(ROW_CORNER_RADIUS)))
+        .finish()
+}
+
 fn render_workspace_task_row(
     state: &VerticalTabsPanelState,
     task: &WorkspaceTask,
@@ -2437,6 +2716,7 @@ fn render_vertical_tabs_panel(
             app,
         ))
         .with_child(Expanded::new(1., scrollable_groups).finish())
+        .with_child(render_bookmarked_sessions(state, workspace, app))
         .with_child(render_workspace_tasks(state, workspace, app))
         .with_child(render_create_section_button(state, app))
         .finish();

@@ -299,6 +299,7 @@ fn conversation(
         first_prompt: None,
         local_resumable,
         flags: flags.to_string(),
+        bookmarked: false,
     }
 }
 
@@ -468,6 +469,92 @@ fn recent_conversations_aggregates_journal_and_mirror() {
 
     // A missing registry directory yields an empty list, not an error.
     assert!(recent_conversations_in(&dir.join("does-not-exist"), 50).is_empty());
+}
+
+#[test]
+fn conversation_bookmarks_toggle_persist_and_validate_session_ids() {
+    let dir = std::env::temp_dir().join(format!(
+        "agent_resume_bookmarks_test_{}",
+        uuid::Uuid::new_v4()
+    ));
+
+    assert!(read_conversation_bookmarks_in(&dir).is_empty());
+    assert!(
+        toggle_conversation_bookmark_in(&dir, AgentResumeProvider::Claude, "claude-session-1")
+            .unwrap()
+    );
+    assert!(
+        toggle_conversation_bookmark_in(&dir, AgentResumeProvider::Codex, "codex-session-2")
+            .unwrap()
+    );
+
+    let bookmarks = read_conversation_bookmarks_in(&dir);
+    assert_eq!(bookmarks.len(), 2);
+    assert!(bookmarks.contains(&ConversationBookmark {
+        provider: AgentResumeProvider::Claude,
+        session_id: "claude-session-1".to_string(),
+    }));
+
+    assert!(!toggle_conversation_bookmark_in(
+        &dir,
+        AgentResumeProvider::Claude,
+        "claude-session-1"
+    )
+    .unwrap());
+    assert_eq!(read_conversation_bookmarks_in(&dir).len(), 1);
+    assert!(
+        toggle_conversation_bookmark_in(&dir, AgentResumeProvider::Claude, "../escape").is_err()
+    );
+
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn finder_keeps_bookmarks_older_than_the_recent_pool_limit() {
+    let dir = std::env::temp_dir().join(format!(
+        "agent_resume_old_bookmark_test_{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("journal.jsonl"),
+        concat!(
+            r#"{"ts":"2026-07-09T08:00:00Z","op":"write","pane":"old","command":"clinch_agent_resume_launch claude old-session","cwd":"/tmp/old"}"#,
+            "\n",
+            r#"{"ts":"2026-07-09T09:00:00Z","op":"write","pane":"middle","command":"clinch_agent_resume_launch codex middle-session","cwd":"/tmp/middle"}"#,
+            "\n",
+            r#"{"ts":"2026-07-09T10:00:00Z","op":"write","pane":"new","command":"clinch_agent_resume_launch claude new-session","cwd":"/tmp/new"}"#,
+            "\n",
+        ),
+    )
+    .unwrap();
+    toggle_conversation_bookmark_in(&dir, AgentResumeProvider::Claude, "old-session").unwrap();
+    let bookmarks = read_conversation_bookmarks_in(&dir);
+
+    assert_eq!(
+        recent_conversations_in(&dir, 1)
+            .iter()
+            .map(|conversation| conversation.session_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["new-session"]
+    );
+    let finder = recent_conversations_including_bookmarks(&dir, 1, &bookmarks);
+    assert_eq!(
+        finder
+            .iter()
+            .map(|conversation| conversation.session_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["new-session", "old-session"]
+    );
+    assert!(!finder[0].bookmarked);
+    assert!(finder[1].bookmarked);
+
+    let bookmarked = bookmarked_conversations_in(&dir);
+    assert_eq!(bookmarked.len(), 1);
+    assert_eq!(bookmarked[0].session_id, "old-session");
+    assert!(bookmarked[0].bookmarked);
+
+    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]

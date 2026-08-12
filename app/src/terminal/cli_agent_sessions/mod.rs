@@ -17,8 +17,8 @@ use warpui::{Entity, EntityId, ModelContext, ModelHandle, SingletonEntity};
 use self::listener::CLIAgentSessionListener;
 use super::CLIAgent;
 use crate::agent_resume::{
-    is_injected_task_notification, prompt_title, read_prompt_history, AgentPrompt,
-    AgentPromptHistory, AgentResumeProvider,
+    bookmarked_conversations, is_injected_task_notification, prompt_title, read_prompt_history,
+    AgentConversation, AgentPrompt, AgentPromptHistory, AgentResumeProvider,
 };
 use crate::ai::blocklist::InputConfig;
 use crate::channel::ChannelState;
@@ -653,6 +653,9 @@ impl CLIAgentSessionsModelEvent {
 /// Singleton model that tracks pane-scoped CLI agent state and plugin-enriched session context.
 pub struct CLIAgentSessionsModel {
     sessions: HashMap<EntityId, CLIAgentSession>,
+    /// Shared snapshot backing the project-scoped Bookmarked sessions sections. It is refreshed
+    /// once per successful toggle instead of re-reading the journal from every sidebar render.
+    bookmarked_conversations: Vec<AgentConversation>,
     /// Tracks (agent, remote_host) pairs where an auto plugin operation (install or update) has failed.
     /// Shared across all views so failure in one tab is reflected everywhere.
     plugin_auto_failures: HashSet<(CLIAgent, Option<String>)>,
@@ -668,12 +671,65 @@ impl CLIAgentSessionsModel {
     pub fn new() -> Self {
         Self {
             sessions: HashMap::new(),
+            bookmarked_conversations: bookmarked_conversations(),
             plugin_auto_failures: HashSet::new(),
         }
     }
 
     pub fn session(&self, terminal_view_id: EntityId) -> Option<&CLIAgentSession> {
         self.sessions.get(&terminal_view_id)
+    }
+
+    /// Global bookmark records. Callers apply their own project filter when rendering a
+    /// project-local section.
+    pub fn bookmarked_conversations(&self) -> &[AgentConversation] {
+        &self.bookmarked_conversations
+    }
+
+    /// Returns whether the durable Claude Code or Codex conversation in this pane is bookmarked.
+    pub fn is_conversation_bookmarked(&self, terminal_view_id: EntityId) -> bool {
+        self.sessions
+            .get(&terminal_view_id)
+            .and_then(CLIAgentSession::session_key)
+            .is_some_and(|key| {
+                crate::agent_resume::is_conversation_bookmarked(key.provider, &key.session_id)
+            })
+    }
+
+    /// Toggles the current pane's durable conversation bookmark and notifies every pane showing
+    /// the same provider/session identity so their footer buttons stay in sync.
+    pub fn toggle_conversation_bookmark(
+        &mut self,
+        terminal_view_id: EntityId,
+        ctx: &mut ModelContext<Self>,
+    ) -> std::io::Result<bool> {
+        let key = self
+            .sessions
+            .get(&terminal_view_id)
+            .and_then(CLIAgentSession::session_key)
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "the active agent has not reported a conversation id yet",
+                )
+            })?;
+        let is_bookmarked =
+            crate::agent_resume::toggle_conversation_bookmark(key.provider, &key.session_id)?;
+        self.bookmarked_conversations = bookmarked_conversations();
+        let affected_sessions = self
+            .sessions
+            .iter()
+            .filter_map(|(view_id, session)| {
+                (session.session_key().as_ref() == Some(&key)).then_some((*view_id, session.agent))
+            })
+            .collect::<Vec<_>>();
+        for (terminal_view_id, agent) in affected_sessions {
+            ctx.emit(CLIAgentSessionsModelEvent::SessionUpdated {
+                terminal_view_id,
+                agent,
+            });
+        }
+        Ok(is_bookmarked)
     }
 
     /// Marks a Claude Code or Codex turn as working when Clinch submits a known, non-empty prompt

@@ -26,6 +26,7 @@ pub enum ScopeFilter {
     ThisProject,
     ProjectWorktrees,
     All,
+    Bookmarked,
 }
 
 impl ScopeFilter {
@@ -34,6 +35,7 @@ impl ScopeFilter {
             Self::ThisProject => "This project",
             Self::ProjectWorktrees => "All worktrees",
             Self::All => "All",
+            Self::Bookmarked => "Bookmark convos",
         }
     }
 }
@@ -92,7 +94,7 @@ impl DataSource {
     /// individual keystrokes only filter in memory. Conversations we don't know how to
     /// reopen (unknown agent) are dropped here so every listed item is acceptable.
     pub fn refresh(&mut self, ctx: &mut ModelContext<Self>) {
-        let conversations = agent_resume::recent_conversations(CONVERSATION_POOL)
+        let conversations = agent_resume::conversations_for_finder(CONVERSATION_POOL)
             .into_iter()
             .filter(|conversation| conversation.reopen_command().is_some())
             .collect::<Vec<_>>();
@@ -176,11 +178,13 @@ impl DataSource {
         &'a self,
         needle: &str,
     ) -> Vec<(&'a AgentConversation, String, FuzzyMatchResult)> {
+        let bookmarked_only = self.scope == ScopeFilter::Bookmarked;
         let selected_provider = self.agent.provider();
 
         self.conversations
             .iter()
             .zip(&self.roots_by_conversation)
+            .filter(|(conversation, _)| !bookmarked_only || conversation.bookmarked)
             .filter(|(conversation, _)| {
                 selected_provider.is_none_or(|provider| {
                     AgentResumeProvider::from_agent_name(&conversation.agent) == Some(provider)
@@ -216,6 +220,10 @@ impl DataSource {
     }
 
     fn matches_directory_filter(&self, root: Option<&Path>) -> bool {
+        if self.scope == ScopeFilter::Bookmarked {
+            return true;
+        }
+
         if let Some(selected_folder) = self.selected_folder.as_deref() {
             return root.is_some_and(|root| paths_match(root, selected_folder));
         }
@@ -233,6 +241,7 @@ impl DataSource {
                             .any(|worktree_root| paths_match(root, worktree_root))
                     })
             }
+            ScopeFilter::Bookmarked => true,
         }
     }
 }
@@ -259,6 +268,7 @@ impl SyncDataSource for DataSource {
                     conversation.clone(),
                     command,
                     match_result,
+                    self.scope == ScopeFilter::Bookmarked,
                 ))
             })
             .collect();
@@ -266,9 +276,13 @@ impl SyncDataSource for DataSource {
         // Friendly empty state (a non-interactible separator row) when nothing has ever
         // been recorded; a non-matching query keeps the palette's own no-results state.
         if needle.is_empty() && results.is_empty() {
-            results.push(QueryResult::from(SeparatorSearchItem::new(
+            let message = if self.scope == ScopeFilter::Bookmarked {
+                "No bookmarked conversations — use Bookmark convo in a Claude Code or Codex footer"
+            } else {
                 "No recent agent conversations — run claude or codex in a pane to record one"
-                    .to_string(),
+            };
+            results.push(QueryResult::from(SeparatorSearchItem::new(
+                message.to_string(),
             )));
         }
 

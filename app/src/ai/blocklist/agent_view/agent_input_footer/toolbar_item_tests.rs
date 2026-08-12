@@ -51,6 +51,7 @@ fn terminal_availability_admits_only_custom_insert() {
         AgentToolbarItemKind::Settings,
         AgentToolbarItemKind::Compact,
         AgentToolbarItemKind::ForkSession,
+        AgentToolbarItemKind::BookmarkConversation,
         AgentToolbarItemKind::ContinuePrompt,
         AgentToolbarItemKind::LooksGoodPrompt,
         AgentToolbarItemKind::FastForwardToggle,
@@ -99,6 +100,10 @@ fn quick_replies_have_expected_labels_and_icons() {
         "Continue"
     );
     assert_eq!(
+        AgentToolbarItemKind::BookmarkConversation.display_label(),
+        "Bookmark convo"
+    );
+    assert_eq!(
         AgentToolbarItemKind::LooksGoodPrompt.display_label(),
         "LGTM"
     );
@@ -109,6 +114,10 @@ fn quick_replies_have_expected_labels_and_icons() {
     assert_eq!(
         AgentToolbarItemKind::LooksGoodPrompt.icon(),
         Some(Icon::ThumbsUp)
+    );
+    assert_eq!(
+        AgentToolbarItemKind::BookmarkConversation.icon(),
+        Some(Icon::Bookmark)
     );
 }
 
@@ -135,13 +144,14 @@ fn quick_replies_hidden_during_handoff_compose() {
 }
 
 #[test]
-fn cli_default_left_places_quick_replies_right_after_fork_and_compact() {
+fn cli_default_left_places_bookmark_and_quick_replies_after_fork() {
     let items = AgentToolbarItemKind::cli_default_left();
     // The quick-reply buttons deterministically sit next to Fork/Compact.
     assert_eq!(
-        &items[..4],
+        &items[..5],
         &[
             AgentToolbarItemKind::ForkSession,
+            AgentToolbarItemKind::BookmarkConversation,
             AgentToolbarItemKind::Compact,
             AgentToolbarItemKind::ContinuePrompt,
             AgentToolbarItemKind::LooksGoodPrompt,
@@ -152,7 +162,7 @@ fn cli_default_left_places_quick_replies_right_after_fork_and_compact() {
 #[test]
 fn agent_transfer_is_a_default_cli_host_control() {
     let items = AgentToolbarItemKind::cli_default_left();
-    assert_eq!(items.get(4), Some(&AgentToolbarItemKind::TransferAgent));
+    assert_eq!(items.get(5), Some(&AgentToolbarItemKind::TransferAgent));
     assert_eq!(
         AgentToolbarItemKind::TransferAgent.available_in(),
         ToolbarAvailability::CLIAgentOnly
@@ -238,6 +248,7 @@ fn cli_quick_insert_presets_are_available_but_hidden_by_default() {
         defaults,
         vec![
             AgentToolbarItemKind::ForkSession,
+            AgentToolbarItemKind::BookmarkConversation,
             AgentToolbarItemKind::Compact,
             AgentToolbarItemKind::ContinuePrompt,
             AgentToolbarItemKind::LooksGoodPrompt,
@@ -292,6 +303,7 @@ fn cli_configurator_excludes_generic_toolbar_and_status_items() {
 #[test]
 fn cli_input_configurator_offers_quick_replies() {
     let available = AgentToolbarItemKind::all_available_for_cli_input();
+    assert!(available.contains(&AgentToolbarItemKind::BookmarkConversation));
     assert!(available.contains(&AgentToolbarItemKind::ContinuePrompt));
     assert!(available.contains(&AgentToolbarItemKind::LooksGoodPrompt));
 }
@@ -299,6 +311,7 @@ fn cli_input_configurator_offers_quick_replies() {
 #[test]
 fn quick_replies_absent_from_agent_view_configurator() {
     let available = AgentToolbarItemKind::all_available();
+    assert!(!available.contains(&AgentToolbarItemKind::BookmarkConversation));
     assert!(!available.contains(&AgentToolbarItemKind::ContinuePrompt));
     assert!(!available.contains(&AgentToolbarItemKind::LooksGoodPrompt));
 }

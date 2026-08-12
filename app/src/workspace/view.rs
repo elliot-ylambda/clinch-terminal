@@ -1122,6 +1122,7 @@ pub struct Workspace {
     pub(crate) tab_groups: HashMap<TabGroupId, TabGroup>,
     /// Lightweight, project-scoped tasks rendered beneath the session list.
     pub(crate) tasks: Vec<WorkspaceTask>,
+    pub(crate) bookmarked_sessions_collapsed: bool,
     pub(crate) tasks_collapsed: bool,
     /// Per-group hover state for the horizontal tab bar.
     horizontal_tab_group_mouse_states: RefCell<HashMap<TabGroupId, HorizontalTabGroupMouseStates>>,
@@ -1463,6 +1464,18 @@ fn cli_agent_action_cwd(
     source_pane_cwd
         .filter(|cwd| Path::new(cwd).is_dir())
         .or_else(|| recorded_cwd.filter(|cwd| Path::new(cwd).is_dir()))
+}
+
+fn agent_conversation_reopen_cwd(
+    use_current_project: bool,
+    current_project: Option<PathBuf>,
+    recorded_cwd: Option<String>,
+) -> Option<String> {
+    if use_current_project {
+        current_project.map(|path| path.to_string_lossy().into_owned())
+    } else {
+        recorded_cwd.filter(|cwd| Path::new(cwd).is_dir())
+    }
 }
 
 impl Workspace {
@@ -1897,6 +1910,11 @@ impl Workspace {
     pub(crate) fn toggle_tasks_collapsed(&mut self, ctx: &mut ViewContext<Self>) {
         self.tasks_collapsed = !self.tasks_collapsed;
         ctx.dispatch_global_action("workspace:save_app", ());
+        ctx.notify();
+    }
+
+    pub(crate) fn toggle_bookmarked_sessions_collapsed(&mut self, ctx: &mut ViewContext<Self>) {
+        self.bookmarked_sessions_collapsed = !self.bookmarked_sessions_collapsed;
         ctx.notify();
     }
 
@@ -3792,6 +3810,7 @@ impl Workspace {
             traffic_light_mouse_states: Default::default(),
             tab_groups: HashMap::new(),
             tasks: Vec::new(),
+            bookmarked_sessions_collapsed: false,
             tasks_collapsed: false,
             horizontal_tab_group_mouse_states: RefCell::default(),
             tab_rename_editor: Self::tab_rename_editor(ctx),
@@ -9371,12 +9390,16 @@ impl Workspace {
         &mut self,
         command: String,
         cwd: Option<String>,
+        use_current_project: bool,
         ctx: &mut ViewContext<Self>,
     ) {
-        // A recorded directory can vanish (worktree pruned, checkout moved); fall back
-        // to the default new-tab directory rather than failing to spawn the shell —
-        // `claude --teleport`/`--resume` locate the conversation by id, not by cwd.
-        let cwd = cwd.filter(|cwd| Path::new(cwd).is_dir());
+        // Bookmarks are global and deliberately use the project the user is looking at. Ordinary
+        // recent results retain their recorded directory when it still exists.
+        let cwd = agent_conversation_reopen_cwd(
+            use_current_project,
+            self.active_header_project_dir(ctx),
+            cwd,
+        );
         let _ = self.launch_cli_agent_in_new_tab(command, cwd, ctx);
     }
 
@@ -25629,6 +25652,7 @@ impl TypedActionView for Workspace {
             UnpinTab(tab_index) => self.unpin_tab(*tab_index, ctx),
             PinTabGroup(group_id) => self.pin_tab_group(*group_id, ctx),
             UnpinTabGroup(group_id) => self.unpin_tab_group(*group_id, ctx),
+            ToggleBookmarkedSessionsCollapsed => self.toggle_bookmarked_sessions_collapsed(ctx),
             ToggleTasksCollapsed => self.toggle_tasks_collapsed(ctx),
             FocusTaskInput => self.focus_task_input(ctx),
             RemoveWorkspaceTask(task_id) => {
@@ -27226,8 +27250,17 @@ impl TypedActionView for Workspace {
                     ctx,
                 );
             }
-            ReopenAgentConversation { command, cwd } => {
-                self.reopen_agent_conversation(command.clone(), cwd.clone(), ctx);
+            ReopenAgentConversation {
+                command,
+                cwd,
+                use_current_project,
+            } => {
+                self.reopen_agent_conversation(
+                    command.clone(),
+                    cwd.clone(),
+                    *use_current_project,
+                    ctx,
+                );
             }
             SummarizeAIConversation {
                 prompt,
