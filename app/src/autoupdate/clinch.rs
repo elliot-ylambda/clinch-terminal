@@ -1,4 +1,5 @@
 use std::cmp::Ordering;
+use std::collections::BTreeMap;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -7,6 +8,7 @@ use anyhow::{anyhow, ensure, Context as _, Result};
 use async_fs::File;
 use base64::prelude::{Engine as _, BASE64_STANDARD};
 use chrono::{DateTime, NaiveDate, Utc};
+use command::blocking::Command as BlockingCommand;
 use command::r#async::Command;
 use futures::StreamExt as _;
 use futures_lite::io::AsyncWriteExt as _;
@@ -20,12 +22,13 @@ use crate::channel::ChannelState;
 const MANIFEST_ASSET: &str = "Clinch.update.json";
 const SIGNATURE_ASSET: &str = "Clinch.update.sig";
 const ARCHIVE_ASSET: &str = "Clinch.app.zip";
+const X86_64_ARCHIVE_ASSET: &str = "Clinch-x86_64.app.zip";
 const EXPECTED_REPOSITORY: &str = "elliot-ylambda/clinch-terminal";
 const EXPECTED_BUNDLE_ID: &str = "sh.clinch.Clinch";
 const MAX_MANIFEST_SIZE: usize = 256 * 1024;
 const MAX_SIGNATURE_SIZE: usize = 4096;
-// The universal archive is currently hundreds of MiB. Allow slower connections to finish rather
-// than turning a healthy, steadily progressing transfer into a failed update.
+// Release archives are still large enough that slower connections need more than the metadata
+// timeout. Keep a steadily progressing transfer from becoming a failed update.
 const ARCHIVE_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const EMBEDDED_PUBLIC_KEY: &str =
     include_str!("../../../resources/update/clinch-update-public-key.json");
@@ -156,6 +159,8 @@ pub struct Manifest {
     pub bundle_id: String,
     pub signing_key_id: String,
     pub archive: Archive,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub archives: BTreeMap<String, Archive>,
     pub release_notes: String,
     pub release_url: String,
     #[serde(default)]
@@ -167,6 +172,7 @@ pub struct Manifest {
 #[derive(Clone, Debug)]
 pub struct VerifiedRelease {
     pub manifest: Manifest,
+    selected_archive: Archive,
 }
 
 impl VerifiedRelease {
@@ -177,12 +183,47 @@ impl VerifiedRelease {
     }
 
     pub fn archive_sha256(&self) -> &str {
-        &self.manifest.archive.sha256
+        &self.selected_archive.sha256
     }
 
     pub fn archive_size(&self) -> u64 {
-        self.manifest.archive.size
+        self.selected_archive.size
     }
+}
+
+impl Manifest {
+    fn archive_for_architecture(&self, architecture: &str) -> Result<&Archive> {
+        if self.archives.is_empty() {
+            return Ok(&self.archive);
+        }
+        self.archives
+            .get(architecture)
+            .with_context(|| format!("release omitted the {architecture} archive"))
+    }
+}
+
+fn architecture_from_hardware_probe(
+    supports_arm64: bool,
+    process_architecture: &str,
+) -> Result<&'static str> {
+    if supports_arm64 {
+        return Ok("arm64");
+    }
+    match process_architecture {
+        "aarch64" => Ok("arm64"),
+        "x86_64" => Ok("x86_64"),
+        architecture => Err(anyhow!("unsupported Mac architecture {architecture}")),
+    }
+}
+
+fn machine_architecture() -> Result<&'static str> {
+    let arm64_probe = BlockingCommand::new("/usr/sbin/sysctl")
+        .args(["-in", "hw.optional.arm64"])
+        .output();
+    let supports_arm64 = arm64_probe.is_ok_and(|output| {
+        output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "1"
+    });
+    architecture_from_hardware_probe(supports_arm64, std::env::consts::ARCH)
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -319,6 +360,43 @@ impl StripAsciiWhitespace for [u8] {
     }
 }
 
+fn validate_archive(
+    archive: &Archive,
+    expected_name: &str,
+    manifest: &Manifest,
+    release: &GithubRelease,
+) -> Result<()> {
+    ensure!(archive.name == expected_name, "unexpected update archive");
+    ensure!(
+        archive.sha256.len() == 64
+            && archive
+                .sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()),
+        "invalid update archive SHA-256"
+    );
+    ensure!(archive.size > 0, "update archive is empty");
+    let archive_url = validate_https_url(&archive.url, "github.com")?;
+    let github_archive = asset(release, expected_name)?;
+    ensure!(
+        archive_url.as_str() == github_archive.browser_download_url,
+        "manifest archive URL does not match its GitHub release"
+    );
+    ensure!(
+        archive.size == github_archive.size,
+        "manifest archive size does not match GitHub"
+    );
+    let expected_path = format!(
+        "/{EXPECTED_REPOSITORY}/releases/download/{}/{}",
+        manifest.version, expected_name
+    );
+    ensure!(
+        archive_url.path() == expected_path,
+        "manifest archive URL points outside the pinned repository"
+    );
+    Ok(())
+}
+
 fn validate_manifest(manifest: &Manifest, release: &GithubRelease) -> Result<()> {
     ensure!(
         manifest.schema_version == 1,
@@ -340,20 +418,28 @@ fn validate_manifest(manifest: &Manifest, release: &GithubRelease) -> Result<()>
                 .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte)),
         "invalid Clinch release version"
     );
-    ensure!(
-        manifest.archive.name == ARCHIVE_ASSET,
-        "unexpected update archive"
-    );
-    ensure!(
-        manifest.archive.sha256.len() == 64
-            && manifest
-                .archive
-                .sha256
-                .bytes()
-                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()),
-        "invalid update archive SHA-256"
-    );
-    ensure!(manifest.archive.size > 0, "update archive is empty");
+    validate_archive(&manifest.archive, ARCHIVE_ASSET, manifest, release)?;
+    if !manifest.archives.is_empty() {
+        ensure!(
+            manifest.archives.len() == 2
+                && manifest.archives.contains_key("arm64")
+                && manifest.archives.contains_key("x86_64"),
+            "update manifest must contain exactly the supported Mac archives"
+        );
+        ensure!(
+            manifest.archives.get("arm64") == Some(&manifest.archive),
+            "legacy update archive must match the Apple Silicon archive"
+        );
+        validate_archive(
+            manifest
+                .archives
+                .get("x86_64")
+                .expect("checked x86_64 archive"),
+            X86_64_ARCHIVE_ASSET,
+            manifest,
+            release,
+        )?;
+    }
     ensure!(
         manifest.release_notes.len() <= 64 * 1024,
         "release notes are unreasonably large"
@@ -362,24 +448,6 @@ fn validate_manifest(manifest: &Manifest, release: &GithubRelease) -> Result<()>
     ensure!(
         release_url.as_str() == release.html_url,
         "manifest release URL does not match GitHub"
-    );
-    let archive_url = validate_https_url(&manifest.archive.url, "github.com")?;
-    let github_archive = asset(release, ARCHIVE_ASSET)?;
-    ensure!(
-        archive_url.as_str() == github_archive.browser_download_url,
-        "manifest archive URL does not match its GitHub release"
-    );
-    ensure!(
-        manifest.archive.size == github_archive.size,
-        "manifest archive size does not match GitHub"
-    );
-    let expected_path = format!(
-        "/{EXPECTED_REPOSITORY}/releases/download/{}/{}",
-        manifest.version, ARCHIVE_ASSET
-    );
-    ensure!(
-        archive_url.path() == expected_path,
-        "manifest archive URL points outside the pinned repository"
     );
     let minimum_components = manifest
         .minimum_macos_version
@@ -509,7 +577,13 @@ pub async fn fetch_latest(client: &http_client::Client) -> Result<VerifiedReleas
     validate_manifest(&manifest, &release)?;
     validate_release_order(&manifest)?;
     persist_next_key(&keys, manifest.next_public_key.as_ref())?;
-    Ok(VerifiedRelease { manifest })
+    let selected_archive = manifest
+        .archive_for_architecture(machine_architecture()?)?
+        .clone();
+    Ok(VerifiedRelease {
+        manifest,
+        selected_archive,
+    })
 }
 
 pub(super) fn update_dir(update_id: &str) -> PathBuf {
@@ -594,8 +668,8 @@ async fn validate_staged_bundle(path: &Path, manifest: &Manifest) -> Result<()> 
         signature.status.success(),
         "staged app code signature is invalid"
     );
-    let architecture = Command::new("/usr/bin/file")
-        .arg("-b")
+    let architecture = Command::new("/usr/bin/lipo")
+        .arg("-archs")
         .arg(&executable_path)
         .output()
         .await?;
@@ -603,13 +677,20 @@ async fn validate_staged_bundle(path: &Path, manifest: &Manifest) -> Result<()> 
         architecture.status.success(),
         "could not inspect staged executable"
     );
-    let machine = Command::new("/usr/bin/uname").arg("-m").output().await?;
-    let machine = String::from_utf8_lossy(&machine.stdout).trim().to_owned();
-    let architecture = String::from_utf8_lossy(&architecture.stdout);
-    ensure!(
-        architecture.contains(&machine) || (machine == "arm64" && architecture.contains("x86_64")),
-        "staged app does not support this Mac"
-    );
+    let machine = machine_architecture()?;
+    let architectures = String::from_utf8_lossy(&architecture.stdout);
+    let architectures = architectures.split_whitespace().collect::<Vec<_>>();
+    if manifest.archives.is_empty() {
+        ensure!(
+            architectures.contains(&machine),
+            "staged app does not support this Mac"
+        );
+    } else {
+        ensure!(
+            architectures == [machine],
+            "staged app is not the native build for this Mac"
+        );
+    }
     Ok(())
 }
 
@@ -618,6 +699,7 @@ pub async fn download_and_stage(
     update_id: &str,
     client: &http_client::Client,
 ) -> Result<PathBuf> {
+    let archive = &release.selected_archive;
     let directory = update_dir(update_id);
     if directory.exists() {
         async_fs::remove_dir_all(&directory).await?;
@@ -625,7 +707,7 @@ pub async fn download_and_stage(
     async_fs::create_dir_all(&directory).await?;
     let archive_path = directory.join(ARCHIVE_ASSET);
     let response = client
-        .get(&release.manifest.archive.url)
+        .get(&archive.url)
         .timeout(ARCHIVE_DOWNLOAD_TIMEOUT)
         .header("Accept", "application/octet-stream")
         .header("User-Agent", "Clinch-Updater")
@@ -642,7 +724,7 @@ pub async fn download_and_stage(
             .checked_add(chunk.len() as u64)
             .context("update archive size overflow")?;
         ensure!(
-            size <= release.manifest.archive.size,
+            size <= archive.size,
             "update archive exceeded its authenticated size"
         );
         digest.update(&chunk);
@@ -651,11 +733,11 @@ pub async fn download_and_stage(
     output.flush().await?;
     output.sync_data().await?;
     ensure!(
-        size == release.manifest.archive.size,
+        size == archive.size,
         "update archive size does not match authenticated metadata"
     );
     ensure!(
-        hex::encode(digest.finalize()) == release.manifest.archive.sha256,
+        hex::encode(digest.finalize()) == archive.sha256,
         "update archive SHA-256 does not match authenticated metadata"
     );
 

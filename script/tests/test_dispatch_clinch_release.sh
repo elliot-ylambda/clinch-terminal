@@ -61,6 +61,12 @@ files=(
   Clinch.update.json Clinch.update.sig Clinch.update.sshsig
   clinch-release-allowed-signers install.sh uninstall.sh
 )
+if [[ "${UNIVERSAL:-0}" != 1 ]]; then
+  files+=(
+    Clinch-x86_64.app.zip Clinch-x86_64.app.zip.sha256
+    Clinch-x86_64.dmg Clinch-x86_64.dmg.sha256 Clinch-x86_64.sbom.cdx.json
+  )
+fi
 for file in "${files[@]}"; do
   printf 'fixture %s\n' "$file" > "$dist/$file"
 done
@@ -198,13 +204,21 @@ case "${1:-} ${2:-}" in
     printf '"name":"fixture","body":"%s","targetCommitish":"%s","assets":[' \
       "$draft_body" "$FIXTURE_COMMIT"
     separator=
-    for name in \
+    names=(
       Clinch.app.zip Clinch.app.zip.sha256 Clinch.source.tar.gz \
       Clinch.source.tar.gz.sha256 Clinch.build-provenance.json \
       Clinch.build-provenance.sshsig Clinch.checksums.sshsig Clinch.checksums.txt \
       Clinch.dmg Clinch.dmg.sha256 Clinch.release-validation.json Clinch.sbom.cdx.json \
       Clinch.update.json Clinch.update.sig Clinch.update.sshsig \
-      clinch-release-allowed-signers install.sh uninstall.sh; do
+      clinch-release-allowed-signers install.sh uninstall.sh
+    )
+    if [[ "${UNIVERSAL:-0}" != 1 ]]; then
+      names+=(
+        Clinch-x86_64.app.zip Clinch-x86_64.app.zip.sha256
+        Clinch-x86_64.dmg Clinch-x86_64.dmg.sha256 Clinch-x86_64.sbom.cdx.json
+      )
+    fi
+    for name in "${names[@]}"; do
       printf '%s{"id":"fixture-%s","name":"%s","size":1,' \
         "$separator" "$name" "$name"
       printf '"updatedAt":"fixture","digest":"sha256:fixture"}'
@@ -385,7 +399,7 @@ reset_state
 run_release_tty "PUBLISH $VERSION ${COMMIT:0:12}" NONBLOCKING_STDIN=1 > "$TMP/happy.out"
 grep -Fq "Locally built, verified, signed, and published $VERSION" "$TMP/happy.out"
 grep -Fq 'make release-check' "$TMP/ops.log"
-grep -Fq "make _verify VERSION=$VERSION UPDATE_SEQUENCE=$SEQUENCE UNIVERSAL=1" "$TMP/ops.log"
+grep -Fq "make _verify VERSION=$VERSION UPDATE_SEQUENCE=$SEQUENCE UNIVERSAL=0" "$TMP/ops.log"
 grep -Fq 'git tag' "$TMP/ops.log"
 grep -Fq 'git push-tag' "$TMP/ops.log"
 grep -Fq 'gh release-create' "$TMP/ops.log"
@@ -479,7 +493,7 @@ assert_no_remote_mutation
 : > "$TMP/gh.log"
 run_release_tty "PUBLISH $VERSION ${COMMIT:0:12}" > "$TMP/candidate-resume.out"
 grep -Fq "Resuming $VERSION" "$TMP/candidate-resume.out"
-grep -Fq "make _verify-existing VERSION=$VERSION UPDATE_SEQUENCE=$SEQUENCE UNIVERSAL=1" \
+grep -Fq "make _verify-existing VERSION=$VERSION UPDATE_SEQUENCE=$SEQUENCE UNIVERSAL=0" \
   "$TMP/ops.log"
 if grep -Fq 'make release-check' "$TMP/ops.log" \
     || grep -Fq "make _verify VERSION=$VERSION" "$TMP/ops.log"; then
@@ -641,5 +655,28 @@ if grep -Fq 'gh release-publish' "$TMP/ops.log"; then
   echo "FAIL: draft published after main mutation" >&2
   exit 1
 fi
+
+reset_state
+run_release_tty "PUBLISH $VERSION ${COMMIT:0:12}" UNIVERSAL=1 \
+  > "$TMP/universal.out"
+grep -Fq "make _verify VERSION=$VERSION UPDATE_SEQUENCE=$SEQUENCE UNIVERSAL=1" \
+  "$TMP/ops.log"
+[[ ! -e "$FIXTURE/target/release-stage/$VERSION/dist/Clinch-x86_64.app.zip" ]]
+
+# A cached candidate from one layout must never be reused for the other.
+reset_state
+if run_release MAKE_FAIL_ON=_verify > "$TMP/native-layout-cache.out" 2>&1; then
+  echo "FAIL: fixture candidate failure was accepted" >&2
+  exit 1
+fi
+: > "$TMP/ops.log"
+if run_release UNIVERSAL=1 < /dev/null > "$TMP/layout-change.out" 2>&1; then
+  echo "FAIL: noninteractive universal publication was accepted" >&2
+  exit 1
+fi
+grep -Fq 'make release-check' "$TMP/ops.log"
+grep -Fq "make _verify VERSION=$VERSION UPDATE_SEQUENCE=$SEQUENCE UNIVERSAL=1" \
+  "$TMP/ops.log"
+! grep -Fq 'from phase initialized' "$TMP/layout-change.out"
 
 echo "PASS"

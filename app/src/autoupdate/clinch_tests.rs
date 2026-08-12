@@ -10,6 +10,21 @@ fn fixture() -> (Manifest, GithubRelease) {
     let archive_url = format!(
         "https://github.com/{EXPECTED_REPOSITORY}/releases/download/{version}/{ARCHIVE_ASSET}"
     );
+    let x86_64_archive_url = format!(
+        "https://github.com/{EXPECTED_REPOSITORY}/releases/download/{version}/{X86_64_ARCHIVE_ASSET}"
+    );
+    let arm64_archive = Archive {
+        name: ARCHIVE_ASSET.to_owned(),
+        url: archive_url.clone(),
+        size: 123,
+        sha256: "a".repeat(64),
+    };
+    let x86_64_archive = Archive {
+        name: X86_64_ARCHIVE_ASSET.to_owned(),
+        url: x86_64_archive_url.clone(),
+        size: 98,
+        sha256: "b".repeat(64),
+    };
     (
         Manifest {
             schema_version: 1,
@@ -18,12 +33,11 @@ fn fixture() -> (Manifest, GithubRelease) {
             minimum_macos_version: "14.0".to_owned(),
             bundle_id: EXPECTED_BUNDLE_ID.to_owned(),
             signing_key_id: "test-key".to_owned(),
-            archive: Archive {
-                name: ARCHIVE_ASSET.to_owned(),
-                url: archive_url.clone(),
-                size: 123,
-                sha256: "a".repeat(64),
-            },
+            archive: arm64_archive.clone(),
+            archives: BTreeMap::from([
+                ("arm64".to_owned(), arm64_archive),
+                ("x86_64".to_owned(), x86_64_archive),
+            ]),
             release_notes: "Reliable updates.".to_owned(),
             release_url: format!(
                 "https://github.com/{EXPECTED_REPOSITORY}/releases/tag/{version}"
@@ -55,6 +69,11 @@ fn fixture() -> (Manifest, GithubRelease) {
                     name: ARCHIVE_ASSET.to_owned(),
                     browser_download_url: archive_url,
                     size: 123,
+                },
+                GithubAsset {
+                    name: X86_64_ARCHIVE_ASSET.to_owned(),
+                    browser_download_url: x86_64_archive_url,
+                    size: 98,
                 },
             ],
         },
@@ -107,6 +126,82 @@ fn rejects_archive_from_another_release_or_repository() {
 }
 
 #[test]
+fn selects_the_archive_for_each_mac_architecture() {
+    let (manifest, _) = fixture();
+
+    assert_eq!(
+        manifest
+            .archive_for_architecture("arm64")
+            .expect("arm64 archive")
+            .name,
+        ARCHIVE_ASSET
+    );
+    assert_eq!(
+        manifest
+            .archive_for_architecture("x86_64")
+            .expect("x86_64 archive")
+            .name,
+        X86_64_ARCHIVE_ASSET
+    );
+    assert!(manifest.archive_for_architecture("powerpc").is_err());
+}
+
+#[test]
+fn apple_silicon_hardware_wins_when_the_process_runs_under_rosetta() {
+    assert_eq!(
+        architecture_from_hardware_probe(true, "x86_64").expect("Apple Silicon"),
+        "arm64"
+    );
+    assert_eq!(
+        architecture_from_hardware_probe(false, "x86_64").expect("Intel"),
+        "x86_64"
+    );
+}
+
+#[test]
+fn legacy_universal_manifest_remains_compatible() {
+    let (mut manifest, mut release) = fixture();
+    manifest.archives.clear();
+    release
+        .assets
+        .retain(|asset| asset.name != X86_64_ARCHIVE_ASSET);
+
+    validate_manifest(&manifest, &release).expect("legacy manifest");
+    assert_eq!(
+        manifest
+            .archive_for_architecture("x86_64")
+            .expect("legacy universal archive")
+            .name,
+        ARCHIVE_ASSET
+    );
+}
+
+#[test]
+fn rejects_incomplete_or_unbound_architecture_archives() {
+    let (manifest, mut release) = fixture();
+
+    let mut missing_intel = manifest.clone();
+    missing_intel.archives.remove("x86_64");
+    assert!(validate_manifest(&missing_intel, &release).is_err());
+
+    let mut mismatched_legacy = manifest.clone();
+    mismatched_legacy
+        .archives
+        .get_mut("arm64")
+        .expect("arm64 archive")
+        .sha256 = "c".repeat(64);
+    assert!(validate_manifest(&mismatched_legacy, &release).is_err());
+
+    release
+        .assets
+        .iter_mut()
+        .find(|asset| asset.name == X86_64_ARCHIVE_ASSET)
+        .expect("Intel GitHub asset")
+        .size += 1;
+    assert!(validate_manifest(&manifest, &release).is_err());
+}
+
+#[test]
 fn release_order_requires_new_sequence_and_explicit_rollback() {
     let (mut manifest, _) = fixture();
     validate_release_order_against(&manifest, "v0.2026.07.12.1200", Some(manifest.sequence - 1))
@@ -123,6 +218,7 @@ fn release_order_requires_new_sequence_and_explicit_rollback() {
     validate_release_order_against(&manifest, "v0.2026.07.12.1200", Some(manifest.sequence - 1))
         .expect("authenticated rollback with a new sequence");
     let release = VerifiedRelease {
+        selected_archive: manifest.archive.clone(),
         manifest: manifest.clone(),
     };
     assert_eq!(release.version_info().is_rollback, Some(true));

@@ -6,12 +6,16 @@ TMP="$(mktemp -d -t clinch-release-stage-test)"
 trap 'rm -rf "$TMP"' EXIT
 FIXTURE="$TMP/repo"
 RELEASE_DIR="$FIXTURE/target/release-lto/bundle/osx"
+ARM64_APP="$FIXTURE/target/aarch64-apple-darwin/release-lto/bundle/osx/Clinch.app"
+X86_64_APP="$FIXTURE/target/x86_64-apple-darwin/release-lto/bundle/osx/Clinch.app"
 mkdir -p \
   "$FIXTURE/script" \
   "$FIXTURE/resources/release" \
   "$FIXTURE/resources/update" \
   "$FIXTURE/web/remote-control/.yarn/releases" \
-  "$RELEASE_DIR/Clinch.app" \
+  "$RELEASE_DIR" \
+  "$ARM64_APP" \
+  "$X86_64_APP" \
   "$TMP/bin"
 cp \
   "$ROOT/script/assemble-clinch-release-stage" \
@@ -85,8 +89,14 @@ printf 'clinch-release %s\n' "$(awk '{print $1, $2}' "$TMP/release-key.pub")" \
 
 printf 'fixture zip\n' > "$RELEASE_DIR/Clinch.app.zip"
 printf 'fixture dmg\n' > "$RELEASE_DIR/Clinch.dmg"
+printf 'fixture Intel zip\n' > "$RELEASE_DIR/Clinch-x86_64.app.zip"
+printf 'fixture Intel dmg\n' > "$RELEASE_DIR/Clinch-x86_64.dmg"
 (cd "$RELEASE_DIR" && shasum -a 256 Clinch.app.zip > Clinch.app.zip.sha256)
 (cd "$RELEASE_DIR" && shasum -a 256 Clinch.dmg > Clinch.dmg.sha256)
+(cd "$RELEASE_DIR" && shasum -a 256 Clinch-x86_64.app.zip \
+  > Clinch-x86_64.app.zip.sha256)
+(cd "$RELEASE_DIR" && shasum -a 256 Clinch-x86_64.dmg \
+  > Clinch-x86_64.dmg.sha256)
 
 /usr/bin/python3 - "$RELEASE_DIR" "$VERSION" "$SEQUENCE" <<'PY'
 import hashlib
@@ -98,18 +108,24 @@ release_dir = pathlib.Path(sys.argv[1])
 version = sys.argv[2]
 sequence = int(sys.argv[3])
 archive = release_dir / "Clinch.app.zip"
-digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-manifest = {
-    "architectures": ["arm64", "x86_64"],
-    "archive": {
-        "name": archive.name,
-        "sha256": digest,
-        "size": archive.stat().st_size,
+intel_archive = release_dir / "Clinch-x86_64.app.zip"
+
+def record(path):
+    return {
+        "name": path.name,
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "size": path.stat().st_size,
         "url": (
             "https://github.com/elliot-ylambda/clinch-terminal/releases/download/"
-            f"{version}/{archive.name}"
+            f"{version}/{path.name}"
         ),
-    },
+    }
+
+arm64_record = record(archive)
+manifest = {
+    "architectures": ["arm64", "x86_64"],
+    "archive": arm64_record,
+    "archives": {"arm64": arm64_record, "x86_64": record(intel_archive)},
     "bundle_id": "sh.clinch.Clinch",
     "minimum_macos_version": "14.0",
     "notarized": False,
@@ -257,12 +273,18 @@ import pathlib
 import sys
 
 validation = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-assert validation["schema_version"] == 4
+assert validation["schema_version"] == 5
+assert validation["release_layout"] == "native"
 assert "manual_qa" not in validation
 PY
 
 verify() {
   (cd "$FIXTURE" && PATH="$TMP/bin:$PATH" ./script/verify-clinch-release-stage "$@")
+}
+
+verify_universal() {
+  (cd "$FIXTURE" && PATH="$TMP/bin:$PATH" UNIVERSAL=1 \
+    ./script/verify-clinch-release-stage "$@")
 }
 
 expect_failure() {
@@ -280,6 +302,14 @@ cp "$DIST/Clinch.app.zip" "$TMP/Clinch.app.zip"
 printf 'tampered\n' >> "$DIST/Clinch.app.zip"
 expect_failure tampered verify "$DIST" "$VERSION" "$COMMIT" "$SEQUENCE"
 cp "$TMP/Clinch.app.zip" "$DIST/Clinch.app.zip"
+
+cp "$DIST/Clinch-x86_64.app.zip" "$TMP/Clinch-x86_64.app.zip"
+printf 'tampered\n' >> "$DIST/Clinch-x86_64.app.zip"
+expect_failure tampered_intel verify "$DIST" "$VERSION" "$COMMIT" "$SEQUENCE"
+cp "$TMP/Clinch-x86_64.app.zip" "$DIST/Clinch-x86_64.app.zip"
+
+expect_failure wrong_layout verify_universal \
+  "$DIST" "$VERSION" "$COMMIT" "$SEQUENCE"
 
 cp "$DIST/Clinch.source.tar.gz" "$TMP/Clinch.source.tar.gz"
 printf 'tampered\n' >> "$DIST/Clinch.source.tar.gz"
@@ -306,5 +336,37 @@ cp "$DIST/Clinch.build-provenance.sshsig" "$TMP/provenance.sshsig"
 printf 'invalid\n' > "$DIST/Clinch.build-provenance.sshsig"
 expect_failure invalid_signature verify "$DIST" "$VERSION" "$COMMIT" "$SEQUENCE"
 cp "$TMP/provenance.sshsig" "$DIST/Clinch.build-provenance.sshsig"
+
+# The explicit legacy flag still assembles and verifies the smaller, original
+# universal asset set without carrying stale native-mode files into the draft.
+mkdir -p "$RELEASE_DIR/Clinch.app"
+/usr/bin/python3 - "$RELEASE_DIR/Clinch.update.json" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+manifest = json.loads(path.read_text(encoding="utf-8"))
+manifest.pop("archives")
+path.write_text(
+    json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n",
+    encoding="utf-8",
+)
+PY
+"$OPENSSL3" pkeyutl -sign -rawin -inkey "$TMP/update-key.pem" \
+  -in "$RELEASE_DIR/Clinch.update.json" -out "$TMP/update-signature.bin"
+base64 < "$TMP/update-signature.bin" | tr -d '\n' > "$RELEASE_DIR/Clinch.update.sig"
+printf '\n' >> "$RELEASE_DIR/Clinch.update.sig"
+ssh-keygen -Y sign -f "$TMP/release-key" -n clinch-install - \
+  < "$RELEASE_DIR/Clinch.update.json" > "$RELEASE_DIR/Clinch.update.sshsig"
+(cd "$FIXTURE" && env \
+  PATH="$TMP/bin:$PATH" \
+  FIXTURE_COMMIT="$COMMIT" \
+  CLINCH_RELEASE_SIGNING_KEY="$TMP/release-key" \
+  UNIVERSAL=1 \
+  ./script/assemble-clinch-release-stage "$VERSION" "$COMMIT" "$SEQUENCE" \
+  >/dev/null)
+verify_universal "$DIST" "$VERSION" "$COMMIT" "$SEQUENCE" >/dev/null
+[[ ! -e "$DIST/Clinch-x86_64.app.zip" ]]
 
 echo "PASS"

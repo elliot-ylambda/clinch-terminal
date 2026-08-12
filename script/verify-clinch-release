@@ -90,6 +90,13 @@ verify_app() {
   if [[ "${REQUIRE_UNIVERSAL:-1}" == "1" ]]; then
     lipo "$binary" -verify_arch x86_64 arm64 >/dev/null \
       || fail "$label is not universal (x86_64 + arm64)"
+  else
+    case "${REQUIRE_ARCHITECTURE:-}" in
+      arm64|x86_64) ;;
+      *) fail "REQUIRE_ARCHITECTURE must be arm64 or x86_64 for a native release" ;;
+    esac
+    [[ "$(lipo -archs "$binary")" == "$REQUIRE_ARCHITECTURE" ]] \
+      || fail "$label is not a native $REQUIRE_ARCHITECTURE bundle"
   fi
 
   for item in \
@@ -205,12 +212,15 @@ ssh-keygen -Y verify -f "$ALLOWED_SIGNERS" -I clinch-release -n clinch-install \
   -s "$SSH_SIGNATURE" < "$MANIFEST" >/dev/null \
   || fail "release SSH signature is invalid"
 
-/usr/bin/python3 - "$MANIFEST" "$ZIP" "$VERSION" "$UPDATE_SEQUENCE" "$MINIMUM_MACOS" <<'PY' \
+/usr/bin/python3 - "$MANIFEST" "$ZIP" "$VERSION" "$UPDATE_SEQUENCE" "$MINIMUM_MACOS" \
+  "${REQUIRE_UNIVERSAL:-1}" "${REQUIRE_ARCHITECTURE:-}" <<'PY' \
   || exit 1
 import hashlib, json, pathlib, sys
 manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 archive = pathlib.Path(sys.argv[2])
 version = sys.argv[3]
+universal = sys.argv[6] == "1"
+architecture = sys.argv[7]
 expected = {
     "schema_version": 1,
     "repository": "elliot-ylambda/clinch-terminal",
@@ -227,21 +237,38 @@ expected = {
 for key, value in expected.items():
     if manifest.get(key) != value:
         raise SystemExit(f"release verification failed: manifest {key} mismatch")
+expected_name = "Clinch.app.zip" if universal or architecture == "arm64" else (
+    "Clinch-x86_64.app.zip"
+)
 expected_url = (
     "https://github.com/elliot-ylambda/clinch-terminal/releases/download/"
-    f"{version}/Clinch.app.zip"
+    f"{version}/{expected_name}"
 )
-if manifest.get("archive", {}).get("name") != "Clinch.app.zip":
+legacy_archive = manifest.get("archive", {})
+if legacy_archive.get("name") != "Clinch.app.zip":
+    raise SystemExit("release verification failed: unexpected legacy manifest archive name")
+if universal:
+    if "archives" in manifest:
+        raise SystemExit("release verification failed: universal manifest has native archives")
+    selected_archive = legacy_archive
+else:
+    archives = manifest.get("archives")
+    if not isinstance(archives, dict) or set(archives) != {"arm64", "x86_64"}:
+        raise SystemExit("release verification failed: native manifest archives are not exact")
+    if archives["arm64"] != legacy_archive:
+        raise SystemExit("release verification failed: legacy archive is not the arm64 archive")
+    selected_archive = archives.get(architecture, {})
+if selected_archive.get("name") != expected_name:
     raise SystemExit("release verification failed: unexpected manifest archive name")
-if manifest["archive"].get("url") != expected_url:
+if selected_archive.get("url") != expected_url:
     raise SystemExit("release verification failed: unexpected manifest archive URL")
-if manifest["archive"].get("size") != archive.stat().st_size:
+if selected_archive.get("size") != archive.stat().st_size:
     raise SystemExit("release verification failed: manifest archive size mismatch")
 digest = hashlib.sha256()
 with archive.open("rb") as source:
     for chunk in iter(lambda: source.read(1024 * 1024), b""):
         digest.update(chunk)
-if manifest["archive"].get("sha256") != digest.hexdigest():
+if selected_archive.get("sha256") != digest.hexdigest():
     raise SystemExit("release verification failed: manifest archive hash mismatch")
 PY
 

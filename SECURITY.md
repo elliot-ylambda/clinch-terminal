@@ -31,15 +31,17 @@ Clinch adds its own release controls:
   release manifest, plus the checksum list that covers the public DMG and other assets;
 - a separate Ed25519 key signs the manifest format retained for independent verification;
 - the manifest binds the repository, tag, version, sequence, bundle ID, minimum macOS version,
-  universal architectures, archive URL, byte length, and SHA-256 digest;
-- the convenience installer authenticates the manifest before parsing it and downloads only from
-  the authenticated exact tag;
+  supported architectures, and each architecture-specific archive URL, byte length, and SHA-256
+  digest;
+- the convenience installer authenticates the manifest before parsing it, detects the Mac's
+  hardware architecture (including processes running under Rosetta), and downloads only that
+  archive from the authenticated exact tag;
 - the local release gate verifies the app, ZIP, and mounted DMG, including their identity,
-  architectures, absence of unused privacy entitlements and the privileged update authorizer,
-  presence of the universal unprivileged update components, code-signature structure, and matching
-  app files;
-- the release workstation publishes a CycloneDX SBOM, signed validation record, signed checksum
-  list, and release-key-signed local provenance for the exact gated commit;
+  exact native architecture (or both slices for an explicit legacy universal release), absence of
+  unused privacy entitlements and the privileged update authorizer, presence of the universal
+  unprivileged update components, code-signature structure, and matching app files;
+- the release workstation publishes an SBOM for each native app, a signed validation record,
+  signed checksum list, and release-key-signed local provenance for the exact gated commit;
 - the local release command downloads and independently verifies the private draft before making
   it public, without running GitHub Actions; and
 - repository policy protects `main`, secret scanning, push protection, and GitHub immutable
@@ -109,7 +111,8 @@ handle credentials according to their own policies.
   fall back to the authenticated manual installer. No administrator authorization shim is bundled.
 - The updater and release controls have not received an independent audit. A client released before
   the updater bridge in `v0.2026.07.20.1643` cannot discover it and needs one final authenticated
-  manual installation.
+  manual installation. An Intel client that predates architecture-specific archive selection also
+  needs one manual bridge install unless an intervening universal release carries the new updater.
 - Restoring a pane intentionally executes a captured provider resume command. A compromised local
   account, provider config, transcript, hook, plugin, or Clinch state file can affect that command.
 - Ad-hoc signing verifies internal bundle consistency, not publisher identity. Anyone can create a

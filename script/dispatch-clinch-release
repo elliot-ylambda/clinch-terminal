@@ -24,6 +24,12 @@ GH_RETRY_DELAY_SECONDS="${CLINCH_GH_RETRY_DELAY_SECONDS:-5}"
 ISOLATED_WORKTREE="${CLINCH_RELEASE_ISOLATED_WORKTREE:-0}"
 PINNED_COMMIT="${CLINCH_RELEASE_PINNED_COMMIT:-}"
 RESUME_ENABLED="${CLINCH_RELEASE_RESUME:-1}"
+case "${UNIVERSAL:-0}" in
+  1|true|yes) UNIVERSAL=1; RELEASE_LAYOUT=universal ;;
+  0|false|no) UNIVERSAL=0; RELEASE_LAYOUT=native ;;
+  *) echo "local release failed: UNIVERSAL must be 0 or 1" >&2; exit 1 ;;
+esac
+export UNIVERSAL
 
 publish_tmp=
 RESUME_DIR=
@@ -87,7 +93,7 @@ increment_version() {
 }
 
 load_resume_state() {
-  local state_commit state_version state_sequence state_started_at state_phase
+  local state_commit state_version state_sequence state_started_at state_phase state_layout
   [[ "$RESUME_ENABLED" == 1 && -f "$RESUME_STATE" ]] || return 1
 
   state_commit="$(jq -er '.commit | strings' "$RESUME_STATE")" || return 1
@@ -95,8 +101,10 @@ load_resume_state() {
   state_sequence="$(jq -er '.sequence | numbers' "$RESUME_STATE")" || return 1
   state_started_at="$(jq -er '.release_started_at | strings' "$RESUME_STATE")" || return 1
   state_phase="$(jq -er '.phase | strings' "$RESUME_STATE")" || return 1
+  state_layout="$(jq -er '.release_layout | strings' "$RESUME_STATE")" || return 1
 
   [[ "$state_commit" == "$COMMIT_SHA" ]] || return 1
+  [[ "$state_layout" == "$RELEASE_LAYOUT" ]] || return 1
   validate_version "$state_version" || return 1
   [[ "$state_sequence" =~ ^[0-9]+$ && "$state_sequence" -gt 0 ]] || return 1
   [[ "$state_started_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] \
@@ -129,8 +137,10 @@ write_resume_state() {
     --argjson sequence "$UPDATE_SEQUENCE" \
     --arg release_started_at "$RELEASE_STARTED_AT" \
     --arg phase "$phase" \
+    --arg release_layout "$RELEASE_LAYOUT" \
     '{schema: 1, commit: $commit, version: $version, sequence: $sequence,
-      release_started_at: $release_started_at, phase: $phase}' > "$tmp"
+      release_started_at: $release_started_at, phase: $phase,
+      release_layout: $release_layout}' > "$tmp"
   mv "$tmp" "$RESUME_STATE"
   RESUME_PHASE="$phase"
 }
@@ -221,7 +231,7 @@ confirm_publication() {
   [[ -t 0 ]] || fail "publication requires an interactive terminal"
   cat <<EOF
 
-The complete local gate, universal artifact verification, SBOM, provenance, and signatures passed.
+The complete local gate, $RELEASE_LAYOUT artifact verification, SBOM, provenance, and signatures passed.
 No public release exists yet. The next step creates or refreshes a signed tag and private draft,
 downloads and verifies every uploaded asset, then publishes that release immediately.
 
@@ -431,7 +441,7 @@ git remote get-url "$REMOTE" >/dev/null || fail "missing Git remote $REMOTE"
 available_kib="$(df -Pk "$ROOT" | awk 'NR == 2 {print $4}')"
 [[ "$available_kib" =~ ^[0-9]+$ ]] || fail "could not determine free disk space"
 (( available_kib >= MINIMUM_FREE_KIB )) \
-  || fail "at least 40 GiB of free disk space is required for a universal local release"
+  || fail "at least 40 GiB of free disk space is required for a two-architecture local release"
 
 if [[ "$ISOLATED_WORKTREE" == 1 ]]; then
   [[ "$PINNED_COMMIT" =~ ^[0-9a-f]{40}$ ]] \
@@ -531,7 +541,7 @@ if [[ "$stage_ready" == 0 && "$RESUME_PHASE" == candidate_verified ]]; then
   if make _verify-existing \
       VERSION="$REQUESTED_VERSION" \
       UPDATE_SEQUENCE="$UPDATE_SEQUENCE" \
-      UNIVERSAL=1; then
+      UNIVERSAL="$UNIVERSAL"; then
     candidate_ready=1
   else
     echo "Cached candidate artifacts are no longer valid; rebuilding them."
@@ -560,11 +570,11 @@ if [[ "$stage_ready" == 0 && "$candidate_ready" == 0 ]]; then
   fi
   write_resume_state initialized
 
-  echo "==> Building and verifying the universal release candidate"
+  echo "==> Building and verifying the $RELEASE_LAYOUT release candidate"
   make _verify \
     VERSION="$REQUESTED_VERSION" \
     UPDATE_SEQUENCE="$UPDATE_SEQUENCE" \
-    UNIVERSAL=1 \
+    UNIVERSAL="$UNIVERSAL" \
     CLINCH_UPDATE_SIGNING_KEY="$UPDATE_KEY" \
     CLINCH_RELEASE_SIGNING_KEY="$RELEASE_KEY"
   verify_source_state "$COMMIT_SHA"
@@ -576,9 +586,10 @@ if [[ "$stage_ready" == 0 ]]; then
   echo "==> Assembling signed local release provenance and draft assets"
   CLINCH_RELEASE_SIGNING_KEY="$RELEASE_KEY" \
   CLINCH_RELEASE_STARTED_AT="$RELEASE_STARTED_AT" \
+  UNIVERSAL="$UNIVERSAL" \
   ./script/assemble-clinch-release-stage \
     "$REQUESTED_VERSION" "$COMMIT_SHA" "$UPDATE_SEQUENCE"
-  ./script/verify-clinch-release-stage \
+  UNIVERSAL="$UNIVERSAL" ./script/verify-clinch-release-stage \
     "$STAGE/dist" "$REQUESTED_VERSION" "$COMMIT_SHA" "$UPDATE_SEQUENCE"
   verify_source_state "$COMMIT_SHA"
   write_resume_state stage_verified

@@ -20,6 +20,7 @@ KEY="$TMP/key.pem"
 PUBLIC="$TMP/public.json"
 APP="$TMP/Clinch.app"
 ZIP="$TMP/Clinch.app.zip"
+INTEL_ZIP="$TMP/Clinch-x86_64.app.zip"
 MANIFEST="$TMP/Clinch.update.json"
 SIGNATURE="$TMP/Clinch.update.sig"
 VERSION="v0.2099.01.02.0304"
@@ -35,13 +36,14 @@ mkdir -p "$APP/Contents"
 /usr/bin/plutil -insert ClinchUpdateSequence -string "$SEQUENCE" "$APP/Contents/Info.plist"
 /usr/bin/plutil -insert LSMinimumSystemVersion -string 14.0 "$APP/Contents/Info.plist"
 printf 'authenticated archive fixture\n' > "$ZIP"
+printf 'authenticated Intel archive fixture\n' > "$INTEL_ZIP"
 
 CLINCH_OPENSSL_BIN="$OPENSSL3" \
 CLINCH_UPDATE_SIGNING_KEY="$KEY" \
 CLINCH_UPDATE_PUBLIC_KEY_JSON="$PUBLIC" \
 RELEASE_NOTES="Signed updater fixture" \
   "$ROOT/script/clinch-update-manifest" generate \
-    "$APP" "$ZIP" "$VERSION" "$SEQUENCE" "$MANIFEST" "$SIGNATURE"
+    "$APP" "$ZIP" "$INTEL_ZIP" "$VERSION" "$SEQUENCE" "$MANIFEST" "$SIGNATURE"
 
 CLINCH_OPENSSL_BIN="$OPENSSL3" \
   "$ROOT/script/clinch-update-manifest" verify "$MANIFEST" "$SIGNATURE" "$PUBLIC"
@@ -52,6 +54,8 @@ with open(sys.argv[1], encoding="utf-8") as source:
 assert manifest["schema_version"] == 1
 assert manifest["sequence"] == int(sys.argv[2])
 assert manifest["archive"]["name"] == "Clinch.app.zip"
+assert manifest["archives"]["arm64"] == manifest["archive"]
+assert manifest["archives"]["x86_64"]["name"] == "Clinch-x86_64.app.zip"
 assert manifest["release_notes"] == "Signed updater fixture"
 PY
 
@@ -62,5 +66,20 @@ if CLINCH_OPENSSL_BIN="$OPENSSL3" \
   echo "tampered update manifest unexpectedly verified" >&2
   exit 1
 fi
+
+LEGACY_MANIFEST="$TMP/Clinch.legacy.update.json"
+LEGACY_SIGNATURE="$TMP/Clinch.legacy.update.sig"
+CLINCH_OPENSSL_BIN="$OPENSSL3" \
+CLINCH_UPDATE_SIGNING_KEY="$KEY" \
+CLINCH_UPDATE_PUBLIC_KEY_JSON="$PUBLIC" \
+  "$ROOT/script/clinch-update-manifest" generate \
+    "$APP" "$ZIP" "$VERSION" "$SEQUENCE" "$LEGACY_MANIFEST" "$LEGACY_SIGNATURE"
+/usr/bin/python3 - "$LEGACY_MANIFEST" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as source:
+    manifest = json.load(source)
+assert "archives" not in manifest
+assert manifest["archive"]["name"] == "Clinch.app.zip"
+PY
 
 echo "clinch signed update manifest tests passed"

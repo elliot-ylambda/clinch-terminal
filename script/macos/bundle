@@ -406,8 +406,12 @@ elif [[ "$ARTIFACT" == app ]]; then
   FEATURES="$FEATURES,gui,nld_classifier_v3,nld_heuristic_v2"
 fi
 
+# Explicit architecture builds may cross-compile, so do not assume the selected
+# Rust target is installed merely because the host target is.
+if [[ $BUILD_BINARY = true && -n "$TARGET_ARCH" ]]; then
+    rustup target add "$DEFAULT_TARGET"
 # If we're building a universal bundle for the app artifact, make sure the additional target is available.
-if [[ $UNIVERSAL_BINARY = true ]]; then
+elif [[ $BUILD_BINARY = true && $UNIVERSAL_BINARY = true ]]; then
     rustup target add "$ADDITIONAL_TARGET"
 fi
 
@@ -463,10 +467,17 @@ if [[ "$ARTIFACT" == "app" ]]; then
     fi
 
     if [[ $DEFAULT_TARGET_PREBUILT != true ]]; then
-      echo "Building $DEFAULT_TARGET app and settings schema generator with profile $CARGO_PROFILE"
+      cargo_bins=(--bin "$WARP_BIN")
+      if [[ -z "${SETTINGS_SCHEMA_CACHE:-}" || ! -f "$SETTINGS_SCHEMA_CACHE" ]]; then
+        cargo_bins+=(--bin generate_settings_schema)
+        schema_build_note=" and settings schema generator"
+      else
+        schema_build_note=" (reusing cached settings schema)"
+      fi
+      echo "Building $DEFAULT_TARGET app$schema_build_note with profile $CARGO_PROFILE"
       pushd app > /dev/null
       cargo build --profile "$CARGO_PROFILE" \
-        --bin "$WARP_BIN" --bin generate_settings_schema \
+        "${cargo_bins[@]}" \
         --target "$DEFAULT_TARGET" --features "$FEATURES"
       popd > /dev/null
       DEFAULT_TARGET_PREBUILT=true

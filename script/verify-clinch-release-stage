@@ -9,6 +9,11 @@ DIST="${1:?usage: verify-clinch-release-stage <dist> <version> <commit> <sequenc
 VERSION="${2:?missing version}"
 EXPECTED_COMMIT="${3:?missing commit}"
 EXPECTED_SEQUENCE="${4:?missing sequence}"
+case "${UNIVERSAL:-0}" in
+  1|true|yes) RELEASE_LAYOUT=universal ;;
+  0|false|no) RELEASE_LAYOUT=native ;;
+  *) echo "staged release verification failed: UNIVERSAL must be 0 or 1" >&2; exit 1 ;;
+esac
 ALLOWED_SIGNERS="${CLINCH_ALLOWED_SIGNERS:-$ROOT/resources/release/clinch-release-allowed-signers}"
 UPDATE_PUBLIC_KEY_JSON="${CLINCH_UPDATE_PUBLIC_KEY_JSON:-$ROOT/resources/update/clinch-update-public-key.json}"
 
@@ -45,6 +50,15 @@ required_files=(
   install.sh
   uninstall.sh
 )
+if [[ "$RELEASE_LAYOUT" == native ]]; then
+  required_files+=(
+    Clinch-x86_64.app.zip
+    Clinch-x86_64.app.zip.sha256
+    Clinch-x86_64.dmg
+    Clinch-x86_64.dmg.sha256
+    Clinch-x86_64.sbom.cdx.json
+  )
+fi
 
 expected_list="$(mktemp "${TMPDIR:-/tmp}/clinch-expected-assets.XXXXXX")"
 actual_list="$(mktemp "${TMPDIR:-/tmp}/clinch-actual-assets.XXXXXX")"
@@ -83,7 +97,7 @@ ssh-keygen -Y verify -f "$ALLOWED_SIGNERS" -I clinch-release -n clinch-checksums
 
 /usr/bin/python3 - \
   "$DIST" "$VERSION" "$EXPECTED_COMMIT" "$EXPECTED_SEQUENCE" "$ROOT" \
-  "$UPDATE_PUBLIC_KEY_JSON" <<'PY'
+  "$UPDATE_PUBLIC_KEY_JSON" "$RELEASE_LAYOUT" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -96,6 +110,7 @@ commit = sys.argv[3]
 sequence = int(sys.argv[4])
 root = pathlib.Path(sys.argv[5])
 update_public_key_path = pathlib.Path(sys.argv[6])
+release_layout = sys.argv[7]
 
 primary_assets = [
     "Clinch.dmg",
@@ -113,6 +128,14 @@ primary_assets = [
     "Clinch.sbom.cdx.json",
     "Clinch.release-validation.json",
 ]
+if release_layout == "native":
+    primary_assets += [
+        "Clinch-x86_64.dmg",
+        "Clinch-x86_64.dmg.sha256",
+        "Clinch-x86_64.app.zip",
+        "Clinch-x86_64.app.zip.sha256",
+        "Clinch-x86_64.sbom.cdx.json",
+    ]
 checksummed_assets = primary_assets + [
     "Clinch.build-provenance.json",
     "Clinch.build-provenance.sshsig",
@@ -153,6 +176,16 @@ for sidecar_name, artifact_name in (
         fail(f"{sidecar_name} does not authenticate {artifact_name}")
     if pathlib.Path(pieces[-1]).name != artifact_name:
         fail(f"{sidecar_name} names the wrong artifact")
+if release_layout == "native":
+    for sidecar_name, artifact_name in (
+        ("Clinch-x86_64.app.zip.sha256", "Clinch-x86_64.app.zip"),
+        ("Clinch-x86_64.dmg.sha256", "Clinch-x86_64.dmg"),
+    ):
+        pieces = (dist / sidecar_name).read_text(encoding="utf-8").split()
+        if len(pieces) < 2 or pieces[0].lower() != digest(dist / artifact_name):
+            fail(f"{sidecar_name} does not authenticate {artifact_name}")
+        if pathlib.Path(pieces[-1]).name != artifact_name:
+            fail(f"{sidecar_name} names the wrong artifact")
 
 manifest = json.loads((dist / "Clinch.update.json").read_text(encoding="utf-8"))
 update_public_key = json.loads(update_public_key_path.read_text(encoding="utf-8"))
@@ -188,6 +221,26 @@ if archive.get("size") != (dist / "Clinch.app.zip").stat().st_size:
     fail("manifest archive size mismatch")
 if archive.get("sha256") != digest(dist / "Clinch.app.zip"):
     fail("manifest archive digest mismatch")
+if release_layout == "native":
+    archives = manifest.get("archives")
+    if not isinstance(archives, dict) or set(archives) != {"arm64", "x86_64"}:
+        fail("manifest architecture archives are not exact")
+    if archives["arm64"] != archive:
+        fail("manifest legacy archive does not match arm64")
+    intel = archives["x86_64"]
+    if intel.get("name") != "Clinch-x86_64.app.zip":
+        fail("manifest Intel archive name mismatch")
+    if intel.get("url") != (
+        "https://github.com/elliot-ylambda/clinch-terminal/releases/download/"
+        f"{version}/Clinch-x86_64.app.zip"
+    ):
+        fail("manifest Intel archive URL mismatch")
+    if intel.get("size") != (dist / "Clinch-x86_64.app.zip").stat().st_size:
+        fail("manifest Intel archive size mismatch")
+    if intel.get("sha256") != digest(dist / "Clinch-x86_64.app.zip"):
+        fail("manifest Intel archive digest mismatch")
+elif "archives" in manifest:
+    fail("universal manifest unexpectedly contains architecture archives")
 if not isinstance(manifest.get("release_notes"), str) or not manifest["release_notes"].strip():
     fail("manifest release notes are empty")
 
@@ -195,10 +248,11 @@ validation = json.loads(
     (dist / "Clinch.release-validation.json").read_text(encoding="utf-8")
 )
 for key, expected in {
-    "schema_version": 4,
+    "schema_version": 5,
     "version": version,
     "commit": commit,
     "update_sequence": sequence,
+    "release_layout": release_layout,
 }.items():
     if validation.get(key) != expected:
         fail(f"validation record {key} mismatch")
@@ -207,11 +261,19 @@ if validation.get("gates") != ["Local full release gate"]:
 if validation.get("notarized") is not False:
     fail("validation record notarization state mismatch")
 if validation.get("artifact_checks") != [
-    "universal x86_64+arm64",
+    (
+        "universal x86_64+arm64"
+        if release_layout == "universal"
+        else "separate native arm64 and x86_64 bundles"
+    ),
     "ad-hoc hardened-runtime signature",
     "no Apple Events entitlement or usage description",
     "no bundled iMessage helper",
-    "ZIP/DMG app equality",
+    (
+        "ZIP/DMG app equality"
+        if release_layout == "universal"
+        else "architecture-specific ZIP/DMG app equality"
+    ),
     "exact licenses, modification notice, and third-party notices",
     "versioned complete corresponding source archive",
     "default-on integration, opt-out, and removal",
@@ -239,6 +301,14 @@ if sbom.get("bomFormat") != "CycloneDX":
     fail("SBOM is not CycloneDX JSON")
 if not isinstance(sbom.get("specVersion"), str) or not sbom["specVersion"].strip():
     fail("SBOM has no CycloneDX specification version")
+if release_layout == "native":
+    intel_sbom = json.loads(
+        (dist / "Clinch-x86_64.sbom.cdx.json").read_text(encoding="utf-8")
+    )
+    if intel_sbom.get("bomFormat") != "CycloneDX":
+        fail("Intel SBOM is not CycloneDX JSON")
+    if not isinstance(intel_sbom.get("specVersion"), str) or not intel_sbom["specVersion"].strip():
+        fail("Intel SBOM has no CycloneDX specification version")
 
 provenance = json.loads(
     (dist / "Clinch.build-provenance.json").read_text(encoding="utf-8")
@@ -276,7 +346,11 @@ if definition.get("buildType") != (
 ):
     fail("provenance build type mismatch")
 parameters = definition.get("externalParameters", {})
-if parameters != {"update_sequence": sequence, "version": version}:
+if parameters != {
+    "release_layout": release_layout,
+    "update_sequence": sequence,
+    "version": version,
+}:
     fail("provenance external parameters mismatch")
 if definition.get("internalParameters") != {}:
     fail("provenance internal parameters mismatch")

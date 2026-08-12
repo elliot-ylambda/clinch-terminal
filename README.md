@@ -68,7 +68,7 @@ curl -fsSL https://clinch.sh/install | sh
 The URL redirects to the authenticated `install.sh` asset on the latest versioned release. The
 script authenticates the signed release manifest with a Clinch release key embedded in the
 reviewed script. It resolves one exact tag, verifies the archive size and SHA-256, bundle ID,
-version, minimum macOS version, Intel and Apple Silicon slices, and structural code signature,
+version, minimum macOS version, the native architecture for this Mac, and structural code signature,
 then stages the app in `/Applications` or `~/Applications` and opens it (pass `--no-open` to
 skip launching). It does not configure Claude Code or Codex, install plugins, request
 administrator access, or change Gatekeeper. Command-line downloads carry no browser quarantine
@@ -80,7 +80,8 @@ it, then run `sh install.sh`.
 
 Every current versioned release on the
 [Clinch releases page](https://github.com/elliot-ylambda/clinch-terminal/releases) also ships
-the artifacts to verify and install by hand. Download `Clinch.dmg`, `Clinch.source.tar.gz`,
+the artifacts to verify and install by hand. Download `Clinch.dmg` on Apple Silicon or
+`Clinch-x86_64.dmg` on Intel, plus `Clinch.source.tar.gz`,
 `Clinch.checksums.txt`, and `Clinch.checksums.sshsig` from the same release. The source archive is
 the version-matched Complete Corresponding Source, including every locked Cargo dependency.
 Authenticate the checksum list with the Clinch release key, then verify the disk image and source
@@ -95,6 +96,8 @@ grep ' Clinch.dmg$' Clinch.checksums.txt
 shasum -a 256 Clinch.source.tar.gz
 grep ' Clinch.source.tar.gz$' Clinch.checksums.txt
 ```
+
+On an Intel Mac, substitute `Clinch-x86_64.dmg` in both DMG commands.
 
 `ssh-keygen` must report a good signature, and each printed digest must match its authenticated
 entry. Open the DMG and drag
@@ -272,7 +275,7 @@ credentials during uninstall.
 
 ## Updates and removal
 
-Updater-enabled builds check automatically and show **Update available** in the header. You can
+Updater-enabled builds check automatically and show **Update Clinch** in the header. You can
 also choose **Clinch → Check for Updates…**. Clinch authenticates the release and presents its
 version and notes; **Download and Install** then verifies the archive, saves restorable state,
 quits, atomically replaces the app, relaunches, and rolls back if the new app does not start.
@@ -285,6 +288,12 @@ bridge in `v0.2026.07.20.1643` need one final bootstrap install:
 ```bash
 curl -fsSL https://clinch.sh/install | sh
 ```
+
+The first release that switches from the legacy universal archive to native archives remains an
+automatic update for Apple Silicon. An Intel installation whose current updater predates native
+archive selection needs the same one-time authenticated installer command; later updates download
+only `Clinch-x86_64.app.zip`. A release operator can instead ship one final bridge with
+`UNIVERSAL=1` before returning to the smaller default layout.
 
 The release asset `uninstall.sh` supports selective removal:
 
@@ -309,8 +318,10 @@ make candidate
 
 `script/launch-check` covers formatting, installer/integration/update-format tests, the stable
 build, component tests, Clippy, dependency license policy, bundled notices, and advisories. `make
-candidate` builds and verifies the universal app, ZIP, DMG, both manifest signatures, minimum OS,
-entitlements, default-on/opt-out flow, and ZIP/DMG app equality. It does not create a tag or release.
+candidate` builds and verifies separate native Apple Silicon and Intel apps, ZIPs, and DMGs, both
+manifest signatures, minimum OS, entitlements, default-on/opt-out flow, and each ZIP/DMG app pair.
+Each Mac therefore downloads only its own architecture. It does not create a tag or release.
+Pass `UNIVERSAL=1` to `make candidate` or `make release` only when a legacy fat app is needed.
 
 Release builds use the persistent local Cargo cache instead of paid hosted macOS runners. Install
 the normal build/test/release dependencies plus OpenSSL 3 and Syft (`brew install openssl@3 syft`)
@@ -323,7 +334,8 @@ The worktree uses the dedicated `target/release-worktree-cache/` directory, and 
 path keeps incremental Cargo fingerprints reusable across releases without conflicting with normal
 development builds. Edits made in the caller's checkout after the release starts cannot dirty or
 change the release source. The command runs the full local
-gate, builds and verifies both macOS architectures, generates a CycloneDX SBOM, a vendored
+gate, builds and verifies both native macOS architecture artifacts, generates a CycloneDX SBOM for
+each architecture, a vendored
 offline-buildable Corresponding Source archive, and signed local provenance, then assembles the
 exact signed asset set under `target/release-worktree-cache/release-stage/<version>/`.
 The release-only Nextest profile permits up to 120 seconds for macOS UI tests whose first system-font
@@ -343,16 +355,13 @@ safe to retry. Verified progress is stored by commit under
 revalidates existing candidate or staged artifacts and skips completed build phases only when those
 checks still pass. Set `CLINCH_RELEASE_RESUME=0` to force a fresh run.
 
-On hosts with at least 32 GiB of RAM and 8 logical CPUs, Intel and Apple Silicon builds run in
-parallel with half of the Cargo job budget assigned to each architecture. The secondary target uses
-its own persistent Cargo root under `target/release-worktree-cache/parallel-arch-cache/` so Cargo's
-target-directory lock cannot silently serialize the builds; its final binary and dSYM are staged
-back into the canonical target tree for universal bundling. Smaller hosts fall back to sequential
-builds. Set `CLINCH_PARALLEL_ARCH_BUILDS=0` to force sequential builds or `=1` to force parallel
-builds; `CLINCH_PARALLEL_ARCH_JOBS` controls the per-architecture Cargo job count.
-The native build also produces the settings-schema generator, which bundling executes directly
-instead of launching a second release-LTO Cargo build. The universal artifact verifier always
-checks that both Intel and Apple Silicon slices are present.
+The default release builds Apple Silicon and Intel bundles separately and reuses one generated
+settings schema across them. The verifier requires the large Clinch executable in each archive to
+contain exactly its advertised native slice. The small updater swap tool, jq helper, and dock-tile
+plugin remain universal so either architecture can safely complete an update. When `UNIVERSAL=1`
+is requested, hosts with at least 32 GiB of RAM and 8 logical CPUs can build the two executable
+slices in parallel; `CLINCH_PARALLEL_ARCH_BUILDS` and `CLINCH_PARALLEL_ARCH_JOBS` control that
+legacy universal build optimization.
 
 After these changes land on `main`, run `make configure-release-repository` once. It validates both
 workstation key copies before deleting the obsolete GitHub signing secrets and `public-release`

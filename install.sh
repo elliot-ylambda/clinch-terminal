@@ -129,7 +129,9 @@ JXA
 read_verified_manifest() {
     manifest=$1
     expected_tag=$2
-    /usr/bin/osascript -l JavaScript - "$manifest" "$expected_tag" "$EXPECTED_UPDATE_KEY_ID" <<'JXA'
+    machine_architecture=$3
+    /usr/bin/osascript -l JavaScript - "$manifest" "$expected_tag" \
+        "$EXPECTED_UPDATE_KEY_ID" "$machine_architecture" <<'JXA'
 ObjC.import("Foundation");
 function fail(message) { throw new Error(message); }
 function run(argv) {
@@ -140,11 +142,24 @@ function run(argv) {
     const m = JSON.parse(ObjC.unwrap(text));
     const tag = argv[1];
     const keyId = argv[2];
+    const machineArchitecture = argv[3];
     const repository = "elliot-ylambda/clinch-terminal";
-    const archiveName = "Clinch.app.zip";
-    const archiveUrl = "https://github.com/" + repository +
-        "/releases/download/" + tag + "/" + archiveName;
     const releaseUrl = "https://github.com/" + repository + "/releases/tag/" + tag;
+
+    function validateArchive(archive, archiveName) {
+        const archiveUrl = "https://github.com/" + repository +
+            "/releases/download/" + tag + "/" + archiveName;
+        if (!archive || typeof archive !== "object" || Array.isArray(archive)) {
+            fail("manifest archive is missing");
+        }
+        if (archive.name !== archiveName || archive.url !== archiveUrl) {
+            fail("manifest archive identity mismatch");
+        }
+        if (!Number.isSafeInteger(archive.size) || archive.size < 1 ||
+            archive.size > 2147483648) fail("invalid archive size");
+        if (typeof archive.sha256 !== "string" ||
+            !/^[0-9a-f]{64}$/.test(archive.sha256)) fail("invalid archive SHA-256");
+    }
 
     if (!m || Array.isArray(m) || typeof m !== "object") fail("manifest is not an object");
     if (m.schema_version !== 1) fail("unsupported manifest schema");
@@ -161,23 +176,36 @@ function run(argv) {
     }
     if (!Array.isArray(m.architectures) || m.architectures.length !== 2 ||
         m.architectures.slice().sort().join(",") !== "arm64,x86_64") {
-        fail("manifest does not require a universal app");
+        fail("manifest does not support both Mac architectures");
     }
-    if (!m.archive || typeof m.archive !== "object") fail("manifest archive is missing");
-    if (m.archive.name !== archiveName || m.archive.url !== archiveUrl) {
-        fail("manifest archive identity mismatch");
+    validateArchive(m.archive, "Clinch.app.zip");
+
+    let selected = m.archive;
+    let layout = "universal";
+    if (m.archives !== undefined) {
+        if (!m.archives || typeof m.archives !== "object" || Array.isArray(m.archives) ||
+            Object.keys(m.archives).sort().join(",") !== "arm64,x86_64") {
+            fail("manifest architecture archives are invalid");
+        }
+        validateArchive(m.archives.arm64, "Clinch.app.zip");
+        validateArchive(m.archives.x86_64, "Clinch-x86_64.app.zip");
+        for (const field of ["name", "url", "size", "sha256"]) {
+            if (m.archive[field] !== m.archives.arm64[field]) {
+                fail("legacy archive does not match the Apple Silicon archive");
+            }
+        }
+        selected = m.archives[machineArchitecture];
+        if (!selected) fail("release does not support this Mac architecture");
+        layout = "native";
     }
-    if (!Number.isSafeInteger(m.archive.size) || m.archive.size < 1 ||
-        m.archive.size > 2147483648) fail("invalid archive size");
-    if (typeof m.archive.sha256 !== "string" ||
-        !/^[0-9a-f]{64}$/.test(m.archive.sha256)) fail("invalid archive SHA-256");
 
     return [
-        m.archive.sha256,
-        String(m.archive.size),
+        selected.sha256,
+        String(selected.size),
         m.minimum_macos_version,
         String(m.sequence),
-        m.archive.url
+        selected.url,
+        layout
     ].join("\n");
 }
 JXA
@@ -208,8 +236,16 @@ verify_bundle() {
     binary="$app/Contents/MacOS/$EXPECTED_EXECUTABLE"
     [ -x "$binary" ] || fail "the app executable is missing or not executable."
     binary_description=$(/usr/bin/file -b "$binary")
-    case "$binary_description" in *arm64*) ;; *) fail "the app is missing its Apple Silicon slice." ;; esac
-    case "$binary_description" in *x86_64*) ;; *) fail "the app is missing its Intel slice." ;; esac
+    if [ "$ARCHIVE_LAYOUT" = universal ]; then
+        case "$binary_description" in *arm64*) ;; *) fail "the app is missing its Apple Silicon slice." ;; esac
+        case "$binary_description" in *x86_64*) ;; *) fail "the app is missing its Intel slice." ;; esac
+    elif [ "$MACHINE_ARCHITECTURE" = arm64 ]; then
+        case "$binary_description" in *arm64*) ;; *) fail "the app is not built for Apple Silicon." ;; esac
+        case "$binary_description" in *x86_64*) fail "the Apple Silicon app unexpectedly includes Intel code." ;; esac
+    else
+        case "$binary_description" in *x86_64*) ;; *) fail "the app is not built for Intel." ;; esac
+        case "$binary_description" in *arm64*) fail "the Intel app unexpectedly includes Apple Silicon code." ;; esac
+    fi
     /usr/bin/codesign --verify --deep --strict "$app" 2>/dev/null \
         || fail "the app's structural code signature is invalid."
 }
@@ -243,7 +279,19 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
-[ "$(/usr/bin/uname -s)" = "Darwin" ] || fail "$APP_NAME only runs on macOS."
+UNAME_BIN=${CLINCH_UNAME_BIN:-/usr/bin/uname}
+[ "$("$UNAME_BIN" -s)" = "Darwin" ] || fail "$APP_NAME only runs on macOS."
+SYSCTL_BIN=${CLINCH_SYSCTL_BIN:-/usr/sbin/sysctl}
+if [ -x "$SYSCTL_BIN" ] && [ "$("$SYSCTL_BIN" -in hw.optional.arm64 2>/dev/null || true)" = 1 ]; then
+    detected_architecture=arm64
+else
+    detected_architecture=$("$UNAME_BIN" -m)
+fi
+case "$detected_architecture" in
+    arm64|aarch64) MACHINE_ARCHITECTURE=arm64; ARCHITECTURE_LABEL="Apple Silicon" ;;
+    x86_64) MACHINE_ARCHITECTURE=x86_64; ARCHITECTURE_LABEL="Intel" ;;
+    *) fail "unsupported Mac architecture." ;;
+esac
 [ -x /usr/bin/ssh-keygen ] || fail "macOS ssh-keygen is required to authenticate this release."
 if app_is_running; then
     fail "$APP_NAME is currently running. Quit it, then run the installer again."
@@ -281,20 +329,27 @@ if ! /usr/bin/ssh-keygen -Y verify -f "$TMP_DIR/allowed_signers" \
     fail "release signature verification failed; nothing was installed."
 fi
 
-MANIFEST_VALUES="$(read_verified_manifest "$TMP_DIR/$MANIFEST_ASSET" "$VERSION" 2>/dev/null)" \
+MANIFEST_VALUES="$(read_verified_manifest "$TMP_DIR/$MANIFEST_ASSET" "$VERSION" \
+    "$MACHINE_ARCHITECTURE" 2>/dev/null)" \
     || fail "signed release metadata failed validation."
 EXPECTED_SHA=$(printf '%s\n' "$MANIFEST_VALUES" | /usr/bin/sed -n '1p')
 EXPECTED_SIZE=$(printf '%s\n' "$MANIFEST_VALUES" | /usr/bin/sed -n '2p')
 MINIMUM_MACOS=$(printf '%s\n' "$MANIFEST_VALUES" | /usr/bin/sed -n '3p')
 UPDATE_SEQUENCE=$(printf '%s\n' "$MANIFEST_VALUES" | /usr/bin/sed -n '4p')
 ARCHIVE_URL=$(printf '%s\n' "$MANIFEST_VALUES" | /usr/bin/sed -n '5p')
+ARCHIVE_LAYOUT=$(printf '%s\n' "$MANIFEST_VALUES" | /usr/bin/sed -n '6p')
 
 CURRENT_MACOS=$(/usr/bin/sw_vers -productVersion)
 version_at_least "$CURRENT_MACOS" "$MINIMUM_MACOS" \
     || fail "Clinch $VERSION requires macOS $MINIMUM_MACOS or later; this Mac runs $CURRENT_MACOS."
 
 ARCHIVE_MIB=$(( (EXPECTED_SIZE + 1048575) / 1048576 ))
-say "Downloading the exact $VERSION universal app ($ARCHIVE_MIB MiB)..."
+if [ "$ARCHIVE_LAYOUT" = universal ]; then
+    ARCHIVE_DESCRIPTION="universal app"
+else
+    ARCHIVE_DESCRIPTION="$ARCHITECTURE_LABEL app"
+fi
+say "Downloading the exact $VERSION $ARCHIVE_DESCRIPTION ($ARCHIVE_MIB MiB)..."
 download "$TMP_DIR/$ASSET" "$ARCHIVE_URL" progress \
     || fail "archive download failed; nothing was installed."
 ACTUAL_SIZE=$(file_size "$TMP_DIR/$ASSET")
@@ -378,7 +433,7 @@ say "This public preview is ad-hoc signed and not notarized by Apple."
 say "The installer did not remove quarantine data or change Gatekeeper settings."
 say "Command-line downloads are not quarantined, so no Gatekeeper approval is needed."
 say "Session restore is enabled on first launch; you can turn capture off in Clinch Settings."
-say "Clinch checks signed update metadata at most daily and shows Update available in the header."
+say "Clinch checks signed update metadata at most daily and shows Update Clinch in the header."
 say "Choose Clinch → Check for Updates… to check now; Clinch installs only after you approve it."
 say "If this app location is not user-writable, Clinch opens the authenticated manual update path."
 say "This install bootstraps automatic discovery for builds older than v0.2026.07.20.1643."

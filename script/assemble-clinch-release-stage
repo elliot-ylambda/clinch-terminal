@@ -9,8 +9,18 @@ VERSION="${1:?usage: assemble-clinch-release-stage <version> <commit> <sequence>
 COMMIT="${2:?missing commit}"
 UPDATE_SEQUENCE="${3:?missing sequence}"
 
-STABLE_APP="target/release-lto/bundle/osx/Clinch.app"
 RELEASE_DIR="target/release-lto/bundle/osx"
+case "${UNIVERSAL:-0}" in
+  1|true|yes)
+    RELEASE_LAYOUT=universal
+    STABLE_APP="$RELEASE_DIR/Clinch.app"
+    ;;
+  0|false|no)
+    RELEASE_LAYOUT=native
+    STABLE_APP="target/aarch64-apple-darwin/release-lto/bundle/osx/Clinch.app"
+    ;;
+  *) echo "release staging failed: UNIVERSAL must be 0 or 1" >&2; exit 1 ;;
+esac
 STAGE="target/release-stage/$VERSION"
 DIST="$STAGE/dist"
 ALLOWED_SIGNERS="resources/release/clinch-release-allowed-signers"
@@ -27,14 +37,27 @@ fail() {
   || fail "invalid update sequence"
 [[ "$(git rev-parse HEAD)" == "$COMMIT" ]] || fail "source commit changed before staging"
 [[ -d "$STABLE_APP" ]] || fail "missing verified app bundle $STABLE_APP"
+release_artifacts=(
+  Clinch.dmg
+  Clinch.dmg.sha256
+  Clinch.app.zip
+  Clinch.app.zip.sha256
+  Clinch.update.json
+  Clinch.update.sig
+  Clinch.update.sshsig
+)
+if [[ "$RELEASE_LAYOUT" == native ]]; then
+  [[ -d target/x86_64-apple-darwin/release-lto/bundle/osx/Clinch.app ]] \
+    || fail "missing verified Intel app bundle"
+  release_artifacts+=(
+    Clinch-x86_64.dmg
+    Clinch-x86_64.dmg.sha256
+    Clinch-x86_64.app.zip
+    Clinch-x86_64.app.zip.sha256
+  )
+fi
 for item in \
-  "$RELEASE_DIR/Clinch.dmg" \
-  "$RELEASE_DIR/Clinch.dmg.sha256" \
-  "$RELEASE_DIR/Clinch.app.zip" \
-  "$RELEASE_DIR/Clinch.app.zip.sha256" \
-  "$RELEASE_DIR/Clinch.update.json" \
-  "$RELEASE_DIR/Clinch.update.sig" \
-  "$RELEASE_DIR/Clinch.update.sshsig" \
+  "${release_artifacts[@]/#/$RELEASE_DIR/}" \
   install.sh uninstall.sh "$ALLOWED_SIGNERS" "$RELEASE_KEY" Cargo.lock; do
   [[ -f "$item" ]] || fail "missing $item"
 done
@@ -47,16 +70,10 @@ expected_release_key="$(awk 'NF {print $2, $3; exit}' "$ALLOWED_SIGNERS")"
 
 rm -rf "$STAGE"
 mkdir -p "$DIST"
-cp \
-  "$RELEASE_DIR/Clinch.dmg" \
-  "$RELEASE_DIR/Clinch.dmg.sha256" \
-  "$RELEASE_DIR/Clinch.app.zip" \
-  "$RELEASE_DIR/Clinch.app.zip.sha256" \
-  "$RELEASE_DIR/Clinch.update.json" \
-  "$RELEASE_DIR/Clinch.update.sig" \
-  "$RELEASE_DIR/Clinch.update.sshsig" \
-  install.sh uninstall.sh "$ALLOWED_SIGNERS" \
-  "$DIST/"
+for artifact in "${release_artifacts[@]}"; do
+  cp "$RELEASE_DIR/$artifact" "$DIST/"
+done
+cp install.sh uninstall.sh "$ALLOWED_SIGNERS" "$DIST/"
 
 echo "==> Assembling version-matched complete Corresponding Source"
 ./script/assemble-clinch-corresponding-source \
@@ -64,6 +81,10 @@ echo "==> Assembling version-matched complete Corresponding Source"
 
 echo "==> Generating CycloneDX SBOM"
 syft "$STABLE_APP" -o "cyclonedx-json=$DIST/Clinch.sbom.cdx.json"
+if [[ "$RELEASE_LAYOUT" == native ]]; then
+  syft target/x86_64-apple-darwin/release-lto/bundle/osx/Clinch.app \
+    -o "cyclonedx-json=$DIST/Clinch-x86_64.sbom.cdx.json"
+fi
 
 builder_os_version="$(sw_vers -productVersion)"
 builder_architecture="$(uname -m)"
@@ -75,7 +96,7 @@ started_at="${CLINCH_RELEASE_STARTED_AT:-$created_at}"
 /usr/bin/python3 - \
   "$DIST/Clinch.release-validation.json" \
   "$VERSION" "$COMMIT" "$UPDATE_SEQUENCE" \
-  "$builder_os_version" "$builder_architecture" <<'PY'
+  "$builder_os_version" "$builder_architecture" "$RELEASE_LAYOUT" <<'PY'
 import json
 import pathlib
 import sys
@@ -83,11 +104,19 @@ import sys
 output = pathlib.Path(sys.argv[1])
 value = {
     "artifact_checks": [
-        "universal x86_64+arm64",
+        (
+            "universal x86_64+arm64"
+            if sys.argv[7] == "universal"
+            else "separate native arm64 and x86_64 bundles"
+        ),
         "ad-hoc hardened-runtime signature",
         "no Apple Events entitlement or usage description",
         "no bundled iMessage helper",
-        "ZIP/DMG app equality",
+        (
+            "ZIP/DMG app equality"
+            if sys.argv[7] == "universal"
+            else "architecture-specific ZIP/DMG app equality"
+        ),
         "exact licenses, modification notice, and third-party notices",
         "versioned complete corresponding source archive",
         "default-on integration, opt-out, and removal",
@@ -106,7 +135,8 @@ value = {
         "command": "make release",
         "kind": "local-release-command",
     },
-    "schema_version": 4,
+    "release_layout": sys.argv[7],
+    "schema_version": 5,
     "update_sequence": int(sys.argv[4]),
     "version": sys.argv[2],
 }
@@ -132,14 +162,24 @@ primary_assets=(
   Clinch.sbom.cdx.json
   Clinch.release-validation.json
 )
+if [[ "$RELEASE_LAYOUT" == native ]]; then
+  primary_assets+=(
+    Clinch-x86_64.dmg
+    Clinch-x86_64.dmg.sha256
+    Clinch-x86_64.app.zip
+    Clinch-x86_64.app.zip.sha256
+    Clinch-x86_64.sbom.cdx.json
+  )
+fi
 
-/usr/bin/python3 - \
+CLINCH_RELEASE_LAYOUT="$RELEASE_LAYOUT" /usr/bin/python3 - \
   "$DIST/Clinch.build-provenance.json" "$DIST" "$VERSION" "$COMMIT" \
   "$UPDATE_SEQUENCE" "$started_at" "$created_at" "$ROOT/Cargo.lock" \
   "$ROOT/web/remote-control/yarn.lock" \
   "${primary_assets[@]}" <<'PY'
 import hashlib
 import json
+import os
 import pathlib
 import sys
 
@@ -172,6 +212,7 @@ value = {
                 "https://github.com/elliot-ylambda/clinch-terminal/local-release/v1"
             ),
             "externalParameters": {
+                "release_layout": os.environ["CLINCH_RELEASE_LAYOUT"],
                 "update_sequence": sequence,
                 "version": version,
             },
@@ -235,22 +276,30 @@ done
 ssh-keygen -Y sign -f "$RELEASE_KEY" -n clinch-checksums - \
   < "$DIST/Clinch.checksums.txt" > "$DIST/Clinch.checksums.sshsig"
 
+if [[ "$RELEASE_LAYOUT" == native ]]; then
+  download_note='Download **Clinch.dmg** on Apple Silicon or **Clinch-x86_64.dmg** on Intel'
+  transition_note='Intel installations that predate native-archive selection need one authenticated manual install for this transition.'
+else
+  download_note='Download the universal **Clinch.dmg**'
+  transition_note=
+fi
 cat > "$STAGE/release-notes.md" <<EOF
 Clinch $VERSION is an unnotarized public preview for macOS 14 or later on Intel and Apple Silicon.
 
-Download **Clinch.dmg**, authenticate **Clinch.checksums.txt** with
-**Clinch.checksums.sshsig**, compare the DMG digest, and drag Clinch to Applications.
+$download_note, authenticate
+**Clinch.checksums.txt** with **Clinch.checksums.sshsig**, compare the DMG digest, and drag Clinch to Applications.
 Use **System Settings → Privacy & Security → Open Anyway** if macOS blocks the first launch.
 The authenticated **install.sh** asset is a secondary convenience.
 
 Session restore is enabled by default and can be turned off or back on in Clinch Settings.
-This release checks signed update metadata at most daily and shows **Update available** in the
+This release checks signed update metadata at most daily and shows **Update Clinch** in the
 header; installation requires explicit consent. Builds older than the updater bridge need one
 final authenticated manual install. The bridge is **v0.2026.07.20.1643**; non-writable app
 installations continue to use the manual installer. See **Clinch.release-validation.json** and
 **Clinch.build-provenance.json** for the automated validation and local-builder records
 authenticated by the Clinch release key. No manual QA attestation is required or recorded by the
 release command.
+$transition_note
 
 Complete Corresponding Source for this exact binary release, including vendored Cargo dependency
 sources, is provided as **Clinch.source.tar.gz** with its digest in
