@@ -2227,8 +2227,7 @@ fn cli_agent_transfer_opens_new_tab_without_replacing_source_tab() {
             let new_tab_cwd = workspace
                 .active_tab_pane_group()
                 .read(ctx, |pane_group, ctx| {
-                    pane_group
-                        .startup_path_for_new_session(pane_group.active_session_id(ctx), ctx)
+                    pane_group.startup_path_for_new_session(pane_group.active_session_id(ctx), ctx)
                 });
             assert_eq!(new_tab_cwd.as_deref(), Some(expected_cwd.as_path()));
         });

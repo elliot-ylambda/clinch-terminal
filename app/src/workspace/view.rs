@@ -17560,12 +17560,7 @@ impl Workspace {
                 terminal_view_id,
                 cwd,
             } => {
-                self.fork_cli_agent_session(
-                    &pane_group,
-                    *terminal_view_id,
-                    cwd.clone(),
-                    ctx,
-                );
+                self.fork_cli_agent_session(&pane_group, *terminal_view_id, cwd.clone(), ctx);
             }
             pane_group::Event::TransferCliAgentSession { command, cwd } => {
                 self.transfer_cli_agent_session(command.clone(), cwd.clone(), ctx);
