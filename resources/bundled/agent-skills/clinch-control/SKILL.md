@@ -3,7 +3,7 @@ name: clinch-control
 description: Control the running Clinch app from Claude Code or Codex with its local control CLI. Use when the user asks to manipulate Clinch windows, tabs, panes, sessions, sidebar sections, toolbelts, or UI surfaces, or to launch a long-lived, interactive, or user-visible project process such as a dev server, watcher, REPL, or log tail in a new tab. Do not use for tests, lint, builds, Git commands, or other bounded work the agent can run in its own shell.
 ---
 
-<!-- managed-by: Clinch; version: 1.1.0 -->
+<!-- managed-by: Clinch; version: 1.2.0 -->
 
 # Clinch control
 
@@ -25,23 +25,58 @@ formatters, builds, type checks, Git commands, file inspection, and diagnostic
 commands. If duration or interactivity is unclear, use the agent-owned shell.
 Do not create a tab merely because a command is a subprocess.
 
-## Use the current app channel
+## Bind to the current Clinch app
 
-Clinch rendered this skill for the app channel that installed it:
+Current Clinch versions inject three values into every local host terminal
+shell:
 
-- Command: `{{clinch_control_binary_name}}`
-- Bundled wrapper: `{{clinch_control_wrapper_path}}`
+- `CLINCH_CONTROL_COMMAND`: the current channel's command name.
+- `CLINCH_CONTROL_WRAPPER`: the exact wrapper inside the app that launched the
+  shell.
+- `CLINCH_CONTROL_PID`: the process ID of that exact app instance.
 
-Use the command when it is on `PATH`. Otherwise use the exact bundled wrapper;
-do not probe processes or guess another channel's command. If neither is
-available, tell the user to enable scripting and install the control command
-from **Clinch Settings > Scripting**. Do not install or replace a
-`/usr/local/bin` symlink without explicit approval. Refer to whichever exact
-executable you select as `<control-command>` below.
+When `CLINCH_CONTROL_WRAPPER` is set and executable, use that exact path as
+`<control-command>` and add `--pid "$CLINCH_CONTROL_PID"` to every command that
+accepts a target selector. The wrapper takes precedence over `PATH`; the PID
+also distinguishes separate local worktree builds that share one channel. If
+the wrapper is set but missing, or its PID is absent, stop and tell the user to
+relaunch or rebuild that Clinch app. Do not fall back to another channel or
+instance. Invoke the wrapper with its value quoted; `<control-command>` in the
+examples means `"$CLINCH_CONTROL_WRAPPER"` in a bound terminal.
+
+Before the first requested control action, verify the bound app responds:
+
+```sh
+<control-command> --output-format json app ping --pid "$CLINCH_CONTROL_PID"
+```
+
+If this returns `no_instance` from a bound Clinch terminal, tell the user to
+enable local control in **Settings > Scripting** and retry. The bundled wrapper
+does not require a global command installation.
+
+An isolated container cannot receive the host app's control capability. If
+`/.dockerenv` exists and the current shell has no complete binding, tell the
+user to run the request from a host Clinch terminal; do not diagnose the
+container as an outdated Clinch install.
+
+When it is absent and `WARP_FOCUS_URL` begins with `clinch://` or
+`clinchdev://`, treat the session as coming from an older Clinch version that
+predates current-app binding. Tell the user to update and start a new
+terminal/agent session. `TERM_PROGRAM=WarpTerminal` alone is not sufficient to
+identify Clinch because Warp uses the same value. Do not use an absolute bundle
+path saved in this user-scope skill and do not guess from running processes.
+
+Outside a Clinch terminal, check `warpctrl` and `warpctrl-local` on `PATH` and
+run `instance list` for each available command. Use it only if exactly one live
+Clinch channel is found; ask the user to select when more than one is live. If
+none is available, tell the user to install the latest Clinch and enable
+**Settings > Scripting**. Never create or replace a `/usr/local/bin` symlink
+without explicit approval.
 
 Run control commands serially because creating or activating a tab changes the
-active target. If multiple same-channel instances are running, select the
-intended instance explicitly with `--instance <id>`.
+active target. Outside a bound Clinch terminal, if multiple same-channel
+instances are running, select the intended instance explicitly with
+`--instance <id>`.
 
 ## Launch a persistent project process
 
@@ -55,19 +90,21 @@ intended instance explicitly with `--instance <id>`.
    ```sh
    <control-command> --output-format json tab create \
      --cwd "/absolute/project/path" \
-     --instance <instance-id> \
+     --pid "$CLINCH_CONTROL_PID" \
      -- npm run dev
    ```
 
-   Omit `--instance` only when exactly one matching instance is running. Pass
-   arguments directly after `--`. To intentionally use shell syntax such as a
-   pipeline, make the shell explicit, for example `-- sh -lc 'cmd | other'`.
+   Outside a bound Clinch terminal, replace the PID selector with the selected
+   `--instance <instance-id>`; omit it only when exactly one matching instance
+   is running. Pass arguments directly after `--`. To intentionally use shell
+   syntax such as a pipeline, make the shell explicit, for example
+   `-- sh -lc 'cmd | other'`.
 3. Use the returned IDs for any follow-up mutation. For example, give the new
    tab a useful name with an exact selector:
 
    ```sh
    <control-command> tab rename "Dev server" \
-     --window <window-id> --tab <tab-id>
+     --pid "$CLINCH_CONTROL_PID" --window <window-id> --tab <tab-id>
    ```
 4. Do not wait for the persistent process to exit. Report which tab was
    created, the directory and command it owns, and that the user can stop it in
@@ -97,7 +134,8 @@ untracked background process in the agent shell.
   and `section list --window <window-id>`. Delete with exact selectors:
 
   ```sh
-  <control-command> section delete <section-id> --window <window-id>
+  <control-command> section delete <section-id> \
+    --pid "$CLINCH_CONTROL_PID" --window <window-id>
   ```
 
   If the user explicitly asks to verify preservation, compare `tab list

@@ -93,6 +93,10 @@ pub struct PtyOptions {
     /// Environment variables to add/override for the spawned PTY process.
     #[serde(default)]
     pub env_vars: HashMap<OsString, OsString>,
+    /// PID of the exact Clinch app that requested this shell. The terminal
+    /// server uses it only with a verified wrapper from the same app bundle.
+    #[serde(default)]
+    pub clinch_control_pid: Option<u32>,
     // Refers to the original SSH wrapper that uses ControlMaster and
     // requires overwriting the user's SSH command at the shell layer.
     pub enable_ssh_wrapper: bool,

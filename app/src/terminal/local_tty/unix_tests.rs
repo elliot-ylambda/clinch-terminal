@@ -23,6 +23,7 @@ fn host_bash_command_sets_history_size_sentinels() {
         false,
         false,
         true,
+        None,
     );
 
     assert_eq!(
@@ -55,6 +56,7 @@ fn host_non_bash_command_does_not_set_history_size_sentinels() {
         false,
         false,
         true,
+        None,
     );
 
     assert_eq!(env_value(&command, "HISTFILESIZE"), None);
@@ -72,6 +74,9 @@ fn host_shell_scrubs_parent_agent_identity_after_overrides() {
     overrides.insert("AI_AGENT".into(), "claude-code".into());
     overrides.insert("CLAUDE_EFFORT".into(), "high".into());
     overrides.insert("CLINCH_UNRELATED".into(), "preserved".into());
+    overrides.insert(CLINCH_CONTROL_COMMAND_ENV.into(), "stale-command".into());
+    overrides.insert(CLINCH_CONTROL_WRAPPER_ENV.into(), "/stale/wrapper".into());
+    overrides.insert(CLINCH_CONTROL_PID_ENV.into(), "999".into());
 
     let command = build_host_shell_command(
         shell_starter(ShellType::Zsh, "/bin/zsh"),
@@ -83,6 +88,7 @@ fn host_shell_scrubs_parent_agent_identity_after_overrides() {
         false,
         false,
         true,
+        None,
     );
 
     for key in [
@@ -101,16 +107,59 @@ fn host_shell_scrubs_parent_agent_identity_after_overrides() {
         env_value(&command, "CLINCH_UNRELATED"),
         Some(Some("preserved".to_owned()))
     );
+    for key in [
+        CLINCH_CONTROL_COMMAND_ENV,
+        CLINCH_CONTROL_WRAPPER_ENV,
+        CLINCH_CONTROL_PID_ENV,
+    ] {
+        assert_eq!(env_value(&command, key), Some(None), "{key} leaked");
+    }
+}
+
+#[test]
+fn exact_clinch_control_binding_replaces_inherited_values() {
+    let mut command = Command::new("/bin/zsh");
+    command.env(CLINCH_CONTROL_COMMAND_ENV, "stale-command");
+    command.env(CLINCH_CONTROL_WRAPPER_ENV, "/stale/wrapper");
+    command.env(CLINCH_CONTROL_PID_ENV, "999");
+
+    apply_clinch_control_environment(
+        &mut command,
+        Some((
+            "warpctrl-local".to_owned(),
+            PathBuf::from("/current/ClinchDev.app/Contents/Resources/bin/warpctrl-local"),
+        )),
+        Some(1234),
+    );
+
+    assert_eq!(
+        env_value(&command, CLINCH_CONTROL_COMMAND_ENV),
+        Some(Some("warpctrl-local".to_owned()))
+    );
+    assert_eq!(
+        env_value(&command, CLINCH_CONTROL_WRAPPER_ENV),
+        Some(Some(
+            "/current/ClinchDev.app/Contents/Resources/bin/warpctrl-local".to_owned()
+        ))
+    );
+    assert_eq!(
+        env_value(&command, CLINCH_CONTROL_PID_ENV),
+        Some(Some("1234".to_owned()))
+    );
 }
 
 #[test]
 fn docker_sandbox_command_sets_history_size_sentinels() {
     let docker_starter =
         DockerSandboxShellStarter::new(shell_starter(ShellType::Bash, "sbx"), None);
+    let mut overrides = HashMap::new();
+    overrides.insert(CLINCH_CONTROL_COMMAND_ENV.into(), "stale-command".into());
+    overrides.insert(CLINCH_CONTROL_WRAPPER_ENV.into(), "/stale/wrapper".into());
+    overrides.insert(CLINCH_CONTROL_PID_ENV.into(), "999".into());
     let command = build_docker_sandbox_command(
         &docker_starter,
         None,
-        HashMap::new(),
+        overrides,
         false,
         false,
         false,
@@ -134,6 +183,13 @@ fn docker_sandbox_command_sets_history_size_sentinels() {
         env_value(&command, "WARP_INITIAL_HISTSIZE"),
         Some(Some(BASH_HISTORY_SIZE_SENTINEL.to_owned()))
     );
+    for key in [
+        CLINCH_CONTROL_COMMAND_ENV,
+        CLINCH_CONTROL_WRAPPER_ENV,
+        CLINCH_CONTROL_PID_ENV,
+    ] {
+        assert_eq!(env_value(&command, key), Some(None), "{key} leaked");
+    }
 }
 
 /// A PTY follower must resolve to a real device path (e.g. `/dev/ttys004`) so

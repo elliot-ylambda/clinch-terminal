@@ -40,7 +40,7 @@ use {
 };
 
 use super::event_loop::EventLoop;
-use super::shell::{ShellStarter, ShellStarterSource};
+use super::shell::{clinch_control_environment, ShellStarter, ShellStarterSource};
 use super::{mio_channel, recorder};
 use crate::ai::active_agent_views_model::ActiveAgentViewsModel;
 use crate::ai::agent::conversation::AIConversation;
@@ -1150,6 +1150,7 @@ impl TerminalManager {
             shell_starter,
             start_dir: startup_directory,
             env_vars,
+            clinch_control_pid: clinch_control_environment().map(|_| std::process::id()),
             enable_ssh_wrapper,
             reuse_ssh_control_master,
             shell_debug_mode: is_shell_debug_mode_enabled,

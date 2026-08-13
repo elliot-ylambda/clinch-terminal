@@ -45,20 +45,14 @@ fn decide(bundled_contents: &str, existing_contents: Option<&str>) -> InstallDec
     }
 }
 
-fn render_bundled_skill(source_root: &Path, contents: &str) -> String {
-    let command_name = ChannelState::channel().warpctrl_command_name();
-    let wrapper_path = source_root
-        .parent()
-        .and_then(Path::parent)
-        .map(|resources_root| resources_root.join("bin").join(command_name))
-        .unwrap_or_else(|| PathBuf::from(command_name));
+fn bundled_control_wrapper(resources_root: &Path) -> PathBuf {
+    resources_root
+        .join("bin")
+        .join(ChannelState::channel().warpctrl_command_name())
+}
 
-    contents
-        .replace("{{clinch_control_binary_name}}", command_name)
-        .replace(
-            "{{clinch_control_wrapper_path}}",
-            &wrapper_path.to_string_lossy(),
-        )
+fn bundle_has_control_wrapper(resources_root: &Path) -> bool {
+    crate::util::path::file_exists_and_is_executable(&bundled_control_wrapper(resources_root))
 }
 
 /// Installs every bundled skill under `source_root` into
@@ -77,7 +71,6 @@ fn install_skills_for_agent(source_root: &Path, presence_dir: &Path, install_roo
         let Ok(bundled_contents) = std::fs::read_to_string(&bundled_skill) else {
             continue;
         };
-        let bundled_contents = render_bundled_skill(source_root, &bundled_contents);
         let target_dir = install_root.join("skills").join(entry.file_name());
         let target = target_dir.join("SKILL.md");
         let existing_contents = std::fs::read_to_string(&target).ok();
@@ -95,6 +88,49 @@ fn install_skills_for_agent(source_root: &Path, presence_dir: &Path, install_roo
     }
 }
 
+/// Removes obsolete Codex-location copies only after an equal-or-newer managed
+/// replacement exists in the shared Agent Skills directory. Files without the
+/// Clinch marker are user-owned and are never touched.
+fn remove_migrated_legacy_skills(source_root: &Path, legacy_root: &Path, install_root: &Path) {
+    let Ok(entries) = std::fs::read_dir(source_root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let skill_name = entry.file_name();
+        let legacy_dir = legacy_root.join(&skill_name);
+        let legacy = legacy_dir.join("SKILL.md");
+        let installed = install_root
+            .join("skills")
+            .join(&skill_name)
+            .join("SKILL.md");
+        let (Ok(legacy_contents), Ok(installed_contents)) = (
+            std::fs::read_to_string(&legacy),
+            std::fs::read_to_string(&installed),
+        ) else {
+            continue;
+        };
+        let (Some(legacy_version), Some(installed_version)) = (
+            managed_version(&legacy_contents),
+            managed_version(&installed_contents),
+        ) else {
+            continue;
+        };
+        if installed_version < legacy_version {
+            continue;
+        }
+        if let Err(err) = std::fs::remove_file(&legacy) {
+            eprintln!(
+                "clinch: could not remove migrated managed skill {}: {err}",
+                legacy.display()
+            );
+            continue;
+        }
+        // Remove the legacy skill directory only when it contains no user
+        // files. `remove_dir` safely leaves non-empty directories in place.
+        let _ = std::fs::remove_dir(legacy_dir);
+    }
+}
+
 #[cfg(test)]
 fn install_skills_from(source_root: &Path, agent_config_dir: &Path) {
     install_skills_for_agent(source_root, agent_config_dir, agent_config_dir);
@@ -108,6 +144,7 @@ fn app_id_enables_bundled_skills(app_id: &str) -> bool {
 struct AgentSkillLocation {
     presence_dir: PathBuf,
     install_root: PathBuf,
+    legacy_managed_root: Option<PathBuf>,
 }
 
 /// User-scope skill locations for supported agents. Claude Code discovers
@@ -130,12 +167,15 @@ fn agent_skill_locations() -> Vec<AgentSkillLocation> {
         locations.push(AgentSkillLocation {
             presence_dir: claude.clone(),
             install_root: claude,
+            legacy_managed_root: None,
         });
     }
     if let (Some(presence_dir), Some(home)) = (codex_presence, home) {
+        let legacy_managed_root = presence_dir.join("skills");
         locations.push(AgentSkillLocation {
             presence_dir,
             install_root: home.join(".agents"),
+            legacy_managed_root: Some(legacy_managed_root),
         });
     }
     locations
@@ -149,15 +189,26 @@ pub fn install_bundled_skills() {
     if !app_id_enables_bundled_skills(&ChannelState::app_id().to_string()) {
         return;
     }
-    let Some(source_root) = warp_core::paths::bundled_resources_dir()
-        .map(|resources| resources.join("bundled").join("agent-skills"))
-        .filter(|path| path.is_dir())
-    else {
+    let Some(resources_root) = warp_core::paths::bundled_resources_dir() else {
         // Expected for unit tests and unbundled binaries.
         return;
     };
+    // Never advertise agent control from a partial or older bundle. The
+    // skills resolve the wrapper exported by the current app, so provisioning
+    // them without that wrapper would create a durable but unusable user-scope
+    // instruction file.
+    if !bundle_has_control_wrapper(&resources_root) {
+        return;
+    }
+    let source_root = resources_root.join("bundled").join("agent-skills");
+    if !source_root.is_dir() {
+        return;
+    }
     for location in agent_skill_locations() {
         install_skills_for_agent(&source_root, &location.presence_dir, &location.install_root);
+        if let Some(legacy_root) = location.legacy_managed_root {
+            remove_migrated_legacy_skills(&source_root, &legacy_root, &location.install_root);
+        }
     }
 }
 

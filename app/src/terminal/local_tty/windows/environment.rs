@@ -14,7 +14,10 @@ use winreg::{RegKey, RegValue};
 use crate::safe_info;
 use crate::terminal::cli_agent_sessions::event::current_protocol_version;
 use crate::terminal::focus_env::{FOCUS_URL_ENV, TERMINAL_SESSION_UUID_ENV};
-use crate::terminal::local_tty::shell::{extra_path_entries, ssh_socket_dir, ShellStarter};
+use crate::terminal::local_tty::shell::{
+    clinch_control_environment, extra_path_entries, ssh_socket_dir, ShellStarter,
+    CLINCH_CONTROL_COMMAND_ENV, CLINCH_CONTROL_PID_ENV, CLINCH_CONTROL_WRAPPER_ENV,
+};
 use crate::terminal::local_tty::PtyOptions;
 
 const HONOR_PS1_NAME: &str = "WARP_HONOR_PS1";
@@ -55,6 +58,11 @@ pub(super) fn get_shell_environment_variables(options: &PtyOptions) -> Vec<u16> 
 
     add_local_machine_env(&mut env);
     add_user_env(&mut env);
+
+    // Do not leak a parent Clinch channel's binding into this app's shells.
+    env.remove(&map_key(CLINCH_CONTROL_COMMAND_ENV.into()));
+    env.remove(&map_key(CLINCH_CONTROL_WRAPPER_ENV.into()));
+    env.remove(&map_key(CLINCH_CONTROL_PID_ENV.into()));
 
     env.insert(
         map_key(HONOR_PS1_NAME.into()),
@@ -205,6 +213,36 @@ pub(super) fn get_shell_environment_variables(options: &PtyOptions) -> Vec<u16> 
                 value: value.clone(),
             },
         );
+    }
+
+    // Apply the verified current-app binding after caller overrides.
+    env.remove(&map_key(CLINCH_CONTROL_COMMAND_ENV.into()));
+    env.remove(&map_key(CLINCH_CONTROL_WRAPPER_ENV.into()));
+    env.remove(&map_key(CLINCH_CONTROL_PID_ENV.into()));
+    if let Some((command, wrapper)) = clinch_control_environment() {
+        env.insert(
+            map_key(CLINCH_CONTROL_COMMAND_ENV.into()),
+            EnvEntry {
+                preferred_key: CLINCH_CONTROL_COMMAND_ENV.into(),
+                value: command.into(),
+            },
+        );
+        env.insert(
+            map_key(CLINCH_CONTROL_WRAPPER_ENV.into()),
+            EnvEntry {
+                preferred_key: CLINCH_CONTROL_WRAPPER_ENV.into(),
+                value: wrapper.into_os_string(),
+            },
+        );
+        if let Some(app_pid) = options.clinch_control_pid {
+            env.insert(
+                map_key(CLINCH_CONTROL_PID_ENV.into()),
+                EnvEntry {
+                    preferred_key: CLINCH_CONTROL_PID_ENV.into(),
+                    value: app_pid.to_string().into(),
+                },
+            );
+        }
     }
 
     environment_block(env.into_iter())

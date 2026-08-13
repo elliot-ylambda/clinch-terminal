@@ -20,7 +20,7 @@ fn bundled_control_skill_contents() -> String {
 fn bundled_skill_carries_a_managed_marker() {
     let contents = bundled_skill_contents();
     assert!(
-        contents.contains("<!-- managed-by: Clinch; version: 2.0.0 -->"),
+        contents.contains("<!-- managed-by: Clinch; version: 2.1.0 -->"),
         "the bundled skill must carry the Clinch managed marker"
     );
 }
@@ -28,28 +28,29 @@ fn bundled_skill_carries_a_managed_marker() {
 #[test]
 fn bundled_control_skill_routes_only_persistent_processes_to_new_tabs() {
     let contents = bundled_control_skill_contents();
-    assert!(contents.contains("<!-- managed-by: Clinch; version: 1.1.0 -->"));
+    assert!(contents.contains("<!-- managed-by: Clinch; version: 1.2.0 -->"));
     assert!(contents.contains("tab create"));
     assert!(contents.contains("--cwd"));
     assert!(contents.contains("dev server"));
     assert!(contents.contains("tests, linters"));
     assert!(contents.contains("Do not create a tab merely because a command is a subprocess"));
-    assert!(contents.contains("{{clinch_control_binary_name}}"));
-    assert!(contents.contains("{{clinch_control_wrapper_path}}"));
+    assert!(contents.contains("CLINCH_CONTROL_COMMAND"));
+    assert!(contents.contains("CLINCH_CONTROL_WRAPPER"));
+    assert!(contents.contains("CLINCH_CONTROL_PID"));
+    assert!(contents.contains("--pid \"$CLINCH_CONTROL_PID\""));
+    assert!(contents.contains("WARP_FOCUS_URL"));
 }
 
 #[test]
-fn bundled_control_skill_renders_the_exact_channel_command_and_wrapper() {
-    let source_root = Path::new("/Applications/Clinch.app/Contents/Resources/bundled/agent-skills");
-    let rendered = render_bundled_skill(source_root, &bundled_control_skill_contents());
-    let command_name = ChannelState::channel().warpctrl_command_name();
-
-    assert!(!rendered.contains("{{clinch_control_binary_name}}"));
-    assert!(!rendered.contains("{{clinch_control_wrapper_path}}"));
-    assert!(rendered.contains(&format!("Command: `{command_name}`")));
-    assert!(rendered.contains(&format!(
-        "Bundled wrapper: `/Applications/Clinch.app/Contents/Resources/bin/{command_name}`"
-    )));
+fn bundled_control_skills_are_channel_neutral() {
+    for contents in [bundled_control_skill_contents(), bundled_skill_contents()] {
+        assert!(contents.contains("CLINCH_CONTROL_WRAPPER"));
+        assert!(contents.contains("CLINCH_CONTROL_PID"));
+        assert!(contents.contains("WARP_FOCUS_URL"));
+        assert!(!contents.contains("{{clinch_control_binary_name}}"));
+        assert!(!contents.contains("{{clinch_control_wrapper_path}}"));
+        assert!(!contents.contains("/Applications/Clinch"));
+    }
 }
 
 #[test]
@@ -59,8 +60,10 @@ fn bundled_skill_uses_typed_toolbelt_control_without_editing_persistence() {
     assert!(contents.contains("toolbelt button create"));
     assert!(contents.contains("toolbelt button delete"));
     assert!(contents.contains("toolbelt button move"));
-    assert!(contents.contains("{{clinch_control_binary_name}}"));
-    assert!(contents.contains("{{clinch_control_wrapper_path}}"));
+    assert!(contents.contains("CLINCH_CONTROL_COMMAND"));
+    assert!(contents.contains("CLINCH_CONTROL_WRAPPER"));
+    assert!(contents.contains("CLINCH_CONTROL_PID"));
+    assert!(contents.contains("--pid \"$CLINCH_CONTROL_PID\""));
     assert!(contents.contains("Never edit `settings.toml`, SQLite"));
     assert!(!contents.contains("[agents.third_party"));
 }
@@ -190,8 +193,114 @@ fn codex_presence_installs_skills_into_the_shared_agent_skills_location() {
 }
 
 #[test]
+fn codex_migration_removes_only_replaced_managed_legacy_skill() {
+    let source = scratch_bundle(MANAGED_V2);
+    let home = tempfile::tempdir().unwrap();
+    let codex_home = home.path().join(".codex");
+    let agent_skills_root = home.path().join(".agents");
+    let legacy_dir = codex_home.join("skills/clinch-toolbelt");
+    std::fs::create_dir_all(&legacy_dir).unwrap();
+    std::fs::write(legacy_dir.join("SKILL.md"), MANAGED_V1).unwrap();
+
+    install_skills_for_agent(source.path(), &codex_home, &agent_skills_root);
+    remove_migrated_legacy_skills(
+        source.path(),
+        &codex_home.join("skills"),
+        &agent_skills_root,
+    );
+
+    assert!(!legacy_dir.exists());
+    assert_eq!(
+        std::fs::read_to_string(
+            agent_skills_root
+                .join("skills/clinch-toolbelt")
+                .join("SKILL.md")
+        )
+        .unwrap(),
+        MANAGED_V2
+    );
+}
+
+#[test]
+fn codex_migration_preserves_user_owned_legacy_skill() {
+    let source = scratch_bundle(MANAGED_V2);
+    let home = tempfile::tempdir().unwrap();
+    let codex_home = home.path().join(".codex");
+    let agent_skills_root = home.path().join(".agents");
+    let legacy = codex_home.join("skills/clinch-toolbelt/SKILL.md");
+    std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+    std::fs::write(&legacy, UNMANAGED).unwrap();
+
+    install_skills_for_agent(source.path(), &codex_home, &agent_skills_root);
+    remove_migrated_legacy_skills(
+        source.path(),
+        &codex_home.join("skills"),
+        &agent_skills_root,
+    );
+
+    assert_eq!(std::fs::read_to_string(legacy).unwrap(), UNMANAGED);
+}
+
+#[test]
+fn codex_migration_preserves_extra_legacy_directory_files() {
+    let source = scratch_bundle(MANAGED_V2);
+    let home = tempfile::tempdir().unwrap();
+    let codex_home = home.path().join(".codex");
+    let agent_skills_root = home.path().join(".agents");
+    let legacy_dir = codex_home.join("skills/clinch-toolbelt");
+    std::fs::create_dir_all(&legacy_dir).unwrap();
+    std::fs::write(legacy_dir.join("SKILL.md"), MANAGED_V1).unwrap();
+    std::fs::write(legacy_dir.join("notes.md"), "user notes").unwrap();
+
+    install_skills_for_agent(source.path(), &codex_home, &agent_skills_root);
+    remove_migrated_legacy_skills(
+        source.path(),
+        &codex_home.join("skills"),
+        &agent_skills_root,
+    );
+
+    assert!(!legacy_dir.join("SKILL.md").exists());
+    assert_eq!(
+        std::fs::read_to_string(legacy_dir.join("notes.md")).unwrap(),
+        "user notes"
+    );
+}
+
+#[test]
 fn provisioning_is_gated_to_clinch_app_ids() {
     assert!(app_id_enables_bundled_skills("sh.clinch.Clinch"));
     assert!(app_id_enables_bundled_skills("sh.clinch.ClinchDev"));
     assert!(!app_id_enables_bundled_skills("dev.warp.Warp-Stable"));
+}
+
+#[test]
+#[cfg(unix)]
+fn provisioning_requires_the_current_bundle_control_wrapper() {
+    let resources = tempfile::tempdir().unwrap();
+    assert!(!bundle_has_control_wrapper(resources.path()));
+
+    let wrapper = bundled_control_wrapper(resources.path());
+    std::fs::create_dir_all(wrapper.parent().unwrap()).unwrap();
+    std::fs::write(&wrapper, "#!/bin/sh\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    assert!(bundle_has_control_wrapper(resources.path()));
+}
+
+#[test]
+fn clinch_build_entrypoints_ship_the_control_wrapper() {
+    let run = include_str!("../../script/run");
+    let clinch_dev = include_str!("../../script/clinch-dev");
+    let macos_bundle = include_str!("../../script/macos/bundle");
+    let release_verifier = include_str!("../../script/verify-clinch-release");
+
+    assert!(run.contains("FEATURES=\"gui,warp_control_cli\""));
+    assert!(clinch_dev.contains("export FEATURES=\"${CLINCH_DEV_FEATURES:-gui},warp_control_cli\""));
+    assert!(macos_bundle.contains("agent_mode_debug,warp_control_cli"));
+    assert!(macos_bundle.contains("Stable Clinch must ship the same current-app control surface"));
+    assert!(release_verifier.contains("Contents/Resources/bin/warpctrl"));
+    assert!(release_verifier.contains("agent-skills/clinch-control/SKILL.md"));
 }

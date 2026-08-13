@@ -30,7 +30,7 @@ executable_path="$app_path/Contents/MacOS/warp"
 export WARP_AGENT_RESUME_DIR="${WARP_AGENT_RESUME_DIR:-$HOME/.clinch-local/agent-resume}"
 export WARP_BIN_NAME="warp"
 export WARP_CHANNEL="local"
-export FEATURES="${CLINCH_DEV_FEATURES:-gui}"
+export FEATURES="${CLINCH_DEV_FEATURES:-gui},warp_control_cli"
 
 mkdir -p "$WARP_AGENT_RESUME_DIR"
 chmod 700 "$WARP_AGENT_RESUME_DIR"

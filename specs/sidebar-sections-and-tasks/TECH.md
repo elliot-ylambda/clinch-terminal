@@ -118,8 +118,27 @@ custom entry removes it, while deleting a shipped entry records it as hidden thr
 selection normalization.
 
 The managed `clinch-control` and `clinch-toolbelt` skills are installed at user scope for Claude
-Code and Codex. They teach agents to inspect before mutation, use typed commands, and never edit
-Clinch settings or SQLite as a fallback.
+Code and Codex only when the current bundle contains its channel-specific control wrapper. Stable
+and local macOS build entrypoints compile `warp_control_cli`, create that wrapper, and release
+verification requires the wrapper plus both skills. Keep the existing `LocalControlSettings`
+permission boundary: public stable builds remain disabled until the user opts in through Scripting,
+and provisioning must not change that setting.
+
+Keep the installed skill text channel-neutral. New local host terminal shells export
+`CLINCH_CONTROL_COMMAND`, `CLINCH_CONTROL_WRAPPER`, and `CLINCH_CONTROL_PID`. The wrapper points to
+the exact app bundle that spawned the shell, while the PID selects that exact running instance even
+when multiple worktree builds share the local channel. The app process records its PID in
+`PtyOptions` before terminal-server serialization. Shell creation first removes inherited and
+caller-supplied binding values, then applies the verified current-app binding so starting one Clinch
+build from another cannot leak or spoof the parent's identity. Agents prefer the exact wrapper and
+PID, reject an incomplete binding, and treat a Clinch terminal without these variables as an older
+version requiring update and relaunch. This avoids a shared user-scope file retaining the last
+launched channel's absolute bundle path while preserving managed-version upgrades and all
+user-owned unmarked skill files. Codex provisioning also removes an obsolete managed copy from
+`~/.codex/skills` only after an equal-or-newer replacement is readable under `~/.agents/skills`;
+unmarked legacy files and non-empty user directories are preserved. Docker sandbox launch strips
+all three bindings rather than exposing a host-app control capability or an unreachable host bundle
+path inside the container.
 
 ## End-to-end flow
 
@@ -149,6 +168,11 @@ Clinch settings or SQLite as a fallback.
 - Local-control protocol and parser tests cover every new catalog action. Toolbelt mutation tests
   cover exact insertion, range rejection, label ambiguity, and hiding shipped defaults; Workspace
   coverage verifies named section creation from an existing tab and non-destructive ungrouping.
+- Managed-skill tests cover wrapper-gated provisioning, safe version upgrades, preservation of
+  user-owned files, and conservative cleanup of obsolete Codex copies. Shell-boundary tests cover
+  exact wrapper/PID injection, stale parent/override scrubbing, and denial inside Docker sandboxes.
+  Stable compilation plus a no-launch local app bundle verify that build entrypoints ship an
+  executable wrapper and both placeholder-free skills.
 - Manual launch remains recommended for final visual inspection of section outlines, collapsed
   drop targeting, provider buttons, restart restoration, and the narrow mobile drawer layout.
 

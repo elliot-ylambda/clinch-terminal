@@ -17,7 +17,10 @@ cd "${REPO_ROOT}"
 
 OS_TYPE="$(uname -s)"
 
-FEATURES="gui"
+# Local Clinch always ships its current-app control wrapper. This keeps the
+# user-scope Claude/Codex skills usable in ordinary development launches,
+# without requiring callers to remember an extra feature flag.
+FEATURES="gui,warp_control_cli"
 WARP_BIN_NAME="warp"
 WARP_CHANNEL="local"
 

@@ -21,6 +21,33 @@ use crate::util::windows::{powershell_5_path, powershell_7_path, wsl_path};
 pub const ZSH_SHELL_PATH: &str = "/bin/zsh";
 pub const BASH_SHELL_PATH: &str = "/bin/bash";
 pub const FISH_SHELL_PATH: &str = "/bin/fish";
+pub const CLINCH_CONTROL_COMMAND_ENV: &str = "CLINCH_CONTROL_COMMAND";
+pub const CLINCH_CONTROL_WRAPPER_ENV: &str = "CLINCH_CONTROL_WRAPPER";
+pub const CLINCH_CONTROL_PID_ENV: &str = "CLINCH_CONTROL_PID";
+
+fn clinch_control_environment_for(
+    app_id: &str,
+    resources_dir: Option<PathBuf>,
+    command_name: &str,
+) -> Option<(String, PathBuf)> {
+    if !matches!(app_id, "sh.clinch.Clinch" | "sh.clinch.ClinchDev") {
+        return None;
+    }
+    let wrapper = resources_dir?.join("bin").join(command_name);
+    crate::util::path::file_exists_and_is_executable(&wrapper)
+        .then(|| (command_name.to_owned(), wrapper))
+}
+
+/// Returns the exact control command and wrapper shipped by the Clinch app
+/// creating this shell. Unlike a user-scope skill or `/usr/local/bin` symlink,
+/// this binding cannot be overwritten by launching another app channel.
+pub fn clinch_control_environment() -> Option<(String, PathBuf)> {
+    clinch_control_environment_for(
+        &ChannelState::app_id().to_string(),
+        warp_core::paths::bundled_resources_dir(),
+        ChannelState::channel().warpctrl_command_name(),
+    )
+}
 
 /// Returns an iterator of additional PATH entries to append to the shell's PATH.
 /// * On macOS, this includes `$APP_PATH/Contents/Resources/bin`, in which we put a wrapper around the Warp CLI.

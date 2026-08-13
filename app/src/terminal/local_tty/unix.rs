@@ -34,13 +34,37 @@ use crate::terminal::local_tty::docker_sandbox::{
     DockerSandboxShellStarter, DOCKER_SANDBOX_HOME_DIR,
 };
 use crate::terminal::local_tty::shell::{
-    extra_path_entries, ssh_socket_dir, DirectShellStarter, ShellStarter,
+    clinch_control_environment, extra_path_entries, ssh_socket_dir, DirectShellStarter,
+    ShellStarter, CLINCH_CONTROL_COMMAND_ENV, CLINCH_CONTROL_PID_ENV, CLINCH_CONTROL_WRAPPER_ENV,
 };
 use crate::terminal::model::session::command_executor::shell_escape_single_quotes;
 use crate::terminal::shell::ShellType;
 use crate::{report_if_error, ASSETS};
 
 const BASH_HISTORY_SIZE_SENTINEL: &str = "57265949261";
+
+fn apply_clinch_control_environment(
+    builder: &mut Command,
+    binding: Option<(String, PathBuf)>,
+    app_pid: Option<u32>,
+) {
+    // Never inherit another Clinch instance's binding when this app was itself
+    // launched from a terminal. Replace it only with a wrapper in this bundle.
+    builder.env_remove(CLINCH_CONTROL_COMMAND_ENV);
+    builder.env_remove(CLINCH_CONTROL_WRAPPER_ENV);
+    builder.env_remove(CLINCH_CONTROL_PID_ENV);
+    if let Some((command, wrapper)) = binding {
+        builder.env(CLINCH_CONTROL_COMMAND_ENV, command);
+        builder.env(CLINCH_CONTROL_WRAPPER_ENV, wrapper);
+        if let Some(app_pid) = app_pid {
+            builder.env(CLINCH_CONTROL_PID_ENV, app_pid.to_string());
+        }
+    }
+}
+
+fn configure_clinch_control_environment(builder: &mut Command, app_pid: Option<u32>) {
+    apply_clinch_control_environment(builder, clinch_control_environment(), app_pid);
+}
 
 /// Agent CLIs export implementation/session identity to their child processes. If Clinch is
 /// launched or updated from inside one of those children, inheriting that identity into a new
@@ -215,6 +239,7 @@ pub(super) fn spawn(options: PtyOptions) -> Result<PtySpawnInfo> {
         shell_starter,
         start_dir,
         env_vars,
+        clinch_control_pid,
         enable_ssh_wrapper,
         reuse_ssh_control_master,
         shell_debug_mode,
@@ -241,6 +266,7 @@ pub(super) fn spawn(options: PtyOptions) -> Result<PtySpawnInfo> {
         shell_debug_mode,
         honor_ps1,
         node_version_chip_enabled,
+        clinch_control_pid,
     );
 
     spawn_command_in_pty(command, &size, close_fds)
@@ -262,6 +288,7 @@ fn build_host_shell_command(
     shell_debug_mode: bool,
     honor_ps1: bool,
     node_version_chip_enabled: bool,
+    clinch_control_pid: Option<u32>,
 ) -> Command {
     let mut buf = [0; 1024];
     let pw = get_pw_entry(&mut buf);
@@ -418,6 +445,7 @@ fn build_host_shell_command(
     for key in agent_identity_env_keys {
         builder.env_remove(key);
     }
+    configure_clinch_control_environment(&mut builder, clinch_control_pid);
 
     // Set the initial working directory to the user's home directory.  If
     // `start_dir` is Some, we'll attempt to cd to that directory at the
@@ -769,6 +797,7 @@ fn spawn_docker_sandbox(
         shell_starter: _,
         start_dir: _,
         env_vars,
+        clinch_control_pid: _,
         enable_ssh_wrapper,
         reuse_ssh_control_master,
         shell_debug_mode,
@@ -900,6 +929,10 @@ fn build_docker_sandbox_command(
     for key in agent_identity_env_keys {
         builder.env_remove(key);
     }
+    // A sandbox must not receive a host-app control capability, and the
+    // bundle-relative wrapper is not mounted inside the container. Scrub any
+    // binding inherited from the parent or supplied by the caller.
+    apply_clinch_control_environment(&mut builder, None, None);
 
     builder.current_dir(home_dir);
 

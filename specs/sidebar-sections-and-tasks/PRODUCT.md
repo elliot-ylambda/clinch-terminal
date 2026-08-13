@@ -127,3 +127,23 @@ visual language for this MVP.
     the Claude Code, Codex, and plain-terminal footer toolbelts. Custom button creation includes its
     label, inserted text, auto-send choice, side, and optional zero-based position. Removing a
     shipped button hides the live default for that footer rather than altering bundled data.
+
+27. Stable Clinch releases and ordinary local Clinch development launches ship the local-control
+    feature and its channel-specific wrapper together. Release validation fails when the wrapper or
+    either managed agent skill is absent. Local control remains an explicit user choice in public
+    Clinch: an update does not override the user's **Settings > Scripting** selection.
+
+28. Every new Clinch host terminal binds Claude Code and Codex to the exact wrapper and process ID
+    of the app instance that created that terminal. Isolated Docker sandboxes do not receive a
+    host-app control capability. The user-scope skills contain no absolute app-bundle path, so
+    launching stable and local builds in either order—or multiple local worktree builds on the
+    shared local channel—cannot redirect one app's agent into another.
+
+29. An older or partial Clinch bundle that has no control wrapper does not install or upgrade the
+    managed control skills. If an already-installed skill is used from an older terminal session,
+    it reports that Clinch must be updated and relaunched instead of guessing another channel or
+    silently launching the requested process in the background.
+
+30. When Codex has an obsolete Clinch-managed skill in its legacy private skills directory,
+    Clinch removes that duplicate only after an equal-or-newer replacement exists in the shared
+    Agent Skills directory. Unmarked user-owned skills and extra files are never deleted.
