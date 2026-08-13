@@ -247,6 +247,26 @@ pub struct ToolbeltButtonMoveParams {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct ToolbeltSuggestionListParams {
+    pub footer: ToolbeltFooter,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolbeltSuggestionOutcome {
+    Accepted,
+    Declined,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolbeltSuggestionResolveParams {
+    pub suggestion_id: String,
+    pub outcome: ToolbeltSuggestionOutcome,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SectionCreateParams {
     pub name: String,
 }

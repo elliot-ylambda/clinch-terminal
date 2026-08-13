@@ -2,7 +2,8 @@
 
 use ::local_control::protocol::{
     ToolbeltButtonCreateParams, ToolbeltButtonDeleteParams, ToolbeltButtonMoveParams,
-    ToolbeltFooter, ToolbeltListParams, ToolbeltSide,
+    ToolbeltFooter, ToolbeltListParams, ToolbeltSide, ToolbeltSuggestionListParams,
+    ToolbeltSuggestionOutcome, ToolbeltSuggestionResolveParams,
 };
 use ::local_control::{ActionKind, ControlError, ErrorCode};
 use serde_json::json;
@@ -101,11 +102,71 @@ pub(crate) fn handle(
         ActionKind::ToolbeltButtonCreate => create(action, ctx),
         ActionKind::ToolbeltButtonDelete => delete(action, ctx),
         ActionKind::ToolbeltButtonMove => move_button(action, ctx),
+        ActionKind::ToolbeltSuggestionList => suggestion_list(action, ctx),
+        ActionKind::ToolbeltSuggestionResolve => resolve_suggestion(action),
         _ => Err(ControlError::new(
             ErrorCode::UnsupportedAction,
             format!("{} is not a toolbelt action", action.kind.as_str()),
         )),
     }
+}
+
+fn suggestion_list(
+    action: &::local_control::Action,
+    ctx: &ModelContext<LocalControlBridge>,
+) -> Result<serde_json::Value, ControlError> {
+    let params = action.params_as::<ToolbeltSuggestionListParams>()?;
+    if params.footer == ToolbeltFooter::Terminal {
+        return Err(ControlError::new(
+            ErrorCode::InvalidParams,
+            "learned suggestions are available only for Claude Code and Codex footers",
+        ));
+    }
+    let enabled = crate::agent_resume::toolbelt_learning_enabled();
+    let selection = read_selection(params.footer, ctx);
+    let suggestions = crate::agent_resume::learned_toolbelt_suggestions()
+        .into_iter()
+        .filter(|suggestion| !selection_contains_text(&selection, &suggestion.text))
+        .collect::<Vec<_>>();
+    Ok(json!({
+        "enabled": enabled,
+        "footer": params.footer,
+        "suggestions": suggestions,
+    }))
+}
+
+fn selection_contains_text(selection: &Selection, candidate_text: &str) -> bool {
+    let (left, right) = selection.items();
+    left.iter().chain(&right).any(|item| {
+        matches!(
+            item,
+            AgentToolbarItemKind::CustomInsert { text, .. } if text == candidate_text
+        )
+    })
+}
+
+fn resolve_suggestion(action: &::local_control::Action) -> Result<serde_json::Value, ControlError> {
+    let params = action.params_as::<ToolbeltSuggestionResolveParams>()?;
+    let accepted = params.outcome == ToolbeltSuggestionOutcome::Accepted;
+    crate::agent_resume::resolve_toolbelt_suggestion(&params.suggestion_id, accepted).map_err(
+        |error| {
+            let code = match error.kind() {
+                std::io::ErrorKind::NotFound => ErrorCode::MissingTarget,
+                std::io::ErrorKind::PermissionDenied => ErrorCode::InvalidParams,
+                _ => ErrorCode::Internal,
+            };
+            ControlError::with_details(
+                code,
+                "could not resolve toolbelt suggestion",
+                error.to_string(),
+            )
+        },
+    )?;
+    Ok(json!({
+        "suggestion_id": params.suggestion_id,
+        "outcome": params.outcome,
+        "resolved": true,
+    }))
 }
 
 fn create(
@@ -442,5 +503,23 @@ mod tests {
             .reserved_items()
             .iter()
             .any(|item| item.has_same_toolbar_identity(&candidate)));
+    }
+
+    #[test]
+    fn existing_quick_insert_text_suppresses_learned_candidate() {
+        let selection = Selection::Cli(
+            CLIAgentToolbarChipSelection::custom_from_effective_items_and_hidden_custom_inserts(
+                vec![AgentToolbarItemKind::CustomInsert {
+                    label: "Serve".to_owned(),
+                    text: "Run the local server".to_owned(),
+                    auto_send: false,
+                }],
+                Vec::new(),
+                Vec::new(),
+            ),
+        );
+
+        assert!(selection_contains_text(&selection, "Run the local server"));
+        assert!(!selection_contains_text(&selection, "Run the test suite"));
     }
 }

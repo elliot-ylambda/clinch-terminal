@@ -8,6 +8,41 @@ _clinch_prompt_mirror_decode() {
   printf '%s' "$1" | /usr/bin/base64 -D 2>/dev/null
 }
 
+_clinch_toolbelt_learn() {
+  local payload="$1" registry="$2" provider="$3" sid="$4" ts="$5" bin="$6"
+  local store="$registry/toolbelt-learning.json"
+  local lock="$registry/.toolbelt-learning.lock"
+  local temp=""
+  local lock_mtime now
+  [[ ! -L "$store" && ! -L "$lock" ]] || return 0
+  if ! mkdir "$lock" 2>/dev/null; then
+    lock_mtime="$(stat -f %m "$lock" 2>/dev/null || echo 0)"
+    now="$(date +%s)"
+    if [[ "$lock_mtime" =~ ^[0-9]+$ ]] && (( lock_mtime > 0 && now - lock_mtime > 60 )); then
+      rmdir "$lock" 2>/dev/null || return 0
+      mkdir "$lock" 2>/dev/null || return 0
+    else
+      return 0
+    fi
+  fi
+  temp="$(mktemp "$registry/.toolbelt-learning.XXXXXX" 2>/dev/null)" || {
+    rmdir "$lock" 2>/dev/null
+    return 0
+  }
+  chmod 600 "$temp" 2>/dev/null || true
+  (
+    trap 'rm -f -- "$temp" 2>/dev/null; rmdir "$lock" 2>/dev/null' EXIT
+    umask 077
+    if printf '%s' "$payload" | "$bin/agent-json" toolbelt-learn \
+        "$store" "$provider" "$sid" "$ts" > "$temp" 2>/dev/null && \
+        LC_ALL=C grep -q '[^[:space:]]' "$temp" 2>/dev/null; then
+      chmod 600 "$temp" 2>/dev/null || true
+      mv -f "$temp" "$store" 2>/dev/null || true
+      chmod 600 "$store" 2>/dev/null || true
+    fi
+  )
+}
+
 _clinch_prompt_mirror_main() {
   set -uo pipefail
   [[ -n "${WARP_TERMINAL_SESSION_UUID:-}" ]] || return 0
@@ -56,8 +91,11 @@ _clinch_prompt_mirror_main() {
     chmod 600 "$file" 2>/dev/null || true
     return 0
   fi
-  ( umask 077; printf '%s\n' "$line" >> "$file" ) 2>/dev/null || true
+  ( umask 077; printf '%s\n' "$line" >> "$file" ) 2>/dev/null || return 0
   chmod 600 "$file" 2>/dev/null || true
+  if [[ "$event" == "UserPromptSubmit" ]]; then
+    _clinch_toolbelt_learn "$payload" "$registry" "$provider" "$sid" "$ts" "$bin"
+  fi
   return 0
 }
 

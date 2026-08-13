@@ -557,6 +557,10 @@ pub enum ToolbeltCommand {
     /// Create, delete, or move a footer button.
     #[command(subcommand)]
     Button(ToolbeltButtonCommand),
+
+    /// List or resolve locally learned cross-conversation button suggestions.
+    #[command(subcommand)]
+    Suggestion(ToolbeltSuggestionCommand),
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -569,6 +573,15 @@ pub enum ToolbeltButtonCommand {
 
     /// Move a visible button to an exact side and zero-based position.
     Move(ToolbeltButtonMoveArgs),
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum ToolbeltSuggestionCommand {
+    /// List eligible unresolved suggestions for a Claude Code or Codex footer.
+    List(ToolbeltSuggestionListArgs),
+
+    /// Record a suggestion as accepted or declined so it is not proposed again.
+    Resolve(ToolbeltSuggestionResolveArgs),
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -957,6 +970,26 @@ pub struct ToolbeltButtonMoveArgs {
 }
 
 #[derive(Debug, Clone, Args)]
+pub struct ToolbeltSuggestionListArgs {
+    #[arg(long, value_enum)]
+    pub footer: CliToolbeltFooter,
+
+    #[command(flatten)]
+    pub target: TargetArgs,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct ToolbeltSuggestionResolveArgs {
+    pub suggestion_id: String,
+
+    #[arg(long, value_enum)]
+    pub outcome: CliToolbeltSuggestionOutcome,
+
+    #[command(flatten)]
+    pub target: TargetArgs,
+}
+
+#[derive(Debug, Clone, Args)]
 pub struct SectionCreateArgs {
     pub name: String,
 
@@ -1014,6 +1047,21 @@ impl From<CliToolbeltFooter> for local_control::protocol::ToolbeltFooter {
             CliToolbeltFooter::ClaudeCode => Self::ClaudeCode,
             CliToolbeltFooter::Codex => Self::Codex,
             CliToolbeltFooter::Terminal => Self::Terminal,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum CliToolbeltSuggestionOutcome {
+    Accepted,
+    Declined,
+}
+
+impl From<CliToolbeltSuggestionOutcome> for local_control::protocol::ToolbeltSuggestionOutcome {
+    fn from(value: CliToolbeltSuggestionOutcome) -> Self {
+        match value {
+            CliToolbeltSuggestionOutcome::Accepted => Self::Accepted,
+            CliToolbeltSuggestionOutcome::Declined => Self::Declined,
         }
     }
 }

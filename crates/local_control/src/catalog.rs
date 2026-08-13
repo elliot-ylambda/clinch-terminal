@@ -57,6 +57,8 @@ pub enum ActionParameterSpec {
     ToolbeltButtonDelete,
     ToolbeltButtonMove,
     ToolbeltList,
+    ToolbeltSuggestionList,
+    ToolbeltSuggestionResolve,
     SectionCreate,
     SectionId,
     SectionMove,
@@ -84,6 +86,7 @@ pub enum ActionResultSpec {
     ThemeList,
     ThemeState,
     ToolbeltState,
+    ToolbeltSuggestionState,
     SectionState,
 }
 
@@ -272,6 +275,8 @@ define_action_catalog! {
         ToolbeltButtonCreate => { name: "toolbelt.button.create", status: Implemented, target: Settings, params: ToolbeltButtonCreate, result: ToolbeltState },
         ToolbeltButtonDelete => { name: "toolbelt.button.delete", status: Implemented, target: Settings, params: ToolbeltButtonDelete, result: ToolbeltState },
         ToolbeltButtonMove => { name: "toolbelt.button.move", status: Implemented, target: Settings, params: ToolbeltButtonMove, result: ToolbeltState },
+        ToolbeltSuggestionList => { name: "toolbelt.suggestion.list", status: Implemented, target: Settings, params: ToolbeltSuggestionList, result: ToolbeltSuggestionState },
+        ToolbeltSuggestionResolve => { name: "toolbelt.suggestion.resolve", status: Implemented, target: Settings, params: ToolbeltSuggestionResolve, result: Acknowledgement },
     }
 
     section {

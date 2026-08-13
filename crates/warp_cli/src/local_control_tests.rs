@@ -84,6 +84,24 @@ fn parses_toolbelt_auto_send_and_section_collapsed_false() {
         panic!("expected section update command");
     };
     assert_eq!(args.collapsed, Some(false));
+
+    let args = ControlArgs::try_parse_from([
+        "warpctrl",
+        "toolbelt",
+        "suggestion",
+        "resolve",
+        "00000000-0000-4000-8000-000000000001",
+        "--outcome",
+        "declined",
+    ])
+    .expect("suggestion outcome parses");
+    let ControlCommand::Toolbelt(ToolbeltCommand::Suggestion(ToolbeltSuggestionCommand::Resolve(
+        args,
+    ))) = args.command
+    else {
+        panic!("expected toolbelt suggestion resolve command");
+    };
+    assert_eq!(args.outcome, CliToolbeltSuggestionOutcome::Declined);
 }
 
 #[test]
@@ -575,6 +593,29 @@ fn retained_action_examples() -> Vec<(ActionKind, Vec<&'static str>)> {
                 "Review",
             ],
         ),
+        (
+            ActionKind::ToolbeltSuggestionList,
+            vec![
+                "warpctrl",
+                "toolbelt",
+                "suggestion",
+                "list",
+                "--footer",
+                "codex",
+            ],
+        ),
+        (
+            ActionKind::ToolbeltSuggestionResolve,
+            vec![
+                "warpctrl",
+                "toolbelt",
+                "suggestion",
+                "resolve",
+                "00000000-0000-4000-8000-000000000001",
+                "--outcome",
+                "accepted",
+            ],
+        ),
         (ActionKind::SectionList, vec!["warpctrl", "section", "list"]),
         (
             ActionKind::SectionCreate,
@@ -811,6 +852,12 @@ fn parsed_action_kind(command: &ControlCommand) -> Option<ActionKind> {
                 ToolbeltButtonCommand::Create(_) => Some(ActionKind::ToolbeltButtonCreate),
                 ToolbeltButtonCommand::Delete(_) => Some(ActionKind::ToolbeltButtonDelete),
                 ToolbeltButtonCommand::Move(_) => Some(ActionKind::ToolbeltButtonMove),
+            },
+            ToolbeltCommand::Suggestion(command) => match command {
+                ToolbeltSuggestionCommand::List(_) => Some(ActionKind::ToolbeltSuggestionList),
+                ToolbeltSuggestionCommand::Resolve(_) => {
+                    Some(ActionKind::ToolbeltSuggestionResolve)
+                }
             },
         },
         ControlCommand::Section(command) => match command {

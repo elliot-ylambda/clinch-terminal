@@ -6,7 +6,8 @@ use ::local_control::protocol::{
     SectionIdParams, SectionMoveParams, SectionUpdateParams, SessionTarget, TabActivateParams,
     TabCloseParams, TabCreateParams, TabTarget, TargetSelector, TextParams, ThemeNameParams,
     ToolbeltButtonCreateParams, ToolbeltButtonDeleteParams, ToolbeltButtonMoveParams,
-    ToolbeltListParams, WindowTarget,
+    ToolbeltListParams, ToolbeltSuggestionListParams, ToolbeltSuggestionResolveParams,
+    WindowTarget,
 };
 use ::local_control::{ActionKind, ControlError, ErrorCode, TargetScope};
 use warpui::{AppContext, ModelContext, SingletonEntity, TypedActionView, ViewHandle, WindowId};
@@ -61,6 +62,12 @@ pub(crate) fn validate_action_params(action: &::local_control::Action) -> Result
         }
         ActionParameterSpec::ToolbeltButtonMove => parse_params::<ToolbeltButtonMoveParams>(action),
         ActionParameterSpec::ToolbeltList => parse_params::<ToolbeltListParams>(action),
+        ActionParameterSpec::ToolbeltSuggestionList => {
+            parse_params::<ToolbeltSuggestionListParams>(action)
+        }
+        ActionParameterSpec::ToolbeltSuggestionResolve => {
+            parse_params::<ToolbeltSuggestionResolveParams>(action)
+        }
         ActionParameterSpec::SectionCreate => parse_params::<SectionCreateParams>(action),
         ActionParameterSpec::SectionId => parse_params::<SectionIdParams>(action),
         ActionParameterSpec::SectionMove => parse_params::<SectionMoveParams>(action),

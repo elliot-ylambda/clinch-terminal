@@ -184,7 +184,9 @@ impl LocalControlBridge {
             ActionKind::ToolbeltList
             | ActionKind::ToolbeltButtonCreate
             | ActionKind::ToolbeltButtonDelete
-            | ActionKind::ToolbeltButtonMove => toolbelt::handle(&request.action, ctx),
+            | ActionKind::ToolbeltButtonMove
+            | ActionKind::ToolbeltSuggestionList
+            | ActionKind::ToolbeltSuggestionResolve => toolbelt::handle(&request.action, ctx),
             ActionKind::SectionList
             | ActionKind::SectionCreate
             | ActionKind::SectionUpdate

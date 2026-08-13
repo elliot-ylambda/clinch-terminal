@@ -20,7 +20,7 @@ fn bundled_control_skill_contents() -> String {
 fn bundled_skill_carries_a_managed_marker() {
     let contents = bundled_skill_contents();
     assert!(
-        contents.contains("<!-- managed-by: Clinch; version: 2.3.0 -->"),
+        contents.contains("<!-- managed-by: Clinch; version: 3.0.0 -->"),
         "the bundled skill must carry the Clinch managed marker"
     );
 }
@@ -29,11 +29,16 @@ fn bundled_skill_carries_a_managed_marker() {
 fn bundled_skill_proactively_suggests_reusable_conversation_patterns() {
     let contents = bundled_skill_contents();
     let normalized = contents.split_whitespace().collect::<Vec<_>>().join(" ");
-    assert!(normalized.contains("proactively suggest reusable buttons"));
+    assert!(normalized.contains("proactively suggests locally learned reusable prompts"));
     assert!(normalized.contains("Do not wait for an explicit button request"));
     assert!(normalized.contains("One affirmative answer authorizes that exact proposal"));
-    assert!(normalized.contains("only conversation context already visible"));
-    assert!(normalized.contains("the CLI executes the confirmed typed mutation"));
+    assert!(normalized.contains("At the first appropriate turn of every new"));
+    assert!(normalized.contains("toolbelt suggestion list"));
+    assert!(normalized.contains("toolbelt suggestion resolve"));
+    assert!(normalized.contains("at least two distinct captured conversations"));
+    assert!(normalized.contains("Never inspect prompt-mirror files directly"));
+    assert!(normalized.contains("conversation content already visible"));
+    assert!(normalized.contains("The CLI executes the confirmed typed mutation"));
 }
 
 #[test]

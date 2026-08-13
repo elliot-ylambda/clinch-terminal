@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, Read};
 use std::path::{Path, PathBuf};
 
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Local, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use unicode_segmentation::UnicodeSegmentation;
@@ -394,7 +394,274 @@ fn registry_dir() -> Option<PathBuf> {
 const ACTIVE_PANES_FILE: &str = "active-panes";
 const APP_TERMINATING_FILE: &str = ".app-terminating";
 const CONVERSATION_BOOKMARKS_FILE: &str = "conversation-bookmarks.json";
+const TOOLBELT_LEARNING_FILE: &str = "toolbelt-learning.json";
+const TOOLBELT_RESOLUTIONS_FILE: &str = "toolbelt-learning-resolutions.json";
+const MAX_TOOLBELT_LEARNING_BYTES: u64 = 4 * 1024 * 1024;
 const TOMBSTONES_DIR: &str = "tombstones";
+
+/// A safe, aggregate quick-insert candidate learned by the local prompt-capture hook.
+/// Raw transcript/session contents are intentionally not part of this API.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct LearnedToolbeltSuggestion {
+    pub id: String,
+    pub text: String,
+    pub conversation_count: usize,
+    pub providers: Vec<String>,
+    pub last_seen: String,
+}
+
+#[derive(Default, Deserialize)]
+struct ToolbeltLearningFile {
+    #[serde(default)]
+    schema: u32,
+    #[serde(default)]
+    patterns: Vec<ToolbeltLearningPattern>,
+}
+
+#[derive(Deserialize)]
+struct ToolbeltLearningPattern {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    sessions: Vec<String>,
+    #[serde(default)]
+    conversation_count: usize,
+    #[serde(default)]
+    providers: Vec<String>,
+    #[serde(default)]
+    last_seen: String,
+    #[serde(default)]
+    text: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ToolbeltSuggestionResolutionOutcome {
+    Accepted,
+    Declined,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct ToolbeltSuggestionResolution {
+    suggestion_id: String,
+    outcome: ToolbeltSuggestionResolutionOutcome,
+    resolved_at: String,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+struct ToolbeltSuggestionResolutionsFile {
+    #[serde(default)]
+    schema: u32,
+    #[serde(default)]
+    resolutions: Vec<ToolbeltSuggestionResolution>,
+}
+
+/// Whether cross-conversation quick-insert learning is active for this Clinch user.
+pub fn toolbelt_learning_enabled() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        capture_layer_enabled()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
+}
+
+fn read_toolbelt_resolutions_in(dir: &Path) -> ToolbeltSuggestionResolutionsFile {
+    let Some(contents) = read_small_regular_file(
+        &dir.join(TOOLBELT_RESOLUTIONS_FILE),
+        MAX_TOOLBELT_LEARNING_BYTES,
+    ) else {
+        return ToolbeltSuggestionResolutionsFile::default();
+    };
+    serde_json::from_str(&contents).unwrap_or_default()
+}
+
+fn learned_toolbelt_suggestions_in(dir: &Path) -> Vec<LearnedToolbeltSuggestion> {
+    let Some(contents) = read_small_regular_file(
+        &dir.join(TOOLBELT_LEARNING_FILE),
+        MAX_TOOLBELT_LEARNING_BYTES,
+    ) else {
+        return Vec::new();
+    };
+    let Ok(file) = serde_json::from_str::<ToolbeltLearningFile>(&contents) else {
+        return Vec::new();
+    };
+    if file.schema != 1 {
+        return Vec::new();
+    }
+    let resolved = read_toolbelt_resolutions_in(dir)
+        .resolutions
+        .into_iter()
+        .map(|resolution| resolution.suggestion_id)
+        .collect::<HashSet<_>>();
+    let mut suggestions = file
+        .patterns
+        .into_iter()
+        .filter_map(|pattern| {
+            if resolved.contains(&pattern.id) || uuid::Uuid::parse_str(&pattern.id).is_err() {
+                return None;
+            }
+            let text = pattern.text.filter(|text| !text.trim().is_empty())?;
+            let observed_conversation_count = pattern
+                .sessions
+                .into_iter()
+                .filter(|session| {
+                    session.split_once(':').is_some_and(|(provider, id)| {
+                        matches!(provider, "claude" | "codex") && is_safe_session_id(id)
+                    })
+                })
+                .collect::<HashSet<_>>()
+                .len();
+            let conversation_count = pattern.conversation_count.max(observed_conversation_count);
+            if conversation_count < 2 {
+                return None;
+            }
+            let mut providers = pattern
+                .providers
+                .into_iter()
+                .filter(|provider| matches!(provider.as_str(), "claude" | "codex"))
+                .collect::<Vec<_>>();
+            providers.sort_unstable();
+            providers.dedup();
+            Some(LearnedToolbeltSuggestion {
+                id: pattern.id,
+                text,
+                conversation_count,
+                providers,
+                last_seen: pattern.last_seen,
+            })
+        })
+        .collect::<Vec<_>>();
+    suggestions.sort_by(|left, right| {
+        right
+            .conversation_count
+            .cmp(&left.conversation_count)
+            .then_with(|| right.last_seen.cmp(&left.last_seen))
+    });
+    suggestions.truncate(3);
+    suggestions
+}
+
+fn read_small_regular_file(path: &Path, max_bytes: u64) -> Option<String> {
+    let metadata = std::fs::symlink_metadata(path).ok()?;
+    if !metadata.file_type().is_file() || metadata.len() > max_bytes {
+        return None;
+    }
+    std::fs::read_to_string(path).ok()
+}
+
+fn toolbelt_learning_pattern_ids_in(dir: &Path) -> HashSet<String> {
+    let Some(contents) = read_small_regular_file(
+        &dir.join(TOOLBELT_LEARNING_FILE),
+        MAX_TOOLBELT_LEARNING_BYTES,
+    ) else {
+        return HashSet::new();
+    };
+    serde_json::from_str::<ToolbeltLearningFile>(&contents)
+        .ok()
+        .filter(|file| file.schema == 1)
+        .map(|file| {
+            file.patterns
+                .into_iter()
+                .filter_map(|pattern| {
+                    uuid::Uuid::parse_str(&pattern.id)
+                        .is_ok()
+                        .then_some(pattern.id)
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Returns at most three eligible unresolved candidates, ordered by recurrence and recency.
+pub fn learned_toolbelt_suggestions() -> Vec<LearnedToolbeltSuggestion> {
+    let dir = registry_dir();
+    learned_toolbelt_suggestions_for_state(toolbelt_learning_enabled(), dir.as_deref())
+}
+
+fn learned_toolbelt_suggestions_for_state(
+    enabled: bool,
+    dir: Option<&Path>,
+) -> Vec<LearnedToolbeltSuggestion> {
+    if !enabled {
+        return Vec::new();
+    }
+    dir.map(learned_toolbelt_suggestions_in).unwrap_or_default()
+}
+
+fn resolve_toolbelt_suggestion_in(
+    dir: &Path,
+    suggestion_id: &str,
+    outcome: ToolbeltSuggestionResolutionOutcome,
+) -> std::io::Result<()> {
+    if uuid::Uuid::parse_str(suggestion_id).is_err() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "eligible toolbelt suggestion was not found",
+        ));
+    }
+    let mut file = read_toolbelt_resolutions_in(dir);
+    let current_ids = toolbelt_learning_pattern_ids_in(dir);
+    file.resolutions
+        .retain(|resolution| current_ids.contains(&resolution.suggestion_id));
+    if let Some(existing) = file
+        .resolutions
+        .iter()
+        .find(|resolution| resolution.suggestion_id == suggestion_id)
+    {
+        if existing.outcome == outcome {
+            return Ok(());
+        }
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "toolbelt suggestion is already resolved",
+        ));
+    }
+    if !learned_toolbelt_suggestions_in(dir)
+        .iter()
+        .any(|suggestion| suggestion.id == suggestion_id)
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "eligible toolbelt suggestion was not found",
+        ));
+    }
+    file.schema = 1;
+    file.resolutions.push(ToolbeltSuggestionResolution {
+        suggestion_id: suggestion_id.to_owned(),
+        outcome,
+        resolved_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+    });
+    let contents = serde_json::to_vec_pretty(&file).map_err(std::io::Error::other)?;
+    write_private_atomic(dir, TOOLBELT_RESOLUTIONS_FILE, &contents)
+}
+
+/// Permanently accepts or declines an eligible learned suggestion for this user.
+pub fn resolve_toolbelt_suggestion(suggestion_id: &str, accepted: bool) -> std::io::Result<()> {
+    if !toolbelt_learning_enabled() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "Claude Code and Codex session capture is disabled",
+        ));
+    }
+    let dir = registry_dir().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "agent conversation registry is unavailable",
+        )
+    })?;
+    resolve_toolbelt_suggestion_in(
+        &dir,
+        suggestion_id,
+        if accepted {
+            ToolbeltSuggestionResolutionOutcome::Accepted
+        } else {
+            ToolbeltSuggestionResolutionOutcome::Declined
+        },
+    )
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 struct ConversationBookmark {

@@ -43,6 +43,22 @@ fn strict_params_serialize_without_synthetic_discriminators() {
         })
     );
     assert!(action.params.get("type").is_none());
+
+    let action = Action::with_params(
+        ActionKind::ToolbeltSuggestionResolve,
+        ToolbeltSuggestionResolveParams {
+            suggestion_id: "00000000-0000-4000-8000-000000000001".to_owned(),
+            outcome: ToolbeltSuggestionOutcome::Declined,
+        },
+    )
+    .expect("toolbelt suggestion params serialize");
+    assert_eq!(
+        action.params,
+        serde_json::json!({
+            "suggestion_id": "00000000-0000-4000-8000-000000000001",
+            "outcome": "declined"
+        })
+    );
 }
 
 #[test]
@@ -164,8 +180,8 @@ fn malformed_and_removed_action_names_are_not_deserialized() {
 }
 
 #[test]
-fn catalog_has_exactly_95_retained_actions() {
-    assert_eq!(ActionKind::ALL.len(), 95);
+fn catalog_has_exactly_97_retained_actions() {
+    assert_eq!(ActionKind::ALL.len(), 97);
 }
 
 #[test]

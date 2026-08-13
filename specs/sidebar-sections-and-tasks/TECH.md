@@ -117,13 +117,32 @@ validated as unique exact selectors. Create and move use bounded zero-based posi
 custom entry removes it, while deleting a shipped entry records it as hidden through the existing
 selection normalization.
 
-Implement conversation-based learning in the managed `clinch-toolbelt` skill, not by giving the
-CLI transcript access. Its discovery description triggers on repeated reusable text even without
-an explicit toolbelt request. The coding agent recognizes patterns in its current visible context,
-proposes the complete button configuration, and treats one affirmative response as authorization
-to list the target footer and execute the typed create action. It suppresses declined patterns for
-the current conversation and excludes secrets, destructive commands, and one-off values. No new
-conversation ingestion, transcript persistence, telemetry, or cross-conversation memory is added.
+Extend the existing local Claude/Codex prompt-mirror hook with a bounded, fail-open learner. On
+`UserPromptSubmit`, normalize case and whitespace, reject secret-looking, destructive, oversized,
+or obvious one-off text, and update an owner-only learning store under the existing agent-resume
+registry. A singleton stores only a stable fingerprint, timestamps, and provider-scoped session
+identity. On the same fingerprint's second distinct conversation, retain the latest exact prompt
+as an eligible candidate. Repeats in one session do not increase the conversation count. Serialize
+concurrent hooks with a short-lived registry lock, write through a mode-0600 temporary file and
+atomic rename, cap the store to the most recent 512 patterns, and never fail prompt submission when
+learning cannot update. Each pattern retains at most 32 recent session identities plus a monotonic
+aggregate count so one exceptionally common prompt cannot make the store grow without bound.
+
+Add typed `toolbelt.suggestion.list` and `toolbelt.suggestion.resolve` local-control actions.
+`suggestion.list` accepts a Claude Code or Codex footer and returns only eligible unresolved
+candidates plus aggregate conversation count, providers, and last-seen time. It does not return
+transcript/session contents or singleton records, and filters exact text already installed in the
+target footer. `suggestion.resolve` accepts a candidate UUID and `accepted` or `declined`, verifies
+that the candidate exists, and atomically persists the decision in a separate owner-only file so
+the app and capture hook never compete to rewrite one document. When session capture is disabled,
+the list is empty and resolution is unavailable. Existing capture purge removes both stores.
+
+Update the managed `clinch-toolbelt` skill so an agent performs one lightweight pending-suggestion
+check at the beginning of a new Clinch conversation as well as recognizing patterns in its current
+visible context. It proposes the complete label, exact text, target footer, side, and `auto_send:
+false`; one affirmative response authorizes the existing typed button-create action followed by an
+accepted resolution. A decline records a declined resolution. The agent sees only the candidate,
+not the conversations that produced it, and the learner emits no telemetry or network traffic.
 
 The managed `clinch-control` and `clinch-toolbelt` skills are installed at user scope for Claude
 Code and Codex only when the current bundle contains its channel-specific control wrapper. Stable
@@ -181,7 +200,12 @@ path inside the container.
   coverage verifies named section creation from an existing tab and non-destructive ungrouping.
 - Managed-skill tests cover wrapper-gated provisioning, safe version upgrades, preservation of
   user-owned files, conservative cleanup of obsolete Codex copies, proactive repeated-pattern
-  discovery, and the one-confirmation boundary. Shell-boundary tests cover exact wrapper/PID
+  discovery, cross-conversation pending-suggestion checks, and the one-confirmation boundary.
+  Prompt-mirror tests cover the two-distinct-session threshold, same-session rejection, bounded
+  pruning, atomic owner-only storage, capture opt-out, and filters for secrets, destructive text,
+  and one-off identifiers. Local-control tests cover suggestion list/resolve serialization,
+  provider-footer filtering, existing-button suppression, and durable accepted/declined outcomes.
+  Shell-boundary tests cover exact wrapper/PID
   injection, stale parent/override scrubbing, and denial inside Docker sandboxes. Stable
   compilation plus a no-launch local app bundle verify that build entrypoints ship an executable
   wrapper and both placeholder-free skills.

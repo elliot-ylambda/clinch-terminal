@@ -154,10 +154,27 @@ visual language for this MVP.
     network-facing remote shell, and labels global CLI installation as optional for terminals
     outside Clinch.
 
-32. While a Claude Code or Codex conversation is in context, Clinch proactively recognizes a
-    repeated reusable prompt or command and offers a concrete quick-insert button without waiting
-    for the person to ask about toolbelts. The proposal shows what will be inserted and whether it
-    will auto-send. One affirmative response creates the proposed button automatically; declining
-    suppresses that pattern for the rest of the conversation. Clinch never turns secrets,
-    destructive commands, or one-off values into suggestions and never implies that the CLI reads
-    hidden conversations or stores transcript history.
+32. Clinch proactively recognizes a reusable prompt or command after its normalized text appears
+    in at least two distinct locally captured Claude Code or Codex conversations. A repeat within
+    one conversation does not qualify. At the start of a later agent conversation, the managed
+    toolbelt skill may offer one concrete quick-insert button without waiting for the person to ask
+    about toolbelts. The proposal shows its label, exact inserted text, target footer, side, and
+    auto-send behavior.
+
+33. Cross-conversation learning is user-scoped, local-only, and part of Clinch's default-on Claude
+    Code and Codex session capture. Clinch does not upload learned prompt text, add it to telemetry,
+    or expose raw conversation histories through local control. Before a prompt qualifies, the
+    learner retains only a bounded fingerprint and conversation identity; after it qualifies, the
+    candidate contains the exact proposed button text and aggregate occurrence metadata.
+
+34. One affirmative response authorizes the proposed button creation. Clinch creates the button
+    through the typed local-control action and records the candidate as accepted only after
+    creation succeeds. A decline records it as dismissed. Accepted and dismissed candidates are
+    not proposed again across later conversations, and a button whose exact text already exists in
+    the target footer is not proposed.
+
+35. Clinch never learns or proposes secret-looking text, credentials, destructive commands,
+    private keys, or obvious one-off identifiers. Learned buttons default to not auto-send. Turning
+    session capture off stops subsequent learning and returns no learned suggestions; purging
+    captured session data also purges learned candidates. The agent may still notice and offer a
+    reusable pattern from its current visible conversation without reading older conversations.

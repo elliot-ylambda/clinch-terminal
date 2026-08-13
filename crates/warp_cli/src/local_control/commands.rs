@@ -8,6 +8,7 @@ use local_control::protocol::{
     SettingListParams, TabActivateParams, TabActivationMode, TabCloseMode, TabCloseParams,
     TabCreateParams, TextParams, ThemeNameParams, ToolbeltButtonCreateParams,
     ToolbeltButtonDeleteParams, ToolbeltButtonMoveParams, ToolbeltListParams,
+    ToolbeltSuggestionListParams, ToolbeltSuggestionResolveParams,
 };
 use local_control::selection::select_instance;
 use serde::Serialize;
@@ -22,7 +23,7 @@ use crate::local_control::{
     SectionTabCommand, SessionCommand, SettingCommand, SurfaceCommand, SurfaceOpenCommand,
     SurfaceOpenToggleCommand, SurfaceQueryCommand, SurfaceSettingsCommand, SurfaceToggleCommand,
     TabActivateArgs, TabCloseArgs, TabColorCommand, TabCommand, TargetArgs, ThemeCommand,
-    ToolbeltButtonCommand, ToolbeltCommand, WindowCommand,
+    ToolbeltButtonCommand, ToolbeltCommand, ToolbeltSuggestionCommand, WindowCommand,
 };
 
 pub(super) fn run_surface_command(
@@ -671,6 +672,25 @@ pub(super) fn run_toolbelt_command(
                     label: args.label,
                     side: args.side.into(),
                     position: args.position,
+                },
+                output_format,
+            ),
+        },
+        ToolbeltCommand::Suggestion(command) => match command {
+            ToolbeltSuggestionCommand::List(args) => run_action_with_params(
+                args.target,
+                ActionKind::ToolbeltSuggestionList,
+                ToolbeltSuggestionListParams {
+                    footer: args.footer.into(),
+                },
+                output_format,
+            ),
+            ToolbeltSuggestionCommand::Resolve(args) => run_action_with_params(
+                args.target,
+                ActionKind::ToolbeltSuggestionResolve,
+                ToolbeltSuggestionResolveParams {
+                    suggestion_id: args.suggestion_id,
+                    outcome: args.outcome.into(),
                 },
                 output_format,
             ),
