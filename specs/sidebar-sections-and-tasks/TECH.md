@@ -117,6 +117,14 @@ validated as unique exact selectors. Create and move use bounded zero-based posi
 custom entry removes it, while deleting a shipped entry records it as hidden through the existing
 selection normalization.
 
+Implement conversation-based learning in the managed `clinch-toolbelt` skill, not by giving the
+CLI transcript access. Its discovery description triggers on repeated reusable text even without
+an explicit toolbelt request. The coding agent recognizes patterns in its current visible context,
+proposes the complete button configuration, and treats one affirmative response as authorization
+to list the target footer and execute the typed create action. It suppresses declined patterns for
+the current conversation and excludes secrets, destructive commands, and one-off values. No new
+conversation ingestion, transcript persistence, telemetry, or cross-conversation memory is added.
+
 The managed `clinch-control` and `clinch-toolbelt` skills are installed at user scope for Claude
 Code and Codex only when the current bundle contains its channel-specific control wrapper. Stable
 and local macOS build entrypoints compile `warp_control_cli`, create that wrapper, and release
@@ -172,10 +180,11 @@ path inside the container.
   cover exact insertion, range rejection, label ambiguity, and hiding shipped defaults; Workspace
   coverage verifies named section creation from an existing tab and non-destructive ungrouping.
 - Managed-skill tests cover wrapper-gated provisioning, safe version upgrades, preservation of
-  user-owned files, and conservative cleanup of obsolete Codex copies. Shell-boundary tests cover
-  exact wrapper/PID injection, stale parent/override scrubbing, and denial inside Docker sandboxes.
-  Stable compilation plus a no-launch local app bundle verify that build entrypoints ship an
-  executable wrapper and both placeholder-free skills.
+  user-owned files, conservative cleanup of obsolete Codex copies, proactive repeated-pattern
+  discovery, and the one-confirmation boundary. Shell-boundary tests cover exact wrapper/PID
+  injection, stale parent/override scrubbing, and denial inside Docker sandboxes. Stable
+  compilation plus a no-launch local app bundle verify that build entrypoints ship an executable
+  wrapper and both placeholder-free skills.
 - Local-control setting tests cover the default-on Clinch app IDs, unchanged defaults for other
   public channels, persistence of an explicit opt-out, and fail-closed malformed secure storage.
 - Manual launch remains recommended for final visual inspection of section outlines, collapsed

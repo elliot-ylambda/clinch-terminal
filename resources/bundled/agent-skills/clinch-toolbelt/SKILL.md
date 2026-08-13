@@ -1,9 +1,9 @@
 ---
 name: clinch-toolbelt
-description: Create, delete, list, or reorder quick-insert buttons in the Clinch terminal's Claude Code, Codex, or plain-terminal footer toolbelt. Use when the user asks for a Clinch button, quick-insert button, footer button, or a change to button ordering.
+description: Create, delete, list, or reorder quick-insert buttons in Clinch, and proactively suggest reusable buttons when repeated prompts or commands emerge in the current Claude Code or Codex conversation. Use when the user asks for a Clinch button, quick-insert button, footer or toolbelt change, or repeatedly uses reusable text.
 ---
 
-<!-- managed-by: Clinch; version: 2.2.0 -->
+<!-- managed-by: Clinch; version: 2.3.0 -->
 
 # Clinch toolbelt buttons
 
@@ -51,6 +51,26 @@ Each footer is independent:
 
 A custom button has a visible label, inserted text, and `auto_send` behavior.
 `auto_send=true` submits immediately; `false` only pre-fills the input.
+
+## Learn from the conversation
+
+Proactively notice a repeated or near-identical user prompt or command, or a
+statement that the user uses some text often. Do not wait for an explicit
+button request. Suggest one concrete quick-insert configuration: footer, label,
+exact inserted text, side, and `auto_send` behavior. Prefer the active Claude
+Code or Codex footer; use `terminal` only for a reusable shell command.
+
+Ask whether to add the proposed button. One affirmative answer authorizes that
+exact proposal: list the footer, resolve any label or position conflict, and
+create it without asking the user to repeat already-confirmed fields. If the
+user changes a field, use the correction. If they decline, do not suggest the
+same pattern again in the current conversation.
+
+Do not suggest secrets, credentials, personal data, destructive commands, or
+text whose paths, IDs, or other values make it useful only once. Pattern
+recognition uses only conversation context already visible to the coding
+agent. Do not claim that the CLI reads hidden or past conversations or stores
+conversation history; the CLI executes the confirmed typed mutation.
 
 ## Inspect before changing
 
@@ -120,8 +140,8 @@ upgrade.
 ## Rules
 
 - Change only the footer the user named.
-- Suggest a button when the user repeatedly sends the same prompt or command,
-  but get confirmation before creating it.
+- Follow the conversation-learning flow even when the user did not explicitly
+  ask about toolbelt buttons.
 - Use JSON output and report the resulting side and position.
 - Do not invent an update operation. To change a custom button's text, label,
   or auto-send behavior with this CLI version, confirm with the user, delete

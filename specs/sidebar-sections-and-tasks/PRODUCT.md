@@ -153,3 +153,11 @@ visual language for this MVP.
     restricted, typed Clinch actions only to programs running as the current OS user and is not a
     network-facing remote shell, and labels global CLI installation as optional for terminals
     outside Clinch.
+
+32. While a Claude Code or Codex conversation is in context, Clinch proactively recognizes a
+    repeated reusable prompt or command and offers a concrete quick-insert button without waiting
+    for the person to ask about toolbelts. The proposal shows what will be inserted and whether it
+    will auto-send. One affirmative response creates the proposed button automatically; declining
+    suppresses that pattern for the rest of the conversation. Clinch never turns secrets,
+    destructive commands, or one-off values into suggestions and never implies that the CLI reads
+    hidden conversations or stores transcript history.

@@ -20,9 +20,20 @@ fn bundled_control_skill_contents() -> String {
 fn bundled_skill_carries_a_managed_marker() {
     let contents = bundled_skill_contents();
     assert!(
-        contents.contains("<!-- managed-by: Clinch; version: 2.2.0 -->"),
+        contents.contains("<!-- managed-by: Clinch; version: 2.3.0 -->"),
         "the bundled skill must carry the Clinch managed marker"
     );
+}
+
+#[test]
+fn bundled_skill_proactively_suggests_reusable_conversation_patterns() {
+    let contents = bundled_skill_contents();
+    let normalized = contents.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(normalized.contains("proactively suggest reusable buttons"));
+    assert!(normalized.contains("Do not wait for an explicit button request"));
+    assert!(normalized.contains("One affirmative answer authorizes that exact proposal"));
+    assert!(normalized.contains("only conversation context already visible"));
+    assert!(normalized.contains("the CLI executes the confirmed typed mutation"));
 }
 
 #[test]
