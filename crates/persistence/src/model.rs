@@ -48,6 +48,7 @@ pub struct Window {
     pub is_active_project: bool,
     pub tasks: String,
     pub tasks_collapsed: bool,
+    pub bookmarked_sessions_color: Option<String>,
 }
 
 #[derive(Identifiable, Insertable, Queryable)]
@@ -350,6 +351,7 @@ pub struct NewWindow {
     pub is_active_project: bool,
     pub tasks: String,
     pub tasks_collapsed: bool,
+    pub bookmarked_sessions_color: Option<String>,
 }
 
 #[derive(Identifiable, Queryable, Associations)]

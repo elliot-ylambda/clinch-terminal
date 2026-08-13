@@ -43,7 +43,7 @@ use crate::terminal::view::inline_banner::ZeroStatePromptSuggestionType;
 use crate::themes::theme::AnsiColorIdentifier;
 use crate::themes::theme_chooser::ThemeChooserMode;
 use crate::workflows::{WorkflowSelectionSource, WorkflowSource, WorkflowType};
-use crate::workspace::tab_group::TabGroupId;
+use crate::workspace::tab_group::{SelectedSectionColor, TabGroupId};
 use crate::workspace::task::{WorkspaceTaskAgent, WorkspaceTaskId};
 use crate::workspace::PaneViewLocator;
 
@@ -198,7 +198,7 @@ pub enum WorkspaceAction {
     /// Sets the light color tint for a tab group, or clears it with `Unset`.
     SetTabGroupColor {
         group_id: TabGroupId,
-        color: SelectedTabColor,
+        color: SelectedSectionColor,
     },
     /// Creates a new tab group containing the tab at the given index.
     NewTabGroupFromTab(usize),
@@ -234,6 +234,9 @@ pub enum WorkspaceAction {
         group_id: TabGroupId,
         anchor: TabContextMenuAnchor,
     },
+    ToggleBookmarkedSessionsRightClickMenu {
+        anchor: TabContextMenuAnchor,
+    },
     UngroupTabs(TabGroupId),
     NewTabInGroup(TabGroupId),
     MoveTabGroupUp(TabGroupId),
@@ -253,6 +256,7 @@ pub enum WorkspaceAction {
     /// and moves the group block to the start of the unpinned region.
     UnpinTabGroup(TabGroupId),
     ToggleBookmarkedSessionsCollapsed,
+    SetBookmarkedSessionsColor(SelectedSectionColor),
     ToggleTasksCollapsed,
     FocusTaskInput,
     RemoveWorkspaceTask(WorkspaceTaskId),
@@ -983,6 +987,7 @@ impl WorkspaceAction {
             | PinTabGroup(_)
             | UnpinTabGroup(_)
             | ToggleBookmarkedSessionsCollapsed
+            | SetBookmarkedSessionsColor(_)
             | ToggleTasksCollapsed
             | RemoveWorkspaceTask(_)
             | LaunchWorkspaceTask { .. }
@@ -1050,6 +1055,7 @@ impl WorkspaceAction {
             | ToggleTabRightClickMenu { .. }
             | ToggleTabSelectionRightClickMenu { .. }
             | ToggleTabGroupRightClickMenu { .. }
+            | ToggleBookmarkedSessionsRightClickMenu { .. }
             | ToggleVerticalTabsPaneContextMenu { .. }
             | OpenNewSessionMenu { .. }
             | ToggleTabConfigsMenu

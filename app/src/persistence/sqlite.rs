@@ -104,7 +104,7 @@ use crate::terminal::history::PersistedCommand;
 use crate::terminal::ShellLaunchData;
 use crate::themes::theme::AnsiColorIdentifier;
 use crate::workflows::WorkflowId;
-use crate::workspace::tab_group::TabGroupId;
+use crate::workspace::tab_group::{SelectedSectionColor, TabGroupId};
 use crate::workspaces::team::Team as TeamMetadata;
 use crate::workspaces::user_profiles::{user_profile_from_persistence, UserProfileWithUID};
 use crate::workspaces::workspace::{Workspace as WorkspaceMetadata, WorkspaceUid};
@@ -1080,6 +1080,10 @@ fn save_app_state(conn: &mut SqliteConnection, app_state: &AppState) -> Result<(
                     is_active_project: project_index == project_window.active_project_index,
                     tasks: serde_json::to_string(&window.tasks).unwrap_or_else(|_| "[]".to_owned()),
                     tasks_collapsed: window.tasks_collapsed,
+                    bookmarked_sessions_color: match window.bookmarked_sessions_color {
+                        SelectedSectionColor::Unset => None,
+                        _ => serde_yaml::to_string(&window.bookmarked_sessions_color).ok(),
+                    },
                 };
                 diesel::insert_into(schema::windows::dsl::windows)
                     .values(new_window)
@@ -1112,7 +1116,7 @@ fn save_app_state(conn: &mut SqliteConnection, app_state: &AppState) -> Result<(
                             window_id,
                             name: group.name.clone(),
                             color: match group.color {
-                                SelectedTabColor::Unset => None,
+                                SelectedSectionColor::Unset => None,
                                 _ => serde_yaml::to_string(&group.color).ok(),
                             },
                             collapsed: group.collapsed,
@@ -2655,7 +2659,15 @@ fn read_sqlite_data(
                 let color = group
                     .color
                     .as_deref()
-                    .and_then(|s| serde_yaml::from_str::<SelectedTabColor>(s).ok())
+                    .and_then(|s| {
+                        serde_yaml::from_str::<SelectedSectionColor>(s)
+                            .ok()
+                            .or_else(|| {
+                                serde_yaml::from_str::<SelectedTabColor>(s)
+                                    .ok()
+                                    .map(SelectedSectionColor::from)
+                            })
+                    })
                     .unwrap_or_default();
                 tab_groups_snapshots.push(TabGroupSnapshot {
                     id: tab_group_id,
@@ -2790,6 +2802,19 @@ fn read_sqlite_data(
                 tab_groups: tab_groups_snapshots,
                 tasks: serde_json::from_str(&window.tasks).unwrap_or_default(),
                 tasks_collapsed: window.tasks_collapsed,
+                bookmarked_sessions_color: window
+                    .bookmarked_sessions_color
+                    .as_deref()
+                    .and_then(|value| {
+                        serde_yaml::from_str::<SelectedSectionColor>(value)
+                            .ok()
+                            .or_else(|| {
+                                serde_yaml::from_str::<SelectedTabColor>(value)
+                                    .ok()
+                                    .map(SelectedSectionColor::from)
+                            })
+                    })
+                    .unwrap_or_default(),
             };
             (
                 project_window_key,

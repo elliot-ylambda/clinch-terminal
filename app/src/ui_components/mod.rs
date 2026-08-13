@@ -29,6 +29,16 @@ pub(crate) const CLINCH_LOGO_GREEN: ColorU = ColorU {
     a: 0xFF,
 };
 
+/// A softer version of [`CLINCH_LOGO_GREEN`] for larger tinted surfaces such as sidebar sections.
+/// This is the classic Clinch lime mixed 60/40 with white so it stays recognizably on-brand
+/// without overpowering text and controls.
+pub(crate) const CLINCH_SECTION_GREEN: ColorU = ColorU {
+    r: 0xD9,
+    g: 0xFF,
+    b: 0x66,
+    a: 0xFF,
+};
+
 /// Blue used for "agent done / unread notification" indicators (project-tab
 /// done counts, tab notification dots). Deliberately NOT `theme.accent()`:
 /// themes may set the accent to the same lime as [`CLINCH_LOGO_GREEN`], which

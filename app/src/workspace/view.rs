@@ -123,8 +123,8 @@ use self::vertical_tabs::telemetry::{VerticalTabsDisplayOption, VerticalTabsTele
 use self::vertical_tabs::{
     htab_group_position_id, pane_summary_kind, render_detail_sidecar, render_settings_popup,
     render_summary_pane_kind_icons, vtab_group_position_id, SummaryPaneKind, SummaryPaneKindIcons,
-    VerticalTabsPanelState, BOOKMARKED_SESSIONS_SECTION_POSITION_ID,
-    VERTICAL_TABS_SETTINGS_BUTTON_POSITION_ID,
+    VerticalTabsPanelState, BOOKMARKED_SESSIONS_KEBAB_POSITION_ID,
+    BOOKMARKED_SESSIONS_SECTION_POSITION_ID, VERTICAL_TABS_SETTINGS_BUTTON_POSITION_ID,
 };
 #[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
 use super::action::AutoCloudHandoffTrigger;
@@ -458,7 +458,7 @@ use crate::tips::{TipsEvent, TipsView};
 use crate::ui_components::agent_icon::terminal_view_agent_icon_variant;
 use crate::ui_components::avatar::{Avatar, AvatarContent, StatusElementTypes};
 use crate::ui_components::buttons::{combo_inner_button, icon_button_with_color};
-use crate::ui_components::color_dot::{render_color_dot, TAB_COLOR_OPTIONS};
+use crate::ui_components::color_dot::render_color_dot;
 use crate::ui_components::icon_with_status::IconWithStatusVariant;
 use crate::ui_components::red_notification_dot::RedNotificationDot;
 use crate::ui_components::window_focus_dimming::WindowFocusDimming;
@@ -516,7 +516,9 @@ use crate::workspace::header_toolbar_editor::{HeaderToolbarEditorEvent, HeaderTo
 use crate::workspace::header_toolbar_item::HeaderToolbarItemKind;
 use crate::workspace::one_time_modal_model::OneTimeModalModel;
 use crate::workspace::sync_inputs::SyncedInputState;
-use crate::workspace::tab_group::{TabGroup, TabGroupId};
+use crate::workspace::tab_group::{
+    SectionColor, SelectedSectionColor, TabGroup, TabGroupId, SECTION_COLOR_OPTIONS,
+};
 use crate::workspace::tab_settings::TabCloseButtonPosition;
 use crate::workspace::task::{WorkspaceTask, WorkspaceTaskAgent, WorkspaceTaskId};
 use crate::workspace::toast_stack::{
@@ -1095,6 +1097,12 @@ fn unidentified_cli_agent_provider(
     }
 }
 
+#[derive(Clone, Copy)]
+enum SectionColorMenuTarget {
+    TabGroup(TabGroupId),
+    BookmarkedSessions,
+}
+
 pub struct Workspace {
     window_id: WindowId,
     pub(crate) tabs: Vec<TabData>,
@@ -1126,6 +1134,7 @@ pub struct Workspace {
     /// Lightweight, project-scoped tasks rendered beneath the session list.
     pub(crate) tasks: Vec<WorkspaceTask>,
     pub(crate) bookmarked_sessions_collapsed: bool,
+    pub(crate) bookmarked_sessions_color: SelectedSectionColor,
     pub(crate) tasks_collapsed: bool,
     /// Per-group hover state for the horizontal tab bar.
     horizontal_tab_group_mouse_states: RefCell<HashMap<TabGroupId, HorizontalTabGroupMouseStates>>,
@@ -1145,6 +1154,8 @@ pub struct Workspace {
     show_tab_right_click_menu: Option<(usize, TabContextMenuAnchor)>,
     /// Open tab group more-options menu; reuses the `tab_right_click_menu` view.
     show_tab_group_right_click_menu: Option<(TabGroupId, TabContextMenuAnchor)>,
+    /// Open menu for the built-in Bookmarked sessions section.
+    show_bookmarked_sessions_right_click_menu: Option<TabContextMenuAnchor>,
     /// Open multi-tab selection menu (right-click on any tab in a multi-tab selection).
     show_tab_selection_right_click_menu: Option<(usize, TabContextMenuAnchor)>,
     // TODO(CORE-2300): this used to be add_tab_dropdown_menu.
@@ -3878,6 +3889,7 @@ impl Workspace {
             tab_groups: HashMap::new(),
             tasks: Vec::new(),
             bookmarked_sessions_collapsed: false,
+            bookmarked_sessions_color: SelectedSectionColor::Unset,
             tasks_collapsed: false,
             horizontal_tab_group_mouse_states: RefCell::default(),
             tab_rename_editor: Self::tab_rename_editor(ctx),
@@ -3895,6 +3907,7 @@ impl Workspace {
             tab_right_click_menu,
             show_tab_right_click_menu: None,
             show_tab_group_right_click_menu: None,
+            show_bookmarked_sessions_right_click_menu: None,
             show_tab_selection_right_click_menu: None,
             new_session_dropdown_menu,
             show_new_session_dropdown_menu: None,
@@ -4603,6 +4616,7 @@ impl Workspace {
                 let restored_left_panel_open = window_snapshot.left_panel_open;
                 self.tasks = window_snapshot.tasks.clone();
                 self.tasks_collapsed = window_snapshot.tasks_collapsed;
+                self.bookmarked_sessions_color = window_snapshot.bookmarked_sessions_color;
 
                 // Restore groups first so per-tab `group_id` assignments
                 // below can validate membership against a populated map.
@@ -7880,7 +7894,7 @@ impl Workspace {
     pub fn set_tab_group_color(
         &mut self,
         group_id: TabGroupId,
-        color: SelectedTabColor,
+        color: SelectedSectionColor,
         ctx: &mut ViewContext<Self>,
     ) {
         let Some(group) = self.tab_groups.get_mut(&group_id) else {
@@ -7891,6 +7905,22 @@ impl Workspace {
         }
 
         group.color = color;
+        ctx.dispatch_global_action("workspace:save_app", ());
+        ctx.notify();
+    }
+
+    /// Applies a color override to the built-in Bookmarked sessions section. `Unset` restores
+    /// its light Clinch-green default; `Cleared` makes it untinted.
+    pub fn set_bookmarked_sessions_color(
+        &mut self,
+        color: SelectedSectionColor,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        if self.bookmarked_sessions_color == color {
+            return;
+        }
+
+        self.bookmarked_sessions_color = color;
         ctx.dispatch_global_action("workspace:save_app", ());
         ctx.notify();
     }
@@ -8498,6 +8528,7 @@ impl Workspace {
             context_menu.set_items(menu_items, view_ctx);
         });
         self.show_tab_group_right_click_menu = None;
+        self.show_bookmarked_sessions_right_click_menu = None;
         self.show_tab_right_click_menu = Some((tab_index, anchor));
         ctx.focus(&self.tab_right_click_menu);
         ctx.notify();
@@ -8523,8 +8554,32 @@ impl Workspace {
             context_menu.set_items(menu_items, view_ctx);
         });
         self.show_tab_right_click_menu = None;
+        self.show_bookmarked_sessions_right_click_menu = None;
         self.hide_move_to_group_sidecar(ctx);
         self.show_tab_group_right_click_menu = Some((group_id, anchor));
+        ctx.focus(&self.tab_right_click_menu);
+        ctx.notify();
+    }
+
+    pub fn toggle_bookmarked_sessions_right_click_menu(
+        &mut self,
+        anchor: TabContextMenuAnchor,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        if self.show_bookmarked_sessions_right_click_menu.is_some() {
+            self.show_bookmarked_sessions_right_click_menu = None;
+            ctx.notify();
+            return;
+        }
+
+        let menu_items = self.section_color_menu_items(SectionColorMenuTarget::BookmarkedSessions);
+        ctx.update_view(&self.tab_right_click_menu, |context_menu, view_ctx| {
+            context_menu.set_items(menu_items, view_ctx);
+        });
+        self.show_tab_right_click_menu = None;
+        self.show_tab_group_right_click_menu = None;
+        self.hide_move_to_group_sidecar(ctx);
+        self.show_bookmarked_sessions_right_click_menu = Some(anchor);
         ctx.focus(&self.tab_right_click_menu);
         ctx.notify();
     }
@@ -10837,6 +10892,7 @@ impl Workspace {
             MenuEvent::Close { via_select_item: _ } => {
                 self.show_tab_right_click_menu = None;
                 self.show_tab_group_right_click_menu = None;
+                self.show_bookmarked_sessions_right_click_menu = None;
                 self.show_tab_selection_right_click_menu = None;
                 self.hide_move_to_group_sidecar(ctx);
                 ctx.notify();
@@ -10845,6 +10901,113 @@ impl Workspace {
                 self.update_move_to_group_sidecar(ctx);
             }
         }
+    }
+
+    fn section_color_menu_items(
+        &self,
+        target: SectionColorMenuTarget,
+    ) -> Vec<MenuItem<WorkspaceAction>> {
+        let (selected_color, default_color) = match target {
+            SectionColorMenuTarget::TabGroup(group_id) => (
+                self.tab_groups
+                    .get(&group_id)
+                    .map(|group| group.color)
+                    .unwrap_or_default(),
+                None,
+            ),
+            SectionColorMenuTarget::BookmarkedSessions => (
+                self.bookmarked_sessions_color,
+                Some(SectionColor::ClinchGreen),
+            ),
+        };
+        let current_color = selected_color.resolve(default_color);
+        let color_mouse_states: Vec<MouseStateHandle> = (0..SECTION_COLOR_OPTIONS.len() + 1)
+            .map(|_| MouseStateHandle::default())
+            .collect();
+
+        vec![MenuItem::Item(
+            MenuItemFields::new_with_custom_label(
+                Arc::new(move |_is_selected, _is_hovered, appearance, _app| {
+                    let theme = appearance.theme();
+                    let ring_color: ColorU = theme.accent().into();
+                    let mut colors = Flex::row()
+                        .with_main_axis_alignment(MainAxisAlignment::SpaceEvenly)
+                        .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                        .with_main_axis_size(MainAxisSize::Max);
+
+                    for (section_color, mouse_state) in std::iter::once(None)
+                        .chain(SECTION_COLOR_OPTIONS.iter().copied().map(Some))
+                        .zip(color_mouse_states.iter().cloned())
+                    {
+                        let is_selected = section_color == current_color;
+                        let dot_color = section_color
+                            .map(|color| color.to_color(&theme.terminal_colors().normal))
+                            .unwrap_or_else(ColorU::transparent_black);
+                        let tooltip = match section_color {
+                            Some(SectionColor::ClinchGreen) => "Clinch green".to_owned(),
+                            Some(color) => color.to_string(),
+                            None => "No section color".to_owned(),
+                        };
+                        let selected_color = section_color
+                            .map(SelectedSectionColor::Color)
+                            .unwrap_or_else(|| match target {
+                                SectionColorMenuTarget::TabGroup(_) => SelectedSectionColor::Unset,
+                                SectionColorMenuTarget::BookmarkedSessions => {
+                                    SelectedSectionColor::Cleared
+                                }
+                            });
+                        let action = match target {
+                            SectionColorMenuTarget::TabGroup(group_id) => {
+                                WorkspaceAction::SetTabGroupColor {
+                                    group_id,
+                                    color: selected_color,
+                                }
+                            }
+                            SectionColorMenuTarget::BookmarkedSessions => {
+                                WorkspaceAction::SetBookmarkedSessionsColor(selected_color)
+                            }
+                        };
+
+                        colors.add_child(
+                            render_color_dot(
+                                mouse_state,
+                                dot_color,
+                                is_selected,
+                                ring_color,
+                                section_color.is_none(),
+                                theme.foreground(),
+                                tooltip,
+                                appearance,
+                            )
+                            .on_click(move |ctx, _, _| {
+                                ctx.dispatch_typed_action(action.clone());
+                                ctx.dispatch_typed_action(crate::menu::MenuAction::Close(true));
+                            })
+                            .finish(),
+                        );
+                    }
+
+                    Flex::column()
+                        .with_main_axis_size(MainAxisSize::Min)
+                        .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+                        .with_spacing(8.)
+                        .with_child(
+                            Text::new_inline(
+                                "Section color",
+                                appearance.ui_font_family(),
+                                appearance.ui_font_size(),
+                            )
+                            .with_color(theme.sub_text_color(theme.surface_2()).into())
+                            .finish(),
+                        )
+                        .with_child(colors.finish())
+                        .finish()
+                }),
+                None,
+            )
+            .no_highlight_on_hover()
+            .with_no_interaction_on_hover(),
+        )]
     }
 
     /// Move/close directional labels read "up/down/above/below" in vertical
@@ -10946,81 +11109,8 @@ impl Workspace {
             vec![]
         };
 
-        let current_color = self
-            .tab_groups
-            .get(&group_id)
-            .and_then(|group| group.color.resolve(None));
-        let color_mouse_states: Vec<MouseStateHandle> = (0..TAB_COLOR_OPTIONS.len() + 1)
-            .map(|_| MouseStateHandle::default())
-            .collect();
-        let color_section = vec![MenuItem::Item(
-            MenuItemFields::new_with_custom_label(
-                Arc::new(move |_is_selected, _is_hovered, appearance, _app| {
-                    let theme = appearance.theme();
-                    let ring_color: ColorU = theme.accent().into();
-                    let mut colors = Flex::row()
-                        .with_main_axis_alignment(MainAxisAlignment::SpaceEvenly)
-                        .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                        .with_main_axis_size(MainAxisSize::Max);
-
-                    for (ansi_id, mouse_state) in std::iter::once(None)
-                        .chain(TAB_COLOR_OPTIONS.iter().copied().map(Some))
-                        .zip(color_mouse_states.iter().cloned())
-                    {
-                        let is_selected = ansi_id == current_color;
-                        let dot_color: ColorU = ansi_id
-                            .map(|id| id.to_ansi_color(&theme.terminal_colors().normal).into())
-                            .unwrap_or_else(ColorU::transparent_black);
-                        let tooltip = ansi_id
-                            .map(|id| id.to_string())
-                            .unwrap_or_else(|| "No section color".to_string());
-                        let selected_color = ansi_id
-                            .map(SelectedTabColor::Color)
-                            .unwrap_or(SelectedTabColor::Unset);
-
-                        colors.add_child(
-                            render_color_dot(
-                                mouse_state,
-                                dot_color,
-                                is_selected,
-                                ring_color,
-                                ansi_id.is_none(),
-                                theme.foreground(),
-                                tooltip,
-                                appearance,
-                            )
-                            .on_click(move |ctx, _, _| {
-                                ctx.dispatch_typed_action(WorkspaceAction::SetTabGroupColor {
-                                    group_id,
-                                    color: selected_color,
-                                });
-                                ctx.dispatch_typed_action(crate::menu::MenuAction::Close(true));
-                            })
-                            .finish(),
-                        );
-                    }
-
-                    Flex::column()
-                        .with_main_axis_size(MainAxisSize::Min)
-                        .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
-                        .with_spacing(8.)
-                        .with_child(
-                            Text::new_inline(
-                                "Section color",
-                                appearance.ui_font_family(),
-                                appearance.ui_font_size(),
-                            )
-                            .with_color(theme.sub_text_color(theme.surface_2()).into())
-                            .finish(),
-                        )
-                        .with_child(colors.finish())
-                        .finish()
-                }),
-                None,
-            )
-            .no_highlight_on_hover()
-            .with_no_interaction_on_hover(),
-        )];
+        let color_section =
+            self.section_color_menu_items(SectionColorMenuTarget::TabGroup(group_id));
 
         let mut menu_items = vec![];
         for section_items in [
@@ -12710,6 +12800,7 @@ impl Workspace {
             tab_groups,
             tasks: self.tasks.clone(),
             tasks_collapsed: self.tasks_collapsed,
+            bookmarked_sessions_color: self.bookmarked_sessions_color,
         }
     }
 
@@ -25747,6 +25838,9 @@ impl TypedActionView for Workspace {
             ToggleTabGroupRightClickMenu { group_id, anchor } => {
                 self.toggle_tab_group_right_click_menu(*group_id, *anchor, ctx)
             }
+            ToggleBookmarkedSessionsRightClickMenu { anchor } => {
+                self.toggle_bookmarked_sessions_right_click_menu(*anchor, ctx)
+            }
             UngroupTabs(group_id) => self.ungroup_tabs(*group_id, ctx),
             NewTabInGroup(group_id) => self.new_tab_in_group(*group_id, ctx),
             MoveTabGroupUp(group_id) => self.move_tab_group(*group_id, TabMovement::Left, ctx),
@@ -25759,6 +25853,7 @@ impl TypedActionView for Workspace {
             PinTabGroup(group_id) => self.pin_tab_group(*group_id, ctx),
             UnpinTabGroup(group_id) => self.unpin_tab_group(*group_id, ctx),
             ToggleBookmarkedSessionsCollapsed => self.toggle_bookmarked_sessions_collapsed(ctx),
+            SetBookmarkedSessionsColor(color) => self.set_bookmarked_sessions_color(*color, ctx),
             ToggleTasksCollapsed => self.toggle_tasks_collapsed(ctx),
             FocusTaskInput => self.focus_task_input(ctx),
             RemoveWorkspaceTask(task_id) => {
@@ -28669,6 +28764,39 @@ impl View for Workspace {
                 }
                 // The kebab anchor only exists in the vertical tabs panel.
                 (false, TabContextMenuAnchor::VerticalTabsKebab) => None,
+            };
+            if let Some(positioning) = positioning {
+                stack.add_positioned_overlay_child(
+                    ChildView::new(&self.tab_right_click_menu).finish(),
+                    positioning,
+                );
+            }
+        }
+
+        // Built-in Bookmarked sessions section color menu.
+        if let Some(anchor) = self.show_bookmarked_sessions_right_click_menu {
+            let positioning = if uses_vertical_tabs() && self.vertical_tabs_panel_open {
+                match anchor {
+                    TabContextMenuAnchor::VerticalTabsKebab => {
+                        Some(OffsetPositioning::offset_from_save_position_element(
+                            BOOKMARKED_SESSIONS_KEBAB_POSITION_ID,
+                            vec2f(0., 4.),
+                            PositionedElementOffsetBounds::WindowByPosition,
+                            PositionedElementAnchor::BottomLeft,
+                            ChildAnchor::TopLeft,
+                        ))
+                    }
+                    TabContextMenuAnchor::Pointer(position) => {
+                        Some(OffsetPositioning::offset_from_parent(
+                            position,
+                            ParentOffsetBounds::WindowByPosition,
+                            ParentAnchor::TopLeft,
+                            ChildAnchor::TopLeft,
+                        ))
+                    }
+                }
+            } else {
+                None
             };
             if let Some(positioning) = positioning {
                 stack.add_positioned_overlay_child(

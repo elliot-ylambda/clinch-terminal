@@ -5107,31 +5107,46 @@ fn test_create_section_action_creates_new_session_and_updates_color() {
                 .expect("new session should be the first member of a section");
             assert_eq!(
                 workspace.tab_groups[&group_id].color,
-                SelectedTabColor::Unset
+                SelectedSectionColor::Unset
             );
 
             workspace.handle_action(
                 &WorkspaceAction::SetTabGroupColor {
                     group_id,
-                    color: SelectedTabColor::Color(AnsiColorIdentifier::Magenta),
+                    color: SelectedSectionColor::Color(SectionColor::ClinchGreen),
                 },
                 ctx,
             );
             assert_eq!(
                 workspace.tab_groups[&group_id].color,
-                SelectedTabColor::Color(AnsiColorIdentifier::Magenta)
+                SelectedSectionColor::Color(SectionColor::ClinchGreen)
             );
 
             workspace.handle_action(
                 &WorkspaceAction::SetTabGroupColor {
                     group_id,
-                    color: SelectedTabColor::Unset,
+                    color: SelectedSectionColor::Unset,
                 },
                 ctx,
             );
             assert_eq!(
                 workspace.tab_groups[&group_id].color,
-                SelectedTabColor::Unset
+                SelectedSectionColor::Unset
+            );
+
+            assert_eq!(
+                workspace.bookmarked_sessions_color,
+                SelectedSectionColor::Unset
+            );
+            workspace.handle_action(
+                &WorkspaceAction::SetBookmarkedSessionsColor(SelectedSectionColor::Color(
+                    SectionColor::Blue,
+                )),
+                ctx,
+            );
+            assert_eq!(
+                workspace.bookmarked_sessions_color,
+                SelectedSectionColor::Color(SectionColor::Blue)
             );
         });
     });

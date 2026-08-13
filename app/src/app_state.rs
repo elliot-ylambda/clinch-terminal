@@ -20,7 +20,7 @@ use crate::settings_view::SettingsSection;
 use crate::tab::SelectedTabColor;
 use crate::terminal::ShellLaunchData;
 use crate::themes::theme::AnsiColorIdentifier;
-use crate::workspace::tab_group::TabGroupId;
+use crate::workspace::tab_group::{SelectedSectionColor, TabGroupId};
 use crate::workspace::task::WorkspaceTask;
 use crate::workspace::view::left_panel::ToolPanelView;
 
@@ -102,13 +102,14 @@ pub struct WindowSnapshot {
     pub tab_groups: Vec<TabGroupSnapshot>,
     pub tasks: Vec<WorkspaceTask>,
     pub tasks_collapsed: bool,
+    pub bookmarked_sessions_color: SelectedSectionColor,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TabGroupSnapshot {
     pub id: TabGroupId,
     pub name: Option<String>,
-    pub color: SelectedTabColor,
+    pub color: SelectedSectionColor,
     pub collapsed: bool,
     pub pinned: bool,
 }

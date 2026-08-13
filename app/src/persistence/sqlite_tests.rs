@@ -28,8 +28,7 @@ use crate::server::ids::ClientId;
 use crate::tab::SelectedTabColor;
 use crate::terminal::model::block::SerializedBlock;
 use crate::terminal::ShellLaunchData;
-use crate::themes::theme::AnsiColorIdentifier;
-use crate::workspace::tab_group::TabGroupId;
+use crate::workspace::tab_group::{SectionColor, SelectedSectionColor, TabGroupId};
 use crate::workspace::task::WorkspaceTask;
 
 fn project_window(project: WindowSnapshot) -> ProjectWindowSnapshot {
@@ -339,6 +338,7 @@ fn test_terminal_window_snapshot(vertical_tabs_panel_open: bool) -> WindowSnapsh
         tab_groups: vec![],
         tasks: vec![],
         tasks_collapsed: false,
+        bookmarked_sessions_color: SelectedSectionColor::Unset,
     }
 }
 
@@ -530,6 +530,7 @@ fn test_sqlite_round_trips_custom_vertical_tabs_title() {
             tab_groups: vec![],
             tasks: vec![],
             tasks_collapsed: false,
+            bookmarked_sessions_color: SelectedSectionColor::Unset,
         })],
         active_window_index: Some(0),
         block_lists: Default::default(),
@@ -609,6 +610,7 @@ fn test_sqlite_round_trips_code_pane_with_multiple_tabs() {
             tab_groups: vec![],
             tasks: vec![],
             tasks_collapsed: false,
+            bookmarked_sessions_color: SelectedSectionColor::Unset,
         })],
         active_window_index: Some(0),
         block_lists: Default::default(),
@@ -730,12 +732,13 @@ fn test_sqlite_round_trips_tab_groups() {
             tab_groups: vec![TabGroupSnapshot {
                 id: group_id,
                 name: Some("Backend".to_string()),
-                color: SelectedTabColor::Color(AnsiColorIdentifier::Blue),
+                color: SelectedSectionColor::Color(SectionColor::Blue),
                 collapsed: true,
                 pinned: false,
             }],
             tasks: vec![],
             tasks_collapsed: false,
+            bookmarked_sessions_color: SelectedSectionColor::Color(SectionColor::ClinchGreen),
         })],
         active_window_index: Some(0),
         block_lists: Default::default(),
@@ -757,9 +760,13 @@ fn test_sqlite_round_trips_tab_groups() {
     assert_eq!(restored_group.name.as_deref(), Some("Backend"));
     assert_eq!(
         restored_group.color,
-        SelectedTabColor::Color(AnsiColorIdentifier::Blue)
+        SelectedSectionColor::Color(SectionColor::Blue)
     );
     assert!(restored_group.collapsed);
+    assert_eq!(
+        restored_window.bookmarked_sessions_color,
+        SelectedSectionColor::Color(SectionColor::ClinchGreen)
+    );
 
     // The in-memory `TabGroupId` is minted fresh on restore, so we check that
     // the grouped tab points at the restored group, and the ungrouped tab
@@ -888,20 +895,21 @@ fn test_sqlite_round_trips_pinned_state() {
                 TabGroupSnapshot {
                     id: pinned_group_id,
                     name: Some("Pinned".to_string()),
-                    color: SelectedTabColor::default(),
+                    color: SelectedSectionColor::default(),
                     collapsed: false,
                     pinned: true,
                 },
                 TabGroupSnapshot {
                     id: unpinned_group_id,
                     name: Some("Loose".to_string()),
-                    color: SelectedTabColor::default(),
+                    color: SelectedSectionColor::default(),
                     collapsed: false,
                     pinned: false,
                 },
             ],
             tasks: vec![],
             tasks_collapsed: false,
+            bookmarked_sessions_color: SelectedSectionColor::Unset,
         })],
         active_window_index: Some(0),
         block_lists: Default::default(),

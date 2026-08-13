@@ -458,6 +458,7 @@ diesel::table! {
         is_active_project -> Bool,
         tasks -> Text,
         tasks_collapsed -> Bool,
+        bookmarked_sessions_color -> Nullable<Text>,
     }
 }
 

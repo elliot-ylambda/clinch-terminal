@@ -1804,7 +1804,18 @@ impl AgentInputFooter {
                      is sent once the limit resets. Click to turn off."
                 ),
             ),
-            (false, _, _, _) => (
+            (false, _, _, AutoContinueAvailability::WaitingForUsageData) => (
+                "Auto-continue: waiting".to_string(),
+                format!(
+                    "Waiting for current {agent_name} plan-limit data before auto-continue can be enabled."
+                ),
+            ),
+            (false, _, _, AutoContinueAvailability::Unsupported) => (
+                "Auto-continue: unavailable".to_string(),
+                "Auto-continue requires a supported local session with the current Clinch agent plugin."
+                    .to_string(),
+            ),
+            (false, _, _, AutoContinueAvailability::Ready) => (
                 "Auto-continue: off".to_string(),
                 format!(
                     "Auto-send \"{AUTO_CONTINUE_PROMPT}\" when this {agent_name} session's rate \
@@ -1820,6 +1831,7 @@ impl AgentInputFooter {
             .with_tooltip(tooltip)
             .with_tooltip_alignment(TooltipAlignment::Left)
             .with_mouse_state_handle(self.auto_continue_mouse_state.clone())
+            .with_disabled(!enabled && !availability.may_enable())
             .on_click(|ctx| {
                 ctx.dispatch_typed_action(AgentInputFooterAction::ToggleAutoContinue);
             })
@@ -1958,11 +1970,6 @@ impl AgentInputFooter {
         // the same eligibility predicate as the Command Palette and action handler.
         let auto_continue_availability =
             AutoContinueModel::availability(self.terminal_view_id, shared_status.is_viewer(), app);
-        let auto_continue_enabled =
-            AutoContinueModel::as_ref(app).is_enabled(self.terminal_view_id);
-        if auto_continue_availability.may_render(auto_continue_enabled) {
-            action_buttons.push(self.render_auto_continue_toggle(auto_continue_availability, app));
-        }
         if let Some(plugin_action) = plugin_action {
             action_buttons.push(plugin_action);
         }
@@ -1996,6 +2003,17 @@ impl AgentInputFooter {
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
             .with_main_axis_size(MainAxisSize::Min)
             .with_spacing(4.);
+
+        // Keep this live per-pane action stable at the far edge where it has historically lived.
+        // Eligibility can be transient while usage data or plugin identity arrives, so render a
+        // disabled state instead of making the control jump in and out of the layout.
+        if matches!(
+            self.cli_agent(app),
+            Some(CLIAgent::Claude | CLIAgent::Codex)
+        ) {
+            right_buttons
+                .add_child(self.render_auto_continue_toggle(auto_continue_availability, app));
+        }
 
         // The editor is deliberately isolated at the far edge so the action and prompt clusters
         // remain easy to scan.

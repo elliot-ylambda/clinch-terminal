@@ -84,7 +84,7 @@ use crate::util::color::Opacity;
 use crate::workspace::action::{NewSessionMenuAnchor, WorkspaceAction};
 use crate::workspace::cross_window_tab_drag::CrossWindowTabDrag;
 use crate::workspace::hoa_onboarding::HoaOnboardingStep;
-use crate::workspace::tab_group::{TabGroup, TabGroupId};
+use crate::workspace::tab_group::{SectionColor, TabGroup, TabGroupId};
 use crate::workspace::tab_settings::{
     TabSettings, VerticalTabsCompactSubtitle, VerticalTabsDisplayGranularity,
     VerticalTabsPrimaryInfo, VerticalTabsTabItemMode, VerticalTabsViewMode,
@@ -142,9 +142,7 @@ const TAB_COLOR_OPACITY: Opacity = 15;
 const TAB_COLOR_HOVER_OPACITY: Opacity = 50;
 const BOOKMARKED_SESSIONS_MAX_HEIGHT: f32 = 220.;
 const BOOKMARKED_SESSION_ICON_SIZE: f32 = VERTICAL_TABS_ICON_SIZE;
-/// Keep the built-in bookmark section visually distinct using one of the same colors offered in
-/// the section color picker.
-const BOOKMARKED_SESSIONS_COLOR: AnsiColorIdentifier = AnsiColorIdentifier::Yellow;
+const BOOKMARKED_SESSIONS_DEFAULT_COLOR: SectionColor = SectionColor::ClinchGreen;
 const TASKS_MAX_HEIGHT: f32 = 220.;
 const TASKS_HEADER_ICON_SIZE: f32 = 14.;
 const SECTION_ACCENT_BORDER_OPACITY: Opacity = 55;
@@ -189,6 +187,9 @@ pub(crate) fn vtab_group_position_id(group_id: TabGroupId) -> String {
 /// Stable hit-test rect for the built-in Bookmarked sessions section.
 pub(crate) const BOOKMARKED_SESSIONS_SECTION_POSITION_ID: &str =
     "vertical_tabs:bookmarked_sessions_section";
+/// Save-position id for the built-in bookmark section's kebab menu.
+pub(crate) const BOOKMARKED_SESSIONS_KEBAB_POSITION_ID: &str =
+    "vertical_tabs:bookmarked_sessions_kebab";
 
 /// Save-position id for a horizontal tab group's container rect, used for
 /// drop hit-testing and as the collapsed-group fallback in horizontal-axis
@@ -2384,9 +2385,10 @@ fn render_bookmarked_sessions(
 ) -> Box<dyn Element> {
     let appearance = Appearance::as_ref(app);
     let theme = appearance.theme();
-    let section_tint: ColorU = BOOKMARKED_SESSIONS_COLOR
-        .to_ansi_color(&theme.terminal_colors().normal)
-        .into();
+    let section_tint = workspace
+        .bookmarked_sessions_color
+        .resolve(Some(BOOKMARKED_SESSIONS_DEFAULT_COLOR))
+        .map(|color| color.to_color(&theme.terminal_colors().normal));
     let project_root = workspace.active_header_project_dir(app);
     let bookmarked = CLIAgentSessionsModel::as_ref(app)
         .bookmarked_conversations()
@@ -2441,7 +2443,7 @@ fn render_bookmarked_sessions(
                 count,
                 &mouse_states,
                 is_collapsed,
-                false,
+                hover_state.is_hovered(),
                 false,
                 false,
                 None,
@@ -2496,8 +2498,7 @@ fn render_bookmarked_sessions(
             false,
             hover_state.is_hovered(),
         );
-        let (card_background, card_border) =
-            section_card_colors(card_state, Some(section_tint), theme);
+        let (card_background, card_border) = section_card_colors(card_state, section_tint, theme);
         Container::new(content.finish())
             .with_padding(padding)
             .with_background(card_background)
@@ -2521,7 +2522,7 @@ fn render_bookmarked_sessions(
         .with_margin_left(GROUP_HORIZONTAL_PADDING)
         .with_margin_right(GROUP_HORIZONTAL_PADDING)
         .with_margin_top(GROUP_HORIZONTAL_PADDING)
-        .with_margin_bottom(4.)
+        .with_margin_bottom(GROUP_HORIZONTAL_PADDING)
         .finish()
 }
 
@@ -3758,6 +3759,7 @@ fn render_tab_group_header_icon_button(
     .finish()
 }
 
+#[derive(Clone, Copy)]
 enum SectionHeaderKind<'a> {
     TabGroup(&'a TabGroup),
     BookmarkedSessions,
@@ -3862,49 +3864,65 @@ fn render_section_header(
         .with_child(subtitle)
         .finish();
 
-    let action_buttons = if let Some(group_id) = group_id.filter(|_| show_action_buttons) {
-        let add_button = render_tab_group_header_icon_button(
-            WarpIcon::Plus,
-            TAB_GROUP_HEADER_ACTION_ICON_SIZE,
-            sub_text_color,
-            internal_colors::fg_overlay_2(theme),
-            mouse_states.add.clone(),
-            Some(WorkspaceAction::NewTabInGroup(group_id)),
-        );
-        let kebab_button = SavePosition::new(
-            render_tab_group_header_icon_button(
-                WarpIcon::DotsVertical,
+    let action_buttons =
+        if show_action_buttons && matches!(kind, SectionHeaderKind::BookmarkedSessions) {
+            SavePosition::new(
+                render_tab_group_header_icon_button(
+                    WarpIcon::DotsVertical,
+                    TAB_GROUP_HEADER_ACTION_ICON_SIZE,
+                    sub_text_color,
+                    internal_colors::fg_overlay_2(theme),
+                    mouse_states.kebab.clone(),
+                    Some(WorkspaceAction::ToggleBookmarkedSessionsRightClickMenu {
+                        anchor: TabContextMenuAnchor::VerticalTabsKebab,
+                    }),
+                ),
+                BOOKMARKED_SESSIONS_KEBAB_POSITION_ID,
+            )
+            .finish()
+        } else if let Some(group_id) = group_id.filter(|_| show_action_buttons) {
+            let add_button = render_tab_group_header_icon_button(
+                WarpIcon::Plus,
                 TAB_GROUP_HEADER_ACTION_ICON_SIZE,
                 sub_text_color,
                 internal_colors::fg_overlay_2(theme),
-                mouse_states.kebab.clone(),
-                Some(WorkspaceAction::ToggleTabGroupRightClickMenu {
-                    group_id,
-                    anchor: TabContextMenuAnchor::VerticalTabsKebab,
-                }),
-            ),
-            &vtab_group_kebab_position_id(group_id),
-        )
-        .finish();
-        let close_button = render_tab_group_header_icon_button(
-            WarpIcon::X,
-            TAB_GROUP_HEADER_ACTION_ICON_SIZE,
-            sub_text_color,
-            internal_colors::fg_overlay_3(theme),
-            mouse_states.close.clone(),
-            Some(WorkspaceAction::UngroupTabs(group_id)),
-        );
-        Flex::row()
-            .with_main_axis_size(MainAxisSize::Min)
-            .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_spacing(GROUP_ACTION_BUTTON_GAP)
-            .with_child(add_button)
-            .with_child(kebab_button)
-            .with_child(close_button)
-            .finish()
-    } else {
-        Empty::new().finish()
-    };
+                mouse_states.add.clone(),
+                Some(WorkspaceAction::NewTabInGroup(group_id)),
+            );
+            let kebab_button = SavePosition::new(
+                render_tab_group_header_icon_button(
+                    WarpIcon::DotsVertical,
+                    TAB_GROUP_HEADER_ACTION_ICON_SIZE,
+                    sub_text_color,
+                    internal_colors::fg_overlay_2(theme),
+                    mouse_states.kebab.clone(),
+                    Some(WorkspaceAction::ToggleTabGroupRightClickMenu {
+                        group_id,
+                        anchor: TabContextMenuAnchor::VerticalTabsKebab,
+                    }),
+                ),
+                &vtab_group_kebab_position_id(group_id),
+            )
+            .finish();
+            let close_button = render_tab_group_header_icon_button(
+                WarpIcon::X,
+                TAB_GROUP_HEADER_ACTION_ICON_SIZE,
+                sub_text_color,
+                internal_colors::fg_overlay_3(theme),
+                mouse_states.close.clone(),
+                Some(WorkspaceAction::UngroupTabs(group_id)),
+            );
+            Flex::row()
+                .with_main_axis_size(MainAxisSize::Min)
+                .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                .with_spacing(GROUP_ACTION_BUTTON_GAP)
+                .with_child(add_button)
+                .with_child(kebab_button)
+                .with_child(close_button)
+                .finish()
+        } else {
+            Empty::new().finish()
+        };
 
     let row = Flex::row()
         .with_main_axis_size(MainAxisSize::Max)
@@ -3985,6 +4003,12 @@ fn render_section_header(
                 anchor: TabContextMenuAnchor::Pointer(position),
             });
         });
+    } else {
+        hoverable = hoverable.on_right_click(move |ctx, _, position| {
+            ctx.dispatch_typed_action(WorkspaceAction::ToggleBookmarkedSessionsRightClickMenu {
+                anchor: TabContextMenuAnchor::Pointer(position),
+            });
+        });
     }
     hoverable.finish()
 }
@@ -4013,10 +4037,10 @@ fn render_grouped_tab_container(
     let member_count = members.len();
     let group_id = group.id;
     let group = group.clone();
-    let group_tint = group.color.resolve(None).map(|color| {
-        let color: ColorU = color.to_ansi_color(&theme.terminal_colors().normal).into();
-        color
-    });
+    let group_tint = group
+        .color
+        .resolve(None)
+        .map(|color| color.to_color(&theme.terminal_colors().normal));
     let any_member_active = members
         .iter()
         .any(|(tab_index, _)| *tab_index == workspace.active_tab_index);

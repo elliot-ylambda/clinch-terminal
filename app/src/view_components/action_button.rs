@@ -295,6 +295,12 @@ impl ActionButton {
         self
     }
 
+    /// Configures the initial disabled state before the button is rendered or added as a view.
+    pub fn with_disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+
     /// Set the keybinding associated with this button's action. This may only be called once.
     pub fn with_keybinding(
         mut self,

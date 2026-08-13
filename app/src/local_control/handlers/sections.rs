@@ -11,15 +11,13 @@ use ::local_control::{ActionKind, ControlError, ErrorCode};
 use serde_json::json;
 use uuid::Uuid;
 use warp_core::features::FeatureFlag;
-use warp_core::ui::theme::AnsiColorIdentifier;
 use warpui::{AppContext, ModelContext};
 
 use crate::local_control::resolver::{
     reject_target_families, tab_index_from_target, target_workspace,
 };
 use crate::local_control::LocalControlBridge;
-use crate::tab::SelectedTabColor;
-use crate::workspace::tab_group::TabGroupId;
+use crate::workspace::tab_group::{SectionColor, SelectedSectionColor, TabGroupId};
 use crate::workspace::{TabMovement, Workspace};
 
 const MAX_SECTION_NAME_BYTES: usize = 256;
@@ -235,16 +233,19 @@ fn validated_name(name: String) -> Result<String, ControlError> {
     }
 }
 
-fn parse_color(color: String) -> Result<SelectedTabColor, ControlError> {
+fn parse_color(color: String) -> Result<SelectedSectionColor, ControlError> {
     if matches!(color.to_ascii_lowercase().as_str(), "default" | "unset") {
-        return Ok(SelectedTabColor::Unset);
+        return Ok(SelectedSectionColor::Unset);
     }
-    AnsiColorIdentifier::from_str(&color)
-        .map(SelectedTabColor::Color)
+    if color.eq_ignore_ascii_case("none") {
+        return Ok(SelectedSectionColor::Cleared);
+    }
+    SectionColor::from_str(&color)
+        .map(SelectedSectionColor::Color)
         .map_err(|_| {
             ControlError::new(
                 ErrorCode::InvalidParams,
-                format!("{color:?} is not an ANSI color or `default`"),
+                format!("{color:?} is not a section color, `none`, or `default`"),
             )
         })
 }
@@ -287,9 +288,9 @@ fn section_state(workspace: &Workspace, _ctx: &AppContext) -> serde_json::Value 
                 .map(|tab| tab.pane_group.id().to_string())
                 .collect::<Vec<_>>();
             let color = match group.color {
-                SelectedTabColor::Unset => None,
-                SelectedTabColor::Cleared => Some("none".to_owned()),
-                SelectedTabColor::Color(color) => Some(color.to_string().to_ascii_lowercase()),
+                SelectedSectionColor::Unset => None,
+                SelectedSectionColor::Cleared => Some("none".to_owned()),
+                SelectedSectionColor::Color(color) => Some(color.to_string()),
             };
             Some(json!({
                 "section_id": section_id.0.to_string(),
@@ -322,11 +323,15 @@ mod tests {
     fn default_color_clears_the_section_tint() {
         assert_eq!(
             parse_color("default".to_owned()).unwrap(),
-            SelectedTabColor::Unset
+            SelectedSectionColor::Unset
         );
         assert_eq!(
             parse_color("magenta".to_owned()).unwrap(),
-            SelectedTabColor::Color(AnsiColorIdentifier::Magenta)
+            SelectedSectionColor::Color(SectionColor::Magenta)
+        );
+        assert_eq!(
+            parse_color("clinch-green".to_owned()).unwrap(),
+            SelectedSectionColor::Color(SectionColor::ClinchGreen)
         );
     }
 }
