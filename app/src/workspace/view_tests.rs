@@ -908,7 +908,7 @@ fn remote_control_header_uses_the_latest_live_device() {
 }
 
 #[test]
-fn remote_control_header_uses_compact_muted_styles() {
+fn remote_control_header_uses_green_outline_with_muted_content() {
     let font_family_id = warpui::fonts::FamilyId(42);
     let muted_color = ColorU {
         r: 0x77,
@@ -924,7 +924,12 @@ fn remote_control_header_uses_compact_muted_styles() {
     assert_eq!(default_styles.font_color, Some(muted_color));
     assert_eq!(default_styles.font_size, Some(11.));
     assert_eq!(default_styles.width, None);
-    assert_eq!(default_styles.border_color, Some(muted_color.into()));
+    assert_eq!(default_styles.border_color, Some(CLINCH_LOGO_GREEN.into()));
+    assert_eq!(interactive_styles.font_color, Some(muted_color));
+    assert_eq!(
+        interactive_styles.border_color,
+        Some(CLINCH_LOGO_GREEN.into())
+    );
 }
 
 #[test]

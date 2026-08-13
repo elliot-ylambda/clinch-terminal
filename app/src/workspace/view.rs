@@ -1449,7 +1449,7 @@ fn remote_control_button_styles(
         font_size: Some(REMOTE_CONTROL_BUTTON_FONT_SIZE),
         font_weight: Some(Weight::Semibold),
         padding: Some(Coords::default().top(3.).bottom(3.).left(7.).right(7.)),
-        border_color: Some(muted_color.into()),
+        border_color: Some(CLINCH_LOGO_GREEN.into()),
         border_width: Some(1.),
         border_radius: Some(CornerRadius::with_all(Radius::Percentage(50.))),
         background: Some(ColorU::transparent_black().into()),
