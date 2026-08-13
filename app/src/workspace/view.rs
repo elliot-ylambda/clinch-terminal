@@ -110,7 +110,7 @@ use warpui::platform::{
 #[cfg(feature = "local_tty")]
 use warpui::r#async::Timer;
 use warpui::text_layout::ClipConfig;
-use warpui::ui_components::button::{Button, ButtonVariant, TextAndIcon, TextAndIconAlignment};
+use warpui::ui_components::button::{ButtonVariant, TextAndIcon, TextAndIconAlignment};
 use warpui::ui_components::components::{Coords, UiComponent, UiComponentStyles};
 use warpui::windowing::state::ApplicationStage;
 use warpui::windowing::{StateEvent, WindowManager};
@@ -261,7 +261,6 @@ use crate::cloud_object::{
     CloudObject, GenericStringObjectFormat, JsonObjectType, ObjectType, Owner, Space,
 };
 use crate::code::buffer_location::LocalOrRemotePath;
-use crate::code::editor::{add_color, remove_color};
 #[cfg(feature = "local_fs")]
 use crate::code::editor_management::CodeManager;
 use crate::code::editor_management::CodeSource;
@@ -4511,9 +4510,6 @@ impl Workspace {
                         self.close_right_panel(&pane_group, ctx);
                     }
                 }
-                ctx.notify();
-            }
-            TabSettingsChangedEvent::ShowCodeReviewDiffStats { .. } => {
                 ctx.notify();
             }
             TabSettingsChangedEvent::DirectoryTabColors { .. } => {
@@ -22046,141 +22042,6 @@ impl Workspace {
             })
     }
 
-    fn render_right_panel_button(
-        &self,
-        appearance: &Appearance,
-        ctx: &AppContext,
-    ) -> Box<dyn Element> {
-        let is_active = self.active_tab_pane_group().as_ref(ctx).right_panel_open;
-        let is_enabled = Self::should_enable_file_tree_and_global_search_for_pane_group(
-            self.active_tab_pane_group().as_ref(ctx),
-        );
-        let disable = !is_enabled;
-
-        let theme = appearance.theme();
-        let font_color = if disable {
-            theme.disabled_text_color(theme.background())
-        } else if is_active {
-            theme.main_text_color(theme.background())
-        } else {
-            theme.sub_text_color(theme.background())
-        };
-
-        // Build the button content: Diff icon + optional diff stats
-        let icon = ConstrainedBox::new(icons::Icon::Diff.to_warpui_icon(font_color).finish())
-            .with_width(16.)
-            .with_height(16.)
-            .finish();
-
-        let show_diff_stats = *TabSettings::as_ref(ctx).show_code_review_diff_stats;
-
-        let line_changes = if show_diff_stats {
-            self.active_tab_pane_group()
-                .as_ref(ctx)
-                .active_session_view(ctx)
-                .and_then(|tv| tv.as_ref(ctx).current_diff_line_changes(ctx))
-                .filter(|lc| {
-                    // Only show the stat badge when there are actual line-level changes
-                    // (files_changed alone, e.g. mode-only changes, is not surfaced here).
-                    lc.lines_added > 0 || lc.lines_removed > 0
-                })
-        } else {
-            None
-        };
-
-        let has_stats = line_changes.is_some();
-
-        let mut row = Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center);
-        row.add_child(icon);
-
-        if let Some(lc) = line_changes {
-            let stat = |value: u32, prefix: &str, color: ColorU| -> Box<dyn Element> {
-                Container::new(
-                    Text::new_inline(format!("{prefix}{value}"), appearance.ui_font_family(), 12.)
-                        .with_color(color)
-                        .with_style(Properties::default().weight(Weight::Semibold))
-                        .finish(),
-                )
-                .with_margin_left(4.)
-                .finish()
-            };
-            row.add_child(stat(lc.lines_added, "+", add_color(appearance)));
-            row.add_child(stat(lc.lines_removed, "-", remove_color(appearance)));
-        }
-
-        let label = row.finish();
-
-        // The diff icon SVG has intrinsic horizontal whitespace in its 14px viewBox: its visible
-        // paths start around x=3 and end around x=11. When stats are shown, equal container padding
-        // makes the gap between the button edge and the visible icon look wider than the gap after
-        // the text. Locally compensate for that artwork padding without changing the shared icon.
-        let (header_padding_left, header_padding_right) =
-            if has_stats { (5., 8.) } else { (4., 4.) };
-        let default_styles = UiComponentStyles {
-            font_color: Some(font_color.into()),
-            font_size: Some(12.),
-            font_weight: Some(Weight::Medium),
-            font_family_id: Some(appearance.ui_font_family()),
-            height: Some(24.),
-            border_radius: Some(CornerRadius::with_all(Radius::Pixels(4.))),
-            border_width: Some(0.),
-            padding: Some(Coords {
-                top: 0.,
-                bottom: 0.,
-                left: header_padding_left,
-                right: header_padding_right,
-            }),
-            ..Default::default()
-        };
-
-        let hover_styles = UiComponentStyles {
-            background: Some(theme.surface_2().into()),
-            ..default_styles
-        };
-
-        let clicked_styles = UiComponentStyles {
-            background: Some(theme.background().into()),
-            ..default_styles
-        };
-
-        let mut button = Button::new(
-            self.mouse_states.right_panel_icon.clone(),
-            default_styles,
-            Some(hover_styles),
-            Some(clicked_styles),
-            None,
-        )
-        .with_custom_label(label);
-
-        if is_active {
-            button = button.active().with_active_styles(UiComponentStyles {
-                background: Some(internal_colors::fg_overlay_3(theme).into()),
-                ..UiComponentStyles::default()
-            });
-        }
-
-        let hoverable = if disable {
-            button.build().disable()
-        } else {
-            button
-                .with_tooltip(self.render_tab_bar_icon_button_tooltip(
-                    appearance,
-                    "Code review panel".to_string(),
-                    keybinding_name_to_display_string("workspace:toggle_right_panel", ctx),
-                ))
-                .build()
-                .on_click(move |ctx, _, _| {
-                    ctx.dispatch_typed_action(WorkspaceAction::ToggleRightPanel);
-                })
-        };
-
-        SavePosition::new(
-            Container::new(Align::new(hoverable.finish()).finish()).finish(),
-            "workspace:right_panel_button",
-        )
-        .finish()
-    }
-
     /// Renders an invisible rect for detecting hovers over the tab bar.
     fn render_tab_bar_hover_area(&self) -> Box<dyn Element> {
         self.render_tab_bar_hoverable(
@@ -22718,7 +22579,9 @@ impl Workspace {
             HeaderToolbarItemKind::AgentManagement => {
                 self.render_agent_management_view_button(appearance, ctx)
             }
-            HeaderToolbarItemKind::CodeReview => self.render_right_panel_button(appearance, ctx),
+            // Keep accepting saved toolbar configurations from older builds, but do not render
+            // the removed code-review header button.
+            HeaderToolbarItemKind::CodeReview => return None,
             // Retain this variant so old serialized toolbar settings still load, but never
             // render the removed AppleScript/iMessage integration.
             HeaderToolbarItemKind::IMessageStatus => return None,
@@ -25114,12 +24977,6 @@ impl Workspace {
 
         if *tab_settings.show_indicators.value() {
             context.set.insert(flags::TAB_INDICATORS_FLAG);
-        }
-        if *tab_settings.show_code_review_button.value() {
-            context.set.insert(flags::SHOW_CODE_REVIEW_BUTTON_FLAG);
-        }
-        if *tab_settings.show_code_review_diff_stats.value() {
-            context.set.insert(flags::SHOW_CODE_REVIEW_DIFF_STATS_FLAG);
         }
         if *general_settings
             .auto_open_code_review_pane_on_first_agent_change

@@ -2,10 +2,9 @@ use chrono::{DateTime, Utc};
 use cli_agent_usage::format::{chip_halves, fmt_pct, fmt_reset, fmt_reset_short, fmt_tokens};
 use cli_agent_usage::{LimitWindow, Provider, Severity, UsageSnapshot, WindowTotals};
 use warp_core::ui::theme::Fill;
-use warp_core::ui::Icon;
 use warpui::elements::{
-    ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Empty, Flex, Hoverable,
-    MouseStateHandle, ParentElement, Radius, SizeConstraintCondition, SizeConstraintSwitch,
+    Container, CornerRadius, CrossAxisAlignment, Empty, Flex, Hoverable, MouseStateHandle,
+    ParentElement, Radius, SizeConstraintCondition, SizeConstraintSwitch,
 };
 use warpui::platform::Cursor;
 use warpui::Element;
@@ -299,8 +298,7 @@ fn clickable_provider(
     .finish()
 }
 
-/// The full/medium inline layout: clock icon + Claude/Fable segment + `│`
-/// divider + Codex segment.
+/// The full/medium inline layout: Claude/Fable segment + `│` divider + Codex segment.
 fn inline_row(
     snapshot: &UsageSnapshot,
     include_resets: bool,
@@ -311,22 +309,7 @@ fn inline_row(
     let bg = render.bg;
     let theme = appearance.theme();
     let sub = theme.sub_text_color(bg);
-    let icon_size = appearance.monospace_font_size();
     let mut row = Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center);
-    row.add_child(
-        Container::new(
-            ConstrainedBox::new(
-                Icon::Clock
-                    .to_warpui_icon(theme.main_text_color(bg))
-                    .finish(),
-            )
-            .with_width(icon_size)
-            .with_height(icon_size)
-            .finish(),
-        )
-        .with_margin_right(4.)
-        .finish(),
-    );
     row.add_child(clickable_provider(
         CliAgentUsageProvider::Claude,
         provider_segment(
@@ -441,22 +424,7 @@ fn compact_row(
     let bg = render.bg;
     let theme = appearance.theme();
     let neutral = theme.sub_text_color(bg);
-    let icon_size = appearance.monospace_font_size();
     let mut row = Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center);
-    row.add_child(
-        Container::new(
-            ConstrainedBox::new(
-                Icon::Clock
-                    .to_warpui_icon(theme.main_text_color(bg))
-                    .finish(),
-            )
-            .with_width(icon_size)
-            .with_height(icon_size)
-            .finish(),
-        )
-        .with_margin_right(2.)
-        .finish(),
-    );
 
     for (index, kind) in [CliAgentUsageProvider::Claude, CliAgentUsageProvider::Codex]
         .into_iter()

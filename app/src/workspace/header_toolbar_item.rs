@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use settings::Setting as _;
 use warpui::{AppContext, SingletonEntity};
 
 use crate::auth::AuthStateProvider;
@@ -7,7 +6,6 @@ use crate::features::FeatureFlag;
 use crate::settings::{AISettings, CodeSettings};
 use crate::tab::uses_vertical_tabs;
 use crate::ui_components::icons::Icon;
-use crate::workspace::tab_settings::TabSettings;
 
 /// A configurable item in the vertical tabs header toolbar.
 ///
@@ -88,7 +86,9 @@ impl HeaderToolbarItemKind {
                     && FeatureFlag::AgentManagementView.is_enabled()
                     && !is_web_anonymous_user
             }
-            Self::CodeReview => cfg!(feature = "local_fs"),
+            // Keep deserializing toolbar settings that contain the removed code-review
+            // header button, but never offer or render it.
+            Self::CodeReview => false,
             // Keep deserializing toolbar settings written by development builds
             // that exposed the removed iMessage integration.
             Self::IMessageStatus => false,
@@ -106,7 +106,7 @@ impl HeaderToolbarItemKind {
         }
         match self {
             Self::FileExplorer => *CodeSettings::as_ref(app).show_project_explorer,
-            Self::CodeReview => *TabSettings::as_ref(app).show_code_review_button.value(),
+            Self::CodeReview => false,
             Self::IMessageStatus => true,
             Self::NotificationsMailbox => *AISettings::as_ref(app).show_agent_notifications,
             Self::TabsPanel
@@ -145,7 +145,7 @@ impl HeaderToolbarItemKind {
     }
 
     pub fn default_right() -> Vec<Self> {
-        vec![Self::CodeReview]
+        vec![]
     }
 
     /// Toolbar items offered by Clinch's configurator (availability filtering
@@ -158,7 +158,6 @@ impl HeaderToolbarItemKind {
             Self::ConversationFinder,
             Self::ToolsPanel,
             Self::AgentManagement,
-            Self::CodeReview,
         ]
     }
 }

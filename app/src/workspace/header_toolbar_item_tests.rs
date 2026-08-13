@@ -51,6 +51,12 @@ fn removed_imessage_status_is_never_exposed() {
 }
 
 #[test]
+fn removed_code_review_button_is_never_exposed() {
+    assert!(!HeaderToolbarItemKind::default_right().contains(&HeaderToolbarItemKind::CodeReview));
+    assert!(!HeaderToolbarItemKind::all_items().contains(&HeaderToolbarItemKind::CodeReview));
+}
+
+#[test]
 fn file_explorer_is_a_panel_item() {
     // It renders the shared left panel when the dedicated Tools Panel item is
     // absent from the toolbar configuration.

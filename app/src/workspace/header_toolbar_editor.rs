@@ -145,8 +145,6 @@ fn save_toolbar_selection<V: View>(
     right: Vec<HeaderToolbarItemKind>,
     ctx: &mut ViewContext<V>,
 ) {
-    sync_show_hide_settings(&left, &right, ctx);
-
     let selection = if toolbar_items_match_defaults(&left, &right) {
         HeaderToolbarChipSelection::Default
     } else {
@@ -158,23 +156,6 @@ fn save_toolbar_selection<V: View>(
             .header_toolbar_chip_selection
             .set_value(selection, ctx));
     });
-}
-
-fn sync_show_hide_settings<V: View>(
-    left: &[HeaderToolbarItemKind],
-    right: &[HeaderToolbarItemKind],
-    ctx: &mut ViewContext<V>,
-) {
-    let placed: Vec<&HeaderToolbarItemKind> = left.iter().chain(right.iter()).collect();
-
-    let code_review_placed = placed.contains(&&HeaderToolbarItemKind::CodeReview);
-    if *TabSettings::as_ref(ctx).show_code_review_button.value() != code_review_placed {
-        TabSettings::handle(ctx).update(ctx, |settings, ctx| {
-            report_if_error!(settings
-                .show_code_review_button
-                .set_value(code_review_placed, ctx));
-        });
-    }
 }
 
 impl HeaderToolbarInlineEditor {

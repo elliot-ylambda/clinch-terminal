@@ -38,7 +38,6 @@ pub(super) struct WorkspaceMouseStates {
     pub(super) offline_icon: MouseStateHandle,
     pub(super) avatar_icon: MouseStateHandle,
     pub(super) header_dimming: MouseStateHandle,
-    pub(super) right_panel_icon: MouseStateHandle,
     pub(super) notifications_mailbox: MouseStateHandle,
     pub(super) session_config_tab_config_chip_close: MouseStateHandle,
     pub(super) tools_panel_icon: MouseStateHandle,
