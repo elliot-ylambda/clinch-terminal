@@ -1,4 +1,4 @@
-//! Settings UI for local scripting and Warp control permissions.
+//! Settings UI for same-user local control permissions.
 use std::cell::RefCell;
 use std::collections::HashMap;
 
@@ -63,15 +63,15 @@ impl ScriptingSettingsPageView {
 
         #[cfg(target_os = "macos")]
         let widgets: Vec<Box<dyn SettingsWidget<View = Self>>> = vec![
-            Box::new(WarpControlCliInstallWidget::default()),
             Box::new(LocalControlModeWidget),
+            Box::new(WarpControlCliInstallWidget::default()),
         ];
         #[cfg(not(target_os = "macos"))]
         let widgets: Vec<Box<dyn SettingsWidget<View = Self>>> =
             vec![Box::new(LocalControlModeWidget)];
 
         Self {
-            page: PageType::new_uncategorized(widgets, Some("Scripting")),
+            page: PageType::new_uncategorized(widgets, Some("Local control")),
             local_only_icon_tooltip_states: RefCell::new(HashMap::new()),
             local_control_mode_dropdown,
             #[cfg(target_os = "macos")]
@@ -121,7 +121,7 @@ impl ScriptingSettingsPageView {
                     Ok(()) => {
                         let command_name = ChannelState::channel().warpctrl_command_name();
                         let message = format!(
-                            "Successfully installed the Warp Control CLI! You can now run '{command_name}' from the command line."
+                            "Successfully installed '{command_name}' for optional use outside Clinch."
                         );
                         ToastStack::handle(ctx).update(ctx, |toast_stack, ctx| {
                             toast_stack.add_ephemeral_toast(
@@ -219,7 +219,7 @@ impl SettingsWidget for WarpControlCliInstallWidget {
     type View = ScriptingSettingsPageView;
 
     fn search_terms(&self) -> &str {
-        "warp control cli command warpctrl install scripting"
+        "local control cli command warpctrl optional global install scripting"
     }
 
     fn render(
@@ -259,13 +259,16 @@ impl SettingsWidget for WarpControlCliInstallWidget {
         };
 
         render_body_item::<ScriptingSettingsPageAction>(
-            "Warp Control CLI command".into(),
+            "Optional global CLI command".into(),
             None,
             LocalOnlyIconState::Hidden,
             ToggleState::Enabled,
             appearance,
             button,
-            Some("Install the warpctrl command for scripting Warp from your terminal.".to_owned()),
+            Some(
+                "Install warpctrl for use from terminals outside Clinch. Claude Code and Codex running inside Clinch use the bundled command and do not need this."
+                    .to_owned(),
+            ),
         )
     }
 }
@@ -275,7 +278,7 @@ impl SettingsWidget for LocalControlModeWidget {
     type View = ScriptingSettingsPageView;
 
     fn search_terms(&self) -> &str {
-        "scripting warp control automation warpctrl local cli scripts disabled enabled"
+        "local control automation warpctrl cli same user typed actions disabled enabled scripting"
     }
 
     fn render(
@@ -285,7 +288,7 @@ impl SettingsWidget for LocalControlModeWidget {
         app: &AppContext,
     ) -> Box<dyn Element> {
         render_body_item::<ScriptingSettingsPageAction>(
-            "warpctrl CLI".into(),
+            "Local control".into(),
             None,
             LocalOnlyIconState::for_setting(
                 LocalControlModeSetting::storage_key(),
@@ -296,7 +299,10 @@ impl SettingsWidget for LocalControlModeWidget {
             ToggleState::Enabled,
             appearance,
             ChildView::new(&view.local_control_mode_dropdown).finish(),
-            Some("warpctrl allows for scripting Warp's UI. Use with care.".to_owned()),
+            Some(
+                "Allows programs running as your macOS user, such as Claude Code and Codex, to use Clinch's restricted, typed actions. Access stays on this Mac; it is not a network-facing remote shell."
+                    .to_owned(),
+            ),
         )
     }
 }

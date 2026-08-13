@@ -3,7 +3,7 @@ name: clinch-toolbelt
 description: Create, delete, list, or reorder quick-insert buttons in the Clinch terminal's Claude Code, Codex, or plain-terminal footer toolbelt. Use when the user asks for a Clinch button, quick-insert button, footer button, or a change to button ordering.
 ---
 
-<!-- managed-by: Clinch; version: 2.1.0 -->
+<!-- managed-by: Clinch; version: 2.2.0 -->
 
 # Clinch toolbelt buttons
 
@@ -22,9 +22,11 @@ Never fall back to another channel or instance. In the examples,
 bound terminal.
 
 Before the first toolbelt action, run `<control-command> --output-format json
-app ping --pid "$CLINCH_CONTROL_PID"`. If a bound terminal returns
-`no_instance`, tell the user to enable local control in **Settings >
-Scripting** and retry; no global command installation is required.
+app ping --pid "$CLINCH_CONTROL_PID"`. New Clinch installs enable local control
+by default. If a bound terminal returns `no_instance`, retry once, then report
+that local control is unavailable or may have been explicitly disabled. Point
+to **Settings > Local control** only as recovery, and do not re-enable a setting
+the user deliberately disabled. No global command installation is required.
 
 If `/.dockerenv` exists and the binding is incomplete, the isolated container
 cannot control the host app. Tell the user to make the request from a host

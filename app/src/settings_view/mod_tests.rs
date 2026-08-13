@@ -323,6 +323,7 @@ fn match_data_countable_zero_is_not_truthy() {
 #[test]
 fn subpage_display_names_are_correct() {
     assert_eq!(SettingsSection::Clinch.to_string(), "Clinch");
+    assert_eq!(SettingsSection::Scripting.to_string(), "Local control");
     assert_eq!(SettingsSection::WarpAgent.to_string(), "Warp Agent");
     assert_eq!(SettingsSection::AgentProfiles.to_string(), "Profiles");
     assert_eq!(SettingsSection::AgentMCPServers.to_string(), "MCP servers");
@@ -354,6 +355,14 @@ fn subpage_from_str_parses_display_names() {
     assert_eq!(
         SettingsSection::from_str("Clinch Settings"),
         Ok(SettingsSection::Clinch)
+    );
+    assert_eq!(
+        SettingsSection::from_str("Local control"),
+        Ok(SettingsSection::Scripting)
+    );
+    assert_eq!(
+        SettingsSection::from_str("Scripting"),
+        Ok(SettingsSection::Scripting)
     );
     // Both the legacy "Oz" name and the new "Warp Agent" display name must
     // resolve to SettingsSection::WarpAgent so existing deep links, persisted

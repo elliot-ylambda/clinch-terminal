@@ -9,7 +9,7 @@ use settings::macros::define_settings_group;
 use settings::{SecureSetting, Setting, SupportedPlatforms, SyncToCloud};
 use warp_core::channel::{Channel, ChannelState};
 use warpui::{AppContext, ModelContext};
-use warpui_extras::secure_storage;
+use warpui_extras::secure_storage::{self, AppContextExt as _};
 
 const LOCAL_CONTROL_MODE_STORAGE_KEY: &str = "LocalControlMode";
 
@@ -36,10 +36,14 @@ pub enum LocalControlMode {
     Enabled,
 }
 
-/// Channel-based default: local control is on for internal dogfood builds and
-/// off for public channels, where users must opt in through Settings > Scripting.
-fn default_mode_for_channel(channel: Channel) -> LocalControlMode {
-    if channel.is_dogfood() {
+fn is_clinch_app_id(app_id: &str) -> bool {
+    matches!(app_id, "sh.clinch.Clinch" | "sh.clinch.ClinchDev")
+}
+
+/// Local control works out of the box in Clinch. Other public Warp channels
+/// retain their opt-in default, while internal dogfood builds remain enabled.
+fn default_mode_for_app(channel: Channel, app_id: &str) -> LocalControlMode {
+    if is_clinch_app_id(app_id) || channel.is_dogfood() {
         LocalControlMode::Enabled
     } else {
         LocalControlMode::Disabled
@@ -178,11 +182,30 @@ impl Setting for LocalControlModeSetting {
     }
 
     fn default_value() -> Self::Value {
-        default_mode_for_channel(ChannelState::channel())
+        default_mode_for_app(ChannelState::channel(), &ChannelState::app_id().to_string())
     }
 
     fn new_from_storage(ctx: &mut AppContext) -> Self {
-        Self::new(Self::read_from_secure_storage(ctx))
+        match ctx.secure_storage().read_value(Self::storage_key()) {
+            Ok(value) => match serde_json::from_str(&value) {
+                Ok(value) => Self::new(Some(value)),
+                Err(err) => {
+                    log::error!(
+                        "Failed to deserialize {} from secure storage: {err:#}",
+                        Self::setting_name()
+                    );
+                    Self::new(Some(LocalControlMode::Disabled))
+                }
+            },
+            Err(secure_storage::Error::NotFound) => Self::new(None),
+            Err(err) => {
+                log::error!(
+                    "Failed to read {} from secure storage: {err:#}",
+                    Self::setting_name()
+                );
+                Self::new(Some(LocalControlMode::Disabled))
+            }
+        }
     }
 
     fn is_supported_on_current_platform(&self) -> bool {

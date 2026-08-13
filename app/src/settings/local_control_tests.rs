@@ -8,7 +8,7 @@ use warpui_extras::secure_storage::{self, AppContextExt as _};
 use warpui_extras::user_preferences;
 
 use super::{
-    default_mode_for_channel, LocalControlMode, LocalControlModeSetting, LocalControlSettings,
+    default_mode_for_app, LocalControlMode, LocalControlModeSetting, LocalControlSettings,
 };
 
 #[derive(Default)]
@@ -61,13 +61,21 @@ fn default_settings() -> LocalControlSettings {
 }
 
 #[test]
-fn default_mode_is_enabled_only_on_dogfood_channels() {
+fn default_mode_is_enabled_for_clinch_and_dogfood_builds() {
     assert_eq!(
-        default_mode_for_channel(Channel::Dev),
+        default_mode_for_app(Channel::Stable, "sh.clinch.Clinch"),
         LocalControlMode::Enabled
     );
     assert_eq!(
-        default_mode_for_channel(Channel::Local),
+        default_mode_for_app(Channel::Local, "sh.clinch.ClinchDev"),
+        LocalControlMode::Enabled
+    );
+    assert_eq!(
+        default_mode_for_app(Channel::Dev, "dev.warp.Warp-Dev"),
+        LocalControlMode::Enabled
+    );
+    assert_eq!(
+        default_mode_for_app(Channel::Local, "dev.warp.Warp-Local"),
         LocalControlMode::Enabled
     );
     for channel in [
@@ -77,9 +85,9 @@ fn default_mode_is_enabled_only_on_dogfood_channels() {
         Channel::Integration,
     ] {
         assert_eq!(
-            default_mode_for_channel(channel),
+            default_mode_for_app(channel, "dev.warp.Warp"),
             LocalControlMode::Disabled,
-            "{channel} must require explicit opt-in"
+            "non-Clinch {channel} must retain its existing default"
         );
     }
 }
@@ -91,7 +99,7 @@ fn unset_mode_follows_channel_default() {
     assert_eq!(LocalControlMode::default(), LocalControlMode::Disabled);
     assert_eq!(
         settings.mode(),
-        default_mode_for_channel(ChannelState::channel())
+        default_mode_for_app(ChannelState::channel(), &ChannelState::app_id().to_string())
     );
 }
 
@@ -143,6 +151,74 @@ fn mode_is_persisted_to_secure_storage() {
 }
 
 #[test]
+fn explicitly_disabled_mode_survives_registration() {
+    warpui::App::test((), |mut app| async move {
+        app.update(|ctx| {
+            ctx.add_singleton_model(|_| {
+                PublicPreferences::new(
+                    Box::<user_preferences::in_memory::InMemoryPreferences>::default(),
+                )
+            });
+            ctx.add_singleton_model(|_| {
+                PrivatePreferences::new(
+                    Box::<user_preferences::in_memory::InMemoryPreferences>::default(),
+                )
+            });
+            ctx.add_singleton_model(|_| SettingsManager::default());
+            ctx.add_singleton_model(|_| -> secure_storage::Model {
+                Box::<InMemorySecureStorage>::default()
+            });
+            ctx.secure_storage()
+                .write_value(
+                    LocalControlModeSetting::storage_key(),
+                    &serde_json::to_string(&LocalControlMode::Disabled).expect("mode serializes"),
+                )
+                .expect("disabled mode should be writable");
+            LocalControlSettings::register(ctx);
+        });
+
+        app.read(|ctx| {
+            let settings = LocalControlSettings::as_ref(ctx);
+            assert_eq!(settings.mode(), LocalControlMode::Disabled);
+            assert!(settings.local_control_mode.is_value_explicitly_set());
+        });
+    });
+}
+
+#[test]
+fn malformed_secure_value_fails_closed() {
+    warpui::App::test((), |mut app| async move {
+        app.update(|ctx| {
+            ctx.add_singleton_model(|_| {
+                PublicPreferences::new(
+                    Box::<user_preferences::in_memory::InMemoryPreferences>::default(),
+                )
+            });
+            ctx.add_singleton_model(|_| {
+                PrivatePreferences::new(
+                    Box::<user_preferences::in_memory::InMemoryPreferences>::default(),
+                )
+            });
+            ctx.add_singleton_model(|_| SettingsManager::default());
+            ctx.add_singleton_model(|_| -> secure_storage::Model {
+                Box::<InMemorySecureStorage>::default()
+            });
+            ctx.secure_storage()
+                .write_value(LocalControlModeSetting::storage_key(), "not-json")
+                .expect("malformed fixture should be writable");
+            LocalControlSettings::register(ctx);
+        });
+
+        app.read(|ctx| {
+            assert_eq!(
+                LocalControlSettings::as_ref(ctx).mode(),
+                LocalControlMode::Disabled
+            );
+        });
+    });
+}
+
+#[test]
 fn mode_does_not_migrate_from_private_preferences() {
     warpui::App::test((), |mut app| async move {
         app.update(|ctx| {
@@ -172,7 +248,7 @@ fn mode_does_not_migrate_from_private_preferences() {
         app.read(|ctx| {
             assert_eq!(
                 LocalControlSettings::as_ref(ctx).mode(),
-                default_mode_for_channel(ChannelState::channel())
+                default_mode_for_app(ChannelState::channel(), &ChannelState::app_id().to_string())
             );
             let private_value = LocalControlModeSetting::preferences_for_setting(ctx)
                 .read_value(LocalControlModeSetting::storage_key())

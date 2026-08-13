@@ -3,7 +3,7 @@ name: clinch-control
 description: Control the running Clinch app from Claude Code or Codex with its local control CLI. Use when the user asks to manipulate Clinch windows, tabs, panes, sessions, sidebar sections, toolbelts, or UI surfaces, or to launch a long-lived, interactive, or user-visible project process such as a dev server, watcher, REPL, or log tail in a new tab. Do not use for tests, lint, builds, Git commands, or other bounded work the agent can run in its own shell.
 ---
 
-<!-- managed-by: Clinch; version: 1.2.0 -->
+<!-- managed-by: Clinch; version: 1.3.0 -->
 
 # Clinch control
 
@@ -50,9 +50,12 @@ Before the first requested control action, verify the bound app responds:
 <control-command> --output-format json app ping --pid "$CLINCH_CONTROL_PID"
 ```
 
-If this returns `no_instance` from a bound Clinch terminal, tell the user to
-enable local control in **Settings > Scripting** and retry. The bundled wrapper
-does not require a global command installation.
+New Clinch installs enable local control by default. If this returns
+`no_instance` from a bound terminal, retry once. If it still fails, report that
+local control is unavailable or may have been explicitly disabled; point to
+**Settings > Local control** only as recovery. Do not re-enable a setting the
+user deliberately disabled. The bundled wrapper does not require a global
+command installation.
 
 An isolated container cannot receive the host app's control capability. If
 `/.dockerenv` exists and the current shell has no complete binding, tell the
@@ -69,9 +72,10 @@ path saved in this user-scope skill and do not guess from running processes.
 Outside a Clinch terminal, check `warpctrl` and `warpctrl-local` on `PATH` and
 run `instance list` for each available command. Use it only if exactly one live
 Clinch channel is found; ask the user to select when more than one is live. If
-none is available, tell the user to install the latest Clinch and enable
-**Settings > Scripting**. Never create or replace a `/usr/local/bin` symlink
-without explicit approval.
+none is available, tell the user to install and run the latest Clinch. The
+optional global command for use outside Clinch is available in **Settings >
+Local control**. Never create or replace a `/usr/local/bin` symlink without
+explicit approval.
 
 Run control commands serially because creating or activating a tab changes the
 active target. Outside a bound Clinch terminal, if multiple same-channel

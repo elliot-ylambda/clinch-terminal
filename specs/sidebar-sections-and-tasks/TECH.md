@@ -121,8 +121,11 @@ The managed `clinch-control` and `clinch-toolbelt` skills are installed at user 
 Code and Codex only when the current bundle contains its channel-specific control wrapper. Stable
 and local macOS build entrypoints compile `warp_control_cli`, create that wrapper, and release
 verification requires the wrapper plus both skills. Keep the existing `LocalControlSettings`
-permission boundary: public stable builds remain disabled until the user opts in through Scripting,
-and provisioning must not change that setting.
+permission boundary, but make its missing-value default `Enabled` for the Clinch stable and local
+app IDs. Preserve an explicitly stored `Disabled` value, keep other public Warp channels on their
+existing opt-in default, and fail closed to `Disabled` when a stored value is unreadable or
+malformed. Present the page as **Local control** and distinguish the optional global CLI symlink
+from the bundled current-app command used by agents.
 
 Keep the installed skill text channel-neutral. New local host terminal shells export
 `CLINCH_CONTROL_COMMAND`, `CLINCH_CONTROL_WRAPPER`, and `CLINCH_CONTROL_PID`. The wrapper points to
@@ -173,6 +176,8 @@ path inside the container.
   exact wrapper/PID injection, stale parent/override scrubbing, and denial inside Docker sandboxes.
   Stable compilation plus a no-launch local app bundle verify that build entrypoints ship an
   executable wrapper and both placeholder-free skills.
+- Local-control setting tests cover the default-on Clinch app IDs, unchanged defaults for other
+  public channels, persistence of an explicit opt-out, and fail-closed malformed secure storage.
 - Manual launch remains recommended for final visual inspection of section outlines, collapsed
   drop targeting, provider buttons, restart restoration, and the narrow mobile drawer layout.
 

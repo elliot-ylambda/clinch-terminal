@@ -25,7 +25,7 @@
 //!                 [0600 socket + kernel-reported peer UID]
 //!                                             |
 //!                                             v
-//!                           feature flag + Settings > Scripting gate
+//!                           feature flag + Settings > Local control gate
 //!                           + protocol + exact action metadata
 //!                                             |
 //!                                             v
@@ -52,11 +52,11 @@
 //! application: malicious software already running as the same user remains
 //! outside this boundary.
 //!
-//! The Settings > Scripting gates used here are local-only settings backed by
+//! The Settings > Local control gate used here is a local-only setting backed by
 //! Warp's secure storage provider.
 //!
 //! Discovery records never include raw bearer tokens: discovery only exposes
-//! endpoint metadata and credential broker references while Scripting is enabled.
+//! endpoint metadata and credential broker references while local control is enabled.
 mod bridge;
 mod handlers;
 mod permissions;
@@ -287,7 +287,7 @@ impl LocalControlServer {
 /// Builds routing metadata without embedding any bearer credential or secret.
 ///
 /// The endpoint and derived broker reference are published only while the
-/// protected Scripting setting permits clients to use them.
+/// protected local-control setting permits clients to use them.
 fn discovery_record_for_settings(
     ctx: &ModelContext<LocalControlServer>,
     control_endpoint: ControlEndpoint,

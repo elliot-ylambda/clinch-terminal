@@ -20,7 +20,7 @@ fn bundled_control_skill_contents() -> String {
 fn bundled_skill_carries_a_managed_marker() {
     let contents = bundled_skill_contents();
     assert!(
-        contents.contains("<!-- managed-by: Clinch; version: 2.1.0 -->"),
+        contents.contains("<!-- managed-by: Clinch; version: 2.2.0 -->"),
         "the bundled skill must carry the Clinch managed marker"
     );
 }
@@ -28,7 +28,7 @@ fn bundled_skill_carries_a_managed_marker() {
 #[test]
 fn bundled_control_skill_routes_only_persistent_processes_to_new_tabs() {
     let contents = bundled_control_skill_contents();
-    assert!(contents.contains("<!-- managed-by: Clinch; version: 1.2.0 -->"));
+    assert!(contents.contains("<!-- managed-by: Clinch; version: 1.3.0 -->"));
     assert!(contents.contains("tab create"));
     assert!(contents.contains("--cwd"));
     assert!(contents.contains("dev server"));

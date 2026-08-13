@@ -130,8 +130,9 @@ visual language for this MVP.
 
 27. Stable Clinch releases and ordinary local Clinch development launches ship the local-control
     feature and its channel-specific wrapper together. Release validation fails when the wrapper or
-    either managed agent skill is absent. Local control remains an explicit user choice in public
-    Clinch: an update does not override the user's **Settings > Scripting** selection.
+    either managed agent skill is absent. A normal Clinch install enables local control by default;
+    Claude Code and Codex inside Clinch require no first-run setting change or global CLI install.
+    A user who explicitly disables local control remains disabled across restarts and upgrades.
 
 28. Every new Clinch host terminal binds Claude Code and Codex to the exact wrapper and process ID
     of the app instance that created that terminal. Isolated Docker sandboxes do not receive a
@@ -147,3 +148,8 @@ visual language for this MVP.
 30. When Codex has an obsolete Clinch-managed skill in its legacy private skills directory,
     Clinch removes that duplicate only after an equal-or-newer replacement exists in the shared
     Agent Skills directory. Unmarked user-owned skills and extra files are never deleted.
+
+31. The user-facing settings page calls this capability **Local control**, explains that it exposes
+    restricted, typed Clinch actions only to programs running as the current OS user and is not a
+    network-facing remote shell, and labels global CLI installation as optional for terminals
+    outside Clinch.
