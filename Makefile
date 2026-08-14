@@ -127,7 +127,8 @@ _validate-release-layout:
 
 _bundle: _validate-release-layout _require-create-dmg
 	@test "$(UPDATE_SEQUENCE)" != auto || { echo "UPDATE_SEQUENCE must be resolved first" >&2; exit 1; }
-	@if [ "$(UNIVERSAL_ENABLED)" = 1 ]; then \
+	@set -e; \
+	if [ "$(UNIVERSAL_ENABLED)" = 1 ]; then \
 	  GIT_RELEASE_TAG="$(VERSION)" CLINCH_UPDATE_SEQUENCE="$(UPDATE_SEQUENCE)" \
 	    ./script/bundle -c stable --selfsign; \
 	else \
