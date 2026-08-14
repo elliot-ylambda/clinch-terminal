@@ -11,6 +11,12 @@ filter = 'package(integration)'
 threads-required = 2
 
 [profile.clinch-release]
+# The shipped-component suite contains CPU-heavy macOS UI tests. Running one
+# test process per core can starve them long enough to hit their 120s timeout,
+# especially after a cold build. Keep releases reliable while still running
+# independent tests in parallel. NEXTEST_TEST_THREADS can override this when a
+# release host has been explicitly sized and validated for higher concurrency.
+test-threads = 4
 # Cold macOS UI tests can spend close to a minute enumerating system fonts
 # before their assertions run. Keep the strict local default while giving the
 # exhaustive release gate enough time for that platform initialization.
