@@ -55,6 +55,7 @@ pub const CAN_FORK_FROM_LAST_KNOWN_GOOD_STATE_KEY: &str = "CanForkFromLastKnownG
 pub const INPUT_BOX_VISIBLE_KEY: &str = "InputVisible";
 pub const KEYBOARD_PROTOCOL_ENABLED_KEY: &str = "KeyboardProtocolEnabled";
 pub const CLI_AGENT_SESSION_ACTIVE_KEY: &str = "CLIAgentSessionActive";
+pub const CLAUDE_CODE_SESSION_ACTIVE_KEY: &str = "ClaudeCodeSessionActive";
 /// Set on the focused pane when rate-limit auto-continue can be offered:
 /// the pane runs a supported Claude Code or Codex session with provider usage data available.
 pub const CLI_AGENT_AUTO_CONTINUE_AVAILABLE_KEY: &str = "CliAgentAutoContinueAvailable";
@@ -89,6 +90,20 @@ pub fn init(app: &mut AppContext) {
     app.register_binding_validator::<TerminalView>(is_binding_pty_compliant);
 
     init_overlapping_keybindings(app);
+
+    #[cfg(target_os = "macos")]
+    // Claude Code exposes composer undo as Ctrl+_ (the C0 US byte). Keep this Claude-specific:
+    // Codex has no composer undo action, and its Ctrl+Z binding suspends the process instead.
+    app.register_fixed_bindings([FixedBinding::custom(
+        CustomAction::Undo,
+        TerminalAction::ControlSequence(vec![escape_sequences::C0::US]),
+        "Undo in Claude Code's native composer",
+        id!("Terminal")
+            & !id!("IMEOpen")
+            & id!(CLAUDE_CODE_SESSION_ACTIVE_KEY)
+            & (id!("LongRunningCommand") | id!("AltScreen")),
+    )]);
+
     // Register input mode bindings before warpify bindings so ctrl-i warpifies
     // instead of opening inline agent when a warpify banner is visible.
     register_input_mode_bindings(app);

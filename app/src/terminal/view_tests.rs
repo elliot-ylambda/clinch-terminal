@@ -534,6 +534,7 @@ fn mac_editing_shortcuts_reach_fullscreen_native_cli_agent_composers() {
                 "{keystroke} should be handled while a native full-screen composer is active"
             );
         }
+        app.dispatch_custom_action(CustomAction::Undo, window_id);
 
         assert_eq!(
             *pty_writes.borrow(),
@@ -545,8 +546,51 @@ fn mac_editing_shortcuts_reach_fullscreen_native_cli_agent_composers() {
                 vec![C0::ETB],
                 vec![C0::NAK],
                 vec![C0::VT],
+                vec![C0::US],
             ]
         );
+    })
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn mac_native_claude_undo_does_not_override_codex_without_native_undo() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        app.add_singleton_model(ImportedConfigModel::new);
+        app.update(crate::terminal::init);
+
+        let (window_id, terminal) = add_window_with_id_and_terminal(&mut app, None);
+        let pty_writes: Rc<RefCell<Vec<Vec<u8>>>> = Rc::new(RefCell::new(Vec::new()));
+        let writes = pty_writes.clone();
+        app.update(|ctx| {
+            ctx.subscribe_to_view(&terminal, move |_, event, _| {
+                if let Event::WriteBytesToPty { bytes } = event {
+                    writes.borrow_mut().push(bytes.to_vec());
+                }
+            });
+        });
+
+        terminal.update(&mut app, |view, ctx| {
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                let mut session = cli_agent_session_with_prompts(Vec::new());
+                session.agent = CLIAgent::Codex;
+                sessions.set_session(view.view_id, session, ctx);
+            });
+            view.model
+                .lock()
+                .simulate_long_running_block("codex", "\x1b[?1049h");
+            assert!(view.model.lock().is_alt_screen_active());
+            assert!(!view
+                .keymap_context(ctx)
+                .set
+                .contains(init::CLAUDE_CODE_SESSION_ACTIVE_KEY));
+            view.focus_terminal(ctx);
+        });
+
+        app.dispatch_custom_action(CustomAction::Undo, window_id);
+
+        assert!(pty_writes.borrow().is_empty());
     })
 }
 

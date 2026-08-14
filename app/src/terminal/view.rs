@@ -28975,11 +28975,14 @@ impl View for TerminalView {
             context.set.insert(init::KEYBOARD_PROTOCOL_ENABLED_KEY);
         }
 
-        if CLIAgentSessionsModel::as_ref(app)
+        if let Some(cli_agent) = CLIAgentSessionsModel::as_ref(app)
             .session(self.view_id)
-            .is_some()
+            .map(|session| session.agent)
         {
             context.set.insert(init::CLI_AGENT_SESSION_ACTIVE_KEY);
+            if cli_agent == CLIAgent::Claude {
+                context.set.insert(init::CLAUDE_CODE_SESSION_ACTIVE_KEY);
+            }
             if *AISettings::as_ref(app).should_render_cli_agent_footer {
                 context.set.insert(flags::CLI_AGENT_FOOTER_ENABLED);
 
