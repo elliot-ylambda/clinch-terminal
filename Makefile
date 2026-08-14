@@ -77,7 +77,8 @@ export RELEASE_NOTES
 .DEFAULT_GOAL := help
 .PHONY: help dev dev-app dev-open candidate release update release-check require-latest-main \
 	prune _prune _require-create-dmg _bundle _package _verify _verify-existing \
-	_validate-release-layout agent-resume-enable configure-release-repository
+	_validate-release-layout _write-release-checksums agent-resume-enable \
+	configure-release-repository
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -145,6 +146,17 @@ _bundle: _validate-release-layout _require-create-dmg
 	  rm -f "$$schema_cache"; \
 	fi
 
+_write-release-checksums:
+	cd "$(RELEASE_DIR)" && shasum -a 256 "$(STABLE_APP).app.zip" > "$(STABLE_APP).app.zip.sha256"
+	cd "$(RELEASE_DIR)" && shasum -a 256 "$(STABLE_APP).dmg" > "$(STABLE_APP).dmg.sha256"
+	@if [ "$(UNIVERSAL_ENABLED)" != 1 ]; then \
+	  cd "$(RELEASE_DIR)" && \
+	    shasum -a 256 "$(STABLE_APP)-x86_64.app.zip" \
+	      > "$(STABLE_APP)-x86_64.app.zip.sha256" && \
+	    shasum -a 256 "$(STABLE_APP)-x86_64.dmg" \
+	      > "$(STABLE_APP)-x86_64.dmg.sha256"; \
+	fi
+
 _package: _bundle
 	@test -f "$(CLINCH_UPDATE_SIGNING_KEY)" || { echo "missing update signing key" >&2; exit 1; }
 	@test -f "$(CLINCH_RELEASE_SIGNING_KEY)" || { echo "missing release signing key" >&2; exit 1; }
@@ -157,14 +169,7 @@ _package: _bundle
 	  ditto -c -k --keepParent "$(ARM64_BUNDLE)" "$(RELEASE_ZIP)"; \
 	  ditto -c -k --keepParent "$(X86_64_BUNDLE)" "$(X86_64_ZIP)"; \
 	fi
-	cd "$(RELEASE_DIR)" && shasum -a 256 "$(STABLE_APP).app.zip" > "$(STABLE_APP).app.zip.sha256"
-	cd "$(RELEASE_DIR)" && shasum -a 256 "$(STABLE_APP).dmg" > "$(STABLE_APP).dmg.sha256"
-	@if [ "$(UNIVERSAL_ENABLED)" != 1 ]; then \
-	  cd "$(RELEASE_DIR)" && shasum -a 256 "$(STABLE_APP)-x86_64.app.zip" \
-	    > "$(STABLE_APP)-x86_64.app.zip.sha256"; \
-	  cd "$(RELEASE_DIR)" && shasum -a 256 "$(STABLE_APP)-x86_64.dmg" \
-	    > "$(STABLE_APP)-x86_64.dmg.sha256"; \
-	fi
+	$(MAKE) --no-print-directory _write-release-checksums UNIVERSAL="$(UNIVERSAL)"
 	@if [ "$(UNIVERSAL_ENABLED)" = 1 ]; then \
 	  CLINCH_UPDATE_SIGNING_KEY="$(CLINCH_UPDATE_SIGNING_KEY)" RELEASE_NOTES="$$RELEASE_NOTES" \
 	    ./script/clinch-update-manifest generate "$(STABLE_BUNDLE)" "$(RELEASE_ZIP)" \

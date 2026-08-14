@@ -34,6 +34,27 @@ fi
 grep -Fq -- '--arch aarch64' "$BUNDLE_CALLS"
 ! grep -Fq -- '--arch x86_64' "$BUNDLE_CALLS"
 
+checksum_root="$TMP/checksum-root"
+checksum_dir="$checksum_root/target/release-lto/bundle/osx"
+mkdir -p "$checksum_dir"
+cp "$ROOT/Makefile" "$checksum_root/Makefile"
+for artifact in \
+    Clinch.app.zip \
+    Clinch.dmg \
+    Clinch-x86_64.app.zip \
+    Clinch-x86_64.dmg; do
+  printf '%s\n' "$artifact" > "$checksum_dir/$artifact"
+done
+make -C "$checksum_root" _write-release-checksums UNIVERSAL=0 \
+  > "$TMP/checksums.out"
+for artifact in \
+    Clinch.app.zip \
+    Clinch.dmg \
+    Clinch-x86_64.app.zip \
+    Clinch-x86_64.dmg; do
+  (cd "$checksum_dir" && shasum -a 256 -c "$artifact.sha256")
+done
+
 if make -C "$ROOT" _validate-release-layout \
     UNIVERSAL=invalid > "$TMP/invalid.out" 2>&1; then
   echo "FAIL: invalid release layout was accepted" >&2
