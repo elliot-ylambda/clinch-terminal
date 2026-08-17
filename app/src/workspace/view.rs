@@ -6705,22 +6705,6 @@ impl Workspace {
                         *visible,
                         ctx,
                     ),
-                    QuickInsertModalTarget::ClaudeCode => append_cli_custom_button(
-                        AgentToolbarEditorMode::ClaudeCode,
-                        label.clone(),
-                        text.clone(),
-                        *auto_send,
-                        *visible,
-                        ctx,
-                    ),
-                    QuickInsertModalTarget::Codex => append_cli_custom_button(
-                        AgentToolbarEditorMode::Codex,
-                        label.clone(),
-                        text.clone(),
-                        *auto_send,
-                        *visible,
-                        ctx,
-                    ),
                     QuickInsertModalTarget::Terminal => append_terminal_custom_button(
                         label.clone(),
                         text.clone(),
@@ -21100,13 +21084,9 @@ impl Workspace {
             .and_then(|terminal_view_id| {
                 CLIAgentSessionsModel::as_ref(ctx)
                     .session(terminal_view_id)
-                    .map(|session| match session.agent {
-                        crate::terminal::CLIAgent::Codex => AgentToolbarEditorMode::Codex,
-                        crate::terminal::CLIAgent::Claude => AgentToolbarEditorMode::ClaudeCode,
-                        _ => AgentToolbarEditorMode::ClaudeCode,
-                    })
+                    .map(|_| AgentToolbarEditorMode::CLIAgent)
             })
-            .unwrap_or(AgentToolbarEditorMode::ClaudeCode)
+            .unwrap_or(AgentToolbarEditorMode::CLIAgent)
     }
 
     /// The active pane group's most-recent local working directory, used to scope
@@ -21131,11 +21111,7 @@ impl Workspace {
             .and_then(|terminal_view_id| {
                 CLIAgentSessionsModel::as_ref(ctx)
                     .session(terminal_view_id)
-                    .map(|session| match session.agent {
-                        crate::terminal::CLIAgent::Claude => QuickInsertModalTarget::ClaudeCode,
-                        crate::terminal::CLIAgent::Codex => QuickInsertModalTarget::Codex,
-                        _ => QuickInsertModalTarget::CLIAgent,
-                    })
+                    .map(|_| QuickInsertModalTarget::CLIAgent)
             })
             .unwrap_or(QuickInsertModalTarget::Terminal);
         self.open_quick_insert_modal_for_target(target, ctx);
@@ -21147,9 +21123,9 @@ impl Workspace {
         ctx: &mut ViewContext<Self>,
     ) {
         let target = match mode {
-            AgentToolbarEditorMode::CLIAgent => QuickInsertModalTarget::CLIAgent,
-            AgentToolbarEditorMode::ClaudeCode => QuickInsertModalTarget::ClaudeCode,
-            AgentToolbarEditorMode::Codex => QuickInsertModalTarget::Codex,
+            AgentToolbarEditorMode::CLIAgent
+            | AgentToolbarEditorMode::ClaudeCode
+            | AgentToolbarEditorMode::Codex => QuickInsertModalTarget::CLIAgent,
             AgentToolbarEditorMode::Terminal => QuickInsertModalTarget::Terminal,
             AgentToolbarEditorMode::AgentView => return,
         };

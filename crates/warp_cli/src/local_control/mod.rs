@@ -1036,8 +1036,11 @@ pub struct SectionMoveArgs {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum CliToolbeltFooter {
+    /// Shared coding-agent layout, addressed from Claude Code.
     ClaudeCode,
+    /// Shared coding-agent layout, addressed from Codex.
     Codex,
+    /// Independent plain-terminal layout.
     Terminal,
 }
 

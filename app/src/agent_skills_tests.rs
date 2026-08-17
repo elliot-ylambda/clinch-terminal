@@ -20,7 +20,7 @@ fn bundled_control_skill_contents() -> String {
 fn bundled_skill_carries_a_managed_marker() {
     let contents = bundled_skill_contents();
     assert!(
-        contents.contains("<!-- managed-by: Clinch; version: 3.0.0 -->"),
+        contents.contains("<!-- managed-by: Clinch; version: 3.1.0 -->"),
         "the bundled skill must carry the Clinch managed marker"
     );
 }
@@ -44,7 +44,7 @@ fn bundled_skill_proactively_suggests_reusable_conversation_patterns() {
 #[test]
 fn bundled_control_skill_routes_only_persistent_processes_to_new_tabs() {
     let contents = bundled_control_skill_contents();
-    assert!(contents.contains("<!-- managed-by: Clinch; version: 1.3.0 -->"));
+    assert!(contents.contains("<!-- managed-by: Clinch; version: 1.4.0 -->"));
     assert!(contents.contains("tab create"));
     assert!(contents.contains("--cwd"));
     assert!(contents.contains("dev server"));
@@ -81,6 +81,7 @@ fn bundled_skill_uses_typed_toolbelt_control_without_editing_persistence() {
     assert!(contents.contains("CLINCH_CONTROL_PID"));
     assert!(contents.contains("--pid \"$CLINCH_CONTROL_PID\""));
     assert!(contents.contains("Never edit `settings.toml`, SQLite"));
+    assert!(contents.contains("Claude Code and Codex share one coding-agent toolbelt"));
     assert!(!contents.contains("[agents.third_party"));
 }
 

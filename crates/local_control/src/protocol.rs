@@ -55,6 +55,9 @@ pub enum TabCloseMode {
 }
 
 /// Footer whose quick-insert toolbelt is being managed.
+///
+/// `ClaudeCode` and `Codex` are provider-oriented compatibility selectors for the same shared
+/// coding-agent layout. `Terminal` remains independent.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolbeltFooter {

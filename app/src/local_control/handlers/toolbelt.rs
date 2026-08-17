@@ -332,11 +332,8 @@ fn find_unique_button(
 fn read_selection(footer: ToolbeltFooter, ctx: &ModelContext<LocalControlBridge>) -> Selection {
     let settings = SessionSettings::as_ref(ctx);
     match footer {
-        ToolbeltFooter::ClaudeCode => {
-            Selection::Cli(settings.claude_code_footer_chip_selection_value().clone())
-        }
-        ToolbeltFooter::Codex => {
-            Selection::Cli(settings.codex_footer_chip_selection_value().clone())
+        ToolbeltFooter::ClaudeCode | ToolbeltFooter::Codex => {
+            Selection::Cli(settings.coding_agent_footer_chip_selection_value().clone())
         }
         ToolbeltFooter::Terminal => {
             Selection::Terminal(settings.terminal_footer_chip_selection.value().clone())
@@ -351,12 +348,11 @@ fn save_selection(
 ) -> Result<(), ControlError> {
     SessionSettings::handle(ctx).update(ctx, |settings, ctx| {
         let result = match (footer, selection) {
-            (ToolbeltFooter::ClaudeCode, Selection::Cli(selection)) => settings
-                .claude_code_footer_chip_selection
-                .set_value(Some(selection), ctx),
-            (ToolbeltFooter::Codex, Selection::Cli(selection)) => settings
-                .codex_footer_chip_selection
-                .set_value(Some(selection), ctx),
+            (ToolbeltFooter::ClaudeCode | ToolbeltFooter::Codex, Selection::Cli(selection)) => {
+                settings
+                    .coding_agent_footer_chip_selection
+                    .set_value(Some(selection), ctx)
+            }
             (ToolbeltFooter::Terminal, Selection::Terminal(selection)) => settings
                 .terminal_footer_chip_selection
                 .set_value(selection, ctx),
@@ -425,6 +421,8 @@ fn button_summaries(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_util::settings::initialize_settings_for_tests;
+    use warpui::App;
 
     fn button(label: &str) -> AgentToolbarItemKind {
         AgentToolbarItemKind::custom_insert(label, format!("{label} prompt"))
@@ -521,5 +519,46 @@ mod tests {
 
         assert!(selection_contains_text(&selection, "Run the local server"));
         assert!(!selection_contains_text(&selection, "Run the test suite"));
+    }
+
+    #[test]
+    fn coding_agent_provider_selectors_read_and_write_one_shared_selection() {
+        App::test((), |mut app| async move {
+            initialize_settings_for_tests(&mut app);
+            let bridge = app.add_singleton_model(LocalControlBridge::new);
+            let review = button("Review");
+            let mut expected_left = AgentToolbarItemKind::cli_default_left();
+            expected_left.push(review.clone());
+            let selection =
+                Selection::Cli(CLIAgentToolbarChipSelection::custom_from_effective_items(
+                    expected_left.clone(),
+                    Vec::new(),
+                ));
+
+            bridge.update(&mut app, |_, ctx| {
+                save_selection(ToolbeltFooter::Codex, selection, ctx)
+                    .expect("Codex selector should save the shared coding-agent selection");
+            });
+
+            let (claude_items, codex_items) = bridge.update(&mut app, |_, ctx| {
+                (
+                    read_selection(ToolbeltFooter::ClaudeCode, ctx).items(),
+                    read_selection(ToolbeltFooter::Codex, ctx).items(),
+                )
+            });
+            assert_eq!(claude_items, (expected_left.clone(), Vec::new()));
+            assert_eq!(codex_items, (expected_left, Vec::new()));
+
+            SessionSettings::handle(&app).read(&app, |settings, _| {
+                let shared = settings
+                    .coding_agent_footer_chip_selection
+                    .value()
+                    .as_ref()
+                    .expect("the canonical coding-agent selection should be persisted");
+                assert!(shared.left_items().contains(&review));
+                assert!(settings.claude_code_footer_chip_selection.value().is_none());
+                assert!(settings.codex_footer_chip_selection.value().is_none());
+            });
+        });
     }
 }

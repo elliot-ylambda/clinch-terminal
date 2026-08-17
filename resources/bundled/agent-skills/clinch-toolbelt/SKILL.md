@@ -3,7 +3,7 @@ name: clinch-toolbelt
 description: Creates, deletes, lists, or reorders Clinch quick-insert buttons and proactively suggests locally learned reusable prompts at the beginning of a new Claude Code or Codex conversation. Use for every new agent conversation in Clinch, when the user asks for a button, footer, or toolbelt change, or when reusable text emerges in the visible conversation.
 ---
 
-<!-- managed-by: Clinch; version: 3.0.0 -->
+<!-- managed-by: Clinch; version: 3.1.0 -->
 
 # Clinch toolbelt buttons
 
@@ -43,10 +43,13 @@ Never use an absolute bundle path persisted in this user-scope skill or edit a
 
 ## Footer behavior
 
-Each footer is independent:
+Claude Code and Codex share one coding-agent toolbelt. A mutation addressed
+with either coding-agent selector updates both providers; the active provider
+still determines where text is inserted and how provider-aware built-ins such
+as Transfer are labelled. The plain-terminal toolbelt is independent:
 
-- `claude-code` inserts a prompt into Claude Code.
-- `codex` inserts a prompt into Codex.
+- `claude-code` addresses the shared coding-agent layout and inserts into Claude Code.
+- `codex` addresses the shared coding-agent layout and inserts into Codex.
 - `terminal` inserts a shell command into a plain terminal.
 
 A custom button has a visible label, inserted text, and `auto_send` behavior.
@@ -156,7 +159,8 @@ later delete or move cannot select the wrong button.
 ```
 
 Deleting a custom button removes it. Deleting a shipped button hides that
-default for this footer; it does not modify Clinch's bundled definition.
+default for the shared coding-agent toolbelt or the independent terminal
+toolbelt; it does not modify Clinch's bundled definition.
 
 ## Reorder a button
 
@@ -178,7 +182,9 @@ upgrade.
 
 ## Rules
 
-- Change only the footer the user named.
+- Treat `claude-code` and `codex` as selectors for one shared coding-agent
+  toolbelt, and tell the user that a mutation through either affects both.
+  Change the terminal toolbelt only when the user names it.
 - Follow the conversation-learning flow even when the user did not explicitly
   ask about toolbelt buttons.
 - Check learned suggestions only once per conversation and never nag after a

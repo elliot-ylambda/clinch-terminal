@@ -123,10 +123,14 @@ visual language for this MVP.
 25. Agent-driven section deletion has the same non-destructive semantics as the UI: it removes the
     section container while preserving every contained tab and running session.
 
-26. Claude Code and Codex can independently list, create, delete, and exactly reorder buttons in
-    the Claude Code, Codex, and plain-terminal footer toolbelts. Custom button creation includes its
-    label, inserted text, auto-send choice, side, and optional zero-based position. Removing a
-    shipped button hides the live default for that footer rather than altering bundled data.
+26. Claude Code and Codex can list, create, delete, and exactly reorder buttons in one shared
+    coding-agent footer toolbelt; a mutation addressed through either provider appears in every
+    Claude Code and Codex tab and window. The plain-terminal toolbelt remains independent. Custom
+    button creation includes its label, inserted text, auto-send choice, side, and optional
+    zero-based position. Removing a shipped button hides the live default for that toolbelt rather
+    than altering bundled data. Provider-aware built-ins such as Transfer derive their label from
+    the active session. Configured session actions remain in a stable position and render disabled
+    with an explanation while transient session identity is unavailable.
 
 27. Stable Clinch releases and ordinary local Clinch development launches ship the local-control
     feature and its channel-specific wrapper together. Release validation fails when the wrapper or

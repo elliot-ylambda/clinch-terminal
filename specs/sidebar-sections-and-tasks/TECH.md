@@ -110,12 +110,21 @@ update, move, add/remove-tab, and delete dispatch the normal workspace save acti
 return ordered UUID-backed section IDs and member tab IDs. Delete calls the non-destructive ungroup
 path, never `close_tab_group`.
 
-Toolbelt handlers operate on the effective provider-specific `SessionSettings` selection. They
-rebuild selections through `custom_from_effective_items_and_hidden_custom_inserts`, preserving live
-defaults, explicit hidden defaults, provider isolation, and ordered overlays. Button labels are
-validated as unique exact selectors. Create and move use bounded zero-based positions; deleting a
-custom entry removes it, while deleting a shipped entry records it as hidden through the existing
-selection normalization.
+Toolbelt handlers operate on one canonical coding-agent `SessionSettings` selection for Claude Code
+and Codex, plus the independent terminal selection. Either provider selector reads and mutates the
+same coding-agent value. A compatibility resolver imports the least-stale provider override from
+the short-lived split-layout format, while exact retired shipped defaults are removed only from
+pre-overlay full snapshots or re-saved layouts with the complete historical shipped signature;
+edited recipes, individually selected presets, and genuine custom buttons remain. Once changed,
+the new optional canonical field is the migration marker and old shared/provider keys cannot
+resurrect their layouts. Rendering, the editor, Remote Control, and local control all resolve this same
+effective selection. Handlers rebuild selections through
+`custom_from_effective_items_and_hidden_custom_inserts`, preserving live defaults, explicit hidden
+defaults, and ordered overlays. Button labels are validated as unique exact selectors. Create and
+move use bounded zero-based positions; deleting a custom entry removes it, while deleting a shipped
+entry records it as hidden through the existing selection normalization. Bookmark and Transfer
+retain their configured slots but render disabled until the active session exposes the identity
+needed to perform them.
 
 Extend the existing local Claude/Codex prompt-mirror hook with a bounded, fail-open learner. On
 `UserPromptSubmit`, normalize case and whitespace, reject secret-looking, destructive, oversized,

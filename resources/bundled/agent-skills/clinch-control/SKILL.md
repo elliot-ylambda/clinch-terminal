@@ -3,7 +3,7 @@ name: clinch-control
 description: Control the running Clinch app from Claude Code or Codex with its local control CLI. Use when the user asks to manipulate Clinch windows, tabs, panes, sessions, sidebar sections, toolbelts, or UI surfaces, or to launch a long-lived, interactive, or user-visible project process such as a dev server, watcher, REPL, or log tail in a new tab. Do not use for tests, lint, builds, Git commands, or other bounded work the agent can run in its own shell.
 ---
 
-<!-- managed-by: Clinch; version: 1.3.0 -->
+<!-- managed-by: Clinch; version: 1.4.0 -->
 
 # Clinch control
 
@@ -146,7 +146,8 @@ untracked background process in the agent shell.
   --window <window-id>` before and after; never substitute a close action.
 - Use the separately installed `clinch-toolbelt` skill for explicit quick-insert
   button requests. Typed `toolbelt` actions can list, create, delete, and move
-  buttons independently for Claude Code, Codex, and terminal footers.
+  buttons in the shared Claude Code/Codex coding-agent footer or the independent
+  terminal footer.
 - Suggest creating a quick-insert button when the user repeatedly supplies the
   same prompt or command, but wait for confirmation before changing a toolbelt.
 - If a requested mutation is not exposed by the installed CLI, say so rather

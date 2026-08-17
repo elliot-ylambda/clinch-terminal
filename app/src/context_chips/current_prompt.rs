@@ -1067,7 +1067,7 @@ impl CurrentPrompt {
 
             // Also include chips configured for the CLI agent footer.
             let cli_footer_chips = SessionSettings::as_ref(ctx)
-                .cli_agent_footer_chip_selection
+                .coding_agent_footer_chip_selection_value()
                 .all_chips();
             for chip_kind in cli_footer_chips {
                 if !chips.contains(&chip_kind) {
@@ -1160,7 +1160,13 @@ impl CurrentPrompt {
             self.update_states_with_new_context(ctx);
         }
 
-        if let SessionSettingsChangedEvent::CLIAgentToolbarChipSelectionSetting { .. } = event {
+        if matches!(
+            event,
+            SessionSettingsChangedEvent::CLIAgentToolbarChipSelectionSetting { .. }
+                | SessionSettingsChangedEvent::CodingAgentToolbarChipSelectionSetting { .. }
+                | SessionSettingsChangedEvent::ClaudeCodeToolbarChipSelectionSetting { .. }
+                | SessionSettingsChangedEvent::CodexToolbarChipSelectionSetting { .. }
+        ) {
             self.update_states_with_new_context(ctx);
         }
     }

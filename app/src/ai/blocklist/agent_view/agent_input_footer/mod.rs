@@ -862,6 +862,7 @@ impl AgentInputFooter {
                 }
                 SessionSettingsChangedEvent::AgentToolbarChipSelectionSetting { .. }
                 | SessionSettingsChangedEvent::CLIAgentToolbarChipSelectionSetting { .. }
+                | SessionSettingsChangedEvent::CodingAgentToolbarChipSelectionSetting { .. }
                 | SessionSettingsChangedEvent::ClaudeCodeToolbarChipSelectionSetting { .. }
                 | SessionSettingsChangedEvent::CodexToolbarChipSelectionSetting { .. }
                 | SessionSettingsChangedEvent::GithubPrChipDefaultValidation { .. } => {
@@ -1634,9 +1635,6 @@ impl AgentInputFooter {
             AgentToolbarItemKind::Compact => Some(ChildView::new(&self.compact_button).finish()),
             AgentToolbarItemKind::ForkSession => Some(ChildView::new(&self.fork_button).finish()),
             AgentToolbarItemKind::BookmarkConversation => {
-                CLIAgentSessionsModel::as_ref(app)
-                    .session(self.terminal_view_id)
-                    .and_then(|session| session.session_key())?;
                 Some(ChildView::new(&self.bookmark_conversation_button).finish())
             }
             AgentToolbarItemKind::ContinuePrompt => {
@@ -1664,16 +1662,20 @@ impl AgentInputFooter {
                         .transcript_path
                         .as_deref()
                         .is_some_and(|path| !path.trim().is_empty());
-                if !has_conversation_reference {
-                    return None;
-                }
 
                 let label = format!("Transfer to {}", target.display_name());
-                let tooltip = format!(
-                    "Continue this conversation in a new {} tab without closing {}",
-                    target.display_name(),
-                    session.agent.display_name()
-                );
+                let tooltip = if has_conversation_reference {
+                    format!(
+                        "Continue this conversation in a new {} tab without closing {}",
+                        target.display_name(),
+                        session.agent.display_name()
+                    )
+                } else {
+                    format!(
+                        "Send a message first so {} can provide a resumable conversation ID",
+                        session.agent.display_name()
+                    )
+                };
                 Some(
                     ActionButton::new(label, AgentInputButtonTheme)
                         .with_icon(Icon::SwitchHorizontal01)
@@ -1682,6 +1684,7 @@ impl AgentInputFooter {
                         .with_tooltip(tooltip)
                         .with_tooltip_alignment(TooltipAlignment::Left)
                         .with_mouse_state_handle(self.transfer_agent_mouse_state.clone())
+                        .with_disabled(!has_conversation_reference)
                         .on_click(|ctx| {
                             ctx.dispatch_typed_action(AgentInputFooterAction::TransferAgent);
                         })
@@ -1887,7 +1890,7 @@ impl AgentInputFooter {
         let selection = self
             .cli_agent(app)
             .map(|agent| session_settings.footer_chip_selection_for_cli_agent(agent))
-            .unwrap_or_else(|| session_settings.cli_agent_footer_chip_selection.value());
+            .unwrap_or_else(|| session_settings.coding_agent_footer_chip_selection_value());
         let left_items = selection.left_items();
         let right_items = selection.right_items();
         let configured_items = left_items
@@ -2432,9 +2435,19 @@ impl AgentInputFooter {
     }
 
     fn sync_conversation_bookmark_button(&self, ctx: &mut ViewContext<Self>) {
+        let sessions = CLIAgentSessionsModel::as_ref(ctx);
+        let can_bookmark = sessions
+            .session(self.terminal_view_id)
+            .and_then(|session| session.session_key())
+            .is_some();
         let is_bookmarked =
-            CLIAgentSessionsModel::as_ref(ctx).is_conversation_bookmarked(self.terminal_view_id);
-        let (label, tooltip) = if is_bookmarked {
+            can_bookmark && sessions.is_conversation_bookmarked(self.terminal_view_id);
+        let (label, tooltip) = if !can_bookmark {
+            (
+                "Bookmark Session",
+                "Send a message first so this conversation has a bookmarkable ID",
+            )
+        } else if is_bookmarked {
             (
                 "Bookmarked",
                 "Remove this conversation from Bookmarked sessions",
@@ -2450,6 +2463,7 @@ impl AgentInputFooter {
                 button.set_label(label, ctx);
                 button.set_tooltip(Some(tooltip), ctx);
                 button.set_active(is_bookmarked, ctx);
+                button.set_disabled(!can_bookmark, ctx);
             });
     }
 
@@ -3055,9 +3069,7 @@ impl TypedActionView for AgentInputFooter {
             }
             AgentInputFooterAction::OpenToolbarEditor => {
                 let mode = match self.cli_agent(ctx) {
-                    Some(crate::terminal::CLIAgent::Codex) => AgentToolbarEditorMode::Codex,
-                    Some(crate::terminal::CLIAgent::Claude) => AgentToolbarEditorMode::ClaudeCode,
-                    Some(_) => AgentToolbarEditorMode::ClaudeCode,
+                    Some(_) => AgentToolbarEditorMode::CLIAgent,
                     None => AgentToolbarEditorMode::Terminal,
                 };
                 ctx.emit(AgentInputFooterEvent::OpenToolbarEditor(mode));

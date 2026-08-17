@@ -8,6 +8,48 @@ use crate::settings::AISettings;
 use crate::terminal::shared_session::SharedSessionStatus;
 use crate::ui_components::icons::Icon;
 
+/// Exact quick-insert definitions that once shipped as mandatory CLI-footer defaults.
+/// Never mutate or remove entries: this is persisted-format migration data, not the live catalog.
+const RETIRED_CLI_DEFAULT_QUICK_INSERT_SNAPSHOTS: &[(&str, &str)] = &[
+    ("/codex", "/codex"),
+    (
+        "Make No Mistakes",
+        "Do it all for me. I'm stepping away. Don't make any mistakes.",
+    ),
+    ("Create a Plan", "Create a Plan"),
+    ("Build w/ Sub-agents", "Build w/ Sub-agents"),
+    (
+        "Create a PR",
+        "Create a PR, then merge main into this PR",
+    ),
+    (
+        "Worktree-Build",
+        "OK go into an isolated work tree. Plan this out, then implement it and create a pull request.",
+    ),
+    ("Review w/ Codex Sol Max", "Review w/ Codex Sol Max"),
+    (
+        "Review w/ Claude Code Fable",
+        "Review w/ Claude Code Fable",
+    ),
+    (
+        "Debug w/ Ultracode",
+        "Investigate with Ultra Code and use subagents",
+    ),
+    (
+        "Git Worktree",
+        "Move our current work and code into an isolated git work tree. And create a branch. Work out of the git worktree",
+    ),
+    (
+        "Fix & Verify",
+        "Implement the requested fix, run the most relevant checks, and summarize what changed.",
+    ),
+    (
+        "Simplify",
+        "Simplify the current implementation without changing behavior, then run the relevant tests.",
+    ),
+    ("Push2Main", "Push all these changes to main."),
+];
+
 /// Declares which footer(s) a toolbar item is available in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToolbarAvailability {
@@ -460,45 +502,49 @@ impl AgentToolbarItemKind {
     /// These are intentionally not part of the default layout: users can opt into the prompts
     /// they want without every preset consuming footer space on a fresh install.
     pub fn cli_quick_insert_presets() -> Vec<Self> {
-        vec![
-            Self::custom_insert("/codex", "/codex"),
-            Self::custom_insert(
-                "Make No Mistakes",
-                "Do it all for me. I'm stepping away. Don't make any mistakes.",
-            ),
-            Self::custom_insert("Create a Plan", "Create a Plan"),
-            Self::custom_insert("Build w/ Sub-agents", "Build w/ Sub-agents"),
-            Self::custom_insert(
-                "Create a PR",
-                "Create a PR, then merge main into this PR",
-            ),
-            Self::custom_insert(
-                "Worktree-Build",
-                "OK go into an isolated work tree. Plan this out, then implement it and create a pull request.",
-            ),
-            Self::custom_insert("Review w/ Codex Sol Max", "Review w/ Codex Sol Max"),
-            Self::custom_insert(
-                "Review w/ Claude Code Fable",
-                "Review w/ Claude Code Fable",
-            ),
-            Self::custom_insert(
-                "Debug w/ Ultracode",
-                "Investigate with Ultra Code and use subagents",
-            ),
-            Self::custom_insert(
-                "Git Worktree",
-                "Move our current work and code into an isolated git work tree. And create a branch. Work out of the git worktree",
-            ),
-            Self::custom_insert(
-                "Fix & Verify",
-                "Implement the requested fix, run the most relevant checks, and summarize what changed.",
-            ),
-            Self::custom_insert(
-                "Simplify",
-                "Simplify the current implementation without changing behavior, then run the relevant tests.",
-            ),
-            Self::custom_insert("Push2Main", "Push all these changes to main."),
-        ]
+        // Append new presets here rather than changing the historical snapshot catalog below.
+        // Migration needs the old definitions to remain byte-for-byte stable.
+        Self::retired_cli_default_quick_insert_snapshot_items()
+    }
+
+    /// Immutable prompt definitions that shipped as mandatory CLI-footer defaults before the
+    /// live-default overlay format. Keep this catalog stable even when the current preset library
+    /// grows or a recipe is revised; settings migration uses exact equality to avoid deleting
+    /// user-authored variants.
+    pub(crate) fn retired_cli_default_quick_insert_snapshot_items() -> Vec<Self> {
+        RETIRED_CLI_DEFAULT_QUICK_INSERT_SNAPSHOTS
+            .iter()
+            .map(|(label, text)| Self::custom_insert(*label, *text))
+            .collect()
+    }
+
+    /// Items that were once injected into every CLI-agent footer but are now optional.
+    ///
+    /// Old settings stored the entire effective footer without recording whether an item came
+    /// from Clinch or the user. Exact historical definitions can therefore look user-authored
+    /// after an upgrade. This list lets the settings compatibility layer remove only those exact
+    /// snapshots; edited prompt text or auto-send behavior remains a genuine user override.
+    pub fn is_retired_cli_default_snapshot_item(&self) -> bool {
+        matches!(
+            self,
+            Self::FileAttach
+                | Self::VoiceInput
+                | Self::ContextChip(ContextChipKind::GitDiffStats)
+                | Self::ShareSession
+                | Self::FileExplorer
+                | Self::RichInput
+                | Self::ContextChip(ContextChipKind::WorkingDirectory)
+                | Self::ContextChip(ContextChipKind::ShellGitBranch)
+                | Self::Settings
+        ) || matches!(
+            self,
+            Self::CustomInsert {
+                label,
+                text,
+                auto_send: true,
+            } if RETIRED_CLI_DEFAULT_QUICK_INSERT_SNAPSHOTS
+                .contains(&(label.as_str(), text.as_str()))
+        )
     }
 
     /// Default right-side items for the CLI agent footer.

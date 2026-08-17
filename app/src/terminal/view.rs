@@ -5493,7 +5493,7 @@ impl TerminalView {
         if self.has_active_cli_agent_session(ctx)
             && Self::uses_git_status_chips(
                 SessionSettings::as_ref(ctx)
-                    .cli_agent_footer_chip_selection
+                    .coding_agent_footer_chip_selection_value()
                     .all_chips(),
             )
         {
@@ -5530,7 +5530,7 @@ impl TerminalView {
         }
         if self.has_active_cli_agent_session(ctx)
             && SessionSettings::as_ref(ctx)
-                .cli_agent_footer_chip_selection
+                .coding_agent_footer_chip_selection_value()
                 .all_chips()
                 .contains(&ContextChipKind::GithubPullRequest)
         {
@@ -23914,6 +23914,7 @@ impl TerminalView {
                 self.update_git_status_subscription(ctx);
             }
             SessionSettingsChangedEvent::CLIAgentToolbarChipSelectionSetting { .. }
+            | SessionSettingsChangedEvent::CodingAgentToolbarChipSelectionSetting { .. }
             | SessionSettingsChangedEvent::ClaudeCodeToolbarChipSelectionSetting { .. }
             | SessionSettingsChangedEvent::CodexToolbarChipSelectionSetting { .. } => {
                 // Force-close rich input when the Rich Input chip is removed so
@@ -29541,7 +29542,7 @@ fn maybe_wrap_terminal_element_in_scrollable(
 /// Returns `true` when the Rich Input chip is present in the user's CLI agent
 /// footer toolbar configuration.
 fn is_rich_input_chip_in_cli_toolbar(app: &AppContext) -> bool {
-    let sel = &SessionSettings::as_ref(app).cli_agent_footer_chip_selection;
+    let sel = SessionSettings::as_ref(app).coding_agent_footer_chip_selection_value();
     sel.left_items()
         .iter()
         .chain(sel.right_items().iter())

@@ -682,7 +682,7 @@ fn terminal_targeted_quick_insert_save_updates_only_terminal_toolbar() {
 }
 
 #[test]
-fn codex_targeted_quick_insert_save_does_not_change_claude_or_legacy_toolbar() {
+fn coding_agent_quick_insert_save_updates_one_shared_toolbar() {
     App::test((), |mut app| async move {
         initialize_app(&mut app);
         let workspace = mock_workspace(&mut app);
@@ -700,9 +700,9 @@ fn codex_targeted_quick_insert_save_does_not_change_claude_or_legacy_toolbar() {
         workspace.update(&mut app, |workspace, ctx| {
             workspace.handle_quick_insert_modal_event(
                 &QuickInsertModalEvent::Save {
-                    target: QuickInsertModalTarget::Codex,
-                    label: "Codex only".to_owned(),
-                    text: "codex prompt".to_owned(),
+                    target: QuickInsertModalTarget::CLIAgent,
+                    label: "Review".to_owned(),
+                    text: "review prompt".to_owned(),
                     auto_send: false,
                     visible: true,
                 },
@@ -716,19 +716,22 @@ fn codex_targeted_quick_insert_save_does_not_change_claude_or_legacy_toolbar() {
                 &legacy_selection
             );
             assert!(settings.claude_code_footer_chip_selection.value().is_none());
-            let codex = settings
-                .codex_footer_chip_selection
+            assert!(settings.codex_footer_chip_selection.value().is_none());
+            let shared = settings
+                .coding_agent_footer_chip_selection
                 .value()
                 .as_ref()
-                .expect("Codex should have an independent footer after adding a button");
-            assert!(codex.left_items().iter().any(|item| matches!(
+                .expect("coding agents should have one canonical footer");
+            assert!(shared.left_items().iter().any(|item| matches!(
                 item,
                 AgentToolbarItemKind::CustomInsert {
                     label,
                     text,
                     auto_send: false,
-                } if label == "Codex only" && text == "codex prompt"
+                } if label == "Review" && text == "review prompt"
             )));
+            assert_eq!(settings.claude_code_footer_chip_selection_value(), shared);
+            assert_eq!(settings.codex_footer_chip_selection_value(), shared);
         });
     });
 }
