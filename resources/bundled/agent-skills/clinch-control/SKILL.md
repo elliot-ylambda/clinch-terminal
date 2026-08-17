@@ -3,7 +3,7 @@ name: clinch-control
 description: Control and inspect the running Clinch app from Claude Code or Codex with its local control CLI. Use when the user asks to manipulate Clinch windows, tabs, panes, sessions, sidebar sections, toolbelts, or UI surfaces; inspect or search rendered terminal contents across tabs; or launch a long-lived, interactive, or user-visible project process such as a dev server, watcher, REPL, or log tail in a new tab. Do not use for tests, lint, builds, Git commands, or other bounded work the agent can run in its own shell.
 ---
 
-<!-- managed-by: Clinch; version: 1.5.0 -->
+<!-- managed-by: Clinch; version: 1.6.0 -->
 
 # Clinch control
 
@@ -27,13 +27,15 @@ Do not create a tab merely because a command is a subprocess.
 
 ## Bind to the current Clinch app
 
-Current Clinch versions inject three values into every local host terminal
+Current Clinch versions inject four values into every local host terminal
 shell:
 
 - `CLINCH_CONTROL_COMMAND`: the current channel's command name.
 - `CLINCH_CONTROL_WRAPPER`: the exact wrapper inside the app that launched the
   shell.
 - `CLINCH_CONTROL_PID`: the process ID of that exact app instance.
+- `WARP_TERMINAL_SESSION_UUID`: the durable identity of the terminal and outer
+  project tab that launched the agent.
 
 When `CLINCH_CONTROL_WRAPPER` is set and executable, use that exact path as
 the executable in the `"$CLINCH_CONTROL_WRAPPER" ctrl` command prefix. Add
@@ -84,6 +86,12 @@ active target. Outside a bound Clinch terminal, if multiple same-channel
 instances are running, select the intended instance explicitly with
 `--instance <id>`.
 
+In a bound Clinch terminal, keep `WARP_TERMINAL_SESSION_UUID` in the command
+environment and omit `--window` when creating a tab unless the user explicitly
+chooses another window. The CLI carries that identity automatically so an
+implicit `tab create` targets the project tab that launched the agent, even if
+another project is active when the request arrives.
+
 ## Search terminal contents across tabs
 
 Use the read-only `tab grep` action when the user asks what is running, shown,
@@ -133,8 +141,8 @@ non-terminal document contents.
    is running. Pass arguments directly after `--`. To intentionally use shell
    syntax such as a pipeline, make the shell explicit, for example
    `-- sh -lc 'cmd | other'`.
-3. Use the returned IDs for any follow-up mutation. For example, give the new
-   tab a useful name with an exact selector:
+3. Use the returned IDs for supported exact follow-up mutations. For example,
+   give the new tab a useful name with an exact selector:
 
    ```sh
    "$CLINCH_CONTROL_WRAPPER" ctrl tab rename "Dev server" \

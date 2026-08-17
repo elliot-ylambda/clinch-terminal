@@ -12,7 +12,7 @@ use warpui::SingletonEntity;
 use warpui::{ModelContext, TypedActionView};
 
 use crate::local_control::resolver::{
-    decode_params, target_window_id_for_target, validate_tab_create_target, workspace_for_window,
+    decode_params, validate_tab_create_target, workspace_for_tab_create,
 };
 use crate::local_control::LocalControlBridge;
 use crate::server::telemetry::AddTabWithShellSource;
@@ -58,11 +58,12 @@ pub(crate) fn create_tab(
     instance_id: &Option<InstanceId>,
     params: &serde_json::Value,
     target: &TargetSelector,
+    origin_terminal_session_uuid: Option<&uuid::Uuid>,
     ctx: &mut ModelContext<LocalControlBridge>,
 ) -> Result<serde_json::Value, ControlError> {
     validate_tab_create_target(target)?;
-    let window_id = target_window_id_for_target(ctx, target, ActionKind::TabCreate)?;
-    let workspace = workspace_for_window(window_id, ActionKind::TabCreate, ctx)?;
+    let (window_id, workspace) =
+        workspace_for_tab_create(target, origin_terminal_session_uuid, ctx)?;
     let params = decode_params::<TabCreateParams>(params)?;
     let launch = tab_create_launch(&params)?;
     let action = if launch.is_none() {

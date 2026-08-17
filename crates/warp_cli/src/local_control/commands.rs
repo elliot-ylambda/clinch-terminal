@@ -12,6 +12,8 @@ use local_control::protocol::{
 };
 use local_control::selection::select_instance;
 use serde::Serialize;
+use std::ffi::OsString;
+use uuid::Uuid;
 use warp_core::channel::ChannelState;
 
 use crate::agent::OutputFormat;
@@ -967,11 +969,20 @@ fn run_action_with_params<T: Serialize>(
     params: T,
     output_format: OutputFormat,
 ) -> Result<(), ControlError> {
+    let has_explicit_window =
+        args.window.is_some() || args.window_index.is_some() || args.window_title.is_some();
     let selector = instance_selector(&args);
     let records = local_control::discovery::list_instances(&ChannelState::channel().to_string());
     let target = target_selector(&args)?;
     let instance = select_instance(&records, &selector)?;
     let mut request = RequestEnvelope::new(Action::with_params(action, params)?);
+    if action == ActionKind::TabCreate && !has_explicit_window {
+        request.origin_terminal_session_uuid = origin_terminal_session_uuid(
+            instance.pid,
+            std::env::var_os(local_control::CLINCH_CONTROL_PID_ENV),
+            std::env::var_os(local_control::TERMINAL_SESSION_UUID_ENV),
+        )?;
+    }
     request.target = target;
     let response = local_control::client::send_request(&instance, &request)?;
     let local_control::protocol::ControlResponse::Ok { data } = response.response else {
@@ -988,6 +999,42 @@ fn run_action_with_params<T: Serialize>(
             Ok(())
         }
     }
+}
+
+pub(crate) fn origin_terminal_session_uuid(
+    selected_instance_pid: u32,
+    bound_instance_pid: Option<OsString>,
+    value: Option<OsString>,
+) -> Result<Option<Uuid>, ControlError> {
+    // Every Warp terminal has a session UUID, but only a matching Clinch PID
+    // proves that the session belongs to the selected local-control instance.
+    let bound_instance_pid = bound_instance_pid
+        .and_then(|pid| pid.into_string().ok())
+        .and_then(|pid| pid.parse::<u32>().ok());
+    if bound_instance_pid != Some(selected_instance_pid) {
+        return Ok(None);
+    }
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let value = value.into_string().map_err(|_| {
+        ControlError::new(
+            ErrorCode::InvalidRequest,
+            format!(
+                "{} must contain a UTF-8 UUID",
+                local_control::TERMINAL_SESSION_UUID_ENV
+            ),
+        )
+    })?;
+    Uuid::parse_str(&value).map(Some).map_err(|_| {
+        ControlError::new(
+            ErrorCode::InvalidRequest,
+            format!(
+                "{} must contain a valid UUID",
+                local_control::TERMINAL_SESSION_UUID_ENV
+            ),
+        )
+    })
 }
 
 fn parse_json_value_or_string(value: String) -> serde_json::Value {

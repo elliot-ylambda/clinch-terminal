@@ -4,7 +4,7 @@ use std::ffi::OsString;
 use crate::channel::ChannelState;
 
 pub(crate) const FOCUS_URL_ENV: &str = "WARP_FOCUS_URL";
-pub(crate) const TERMINAL_SESSION_UUID_ENV: &str = "WARP_TERMINAL_SESSION_UUID";
+pub(crate) const TERMINAL_SESSION_UUID_ENV: &str = ::local_control::TERMINAL_SESSION_UUID_ENV;
 pub(crate) const AGENT_RESUME_DIR_ENV: &str = "WARP_AGENT_RESUME_DIR";
 
 pub(crate) fn session_focus_url(session_uuid_hex: &str) -> String {

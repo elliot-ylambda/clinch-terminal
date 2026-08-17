@@ -10,6 +10,7 @@ use ::local_control::protocol::{
     ToolbeltSuggestionResolveParams, WindowTarget,
 };
 use ::local_control::{ActionKind, ControlError, ErrorCode, TargetScope};
+use uuid::Uuid;
 use warpui::{AppContext, ModelContext, SingletonEntity, TypedActionView, ViewHandle, WindowId};
 
 use crate::local_control::handlers::metadata::action_metadata_for_name;
@@ -263,6 +264,47 @@ pub(crate) fn workspace_for_window(
                 ),
             )
         })
+}
+
+pub(crate) fn workspace_for_tab_create(
+    target: &TargetSelector,
+    origin_terminal_session_uuid: Option<&Uuid>,
+    ctx: &mut ModelContext<LocalControlBridge>,
+) -> Result<(WindowId, ViewHandle<Workspace>), ControlError> {
+    if target.window.is_some() || origin_terminal_session_uuid.is_none() {
+        let window_id = target_window_id_for_target(ctx, target, ActionKind::TabCreate)?;
+        let workspace = workspace_for_window(window_id, ActionKind::TabCreate, ctx)?;
+        return Ok((window_id, workspace));
+    }
+
+    let origin_terminal_session_uuid =
+        origin_terminal_session_uuid.expect("checked origin terminal session UUID");
+    let mut matches = WorkspaceRegistry::as_ref(ctx)
+        .all_workspaces(ctx)
+        .into_iter()
+        .filter(|(_, workspace)| {
+            workspace.read(ctx, |workspace, ctx| {
+                workspace.tab_views().any(|pane_group| {
+                    pane_group
+                        .as_ref(ctx)
+                        .find_terminal_pane_by_session_uuid(origin_terminal_session_uuid.as_bytes())
+                        .is_some()
+                })
+            })
+        });
+    let Some(target) = matches.next() else {
+        return Err(ControlError::new(
+            ErrorCode::StaleTarget,
+            "tab.create cannot resolve its originating terminal session",
+        ));
+    };
+    if matches.next().is_some() {
+        return Err(ControlError::new(
+            ErrorCode::AmbiguousTarget,
+            "tab.create resolved its originating terminal session in multiple project workspaces",
+        ));
+    }
+    Ok(target)
 }
 
 pub(crate) fn target_workspace(

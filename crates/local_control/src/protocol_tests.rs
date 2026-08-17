@@ -6,6 +6,27 @@ fn request_envelope_serializes_stable_action_names() {
     let value = serde_json::to_value(&request).expect("request serializes");
     assert_eq!(value["protocol_version"], PROTOCOL_VERSION);
     assert_eq!(value["action"]["kind"], "window.focus");
+    assert!(value.get("origin_terminal_session_uuid").is_none());
+}
+
+#[test]
+fn request_envelope_roundtrips_origin_terminal_session_uuid() {
+    let origin_terminal_session_uuid =
+        Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+    let mut request = RequestEnvelope::new(Action::new(ActionKind::TabCreate));
+    request.origin_terminal_session_uuid = Some(origin_terminal_session_uuid);
+
+    let value = serde_json::to_value(&request).expect("request serializes");
+    assert_eq!(
+        value["origin_terminal_session_uuid"],
+        origin_terminal_session_uuid.to_string()
+    );
+    assert_eq!(
+        serde_json::from_value::<RequestEnvelope>(value)
+            .expect("request decodes")
+            .origin_terminal_session_uuid,
+        Some(origin_terminal_session_uuid)
+    );
 }
 
 #[test]

@@ -125,6 +125,7 @@ impl LocalControlBridge {
                 request.action.kind,
                 &request.action.params,
                 &request.target,
+                request.origin_terminal_session_uuid.as_ref(),
                 ctx,
             ),
             ActionKind::TabRename => metadata_config::tab_rename(

@@ -468,6 +468,12 @@ pub enum ControlResult {
 pub struct RequestEnvelope {
     pub protocol_version: u32,
     pub request_id: Uuid,
+    /// Durable identity of the terminal session that initiated this request.
+    ///
+    /// This is source context, not an explicit target. Handlers may use it to
+    /// resolve an implicit target, while explicit selectors continue to win.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_terminal_session_uuid: Option<Uuid>,
     #[serde(default)]
     pub target: TargetSelector,
     pub action: Action,
@@ -478,6 +484,7 @@ impl RequestEnvelope {
         Self {
             protocol_version: PROTOCOL_VERSION,
             request_id: Uuid::new_v4(),
+            origin_terminal_session_uuid: None,
             target: TargetSelector::default(),
             action,
         }

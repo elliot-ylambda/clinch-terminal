@@ -43,6 +43,46 @@ fn parses_typed_create_and_setting_list_params() {
 }
 
 #[test]
+fn parses_origin_terminal_session_uuid_from_shell_context() {
+    let uuid = uuid::Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+
+    assert_eq!(
+        origin_terminal_session_uuid(
+            123,
+            Some("123".into()),
+            Some("550e8400e29b41d4a716446655440000".into())
+        )
+        .expect("simple UUID parses for the bound app"),
+        Some(uuid)
+    );
+    assert_eq!(
+        origin_terminal_session_uuid(123, Some("123".into()), None)
+            .expect("missing origin is accepted"),
+        None
+    );
+    assert_eq!(
+        origin_terminal_session_uuid(123, Some("123".into()), Some("not-a-uuid".into()))
+            .expect_err("malformed origin is rejected")
+            .code,
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        origin_terminal_session_uuid(
+            456,
+            Some("123".into()),
+            Some("550e8400e29b41d4a716446655440000".into())
+        )
+        .expect("a foreign terminal origin is ignored"),
+        None
+    );
+    assert_eq!(
+        origin_terminal_session_uuid(123, None, Some("550e8400e29b41d4a716446655440000".into()))
+            .expect("an unbound terminal origin is ignored"),
+        None
+    );
+}
+
+#[test]
 fn tab_startup_command_requires_explicit_cwd() {
     let err = ControlArgs::try_parse_from(["warpctrl", "tab", "create", "--", "npm", "run", "dev"])
         .expect_err("startup command without cwd must be rejected");

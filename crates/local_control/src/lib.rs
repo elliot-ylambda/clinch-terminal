@@ -22,3 +22,12 @@ pub use protocol::{
     RequestEnvelope, ResponseEnvelope,
 };
 pub use selectors::{PaneSelector, SessionSelector, TabSelector, TargetSelector, WindowSelector};
+
+/// Durable terminal identity exported to processes launched inside a Warp session.
+///
+/// Local-control clients use this to preserve the originating project workspace
+/// when a physical window contains more than one project.
+pub const TERMINAL_SESSION_UUID_ENV: &str = "WARP_TERMINAL_SESSION_UUID";
+
+/// Process identity exported by a Clinch-bound terminal for its owning app.
+pub const CLINCH_CONTROL_PID_ENV: &str = "CLINCH_CONTROL_PID";

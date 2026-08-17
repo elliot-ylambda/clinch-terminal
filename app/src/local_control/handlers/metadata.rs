@@ -104,6 +104,7 @@ pub(super) struct TabEntry {
     pub(super) window_index: usize,
     pub(super) index: usize,
     pub(super) workspace_active_tab_index: usize,
+    pub(super) workspace: ViewHandle<Workspace>,
     pub(super) pane_group: ViewHandle<PaneGroup>,
 }
 
@@ -825,24 +826,48 @@ pub(super) fn tab_entries_for_windows(
     action: ActionKind,
     ctx: &mut ModelContext<LocalControlBridge>,
 ) -> Result<Vec<TabEntry>, ControlError> {
+    tab_entries_for_windows_with_project_scope(windows, action, false, ctx)
+}
+
+pub(super) fn tab_entries_for_windows_including_projects(
+    windows: Vec<WindowEntry>,
+    action: ActionKind,
+    ctx: &mut ModelContext<LocalControlBridge>,
+) -> Result<Vec<TabEntry>, ControlError> {
+    tab_entries_for_windows_with_project_scope(windows, action, true, ctx)
+}
+
+fn tab_entries_for_windows_with_project_scope(
+    windows: Vec<WindowEntry>,
+    action: ActionKind,
+    include_inactive_projects: bool,
+    ctx: &mut ModelContext<LocalControlBridge>,
+) -> Result<Vec<TabEntry>, ControlError> {
     let mut entries = Vec::new();
     for window in windows {
-        let Some(workspace) = workspace_for_window(window.window_id, action, ctx)? else {
-            continue;
+        let workspaces = if include_inactive_projects {
+            WorkspaceRegistry::as_ref(ctx).get_all(window.window_id, ctx)
+        } else {
+            workspace_for_window(window.window_id, action, ctx)?
+                .into_iter()
+                .collect()
         };
-        entries.extend(workspace.read(ctx, |workspace, _| {
-            workspace
-                .tab_views()
-                .enumerate()
-                .map(|(index, pane_group)| TabEntry {
-                    window_id: window.window_id,
-                    window_index: window.index,
-                    index,
-                    workspace_active_tab_index: workspace.active_tab_index(),
-                    pane_group: pane_group.clone(),
-                })
-                .collect::<Vec<_>>()
-        }));
+        for workspace in workspaces {
+            entries.extend(workspace.read(ctx, |workspace_ref, _| {
+                workspace_ref
+                    .tab_views()
+                    .enumerate()
+                    .map(|(index, pane_group)| TabEntry {
+                        window_id: window.window_id,
+                        window_index: window.index,
+                        index,
+                        workspace_active_tab_index: workspace_ref.active_tab_index(),
+                        workspace: workspace.clone(),
+                        pane_group: pane_group.clone(),
+                    })
+                    .collect::<Vec<_>>()
+            }));
+        }
     }
     Ok(entries)
 }
