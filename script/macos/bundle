@@ -672,6 +672,7 @@ EOF
   chmod +x "$CLI_SCRIPT_PATH"
 
   if [[ ",$FEATURES," =~ ",warp_control_cli," ]]; then
+    # Keep the direct warpctrl wrapper as a compatibility alias.
     # Each value must match `Channel::warpctrl_command_name` in the Rust source.
     if [[ $RELEASE_CHANNEL = "stable" ]]; then
       WARPCTRL_COMMAND_NAME="warpctrl"
@@ -685,6 +686,21 @@ EOF
     "$WORKSPACE_ROOT_DIR/script/macos/create_warpctrl_wrapper" \
       "$WARPCTRL_SCRIPT_PATH" \
       "../../MacOS/$WARP_BIN"
+
+    if [[ "$BUNDLE_ID" == "sh.clinch.Clinch" || "$BUNDLE_ID" == "sh.clinch.ClinchDev" ]]; then
+      # Each value must match `Channel::clinch_command_name` in the Rust source.
+      if [[ $RELEASE_CHANNEL = "stable" ]]; then
+        CLINCH_COMMAND_NAME="clinch"
+      else
+        CLINCH_COMMAND_NAME="clinch-$RELEASE_CHANNEL"
+      fi
+      CLINCH_SCRIPT_PATH="$BUNDLED_RESOURCES_DIR/bin/$CLINCH_COMMAND_NAME"
+      echo "Creating Clinch ctrl wrapper script at $CLINCH_SCRIPT_PATH..."
+      "$WORKSPACE_ROOT_DIR/script/macos/create_warpctrl_wrapper" \
+        "$CLINCH_SCRIPT_PATH" \
+        "../../MacOS/$WARP_BIN" \
+        clinch
+    fi
   fi
 
   # Store the built artifact locations for GitHub Actions outputs.

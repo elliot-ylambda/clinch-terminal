@@ -768,7 +768,7 @@ fn select_tab_entries(
     }
 }
 
-fn select_pane_entries(
+pub(super) fn select_pane_entries(
     target: &TargetSelector,
     action: ActionKind,
     ctx: &mut ModelContext<LocalControlBridge>,

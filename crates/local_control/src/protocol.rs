@@ -202,6 +202,45 @@ pub struct TabCreateParams {
     pub command: Vec<String>,
 }
 
+/// Parameters for searching bounded, rendered terminal text across tabs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TabGrepParams {
+    pub pattern: String,
+    #[serde(default)]
+    pub ignore_case: bool,
+    #[serde(default)]
+    pub fixed_strings: bool,
+    pub max_matches: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TabGrepMatch {
+    pub window_id: String,
+    pub window_index: u32,
+    pub tab_id: String,
+    pub tab_index: u32,
+    pub tab_title: String,
+    pub pane_id: String,
+    pub pane_index: u32,
+    pub line_number: u32,
+    pub text_truncated: bool,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TabGrepResult {
+    pub action: ActionKind,
+    pub pattern: String,
+    pub searched_tabs: u32,
+    pub searched_panes: u32,
+    pub skipped_non_terminal_panes: u32,
+    pub match_count: u32,
+    pub content_truncated: bool,
+    pub matches_truncated: bool,
+    pub matches: Vec<TabGrepMatch>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TextParams {

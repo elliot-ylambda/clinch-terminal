@@ -48,7 +48,7 @@ fn decide(bundled_contents: &str, existing_contents: Option<&str>) -> InstallDec
 fn bundled_control_wrapper(resources_root: &Path) -> PathBuf {
     resources_root
         .join("bin")
-        .join(ChannelState::channel().warpctrl_command_name())
+        .join(ChannelState::channel().clinch_command_name())
 }
 
 fn bundle_has_control_wrapper(resources_root: &Path) -> bool {

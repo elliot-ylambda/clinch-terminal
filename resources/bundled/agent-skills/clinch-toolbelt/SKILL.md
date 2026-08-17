@@ -3,7 +3,7 @@ name: clinch-toolbelt
 description: Creates, deletes, lists, or reorders Clinch quick-insert buttons and proactively suggests locally learned reusable prompts at the beginning of a new Claude Code or Codex conversation. Use for every new agent conversation in Clinch, when the user asks for a button, footer, or toolbelt change, or when reusable text emerges in the visible conversation.
 ---
 
-<!-- managed-by: Clinch; version: 3.1.0 -->
+<!-- managed-by: Clinch; version: 3.2.0 -->
 
 # Clinch toolbelt buttons
 
@@ -13,20 +13,20 @@ other Clinch persistence directly for a toolbelt request.
 Current Clinch versions inject `CLINCH_CONTROL_COMMAND`, the exact
 `CLINCH_CONTROL_WRAPPER` path, and `CLINCH_CONTROL_PID` into every local host
 terminal shell. When the wrapper is executable and the PID is present, use
-the wrapper as `<control-command>` and add `--pid "$CLINCH_CONTROL_PID"` to
-every toolbelt command. The wrapper takes precedence over `PATH`; the PID
-prevents one local worktree build from controlling another. If either binding
-is incomplete, stop and ask the user to relaunch or rebuild that Clinch app.
-Never fall back to another channel or instance. In the examples,
-`<control-command>` means the quoted `"$CLINCH_CONTROL_WRAPPER"` value in a
-bound terminal.
+the `"$CLINCH_CONTROL_WRAPPER" ctrl` command prefix and add
+`--pid "$CLINCH_CONTROL_PID"` to every toolbelt command. The wrapper takes
+precedence over `PATH`; the PID prevents one local worktree build from
+controlling another. If either binding is incomplete, stop and ask the user to
+relaunch or rebuild that Clinch app. Never fall back to another channel or
+instance. Always quote the wrapper path and include the `ctrl` subcommand.
 
-Before the first toolbelt action, run `<control-command> --output-format json
-app ping --pid "$CLINCH_CONTROL_PID"`. New Clinch installs enable local control
-by default. If a bound terminal returns `no_instance`, retry once, then report
-that local control is unavailable or may have been explicitly disabled. Point
-to **Settings > Local control** only as recovery, and do not re-enable a setting
-the user deliberately disabled. No global command installation is required.
+Before the first toolbelt action, run `"$CLINCH_CONTROL_WRAPPER" ctrl
+--output-format json app ping --pid "$CLINCH_CONTROL_PID"`. New Clinch installs
+enable local control by default. If a bound terminal returns `no_instance`,
+retry once, then report that local control is unavailable or may have been
+explicitly disabled. Point to **Settings > Local control** only as recovery,
+and do not re-enable a setting the user deliberately disabled. No global
+command installation is required.
 
 If `/.dockerenv` exists and the binding is incomplete, the isolated container
 cannot control the host app. Tell the user to make the request from a host
@@ -36,10 +36,11 @@ If the wrapper is absent and `WARP_FOCUS_URL` begins with `clinch://` or
 `clinchdev://`, the session came from an older version that predates
 current-app binding. Tell the user to update Clinch and start a new
 terminal/agent session. `TERM_PROGRAM=WarpTerminal` alone does not identify
-Clinch. Outside Clinch, check `warpctrl` and `warpctrl-local` on `PATH`, run
-`instance list`, and proceed only when exactly one live channel is found.
-Never use an absolute bundle path persisted in this user-scope skill or edit a
-`/usr/local/bin` symlink without explicit approval.
+Clinch. Outside Clinch, check `clinch` and `clinch-local` on `PATH`, run
+`<available-command> ctrl instance list`, and proceed only when exactly one
+live channel is found. Never use an absolute bundle path persisted in this
+user-scope skill or edit a `/usr/local/bin` symlink without explicit approval.
+`warpctrl` is a legacy compatibility alias, not the user-facing Clinch command.
 
 ## Footer behavior
 
@@ -119,7 +120,7 @@ to hidden or past conversations.
 Always list the requested footer first:
 
 ```sh
-<control-command> --output-format json toolbelt list \
+"$CLINCH_CONTROL_WRAPPER" ctrl --output-format json toolbelt list \
   --pid "$CLINCH_CONTROL_PID" --footer codex
 ```
 
@@ -136,7 +137,7 @@ automatically. A position is side-relative and cannot be interpreted until the
 side is known. Then create it at an exact side and optional position:
 
 ```sh
-<control-command> --output-format json toolbelt button create \
+"$CLINCH_CONTROL_WRAPPER" ctrl --output-format json toolbelt button create \
   --pid "$CLINCH_CONTROL_PID" \
   --footer codex \
   --side left \
@@ -152,7 +153,7 @@ later delete or move cannot select the wrong button.
 ## Delete a button
 
 ```sh
-<control-command> --output-format json toolbelt button delete \
+"$CLINCH_CONTROL_WRAPPER" ctrl --output-format json toolbelt button delete \
   --pid "$CLINCH_CONTROL_PID" \
   --footer codex \
   "Review"
@@ -167,7 +168,7 @@ toolbelt; it does not modify Clinch's bundled definition.
 List first, then move the exact label to a side and zero-based destination:
 
 ```sh
-<control-command> --output-format json toolbelt button move \
+"$CLINCH_CONTROL_WRAPPER" ctrl --output-format json toolbelt button move \
   --pid "$CLINCH_CONTROL_PID" \
   --footer codex \
   --side left \

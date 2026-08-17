@@ -4,10 +4,10 @@ use ::local_control::protocol::{
     DirectionParams, EmptyParams, FileOpenParams, KeyParams, KeyValueParams, NamespaceParams,
     PageQueryParams, PaneTarget, QueryParams, RenameParams, ResizeParams, SectionCreateParams,
     SectionIdParams, SectionMoveParams, SectionUpdateParams, SessionTarget, TabActivateParams,
-    TabCloseParams, TabCreateParams, TabTarget, TargetSelector, TextParams, ThemeNameParams,
-    ToolbeltButtonCreateParams, ToolbeltButtonDeleteParams, ToolbeltButtonMoveParams,
-    ToolbeltListParams, ToolbeltSuggestionListParams, ToolbeltSuggestionResolveParams,
-    WindowTarget,
+    TabCloseParams, TabCreateParams, TabGrepParams, TabTarget, TargetSelector, TextParams,
+    ThemeNameParams, ToolbeltButtonCreateParams, ToolbeltButtonDeleteParams,
+    ToolbeltButtonMoveParams, ToolbeltListParams, ToolbeltSuggestionListParams,
+    ToolbeltSuggestionResolveParams, WindowTarget,
 };
 use ::local_control::{ActionKind, ControlError, ErrorCode, TargetScope};
 use warpui::{AppContext, ModelContext, SingletonEntity, TypedActionView, ViewHandle, WindowId};
@@ -52,6 +52,7 @@ pub(crate) fn validate_action_params(action: &::local_control::Action) -> Result
         ActionParameterSpec::TabActivate => parse_params::<TabActivateParams>(action),
         ActionParameterSpec::TabClose => parse_params::<TabCloseParams>(action),
         ActionParameterSpec::TabCreate => parse_params::<TabCreateParams>(action),
+        ActionParameterSpec::TabGrep => parse_params::<TabGrepParams>(action),
         ActionParameterSpec::Text => parse_params::<TextParams>(action),
         ActionParameterSpec::ThemeName => parse_params::<ThemeNameParams>(action),
         ActionParameterSpec::ToolbeltButtonCreate => {

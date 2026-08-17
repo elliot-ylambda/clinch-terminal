@@ -45,7 +45,7 @@ pub fn clinch_control_environment() -> Option<(String, PathBuf)> {
     clinch_control_environment_for(
         &ChannelState::app_id().to_string(),
         warp_core::paths::bundled_resources_dir(),
-        ChannelState::channel().warpctrl_command_name(),
+        ChannelState::channel().clinch_command_name(),
     )
 }
 

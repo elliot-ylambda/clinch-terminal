@@ -126,20 +126,20 @@ fn exact_clinch_control_binding_replaces_inherited_values() {
     apply_clinch_control_environment(
         &mut command,
         Some((
-            "warpctrl-local".to_owned(),
-            PathBuf::from("/current/ClinchDev.app/Contents/Resources/bin/warpctrl-local"),
+            "clinch-local".to_owned(),
+            PathBuf::from("/current/ClinchDev.app/Contents/Resources/bin/clinch-local"),
         )),
         Some(1234),
     );
 
     assert_eq!(
         env_value(&command, CLINCH_CONTROL_COMMAND_ENV),
-        Some(Some("warpctrl-local".to_owned()))
+        Some(Some("clinch-local".to_owned()))
     );
     assert_eq!(
         env_value(&command, CLINCH_CONTROL_WRAPPER_ENV),
         Some(Some(
-            "/current/ClinchDev.app/Contents/Resources/bin/warpctrl-local".to_owned()
+            "/current/ClinchDev.app/Contents/Resources/bin/clinch-local".to_owned()
         ))
     );
     assert_eq!(

@@ -8893,6 +8893,31 @@ fn remote_control_alternate_snapshot_excludes_retained_resize_history() {
 }
 
 #[test]
+fn local_control_searchable_grid_text_is_plaintext_and_viewport_scoped() {
+    let mut grid = GridHandler::new_for_test_with_scroll_limit(2, 12, 10);
+    for character in "historical".chars() {
+        grid.input(character);
+    }
+    grid.carriage_return();
+    grid.linefeed();
+    for character in "current-one".chars() {
+        grid.input(character);
+    }
+    grid.carriage_return();
+    grid.linefeed();
+    for character in "current-two".chars() {
+        grid.input(character);
+    }
+
+    let (text, truncated) = local_control_live_grid_text(&grid, 1_000);
+    assert!(!truncated);
+    assert!(!text.contains("historical"));
+    assert!(text.contains("current-one"));
+    assert!(text.contains("current-two"));
+    assert!(!text.contains('\x1b'));
+}
+
+#[test]
 fn remote_control_alternate_snapshot_positions_wrapped_rows_independently() {
     let mut grid = GridHandler::new_for_alt_screen_test(2, 3);
     for character in "abcdef".chars() {
@@ -9016,4 +9041,26 @@ fn remote_control_zero_width_prompt_snapshot_includes_visible_prompt_and_command
         visible_snapshot,
         "\x1b]133;A\x07➜  magister-marketing git:(main) \x1b]133;B\x07slowtest"
     );
+}
+
+#[test]
+fn local_control_searchable_prompt_text_has_no_remote_control_markers() {
+    let mut model = TerminalModel::mock(None, None);
+    model.precmd(ansi::PrecmdValue {
+        ps1: Some(hex::encode("➜  project ")),
+        honor_ps1: Some(false),
+        ..Default::default()
+    });
+    model.prompt_marker(ansi::PromptMarker::StartPrompt {
+        kind: ansi::PromptKind::Initial,
+    });
+    model.process_bytes("➜  project ");
+    model.prompt_marker(ansi::PromptMarker::EndPrompt);
+    model.block_list_mut().active_block_mut().start();
+    model.process_bytes("cargo test");
+
+    let mut text = local_control_prompt_and_command_text(model.block_list().active_block());
+    local_control_trim_final_row_terminator(&mut text);
+    assert_eq!(text, "➜  project cargo test");
+    assert!(!text.contains('\x1b'));
 }

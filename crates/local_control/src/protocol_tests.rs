@@ -59,6 +59,26 @@ fn strict_params_serialize_without_synthetic_discriminators() {
             "outcome": "declined"
         })
     );
+
+    let action = Action::with_params(
+        ActionKind::TabGrep,
+        TabGrepParams {
+            pattern: "error".to_owned(),
+            ignore_case: true,
+            fixed_strings: false,
+            max_matches: 25,
+        },
+    )
+    .expect("tab.grep params serialize");
+    assert_eq!(
+        action.params,
+        serde_json::json!({
+            "pattern": "error",
+            "ignore_case": true,
+            "fixed_strings": false,
+            "max_matches": 25
+        })
+    );
 }
 
 #[test]
@@ -180,8 +200,8 @@ fn malformed_and_removed_action_names_are_not_deserialized() {
 }
 
 #[test]
-fn catalog_has_exactly_97_retained_actions() {
-    assert_eq!(ActionKind::ALL.len(), 97);
+fn catalog_has_exactly_98_retained_actions() {
+    assert_eq!(ActionKind::ALL.len(), 98);
 }
 
 #[test]

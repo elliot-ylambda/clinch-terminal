@@ -10038,38 +10038,38 @@ impl Workspace {
         );
     }
 
-    /// Install the Warp Control CLI by creating a symlink in /usr/local/bin
+    /// Install the Clinch CLI by creating a symlink in /usr/local/bin.
     #[cfg(target_os = "macos")]
     fn install_warpctrl(&mut self, ctx: &mut ViewContext<Self>) {
         ctx.spawn(
-            async { cli_install::install_warpctrl() },
+            async { cli_install::install_local_control_cli() },
             |view, result, ctx| {
-                let command_name = ChannelState::channel().warpctrl_command_name();
-                let message = format!("Successfully installed the Warp Control CLI! You can now run '{command_name}' from the command line.");
+                let command = cli_install::local_control_cli_invocation();
+                let message = format!("Successfully installed the Clinch CLI! You can now run '{command}' from the command line.");
                 let toast = DismissibleToast::success(message);
                 view.handle_cli_command_result(
                     result,
                     toast,
-                    "Failed to install Warp Control command",
+                    "Failed to install Clinch CLI command",
                     ctx,
                 );
             },
         );
     }
 
-    /// Uninstall the Warp Control CLI by removing the symlink from /usr/local/bin
+    /// Uninstall the Clinch CLI by removing the symlink from /usr/local/bin.
     #[cfg(target_os = "macos")]
     fn uninstall_warpctrl(&mut self, ctx: &mut ViewContext<Self>) {
         ctx.spawn(
-            async { cli_install::uninstall_warpctrl() },
+            async { cli_install::uninstall_local_control_cli() },
             |view, result, ctx| {
                 let toast = DismissibleToast::success(
-                    "Successfully uninstalled the Warp Control command.".to_string(),
+                    "Successfully uninstalled the Clinch CLI command.".to_string(),
                 );
                 view.handle_cli_command_result(
                     result,
                     toast,
-                    "Failed to uninstall Warp Control command",
+                    "Failed to uninstall Clinch CLI command",
                     ctx,
                 );
             },

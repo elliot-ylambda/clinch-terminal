@@ -50,6 +50,30 @@ fn tab_startup_command_requires_explicit_cwd() {
 }
 
 #[test]
+fn parses_tab_grep_search_options_and_scope() {
+    let args = ControlArgs::try_parse_from([
+        "warpctrl",
+        "tab",
+        "grep",
+        "build (failed|error)",
+        "--ignore-case",
+        "--max-matches",
+        "12",
+        "--window-index",
+        "2",
+    ])
+    .expect("tab grep parses");
+    let ControlCommand::Tab(TabCommand::Grep(args)) = args.command else {
+        panic!("expected tab grep command");
+    };
+    assert_eq!(args.pattern, "build (failed|error)");
+    assert!(args.ignore_case);
+    assert!(!args.fixed_strings);
+    assert_eq!(args.max_matches, 12);
+    assert_eq!(args.target.window_index, Some(2));
+}
+
+#[test]
 fn parses_toolbelt_auto_send_and_section_collapsed_false() {
     let args = ControlArgs::try_parse_from([
         "warpctrl",
@@ -212,6 +236,19 @@ fn parses_control_mode_args_after_hidden_flag() {
 }
 
 #[test]
+fn control_mode_help_uses_the_clinch_ctrl_command_path() {
+    let err = ControlArgs::try_parse_control_mode_from([
+        "/Applications/Clinch.app/Contents/Resources/bin/clinch",
+        "--warpctrl",
+        "--help",
+    ])
+    .expect("control mode flag is present")
+    .expect_err("help exits through clap");
+    assert_eq!(err.kind(), clap::error::ErrorKind::DisplayHelp);
+    assert!(err.to_string().contains("Usage: clinch ctrl"));
+}
+
+#[test]
 fn ignores_args_without_control_mode_flag() {
     assert!(ControlArgs::try_parse_control_mode_from(["warp", "tab", "create"]).is_none());
 }
@@ -301,6 +338,15 @@ fn generated_bash_completions_include_readonly_commands() {
 }
 
 #[test]
+fn generated_bash_completions_nest_control_under_clinch_ctrl() {
+    let completions = generate_completion_string_for_bin(Shell::Bash, "clinch")
+        .expect("Clinch bash completions render to UTF-8");
+    assert!(completions.contains("complete -F _clinch"));
+    assert!(completions.contains("clinch,ctrl"));
+    assert!(completions.contains("tab"));
+}
+
+#[test]
 fn every_retained_catalog_action_has_a_parseable_cli_example() {
     let mut covered = HashSet::new();
     for (kind, argv) in retained_action_examples() {
@@ -371,6 +417,28 @@ fn renders_human_readable_tab_create_output() {
     );
 }
 
+#[test]
+fn renders_human_readable_tab_grep_output() {
+    let rendered = render_human_readable_for_test(
+        ActionKind::TabGrep,
+        &json!({
+            "searched_tabs": 2,
+            "searched_panes": 2,
+            "content_truncated": false,
+            "matches_truncated": false,
+            "matches": [{
+                "window_index": 0,
+                "tab_index": 3,
+                "pane_index": 0,
+                "line_number": 42,
+                "tab_title": "API server",
+                "text": "error: port already in use"
+            }]
+        }),
+    );
+    assert_eq!(rendered, "0:3:0:42:API server: error: port already in use");
+}
+
 fn retained_action_examples() -> Vec<(ActionKind, Vec<&'static str>)> {
     vec![
         (
@@ -406,6 +474,10 @@ fn retained_action_examples() -> Vec<(ActionKind, Vec<&'static str>)> {
         (ActionKind::WindowClose, vec!["warpctrl", "window", "close"]),
         (ActionKind::TabList, vec!["warpctrl", "tab", "list"]),
         (ActionKind::TabInspect, vec!["warpctrl", "tab", "inspect"]),
+        (
+            ActionKind::TabGrep,
+            vec!["warpctrl", "tab", "grep", "error"],
+        ),
         (ActionKind::TabCreate, vec!["warpctrl", "tab", "create"]),
         (ActionKind::TabActivate, vec!["warpctrl", "tab", "activate"]),
         (
@@ -793,6 +865,7 @@ fn parsed_action_kind(command: &ControlCommand) -> Option<ActionKind> {
         ControlCommand::Tab(command) => match command {
             TabCommand::List(_) => Some(ActionKind::TabList),
             TabCommand::Inspect(_) => Some(ActionKind::TabInspect),
+            TabCommand::Grep(_) => Some(ActionKind::TabGrep),
             TabCommand::Create(_) => Some(ActionKind::TabCreate),
             TabCommand::Activate(_) => Some(ActionKind::TabActivate),
             TabCommand::Move(_) => Some(ActionKind::TabMove),

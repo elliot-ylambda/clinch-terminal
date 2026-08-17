@@ -3149,6 +3149,25 @@ fn remote_control_trim_final_row_terminator(snapshot: &mut Vec<u8>) {
     }
 }
 
+fn local_control_trim_final_row_terminator(snapshot: &mut String) {
+    if snapshot.ends_with("\r\n") {
+        snapshot.truncate(snapshot.len() - 2);
+    } else if snapshot.ends_with('\n') {
+        snapshot.truncate(snapshot.len() - 1);
+    }
+}
+
+fn local_control_utf8_suffix(value: &str, max_bytes: usize) -> &str {
+    if value.len() <= max_bytes {
+        return value;
+    }
+    let mut start = value.len() - max_bytes;
+    while !value.is_char_boundary(start) {
+        start += 1;
+    }
+    &value[start..]
+}
+
 const REMOTE_CONTROL_PROMPT_START: &[u8] = b"\x1b]133;A\x07";
 const REMOTE_CONTROL_PROMPT_END: &[u8] = b"\x1b]133;B\x07";
 
@@ -3186,6 +3205,22 @@ fn remote_control_prompt_and_command_bytes(block: &Block, is_active: bool) -> Ve
     }
     bytes.extend_from_slice(command.as_bytes());
     bytes
+}
+
+fn local_control_prompt_and_command_text(block: &Block) -> String {
+    let command = block
+        .prompt_and_command_grid()
+        .contents_to_string_force_secrets_obfuscated(false, Some(1_000));
+    if block.honor_ps1() {
+        return command;
+    }
+
+    let mut prompt = block
+        .prompt_grid()
+        .contents_to_string_force_secrets_obfuscated(false, Some(1_000));
+    local_control_trim_final_row_terminator(&mut prompt);
+    prompt.push_str(&command);
+    prompt
 }
 
 fn remote_control_has_visible_live_primary_grid(block: &Block) -> bool {
@@ -3281,6 +3316,36 @@ fn remote_control_live_grid_snapshot(
         snapshot.drain(..snapshot.len() - max_bytes);
     }
     snapshot
+}
+
+fn local_control_live_grid_text(grid: &GridHandler, max_bytes: usize) -> (String, bool) {
+    if max_bytes == 0 || grid.visible_rows() == 0 || grid.columns() == 0 {
+        return (String::new(), false);
+    }
+
+    let first_visible_row = grid.history_size();
+    let last_visible_row = first_visible_row + grid.visible_rows() - 1;
+    let mut text = String::new();
+    for grid_row in first_visible_row..=last_visible_row {
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        let contents = grid.bounds_to_string(
+            Point::new(grid_row, 0),
+            Point::new(grid_row, grid.columns() - 1),
+            false,
+            RespectObfuscatedSecrets::Yes,
+            true,
+            RespectDisplayedOutput::No,
+        );
+        text.push_str(contents.trim_end_matches(&['\r', '\n'][..]));
+    }
+
+    let truncated = text.len() > max_bytes;
+    if truncated {
+        text = local_control_utf8_suffix(&text, max_bytes).to_owned();
+    }
+    (text, truncated)
 }
 
 impl TerminalView {
@@ -16807,6 +16872,83 @@ impl TerminalView {
             snapshot.extend_from_slice(&chunk);
         }
         snapshot
+    }
+
+    /// Produces bounded plaintext for local-control search without activating the terminal.
+    /// Secret cells remain obfuscated. Logical shell blocks include retained prompt/output text;
+    /// full-screen applications contribute their currently rendered viewport.
+    pub(crate) fn local_control_searchable_text(&self, max_bytes: usize) -> (String, bool) {
+        use std::collections::VecDeque;
+
+        if max_bytes == 0 {
+            return (String::new(), false);
+        }
+
+        let model = self.model.lock();
+        if model.is_alt_screen_active() {
+            return local_control_live_grid_text(model.alt_screen().grid_handler(), max_bytes);
+        }
+
+        let block_list = model.block_list();
+        let active_block = block_list.active_block();
+        if remote_control_bootstrap_stage_is_visible(active_block.bootstrap_stage())
+            && !active_block.should_hide_block(block_list.agent_view_state())
+            && remote_control_has_visible_live_primary_grid(active_block)
+        {
+            return local_control_live_grid_text(
+                active_block.output_grid().grid_handler(),
+                max_bytes,
+            );
+        }
+
+        let visible_blocks = block_list
+            .blocks()
+            .iter()
+            .filter(|block| {
+                remote_control_bootstrap_stage_is_visible(block.bootstrap_stage())
+                    && !block.should_hide_block(block_list.agent_view_state())
+            })
+            .collect::<Vec<_>>();
+        let mut chunks = VecDeque::new();
+        let mut total = 0usize;
+        let mut truncated = false;
+        for (offset, block) in visible_blocks.iter().rev().enumerate() {
+            let remaining = max_bytes.saturating_sub(total);
+            if remaining == 0 {
+                truncated = true;
+                break;
+            }
+
+            let prompt = local_control_prompt_and_command_text(block);
+            let output = block
+                .output_grid()
+                .contents_to_string_force_secrets_obfuscated(false, Some(4_000));
+            let mut chunk = String::with_capacity(prompt.len() + output.len() + 2);
+            chunk.push_str(&prompt);
+            if !prompt.is_empty() && !output.is_empty() {
+                chunk.push('\n');
+            }
+            chunk.push_str(&output);
+            if !chunk.ends_with('\n') {
+                chunk.push('\n');
+            }
+            if chunk.len() > remaining {
+                chunk = local_control_utf8_suffix(&chunk, remaining).to_owned();
+                truncated = true;
+            }
+            total += chunk.len();
+            chunks.push_front(chunk);
+            if total >= max_bytes && offset + 1 < visible_blocks.len() {
+                truncated = true;
+                break;
+            }
+        }
+
+        let mut text = String::with_capacity(total);
+        for chunk in chunks {
+            text.push_str(&chunk);
+        }
+        (text, truncated)
     }
 
     /// Whether the active shell has declared its visible prompt zero-width so Clinch can paint
