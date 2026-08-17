@@ -1,4 +1,6 @@
 //! Implementations for user-facing `warpctrl` command groups.
+use std::ffi::OsString;
+
 use local_control::discovery::InstanceRecord;
 use local_control::protocol::{
     Action, ActionKind, ActionNameParams, BindingNameParams, BooleanValueParams, ColorValueParams,
@@ -12,7 +14,6 @@ use local_control::protocol::{
 };
 use local_control::selection::select_instance;
 use serde::Serialize;
-use std::ffi::OsString;
 use uuid::Uuid;
 use warp_core::channel::ChannelState;
 
