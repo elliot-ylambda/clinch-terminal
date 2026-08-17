@@ -420,9 +420,10 @@ fn button_summaries(
 
 #[cfg(test)]
 mod tests {
+    use warpui::App;
+
     use super::*;
     use crate::test_util::settings::initialize_settings_for_tests;
-    use warpui::App;
 
     fn button(label: &str) -> AgentToolbarItemKind {
         AgentToolbarItemKind::custom_insert(label, format!("{label} prompt"))
