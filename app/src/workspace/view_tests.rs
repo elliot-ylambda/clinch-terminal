@@ -1159,6 +1159,38 @@ fn test_clinch_update_header_pill_stays_visible_during_install() {
 }
 
 #[test]
+fn test_clinch_update_header_rechecks_before_installing_a_discovered_release() {
+    let new_version = channel_versions::VersionInfo::new("v2".to_owned());
+    for stage in [
+        AutoupdateStage::UpdateAvailable {
+            new_version: new_version.clone(),
+            update_id: "available".to_owned(),
+        },
+        AutoupdateStage::UpdateReady {
+            new_version: new_version.clone(),
+            update_id: "downloaded".to_owned(),
+        },
+    ] {
+        assert!(matches!(
+            update_header_install_action(true, &stage),
+            WorkspaceAction::CheckForUpdate
+        ));
+        assert!(matches!(
+            update_header_install_action(false, &stage),
+            WorkspaceAction::ApplyUpdate
+        ));
+    }
+
+    assert!(matches!(
+        update_header_install_action(
+            true,
+            &AutoupdateStage::UpdatedPendingRestart { new_version }
+        ),
+        WorkspaceAction::ApplyUpdate
+    ));
+}
+
+#[test]
 fn terminal_input_toast_only_appears_for_the_focused_tab() {
     App::test((), |mut app| async move {
         initialize_app(&mut app);

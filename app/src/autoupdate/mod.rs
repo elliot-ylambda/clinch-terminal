@@ -247,16 +247,27 @@ impl AutoupdateState {
         self.try_execute_request(ctx);
     }
 
-    // Poll for updates once per 10 minutes.
+    // Warp keeps its existing ten-minute scheduler. Clinch wakes its scheduler at most once per
+    // day; its persisted cadence record can suppress the actual GitHub request for even longer.
     const AUTOUPDATE_POLL: Duration = Duration::from_secs(10 * 60);
+    const CLINCH_AUTOUPDATE_POLL: Duration = Duration::from_secs(24 * 60 * 60);
+
+    fn autoupdate_poll_interval(uses_clinch_updater: bool) -> Duration {
+        if uses_clinch_updater {
+            Self::CLINCH_AUTOUPDATE_POLL
+        } else {
+            Self::AUTOUPDATE_POLL
+        }
+    }
 
     /// This method recursively calls itself after a delay. Call it once and only once to start the
     /// loop.
     fn poll_for_update(&mut self, ctx: &mut ModelContext<Self>) {
         self.enqueue_request(RequestType::Poll, ctx);
+        let interval = Self::autoupdate_poll_interval(ChannelState::uses_clinch_updater());
         ctx.spawn(
-            async {
-                Timer::after(Self::AUTOUPDATE_POLL).await;
+            async move {
+                Timer::after(interval).await;
             },
             |me, _, ctx| me.poll_for_update(ctx),
         );
@@ -319,11 +330,16 @@ impl AutoupdateState {
         );
 
         #[cfg(target_os = "macos")]
-        if ChannelState::uses_clinch_updater()
-            && request_type != RequestType::ManualCheck
-            && !clinch::automatic_check_due(chrono::Utc::now())
-        {
-            return;
+        if ChannelState::uses_clinch_updater() && request_type != RequestType::ManualCheck {
+            let now = chrono::Utc::now();
+            if !clinch::automatic_check_due(now) {
+                return;
+            }
+            // Persist before starting the request so a crash, cancellation, or relaunch cannot
+            // turn one eligible automatic check into several requests in the same day.
+            if !clinch::record_automatic_check_attempt(now) {
+                return;
+            }
         }
 
         // Other RequestTypes will fallback to hitting `/client_version`, but DailyCheck will not.
@@ -476,15 +492,6 @@ impl AutoupdateState {
         #[cfg(target_os = "macos")]
         if should_record_clinch_success(ChannelState::uses_clinch_updater(), version.is_ok()) {
             clinch::record_successful_check(chrono::Utc::now());
-        }
-
-        #[cfg(target_os = "macos")]
-        if should_record_failed_check(
-            request_type,
-            ChannelState::uses_clinch_updater(),
-            version.is_ok(),
-        ) {
-            clinch::record_failed_check(chrono::Utc::now());
         }
 
         // If one update was already applied, we cannot apply another.
@@ -863,8 +870,8 @@ pub enum ReadyForRelaunch {
 pub enum RequestType {
     /// For when the user triggers the check manually in the settings page.
     ManualCheck,
-    /// We automatically poll for updates every AUTOUPDATE_POLL. This can also trigger the daily
-    /// request to /client_version/daily if it hasn't been done yet today.
+    /// The periodic update scheduler. Its interval is channel-specific and it can also trigger
+    /// the daily request to /client_version/daily if it hasn't been done yet today.
     Poll,
     /// Only go through with the check to /client_version/daily if it hasn't been done yet today.
     /// Otherwise, abort the check. This is useful if we want to eagerly send the check b/c we
@@ -891,23 +898,10 @@ fn should_record_daily_success(
 ///
 /// Unlike [`should_record_daily_success`], which governs Warp's in-memory daily bookkeeping, this
 /// includes manual checks: metadata the user just fetched by hand is no staler than metadata an
-/// automatic check would fetch, so a manual success resets the weekly clock rather than leaving an
+/// automatic check would fetch, so a manual success resets the daily clock rather than leaving an
 /// automatic check to re-fetch it moments later.
 fn should_record_clinch_success(uses_clinch_updater: bool, succeeded: bool) -> bool {
     uses_clinch_updater && succeeded
-}
-
-/// Whether a completed check should record a failure backoff.
-///
-/// Without this, a check that fails records nothing, so the next window focus or poll re-fires it
-/// immediately. Manual checks are excluded: a check the user asked for should not suppress
-/// automatic ones. Only the Clinch updater keeps this record; upstream Warp has its own cadence.
-fn should_record_failed_check(
-    request_type: RequestType,
-    uses_clinch_updater: bool,
-    succeeded: bool,
-) -> bool {
-    uses_clinch_updater && !succeeded && request_type != RequestType::ManualCheck
 }
 
 /// Whether `CLINCH_NO_UPDATE_CHECK` asks for automatic checks to be off.

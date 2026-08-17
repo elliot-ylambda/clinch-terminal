@@ -634,6 +634,22 @@ fn clinch_update_header_pill(stage: &AutoupdateStage) -> Option<(&'static str, b
     }
 }
 
+fn update_header_install_action(
+    uses_clinch_updater: bool,
+    stage: &AutoupdateStage,
+) -> WorkspaceAction {
+    if uses_clinch_updater
+        && matches!(
+            stage,
+            AutoupdateStage::UpdateAvailable { .. } | AutoupdateStage::UpdateReady { .. }
+        )
+    {
+        WorkspaceAction::CheckForUpdate
+    } else {
+        WorkspaceAction::ApplyUpdate
+    }
+}
+
 #[cfg(not(target_family = "wasm"))]
 const RESOURCE_CENTER_WIDTH: f32 = 361.;
 
@@ -8638,14 +8654,29 @@ impl Workspace {
                         .with_disabled(true)
                         .into_item(),
                 );
-                match autoupdate::get_update_state(ctx) {
+                let update_state = autoupdate::get_update_state(ctx);
+                match &update_state {
                     AutoupdateStage::UpdateAvailable { new_version, .. }
                     | AutoupdateStage::UpdateReady { new_version, .. }
-                    | AutoupdateStage::UpdatedPendingRestart { new_version } => menu_items.push(
-                        MenuItemFields::new(format!("Install update ({})", new_version.version))
-                            .with_on_select_action(WorkspaceAction::ApplyUpdate)
-                            .into_item(),
-                    ),
+                    | AutoupdateStage::UpdatedPendingRestart { new_version } => {
+                        let action = update_header_install_action(
+                            ChannelState::uses_clinch_updater(),
+                            &update_state,
+                        );
+                        let label = if matches!(&action, WorkspaceAction::CheckForUpdate) {
+                            // The persistent pill may have been populated by a daily check before
+                            // newer releases were published. Refresh the signed feed before using
+                            // it so one click always targets the newest available Clinch release.
+                            "Check for latest and install".to_owned()
+                        } else {
+                            format!("Install update ({})", new_version.version)
+                        };
+                        menu_items.push(
+                            MenuItemFields::new(label)
+                                .with_on_select_action(action)
+                                .into_item(),
+                        );
+                    }
                     AutoupdateStage::Updating { new_version, .. } => menu_items.push(
                         MenuItemFields::new(format!("Updating to ({})", new_version.version))
                             .with_disabled(true)

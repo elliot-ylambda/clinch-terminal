@@ -79,13 +79,17 @@ entitlements are rejected by release verification.
 ## Privacy posture
 
 The stable Clinch channel has no Warp backend, telemetry destination, or crash-reporting
-destination. Its updater makes a quiet, at-most-weekly GitHub request for signed release metadata;
+destination. Its updater makes a quiet, at-most-daily GitHub check for signed release metadata;
 automatic checks do not download an archive. That check is the only request Clinch issues on its
 own, and it can be disabled entirely with `clinch.updates.automatic_check` or the
 `CLINCH_NO_UPDATE_CHECK` environment variable, leaving on-demand checks from the Clinch menu as
-the only path to the network. Unavailable telemetry overrides stored defaults and
-experiment or enterprise flags. The collector drains memory, removes stale Clinch queue files
-without upload, and does not start telemetry timers or write a shutdown queue.
+the only path to the network. Every automatic check is recorded before it starts, so failures,
+cancellations, and restarts cannot exceed the daily ceiling. The request carries only a static
+updater user agent and no unique Clinch identifier, app version, OS version, or usage data,
+although GitHub necessarily observes normal HTTPS transport metadata such as source IP and request
+time. Unavailable telemetry overrides stored defaults and experiment or enterprise flags. The
+collector drains memory, removes stale Clinch queue files without upload, and does not start
+telemetry timers or write a shutdown queue.
 
 Local session capture is enabled on first launch so Claude Code and Codex conversations can be
 restored by default. Its managed hooks write local pane mappings, a journal, and prompt mirrors.

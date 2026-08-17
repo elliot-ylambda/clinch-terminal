@@ -1418,7 +1418,7 @@ impl SettingsWidget for AutomaticUpdateCheckWidget {
     type View = ClinchSettingsPageView;
 
     fn search_terms(&self) -> &str {
-        "clinch update updates automatic check weekly github network privacy offline telemetry \
+        "clinch update updates automatic check daily github network privacy offline telemetry \
          disable"
     }
 
@@ -1450,8 +1450,8 @@ impl SettingsWidget for AutomaticUpdateCheckWidget {
                 })
                 .finish(),
             Some(
-                "Ask GitHub once a week whether a signed Clinch update exists. Nothing is \
-                 downloaded until you approve it, and no identifier or usage data is sent. Turn \
+                "Ask GitHub at most once a day whether a signed Clinch update exists. Nothing is \
+                 downloaded until you approve it, and no unique identifier or usage data is sent. Turn \
                  this off and Clinch makes no automatic network requests at all — you can still \
                  check on demand from Clinch → Check for Updates…. Setting \
                  CLINCH_NO_UPDATE_CHECK=1 in the environment also turns it off."
