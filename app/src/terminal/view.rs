@@ -12120,10 +12120,10 @@ impl TerminalView {
                     // Close the rich input editor if it was open (side effects
                     // like input config restore happen reactively).
                     // The auto-toggle flag is irrelevant here because the
-                    // session is removed immediately afterwards.
+                    // session and any bookmark are removed immediately afterwards.
                     self.close_cli_agent_rich_input(CLIAgentRichInputCloseReason::Other, ctx);
                     CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions_model, ctx| {
-                        sessions_model.remove_session(self.view_id, ctx);
+                        sessions_model.remove_session_after_agent_exit(self.view_id, ctx);
                     });
                 }
 
