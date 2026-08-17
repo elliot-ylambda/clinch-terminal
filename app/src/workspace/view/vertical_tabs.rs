@@ -839,7 +839,7 @@ fn render_pane_row_element(
         pane_group_id,
         pane_id,
     };
-    if pane_context_menu_tab_index.is_some() && !is_pane_being_renamed {
+    if pane_context_menu_tab_index.is_some() && !is_tab_being_renamed && !is_pane_being_renamed {
         row = row.on_double_click(move |ctx, _, _| {
             ctx.dispatch_typed_action(WorkspaceAction::RenamePane(pane_locator));
         });
@@ -3202,20 +3202,14 @@ fn render_tab_group_internal(
     let per_pane_colors = color_mode.into_per_pane_colors(&visible_pane_ids);
     let is_being_renamed = is_active && workspace.current_workspace_state.is_tab_being_renamed();
     let rename_editor = workspace.tab_rename_editor.clone();
-    let has_custom_title = pane_group.custom_title(app).is_some();
-    // In Panes view, tabs inside a group render individual pane rows, so each
-    // pane keeps its own generated title. Propagating the tab's custom title as
-    // an override here would shadow every pane's title with the same string.
-    // In Tabs/Summary modes there is only one row per tab, so the tab-level
-    // custom title is still the right thing to show.
-    let displayed_tab_title_override =
-        if in_tab_group && matches!(display_granularity, VerticalTabsDisplayGranularity::Panes) {
-            None
-        } else {
-            (!uses_outer_group_container)
-                .then(|| pane_group.custom_title(app))
-                .flatten()
-        };
+    let custom_title = pane_group.custom_title(app);
+    let has_custom_title = custom_title.is_some();
+    // A tab with one displayed session has no pane-title ambiguity, so its manual tab name
+    // replaces the generated title (including CLI-agent prompt titles). Split tabs retain their
+    // distinct pane names and show the manual tab name once in a header instead.
+    let use_tab_title_header = tab_title_uses_header(display_granularity, visible_pane_ids.len());
+    let show_tab_title_header = use_tab_title_header && (has_custom_title || is_being_renamed);
+    let displayed_tab_title_override = (!use_tab_title_header).then_some(custom_title).flatten();
     let is_menu_open_for_tab = workspace
         .show_tab_right_click_menu
         .is_some_and(|(idx, _)| idx == tab_index);
@@ -3277,8 +3271,8 @@ fn render_tab_group_internal(
                     displayed_tab_title_override.clone(),
                     (!uses_outer_group_container).then_some(tab_index),
                     None,
-                    !uses_outer_group_container && is_being_renamed,
-                    (!uses_outer_group_container).then_some(rename_editor.clone()),
+                    !use_tab_title_header && is_being_renamed,
+                    (!use_tab_title_header).then_some(rename_editor.clone()),
                     false,
                     None,
                     tab.pinned,
@@ -3335,8 +3329,8 @@ fn render_tab_group_internal(
                     displayed_tab_title_override.clone(),
                     (!uses_outer_group_container).then_some(tab_index),
                     uses_outer_group_container.then_some(tab_index),
-                    !uses_outer_group_container && is_being_renamed,
-                    (!uses_outer_group_container).then_some(rename_editor.clone()),
+                    !use_tab_title_header && is_being_renamed,
+                    (!use_tab_title_header).then_some(rename_editor.clone()),
                     is_pane_being_renamed,
                     is_pane_being_renamed.then_some(workspace.pane_rename_editor.clone()),
                     tab.pinned,
@@ -3365,7 +3359,7 @@ fn render_tab_group_internal(
             let mut group = Flex::column()
                 .with_main_axis_size(MainAxisSize::Min)
                 .with_cross_axis_alignment(CrossAxisAlignment::Stretch);
-            if has_custom_title || is_being_renamed {
+            if show_tab_title_header {
                 group.add_child(render_group_header(
                     GroupHeaderProps {
                         tab_index,
@@ -3378,14 +3372,13 @@ fn render_tab_group_internal(
                 ));
             }
 
-            let show_header = has_custom_title || is_being_renamed;
             // The rows carry their own padding, so the card only needs enough of a
             // margin to keep a row's rounded highlight off the card's outline.
             let mut body_padding = Padding::uniform(0.)
                 .with_left(TAB_CARD_BODY_PADDING)
                 .with_right(TAB_CARD_BODY_PADDING)
                 .with_bottom(TAB_CARD_BODY_PADDING);
-            if !show_header {
+            if !show_tab_title_header {
                 body_padding = body_padding.with_top(TAB_CARD_BODY_PADDING);
             }
             group.add_child(
@@ -3425,7 +3418,27 @@ fn render_tab_group_internal(
             } else {
                 GROUP_BODY_BOTTOM_PADDING
             };
-            let mut container = Container::new(build_rows())
+            let rows = build_rows();
+            let tab_content = if show_tab_title_header {
+                Flex::column()
+                    .with_main_axis_size(MainAxisSize::Min)
+                    .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+                    .with_child(render_group_header(
+                        GroupHeaderProps {
+                            tab_index,
+                            pane_group,
+                            is_being_renamed,
+                            rename_editor: rename_editor.clone(),
+                            header_mouse_state: group_header_mouse_state.clone(),
+                        },
+                        app,
+                    ))
+                    .with_child(rows)
+                    .finish()
+            } else {
+                rows
+            };
+            let mut container = Container::new(tab_content)
                 .with_background(card_state.background(theme))
                 .with_corner_radius(CornerRadius::with_all(Radius::Pixels(ROW_CORNER_RADIUS)));
             // Same rule as the grouped-container branch: only a top-level tab is
@@ -4893,10 +4906,11 @@ impl<'a> PaneProps<'a> {
     }
 
     fn displayed_title(&self) -> &str {
-        self.custom_vertical_tabs_title
-            .as_deref()
-            .or(self.display_title_override.as_deref())
-            .unwrap_or(self.title.as_str())
+        preferred_vertical_tab_title_override(
+            self.display_title_override.as_deref(),
+            self.custom_vertical_tabs_title.as_deref(),
+        )
+        .unwrap_or(self.title.as_str())
     }
 
     fn generated_or_tab_title(&self) -> &str {
@@ -4945,6 +4959,20 @@ fn pane_matches_query(props: &PaneProps<'_>, query_lower: &str, app: &AppContext
 
 fn uses_outer_group_container(display_granularity: VerticalTabsDisplayGranularity) -> bool {
     matches!(display_granularity, VerticalTabsDisplayGranularity::Panes)
+}
+
+fn tab_title_uses_header(
+    display_granularity: VerticalTabsDisplayGranularity,
+    visible_pane_count: usize,
+) -> bool {
+    matches!(display_granularity, VerticalTabsDisplayGranularity::Panes) && visible_pane_count > 1
+}
+
+fn preferred_vertical_tab_title_override<'a>(
+    tab_title: Option<&'a str>,
+    pane_title: Option<&'a str>,
+) -> Option<&'a str> {
+    tab_title.or(pane_title)
 }
 
 fn search_fragments_contain_query(fragments: &[String], query_lower: &str) -> bool {
@@ -5608,16 +5636,16 @@ fn render_title_override(
             .map(|rename_editor| render_inline_tab_rename_editor(rename_editor, appearance, app));
     }
 
-    props
-        .custom_vertical_tabs_title
-        .as_ref()
-        .or(props.display_title_override.as_ref())
-        .map(|title| {
-            Text::new_inline(title.clone(), appearance.ui_font_family(), font_size)
-                .with_clip(clip)
-                .with_color(text_color.into())
-                .finish()
-        })
+    preferred_vertical_tab_title_override(
+        props.display_title_override.as_deref(),
+        props.custom_vertical_tabs_title.as_deref(),
+    )
+    .map(|title| {
+        Text::new_inline(title.to_string(), appearance.ui_font_family(), font_size)
+            .with_clip(clip)
+            .with_color(text_color.into())
+            .finish()
+    })
 }
 
 fn render_pane_title_slot(
