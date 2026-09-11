@@ -448,6 +448,86 @@ fn project_display_name_falls_back_when_no_project_directory_is_available() {
     );
 }
 
+#[test]
+#[cfg(feature = "local_fs")]
+fn project_display_name_uses_main_repo_for_linked_worktrees_only() {
+    use warp_util::standardized_path::StandardizedPath;
+
+    App::test((), |mut app| async move {
+        let repositories = app.add_singleton_model(|_| DetectedRepositories::default());
+        let watcher = app.add_singleton_model(DirectoryWatcher::new_for_testing);
+        let temp_root = TempDir::new().unwrap();
+        let main_repo = temp_root.path().join("main-repo");
+        let worktree_git_dir = main_repo.join(".git/worktrees/random-worktree");
+        let submodule_git_dir = main_repo.join(".git/modules/dependency");
+        for git_dir in [
+            &main_repo.join(".git"),
+            &worktree_git_dir,
+            &submodule_git_dir,
+        ] {
+            std::fs::create_dir_all(git_dir).unwrap();
+        }
+
+        for (directory, external_git_dir, expected_name) in [
+            (main_repo.clone(), None, "main-repo"),
+            (
+                temp_root.path().join("random-worktree"),
+                Some(worktree_git_dir),
+                "main-repo",
+            ),
+            (
+                main_repo.join("dependency"),
+                Some(submodule_git_dir),
+                "dependency",
+            ),
+        ] {
+            std::fs::create_dir_all(&directory).unwrap();
+            let root = StandardizedPath::from_local_canonicalized(&directory).unwrap();
+            repositories.update(&mut app, |repositories, _| {
+                repositories.insert_test_repo_root(root.clone());
+            });
+            watcher.update(&mut app, |watcher, ctx| {
+                watcher
+                    .add_directory_with_git_dir(
+                        root,
+                        external_git_dir
+                            .map(|dir| StandardizedPath::from_local_canonicalized(&dir).unwrap()),
+                        ctx,
+                    )
+                    .unwrap();
+            });
+            app.read(|ctx| {
+                assert_eq!(
+                    Workspace::project_display_name_for_dir(Some(&directory), ctx),
+                    expected_name
+                );
+                // Project naming must not redirect commands or repo lookups to the main checkout.
+                assert_eq!(
+                    DetectedRepositories::as_ref(ctx)
+                        .get_root_for_path(&LocalOrRemotePath::Local(directory.clone()))
+                        .unwrap()
+                        .to_local_path(),
+                    Some(std::fs::canonicalize(&directory).unwrap().as_path())
+                );
+            });
+        }
+
+        app.read(|ctx| {
+            assert_eq!(
+                Workspace::project_display_name_for_dir(
+                    Some(temp_root.path().join("notes").as_path()),
+                    ctx
+                ),
+                "notes"
+            );
+            assert_eq!(
+                Workspace::project_display_name_for_dir(None, ctx),
+                "New Project"
+            );
+        });
+    });
+}
+
 pub(crate) fn initialize_app(app: &mut App) {
     initialize_settings_for_tests(app);
 

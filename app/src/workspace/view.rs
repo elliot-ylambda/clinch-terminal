@@ -22915,11 +22915,26 @@ impl Workspace {
             .unwrap_or_else(|| "New Project".to_string())
     }
 
-    /// Label for the outer project tab, using the same project-directory name
-    /// that previously appeared above the vertical inner-tab list.
+    fn project_display_name_for_dir(project_dir: Option<&Path>, ctx: &AppContext) -> String {
+        let primary_dir = project_dir
+            .and_then(|dir| {
+                DetectedRepositories::as_ref(ctx).get_local_watched_repo_for_path(dir, ctx)
+            })
+            .and_then(|repository| {
+                let repository = repository.as_ref(ctx);
+                if !repository.is_linked_worktree() {
+                    return None;
+                }
+                repository.common_git_dir().parent().map(Path::to_path_buf)
+            });
+        Self::project_display_name_from_dir(primary_dir.as_deref().or(project_dir))
+    }
+
+    /// Label for the outer project tab. Linked worktrees use the main repository's
+    /// name, while the active project directory remains the selected checkout.
     pub(crate) fn project_display_name(&self, ctx: &AppContext) -> String {
         let project_dir = self.active_header_project_dir(ctx);
-        Self::project_display_name_from_dir(project_dir.as_deref())
+        Self::project_display_name_for_dir(project_dir.as_deref(), ctx)
     }
 
     pub(crate) fn contains_pane_group(&self, pane_group_id: EntityId) -> bool {
