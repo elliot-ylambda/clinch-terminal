@@ -23,7 +23,7 @@ pub const BASH_SHELL_PATH: &str = "/bin/bash";
 pub const FISH_SHELL_PATH: &str = "/bin/fish";
 pub const CLINCH_CONTROL_COMMAND_ENV: &str = "CLINCH_CONTROL_COMMAND";
 pub const CLINCH_CONTROL_WRAPPER_ENV: &str = "CLINCH_CONTROL_WRAPPER";
-pub const CLINCH_CONTROL_PID_ENV: &str = "CLINCH_CONTROL_PID";
+pub const CLINCH_CONTROL_PID_ENV: &str = ::local_control::CLINCH_CONTROL_PID_ENV;
 
 fn clinch_control_environment_for(
     app_id: &str,
@@ -45,7 +45,7 @@ pub fn clinch_control_environment() -> Option<(String, PathBuf)> {
     clinch_control_environment_for(
         &ChannelState::app_id().to_string(),
         warp_core::paths::bundled_resources_dir(),
-        ChannelState::channel().warpctrl_command_name(),
+        ChannelState::channel().clinch_command_name(),
     )
 }
 

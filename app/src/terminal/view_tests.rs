@@ -534,6 +534,7 @@ fn mac_editing_shortcuts_reach_fullscreen_native_cli_agent_composers() {
                 "{keystroke} should be handled while a native full-screen composer is active"
             );
         }
+        app.dispatch_custom_action(CustomAction::Undo, window_id);
 
         assert_eq!(
             *pty_writes.borrow(),
@@ -545,8 +546,51 @@ fn mac_editing_shortcuts_reach_fullscreen_native_cli_agent_composers() {
                 vec![C0::ETB],
                 vec![C0::NAK],
                 vec![C0::VT],
+                vec![C0::US],
             ]
         );
+    })
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn mac_native_claude_undo_does_not_override_codex_without_native_undo() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        app.add_singleton_model(ImportedConfigModel::new);
+        app.update(crate::terminal::init);
+
+        let (window_id, terminal) = add_window_with_id_and_terminal(&mut app, None);
+        let pty_writes: Rc<RefCell<Vec<Vec<u8>>>> = Rc::new(RefCell::new(Vec::new()));
+        let writes = pty_writes.clone();
+        app.update(|ctx| {
+            ctx.subscribe_to_view(&terminal, move |_, event, _| {
+                if let Event::WriteBytesToPty { bytes } = event {
+                    writes.borrow_mut().push(bytes.to_vec());
+                }
+            });
+        });
+
+        terminal.update(&mut app, |view, ctx| {
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                let mut session = cli_agent_session_with_prompts(Vec::new());
+                session.agent = CLIAgent::Codex;
+                sessions.set_session(view.view_id, session, ctx);
+            });
+            view.model
+                .lock()
+                .simulate_long_running_block("codex", "\x1b[?1049h");
+            assert!(view.model.lock().is_alt_screen_active());
+            assert!(!view
+                .keymap_context(ctx)
+                .set
+                .contains(init::CLAUDE_CODE_SESSION_ACTIVE_KEY));
+            view.focus_terminal(ctx);
+        });
+
+        app.dispatch_custom_action(CustomAction::Undo, window_id);
+
+        assert!(pty_writes.borrow().is_empty());
     })
 }
 
@@ -8849,6 +8893,31 @@ fn remote_control_alternate_snapshot_excludes_retained_resize_history() {
 }
 
 #[test]
+fn local_control_searchable_grid_text_is_plaintext_and_viewport_scoped() {
+    let mut grid = GridHandler::new_for_test_with_scroll_limit(2, 12, 10);
+    for character in "historical".chars() {
+        grid.input(character);
+    }
+    grid.carriage_return();
+    grid.linefeed();
+    for character in "current-one".chars() {
+        grid.input(character);
+    }
+    grid.carriage_return();
+    grid.linefeed();
+    for character in "current-two".chars() {
+        grid.input(character);
+    }
+
+    let (text, truncated) = local_control_live_grid_text(&grid, 1_000);
+    assert!(!truncated);
+    assert!(!text.contains("historical"));
+    assert!(text.contains("current-one"));
+    assert!(text.contains("current-two"));
+    assert!(!text.contains('\x1b'));
+}
+
+#[test]
 fn remote_control_alternate_snapshot_positions_wrapped_rows_independently() {
     let mut grid = GridHandler::new_for_alt_screen_test(2, 3);
     for character in "abcdef".chars() {
@@ -8972,4 +9041,26 @@ fn remote_control_zero_width_prompt_snapshot_includes_visible_prompt_and_command
         visible_snapshot,
         "\x1b]133;A\x07➜  magister-marketing git:(main) \x1b]133;B\x07slowtest"
     );
+}
+
+#[test]
+fn local_control_searchable_prompt_text_has_no_remote_control_markers() {
+    let mut model = TerminalModel::mock(None, None);
+    model.precmd(ansi::PrecmdValue {
+        ps1: Some(hex::encode("➜  project ")),
+        honor_ps1: Some(false),
+        ..Default::default()
+    });
+    model.prompt_marker(ansi::PromptMarker::StartPrompt {
+        kind: ansi::PromptKind::Initial,
+    });
+    model.process_bytes("➜  project ");
+    model.prompt_marker(ansi::PromptMarker::EndPrompt);
+    model.block_list_mut().active_block_mut().start();
+    model.process_bytes("cargo test");
+
+    let mut text = local_control_prompt_and_command_text(model.block_list().active_block());
+    local_control_trim_final_row_terminator(&mut text);
+    assert_eq!(text, "➜  project cargo test");
+    assert!(!text.contains('\x1b'));
 }

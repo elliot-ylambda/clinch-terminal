@@ -602,9 +602,10 @@ fn apply_scroll_multiplier(event: &mut Event, app: &AppContext) {
 
 /// Runs the shared Warp executable as the app or as one of its command-line modes.
 ///
-/// The bundled Warp Control wrapper injects `--warpctrl`, which is dispatched
-/// before the normal Warp/Oz parser. Oz subcommands are part of that normal
-/// parser and therefore do not require a separate mode flag.
+/// The bundled `clinch ctrl` wrapper injects the internal local-control mode
+/// flag, which is dispatched before the normal Warp/Oz parser. Legacy
+/// `warpctrl` wrappers enter the same mode for compatibility. Oz subcommands
+/// are part of the normal parser and do not require a separate mode flag.
 #[::tracing::instrument(skip_all, fields(tags.cloud_agent = true))]
 pub fn run() -> Result<()> {
     // Perform any necessary platform-specific initialization.

@@ -1109,7 +1109,44 @@ impl CLIAgentSessionsModel {
     }
 
     pub fn remove_session(&mut self, terminal_view_id: EntityId, ctx: &mut ModelContext<Self>) {
+        self.remove_session_inner(terminal_view_id, false, ctx);
+    }
+
+    /// Removes a CLI-agent session after its process exits and discards any durable bookmark for
+    /// that conversation. View detachment uses [`Self::remove_session`] instead so bookmarks
+    /// survive closing or restoring a Clinch window.
+    pub fn remove_session_after_agent_exit(
+        &mut self,
+        terminal_view_id: EntityId,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        self.remove_session_inner(terminal_view_id, true, ctx);
+    }
+
+    fn remove_session_inner(
+        &mut self,
+        terminal_view_id: EntityId,
+        remove_conversation_bookmark: bool,
+        ctx: &mut ModelContext<Self>,
+    ) {
         if let Some(session) = self.sessions.remove(&terminal_view_id) {
+            let bookmark_key = if remove_conversation_bookmark {
+                session.session_key()
+            } else {
+                None
+            };
+            if let Some(key) = bookmark_key {
+                match crate::agent_resume::set_conversation_bookmark(
+                    key.provider,
+                    &key.session_id,
+                    false,
+                ) {
+                    Ok(_) => self.refresh_conversation_bookmarks_and_emit(&key, ctx),
+                    Err(error) => log::warn!(
+                        "could not remove bookmark for exited agent conversation: {error}"
+                    ),
+                }
+            }
             ctx.emit(CLIAgentSessionsModelEvent::Ended {
                 terminal_view_id,
                 agent: session.agent,

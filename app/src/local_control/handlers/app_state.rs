@@ -49,6 +49,7 @@ pub(crate) fn handle(
     action: ActionKind,
     params: &serde_json::Value,
     target: &TargetSelector,
+    origin_terminal_session_uuid: Option<&uuid::Uuid>,
     ctx: &mut ModelContext<LocalControlBridge>,
 ) -> Result<serde_json::Value, ControlError> {
     match action {
@@ -56,7 +57,13 @@ pub(crate) fn handle(
             focus_window(instance_id, action, target, ctx)
         }
         ActionKind::WindowCreate => window_create(instance_id, params, target, ctx),
-        ActionKind::TabCreate => create_tab(instance_id, params, target, ctx),
+        ActionKind::TabCreate => create_tab(
+            instance_id,
+            params,
+            target,
+            origin_terminal_session_uuid,
+            ctx,
+        ),
         ActionKind::TabActivate => tab_activate(instance_id, params, target, ctx),
         ActionKind::TabMove => tab_move(instance_id, params, target, ctx),
         ActionKind::PaneSplit => pane_split(instance_id, params, target, ctx),

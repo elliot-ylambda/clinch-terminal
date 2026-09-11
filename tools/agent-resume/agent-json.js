@@ -78,6 +78,146 @@ function promptLine(argv) {
     });
 }
 
+function toolbeltPromptFingerprint(text) {
+    // Two independent 32-bit FNV-style lanes plus the normalized UTF-16 length make accidental
+    // collisions impractical without pulling a non-system hashing runtime into the hook.
+    let left = 2166136261;
+    let right = 2246822519;
+    for (let index = 0; index < text.length; index += 1) {
+        const code = text.charCodeAt(index);
+        left = Math.imul(left ^ code, 16777619);
+        right = Math.imul(right ^ code, 3266489917);
+    }
+    function hex(value) {
+        const output = (value >>> 0).toString(16);
+        return "00000000".slice(output.length) + output;
+    }
+    return hex(left) + hex(right) + ":" + text.length;
+}
+
+function normalizeToolbeltPrompt(text) {
+    const trimmed = asString(text, "").trim().replace(/\s+/g, " ");
+    return trimmed.toLocaleLowerCase();
+}
+
+function isLearnableToolbeltPrompt(prompt, normalized) {
+    if (prompt.length > 4096 || normalized.length < 12 || normalized.split(" ").length < 3) {
+        return false;
+    }
+    // Credentials, private material, and common token formats.
+    if (/(?:password|passwd|secret|api[_ -]?key|access[_ -]?token|authorization)\s*[:=]/i.test(prompt) ||
+            /-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(prompt) ||
+            /(?:gh[pousr]_|sk-(?:proj-)?|xox[baprs]-|AKIA)[A-Za-z0-9_\-]{12,}/.test(prompt) ||
+            /\b(?:bearer\s+)?[A-Za-z0-9_\/+\-=]{32,}\b/i.test(prompt) ||
+            /\beyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\b/.test(prompt) ||
+            /:\/\/[^/\s:@]+:[^/\s@]+@/.test(prompt)) {
+        return false;
+    }
+    // Do not turn destructive shell/database/infrastructure operations into a convenient button.
+    if (/\b(?:sudo\s+)?rm\s+(?:-[A-Za-z]*r[A-Za-z]*f|-[A-Za-z]*f[A-Za-z]*r)\b/i.test(normalized) ||
+            /\bgit\s+(?:reset\s+--hard|clean\s+-[A-Za-z]*f|push\b[^\n]*--force)|\b(?:terraform|tofu)\s+destroy\b|\bkubectl\s+delete\b|\b(?:drop\s+(?:database|table)|truncate\s+table|delete\s+from)\b|\b(?:mkfs|shutdown|reboot)\b/i.test(normalized)) {
+        return false;
+    }
+    // Obvious one-off identifiers and timestamp-shaped values are poor reusable controls.
+    if (/\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i.test(prompt) ||
+            /\b[0-9a-f]{24,}\b/i.test(prompt) ||
+            /\b20\d\d-[01]\d-[0-3]\d[t ][0-2]\d:[0-5]\d(?::[0-5]\d)?\b/i.test(prompt) ||
+            /\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b/i.test(prompt)) {
+        return false;
+    }
+    return true;
+}
+
+function newToolbeltSuggestionId() {
+    return asString(ObjC.unwrap($.NSUUID.UUID.UUIDString), "").toLocaleLowerCase();
+}
+
+function toolbeltLearn(argv) {
+    const storePath = asString(argv[0], "");
+    const provider = asString(argv[1], "");
+    const sessionId = asString(argv[2], "");
+    const timestamp = asString(argv[3], "");
+    if (!storePath || !/^(?:claude|codex)$/.test(provider) ||
+            !/^[A-Za-z0-9-]+$/.test(sessionId)) {
+        throw new Error("toolbelt-learn requires a store, provider, and safe session id");
+    }
+
+    const payload = parseObject(readStdin(), "hook payload");
+    if (asString(payload.hook_event_name, "") !== "UserPromptSubmit") {
+        return "";
+    }
+    const prompt = asString(payload.prompt, "");
+    const normalized = normalizeToolbeltPrompt(prompt);
+    if (!isLearnableToolbeltPrompt(prompt, normalized)) {
+        return "";
+    }
+
+    let store = { schema: 1, patterns: [] };
+    const previous = readFile(storePath);
+    if (previous) {
+        try {
+            const parsed = parseObject(previous, "toolbelt learning store");
+            if (parsed.schema === 1 && Array.isArray(parsed.patterns)) {
+                store = parsed;
+            }
+        } catch (_) {
+            // A malformed optional learning store must not break prompt capture. Start fresh.
+        }
+    }
+
+    const fingerprint = toolbeltPromptFingerprint(normalized);
+    const sessionKey = provider + ":" + sessionId;
+    let pattern = store.patterns.find(function (item) {
+        return item && item.fingerprint === fingerprint;
+    });
+    if (!pattern) {
+        pattern = {
+            id: newToolbeltSuggestionId(),
+            fingerprint: fingerprint,
+            sessions: [],
+            conversation_count: 0,
+            providers: [],
+            first_seen: timestamp,
+            last_seen: timestamp,
+        };
+        store.patterns.push(pattern);
+    }
+    if (!Array.isArray(pattern.sessions)) {
+        pattern.sessions = [];
+    }
+    if (!Array.isArray(pattern.providers)) {
+        pattern.providers = [];
+    }
+    if (pattern.sessions.indexOf(sessionKey) < 0) {
+        pattern.sessions.push(sessionKey);
+        pattern.conversation_count = Math.max(
+            Number.isFinite(pattern.conversation_count) ? pattern.conversation_count : 0,
+            pattern.sessions.length,
+        );
+        if (pattern.sessions.length > 32) {
+            pattern.sessions = pattern.sessions.slice(-32);
+        }
+    }
+    if (pattern.providers.indexOf(provider) < 0) {
+        pattern.providers.push(provider);
+    }
+    pattern.last_seen = timestamp;
+    if (pattern.conversation_count >= 2) {
+        pattern.text = prompt;
+    }
+
+    store.patterns.forEach(function (item) {
+        if (item && Array.isArray(item.sessions) && item.sessions.length > 32) {
+            item.sessions = item.sessions.slice(-32);
+        }
+    });
+    store.patterns.sort(function (a, b) {
+        return asString(a.last_seen, "") < asString(b.last_seen, "") ? 1 : -1;
+    });
+    store.patterns = store.patterns.slice(0, 512);
+    return JSON.stringify(store, null, 2) + "\n";
+}
+
 function registryEntry(argv) {
     const command = asString(argv[0], "");
     const cwd = asString(argv[1], "");
@@ -488,6 +628,8 @@ function run(argv) {
         return hookFields();
     case "prompt-line":
         return promptLine(argv);
+    case "toolbelt-learn":
+        return toolbeltLearn(argv);
     case "wire-claude":
         return wireClaude(argv);
     case "unwire-claude":

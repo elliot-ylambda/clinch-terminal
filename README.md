@@ -53,7 +53,7 @@ alongside Warp without inheriting Warp's settings.
   Tailscale network. Off until you turn it on.
 - **Stay local-first.** No telemetry, no analytics, no crash reporting, no account. Clinch
   collects nothing about you or your work, and the only thing it reaches for on its own is a
-  weekly update check against this repository—which you can turn off. See
+  once-daily-at-most update check against this repository—which you can turn off. See
   [Privacy and network behavior](#privacy-and-network-behavior)—including how to verify it
   yourself.
 
@@ -211,17 +211,19 @@ privileged update authorizer.
 
 | Activity | Runs when | Destination |
 | --- | --- | --- |
-| Update check | Automatically, at most once a week — **and you can turn it off** | `api.github.com`, this repository's releases |
+| Update check | Automatically, at most once a day — **and you can turn it off** | `api.github.com`, this repository's releases |
 | Update download | Only after you approve the update | GitHub release assets |
 | Claude plan-limit gauges | **Off by default**; only if you enable them in Settings | `api.anthropic.com` |
 | [Remote Control](#remote-control-beta) | **Off by default**; only while you have it enabled | Your own tailnet, phone to Mac — no Clinch relay |
 | Language servers, MCP servers, remote assets | Only when you start them | Wherever you point them |
 | Claude Code, Codex, SSH, package tooling | Only when you run them | Their own services |
 
-The update check is an ordinary HTTPS GET for signed release metadata. Clinch attaches no
-identifier, machine fingerprint, or usage data to it, and it downloads nothing until you approve
-the update. A successful check is not repeated for another week; a failed one backs off for six
-hours rather than retrying on every window focus.
+An update check uses ordinary HTTPS GETs for the release feed, manifest, and signature. Clinch
+attaches no unique identifier, machine fingerprint, installed version, operating-system version,
+or usage data to them, and it downloads no app archive until you approve the update. GitHub
+necessarily sees ordinary transport metadata such as the requesting IP address and time. Clinch
+records an automatic check before sending it, so successes, failures, cancellations, and app
+restarts are all capped at one check per 24 hours.
 
 **To make Clinch issue no automatic network requests at all**, turn off **Settings → Clinch →
 Updates → Check for updates automatically**. Checking on demand from **Clinch → Check for
@@ -344,7 +346,9 @@ unchanged.
 After a version-and-commit-specific publication confirmation,
 it pushes the signed tag, creates or refreshes a private draft release, downloads the uploaded
 assets into a fresh directory, verifies them again, and publishes the draft. The command does not
-require or record a manual QA attestation. Advanced users can override `VERSION`.
+require or record a manual QA attestation. A running installation discovers the release on its
+next at-most-daily check; choose **Clinch → Check for Updates…** to refresh immediately without
+resetting the automatic privacy cadence. Advanced users can override `VERSION`.
 
 Release publication runs no GitHub Actions job. Immediately before publication, the local command
 rechecks the signed remote tag, current `main`, both manifest signatures, exact asset set and

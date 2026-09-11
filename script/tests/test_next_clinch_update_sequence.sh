@@ -10,7 +10,8 @@ cp "$ROOT/script/next-clinch-update-sequence" "$FIXTURE/script/"
 
 LATEST_VERSION=v0.2026.07.15.2000
 LATEST_SEQUENCE=200
-printf '{"tag_name":"%s"}\n' "$LATEST_VERSION" > "$TMP/source/latest.json"
+printf '[{"tag_name":"v0.2026.07.14.2300","draft":false,"prerelease":false,"assets":[{"name":"Clinch.update.json"},{"name":"Clinch.update.sig"}]},{"tag_name":"%s","draft":false,"prerelease":false,"assets":[{"name":"Clinch.update.json"},{"name":"Clinch.update.sig"}]},{"tag_name":"v0.2098.01.01.0000","draft":false,"prerelease":false,"assets":[]},{"tag_name":"v0.2099.01.01.0000","draft":true,"prerelease":false,"assets":[{"name":"Clinch.update.json"},{"name":"Clinch.update.sig"}]}]\n' \
+  "$LATEST_VERSION" > "$TMP/source/releases.json"
 printf '{"sequence":%s}\n' "$LATEST_SEQUENCE" > "$TMP/source/manifest.json"
 
 ssh-keygen -q -t ed25519 -N '' -f "$TMP/release-key"
@@ -40,9 +41,13 @@ while (( $# )); do
   esac
 done
 case "$url" in
-  */releases/latest)
+  */releases\?per_page=100)
     [[ "${SEQUENCE_NO_RELEASE:-0}" != 1 ]] || exit 22
-    cp "$SEQUENCE_FIXTURE_SOURCE/latest.json" "$output"
+    if [[ "${SEQUENCE_EMPTY_FEED:-0}" == 1 ]]; then
+      printf '%s\n' '[]' > "$output"
+    else
+      cp "$SEQUENCE_FIXTURE_SOURCE/releases.json" "$output"
+    fi
     ;;
   */Clinch.update.json) cp "$SEQUENCE_FIXTURE_SOURCE/manifest.json" "$output" ;;
   */Clinch.update.sshsig) cp "$SEQUENCE_FIXTURE_SOURCE/manifest.sshsig" "$output" ;;
@@ -77,19 +82,19 @@ next="$(run_sequence)"
 [[ "$next" =~ ^[0-9]+$ && "$next" -gt "$LATEST_SEQUENCE" ]]
 
 bootstrap="$(
-  CLINCH_ALLOW_NO_PREVIOUS_RELEASE=1 SEQUENCE_NO_RELEASE=1 run_sequence
+  CLINCH_ALLOW_NO_PREVIOUS_RELEASE=1 SEQUENCE_EMPTY_FEED=1 run_sequence
 )"
 [[ "$bootstrap" =~ ^[0-9]+$ && "$bootstrap" -gt 0 ]]
 bootstrap_verify="$(
-  CLINCH_ALLOW_NO_PREVIOUS_RELEASE=1 SEQUENCE_NO_RELEASE=1 \
+  CLINCH_ALLOW_NO_PREVIOUS_RELEASE=1 SEQUENCE_EMPTY_FEED=1 \
     run_sequence verify v0.2026.07.17.2000 "$bootstrap"
 )"
 grep -Fq 'authenticated bootstrap release' <<< "$bootstrap_verify"
 
-if SEQUENCE_NO_RELEASE=1 run_sequence > "$TMP/no-release.out" 2>&1; then
+if SEQUENCE_EMPTY_FEED=1 run_sequence > "$TMP/no-release.out" 2>&1; then
   echo "FAIL: missing release was accepted without bootstrap authorization" >&2
   exit 1
 fi
-grep -Fq 'could not resolve the latest release' "$TMP/no-release.out"
+grep -Fq 'release feed contains no stable numeric release' "$TMP/no-release.out"
 
 echo "PASS"

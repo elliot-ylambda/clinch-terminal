@@ -691,10 +691,10 @@ pub enum WorkspaceAction {
     /// Uninstall the Oz CLI command from /usr/local/bin
     #[cfg(target_os = "macos")]
     UninstallOz,
-    /// Install the Warp Control CLI command to /usr/local/bin
+    /// Install the Clinch CLI command to /usr/local/bin.
     #[cfg(target_os = "macos")]
     InstallWarpctrl,
-    /// Uninstall the Warp Control CLI command from /usr/local/bin
+    /// Uninstall the Clinch CLI command from /usr/local/bin.
     #[cfg(target_os = "macos")]
     UninstallWarpctrl,
     UndoRevertInCodeReviewPane {

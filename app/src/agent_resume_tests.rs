@@ -1184,3 +1184,127 @@ fn persisted_command_survives_without_a_removal_tombstone() {
     );
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn toolbelt_learning_requires_two_distinct_safe_conversations() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join(TOOLBELT_LEARNING_FILE),
+        serde_json::json!({
+            "schema": 1,
+            "patterns": [
+                {
+                    "id": "00000000-0000-4000-8000-000000000001",
+                    "sessions": ["codex:same-session", "codex:same-session"],
+                    "providers": ["codex"],
+                    "last_seen": "2026-08-13T01:00:00Z",
+                    "text": "Run the same local server"
+                },
+                {
+                    "id": "00000000-0000-4000-8000-000000000002",
+                    "sessions": ["codex:session-one", "claude:session-two"],
+                    "providers": ["codex", "claude", "invalid"],
+                    "last_seen": "2026-08-13T02:00:00Z",
+                    "text": "Run the reusable local server"
+                },
+                {
+                    "id": "not-a-uuid",
+                    "sessions": ["codex:session-three", "codex:session-four"],
+                    "providers": ["codex"],
+                    "last_seen": "2026-08-13T03:00:00Z",
+                    "text": "This invalid record stays hidden"
+                }
+            ]
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let suggestions = learned_toolbelt_suggestions_in(dir.path());
+    assert_eq!(suggestions.len(), 1);
+    assert_eq!(
+        suggestions[0],
+        LearnedToolbeltSuggestion {
+            id: "00000000-0000-4000-8000-000000000002".to_owned(),
+            text: "Run the reusable local server".to_owned(),
+            conversation_count: 2,
+            providers: vec!["claude".to_owned(), "codex".to_owned()],
+            last_seen: "2026-08-13T02:00:00Z".to_owned(),
+        }
+    );
+    assert!(learned_toolbelt_suggestions_for_state(false, Some(dir.path())).is_empty());
+}
+
+#[test]
+fn toolbelt_suggestion_resolution_is_private_durable_and_idempotent() {
+    let dir = tempfile::tempdir().unwrap();
+    let suggestion_id = "00000000-0000-4000-8000-000000000003";
+    std::fs::write(
+        dir.path().join(TOOLBELT_LEARNING_FILE),
+        serde_json::json!({
+            "schema": 1,
+            "patterns": [{
+                "id": suggestion_id,
+                "sessions": ["codex:session-one", "codex:session-two"],
+                "providers": ["codex"],
+                "last_seen": "2026-08-13T02:00:00Z",
+                "text": "Run the reusable local server"
+            }]
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    resolve_toolbelt_suggestion_in(
+        dir.path(),
+        suggestion_id,
+        ToolbeltSuggestionResolutionOutcome::Declined,
+    )
+    .unwrap();
+    resolve_toolbelt_suggestion_in(
+        dir.path(),
+        suggestion_id,
+        ToolbeltSuggestionResolutionOutcome::Declined,
+    )
+    .expect("repeating the same resolution is idempotent");
+    assert!(learned_toolbelt_suggestions_in(dir.path()).is_empty());
+
+    let saved = std::fs::read_to_string(dir.path().join(TOOLBELT_RESOLUTIONS_FILE)).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&saved).unwrap();
+    assert_eq!(value["schema"], 1);
+    assert_eq!(value["resolutions"][0]["outcome"], "declined");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(dir.path().join(TOOLBELT_RESOLUTIONS_FILE))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn toolbelt_learning_rejects_symlinked_and_oversized_stores() {
+    use std::os::unix::fs::symlink;
+
+    let dir = tempfile::tempdir().unwrap();
+    let outside = dir.path().join("outside.json");
+    std::fs::write(
+        &outside,
+        r#"{"schema":1,"patterns":[{"id":"00000000-0000-4000-8000-000000000004","sessions":["codex:one","codex:two"],"providers":["codex"],"text":"Run the local preview server"}]}"#,
+    )
+    .unwrap();
+    let store = dir.path().join(TOOLBELT_LEARNING_FILE);
+    symlink(&outside, &store).unwrap();
+    assert!(learned_toolbelt_suggestions_in(dir.path()).is_empty());
+
+    std::fs::remove_file(&store).unwrap();
+    let file = std::fs::File::create(&store).unwrap();
+    file.set_len(MAX_TOOLBELT_LEARNING_BYTES + 1).unwrap();
+    assert!(learned_toolbelt_suggestions_in(dir.path()).is_empty());
+}
