@@ -7,6 +7,7 @@ export WARP_AGENT_RESUME_DIR="$TMP/reg"
 # because the real hook environment does not inherit the shell PATH.
 export WARP_TERMINAL_SESSION_UUID="bb22"
 export WARP_AGENT_RESUME_FAKE_ANCESTRY="codex"
+export WARP_AGENT_RESUME_FAKE_OWNER_PID=1000
 
 echo '{"session_id":"sess-77","cwd":"/tmp/repo","source":"startup"}' | bash "$HERE/codex-session-start.sh"
 f="$WARP_AGENT_RESUME_DIR/bb22.json"
