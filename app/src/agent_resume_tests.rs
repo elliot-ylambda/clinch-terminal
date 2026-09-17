@@ -2,6 +2,23 @@ use std::io::Write;
 
 use super::*;
 
+#[test]
+fn shutdown_owner_preserves_exact_pane_metadata_across_global_marker_cleanup() {
+    let dir = tempfile::tempdir().unwrap();
+    let uuid = vec![0xab, 0xcd];
+    let entry = br#"{"command":"clinch_agent_resume_launch claude session-1","cwd":"/repo","owner_pid":"123","owner_tty":"ttys001"}"#;
+    write_private_atomic(dir.path(), "abcd.json", entry).unwrap();
+    write_private_atomic(dir.path(), APP_TERMINATING_FILE, b"456\n").unwrap();
+    preserve_shutdown_owner_in(dir.path(), &uuid).unwrap();
+    std::fs::remove_file(dir.path().join(APP_TERMINATING_FILE)).unwrap();
+    assert_eq!(
+        std::fs::read(dir.path().join("shutdown-owners/abcd.json")).unwrap(),
+        entry
+    );
+    preserve_shutdown_owner_in(dir.path(), &[0xef]).unwrap();
+    assert!(!dir.path().join("shutdown-owners/ef.json").exists());
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn capture_installer_failure_includes_compact_stderr() {

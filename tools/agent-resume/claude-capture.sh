@@ -221,7 +221,7 @@ _clinch_agent_resume_capture_main() {
       # user exits have no marker and remove only the session that still owns this pane.
       "$BIN/clinch-agent-resume" app-terminating >/dev/null 2>&1 && return 0
       "$BIN/clinch-agent-resume" remove-if-matches \
-        "$WARP_TERMINAL_SESSION_UUID" claude "$sid" >/dev/null 2>&1 || true
+        "$WARP_TERMINAL_SESSION_UUID" claude "$sid" "$owner_pid" "$owner_tty" >/dev/null 2>&1 || true
       return 0
       ;;
     *) return 0 ;;

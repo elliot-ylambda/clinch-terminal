@@ -330,8 +330,8 @@ pub fn install_bundled_capture_layer() {
         return;
     }
 
-    // A graceful previous shutdown intentionally left this marker while PTYs emitted
-    // SessionEnd. It must be gone before the first restored/new agent can exit.
+    // Clear only the legacy global guard. Per-pane shutdown owners must survive startup:
+    // an old agent can emit SessionEnd minutes after its replacement app starts.
     clear_app_terminating_marker();
 
     if let Err(error) = run_capture_installer(command) {
@@ -856,9 +856,9 @@ fn write_private_atomic(dir: &Path, name: &str, contents: &[u8]) -> std::io::Res
 }
 
 /// Preserve live registry entries while graceful app shutdown sends SIGHUP to agent PTYs.
-/// SessionEnd hooks remove entries for normal user exits, but skip removal while this marker
-/// exists. The next Clinch launch clears it before any pane can start.
-pub fn mark_app_terminating() {
+/// Persist the exact exiting owners as well as the legacy global marker. Startup clears the
+/// global marker, but late hooks must still recognize owners from the previous app lifetime.
+pub fn mark_app_terminating(pane_uuids: &[Vec<u8>]) {
     if !runtime_enabled() {
         return;
     }
@@ -870,6 +870,21 @@ pub fn mark_app_terminating() {
     ) {
         log::warn!("could not mark agent-resume app shutdown: {err}");
     }
+    for uuid in pane_uuids {
+        if let Err(err) = preserve_shutdown_owner_in(&dir, uuid) {
+            log::warn!("could not preserve agent-resume shutdown owner: {err}");
+        }
+    }
+}
+
+fn preserve_shutdown_owner_in(dir: &Path, uuid: &[u8]) -> std::io::Result<()> {
+    let filename = format!("{}.json", hex::encode(uuid));
+    let contents = match std::fs::read(dir.join(&filename)) {
+        Ok(contents) => contents,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(err),
+    };
+    write_private_atomic(&dir.join("shutdown-owners"), &filename, &contents)
 }
 
 fn clear_app_terminating_marker() {

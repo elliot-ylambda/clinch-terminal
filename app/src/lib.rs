@@ -2280,7 +2280,9 @@ pub(crate) fn app_callbacks(
             // Freeze the newest pane/agent ownership before the writer's FIFO termination
             // event. The marker keeps SessionEnd hooks from deleting those registry entries
             // while PTYs are torn down later in shutdown.
-            agent_resume::mark_app_terminating();
+            agent_resume::mark_app_terminating(
+                &app_state::get_app_state(ctx).terminal_pane_uuids(),
+            );
             workspace::global_actions::enqueue_app_state_snapshot(ctx);
 
             NotebookManager::handle(ctx).update(ctx, |manager, ctx| {

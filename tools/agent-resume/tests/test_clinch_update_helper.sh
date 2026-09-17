@@ -94,6 +94,9 @@ run_transaction() {
   # bundles, but the helper's PID ownership check intentionally operates on the process command.
   /bin/bash -c 'exec -a "$1" /bin/sleep 120' _ "$destination/Contents/MacOS/stable" &
   old_pid=$!
+  mkdir -p "$transaction_home/.warp/agent-resume/shutdown-owners"
+  printf '%s\n' "$old_pid" > "$transaction_home/.warp/agent-resume/.app-terminating"
+  printf 'protected owner\n' > "$transaction_home/.warp/agent-resume/shutdown-owners/aa11.json"
 
   set +e
   CLINCH_UPDATE_HELPER_TEST=1 \
@@ -147,6 +150,8 @@ run_transaction() {
     fail "unacknowledged update unexpectedly succeeded"
   fi
   [[ "$(bundle_value "$destination" WarpVersion)" == "$expected_version" ]]
+  [[ -f "$transaction_home/.warp/agent-resume/.app-terminating" ]]
+  [[ "$(cat "$transaction_home/.warp/agent-resume/shutdown-owners/aa11.json")" == 'protected owner' ]]
 }
 
 run_transaction success-update 1 v0.2099.01.02.0002

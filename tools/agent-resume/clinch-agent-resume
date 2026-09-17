@@ -88,7 +88,8 @@ hook_owner_fields() {
     IFS='|' read -r command64 cwd64 bridge64 recorded_pid64 recorded_tty64 <<<"$fields"
     recorded_pid="$(decode64 "${recorded_pid64:-}")"
     recorded_tty="$(decode64 "${recorded_tty64:-}")"
-    if [[ "$recorded_pid" =~ ^[0-9]+$ && "$recorded_pid" != "$owner_pid" && -n "$recorded_tty" ]]; then
+    if [[ "$recorded_pid" =~ ^[0-9]+$ && "$recorded_pid" != "$owner_pid" && -n "$recorded_tty" ]] \
+        && ! pane_owner_is_shutting_down "$pane"; then
       if [[ "${WARP_AGENT_RESUME_FAKE_RECORDED_OWNER_ACTIVE:-}" == "1" ]]; then
         return 1
       fi
@@ -240,6 +241,9 @@ write_entry() {
   chmod 600 "$tmp"
   mv -f "$tmp" "$DIR/$uuid.json"
   rm -f "$DIR/tombstones/$uuid"
+  if ! entry_owner_matches "$DIR/shutdown-owners/$uuid.json" "$owner_pid" "$owner_tty"; then
+    rm -f "$DIR/shutdown-owners/$uuid.json"
+  fi
   journal_append "$("$BIN/agent-json" journal-write "$(now_utc)" "$uuid" "$command_str" "$cwd" "$bridge")"
 }
 
@@ -270,6 +274,29 @@ entry_matches() {
   IFS='|' read -r command64 ignored <<<"$fields"
   parse_launch_command "$(decode64 "$command64")" || return 1
   [[ "$PARSED_AGENT" == "$agent" && "$PARSED_SESSION" == "$sid" ]]
+}
+
+entry_owner_matches() {
+  local file="$1" pid="$2" tty="$3" fields command64 cwd64 bridge64 pid64 tty64
+  [[ -n "$pid" && -n "$tty" ]] || return 1
+  fields="$(entry_fields "$file")" || return 1
+  IFS='|' read -r command64 cwd64 bridge64 pid64 tty64 <<<"$fields"
+  # Legacy and repair-live entries can lack ownership. Only the current-entry check
+  # opts into the old provider/session-only behavior; shutdown guards require an owner.
+  if [[ "${4:-0}" == 1 && ( -z "${pid64:-}" || -z "${tty64:-}" ) ]]; then
+    return 0
+  fi
+  [[ "$(decode64 "${pid64:-}")" == "$pid" && "$(decode64 "${tty64:-}")" == "$tty" ]]
+}
+
+pane_owner_is_shutting_down() {
+  local pane="$1" fields command64 cwd64 bridge64 pid64 tty64
+  fields="$(entry_fields "$DIR/$pane.json")" || return 1
+  IFS='|' read -r command64 cwd64 bridge64 pid64 tty64 <<<"$fields"
+  parse_launch_command "$(decode64 "$command64")" || return 1
+  entry_matches "$DIR/shutdown-owners/$pane.json" "$PARSED_AGENT" "$PARSED_SESSION" \
+    && entry_owner_matches "$DIR/shutdown-owners/$pane.json" \
+      "$(decode64 "${pid64:-}")" "$(decode64 "${tty64:-}")"
 }
 
 entry_owner_alive() {
@@ -435,9 +462,21 @@ case "$cmd" in
     ;;
   remove-if-matches)
     uuid="$1"; agent="$2"; sid="$3"
+    owner_pid="${4:-}"; owner_tty="${5:-}"
     valid_uuid "$uuid" && valid_agent "$agent" && [[ "$sid" =~ ^[A-Za-z0-9-]+$ ]] \
       || { echo "remove-if-matches: invalid arguments" >&2; exit 2; }
     if entry_matches "$DIR/$uuid.json" "$agent" "$sid"; then
+      if [[ -n "$owner_pid" ]]; then
+        # A late hook must never delete a replacement, even when it resumed the same ID.
+        entry_owner_matches "$DIR/$uuid.json" "$owner_pid" "$owner_tty" 1 || exit 0
+        # Unlike the global grace window, this guard survives arbitrarily slow startup
+        # and protects only the exiting process, not a newly resumed session.
+        shutdown_owner="$DIR/shutdown-owners/$uuid.json"
+        if entry_matches "$shutdown_owner" "$agent" "$sid" \
+            && entry_owner_matches "$shutdown_owner" "$owner_pid" "$owner_tty"; then
+          exit 0
+        fi
+      fi
       remove_entry "$uuid"
     fi
     ;;
