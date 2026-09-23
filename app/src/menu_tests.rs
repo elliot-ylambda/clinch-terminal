@@ -6,10 +6,11 @@ use super::{Menu, MenuAction, MenuItem, MenuItemFields, SelectAction, SubMenu};
 
 #[test]
 fn scrollable_menu_tooltip_escapes_clip_and_preserves_row_hover() {
-    use pathfinder_geometry::vector::vec2f;
     use std::cell::RefCell;
     use std::collections::HashSet;
     use std::rc::Rc;
+
+    use pathfinder_geometry::vector::vec2f;
     use warpui::{Event, Presenter, WindowInvalidation};
 
     App::test((), |mut app| async move {
