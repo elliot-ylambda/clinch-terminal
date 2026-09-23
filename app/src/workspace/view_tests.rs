@@ -5709,6 +5709,144 @@ fn test_move_tab_to_group_expands_collapsed_group() {
 }
 
 #[test]
+fn transferred_sidebar_tab_clears_filter_and_receives_mouse_up() {
+    let _vertical_tabs_guard = FeatureFlag::VerticalTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+        let (window_id, drag_state) = workspace.update(&mut app, |workspace, ctx| {
+            workspace.add_terminal_tab(false, ctx);
+            let id = workspace.tabs[1].pane_group.id();
+            let tab = workspace.take_tab_for_project_transfer(id, ctx).unwrap();
+            let drag_state = tab.draggable_state.clone();
+            drag_state.set_dragging(vec2f(120., 260.), vec2f(-20., -8.));
+            workspace.vertical_tabs_panel.search_query = "no-session-matches-this-query".into();
+            workspace
+                .vertical_tabs_search_input
+                .update(ctx, |editor, ctx| {
+                    editor.set_buffer_text("no-session-matches-this-query", ctx);
+                });
+            workspace.accept_project_tab_drag(tab, ctx);
+            assert!(workspace.vertical_tabs_panel.search_query.is_empty());
+            assert!(workspace
+                .vertical_tabs_search_input
+                .as_ref(ctx)
+                .buffer_text(ctx)
+                .is_empty());
+            (ctx.window_id(), drag_state)
+        });
+        let presenter =
+            std::rc::Rc::new(std::cell::RefCell::new(warpui::Presenter::new(window_id)));
+        app.update(|ctx| {
+            presenter.borrow_mut().invalidate(
+                warpui::WindowInvalidation {
+                    updated: std::collections::HashSet::from([workspace.id()]),
+                    ..Default::default()
+                },
+                ctx,
+            );
+            presenter
+                .borrow_mut()
+                .build_scene(vec2f(1200., 800.), 1., None, ctx);
+            ctx.simulate_window_event(
+                warpui::Event::LeftMouseUp {
+                    position: vec2f(120., 260.),
+                    modifiers: Default::default(),
+                },
+                window_id,
+                presenter.clone(),
+            );
+        });
+        assert!(
+            !drag_state.is_dragging(),
+            "the visible destination row must receive mouse-up"
+        );
+        assert_eq!(
+            workspace.read(&app, |workspace, _| workspace.tab_count()),
+            2
+        );
+    });
+}
+
+#[test]
+fn dragging_tab_into_collapsed_section_expands_before_membership_changes() {
+    let _grouped_tabs_guard = FeatureFlag::GroupedTabs.override_enabled(true);
+    let _vertical_tabs_guard = FeatureFlag::VerticalTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+        let (window_id, group_id, dragged_id, original_count) =
+            workspace.update(&mut app, |workspace, ctx| {
+                workspace.vertical_tabs_panel_open = true;
+                workspace.handle_action(
+                    &WorkspaceAction::SelectNewSessionMenuItem(
+                        NewSessionMenuItem::CreateNewTabGroup,
+                    ),
+                    ctx,
+                );
+                let group_id = workspace.tabs[workspace.active_tab_index()]
+                    .group_id
+                    .unwrap();
+                workspace.handle_action(&WorkspaceAction::ToggleTabGroupCollapsed(group_id), ctx);
+                let dragged = workspace
+                    .tabs
+                    .iter()
+                    .find(|tab| tab.group_id.is_none())
+                    .unwrap();
+                (
+                    ctx.window_id(),
+                    group_id,
+                    dragged.pane_group.id(),
+                    workspace.tabs.len(),
+                )
+            });
+        let mut presenter = warpui::Presenter::new(window_id);
+        app.update(|ctx| {
+            presenter.invalidate(
+                warpui::WindowInvalidation {
+                    updated: std::collections::HashSet::from([workspace.id()]),
+                    ..Default::default()
+                },
+                ctx,
+            );
+            presenter.build_scene(vec2f(1200., 800.), 1., None, ctx);
+        });
+        workspace.update(&mut app, |workspace, ctx| {
+            let position_id = if uses_vertical_tabs() {
+                vtab_group_position_id(group_id)
+            } else {
+                htab_group_position_id(group_id)
+            };
+            let section = ctx
+                .element_position_by_id(position_id)
+                .expect("collapsed section must have a drop target");
+            let index = workspace
+                .tabs
+                .iter()
+                .position(|tab| tab.pane_group.id() == dragged_id)
+                .unwrap();
+            workspace.tabs[index]
+                .draggable_state
+                .set_dragging(section.center(), vec2f(-20., -8.));
+            workspace.on_tab_drag(
+                index,
+                RectF::new(section.center() - vec2f(20., 8.), vec2f(40., 16.)),
+                ctx,
+            );
+            assert!(!workspace.tab_groups[&group_id].collapsed);
+            assert_eq!(workspace.tabs.len(), original_count);
+            let moved = workspace
+                .tabs
+                .iter()
+                .find(|tab| tab.pane_group.id() == dragged_id)
+                .unwrap();
+            assert_eq!(moved.group_id, Some(group_id));
+            assert!(moved.draggable_state.is_dragging());
+        });
+    });
+}
+
+#[test]
 fn test_move_selected_tabs_to_group_expands_collapsed_group() {
     let _grouped_tabs_guard = FeatureFlag::GroupedTabs.override_enabled(true);
 

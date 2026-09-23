@@ -487,8 +487,10 @@ impl View {
             .collect_vec();
 
         let mixer = ctx.add_model(|_| CommandPaletteMixer::new());
+        // Wire search sources now, but defer transcript scanning until the palette
+        // opens. Every project creates two of these hidden palettes.
         data_source_store.update(ctx, |store, ctx| {
-            store.reset_search_mixer(mixer.clone(), false, ctx);
+            store.configure_search_mixer(mixer.clone(), false, ctx);
             ctx.notify();
         });
 

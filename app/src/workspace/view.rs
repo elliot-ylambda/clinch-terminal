@@ -1492,6 +1492,14 @@ fn agent_conversation_reopen_cwd(
 }
 
 impl Workspace {
+    pub(crate) fn vertical_tabs_panel_width(&self) -> f32 {
+        self.vertical_tabs_panel.width()
+    }
+
+    pub(crate) fn set_vertical_tabs_panel_width(&mut self, width: f32) {
+        self.vertical_tabs_panel.set_width(width);
+    }
+
     pub fn is_tab_drag_preview(&self) -> bool {
         self.is_tab_drag_preview
     }
@@ -1936,6 +1944,10 @@ impl Workspace {
         is_drop_target: bool,
         ctx: &mut ViewContext<Self>,
     ) {
+        if is_drop_target && self.bookmarked_sessions_collapsed {
+            self.bookmarked_sessions_collapsed = false;
+            ctx.notify();
+        }
         if self.vertical_tabs_panel.bookmarked_section_is_drop_target == is_drop_target {
             return;
         }
@@ -3978,7 +3990,18 @@ impl Workspace {
             ai_fact_view,
             left_panel_open: false,
             vertical_tabs_panel_open: false,
-            vertical_tabs_panel: Default::default(),
+            vertical_tabs_panel: {
+                let panel = VerticalTabsPanelState::default();
+                if let NewWorkspaceSource::Restored {
+                    window_snapshot, ..
+                } = &workspace_setting
+                {
+                    if let Some(width) = window_snapshot.vertical_tabs_panel_width {
+                        panel.set_width(width);
+                    }
+                }
+                panel
+            },
             left_panel_view,
             left_panel_views,
             right_panel_view,
@@ -12790,6 +12813,7 @@ impl Workspace {
             warp_drive_index_width,
             left_panel_open: self.left_panel_open,
             vertical_tabs_panel_open: self.vertical_tabs_panel_open,
+            vertical_tabs_panel_width: Some(self.vertical_tabs_panel.width()),
             left_panel_width,
             right_panel_width,
             agent_management_filters,
@@ -26672,6 +26696,15 @@ impl TypedActionView for Workspace {
                     && self.is_over_bookmarked_section(*tab_position, ctx))
                 .then(|| self.bookmarkable_terminal_view_id_for_tab(*pane_group_id, ctx))
                 .flatten();
+                let target_project_id = (!is_cross_window && bookmark_terminal_view_id.is_none())
+                    .then(|| {
+                        self.containing_project_window(ctx).and_then(|parent| {
+                            parent
+                                .as_ref(ctx)
+                                .inner_tab_drop_project(*tab_position, ctx)
+                        })
+                    })
+                    .flatten();
                 let project_insertion_index = (!is_cross_window
                     && bookmark_terminal_view_id.is_none())
                 .then(|| self.project_drop_insertion_index(*tab_position, ctx))
@@ -26726,6 +26759,16 @@ impl TypedActionView for Workspace {
                         });
                     }
                     ctx.notify();
+                    return;
+                }
+                if let Some(target_project_id) = target_project_id {
+                    ctx.dispatch_typed_action_deferred(
+                        ProjectWindowAction::MoveInnerTabToProject {
+                            source_workspace_id: ctx.handle().id(),
+                            pane_group_id: *pane_group_id,
+                            target_project_id,
+                        },
+                    );
                     return;
                 }
                 if let Some(insertion_index) = project_insertion_index {
@@ -29969,6 +30012,60 @@ impl Workspace {
         Some(transferred_tab)
     }
 
+    pub(crate) fn take_tab_for_project_transfer(
+        &mut self,
+        pane_group_id: EntityId,
+        ctx: &mut ViewContext<Self>,
+    ) -> Option<TransferredTab> {
+        let index = self
+            .tabs
+            .iter()
+            .position(|tab| tab.pane_group.id() == pane_group_id)?;
+        let transferred = self.tab_transfer_info_at_index(index, ctx)?;
+        ctx.unsubscribe_to_view(&transferred.pane_group);
+        self.current_workspace_state.is_tab_being_dragged = false;
+        if self.tabs.len() == 1 && !self.tasks.is_empty() {
+            // Keep project-owned tasks and their directory when its last live
+            // session moves away. Create the replacement before removing the
+            // old tab so normal directory inheritance still applies.
+            self.add_terminal_tab(false, ctx);
+        }
+        if self.tabs.len() == 1 {
+            // The parent removes this empty project after reparenting the live pane.
+            // Ordinary last-tab removal would run close hooks and terminate the agent.
+            self.tabs.clear();
+            self.tab_mru_order.clear();
+            self.tab_groups.clear();
+            self.active_tab_index = 0;
+        } else {
+            let index = self
+                .tabs
+                .iter()
+                .position(|tab| tab.pane_group.id() == pane_group_id)?;
+            self.remove_tab_without_undo(index, ctx);
+        }
+        ctx.notify();
+        Some(transferred)
+    }
+
+    pub(crate) fn accept_project_tab_drag(
+        &mut self,
+        tab: TransferredTab,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let is_dragging = tab.draggable_state.is_dragging();
+        self.insert_transferred_tab_at_index(tab, self.tabs.len(), ctx);
+        self.vertical_tabs_panel_open = true;
+        // The transferred Draggable must stay rendered to receive subsequent
+        // motion and mouse-up events, even if the destination was filtered.
+        self.vertical_tabs_panel.search_query.clear();
+        self.vertical_tabs_search_input.update(ctx, |editor, ctx| {
+            editor.clear_buffer_and_reset_undo_stack(ctx);
+        });
+        self.current_workspace_state.is_tab_being_dragged = is_dragging;
+        ctx.notify();
+    }
+
     /// Replaces the placeholder pane group (created by
     /// `create_transferred_window`) with the real pane group transferred from
     /// the source window, detaching and dropping the placeholder.
@@ -30229,6 +30326,18 @@ impl Workspace {
         // Check it before the perpendicular-axis detach threshold so dragging
         // upward can promote the tab without briefly creating a preview window.
         if !CrossWindowTabDrag::as_ref(ctx).is_active() {
+            if let Some(target_project_id) = self
+                .containing_project_window(ctx)
+                .and_then(|parent| parent.as_ref(ctx).inner_tab_drop_project(position, ctx))
+            {
+                self.set_inner_tab_project_drop_indicator(None, ctx);
+                ctx.dispatch_typed_action_deferred(ProjectWindowAction::MoveInnerTabToProject {
+                    source_workspace_id: ctx.handle().id(),
+                    pane_group_id,
+                    target_project_id,
+                });
+                return;
+            }
             let project_insertion_index = self.project_drop_insertion_index(position, ctx);
             self.set_inner_tab_project_drop_indicator(project_insertion_index, ctx);
             if project_insertion_index.is_some() {
@@ -30263,6 +30372,23 @@ impl Workspace {
                 }
             })
         };
+
+        // A diagonal drag to another project crosses the sidebar edge before
+        // reaching the header. Keep that gesture in this window until it actually
+        // leaves the native window; otherwise a preview window steals the drag.
+        if !is_cross_window_drag
+            && uses_vertical_tabs()
+            && (is_drag_outside_tab_bar || self.tabs.len() == 1)
+            && self
+                .containing_project_window(ctx)
+                .is_some_and(|parent| parent.as_ref(ctx).projects().count() > 1)
+            && ctx.window_bounds(&self.window_id).is_some_and(|bounds| {
+                RectF::new(vec2f(0., 0.), bounds.size()).contains_point(drag_center)
+            })
+        {
+            ctx.notify();
+            return;
+        }
 
         if CrossWindowTabDrag::as_ref(ctx).is_active() {
             let window_id = ctx.window_id();
@@ -30451,6 +30577,14 @@ impl Workspace {
             // This is not supported as pinned items can not leave the pinned area.
             let pinned_into_unpinned_group =
                 was_pinned && hovered_group.is_some() && !target_group_pinned;
+
+            // Keep the dragged row rendered when it enters a collapsed section.
+            // Expanding before membership changes also exposes insertion positions.
+            if !pinned_into_unpinned_group {
+                if let Some(group_id) = hovered_group {
+                    self.expand_tab_group(group_id, ctx);
+                }
+            }
 
             if hovered_group != source_group && !pinned_into_unpinned_group {
                 // Check if a tab is being dragged out of a pinned group.

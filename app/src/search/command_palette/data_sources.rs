@@ -92,6 +92,17 @@ impl DataSourceStore {
         self.agent_conversations_data_source
             .update(ctx, |source, ctx| source.refresh(ctx));
 
+        self.configure_search_mixer(mixer, is_shared_session_viewer, ctx);
+    }
+
+    /// Wires sources without scanning agent transcripts. Hidden palettes use this
+    /// during construction; opening a palette refreshes its data through reset above.
+    pub fn configure_search_mixer(
+        &mut self,
+        mixer: ModelHandle<CommandPaletteMixer>,
+        is_shared_session_viewer: bool,
+        ctx: &mut ModelContext<Self>,
+    ) {
         mixer.update(ctx, |mixer, ctx| {
             mixer.reset(ctx);
 

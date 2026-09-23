@@ -1380,10 +1380,9 @@ impl<A: Action + Clone> MenuItemFields<A> {
                     };
                     let mut stack = Stack::new();
                     stack.add_child(container_element);
-                    // Use add_positioned_child instead of add_positioned_overlay_child
-                    // to prevent the tooltip from intercepting mouse events and causing
-                    // hover state flickering on the parent menu item.
-                    stack.add_positioned_child(tooltip_element, positioning);
+                    // Escape the scrollable menu's clip while leaving hover and clicks
+                    // on the row underneath; an interactive overlay would flicker.
+                    stack.add_positioned_click_through_overlay_child(tooltip_element, positioning);
                     return stack.finish();
                 }
             }
