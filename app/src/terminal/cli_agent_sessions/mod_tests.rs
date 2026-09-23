@@ -1,3 +1,6 @@
+use std::ffi::OsString;
+
+use tempfile::TempDir;
 use warp_core::channel::{Channel, ChannelConfig, ChannelState};
 use warp_core::AppId;
 use warpui::{App, Entity, EntityId};
@@ -21,6 +24,29 @@ struct CapturedSessionEvents(Vec<CLIAgentSessionsModelEvent>);
 
 impl Entity for CapturedSessionEvents {
     type Event = ();
+}
+
+struct EnvVarGuard {
+    key: &'static str,
+    original: Option<OsString>,
+}
+
+impl EnvVarGuard {
+    fn set(key: &'static str, value: impl Into<OsString>) -> Self {
+        let original = std::env::var_os(key);
+        std::env::set_var(key, value.into());
+        Self { key, original }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        if let Some(original) = &self.original {
+            std::env::set_var(self.key, original);
+        } else {
+            std::env::remove_var(self.key);
+        }
+    }
 }
 
 #[test]
@@ -337,6 +363,55 @@ fn idle_test_session(agent: CLIAgent) -> CLIAgentSession {
         prompt_history_load_state: Default::default(),
         prompt_history_generation: 0,
     }
+}
+
+#[test]
+#[serial_test::serial]
+fn agent_exit_removes_bookmark_while_view_detach_preserves_it() {
+    let registry = TempDir::new().unwrap();
+    let _registry_env = EnvVarGuard::set("WARP_AGENT_RESUME_DIR", registry.path());
+    std::fs::write(
+        registry.path().join("journal.jsonl"),
+        concat!(
+            r#"{"ts":"2026-08-15T10:00:00Z","op":"write","pane":"pane-1","command":"clinch_agent_resume_launch codex session-id","cwd":"/tmp/project"}"#,
+            "\n",
+        ),
+    )
+    .unwrap();
+    assert!(crate::agent_resume::set_conversation_bookmark(
+        AgentResumeProvider::Codex,
+        "session-id",
+        true,
+    )
+    .unwrap());
+
+    App::test((), |mut app| async move {
+        let sessions = app.add_model(|_| CLIAgentSessionsModel::new());
+        let terminal_view_id = EntityId::new();
+        let mut session = idle_test_session(CLIAgent::Codex);
+        session.session_context.session_id = Some("session-id".to_owned());
+
+        sessions.update(&mut app, |model, ctx| {
+            assert_eq!(model.bookmarked_conversations().len(), 1);
+            model.set_session(terminal_view_id, session.clone(), ctx);
+            model.remove_session(terminal_view_id, ctx);
+        });
+        assert!(crate::agent_resume::is_conversation_bookmarked(
+            AgentResumeProvider::Codex,
+            "session-id"
+        ));
+
+        sessions.update(&mut app, |model, ctx| {
+            assert_eq!(model.bookmarked_conversations().len(), 1);
+            model.set_session(terminal_view_id, session, ctx);
+            model.remove_session_after_agent_exit(terminal_view_id, ctx);
+            assert!(model.bookmarked_conversations().is_empty());
+        });
+        assert!(!crate::agent_resume::is_conversation_bookmarked(
+            AgentResumeProvider::Codex,
+            "session-id"
+        ));
+    });
 }
 
 fn activity_event(agent: CLIAgent, event: CLIAgentEventType) -> CLIAgentEvent {

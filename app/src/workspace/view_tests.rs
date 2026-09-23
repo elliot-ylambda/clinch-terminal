@@ -448,6 +448,86 @@ fn project_display_name_falls_back_when_no_project_directory_is_available() {
     );
 }
 
+#[test]
+#[cfg(feature = "local_fs")]
+fn project_display_name_uses_main_repo_for_linked_worktrees_only() {
+    use warp_util::standardized_path::StandardizedPath;
+
+    App::test((), |mut app| async move {
+        let repositories = app.add_singleton_model(|_| DetectedRepositories::default());
+        let watcher = app.add_singleton_model(DirectoryWatcher::new_for_testing);
+        let temp_root = TempDir::new().unwrap();
+        let main_repo = temp_root.path().join("main-repo");
+        let worktree_git_dir = main_repo.join(".git/worktrees/random-worktree");
+        let submodule_git_dir = main_repo.join(".git/modules/dependency");
+        for git_dir in [
+            &main_repo.join(".git"),
+            &worktree_git_dir,
+            &submodule_git_dir,
+        ] {
+            std::fs::create_dir_all(git_dir).unwrap();
+        }
+
+        for (directory, external_git_dir, expected_name) in [
+            (main_repo.clone(), None, "main-repo"),
+            (
+                temp_root.path().join("random-worktree"),
+                Some(worktree_git_dir),
+                "main-repo",
+            ),
+            (
+                main_repo.join("dependency"),
+                Some(submodule_git_dir),
+                "dependency",
+            ),
+        ] {
+            std::fs::create_dir_all(&directory).unwrap();
+            let root = StandardizedPath::from_local_canonicalized(&directory).unwrap();
+            repositories.update(&mut app, |repositories, _| {
+                repositories.insert_test_repo_root(root.clone());
+            });
+            watcher.update(&mut app, |watcher, ctx| {
+                watcher
+                    .add_directory_with_git_dir(
+                        root,
+                        external_git_dir
+                            .map(|dir| StandardizedPath::from_local_canonicalized(&dir).unwrap()),
+                        ctx,
+                    )
+                    .unwrap();
+            });
+            app.read(|ctx| {
+                assert_eq!(
+                    Workspace::project_display_name_for_dir(Some(&directory), ctx),
+                    expected_name
+                );
+                // Project naming must not redirect commands or repo lookups to the main checkout.
+                assert_eq!(
+                    DetectedRepositories::as_ref(ctx)
+                        .get_root_for_path(&LocalOrRemotePath::Local(directory.clone()))
+                        .unwrap()
+                        .to_local_path(),
+                    Some(std::fs::canonicalize(&directory).unwrap().as_path())
+                );
+            });
+        }
+
+        app.read(|ctx| {
+            assert_eq!(
+                Workspace::project_display_name_for_dir(
+                    Some(temp_root.path().join("notes").as_path()),
+                    ctx
+                ),
+                "notes"
+            );
+            assert_eq!(
+                Workspace::project_display_name_for_dir(None, ctx),
+                "New Project"
+            );
+        });
+    });
+}
+
 pub(crate) fn initialize_app(app: &mut App) {
     initialize_settings_for_tests(app);
 
@@ -682,7 +762,7 @@ fn terminal_targeted_quick_insert_save_updates_only_terminal_toolbar() {
 }
 
 #[test]
-fn codex_targeted_quick_insert_save_does_not_change_claude_or_legacy_toolbar() {
+fn coding_agent_quick_insert_save_updates_one_shared_toolbar() {
     App::test((), |mut app| async move {
         initialize_app(&mut app);
         let workspace = mock_workspace(&mut app);
@@ -700,9 +780,9 @@ fn codex_targeted_quick_insert_save_does_not_change_claude_or_legacy_toolbar() {
         workspace.update(&mut app, |workspace, ctx| {
             workspace.handle_quick_insert_modal_event(
                 &QuickInsertModalEvent::Save {
-                    target: QuickInsertModalTarget::Codex,
-                    label: "Codex only".to_owned(),
-                    text: "codex prompt".to_owned(),
+                    target: QuickInsertModalTarget::CLIAgent,
+                    label: "Review".to_owned(),
+                    text: "review prompt".to_owned(),
                     auto_send: false,
                     visible: true,
                 },
@@ -716,19 +796,22 @@ fn codex_targeted_quick_insert_save_does_not_change_claude_or_legacy_toolbar() {
                 &legacy_selection
             );
             assert!(settings.claude_code_footer_chip_selection.value().is_none());
-            let codex = settings
-                .codex_footer_chip_selection
+            assert!(settings.codex_footer_chip_selection.value().is_none());
+            let shared = settings
+                .coding_agent_footer_chip_selection
                 .value()
                 .as_ref()
-                .expect("Codex should have an independent footer after adding a button");
-            assert!(codex.left_items().iter().any(|item| matches!(
+                .expect("coding agents should have one canonical footer");
+            assert!(shared.left_items().iter().any(|item| matches!(
                 item,
                 AgentToolbarItemKind::CustomInsert {
                     label,
                     text,
                     auto_send: false,
-                } if label == "Codex only" && text == "codex prompt"
+                } if label == "Review" && text == "review prompt"
             )));
+            assert_eq!(settings.claude_code_footer_chip_selection_value(), shared);
+            assert_eq!(settings.codex_footer_chip_selection_value(), shared);
         });
     });
 }
@@ -908,7 +991,7 @@ fn remote_control_header_uses_the_latest_live_device() {
 }
 
 #[test]
-fn remote_control_header_uses_compact_muted_styles() {
+fn remote_control_header_uses_green_outline_with_muted_content() {
     let font_family_id = warpui::fonts::FamilyId(42);
     let muted_color = ColorU {
         r: 0x77,
@@ -924,7 +1007,12 @@ fn remote_control_header_uses_compact_muted_styles() {
     assert_eq!(default_styles.font_color, Some(muted_color));
     assert_eq!(default_styles.font_size, Some(11.));
     assert_eq!(default_styles.width, None);
-    assert_eq!(default_styles.border_color, Some(muted_color.into()));
+    assert_eq!(default_styles.border_color, Some(CLINCH_LOGO_GREEN.into()));
+    assert_eq!(interactive_styles.font_color, Some(muted_color));
+    assert_eq!(
+        interactive_styles.border_color,
+        Some(CLINCH_LOGO_GREEN.into())
+    );
 }
 
 #[test]
@@ -1148,6 +1236,38 @@ fn test_clinch_update_header_pill_stays_visible_during_install() {
         clinch_update_header_pill(&AutoupdateStage::NoUpdateAvailable),
         None
     );
+}
+
+#[test]
+fn test_clinch_update_header_rechecks_before_installing_a_discovered_release() {
+    let new_version = channel_versions::VersionInfo::new("v2".to_owned());
+    for stage in [
+        AutoupdateStage::UpdateAvailable {
+            new_version: new_version.clone(),
+            update_id: "available".to_owned(),
+        },
+        AutoupdateStage::UpdateReady {
+            new_version: new_version.clone(),
+            update_id: "downloaded".to_owned(),
+        },
+    ] {
+        assert!(matches!(
+            update_header_install_action(true, &stage),
+            WorkspaceAction::CheckForUpdate
+        ));
+        assert!(matches!(
+            update_header_install_action(false, &stage),
+            WorkspaceAction::ApplyUpdate
+        ));
+    }
+
+    assert!(matches!(
+        update_header_install_action(
+            true,
+            &AutoupdateStage::UpdatedPendingRestart { new_version }
+        ),
+        WorkspaceAction::ApplyUpdate
+    ));
 }
 
 #[test]

@@ -634,6 +634,22 @@ fn clinch_update_header_pill(stage: &AutoupdateStage) -> Option<(&'static str, b
     }
 }
 
+fn update_header_install_action(
+    uses_clinch_updater: bool,
+    stage: &AutoupdateStage,
+) -> WorkspaceAction {
+    if uses_clinch_updater
+        && matches!(
+            stage,
+            AutoupdateStage::UpdateAvailable { .. } | AutoupdateStage::UpdateReady { .. }
+        )
+    {
+        WorkspaceAction::CheckForUpdate
+    } else {
+        WorkspaceAction::ApplyUpdate
+    }
+}
+
 #[cfg(not(target_family = "wasm"))]
 const RESOURCE_CENTER_WIDTH: f32 = 361.;
 
@@ -1449,7 +1465,7 @@ fn remote_control_button_styles(
         font_size: Some(REMOTE_CONTROL_BUTTON_FONT_SIZE),
         font_weight: Some(Weight::Semibold),
         padding: Some(Coords::default().top(3.).bottom(3.).left(7.).right(7.)),
-        border_color: Some(muted_color.into()),
+        border_color: Some(CLINCH_LOGO_GREEN.into()),
         border_width: Some(1.),
         border_radius: Some(CornerRadius::with_all(Radius::Percentage(50.))),
         background: Some(ColorU::transparent_black().into()),
@@ -6728,22 +6744,6 @@ impl Workspace {
                         *visible,
                         ctx,
                     ),
-                    QuickInsertModalTarget::ClaudeCode => append_cli_custom_button(
-                        AgentToolbarEditorMode::ClaudeCode,
-                        label.clone(),
-                        text.clone(),
-                        *auto_send,
-                        *visible,
-                        ctx,
-                    ),
-                    QuickInsertModalTarget::Codex => append_cli_custom_button(
-                        AgentToolbarEditorMode::Codex,
-                        label.clone(),
-                        text.clone(),
-                        *auto_send,
-                        *visible,
-                        ctx,
-                    ),
                     QuickInsertModalTarget::Terminal => append_terminal_custom_button(
                         label.clone(),
                         text.clone(),
@@ -8677,14 +8677,29 @@ impl Workspace {
                         .with_disabled(true)
                         .into_item(),
                 );
-                match autoupdate::get_update_state(ctx) {
+                let update_state = autoupdate::get_update_state(ctx);
+                match &update_state {
                     AutoupdateStage::UpdateAvailable { new_version, .. }
                     | AutoupdateStage::UpdateReady { new_version, .. }
-                    | AutoupdateStage::UpdatedPendingRestart { new_version } => menu_items.push(
-                        MenuItemFields::new(format!("Install update ({})", new_version.version))
-                            .with_on_select_action(WorkspaceAction::ApplyUpdate)
-                            .into_item(),
-                    ),
+                    | AutoupdateStage::UpdatedPendingRestart { new_version } => {
+                        let action = update_header_install_action(
+                            ChannelState::uses_clinch_updater(),
+                            &update_state,
+                        );
+                        let label = if matches!(&action, WorkspaceAction::CheckForUpdate) {
+                            // The persistent pill may have been populated by a daily check before
+                            // newer releases were published. Refresh the signed feed before using
+                            // it so one click always targets the newest available Clinch release.
+                            "Check for latest and install".to_owned()
+                        } else {
+                            format!("Install update ({})", new_version.version)
+                        };
+                        menu_items.push(
+                            MenuItemFields::new(label)
+                                .with_on_select_action(action)
+                                .into_item(),
+                        );
+                    }
                     AutoupdateStage::Updating { new_version, .. } => menu_items.push(
                         MenuItemFields::new(format!("Updating to ({})", new_version.version))
                             .with_disabled(true)
@@ -10077,38 +10092,38 @@ impl Workspace {
         );
     }
 
-    /// Install the Warp Control CLI by creating a symlink in /usr/local/bin
+    /// Install the Clinch CLI by creating a symlink in /usr/local/bin.
     #[cfg(target_os = "macos")]
     fn install_warpctrl(&mut self, ctx: &mut ViewContext<Self>) {
         ctx.spawn(
-            async { cli_install::install_warpctrl() },
+            async { cli_install::install_local_control_cli() },
             |view, result, ctx| {
-                let command_name = ChannelState::channel().warpctrl_command_name();
-                let message = format!("Successfully installed the Warp Control CLI! You can now run '{command_name}' from the command line.");
+                let command = cli_install::local_control_cli_invocation();
+                let message = format!("Successfully installed the Clinch CLI! You can now run '{command}' from the command line.");
                 let toast = DismissibleToast::success(message);
                 view.handle_cli_command_result(
                     result,
                     toast,
-                    "Failed to install Warp Control command",
+                    "Failed to install Clinch CLI command",
                     ctx,
                 );
             },
         );
     }
 
-    /// Uninstall the Warp Control CLI by removing the symlink from /usr/local/bin
+    /// Uninstall the Clinch CLI by removing the symlink from /usr/local/bin.
     #[cfg(target_os = "macos")]
     fn uninstall_warpctrl(&mut self, ctx: &mut ViewContext<Self>) {
         ctx.spawn(
-            async { cli_install::uninstall_warpctrl() },
+            async { cli_install::uninstall_local_control_cli() },
             |view, result, ctx| {
                 let toast = DismissibleToast::success(
-                    "Successfully uninstalled the Warp Control command.".to_string(),
+                    "Successfully uninstalled the Clinch CLI command.".to_string(),
                 );
                 view.handle_cli_command_result(
                     result,
                     toast,
-                    "Failed to uninstall Warp Control command",
+                    "Failed to uninstall Clinch CLI command",
                     ctx,
                 );
             },
@@ -21124,13 +21139,9 @@ impl Workspace {
             .and_then(|terminal_view_id| {
                 CLIAgentSessionsModel::as_ref(ctx)
                     .session(terminal_view_id)
-                    .map(|session| match session.agent {
-                        crate::terminal::CLIAgent::Codex => AgentToolbarEditorMode::Codex,
-                        crate::terminal::CLIAgent::Claude => AgentToolbarEditorMode::ClaudeCode,
-                        _ => AgentToolbarEditorMode::ClaudeCode,
-                    })
+                    .map(|_| AgentToolbarEditorMode::CLIAgent)
             })
-            .unwrap_or(AgentToolbarEditorMode::ClaudeCode)
+            .unwrap_or(AgentToolbarEditorMode::CLIAgent)
     }
 
     /// The active pane group's most-recent local working directory, used to scope
@@ -21155,11 +21166,7 @@ impl Workspace {
             .and_then(|terminal_view_id| {
                 CLIAgentSessionsModel::as_ref(ctx)
                     .session(terminal_view_id)
-                    .map(|session| match session.agent {
-                        crate::terminal::CLIAgent::Claude => QuickInsertModalTarget::ClaudeCode,
-                        crate::terminal::CLIAgent::Codex => QuickInsertModalTarget::Codex,
-                        _ => QuickInsertModalTarget::CLIAgent,
-                    })
+                    .map(|_| QuickInsertModalTarget::CLIAgent)
             })
             .unwrap_or(QuickInsertModalTarget::Terminal);
         self.open_quick_insert_modal_for_target(target, ctx);
@@ -21171,9 +21178,9 @@ impl Workspace {
         ctx: &mut ViewContext<Self>,
     ) {
         let target = match mode {
-            AgentToolbarEditorMode::CLIAgent => QuickInsertModalTarget::CLIAgent,
-            AgentToolbarEditorMode::ClaudeCode => QuickInsertModalTarget::ClaudeCode,
-            AgentToolbarEditorMode::Codex => QuickInsertModalTarget::Codex,
+            AgentToolbarEditorMode::CLIAgent
+            | AgentToolbarEditorMode::ClaudeCode
+            | AgentToolbarEditorMode::Codex => QuickInsertModalTarget::CLIAgent,
             AgentToolbarEditorMode::Terminal => QuickInsertModalTarget::Terminal,
             AgentToolbarEditorMode::AgentView => return,
         };
@@ -22932,11 +22939,26 @@ impl Workspace {
             .unwrap_or_else(|| "New Project".to_string())
     }
 
-    /// Label for the outer project tab, using the same project-directory name
-    /// that previously appeared above the vertical inner-tab list.
+    fn project_display_name_for_dir(project_dir: Option<&Path>, ctx: &AppContext) -> String {
+        let primary_dir = project_dir
+            .and_then(|dir| {
+                DetectedRepositories::as_ref(ctx).get_local_watched_repo_for_path(dir, ctx)
+            })
+            .and_then(|repository| {
+                let repository = repository.as_ref(ctx);
+                if !repository.is_linked_worktree() {
+                    return None;
+                }
+                repository.common_git_dir().parent().map(Path::to_path_buf)
+            });
+        Self::project_display_name_from_dir(primary_dir.as_deref().or(project_dir))
+    }
+
+    /// Label for the outer project tab. Linked worktrees use the main repository's
+    /// name, while the active project directory remains the selected checkout.
     pub(crate) fn project_display_name(&self, ctx: &AppContext) -> String {
         let project_dir = self.active_header_project_dir(ctx);
-        Self::project_display_name_from_dir(project_dir.as_deref())
+        Self::project_display_name_for_dir(project_dir.as_deref(), ctx)
     }
 
     pub(crate) fn contains_pane_group(&self, pane_group_id: EntityId) -> bool {

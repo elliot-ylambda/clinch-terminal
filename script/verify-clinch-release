@@ -115,6 +115,7 @@ verify_app() {
     "$app/Contents/Resources/agent-resume/codex-session-end.sh" \
     "$app/Contents/Resources/bin/clinch_agent_resume_launch" \
     "$app/Contents/Resources/bin/warp_agent_resume_launch" \
+    "$app/Contents/Resources/bin/clinch" \
     "$app/Contents/Resources/bin/warpctrl" \
     "$app/Contents/Resources/bundled/agent-skills/clinch-control/SKILL.md" \
     "$app/Contents/Resources/bundled/agent-skills/clinch-toolbelt/SKILL.md"; do
@@ -137,10 +138,16 @@ verify_app() {
     || fail "$label omitted React attribution"
   [[ -x "$app/Contents/Resources/agent-resume/install.sh" ]] \
     || fail "$label integration manager is not executable"
+  [[ -x "$app/Contents/Resources/bin/clinch" ]] \
+    || fail "$label Clinch CLI wrapper is not executable"
+  grep -Fq 'ctrl <command>' "$app/Contents/Resources/bin/clinch" \
+    || fail "$label Clinch CLI wrapper does not expose the ctrl subcommand"
+  grep -Fq -- '--warpctrl' "$app/Contents/Resources/bin/clinch" \
+    || fail "$label Clinch CLI wrapper does not select control mode"
   [[ -x "$app/Contents/Resources/bin/warpctrl" ]] \
-    || fail "$label Warp Control wrapper is not executable"
+    || fail "$label legacy Warp Control wrapper is not executable"
   grep -Fq -- '--warpctrl' "$app/Contents/Resources/bin/warpctrl" \
-    || fail "$label Warp Control wrapper does not select control mode"
+    || fail "$label legacy Warp Control wrapper does not select control mode"
   for skill in \
     "$app/Contents/Resources/bundled/agent-skills/clinch-control/SKILL.md" \
     "$app/Contents/Resources/bundled/agent-skills/clinch-toolbelt/SKILL.md"; do
@@ -148,6 +155,8 @@ verify_app() {
       || fail "$label agent skill omitted current-app control binding"
     grep -Fq 'CLINCH_CONTROL_PID' "$skill" \
       || fail "$label agent skill omitted exact-instance control binding"
+    grep -Fq '"$CLINCH_CONTROL_WRAPPER" ctrl' "$skill" \
+      || fail "$label agent skill omitted the canonical Clinch ctrl command path"
     ! grep -Fq '{{clinch_control_' "$skill" \
       || fail "$label agent skill retained a rendered channel placeholder"
   done

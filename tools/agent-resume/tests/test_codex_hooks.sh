@@ -8,6 +8,7 @@ export WARP_AGENT_RESUME_DIR="$TMP/reg"
 export WARP_TERMINAL_SESSION_UUID="bb22"
 export WARP_AGENT_RESUME_FAKE_ANCESTRY="codex"
 unset CLINCH_CONTROL_PID
+export WARP_AGENT_RESUME_FAKE_OWNER_PID=1000
 
 echo '{"session_id":"sess-77","cwd":"/tmp/repo","source":"startup"}' | bash "$HERE/codex-session-start.sh"
 f="$WARP_AGENT_RESUME_DIR/bb22.json"
@@ -109,7 +110,8 @@ rm -f "$f"
 # writes above, so assert on pane entries, not an empty dir.)
 unset WARP_TERMINAL_SESSION_UUID
 echo '{"session_id":"x","cwd":"/tmp"}' | bash "$HERE/codex-session-start.sh"
-entries="$(find "$WARP_AGENT_RESUME_DIR" -name '*.json' 2>/dev/null)"
+entries="$(find "$WARP_AGENT_RESUME_DIR" -name '*.json' \
+  ! -name 'toolbelt-learning.json' ! -name 'toolbelt-learning-resolutions.json' 2>/dev/null)"
 [[ -z "$entries" ]] || { echo "FAIL: wrote outside pane"; exit 1; }
 echo '{"session_id":"outside","cwd":"/tmp","hook_event_name":"UserPromptSubmit","prompt":"secret"}' \
   | bash "$HERE/codex-prompt-submit.sh"

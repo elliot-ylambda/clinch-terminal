@@ -2,13 +2,27 @@
 
 set -e
 
-if [[ $# -ne 2 ]]; then
-  echo "Usage: $0 <wrapper-path> <binary-relative-path>" >&2
+if [[ $# -lt 2 || $# -gt 3 ]]; then
+  echo "Usage: $0 <wrapper-path> <binary-relative-path> [legacy|clinch]" >&2
   exit 1
 fi
 
 WRAPPER_PATH="$1"
 BINARY_RELATIVE_PATH="$2"
+WRAPPER_STYLE="${3:-legacy}"
+
+case "$WRAPPER_STYLE" in
+  legacy)
+    REQUIRES_CTRL=false
+    ;;
+  clinch)
+    REQUIRES_CTRL=true
+    ;;
+  *)
+    echo "Unknown wrapper style: $WRAPPER_STYLE" >&2
+    exit 1
+    ;;
+esac
 
 mkdir -p "$(dirname "$WRAPPER_PATH")"
 cat > "$WRAPPER_PATH" << EOF
@@ -25,8 +39,26 @@ while [[ -L "\$wrapper_path" ]]; do
 done
 script_dir="\$(cd -P "\$(dirname "\$wrapper_path")" && pwd)"
 
-# Warp Control has a separate argument parser from the normal Warp/Oz parser.
-# The hidden flag selects it before normal CLI parsing or GUI startup.
+# Clinch exposes local control as the ctrl subcommand. Legacy warpctrl wrappers
+# enter the same parser directly for compatibility.
+if [[ "$REQUIRES_CTRL" == "true" ]]; then
+  case "\${1:-}" in
+    ctrl)
+      shift
+      ;;
+    ""|-h|--help)
+      echo "Usage: \$(basename "\$0") ctrl <command> [options]"
+      exit 0
+      ;;
+    *)
+      echo "Unknown command '\$1'. Usage: \$(basename "\$0") ctrl <command> [options]" >&2
+      exit 2
+      ;;
+  esac
+fi
+
+# Local control has a separate argument parser from the normal Warp/Oz parser.
+# The hidden compatibility flag selects it before normal CLI parsing or GUI startup.
 # Replace the wrapper process while preserving its invocation name as argv[0].
 exec -a "\$0" "\$script_dir/$BINARY_RELATIVE_PATH" --warpctrl "\$@"
 EOF

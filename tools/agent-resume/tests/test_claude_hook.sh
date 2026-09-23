@@ -13,6 +13,7 @@ install -m 0644 "$HERE/agent-json.js" "$BIN/"
 
 export WARP_TERMINAL_SESSION_UUID="cc33"
 export WARP_AGENT_RESUME_FAKE_ANCESTRY="claude"
+export WARP_AGENT_RESUME_FAKE_OWNER_PID=1000
 f="$WARP_AGENT_RESUME_DIR/cc33.json"
 
 # Pin the launch-flag detection off for the plain cases so they are deterministic regardless
