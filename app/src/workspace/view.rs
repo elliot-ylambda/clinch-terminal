@@ -1428,6 +1428,8 @@ const REMOTE_CONTROL_DISCOVERY_LABEL: &str = "Remote Control";
 struct RemoteControlHeaderPresentation {
     label: String,
     connected_device_name: Option<String>,
+    /// A scanned phone is waiting for approval, which only happens on this Mac.
+    awaiting_approval: bool,
 }
 
 #[cfg(not(target_family = "wasm"))]
@@ -1443,14 +1445,19 @@ fn remote_control_header_presentation(
                 .max_by(|left, right| left.last_seen_at.cmp(&right.last_seen_at))
         })
         .map(|device| device.name.clone());
-    let label = connected_device_name
-        .as_ref()
-        .map(|name| format!("{name} connected"))
-        .unwrap_or_else(|| REMOTE_CONTROL_DISCOVERY_LABEL.to_owned());
+    let pending_device_name = state
+        .and_then(|state| state.pending_claims.first())
+        .map(|claim| claim.device_name.clone());
+    let label = match (&pending_device_name, &connected_device_name) {
+        (Some(name), _) => format!("Approve {name}"),
+        (None, Some(name)) => format!("{name} connected"),
+        (None, None) => REMOTE_CONTROL_DISCOVERY_LABEL.to_owned(),
+    };
 
     RemoteControlHeaderPresentation {
         label,
         connected_device_name,
+        awaiting_approval: pending_device_name.is_some(),
     }
 }
 
@@ -23505,10 +23512,15 @@ impl Workspace {
             None,
         );
 
-        if presentation.connected_device_name.is_some() {
+        if presentation.awaiting_approval || presentation.connected_device_name.is_some() {
+            let dot_color = if presentation.awaiting_approval {
+                theme.ansi_fg_yellow()
+            } else {
+                theme.ansi_fg_green()
+            };
             let dot = ConstrainedBox::new(
                 Container::new(Empty::new().finish())
-                    .with_background_color(theme.ansi_fg_green())
+                    .with_background_color(dot_color)
                     .with_corner_radius(CornerRadius::with_all(Radius::Pixels(3.5)))
                     .finish(),
             )
@@ -23544,7 +23556,9 @@ impl Workspace {
             );
         }
 
-        let tooltip_description = if presentation.connected_device_name.is_some() {
+        let tooltip_description = if presentation.awaiting_approval {
+            Some("A phone scanned your pairing code — approve it in Settings".to_string())
+        } else if presentation.connected_device_name.is_some() {
             Some("Connected securely through your private tailnet".to_string())
         } else {
             Some("Securely access Clinch from your phone".to_string())

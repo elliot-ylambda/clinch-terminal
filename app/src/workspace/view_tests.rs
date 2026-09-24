@@ -950,6 +950,7 @@ fn remote_control_header_uses_discovery_copy_without_a_live_device() {
         RemoteControlHeaderPresentation {
             label: "Remote Control".to_owned(),
             connected_device_name: None,
+            awaiting_approval: false,
         }
     );
 }
@@ -986,8 +987,27 @@ fn remote_control_header_uses_the_latest_live_device() {
         RemoteControlHeaderPresentation {
             label: "Elliot's iPhone connected".to_owned(),
             connected_device_name: Some("Elliot's iPhone".to_owned()),
+            awaiting_approval: false,
         }
     );
+}
+
+#[test]
+fn remote_control_header_asks_for_a_pending_approval_first() {
+    let state = RemoteControlViewState {
+        pending_claims: vec![crate::remote_control::PendingClaimSummary {
+            id: clinch_companion_protocol::PairingClaimId::new(),
+            device_name: "iPhone · Safari".to_owned(),
+            platform: clinch_companion_protocol::DevicePlatform::Ios,
+            public_key_fingerprint: "ab".repeat(32),
+            expires_at: chrono::Utc::now(),
+        }],
+        ..RemoteControlViewState::default()
+    };
+
+    let presentation = remote_control_header_presentation(Some(&state));
+    assert_eq!(presentation.label, "Approve iPhone · Safari");
+    assert!(presentation.awaiting_approval);
 }
 
 #[test]
