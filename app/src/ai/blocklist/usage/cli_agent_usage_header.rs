@@ -164,8 +164,8 @@ fn token_text(totals: &WindowTotals) -> String {
 }
 
 /// Whether Claude's opt-in plan gauges are on, plus the shared mouse handle
-/// for the "Turn on"/"Authorize" affordance rendered in their place while the
-/// gauges are off or the Keychain read awaits a sanctioning click.
+/// for the "Turn on"/"Retry" affordance rendered in their place while the
+/// gauges are off or the existing provider login is unavailable.
 struct PlanLimitsGate<'a> {
     state: PlanLimitsState,
     turn_on_mouse_state: &'a MouseStateHandle,

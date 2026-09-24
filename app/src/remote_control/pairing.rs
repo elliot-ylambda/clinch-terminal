@@ -288,6 +288,22 @@ impl PairingManager {
         Ok(self.lock()?.registry.clone())
     }
 
+    /// Restore persisted authority before serving requests. Mutating the shared
+    /// state keeps the workspace adapter and gateway on the same device registry.
+    pub(super) fn restore_registry(&self, registry: DeviceRegistry) -> Result<(), PairingError> {
+        let registry = registry.validate()?;
+        let mut state = self.lock()?;
+        if !state.invitations.is_empty()
+            || !state.claims.is_empty()
+            || !state.challenges.is_empty()
+            || !state.sessions.is_empty()
+        {
+            return Err(PairingError::StateUnavailable);
+        }
+        state.registry = registry;
+        Ok(())
+    }
+
     pub fn route_path(&self) -> Result<String, PairingError> {
         Ok(self.lock()?.registry.route_path())
     }

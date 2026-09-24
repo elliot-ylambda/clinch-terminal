@@ -68,6 +68,8 @@ pub enum ClinchSettingsPageAction {
     #[cfg(feature = "local_fs")]
     RemoteControlRetry,
     #[cfg(feature = "local_fs")]
+    RemoteControlShowPairedPhones,
+    #[cfg(feature = "local_fs")]
     RemoteControlPair,
     #[cfg(feature = "local_fs")]
     RemoteControlCancelPairing,
@@ -233,6 +235,11 @@ impl TypedActionView for ClinchSettingsPageView {
             #[cfg(feature = "local_fs")]
             ClinchSettingsPageAction::RemoteControlRetry => {
                 RemoteControlService::handle(ctx).update(ctx, |service, ctx| service.retry(ctx));
+            }
+            #[cfg(feature = "local_fs")]
+            ClinchSettingsPageAction::RemoteControlShowPairedPhones => {
+                RemoteControlService::handle(ctx)
+                    .update(ctx, |service, ctx| service.show_paired_phones(ctx));
             }
             #[cfg(feature = "local_fs")]
             ClinchSettingsPageAction::RemoteControlPair => {
@@ -797,7 +804,9 @@ impl RemoteControlSetupWidget {
 
     #[cfg(feature = "local_fs")]
     fn render_native(&self, appearance: &Appearance, app: &AppContext) -> Box<dyn Element> {
-        let state = RemoteControlService::as_ref(app).view_state().clone();
+        let service = RemoteControlService::as_ref(app);
+        let paired_phones_loaded = service.paired_phones_loaded();
+        let state = service.view_state().clone();
         let (status_title, status_description) = match &state.status {
             RemoteControlStatus::Disabled => (
                 "Remote Control is off".to_owned(),
@@ -1083,6 +1092,36 @@ impl RemoteControlSetupWidget {
                 );
             }
             (None, true) => {}
+        }
+
+        if !paired_phones_loaded {
+            content.add_child(
+                Container::new(Self::render_typed_action_button(
+                    "Show paired phones",
+                    ClinchSettingsPageAction::RemoteControlShowPairedPhones,
+                    self.dynamic_mouse_state("show-paired-phones".to_owned()),
+                    appearance,
+                    false,
+                ))
+                .with_margin_top(4.)
+                .with_margin_bottom(8.)
+                .finish(),
+            );
+        } else if state.paired_devices.is_empty() {
+            content.add_child(
+                Container::new(
+                    Text::new_inline(
+                        "No paired phones",
+                        appearance.ui_font_family(),
+                        CONTENT_FONT_SIZE,
+                    )
+                    .with_color(appearance.theme().nonactive_ui_text_color().into())
+                    .finish(),
+                )
+                .with_margin_top(4.)
+                .with_margin_bottom(8.)
+                .finish(),
+            );
         }
 
         if !state.paired_devices.is_empty() {

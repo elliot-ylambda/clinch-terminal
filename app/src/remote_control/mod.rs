@@ -1,5 +1,6 @@
 mod gateway;
 mod pairing;
+mod registry_storage;
 mod status;
 mod tailscale;
 mod workspace_adapter;
@@ -17,6 +18,7 @@ use warpui_extras::secure_storage;
 
 use self::gateway::{GatewayEvent, GatewayHandle};
 use self::pairing::{DeviceRegistry, PairingManager};
+use self::registry_storage::RegistryStorage;
 use self::tailscale::{TailscaleClient, TailscaleError, TailscaleSetupOutcome};
 use self::workspace_adapter::WorkspaceAdapter;
 use crate::settings::{RemoteControlMode, RemoteControlSettings};
@@ -25,21 +27,11 @@ const DEVICE_REGISTRY_STORAGE_KEY: &str = "ClinchRemoteControlDeviceRegistryV1";
 const TAILSCALE_SETUP_TIMEOUT: StdDuration = StdDuration::from_secs(20);
 
 pub fn register(ctx: &mut AppContext) {
-    let registry = if ChannelState::has_backend() {
-        // The inherited account-backed app still constructs the Clinch settings page, so its
-        // model handle must exist. Give it an inert in-memory authority without reading or
-        // rewriting Clinch's local device registry.
-        DeviceRegistry::default()
-    } else {
-        load_registry(ctx)
-    };
-    let pairing = PairingManager::new(registry).unwrap_or_else(|error| {
-        log::error!("Remote Control device registry was rejected: {error}");
-        PairingManager::new(DeviceRegistry::default()).expect("default device registry is valid")
-    });
-    if !ChannelState::has_backend() {
-        persist_registry(&pairing, ctx);
-    }
+    // Keep the shared authority inert until Remote Control is actually used.
+    // Loading its protected registry while disabled causes unnecessary Keychain
+    // prompts after updates; writing a failed read back can erase paired devices.
+    let pairing =
+        PairingManager::new(DeviceRegistry::default()).expect("default device registry is valid");
 
     let workspace_pairing = pairing.clone();
     ctx.add_singleton_model(move |ctx| WorkspaceAdapter::new(workspace_pairing, ctx));
@@ -48,6 +40,7 @@ pub fn register(ctx: &mut AppContext) {
 
 pub struct RemoteControlService {
     pairing: PairingManager,
+    registry_storage: RegistryStorage,
     view_state: RemoteControlViewState,
     runtime: Option<tokio::runtime::Runtime>,
     gateway: Option<GatewayHandle>,
@@ -66,6 +59,7 @@ impl RemoteControlService {
     fn new(pairing: PairingManager, ctx: &mut ModelContext<Self>) -> Self {
         let mut service = Self {
             pairing,
+            registry_storage: RegistryStorage::default(),
             view_state: RemoteControlViewState::default(),
             runtime: None,
             gateway: None,
@@ -82,6 +76,29 @@ impl RemoteControlService {
 
     pub fn view_state(&self) -> &RemoteControlViewState {
         &self.view_state
+    }
+
+    pub fn paired_phones_loaded(&self) -> bool {
+        self.registry_storage.is_loaded()
+    }
+
+    /// Explicit device management is available while the companion remains off.
+    pub fn show_paired_phones(&mut self, ctx: &mut ModelContext<Self>) {
+        match self.ensure_registry_loaded(ctx) {
+            Ok(()) => {
+                self.refresh_pairing_state();
+                if !self.view_state.enabled {
+                    self.view_state.status = RemoteControlStatus::Disabled;
+                }
+            }
+            Err(message) => {
+                self.view_state.status = RemoteControlStatus::Error {
+                    message,
+                    retryable: true,
+                };
+            }
+        }
+        ctx.notify();
     }
 
     pub fn set_enabled(&mut self, enabled: bool, ctx: &mut ModelContext<Self>) {
@@ -101,10 +118,13 @@ impl RemoteControlService {
     }
 
     pub fn retry(&mut self, ctx: &mut ModelContext<Self>) {
-        if ChannelState::has_backend()
-            || !RemoteControlSettings::as_ref(ctx).is_enabled()
-            || self.cleanup_in_progress
-        {
+        if ChannelState::has_backend() || self.cleanup_in_progress {
+            return;
+        }
+        if !RemoteControlSettings::as_ref(ctx).is_enabled() {
+            if !self.paired_phones_loaded() {
+                self.show_paired_phones(ctx);
+            }
             return;
         }
         self.stop_runtime(false, ctx);
@@ -186,6 +206,7 @@ impl RemoteControlService {
         claim_id: PairingClaimId,
         ctx: &mut ModelContext<Self>,
     ) -> Result<(), String> {
+        self.ensure_registry_loaded(ctx)?;
         self.pairing
             .approve(
                 claim_id,
@@ -199,7 +220,7 @@ impl RemoteControlService {
             )
             .map_err(|error| error.to_string())?;
         self.view_state.active_invitation = None;
-        persist_registry(&self.pairing, ctx);
+        self.persist_registry(ctx);
         self.refresh_pairing_state();
         ctx.notify();
         Ok(())
@@ -224,20 +245,22 @@ impl RemoteControlService {
         device_id: DeviceId,
         ctx: &mut ModelContext<Self>,
     ) -> Result<(), String> {
+        self.ensure_registry_loaded(ctx)?;
         self.pairing
             .revoke_device(device_id, Utc::now())
             .map_err(|error| error.to_string())?;
-        persist_registry(&self.pairing, ctx);
+        self.persist_registry(ctx);
         self.refresh_pairing_state();
         ctx.notify();
         Ok(())
     }
 
     pub fn revoke_all_devices(&mut self, ctx: &mut ModelContext<Self>) -> Result<(), String> {
+        self.ensure_registry_loaded(ctx)?;
         self.pairing
             .revoke_all_devices(Utc::now())
             .map_err(|error| error.to_string())?;
-        persist_registry(&self.pairing, ctx);
+        self.persist_registry(ctx);
         self.view_state.active_invitation = None;
         self.refresh_pairing_state();
         ctx.notify();
@@ -273,6 +296,13 @@ impl RemoteControlService {
     fn start(&mut self, ctx: &mut ModelContext<Self>) {
         if ChannelState::has_backend() {
             self.view_state.status = RemoteControlStatus::Disabled;
+            return;
+        }
+        if let Err(message) = self.ensure_registry_loaded(ctx) {
+            self.view_state.status = RemoteControlStatus::Error {
+                message,
+                retryable: true,
+            };
             return;
         }
         self.generation = self.generation.wrapping_add(1);
@@ -453,7 +483,7 @@ impl RemoteControlService {
 
     fn handle_gateway_event(&mut self, event: GatewayEvent, ctx: &mut ModelContext<Self>) {
         match event {
-            GatewayEvent::DeviceRegistryChanged => persist_registry(&self.pairing, ctx),
+            GatewayEvent::DeviceRegistryChanged => self.persist_registry(ctx),
             GatewayEvent::PendingPairingChanged => {
                 // Keep the just-scanned QR visible as the anchor for the approval panel. The
                 // invitation has already been consumed server-side and cannot be replayed.
@@ -545,6 +575,26 @@ impl RemoteControlService {
         }
         ctx.notify();
     }
+
+    fn ensure_registry_loaded(&mut self, ctx: &AppContext) -> Result<(), String> {
+        if ChannelState::has_backend() {
+            return Err("Remote Control is unavailable in this app.".to_owned());
+        }
+        let storage = secure_storage::Model::handle(ctx).as_ref(ctx);
+        self.registry_storage
+            .ensure_loaded(&self.pairing, storage.as_ref())
+            .map_err(|error| format!("{error:#}"))
+    }
+
+    fn persist_registry(&self, ctx: &AppContext) {
+        let storage = secure_storage::Model::handle(ctx).as_ref(ctx);
+        if let Err(error) = self
+            .registry_storage
+            .persist(&self.pairing, storage.as_ref())
+        {
+            log::error!("could not persist Remote Control device registry: {error:#}");
+        }
+    }
 }
 
 impl Drop for RemoteControlService {
@@ -553,30 +603,5 @@ impl Drop for RemoteControlService {
         if let Some(runtime) = self.runtime.take() {
             runtime.shutdown_background();
         }
-    }
-}
-
-fn load_registry(ctx: &AppContext) -> DeviceRegistry {
-    let storage = secure_storage::Model::handle(ctx).as_ref(ctx);
-    storage
-        .read_value(DEVICE_REGISTRY_STORAGE_KEY)
-        .ok()
-        .and_then(|json| serde_json::from_str::<DeviceRegistry>(&json).ok())
-        .and_then(|registry| registry.validate().ok())
-        .unwrap_or_default()
-}
-
-fn persist_registry(pairing: &PairingManager, ctx: &AppContext) {
-    let Ok(registry) = pairing.registry_snapshot() else {
-        return;
-    };
-    let Ok(json) = serde_json::to_string(&registry) else {
-        return;
-    };
-    if let Err(error) = secure_storage::Model::handle(ctx)
-        .as_ref(ctx)
-        .write_value_with_owner_only_fallback(DEVICE_REGISTRY_STORAGE_KEY, &json)
-    {
-        log::error!("could not persist Remote Control device registry: {error}");
     }
 }
