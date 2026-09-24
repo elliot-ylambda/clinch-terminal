@@ -37,4 +37,11 @@ grep -Fq "Using prebuilt settings schema generator $TMP/generate-settings-schema
 grep -Fq -- '--channel stable' "$TMP/generator.log"
 grep -Fq '"generated":true' "$TMP/resources/settings_schema.json"
 
+test -x "$TMP/resources/session-transfer/clinch-sessions"
+for module in session_cli.py session_inventory.py session_worker.py; do
+  cmp "$ROOT/tools/session-transfer/$module" "$TMP/resources/session-transfer/$module"
+done
+"$TMP/resources/session-transfer/clinch-sessions" --help > "$TMP/sessions-help.txt"
+grep -Fq 'open-in' "$TMP/sessions-help.txt"
+
 echo "PASS"

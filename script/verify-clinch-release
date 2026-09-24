@@ -100,6 +100,10 @@ verify_app() {
   fi
 
   for item in \
+    "$app/Contents/Resources/session-transfer/clinch-sessions" \
+    "$app/Contents/Resources/session-transfer/session_cli.py" \
+    "$app/Contents/Resources/session-transfer/session_inventory.py" \
+    "$app/Contents/Resources/session-transfer/session_worker.py" \
     "$app/Contents/Resources/agent-resume/install.sh" \
     "$app/Contents/Resources/agent-resume/unwire-claude-hooks.sh" \
     "$app/Contents/Resources/agent-resume/agent-json" \

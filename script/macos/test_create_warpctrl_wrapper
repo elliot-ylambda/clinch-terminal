@@ -41,10 +41,33 @@ FORWARDED_ARGS_FILE="$forwarded_args_file" \
   "$clinch_wrapper_path" ctrl tab create --instance "inst 123"
 cmp "$expected_args_file" "$forwarded_args_file"
 
+# The sessions command stays outside GUI startup and works through installed symlinks.
+sessions_dir="$bundle_dir/Resources/session-transfer"
+mkdir -p "$sessions_dir"
+cat > "$sessions_dir/clinch-sessions" << 'EOF'
+#!/bin/bash
+printf '%s\n' "$@" > "$FORWARDED_ARGS_FILE"
+EOF
+chmod +x "$sessions_dir/clinch-sessions"
+FORWARDED_ARGS_FILE="$forwarded_args_file" \
+  "$clinch_wrapper_path" sessions open-in orca --dry-run --cwd "repo with spaces"
+cat > "$temp_dir/expected-session-args" << 'EOF'
+open-in
+orca
+--dry-run
+--cwd
+repo with spaces
+EOF
+cmp "$temp_dir/expected-session-args" "$forwarded_args_file"
+
 ln -s "$clinch_wrapper_path" "$installed_path"
 FORWARDED_ARGS_FILE="$forwarded_args_file" \
   "$installed_path" ctrl tab create --instance "inst 123"
 cmp "$expected_args_file" "$forwarded_args_file"
+
+FORWARDED_ARGS_FILE="$forwarded_args_file" \
+  "$installed_path" sessions open-in orca --dry-run --cwd "repo with spaces"
+cmp "$temp_dir/expected-session-args" "$forwarded_args_file"
 
 FORWARDED_ARGS_FILE="$forwarded_args_file" \
   "$legacy_wrapper_path" tab create --instance "inst 123"
