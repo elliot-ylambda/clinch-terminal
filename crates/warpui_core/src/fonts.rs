@@ -202,6 +202,9 @@ pub struct FontInfo {
 }
 
 type RasterBoundsKey = (GlyphKey, (OrderedFloat<f32>, OrderedFloat<f32>));
+#[cfg(not(target_family = "wasm"))]
+type PendingSystemFonts =
+    futures_util::future::Shared<BoxFuture<'static, Vec<(Option<FamilyId>, FontInfo)>>>;
 
 pub struct Cache {
     selections: DashMap<(FamilyId, Properties), FontId>,
@@ -218,8 +221,7 @@ pub struct Cache {
     #[cfg_attr(target_family = "wasm", allow(dead_code))]
     available_system_fonts: Option<Vec<(Option<FamilyId>, FontInfo)>>,
     #[cfg(not(target_family = "wasm"))]
-    pending_system_fonts:
-        Option<futures_util::future::Shared<BoxFuture<'static, Vec<(Option<FamilyId>, FontInfo)>>>>,
+    pending_system_fonts: Option<PendingSystemFonts>,
     font_fallback_cache: FontFallbackCache,
 }
 
