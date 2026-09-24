@@ -51,6 +51,7 @@ function hookFields() {
         base64(asString(payload.hook_event_name, "SessionStart")),
         base64(asString(payload.permission_mode, "")),
         base64(asString(payload.model, "")),
+        base64(asString(payload.reason, "")),
     ].join("|");
 }
 

@@ -1076,6 +1076,23 @@ impl Default for VerticalTabsPanelState {
 }
 
 impl VerticalTabsPanelState {
+    pub(super) fn width(&self) -> f32 {
+        self.resizable_state
+            .lock()
+            .map(|state| state.size())
+            .unwrap_or(PANEL_WIDTH)
+    }
+
+    pub(super) fn set_width(&self, width: f32) {
+        if width.is_finite() && width > 0. {
+            if let Ok(mut state) = self.resizable_state.lock() {
+                state.set_size(width.max(MIN_PANEL_WIDTH));
+            }
+        }
+    }
+}
+
+impl VerticalTabsPanelState {
     /// Returns a lightweight handle bundle for workspace-level visibility reconciliation while the
     /// detail sidecar is active.
     pub(super) fn detail_hover_state(&self, window_id: WindowId) -> VerticalTabsDetailHoverState {
@@ -2828,6 +2845,9 @@ fn render_vertical_tabs_panel(
         .on_resize(|ctx, _| {
             ctx.notify();
         })
+        .on_end_resizing(|ctx, _| {
+            ctx.dispatch_action("workspace:save_app", ());
+        })
         .with_bounds_callback(Box::new(|window_size| {
             let max_width = window_size.x() * MAX_PANEL_WIDTH_RATIO;
             (MIN_PANEL_WIDTH, max_width.max(MIN_PANEL_WIDTH))
@@ -3566,13 +3586,9 @@ fn render_tab_group_internal(
         .and_then(|gid| workspace.tab_groups.get(&gid))
         .is_some_and(|group| group.draggable_state.is_dragging());
 
-    // Sole group member: skip the per-tab drag so the outer group drag fires instead.
-    let is_sole_group_member = in_tab_group
-        && tab
-            .group_id
-            .is_some_and(|gid| super::group_has_single_member(&workspace.tabs, gid));
-
-    let draggable: Box<dyn Element> = if is_parent_group_dragging || is_sole_group_member {
+    // A sole member still needs its own drag so it can move to another project;
+    // dragging the section header continues to move the whole section.
+    let draggable: Box<dyn Element> = if is_parent_group_dragging {
         group_element
     } else {
         let draggable = Draggable::new(tab.draggable_state.clone(), group_element)

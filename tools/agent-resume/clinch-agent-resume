@@ -151,6 +151,12 @@ same_directory() {
 }
 
 app_termination_active() {
+  # A crash cannot write the graceful-shutdown marker. New pane shells carry the
+  # exact host PID; if that host is gone, preserve both providers' resume mappings.
+  if [[ "${CLINCH_CONTROL_PID:-}" =~ ^[0-9]+$ ]] \
+     && ! /bin/kill -0 "$CLINCH_CONTROL_PID" 2>/dev/null; then
+    return 0
+  fi
   local marker="$DIR/.app-terminating" pid active=1 now mtime age
   [[ -f "$marker" ]] || return 1
   while read -r pid; do

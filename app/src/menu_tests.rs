@@ -4,6 +4,73 @@ use warpui::{App, TypedActionView};
 
 use super::{Menu, MenuAction, MenuItem, MenuItemFields, SelectAction, SubMenu};
 
+#[test]
+fn scrollable_menu_tooltip_escapes_clip_and_preserves_row_hover() {
+    use std::cell::RefCell;
+    use std::collections::HashSet;
+    use std::rc::Rc;
+
+    use pathfinder_geometry::vector::vec2f;
+    use warpui::{Event, Presenter, WindowInvalidation};
+
+    App::test((), |mut app| async move {
+        app.add_singleton_model(|_| Appearance::mock());
+        let fields = MenuItemFields::<()>::new("Abbreviated message…")
+            .with_tooltip("The complete message continues here. ".repeat(40))
+            .with_tooltip_max_width(260.)
+            .with_tooltip_position(super::MenuTooltipPosition::Above);
+        let mouse = fields.mouse_state.clone();
+        let (window_id, menu) = app.add_window(WindowStyle::NotStealFocus, |ctx| {
+            let mut menu = Menu::<()>::new()
+                .with_width(220.)
+                .with_menu_variant(super::MenuVariant::scrollable());
+            menu.set_height(80.);
+            menu.set_items(vec![fields.into_item()], ctx);
+            menu
+        });
+        let presenter = Rc::new(RefCell::new(Presenter::new(window_id)));
+        app.update(|ctx| {
+            for _ in 0..3 {
+                presenter.borrow_mut().invalidate(
+                    WindowInvalidation {
+                        updated: HashSet::from([menu.id()]),
+                        ..Default::default()
+                    },
+                    ctx,
+                );
+                presenter
+                    .borrow_mut()
+                    .build_scene(vec2f(800., 800.), 1., None, ctx);
+                let event = Event::MouseMoved {
+                    position: vec2f(25., 18.),
+                    cmd: false,
+                    shift: false,
+                    is_synthetic: false,
+                };
+                ctx.simulate_window_event(event.clone(), window_id, presenter.clone());
+                ctx.set_last_mouse_move_event(window_id, event);
+            }
+            assert!(
+                mouse.lock().unwrap().is_hovered(),
+                "tooltip must not steal row hover"
+            );
+            let presenter = presenter.borrow();
+            let scene = presenter.scene().unwrap();
+            // The test font backend returns empty text frames, so verify the
+            // popup's painted container here. The history tests independently
+            // assert that its payload retains every character of the message.
+            let tooltip = scene
+                .layers()
+                .find(|layer| layer.click_through && !layer.rects.is_empty())
+                .expect("tooltip must paint in a click-through overlay");
+            assert!(
+                tooltip.clip_bounds.is_none(),
+                "menu scrolling must not clip the popup"
+            );
+        });
+    });
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum TestAction {
     Root,

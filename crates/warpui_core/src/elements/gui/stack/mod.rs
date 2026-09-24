@@ -172,6 +172,15 @@ impl Stack {
     ) {
         self.add_positioned_child(Overlay::new(child).finish(), positioning);
     }
+
+    /// Paints decorative content outside ancestor clipping without covering pointer targets.
+    pub fn add_positioned_click_through_overlay_child(
+        &mut self,
+        child: Box<dyn Element>,
+        positioning: OffsetPositioning,
+    ) {
+        self.add_positioned_child(Overlay::click_through(child).finish(), positioning);
+    }
 }
 
 impl Element for Stack {

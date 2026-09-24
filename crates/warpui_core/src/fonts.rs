@@ -202,6 +202,9 @@ pub struct FontInfo {
 }
 
 type RasterBoundsKey = (GlyphKey, (OrderedFloat<f32>, OrderedFloat<f32>));
+#[cfg(not(target_family = "wasm"))]
+type PendingSystemFonts =
+    futures_util::future::Shared<BoxFuture<'static, Vec<(Option<FamilyId>, FontInfo)>>>;
 
 pub struct Cache {
     selections: DashMap<(FamilyId, Properties), FontId>,
@@ -217,6 +220,8 @@ pub struct Cache {
     raster_bounds: DashMap<RasterBoundsKey, Result<RectI, Error>>,
     #[cfg_attr(target_family = "wasm", allow(dead_code))]
     available_system_fonts: Option<Vec<(Option<FamilyId>, FontInfo)>>,
+    #[cfg(not(target_family = "wasm"))]
+    pending_system_fonts: Option<PendingSystemFonts>,
     font_fallback_cache: FontFallbackCache,
 }
 
@@ -251,6 +256,8 @@ impl Cache {
             glyph_typographic_bounds: Default::default(),
             raster_bounds: Default::default(),
             available_system_fonts: Default::default(),
+            #[cfg(not(target_family = "wasm"))]
+            pending_system_fonts: None,
             font_fallback_cache: Default::default(),
         }
     }
@@ -274,15 +281,16 @@ impl Cache {
     /// Returns all of the system fonts on the user's current machine. If already cached, the
     /// current set of system fonts are immediately returned. If not cached, a future is returned
     /// that returns all of the system fonts when awaited.
-    /// NOTE it is up to the caller to cache the result of the future via a call to
-    /// [`Self::set_system_fonts`].
+    /// Concurrent callers share one pending load, and the completed result is cached here.
     #[cfg(not(target_family = "wasm"))]
     pub fn all_system_fonts(
-        &self,
+        &mut self,
         ctx: &mut crate::ModelContext<Self>,
     ) -> BoxFuture<'static, Vec<(Option<FamilyId>, FontInfo)>> {
         if let Some(fonts) = self.available_system_fonts.as_ref() {
             futures::future::ready(fonts.clone()).boxed()
+        } else if let Some(pending) = &self.pending_system_fonts {
+            pending.clone().boxed()
         } else {
             log::info!("Computing available system fonts");
             let (tx, rx) = futures::channel::oneshot::channel();
@@ -291,10 +299,13 @@ impl Cache {
                 |me, loaded_system_fonts, _ctx| {
                     let system_fonts = me.platform.process_loaded_system_fonts(loaded_system_fonts);
                     me.available_system_fonts = Some(system_fonts.clone());
+                    me.pending_system_fonts = None;
                     let _ = tx.send(system_fonts);
                 },
             );
-            rx.map(Result::unwrap_or_default).boxed()
+            let pending = rx.map(Result::unwrap_or_default).boxed().shared();
+            self.pending_system_fonts = Some(pending.clone());
+            pending.boxed()
         }
     }
 

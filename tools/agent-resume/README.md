@@ -37,7 +37,9 @@ capture (agent SessionStart hooks)          replay (Rust, in Clinch)
   a different live owner. Nested tools still receive their own prompt mirror, but cannot
   overwrite or remove the visible outer session's entry. `SessionEnd` removes only a
   matching owner. During app shutdown a live-PID marker preserves mappings while PTYs exit,
-  and a stale marker self-cleans after the app is gone.
+  and a stale marker self-cleans after the app is gone. If the inherited Clinch host
+  PID has already exited, mappings survive abrupt PTY shutdown too. Claude's
+  ambiguous `other` end reason also preserves the mapping when no host PID is available.
 - **Key = the pane UUID** (`WARP_TERMINAL_SESSION_UUID`), which is stable across
   quit/restore and unique per tab — so multiple agents in the *same directory* are
   disambiguated (a directory-based scheme can't do that).
@@ -221,13 +223,10 @@ separate data dir (`~/.warp-oss`), so the two never clobber each other's session
 
 ## Known limitations
 
-- **Graceful-exit behavior:** the Claude hook does *not* remove the registry entry when a
-  session ends (only overwrites it when the next session starts in that pane). This is the
-  safe default — it guarantees the entry is present when Clinch snapshots at quit (you
-  usually quit with the agent still running). The cost is that a session you closed may
-  reopen on the next restore. Removing on exit would risk the opposite, worse failure: the
-  entry vanishing before Clinch snapshots, so a session you *were* using doesn't come back.
-  (Codex removes on `SessionEnd`; that race is pre-existing and accepted there.)
+- **Ambiguous Claude exits:** `SessionEnd` with reason `other` retains the resume entry
+  because it can represent a terminal disconnect during an app crash. A session closed
+  this way may reopen on restore. Explicit exits still remove the matching owner's entry
+  while the app is live; normal app shutdown and a dead inherited host PID preserve it.
 - **`claude --print` / `-p` is also captured.** The hook can't tell a one-off print
   invocation from an interactive session, so a pane whose last Claude activity was a
   `claude -p` may reopen that conversation on restore. Harmless — you can exit it — and an
