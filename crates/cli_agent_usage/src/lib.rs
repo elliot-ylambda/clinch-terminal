@@ -14,6 +14,10 @@ pub mod keychain;
 pub mod pricing;
 pub mod snapshot_cache;
 
+#[cfg(test)]
+#[path = "resource_usage_tests.rs"]
+mod resource_usage_tests;
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TokenCounts {
     pub input: u64,
@@ -135,12 +139,10 @@ pub struct Provider {
     pub week: WindowTotals,
     pub month: WindowTotals,
     pub plan: Option<PlanLimits>,
-    /// Claude only: the plan gauges are enabled, but reading the Keychain
-    /// token would raise the macOS credential prompt (the item's ACL no
-    /// longer trusts a silent read). The poller sets this instead of reading;
-    /// the UI offers an explicit Authorize gesture that sanctions the prompt.
-    #[serde(default)]
-    pub plan_needs_authorization: bool,
+    /// Claude only: the existing provider login is unavailable without user
+    /// interaction. Plan gauges offer a silent Retry; local totals still work.
+    #[serde(default, alias = "plan_needs_authorization")]
+    pub plan_unavailable: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -193,6 +195,11 @@ pub fn aggregate_windows(
     let month_ago = now - chrono::Duration::days(30);
 
     for e in entries {
+        // Older events cannot contribute to any displayed window. Avoid
+        // allocating and hashing their dedup keys on every refresh.
+        if e.ts < month_ago {
+            continue;
+        }
         if !e.dedup.is_empty() && !seen.insert(e.dedup.clone()) {
             continue;
         }
@@ -342,9 +349,8 @@ pub fn fetch_claude_plan(
 /// step fails.
 ///
 /// Split out from [`fetch_claude_plan`] so a poller can read the Keychain token
-/// **once**, cache it, and reuse it across many fetches — the Keychain read is
-/// what triggers the macOS "allow access" prompt, so re-reading it on every poll
-/// pesters the user. See `CliAgentUsageModel::producer_loop`.
+/// **once**, cache it, and reuse it across many fetches, avoiding repeated
+/// native reads. See `CliAgentUsageModel::producer_loop`.
 ///
 /// **Blocking** (a blocking HTTP call). Call only from a dedicated thread, never
 /// a Tokio/async runtime.

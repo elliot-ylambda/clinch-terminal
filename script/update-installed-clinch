@@ -85,6 +85,9 @@ snapshot_session_state() (
 #
 # Make's process-control variables must also stay out of the app (MAKEFLAGS=n would make
 # later Make invocations dry-runs), as must the release-only SKIP_SYNC override.
+# Agent command runners also export noninteractive color/CI flags. Letting NO_COLOR=1
+# reach the relaunched app makes every resumed agent monochrome despite its real PTY.
+# Clear these at the app boundary; each pane's shell startup can set user preferences.
 # CLINCH_OPEN_BIN is a test seam; production always resolves the normal `open` executable.
 clinch_scrubbed_open() {
   local bundle="$1" name
@@ -99,6 +102,13 @@ clinch_scrubbed_open() {
     -u MAKE_TERMERR
     -u RELEASE_NOTES
     -u SKIP_SYNC
+    -u NO_COLOR
+    -u FORCE_COLOR
+    -u CLICOLOR
+    -u CLICOLOR_FORCE
+    -u NODE_DISABLE_COLORS
+    -u CI
+    -u CONTINUOUS_INTEGRATION
   )
   while IFS= read -r name; do
     case "$name" in

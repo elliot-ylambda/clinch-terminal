@@ -2298,7 +2298,7 @@ fn usage_snapshots(ctx: &ModelContext<WorkspaceAdapter>) -> Vec<UsageSnapshot> {
         UsageSnapshot {
             provider,
             state: if selected_window.is_some() || has_local_usage {
-                if usage.plan_needs_authorization {
+                if usage.plan_unavailable {
                     UsageState::Stale
                 } else {
                     UsageState::Available

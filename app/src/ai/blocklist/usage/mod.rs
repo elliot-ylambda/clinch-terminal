@@ -31,7 +31,7 @@ pub enum CliAgentUsageProvider {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlanLimitsState {
     pub enabled: bool,
-    pub authorization_pending: bool,
+    pub refresh_pending: bool,
 }
 
 /// A statistic that can be independently shown or hidden in the tab-bar usage
@@ -229,9 +229,8 @@ impl CliAgentUsageProvider {
     /// limit windows. Claude's plan gauges come from the opt-in Keychain +
     /// usage-endpoint poller (`show_plan_limits`): while the setting is off
     /// they offer "Turn on" (otherwise permanent dashes read as "broken"),
-    /// and while the poller reports that reading the Keychain would prompt
-    /// they offer "Authorize" — so the macOS credential prompt only ever
-    /// appears as the direct result of a click, never unbidden at launch.
+    /// and while the existing login is unavailable they offer "Retry".
+    /// All attempts are non-interactive; local usage remains available.
     /// Codex limits come from local files and need neither.
     fn plan_limits_affordance(
         self,
@@ -244,37 +243,36 @@ impl CliAgentUsageProvider {
         if !plan_limits.enabled {
             return Some(PlanLimitsAffordance::TurnOn);
         }
-        if plan_limits.authorization_pending {
-            return Some(PlanLimitsAffordance::Authorizing);
+        if plan_limits.refresh_pending {
+            return Some(PlanLimitsAffordance::Checking);
         }
         provider
-            .plan_needs_authorization
-            .then_some(PlanLimitsAffordance::Authorize)
+            .plan_unavailable
+            .then_some(PlanLimitsAffordance::Retry)
     }
 }
 
 /// See [`CliAgentUsageProvider::plan_limits_affordance`]. The clickable
 /// variants dispatch the same `EnableCliAgentPlanLimits` gesture: ensure the
-/// setting is on and sanction one Keychain read (with its prompt, if macOS
-/// raises one).
+/// setting is on and request one non-interactive refresh.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlanLimitsAffordance {
     TurnOn,
-    Authorize,
-    Authorizing,
+    Retry,
+    Checking,
 }
 
 impl PlanLimitsAffordance {
     pub fn label(self) -> &'static str {
         match self {
             Self::TurnOn => "Turn on",
-            Self::Authorize => "Authorize",
-            Self::Authorizing => "Authorizing…",
+            Self::Retry => "Retry",
+            Self::Checking => "Checking…",
         }
     }
 
     pub fn is_clickable(self) -> bool {
-        !matches!(self, Self::Authorizing)
+        !matches!(self, Self::Checking)
     }
 }
 
@@ -343,25 +341,25 @@ mod cli_agent_usage_provider_tests {
     }
 
     #[test]
-    fn plan_limits_affordance_is_claude_only_turn_on_then_authorize() {
+    fn plan_limits_affordance_is_claude_only_turn_on_then_retry() {
         let claude = CliAgentUsageProvider::Claude;
         let codex = CliAgentUsageProvider::Codex;
         let idle = Provider::default();
-        let needs_auth = Provider {
-            plan_needs_authorization: true,
+        let unavailable = Provider {
+            plan_unavailable: true,
             ..Provider::default()
         };
         let disabled = PlanLimitsState {
             enabled: false,
-            authorization_pending: false,
+            refresh_pending: false,
         };
         let enabled = PlanLimitsState {
             enabled: true,
-            authorization_pending: false,
+            refresh_pending: false,
         };
-        let authorizing = PlanLimitsState {
+        let checking = PlanLimitsState {
             enabled: true,
-            authorization_pending: true,
+            refresh_pending: true,
         };
 
         // Setting off: Claude offers "Turn on" regardless of poller state.
@@ -370,32 +368,31 @@ mod cli_agent_usage_provider_tests {
             Some(PlanLimitsAffordance::TurnOn)
         );
         assert_eq!(
-            claude.plan_limits_affordance(disabled, &needs_auth),
+            claude.plan_limits_affordance(disabled, &unavailable),
             Some(PlanLimitsAffordance::TurnOn)
         );
-        // Setting on: Authorize appears only while the poller reports that
-        // reading the Keychain would prompt.
+        // Setting on: Retry appears when the existing login is unavailable.
         assert_eq!(claude.plan_limits_affordance(enabled, &idle), None);
         assert_eq!(
-            claude.plan_limits_affordance(enabled, &needs_auth),
-            Some(PlanLimitsAffordance::Authorize)
+            claude.plan_limits_affordance(enabled, &unavailable),
+            Some(PlanLimitsAffordance::Retry)
         );
         assert_eq!(
-            claude.plan_limits_affordance(authorizing, &needs_auth),
-            Some(PlanLimitsAffordance::Authorizing)
+            claude.plan_limits_affordance(checking, &unavailable),
+            Some(PlanLimitsAffordance::Checking)
         );
         // Codex limits come from local files; no affordance ever.
         assert_eq!(codex.plan_limits_affordance(disabled, &idle), None);
-        assert_eq!(codex.plan_limits_affordance(authorizing, &needs_auth), None);
+        assert_eq!(codex.plan_limits_affordance(checking, &unavailable), None);
     }
 
     #[test]
     fn affordance_labels_name_the_gesture() {
         assert_eq!(PlanLimitsAffordance::TurnOn.label(), "Turn on");
-        assert_eq!(PlanLimitsAffordance::Authorize.label(), "Authorize");
-        assert_eq!(PlanLimitsAffordance::Authorizing.label(), "Authorizing…");
-        assert!(PlanLimitsAffordance::Authorize.is_clickable());
-        assert!(!PlanLimitsAffordance::Authorizing.is_clickable());
+        assert_eq!(PlanLimitsAffordance::Retry.label(), "Retry");
+        assert_eq!(PlanLimitsAffordance::Checking.label(), "Checking…");
+        assert!(PlanLimitsAffordance::Retry.is_clickable());
+        assert!(!PlanLimitsAffordance::Checking.is_clickable());
     }
 
     #[test]

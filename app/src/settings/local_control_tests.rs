@@ -219,6 +219,37 @@ fn malformed_secure_value_fails_closed() {
 }
 
 #[test]
+fn unavailable_secure_value_disables_control_without_overwriting_storage() {
+    struct LockedStorage;
+
+    impl secure_storage::SecureStorage for LockedStorage {
+        fn read_value(&self, key: &str) -> Result<String, secure_storage::Error> {
+            assert_eq!(key, LocalControlModeSetting::storage_key());
+            Err(secure_storage::Error::Unknown(anyhow::anyhow!(
+                "interaction is not allowed"
+            )))
+        }
+
+        fn write_value(&self, _: &str, _: &str) -> Result<(), secure_storage::Error> {
+            panic!("an unavailable setting must not be replaced")
+        }
+
+        fn remove_value(&self, _: &str) -> Result<(), secure_storage::Error> {
+            panic!("an unavailable setting must not be removed")
+        }
+    }
+
+    warpui::App::test((), |mut app| async move {
+        app.update(|ctx| {
+            ctx.add_singleton_model(|_| -> secure_storage::Model { Box::new(LockedStorage) });
+            let setting = LocalControlModeSetting::new_from_storage(ctx);
+            assert_eq!(*setting.value(), LocalControlMode::Disabled);
+            assert!(setting.is_value_explicitly_set());
+        });
+    });
+}
+
+#[test]
 fn mode_does_not_migrate_from_private_preferences() {
     warpui::App::test((), |mut app| async move {
         app.update(|ctx| {
