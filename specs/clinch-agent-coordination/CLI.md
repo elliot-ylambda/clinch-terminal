@@ -134,7 +134,9 @@ staged architecture in [TECH.md](./TECH.md).
 
 ## Validation
 
-- 65 app tests, 42 protocol/discovery tests, and 24 CLI tests pass. Queue coverage
+- Pre-merge validation against current `main`: 318 selected app tests, 43 protocol/discovery
+  tests, and 189 CLI tests pass. App coverage includes coordination, provider session tracking,
+  native prompt submission, and managed skill installation. Queue coverage
   includes persistence, atomic cancellation/dispatch claims, sender ownership, limits,
   paging, expiry, restart recovery, and native human-input preemption.
 - Signed Clinch Dev live checks passed for both disposable Claude and Codex protocol
@@ -151,4 +153,4 @@ not the providers' current TUIs. Whole-app discovery was also checked across thr
 
 Real-provider validation is recorded separately in [LIVE_TEST.md](./LIVE_TEST.md): three real
 Claude/Codex sessions across two project windows, eight verified CLI prompts, queued follow-up,
-cross-session review, and the remaining launch/recovery gaps.
+cross-session review, the corrected recovery edge case, and remaining launch limitations.

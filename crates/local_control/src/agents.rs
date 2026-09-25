@@ -81,28 +81,13 @@ pub fn default_message_limit() -> u32 {
 pub const MAX_PROMPT_BYTES: usize = 64 * 1024;
 pub const MAX_READ_BYTES: usize = 256 * 1024;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn send_requires_identity_revision_and_request_id() {
-        assert!(
-            serde_json::from_value::<AgentSendParams>(serde_json::json!({
-                "agent_id": "pane", "text": "continue"
-            }))
-            .is_err()
-        );
-        assert!(serde_json::from_value::<AgentScope>(serde_json::json!({
-            "project": "typo-would-broaden-scope"
-        }))
-        .is_err());
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PaneReadParams {
     pub pane_id: String,
     pub max_bytes: usize,
 }
+
+#[cfg(test)]
+#[path = "agents_tests.rs"]
+mod tests;

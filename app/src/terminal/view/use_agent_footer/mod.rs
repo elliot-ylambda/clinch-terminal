@@ -1218,8 +1218,9 @@ impl TerminalView {
         &self,
         ctx: &AppContext,
     ) -> (String, Option<&'static str>) {
-        use crate::terminal::cli_agent_sessions::CLIAgentSessionStatus;
         use std::hash::{Hash, Hasher};
+
+        use crate::terminal::cli_agent_sessions::CLIAgentSessionStatus;
         let Some(session) = CLIAgentSessionsModel::as_ref(ctx).session(self.view_id) else {
             return (String::new(), Some("no_agent"));
         };

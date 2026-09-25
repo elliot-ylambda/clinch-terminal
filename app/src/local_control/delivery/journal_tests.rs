@@ -103,7 +103,7 @@ fn restart_never_replays_inflight_or_rebinds_queued_targets() {
     let live = journal.insert(live).unwrap();
     drop(journal);
     let mut journal = Journal::open(&dir.path().join("private/messages.sqlite3")).unwrap();
-    journal.maintain(200, |pid| pid == 999).unwrap();
+    journal.maintain(200, |pid, _| pid == 999).unwrap();
     assert_eq!(
         journal
             .get(&queued.params.request_id)
@@ -124,14 +124,14 @@ fn restart_never_replays_inflight_or_rebinds_queued_targets() {
         journal.get(&live.params.request_id).unwrap().unwrap().state,
         "queued"
     );
-    journal.maintain(1900, |_| true).unwrap();
+    journal.maintain(1900, |_, _| true).unwrap();
     assert_eq!(
         journal.get(&live.params.request_id).unwrap().unwrap().state,
         "expired"
     );
     assert!(journal.pending().unwrap().is_empty());
     journal
-        .maintain(1901 + RETENTION_SECONDS, |_| true)
+        .maintain(1901 + RETENTION_SECONDS, |_, _| true)
         .unwrap();
     assert!(journal.get(&live.params.request_id).unwrap().is_none());
 }
@@ -193,4 +193,46 @@ fn journal_and_directory_are_owner_only() {
             & 0o777,
         0o600
     );
+}
+
+#[test]
+fn reused_pid_recovers_abandoned_messages_without_disturbing_new_owner() {
+    let (_dir, mut journal) = open();
+    let mut old = message("old-queued", "s");
+    old.owner_pid = 999;
+    old.owner_start_time = Some(10);
+    let queued = journal.insert(old.clone()).unwrap();
+    old.params = params("old-dispatching", "s");
+    let dispatching = journal.insert(old.clone()).unwrap();
+    journal
+        .transition(&dispatching, "dispatching", None, 110)
+        .unwrap();
+    old.params = params("legacy", "s");
+    old.owner_start_time = None;
+    let legacy = journal.insert(old.clone()).unwrap();
+    old.params = params("new-owner", "s");
+    old.instance_id = "new-instance".into();
+    old.owner_start_time = Some(20);
+    let current = journal.insert(old).unwrap();
+    journal
+        .maintain(200, |pid, start| pid == 999 && start == Some(20))
+        .unwrap();
+    for (id, expected) in [
+        (&queued.params.request_id, "cancelled"),
+        (&dispatching.params.request_id, "delivery_unknown"),
+        (&legacy.params.request_id, "cancelled"),
+        (&current.params.request_id, "queued"),
+    ] {
+        assert_eq!(journal.get(id).unwrap().unwrap().state, expected);
+    }
+    assert_eq!(journal.pending().unwrap().len(), 1);
+}
+
+#[test]
+fn process_identity_requires_the_original_start_time() {
+    let pid = std::process::id();
+    let start = process_start_time(pid).expect("current process must have a start time");
+    assert!(owner_is_alive(pid, Some(start)));
+    assert!(!owner_is_alive(pid, Some(start + 1)));
+    assert!(!owner_is_alive(pid, None));
 }

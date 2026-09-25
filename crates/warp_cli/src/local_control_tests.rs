@@ -355,9 +355,11 @@ fn instance_list_output_serializes_empty_and_populated_lists() {
 #[test]
 fn excluded_actions_are_not_allowlisted_catalog_entries() {
     for excluded in ["auth.api_key.set", "file.write", "block.list"] {
-        assert!(ActionKind::ALL
-            .iter()
-            .all(|action| action.as_str() != excluded));
+        assert!(
+            ActionKind::ALL
+                .iter()
+                .all(|action| action.as_str() != excluded)
+        );
     }
 }
 

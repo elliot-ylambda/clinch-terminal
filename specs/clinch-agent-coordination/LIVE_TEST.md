@@ -43,12 +43,12 @@ sessions were left open and ready for inspection.
 
 ## Findings and remaining work
 
-- **Receipt recovery edge case:** Codex identified, and source inspection confirmed, that recovery
-  checks PID liveness without identifying the original process. If an exited owner's PID is
-  reused, an abandoned `dispatching` receipt can remain pending. Dispatch filters by exact app
-  instance and does not resend `dispatching` entries, so this is a stuck receipt, not automatic
-  duplicate delivery. Add process-incarnation-aware recovery and a regression test before release.
-  This finding was verified from the recovery/dispatch code, not by forcing OS PID reuse live.
+- **Receipt recovery fixed before merge:** Codex identified that PID-only recovery could leave
+  an abandoned dispatch pending when the OS reused its owner's PID. The journal now records
+  and checks process start time as well as PID. Recovery cancels stale queued work and marks
+  interrupted dispatches `delivery_unknown`, including legacy records without a process identity.
+  A regression test covers two process incarnations sharing a PID and preserves the live owner's
+  queue. This was tested synthetically, not by forcing OS PID reuse live.
 - **Project-targeted launch:** `tab create` currently uses the active project of the selected
   window. This run used two project windows; it did not validate CLI creation directly inside
   an inactive project tab in the same window. Add an explicit project launch selector.

@@ -21,6 +21,8 @@ pub(super) struct Message {
     pub params: AgentSendParams,
     pub instance_id: String,
     pub owner_pid: u32,
+    #[serde(default)]
+    pub owner_start_time: Option<u64>,
     pub guard: String,
     pub state: String,
     pub reason: Option<String>,
@@ -37,6 +39,7 @@ impl Message {
             params,
             instance_id,
             owner_pid: std::process::id(),
+            owner_start_time: process_start_time(std::process::id()),
             guard,
             state: "queued".into(),
             reason: None,
@@ -60,6 +63,26 @@ impl Message {
         }
         value
     }
+}
+
+// Read only the named process on the delivery worker, never on the UI thread.
+// A PID alone can refer to a different process after a crash or reboot.
+pub(super) fn process_start_time(pid: u32) -> Option<u64> {
+    let pid = sysinfo::Pid::from_u32(pid);
+    let mut system = sysinfo::System::new();
+    system.refresh_processes_specifics(
+        sysinfo::ProcessesToUpdate::Some(&[pid]),
+        true,
+        sysinfo::ProcessRefreshKind::nothing(),
+    );
+    system
+        .process(pid)
+        .map(|process| process.start_time())
+        .filter(|time| *time != 0)
+}
+
+pub(super) fn owner_is_alive(pid: u32, start_time: Option<u64>) -> bool {
+    start_time.is_some() && process_start_time(pid) == start_time
 }
 
 #[derive(QueryableByName)]
@@ -253,12 +276,16 @@ impl Journal {
         Ok((changed == 1).then_some(next))
     }
 
-    pub fn maintain(&mut self, now: i64, alive: impl Fn(u32) -> bool) -> Result<(), ControlError> {
+    pub fn maintain(
+        &mut self,
+        now: i64,
+        alive: impl Fn(u32, Option<u64>) -> bool,
+    ) -> Result<(), ControlError> {
         let mut liveness = std::collections::HashMap::new();
         for message in self.pending()? {
             let change = if !*liveness
-                .entry(message.owner_pid)
-                .or_insert_with(|| alive(message.owner_pid))
+                .entry((message.owner_pid, message.owner_start_time))
+                .or_insert_with(|| alive(message.owner_pid, message.owner_start_time))
             {
                 if message.state == "dispatching" {
                     Some((

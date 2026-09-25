@@ -41,8 +41,8 @@ installed-app success as validation of changed source.
   use atomic state transitions across app instances. Retention is seven days / 10,000 receipts;
   pending limits are 100 per app instance and ten per target. Receipts include payload only on
   explicit inspect. The database lives under the channel's private config directory.
-- Recovery cancels queued messages whose owner process exited and marks interrupted dispatches
-  `delivery_unknown`; runtime IDs are never rebound after restart. Exact same-request retries
+- Recovery checks owner PID and process start time, cancels queued messages whose owner exited,
+  and marks interrupted dispatches `delivery_unknown`; runtime IDs are never rebound after restart. Exact same-request retries
   retrieve retained receipts before checking live target availability. UUID/content/options
   conflicts fail. Storage errors never fall back to unjournaled delivery.
 - `agent watch` polls status snapshots. It has neither replay nor a persistent event journal.

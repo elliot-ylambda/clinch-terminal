@@ -9,12 +9,12 @@ use ::local_control::agents::{
     AgentMessageListParams, AgentMessageParams, AgentSendParams, MAX_PROMPT_BYTES,
 };
 use ::local_control::{Action, ActionKind, ControlError, ErrorCode, InstanceId};
+use journal::{Journal, Message};
 use serde_json::Value;
 use warpui::{ModelContext, ModelSpawner};
 
 use super::bridge::LocalControlBridge;
 use super::permissions::{ensure_action_allowed, ensure_feature_enabled};
-use journal::{Journal, Message};
 
 type Reply = Result<Value, ControlError>;
 pub(super) type PendingReply = async_channel::Receiver<Reply>;
@@ -146,9 +146,7 @@ fn run_worker(
             }
         };
         // Expiry and crash recovery happen before any dispatch or retry.
-        let maintenance = journal.maintain(now(), |pid| {
-            pid == std::process::id() || ::local_control::discovery::is_pid_alive(pid)
-        });
+        let maintenance = journal.maintain(now(), journal::owner_is_alive);
         let can_dispatch = maintenance.is_ok();
         match command {
             Command::Request(operation, reply) => {
