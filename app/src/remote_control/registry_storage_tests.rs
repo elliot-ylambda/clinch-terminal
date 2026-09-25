@@ -4,7 +4,7 @@ use std::rc::Rc;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
 use chrono::Utc;
-use clinch_companion_protocol::{Capability, DeviceId, DevicePlatform};
+use clinch_companion_protocol::{Capability, DeviceId, DevicePlatform, PairingClaimId};
 
 use super::*;
 use crate::remote_control::pairing::PairedDeviceRecord;
@@ -254,6 +254,31 @@ fn disabled_device_management_loads_retries_and_revokes_without_starting() {
                         ..
                     }
                 ));
+                service.approve_pairing(PairingClaimId::new(), ctx);
+                assert!(service
+                    .view_state()
+                    .pairing_error
+                    .as_deref()
+                    .unwrap()
+                    .contains("access denied"));
+                service.dismiss_pairing_error(ctx);
+                service.revoke_device(device_id, ctx);
+                assert!(service
+                    .view_state()
+                    .pairing_error
+                    .as_deref()
+                    .unwrap()
+                    .contains("access denied"));
+                service.dismiss_pairing_error(ctx);
+                service.revoke_all_devices(ctx);
+                assert!(service
+                    .view_state()
+                    .pairing_error
+                    .as_deref()
+                    .unwrap()
+                    .contains("access denied"));
+                service.dismiss_pairing_error(ctx);
+                assert!(!service.paired_phones_loaded());
                 assert!(service.runtime.is_none());
                 assert!(service.gateway.is_none());
                 assert!(!RemoteControlSettings::as_ref(ctx).is_enabled());
@@ -277,14 +302,15 @@ fn disabled_device_management_loads_retries_and_revokes_without_starting() {
                 assert!(service.runtime.is_none());
                 assert!(service.gateway.is_none());
                 assert!(!RemoteControlSettings::as_ref(ctx).is_enabled());
-                service.revoke_device(device_id, ctx).unwrap();
+                service.revoke_device(device_id, ctx);
+                assert!(service.view_state().pairing_error.is_none());
                 assert!(service.view_state().paired_devices.is_empty());
                 assert!(service.runtime.is_none());
                 assert!(service.gateway.is_none());
                 assert!(!RemoteControlSettings::as_ref(ctx).is_enabled());
             });
         });
-        assert_eq!(storage.reads.get(), 2);
+        assert_eq!(storage.reads.get(), 5);
         assert_eq!(storage.writes.get(), 1);
     });
 }

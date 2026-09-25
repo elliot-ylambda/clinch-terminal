@@ -30,6 +30,9 @@ const MAX_PAIRED_DEVICES: usize = 32;
 const MAX_PENDING_CLAIMS: usize = 16;
 const MAX_CHALLENGES: usize = 64;
 const MAX_SECURITY_ATTEMPTS_PER_MINUTE: usize = 30;
+/// A scanned QR gets its own approval window instead of inheriting whatever remained of the
+/// invitation, so scanning in the invitation's last minute still leaves time to approve.
+pub(crate) const PAIRING_CLAIM_TTL_SECS: i64 = 2 * 60;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DeviceRegistry {
@@ -385,7 +388,7 @@ impl PairingManager {
         let public_key_fingerprint = hex::encode(Sha256::digest(&public_key));
         let claim_id = PairingClaimId::new();
         let claim_secret = random_secret();
-        let expires_at = invitation.expires_at;
+        let expires_at = now + Duration::seconds(PAIRING_CLAIM_TTL_SECS);
         state.claims.insert(
             claim_id,
             Claim {
@@ -749,8 +752,10 @@ impl PairingManager {
             device_name: device.name.clone(),
             capabilities: device.capabilities.clone(),
         };
-        // A short-lived cookie authorizes one WebSocket, not an arbitrary number of tabs that
-        // happen to share browser storage. Reconnects authenticate again and receive a new cookie.
+        // A short-lived cookie authorizes one WebSocket at a time, not an arbitrary number of
+        // tabs that happen to share browser storage. Once that socket is released, the same
+        // cookie may reconnect until it expires, so returning to a backgrounded page skips the
+        // challenge round trips.
         if already_connected {
             return Err(PairingError::AlreadyUsed);
         }
@@ -767,12 +772,28 @@ impl PairingManager {
         if let Some(session) = state.sessions.get_mut(&token_hash) {
             session.connected = true;
         }
+        if let Some(device) = state
+            .registry
+            .devices
+            .iter_mut()
+            .find(|device| device.id == device_id)
+        {
+            device.last_seen_at = Some(now);
+        }
         Ok(authorization)
     }
 
-    pub fn end_session(&self, session_id: AuthSessionId) -> Result<(), PairingError> {
+    /// Frees a session's WebSocket slot. The cookie stays valid for a later reconnect until it
+    /// expires, the device is revoked, or a fresh authentication replaces it.
+    pub fn release_session(&self, session_id: AuthSessionId) -> Result<(), PairingError> {
         let mut state = self.lock()?;
-        state.sessions.retain(|_, session| session.id != session_id);
+        if let Some(session) = state
+            .sessions
+            .values_mut()
+            .find(|session| session.id == session_id)
+        {
+            session.connected = false;
+        }
         Ok(())
     }
 
