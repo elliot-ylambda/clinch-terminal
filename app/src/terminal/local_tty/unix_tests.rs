@@ -66,6 +66,62 @@ fn host_non_bash_command_does_not_set_history_size_sentinels() {
 }
 
 #[test]
+fn host_shell_scrubs_inherited_automation_flags_and_advertises_color() {
+    let command = build_host_shell_command(
+        shell_starter(ShellType::Zsh, "/bin/zsh"),
+        None,
+        HashMap::new(),
+        None,
+        false,
+        false,
+        false,
+        false,
+        true,
+        None,
+    );
+
+    for key in INHERITED_AUTOMATION_ENV_VARS {
+        assert_eq!(env_value(&command, key), Some(None), "{key} could leak");
+    }
+    assert_eq!(
+        env_value(&command, "TERM"),
+        Some(Some("xterm-256color".into()))
+    );
+    assert_eq!(
+        env_value(&command, "COLORTERM"),
+        Some(Some("truecolor".into()))
+    );
+}
+
+#[test]
+fn host_shell_preserves_explicit_color_and_ci_preferences() {
+    let overrides = HashMap::from([
+        ("NO_COLOR".into(), "user-preference".into()),
+        ("CLICOLOR".into(), "0".into()),
+        ("CI".into(), "intentional".into()),
+    ]);
+    let command = build_host_shell_command(
+        shell_starter(ShellType::Zsh, "/bin/zsh"),
+        None,
+        overrides,
+        None,
+        false,
+        false,
+        false,
+        false,
+        true,
+        None,
+    );
+
+    assert_eq!(
+        env_value(&command, "NO_COLOR"),
+        Some(Some("user-preference".into()))
+    );
+    assert_eq!(env_value(&command, "CLICOLOR"), Some(Some("0".into())));
+    assert_eq!(env_value(&command, "CI"), Some(Some("intentional".into())));
+}
+
+#[test]
 fn host_shell_scrubs_parent_agent_identity_after_overrides() {
     let mut overrides = HashMap::new();
     overrides.insert("CLAUDE_CODE_SESSION_ID".into(), "stale-session".into());
@@ -189,6 +245,9 @@ fn docker_sandbox_command_sets_history_size_sentinels() {
         CLINCH_CONTROL_PID_ENV,
     ] {
         assert_eq!(env_value(&command, key), Some(None), "{key} leaked");
+    }
+    for key in INHERITED_AUTOMATION_ENV_VARS {
+        assert_eq!(env_value(&command, key), Some(None), "{key} could leak");
     }
 }
 

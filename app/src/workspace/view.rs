@@ -22770,11 +22770,11 @@ impl Workspace {
         {
             let usage_model = CliAgentUsageModel::as_ref(ctx);
             let snapshot = usage_model.latest().clone();
-            let authorization_pending = usage_model.authorization_pending();
+            let refresh_pending = usage_model.refresh_pending();
             let usage_settings = CliAgentUsageSettings::as_ref(ctx);
             let plan_limits = PlanLimitsState {
                 enabled: *usage_settings.show_plan_limits,
-                authorization_pending,
+                refresh_pending,
             };
             let visibility = CliAgentUsageHeaderVisibility::from_overrides(
                 &usage_settings.header_metric_visibility,
@@ -27011,11 +27011,9 @@ impl TypedActionView for Workspace {
                         report_if_error!(settings.show_plan_limits.toggle_and_save_value(ctx));
                     }
                 });
-                // The same click sanctions one Keychain read: if the item's
-                // ACL requires the macOS credential prompt, it appears now as
-                // a direct response to the gesture — never unbidden at launch.
+                // Retry the existing provider login without user interaction.
                 CliAgentUsageModel::handle(ctx).update(ctx, |model, ctx| {
-                    model.request_authorization(ctx);
+                    model.request_refresh(ctx);
                 });
                 ctx.notify();
             }
@@ -28399,12 +28397,12 @@ impl View for Workspace {
         if let Some(provider) = self.cli_agent_usage_panel_provider {
             let usage_model = CliAgentUsageModel::as_ref(app);
             let snapshot = usage_model.latest().clone();
-            let authorization_pending = usage_model.authorization_pending();
+            let refresh_pending = usage_model.refresh_pending();
             if cli_agent_usage::format::chip_halves(&snapshot).is_some() {
                 let usage_settings = CliAgentUsageSettings::as_ref(app);
                 let plan_limits = PlanLimitsState {
                     enabled: *usage_settings.show_plan_limits,
-                    authorization_pending,
+                    refresh_pending,
                 };
                 let visibility = CliAgentUsageHeaderVisibility::from_overrides(
                     &usage_settings.header_metric_visibility,

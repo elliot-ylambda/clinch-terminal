@@ -19,7 +19,27 @@ fn make_manager_with_grok(keys: ApiKeys, grok_tokens: Option<GrokTokens>) -> Api
         geap_credentials_state: GeapCredentialsState::Missing,
         secure_storage_write_version: 0,
         grok_secure_storage_write_version: 0,
+        persist_credentials: true,
     }
+}
+
+#[test]
+fn backend_free_model_does_not_access_saved_credentials() {
+    warpui_core::App::test((), |mut app| async move {
+        // Do not register secure storage: any attempted read/write panics.
+        let manager = app.update(|ctx| {
+            ctx.add_singleton_model(|ctx| ApiKeyManager::new_with_backend(false, ctx))
+        });
+        manager.update(&mut app, |manager, ctx| {
+            assert!(!manager.keys().has_any_key());
+            assert!(manager.grok_tokens().is_none());
+            manager.set_openai_key(Some("synthetic-key".into()), ctx);
+            manager.set_grok_tokens(Some(grok_tokens("synthetic-token", None)), ctx);
+            manager.set_grok_tokens(None, ctx);
+            assert_eq!(manager.secure_storage_write_version, 0);
+            assert_eq!(manager.grok_secure_storage_write_version, 0);
+        });
+    });
 }
 
 fn make_manager_with_geap(geap_credentials_state: GeapCredentialsState) -> ApiKeyManager {

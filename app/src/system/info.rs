@@ -247,6 +247,15 @@ impl SystemInfo {
             });
         let retained_undo_close_terminal_bytes =
             UndoCloseStack::as_ref(ctx).retained_terminal_bytes();
+        // Clinch disables telemetry. Keep the existing hysteresis-limited
+        // warning useful in local diagnostics without recording terminal data.
+        log::warn!(
+            "High app memory usage: footprint={} bytes, rss={} bytes, open_terminal_estimate={} bytes, undo_close_terminal_estimate={} bytes",
+            memory_footprint.as_u64(),
+            total_application_usage_bytes,
+            retained_open_terminal_bytes,
+            retained_undo_close_terminal_bytes,
+        );
         send_telemetry_sync_from_ctx!(
             TelemetryEvent::MemoryUsageHigh {
                 total_application_usage_bytes,

@@ -1,6 +1,6 @@
 //! Incremental file cache: parse a file only when its (mtime, size) changed.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -39,6 +39,32 @@ impl<T> ScanCache<T> {
         }
         &self.entries.get(path).expect("just inserted").value
     }
+
+    /// Lists current sources and releases cached values for files removed since
+    /// the previous scan. An incomplete walk cannot prove a file was removed,
+    /// so transient permission and I/O errors leave the cache intact.
+    pub(crate) fn scan_dir(&mut self, root: &Path, ext: &str) -> Vec<(PathBuf, SystemTime, u64)> {
+        let scan = scan_dir_with_status(root, ext);
+        self.retain_scanned_files(&scan);
+        scan.files
+    }
+
+    fn retain_scanned_files(&mut self, scan: &DirectoryScan) {
+        if !scan.complete {
+            return;
+        }
+        let paths: HashSet<&Path> = scan
+            .files
+            .iter()
+            .map(|(path, _, _)| path.as_path())
+            .collect();
+        let previous_len = self.entries.len();
+        self.entries
+            .retain(|path, _| paths.contains(path.as_path()));
+        if self.entries.len() < previous_len / 2 {
+            self.entries.shrink_to_fit();
+        }
+    }
 }
 
 impl<T> Default for ScanCache<T> {
@@ -50,11 +76,27 @@ impl<T> Default for ScanCache<T> {
 /// Recursively list files under `root` whose name ends with `ext` (e.g. ".jsonl").
 /// Missing/unreadable dir → empty vec (fail-soft).
 pub fn scan_dir(root: &Path, ext: &str) -> Vec<(PathBuf, SystemTime, u64)> {
-    let mut out = Vec::new();
-    for entry in walkdir::WalkDir::new(root)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
+    scan_dir_with_status(root, ext).files
+}
+
+struct DirectoryScan {
+    files: Vec<(PathBuf, SystemTime, u64)>,
+    complete: bool,
+}
+
+fn scan_dir_with_status(root: &Path, ext: &str) -> DirectoryScan {
+    let mut scan = DirectoryScan {
+        files: Vec::new(),
+        complete: true,
+    };
+    for entry in walkdir::WalkDir::new(root) {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => {
+                scan.complete = false;
+                continue;
+            }
+        };
         if !entry.file_type().is_file() {
             continue;
         }
@@ -64,78 +106,14 @@ pub fn scan_dir(root: &Path, ext: &str) -> Vec<(PathBuf, SystemTime, u64)> {
         }
         if let Ok(md) = entry.metadata() {
             let mtime = md.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-            out.push((path.to_path_buf(), mtime, md.len()));
+            scan.files.push((path.to_path_buf(), mtime, md.len()));
+        } else {
+            scan.complete = false;
         }
     }
-    out
+    scan
 }
 
 #[cfg(test)]
-mod tests {
-    use std::fs;
-    use std::time::SystemTime;
-
-    use super::*;
-
-    fn tmp() -> std::path::PathBuf {
-        let p = std::env::temp_dir().join(format!("cau_cache_{}", std::process::id()));
-        let _ = fs::remove_dir_all(&p);
-        fs::create_dir_all(&p).unwrap();
-        p
-    }
-
-    #[test]
-    fn scan_dir_lists_only_matching_ext() {
-        let d = tmp();
-        fs::write(d.join("a.jsonl"), "x").unwrap();
-        fs::write(d.join("b.txt"), "x").unwrap();
-        fs::create_dir_all(d.join("sub")).unwrap();
-        fs::write(d.join("sub/c.jsonl"), "x").unwrap();
-        let mut found: Vec<_> = scan_dir(&d, ".jsonl")
-            .into_iter()
-            .map(|(p, _, _)| p)
-            .collect();
-        found.sort();
-        assert_eq!(found.len(), 2);
-        assert!(found.iter().all(|p| p.extension().unwrap() == "jsonl"));
-    }
-
-    #[test]
-    fn scan_dir_missing_is_empty() {
-        assert!(scan_dir(std::path::Path::new("/no/such/dir/xyz"), ".jsonl").is_empty());
-    }
-
-    #[test]
-    fn cache_reparses_only_on_change() {
-        let mut c: ScanCache<u32> = ScanCache::new();
-        let p = std::path::Path::new("/fake/x.jsonl");
-        let calls = std::cell::Cell::new(0u32);
-        let m1 = SystemTime::UNIX_EPOCH;
-        let v = *c.get_or_parse(p, m1, 10, |_| {
-            calls.set(calls.get() + 1);
-            42
-        });
-        assert_eq!(v, 42);
-        // same mtime+size -> no re-parse
-        let _ = c.get_or_parse(p, m1, 10, |_| {
-            calls.set(calls.get() + 1);
-            99
-        });
-        assert_eq!(calls.get(), 1);
-        // changed size -> re-parse
-        let v2 = *c.get_or_parse(p, m1, 11, |_| {
-            calls.set(calls.get() + 1);
-            7
-        });
-        assert_eq!(v2, 7);
-        assert_eq!(calls.get(), 2);
-        // changed mtime alone (same size) -> re-parse
-        let m2 = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(5);
-        let v3 = *c.get_or_parse(p, m2, 11, |_| {
-            calls.set(calls.get() + 1);
-            13
-        });
-        assert_eq!(v3, 13);
-        assert_eq!(calls.get(), 3);
-    }
-}
+#[path = "cache_tests.rs"]
+mod tests;

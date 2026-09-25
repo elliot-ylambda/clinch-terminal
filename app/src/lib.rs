@@ -1166,6 +1166,14 @@ pub(crate) fn initialize_app(
                 warpui_extras::secure_storage::register_with_fallback(&data_domain, warp_core::paths::state_dir(), ctx)
             } else if #[cfg(target_os = "windows")] {
                 warpui_extras::secure_storage::register_with_dir(&data_domain, warp_core::paths::state_dir(), ctx)
+            } else if #[cfg(target_os = "macos")] {
+                if ChannelState::has_backend() {
+                    warpui_extras::secure_storage::register(&data_domain, ctx);
+                } else {
+                    // CLI providers own their login. Clinch's local settings and
+                    // paired-device storage must never summon a password prompt.
+                    warpui_extras::secure_storage::register_noninteractive(&data_domain, ctx);
+                }
             } else {
                 warpui_extras::secure_storage::register(&data_domain, ctx);
             }

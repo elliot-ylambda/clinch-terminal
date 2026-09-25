@@ -461,9 +461,8 @@ pub enum WorkspaceAction {
         metric: CliAgentUsageMetric,
     },
     /// Enable the Claude plan-limit gauges from the usage widget's "Turn on"
-    /// or "Authorize" affordance. Ensures the `show_plan_limits` setting is on
-    /// and sanctions one Keychain read on the poller's next tick — the only
-    /// path on which the macOS credential prompt is allowed to appear.
+    /// or "Retry" affordance. Ensures the `show_plan_limits` setting is on
+    /// and requests a non-interactive refresh on the poller's next tick.
     EnableCliAgentPlanLimits,
     Reauth,
     SignupAnonymousUser,
