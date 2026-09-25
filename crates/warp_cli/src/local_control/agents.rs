@@ -1,8 +1,9 @@
 //! CLI-agent commands use app-wide discovery, never the currently focused tab.
 use std::io::Read as _;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use clap::{Args, Subcommand};
+use instant::Instant;
 use local_control::agents::{
     AgentMessageListParams, AgentMessageParams, AgentReadParams, AgentScope, AgentSendParams,
     AgentTargetParams, MAX_PROMPT_BYTES,

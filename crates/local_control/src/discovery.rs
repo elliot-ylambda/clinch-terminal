@@ -342,13 +342,12 @@ pub fn list_instances_from_dir(dir: &Path, channel: &str) -> Vec<InstanceRecord>
                     instance_id: InstanceId,
                     pid: u32,
                 }
-                if let Ok(identity) = serde_json::from_str::<RecordIdentity>(&contents) {
-                    if record_path(dir, &identity.instance_id) == path && is_pid_alive(identity.pid)
-                    {
-                        retained_broker_sockets
-                            .insert(broker_socket_filename(&identity.instance_id));
-                        continue;
-                    }
+                if let Ok(identity) = serde_json::from_str::<RecordIdentity>(&contents)
+                    && record_path(dir, &identity.instance_id) == path
+                    && is_pid_alive(identity.pid)
+                {
+                    retained_broker_sockets.insert(broker_socket_filename(&identity.instance_id));
+                    continue;
                 }
                 remove_malformed_record_artifacts(dir, &path);
                 continue;

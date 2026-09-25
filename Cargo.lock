@@ -15056,6 +15056,7 @@ dependencies = [
  "clap_complete",
  "color-print",
  "humantime",
+ "instant",
  "jaq-all",
  "local_control",
  "serde",
