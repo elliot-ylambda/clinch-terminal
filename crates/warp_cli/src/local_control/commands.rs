@@ -490,6 +490,7 @@ pub(super) fn run_pane_command(
     output_format: OutputFormat,
 ) -> Result<(), ControlError> {
     match command {
+        PaneCommand::Read(args) => super::agents::run_pane_read(args, output_format),
         PaneCommand::List(args) => {
             run_action_with_params(args, ActionKind::PaneList, EmptyParams {}, output_format)
         }

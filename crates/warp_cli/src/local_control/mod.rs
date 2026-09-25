@@ -1,4 +1,5 @@
 //! Command-line interface for controlling a running local app.
+mod agents;
 mod commands;
 mod completions;
 mod output;
@@ -97,6 +98,9 @@ impl ControlArgs {
             stripped_args.push(arg);
         }
 
+        if stripped_args.get(1).is_some_and(|arg| arg == "ctrl") {
+            stripped_args.remove(1);
+        }
         found_control_mode.then(|| Self::try_parse_from_args(stripped_args, bin_name))
     }
 
@@ -162,6 +166,15 @@ impl ControlArgs {
 /// Top-level local-control command groups.
 #[derive(Debug, Clone, Subcommand)]
 pub enum ControlCommand {
+    /// Inspect the complete Clinch hierarchy, including inactive projects.
+    #[command(subcommand)]
+    Workspace(agents::WorkspaceCommand),
+    /// Inspect every open project.
+    #[command(subcommand)]
+    Project(agents::ProjectCommand),
+    /// Read, message, and monitor Claude Code and Codex sessions across projects.
+    #[command(subcommand)]
+    Agent(agents::AgentCommand),
     /// Inspect local Warp app instances.
     #[command(subcommand)]
     Instance(InstanceCommand),
@@ -366,6 +379,8 @@ pub enum TabColorCommand {
 /// Commands that inspect local Warp panes.
 #[derive(Debug, Clone, Subcommand)]
 pub enum PaneCommand {
+    /// Read bounded terminal output in any project using a workspace-tree pane ID.
+    Read(agents::PaneReadArgs),
     /// List panes in the selected local Warp app.
     List(TargetArgs),
 
@@ -1256,6 +1271,9 @@ fn run_exit_code(args: ControlArgs) -> u8 {
 fn run_inner(args: ControlArgs) -> Result<(), local_control::protocol::ControlError> {
     let output_format = args.output_format;
     match args.command {
+        ControlCommand::Workspace(command) => agents::run_workspace(command, output_format),
+        ControlCommand::Project(command) => agents::run_project(command, output_format),
+        ControlCommand::Agent(command) => agents::run_agent(command, output_format),
         ControlCommand::Instance(command) => run_instance_command(command, output_format),
         ControlCommand::App(command) => run_app_command(command, output_format),
         ControlCommand::Capability(command) => run_capability_command(command, output_format),

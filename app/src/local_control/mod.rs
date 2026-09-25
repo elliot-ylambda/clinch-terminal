@@ -57,7 +57,10 @@
 //!
 //! Discovery records never include raw bearer tokens: discovery only exposes
 //! endpoint metadata and credential broker references while local control is enabled.
+mod agents;
 mod bridge;
+mod conversation;
+mod delivery;
 mod handlers;
 mod permissions;
 mod resolver;
@@ -580,7 +583,31 @@ async fn handle_control_request(
         .spawn(move |bridge, ctx| bridge.handle_request(request, grant, ctx))
         .await
     {
-        Ok(response) => response,
+        Ok(bridge::BridgeReply::Immediate(response)) => response,
+        Ok(bridge::BridgeReply::Delivery {
+            request_id,
+            receiver,
+        }) => match receiver.recv().await {
+            Ok(Ok(data)) => ResponseEnvelope::ok(request_id, data),
+            Ok(Err(error)) => ResponseEnvelope::error(request_id, error),
+            Err(_) => ResponseEnvelope::error(
+                request_id,
+                ControlError::new(
+                    ErrorCode::BridgeUnavailable,
+                    "agent delivery worker stopped",
+                ),
+            ),
+        },
+        Ok(bridge::BridgeReply::Read { request_id, plan }) => {
+            match tokio::task::spawn_blocking(move || plan.execute()).await {
+                Ok(Ok(data)) => ResponseEnvelope::ok(request_id, data),
+                Ok(Err(error)) => ResponseEnvelope::error(request_id, error),
+                Err(_) => ResponseEnvelope::error(
+                    request_id,
+                    ControlError::new(ErrorCode::Internal, "conversation reader failed"),
+                ),
+            }
+        }
         Err(_) => ResponseEnvelope::error(
             request_id,
             ControlError::new(

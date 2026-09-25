@@ -482,6 +482,51 @@ fn renders_human_readable_tab_grep_output() {
 fn retained_action_examples() -> Vec<(ActionKind, Vec<&'static str>)> {
     vec![
         (
+            ActionKind::PaneRead,
+            vec!["warpctrl", "pane", "read", "--pane", "opaque-pane-id"],
+        ),
+        (
+            ActionKind::WorkspaceTree,
+            vec!["warpctrl", "workspace", "tree"],
+        ),
+        (ActionKind::ProjectList, vec!["warpctrl", "project", "list"]),
+        (ActionKind::AgentList, vec!["warpctrl", "agent", "list"]),
+        (
+            ActionKind::AgentInspect,
+            vec!["warpctrl", "agent", "inspect", "agent-id"],
+        ),
+        (
+            ActionKind::AgentMessageInspect,
+            vec!["warpctrl", "agent", "message", "inspect", "id"],
+        ),
+        (
+            ActionKind::AgentMessageCancel,
+            vec!["warpctrl", "agent", "message", "cancel", "id"],
+        ),
+        (
+            ActionKind::AgentMessageList,
+            vec!["warpctrl", "agent", "message", "list"],
+        ),
+        (
+            ActionKind::AgentRead,
+            vec!["warpctrl", "agent", "read", "agent-id"],
+        ),
+        (
+            ActionKind::AgentSend,
+            vec![
+                "warpctrl",
+                "agent",
+                "send",
+                "agent-id",
+                "--text",
+                "hello",
+                "--expected-revision",
+                "revision",
+                "--request-id",
+                "00000000-0000-0000-0000-000000000001",
+            ],
+        ),
+        (
             ActionKind::InstanceList,
             vec!["warpctrl", "instance", "list"],
         ),
@@ -918,6 +963,7 @@ fn parsed_action_kind(command: &ControlCommand) -> Option<ActionKind> {
             },
         },
         ControlCommand::Pane(command) => match command {
+            PaneCommand::Read(_) => Some(ActionKind::PaneRead),
             PaneCommand::List(_) => Some(ActionKind::PaneList),
             PaneCommand::Inspect(_) => Some(ActionKind::PaneInspect),
             PaneCommand::Split(_) => Some(ActionKind::PaneSplit),
@@ -1050,6 +1096,21 @@ fn parsed_action_kind(command: &ControlCommand) -> Option<ActionKind> {
             SurfaceCommand::AgentManagement(command) => match command {
                 SurfaceOpenCommand::Open(_) => Some(ActionKind::SurfaceAgentManagementOpen),
             },
+        },
+        ControlCommand::Workspace(_) => Some(ActionKind::WorkspaceTree),
+        ControlCommand::Project(_) => Some(ActionKind::ProjectList),
+        ControlCommand::Agent(command) => match command {
+            super::agents::AgentCommand::List(_) | super::agents::AgentCommand::Watch { .. } => {
+                Some(ActionKind::AgentList)
+            }
+            super::agents::AgentCommand::Inspect(_) => Some(ActionKind::AgentInspect),
+            super::agents::AgentCommand::Read { .. } => Some(ActionKind::AgentRead),
+            super::agents::AgentCommand::Send { .. } => Some(ActionKind::AgentSend),
+            super::agents::AgentCommand::Message(command) => Some(match command {
+                super::agents::AgentMessageCommand::Inspect(_) => ActionKind::AgentMessageInspect,
+                super::agents::AgentMessageCommand::Cancel(_) => ActionKind::AgentMessageCancel,
+                super::agents::AgentMessageCommand::List { .. } => ActionKind::AgentMessageList,
+            }),
         },
         ControlCommand::Completions { .. } => None,
     }

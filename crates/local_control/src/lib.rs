@@ -3,6 +3,7 @@
 //! The `local_control` crate is intentionally UI-agnostic so the Warp app and
 //! `warpctrl` CLI can share the same wire envelopes, action catalog, discovery
 //! records, selectors, and credential validation rules.
+pub mod agents;
 pub mod auth;
 pub mod catalog;
 pub mod client;

@@ -714,3 +714,8 @@ impl Drop for RemoteControlService {
         }
     }
 }
+
+/// Local automation respects connected companion writers for the same terminal.
+pub(crate) fn has_writer_for_terminal(terminal_id: warpui::EntityId, ctx: &AppContext) -> bool {
+    WorkspaceAdapter::as_ref(ctx).has_writer_for_terminal(terminal_id, ctx)
+}
