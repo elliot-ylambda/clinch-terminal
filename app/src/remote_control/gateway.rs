@@ -433,7 +433,7 @@ async fn websocket_loop(mut socket: WebSocket, state: GatewayState, cookie_token
         .await
         .is_err()
     {
-        let _ = state.pairing.end_session(session_id);
+        let _ = state.pairing.release_session(session_id);
         let _ = state.events.send(GatewayEvent::ClientDisconnected).await;
         return;
     }
@@ -450,7 +450,7 @@ async fn websocket_loop(mut socket: WebSocket, state: GatewayState, cookie_token
                     reason: "Clinch workspace is unavailable".into(),
                 })))
                 .await;
-            let _ = state.pairing.end_session(session_id);
+            let _ = state.pairing.release_session(session_id);
             let _ = state.events.send(GatewayEvent::ClientDisconnected).await;
             return;
         }
@@ -459,7 +459,7 @@ async fn websocket_loop(mut socket: WebSocket, state: GatewayState, cookie_token
         .await
         .is_err()
     {
-        let _ = state.pairing.end_session(session_id);
+        let _ = state.pairing.release_session(session_id);
         let _ = state.events.send(GatewayEvent::ClientDisconnected).await;
         return;
     }
@@ -873,7 +873,7 @@ async fn websocket_loop(mut socket: WebSocket, state: GatewayState, cookie_token
             .spawn(|adapter, ctx| adapter.sweep_writer_leases(ctx))
             .await;
     });
-    let _ = state.pairing.end_session(session_id);
+    let _ = state.pairing.release_session(session_id);
     let _ = state.events.send(GatewayEvent::ClientDisconnected).await;
 }
 
