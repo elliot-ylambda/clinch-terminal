@@ -1,0 +1,9 @@
+#!/usr/bin/env python3
+"""Portable entry point for `clinch sessions`. Requires Python 3.9+."""
+import sys
+
+sys.dont_write_bytecode = True
+from session_cli import main
+
+if __name__ == "__main__":
+    raise SystemExit(main())

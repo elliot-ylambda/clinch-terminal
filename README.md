@@ -151,6 +151,14 @@ deleted transcripts, changed CLIs, and abrupt power loss can prevent an exact re
 More implementation detail is in
 [tools/agent-resume/README.md](tools/agent-resume/README.md).
 
+The `clinch sessions` CLI lists saved Claude/Codex conversations, opens stopped sessions in
+Orca, and transfers a conversation plus its Git checkout between Mac and Linux over SSH.
+Preview an Orca migration with `clinch sessions open-in orca --all --dry-run`.
+See [session handoff commands and limits](tools/session-transfer/README.md) before transferring.
+For the current conversation, `clinch sessions to-devbox` opens a visible handoff task that
+waits for the agent to exit. `from-devbox` brings its updated conversation and checkout back
+into the original Clinch project; `transferred` lists handoff status and destinations.
+
 ## Remote Control (Beta)
 
 Answer the agents already running on your Mac from your phone. Type a line in Safari and it runs
