@@ -1,0 +1,17 @@
+[
+  {
+    "label": "To DevBox",
+    "auto_send": true,
+    "text": "Prepare this current conversation for DevBox by running \"$HOME/.local/bin/clinch-sessions\" to-devbox --json from this Clinch pane, preserving its environment. The command opens a visible handoff task. Once queued, tell me to finish this turn and exit this Claude/Codex with /exit or Ctrl-D, keeping the handoff task and Mac open until Complete. If preflight fails, explain the actual error. Do not kill agents or run a detached transfer."
+  },
+  {
+    "label": "Back to Mac",
+    "auto_send": true,
+    "text": "Bring a DevBox conversation back to its original Clinch project using \"$HOME/.local/bin/clinch-sessions\" from-devbox --json. If this conversation is not a known transfer, run \"$HOME/.local/bin/clinch-sessions\" transferred --host devbox --json and ask which named conversation to bring back, then pass its exact provider:session-ID to from-devbox. Once queued, tell me to exit the agent in DevBox's Orca terminal and any Mac copy of that same conversation, leaving the handoff task open until Complete. Do not kill agents or start a second copy."
+  },
+  {
+    "label": "Transfers",
+    "auto_send": true,
+    "text": "Run \"$HOME/.local/bin/clinch-sessions\" transferred --json and \"$HOME/.local/bin/clinch-sessions\" transferred --host devbox --json. Show the transferred conversation titles, projects, locations and job statuses, and explain where to find each in Orca Mobile or Clinch. List only; do not start or move any session."
+  }
+]

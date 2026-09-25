@@ -75,7 +75,7 @@ fi
 SESSION_TRANSFER_DEST="$DEST_DIR/session-transfer"
 mkdir -p "$SESSION_TRANSFER_DEST"
 install -m 0755 "$REPO_ROOT/tools/session-transfer/clinch-sessions" "$SESSION_TRANSFER_DEST/"
-for module in session_cli.py session_inventory.py session_worker.py; do
+for module in session_cli.py session_inventory.py session_worker.py session_handoff.py; do
   install -m 0644 "$REPO_ROOT/tools/session-transfer/$module" "$SESSION_TRANSFER_DEST/"
 done
 

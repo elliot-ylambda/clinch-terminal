@@ -42,7 +42,7 @@ def call(host, operation, **params):
         input=payload,
         capture_output=True,
         check=False,
-        timeout=240,
+        timeout=900,
     )
     try:
         response = json.loads(result.stdout)
@@ -82,6 +82,9 @@ def parser():
         description="Discover saved Claude/Codex conversations, open them in Orca, or move them between hosts.",
     )
     commands = root.add_subparsers(dest="command", required=True)
+    from session_handoff import add_commands
+
+    add_commands(commands)
     listing = commands.add_parser(
         "list", help="List saved Clinch sessions across all projects"
     )
@@ -89,7 +92,7 @@ def parser():
     opening = commands.add_parser(
         "open-in", help="Resume stopped sessions in Orca on their current host"
     )
-    opening.add_argument("app", choices=("orca",))
+    opening.add_argument("app", choices=("orca", "clinch"))
     opening.add_argument("session", nargs="?", help="Session ID (or agent:ID)")
     opening.add_argument(
         "--all", action="store_true", help="Select all saved sessions across projects"
@@ -202,7 +205,11 @@ def execute(args):
                     result["status"] = "ready"
                 else:
                     result["terminal"] = call(
-                        args.source, "open", session=inspected, orca=args.orca_bin
+                        args.source,
+                        "open",
+                        session=inspected,
+                        orca=args.orca_bin,
+                        app=args.app,
                     )
                     result["status"] = "opened"
             except (ValueError, OSError, subprocess.SubprocessError) as error:
@@ -277,6 +284,17 @@ def execute(args):
 def main(argv=None):
     args = parser().parse_args(argv)
     try:
+        if args.command in (
+            "to-devbox",
+            "from-devbox",
+            "transferred",
+            "cancel",
+            "organize",
+            "_run-handoff",
+        ):
+            from session_handoff import execute as handoff
+
+            return handoff(args)
         report, code = execute(args)
     except (
         ValueError,

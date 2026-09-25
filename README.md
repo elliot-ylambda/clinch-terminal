@@ -155,6 +155,9 @@ The `clinch sessions` CLI lists saved Claude/Codex conversations, opens stopped 
 Orca, and transfers a conversation plus its Git checkout between Mac and Linux over SSH.
 Preview an Orca migration with `clinch sessions open-in orca --all --dry-run`.
 See [session handoff commands and limits](tools/session-transfer/README.md) before transferring.
+For the current conversation, `clinch sessions to-devbox` opens a visible handoff task that
+waits for the agent to exit. `from-devbox` brings its updated conversation and checkout back
+into the original Clinch project; `transferred` lists handoff status and destinations.
 
 ## Remote Control (Beta)
 

@@ -381,8 +381,7 @@ def verify_codex(record):
                     process.kill()
 
 
-def launch(record, orca=None):
-    binary = orca_command(orca)
+def resume_command(record):
     provider = shutil.which(record["agent"])
     if not provider:
         raise ValueError("{} CLI not found on destination.".format(record["agent"]))
@@ -407,10 +406,25 @@ def launch(record, orca=None):
             "--resume",
             record["transcript"],
         ]
-    env = dict(os.environ)
-    for key in ("ORCA_PAIRING_CODE", "ORCA_ENVIRONMENT"):
-        env.pop(key, None)
-    run([binary, "repo", "add", "--path", record["cwd"], "--json"], env=env)
+    return args
+
+
+def launch(record, orca=None):
+    args = resume_command(record)
+    if record.get("launch_app") == "clinch":
+        from session_handoff import launch_clinch
+
+        return launch_clinch(record, args)
+    binary = orca_command(orca)
+    env = {k: v for k, v in os.environ.items() if not k.startswith("ORCA_")}
+    checkout = record.get("checkout_root") or record["cwd"]
+    run([binary, "repo", "add", "--path", checkout, "--json"], env=env)
+    if checkout != record["cwd"]:
+        args = [
+            "sh",
+            "-c",
+            "cd " + shlex.quote(record["cwd"]) + " && exec " + shlex.join(args),
+        ]
     title = record.get("title") or "{} {}".format(
         record["agent"], record["session_id"][:8]
     )
@@ -422,7 +436,7 @@ def launch(record, orca=None):
             "terminal",
             "create",
             "--worktree",
-            "path:" + record["cwd"],
+            "path:" + checkout,
             "--title",
             title,
             "--command",
@@ -596,10 +610,18 @@ def export_session(record):
     )
     for name, (data, _) in project["untracked"].items():
         payloads["files/" + name] = data
-    with tempfile.TemporaryDirectory(prefix="clinch-session-export-") as temp:
-        bundle = Path(temp) / "repo.bundle"
-        run(["git", "bundle", "create", str(bundle), "HEAD"], project["root"])
-        payloads["repo.bundle"] = regular_bytes(bundle)
+    github = (
+        github_source(project["root"], record.get("git_remote"))
+        if record.get("github_bootstrap")
+        else None
+    )
+    project["github"] = github
+    if not github or github["base"] != project["head"]:
+        with tempfile.TemporaryDirectory(prefix="clinch-session-export-") as temp:
+            bundle = Path(temp) / "repo.bundle"
+            revisions = ["HEAD"] + (["^" + github["base"]] if github else [])
+            run(["git", "bundle", "create", str(bundle), *revisions], project["root"])
+            payloads["repo.bundle"] = regular_bytes(bundle)
     if sum(map(len, payloads.values())) > MAX_BYTES:
         raise ValueError(
             "Transfer exceeds 128 MiB; use an existing remote runtime for this repository."
@@ -636,6 +658,72 @@ def export_session(record):
         "sha256": digest(stream.getvalue()),
         "manifest": manifest,
     }
+
+
+def valid_github_url(url):
+    return bool(
+        re.fullmatch(
+            r"(?:https://github\.com/|git@github\.com:)[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?",
+            url,
+        )
+    )
+
+
+def github_source(root, remote=None):
+    """Use an existing tracking ancestor; never push commits or copy credentials."""
+    remotes = run(["git", "remote"], root).decode().splitlines()
+    ordered = (
+        [remote]
+        if remote
+        else sorted(
+            remotes,
+            key=lambda name: (name not in ("clinch", "origin"), name != "clinch", name),
+        )
+    )
+    for name in ordered:
+        if name not in remotes:
+            raise ValueError("Requested Git remote does not exist")
+        url = run(["git", "remote", "get-url", name], root).decode().strip()
+        if not valid_github_url(url):
+            if remote:
+                raise ValueError(
+                    "GitHub bootstrap needs a credential-free github.com HTTPS or SSH remote"
+                )
+            continue
+        branch = (
+            run(["git", "rev-parse", "--abbrev-ref", "HEAD"], root).decode().strip()
+        )
+        refs = (
+            run(
+                [
+                    "git",
+                    "for-each-ref",
+                    "--format=%(refname)",
+                    "refs/remotes/" + name + "/",
+                ],
+                root,
+            )
+            .decode()
+            .splitlines()
+        )
+        refs.sort(
+            key=lambda ref: (
+                ref != "refs/remotes/" + name + "/" + branch,
+                not ref.endswith("/main"),
+                ref,
+            )
+        )
+        for ref in refs:
+            try:
+                base = run(["git", "merge-base", "HEAD", ref], root).decode().strip()
+            except ValueError:
+                continue
+            return {"url": url, "base": base, "remote": name}
+    if remote:
+        raise ValueError(
+            "GitHub bootstrap needs a fetched remote-tracking ancestor; fetch the selected remote first"
+        )
+    return None
 
 
 def unpack_bundle(encoded, expected):
@@ -717,7 +805,7 @@ def launch_once(record, orca, lease):
     return result
 
 
-def destination_check(destination, orca=None, agent=None):
+def destination_check(destination, orca=None, agent=None, app="orca"):
     path = Path(destination).expanduser()
     if not path.is_absolute() or path.exists() or path.is_symlink():
         raise ValueError(
@@ -725,7 +813,14 @@ def destination_check(destination, orca=None, agent=None):
         )
     # Resolve only the parent; a final symlink must never disguise a collision.
     path = path.parent.resolve() / path.name
-    orca_command(orca)
+    if app == "clinch":
+        from session_handoff import binding
+
+        binding()
+    elif app == "orca":
+        orca_command(orca)
+    else:
+        raise ValueError("Unsupported destination app")
     if agent and not shutil.which(agent):
         raise ValueError(f"{agent} CLI is missing on the destination.")
     if not shutil.which("git"):
@@ -742,7 +837,10 @@ def import_session(request):
 def import_locked(request, manifest, payloads, lease):
     destination = Path(
         destination_check(
-            request["destination"], request.get("orca"), manifest["session"]["agent"]
+            request["destination"],
+            request.get("orca"),
+            manifest["session"]["agent"],
+            request.get("app", "orca"),
         )
     )
     source = manifest["session"]
@@ -812,10 +910,12 @@ def import_locked(request, manifest, payloads, lease):
     record = dict(
         source,
         cwd=str(destination / cwd_relative),
+        checkout_root=str(destination),
         agent_home=str(home),
         transcript=str(home / main_relative),
         registry=None,
         ancestor_hashes=ancestors,
+        launch_app=request.get("app", "orca"),
     )
     record.pop("active_pids", None)
     # Refuse to install onto a destination that already runs this conversation.
@@ -856,23 +956,81 @@ def import_locked(request, manifest, payloads, lease):
     installed = False
     try:
         bundle_path = stage / "repo.bundle"
-        write_new(bundle_path, payloads["repo.bundle"])
+        if "repo.bundle" in payloads:
+            write_new(bundle_path, payloads["repo.bundle"])
         checkout = stage / "checkout"
         git_env = dict(
-            os.environ, GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull
+            os.environ,
+            GIT_CONFIG_NOSYSTEM="1",
+            GIT_CONFIG_GLOBAL=os.devnull,
+            GIT_TERMINAL_PROMPT="0",
         )
-        run(
-            [
-                "git",
-                "-c",
-                "core.hooksPath=/dev/null",
-                "clone",
-                "--no-checkout",
-                str(bundle_path),
-                str(checkout),
-            ],
-            env=git_env,
-        )
+        github = manifest["project"].get("github")
+        if github:
+            if not valid_github_url(github["url"]) or not re.fullmatch(
+                r"[0-9a-f]{40,64}", github["base"]
+            ):
+                raise ValueError("Invalid GitHub bootstrap source")
+            run(
+                ["git", "-c", "core.hooksPath=/dev/null", "init", str(checkout)],
+                env=git_env,
+            )
+            run(
+                ["git", "remote", "add", "origin", github["url"]], checkout, env=git_env
+            )
+            auth = (
+                [
+                    "-c",
+                    "credential.helper=",
+                    "-c",
+                    "credential.https://github.com.helper=!gh auth git-credential",
+                ]
+                if shutil.which("gh")
+                else []
+            )
+            run(
+                [
+                    "git",
+                    *auth,
+                    "-c",
+                    "core.hooksPath=/dev/null",
+                    "fetch",
+                    "--no-tags",
+                    "origin",
+                    github["base"],
+                ],
+                checkout,
+                env=git_env,
+                timeout=600,
+            )
+            run(
+                [
+                    "git",
+                    "update-ref",
+                    "refs/remotes/origin/clinch-handoff-base",
+                    github["base"],
+                ],
+                checkout,
+                env=git_env,
+            )
+            if bundle_path.exists():
+                run(
+                    ["git", "bundle", "verify", str(bundle_path)], checkout, env=git_env
+                )
+                run(["git", "fetch", str(bundle_path), "HEAD"], checkout, env=git_env)
+        else:
+            run(
+                [
+                    "git",
+                    "-c",
+                    "core.hooksPath=/dev/null",
+                    "clone",
+                    "--no-checkout",
+                    str(bundle_path),
+                    str(checkout),
+                ],
+                env=git_env,
+            )
         run(
             [
                 "git",
@@ -893,7 +1051,8 @@ def import_locked(request, manifest, payloads, lease):
                 checkout,
                 env=git_env,
             )
-        run(["git", "remote", "remove", "origin"], checkout, env=git_env)
+        if not github:
+            run(["git", "remote", "remove", "origin"], checkout, env=git_env)
         for name, indexed in (("index.patch", True), ("worktree.patch", False)):
             if payloads[name]:
                 patch = stage / name
@@ -970,11 +1129,18 @@ def dispatch(request):
     operation = request["operation"]
     if operation == "inventory":
         return inventory(request.get("database"), request.get("registry"))
+    if operation == "home":
+        return str(Path.home())
     if operation == "inspect":
         return inspect_session(request["session"])
     if operation == "plan-move":
         record = inspect_session(request["session"])
         project = project_snapshot(record["cwd"], record.get("include", []))
+        project["github"] = (
+            github_source(project["root"], record.get("git_remote"))
+            if record.get("github_bootstrap")
+            else None
+        )
         artifacts = session_files(record)
         return {
             "session": record,
@@ -990,7 +1156,10 @@ def dispatch(request):
     if operation == "check-destination":
         return {
             "destination": destination_check(
-                request["destination"], request.get("orca"), request.get("agent")
+                request["destination"],
+                request.get("orca"),
+                request.get("agent"),
+                request.get("app", "orca"),
             )
         }
     if operation == "export":
@@ -1000,9 +1169,12 @@ def dispatch(request):
         return import_session(request)
     if operation == "open":
         with session_lock(request["session"]) as lease:
-            return launch_once(
-                require_stopped(request["session"]), request.get("orca"), lease
-            )
+            record = dict(request["session"], launch_app=request.get("app", "orca"))
+            if record["launch_app"] == "clinch":
+                from session_handoff import binding
+
+                record["origin_pane"] = binding()["pane"]
+            return launch_once(require_stopped(record), request.get("orca"), lease)
     raise ValueError("Unknown session worker operation")
 
 

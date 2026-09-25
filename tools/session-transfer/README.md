@@ -10,6 +10,83 @@ your existing SSH configuration and authentication. The SSH worker runs in memor
 the other host does not need a Clinch desktop installation. Install and sign in to
 Claude/Codex on that host separately.
 
+## Current-session shortcuts
+
+```sh
+clinch sessions to-devbox --dry-run --json
+clinch sessions to-devbox
+clinch sessions from-devbox
+clinch sessions transferred
+clinch sessions transferred --host devbox
+```
+
+`to-devbox` identifies this Clinch pane's exact Claude/Codex conversation and opens
+a visible **To DevBox** handoff tab. Finish the turn, then exit the source agent
+with `/exit` or Ctrl-D. The task waits for the agent to stop and the transcript to
+stabilize, copies its saved state, and starts it in DevBox's Orca runtime. Keep the
+task open and the Mac awake until it prints **Complete**. Other same-provider
+agents sharing the checkout also block the transfer; no agent is killed. Waiting
+times out after 30 minutes. `clinch sessions cancel JOB_ID` cancels a waiting task.
+
+`from-devbox` retrieves the latest completed outbound handoff for this conversation,
+including new DevBox messages and code changes. Exit the agent in Orca first. If
+this conversation is also running on Mac, exit that copy too. The returned agent
+opens in its original Clinch project, in a **Transferred** section. For sessions
+not sent by this Mac, choose `claude:SESSION_ID` or `codex:SESSION_ID` from
+`transferred --host devbox`; use `--remote-cwd` for ambiguous remote copies.
+
+The original project tab must still exist. Tab creation uses its durable pane
+identity even when another project is active. The installed app's section API
+only addresses the selected project: switching projects during handoff can leave
+the new tab ungrouped. Select the original project and run
+`clinch sessions organize JOB_ID`. Exact tab IDs prevent grouping a session in the
+wrong project. If the original tab was closed, the import remains with a failed
+launch receipt; after checking that no agent started, use
+`open-in clinch SESSION_ID --cwd DESTINATION` from the desired project to retry.
+
+Each handoff creates `~/.clinch/transfers/PROJECT/HANDOFF_ID/PROJECT` on the destination.
+Use `--dest` to override it and `--host` to override the `devbox` SSH alias.
+`--include` selects required ignored files; selections carry into the return trip.
+Dependencies and provider credentials/configuration need separate provisioning.
+
+For GitHub repositories these shortcuts select a credential-free `clinch` or
+`origin` remote and a fetched tracking ancestor. Published history downloads from
+GitHub on the destination. The upload contains unpublished commits, working
+changes, and conversation artifacts. Nothing is pushed to GitHub. The new checkout
+retains a clean GitHub `origin` and a tracking base for return trips. Use
+`--git-remote NAME` to choose another GitHub remote. The destination must already
+have access through GitHub CLI or SSH. A missing published base stops the transfer.
+Without a usable GitHub ancestor, the bounded full-history bundle is used.
+
+## Find the session on your phone
+
+Pair Orca Mobile **directly with DevBox's Orca server** over Tailscale. After
+Complete, open **DevBox → PROJECT → [From Mac] CONVERSATION**. The checkout retains
+the project name and Orca receives the conversation title. Open its terminal tab
+even if Orca does not show an agent-status badge. The agent runs in the server's
+Orca terminal, so the Mac can now sleep. Pairing only to a Mac that exposes an SSH
+worktree does not provide this lifetime. See
+[Orca's headless mobile pairing instructions](https://www.onorca.dev/docs/remote-servers#mobile-from-a-headless-server).
+
+## Use the helper before the next app release
+
+```sh
+python3 tools/session-transfer/install-local
+~/.local/bin/clinch-sessions to-devbox --dry-run --json
+```
+
+This installs a versioned helper under `~/.local/share/clinch/session-transfer/`
+and a `clinch-sessions` command without changing the signed app. It accepts the
+same arguments as `clinch sessions`, which is available with the updated app bundle.
+Old versions stay available to queued jobs.
+
+Custom Clinch toolbar buttons submit prompts to the current agent. Shared
+Claude/Codex buttons **To DevBox**, **Back to Mac**, and **Transfers** can instruct
+the agent to run these shortcuts. The first two prepare a handoff and tell the
+user to exit the source; they must not kill an agent or start a detached transfer.
+Jobs record status, destination, and recovery details under
+`~/.clinch/session-transfer/jobs/`.
+
 ## Inspect before applying
 
 ```sh
@@ -92,9 +169,10 @@ tool, pass `--agent claude|codex`, `--cwd`, and optionally `--agent-home`.
 The transfer contains the selected Git HEAD and its reachable history, branch name,
 staged and unstaged binary patches, untracked files, conversation log, and supported
 session artifacts. It constructs an independent checkout; it does not copy `.git`
-worktree pointers or repository hooks/configuration. Remote URLs are deliberately
-not copied, since they can contain credentials. Configure the new checkout's
-remote separately when needed. A session started in a repository subdirectory
+worktree pointers or repository hooks/configuration. This lower-level `move`
+command omits remote URLs because they can contain credentials; configure the
+remote afterward. The shortcuts above restore a validated GitHub remote instead.
+A session started in a repository subdirectory
 resumes in the corresponding subdirectory of the new root.
 
 Ignored files (including `.env`, build products, and dependencies) are not included

@@ -141,6 +141,18 @@ def inventory(database=None, registry=None):
         key = (item["agent"], item["session_id"], item.get("cwd"))
         if key in unique:
             unique[key].setdefault("other_panes", []).append(item.get("pane_id"))
+            # Receipts carry lineage that a newly saved Clinch pane does not.
+            for field in (
+                "ancestor_hashes",
+                "origin_pane",
+                "origin_cwd",
+                "project_name",
+                "checkout_root",
+                "agent_home",
+                "transcript",
+            ):
+                if field in item:
+                    unique[key][field] = item[field]
         else:
             unique[key] = item
     return {
