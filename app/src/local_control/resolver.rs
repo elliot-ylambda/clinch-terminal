@@ -31,6 +31,27 @@ pub(crate) fn validate_action_params(action: &::local_control::Action) -> Result
         return Ok(());
     }
     match action.kind.metadata().parameter_spec {
+        ActionParameterSpec::PaneRead => {
+            parse_params::<::local_control::agents::PaneReadParams>(action)
+        }
+        ActionParameterSpec::AgentScope => {
+            parse_params::<::local_control::agents::AgentScope>(action)
+        }
+        ActionParameterSpec::AgentTarget => {
+            parse_params::<::local_control::agents::AgentTargetParams>(action)
+        }
+        ActionParameterSpec::AgentRead => {
+            parse_params::<::local_control::agents::AgentReadParams>(action)
+        }
+        ActionParameterSpec::AgentSend => {
+            parse_params::<::local_control::agents::AgentSendParams>(action)
+        }
+        ActionParameterSpec::AgentMessage => {
+            parse_params::<::local_control::agents::AgentMessageParams>(action)
+        }
+        ActionParameterSpec::AgentMessageList => {
+            parse_params::<::local_control::agents::AgentMessageListParams>(action)
+        }
         ActionParameterSpec::None => parse_params::<EmptyParams>(action),
         ActionParameterSpec::ActionName => {
             let params = action.params_as::<ActionNameParams>()?;

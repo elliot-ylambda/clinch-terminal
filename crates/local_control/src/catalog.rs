@@ -61,6 +61,13 @@ pub enum ActionParameterSpec {
     SectionId,
     SectionMove,
     SectionUpdate,
+    AgentScope,
+    AgentTarget,
+    AgentRead,
+    AgentSend,
+    AgentMessage,
+    AgentMessageList,
+    PaneRead,
 }
 
 /// Typed result contract for a catalog action.
@@ -190,6 +197,19 @@ define_action_catalog! {
     capability {
         CapabilityList => { name: "capability.list", status: Implemented, target: Capability, params: None, result: CapabilityList },
         CapabilityInspect => { name: "capability.inspect", status: Implemented, target: Capability, params: ActionName, result: CapabilityMetadata },
+    }
+
+    coordination {
+        PaneRead => { name: "pane.read", status: Implemented, target: Instance, params: PaneRead, result: TargetMetadata },
+        WorkspaceTree => { name: "workspace.tree", status: Implemented, target: Instance, params: AgentScope, result: TargetList },
+        ProjectList => { name: "project.list", status: Implemented, target: Instance, params: AgentScope, result: TargetList },
+        AgentList => { name: "agent.list", status: Implemented, target: Instance, params: AgentScope, result: TargetList },
+        AgentInspect => { name: "agent.inspect", status: Implemented, target: Instance, params: AgentTarget, result: TargetMetadata },
+        AgentRead => { name: "agent.read", status: Implemented, target: Instance, params: AgentRead, result: TargetMetadata },
+        AgentSend => { name: "agent.send", status: Implemented, target: Instance, params: AgentSend, result: Acknowledgement },
+        AgentMessageInspect => { name: "agent.message.inspect", status: Implemented, target: Instance, params: AgentMessage, result: TargetMetadata },
+        AgentMessageCancel => { name: "agent.message.cancel", status: Implemented, target: Instance, params: AgentMessage, result: Acknowledgement },
+        AgentMessageList => { name: "agent.message.list", status: Implemented, target: Instance, params: AgentMessageList, result: TargetList },
     }
 
     window {

@@ -8973,3 +8973,160 @@ fn remote_control_zero_width_prompt_snapshot_includes_visible_prompt_and_command
         "\x1b]133;A\x07➜  magister-marketing git:(main) \x1b]133;B\x07slowtest"
     );
 }
+
+#[cfg(feature = "local_tty")]
+fn exercise_local_control_send(agent: CLIAgent, intervening_input: bool) {
+    App::test((), move |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        app.update(crate::remote_control::register);
+        app.update(crate::settings::LocalControlSettings::register);
+        app.update(|ctx| {
+            crate::settings::LocalControlSettings::handle(ctx).update(ctx, |settings, ctx| {
+                settings
+                    .local_control_mode
+                    .set_value(crate::settings::LocalControlMode::Enabled, ctx)
+            })
+        })
+        .unwrap();
+        let terminal = add_window_with_terminal(&mut app, None);
+        let writes = Rc::new(RefCell::new(Vec::<Vec<u8>>::new()));
+        let captured = writes.clone();
+        app.update(|ctx| {
+            ctx.subscribe_to_view(&terminal, move |_, event, _| {
+                if let Event::WriteBytesToPty { bytes } = event {
+                    captured.borrow_mut().push(bytes.to_vec());
+                }
+            })
+        });
+        let original_guard = Rc::new(RefCell::new(String::new()));
+        let guard_capture = original_guard.clone();
+        let completed = Arc::new(std::sync::Mutex::new(None));
+        let callback = completed.clone();
+        terminal.update(&mut app, |view, ctx| {
+            view.model.lock().simulate_long_running_block(
+                if agent == CLIAgent::Claude {
+                    "claude"
+                } else {
+                    "codex"
+                },
+                "",
+            );
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                let mut session = cli_agent_session_with_prompts(Vec::new());
+                session.agent = agent;
+                session.status = CLIAgentSessionStatus::Success;
+                session.session_context.session_id = Some("coordination-test".into());
+                session.received_rich_notification = true;
+                session.input_state = CLIAgentInputState::Closed;
+                session.draft_text = None;
+                sessions.set_session(view.view_id, session, ctx);
+            });
+            *guard_capture.borrow_mut() = view.local_control_queue_guard();
+            let (revision, unavailable) = view.local_control_agent_readiness(ctx);
+            assert_eq!(unavailable, None);
+            assert!(!view.local_control_send_agent_text(
+                "wrong".into(),
+                "stale-revision",
+                |_| {},
+                ctx
+            ));
+            assert!(view.local_control_send_agent_text(
+                "hello".into(),
+                &revision,
+                move |submitted| *callback.lock().unwrap() = Some(submitted),
+                ctx
+            ));
+            if intervening_input {
+                view.write_user_bytes_to_pty(b"x".to_vec(), ctx);
+            }
+        });
+        assert_eventually!(
+            completed.lock().unwrap().is_some(),
+            "submission callback should resolve"
+        );
+        assert_eq!(*completed.lock().unwrap(), Some(!intervening_input));
+        terminal.read(&app, |view, _| {
+            assert_eq!(
+                view.local_control_queue_guard() == *original_guard.borrow(),
+                !intervening_input,
+                "automated delivery must preserve queued guards; human input must invalidate them: before={}, after={}", original_guard.borrow(), view.local_control_queue_guard()
+            );
+        });
+        let writes = writes.borrow();
+        assert!(!writes.iter().any(|bytes| bytes == b"wrong"));
+        if intervening_input {
+            assert_eq!(writes.as_slice(), &[b"hello".to_vec(), b"x".to_vec()]);
+        } else {
+            assert_eq!(writes.len(), 2);
+            let expected = if agent == CLIAgent::Codex {
+                [BRACKETED_PASTE_START, b"hello", BRACKETED_PASTE_END].concat()
+            } else {
+                b"hello".to_vec()
+            };
+            assert_eq!(writes[0], expected);
+            assert_eq!(writes[1], b"\r");
+        }
+    });
+}
+
+#[test]
+#[cfg(feature = "local_tty")]
+fn local_control_send_claude_stops_enter_after_human_input() {
+    exercise_local_control_send(CLIAgent::Claude, true);
+}
+
+#[test]
+#[cfg(feature = "local_tty")]
+fn local_control_send_claude_submits_text_and_delayed_enter() {
+    exercise_local_control_send(CLIAgent::Claude, false);
+}
+
+#[test]
+#[cfg(feature = "local_tty")]
+fn local_control_send_codex_uses_bracketed_paste_and_enter() {
+    exercise_local_control_send(CLIAgent::Codex, false);
+}
+
+#[test]
+fn local_control_input_acknowledgement_reaches_an_existing_listener() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let terminal = add_window_with_terminal(&mut app, None);
+        terminal.update(&mut app, |view, ctx| {
+            view.model.lock().simulate_long_running_block("claude", "");
+            let start = serde_json::json!({"v": 1, "agent": "claude", "event": "session_start", "session_id": "existing-listener"}).to_string();
+            view.handle_cli_agent_notification(Some(CLI_AGENT_NOTIFICATION_SENTINEL), &start, ctx);
+            assert!(CLIAgentSessionsModel::as_ref(ctx).session(view.view_id).unwrap().listener.is_some());
+            view.write_user_bytes_to_pty(b"hello".to_vec(), ctx);
+            assert!(view.coordination_input_dirty);
+            let submit = serde_json::json!({"v": 1, "agent": "claude", "event": "prompt_submit", "session_id": "existing-listener", "query": "hello"}).to_string();
+            view.handle_cli_agent_notification(Some(CLI_AGENT_NOTIFICATION_SENTINEL), &submit, ctx);
+            assert!(!view.coordination_input_dirty);
+            view.write_user_bytes_to_pty(b"draft".to_vec(), ctx);
+            let other = serde_json::json!({"v": 1, "agent": "claude", "event": "prompt_submit", "session_id": "different-conversation", "query": "hello"}).to_string();
+            view.handle_cli_agent_notification(Some(CLI_AGENT_NOTIFICATION_SENTINEL), &other, ctx);
+            assert!(view.coordination_input_dirty);
+        });
+    });
+}
+
+#[test]
+fn local_control_queue_guard_changes_when_rich_input_is_edited() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let terminal = add_window_with_terminal(&mut app, None);
+        // Drain initial editor selection events before capturing the guard.
+        Timer::after(Duration::from_millis(10)).await;
+        let before = terminal.read(&app, |view, _| view.local_control_queue_guard());
+        terminal.update(&mut app, |view, ctx| {
+            view.input().update(ctx, |input, ctx| {
+                input.replace_buffer_content("human draft", ctx)
+            });
+        });
+        Timer::after(Duration::from_millis(10)).await;
+        assert_ne!(
+            terminal.read(&app, |view, _| view.local_control_queue_guard()),
+            before
+        );
+    });
+}

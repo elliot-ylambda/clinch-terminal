@@ -580,3 +580,8 @@ fn persist_registry(pairing: &PairingManager, ctx: &AppContext) {
         log::error!("could not persist Remote Control device registry: {error}");
     }
 }
+
+/// Local automation respects connected companion writers for the same terminal.
+pub(crate) fn has_writer_for_terminal(terminal_id: warpui::EntityId, ctx: &AppContext) -> bool {
+    WorkspaceAdapter::as_ref(ctx).has_writer_for_terminal(terminal_id, ctx)
+}

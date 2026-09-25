@@ -1097,6 +1097,21 @@ fn read_prompt_history_in(
         .unwrap_or_default()
 }
 
+/// Resolves only an attached provider session's native transcript for local coordination.
+/// Call from a blocking worker, never while holding the UI model.
+pub(crate) fn coordination_transcript_path(
+    provider: AgentResumeProvider,
+    session_id: &str,
+    path: Option<&Path>,
+) -> Option<PathBuf> {
+    let roots = agent_transcript_roots();
+    path.and_then(|path| safe_provider_transcript(path, provider, session_id, &roots))
+        .or_else(|| {
+            find_provider_transcript(provider, session_id, &roots)
+                .and_then(|path| safe_provider_transcript(&path, provider, session_id, &roots))
+        })
+}
+
 fn provider_transcript_root(
     provider: AgentResumeProvider,
     roots: &AgentTranscriptRoots,

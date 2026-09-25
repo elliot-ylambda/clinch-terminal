@@ -2687,6 +2687,11 @@ pub struct TerminalView {
 
     /// The [`EntityId`] for this terminal view.
     view_id: EntityId,
+    /// Tracks input changes between local-control inspection and submission.
+    coordination_input_epoch: u64,
+    coordination_user_input_epoch: u64,
+    coordination_input_dirty: bool,
+    coordination_send_pending: bool,
 
     current_state: TerminalViewStateChange,
 
@@ -4729,6 +4734,10 @@ impl TerminalView {
             privacy_settings_snapshot: privacy_settings_handle.as_ref(ctx).get_snapshot(ctx),
             was_ever_visible: false,
             view_id: ctx.view_id(),
+            coordination_input_epoch: 0,
+            coordination_user_input_epoch: 0,
+            coordination_input_dirty: false,
+            coordination_send_pending: false,
             current_state: TerminalViewStateChange::default(),
             did_notify_long_running: false,
             is_focused_and_active: true,
@@ -9648,6 +9657,9 @@ impl TerminalView {
         // auto-continue (the user has taken over). The auto-continue's own
         // send also lands here, but only after its armed state was consumed,
         // so this is a no-op for that path.
+        self.coordination_user_input_epoch = self.coordination_user_input_epoch.wrapping_add(1);
+        self.coordination_input_epoch = self.coordination_input_epoch.wrapping_add(1);
+        self.coordination_input_dirty = true;
         self.cancel_auto_continue_on_user_input(ctx);
 
         // Neither Claude Code nor Codex fires a hook for an aborted turn, so the interrupt
@@ -13407,14 +13419,31 @@ impl TerminalView {
             return;
         }
 
-        if !self.register_cli_agent_listener_from_event(&notification, ctx) {
-            return;
+        let registered = self.register_cli_agent_listener_from_event(&notification, ctx);
+        if registered {
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions_model, ctx| {
+                sessions_model.update_from_event(self.view_id, &notification, ctx);
+            });
         }
 
-        CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions_model, ctx| {
-            sessions_model.update_from_event(self.view_id, &notification, ctx);
-        });
-
+        // Subsequent events are applied by the listener, but input acknowledgement must
+        // also reach this view; otherwise the first submission would leave it dirty forever.
+        if matches!(
+            notification.event,
+            CLIAgentEventType::PromptSubmit | CLIAgentEventType::SessionStart
+        ) && CLIAgentSessionsModel::as_ref(ctx)
+            .session(self.view_id)
+            .is_some_and(|session| {
+                session.agent == notification.agent
+                    && session.session_context.session_id == notification.session_id
+            })
+        {
+            self.coordination_input_dirty = false;
+            self.coordination_input_epoch = self.coordination_input_epoch.wrapping_add(1);
+        }
+        if !registered {
+            return;
+        }
         if notification.event == CLIAgentEventType::SessionStart {
             send_telemetry_from_ctx!(
                 TelemetryEvent::CLIAgentPluginDetected {
@@ -22491,6 +22520,15 @@ impl TerminalView {
                 block_id,
                 operations,
             } => {
+                // Selection updates also occur during automated submission. Only
+                // changes to text preempt queued coordination messages.
+                if operations.iter().any(|operation| {
+                    matches!(operation, CrdtOperation::Edit(_) | CrdtOperation::Undo(_))
+                }) {
+                    self.coordination_user_input_epoch =
+                        self.coordination_user_input_epoch.wrapping_add(1);
+                    self.coordination_input_epoch = self.coordination_input_epoch.wrapping_add(1);
+                }
                 // Editing the rich input means the user has taken over this
                 // stopped pane, just like typing directly into its PTY.
                 self.cancel_auto_continue_on_user_input(ctx);

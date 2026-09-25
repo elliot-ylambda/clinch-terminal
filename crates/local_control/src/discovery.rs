@@ -334,6 +334,22 @@ pub fn list_instances_from_dir(dir: &Path, channel: &str) -> Vec<InstanceRecord>
         let record = match serde_json::from_str::<InstanceRecord>(&contents) {
             Ok(r) => r,
             Err(_) => {
+                // Another live app may advertise actions this client has never heard of.
+                // Its closed-enum metadata is incompatible, not corrupt. Preserve its
+                // record and socket instead of breaking that app's control channel.
+                #[derive(Deserialize)]
+                struct RecordIdentity {
+                    instance_id: InstanceId,
+                    pid: u32,
+                }
+                if let Ok(identity) = serde_json::from_str::<RecordIdentity>(&contents) {
+                    if record_path(dir, &identity.instance_id) == path && is_pid_alive(identity.pid)
+                    {
+                        retained_broker_sockets
+                            .insert(broker_socket_filename(&identity.instance_id));
+                        continue;
+                    }
+                }
                 remove_malformed_record_artifacts(dir, &path);
                 continue;
             }
@@ -434,12 +450,12 @@ fn sweep_abandoned_temp_records(dir: &Path, grace_period: Duration) {
 }
 
 #[cfg(unix)]
-fn is_pid_alive(pid: u32) -> bool {
+pub fn is_pid_alive(pid: u32) -> bool {
     unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
 }
 
 #[cfg(windows)]
-fn is_pid_alive(pid: u32) -> bool {
+pub fn is_pid_alive(pid: u32) -> bool {
     Command::new("tasklist")
         .args(["/FI", &format!("PID eq {pid}"), "/NH"])
         .output()
@@ -447,7 +463,7 @@ fn is_pid_alive(pid: u32) -> bool {
         .unwrap_or(true)
 }
 #[cfg(all(not(unix), not(windows)))]
-fn is_pid_alive(_: u32) -> bool {
+pub fn is_pid_alive(_: u32) -> bool {
     false
 }
 

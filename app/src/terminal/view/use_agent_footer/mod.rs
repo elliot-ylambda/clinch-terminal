@@ -356,6 +356,16 @@ enum RichInputSubmitStrategy {
     BracketedPasteDelayedEnter,
 }
 
+/// A closed pane drops its timer, which makes unfinished delivery explicitly uncertain.
+struct LocalAgentDeliveryCompletion(Option<Box<dyn FnOnce(bool) + Send>>);
+impl Drop for LocalAgentDeliveryCompletion {
+    fn drop(&mut self) {
+        if let Some(callback) = self.0.take() {
+            callback(false);
+        }
+    }
+}
+
 /// Returns the strategy for submitting rich input text to a CLI agent's PTY.
 fn rich_input_submit_strategy(agent: CLIAgent) -> RichInputSubmitStrategy {
     match agent {
@@ -1192,6 +1202,187 @@ impl TerminalView {
         ctx.clipboard()
             .write(warpui::clipboard::ClipboardContent::plain_text(draft));
         true
+    }
+
+    /// Queue guard changes for human input or foreground replacement, not provider progress.
+    pub(crate) fn local_control_queue_guard(&self) -> String {
+        format!(
+            "{}:{:?}",
+            self.coordination_user_input_epoch,
+            self.model.lock().block_list().active_block().id()
+        )
+    }
+
+    /// Revision includes input epochs and provider state; inspection itself never consumes input.
+    pub(crate) fn local_control_agent_readiness(
+        &self,
+        ctx: &AppContext,
+    ) -> (String, Option<&'static str>) {
+        use crate::terminal::cli_agent_sessions::CLIAgentSessionStatus;
+        use std::hash::{Hash, Hasher};
+        let Some(session) = CLIAgentSessionsModel::as_ref(ctx).session(self.view_id) else {
+            return (String::new(), Some("no_agent"));
+        };
+        let model = self.model.lock();
+        let block = model.block_list().active_block();
+        let native_grid = if model.is_alt_screen_active() {
+            model.alt_screen().grid_handler()
+        } else {
+            block.output_grid().grid_handler()
+        };
+        let native_draft = match session.agent {
+            CLIAgent::Claude => claude_native_composer_draft(native_grid),
+            CLIAgent::Codex => codex_native_composer_draft(native_grid),
+            _ => None,
+        };
+        let rich_draft = self.has_active_cli_agent_input_session(ctx)
+            && !self.input.as_ref(ctx).buffer_text(ctx).is_empty();
+        let reason = if !matches!(session.agent, CLIAgent::Claude | CLIAgent::Codex) {
+            Some("unsupported_provider")
+        } else if session.is_remote() {
+            Some("remote_session")
+        } else if session.session_key().is_none() {
+            Some("unknown_conversation")
+        } else if !session.supports_rich_status() {
+            Some("status_unavailable")
+        } else if self.coordination_send_pending {
+            Some("submission_pending")
+        } else if !block.is_active_and_long_running()
+            || block.is_agent_in_control()
+            || model.shared_session_status().is_viewer()
+        {
+            Some("agent_not_writable")
+        } else if matches!(session.status, CLIAgentSessionStatus::Blocked { .. }) {
+            Some("interactive_attention_required")
+        } else if session.session_context.stop_reason.is_some() {
+            Some("rate_limited")
+        } else if self.coordination_input_dirty
+            || rich_draft
+            || native_draft.is_some()
+            || session
+                .draft_text
+                .as_ref()
+                .is_some_and(|text| !text.is_empty())
+        {
+            Some("human_input_or_draft")
+        } else if session.is_actively_working() {
+            Some("working")
+        } else {
+            None
+        };
+        drop(model);
+        let reason = reason.or_else(|| {
+            crate::remote_control::has_writer_for_terminal(self.view_id, ctx)
+                .then_some("remote_writer")
+        });
+        let mut hash = std::collections::hash_map::DefaultHasher::new();
+        format!(
+            "{:?}:{:?}:{:?}:{}:{}:{:?}",
+            session.agent,
+            session.session_context.session_id,
+            session.status,
+            self.coordination_input_epoch,
+            session.prompt_count(),
+            reason
+        )
+        .hash(&mut hash);
+        (format!("{:016x}", hash.finish()), reason)
+    }
+
+    /// Direct CLI send with a second identity/input check before provider-specific Enter.
+    #[cfg(feature = "local_tty")]
+    pub(crate) fn local_control_send_agent_text(
+        &mut self,
+        text: String,
+        expected_revision: &str,
+        completion: impl FnOnce(bool) + Send + 'static,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        let (revision, unavailable) = self.local_control_agent_readiness(ctx);
+        let mut completion = LocalAgentDeliveryCompletion(Some(Box::new(completion)));
+        if revision != expected_revision || unavailable.is_some() {
+            return false;
+        }
+        let session = CLIAgentSessionsModel::as_ref(ctx)
+            .session(self.view_id)
+            .expect("validated agent");
+        let identity = session.session_key();
+        let agent = session.agent;
+        let input_epoch = self.coordination_input_epoch;
+        let block_id = self.model.lock().block_list().active_block().id().clone();
+        let text_bytes = text.into_bytes();
+        self.coordination_send_pending = true;
+        // write_to_pty avoids marking our own insertion as intervening human input.
+        if matches!(
+            rich_input_submit_strategy(agent),
+            RichInputSubmitStrategy::BracketedPaste
+        ) {
+            let mut bytes = BRACKETED_PASTE_START.to_vec();
+            bytes.extend_from_slice(&text_bytes);
+            bytes.extend_from_slice(BRACKETED_PASTE_END);
+            self.write_to_pty(bytes, ctx);
+        } else {
+            self.write_to_pty(text_bytes, ctx);
+        }
+        let delay = if agent == CLIAgent::Claude {
+            CLI_AGENT_PTY_WRITE_DELAY
+        } else {
+            Duration::ZERO
+        };
+        ctx.spawn(Timer::after(delay), move |me, _, ctx| {
+            let same_ready_session = CLIAgentSessionsModel::as_ref(ctx)
+                .session(me.view_id)
+                .is_some_and(|session| {
+                    session.agent == agent
+                        && session.session_key() == identity
+                        && !session.is_remote()
+                        && !session.is_actively_working()
+                        && !matches!(session.status, crate::terminal::cli_agent_sessions::CLIAgentSessionStatus::Blocked { .. })
+                        && session.session_context.stop_reason.is_none()
+                        && session.draft_text.as_ref().is_none_or(String::is_empty)
+                });
+            let same_foreground = {
+                let model = me.model.lock();
+                let block = model.block_list().active_block();
+                block.id() == &block_id
+                    && block.is_active_and_long_running()
+                    && !block.is_agent_in_control()
+                    && !model.shared_session_status().is_viewer()
+            };
+            let rich_input_empty = !me.has_active_cli_agent_input_session(ctx)
+                || me.input.as_ref(ctx).buffer_text(ctx).is_empty();
+            let valid = me.coordination_input_epoch == input_epoch
+                && crate::settings::LocalControlSettings::as_ref(ctx).is_enabled()
+                && !crate::remote_control::has_writer_for_terminal(me.view_id, ctx)
+                && same_ready_session
+                && same_foreground
+                && rich_input_empty;
+            me.coordination_send_pending = false;
+            me.coordination_input_dirty = true;
+            me.coordination_input_epoch = me.coordination_input_epoch.wrapping_add(1);
+            if valid {
+                me.write_to_pty(vec![b'\r'], ctx);
+                CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                    sessions.mark_project_cli_agent_turn_started_from_clinch_submission(me.view_id, ctx);
+                });
+                me.maybe_close_rich_input_after_submit(ctx);
+            }
+            if let Some(callback) = completion.0.take() {
+                callback(valid);
+            }
+        });
+        true
+    }
+
+    #[cfg(not(feature = "local_tty"))]
+    pub(crate) fn local_control_send_agent_text(
+        &mut self,
+        _text: String,
+        _expected_revision: &str,
+        _completion: impl FnOnce(bool) + Send + 'static,
+        _ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        false
     }
 
     /// Submits `text` as a prompt to the active CLI agent on this terminal by
