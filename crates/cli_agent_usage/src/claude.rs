@@ -5,7 +5,7 @@ use std::path::Path;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
-use crate::cache::{scan_dir, ScanCache};
+use crate::cache::ScanCache;
 use crate::{aggregate_windows, Entry, Provider, TokenCounts, WindowTotals};
 
 #[derive(Deserialize)]
@@ -107,7 +107,7 @@ pub fn scan(
     let mut provider = Provider::default();
     let mut seen = std::collections::HashSet::new();
 
-    let files = scan_dir(projects_dir, ".jsonl");
+    let files = cache.scan_dir(projects_dir, ".jsonl");
     // session = the most-recently-modified transcript
     let latest = files
         .iter()
@@ -115,9 +115,7 @@ pub fn scan(
         .map(|(p, _, _)| p.clone());
 
     for (path, mtime, size) in &files {
-        let entries = cache
-            .get_or_parse(path, *mtime, *size, parse_transcript_file)
-            .clone();
+        let entries = cache.get_or_parse(path, *mtime, *size, parse_transcript_file);
         // Index this transcript's latest model under its session id (= file stem).
         if let Some(session_id) = path.file_stem().and_then(|s| s.to_str()) {
             if let Some(model) = entries.iter().max_by_key(|e| e.ts).map(|e| e.model.clone()) {
@@ -125,7 +123,7 @@ pub fn scan(
             }
         }
         aggregate_windows(
-            &entries,
+            entries,
             now,
             &mut seen,
             &mut provider.today,
@@ -135,8 +133,8 @@ pub fn scan(
         if Some(path) == latest.as_ref() {
             let mut s = WindowTotals::default();
             let mut session_seen = std::collections::HashSet::new();
-            for e in &entries {
-                if !e.dedup.is_empty() && !session_seen.insert(e.dedup.clone()) {
+            for e in entries {
+                if !e.dedup.is_empty() && !session_seen.insert(e.dedup.as_str()) {
                     continue;
                 }
                 s.add_entry(e);

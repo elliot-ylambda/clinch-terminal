@@ -283,6 +283,17 @@ Session-capture data stays in local Clinch-owned files. Claude Code and Codex co
 their own transcripts and credentials. Clinch does not delete provider transcripts or Keychain
 credentials during uninstall.
 
+Clinch launches the provider CLIs with their existing sign-ins. On macOS, Clinch's own Keychain
+access never opens a password dialog. The optional Claude plan meter uses the existing Claude
+Code login only when macOS permits a silent read; **Retry** follows the same rule. If access is
+unavailable, plan limits remain unavailable while local transcript statistics and agent sessions
+continue to work. The provider CLIs still control their own authentication flows.
+
+Blocked Keychain access does not erase saved data or create replacement credentials. Local and
+Remote Control remain disabled when their saved authorization cannot be read. Stable app signing
+is needed to preserve Keychain trust across updates; suppressing dialogs does not grant access to
+an entry that trusts an older build.
+
 ## Updates and removal
 
 Updater-enabled builds check automatically and show **Update Clinch** in the header. You can
@@ -378,6 +389,53 @@ legacy universal build optimization.
 After these changes land on `main`, run `make configure-release-repository` once. It validates both
 workstation key copies before deleting the obsolete GitHub signing secrets and `public-release`
 environment, then reapplies branch, scanning, Actions-token, and immutable-release controls.
+
+## Local disk and resource maintenance
+
+From a source checkout, `make worktrees` previews registered worktrees, their disk use, and
+what prevents cleanup. It deletes nothing. Once a worktree is finished, close its tabs and
+processes, review its ignored files in the preview, then select its exact path:
+
+```bash
+./script/clean-worktrees --remove "$HOME/.clinch/worktrees/clinch-terminal/finished-branch"
+./script/clean-worktrees --remove "$HOME/.clinch/worktrees/clinch-terminal/finished-branch" --apply
+```
+
+Removal requires a clean, unlocked, attached worktree under the managed worktree directory,
+with its commits merged into the selected base. The default base is local `main`, `master`,
+or `origin/HEAD`; use `--base` for another branch. This check does not fetch and conservatively
+keeps squash-merged branches whose commits are not ancestors of the base. Primary/current
+checkouts, symlink paths, indexes that hide tracked changes, and checkouts used as one of your
+running processes' working directories are protected. Paths with backslashes, control characters, or
+non-ASCII characters are kept because process inspection may escape them. If process inspection
+fails, cleanup is blocked. Checks run again before removal;
+Git performs the final removal without force, and the branch is preserved.
+
+Removing a checkout **also removes ignored files**, including build outputs and local `.env`
+files, and means Undo Close can no longer reopen that checkout. Move any local files you want
+to keep first. Process checks are a snapshot: don't start new work in a checkout while removing
+it. Tab closure alone never deletes a worktree. `--repo`, `--managed-root`, `--json`, and `--size`
+are available for other repositories and scripted previews. To reclaim only regenerable Cargo
+caches while retaining checkouts and compiled dependencies, use `make prune` (default: seven
+days old), or preview with `./script/reclaim-build-space --dry-run`.
+
+On macOS, `make resources` watches the Clinch process bound to the current terminal. It uses
+OS counters every five seconds and displays CPU, resident memory, full physical footprint
+(including compressed memory), and separate totals for child processes such as shells and
+coding agents. CPU at 100% means one core. Child totals are approximate: shared memory may be
+counted more than once, short-lived processes may exit between samples, and unreadable children
+are counted separately. It reads no terminal text or provider transcripts and sends nothing
+over the network. To record a bounded sample from another terminal:
+
+```bash
+./script/watch-clinch-resources --pid 12345 --samples 60 --csv /tmp/clinch-resources.csv
+```
+
+Replace `12345` with the Clinch PID from Activity Monitor. CSV output creates a new file and
+refuses to overwrite an existing one. Ctrl-C stops an interactive watch; nothing is installed
+to run in the background. Clinch also logs a local warning when its own footprint reaches
+2 GB, with resident memory and estimated open/Undo Close terminal retention. That warning
+re-arms only after the footprint falls below 1.5 GB.
 
 ## License and attribution
 

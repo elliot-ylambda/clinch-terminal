@@ -5,6 +5,8 @@
 #   make update                       Install the latest authenticated public release manually.
 #   make dev                          Build and run isolated Clinch Dev.
 #   make prune                        Delete regenerable build caches by hand.
+#   make worktrees                    Preview finished worktree cleanup.
+#   make resources                    Watch this Clinch instance's CPU and memory.
 #
 # The build targets prune stale caches first so a release is not aborted by the
 # 40 GiB free-space floor; CLINCH_SKIP_PRUNE=1 disables that.
@@ -76,7 +78,7 @@ export RELEASE_NOTES
 
 .DEFAULT_GOAL := help
 .PHONY: help dev dev-app dev-open candidate release update release-check require-latest-main \
-	prune _prune _require-create-dmg _bundle _package _verify _verify-existing \
+	prune worktrees resources _prune _require-create-dmg _bundle _package _verify _verify-existing \
 	_validate-release-layout _write-release-checksums agent-resume-enable \
 	configure-release-repository
 
@@ -98,6 +100,12 @@ _prune:
 
 prune: ## Delete regenerable build caches (PRUNE_DAYS=0 for every cache)
 	./script/reclaim-build-space --days $(PRUNE_DAYS)
+
+worktrees: ## Preview finished worktrees and their disk usage; deletes nothing
+	./script/clean-worktrees --size
+
+resources: ## Watch CPU and memory for the Clinch instance bound to this terminal
+	./script/watch-clinch-resources
 
 dev: _prune ## Incrementally build and run isolated Clinch Dev
 	./script/clinch-dev run
