@@ -13,11 +13,13 @@ install -m 0644 "$HERE/agent-json.js" "$BIN/"
 
 export WARP_TERMINAL_SESSION_UUID="cc33"
 export WARP_AGENT_RESUME_FAKE_ANCESTRY="claude"
+export WARP_AGENT_RESUME_FAKE_OWNER_PID=1000
 f="$WARP_AGENT_RESUME_DIR/cc33.json"
 
 # Pin the launch-flag detection off for the plain cases so they are deterministic regardless
 # of how this test was launched (a real claude ancestor must not leak its flags in).
 export WARP_AGENT_RESUME_FAKE_ARGV=""
+unset CLINCH_CONTROL_PID
 # Likewise pin the bridge id off: this test may itself run inside a bridged claude session,
 # which would leak CLAUDE_CODE_BRIDGE_SESSION_ID into every capture below.
 unset CLAUDE_CODE_BRIDGE_SESSION_ID
@@ -154,6 +156,16 @@ grep -q 'sess-new' "$f" || { echo "FAIL: user-started session must still take ov
 # nested/mismatched end and app-shutdown teardown both preserve the outer mapping.
 echo '{"session_id":"sess-other","cwd":"/tmp/repo","hook_event_name":"SessionEnd"}' | "$BIN/claude-capture.sh"
 grep -q 'sess-new' "$f" || { echo "FAIL: mismatched SessionEnd removed outer entry"; exit 1; }
+# A crash writes no graceful-shutdown marker. Claude's abnormal exit must keep
+# the exact session mapping and must not create a removal tombstone.
+echo '{"session_id":"sess-new","cwd":"/tmp/repo","hook_event_name":"SessionEnd","reason":"other"}' | "$BIN/claude-capture.sh"
+grep -q 'sess-new' "$f" || { echo "FAIL: abnormal SessionEnd removed restorable entry"; exit 1; }
+[[ ! -f "$WARP_AGENT_RESUME_DIR/tombstones/cc33" ]] || { echo "FAIL: abnormal exit created tombstone"; exit 1; }
+# Host death is authoritative even when an older provider omits its exit reason.
+/bin/sleep 0 & crashed_pid=$!; wait "$crashed_pid" 2>/dev/null || true
+echo '{"session_id":"sess-new","cwd":"/tmp/repo","hook_event_name":"SessionEnd"}' \
+  | CLINCH_CONTROL_PID="$crashed_pid" "$BIN/claude-capture.sh"
+grep -q 'sess-new' "$f" || { echo "FAIL: crashed host removed restorable entry"; exit 1; }
 mkdir -p "$WARP_AGENT_RESUME_DIR"; printf '%s\n' "$$" > "$WARP_AGENT_RESUME_DIR/.app-terminating"
 echo '{"session_id":"sess-new","cwd":"/tmp/repo","hook_event_name":"SessionEnd"}' | "$BIN/claude-capture.sh"
 grep -q 'sess-new' "$f" || { echo "FAIL: app shutdown removed restorable entry"; exit 1; }
@@ -177,7 +189,7 @@ echo '{"session_id":"sess-new","cwd":"/tmp/repo","hook_event_name":"SessionEnd"}
   || { echo "FAIL: expired marker was not self-removed"; exit 1; }
 
 echo '{"session_id":"sess-new","cwd":"/tmp/repo"}' | "$BIN/claude-capture.sh"
-echo '{"session_id":"sess-new","cwd":"/tmp/repo","hook_event_name":"SessionEnd"}' | "$BIN/claude-capture.sh"
+echo '{"session_id":"sess-new","cwd":"/tmp/repo","hook_event_name":"SessionEnd","reason":"prompt_input_exit"}' | CLINCH_CONTROL_PID="$$" "$BIN/claude-capture.sh"
 [[ ! -f "$f" ]] || { echo "FAIL: user SessionEnd did not remove owned entry"; exit 1; }
 rm -f "$f"
 

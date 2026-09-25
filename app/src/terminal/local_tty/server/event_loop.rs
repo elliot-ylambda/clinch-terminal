@@ -249,7 +249,7 @@ impl EventLoop {
                     // No need to close all open file descriptors when spawning a pty from
                     // the terminal server, as it spawns ptys cleanly.
                     options.close_fds = false;
-                    let result = match local_tty::spawn(options) {
+                    let result = match local_tty::spawn(*options) {
                         Ok(pty_spawn_info) => {
                             let child = pty_spawn_info.child;
                             log::info!("Successfully spawned tty with pid: {}", child.id());

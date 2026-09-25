@@ -6,6 +6,27 @@ fn request_envelope_serializes_stable_action_names() {
     let value = serde_json::to_value(&request).expect("request serializes");
     assert_eq!(value["protocol_version"], PROTOCOL_VERSION);
     assert_eq!(value["action"]["kind"], "window.focus");
+    assert!(value.get("origin_terminal_session_uuid").is_none());
+}
+
+#[test]
+fn request_envelope_roundtrips_origin_terminal_session_uuid() {
+    let origin_terminal_session_uuid =
+        Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+    let mut request = RequestEnvelope::new(Action::new(ActionKind::TabCreate));
+    request.origin_terminal_session_uuid = Some(origin_terminal_session_uuid);
+
+    let value = serde_json::to_value(&request).expect("request serializes");
+    assert_eq!(
+        value["origin_terminal_session_uuid"],
+        origin_terminal_session_uuid.to_string()
+    );
+    assert_eq!(
+        serde_json::from_value::<RequestEnvelope>(value)
+            .expect("request decodes")
+            .origin_terminal_session_uuid,
+        Some(origin_terminal_session_uuid)
+    );
 }
 
 #[test]
@@ -43,6 +64,42 @@ fn strict_params_serialize_without_synthetic_discriminators() {
         })
     );
     assert!(action.params.get("type").is_none());
+
+    let action = Action::with_params(
+        ActionKind::ToolbeltSuggestionResolve,
+        ToolbeltSuggestionResolveParams {
+            suggestion_id: "00000000-0000-4000-8000-000000000001".to_owned(),
+            outcome: ToolbeltSuggestionOutcome::Declined,
+        },
+    )
+    .expect("toolbelt suggestion params serialize");
+    assert_eq!(
+        action.params,
+        serde_json::json!({
+            "suggestion_id": "00000000-0000-4000-8000-000000000001",
+            "outcome": "declined"
+        })
+    );
+
+    let action = Action::with_params(
+        ActionKind::TabGrep,
+        TabGrepParams {
+            pattern: "error".to_owned(),
+            ignore_case: true,
+            fixed_strings: false,
+            max_matches: 25,
+        },
+    )
+    .expect("tab.grep params serialize");
+    assert_eq!(
+        action.params,
+        serde_json::json!({
+            "pattern": "error",
+            "ignore_case": true,
+            "fixed_strings": false,
+            "max_matches": 25
+        })
+    );
 }
 
 #[test]
@@ -164,8 +221,8 @@ fn malformed_and_removed_action_names_are_not_deserialized() {
 }
 
 #[test]
-fn catalog_has_exactly_105_retained_actions() {
-    assert_eq!(ActionKind::ALL.len(), 105);
+fn catalog_has_exactly_108_retained_actions() {
+    assert_eq!(ActionKind::ALL.len(), 108);
 }
 
 #[test]

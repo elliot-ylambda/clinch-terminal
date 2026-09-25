@@ -634,6 +634,22 @@ fn clinch_update_header_pill(stage: &AutoupdateStage) -> Option<(&'static str, b
     }
 }
 
+fn update_header_install_action(
+    uses_clinch_updater: bool,
+    stage: &AutoupdateStage,
+) -> WorkspaceAction {
+    if uses_clinch_updater
+        && matches!(
+            stage,
+            AutoupdateStage::UpdateAvailable { .. } | AutoupdateStage::UpdateReady { .. }
+        )
+    {
+        WorkspaceAction::CheckForUpdate
+    } else {
+        WorkspaceAction::ApplyUpdate
+    }
+}
+
 #[cfg(not(target_family = "wasm"))]
 const RESOURCE_CENTER_WIDTH: f32 = 361.;
 
@@ -1412,6 +1428,8 @@ const REMOTE_CONTROL_DISCOVERY_LABEL: &str = "Remote Control";
 struct RemoteControlHeaderPresentation {
     label: String,
     connected_device_name: Option<String>,
+    /// A scanned phone is waiting for approval, which only happens on this Mac.
+    awaiting_approval: bool,
 }
 
 #[cfg(not(target_family = "wasm"))]
@@ -1427,14 +1445,19 @@ fn remote_control_header_presentation(
                 .max_by(|left, right| left.last_seen_at.cmp(&right.last_seen_at))
         })
         .map(|device| device.name.clone());
-    let label = connected_device_name
-        .as_ref()
-        .map(|name| format!("{name} connected"))
-        .unwrap_or_else(|| REMOTE_CONTROL_DISCOVERY_LABEL.to_owned());
+    let pending_device_name = state
+        .and_then(|state| state.pending_claims.first())
+        .map(|claim| claim.device_name.clone());
+    let label = match (&pending_device_name, &connected_device_name) {
+        (Some(name), _) => format!("Approve {name}"),
+        (None, Some(name)) => format!("{name} connected"),
+        (None, None) => REMOTE_CONTROL_DISCOVERY_LABEL.to_owned(),
+    };
 
     RemoteControlHeaderPresentation {
         label,
         connected_device_name,
+        awaiting_approval: pending_device_name.is_some(),
     }
 }
 
@@ -1449,7 +1472,7 @@ fn remote_control_button_styles(
         font_size: Some(REMOTE_CONTROL_BUTTON_FONT_SIZE),
         font_weight: Some(Weight::Semibold),
         padding: Some(Coords::default().top(3.).bottom(3.).left(7.).right(7.)),
-        border_color: Some(muted_color.into()),
+        border_color: Some(CLINCH_LOGO_GREEN.into()),
         border_width: Some(1.),
         border_radius: Some(CornerRadius::with_all(Radius::Percentage(50.))),
         background: Some(ColorU::transparent_black().into()),
@@ -1492,6 +1515,14 @@ fn agent_conversation_reopen_cwd(
 }
 
 impl Workspace {
+    pub(crate) fn vertical_tabs_panel_width(&self) -> f32 {
+        self.vertical_tabs_panel.width()
+    }
+
+    pub(crate) fn set_vertical_tabs_panel_width(&mut self, width: f32) {
+        self.vertical_tabs_panel.set_width(width);
+    }
+
     pub fn is_tab_drag_preview(&self) -> bool {
         self.is_tab_drag_preview
     }
@@ -1936,6 +1967,10 @@ impl Workspace {
         is_drop_target: bool,
         ctx: &mut ViewContext<Self>,
     ) {
+        if is_drop_target && self.bookmarked_sessions_collapsed {
+            self.bookmarked_sessions_collapsed = false;
+            ctx.notify();
+        }
         if self.vertical_tabs_panel.bookmarked_section_is_drop_target == is_drop_target {
             return;
         }
@@ -3978,7 +4013,18 @@ impl Workspace {
             ai_fact_view,
             left_panel_open: false,
             vertical_tabs_panel_open: false,
-            vertical_tabs_panel: Default::default(),
+            vertical_tabs_panel: {
+                let panel = VerticalTabsPanelState::default();
+                if let NewWorkspaceSource::Restored {
+                    window_snapshot, ..
+                } = &workspace_setting
+                {
+                    if let Some(width) = window_snapshot.vertical_tabs_panel_width {
+                        panel.set_width(width);
+                    }
+                }
+                panel
+            },
             left_panel_view,
             left_panel_views,
             right_panel_view,
@@ -6705,22 +6751,6 @@ impl Workspace {
                         *visible,
                         ctx,
                     ),
-                    QuickInsertModalTarget::ClaudeCode => append_cli_custom_button(
-                        AgentToolbarEditorMode::ClaudeCode,
-                        label.clone(),
-                        text.clone(),
-                        *auto_send,
-                        *visible,
-                        ctx,
-                    ),
-                    QuickInsertModalTarget::Codex => append_cli_custom_button(
-                        AgentToolbarEditorMode::Codex,
-                        label.clone(),
-                        text.clone(),
-                        *auto_send,
-                        *visible,
-                        ctx,
-                    ),
                     QuickInsertModalTarget::Terminal => append_terminal_custom_button(
                         label.clone(),
                         text.clone(),
@@ -8654,14 +8684,29 @@ impl Workspace {
                         .with_disabled(true)
                         .into_item(),
                 );
-                match autoupdate::get_update_state(ctx) {
+                let update_state = autoupdate::get_update_state(ctx);
+                match &update_state {
                     AutoupdateStage::UpdateAvailable { new_version, .. }
                     | AutoupdateStage::UpdateReady { new_version, .. }
-                    | AutoupdateStage::UpdatedPendingRestart { new_version } => menu_items.push(
-                        MenuItemFields::new(format!("Install update ({})", new_version.version))
-                            .with_on_select_action(WorkspaceAction::ApplyUpdate)
-                            .into_item(),
-                    ),
+                    | AutoupdateStage::UpdatedPendingRestart { new_version } => {
+                        let action = update_header_install_action(
+                            ChannelState::uses_clinch_updater(),
+                            &update_state,
+                        );
+                        let label = if matches!(&action, WorkspaceAction::CheckForUpdate) {
+                            // The persistent pill may have been populated by a daily check before
+                            // newer releases were published. Refresh the signed feed before using
+                            // it so one click always targets the newest available Clinch release.
+                            "Check for latest and install".to_owned()
+                        } else {
+                            format!("Install update ({})", new_version.version)
+                        };
+                        menu_items.push(
+                            MenuItemFields::new(label)
+                                .with_on_select_action(action)
+                                .into_item(),
+                        );
+                    }
                     AutoupdateStage::Updating { new_version, .. } => menu_items.push(
                         MenuItemFields::new(format!("Updating to ({})", new_version.version))
                             .with_disabled(true)
@@ -10054,38 +10099,38 @@ impl Workspace {
         );
     }
 
-    /// Install the Warp Control CLI by creating a symlink in /usr/local/bin
+    /// Install the Clinch CLI by creating a symlink in /usr/local/bin.
     #[cfg(target_os = "macos")]
     fn install_warpctrl(&mut self, ctx: &mut ViewContext<Self>) {
         ctx.spawn(
-            async { cli_install::install_warpctrl() },
+            async { cli_install::install_local_control_cli() },
             |view, result, ctx| {
-                let command_name = ChannelState::channel().warpctrl_command_name();
-                let message = format!("Successfully installed the Warp Control CLI! You can now run '{command_name}' from the command line.");
+                let command = cli_install::local_control_cli_invocation();
+                let message = format!("Successfully installed the Clinch CLI! You can now run '{command}' from the command line.");
                 let toast = DismissibleToast::success(message);
                 view.handle_cli_command_result(
                     result,
                     toast,
-                    "Failed to install Warp Control command",
+                    "Failed to install Clinch CLI command",
                     ctx,
                 );
             },
         );
     }
 
-    /// Uninstall the Warp Control CLI by removing the symlink from /usr/local/bin
+    /// Uninstall the Clinch CLI by removing the symlink from /usr/local/bin.
     #[cfg(target_os = "macos")]
     fn uninstall_warpctrl(&mut self, ctx: &mut ViewContext<Self>) {
         ctx.spawn(
-            async { cli_install::uninstall_warpctrl() },
+            async { cli_install::uninstall_local_control_cli() },
             |view, result, ctx| {
                 let toast = DismissibleToast::success(
-                    "Successfully uninstalled the Warp Control command.".to_string(),
+                    "Successfully uninstalled the Clinch CLI command.".to_string(),
                 );
                 view.handle_cli_command_result(
                     result,
                     toast,
-                    "Failed to uninstall Warp Control command",
+                    "Failed to uninstall Clinch CLI command",
                     ctx,
                 );
             },
@@ -12790,6 +12835,7 @@ impl Workspace {
             warp_drive_index_width,
             left_panel_open: self.left_panel_open,
             vertical_tabs_panel_open: self.vertical_tabs_panel_open,
+            vertical_tabs_panel_width: Some(self.vertical_tabs_panel.width()),
             left_panel_width,
             right_panel_width,
             agent_management_filters,
@@ -21100,13 +21146,9 @@ impl Workspace {
             .and_then(|terminal_view_id| {
                 CLIAgentSessionsModel::as_ref(ctx)
                     .session(terminal_view_id)
-                    .map(|session| match session.agent {
-                        crate::terminal::CLIAgent::Codex => AgentToolbarEditorMode::Codex,
-                        crate::terminal::CLIAgent::Claude => AgentToolbarEditorMode::ClaudeCode,
-                        _ => AgentToolbarEditorMode::ClaudeCode,
-                    })
+                    .map(|_| AgentToolbarEditorMode::CLIAgent)
             })
-            .unwrap_or(AgentToolbarEditorMode::ClaudeCode)
+            .unwrap_or(AgentToolbarEditorMode::CLIAgent)
     }
 
     /// The active pane group's most-recent local working directory, used to scope
@@ -21131,11 +21173,7 @@ impl Workspace {
             .and_then(|terminal_view_id| {
                 CLIAgentSessionsModel::as_ref(ctx)
                     .session(terminal_view_id)
-                    .map(|session| match session.agent {
-                        crate::terminal::CLIAgent::Claude => QuickInsertModalTarget::ClaudeCode,
-                        crate::terminal::CLIAgent::Codex => QuickInsertModalTarget::Codex,
-                        _ => QuickInsertModalTarget::CLIAgent,
-                    })
+                    .map(|_| QuickInsertModalTarget::CLIAgent)
             })
             .unwrap_or(QuickInsertModalTarget::Terminal);
         self.open_quick_insert_modal_for_target(target, ctx);
@@ -21147,9 +21185,9 @@ impl Workspace {
         ctx: &mut ViewContext<Self>,
     ) {
         let target = match mode {
-            AgentToolbarEditorMode::CLIAgent => QuickInsertModalTarget::CLIAgent,
-            AgentToolbarEditorMode::ClaudeCode => QuickInsertModalTarget::ClaudeCode,
-            AgentToolbarEditorMode::Codex => QuickInsertModalTarget::Codex,
+            AgentToolbarEditorMode::CLIAgent
+            | AgentToolbarEditorMode::ClaudeCode
+            | AgentToolbarEditorMode::Codex => QuickInsertModalTarget::CLIAgent,
             AgentToolbarEditorMode::Terminal => QuickInsertModalTarget::Terminal,
             AgentToolbarEditorMode::AgentView => return,
         };
@@ -22908,11 +22946,26 @@ impl Workspace {
             .unwrap_or_else(|| "New Project".to_string())
     }
 
-    /// Label for the outer project tab, using the same project-directory name
-    /// that previously appeared above the vertical inner-tab list.
+    fn project_display_name_for_dir(project_dir: Option<&Path>, ctx: &AppContext) -> String {
+        let primary_dir = project_dir
+            .and_then(|dir| {
+                DetectedRepositories::as_ref(ctx).get_local_watched_repo_for_path(dir, ctx)
+            })
+            .and_then(|repository| {
+                let repository = repository.as_ref(ctx);
+                if !repository.is_linked_worktree() {
+                    return None;
+                }
+                repository.common_git_dir().parent().map(Path::to_path_buf)
+            });
+        Self::project_display_name_from_dir(primary_dir.as_deref().or(project_dir))
+    }
+
+    /// Label for the outer project tab. Linked worktrees use the main repository's
+    /// name, while the active project directory remains the selected checkout.
     pub(crate) fn project_display_name(&self, ctx: &AppContext) -> String {
         let project_dir = self.active_header_project_dir(ctx);
-        Self::project_display_name_from_dir(project_dir.as_deref())
+        Self::project_display_name_for_dir(project_dir.as_deref(), ctx)
     }
 
     pub(crate) fn contains_pane_group(&self, pane_group_id: EntityId) -> bool {
@@ -23459,10 +23512,15 @@ impl Workspace {
             None,
         );
 
-        if presentation.connected_device_name.is_some() {
+        if presentation.awaiting_approval || presentation.connected_device_name.is_some() {
+            let dot_color = if presentation.awaiting_approval {
+                theme.ansi_fg_yellow()
+            } else {
+                theme.ansi_fg_green()
+            };
             let dot = ConstrainedBox::new(
                 Container::new(Empty::new().finish())
-                    .with_background_color(theme.ansi_fg_green())
+                    .with_background_color(dot_color)
                     .with_corner_radius(CornerRadius::with_all(Radius::Pixels(3.5)))
                     .finish(),
             )
@@ -23498,7 +23556,9 @@ impl Workspace {
             );
         }
 
-        let tooltip_description = if presentation.connected_device_name.is_some() {
+        let tooltip_description = if presentation.awaiting_approval {
+            Some("A phone scanned your pairing code — approve it in Settings".to_string())
+        } else if presentation.connected_device_name.is_some() {
             Some("Connected securely through your private tailnet".to_string())
         } else {
             Some("Securely access Clinch from your phone".to_string())
@@ -26672,6 +26732,15 @@ impl TypedActionView for Workspace {
                     && self.is_over_bookmarked_section(*tab_position, ctx))
                 .then(|| self.bookmarkable_terminal_view_id_for_tab(*pane_group_id, ctx))
                 .flatten();
+                let target_project_id = (!is_cross_window && bookmark_terminal_view_id.is_none())
+                    .then(|| {
+                        self.containing_project_window(ctx).and_then(|parent| {
+                            parent
+                                .as_ref(ctx)
+                                .inner_tab_drop_project(*tab_position, ctx)
+                        })
+                    })
+                    .flatten();
                 let project_insertion_index = (!is_cross_window
                     && bookmark_terminal_view_id.is_none())
                 .then(|| self.project_drop_insertion_index(*tab_position, ctx))
@@ -26726,6 +26795,16 @@ impl TypedActionView for Workspace {
                         });
                     }
                     ctx.notify();
+                    return;
+                }
+                if let Some(target_project_id) = target_project_id {
+                    ctx.dispatch_typed_action_deferred(
+                        ProjectWindowAction::MoveInnerTabToProject {
+                            source_workspace_id: ctx.handle().id(),
+                            pane_group_id: *pane_group_id,
+                            target_project_id,
+                        },
+                    );
                     return;
                 }
                 if let Some(insertion_index) = project_insertion_index {
@@ -29969,6 +30048,60 @@ impl Workspace {
         Some(transferred_tab)
     }
 
+    pub(crate) fn take_tab_for_project_transfer(
+        &mut self,
+        pane_group_id: EntityId,
+        ctx: &mut ViewContext<Self>,
+    ) -> Option<TransferredTab> {
+        let index = self
+            .tabs
+            .iter()
+            .position(|tab| tab.pane_group.id() == pane_group_id)?;
+        let transferred = self.tab_transfer_info_at_index(index, ctx)?;
+        ctx.unsubscribe_to_view(&transferred.pane_group);
+        self.current_workspace_state.is_tab_being_dragged = false;
+        if self.tabs.len() == 1 && !self.tasks.is_empty() {
+            // Keep project-owned tasks and their directory when its last live
+            // session moves away. Create the replacement before removing the
+            // old tab so normal directory inheritance still applies.
+            self.add_terminal_tab(false, ctx);
+        }
+        if self.tabs.len() == 1 {
+            // The parent removes this empty project after reparenting the live pane.
+            // Ordinary last-tab removal would run close hooks and terminate the agent.
+            self.tabs.clear();
+            self.tab_mru_order.clear();
+            self.tab_groups.clear();
+            self.active_tab_index = 0;
+        } else {
+            let index = self
+                .tabs
+                .iter()
+                .position(|tab| tab.pane_group.id() == pane_group_id)?;
+            self.remove_tab_without_undo(index, ctx);
+        }
+        ctx.notify();
+        Some(transferred)
+    }
+
+    pub(crate) fn accept_project_tab_drag(
+        &mut self,
+        tab: TransferredTab,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let is_dragging = tab.draggable_state.is_dragging();
+        self.insert_transferred_tab_at_index(tab, self.tabs.len(), ctx);
+        self.vertical_tabs_panel_open = true;
+        // The transferred Draggable must stay rendered to receive subsequent
+        // motion and mouse-up events, even if the destination was filtered.
+        self.vertical_tabs_panel.search_query.clear();
+        self.vertical_tabs_search_input.update(ctx, |editor, ctx| {
+            editor.clear_buffer_and_reset_undo_stack(ctx);
+        });
+        self.current_workspace_state.is_tab_being_dragged = is_dragging;
+        ctx.notify();
+    }
+
     /// Replaces the placeholder pane group (created by
     /// `create_transferred_window`) with the real pane group transferred from
     /// the source window, detaching and dropping the placeholder.
@@ -30229,6 +30362,18 @@ impl Workspace {
         // Check it before the perpendicular-axis detach threshold so dragging
         // upward can promote the tab without briefly creating a preview window.
         if !CrossWindowTabDrag::as_ref(ctx).is_active() {
+            if let Some(target_project_id) = self
+                .containing_project_window(ctx)
+                .and_then(|parent| parent.as_ref(ctx).inner_tab_drop_project(position, ctx))
+            {
+                self.set_inner_tab_project_drop_indicator(None, ctx);
+                ctx.dispatch_typed_action_deferred(ProjectWindowAction::MoveInnerTabToProject {
+                    source_workspace_id: ctx.handle().id(),
+                    pane_group_id,
+                    target_project_id,
+                });
+                return;
+            }
             let project_insertion_index = self.project_drop_insertion_index(position, ctx);
             self.set_inner_tab_project_drop_indicator(project_insertion_index, ctx);
             if project_insertion_index.is_some() {
@@ -30263,6 +30408,23 @@ impl Workspace {
                 }
             })
         };
+
+        // A diagonal drag to another project crosses the sidebar edge before
+        // reaching the header. Keep that gesture in this window until it actually
+        // leaves the native window; otherwise a preview window steals the drag.
+        if !is_cross_window_drag
+            && uses_vertical_tabs()
+            && (is_drag_outside_tab_bar || self.tabs.len() == 1)
+            && self
+                .containing_project_window(ctx)
+                .is_some_and(|parent| parent.as_ref(ctx).projects().count() > 1)
+            && ctx.window_bounds(&self.window_id).is_some_and(|bounds| {
+                RectF::new(vec2f(0., 0.), bounds.size()).contains_point(drag_center)
+            })
+        {
+            ctx.notify();
+            return;
+        }
 
         if CrossWindowTabDrag::as_ref(ctx).is_active() {
             let window_id = ctx.window_id();
@@ -30451,6 +30613,14 @@ impl Workspace {
             // This is not supported as pinned items can not leave the pinned area.
             let pinned_into_unpinned_group =
                 was_pinned && hovered_group.is_some() && !target_group_pinned;
+
+            // Keep the dragged row rendered when it enters a collapsed section.
+            // Expanding before membership changes also exposes insertion positions.
+            if !pinned_into_unpinned_group {
+                if let Some(group_id) = hovered_group {
+                    self.expand_tab_group(group_id, ctx);
+                }
+            }
 
             if hovered_group != source_group && !pinned_into_unpinned_group {
                 // Check if a tab is being dragged out of a pinned group.

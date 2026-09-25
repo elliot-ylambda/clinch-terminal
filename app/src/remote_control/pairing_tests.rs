@@ -425,7 +425,78 @@ fn connection_limit_counts_only_claimed_websocket_sessions() {
     ));
 
     for session in connected {
-        manager.end_session(session.response.session_id).unwrap();
+        manager
+            .release_session(session.response.session_id)
+            .unwrap();
     }
     assert!(!manager.paired_devices(now).unwrap()[0].connected);
+}
+
+#[test]
+fn a_late_scan_gets_its_own_approval_window() {
+    let manager = PairingManager::new(DeviceRegistry::default()).unwrap();
+    let created = Utc::now();
+    let invitation = manager
+        .create_invitation("https://mac.example.ts.net", created)
+        .unwrap();
+    let scanned = created + Duration::seconds(PAIRING_INVITATION_TTL_SECS as i64 - 10);
+
+    let receipt = manager.claim(claim_request(&invitation), scanned).unwrap();
+
+    assert_eq!(
+        receipt.expires_at,
+        scanned + Duration::seconds(PAIRING_CLAIM_TTL_SECS)
+    );
+    let later = invitation.expires_at + Duration::seconds(30);
+    assert_eq!(manager.pending_claims(later).unwrap().len(), 1);
+}
+
+#[test]
+fn a_released_session_cookie_reconnects_one_socket_at_a_time() {
+    let now = Utc::now();
+    let rng = SystemRandom::new();
+    let key_pair = signing_key(&rng);
+    let (manager, device_id) = manager_for_key(&key_pair, now);
+    let session = authenticate_device(&manager, device_id, &key_pair, &rng, now);
+
+    manager.connect_session(&session.cookie_token, now).unwrap();
+    assert!(matches!(
+        manager.connect_session(&session.cookie_token, now),
+        Err(PairingError::AlreadyUsed)
+    ));
+
+    manager
+        .release_session(session.response.session_id)
+        .unwrap();
+    let reconnected = manager
+        .connect_session(&session.cookie_token, now + Duration::seconds(60))
+        .unwrap();
+    assert_eq!(reconnected.session_id, session.response.session_id);
+
+    manager
+        .release_session(session.response.session_id)
+        .unwrap();
+    manager.revoke_device(device_id, now).unwrap();
+    assert!(manager
+        .connect_session(&session.cookie_token, now + Duration::seconds(90))
+        .is_err());
+}
+
+#[test]
+fn a_released_session_cookie_expires_with_its_ttl() {
+    let now = Utc::now();
+    let rng = SystemRandom::new();
+    let key_pair = signing_key(&rng);
+    let (manager, device_id) = manager_for_key(&key_pair, now);
+    let session = authenticate_device(&manager, device_id, &key_pair, &rng, now);
+    manager.connect_session(&session.cookie_token, now).unwrap();
+    manager
+        .release_session(session.response.session_id)
+        .unwrap();
+
+    let expired = now + Duration::seconds(AUTH_SESSION_TTL_SECS as i64 + 1);
+    assert!(matches!(
+        manager.connect_session(&session.cookie_token, expired),
+        Err(PairingError::Unauthorized)
+    ));
 }

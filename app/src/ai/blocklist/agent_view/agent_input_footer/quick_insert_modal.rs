@@ -89,10 +89,8 @@ pub enum QuickInsertModalAction {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QuickInsertModalTarget {
-    /// Legacy shared setting used by CLI agents other than Claude Code and Codex.
+    /// Shared by Claude Code, Codex, and other coding agents.
     CLIAgent,
-    ClaudeCode,
-    Codex,
     Terminal,
 }
 
@@ -151,7 +149,7 @@ impl QuickInsertModal {
             text_input,
             label_input,
             last_auto_label: String::new(),
-            target: QuickInsertModalTarget::ClaudeCode,
+            target: QuickInsertModalTarget::CLIAgent,
             auto_send: true,
             visible: true,
             cwd: None,
@@ -533,9 +531,7 @@ impl View for QuickInsertModal {
             .finish();
 
         let target_name = match self.target {
-            QuickInsertModalTarget::CLIAgent => "active CLI agent",
-            QuickInsertModalTarget::ClaudeCode => "Claude Code",
-            QuickInsertModalTarget::Codex => "Codex",
+            QuickInsertModalTarget::CLIAgent => "coding agents",
             QuickInsertModalTarget::Terminal => "active terminal",
         };
         let subtitle = FormattedTextElement::from_str(

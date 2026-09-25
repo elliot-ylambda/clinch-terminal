@@ -136,7 +136,7 @@ fn custom_button_can_be_saved_without_showing_in_footer() {
 }
 
 #[test]
-fn claude_code_editor_uses_one_footer_zone_and_persists_add_and_auto_send_controls() {
+fn provider_alias_opens_shared_footer_and_persists_controls() {
     App::test((), |mut app| async move {
         initialize_settings_for_tests(&mut app);
         app.add_singleton_model(|_| Appearance::mock());
@@ -144,6 +144,7 @@ fn claude_code_editor_uses_one_footer_zone_and_persists_add_and_auto_send_contro
 
         editor.update(&mut app, |editor, ctx| {
             editor.open(AgentToolbarEditorMode::ClaudeCode, ctx);
+            assert_eq!(editor.mode, AgentToolbarEditorMode::CLIAgent);
             assert_eq!(
                 editor.chip_configurator.layout(),
                 ChipConfiguratorLayout::SingleZone
@@ -179,8 +180,30 @@ fn claude_code_editor_uses_one_footer_zone_and_persists_add_and_auto_send_contro
             editor.handle_action(&AgentToolbarEditorAction::Save, ctx);
         });
 
+        let stale_provider_selection = CLIAgentToolbarChipSelection::custom_from_effective_items(
+            vec![AgentToolbarItemKind::custom_insert(
+                "Stale provider button",
+                "stale prompt",
+            )],
+            Vec::new(),
+        );
+        SessionSettings::handle(&app).update(&mut app, |settings, ctx| {
+            settings
+                .claude_code_footer_chip_selection
+                .set_value(Some(stale_provider_selection.clone()), ctx)
+                .unwrap();
+            settings
+                .codex_footer_chip_selection
+                .set_value(Some(stale_provider_selection), ctx)
+                .unwrap();
+        });
+
         SessionSettings::handle(&app).read(&app, |settings, _| {
-            let selection = settings.claude_code_footer_chip_selection_value();
+            let selection = settings
+                .coding_agent_footer_chip_selection
+                .value()
+                .as_ref()
+                .expect("shared coding-agent layout should be persisted");
             assert!(selection.right_items().is_empty());
             assert!(selection.left_items().iter().any(|item| {
                 matches!(
@@ -196,12 +219,17 @@ fn claude_code_editor_uses_one_footer_zone_and_persists_add_and_auto_send_contro
                 .left_items()
                 .iter()
                 .any(|item| item.display_label() == "/codex"));
+            assert_eq!(
+                settings.claude_code_footer_chip_selection_value(),
+                selection
+            );
+            assert_eq!(settings.codex_footer_chip_selection_value(), selection);
         });
     });
 }
 
 #[test]
-fn footer_tabs_preserve_independent_drafts_and_save_each_provider() {
+fn footer_tabs_preserve_one_coding_agent_draft_and_terminal_draft() {
     App::test((), |mut app| async move {
         initialize_settings_for_tests(&mut app);
         app.add_singleton_model(|_| Appearance::mock());
@@ -221,6 +249,7 @@ fn footer_tabs_preserve_independent_drafts_and_save_each_provider() {
         let (_, editor) = app.add_window(WindowStyle::NotStealFocus, AgentToolbarEditorModal::new);
         editor.update(&mut app, |editor, ctx| {
             editor.open(AgentToolbarEditorMode::ClaudeCode, ctx);
+            assert_eq!(editor.mode, AgentToolbarEditorMode::CLIAgent);
             assert!(editor
                 .chip_configurator
                 .used_item_kinds()
@@ -245,10 +274,19 @@ fn footer_tabs_preserve_independent_drafts_and_save_each_provider() {
                 &AgentToolbarEditorAction::SelectMode(AgentToolbarEditorMode::Codex),
                 ctx,
             );
+            assert_eq!(editor.mode, AgentToolbarEditorMode::CLIAgent);
             assert!(editor
                 .chip_configurator
                 .used_item_kinds()
-                .contains(&AgentToolbarItemKind::Compact));
+                .iter()
+                .any(|item| matches!(
+                    item,
+                    AgentToolbarItemKind::CustomInsert {
+                        label,
+                        text,
+                        auto_send: false,
+                    } if label == "Compact" && text == "/compact"
+                )));
             assert!(editor
                 .chip_configurator
                 .used_item_kinds()
@@ -266,10 +304,6 @@ fn footer_tabs_preserve_independent_drafts_and_save_each_provider() {
                 ctx,
             );
 
-            editor.handle_action(
-                &AgentToolbarEditorAction::SelectMode(AgentToolbarEditorMode::ClaudeCode),
-                ctx,
-            );
             assert!(editor
                 .chip_configurator
                 .used_item_kinds()
@@ -301,13 +335,15 @@ fn footer_tabs_preserve_independent_drafts_and_save_each_provider() {
                 settings.cli_agent_footer_chip_selection.value(),
                 &legacy_selection
             );
+            assert!(settings.claude_code_footer_chip_selection.value().is_none());
+            assert!(settings.codex_footer_chip_selection.value().is_none());
 
-            let claude = settings
-                .claude_code_footer_chip_selection
+            let shared = settings
+                .coding_agent_footer_chip_selection
                 .value()
                 .as_ref()
-                .expect("Claude Code should have its own saved layout");
-            assert!(claude.left_items().iter().any(|item| matches!(
+                .expect("coding agents should have one saved layout");
+            assert!(shared.left_items().iter().any(|item| matches!(
                 item,
                 AgentToolbarItemKind::CustomInsert {
                     label,
@@ -315,33 +351,22 @@ fn footer_tabs_preserve_independent_drafts_and_save_each_provider() {
                     auto_send: false,
                 } if label == "Compact" && text == "/compact"
             )));
-            assert!(!claude
-                .left_items()
-                .iter()
-                .any(|item| item.display_label() == "/codex"));
-
-            let codex = settings
-                .codex_footer_chip_selection
-                .value()
-                .as_ref()
-                .expect("Codex should have its own saved layout");
-            assert!(codex.left_items().contains(&AgentToolbarItemKind::Compact));
-            assert!(codex.left_items().contains(&legacy_button));
-            assert!(codex
+            assert!(shared.left_items().contains(&legacy_button));
+            assert!(shared
                 .left_items()
                 .iter()
                 .any(|item| item.display_label() == "/codex"));
             assert_eq!(
                 settings.footer_chip_selection_for_cli_agent(crate::terminal::CLIAgent::Claude),
-                claude
+                shared
             );
             assert_eq!(
                 settings.footer_chip_selection_for_cli_agent(crate::terminal::CLIAgent::Codex),
-                codex
+                shared
             );
             assert_eq!(
                 settings.footer_chip_selection_for_cli_agent(crate::terminal::CLIAgent::Gemini),
-                &legacy_selection
+                shared
             );
 
             assert_eq!(

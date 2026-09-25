@@ -27,6 +27,181 @@ use crate::workspace::view::{
 };
 use crate::GlobalResourceHandles;
 
+fn mock_project_window(app: &mut App) -> warpui::ViewHandle<super::ProjectWindow> {
+    crate::workspace::view::tests::initialize_app(app);
+    app.update(crate::root_view::init);
+    ChannelState::set(ChannelState::new(
+        Channel::Local,
+        ChannelConfig::no_backend(AppId::new("test", "warp", "WarpTest"), "warp-test.log"),
+    ));
+    let resources = GlobalResourceHandles::mock(app);
+    let (_, root) = app.add_window(WindowStyle::NotStealFocus, |ctx| {
+        RootView::new(
+            resources,
+            NewWorkspaceSource::Empty {
+                previous_active_window: None,
+                shell: None,
+            },
+            ctx,
+        )
+    });
+    root.read(app, |root, _| root.project_window()).unwrap()
+}
+
+#[test]
+fn new_project_inherits_active_sidebar_width() {
+    App::test((), |mut app| async move {
+        let parent = mock_project_window(&mut app);
+        parent.update(&mut app, |parent, ctx| {
+            let first = parent.active_workspace();
+            first.update(ctx, |workspace, _| {
+                workspace.set_vertical_tabs_panel_width(390.)
+            });
+            parent.add_project(ctx);
+            assert_eq!(
+                parent
+                    .active_workspace()
+                    .as_ref(ctx)
+                    .vertical_tabs_panel_width(),
+                390.
+            );
+            parent.active_workspace().update(ctx, |workspace, _| {
+                workspace.set_vertical_tabs_panel_width(460.)
+            });
+            parent.add_project(ctx);
+            assert_eq!(
+                parent
+                    .active_workspace()
+                    .as_ref(ctx)
+                    .vertical_tabs_panel_width(),
+                460.
+            );
+            assert_eq!(first.as_ref(ctx).vertical_tabs_panel_width(), 390.);
+        });
+    });
+}
+
+fn assert_sidebar_drag_handoff(single_tab_source: bool, has_tasks: bool) {
+    App::test((), move |mut app| async move {
+        let parent = mock_project_window(&mut app);
+        parent.update(&mut app, |parent, ctx| {
+            let source = parent.active_workspace();
+            if !single_tab_source {
+                source.update(ctx, |workspace, ctx| workspace.add_terminal_tab(false, ctx));
+            }
+            if has_tasks {
+                source.update(ctx, |workspace, ctx| {
+                    workspace.add_workspace_task("Keep this project task".into(), ctx);
+                });
+            }
+            let transferred = source.read(ctx, |workspace, ctx| {
+                workspace
+                    .get_tab_transfer_info_for_attach(workspace.tab_count() - 1, ctx)
+                    .unwrap()
+            });
+            let pane_group_id = transferred.pane_group.id();
+            transferred
+                .draggable_state
+                .set_dragging(vec2f(300., 15.), vec2f(-30., -10.));
+            let target_id = parent.add_project(ctx);
+            let target = parent.active_workspace();
+            assert!(parent.move_inner_tab_to_project(source.id(), pane_group_id, target_id, ctx));
+            assert_eq!(parent.active_workspace().id(), target.id());
+            let removes_source = single_tab_source && !has_tasks;
+            assert_eq!(parent.projects.len(), if removes_source { 1 } else { 2 });
+            assert_eq!(
+                source.as_ref(ctx).tab_count(),
+                if removes_source { 0 } else { 1 }
+            );
+            if has_tasks {
+                assert_eq!(source.as_ref(ctx).workspace_tasks().len(), 1);
+            }
+            target.read(ctx, |workspace, ctx| {
+                assert_eq!(workspace.tab_count(), 2);
+                let moved = workspace.get_tab_transfer_info_for_attach(1, ctx).unwrap();
+                assert_eq!(moved.pane_group.id(), pane_group_id);
+                assert!(
+                    moved.draggable_state.is_dragging(),
+                    "drag must continue in destination sidebar"
+                );
+            });
+            assert!(!parent.move_inner_tab_to_project(source.id(), pane_group_id, target_id, ctx));
+            assert_eq!(
+                target.as_ref(ctx).tab_count(),
+                2,
+                "stale hover events must not duplicate the tab"
+            );
+        });
+    });
+}
+
+#[test]
+fn sidebar_drag_moves_live_tab_into_existing_project() {
+    assert_sidebar_drag_handoff(false, false);
+}
+
+#[test]
+fn sidebar_drag_moves_only_tab_without_closing_its_session() {
+    assert_sidebar_drag_handoff(true, false);
+}
+
+#[test]
+fn sidebar_drag_keeps_source_project_tasks_when_moving_last_session() {
+    assert_sidebar_drag_handoff(true, true);
+}
+
+#[test]
+fn sidebar_drag_of_only_session_waits_for_sibling_project_target() {
+    let _vertical_tabs_guard =
+        warp_core::features::FeatureFlag::VerticalTabs.override_enabled(true);
+    let _window_drag_guard =
+        warp_core::features::FeatureFlag::DragTabsToWindows.override_enabled(true);
+    App::test((), |mut app| async move {
+        let parent = mock_project_window(&mut app);
+        let (source, window_id) = parent.update(&mut app, |parent, ctx| {
+            let source_id = parent.projects[0].id;
+            let source = parent.active_workspace();
+            parent.add_project(ctx);
+            parent.activate_project(source_id, ctx);
+            (source, parent.window_id)
+        });
+        let mut presenter = Presenter::new(window_id);
+        app.update(|ctx| {
+            presenter.invalidate(
+                WindowInvalidation {
+                    updated: HashSet::from([parent.id(), source.id()]),
+                    ..Default::default()
+                },
+                ctx,
+            );
+            presenter.build_scene(vec2f(1200., 800.), 1., None, ctx);
+        });
+        source.update(&mut app, |workspace, ctx| {
+            let bar = crate::workspace::view::tab_bar_rects_for_window(window_id, ctx)[0];
+            let state = workspace
+                .get_tab_transfer_info_for_attach(0, ctx)
+                .unwrap()
+                .draggable_state;
+            for cursor in [bar.center(), vec2f(600., 400.)] {
+                state.set_dragging(cursor, vec2f(-20., -8.));
+                workspace.handle_action(
+                    &crate::workspace::WorkspaceAction::DragTab {
+                        tab_index: 0,
+                        tab_position: RectF::new(cursor - vec2f(20., 8.), vec2f(40., 16.)),
+                    },
+                    ctx,
+                );
+                assert!(
+                    !crate::workspace::cross_window_tab_drag::CrossWindowTabDrag::as_ref(ctx)
+                        .is_active(),
+                    "moving toward a sibling project must not detach the source window"
+                );
+                assert!(state.is_dragging());
+            }
+        });
+    });
+}
+
 struct ProjectHoverCardDragLayoutView;
 
 impl Entity for ProjectHoverCardDragLayoutView {
@@ -259,6 +434,11 @@ fn dragging_project_out_creates_window_without_losing_workspace() {
 
         project_window.update(&mut app, |project_window, ctx| {
             let last_position = RectF::new(vec2f(300., 250.), vec2f(140., 32.));
+            // The test platform's ordered-window list is empty. Include the source
+            // explicitly while its view is leased, as macOS does during a real drag.
+            assert!(project_window
+                .attach_target_in_windows(last_position.center(), [source_window_id], ctx)
+                .is_none());
             project_window.active_drag = Some(super::ProjectDragState {
                 id: dragged_project_id,
                 original_index: 1,

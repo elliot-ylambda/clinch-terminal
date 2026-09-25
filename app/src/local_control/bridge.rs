@@ -10,7 +10,7 @@ use ::local_control::{
 use warpui::{Entity, ModelContext, SingletonEntity};
 
 use crate::local_control::handlers::{
-    app_state, close, metadata, metadata_config, sections, settings_surfaces, toolbelt,
+    app_state, close, metadata, metadata_config, sections, settings_surfaces, tab_grep, toolbelt,
 };
 use crate::local_control::permissions::{
     ensure_action_allowed, ensure_feature_enabled, ensure_protocol_version,
@@ -163,6 +163,7 @@ impl LocalControlBridge {
             ActionKind::WindowInspect => metadata::window_inspect(&request.target, ctx),
             ActionKind::TabList => metadata::tab_list(&request.target, ctx),
             ActionKind::TabInspect => metadata::tab_inspect(&request.target, ctx),
+            ActionKind::TabGrep => tab_grep::handle(&request.action, &request.target, ctx),
             ActionKind::AppFocus
             | ActionKind::WindowCreate
             | ActionKind::WindowFocus
@@ -205,6 +206,7 @@ impl LocalControlBridge {
                 request.action.kind,
                 &request.action.params,
                 &request.target,
+                request.origin_terminal_session_uuid.as_ref(),
                 ctx,
             ),
             ActionKind::TabRename => metadata_config::tab_rename(
@@ -265,7 +267,9 @@ impl LocalControlBridge {
             ActionKind::ToolbeltList
             | ActionKind::ToolbeltButtonCreate
             | ActionKind::ToolbeltButtonDelete
-            | ActionKind::ToolbeltButtonMove => toolbelt::handle(&request.action, ctx),
+            | ActionKind::ToolbeltButtonMove
+            | ActionKind::ToolbeltSuggestionList
+            | ActionKind::ToolbeltSuggestionResolve => toolbelt::handle(&request.action, ctx),
             ActionKind::SectionList
             | ActionKind::SectionCreate
             | ActionKind::SectionUpdate

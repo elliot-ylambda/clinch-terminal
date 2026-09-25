@@ -20,7 +20,7 @@ fn bundled_control_skill_contents() -> String {
 fn bundled_skill_carries_a_managed_marker() {
     let contents = bundled_skill_contents();
     assert!(
-        contents.contains("<!-- managed-by: Clinch; version: 2.3.0 -->"),
+        contents.contains("<!-- managed-by: Clinch; version: 3.2.0 -->"),
         "the bundled skill must carry the Clinch managed marker"
     );
 }
@@ -29,17 +29,22 @@ fn bundled_skill_carries_a_managed_marker() {
 fn bundled_skill_proactively_suggests_reusable_conversation_patterns() {
     let contents = bundled_skill_contents();
     let normalized = contents.split_whitespace().collect::<Vec<_>>().join(" ");
-    assert!(normalized.contains("proactively suggest reusable buttons"));
+    assert!(normalized.contains("proactively suggests locally learned reusable prompts"));
     assert!(normalized.contains("Do not wait for an explicit button request"));
     assert!(normalized.contains("One affirmative answer authorizes that exact proposal"));
-    assert!(normalized.contains("only conversation context already visible"));
-    assert!(normalized.contains("the CLI executes the confirmed typed mutation"));
+    assert!(normalized.contains("At the first appropriate turn of every new"));
+    assert!(normalized.contains("toolbelt suggestion list"));
+    assert!(normalized.contains("toolbelt suggestion resolve"));
+    assert!(normalized.contains("at least two distinct captured conversations"));
+    assert!(normalized.contains("Never inspect prompt-mirror files directly"));
+    assert!(normalized.contains("conversation content already visible"));
+    assert!(normalized.contains("The CLI executes the confirmed typed mutation"));
 }
 
 #[test]
 fn bundled_control_skill_routes_only_persistent_processes_to_new_tabs() {
     let contents = bundled_control_skill_contents();
-    assert!(contents.contains("<!-- managed-by: Clinch; version: 1.3.0 -->"));
+    assert!(contents.contains("<!-- managed-by: Clinch; version: 1.6.0 -->"));
     assert!(contents.contains("tab create"));
     assert!(contents.contains("--cwd"));
     assert!(contents.contains("dev server"));
@@ -48,14 +53,29 @@ fn bundled_control_skill_routes_only_persistent_processes_to_new_tabs() {
     assert!(contents.contains("CLINCH_CONTROL_COMMAND"));
     assert!(contents.contains("CLINCH_CONTROL_WRAPPER"));
     assert!(contents.contains("CLINCH_CONTROL_PID"));
+    assert!(contents.contains("WARP_TERMINAL_SESSION_UUID"));
     assert!(contents.contains("--pid \"$CLINCH_CONTROL_PID\""));
     assert!(contents.contains("WARP_FOCUS_URL"));
+}
+
+#[test]
+fn bundled_control_skill_searches_tab_contents_with_bounded_typed_control() {
+    let contents = bundled_control_skill_contents();
+    let normalized = contents.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(contents.contains("tab grep"));
+    assert!(contents.contains("--fixed-strings"));
+    assert!(contents.contains("content_truncated"));
+    assert!(contents.contains("matches_truncated"));
+    assert!(contents.contains("text_truncated"));
+    assert!(contents.contains("Secret cells remain obfuscated"));
+    assert!(normalized.contains("do not use an empty or catch-all pattern"));
 }
 
 #[test]
 fn bundled_control_skills_are_channel_neutral() {
     for contents in [bundled_control_skill_contents(), bundled_skill_contents()] {
         assert!(contents.contains("CLINCH_CONTROL_WRAPPER"));
+        assert!(contents.contains("\"$CLINCH_CONTROL_WRAPPER\" ctrl"));
         assert!(contents.contains("CLINCH_CONTROL_PID"));
         assert!(contents.contains("WARP_FOCUS_URL"));
         assert!(!contents.contains("{{clinch_control_binary_name}}"));
@@ -76,6 +96,7 @@ fn bundled_skill_uses_typed_toolbelt_control_without_editing_persistence() {
     assert!(contents.contains("CLINCH_CONTROL_PID"));
     assert!(contents.contains("--pid \"$CLINCH_CONTROL_PID\""));
     assert!(contents.contains("Never edit `settings.toml`, SQLite"));
+    assert!(contents.contains("Claude Code and Codex share one coding-agent toolbelt"));
     assert!(!contents.contains("[agents.third_party"));
 }
 
@@ -312,6 +333,7 @@ fn clinch_build_entrypoints_ship_the_control_wrapper() {
     assert!(clinch_dev.contains("export FEATURES=\"${CLINCH_DEV_FEATURES:-gui},warp_control_cli\""));
     assert!(macos_bundle.contains("agent_mode_debug,warp_control_cli"));
     assert!(macos_bundle.contains("Stable Clinch must ship the same current-app control surface"));
+    assert!(release_verifier.contains("Contents/Resources/bin/clinch"));
     assert!(release_verifier.contains("Contents/Resources/bin/warpctrl"));
     assert!(release_verifier.contains("agent-skills/clinch-control/SKILL.md"));
 }

@@ -212,6 +212,13 @@ impl Client {
         self.builder(self.wrapped.get(url), include_warp_headers, iap_token)
     }
 
+    /// Builds a GET request without Warp's client-version, execution-mode, or operating-system
+    /// headers. Intended for privacy-sensitive third-party requests whose protocol does not need
+    /// Warp backend metadata, such as Clinch's public GitHub update feed.
+    pub fn get_without_warp_headers<U: IntoUrl>(&self, url: U) -> RequestBuilder<'_> {
+        self.builder(self.wrapped.get(url), false, None)
+    }
+
     pub fn post<U: IntoUrl + Clone>(&self, url: U) -> RequestBuilder<'_> {
         let include_warp_headers = Self::include_warp_http_headers(url.clone());
         let iap_token = self.iap_token_for(url.clone());
@@ -774,6 +781,29 @@ impl<'c> oauth2::AsyncHttpClient<'c> for Client {
 #[cfg(test)]
 mod origin_tests {
     use super::*;
+
+    #[test]
+    fn header_free_get_omits_warp_client_metadata() {
+        let client = Client::new();
+        let request = client
+            .get_without_warp_headers("https://api.github.com/example")
+            .build()
+            .unwrap();
+
+        for header in [
+            headers::WARP_CLIENT_ID,
+            headers::CLIENT_RELEASE_VERSION_HEADER_KEY,
+            headers::WARP_OS_CATEGORY,
+            headers::WARP_OS_NAME,
+            headers::WARP_OS_VERSION,
+            headers::WARP_OS_LINUX_KERNEL_VERSION,
+        ] {
+            assert!(
+                !request.wrapped.headers().contains_key(header),
+                "unexpected inherited header {header}"
+            );
+        }
+    }
 
     #[test]
     fn server_and_rtc_origins_match() {

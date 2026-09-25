@@ -51,12 +51,15 @@ pub enum ActionParameterSpec {
     TabActivate,
     TabClose,
     TabCreate,
+    TabGrep,
     Text,
     ThemeName,
     ToolbeltButtonCreate,
     ToolbeltButtonDelete,
     ToolbeltButtonMove,
     ToolbeltList,
+    ToolbeltSuggestionList,
+    ToolbeltSuggestionResolve,
     SectionCreate,
     SectionId,
     SectionMove,
@@ -88,9 +91,11 @@ pub enum ActionResultSpec {
     SurfaceList,
     TargetList,
     TargetMetadata,
+    TabGrep,
     ThemeList,
     ThemeState,
     ToolbeltState,
+    ToolbeltSuggestionState,
     SectionState,
 }
 
@@ -223,6 +228,7 @@ define_action_catalog! {
     tab {
         TabList => { name: "tab.list", status: Implemented, target: Tab, params: None, result: TargetList },
         TabInspect => { name: "tab.inspect", status: Implemented, target: Tab, params: None, result: TargetMetadata },
+        TabGrep => { name: "tab.grep", status: Implemented, target: Tab, params: TabGrep, result: TabGrep },
         TabCreate => { name: "tab.create", status: Implemented, target: Tab, params: TabCreate, result: Acknowledgement },
         TabActivate => { name: "tab.activate", status: Implemented, target: Tab, params: TabActivate, result: Acknowledgement },
         TabMove => { name: "tab.move", status: Implemented, target: Tab, params: Direction, result: Acknowledgement },
@@ -292,6 +298,8 @@ define_action_catalog! {
         ToolbeltButtonCreate => { name: "toolbelt.button.create", status: Implemented, target: Settings, params: ToolbeltButtonCreate, result: ToolbeltState },
         ToolbeltButtonDelete => { name: "toolbelt.button.delete", status: Implemented, target: Settings, params: ToolbeltButtonDelete, result: ToolbeltState },
         ToolbeltButtonMove => { name: "toolbelt.button.move", status: Implemented, target: Settings, params: ToolbeltButtonMove, result: ToolbeltState },
+        ToolbeltSuggestionList => { name: "toolbelt.suggestion.list", status: Implemented, target: Settings, params: ToolbeltSuggestionList, result: ToolbeltSuggestionState },
+        ToolbeltSuggestionResolve => { name: "toolbelt.suggestion.resolve", status: Implemented, target: Settings, params: ToolbeltSuggestionResolve, result: Acknowledgement },
     }
 
     section {

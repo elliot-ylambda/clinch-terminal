@@ -49,6 +49,7 @@ pub struct Window {
     pub tasks: String,
     pub tasks_collapsed: bool,
     pub bookmarked_sessions_color: Option<String>,
+    pub vertical_tabs_panel_width: Option<f32>,
 }
 
 #[derive(Identifiable, Insertable, Queryable)]
@@ -352,6 +353,7 @@ pub struct NewWindow {
     pub tasks: String,
     pub tasks_collapsed: bool,
     pub bookmarked_sessions_color: Option<String>,
+    pub vertical_tabs_panel_width: Option<f32>,
 }
 
 #[derive(Identifiable, Queryable, Associations)]

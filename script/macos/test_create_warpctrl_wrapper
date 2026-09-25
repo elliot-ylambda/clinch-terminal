@@ -7,9 +7,10 @@ temp_dir="$(mktemp -d)"
 trap 'rm -rf "$temp_dir"' EXIT
 
 bundle_dir="$temp_dir/WarpDev.app/Contents"
-wrapper_path="$bundle_dir/Resources/bin/warpctrl-dev"
+clinch_wrapper_path="$bundle_dir/Resources/bin/clinch-dev"
+legacy_wrapper_path="$bundle_dir/Resources/bin/warpctrl-dev"
 binary_path="$bundle_dir/MacOS/dev"
-installed_path="$temp_dir/usr/local/bin/warpctrl-dev"
+installed_path="$temp_dir/usr/local/bin/clinch-dev"
 forwarded_args_file="$temp_dir/forwarded-args"
 expected_args_file="$temp_dir/expected-args"
 
@@ -21,7 +22,11 @@ EOF
 chmod +x "$binary_path"
 
 "$workspace_root/script/macos/create_warpctrl_wrapper" \
-  "$wrapper_path" \
+  "$clinch_wrapper_path" \
+  "../../MacOS/dev" \
+  clinch
+"$workspace_root/script/macos/create_warpctrl_wrapper" \
+  "$legacy_wrapper_path" \
   "../../MacOS/dev"
 
 cat > "$expected_args_file" << 'EOF'
@@ -33,10 +38,20 @@ inst 123
 EOF
 
 FORWARDED_ARGS_FILE="$forwarded_args_file" \
-  "$wrapper_path" tab create --instance "inst 123"
+  "$clinch_wrapper_path" ctrl tab create --instance "inst 123"
 cmp "$expected_args_file" "$forwarded_args_file"
 
-ln -s "$wrapper_path" "$installed_path"
+ln -s "$clinch_wrapper_path" "$installed_path"
 FORWARDED_ARGS_FILE="$forwarded_args_file" \
-  "$installed_path" tab create --instance "inst 123"
+  "$installed_path" ctrl tab create --instance "inst 123"
 cmp "$expected_args_file" "$forwarded_args_file"
+
+FORWARDED_ARGS_FILE="$forwarded_args_file" \
+  "$legacy_wrapper_path" tab create --instance "inst 123"
+cmp "$expected_args_file" "$forwarded_args_file"
+
+if FORWARDED_ARGS_FILE="$forwarded_args_file" \
+  "$clinch_wrapper_path" tab create >/dev/null 2>&1; then
+  echo "clinch wrapper accepted a command without the ctrl subcommand" >&2
+  exit 1
+fi

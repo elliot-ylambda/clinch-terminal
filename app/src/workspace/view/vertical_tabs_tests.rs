@@ -10,16 +10,17 @@ use super::{
     code_detail_kind_label, compact_branch_subtitle_display, detail_sidecar_width_and_bounds,
     detail_target_for_hovered_row, non_terminal_search_text_fragments,
     pane_ids_for_display_granularity, pane_search_text_fragments, path_belongs_to_project,
-    preferred_agent_tab_titles, push_normalized_unique_summary_label,
-    search_fragments_contain_query, select_summary_pane_kind_icons, separate_title_indicator_kind,
+    preferred_agent_tab_titles, preferred_vertical_tab_title_override,
+    push_normalized_unique_summary_label, search_fragments_contain_query,
+    select_summary_pane_kind_icons, separate_title_indicator_kind,
     should_keep_detail_sidecar_visible_for_mouse_position,
     should_render_separate_activity_indicator, sort_summary_primary_labels_status_first,
-    summary_overflow_count, summary_search_text_fragments, terminal_command_status,
-    terminal_kind_badge_label, terminal_primary_line_data, terminal_pull_request_badge_label,
-    terminal_search_text_fragments, terminal_title_fallback_font, title_indicator_color,
-    uses_outer_group_container, vertical_tab_activity_dot_color,
-    visible_pane_ids_for_detail_target, vtab_diff_stats_text, AgentTabTextPreference,
-    SummaryPaneKind, SummaryPaneKindIcons, TabCardState, TerminalAgentText,
+    summary_overflow_count, summary_search_text_fragments, tab_title_uses_header,
+    terminal_command_status, terminal_kind_badge_label, terminal_primary_line_data,
+    terminal_pull_request_badge_label, terminal_search_text_fragments,
+    terminal_title_fallback_font, title_indicator_color, uses_outer_group_container,
+    vertical_tab_activity_dot_color, visible_pane_ids_for_detail_target, vtab_diff_stats_text,
+    AgentTabTextPreference, SummaryPaneKind, SummaryPaneKindIcons, TabCardState, TerminalAgentText,
     TerminalPrimaryLineData, TerminalPrimaryLineFont, TitleIndicatorKind, VerticalTabsDetailTarget,
     VerticalTabsDetailTargetKind, VerticalTabsSummaryBranchEntry, VerticalTabsSummaryData,
     VerticalTabsSummaryPrimaryLabel, BOOKMARKED_SESSIONS_DEFAULT_COLOR,
@@ -984,6 +985,34 @@ fn pane_search_fragments_dedupe_custom_title_against_generated_text() {
         ),
         vec!["Production API".to_string(), "~/warp".to_string()]
     );
+}
+
+#[test]
+fn single_pane_tab_names_replace_generated_titles() {
+    assert!(!tab_title_uses_header(
+        VerticalTabsDisplayGranularity::Panes,
+        1
+    ));
+    assert_eq!(
+        preferred_vertical_tab_title_override(Some("My renamed tab"), None),
+        Some("My renamed tab")
+    );
+    assert_eq!(
+        preferred_vertical_tab_title_override(Some("My renamed tab"), Some("My pane name")),
+        Some("My renamed tab")
+    );
+}
+
+#[test]
+fn split_tab_names_use_a_header_without_replacing_pane_titles() {
+    assert!(tab_title_uses_header(
+        VerticalTabsDisplayGranularity::Panes,
+        2
+    ));
+    assert!(!tab_title_uses_header(
+        VerticalTabsDisplayGranularity::Tabs,
+        2
+    ));
 }
 
 #[test]

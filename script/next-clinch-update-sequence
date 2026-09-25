@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Computes or verifies values strictly newer than the latest authenticated release.
+# Computes or verifies values strictly newer than the newest authenticated release.
 set -euo pipefail
 
 REPO="${CLINCH_REPO:-elliot-ylambda/clinch-terminal}"
@@ -15,11 +15,55 @@ download() {
 }
 
 has_previous_release=1
-if ! download "$TMP/latest.json" "$API/releases/latest"; then
+if ! download "$TMP/releases.json" "$API/releases?per_page=100"; then
   if [[ "${CLINCH_ALLOW_NO_PREVIOUS_RELEASE:-0}" == "1" ]]; then
     has_previous_release=0
   else
-    fail "could not resolve the latest release"
+    fail "could not resolve the release feed"
+  fi
+fi
+
+tag=
+if (( has_previous_release == 1 )); then
+  tag="$(/usr/bin/python3 - "$TMP/releases.json" <<'PY'
+import json, pathlib, re, sys
+
+value = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+if not isinstance(value, list):
+    raise SystemExit("release feed is not an array")
+
+version_pattern = re.compile(r"^v[0-9]+(?:\.[0-9]+)+$")
+candidates = []
+for release in value:
+    if not isinstance(release, dict):
+        continue
+    tag = release.get("tag_name")
+    assets = release.get("assets")
+    asset_names = {
+        asset.get("name")
+        for asset in assets if isinstance(asset, dict) and isinstance(asset.get("name"), str)
+    } if isinstance(assets, list) else set()
+    if (
+        isinstance(tag, str)
+        and version_pattern.fullmatch(tag)
+        and release.get("draft") is not True
+        and release.get("prerelease") is not True
+        and {"Clinch.update.json", "Clinch.update.sig"} <= asset_names
+    ):
+        candidates.append(tag)
+
+if candidates:
+    print(max(candidates, key=lambda candidate: tuple(
+        int(piece) for piece in candidate.removeprefix("v").split(".")
+    )))
+PY
+)" || fail "release feed response is invalid"
+  if [[ -z "$tag" ]]; then
+    if [[ "${CLINCH_ALLOW_NO_PREVIOUS_RELEASE:-0}" == "1" ]]; then
+      has_previous_release=0
+    else
+      fail "release feed contains no stable numeric release"
+    fi
   fi
 fi
 
@@ -41,20 +85,11 @@ if (( has_previous_release == 0 )); then
   exit 0
 fi
 
-tag="$(/usr/bin/python3 - "$TMP/latest.json" <<'PY'
-import json, pathlib, sys
-value = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-tag = value.get("tag_name")
-if not isinstance(tag, str):
-    raise SystemExit("missing tag_name")
-print(tag)
-PY
-)" || fail "latest release response is invalid"
-[[ "$tag" =~ ^v[0-9][0-9A-Za-z._-]*$ ]] || fail "latest release has unsafe tag '$tag'"
+[[ "$tag" =~ ^v[0-9][0-9A-Za-z._-]*$ ]] || fail "newest release has unsafe tag '$tag'"
 
 base="https://github.com/$REPO/releases/download/$tag"
 download "$TMP/manifest" "$base/Clinch.update.json" \
-  || fail "latest release has no update manifest"
+  || fail "newest release has no update manifest"
 if download "$TMP/sshsig" "$base/Clinch.update.sshsig" 2>/dev/null; then
   ssh-keygen -Y verify -f "$ALLOWED_SIGNERS" -I clinch-release -n clinch-install \
     -s "$TMP/sshsig" < "$TMP/manifest" >/dev/null \
@@ -62,10 +97,10 @@ if download "$TMP/sshsig" "$base/Clinch.update.sshsig" 2>/dev/null; then
 else
   # Migration path for releases published before SSHSIG bootstrap authentication existed.
   download "$TMP/rawsig" "$base/Clinch.update.sig" \
-    || fail "latest release has no recognized manifest signature"
+    || fail "newest release has no recognized manifest signature"
   ./script/clinch-update-manifest verify "$TMP/manifest" "$TMP/rawsig" \
     resources/update/clinch-update-public-key.json >/dev/null \
-    || fail "latest release raw manifest signature is invalid"
+    || fail "newest release raw manifest signature is invalid"
 fi
 
 previous="$(/usr/bin/python3 - "$TMP/manifest" <<'PY'
@@ -76,7 +111,7 @@ if not isinstance(sequence, int) or isinstance(sequence, bool) or sequence < 1:
     raise SystemExit("invalid sequence")
 print(sequence)
 PY
-)" || fail "latest authenticated manifest has an invalid sequence"
+)" || fail "newest authenticated manifest has an invalid sequence"
 
 if [[ "${1:-}" == verify ]]; then
   requested_version="${2:?usage: next-clinch-update-sequence verify <version> <sequence>}"
