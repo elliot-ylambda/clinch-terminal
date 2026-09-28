@@ -6558,24 +6558,9 @@ fn render_badge_container(content: Box<dyn Element>, background: ThemeFill) -> B
 fn render_passive_worktree_badge(appearance: &Appearance) -> Box<dyn Element> {
     let theme = appearance.theme();
     let sub_text_color = theme.sub_text_color(theme.background());
-    let content = Flex::row()
-        .with_cross_axis_alignment(CrossAxisAlignment::Center)
-        .with_spacing(4.)
-        .with_child(
-            ConstrainedBox::new(UiIcon::Dataflow02.to_warpui_icon(sub_text_color).finish())
-                .with_width(BADGE_ICON_SIZE)
-                .with_height(BADGE_ICON_SIZE)
-                .finish(),
-        )
-        .with_child(
-            Text::new_inline(
-                TerminalView::LINKED_WORKTREE_LABEL.to_string(),
-                appearance.ui_font_family(),
-                10.,
-            )
-            .with_color(sub_text_color.into())
-            .finish(),
-        )
+    let content = ConstrainedBox::new(UiIcon::Dataflow02.to_warpui_icon(sub_text_color).finish())
+        .with_width(BADGE_ICON_SIZE)
+        .with_height(BADGE_ICON_SIZE)
         .finish();
 
     render_badge_container(content, internal_colors::fg_overlay_1(theme))
