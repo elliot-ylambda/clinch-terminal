@@ -11,7 +11,7 @@ use super::{
     detail_target_for_hovered_row, non_terminal_search_text_fragments,
     pane_ids_for_display_granularity, pane_search_text_fragments, path_belongs_to_project,
     preferred_agent_tab_titles, preferred_vertical_tab_title_override,
-    push_normalized_unique_summary_label, search_fragments_contain_query,
+    push_normalized_unique_summary_label, row_renames_pane, search_fragments_contain_query,
     select_summary_pane_kind_icons, separate_title_indicator_kind,
     should_keep_detail_sidecar_visible_for_mouse_position,
     should_render_separate_activity_indicator, sort_summary_primary_labels_status_first,
@@ -1012,6 +1012,25 @@ fn split_tab_names_use_a_header_without_replacing_pane_titles() {
     assert!(!tab_title_uses_header(
         VerticalTabsDisplayGranularity::Tabs,
         2
+    ));
+}
+
+#[test]
+fn double_click_renames_exactly_one_target() {
+    // Rows that display the tab name (single-pane tabs, Tabs view) rename the tab;
+    // only split-tab pane rows rename the pane. Doing both from one double-click
+    // let the losing editor commit the old name, so a rename appeared to revert.
+    assert!(!row_renames_pane(
+        VerticalTabsDisplayGranularity::Panes,
+        Some(0)
+    ));
+    assert!(row_renames_pane(
+        VerticalTabsDisplayGranularity::Panes,
+        None
+    ));
+    assert!(!row_renames_pane(
+        VerticalTabsDisplayGranularity::Tabs,
+        Some(0)
     ));
 }
 
