@@ -29,9 +29,10 @@ const FOOTER_MODAL_TITLE: &str = "Edit footer buttons";
 pub enum AgentToolbarEditorMode {
     #[default]
     AgentView,
-    /// Legacy shared CLI-agent selection used as the migration fallback and by the AI settings
-    /// inline editor. The unified popup opens provider-specific tabs instead.
+    /// Shared coding-agent footer used by Claude Code, Codex, and other CLI agents.
     CLIAgent,
+    /// Compatibility aliases for call sites that identify the active provider. The modal
+    /// normalizes both to `CLIAgent`; they never select separate persisted layouts.
     ClaudeCode,
     Codex,
     Terminal,
@@ -93,6 +94,15 @@ fn layout_for_mode(mode: AgentToolbarEditorMode) -> ChipConfiguratorLayout {
     }
 }
 
+fn normalized_editor_mode(mode: AgentToolbarEditorMode) -> AgentToolbarEditorMode {
+    match mode {
+        AgentToolbarEditorMode::ClaudeCode | AgentToolbarEditorMode::Codex => {
+            AgentToolbarEditorMode::CLIAgent
+        }
+        mode => mode,
+    }
+}
+
 fn selected_toolbar_items(
     mode: AgentToolbarEditorMode,
     chip_configurator: &ChipConfigurator,
@@ -125,22 +135,12 @@ fn open_toolbar_items_from_settings<V: View>(
                 AgentToolbarItemKind::all_available(),
             )
         }
-        mode @ (AgentToolbarEditorMode::CLIAgent
+        AgentToolbarEditorMode::CLIAgent
         | AgentToolbarEditorMode::ClaudeCode
-        | AgentToolbarEditorMode::Codex) => {
-            let selection = match mode {
-                AgentToolbarEditorMode::CLIAgent => session_settings
-                    .cli_agent_footer_chip_selection
-                    .value()
-                    .clone(),
-                AgentToolbarEditorMode::ClaudeCode => session_settings
-                    .claude_code_footer_chip_selection_value()
-                    .clone(),
-                AgentToolbarEditorMode::Codex => {
-                    session_settings.codex_footer_chip_selection_value().clone()
-                }
-                _ => unreachable!(),
-            };
+        | AgentToolbarEditorMode::Codex => {
+            let selection = session_settings
+                .coding_agent_footer_chip_selection_value()
+                .clone();
             let mut available = AgentToolbarItemKind::all_available_for_cli_input();
             for item in selection.hidden_custom_inserts() {
                 if !available
@@ -343,14 +343,13 @@ impl AgentToolbarInlineEditor {
                     AgentToolbarEditorMode::AgentView,
                     SessionSettingsChangedEvent::AgentToolbarChipSelectionSetting { .. },
                 ) | (
-                    AgentToolbarEditorMode::CLIAgent,
-                    SessionSettingsChangedEvent::CLIAgentToolbarChipSelectionSetting { .. },
-                ) | (
-                    AgentToolbarEditorMode::ClaudeCode,
-                    SessionSettingsChangedEvent::ClaudeCodeToolbarChipSelectionSetting { .. },
-                ) | (
-                    AgentToolbarEditorMode::Codex,
-                    SessionSettingsChangedEvent::CodexToolbarChipSelectionSetting { .. },
+                    AgentToolbarEditorMode::CLIAgent
+                        | AgentToolbarEditorMode::ClaudeCode
+                        | AgentToolbarEditorMode::Codex,
+                    SessionSettingsChangedEvent::CodingAgentToolbarChipSelectionSetting { .. }
+                        | SessionSettingsChangedEvent::CLIAgentToolbarChipSelectionSetting { .. }
+                        | SessionSettingsChangedEvent::ClaudeCodeToolbarChipSelectionSetting { .. }
+                        | SessionSettingsChangedEvent::CodexToolbarChipSelectionSetting { .. },
                 ) | (
                     AgentToolbarEditorMode::Terminal,
                     SessionSettingsChangedEvent::TerminalToolbarChipSelectionSetting { .. },
@@ -475,7 +474,7 @@ pub fn next_selection_with_custom_button(
     )
 }
 
-/// Persists a new custom quick-insert button into a shared or provider-specific CLI footer.
+/// Persists a new custom quick-insert button into the shared coding-agent footer.
 pub fn append_cli_custom_button<V: View>(
     mode: AgentToolbarEditorMode,
     label: String,
@@ -485,33 +484,20 @@ pub fn append_cli_custom_button<V: View>(
     ctx: &mut ViewContext<V>,
 ) {
     let current = match mode {
-        AgentToolbarEditorMode::CLIAgent => SessionSettings::as_ref(ctx)
-            .cli_agent_footer_chip_selection
-            .value()
-            .clone(),
-        AgentToolbarEditorMode::ClaudeCode => SessionSettings::as_ref(ctx)
-            .claude_code_footer_chip_selection_value()
-            .clone(),
-        AgentToolbarEditorMode::Codex => SessionSettings::as_ref(ctx)
-            .codex_footer_chip_selection_value()
+        AgentToolbarEditorMode::CLIAgent
+        | AgentToolbarEditorMode::ClaudeCode
+        | AgentToolbarEditorMode::Codex => SessionSettings::as_ref(ctx)
+            .coding_agent_footer_chip_selection_value()
             .clone(),
         AgentToolbarEditorMode::AgentView | AgentToolbarEditorMode::Terminal => return,
     };
     let next = next_selection_with_custom_button(current, label, text, auto_send, visible);
     SessionSettings::handle(ctx).update(ctx, |settings, ctx| match mode {
-        AgentToolbarEditorMode::CLIAgent => {
+        AgentToolbarEditorMode::CLIAgent
+        | AgentToolbarEditorMode::ClaudeCode
+        | AgentToolbarEditorMode::Codex => {
             report_if_error!(settings
-                .cli_agent_footer_chip_selection
-                .set_value(next, ctx));
-        }
-        AgentToolbarEditorMode::ClaudeCode => {
-            report_if_error!(settings
-                .claude_code_footer_chip_selection
-                .set_value(Some(next), ctx));
-        }
-        AgentToolbarEditorMode::Codex => {
-            report_if_error!(settings
-                .codex_footer_chip_selection
+                .coding_agent_footer_chip_selection
                 .set_value(Some(next), ctx));
         }
         AgentToolbarEditorMode::AgentView | AgentToolbarEditorMode::Terminal => {}
@@ -583,9 +569,9 @@ fn save_toolbar_selection<V: View>(
                     .set_value(selection, ctx));
             });
         }
-        mode @ (AgentToolbarEditorMode::CLIAgent
+        AgentToolbarEditorMode::CLIAgent
         | AgentToolbarEditorMode::ClaudeCode
-        | AgentToolbarEditorMode::Codex) => {
+        | AgentToolbarEditorMode::Codex => {
             let selection = if is_default {
                 CLIAgentToolbarChipSelection::Default
             } else {
@@ -596,19 +582,11 @@ fn save_toolbar_selection<V: View>(
                 )
             };
             SessionSettings::handle(ctx).update(ctx, |settings, ctx| match mode {
-                AgentToolbarEditorMode::CLIAgent => {
+                AgentToolbarEditorMode::CLIAgent
+                | AgentToolbarEditorMode::ClaudeCode
+                | AgentToolbarEditorMode::Codex => {
                     report_if_error!(settings
-                        .cli_agent_footer_chip_selection
-                        .set_value(selection, ctx));
-                }
-                AgentToolbarEditorMode::ClaudeCode => {
-                    report_if_error!(settings
-                        .claude_code_footer_chip_selection
-                        .set_value(Some(selection), ctx));
-                }
-                AgentToolbarEditorMode::Codex => {
-                    report_if_error!(settings
-                        .codex_footer_chip_selection
+                        .coding_agent_footer_chip_selection
                         .set_value(Some(selection), ctx));
                 }
                 AgentToolbarEditorMode::AgentView | AgentToolbarEditorMode::Terminal => {}
@@ -647,10 +625,7 @@ impl AgentToolbarEditorModal {
 
     pub fn open(&mut self, mode: AgentToolbarEditorMode, ctx: &mut ViewContext<Self>) {
         self.reset();
-        self.mode = match mode {
-            AgentToolbarEditorMode::CLIAgent => AgentToolbarEditorMode::ClaudeCode,
-            mode => mode,
-        };
+        self.mode = normalized_editor_mode(mode);
         open_toolbar_items_from_settings(&mut self.chip_configurator, self.mode, ctx);
         ctx.notify();
     }
@@ -675,12 +650,8 @@ impl AgentToolbarEditorModal {
     }
 
     fn select_mode(&mut self, mode: AgentToolbarEditorMode, ctx: &mut ViewContext<Self>) {
-        if mode == self.mode
-            || matches!(
-                mode,
-                AgentToolbarEditorMode::AgentView | AgentToolbarEditorMode::CLIAgent
-            )
-        {
+        let mode = normalized_editor_mode(mode);
+        if mode == self.mode || matches!(mode, AgentToolbarEditorMode::AgentView) {
             return;
         }
         if self.dirty_modes.contains(&self.mode) {
@@ -801,18 +772,10 @@ impl View for AgentToolbarEditorModal {
                     mouse_handle: &self.mouse_handles.terminal_tab,
                 },
                 ChipEditorTab {
-                    label: "Codex",
-                    selected: self.mode == AgentToolbarEditorMode::Codex,
-                    action: AgentToolbarEditorAction::SelectMode(AgentToolbarEditorMode::Codex),
-                    mouse_handle: &self.mouse_handles.codex_tab,
-                },
-                ChipEditorTab {
-                    label: "Claude Code",
-                    selected: self.mode == AgentToolbarEditorMode::ClaudeCode,
-                    action: AgentToolbarEditorAction::SelectMode(
-                        AgentToolbarEditorMode::ClaudeCode,
-                    ),
-                    mouse_handle: &self.mouse_handles.claude_code_tab,
+                    label: "Coding agents",
+                    selected: self.mode == AgentToolbarEditorMode::CLIAgent,
+                    action: AgentToolbarEditorAction::SelectMode(AgentToolbarEditorMode::CLIAgent),
+                    mouse_handle: &self.mouse_handles.coding_agents_tab,
                 },
             ]
         };

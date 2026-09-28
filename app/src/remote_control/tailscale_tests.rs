@@ -193,3 +193,46 @@ async fn distinguishes_a_stopped_daemon_from_signed_out() {
         TailscaleSetupOutcome::Stopped
     );
 }
+
+#[tokio::test]
+async fn removes_only_abandoned_clinch_routes_on_dead_ports() {
+    let route = "/clinch-remote-0123456789abcdef01234567";
+    let target = "http://127.0.0.1:4567";
+    let live = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let live_port = live.local_addr().unwrap().port();
+    let dead_port = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.local_addr().unwrap().port()
+    };
+    let abandoned = "/clinch-remote-aaaaaaaaaaaaaaaaaaaaaaaa";
+    let running = "/clinch-remote-bbbbbbbbbbbbbbbbbbbbbbbb";
+    let runner = FakeRunner::with_outputs(vec![
+        output(
+            true,
+            r#"{"BackendState":"Running","Self":{"Online":true,"DNSName":"mac.tail.ts.net."}}"#,
+        ),
+        output(true, "configured"),
+        output(
+            true,
+            &format!(
+                r#"{{"Web":{{"mac:443":{{"Handlers":{{
+                    "{route}":{{"Proxy":"{target}"}},
+                    "{abandoned}":{{"Proxy":"http://127.0.0.1:{dead_port}"}},
+                    "{running}":{{"Proxy":"http://127.0.0.1:{live_port}"}},
+                    "/grafana":{{"Proxy":"http://127.0.0.1:{dead_port}"}}
+                }}}}}}}}"#
+            ),
+        ),
+        output(true, "removed"),
+    ]);
+    let client = client(runner);
+
+    assert!(matches!(
+        client.configure_private_route(route, 4567).await.unwrap(),
+        TailscaleSetupOutcome::Ready(_)
+    ));
+    let calls = client.runner.calls.lock().unwrap();
+    assert_eq!(calls.len(), 4);
+    assert_eq!(calls[3], serve_disable_args(abandoned));
+    drop(live);
+}

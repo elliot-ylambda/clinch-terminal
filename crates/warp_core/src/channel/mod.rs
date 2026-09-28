@@ -59,7 +59,22 @@ impl Channel {
         }
     }
 
-    /// Returns the Warp Control CLI command name corresponding to this channel.
+    /// Returns the Clinch CLI command name corresponding to this channel.
+    ///
+    /// Local control is exposed as the `ctrl` subcommand of this command (for
+    /// example, `clinch ctrl` or `clinch-local ctrl`).
+    pub fn clinch_command_name(&self) -> &'static str {
+        match self {
+            Channel::Stable => "clinch",
+            Channel::Dev => "clinch-dev",
+            Channel::Preview => "clinch-preview",
+            Channel::Local => "clinch-local",
+            Channel::Integration => "clinch-integration",
+            Channel::Oss => "clinch-oss",
+        }
+    }
+
+    /// Returns the legacy Warp Control CLI command name corresponding to this channel.
     pub fn warpctrl_command_name(&self) -> &'static str {
         match self {
             Channel::Stable => "warpctrl",

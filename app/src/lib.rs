@@ -602,9 +602,10 @@ fn apply_scroll_multiplier(event: &mut Event, app: &AppContext) {
 
 /// Runs the shared Warp executable as the app or as one of its command-line modes.
 ///
-/// The bundled Warp Control wrapper injects `--warpctrl`, which is dispatched
-/// before the normal Warp/Oz parser. Oz subcommands are part of that normal
-/// parser and therefore do not require a separate mode flag.
+/// The bundled `clinch ctrl` wrapper injects the internal local-control mode
+/// flag, which is dispatched before the normal Warp/Oz parser. Legacy
+/// `warpctrl` wrappers enter the same mode for compatibility. Oz subcommands
+/// are part of the normal parser and do not require a separate mode flag.
 #[::tracing::instrument(skip_all, fields(tags.cloud_agent = true))]
 pub fn run() -> Result<()> {
     // Perform any necessary platform-specific initialization.
@@ -1165,6 +1166,14 @@ pub(crate) fn initialize_app(
                 warpui_extras::secure_storage::register_with_fallback(&data_domain, warp_core::paths::state_dir(), ctx)
             } else if #[cfg(target_os = "windows")] {
                 warpui_extras::secure_storage::register_with_dir(&data_domain, warp_core::paths::state_dir(), ctx)
+            } else if #[cfg(target_os = "macos")] {
+                if ChannelState::has_backend() {
+                    warpui_extras::secure_storage::register(&data_domain, ctx);
+                } else {
+                    // CLI providers own their login. Clinch's local settings and
+                    // paired-device storage must never summon a password prompt.
+                    warpui_extras::secure_storage::register_noninteractive(&data_domain, ctx);
+                }
             } else {
                 warpui_extras::secure_storage::register(&data_domain, ctx);
             }
@@ -2279,7 +2288,9 @@ pub(crate) fn app_callbacks(
             // Freeze the newest pane/agent ownership before the writer's FIFO termination
             // event. The marker keeps SessionEnd hooks from deleting those registry entries
             // while PTYs are torn down later in shutdown.
-            agent_resume::mark_app_terminating();
+            agent_resume::mark_app_terminating(
+                &app_state::get_app_state(ctx).terminal_pane_uuids(),
+            );
             workspace::global_actions::enqueue_app_state_snapshot(ctx);
 
             NotebookManager::handle(ctx).update(ctx, |manager, ctx| {

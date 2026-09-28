@@ -94,6 +94,7 @@ pub struct WindowSnapshot {
     pub warp_drive_index_width: Option<f32>,
     pub left_panel_open: bool,
     pub vertical_tabs_panel_open: bool,
+    pub vertical_tabs_panel_width: Option<f32>,
     pub left_panel_width: Option<f32>,
     pub right_panel_width: Option<f32>,
     pub agent_management_filters: Option<PersistedAgentManagementFilters>,

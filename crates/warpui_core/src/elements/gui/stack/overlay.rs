@@ -11,11 +11,22 @@ use crate::{
 /// and painting the child within that layer, so that it is drawn above the normal UI elements.
 pub(super) struct Overlay {
     child: Box<dyn Element>,
+    click_through: bool,
 }
 
 impl Overlay {
     pub fn new(child: Box<dyn Element>) -> Self {
-        Self { child }
+        Self {
+            child,
+            click_through: false,
+        }
+    }
+
+    pub fn click_through(child: Box<dyn Element>) -> Self {
+        Self {
+            child,
+            click_through: true,
+        }
     }
 }
 
@@ -35,6 +46,9 @@ impl Element for Overlay {
 
     fn paint(&mut self, origin: Vector2F, ctx: &mut PaintContext, app: &AppContext) {
         ctx.scene.start_overlay_layer(ClipBounds::None);
+        if self.click_through {
+            ctx.scene.set_active_layer_click_through();
+        }
         self.child.paint(origin, ctx, app);
         ctx.scene.stop_layer();
     }
@@ -45,6 +59,9 @@ impl Element for Overlay {
         ctx: &mut EventContext,
         app: &AppContext,
     ) -> bool {
+        if self.click_through {
+            return false;
+        }
         self.child.dispatch_event(event, ctx, app)
     }
 

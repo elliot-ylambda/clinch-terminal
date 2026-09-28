@@ -25,6 +25,7 @@ const ARCHIVE_ASSET: &str = "Clinch.app.zip";
 const X86_64_ARCHIVE_ASSET: &str = "Clinch-x86_64.app.zip";
 const EXPECTED_REPOSITORY: &str = "elliot-ylambda/clinch-terminal";
 const EXPECTED_BUNDLE_ID: &str = "sh.clinch.Clinch";
+const RELEASES_PAGE_SIZE: usize = 100;
 const MAX_MANIFEST_SIZE: usize = 256 * 1024;
 const MAX_SIGNATURE_SIZE: usize = 4096;
 // Release archives are still large enough that slower connections need more than the metadata
@@ -34,11 +35,10 @@ const EMBEDDED_PUBLIC_KEY: &str =
     include_str!("../../../resources/update/clinch-update-public-key.json");
 
 /// How long a successful automatic check suppresses the next one.
-const AUTOMATIC_CHECK_INTERVAL_SECS: i64 = 7 * 24 * 60 * 60;
-/// How long a failed automatic check suppresses the next one. Short enough to recover the same
-/// day from a brief outage, long enough that a persistently failing check costs a handful of
-/// requests per day rather than one per window focus.
-const FAILED_CHECK_BACKOFF_SECS: i64 = 6 * 60 * 60;
+const AUTOMATIC_CHECK_INTERVAL_SECS: i64 = 24 * 60 * 60;
+/// How long an automatic attempt suppresses the next one. This keeps every background path,
+/// including crashes and persistent failures, to at most one GitHub request per day.
+const AUTOMATIC_ATTEMPT_BACKOFF_SECS: i64 = 24 * 60 * 60;
 
 fn last_check_path() -> PathBuf {
     warp_core::paths::state_dir().join("last-update-check")
@@ -47,9 +47,9 @@ fn last_check_path() -> PathBuf {
 /// Cadence state for Clinch's automatic update check.
 ///
 /// Both fields are instants rather than calendar dates, so the cadence is timezone-independent
-/// and does not depend on when the local day happens to roll over. `retry_after` is written only
-/// when a check fails; without it a failing check records nothing and re-fires on every window
-/// focus.
+/// and does not depend on when the local day happens to roll over. `retry_after` is written before
+/// every automatic request; that preserves the daily ceiling even if the app exits before the
+/// request finishes.
 #[derive(Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
 pub(super) struct UpdateCheckRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -97,8 +97,8 @@ impl UpdateCheckRecord {
         self.retry_after = None;
     }
 
-    pub(super) fn record_failure(&mut self, now: DateTime<Utc>) {
-        self.retry_after = Some(now + chrono::Duration::seconds(FAILED_CHECK_BACKOFF_SECS));
+    pub(super) fn record_attempt(&mut self, now: DateTime<Utc>) {
+        self.retry_after = Some(now + chrono::Duration::seconds(AUTOMATIC_ATTEMPT_BACKOFF_SECS));
     }
 }
 
@@ -108,15 +108,21 @@ fn read_record() -> UpdateCheckRecord {
         .unwrap_or_default()
 }
 
-fn write_record(record: &UpdateCheckRecord) {
+fn write_record(record: &UpdateCheckRecord) -> bool {
     let path = last_check_path();
-    let Some(parent) = path.parent() else { return };
-    if let Err(error) = std::fs::create_dir_all(parent).and_then(|_| {
+    let Some(parent) = path.parent() else {
+        return false;
+    };
+    match std::fs::create_dir_all(parent).and_then(|_| {
         let temporary = path.with_extension(format!("tmp.{}", std::process::id()));
         std::fs::write(&temporary, format!("{}\n", record.to_json()))?;
         std::fs::rename(temporary, path)
     }) {
-        log::warn!("could not record the Clinch update check: {error}");
+        Ok(()) => true,
+        Err(error) => {
+            log::warn!("could not record the Clinch update check: {error}");
+            false
+        }
     }
 }
 
@@ -127,13 +133,15 @@ pub(super) fn automatic_check_due(now: DateTime<Utc>) -> bool {
 pub(super) fn record_successful_check(now: DateTime<Utc>) {
     let mut record = read_record();
     record.record_success(now);
-    write_record(&record);
+    let _ = write_record(&record);
 }
 
-pub(super) fn record_failed_check(now: DateTime<Utc>) {
+/// Records an automatic attempt before it starts. Returning `false` prevents the request when the
+/// cadence record cannot be persisted, preserving the daily ceiling across app restarts.
+pub(super) fn record_automatic_check_attempt(now: DateTime<Utc>) -> bool {
     let mut record = read_record();
-    record.record_failure(now);
-    write_record(&record);
+    record.record_attempt(now);
+    write_record(&record)
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -230,6 +238,10 @@ fn machine_architecture() -> Result<&'static str> {
 struct GithubRelease {
     tag_name: String,
     html_url: String,
+    #[serde(default)]
+    draft: bool,
+    #[serde(default)]
+    prerelease: bool,
     assets: Vec<GithubAsset>,
 }
 
@@ -496,6 +508,33 @@ fn compare_numeric_versions(left: &str, right: &str) -> Result<Ordering> {
     Ok(left.cmp(&right))
 }
 
+/// Select the greatest public, stable release that actually carries Clinch update metadata.
+///
+/// GitHub's singular `releases/latest` route follows a mutable repository marker. Looking across
+/// the release feed prevents a stale marker from making an installation walk through intervening
+/// versions one at a time. The signed manifest still authenticates every field after selection.
+fn select_latest_update_release(releases: Vec<GithubRelease>) -> Result<GithubRelease> {
+    let mut latest: Option<GithubRelease> = None;
+    for release in releases {
+        if release.draft
+            || release.prerelease
+            || asset(&release, MANIFEST_ASSET).is_err()
+            || asset(&release, SIGNATURE_ASSET).is_err()
+            || numeric_version(&release.tag_name).is_err()
+        {
+            continue;
+        }
+        let replace = latest.as_ref().is_none_or(|current| {
+            compare_numeric_versions(&release.tag_name, &current.tag_name)
+                .is_ok_and(|ordering| ordering == Ordering::Greater)
+        });
+        if replace {
+            latest = Some(release);
+        }
+    }
+    latest.context("GitHub returned no public Clinch update release")
+}
+
 fn validate_release_order_against(
     manifest: &Manifest,
     current_version: &str,
@@ -533,7 +572,7 @@ async fn fetch_small_asset(
     maximum_size: usize,
 ) -> Result<Vec<u8>> {
     let response = client
-        .get(url)
+        .get_without_warp_headers(url)
         .timeout(Duration::from_secs(30))
         .header("Accept", "application/octet-stream")
         .header("User-Agent", "Clinch-Updater")
@@ -548,14 +587,15 @@ async fn fetch_small_asset(
 pub async fn fetch_latest(client: &http_client::Client) -> Result<VerifiedRelease> {
     let base_url = ChannelState::releases_base_url();
     let response = client
-        .get(format!("{base_url}/latest").as_str())
+        .get_without_warp_headers(format!("{base_url}?per_page={RELEASES_PAGE_SIZE}").as_str())
         .timeout(Duration::from_secs(30))
         .header("Accept", "application/vnd.github+json")
         .header("User-Agent", "Clinch-Updater")
         .send()
         .await?
         .error_for_status()?;
-    let release: GithubRelease = response.json().await?;
+    let releases: Vec<GithubRelease> = response.json().await?;
+    let release = select_latest_update_release(releases)?;
     let manifest_asset = asset(&release, MANIFEST_ASSET)?;
     let signature_asset = asset(&release, SIGNATURE_ASSET)?;
     validate_https_url(&manifest_asset.browser_download_url, "github.com")?;
@@ -707,7 +747,7 @@ pub async fn download_and_stage(
     async_fs::create_dir_all(&directory).await?;
     let archive_path = directory.join(ARCHIVE_ASSET);
     let response = client
-        .get(&archive.url)
+        .get_without_warp_headers(&archive.url)
         .timeout(ARCHIVE_DOWNLOAD_TIMEOUT)
         .header("Accept", "application/octet-stream")
         .header("User-Agent", "Clinch-Updater")

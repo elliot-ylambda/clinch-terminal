@@ -55,6 +55,7 @@ async function installPairedPhone(
         }), { status: 200, headers: { "content-type": "application/json" } });
       }
       if (url.includes("/api/v1/auth/authenticate")) {
+        localStorage.setItem("auth-count", String(Number(localStorage.getItem("auth-count") ?? "0") + 1));
         return new Response(JSON.stringify({
           session_id: "33333333-3333-4333-8333-333333333333",
           device: {
@@ -465,7 +466,8 @@ async function installPairedPhone(
 
 test("unpaired phone gets a focused setup screen without horizontal overflow", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByText("Open Clinch Settings", { exact: false })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Pair this phone" })).toBeVisible();
+  await expect(page.getByText("click “Pair a phone”", { exact: false })).toBeVisible();
   const mark = page.getByRole("img", { name: "Clinch" });
   await expect(mark).toBeVisible();
   await expect(mark).toHaveAttribute("src", "./clinch-logo.svg");
@@ -516,13 +518,20 @@ test("a first-time QR scan creates a phone key and waits for explicit Mac approv
 
   await page.goto("/#bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb:qr-secret");
   await expect(page.getByRole("heading", { name: "Approve on your Mac" })).toBeVisible();
-  await expect(page.getByText("Approve “iPhone” in Clinch on your Mac.")).toBeVisible();
+  await expect(page.getByText("Check that your Mac shows this code, then click Approve.")).toBeVisible();
+  // The head of the phone key's fingerprint, which the Mac's approval prompt shows too.
+  await expect(page.getByLabel("Matching code")).toHaveText("0123-4567");
   await expect(page.getByRole("img", { name: "Clinch" })).toBeVisible();
   await expect.poll(() => page.evaluate(() => location.hash)).toBe("");
 
   await page.reload();
   await expect(page.getByRole("heading", { name: "Approve on your Mac" })).toBeVisible();
-  await expect(page.getByText("Approve “iPhone” in Clinch on your Mac.")).toBeVisible();
+  await expect(page.getByLabel("Matching code")).toHaveText("0123-4567");
+  const dimensions = await page.evaluate(() => ({
+    client: document.documentElement.clientWidth,
+    scroll: document.documentElement.scrollWidth,
+  }));
+  expect(dimensions.scroll).toBeLessThanOrEqual(dimensions.client);
   expect(await page.evaluate(() => localStorage.getItem("pair-claim-count"))).toBe("1");
 });
 
@@ -566,7 +575,15 @@ test("paired phone exposes projects, drawer, usage, and recent-session resume", 
   await expect(page.locator(".session-header")).toHaveCount(0);
 
   const drawerToggle = page.getByRole("button", { name: "Open project and tab drawer" });
-  await expect(drawerToggle.getByRole("img", { name: "Clinch" })).toBeVisible();
+  await expect(drawerToggle).toBeVisible();
+  // The slim session bar names the pane on screen and is another way into the drawer.
+  const sessionBar = page.locator(".session-bar");
+  await expect(sessionBar).toContainText("Ship remote control");
+  await expect(sessionBar).toContainText("Claude Code");
+  expect(await sessionBar.evaluate((bar) => bar.getBoundingClientRect().height)).toBeLessThanOrEqual(32);
+  await sessionBar.getByRole("button", { name: /Ship remote control/ }).click();
+  await expect(page.getByRole("complementary", { name: "Current project sessions" })).toBeVisible();
+  await page.getByRole("button", { name: "Close drawer" }).click();
   await demoProject.click();
   await expect(page.getByRole("complementary", { name: "Current project sessions" })).toBeVisible();
   await page.getByRole("button", { name: "Close drawer" }).click();
@@ -666,13 +683,14 @@ test("paired phone exposes projects, drawer, usage, and recent-session resume", 
     unsafeResizes: 0,
   });
 
-  const projectAdd = page.getByRole("button", { name: "New project", exact: true });
-  expect(await projectAdd.evaluate((button) => {
-    const bounds = button.getBoundingClientRect();
-    return bounds.left >= 0 && bounds.right <= innerWidth;
-  })).toBe(true);
+  await expect(page.getByRole("banner").getByRole("button", { name: /New project/ })).toHaveCount(0);
+  await drawerToggle.click();
+  const projectAdd = page.getByRole("complementary", { name: "Current project sessions" })
+    .getByRole("button", { name: "＋ New project" });
+  await expect(projectAdd).toBeVisible();
   await projectAdd.click();
   await expect.poll(() => page.evaluate(() => localStorage.getItem("remote-command-types"))).toContain("create_project");
+  await expect(page.getByRole("complementary", { name: "Current project sessions" })).toHaveCount(0);
 
   await page.getByRole("button", { name: "Open project and tab drawer" }).click();
   const drawer = page.getByRole("complementary", { name: "Current project sessions" });
@@ -684,12 +702,22 @@ test("paired phone exposes projects, drawer, usage, and recent-session resume", 
     .toBe("rgb(55, 128, 233)");
 
   await drawer.getByRole("button", { name: "Close drawer" }).click();
-  await page.getByRole("button", { name: "Usage and settings" }).click();
-  const usage = page.getByRole("dialog", { name: "Usage & connection" });
-  await expect(usage.getByText("Today", { exact: true })).toBeVisible();
-  await expect(usage.getByText("Test iPhone · Test Mac", { exact: false })).toBeVisible();
-  await expect(usage.getByText("full-screen app without browser bars", { exact: false })).toBeVisible();
-  await usage.getByRole("button", { name: "Close" }).click();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const settings = page.getByRole("dialog", { name: "Settings" });
+  await expect(settings.getByRole("heading", { name: "Settings" })).toBeVisible();
+  await expect(settings.getByText("Test iPhone · Test Mac", { exact: false })).toBeVisible();
+  // Usage is secondary here, so it starts collapsed.
+  await expect(settings.getByText("Today", { exact: true })).toBeHidden();
+  await settings.getByText("Claude Code & Codex usage").click();
+  await expect(settings.getByText("Today", { exact: true })).toBeVisible();
+  await expect(settings.getByText("full-screen app without browser bars", { exact: false })).toBeVisible();
+  await settings.getByRole("button", { name: "Dismiss Home Screen tip" }).click();
+  await expect(settings.getByText("full-screen app without browser bars", { exact: false })).toHaveCount(0);
+  await settings.getByRole("button", { name: "Close", exact: true }).click();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Settings" })
+    .getByText("full-screen app without browser bars", { exact: false })).toHaveCount(0);
+  await page.getByRole("dialog", { name: "Settings" }).getByRole("button", { name: "Close", exact: true }).click();
 
   await page.getByRole("button", { name: "Open project and tab drawer" }).click();
   await page.getByRole("complementary", { name: "Current project sessions" })
@@ -775,7 +803,8 @@ test("typing stays after a shell prompt that reflows from a narrower Mac pane", 
   // grid. This catches implementations that merely offset carriage returns and break at wrap.
   const typed = `h${"i".repeat(29)}`;
   await terminalInput.pressSequentially(typed);
-  await expect(page.getByText("This phone has control", { exact: true })).toBeVisible();
+  // Holding control yourself is the normal case and needs no status line.
+  await expect(page.getByText("This phone has control", { exact: true })).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => localStorage.getItem("wrapped-resize-acked"))).toBe("true");
   await expect.poll(() => page.evaluate(() => localStorage.getItem("wrapped-resize-redrawn"))).toBe("true");
   expect(await page.evaluate(() => localStorage.getItem("wrapped-input-before-resize"))).toBeNull();
@@ -797,7 +826,7 @@ test("a pane on screen on the Mac is mirrored, not resized", async ({ page }) =>
   await page.addInitScript(() => localStorage.setItem("remote-command-types", "[]"));
   await installPairedPhone(page, "full-screen", true);
 
-  await expect(page.getByText(/^Sized for the Mac/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Fit to phone" })).toHaveAttribute("title", /^Sized for the Mac/);
 
   // The whole point: attaching must not reshape the pane someone is working in on the Mac.
   await page.waitForTimeout(1_000);
@@ -829,7 +858,7 @@ test("a pane on screen on the Mac is mirrored, not resized", async ({ page }) =>
 test("taking the width for the phone is a deliberate, reversible tap", async ({ page }) => {
   await installPairedPhone(page, "full-screen", true);
 
-  await expect(page.getByText(/^Sized for the Mac/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Fit to phone" })).toBeVisible();
   await page.evaluate(() => localStorage.setItem("remote-command-types", "[]"));
   await page.getByRole("button", { name: "Fit to phone" }).click();
 
@@ -858,4 +887,29 @@ test("empty-project focus mode stays centered within a phone viewport", async ({
   expect(Math.abs(layout.headingCenter - layout.viewportWidth / 2)).toBeLessThan(2);
   expect(layout.shellLeft).toBeGreaterThanOrEqual(0);
   expect(layout.shellRight).toBeLessThanOrEqual(layout.viewportWidth);
+});
+
+test("returning to the app keeps the last terminal on screen while it reconnects", async ({ page }) => {
+  await installPairedPhone(page);
+  const rows = page.locator(".xterm-screen > .xterm-rows");
+  await expect.poll(() => rows.evaluate((element) => element.textContent?.includes("Claude frame settled"))).toBe(true);
+  const authentications = await page.evaluate(() => localStorage.getItem("auth-count"));
+
+  // Dropping the connection must not swap the terminal for the "Waiting for your Mac" screen.
+  await page.evaluate(() => window.dispatchEvent(new Event("offline")));
+  await expect(page.locator(".reconnect-pill")).toHaveText(/Reconnecting…|Mac offline/);
+  await expect(page.getByLabel("Selected Clinch terminal output")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Waiting for your Mac" })).toHaveCount(0);
+
+  // Reconnecting reuses the still-valid session instead of signing a new challenge.
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await expect(page.locator(".reconnect-pill")).toHaveCount(0);
+  await expect(page.getByLabel("Selected Clinch terminal output")).toBeVisible();
+  expect(await page.evaluate(() => localStorage.getItem("auth-count"))).toBe(authentications);
+
+  const dimensions = await page.evaluate(() => ({
+    client: document.documentElement.clientWidth,
+    scroll: document.documentElement.scrollWidth,
+  }));
+  expect(dimensions.scroll).toBeLessThanOrEqual(dimensions.client);
 });

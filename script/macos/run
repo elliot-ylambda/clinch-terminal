@@ -144,8 +144,16 @@ if [[ ",$FEATURES," =~ ",heap_usage_tracking," ]]; then
 fi
 
 if [[ ",$FEATURES," =~ ",warp_control_cli," ]]; then
+  CLINCH_SCRIPT_PATH="$WARP_APP_PATH/Contents/Resources/bin/clinch-$WARP_CHANNEL"
+  echo "Creating Clinch ctrl wrapper script at $CLINCH_SCRIPT_PATH..."
+  "${REPO_ROOT}/script/macos/create_warpctrl_wrapper" \
+    "$CLINCH_SCRIPT_PATH" \
+    "../../MacOS/$WARP_BIN_NAME" \
+    clinch
+
+  # Preserve the old direct command for compatibility with existing scripts.
   WARPCTRL_SCRIPT_PATH="$WARP_APP_PATH/Contents/Resources/bin/warpctrl-$WARP_CHANNEL"
-  echo "Creating warpctrl wrapper script at $WARPCTRL_SCRIPT_PATH..."
+  echo "Creating legacy warpctrl wrapper script at $WARPCTRL_SCRIPT_PATH..."
   "${REPO_ROOT}/script/macos/create_warpctrl_wrapper" \
     "$WARPCTRL_SCRIPT_PATH" \
     "../../MacOS/$WARP_BIN_NAME"

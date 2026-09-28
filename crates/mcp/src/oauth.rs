@@ -364,6 +364,11 @@ pub fn load_credentials_from_secure_storage<T: DeserializeOwned + Default>(
     app: &mut warpui::AppContext,
     key: &str,
 ) -> T {
+    // CLI providers in Clinch own their MCP authentication. Keep both reads
+    // and writes inert so empty in-app state cannot overwrite saved records.
+    if !ChannelState::has_backend() {
+        return T::default();
+    }
     app.secure_storage()
         .read_value(key)
         .inspect_err(|err| {
@@ -382,6 +387,9 @@ pub fn write_to_secure_storage<T: Serialize>(
     key: &str,
     credentials: &T,
 ) {
+    if !ChannelState::has_backend() {
+        return;
+    }
     match serde_json::to_string(credentials) {
         Ok(json) => {
             app.secure_storage()

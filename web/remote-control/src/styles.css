@@ -95,7 +95,6 @@ button:disabled {
   padding: env(safe-area-inset-top) 10px 0;
 }
 
-.wordmark,
 .pairing-mark {
   display: block;
   flex: 0 0 auto;
@@ -103,26 +102,28 @@ button:disabled {
   box-shadow: 0 7px 25px rgba(191, 255, 0, 0.1);
 }
 
-.wordmark {
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-}
-
-.project-drawer-button {
+.menu-button {
   display: grid;
   place-items: center;
   flex: 0 0 auto;
-  width: 32px;
-  height: 32px;
-  padding: 2px;
+  width: 34px;
+  height: 34px;
   border: 1px solid transparent;
   border-radius: 9px;
+  color: var(--ink);
   background: transparent;
 }
 
-.project-drawer-button:active,
-.project-drawer-button[aria-expanded="true"] {
+.menu-button span {
+  width: 16px;
+  height: 2px;
+  border-radius: 1px;
+  background: currentColor;
+  box-shadow: 0 -5px 0 currentColor, 0 5px 0 currentColor;
+}
+
+.menu-button:active,
+.menu-button[aria-expanded="true"] {
   border-color: var(--stroke);
   background: rgba(255, 255, 255, 0.07);
 }
@@ -143,8 +144,6 @@ button:disabled {
 
 .project-pill,
 .quick-inserts button,
-.project-add-button,
-.new-button,
 .icon-button,
 .empty-actions button {
   white-space: nowrap;
@@ -217,25 +216,6 @@ button:disabled {
   background: rgba(255, 255, 255, 0.07);
 }
 
-.project-add-button {
-  display: grid;
-  place-items: center;
-  flex: 0 0 auto;
-  width: 29px;
-  height: 29px;
-  border-color: var(--stroke);
-  border-radius: 9px;
-  color: var(--accent);
-  background: rgba(191, 255, 0, 0.06);
-  font-size: 18px;
-  line-height: 1;
-}
-
-.project-add-button:hover:not(:disabled) {
-  border-color: rgba(191, 255, 0, 0.42);
-  background: rgba(191, 255, 0, 0.11);
-}
-
 .activity-dot {
   display: inline-block;
   width: 7px;
@@ -283,96 +263,122 @@ button:disabled {
 }
 
 .icon-button:active,
-.new-button:active,
 .quick-inserts button:active {
   background: rgba(255, 255, 255, 0.09);
 }
 
-.target-title {
-  display: flex;
-  flex: 1;
-  min-width: 0;
-  flex-direction: column;
-  line-height: 1.2;
-}
-
-.target-title strong,
-.target-title span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.target-title strong {
-  font-size: 13px;
-  font-weight: 670;
-}
-
-.target-title span {
-  margin-top: 3px;
-  color: var(--muted);
-  font-size: 10px;
-}
-
-.connection-chip {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  max-width: 112px;
-  padding: 5px 7px;
-  overflow: hidden;
-  border: 1px solid var(--stroke);
-  border-radius: 99px;
-  color: var(--muted);
-  font-size: 9px;
-  font-weight: 700;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.connection-chip > span {
-  width: 6px;
-  height: 6px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: #656976;
-}
-
-.connection-chip.connected > span {
-  background: var(--green);
-  box-shadow: 0 0 8px rgba(5, 223, 114, 0.5);
-}
-
-.connection-chip.reconnecting > span {
-  background: var(--amber);
-  animation: pulse 1.4s ease-in-out infinite;
-}
-
-.connection-chip.authorization_revoked > span,
-.connection-chip.version_incompatible > span {
-  background: var(--red);
-}
-
-.new-button {
-  height: 32px;
-  padding: 0 10px;
-  border-color: rgba(191, 255, 0, 0.28);
-  border-radius: 9px;
-  color: var(--violet-bright);
-  background: rgba(191, 255, 0, 0.08);
-  font-size: 11px;
-  font-weight: 720;
-}
-
 .focus-area {
   position: relative;
+  display: flex;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  flex-direction: column;
   background:
     linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
     var(--background);
   background-size: 100% 22px;
+}
+
+/* One slim line naming the pane on screen; tapping it opens the drawer to switch. */
+.session-bar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  min-width: 0;
+  padding: 0 6px 0 4px;
+  border-bottom: 1px solid var(--stroke);
+  background: rgba(11, 15, 30, 0.94);
+}
+
+.session-bar-title {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  height: 100%;
+  padding: 0 6px;
+  overflow: hidden;
+  color: var(--ink);
+  background: transparent;
+  text-align: left;
+}
+
+.session-bar-title strong {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-bar-title small {
+  flex: 0 0 auto;
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.session-bar-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--command-gray);
+}
+
+.session-bar-dot.working {
+  background: var(--accent);
+  box-shadow: 0 0 7px rgba(191, 255, 0, 0.45);
+}
+
+.session-bar-dot.done {
+  background: var(--done-blue);
+  box-shadow: 0 0 7px rgba(55, 128, 233, 0.36);
+}
+
+/*
+ * A PTY has a single width, so taking it for this phone visibly reshapes the pane on the Mac;
+ * that has to be a deliberate tap, not a side effect of opening this app.
+ */
+.session-bar-size {
+  flex: 0 0 auto;
+  height: 22px;
+  padding: 0 9px;
+  border: 1px solid var(--stroke);
+  border-radius: 999px;
+  color: var(--ink);
+  background: var(--panel-soft);
+  font-size: 10px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.focus-body {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.reconnect-pill {
+  position: absolute;
+  z-index: 10;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 11px;
+  border: 1px solid var(--stroke);
+  border-radius: 999px;
+  color: var(--muted);
+  background: rgba(11, 15, 30, 0.92);
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 .terminal-surface {
@@ -392,51 +398,6 @@ button:disabled {
 .terminal-stage {
   width: 100%;
   height: 100%;
-}
-
-/*
- * Explains, at the moment it matters, why the grid looks the way it does — and offers the one
- * tap that changes it. A PTY has a single width, so taking it for this phone visibly reshapes
- * the pane on the Mac; that has to be a deliberate act, not a side effect of opening this app.
- */
-.sizing-chip {
-  position: absolute;
-  z-index: 7;
-  /* Anchored to the bottom because a mirrored grid is a short box at the top of the surface: the
-     space down here is empty in exactly the case where this chip is shown most. */
-  bottom: 8px;
-  right: 8px;
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  max-width: calc(100% - 16px);
-  padding: 4px 4px 4px 10px;
-  border: 1px solid var(--stroke);
-  border-radius: 999px;
-  background: rgba(11, 15, 30, 0.92);
-  font-size: 11px;
-  color: var(--muted);
-  backdrop-filter: blur(6px);
-}
-
-.sizing-chip > span {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.sizing-chip > button {
-  flex: none;
-  padding: 4px 10px;
-  border: 1px solid var(--stroke);
-  border-radius: 999px;
-  background: var(--panel-soft);
-  font-size: 11px;
-  color: var(--ink);
-}
-
-.sizing-chip > button:disabled {
-  opacity: 0.45;
 }
 
 .terminal-resize-freeze {
@@ -763,16 +724,32 @@ button:disabled {
   font-size: 8px;
 }
 
+.drawer-actions {
+  display: grid;
+  gap: 6px;
+  margin: 4px 0 14px;
+}
+
 .drawer-new {
   width: 100%;
   min-height: 40px;
-  margin: 4px 0 14px;
   border: 1px dashed rgba(191, 255, 0, 0.35);
   border-radius: 11px;
   color: var(--violet-bright);
   background: rgba(191, 255, 0, 0.06);
   font-size: 11px;
   font-weight: 700;
+}
+
+.drawer-new-project {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid var(--stroke);
+  border-radius: 11px;
+  color: var(--muted);
+  background: transparent;
+  font-size: 11px;
+  font-weight: 650;
 }
 
 .drawer-task-section {
@@ -871,7 +848,7 @@ button:disabled {
   z-index: 31;
   inset: auto 0 0;
   max-height: min(86dvh, 720px);
-  padding: 7px 16px calc(20px + env(safe-area-inset-bottom));
+  padding: 0 16px calc(20px + env(safe-area-inset-bottom));
   overflow-y: auto;
   border: 1px solid var(--stroke-strong);
   border-bottom: 0;
@@ -888,13 +865,19 @@ button:disabled {
 .sheet-handle {
   width: 38px;
   height: 4px;
-  margin: 0 auto 10px;
+  margin: 7px auto 0;
   border-radius: 99px;
   background: #52545d;
 }
 
+/* Stays pinned while the sheet (the scroll container) scrolls, so Close is always in reach. */
 .sheet header {
-  margin-bottom: 15px;
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  margin: 0 -16px 5px;
+  padding: 10px 16px;
+  background: rgb(11, 15, 30);
 }
 
 .sheet h2 {
@@ -951,6 +934,40 @@ button:disabled {
   color: var(--muted);
   font-size: 10px;
   line-height: 1.45;
+}
+
+.usage-details summary {
+  padding: 11px 3px;
+  color: #d2d4dc;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.usage-details .usage-card + .usage-card,
+.usage-details > .muted {
+  margin-top: 10px;
+}
+
+.home-screen-tip {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.home-screen-tip p {
+  flex: 1;
+  margin: 0;
+}
+
+.home-screen-tip button {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.055);
+  font-size: 16px;
 }
 
 .connection-help {
@@ -1253,26 +1270,46 @@ button:disabled {
   line-height: 1.5;
 }
 
+.pairing-screen > .pairing-code {
+  display: block;
+  margin: 0 0 10px;
+  padding: 14px 20px;
+  border: 1px solid rgba(191, 255, 0, 0.35);
+  border-radius: 14px;
+  color: var(--accent);
+  background: rgba(191, 255, 0, 0.06);
+  font-family: var(--font-mono);
+  font-size: clamp(30px, 10vw, 40px);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.pairing-screen > p.pairing-expiry {
+  margin: 0 0 18px;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
 .pairing-screen > .primary-wide {
   max-width: 290px;
 }
 
 .pairing-security {
   display: flex;
-  max-width: 390px;
+  max-width: 330px;
   margin-top: auto;
-  padding: 13px;
+  padding-top: 18px;
   align-items: flex-start;
-  gap: 11px;
-  border: 1px solid rgba(5, 223, 114, 0.14);
-  border-radius: 13px;
-  background: rgba(5, 223, 114, 0.04);
+  gap: 8px;
+  opacity: 0.75;
   text-align: left;
 }
 
 .pairing-security > span {
   color: var(--green);
-  font-size: 19px;
+  font-size: 13px;
 }
 
 .pairing-security div {
@@ -1281,7 +1318,8 @@ button:disabled {
 }
 
 .pairing-security strong {
-  font-size: 11px;
+  color: var(--muted);
+  font-size: 10px;
 }
 
 .pairing-security small {

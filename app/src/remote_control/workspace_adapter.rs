@@ -238,6 +238,30 @@ impl WorkspaceAdapter {
         }
     }
 
+    pub(super) fn has_writer_for_terminal(&self, terminal_id: EntityId, ctx: &AppContext) -> bool {
+        if self.writer_leases.is_empty() {
+            return false;
+        }
+        for (_, workspace) in crate::workspace::WorkspaceRegistry::as_ref(ctx).all_workspaces(ctx) {
+            for tab in workspace.as_ref(ctx).tab_views() {
+                let group = tab.as_ref(ctx);
+                for pane in group.pane_ids() {
+                    if group
+                        .terminal_view_from_pane_id(pane, ctx)
+                        .is_some_and(|view| view.id() == terminal_id)
+                    {
+                        let pane_id = pane_opaque_id(pane);
+                        return self.writer_leases.iter().any(|(target, lease)| {
+                            target.pane_id == pane_id
+                                && self.connected_sessions.contains(&lease.session_id)
+                        });
+                    }
+                }
+            }
+        }
+        false
+    }
+
     pub fn initial_snapshot(&mut self, ctx: &mut ModelContext<Self>) -> ServerEnvelope {
         let snapshot = self.snapshot(ctx);
         self.response(None, ServerMessage::Snapshot(snapshot))
@@ -2274,7 +2298,7 @@ fn usage_snapshots(ctx: &ModelContext<WorkspaceAdapter>) -> Vec<UsageSnapshot> {
         UsageSnapshot {
             provider,
             state: if selected_window.is_some() || has_local_usage {
-                if usage.plan_needs_authorization {
+                if usage.plan_unavailable {
                     UsageState::Stale
                 } else {
                     UsageState::Available

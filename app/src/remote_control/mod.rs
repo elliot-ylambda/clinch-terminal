@@ -1,5 +1,6 @@
 mod gateway;
 mod pairing;
+mod registry_storage;
 mod status;
 mod tailscale;
 mod workspace_adapter;
@@ -7,8 +8,10 @@ mod workspace_adapter;
 use std::time::Duration as StdDuration;
 
 use chrono::Utc;
-use clinch_companion_protocol::{Capability, DeviceId, PairingClaimId, PairingInvitation};
+use clinch_companion_protocol::{Capability, DeviceId, PairingClaimId};
 use instant::Instant;
+#[cfg(test)]
+pub use pairing::PendingClaimSummary;
 use settings::Setting as _;
 pub use status::{RemoteControlStatus, RemoteControlViewState};
 use warp_core::channel::ChannelState;
@@ -17,29 +20,30 @@ use warpui_extras::secure_storage;
 
 use self::gateway::{GatewayEvent, GatewayHandle};
 use self::pairing::{DeviceRegistry, PairingManager};
+use self::registry_storage::RegistryStorage;
 use self::tailscale::{TailscaleClient, TailscaleError, TailscaleSetupOutcome};
 use self::workspace_adapter::WorkspaceAdapter;
 use crate::settings::{RemoteControlMode, RemoteControlSettings};
 
 const DEVICE_REGISTRY_STORAGE_KEY: &str = "ClinchRemoteControlDeviceRegistryV1";
 const TAILSCALE_SETUP_TIMEOUT: StdDuration = StdDuration::from_secs(20);
+/// Drives QR/claim countdowns and expiry while a pairing is in progress.
+const PAIRING_TICK: StdDuration = StdDuration::from_secs(1);
+/// An unscanned QR renews itself for this long after "Pair a phone", then stops so a forgotten
+/// settings window never keeps minting invitations.
+const PAIRING_RENEWAL_WINDOW: StdDuration = StdDuration::from_secs(30 * 60);
+/// While Tailscale blocks setup, re-check quickly at first so finishing a sign-in is noticed
+/// without a button, then back off.
+const TAILSCALE_RECHECK_FAST: StdDuration = StdDuration::from_secs(4);
+const TAILSCALE_RECHECK_SLOW: StdDuration = StdDuration::from_secs(30);
+const TAILSCALE_RECHECK_FAST_WINDOW: StdDuration = StdDuration::from_secs(3 * 60);
 
 pub fn register(ctx: &mut AppContext) {
-    let registry = if ChannelState::has_backend() {
-        // The inherited account-backed app still constructs the Clinch settings page, so its
-        // model handle must exist. Give it an inert in-memory authority without reading or
-        // rewriting Clinch's local device registry.
-        DeviceRegistry::default()
-    } else {
-        load_registry(ctx)
-    };
-    let pairing = PairingManager::new(registry).unwrap_or_else(|error| {
-        log::error!("Remote Control device registry was rejected: {error}");
-        PairingManager::new(DeviceRegistry::default()).expect("default device registry is valid")
-    });
-    if !ChannelState::has_backend() {
-        persist_registry(&pairing, ctx);
-    }
+    // Keep the shared authority inert until Remote Control is actually used.
+    // Loading its protected registry while disabled causes unnecessary Keychain
+    // prompts after updates; writing a failed read back can erase paired devices.
+    let pairing =
+        PairingManager::new(DeviceRegistry::default()).expect("default device registry is valid");
 
     let workspace_pairing = pairing.clone();
     ctx.add_singleton_model(move |ctx| WorkspaceAdapter::new(workspace_pairing, ctx));
@@ -48,12 +52,19 @@ pub fn register(ctx: &mut AppContext) {
 
 pub struct RemoteControlService {
     pairing: PairingManager,
+    registry_storage: RegistryStorage,
     view_state: RemoteControlViewState,
     runtime: Option<tokio::runtime::Runtime>,
     gateway: Option<GatewayHandle>,
     base_origin: Option<String>,
+    /// Loopback port of the running gateway, reused when re-checking Tailscale.
+    gateway_port: Option<u16>,
     generation: u64,
     cleanup_in_progress: bool,
+    /// Set by "Pair a phone"; cleared once the phone is approved or the user cancels.
+    pairing_started_at: Option<Instant>,
+    pairing_ticker_running: bool,
+    tailscale_blocked_since: Option<Instant>,
 }
 
 impl Entity for RemoteControlService {
@@ -66,12 +77,17 @@ impl RemoteControlService {
     fn new(pairing: PairingManager, ctx: &mut ModelContext<Self>) -> Self {
         let mut service = Self {
             pairing,
+            registry_storage: RegistryStorage::default(),
             view_state: RemoteControlViewState::default(),
             runtime: None,
             gateway: None,
             base_origin: None,
+            gateway_port: None,
             generation: 0,
             cleanup_in_progress: false,
+            pairing_started_at: None,
+            pairing_ticker_running: false,
+            tailscale_blocked_since: None,
         };
         ctx.subscribe_to_model(&RemoteControlSettings::handle(ctx), |service, _, _, ctx| {
             service.refresh_for_settings(ctx);
@@ -82,6 +98,29 @@ impl RemoteControlService {
 
     pub fn view_state(&self) -> &RemoteControlViewState {
         &self.view_state
+    }
+
+    pub fn paired_phones_loaded(&self) -> bool {
+        self.registry_storage.is_loaded()
+    }
+
+    /// Explicit device management is available while the companion remains off.
+    pub fn show_paired_phones(&mut self, ctx: &mut ModelContext<Self>) {
+        match self.ensure_registry_loaded(ctx) {
+            Ok(()) => {
+                self.refresh_pairing_state();
+                if !self.view_state.enabled {
+                    self.view_state.status = RemoteControlStatus::Disabled;
+                }
+            }
+            Err(message) => {
+                self.view_state.status = RemoteControlStatus::Error {
+                    message,
+                    retryable: true,
+                };
+            }
+        }
+        ctx.notify();
     }
 
     pub fn set_enabled(&mut self, enabled: bool, ctx: &mut ModelContext<Self>) {
@@ -101,20 +140,33 @@ impl RemoteControlService {
     }
 
     pub fn retry(&mut self, ctx: &mut ModelContext<Self>) {
-        if ChannelState::has_backend()
-            || !RemoteControlSettings::as_ref(ctx).is_enabled()
-            || self.cleanup_in_progress
-        {
+        if ChannelState::has_backend() || self.cleanup_in_progress {
+            return;
+        }
+        if !RemoteControlSettings::as_ref(ctx).is_enabled() {
+            if !self.paired_phones_loaded() {
+                self.show_paired_phones(ctx);
+            }
             return;
         }
         self.stop_runtime(false, ctx);
         self.start(ctx);
     }
 
-    pub fn create_pairing_invitation(
-        &mut self,
-        ctx: &mut ModelContext<Self>,
-    ) -> Result<PairingInvitation, String> {
+    /// Starts (or restarts) pairing: shows a fresh QR code that keeps renewing itself until a
+    /// phone scans it, the user cancels, or [`PAIRING_RENEWAL_WINDOW`] lapses.
+    pub fn start_pairing(&mut self, ctx: &mut ModelContext<Self>) {
+        self.pairing_started_at = Some(Instant::now());
+        self.view_state.pairing_error = None;
+        if let Err(message) = self.issue_invitation() {
+            self.pairing_started_at = None;
+            self.view_state.pairing_error = Some(message);
+        }
+        self.ensure_pairing_ticker(ctx);
+        ctx.notify();
+    }
+
+    fn issue_invitation(&mut self) -> Result<(), String> {
         let base_origin = self
             .base_origin
             .as_deref()
@@ -122,71 +174,91 @@ impl RemoteControlService {
         let invitation = self
             .pairing
             .create_invitation(base_origin, Utc::now())
-            .map_err(|error| error.to_string())?;
-        self.view_state.active_invitation = Some(invitation.clone());
-        if let Some(runtime) = &self.runtime {
-            let generation = self.generation;
-            let invitation_id = invitation.id;
-            let spawner = ctx.spawner();
-            runtime.spawn(async move {
-                loop {
-                    tokio::time::sleep(StdDuration::from_millis(500)).await;
-                    let Ok(should_continue) = spawner
-                        .spawn(move |service, ctx| {
-                            if service.generation != generation
-                                || service
-                                    .view_state
-                                    .active_invitation
-                                    .as_ref()
-                                    .is_none_or(|active| active.id != invitation_id)
-                            {
-                                return false;
-                            }
-                            service.refresh_pairing_state();
-                            let pending = !service.view_state.pending_claims.is_empty();
-                            if pending {
-                                log::info!(
-                                    "Remote Control approval watcher found {} pending phone(s)",
-                                    service.view_state.pending_claims.len()
-                                );
-                            }
-                            let active = service
-                                .view_state
-                                .active_invitation
-                                .as_ref()
-                                .is_some_and(|active| active.id == invitation_id);
-                            if pending || !active {
-                                ctx.notify();
-                            }
-                            active && !pending
-                        })
-                        .await
-                    else {
-                        break;
-                    };
-                    if !should_continue {
-                        break;
-                    }
-                }
-            });
-        }
-        ctx.notify();
-        Ok(invitation)
+            .map_err(|error| format!("Could not create a pairing code: {error}"))?;
+        self.view_state.active_invitation = Some(invitation);
+        Ok(())
     }
 
-    pub fn cancel_pairing_invitation(&mut self, ctx: &mut ModelContext<Self>) {
+    fn pairing_in_progress(&self) -> bool {
+        self.pairing_started_at.is_some() || !self.view_state.pending_claims.is_empty()
+    }
+
+    fn ensure_pairing_ticker(&mut self, ctx: &mut ModelContext<Self>) {
+        if self.pairing_ticker_running || !self.pairing_in_progress() {
+            return;
+        }
+        let Some(runtime) = &self.runtime else {
+            return;
+        };
+        self.pairing_ticker_running = true;
+        let generation = self.generation;
+        let spawner = ctx.spawner();
+        runtime.spawn(async move {
+            loop {
+                tokio::time::sleep(PAIRING_TICK).await;
+                let keep_ticking = spawner
+                    .spawn(move |service, ctx| service.pairing_tick(generation, ctx))
+                    .await
+                    .unwrap_or(false);
+                if !keep_ticking {
+                    break;
+                }
+            }
+        });
+    }
+
+    fn pairing_tick(&mut self, generation: u64, ctx: &mut ModelContext<Self>) -> bool {
+        if generation != self.generation {
+            return false;
+        }
+        self.refresh_pairing_state();
+        if self
+            .pairing_started_at
+            .is_some_and(|started| started.elapsed() >= PAIRING_RENEWAL_WINDOW)
+        {
+            self.pairing_started_at = None;
+        }
+        if self.pairing_started_at.is_some()
+            && self.view_state.active_invitation.is_none()
+            && self.view_state.pending_claims.is_empty()
+            && self.view_state.status.is_ready()
+        {
+            if let Err(message) = self.issue_invitation() {
+                self.view_state.pairing_error = Some(message);
+                self.pairing_started_at = None;
+            }
+        }
+        // Countdowns in Settings need a repaint every tick while anything is on screen.
+        ctx.notify();
+        let keep_ticking = self.pairing_in_progress();
+        if !keep_ticking {
+            self.pairing_ticker_running = false;
+        }
+        keep_ticking
+    }
+
+    pub fn cancel_pairing(&mut self, ctx: &mut ModelContext<Self>) {
+        self.pairing_started_at = None;
+        self.view_state.pairing_error = None;
         if let Some(invitation) = self.view_state.active_invitation.take() {
             let _ = self.pairing.cancel_invitation(invitation.id);
         }
         ctx.notify();
     }
 
-    pub fn approve_pairing(
-        &mut self,
-        claim_id: PairingClaimId,
-        ctx: &mut ModelContext<Self>,
-    ) -> Result<(), String> {
-        self.pairing
+    pub fn dismiss_pairing_error(&mut self, ctx: &mut ModelContext<Self>) {
+        self.view_state.pairing_error = None;
+        ctx.notify();
+    }
+
+    pub fn approve_pairing(&mut self, claim_id: PairingClaimId, ctx: &mut ModelContext<Self>) {
+        if let Err(message) = self.ensure_registry_loaded(ctx) {
+            self.view_state.pairing_error = Some(message);
+            ctx.notify();
+            return;
+        }
+        let result = self
+            .pairing
             .approve(
                 claim_id,
                 vec![
@@ -197,51 +269,60 @@ impl RemoteControlService {
                 ],
                 Utc::now(),
             )
-            .map_err(|error| error.to_string())?;
-        self.view_state.active_invitation = None;
-        persist_registry(&self.pairing, ctx);
+            .map_err(|error| format!("Could not approve the phone: {error}"));
+        match result {
+            Ok(_) => {
+                self.pairing_started_at = None;
+                self.view_state.active_invitation = None;
+                self.view_state.pairing_error = None;
+                self.persist_registry(ctx);
+            }
+            Err(message) => self.view_state.pairing_error = Some(message),
+        }
         self.refresh_pairing_state();
         ctx.notify();
-        Ok(())
     }
 
-    pub fn reject_pairing(
-        &mut self,
-        claim_id: PairingClaimId,
-        ctx: &mut ModelContext<Self>,
-    ) -> Result<(), String> {
-        self.pairing
-            .reject(claim_id, Utc::now())
-            .map_err(|error| error.to_string())?;
-        self.view_state.active_invitation = None;
+    /// Rejecting a phone keeps pairing open: the ticker shows a fresh QR code for another try.
+    pub fn reject_pairing(&mut self, claim_id: PairingClaimId, ctx: &mut ModelContext<Self>) {
+        if let Err(error) = self.pairing.reject(claim_id, Utc::now()) {
+            self.view_state.pairing_error = Some(format!("Could not reject the phone: {error}"));
+        }
         self.refresh_pairing_state();
         ctx.notify();
-        Ok(())
     }
 
-    pub fn revoke_device(
-        &mut self,
-        device_id: DeviceId,
-        ctx: &mut ModelContext<Self>,
-    ) -> Result<(), String> {
-        self.pairing
-            .revoke_device(device_id, Utc::now())
-            .map_err(|error| error.to_string())?;
-        persist_registry(&self.pairing, ctx);
+    pub fn revoke_device(&mut self, device_id: DeviceId, ctx: &mut ModelContext<Self>) {
+        if let Err(message) = self.ensure_registry_loaded(ctx) {
+            self.view_state.pairing_error = Some(message);
+            ctx.notify();
+            return;
+        }
+        match self.pairing.revoke_device(device_id, Utc::now()) {
+            Ok(()) => self.persist_registry(ctx),
+            Err(error) => {
+                self.view_state.pairing_error = Some(format!("Could not remove the phone: {error}"))
+            }
+        }
         self.refresh_pairing_state();
         ctx.notify();
-        Ok(())
     }
 
-    pub fn revoke_all_devices(&mut self, ctx: &mut ModelContext<Self>) -> Result<(), String> {
-        self.pairing
-            .revoke_all_devices(Utc::now())
-            .map_err(|error| error.to_string())?;
-        persist_registry(&self.pairing, ctx);
-        self.view_state.active_invitation = None;
+    pub fn revoke_all_devices(&mut self, ctx: &mut ModelContext<Self>) {
+        if let Err(message) = self.ensure_registry_loaded(ctx) {
+            self.view_state.pairing_error = Some(message);
+            ctx.notify();
+            return;
+        }
+        match self.pairing.revoke_all_devices(Utc::now()) {
+            Ok(()) => self.persist_registry(ctx),
+            Err(error) => {
+                self.view_state.pairing_error =
+                    Some(format!("Could not remove paired phones: {error}"))
+            }
+        }
         self.refresh_pairing_state();
         ctx.notify();
-        Ok(())
     }
 
     fn refresh_for_settings(&mut self, ctx: &mut ModelContext<Self>) {
@@ -275,8 +356,14 @@ impl RemoteControlService {
             self.view_state.status = RemoteControlStatus::Disabled;
             return;
         }
+        if let Err(message) = self.ensure_registry_loaded(ctx) {
+            self.view_state.status = RemoteControlStatus::Error {
+                message,
+                retryable: true,
+            };
+            return;
+        }
         self.generation = self.generation.wrapping_add(1);
-        let generation = self.generation;
         self.view_state.status = RemoteControlStatus::Starting;
         self.view_state.active_invitation = None;
         self.base_origin = None;
@@ -310,7 +397,7 @@ impl RemoteControlService {
         let workspace_spawner = WorkspaceAdapter::handle(ctx).update(ctx, |_, ctx| ctx.spawner());
         let gateway = match GatewayHandle::start(
             &runtime,
-            route_path.clone(),
+            route_path,
             self.pairing.clone(),
             workspace_spawner,
             event_tx,
@@ -343,21 +430,33 @@ impl RemoteControlService {
             }
         });
 
-        let client = match TailscaleClient::discover() {
-            Ok(client) => client,
-            Err(TailscaleError::NotInstalled) => {
-                self.view_state.status = RemoteControlStatus::TailscaleNotInstalled;
-                self.gateway = Some(gateway);
-                self.runtime = Some(runtime);
-                return;
-            }
+        self.gateway = Some(gateway);
+        self.gateway_port = Some(port);
+        self.runtime = Some(runtime);
+        self.tailscale_blocked_since = None;
+        self.configure_tailscale(ctx);
+    }
+
+    /// Runs (or re-runs) the Tailscale half of setup against the already-running gateway.
+    fn configure_tailscale(&mut self, ctx: &mut ModelContext<Self>) {
+        let (Some(runtime), Some(port)) = (&self.runtime, self.gateway_port) else {
+            return;
+        };
+        let route_path = match self.pairing.route_path() {
+            Ok(route_path) => route_path,
             Err(error) => {
                 self.view_state.status = RemoteControlStatus::Error {
                     message: error.to_string(),
-                    retryable: true,
+                    retryable: false,
                 };
-                self.gateway = Some(gateway);
-                self.runtime = Some(runtime);
+                return;
+            }
+        };
+        let generation = self.generation;
+        let client = match TailscaleClient::discover() {
+            Ok(client) => client,
+            Err(error) => {
+                self.finish_tailscale_setup(generation, port, Err(error), ctx);
                 return;
             }
         };
@@ -391,8 +490,36 @@ impl RemoteControlService {
                 })
                 .await;
         });
-        self.gateway = Some(gateway);
-        self.runtime = Some(runtime);
+    }
+
+    /// Tailscale changes (install, sign-in, consent) happen outside Clinch, so poll instead of
+    /// asking the user to come back and press a button.
+    fn schedule_tailscale_recheck(&mut self, ctx: &mut ModelContext<Self>) {
+        let Some(runtime) = &self.runtime else {
+            return;
+        };
+        let blocked_since = *self
+            .tailscale_blocked_since
+            .get_or_insert_with(Instant::now);
+        let delay = if blocked_since.elapsed() < TAILSCALE_RECHECK_FAST_WINDOW {
+            TAILSCALE_RECHECK_FAST
+        } else {
+            TAILSCALE_RECHECK_SLOW
+        };
+        let generation = self.generation;
+        let spawner = ctx.spawner();
+        runtime.spawn(async move {
+            tokio::time::sleep(delay).await;
+            let _ = spawner
+                .spawn(move |service, ctx| {
+                    if service.generation == generation
+                        && service.view_state.status.is_blocked_on_tailscale()
+                    {
+                        service.configure_tailscale(ctx);
+                    }
+                })
+                .await;
+        });
     }
 
     fn finish_tailscale_setup(
@@ -447,16 +574,22 @@ impl RemoteControlService {
                 retryable: true,
             },
         };
+        if self.view_state.status.is_blocked_on_tailscale() {
+            self.schedule_tailscale_recheck(ctx);
+        } else {
+            self.tailscale_blocked_since = None;
+        }
         self.refresh_pairing_state();
         ctx.notify();
     }
 
     fn handle_gateway_event(&mut self, event: GatewayEvent, ctx: &mut ModelContext<Self>) {
         match event {
-            GatewayEvent::DeviceRegistryChanged => persist_registry(&self.pairing, ctx),
+            GatewayEvent::DeviceRegistryChanged => self.persist_registry(ctx),
             GatewayEvent::PendingPairingChanged => {
-                // Keep the just-scanned QR visible as the anchor for the approval panel. The
-                // invitation has already been consumed server-side and cannot be replayed.
+                // The scanned QR was consumed server-side and cannot be replayed; stop showing
+                // it so the approval panel is the only thing asking for attention.
+                self.view_state.active_invitation = None;
             }
             GatewayEvent::ClientConnected | GatewayEvent::ClientDisconnected => {}
         }
@@ -473,6 +606,7 @@ impl RemoteControlService {
             self.view_state.paired_devices.len(),
             connected,
         );
+        self.ensure_pairing_ticker(ctx);
         ctx.notify();
     }
 
@@ -502,6 +636,11 @@ impl RemoteControlService {
             adapter.all_sessions_disconnected(ctx);
         });
         self.gateway = None;
+        self.gateway_port = None;
+        self.pairing_started_at = None;
+        self.pairing_ticker_running = false;
+        self.tailscale_blocked_since = None;
+        self.view_state.pairing_error = None;
         let _ = self.pairing.invalidate_ephemeral_state();
         self.base_origin = None;
         self.view_state.active_invitation = None;
@@ -545,6 +684,26 @@ impl RemoteControlService {
         }
         ctx.notify();
     }
+
+    fn ensure_registry_loaded(&mut self, ctx: &AppContext) -> Result<(), String> {
+        if ChannelState::has_backend() {
+            return Err("Remote Control is unavailable in this app.".to_owned());
+        }
+        let storage = secure_storage::Model::handle(ctx).as_ref(ctx);
+        self.registry_storage
+            .ensure_loaded(&self.pairing, storage.as_ref())
+            .map_err(|error| format!("{error:#}"))
+    }
+
+    fn persist_registry(&self, ctx: &AppContext) {
+        let storage = secure_storage::Model::handle(ctx).as_ref(ctx);
+        if let Err(error) = self
+            .registry_storage
+            .persist(&self.pairing, storage.as_ref())
+        {
+            log::error!("could not persist Remote Control device registry: {error:#}");
+        }
+    }
 }
 
 impl Drop for RemoteControlService {
@@ -556,27 +715,7 @@ impl Drop for RemoteControlService {
     }
 }
 
-fn load_registry(ctx: &AppContext) -> DeviceRegistry {
-    let storage = secure_storage::Model::handle(ctx).as_ref(ctx);
-    storage
-        .read_value(DEVICE_REGISTRY_STORAGE_KEY)
-        .ok()
-        .and_then(|json| serde_json::from_str::<DeviceRegistry>(&json).ok())
-        .and_then(|registry| registry.validate().ok())
-        .unwrap_or_default()
-}
-
-fn persist_registry(pairing: &PairingManager, ctx: &AppContext) {
-    let Ok(registry) = pairing.registry_snapshot() else {
-        return;
-    };
-    let Ok(json) = serde_json::to_string(&registry) else {
-        return;
-    };
-    if let Err(error) = secure_storage::Model::handle(ctx)
-        .as_ref(ctx)
-        .write_value_with_owner_only_fallback(DEVICE_REGISTRY_STORAGE_KEY, &json)
-    {
-        log::error!("could not persist Remote Control device registry: {error}");
-    }
+/// Local automation respects connected companion writers for the same terminal.
+pub(crate) fn has_writer_for_terminal(terminal_id: warpui::EntityId, ctx: &AppContext) -> bool {
+    WorkspaceAdapter::as_ref(ctx).has_writer_for_terminal(terminal_id, ctx)
 }

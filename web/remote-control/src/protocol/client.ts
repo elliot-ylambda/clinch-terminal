@@ -8,6 +8,9 @@ import { authenticate } from "./pairing";
 import type { DeviceIdentity } from "./storage";
 import { websocketUrl } from "./urls";
 
+/** Slightly shorter than the Mac's 15-minute session cookie so a reuse never races its expiry. */
+export const SESSION_REUSE_WINDOW_MS = 14 * 60_000;
+
 interface PendingRequest {
   resolve: (envelope: ServerEnvelope) => void;
   reject: (error: Error) => void;
@@ -29,6 +32,7 @@ export class CompanionClient {
   private reconnectTimer?: number;
   private pingTimer?: number;
   private lastSequence = 0;
+  private authenticatedAt?: number;
   private pending = new Map<string, PendingRequest>();
 
   constructor(
@@ -94,47 +98,32 @@ export class CompanionClient {
     this.socket.send(frame);
   }
 
-  private async connect(): Promise<void> {
+  private async connect(allowSessionReuse = true): Promise<void> {
     if (this.stopped || this.connecting || document.visibilityState === "hidden") return;
     if (!navigator.onLine) {
       this.events.connection("mac_offline", "Phone is offline");
       return;
     }
     this.connecting = true;
-    this.events.connection(this.reconnectAttempt ? "reconnecting" : "reconnecting");
+    this.events.connection("reconnecting");
     try {
-      const authenticated = await authenticate(this.identity, this.lastSequence);
-      if (authenticated.replayed_from_sequence == null) this.lastSequence = 0;
+      // The Mac keeps the HttpOnly session cookie from the last authentication valid for 15
+      // minutes and accepts one WebSocket at a time on it, so returning to the app within that
+      // window can skip the challenge/sign round trips entirely.
+      const reuseSession = allowSessionReuse
+        && this.authenticatedAt !== undefined
+        && Date.now() - this.authenticatedAt < SESSION_REUSE_WINDOW_MS;
+      if (reuseSession) {
+        // The Mac opens every socket with a full snapshot, so start the sequence over rather
+        // than risk dropping that snapshot as a replay of an older connection's numbering.
+        this.lastSequence = 0;
+      } else {
+        const authenticated = await authenticate(this.identity, this.lastSequence);
+        this.authenticatedAt = Date.now();
+        if (authenticated.replayed_from_sequence == null) this.lastSequence = 0;
+      }
       if (this.stopped) return;
-      const socket = new WebSocket(websocketUrl());
-      socket.binaryType = "arraybuffer";
-      this.socket = socket;
-      socket.onopen = () => {
-        this.connecting = false;
-        this.reconnectAttempt = 0;
-        this.events.connection("connected");
-        this.pingTimer = window.setInterval(() => {
-          try {
-            this.send({ type: "ping" });
-          } catch {
-            // The close handler owns reconnect behavior.
-          }
-        }, 20_000);
-      };
-      socket.onmessage = (event: MessageEvent<string | ArrayBuffer>) => this.received(event.data);
-      socket.onerror = () => socket.close();
-      socket.onclose = () => {
-        window.clearInterval(this.pingTimer);
-        if (this.socket === socket) this.socket = undefined;
-        this.connecting = false;
-        this.rejectPending(new Error("Connection to the Mac was interrupted"));
-        if (!this.stopped) {
-          // A 15-minute WebSocket authorization intentionally expires even though the paired
-          // device remains valid. Re-authentication decides whether this was routine renewal or
-          // an actual device revocation.
-          this.scheduleReconnect();
-        }
-      };
+      this.openSocket(reuseSession);
     } catch (error) {
       this.connecting = false;
       const message = error instanceof Error ? error.message : String(error);
@@ -146,6 +135,46 @@ export class CompanionClient {
         this.scheduleReconnect();
       }
     }
+  }
+
+  private openSocket(reusedSession: boolean): void {
+    const socket = new WebSocket(websocketUrl());
+    socket.binaryType = "arraybuffer";
+    this.socket = socket;
+    let opened = false;
+    socket.onopen = () => {
+      opened = true;
+      this.connecting = false;
+      this.reconnectAttempt = 0;
+      this.events.connection("connected");
+      this.pingTimer = window.setInterval(() => {
+        try {
+          this.send({ type: "ping" });
+        } catch {
+          // The close handler owns reconnect behavior.
+        }
+      }, 20_000);
+    };
+    socket.onmessage = (event: MessageEvent<string | ArrayBuffer>) => this.received(event.data);
+    socket.onerror = () => socket.close();
+    socket.onclose = () => {
+      window.clearInterval(this.pingTimer);
+      if (this.socket === socket) this.socket = undefined;
+      this.connecting = false;
+      this.rejectPending(new Error("Connection to the Mac was interrupted"));
+      if (this.stopped) return;
+      if (reusedSession && !opened) {
+        // The Mac refused the saved session (expired, or replaced by a restart). Forget it and
+        // authenticate right away; the next failure goes through normal backoff.
+        this.authenticatedAt = undefined;
+        void this.connect(false);
+        return;
+      }
+      // A 15-minute WebSocket authorization intentionally expires even though the paired
+      // device remains valid. Re-authentication decides whether this was routine renewal or
+      // an actual device revocation.
+      this.scheduleReconnect();
+    };
   }
 
   private received(data: string | ArrayBuffer): void {

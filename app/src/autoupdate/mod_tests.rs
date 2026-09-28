@@ -10,6 +10,18 @@ use crate::server::server_api::ServerApiProvider;
 use crate::server::telemetry::context_provider::AppTelemetryContextProvider;
 
 #[test]
+fn clinch_update_scheduler_wakes_at_most_once_per_day() {
+    assert_eq!(
+        AutoupdateState::autoupdate_poll_interval(true),
+        std::time::Duration::from_secs(24 * 60 * 60)
+    );
+    assert_eq!(
+        AutoupdateState::autoupdate_poll_interval(false),
+        std::time::Duration::from_secs(10 * 60)
+    );
+}
+
+#[test]
 fn clinch_release_notes_are_safe_for_native_dialogs() {
     let notes = format!("hello\0world\n{}", "x".repeat(10_000));
     let sanitized = sanitize_release_notes(&notes);
@@ -694,26 +706,6 @@ fn test_should_update() {
 }
 
 #[test]
-fn clinch_records_failed_automatic_checks_so_they_back_off() {
-    assert!(should_record_failed_check(RequestType::Poll, true, false));
-    assert!(should_record_failed_check(
-        RequestType::DailyCheck,
-        true,
-        false
-    ));
-    // A check the user explicitly asked for must not impose a backoff on automatic checks.
-    assert!(!should_record_failed_check(
-        RequestType::ManualCheck,
-        true,
-        false
-    ));
-    // Successes are recorded by should_record_daily_success instead.
-    assert!(!should_record_failed_check(RequestType::Poll, true, true));
-    // Upstream Warp's updater keeps its own cadence bookkeeping.
-    assert!(!should_record_failed_check(RequestType::Poll, false, false));
-}
-
-#[test]
 fn the_update_check_env_var_disables_automatic_checks() {
     for raw in ["1", "true", "TRUE", " yes ", "on"] {
         assert!(
@@ -775,7 +767,7 @@ fn disabling_automatic_checks_drops_polls_but_keeps_manual_checks() {
 
 #[test]
 fn clinch_records_successful_checks_including_manual_ones() {
-    // A manual check that succeeds must reset the weekly clock too, otherwise an automatic check
+    // A manual check that succeeds must reset the daily clock too, otherwise an automatic check
     // fires seconds later for metadata the user just fetched by hand.
     assert!(should_record_clinch_success(true, true));
     assert!(!should_record_clinch_success(true, false));

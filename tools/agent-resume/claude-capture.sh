@@ -159,12 +159,12 @@ _clinch_agent_resume_entry_protected() {
 _clinch_agent_resume_capture_main() {
   set -uo pipefail
   [[ -n "${WARP_TERMINAL_SESSION_UUID:-}" ]] || return 0   # only act inside a Clinch pane
-  local payload fields sid64 cwd64 event64 pmode64 model64
+  local payload fields sid64 cwd64 event64 pmode64 model64 reason64
   local sid cwd event pmode extra mode_part entry_file BIN nested=0
   local owner_fields owner_pid owner_tty64 owner_tty
   payload="$(cat)"
   fields="$(printf '%s' "$payload" | _clinch_agent_resume_json hook-fields 2>/dev/null)" || return 0
-  IFS='|' read -r sid64 cwd64 event64 pmode64 model64 <<<"$fields"
+  IFS='|' read -r sid64 cwd64 event64 pmode64 model64 reason64 <<<"$fields"
   sid="$(_clinch_agent_resume_decode "$sid64")" || return 0
   cwd="$(_clinch_agent_resume_decode "$cwd64")" || return 0
   event="$(_clinch_agent_resume_decode "$event64")" || return 0
@@ -216,12 +216,16 @@ _clinch_agent_resume_capture_main() {
       ;;
     SessionEnd)
       (( nested )) && return 0
+      # A signal/PTY failure ends Claude too. It is not an intentional user exit and
+      # must not erase the only resume pointer when Clinch crashes before writing its
+      # graceful-shutdown marker. Explicit clear/resume/logout/input exits still remove it.
+      [[ "$(_clinch_agent_resume_decode "$reason64")" == other ]] && return 0
       # Graceful app shutdown snapshots before tearing down PTYs. Preserve registry entries
       # across that teardown so restored sibling panes remain claimed during replay; normal
       # user exits have no marker and remove only the session that still owns this pane.
       "$BIN/clinch-agent-resume" app-terminating >/dev/null 2>&1 && return 0
       "$BIN/clinch-agent-resume" remove-if-matches \
-        "$WARP_TERMINAL_SESSION_UUID" claude "$sid" >/dev/null 2>&1 || true
+        "$WARP_TERMINAL_SESSION_UUID" claude "$sid" "$owner_pid" "$owner_tty" >/dev/null 2>&1 || true
       return 0
       ;;
     *) return 0 ;;

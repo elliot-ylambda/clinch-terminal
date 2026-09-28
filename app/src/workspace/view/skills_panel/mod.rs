@@ -1,5 +1,6 @@
 mod catalog;
 mod grouping;
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
 use catalog::{catalog_for_subtab, group_catalog_skills, CatalogGroup, CatalogSkill};
@@ -35,11 +36,11 @@ pub struct SkillsPanel {
     scroll_state: ClippedScrollStateHandle,
     /// Per-skill row mouse states, keyed by skill name, so hover feedback survives
     /// re-renders triggered by unrelated state changes (e.g. a sibling skill's row).
-    row_states: HashMap<String, MouseStateHandle>,
+    row_states: RefCell<HashMap<String, MouseStateHandle>>,
     /// Per-group header mouse states, keyed by stable catalog group ID, so hover feedback on a
     /// group header survives re-renders triggered by unrelated state changes (e.g. a
     /// subtab switch or a `HomeSkillsChanged` event) while the mouse sits stationary.
-    header_states: HashMap<String, MouseStateHandle>,
+    header_states: RefCell<HashMap<String, MouseStateHandle>>,
 }
 
 #[derive(Clone, Debug)]
@@ -97,10 +98,9 @@ impl SkillsPanel {
         });
 
         // The subtab selection lives inside `subtab_control`; when it changes, re-sync the
-        // row mouse-state cache (the visible skill set changed) and re-render.
-        ctx.subscribe_to_view(&subtab_control, |me, _, event, ctx| {
+        // visible catalog on the next render.
+        ctx.subscribe_to_view(&subtab_control, |_me, _, event, ctx| {
             let SegmentedControlEvent::OptionSelected(_) = event;
-            me.sync_row_states(ctx);
             ctx.notify();
         });
 
@@ -109,24 +109,21 @@ impl SkillsPanel {
         // current state without changing the execution catalog.
         ctx.subscribe_to_model(
             &SkillManager::handle(ctx),
-            |me, _model, event, ctx| match event {
+            |_me, _model, event, ctx| match event {
                 SkillManagerEvent::HomeSkillsChanged | SkillManagerEvent::SkillsChanged => {
-                    me.sync_row_states(ctx);
                     ctx.notify();
                 }
             },
         );
 
-        let mut this = Self {
+        Self {
             subtab_control,
             working_directory: None,
             collapsed_groups: HashSet::new(),
             scroll_state: ClippedScrollStateHandle::default(),
-            row_states: HashMap::new(),
-            header_states: HashMap::new(),
-        };
-        this.sync_row_states(ctx);
-        this
+            row_states: RefCell::default(),
+            header_states: RefCell::default(),
+        }
     }
 
     pub fn set_working_directory(
@@ -136,7 +133,6 @@ impl SkillsPanel {
     ) {
         if self.working_directory != cwd {
             self.working_directory = cwd;
-            self.sync_row_states(ctx);
             ctx.notify();
         }
     }
@@ -159,27 +155,22 @@ impl SkillsPanel {
         )
     }
 
-    /// Ensures every skill currently in scope has a persistent mouse-state handle, so hover
-    /// feedback on a row survives a re-render triggered by something else changing.
-    fn sync_row_states(&mut self, ctx: &mut ViewContext<Self>) {
-        let skills = self.current_catalog(ctx);
-        for skill in &skills {
-            self.row_states.entry(skill.stable_id()).or_default();
-            self.header_states
-                .entry(skill.group.id.clone())
-                .or_default();
-        }
-    }
-
+    // Allocate hover state when a row is actually rendered. Constructing every project's
+    // hidden panel or changing its CWD must not synchronously rescan skills on disk.
     fn row_state(&self, id: &str) -> MouseStateHandle {
-        self.row_states.get(id).cloned().unwrap_or_default()
+        self.row_states
+            .borrow_mut()
+            .entry(id.to_owned())
+            .or_default()
+            .clone()
     }
 
     fn header_state(&self, group_id: &str) -> MouseStateHandle {
         self.header_states
-            .get(group_id)
-            .cloned()
-            .unwrap_or_default()
+            .borrow_mut()
+            .entry(group_id.to_owned())
+            .or_default()
+            .clone()
     }
 
     fn render_subtab_bar(&self) -> Box<dyn Element> {

@@ -189,6 +189,8 @@ impl<R: TailscaleCommandRunner> TailscaleClient<R> {
         if !status.success || !serve_status_has_route(&status.stdout, route_path, &target) {
             return Err(TailscaleError::RouteVerificationFailed);
         }
+        self.remove_abandoned_routes(&status.stdout, route_path)
+            .await;
 
         Ok(TailscaleSetupOutcome::Ready(TailscaleServeReady {
             base_url: format!("https://{}", dns_name.trim_end_matches('.')),
@@ -209,6 +211,21 @@ impl<R: TailscaleCommandRunner> TailscaleClient<R> {
             Ok(())
         } else {
             Err(TailscaleError::Command(non_secret_command_error(&output)))
+        }
+    }
+
+    /// Another Clinch channel (or an earlier build) that quit without turning Remote Control off
+    /// leaves its mount behind, proxying to a dead port. Remove those, but never a route whose
+    /// loopback port still answers: a concurrently running channel owns it.
+    async fn remove_abandoned_routes(&self, serve_status_json: &str, own_route_path: &str) {
+        for (route_path, port) in clinch_routes(serve_status_json) {
+            if route_path == own_route_path || loopback_port_is_listening(port).await {
+                continue;
+            }
+            log::info!("Removing abandoned Clinch Tailscale Serve route on dead port {port}");
+            if let Err(error) = self.remove_private_route(&route_path).await {
+                log::warn!("could not remove abandoned Clinch Serve route: {error}");
+            }
         }
     }
 
@@ -387,6 +404,43 @@ fn serve_status_has_route(json: &str, route_path: &str, target: &str) -> bool {
         return false;
     };
     json_value_has_route_target(&value, route_path, target)
+}
+
+/// Clinch-owned Serve handlers and the loopback port each proxies to.
+fn clinch_routes(serve_status_json: &str) -> Vec<(String, u16)> {
+    let Ok(value) = serde_json::from_str::<Value>(serve_status_json) else {
+        return Vec::new();
+    };
+    let Some(hosts) = value.get("Web").and_then(Value::as_object) else {
+        return Vec::new();
+    };
+    hosts
+        .values()
+        .filter_map(|host| host.get("Handlers").and_then(Value::as_object))
+        .flatten()
+        .filter(|(route_path, _)| validate_route_path(route_path).is_ok())
+        .filter_map(|(route_path, handler)| {
+            let port = handler
+                .get("Proxy")?
+                .as_str()?
+                .strip_prefix("http://127.0.0.1:")?
+                .trim_end_matches('/')
+                .parse()
+                .ok()?;
+            Some((route_path.clone(), port))
+        })
+        .collect()
+}
+
+async fn loopback_port_is_listening(port: u16) -> bool {
+    matches!(
+        tokio::time::timeout(
+            Duration::from_millis(500),
+            tokio::net::TcpStream::connect(("127.0.0.1", port)),
+        )
+        .await,
+        Ok(Ok(_))
+    )
 }
 
 fn json_value_has_route_target(value: &Value, route_path: &str, target: &str) -> bool {

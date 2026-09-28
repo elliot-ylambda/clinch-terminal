@@ -7,6 +7,8 @@ export WARP_AGENT_RESUME_DIR="$TMP/reg"
 # because the real hook environment does not inherit the shell PATH.
 export WARP_TERMINAL_SESSION_UUID="bb22"
 export WARP_AGENT_RESUME_FAKE_ANCESTRY="codex"
+unset CLINCH_CONTROL_PID
+export WARP_AGENT_RESUME_FAKE_OWNER_PID=1000
 
 echo '{"session_id":"sess-77","cwd":"/tmp/repo","source":"startup"}' | bash "$HERE/codex-session-start.sh"
 f="$WARP_AGENT_RESUME_DIR/bb22.json"
@@ -36,6 +38,10 @@ printf '%s\n' "$$" > "$WARP_AGENT_RESUME_DIR/.app-terminating"
 echo '{"session_id":"sess-99","cwd":"/tmp/repo"}' | bash "$HERE/codex-session-end.sh"
 grep -q 'sess-99' "$f" || { echo "FAIL: app shutdown removed Codex owner"; exit 1; }
 rm -f "$WARP_AGENT_RESUME_DIR/.app-terminating"
+/bin/sleep 0 & crashed_pid=$!; wait "$crashed_pid" 2>/dev/null || true
+echo '{"session_id":"sess-99","cwd":"/tmp/repo"}' \
+  | CLINCH_CONTROL_PID="$crashed_pid" bash "$HERE/codex-session-end.sh"
+grep -q 'sess-99' "$f" || { echo "FAIL: crashed host removed Codex resume mapping"; exit 1; }
 echo '{"session_id":"sess-99","cwd":"/tmp/repo"}' | bash "$HERE/codex-session-end.sh"
 [[ ! -f "$f" ]] || { echo "FAIL: end did not remove"; exit 1; }
 
@@ -104,7 +110,8 @@ rm -f "$f"
 # writes above, so assert on pane entries, not an empty dir.)
 unset WARP_TERMINAL_SESSION_UUID
 echo '{"session_id":"x","cwd":"/tmp"}' | bash "$HERE/codex-session-start.sh"
-entries="$(find "$WARP_AGENT_RESUME_DIR" -name '*.json' 2>/dev/null)"
+entries="$(find "$WARP_AGENT_RESUME_DIR" -name '*.json' \
+  ! -name 'toolbelt-learning.json' ! -name 'toolbelt-learning-resolutions.json' 2>/dev/null)"
 [[ -z "$entries" ]] || { echo "FAIL: wrote outside pane"; exit 1; }
 echo '{"session_id":"outside","cwd":"/tmp","hook_event_name":"UserPromptSubmit","prompt":"secret"}' \
   | bash "$HERE/codex-prompt-submit.sh"
