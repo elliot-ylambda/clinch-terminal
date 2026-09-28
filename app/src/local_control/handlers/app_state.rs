@@ -237,7 +237,8 @@ fn window_create(
 ) -> Result<serde_json::Value, ControlError> {
     reject_target_families(
         ActionKind::WindowCreate,
-        target.window.is_some()
+        target.project.is_some()
+            || target.window.is_some()
             || target.tab.is_some()
             || target.pane.is_some()
             || target.session.is_some(),
@@ -423,6 +424,7 @@ fn tab_activate(
         workspace.handle_action(&action, ctx);
         Ok::<_, ControlError>(())
     })?;
+    super::projects::activate_selected_project(target, ctx)?;
     Ok(ack(instance_id, ActionKind::TabActivate))
 }
 
@@ -535,6 +537,7 @@ fn pane_focus(
             ctx,
         );
     });
+    super::projects::activate_selected_project(target, ctx)?;
     Ok(ack(instance_id, action_kind))
 }
 

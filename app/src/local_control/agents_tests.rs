@@ -85,6 +85,14 @@ fn discovers_inactive_projects_and_rejects_replaced_conversations() {
         let snapshot = app.read(|ctx| snapshot(&instance, &AgentScope::default(), ctx).unwrap());
         assert_eq!(snapshot.agents.len(), 2);
         assert_eq!(
+            snapshot.tree["windows"][0]["projects"][0]["tabs"][0]["panes"][0]["state"],
+            "turn_complete"
+        );
+        assert_eq!(
+            snapshot.tree["windows"][0]["projects"][0]["tabs"][0]["panes"][0]["conversation_id"],
+            "conversation-0"
+        );
+        assert_eq!(
             snapshot.tree["windows"][0]["projects"]
                 .as_array()
                 .unwrap()

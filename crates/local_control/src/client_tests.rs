@@ -76,3 +76,29 @@ fn probe_rejects_mismatched_instance_identity() {
     .expect_err("mismatched live identity is rejected");
     assert_eq!(err.code, ErrorCode::TransportUnavailable);
 }
+
+#[test]
+fn project_selectors_require_advertised_support_before_any_transport_request() {
+    let mut instance = InstanceRecord::for_current_process(
+        None,
+        "local",
+        "test-app",
+        None,
+        vec![ActionKind::TabCreate.metadata()],
+    );
+    let mut request = RequestEnvelope::new(Action::new(ActionKind::TabCreate));
+    assert!(validate_target_support(&instance, &request).is_ok());
+    request.target.project = Some("exact-project".into());
+    assert_eq!(
+        validate_target_support(&instance, &request)
+            .unwrap_err()
+            .code,
+        ErrorCode::UnsupportedAction
+    );
+    let mut metadata = ActionKind::ProjectInspect.metadata();
+    metadata.implementation_status = crate::catalog::ActionImplementationStatus::Stub;
+    instance.actions.push(metadata);
+    assert!(validate_target_support(&instance, &request).is_err());
+    instance.actions.push(ActionKind::ProjectInspect.metadata());
+    assert!(validate_target_support(&instance, &request).is_ok());
+}

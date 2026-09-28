@@ -8441,7 +8441,12 @@ impl Workspace {
 
     /// Moves the tab at `from` to position `to` (`Vec::insert` semantics).
     /// The active-tab tracker follows the moved tab.
-    fn move_tab_to_index(&mut self, from: usize, to: usize, ctx: &mut ViewContext<Self>) {
+    pub(crate) fn move_tab_to_index(
+        &mut self,
+        from: usize,
+        to: usize,
+        ctx: &mut ViewContext<Self>,
+    ) {
         if from >= self.tabs.len() {
             log::debug!(
                 "move_tab_to_index: from {from} out of bounds (len {})",

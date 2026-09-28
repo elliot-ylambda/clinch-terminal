@@ -22,7 +22,7 @@ pub(crate) fn validate_tab_create_target(target: &TargetSelector) -> Result<(), 
     if target.tab.is_some() || target.pane.is_some() || target.session.is_some() {
         return Err(ControlError::new(
             ErrorCode::InvalidSelector,
-            "tab.create accepts only a window selector",
+            "tab.create accepts only window and project selectors",
         ));
     }
     Ok(())
@@ -33,6 +33,15 @@ pub(crate) fn validate_action_params(action: &::local_control::Action) -> Result
         return Ok(());
     }
     match action.kind.metadata().parameter_spec {
+        ActionParameterSpec::ProjectCreate => {
+            parse_params::<::local_control::projects::ProjectCreateParams>(action)
+        }
+        ActionParameterSpec::ProjectRestore => {
+            parse_params::<::local_control::projects::ProjectRestoreParams>(action)
+        }
+        ActionParameterSpec::TabTransfer => {
+            parse_params::<::local_control::projects::TabTransferParams>(action)
+        }
         ActionParameterSpec::PaneRead => {
             parse_params::<::local_control::agents::PaneReadParams>(action)
         }
@@ -102,7 +111,8 @@ pub(crate) fn validate_action_target(
     action: ActionKind,
     target: &TargetSelector,
 ) -> Result<(), ControlError> {
-    let has_target = target.window.is_some()
+    let has_target = target.project.is_some()
+        || target.window.is_some()
         || target.tab.is_some()
         || target.pane.is_some()
         || target.session.is_some();
@@ -113,7 +123,8 @@ pub(crate) fn validate_action_target(
         | TargetScope::Keybinding
         | TargetScope::Action
         | TargetScope::Capability => true,
-        TargetScope::Window
+        TargetScope::Project
+        | TargetScope::Window
         | TargetScope::Tab
         | TargetScope::Pane
         | TargetScope::Session
@@ -135,6 +146,20 @@ pub(super) fn target_window_id_for_target(
     target: &TargetSelector,
     action: ActionKind,
 ) -> Result<WindowId, ControlError> {
+    if let Some(project_id) = &target.project {
+        let project = super::handlers::projects::resolve_project(project_id, ctx)?;
+        if target.window.is_some() {
+            let mut window_target = target.clone();
+            window_target.project = None;
+            if target_window_id_for_target(ctx, &window_target, action)? != project.window_id {
+                return Err(ControlError::new(
+                    ErrorCode::InvalidSelector,
+                    "project does not belong to the selected window",
+                ));
+            }
+        }
+        return Ok(project.window_id);
+    }
     match target.window.as_ref() {
         None | Some(WindowTarget::Active) => active_or_single_window_id(ctx, action),
         Some(WindowTarget::Id { id }) => ctx
@@ -292,9 +317,10 @@ pub(crate) fn workspace_for_tab_create(
     origin_terminal_session_uuid: Option<&Uuid>,
     ctx: &mut ModelContext<LocalControlBridge>,
 ) -> Result<(WindowId, ViewHandle<Workspace>), ControlError> {
-    if target.window.is_some() || origin_terminal_session_uuid.is_none() {
+    if target.project.is_some() || target.window.is_some() || origin_terminal_session_uuid.is_none()
+    {
         let window_id = target_window_id_for_target(ctx, target, ActionKind::TabCreate)?;
-        let workspace = workspace_for_window(window_id, ActionKind::TabCreate, ctx)?;
+        let workspace = target_workspace(ActionKind::TabCreate, target, ctx)?;
         return Ok((window_id, workspace));
     }
 
@@ -334,6 +360,9 @@ pub(crate) fn target_workspace(
     ctx: &mut ModelContext<LocalControlBridge>,
 ) -> Result<ViewHandle<Workspace>, ControlError> {
     let window_id = target_window_id_for_target(ctx, target, action)?;
+    if let Some(project_id) = &target.project {
+        return Ok(super::handlers::projects::resolve_project(project_id, ctx)?.workspace);
+    }
     workspace_for_window(window_id, action, ctx)
 }
 

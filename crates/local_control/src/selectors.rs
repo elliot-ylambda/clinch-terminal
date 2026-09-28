@@ -25,6 +25,9 @@ pub struct SessionSelector(pub String);
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct TargetSelector {
+    /// Exact runtime project ID from workspace.tree or project.list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub window: Option<WindowTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

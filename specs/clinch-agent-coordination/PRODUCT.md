@@ -214,3 +214,38 @@ Design: use the current Clinch styling; no separate Figma mock was supplied.
     Generic CLI inspection and explicitly requested messaging remain available without a
     coordinator registry entry. Coordinator badges, ownership, and release sequencing apply
     to the selected coordination run, not to all chats by default.
+
+
+## Project control extension (2026-09-28)
+
+The user requested CLI control of outer project tabs and their vertical sessions/sections,
+including creation, recreation, restoration, colors, and live transfers. Independent sessions
+remain the default. Existing Clinch styling and drag behavior are retained.
+
+1. An agent can create an outer project tab in an exact window and choose its initial local
+   directory. The result identifies the created project and its initial terminal tab.
+2. Existing tab, pane, session, and section commands accept an exact `--project` identifier,
+   including inactive projects. A mismatched window/project or stale ID fails without falling
+   back to the active project. Reads do not switch projects.
+3. Project inspection exposes ordered vertical tabs, panes, session identities and status,
+   sections, membership, pin/collapse state, tasks, and usable section colors. Color values
+   distinguish inherited/default, explicit color, and explicitly cleared color.
+4. An agent can activate and close an exact project, with native close warnings preserved.
+   Project labels follow the same directory-derived behavior as the UI.
+5. A live vertical tab can move to another project in the same window, at an explicit position
+   or into an explicit destination section. Validation occurs before movement; the terminal,
+   running agent, title, and tab color survive. The result provides current identifiers.
+6. Mouse dragging already supports hovering over a sibling project tab, activating it with the
+   drag still held, and dropping into the destination sidebar. This behavior and live session
+   continuity remain covered by tests. CLI movement uses the same native transfer machinery.
+7. A versioned project export can recreate supported terminal/agent pane layouts, tab titles,
+   colors, sections, collapsed/pinned state, active tab, and project tasks in a new project.
+   Unsupported pane types are reported explicitly rather than silently omitted. Existing
+   projects are not overwritten. Invalid documents are rejected before creating anything.
+8. Restoring a layout opens fresh terminal processes. `--resume-agents` also resumes captured
+   local Claude/Codex conversation identities through native session restoration. It does not
+   replay arbitrary shell commands or claim to revive a previous running process. Restored
+   project/pane identities are fresh; discovery returns their new IDs.
+9. Export/import is bounded and version checked. The CLI performs file IO; the app validates
+   the complete request before changing the workspace. Duplicate section IDs, broken membership,
+   invalid colors/paths, excessive nesting, or invalid placement fail clearly.

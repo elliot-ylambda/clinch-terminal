@@ -807,7 +807,7 @@ impl ProjectWindow {
     }
 
     /// Hand off an in-progress sidebar drag without recreating the terminal or its PTY.
-    fn move_inner_tab_to_project(
+    pub(crate) fn move_inner_tab_to_project(
         &mut self,
         source_workspace_id: EntityId,
         pane_group_id: EntityId,
@@ -834,6 +834,12 @@ impl ProjectWindow {
         else {
             return false;
         };
+        let original_colors = source_workspace
+            .as_ref(ctx)
+            .tabs
+            .iter()
+            .find(|tab| tab.pane_group.id() == pane_group_id)
+            .map(|tab| (tab.selected_color, tab.default_directory_color));
         let Some(transferred_tab) = source_workspace.update(ctx, |workspace, ctx| {
             workspace.take_tab_for_project_transfer(pane_group_id, ctx)
         }) else {
@@ -846,6 +852,16 @@ impl ProjectWindow {
         );
         target_workspace.update(ctx, |workspace, ctx| {
             workspace.accept_project_tab_drag(transferred_tab, ctx);
+            if let Some((selected, default)) = original_colors {
+                if let Some(tab) = workspace
+                    .tabs
+                    .iter_mut()
+                    .find(|tab| tab.pane_group.id() == pane_group_id)
+                {
+                    tab.selected_color = selected;
+                    tab.default_directory_color = default;
+                }
+            }
         });
         if source_workspace.as_ref(ctx).tab_count() == 0 {
             self.take_project_for_transfer(source_id, ctx);

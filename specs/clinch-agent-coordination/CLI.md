@@ -80,6 +80,57 @@ Alternatively use `--text` or `--text-file -` for stdin. Preserve the exact
 UUID/revision/target/text when retrying. The CLI waits briefly for a receipt;
 repeating an identical request retrieves it without a duplicate dispatch.
 
+## Project control and layout restoration
+
+```text
+<ctl> project create --cwd /absolute/project --window WINDOW_ID --pid PID
+<ctl> project inspect --project PROJECT_ID --pid PID
+<ctl> project activate --project PROJECT_ID --pid PID
+<ctl> tab list --project PROJECT_ID --pid PID
+<ctl> tab create --project PROJECT_ID --cwd /absolute/project --pid PID -- codex
+<ctl> section create "In Progress" --project PROJECT_ID --tab TAB_ID --pid PID
+<ctl> section update SECTION_ID --color clinch-green --project PROJECT_ID --pid PID
+<ctl> tab transfer --project SOURCE_ID --tab TAB_ID --to-project DESTINATION_ID --section SECTION_ID --index 0 --pid PID
+<ctl> project export --project PROJECT_ID --file /absolute/layout.json --pid PID
+<ctl> project restore --file /absolute/layout.json --window WINDOW_ID --pid PID
+```
+
+Shared `--project` targets an exact project even when inactive; accompanying window
+selectors must match it. It overrides `tab create`'s originating-terminal inference.
+Reads preserve focus. Creation activates the new project; names follow the active
+directory, matching the UI. `project close` follows normal close warnings and reports
+whether closure completed or awaits user confirmation.
+
+Live transfer reuses the same terminal/PTY. Destination project must be in the same
+native window; cross-window transfer remains available through mouse drag. Section
+and index are optional: omitted section means ungrouped, omitted index means append.
+Indices count members of the target section or unpinned ungrouped tabs. Invalid IDs
+or positions fail before removal. Moving the last tab closes the empty source project,
+except task-owning projects retain a replacement terminal. The destination activates;
+collapsed target sections expand. Rediscover agent/content-read pane IDs after transfer.
+
+Mouse behavior already present in main is retained: drag a vertical session tab onto
+another project pill, let that project activate while holding the mouse, then place it
+within the destination sidebar. Hover commits the transfer immediately; Escape does
+not roll it back. No coordinator is involved.
+
+Export writes a new JSON file (existing files are not overwritten); without `--file`,
+the response contains `layout`. Restore expects that layout document and always adds
+a new project. Version 1 preserves terminal pane trees/weights, active tab, section
+membership/order/name/color/collapse/pin state, tab titles/color overrides and tasks.
+Section colors are named strings, `none` (explicit clear), or null (default). Set the
+latter through `section update --color default`. New pane and section IDs are generated.
+Add `--resume-agents` to launch captured local Claude/Codex conversation identities
+through the normal resume launcher. Provider installation, sign-in, and locally available
+history are still required. Custom launch flags and shell/profile settings are omitted.
+Layouts do not preserve terminal output or arbitrary foreground processes and are not
+complete session backups. Unsupported nonterminal pane types cause export to fail.
+
+Limits: 1 MiB JSON, 128 tabs/sections, 256 tasks, 512 pane nodes, 16 split levels.
+Restoration validates the complete document and absolute local directories before
+opening anything. Empty sections, broken membership, discontiguous sections, invalid
+pin ordering, and invalid weights/agent IDs are rejected.
+
 ## Queue and inspect delivery
 
 Use one sender UUID per coordinating conversation. A queued send may target a ready or working
@@ -154,3 +205,5 @@ not the providers' current TUIs. Whole-app discovery was also checked across thr
 Real-provider validation is recorded separately in [LIVE_TEST.md](./LIVE_TEST.md): three real
 Claude/Codex sessions across two project windows, eight verified CLI prompts, queued follow-up,
 cross-session review, the corrected recovery edge case, and remaining launch limitations.
+
+Project-control extension validation is recorded in [PROJECT_CONTROL_TEST.md](./PROJECT_CONTROL_TEST.md).

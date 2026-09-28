@@ -98,7 +98,7 @@ pub(super) fn snapshot(
                 }
                 if let Some((id, section)) = &section {
                     if seen_sections.insert(id.clone()) {
-                        sections.push(json!({"section_id": id, "name": section.name, "collapsed": section.collapsed, "pinned": section.pinned, "color": format!("{:?}", section.color)}));
+                        sections.push(json!({"section_id": id, "position": sections.len(), "name": section.name, "collapsed": section.collapsed, "pinned": section.pinned, "color": super::handlers::sections::color_value(section.color), "tab_ids": workspace.tabs.iter().filter(|tab| tab.group_id.map(|id| id.0.to_string()).as_ref() == Some(id)).map(|tab| tab.pane_group.id().to_string()).collect::<Vec<_>>()}));
                     }
                 }
                 let mut panes = Vec::new();
@@ -120,7 +120,7 @@ pub(super) fn snapshot(
                     ]));
                     let terminal = group.terminal_view_from_pane_id(pane_id, ctx);
                     all_panes.push((pane_id_string.clone(), terminal.clone()));
-                    let mut pane = json!({"pane_id": pane_id_string, "title": group.pane_title(pane_id, ctx), "visible": visible.contains(&pane_id), "active": group.focused_pane_id(ctx) == pane_id, "kind": "other", "content_read": false});
+                    let mut pane = json!({"pane_id": pane_id_string, "pane_selector": pane_id.to_string(), "title": group.pane_title(pane_id, ctx), "visible": visible.contains(&pane_id), "active": group.focused_pane_id(ctx) == pane_id, "kind": "other", "content_read": false});
                     if let Some(terminal) = terminal {
                         let terminal_ref = terminal.as_ref(ctx);
                         pane["kind"] = json!("terminal");
@@ -179,6 +179,8 @@ pub(super) fn snapshot(
                                 });
                                 pane["kind"] = json!(provider_name);
                                 pane["agent_id"] = json!(agent_id);
+                                pane["conversation_id"] = json!(conversation_id);
+                                pane["state"] = json!(state);
                                 agents.push(AgentEntry {
                                     data,
                                     terminal: terminal.clone(),
@@ -195,7 +197,7 @@ pub(super) fn snapshot(
                     }
                     panes.push(pane);
                 }
-                tabs.push(json!({"tab_id": tab_id, "name": tab_title, "position": tab_index, "active": workspace.active_tab_index() == tab_index, "section_id": section_id, "panes": panes}));
+                tabs.push(json!({"tab_id": tab_id, "name": tab_title, "custom_title": group.custom_title(ctx), "position": tab_index, "active": workspace.active_tab_index() == tab_index, "section_id": section_id, "pinned": workspace.tabs[tab_index].pinned, "color": super::handlers::projects::tab_color_value(workspace.tabs[tab_index].selected_color), "panes": panes}));
             }
             projects.push(json!({"project_id": project_id, "name": project_name, "position": project_index, "active": project_window.active_project_index() == project_index, "sections": sections, "tabs": tabs, "tasks": workspace.tasks}));
         }

@@ -38,7 +38,11 @@ pub(crate) fn handle(
     // A selector-free grep is deliberately scoped to the active project window. Exact tab or
     // pane IDs can still address an inactive window without first activating it.
     let mut target = target.clone();
-    if target.window.is_none() && target.tab.is_none() && target.pane.is_none() {
+    if target.project.is_none()
+        && target.window.is_none()
+        && target.tab.is_none()
+        && target.pane.is_none()
+    {
         target.window = Some(WindowTarget::Active);
     }
     let panes = select_pane_entries(&target, ActionKind::TabGrep, ctx)?;

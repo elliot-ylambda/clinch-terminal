@@ -3,6 +3,7 @@ mod agents;
 mod commands;
 mod completions;
 mod output;
+mod projects;
 mod selectors;
 use std::ffi::OsString;
 use std::path::Path;
@@ -171,7 +172,7 @@ pub enum ControlCommand {
     Workspace(agents::WorkspaceCommand),
     /// Inspect every open project.
     #[command(subcommand)]
-    Project(agents::ProjectCommand),
+    Project(projects::ProjectCommand),
     /// Read, message, and monitor Claude Code and Codex sessions across projects.
     #[command(subcommand)]
     Agent(agents::AgentCommand),
@@ -269,7 +270,7 @@ pub enum InstanceCommand {
     List,
 
     /// Print app, protocol, active target, and action metadata for the selected instance.
-    Inspect(TargetArgs),
+    Inspect(Box<TargetArgs>),
 }
 
 /// Commands that inspect the selected Warp app instance.
@@ -345,6 +346,9 @@ pub enum TabCommand {
 
     /// Create a new terminal tab in the active window.
     Create(TabCreateArgs),
+
+    /// Transfer a live session into another project in the same window.
+    Transfer(projects::TabTransferArgs),
 
     /// Activate a tab.
     Activate(TabActivateArgs),
@@ -691,6 +695,9 @@ pub enum FileCommand {
 /// Exact selectors for a target within the selected Warp instance.
 #[derive(Debug, Clone, Args, Default)]
 pub struct TargetArgs {
+    /// Exact project ID, including inactive projects.
+    #[arg(long = "project")]
+    pub project: Option<String>,
     /// Target a specific local app instance id from `clinch ctrl instance list`.
     #[arg(long = "instance", conflicts_with = "pid")]
     pub instance: Option<String>,
@@ -1272,7 +1279,7 @@ fn run_inner(args: ControlArgs) -> Result<(), local_control::protocol::ControlEr
     let output_format = args.output_format;
     match args.command {
         ControlCommand::Workspace(command) => agents::run_workspace(command, output_format),
-        ControlCommand::Project(command) => agents::run_project(command, output_format),
+        ControlCommand::Project(command) => projects::run_project(command, output_format),
         ControlCommand::Agent(command) => agents::run_agent(command, output_format),
         ControlCommand::Instance(command) => run_instance_command(command, output_format),
         ControlCommand::App(command) => run_app_command(command, output_format),

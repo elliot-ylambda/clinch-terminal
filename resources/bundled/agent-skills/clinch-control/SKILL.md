@@ -1,9 +1,9 @@
 ---
 name: clinch-control
-description: Control and inspect the running Clinch app from Claude Code or Codex with its local control CLI. Use when the user asks to manipulate Clinch windows, tabs, panes, sessions, sidebar sections, toolbelts, or UI surfaces; inspect or search rendered terminal contents across tabs; or launch a long-lived, interactive, or user-visible project process such as a dev server, watcher, REPL, or log tail in a new tab. Do not use for tests, lint, builds, Git commands, or other bounded work the agent can run in its own shell.
+description: Control and inspect the running Clinch app from Claude Code or Codex with its local control CLI. Use when the user asks to manipulate Clinch windows, project tabs, layouts, panes, sessions, sidebar sections, toolbelts, or UI surfaces; inspect or search rendered terminal contents across tabs; or launch a long-lived, interactive, or user-visible project process such as a dev server, watcher, REPL, or log tail in a new tab. Do not use for tests, lint, builds, Git commands, or other bounded work the agent can run in its own shell.
 ---
 
-<!-- managed-by: Clinch; version: 1.6.0 -->
+<!-- managed-by: Clinch; version: 1.7.0 -->
 
 # Clinch control
 
@@ -155,15 +155,56 @@ non-terminal document contents.
 If launch fails, report the control error. Do not silently fall back to an
 untracked background process in the agent shell.
 
+## Manage projects and move live sessions
+
+First discover IDs with `workspace tree` or `project list`, then inspect a project
+with `project inspect --project PROJECT_ID`. These include inactive projects.
+Retain `--pid "$CLINCH_CONTROL_PID"` on every command below. If `project --help`
+does not expose the command, the running app must be updated first.
+
+```sh
+"$CLINCH_CONTROL_WRAPPER" ctrl project create --cwd /absolute/project --window WINDOW_ID --pid "$CLINCH_CONTROL_PID"
+"$CLINCH_CONTROL_WRAPPER" ctrl tab list --project PROJECT_ID --pid "$CLINCH_CONTROL_PID"
+"$CLINCH_CONTROL_WRAPPER" ctrl tab create --project PROJECT_ID --cwd /absolute/project --pid "$CLINCH_CONTROL_PID"
+"$CLINCH_CONTROL_WRAPPER" ctrl section list --project PROJECT_ID --pid "$CLINCH_CONTROL_PID"
+"$CLINCH_CONTROL_WRAPPER" ctrl tab transfer --project SOURCE_ID --tab TAB_ID --to-project DESTINATION_ID --section SECTION_ID --index 0 --pid "$CLINCH_CONTROL_PID"
+```
+
+Shared `--project` accepts one exact ID and takes precedence over originating-tab
+inference. Add it to tab, pane, session, input, and section actions to target an
+inactive project. An accompanying `--window` must match. Reads preserve focus.
+`project activate` switches projects; `project close` retains normal close warnings.
+Project names follow their directory, as in the UI. A coordinator is never required.
+
+Transfers move the existing live pane/PTY to a different project in the same native
+window. Omit `--section` for ungrouped placement and `--index` to append; the index
+is zero-based within that section or the unpinned ungrouped sessions. The destination
+opens and its section expands. An emptied source project closes unless it owns tasks.
+Agent and content-read pane IDs change: use returned metadata or rediscover after a
+move before reading/sending; do not reuse queued-message targets.
+
+`project export --project PROJECT_ID --file /absolute/layout.json` writes a new file.
+`project restore --file /absolute/layout.json --window WINDOW_ID` creates a new project
+with fresh runtime identities. Add `--resume-agents` only to resume saved local
+Claude/Codex conversation identities. Layouts preserve terminal splits/proportions,
+section order, names, colors, collapse/pin state, tab titles/colors and project tasks.
+They do not capture terminal output, arbitrary running commands, custom shell/profile
+settings, or provider launch flags. Other pane types produce an explicit export error.
+Paths must exist locally when restored. Do not treat export as a full session backup.
+
+Section `color` values are reusable: a named color (including `clinch-green`), `none`
+for explicitly cleared, or null for default. Set defaults with `--color default`.
+Use exact `--project` on section mutations; section IDs belong to that project.
+
 ## Handle other Clinch changes
 
 - Discover the installed surface with `"$CLINCH_CONTROL_WRAPPER" ctrl help`
   and `"$CLINCH_CONTROL_WRAPPER" ctrl <group> --help`; do not invent actions.
 - Inspect targets before mutating them and reuse opaque IDs from CLI results.
 - Use `section list` to inspect project sidebar sections. A section ID is scoped
-  to its window and must be reused exactly.
+  to its project and must be reused exactly.
 - Create a named section from an existing tab with
-  `section create "Backend" --window <window-id> --tab <tab-id>`. Empty sections
+  `section create "Backend" --project <project-id> --tab <tab-id>`. Empty sections
   are not supported.
 - Manage a section with `section update <section-id> --name "API"`,
   `--collapsed true|false`, or `--color red|default`; reorder it one slot with

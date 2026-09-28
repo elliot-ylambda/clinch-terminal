@@ -40,7 +40,11 @@ fn active_session_target(target: &TargetSelector) -> TargetSelector {
         return target.clone();
     }
     TargetSelector {
-        window: target.window.clone().or(Some(WindowTarget::Active)),
+        project: target.project.clone(),
+        window: target
+            .window
+            .clone()
+            .or_else(|| target.project.is_none().then_some(WindowTarget::Active)),
         tab: target.tab.clone().or(Some(TabTarget::Active)),
         pane: target.pane.clone().or(Some(PaneTarget::Active)),
         session: target.session.clone(),
@@ -409,7 +413,11 @@ pub(crate) fn window_inspect(
         "tab, pane, or session selectors",
     )?;
     let target = TargetSelector {
-        window: target.window.clone().or(Some(WindowTarget::Active)),
+        project: target.project.clone(),
+        window: target
+            .window
+            .clone()
+            .or_else(|| target.project.is_none().then_some(WindowTarget::Active)),
         tab: None,
         pane: None,
         session: None,
@@ -460,6 +468,7 @@ pub(crate) fn tab_inspect(
         "pane or session selectors",
     )?;
     let target = TargetSelector {
+        project: target.project.clone(),
         window: target.window.clone(),
         tab: target.tab.clone().or(Some(TabTarget::Active)),
         pane: None,
@@ -520,6 +529,7 @@ pub(crate) fn pane_inspect(
         "session selectors",
     )?;
     let target = TargetSelector {
+        project: target.project.clone(),
         window: target.window.clone(),
         tab: target.tab.clone(),
         pane: target.pane.clone().or(Some(PaneTarget::Active)),
@@ -647,6 +657,14 @@ fn select_window_entries(
     ctx: &mut ModelContext<LocalControlBridge>,
 ) -> Result<Vec<WindowEntry>, ControlError> {
     let entries = window_entries(ctx);
+    if target.project.is_some() {
+        let window_id =
+            crate::local_control::resolver::target_window_id_for_target(ctx, target, action)?;
+        return Ok(entries
+            .into_iter()
+            .filter(|entry| entry.window_id == window_id)
+            .collect());
+    }
     match target.window.as_ref() {
         None if force_active_default => {
             let active =
@@ -716,7 +734,15 @@ fn select_tab_entries(
         Some(PaneTarget::Active | PaneTarget::Index { .. })
     );
     let windows = select_window_entries(target, force_active_window, action, ctx)?;
-    let entries = tab_entries_for_windows(windows, action, ctx)?;
+    let entries = if let Some(id) = &target.project {
+        let project = super::projects::resolve_project(id, ctx)?;
+        tab_entries_for_windows_including_projects(windows, action, ctx)?
+            .into_iter()
+            .filter(|entry| entry.workspace.id() == project.workspace.id())
+            .collect()
+    } else {
+        tab_entries_for_windows(windows, action, ctx)?
+    };
     let requires_active_tab_default = matches!(
         target.pane,
         Some(PaneTarget::Active | PaneTarget::Index { .. })
