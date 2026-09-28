@@ -233,7 +233,7 @@ fn validated_name(name: String) -> Result<String, ControlError> {
     }
 }
 
-fn parse_color(color: String) -> Result<SelectedSectionColor, ControlError> {
+pub(super) fn parse_color(color: String) -> Result<SelectedSectionColor, ControlError> {
     if matches!(color.to_ascii_lowercase().as_str(), "default" | "unset") {
         return Ok(SelectedSectionColor::Unset);
     }
@@ -250,6 +250,14 @@ fn parse_color(color: String) -> Result<SelectedSectionColor, ControlError> {
         })
 }
 
+pub(crate) fn color_value(color: SelectedSectionColor) -> Option<String> {
+    match color {
+        SelectedSectionColor::Unset => None,
+        SelectedSectionColor::Cleared => Some("none".to_owned()),
+        SelectedSectionColor::Color(color) => Some(color.to_string()),
+    }
+}
+
 fn require_section(workspace: &Workspace, section_id: TabGroupId) -> Result<(), ControlError> {
     if workspace.tab_groups.contains_key(&section_id) {
         Ok(())
@@ -261,7 +269,7 @@ fn require_section(workspace: &Workspace, section_id: TabGroupId) -> Result<(), 
     }
 }
 
-fn section_state(workspace: &Workspace, _ctx: &AppContext) -> serde_json::Value {
+pub(crate) fn section_state(workspace: &Workspace, _ctx: &AppContext) -> serde_json::Value {
     let mut seen = HashSet::new();
     let mut ordered_ids = workspace
         .tabs
@@ -287,11 +295,7 @@ fn section_state(workspace: &Workspace, _ctx: &AppContext) -> serde_json::Value 
                 .filter(|tab| tab.group_id == Some(section_id))
                 .map(|tab| tab.pane_group.id().to_string())
                 .collect::<Vec<_>>();
-            let color = match group.color {
-                SelectedSectionColor::Unset => None,
-                SelectedSectionColor::Cleared => Some("none".to_owned()),
-                SelectedSectionColor::Color(color) => Some(color.to_string()),
-            };
+            let color = color_value(group.color);
             Some(json!({
                 "section_id": section_id.0.to_string(),
                 "position": position,
@@ -307,31 +311,5 @@ fn section_state(workspace: &Workspace, _ctx: &AppContext) -> serde_json::Value 
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn section_names_are_trimmed_and_cannot_be_empty() {
-        assert_eq!(validated_name("  Backend  ".to_owned()).unwrap(), "Backend");
-        assert_eq!(
-            validated_name("   ".to_owned()).unwrap_err().code,
-            ErrorCode::InvalidParams
-        );
-    }
-
-    #[test]
-    fn default_color_clears_the_section_tint() {
-        assert_eq!(
-            parse_color("default".to_owned()).unwrap(),
-            SelectedSectionColor::Unset
-        );
-        assert_eq!(
-            parse_color("magenta".to_owned()).unwrap(),
-            SelectedSectionColor::Color(SectionColor::Magenta)
-        );
-        assert_eq!(
-            parse_color("clinch-green".to_owned()).unwrap(),
-            SelectedSectionColor::Color(SectionColor::ClinchGreen)
-        );
-    }
-}
+#[path = "sections_tests.rs"]
+mod tests;

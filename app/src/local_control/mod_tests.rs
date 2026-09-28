@@ -71,6 +71,7 @@ fn tab_create_accepts_default_and_window_targets() {
     validate_tab_create_target(&TargetSelector::default()).expect("default target is accepted");
 
     validate_tab_create_target(&TargetSelector {
+        project: None,
         window: Some(WindowTarget::Id {
             id: WindowSelector("window".to_owned()),
         }),
@@ -81,6 +82,7 @@ fn tab_create_accepts_default_and_window_targets() {
     .expect("window id target is accepted");
 
     validate_tab_create_target(&TargetSelector {
+        project: None,
         window: Some(WindowTarget::Index { index: 0 }),
         tab: None,
         pane: None,
@@ -89,6 +91,7 @@ fn tab_create_accepts_default_and_window_targets() {
     .expect("window index target is accepted");
 
     validate_tab_create_target(&TargetSelector {
+        project: None,
         window: Some(WindowTarget::Title {
             title: "window".to_owned(),
         }),
@@ -102,6 +105,7 @@ fn tab_create_accepts_default_and_window_targets() {
 #[test]
 fn tab_create_rejects_lower_level_targets() {
     let err = validate_tab_create_target(&TargetSelector {
+        project: None,
         window: None,
         tab: Some(TabTarget::Id {
             id: TabSelector("tab".to_owned()),
@@ -113,6 +117,7 @@ fn tab_create_rejects_lower_level_targets() {
     assert_eq!(err.code, ErrorCode::InvalidSelector);
 
     let err = validate_tab_create_target(&TargetSelector {
+        project: None,
         window: None,
         tab: None,
         pane: Some(PaneTarget::Id {
@@ -127,6 +132,7 @@ fn tab_create_rejects_lower_level_targets() {
 #[test]
 fn tab_create_rejects_unsupported_selector_forms() {
     let err = validate_tab_create_target(&TargetSelector {
+        project: None,
         window: None,
         tab: Some(TabTarget::Index { index: 0 }),
         pane: None,
@@ -141,6 +147,7 @@ fn surface_list_rejects_target_selectors() {
     let error = validate_action_target(
         ActionKind::SurfaceList,
         &TargetSelector {
+            project: None,
             window: Some(WindowTarget::Active),
             tab: None,
             pane: None,
@@ -153,7 +160,7 @@ fn surface_list_rejects_target_selectors() {
 
 #[test]
 fn capabilities_advertises_the_complete_catalog() {
-    assert_eq!(capabilities().len(), 108);
+    assert_eq!(capabilities().len(), 115);
 }
 
 #[test]

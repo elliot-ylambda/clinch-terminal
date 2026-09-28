@@ -44,7 +44,7 @@ fn bundled_skill_proactively_suggests_reusable_conversation_patterns() {
 #[test]
 fn bundled_control_skill_routes_only_persistent_processes_to_new_tabs() {
     let contents = bundled_control_skill_contents();
-    assert!(contents.contains("<!-- managed-by: Clinch; version: 1.6.0 -->"));
+    assert!(contents.contains("<!-- managed-by: Clinch; version: 1.7.0 -->"));
     assert!(contents.contains("tab create"));
     assert!(contents.contains("--cwd"));
     assert!(contents.contains("dev server"));

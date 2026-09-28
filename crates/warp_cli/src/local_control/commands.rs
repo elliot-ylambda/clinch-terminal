@@ -245,7 +245,7 @@ pub(super) fn run_instance_command(
             output_format,
         ),
         InstanceCommand::Inspect(args) => run_action_with_params(
-            args,
+            *args,
             ActionKind::InstanceInspect,
             EmptyParams {},
             output_format,
@@ -435,6 +435,16 @@ pub(super) fn run_tab_command(
                 shell: args.shell,
                 cwd: args.cwd,
                 command: args.command,
+            },
+            output_format,
+        ),
+        TabCommand::Transfer(args) => run_action_with_params(
+            args.target,
+            ActionKind::TabTransfer,
+            local_control::projects::TabTransferParams {
+                destination_project: args.to_project,
+                section_id: args.section,
+                index: args.index,
             },
             output_format,
         ),
@@ -965,12 +975,28 @@ fn run_action(
     run_action_with_params(args, action, EmptyParams {}, output_format)
 }
 
-fn run_action_with_params<T: Serialize>(
+pub(super) fn run_action_with_params<T: Serialize>(
     args: TargetArgs,
     action: ActionKind,
     params: T,
     output_format: OutputFormat,
 ) -> Result<(), ControlError> {
+    let data = request_action_with_params(args, action, params)?;
+    match output_format {
+        OutputFormat::Json => write_json(&data),
+        OutputFormat::Ndjson => write_json_line(&data),
+        OutputFormat::Pretty | OutputFormat::Text => {
+            println!("{}", render_human_readable(action, &data));
+            Ok(())
+        }
+    }
+}
+
+pub(super) fn request_action_with_params<T: Serialize>(
+    args: TargetArgs,
+    action: ActionKind,
+    params: T,
+) -> Result<serde_json::Value, ControlError> {
     let has_explicit_window =
         args.window.is_some() || args.window_index.is_some() || args.window_title.is_some();
     let selector = instance_selector(&args);
@@ -978,7 +1004,7 @@ fn run_action_with_params<T: Serialize>(
     let target = target_selector(&args)?;
     let instance = select_instance(&records, &selector)?;
     let mut request = RequestEnvelope::new(Action::with_params(action, params)?);
-    if action == ActionKind::TabCreate && !has_explicit_window {
+    if action == ActionKind::TabCreate && !has_explicit_window && args.project.is_none() {
         request.origin_terminal_session_uuid = origin_terminal_session_uuid(
             instance.pid,
             std::env::var_os(local_control::CLINCH_CONTROL_PID_ENV),
@@ -993,14 +1019,7 @@ fn run_action_with_params<T: Serialize>(
             "local-control request failed without an error payload",
         ));
     };
-    match output_format {
-        OutputFormat::Json => write_json(&data),
-        OutputFormat::Ndjson => write_json_line(&data),
-        OutputFormat::Pretty | OutputFormat::Text => {
-            println!("{}", render_human_readable(action, &data));
-            Ok(())
-        }
-    }
+    Ok(data)
 }
 
 pub(crate) fn origin_terminal_session_uuid(

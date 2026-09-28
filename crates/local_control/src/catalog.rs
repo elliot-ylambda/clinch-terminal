@@ -9,6 +9,7 @@ pub const PROTOCOL_VERSION: u32 = 1;
 pub enum TargetScope {
     Instance,
     Window,
+    Project,
     Tab,
     Pane,
     Session,
@@ -71,6 +72,9 @@ pub enum ActionParameterSpec {
     AgentMessage,
     AgentMessageList,
     PaneRead,
+    ProjectCreate,
+    ProjectRestore,
+    TabTransfer,
 }
 
 /// Typed result contract for a catalog action.
@@ -215,6 +219,16 @@ define_action_catalog! {
         AgentMessageInspect => { name: "agent.message.inspect", status: Implemented, target: Instance, params: AgentMessage, result: TargetMetadata },
         AgentMessageCancel => { name: "agent.message.cancel", status: Implemented, target: Instance, params: AgentMessage, result: Acknowledgement },
         AgentMessageList => { name: "agent.message.list", status: Implemented, target: Instance, params: AgentMessageList, result: TargetList },
+    }
+
+    project {
+        ProjectInspect => { name: "project.inspect", status: Implemented, target: Project, params: None, result: TargetMetadata },
+        ProjectCreate => { name: "project.create", status: Implemented, target: Project, params: ProjectCreate, result: TargetMetadata },
+        ProjectActivate => { name: "project.activate", status: Implemented, target: Project, params: None, result: Acknowledgement },
+        ProjectClose => { name: "project.close", status: Implemented, target: Project, params: None, result: Acknowledgement },
+        ProjectExport => { name: "project.export", status: Implemented, target: Project, params: None, result: TargetMetadata },
+        ProjectRestore => { name: "project.restore", status: Implemented, target: Project, params: ProjectRestore, result: TargetMetadata },
+        TabTransfer => { name: "tab.transfer", status: Implemented, target: Tab, params: TabTransfer, result: TargetMetadata },
     }
 
     window {

@@ -29,7 +29,7 @@ pub struct InstanceArgs {
 #[derive(Debug, Clone, Args)]
 pub struct ScopeArgs {
     #[command(flatten)]
-    instance: InstanceArgs,
+    pub(super) instance: InstanceArgs,
     /// Filter by a returned project ID; repeat to include several projects.
     #[arg(long = "project")]
     projects: Vec<String>,
@@ -39,7 +39,7 @@ pub struct ScopeArgs {
 }
 
 impl ScopeArgs {
-    fn scope(&self) -> AgentScope {
+    pub(super) fn scope(&self) -> AgentScope {
         AgentScope {
             projects: self.projects.clone(),
             sections: self.sections.clone(),
@@ -59,12 +59,6 @@ pub struct AgentArgs {
 pub enum WorkspaceCommand {
     /// Read the full window/project/section/tab/pane hierarchy without changing focus.
     Tree(ScopeArgs),
-}
-
-#[derive(Debug, Clone, Subcommand)]
-pub enum ProjectCommand {
-    /// List every open project, including inactive projects.
-    List(ScopeArgs),
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -157,7 +151,9 @@ pub enum AgentMessageCommand {
     },
 }
 
-fn instance(args: &InstanceArgs) -> Result<local_control::discovery::InstanceRecord, ControlError> {
+pub(super) fn instance(
+    args: &InstanceArgs,
+) -> Result<local_control::discovery::InstanceRecord, ControlError> {
     let selector = match (&args.instance, args.pid) {
         (Some(id), _) => InstanceSelector::Id(local_control::InstanceId(id.clone())),
         (_, Some(pid)) => InstanceSelector::Pid(pid),
@@ -169,7 +165,7 @@ fn instance(args: &InstanceArgs) -> Result<local_control::discovery::InstanceRec
     )
 }
 
-fn request<T: Serialize>(
+pub(super) fn request<T: Serialize>(
     instance: &local_control::discovery::InstanceRecord,
     kind: ActionKind,
     params: T,
@@ -181,7 +177,7 @@ fn request<T: Serialize>(
     }
 }
 
-fn render(data: &serde_json::Value, format: OutputFormat) -> Result<(), ControlError> {
+pub(super) fn render(data: &serde_json::Value, format: OutputFormat) -> Result<(), ControlError> {
     match format {
         OutputFormat::Ndjson => write_json_line(data),
         _ => write_json(data),
@@ -197,21 +193,6 @@ pub(super) fn run_workspace(
         &request(
             &instance(&args.instance)?,
             ActionKind::WorkspaceTree,
-            args.scope(),
-        )?,
-        format,
-    )
-}
-
-pub(super) fn run_project(
-    command: ProjectCommand,
-    format: OutputFormat,
-) -> Result<(), ControlError> {
-    let ProjectCommand::List(args) = command;
-    render(
-        &request(
-            &instance(&args.instance)?,
-            ActionKind::ProjectList,
             args.scope(),
         )?,
         format,

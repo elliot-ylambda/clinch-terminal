@@ -490,6 +490,61 @@ fn retained_action_examples() -> Vec<(ActionKind, Vec<&'static str>)> {
             vec!["warpctrl", "workspace", "tree"],
         ),
         (ActionKind::ProjectList, vec!["warpctrl", "project", "list"]),
+        (
+            ActionKind::ProjectInspect,
+            vec!["warpctrl", "project", "inspect", "--project", "project-id"],
+        ),
+        (
+            ActionKind::ProjectCreate,
+            vec!["warpctrl", "project", "create", "--cwd", "/tmp"],
+        ),
+        (
+            ActionKind::ProjectActivate,
+            vec!["warpctrl", "project", "activate", "--project", "project-id"],
+        ),
+        (
+            ActionKind::ProjectClose,
+            vec!["warpctrl", "project", "close", "--project", "project-id"],
+        ),
+        (
+            ActionKind::ProjectExport,
+            vec![
+                "warpctrl",
+                "project",
+                "export",
+                "--file",
+                "/tmp/layout.json",
+            ],
+        ),
+        (
+            ActionKind::ProjectRestore,
+            vec![
+                "warpctrl",
+                "project",
+                "restore",
+                "--file",
+                "/tmp/layout.json",
+                "--resume-agents",
+            ],
+        ),
+        (
+            ActionKind::TabTransfer,
+            vec![
+                "warpctrl",
+                "tab",
+                "transfer",
+                "--project",
+                "source",
+                "--tab",
+                "session",
+                "--to-project",
+                "destination",
+                "--section",
+                "section-id",
+                "--index",
+                "0",
+            ],
+        ),
         (ActionKind::AgentList, vec!["warpctrl", "agent", "list"]),
         (
             ActionKind::AgentInspect,
@@ -952,6 +1007,7 @@ fn parsed_action_kind(command: &ControlCommand) -> Option<ActionKind> {
             TabCommand::Inspect(_) => Some(ActionKind::TabInspect),
             TabCommand::Grep(_) => Some(ActionKind::TabGrep),
             TabCommand::Create(_) => Some(ActionKind::TabCreate),
+            TabCommand::Transfer(_) => Some(ActionKind::TabTransfer),
             TabCommand::Activate(_) => Some(ActionKind::TabActivate),
             TabCommand::Move(_) => Some(ActionKind::TabMove),
             TabCommand::Close(_) => Some(ActionKind::TabClose),
@@ -1098,7 +1154,15 @@ fn parsed_action_kind(command: &ControlCommand) -> Option<ActionKind> {
             },
         },
         ControlCommand::Workspace(_) => Some(ActionKind::WorkspaceTree),
-        ControlCommand::Project(_) => Some(ActionKind::ProjectList),
+        ControlCommand::Project(command) => Some(match command {
+            super::projects::ProjectCommand::List(_) => ActionKind::ProjectList,
+            super::projects::ProjectCommand::Inspect(_) => ActionKind::ProjectInspect,
+            super::projects::ProjectCommand::Create { .. } => ActionKind::ProjectCreate,
+            super::projects::ProjectCommand::Activate(_) => ActionKind::ProjectActivate,
+            super::projects::ProjectCommand::Close(_) => ActionKind::ProjectClose,
+            super::projects::ProjectCommand::Export { .. } => ActionKind::ProjectExport,
+            super::projects::ProjectCommand::Restore { .. } => ActionKind::ProjectRestore,
+        }),
         ControlCommand::Agent(command) => match command {
             super::agents::AgentCommand::List(_) | super::agents::AgentCommand::Watch { .. } => {
                 Some(ActionKind::AgentList)

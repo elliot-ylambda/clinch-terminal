@@ -291,3 +291,37 @@ and several sections; create one coordinator with a union scope, then exercise A
 another project active while reading and sending; move one worker, add a new one, pause/resume,
 restart the app, and inspect recoverable/unknown states. Obtain useful summaries and direct replies
 without computer-use clicks. Separately verify all-project observation without creating a coordinator.
+
+
+## Project control extension implementation (2026-09-28)
+
+Baseline: `d9cd5350932af41ae8863c6118faddaa3a3b2895` (PR #69). Extend the existing
+local-control bridge and catalog; no new service or coordinator requirement.
+
+- Add an optional exact project ID to `TargetSelector` and the CLI's shared target arguments.
+  Resolve it through `RootView::project_window` and `ProjectWindow::projects`, validating an
+  accompanying window before touching a workspace. Existing requests omit it unchanged. Clients
+  require advertised `project.inspect` support before sending a project selector, because older
+  protocol-1 decoders ignored unknown selector fields.
+- Add project create/inspect/activate/close/export/restore actions plus exact live-tab transfer.
+  Use `ProjectWindow` parent-owned updates so child workspace extraction and adoption cannot
+  cause reentrant view borrows. Restrict live transfers to one native window initially, matching
+  the existing sibling-project drag operation; cross-window drags keep their current machinery.
+- Reuse `take_tab_for_project_transfer`, reparenting, and `accept_project_tab_drag`. Validate
+  destination section/index and contiguous/pinned ordering first. CLI calls finish placement;
+  mouse calls retain their active draggable. Return refreshed project/agent metadata after moves.
+- Normalize section color serialization between `workspace tree`, `project inspect`, and
+  `section list/update`. Include section position and vertical-tab title/color/pin metadata.
+- Use a separate bounded versioned portable document for terminal pane trees and sections.
+  Reconstruct native `WindowSnapshot` / `NewWorkspaceSource::Restored` with fresh pane UUIDs.
+  Preserve split proportions and supported resume identities. Unsupported native pane kinds
+  produce an explicit export error; no hidden partial restore or arbitrary command replay.
+- Keep CLI file reads/writes bounded and outside the UI process. Resume is an explicit option.
+  Existing provider authentication and availability requirements remain unchanged.
+
+Validation maps to the extension invariants: protocol/CLI argument tests; app tests with two
+projects proving inactive targeting and stale/mismatched rejection; create/export/restore round
+trip (sections, colors, ordering, split ratios, resume identity); live-transfer tests proving the
+same pane group/terminal survives and invalid placement leaves both projects untouched; existing
+project hover-drag and mouse-up tests. Finish with a disposable signed development-app smoke run,
+repository formatting, relevant tests, and Clippy. Do not modify the user's real layouts as a test.

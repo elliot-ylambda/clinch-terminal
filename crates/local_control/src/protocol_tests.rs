@@ -221,8 +221,8 @@ fn malformed_and_removed_action_names_are_not_deserialized() {
 }
 
 #[test]
-fn catalog_has_exactly_108_retained_actions() {
-    assert_eq!(ActionKind::ALL.len(), 108);
+fn catalog_has_exactly_115_retained_actions() {
+    assert_eq!(ActionKind::ALL.len(), 115);
 }
 
 #[test]

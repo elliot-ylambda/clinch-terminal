@@ -3,7 +3,7 @@ name: clinch-coordinate
 description: Coordinates Claude Code and Codex sessions across Clinch projects and sections using the local CLI. Use when the user wants one conversation to inspect other sessions, summarize progress, send delegated instructions, or organize reviews and deployments across sessions.
 ---
 
-<!-- managed-by: Clinch; version: 1.2.0 -->
+<!-- managed-by: Clinch; version: 1.3.0 -->
 
 # Clinch coordination
 
@@ -47,6 +47,15 @@ restart or target replacement. Repeated `--project ID` and `--section ID` filter
 are unions within each kind and intersections between kinds. For mixed scopes,
 union the selected IDs yourself. Unknown IDs fail rather than widen scope.
 Exclude your own session and any other coordinating session from worker sends.
+
+## Organize projects and sessions
+
+Use `clinch-control` for project creation, exact `--project` targets on tab/section
+commands, layout export/restore, and `tab transfer`. `project inspect --project ID`
+shows the complete hierarchy for one project. These controls work without a
+coordinator. Project filters on discovery may repeat; mutation selectors accept
+one exact project. After transfer or restoration, rediscover agent and pane IDs
+before sending: original message targets are never automatically rebound.
 
 ## Read and monitor
 

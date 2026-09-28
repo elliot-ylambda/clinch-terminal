@@ -376,7 +376,13 @@ fn select_tab_entries(
         .enumerate()
         .map(|(index, window_id)| WindowEntry { window_id, index })
         .collect::<Vec<_>>();
-    let entries = if matches!(target.tab, Some(TabTarget::Id { .. })) {
+    let entries = if let Some(id) = &target.project {
+        let project = super::projects::resolve_project(id, ctx)?;
+        tab_entries_for_windows_including_projects(windows, action, ctx)?
+            .into_iter()
+            .filter(|entry| entry.workspace.id() == project.workspace.id())
+            .collect()
+    } else if matches!(target.tab, Some(TabTarget::Id { .. })) {
         tab_entries_for_windows_including_projects(windows, action, ctx)?
     } else {
         tab_entries_for_windows(windows, action, ctx)?
@@ -410,6 +416,11 @@ fn select_window_ids(
     action: ActionKind,
     ctx: &mut ModelContext<LocalControlBridge>,
 ) -> Result<Vec<WindowId>, ControlError> {
+    if target.project.is_some() {
+        return Ok(vec![
+            crate::local_control::resolver::target_window_id_for_target(ctx, target, action)?,
+        ]);
+    }
     match target.window.as_ref() {
         None | Some(WindowTarget::Active) => Ok(vec![require_active_window_id_for_action(
             ctx.windows().active_window(),

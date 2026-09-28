@@ -19,6 +19,7 @@ pub(super) fn instance_selector(args: &TargetArgs) -> InstanceSelector {
 
 pub(super) fn target_selector(args: &TargetArgs) -> Result<TargetSelector, ControlError> {
     Ok(TargetSelector {
+        project: args.project.clone(),
         window: window_target(args)?,
         tab: tab_target(args)?,
         pane: pane_target(args)?,

@@ -137,6 +137,18 @@ impl LocalControlBridge {
                     super::agents::list(request.action.kind, instance_id, scope, ctx)
                 })
             }
+            ActionKind::ProjectInspect
+            | ActionKind::ProjectCreate
+            | ActionKind::ProjectActivate
+            | ActionKind::ProjectClose
+            | ActionKind::ProjectExport
+            | ActionKind::ProjectRestore
+            | ActionKind::TabTransfer => super::handlers::projects::handle(
+                instance_id,
+                &request.action,
+                &request.target,
+                ctx,
+            ),
             ActionKind::AgentInspect => request
                 .action
                 .params_as::<::local_control::agents::AgentTargetParams>()
