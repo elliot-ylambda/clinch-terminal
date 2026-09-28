@@ -666,7 +666,7 @@ fn render_pane_row_element(
         pane_color,
         badge_mouse_states: _,
         detail_hover_state,
-        display_granularity: _,
+        display_granularity,
         renamable_tab_index,
         pane_context_menu_tab_index,
         is_tab_being_renamed,
@@ -839,7 +839,10 @@ fn render_pane_row_element(
         pane_group_id,
         pane_id,
     };
-    if pane_context_menu_tab_index.is_some() && !is_tab_being_renamed && !is_pane_being_renamed {
+    if row_renames_pane(display_granularity, renamable_tab_index)
+        && !is_tab_being_renamed
+        && !is_pane_being_renamed
+    {
         row = row.on_double_click(move |ctx, _, _| {
             ctx.dispatch_typed_action(WorkspaceAction::RenamePane(pane_locator));
         });
@@ -3347,7 +3350,7 @@ fn render_tab_group_internal(
                     display_granularity,
                     true,
                     displayed_tab_title_override.clone(),
-                    (!uses_outer_group_container).then_some(tab_index),
+                    (!use_tab_title_header).then_some(tab_index),
                     uses_outer_group_container.then_some(tab_index),
                     !use_tab_title_header && is_being_renamed,
                     (!use_tab_title_header).then_some(rename_editor.clone()),
@@ -4984,6 +4987,17 @@ fn tab_title_uses_header(
     matches!(display_granularity, VerticalTabsDisplayGranularity::Panes) && visible_pane_count > 1
 }
 
+/// A row renames its pane only when it shows the pane's own title: in Panes view
+/// with no tab to rename (split tabs, whose tab name lives in the header). Rows
+/// that display the tab name rename the tab instead.
+fn row_renames_pane(
+    display_granularity: VerticalTabsDisplayGranularity,
+    renamable_tab_index: Option<usize>,
+) -> bool {
+    matches!(display_granularity, VerticalTabsDisplayGranularity::Panes)
+        && renamable_tab_index.is_none()
+}
+
 fn preferred_vertical_tab_title_override<'a>(
     tab_title: Option<&'a str>,
     pane_title: Option<&'a str>,
@@ -5676,10 +5690,10 @@ fn render_pane_title_slot(
     let title = render_title_override(props, font_size, text_color, clip, appearance, app)
         .unwrap_or_else(generated_title);
 
-    if !matches!(
-        props.display_granularity,
-        VerticalTabsDisplayGranularity::Panes
-    ) || props.shows_inline_tab_rename_editor()
+    // A row that renames its tab must not also rename the pane: both handlers
+    // fire on one double-click, and the losing editor commits a stale name.
+    if !row_renames_pane(props.display_granularity, props.renamable_tab_index)
+        || props.shows_inline_tab_rename_editor()
     {
         return title;
     }
