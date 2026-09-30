@@ -35,6 +35,7 @@ use warpui::prelude::Align;
 use warpui::text_layout::ClipConfig;
 use warpui::ui_components::components::{UiComponent, UiComponentStyles};
 use warpui::ui_components::text_input::TextInput;
+use warpui::units::IntoPixels;
 use warpui::{AppContext, EntityId, SingletonEntity, ViewHandle, WindowId};
 
 use super::{
@@ -187,6 +188,13 @@ pub(crate) fn vtab_group_position_id(group_id: TabGroupId) -> String {
 /// Stable hit-test rect for the built-in Bookmarked sessions section.
 pub(crate) const BOOKMARKED_SESSIONS_SECTION_POSITION_ID: &str =
     "vertical_tabs:bookmarked_sessions_section";
+/// Hit-test rect for the scrollable tab list, used to auto-scroll during drags.
+pub(crate) const VERTICAL_TABS_SCROLL_VIEWPORT_POSITION_ID: &str = "vertical_tabs:scroll_viewport";
+/// Depth of the band at each end of the tab list that auto-scrolls a drag.
+const DRAG_AUTOSCROLL_EDGE_BAND: f32 = 48.;
+/// Largest per-tick scroll, reached once the dragged tab is at (or past) the edge.
+const DRAG_AUTOSCROLL_MAX_STEP: f32 = 14.;
+
 /// Save-position id for the built-in bookmark section's kebab menu.
 pub(crate) const BOOKMARKED_SESSIONS_KEBAB_POSITION_ID: &str =
     "vertical_tabs:bookmarked_sessions_kebab";
@@ -1480,7 +1488,30 @@ fn resolve_summary_pane_kind_icons(
     }))
 }
 
+/// Per-tick scroll delta for a drag whose dragged element is centred at `drag_y`
+/// over a tab list occupying `viewport`: negative scrolls up, positive scrolls
+/// down, zero outside the edge bands. Speed ramps with depth into a band, and
+/// drags past the edge (e.g. onto the control bar) keep scrolling at full speed.
+pub(crate) fn drag_autoscroll_step(viewport: RectF, drag_y: f32) -> f32 {
+    let band = DRAG_AUTOSCROLL_EDGE_BAND.min(viewport.height() / 2.);
+    if band <= 0. || drag_y < viewport.min_y() - band || drag_y > viewport.max_y() + band {
+        return 0.;
+    }
+    let depth = if drag_y < viewport.min_y() + band {
+        -(viewport.min_y() + band - drag_y)
+    } else if drag_y > viewport.max_y() - band {
+        drag_y - (viewport.max_y() - band)
+    } else {
+        return 0.;
+    };
+    (depth / band).clamp(-1., 1.) * DRAG_AUTOSCROLL_MAX_STEP
+}
+
 impl VerticalTabsPanelState {
+    pub(super) fn scroll_by(&self, delta: f32) {
+        self.scroll_state.scroll_by(delta.into_pixels());
+    }
+
     pub(super) fn scroll_to_tab(&self, tab_index: usize) {
         self.scroll_state.scroll_to_position(ScrollTarget {
             position_id: tab_position_id(tab_index),
@@ -2775,15 +2806,19 @@ fn render_vertical_tabs_panel(
     let appearance = Appearance::as_ref(app);
     let theme = appearance.theme();
 
-    let scrollable_groups = ClippedScrollable::vertical(
-        state.scroll_state.clone(),
-        render_groups(state, workspace, app),
-        ScrollbarWidth::Custom(4.),
-        theme.nonactive_ui_detail().into(),
-        theme.active_ui_detail().into(),
-        ElementFill::None,
+    let scrollable_groups = SavePosition::new(
+        ClippedScrollable::vertical(
+            state.scroll_state.clone(),
+            render_groups(state, workspace, app),
+            ScrollbarWidth::Custom(4.),
+            theme.nonactive_ui_detail().into(),
+            theme.active_ui_detail().into(),
+            ElementFill::None,
+        )
+        .with_overlayed_scrollbar()
+        .finish(),
+        VERTICAL_TABS_SCROLL_VIEWPORT_POSITION_ID,
     )
-    .with_overlayed_scrollbar()
     .finish();
 
     let panel_content = Flex::column()

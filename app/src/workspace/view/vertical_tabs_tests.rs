@@ -8,7 +8,7 @@ use warpui::EntityId;
 use super::{
     automatic_worktree_toggle_tooltip, branch_label_display, coalesce_summary_branch_entries,
     code_detail_kind_label, compact_branch_subtitle_display, detail_sidecar_width_and_bounds,
-    detail_target_for_hovered_row, non_terminal_search_text_fragments,
+    detail_target_for_hovered_row, drag_autoscroll_step, non_terminal_search_text_fragments,
     pane_ids_for_display_granularity, pane_search_text_fragments, path_belongs_to_project,
     preferred_agent_tab_titles, preferred_vertical_tab_title_override,
     push_normalized_unique_summary_label, row_renames_pane, search_fragments_contain_query,
@@ -1362,4 +1362,34 @@ fn summary_search_fragments_include_hidden_overflow_values() {
     assert!(search_fragments_contain_query(&fragments, "#789"));
     assert!(search_fragments_contain_query(&fragments, "+2"));
     assert!(search_fragments_contain_query(&fragments, "-3"));
+}
+
+#[test]
+fn drag_autoscroll_scrolls_toward_the_nearer_edge_and_ramps_with_depth() {
+    // A 500px-tall tab list starting 100px down the window.
+    let viewport = RectF::new(Vector2F::new(0., 100.), Vector2F::new(240., 500.));
+
+    // Middle of the list: no scroll.
+    assert_eq!(drag_autoscroll_step(viewport, 350.), 0.);
+    // Top band scrolls up, faster the closer to the edge.
+    let shallow_up = drag_autoscroll_step(viewport, 140.);
+    let deep_up = drag_autoscroll_step(viewport, 105.);
+    assert!(shallow_up < 0. && deep_up < shallow_up);
+    // Bottom band scrolls down.
+    assert!(drag_autoscroll_step(viewport, 590.) > 0.);
+    // Just past an edge (over the control bar) keeps scrolling at full speed...
+    assert_eq!(
+        drag_autoscroll_step(viewport, 90.),
+        drag_autoscroll_step(viewport, 60.)
+    );
+    assert!(drag_autoscroll_step(viewport, 90.) < 0.);
+    // ...but a drag well away from the list does not scroll it.
+    assert_eq!(drag_autoscroll_step(viewport, 0.), 0.);
+    assert_eq!(drag_autoscroll_step(viewport, 700.), 0.);
+}
+
+#[test]
+fn drag_autoscroll_ignores_collapsed_list() {
+    let viewport = RectF::new(Vector2F::new(0., 100.), Vector2F::new(240., 0.));
+    assert_eq!(drag_autoscroll_step(viewport, 100.), 0.);
 }
