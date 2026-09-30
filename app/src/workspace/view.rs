@@ -121,10 +121,11 @@ use warpui::{
 
 use self::vertical_tabs::telemetry::{VerticalTabsDisplayOption, VerticalTabsTelemetryEvent};
 use self::vertical_tabs::{
-    htab_group_position_id, pane_summary_kind, render_detail_sidecar, render_settings_popup,
-    render_summary_pane_kind_icons, vtab_group_position_id, SummaryPaneKind, SummaryPaneKindIcons,
-    VerticalTabsPanelState, BOOKMARKED_SESSIONS_KEBAB_POSITION_ID,
-    BOOKMARKED_SESSIONS_SECTION_POSITION_ID, VERTICAL_TABS_SETTINGS_BUTTON_POSITION_ID,
+    drag_autoscroll_step, htab_group_position_id, pane_summary_kind, render_detail_sidecar,
+    render_settings_popup, render_summary_pane_kind_icons, vtab_group_position_id, SummaryPaneKind,
+    SummaryPaneKindIcons, VerticalTabsPanelState, BOOKMARKED_SESSIONS_KEBAB_POSITION_ID,
+    BOOKMARKED_SESSIONS_SECTION_POSITION_ID, VERTICAL_TABS_SCROLL_VIEWPORT_POSITION_ID,
+    VERTICAL_TABS_SETTINGS_BUTTON_POSITION_ID,
 };
 #[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
 use super::action::AutoCloudHandoffTrigger;
@@ -854,6 +855,22 @@ pub struct TabPaneGroupIdentifiers {
     pub terminal_ids: Vec<EntityId>,
 }
 
+/// What a vertical-tab drag is moving.
+#[derive(Clone, Copy, Debug)]
+enum VerticalTabDragTarget {
+    Tab(usize),
+    Group(TabGroupId),
+}
+
+#[derive(Clone, Copy, Debug)]
+struct VerticalTabDragAutoscroll {
+    target: VerticalTabDragTarget,
+    /// The dragged element's latest window-space rect.
+    position: RectF,
+    /// Whether a scroll tick is already scheduled, so drag events don't stack loops.
+    is_ticking: bool,
+}
+
 #[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LocalToCloudHandoffIntent {
@@ -1292,6 +1309,9 @@ pub struct Workspace {
     left_panel_open: bool,
     vertical_tabs_panel_open: bool,
     vertical_tabs_panel: VerticalTabsPanelState,
+    /// The in-progress vertical-tab drag, kept so the tab list can keep
+    /// auto-scrolling while the cursor rests near its top or bottom edge.
+    vertical_tab_drag_autoscroll: Option<VerticalTabDragAutoscroll>,
     left_panel_view: ViewHandle<LeftPanelView>,
     left_panel_views: Vec<ToolPanelView>,
     right_panel_view: ViewHandle<RightPanelView>,
@@ -4013,6 +4033,7 @@ impl Workspace {
             ai_fact_view,
             left_panel_open: false,
             vertical_tabs_panel_open: false,
+            vertical_tab_drag_autoscroll: None,
             vertical_tabs_panel: {
                 let panel = VerticalTabsPanelState::default();
                 if let NewWorkspaceSource::Restored {
@@ -26316,8 +26337,14 @@ impl TypedActionView for Workspace {
             }
             DragGroup { group_id, position } => {
                 self.on_group_drag(*group_id, *position, ctx);
+                self.track_vertical_tab_drag_autoscroll(
+                    VerticalTabDragTarget::Group(*group_id),
+                    *position,
+                    ctx,
+                );
             }
             DropGroup => {
+                self.vertical_tab_drag_autoscroll = None;
                 send_telemetry_from_ctx!(TelemetryEvent::DragAndDropTabGroup, ctx);
                 ctx.notify();
             }
@@ -26727,11 +26754,19 @@ impl TypedActionView for Workspace {
             DragTab {
                 tab_index,
                 tab_position,
-            } => self.on_tab_drag(*tab_index, *tab_position, ctx),
+            } => {
+                self.on_tab_drag(*tab_index, *tab_position, ctx);
+                self.track_vertical_tab_drag_autoscroll(
+                    VerticalTabDragTarget::Tab(*tab_index),
+                    *tab_position,
+                    ctx,
+                );
+            }
             DropTab {
                 pane_group_id,
                 tab_position,
             } => {
+                self.vertical_tab_drag_autoscroll = None;
                 let is_cross_window = CrossWindowTabDrag::as_ref(ctx).is_active();
                 let bookmark_terminal_view_id = (!is_cross_window
                     && self.is_over_bookmarked_section(*tab_position, ctx))
@@ -30310,6 +30345,98 @@ impl Workspace {
     /// one of three modes: forward to an in-progress cross-window drag,
     /// initiate a new cross-window drag when the drag leaves the tab bar
     /// (or from a single-tab window), or reorder within the current window.
+    /// Records the latest drag position and starts the auto-scroll loop when a
+    /// vertical-tab drag enters an edge band of the tab list. `on_drag` only
+    /// fires on mouse movement, so the loop keeps scrolling while the cursor
+    /// rests at the edge.
+    fn track_vertical_tab_drag_autoscroll(
+        &mut self,
+        target: VerticalTabDragTarget,
+        position: RectF,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        if !uses_vertical_tabs() || CrossWindowTabDrag::as_ref(ctx).is_active() {
+            self.vertical_tab_drag_autoscroll = None;
+            return;
+        }
+        let is_ticking = self
+            .vertical_tab_drag_autoscroll
+            .is_some_and(|drag| drag.is_ticking);
+        self.vertical_tab_drag_autoscroll = Some(VerticalTabDragAutoscroll {
+            target,
+            position,
+            is_ticking,
+        });
+        if !is_ticking && self.vertical_tab_drag_autoscroll_step(position, ctx) != 0. {
+            self.schedule_vertical_tab_drag_autoscroll_tick(ctx);
+        }
+    }
+
+    fn vertical_tab_drag_autoscroll_step(
+        &self,
+        position: RectF,
+        ctx: &mut ViewContext<Self>,
+    ) -> f32 {
+        // The bookmark section below the list is a drop target of its own.
+        if self.is_over_bookmarked_section(position, ctx) {
+            return 0.;
+        }
+        ctx.element_position_by_id(VERTICAL_TABS_SCROLL_VIEWPORT_POSITION_ID)
+            .map_or(0., |viewport| {
+                drag_autoscroll_step(viewport, position.center().y())
+            })
+    }
+
+    fn schedule_vertical_tab_drag_autoscroll_tick(&mut self, ctx: &mut ViewContext<Self>) {
+        const TICK: Duration = Duration::from_millis(16);
+        if let Some(drag) = self.vertical_tab_drag_autoscroll.as_mut() {
+            drag.is_ticking = true;
+        }
+        ctx.spawn(Timer::after(TICK), |workspace, _, ctx| {
+            workspace.vertical_tab_drag_autoscroll_tick(ctx);
+        });
+    }
+
+    /// Scrolls one step and re-runs the drag's reorder logic against the moved
+    /// content, so the dragged tab keeps sliding past neighbours that scroll
+    /// under a stationary cursor.
+    fn vertical_tab_drag_autoscroll_tick(&mut self, ctx: &mut ViewContext<Self>) {
+        let Some(drag) = self.vertical_tab_drag_autoscroll else {
+            return;
+        };
+        let still_dragging = match drag.target {
+            VerticalTabDragTarget::Tab(_) => self
+                .tabs
+                .iter()
+                .any(|tab| tab.draggable_state.is_dragging()),
+            VerticalTabDragTarget::Group(group_id) => self
+                .tab_groups
+                .get(&group_id)
+                .is_some_and(|group| group.draggable_state.is_dragging()),
+        };
+        let step = self.vertical_tab_drag_autoscroll_step(drag.position, ctx);
+        if !still_dragging || step == 0. {
+            if let Some(drag) = self.vertical_tab_drag_autoscroll.as_mut() {
+                drag.is_ticking = false;
+            }
+            if !still_dragging {
+                self.vertical_tab_drag_autoscroll = None;
+            }
+            return;
+        }
+        self.vertical_tabs_panel.scroll_by(step);
+        match drag.target {
+            VerticalTabDragTarget::Tab(tab_index) => {
+                self.on_tab_drag(tab_index, drag.position, ctx)
+            }
+            VerticalTabDragTarget::Group(group_id) => {
+                self.on_group_drag(group_id, drag.position, ctx)
+            }
+        }
+        ctx.notify();
+        self.schedule_vertical_tab_drag_autoscroll_tick(ctx);
+    }
+
     pub(crate) fn on_tab_drag(
         &mut self,
         current_index: usize,
