@@ -8,6 +8,8 @@ fn params() -> AgentReadParams {
         after: None,
         limit: 1,
         tail: false,
+        role: None,
+        messages_only: false,
     }
 }
 
@@ -96,4 +98,39 @@ fn claude_retains_tool_results_and_omits_thinking() {
     assert_eq!(result["text"], "hello");
     assert_eq!(result["tools"][0]["name"], "Read");
     assert!(!result.to_string().contains("private"));
+}
+
+#[test]
+fn filters_before_tail_and_page_limits_and_binds_cursor_filters() {
+    let mut file = tempfile::NamedTempFile::new().unwrap();
+    file.write_all(message("first answer").as_bytes()).unwrap();
+    file.write_all(
+        message("user prompt")
+            .replace("assistant", "user")
+            .as_bytes(),
+    )
+    .unwrap();
+    writeln!(file, "{}", json!({"type": "response_item", "payload": {"type": "function_call", "name": "read", "arguments": "{}"}})).unwrap();
+    file.write_all(message("second answer").as_bytes()).unwrap();
+    let mut request = params();
+    request.role = Some(::local_control::agents::AgentRole::Assistant);
+    request.messages_only = true;
+    request.tail = true;
+    request.limit = 2;
+    let tail = read_path(file.path(), AgentResumeProvider::Codex, &request).unwrap();
+    assert_eq!(tail["records"].as_array().unwrap().len(), 2);
+    assert_eq!(tail["records"][0]["text"], "first answer");
+    request.tail = false;
+    request.limit = 1;
+    let page = read_path(file.path(), AgentResumeProvider::Codex, &request).unwrap();
+    request.after = page["next_cursor"].as_str().map(str::to_owned);
+    let page = read_path(file.path(), AgentResumeProvider::Codex, &request).unwrap();
+    assert_eq!(page["records"][0]["text"], "second answer");
+    request.role = None;
+    assert_eq!(
+        read_path(file.path(), AgentResumeProvider::Codex, &request)
+            .unwrap_err()
+            .code,
+        ErrorCode::InvalidParams
+    );
 }

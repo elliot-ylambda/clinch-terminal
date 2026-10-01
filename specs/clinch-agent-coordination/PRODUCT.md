@@ -118,6 +118,10 @@ Design: use the current Clinch styling; no separate Figma mock was supplied.
     plus truncation and source-change information. They do not claim access to unrecorded history.
     Missing capture, delayed transcript flush, malformed records, and provider schema changes
     produce useful partial results or explicit errors, never a fabricated empty conversation.
+    The CLI defaults to the latest three records, configurable with `CLINCH_AGENT_READ_LIMIT`
+    or `--last N`/`--limit N`. Older history requires `--from-start` or `--after`; `--all`
+    explicitly streams available history as NDJSON pages, retaining coverage metadata. It stops
+    at EOF or an incomplete provider record rather than waiting for future conversation turns.
 
 16. `pane read` exposes available retained terminal text or the rendered full-screen viewport
     for an exact pane without activating it, with source and truncation metadata. Existing secret
@@ -249,3 +253,35 @@ remain the default. Existing Clinch styling and drag behavior are retained.
 9. Export/import is bounded and version checked. The CLI performs file IO; the app validates
    the complete request before changing the workspace. Duplicate section IDs, broken membership,
    invalid colors/paths, excessive nesting, or invalid placement fail clearly.
+
+## Coordination CLI completion (2026-09-30)
+
+The approved scope adds these controls without requiring a coordinator or changing ordinary chats.
+
+1. Conversation reads filter by role and optionally text messages before applying the record
+   limit. The default remains three recent records; full history streams bounded pages. Cursors
+   reject a changed filter or replaced transcript rather than silently skipping records.
+2. An inbox collects new assistant messages across selected projects/sections. An explicit reader
+   UUID owns independent, persistent checkpoints. First reads return recent messages and disclose
+   omitted history. Later reads drain forward without skipping a backlog. Peeking changes nothing;
+   acknowledgment occurs only after successful output and rejects conflicting checkpoint updates.
+3. Waiting on an exact agent supports ready, working, attention, and turn-complete conditions,
+   a bounded timeout, and machine-readable outcomes. Waiting never changes focus or interrupts work.
+4. Typed Claude/Codex launch chooses an exact project and optional section, directory, title and
+   initial prompt. Background launch never activates its tab or steals focus, including during
+   startup. Results distinguish tab creation, identity discovery, readiness and startup timeout.
+5. Interrupt requires the current input revision and exact working session. It sends a native
+   provider interrupt without closing the conversation or overwriting human drafts. Stale, idle,
+   remote or conflicting-writer requests fail before input. The result says interrupt requested,
+   not that provider completion has been confirmed.
+6. Tab and section pin/unpin use native ordering and persistence. Project tasks support list,
+   create, update, complete and delete with stable task IDs. Completion removes the pending task,
+   matching the current UI. Live transfers also work between native windows, preserving processes.
+7. A replayable event stream records agent lifecycle/status and organization changes even with
+   no connected watcher. Clients resume with cursors; expiration, collection gaps and instance
+   changes are explicit. Retention, responses and queues are bounded. This does not promise every
+   terminal byte or every transient readiness state; existing snapshot watch remains available.
+
+Validation covers independent readers, output/ack failure, transcript rotation, filtered pagination,
+timeouts and stale IDs, inactive-project launch and delayed startup focus, guarded interruption,
+pin/task persistence, cross-window process continuity, replay after disconnect and retention gaps.

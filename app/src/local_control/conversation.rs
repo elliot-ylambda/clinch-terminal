@@ -27,6 +27,10 @@ struct Cursor {
     source: String,
     offset: u64,
     anchor: u64,
+    #[serde(default)]
+    role: Option<::local_control::agents::AgentRole>,
+    #[serde(default)]
+    messages_only: bool,
 }
 
 const SCAN_BYTES: u64 = 4 * 1024 * 1024;
@@ -106,6 +110,12 @@ fn read_path(
             .ok_or_else(|| {
                 ControlError::new(ErrorCode::InvalidParams, "invalid conversation cursor")
             })?;
+        if cursor.role != params.role || cursor.messages_only != params.messages_only {
+            return Err(ControlError::new(
+                ErrorCode::InvalidParams,
+                "conversation cursor filter changed; restart the read",
+            ));
+        }
         if cursor.agent != params.agent_id
             || cursor.source != source
             || cursor.offset > metadata.len()
@@ -163,6 +173,17 @@ fn read_path(
             position += read as u64;
             continue;
         };
+        if params
+            .role
+            .is_some_and(|role| record["role"].as_str() != Some(role.as_str()))
+            || (params.messages_only
+                && record["text"]
+                    .as_str()
+                    .is_none_or(|text| text.trim().is_empty()))
+        {
+            position += read as u64;
+            continue;
+        }
         record["id"] = json!(format!("{source}:{record_start}"));
         record["timestamp"] = parsed
             .get("timestamp")
@@ -193,6 +214,8 @@ fn read_path(
         source,
         offset: position,
         anchor: anchor(&mut file, position)?,
+        role: params.role,
+        messages_only: params.messages_only,
     };
     let next_cursor = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .encode(serde_json::to_vec(&cursor).expect("cursor serialization"));

@@ -625,12 +625,14 @@ impl ProjectWindow {
 
     fn register_active_workspace(&self, ctx: &mut ViewContext<Self>) {
         let workspace = self.active_workspace();
-        WorkspaceRegistry::handle(ctx).update(ctx, |registry, _| {
+        WorkspaceRegistry::handle(ctx).update(ctx, |registry, ctx| {
             registry.set_active(self.window_id, workspace.downgrade());
+            ctx.notify();
         });
     }
 
     fn notify_project_header(&self, ctx: &mut ViewContext<Self>) {
+        ctx.emit(());
         if let Some(project) = self.projects.get(self.active_project_index) {
             project.workspace.update(ctx, |_, ctx| ctx.notify());
         }
@@ -1347,6 +1349,27 @@ impl ProjectWindow {
             }
         }
         None
+    }
+
+    /// Finish a live tab transfer without running process-closing hooks.
+    pub(crate) fn settle_empty_workspace_after_tab_transfer(
+        &mut self,
+        workspace_id: EntityId,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        if let Some(id) = self
+            .projects
+            .iter()
+            .find(|project| {
+                project.workspace.id() == workspace_id
+                    && project.workspace.as_ref(ctx).tab_count() == 0
+            })
+            .map(|project| project.id)
+        {
+            self.take_project_for_transfer(id, ctx);
+            self.settle_after_project_transfer_out(ctx);
+        }
+        self.notify_project_header(ctx);
     }
 
     fn take_project_for_transfer(

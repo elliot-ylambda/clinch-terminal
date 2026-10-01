@@ -175,7 +175,7 @@ pub(super) fn snapshot(
                                     "input_revision": revision, "ready": unavailable.is_none(), "unavailable_reason": unavailable,
                                     "latest_prompt": session.latest_user_prompt_for_chrome(), "latest_response_preview": session.session_context.response,
                                     "tool_name": session.session_context.tool_name, "tool_input_preview": session.session_context.tool_input_preview,
-                                    "capabilities": {"read": true, "send": unavailable.is_none(), "queue": true, "durable_receipts": true, "event_replay": false},
+                                    "capabilities": {"read": true, "send": unavailable.is_none(), "queue": true, "durable_receipts": true, "event_replay": true, "interrupt": unavailable == Some("working")},
                                 });
                                 pane["kind"] = json!(provider_name);
                                 pane["agent_id"] = json!(agent_id);
@@ -320,3 +320,147 @@ pub(super) fn read_pane(
 #[cfg(test)]
 #[path = "agents_tests.rs"]
 mod tests;
+
+/// Provider startup is scheduled on the exact new pane before its shell bootstraps.
+pub(super) fn launch(
+    instance: &InstanceId,
+    params: ::local_control::agents::AgentLaunchParams,
+    ctx: &mut warpui::ModelContext<super::LocalControlBridge>,
+) -> Result<Value, ControlError> {
+    use crate::workspace::tab_group::TabGroupId;
+    let project = super::handlers::projects::resolve_project(&params.project_id, ctx)?;
+    if project.workspace.as_ref(ctx).has_open_tab_context_menu() {
+        return Err(ControlError::new(ErrorCode::InvalidRequest, "close the target project's tab context menu before launching; its actions retain tab positions"));
+    }
+    let section = params
+        .section_id
+        .as_deref()
+        .map(|id| {
+            uuid::Uuid::parse_str(id)
+                .map(TabGroupId)
+                .map_err(|_| ControlError::new(ErrorCode::InvalidParams, "invalid section ID"))
+        })
+        .transpose()?;
+    if section.is_some_and(|id| !project.workspace.as_ref(ctx).tab_groups.contains_key(&id)) {
+        return Err(ControlError::new(
+            ErrorCode::StaleTarget,
+            "section is not in the launch project",
+        ));
+    }
+    if params.prompt.as_ref().is_some_and(|text| {
+        text.trim().is_empty()
+            || text.len() > ::local_control::agents::MAX_PROMPT_BYTES
+            || text
+                .chars()
+                .any(|ch| ch.is_control() && ch != '\n' && ch != '\t')
+    }) || params.title.as_ref().is_some_and(|title| {
+        title.trim().is_empty() || title.len() > 256 || title.chars().any(char::is_control)
+    }) {
+        return Err(ControlError::new(
+            ErrorCode::InvalidParams,
+            "invalid launch prompt or title",
+        ));
+    }
+    let cwd = params.cwd.or_else(|| {
+        project
+            .workspace
+            .as_ref(ctx)
+            .active_header_project_dir(ctx)
+            .map(|path| path.to_string_lossy().into_owned())
+    });
+    if cwd.as_ref().is_some_and(|cwd| {
+        !std::path::Path::new(cwd).is_absolute()
+            || cwd.contains('\0')
+            || !std::path::Path::new(cwd).is_dir()
+    }) {
+        return Err(ControlError::new(
+            ErrorCode::InvalidParams,
+            "launch directory must be an existing absolute local directory",
+        ));
+    }
+    let mut command = provider_launch_command(params.provider, params.prompt.as_deref());
+    if let Some(cwd) = &cwd {
+        command = format!("cd -- {} && {command}", shell_words::quote(cwd));
+    }
+    if !params.background {
+        project
+            .parent
+            .update(ctx, |parent, ctx| parent.activate_project(project.id, ctx));
+    }
+    let group = project
+        .workspace
+        .update(ctx, |workspace, ctx| {
+            workspace.launch_command_in_new_tab_placed(
+                command,
+                cwd,
+                params.title,
+                Some((params.background, section)),
+                ctx,
+            )
+        })
+        .ok_or_else(|| {
+            ControlError::new(
+                ErrorCode::InvalidRequest,
+                "could not register provider startup; inspect project before retrying",
+            )
+        })?;
+    let snapshot = snapshot(
+        instance,
+        &AgentScope {
+            projects: vec![params.project_id.clone()],
+            sections: vec![],
+        },
+        ctx,
+    )?;
+    let tab_id = group.id().to_string();
+    let pane_id = snapshot.tree["windows"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|window| window["projects"].as_array().into_iter().flatten())
+        .flat_map(|project| project["tabs"].as_array().into_iter().flatten())
+        .find(|tab| tab["tab_id"] == tab_id)
+        .map(|tab| tab["panes"][0]["pane_id"].clone());
+    Ok(
+        json!({"action": "agent.launch", "created": true, "startup_scheduled": true,
+        "project_id": params.project_id, "tab_id": tab_id, "pane_id": pane_id, "provider": params.provider,
+        "background": params.background, "ready": false}),
+    )
+}
+
+fn provider_launch_command(
+    provider: ::local_control::agents::AgentProvider,
+    prompt: Option<&str>,
+) -> String {
+    let mut command = match provider {
+        ::local_control::agents::AgentProvider::Claude => "claude".to_owned(),
+        ::local_control::agents::AgentProvider::Codex => {
+            // A shared Codex daemon cannot inherit this pane's notification environment.
+            // Probe on the new terminal's shell, never the UI thread; older CLIs lack this flag.
+            let script = "if command codex --help 2>/dev/null | command grep -q -- --no-daemon; then exec codex --no-daemon \"$@\"; else exec codex \"$@\"; fi";
+            format!("sh -c {} clinch-codex", shell_words::quote(script))
+        }
+    };
+    if let Some(prompt) = prompt {
+        command.push_str(" -- ");
+        command.push_str(&shell_words::quote(prompt));
+    }
+    command
+}
+
+pub(super) fn interrupt(
+    instance: &InstanceId,
+    params: ::local_control::agents::AgentInterruptParams,
+    ctx: &mut warpui::ModelContext<super::LocalControlBridge>,
+) -> Result<Value, ControlError> {
+    let entry = resolve(instance, &params.agent_id, ctx)?;
+    if !entry.terminal.update(ctx, |terminal, ctx| {
+        terminal.local_control_interrupt_agent(&params.expected_revision, ctx)
+    }) {
+        return Err(ControlError::new(ErrorCode::StaleTarget, "interrupt requires the current revision of a writable working agent without human input or another writer; inspect again"));
+    }
+    Ok(
+        json!({"action": "agent.interrupt", "agent_id": params.agent_id, "interrupt_requested": true,
+        "provider_confirmation": "unconfirmed"}),
+    )
+}

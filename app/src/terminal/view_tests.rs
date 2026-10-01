@@ -9221,3 +9221,54 @@ fn local_control_searchable_prompt_text_has_no_remote_control_markers() {
     assert_eq!(text, "➜  project cargo test");
     assert!(!text.contains('\x1b'));
 }
+
+#[test]
+fn local_control_interrupt_preserves_conversation_and_does_not_invent_a_draft() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        app.update(crate::remote_control::register);
+        let terminal = add_window_with_terminal(&mut app, None);
+        let writes = Rc::new(RefCell::new(Vec::<Vec<u8>>::new()));
+        let captured = writes.clone();
+        app.update(|ctx| {
+            ctx.subscribe_to_view(&terminal, move |_, event, _| {
+                if let Event::WriteBytesToPty { bytes } = event {
+                    captured.borrow_mut().push(bytes.to_vec());
+                }
+            })
+        });
+        terminal.update(&mut app, |view, ctx| {
+            view.model.lock().simulate_long_running_block("claude", "");
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                let mut session = cli_agent_session_with_prompts(Vec::new());
+                session.agent = CLIAgent::Claude;
+                session.status = CLIAgentSessionStatus::InProgress;
+                session.session_context.session_id = Some("interrupt-conversation".into());
+                session.received_rich_notification = true;
+                session.has_observed_turn_activity = true;
+                session.input_state = CLIAgentInputState::Closed;
+                session.draft_text = None;
+                sessions.set_session(view.view_id, session, ctx);
+            });
+            let guard = view.local_control_queue_guard();
+            let (revision, reason) = view.local_control_agent_readiness(ctx);
+            assert_eq!(reason, Some("working"));
+            assert!(!view.local_control_interrupt_agent("stale", ctx));
+            assert!(view.local_control_interrupt_agent(&revision, ctx));
+            assert!(!view.coordination_input_dirty);
+            assert_ne!(view.local_control_queue_guard(), guard);
+            assert_eq!(view.local_control_agent_readiness(ctx).1, None);
+            assert_eq!(
+                CLIAgentSessionsModel::as_ref(ctx)
+                    .session(view.view_id)
+                    .unwrap()
+                    .session_context
+                    .session_id
+                    .as_deref(),
+                Some("interrupt-conversation")
+            );
+            assert!(!view.local_control_interrupt_agent(&revision, ctx));
+        });
+        assert_eq!(*writes.borrow(), vec![vec![0x1b]]);
+    });
+}

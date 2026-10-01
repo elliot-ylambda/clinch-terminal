@@ -144,3 +144,38 @@ fn discovers_inactive_projects_and_rejects_replaced_conversations() {
         app.read(|ctx| assert!(resolve(&instance, &first, ctx).is_err()));
     });
 }
+
+#[cfg(unix)]
+#[test]
+fn codex_launch_preserves_pane_hooks_and_supports_older_cli_without_relaunching() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    use ::local_control::agents::AgentProvider;
+    for supports_local in [true, false] {
+        let dir = tempfile::tempdir().unwrap();
+        let executable = dir.path().join("codex");
+        let log = dir.path().join("args");
+        std::fs::write(&executable, format!(
+            "#!/bin/sh\nif [ \"$1\" = --help ]; then printf '%s\\n' '{}'; exit 0; fi\nprintf '%s\\n' \"$@\" >> \"$CLINCH_LAUNCH_TEST_LOG\"\nexit 7\n",
+            if supports_local { "Options: --no-daemon" } else { "Options: --model" }
+        )).unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let prompt = "literal ' quote; $(touch injected) `touch injected`";
+        let status = command::blocking::Command::new("sh")
+            .arg("-c")
+            .arg(provider_launch_command(AgentProvider::Codex, Some(prompt)))
+            .current_dir(dir.path())
+            .env("PATH", format!("{}:/usr/bin:/bin", dir.path().display()))
+            .env("CLINCH_LAUNCH_TEST_LOG", &log)
+            .status()
+            .unwrap();
+        assert_eq!(status.code(), Some(7));
+        let expected = if supports_local {
+            format!("--no-daemon\n--\n{prompt}\n")
+        } else {
+            format!("--\n{prompt}\n")
+        };
+        assert_eq!(std::fs::read_to_string(&log).unwrap(), expected);
+        assert!(!dir.path().join("injected").exists());
+    }
+}

@@ -600,6 +600,7 @@ pub enum CLIAgentSessionsModelEvent {
     Started {
         terminal_view_id: EntityId,
         agent: CLIAgent,
+        conversation_id: Option<String>,
     },
     StatusChanged {
         terminal_view_id: EntityId,
@@ -619,6 +620,7 @@ pub enum CLIAgentSessionsModelEvent {
     Ended {
         terminal_view_id: EntityId,
         agent: CLIAgent,
+        conversation_id: Option<String>,
     },
     /// The agent session has been updated. Subscribers may use this as a trigger for best-effort
     /// saving of state derived from the agent's session.
@@ -1150,6 +1152,7 @@ impl CLIAgentSessionsModel {
             ctx.emit(CLIAgentSessionsModelEvent::Ended {
                 terminal_view_id,
                 agent: session.agent,
+                conversation_id: session.session_context.session_id.clone(),
             });
         }
     }
@@ -1286,6 +1289,7 @@ impl CLIAgentSessionsModel {
         ctx: &mut ModelContext<Self>,
     ) {
         let agent = session.agent;
+        let conversation_id = session.session_context.session_id.clone();
         // Close any open rich input before replacing, so subscribers can
         // restore input config before the session ends.
         self.close_input(terminal_view_id, false, ctx);
@@ -1293,12 +1297,14 @@ impl CLIAgentSessionsModel {
             ctx.emit(CLIAgentSessionsModelEvent::Ended {
                 terminal_view_id,
                 agent: old.agent,
+                conversation_id: old.session_context.session_id,
             });
         }
 
         ctx.emit(CLIAgentSessionsModelEvent::Started {
             terminal_view_id,
             agent,
+            conversation_id,
         });
     }
 

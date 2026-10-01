@@ -3,7 +3,7 @@ name: clinch-control
 description: Control and inspect the running Clinch app from Claude Code or Codex with its local control CLI. Use when the user asks to manipulate Clinch windows, project tabs, layouts, panes, sessions, sidebar sections, toolbelts, or UI surfaces; inspect or search rendered terminal contents across tabs; or launch a long-lived, interactive, or user-visible project process such as a dev server, watcher, REPL, or log tail in a new tab. Do not use for tests, lint, builds, Git commands, or other bounded work the agent can run in its own shell.
 ---
 
-<!-- managed-by: Clinch; version: 1.7.0 -->
+<!-- managed-by: Clinch; version: 1.8.0 -->
 
 # Clinch control
 
@@ -232,3 +232,29 @@ Use exact `--project` on section mutations; section IDs belong to that project.
 - If a requested mutation is not exposed by the installed CLI, say so rather
   than editing internal persistence.
 - Invoke close actions only when the user explicitly asks to close something.
+
+## Pinning and project tasks
+
+Use exact project/tab/section IDs from discovery:
+
+```sh
+<ctl> tab pin --project PROJECT_ID --tab TAB_ID --pid PID
+<ctl> tab unpin --project PROJECT_ID --tab TAB_ID --pid PID
+<ctl> section pin SECTION_ID --project PROJECT_ID --pid PID
+<ctl> section unpin SECTION_ID --project PROJECT_ID --pid PID
+<ctl> project task list --project PROJECT_ID --pid PID
+<ctl> project task create --text "Review integration" --project PROJECT_ID --pid PID
+<ctl> project task update TASK_ID --text "Review and merge integration" --project PROJECT_ID --pid PID
+<ctl> project task complete TASK_ID --project PROJECT_ID --pid PID
+<ctl> project task delete TASK_ID --project PROJECT_ID --pid PID
+```
+
+Here `<ctl>` means the same bound wrapper plus `ctrl`; retain the injected PID.
+Pinning a grouped tab extracts it from that section. Pinning a section moves its
+members together. Task IDs stay stable on edit; completing removes the pending
+task, matching the UI. Live `tab transfer` also works between native windows and
+preserves the running process. Rediscover agent IDs after any transfer.
+
+For background Claude/Codex startup, guarded interruption, unread inboxes, bounded
+waits, and replayable events, use the `clinch-coordinate` skill. Those CLI controls
+also work for independent sessions without creating a coordinator.

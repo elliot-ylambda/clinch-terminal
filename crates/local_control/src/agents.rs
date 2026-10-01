@@ -29,6 +29,11 @@ pub struct AgentReadParams {
     /// Start at the most recent bounded portion of the transcript.
     #[serde(default)]
     pub tail: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<AgentRole>,
+    /// Include only records with nonempty message text, excluding tool-only records.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub messages_only: bool,
 }
 
 pub fn default_limit() -> usize {
@@ -91,3 +96,111 @@ pub struct PaneReadParams {
 #[cfg(test)]
 #[path = "agents_tests.rs"]
 mod tests;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentRole {
+    User,
+    Assistant,
+    Tool,
+}
+impl AgentRole {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Assistant => "assistant",
+            Self::Tool => "tool",
+        }
+    }
+}
+impl std::str::FromStr for AgentRole {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "user" => Ok(Self::User),
+            "assistant" => Ok(Self::Assistant),
+            "tool" => Ok(Self::Tool),
+            _ => Err("role must be user, assistant, or tool".into()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentProvider {
+    Claude,
+    Codex,
+}
+impl AgentProvider {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Codex => "codex",
+        }
+    }
+}
+impl std::str::FromStr for AgentProvider {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "claude" => Ok(Self::Claude),
+            "codex" => Ok(Self::Codex),
+            _ => Err("provider must be claude or codex".into()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentLaunchParams {
+    pub provider: AgentProvider,
+    pub project_id: String,
+    #[serde(default)]
+    pub section_id: Option<String>,
+    #[serde(default)]
+    pub cwd: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub prompt: Option<String>,
+    #[serde(default)]
+    pub background: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentInterruptParams {
+    pub agent_id: String,
+    pub expected_revision: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentInboxParams {
+    pub reader_id: String,
+    #[serde(default)]
+    pub scope: AgentScope,
+    #[serde(default = "default_inbox_limit")]
+    pub limit: usize,
+}
+pub fn default_inbox_limit() -> usize {
+    3
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentInboxAckParams {
+    pub reader_id: String,
+    pub batch_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentEventsParams {
+    #[serde(default)]
+    pub after: Option<String>,
+    #[serde(default)]
+    pub scope: AgentScope,
+    #[serde(default = "default_limit")]
+    pub limit: usize,
+}

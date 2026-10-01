@@ -25,7 +25,7 @@ fn tab_create_handler_adds_and_activates_terminal_tab() {
         let instance_id = InstanceId("inst_test".to_owned());
 
         let response = bridge.update(&mut app, |bridge, ctx| {
-            bridge.set_instance_id(instance_id.clone());
+            bridge.set_instance_id(instance_id.clone(), ctx);
             create_tab(
                 &Some(instance_id.clone()),
                 &serde_json::json!({}),
@@ -61,7 +61,7 @@ fn tab_create_handler_registers_a_startup_command_in_an_explicit_cwd() {
         let cwd = tempfile::tempdir().expect("temporary cwd");
 
         let response = bridge.update(&mut app, |bridge, ctx| {
-            bridge.set_instance_id(instance_id.clone());
+            bridge.set_instance_id(instance_id.clone(), ctx);
             create_tab(
                 &Some(instance_id),
                 &serde_json::json!({
@@ -126,7 +126,7 @@ fn tab_create_uses_origin_terminal_project_unless_window_is_explicit() {
         let instance_id = InstanceId("inst_test".to_owned());
 
         let response = bridge.update(&mut app, |bridge, ctx| {
-            bridge.set_instance_id(instance_id.clone());
+            bridge.set_instance_id(instance_id.clone(), ctx);
             create_tab(
                 &Some(instance_id.clone()),
                 &serde_json::json!({}),

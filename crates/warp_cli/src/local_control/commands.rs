@@ -438,6 +438,12 @@ pub(super) fn run_tab_command(
             },
             output_format,
         ),
+        TabCommand::Pin(args) => {
+            run_action_with_params(args, ActionKind::TabPin, EmptyParams {}, output_format)
+        }
+        TabCommand::Unpin(args) => {
+            run_action_with_params(args, ActionKind::TabUnpin, EmptyParams {}, output_format)
+        }
         TabCommand::Transfer(args) => run_action_with_params(
             args.target,
             ActionKind::TabTransfer,
@@ -794,6 +800,22 @@ pub(super) fn run_section_command(
         SectionCommand::Delete(args) => run_action_with_params(
             args.target,
             ActionKind::SectionDelete,
+            SectionIdParams {
+                section_id: args.section_id,
+            },
+            output_format,
+        ),
+        SectionCommand::Pin(args) => run_action_with_params(
+            args.target,
+            ActionKind::SectionPin,
+            SectionIdParams {
+                section_id: args.section_id,
+            },
+            output_format,
+        ),
+        SectionCommand::Unpin(args) => run_action_with_params(
+            args.target,
+            ActionKind::SectionUnpin,
             SectionIdParams {
                 section_id: args.section_id,
             },

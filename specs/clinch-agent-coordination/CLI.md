@@ -1,7 +1,8 @@
 # CLI-first coordination
 
 This branch adds app-wide discovery, transcript reads, exact-agent messaging,
-explicit message queues, durable delivery receipts, and status polling. Build and run this branch to test it; the already running
+explicit message queues, durable delivery receipts, unread inboxes, typed launch/interruption,
+bounded waiting, replayable events, and project organization controls. Build and run this branch to test it; the already running
 production app cannot gain these handlers by updating a client alone.
 
 Normal Claude/Codex chats work independently by default. A coordinator is optional: creating
@@ -56,8 +57,12 @@ Using `<ctl>` below to mean `"$CLINCH_CONTROL_WRAPPER" ctrl`:
 <ctl> agent list --project PROJECT_A --project PROJECT_B --pid PID
 <ctl> agent list --section SECTION_A --section SECTION_B --pid PID
 <ctl> agent inspect AGENT_ID --pid PID
-<ctl> agent read AGENT_ID --tail --limit 30 --pid PID
+<ctl> agent read AGENT_ID --pid PID
+<ctl> agent read AGENT_ID --last 1 --pid PID
+<ctl> agent read AGENT_ID --last 2 --pid PID
+<ctl> agent read AGENT_ID --from-start --limit 100 --pid PID
 <ctl> agent read AGENT_ID --after CURSOR --limit 100 --pid PID
+<ctl> --output-format ndjson agent read AGENT_ID --all --pid PID
 <ctl> pane read --pane PANE_ID --max-bytes 65536 --pid PID
 <ctl> agent watch --after SNAPSHOT_CURSOR --wait 30 --pid PID
 <ctl> agent watch --follow --pid PID
@@ -68,6 +73,21 @@ an intersection. No filters means all open projects, including inactive ones.
 `--instance ID` is an alternative to `--pid`. Discovery does not change focus.
 `agent watch` emits a snapshot or timeout with `data`, `cursor`, and explicit
 `polled_snapshot` coverage. Follow streams NDJSON; it stops when interrupted.
+
+`agent read` defaults to the latest **three** captured records. `--last N` is an
+alias for `--limit N`; `--tail --limit N` remains valid. The environment variable
+`CLINCH_AGENT_READ_LIMIT` configures the count (1–500); a command-line count overrides
+it. Without a configured count, `--from-start`, `--after`, and `--all` use 100 records
+per page. Scripts that previously relied on starting at the beginning must now pass
+`--from-start` explicitly. The wire protocol's defaults are unchanged.
+
+`--all` requires `--output-format ndjson` and emits one complete response per line,
+preserving coverage and truncation metadata. It follows `next_cursor` until EOF or
+an incomplete provider record, without accumulating the history in memory. If later
+pages fail, prior emitted pages remain usable and the command exits with an error.
+It does not wait for future messages. All read modes remain bounded per page and
+include only supported captured user/assistant/tool records; images and reasoning
+are omitted. Counts refer to these records, not exclusively to assistant replies.
 
 To send: inspect the agent, require `ready: true`, retain `input_revision`, write
 a UTF-8 prompt file, and generate one UUID for that logical message:
@@ -101,8 +121,8 @@ Reads preserve focus. Creation activates the new project; names follow the activ
 directory, matching the UI. `project close` follows normal close warnings and reports
 whether closure completed or awaits user confirmation.
 
-Live transfer reuses the same terminal/PTY. Destination project must be in the same
-native window; cross-window transfer remains available through mouse drag. Section
+Live transfer reuses the same terminal/PTY. The destination can be in another
+native window; the framework transfers the complete live pane subtree. Section
 and index are optional: omitted section means ungrouped, omitted index means append.
 Indices count members of the target section or unpinned ungrouped tabs. Invalid IDs
 or positions fail before removal. Moving the last tab closes the empty source project,
@@ -207,3 +227,65 @@ Claude/Codex sessions across two project windows, eight verified CLI prompts, qu
 cross-session review, the corrected recovery edge case, and remaining launch limitations.
 
 Project-control extension validation is recorded in [PROJECT_CONTROL_TEST.md](./PROJECT_CONTROL_TEST.md).
+
+Background delivery and configurable recent/full-history reading are demonstrated in
+[BACKGROUND_MESSAGES_TEST.md](./BACKGROUND_MESSAGES_TEST.md). The completion extension checks
+are recorded in [CLI_COMPLETION_TEST.md](./CLI_COMPLETION_TEST.md).
+
+
+## Additional coordination controls
+
+```text
+<ctl> agent read AGENT_ID --role assistant --messages-only --last 2 --pid PID
+<ctl> agent inbox --reader READER_UUID --project PROJECT_ID --limit 3 --pid PID
+<ctl> agent inbox --reader READER_UUID --peek --pid PID
+<ctl> agent inbox-ack --reader READER_UUID --batch BATCH_UUID --pid PID
+<ctl> agent events --since EVENT_CURSOR --limit 100 --pid PID
+<ctl> agent events --follow --pid PID
+<ctl> agent wait AGENT_ID --until ready --timeout 120 --pid PID
+<ctl> agent launch --provider codex --project PROJECT_ID --section SECTION_ID --background --timeout 30 --pid PID
+<ctl> agent interrupt AGENT_ID --expected-revision REVISION --pid PID
+<ctl> tab pin --project PROJECT_ID --tab TAB_ID --pid PID
+<ctl> tab unpin --project PROJECT_ID --tab TAB_ID --pid PID
+<ctl> section pin SECTION_ID --project PROJECT_ID --pid PID
+<ctl> section unpin SECTION_ID --project PROJECT_ID --pid PID
+<ctl> project task list --project PROJECT_ID --pid PID
+<ctl> project task create --text "Review integration" --project PROJECT_ID --pid PID
+<ctl> project task update TASK_ID --text "Review deployment" --project PROJECT_ID --pid PID
+<ctl> project task complete TASK_ID --project PROJECT_ID --pid PID
+<ctl> project task delete TASK_ID --project PROJECT_ID --pid PID
+```
+
+- Read role filters (`assistant`, `user`, `tool`) run before limits. `--messages-only`
+  excludes tool-only records. Cursor continuation requires unchanged filters.
+- Inbox uses an explicit reader UUID, optionally `CLINCH_INBOX_READER`. Each reader
+  owns persistent provider/conversation checkpoints, independent of tab placement.
+  First reads return the latest three assistant text records; subsequent reads drain
+  forward. `--limit` is 1–100 per conversation; scope is at most 100 agents and output
+  is bounded to 512 KiB. Check per-agent coverage/errors, `has_more` and deferred count.
+  Normal CLI output is followed by atomic acknowledgment. Output failure, `--peek`,
+  and stale/conflicting acknowledgments never consume unread records. Batch tokens
+  expire after ten minutes; reader checkpoints after 90 inactive days. Remote/missing
+  capture stays explicitly preview-only. Rotation errors require recovery/new reader.
+- Events are recorded by the app without a watcher. Replay retains seven days or
+  10,000 events, with instance-bound cursors and explicit expiration/collection gaps.
+  Filters apply to historical project/section membership, including departures.
+  Native lifecycle/status and organization metadata are covered; terminal bytes and
+  every transient readiness state are not. `watch` remains a separate snapshot poll.
+- Wait conditions are `ready`, `working`, `attention`, `turn-complete`. Timeout is
+  1–86400 seconds; `matched` and `timed_out` distinguish the outcome without mutation.
+- Launch creates one provider tab in an exact project. Optional directory/title/prompt
+  and section are validated before creation. The directory must exist; startup uses
+  a checked directory change. Background launch preserves keyboard focus and selected
+  project/tab, and does not expand a collapsed section. An open tab context menu in
+  the destination must be closed first because its actions retain tab positions.
+  Codex launch probes its help on the new terminal and uses `--no-daemon` when
+  supported, retaining the pane notification environment; older versions launch normally.
+  Startup returns created IDs even if identity observation times out or fails; never
+  retry creation blindly. `--timeout 0` returns after scheduling startup. Authentication,
+  trust screens and missing provider hooks can prevent readiness.
+- Interrupt requires an exact working session and current revision, rejects human
+  drafts and remote writers, invalidates queued work, and sends mode-correct Escape.
+  It preserves the conversation and reports a request, not confirmed provider completion.
+- Pins use native sidebar ordering. Task edits preserve IDs; completion removes the
+  pending task. These actions work in inactive projects without requiring coordination.

@@ -482,6 +482,79 @@ fn renders_human_readable_tab_grep_output() {
 fn retained_action_examples() -> Vec<(ActionKind, Vec<&'static str>)> {
     vec![
         (
+            ActionKind::AgentLaunch,
+            vec![
+                "warpctrl",
+                "agent",
+                "launch",
+                "--provider",
+                "claude",
+                "--project",
+                "p",
+                "--background",
+            ],
+        ),
+        (
+            ActionKind::AgentInterrupt,
+            vec![
+                "warpctrl",
+                "agent",
+                "interrupt",
+                "id",
+                "--expected-revision",
+                "rev",
+            ],
+        ),
+        (
+            ActionKind::AgentInbox,
+            vec!["warpctrl", "agent", "inbox", "--reader", "reader"],
+        ),
+        (
+            ActionKind::AgentInboxAck,
+            vec![
+                "warpctrl",
+                "agent",
+                "inbox-ack",
+                "--reader",
+                "reader",
+                "--batch",
+                "batch",
+            ],
+        ),
+        (ActionKind::AgentEvents, vec!["warpctrl", "agent", "events"]),
+        (ActionKind::TabPin, vec!["warpctrl", "tab", "pin"]),
+        (ActionKind::TabUnpin, vec!["warpctrl", "tab", "unpin"]),
+        (
+            ActionKind::SectionPin,
+            vec!["warpctrl", "section", "pin", "section"],
+        ),
+        (
+            ActionKind::SectionUnpin,
+            vec!["warpctrl", "section", "unpin", "section"],
+        ),
+        (
+            ActionKind::ProjectTaskList,
+            vec!["warpctrl", "project", "task", "list"],
+        ),
+        (
+            ActionKind::ProjectTaskCreate,
+            vec!["warpctrl", "project", "task", "create", "--text", "todo"],
+        ),
+        (
+            ActionKind::ProjectTaskUpdate,
+            vec![
+                "warpctrl", "project", "task", "update", "id", "--text", "updated",
+            ],
+        ),
+        (
+            ActionKind::ProjectTaskComplete,
+            vec!["warpctrl", "project", "task", "complete", "id"],
+        ),
+        (
+            ActionKind::ProjectTaskDelete,
+            vec!["warpctrl", "project", "task", "delete", "id"],
+        ),
+        (
             ActionKind::PaneRead,
             vec!["warpctrl", "pane", "read", "--pane", "opaque-pane-id"],
         ),
@@ -1003,6 +1076,8 @@ fn parsed_action_kind(command: &ControlCommand) -> Option<ActionKind> {
             WindowCommand::Close(_) => Some(ActionKind::WindowClose),
         },
         ControlCommand::Tab(command) => match command {
+            TabCommand::Pin(_) => Some(ActionKind::TabPin),
+            TabCommand::Unpin(_) => Some(ActionKind::TabUnpin),
             TabCommand::List(_) => Some(ActionKind::TabList),
             TabCommand::Inspect(_) => Some(ActionKind::TabInspect),
             TabCommand::Grep(_) => Some(ActionKind::TabGrep),
@@ -1076,6 +1151,8 @@ fn parsed_action_kind(command: &ControlCommand) -> Option<ActionKind> {
             },
         },
         ControlCommand::Section(command) => match command {
+            SectionCommand::Pin(_) => Some(ActionKind::SectionPin),
+            SectionCommand::Unpin(_) => Some(ActionKind::SectionUnpin),
             SectionCommand::List(_) => Some(ActionKind::SectionList),
             SectionCommand::Create(_) => Some(ActionKind::SectionCreate),
             SectionCommand::Update(_) => Some(ActionKind::SectionUpdate),
@@ -1155,6 +1232,15 @@ fn parsed_action_kind(command: &ControlCommand) -> Option<ActionKind> {
         },
         ControlCommand::Workspace(_) => Some(ActionKind::WorkspaceTree),
         ControlCommand::Project(command) => Some(match command {
+            super::projects::ProjectCommand::Task(command) => match command {
+                super::projects::ProjectTaskCommand::List(_) => ActionKind::ProjectTaskList,
+                super::projects::ProjectTaskCommand::Create { .. } => ActionKind::ProjectTaskCreate,
+                super::projects::ProjectTaskCommand::Update { .. } => ActionKind::ProjectTaskUpdate,
+                super::projects::ProjectTaskCommand::Complete { .. } => {
+                    ActionKind::ProjectTaskComplete
+                }
+                super::projects::ProjectTaskCommand::Delete { .. } => ActionKind::ProjectTaskDelete,
+            },
             super::projects::ProjectCommand::List(_) => ActionKind::ProjectList,
             super::projects::ProjectCommand::Inspect(_) => ActionKind::ProjectInspect,
             super::projects::ProjectCommand::Create { .. } => ActionKind::ProjectCreate,
@@ -1164,6 +1250,12 @@ fn parsed_action_kind(command: &ControlCommand) -> Option<ActionKind> {
             super::projects::ProjectCommand::Restore { .. } => ActionKind::ProjectRestore,
         }),
         ControlCommand::Agent(command) => match command {
+            super::agents::AgentCommand::Launch(_) => Some(ActionKind::AgentLaunch),
+            super::agents::AgentCommand::Wait(_) => Some(ActionKind::AgentInspect),
+            super::agents::AgentCommand::Interrupt { .. } => Some(ActionKind::AgentInterrupt),
+            super::agents::AgentCommand::Inbox { .. } => Some(ActionKind::AgentInbox),
+            super::agents::AgentCommand::InboxAck { .. } => Some(ActionKind::AgentInboxAck),
+            super::agents::AgentCommand::Events { .. } => Some(ActionKind::AgentEvents),
             super::agents::AgentCommand::List(_) | super::agents::AgentCommand::Watch { .. } => {
                 Some(ActionKind::AgentList)
             }
