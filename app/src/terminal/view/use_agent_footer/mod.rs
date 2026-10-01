@@ -1290,6 +1290,31 @@ impl TerminalView {
         (format!("{:016x}", hash.finish()), reason)
     }
 
+    /// Stop only the current working turn, preserving the PTY, identity and actual human input.
+    pub(crate) fn local_control_interrupt_agent(
+        &mut self,
+        expected_revision: &str,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        let (revision, reason) = self.local_control_agent_readiness(ctx);
+        if revision != expected_revision
+            || reason != Some("working")
+            || crate::remote_control::has_writer_for_terminal(self.view_id, ctx)
+        {
+            return false;
+        }
+        let bytes =
+            mode_correct_control_key_bytes(&self.model.lock(), "escape", "escape", "\u{1b}", 0x1b);
+        self.coordination_user_input_epoch = self.coordination_user_input_epoch.wrapping_add(1);
+        self.coordination_input_epoch = self.coordination_input_epoch.wrapping_add(1);
+        self.cancel_auto_continue_on_user_input(ctx);
+        self.write_to_pty(bytes, ctx);
+        CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+            sessions.mark_project_cli_agent_turn_interrupted_from_user_input(self.view_id, ctx);
+        });
+        true
+    }
+
     /// Direct CLI send with a second identity/input check before provider-specific Enter.
     #[cfg(feature = "local_tty")]
     pub(crate) fn local_control_send_agent_text(

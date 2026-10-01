@@ -51,6 +51,30 @@ pub(crate) fn validate_action_params(action: &::local_control::Action) -> Result
         ActionParameterSpec::AgentTarget => {
             parse_params::<::local_control::agents::AgentTargetParams>(action)
         }
+        ActionParameterSpec::AgentLaunch => {
+            parse_params::<::local_control::agents::AgentLaunchParams>(action)
+        }
+        ActionParameterSpec::AgentInterrupt => {
+            parse_params::<::local_control::agents::AgentInterruptParams>(action)
+        }
+        ActionParameterSpec::AgentInbox => {
+            parse_params::<::local_control::agents::AgentInboxParams>(action)
+        }
+        ActionParameterSpec::AgentInboxAck => {
+            parse_params::<::local_control::agents::AgentInboxAckParams>(action)
+        }
+        ActionParameterSpec::AgentEvents => {
+            parse_params::<::local_control::agents::AgentEventsParams>(action)
+        }
+        ActionParameterSpec::ProjectTaskCreate => {
+            parse_params::<::local_control::projects::ProjectTaskCreateParams>(action)
+        }
+        ActionParameterSpec::ProjectTaskUpdate => {
+            parse_params::<::local_control::projects::ProjectTaskUpdateParams>(action)
+        }
+        ActionParameterSpec::ProjectTaskId => {
+            parse_params::<::local_control::projects::ProjectTaskIdParams>(action)
+        }
         ActionParameterSpec::AgentRead => {
             parse_params::<::local_control::agents::AgentReadParams>(action)
         }

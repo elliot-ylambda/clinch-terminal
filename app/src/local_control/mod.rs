@@ -62,6 +62,7 @@ mod bridge;
 mod conversation;
 mod delivery;
 mod handlers;
+mod observation;
 mod permissions;
 mod resolver;
 
@@ -173,7 +174,8 @@ impl LocalControlServer {
     }
 
     /// Stops both listeners and removes the discovery record and broker socket.
-    fn stop(&mut self, _ctx: &mut ModelContext<Self>) {
+    fn stop(&mut self, ctx: &mut ModelContext<Self>) {
+        LocalControlBridge::handle(ctx).update(ctx, |bridge, _| bridge.stop());
         self.registered_instance = None;
         self.control_endpoint = None;
         self._runtime = None;
@@ -234,10 +236,6 @@ impl LocalControlServer {
         let control_endpoint = ControlEndpoint::localhost(port.port());
         let record = discovery_record_for_settings(ctx, control_endpoint.clone());
         let instance_id = record.instance_id.clone();
-        let bridge_spawner = LocalControlBridge::handle(ctx).update(ctx, |bridge, ctx| {
-            bridge.set_instance_id(instance_id.clone());
-            ctx.spawner()
-        });
         let registered_instance = RegisteredInstance::register(record)?;
         #[cfg(unix)]
         let broker_listener = {
@@ -246,6 +244,11 @@ impl LocalControlServer {
             drop(runtime_guard);
             listener
         };
+        let bridge_spawner = LocalControlBridge::handle(ctx).update(ctx, |bridge, ctx| {
+            bridge.set_instance_id(instance_id.clone(), ctx);
+            bridge.start_observations(ctx);
+            ctx.spawner()
+        });
         let state = ControlServerState {
             bridge_spawner,
             instance_id,

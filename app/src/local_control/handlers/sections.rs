@@ -34,6 +34,7 @@ pub(crate) fn handle(
         ));
     }
     match action.kind {
+        ActionKind::SectionPin | ActionKind::SectionUnpin => pin(action, target, ctx),
         ActionKind::SectionList => list(target, ctx),
         ActionKind::SectionCreate => create(action, target, ctx),
         ActionKind::SectionUpdate => update(action, target, ctx),
@@ -313,3 +314,50 @@ pub(crate) fn section_state(workspace: &Workspace, _ctx: &AppContext) -> serde_j
 #[cfg(test)]
 #[path = "sections_tests.rs"]
 mod tests;
+
+fn pin(
+    action: &::local_control::Action,
+    target: &TargetSelector,
+    ctx: &mut ModelContext<LocalControlBridge>,
+) -> Result<serde_json::Value, ControlError> {
+    reject_lower_targets(action.kind, target, false)?;
+    if !FeatureFlag::PinnedTabs.is_enabled() {
+        return Err(ControlError::new(
+            ErrorCode::UnsupportedAction,
+            "pinning is disabled",
+        ));
+    }
+    let id = parse_section_id(&action.params_as::<SectionIdParams>()?.section_id)?;
+    let workspace = target_workspace(action.kind, target, ctx)?;
+    workspace.update(ctx, |workspace, ctx| {
+        require_section(workspace, id)?;
+        if action.kind == ActionKind::SectionPin {
+            workspace.pin_tab_group(id, ctx);
+        } else {
+            workspace.unpin_tab_group(id, ctx);
+        }
+        Ok(section_state(workspace, ctx))
+    })
+}
+
+pub(crate) fn pin_tab(
+    action: ActionKind,
+    target: &TargetSelector,
+    ctx: &mut ModelContext<LocalControlBridge>,
+) -> Result<serde_json::Value, ControlError> {
+    reject_lower_targets(action, target, true)?;
+    if !FeatureFlag::PinnedTabs.is_enabled() {
+        return Err(ControlError::new(
+            ErrorCode::UnsupportedAction,
+            "pinning is disabled",
+        ));
+    }
+    let workspace = target_workspace(action, target, ctx)?;
+    workspace.update(ctx, |workspace, ctx| {
+        let index = tab_index_from_target(target, workspace, ctx)?;
+        let tab_id = workspace.tabs[index].pane_group.id().to_string();
+        if action == ActionKind::TabPin { workspace.pin_tab(index, ctx); }
+        else { workspace.unpin_tab(index, ctx); }
+        Ok(json!({"action": action.as_str(), "tab_id": tab_id, "pinned": action == ActionKind::TabPin}))
+    })
+}

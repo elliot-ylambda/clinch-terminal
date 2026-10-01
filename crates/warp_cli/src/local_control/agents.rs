@@ -55,6 +55,45 @@ pub struct AgentArgs {
     instance: InstanceArgs,
 }
 
+#[derive(Debug, Clone, Args)]
+pub struct AgentReadOptions {
+    /// Filter records before applying --last/--limit.
+    #[arg(long)]
+    role: Option<local_control::agents::AgentRole>,
+    /// Exclude tool-only records with no message text.
+    #[arg(long)]
+    messages_only: bool,
+    /// Continue an earlier read from its next_cursor.
+    #[arg(long, conflicts_with_all = ["tail", "from_start", "all"])]
+    after: Option<String>,
+    /// Maximum records per response. Default: 3 recent records, or 100 per history page.
+    #[arg(long, visible_alias = "last", env = "CLINCH_AGENT_READ_LIMIT", value_parser = clap::value_parser!(u32).range(1..=500))]
+    limit: Option<u32>,
+    /// Read the newest records (the default); retained for compatibility.
+    #[arg(long, conflicts_with_all = ["from_start", "all"])]
+    tail: bool,
+    /// Read the first history page; continue with --after NEXT_CURSOR.
+    #[arg(long, conflicts_with = "all")]
+    from_start: bool,
+    /// Stream all available history pages. Requires --output-format ndjson.
+    #[arg(long)]
+    all: bool,
+}
+
+impl AgentReadOptions {
+    fn params(&self, agent_id: String) -> AgentReadParams {
+        let recent = self.tail || !(self.from_start || self.all || self.after.is_some());
+        AgentReadParams {
+            agent_id,
+            after: self.after.clone(),
+            limit: self.limit.unwrap_or(if recent { 3 } else { 100 }) as usize,
+            tail: recent,
+            role: self.role,
+            messages_only: self.messages_only,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Subcommand)]
 pub enum WorkspaceCommand {
     /// Read the full window/project/section/tab/pane hierarchy without changing focus.
@@ -63,21 +102,62 @@ pub enum WorkspaceCommand {
 
 #[derive(Debug, Clone, Subcommand)]
 pub enum AgentCommand {
+    /// Launch Claude/Codex in an exact project; --background preserves focus.
+    Launch(AgentLaunchArgs),
+    /// Wait for an exact agent state without changing its tab or work.
+    Wait(AgentWaitArgs),
+    /// Interrupt a working turn without closing the conversation.
+    Interrupt {
+        #[command(flatten)]
+        target: AgentArgs,
+        #[arg(long)]
+        expected_revision: String,
+    },
+    /// Read unread assistant text across projects, with independent reader checkpoints.
+    Inbox {
+        #[command(flatten)]
+        scope: ScopeArgs,
+        /// Stable UUID for this reader/coordinator; checkpoints persist across calls.
+        #[arg(long, env = "CLINCH_INBOX_READER")]
+        reader: String,
+        /// Maximum messages per conversation per call.
+        #[arg(long, default_value_t = 3, value_parser = clap::value_parser!(u32).range(1..=100))]
+        limit: u32,
+        /// Leave unread checkpoints unchanged. Without this flag, acknowledge after output.
+        #[arg(long)]
+        peek: bool,
+    },
+    /// Acknowledge a batch previously returned by inbox --peek.
+    InboxAck {
+        #[command(flatten)]
+        instance: InstanceArgs,
+        #[arg(long, env = "CLINCH_INBOX_READER")]
+        reader: String,
+        #[arg(long)]
+        batch: String,
+    },
+    /// Replay recorded agent and organization events, including while disconnected.
+    Events {
+        #[command(flatten)]
+        scope: ScopeArgs,
+        #[arg(long, visible_alias = "since")]
+        after: Option<String>,
+        #[arg(long, default_value_t = 100, value_parser = clap::value_parser!(u32).range(1..=500))]
+        limit: u32,
+        /// Stream journal pages as NDJSON until interrupted.
+        #[arg(long)]
+        follow: bool,
+    },
     /// List Claude/Codex sessions across all projects, or the requested scope.
     List(ScopeArgs),
     /// Inspect state, input revision, capabilities, and latest previews.
     Inspect(AgentArgs),
-    /// Read captured conversation records with explicit coverage and pagination.
+    /// Read the latest three captured records by default, or select older/full history.
     Read {
         #[command(flatten)]
         target: AgentArgs,
-        #[arg(long, conflicts_with = "tail")]
-        after: Option<String>,
-        #[arg(long, default_value_t = 100, value_parser = clap::value_parser!(u32).range(1..=500))]
-        limit: u32,
-        /// Read the newest bounded portion, rather than starting at the beginning.
-        #[arg(long)]
-        tail: bool,
+        #[command(flatten)]
+        options: AgentReadOptions,
     },
     /// Submit one prompt, or explicitly queue it for the same agent to become ready.
     Send {
@@ -201,6 +281,67 @@ pub(super) fn run_workspace(
 
 pub(super) fn run_agent(command: AgentCommand, format: OutputFormat) -> Result<(), ControlError> {
     let data = match command {
+        AgentCommand::InboxAck {
+            instance: selection,
+            reader,
+            batch,
+        } => request(
+            &instance(&selection)?,
+            ActionKind::AgentInboxAck,
+            local_control::agents::AgentInboxAckParams {
+                reader_id: reader,
+                batch_id: batch,
+            },
+        )?,
+        AgentCommand::Launch(args) => return launch(args, format),
+        AgentCommand::Wait(args) => return wait_for_agent(args, format),
+        AgentCommand::Interrupt {
+            target,
+            expected_revision,
+        } => request(
+            &instance(&target.instance)?,
+            ActionKind::AgentInterrupt,
+            local_control::agents::AgentInterruptParams {
+                agent_id: target.agent_id,
+                expected_revision,
+            },
+        )?,
+        AgentCommand::Inbox {
+            scope,
+            reader,
+            limit,
+            peek,
+        } => {
+            let instance = instance(&scope.instance)?;
+            let data = request(
+                &instance,
+                ActionKind::AgentInbox,
+                local_control::agents::AgentInboxParams {
+                    reader_id: reader.clone(),
+                    scope: scope.scope(),
+                    limit: limit as usize,
+                },
+            )?;
+            // Never acknowledge if stdout failed. Repeated records are preferable to lost work.
+            render(&data, format)?;
+            if !peek && let Some(batch) = data["batch_id"].as_str() {
+                request(
+                    &instance,
+                    ActionKind::AgentInboxAck,
+                    local_control::agents::AgentInboxAckParams {
+                        reader_id: reader,
+                        batch_id: batch.to_owned(),
+                    },
+                )?;
+            }
+            return Ok(());
+        }
+        AgentCommand::Events {
+            scope,
+            after,
+            limit,
+            follow,
+        } => return events(scope, after, limit, follow, format),
         AgentCommand::List(args) => request(
             &instance(&args.instance)?,
             ActionKind::AgentList,
@@ -213,21 +354,24 @@ pub(super) fn run_agent(command: AgentCommand, format: OutputFormat) -> Result<(
                 agent_id: args.agent_id,
             },
         )?,
-        AgentCommand::Read {
-            target,
-            after,
-            limit,
-            tail,
-        } => request(
-            &instance(&target.instance)?,
-            ActionKind::AgentRead,
-            AgentReadParams {
-                agent_id: target.agent_id,
-                after,
-                limit: limit as usize,
-                tail,
-            },
-        )?,
+        AgentCommand::Read { target, options } => {
+            if options.all && !matches!(format, OutputFormat::Ndjson) {
+                return Err(ControlError::new(
+                    ErrorCode::InvalidParams,
+                    "--all streams history pages; use --output-format ndjson",
+                ));
+            }
+            let instance = instance(&target.instance)?;
+            let params = options.params(target.agent_id);
+            if options.all {
+                return read_all_pages(
+                    params,
+                    |params| request(&instance, ActionKind::AgentRead, params),
+                    |page| render(page, format),
+                );
+            }
+            request(&instance, ActionKind::AgentRead, params)?
+        }
         AgentCommand::Send {
             target,
             text,
@@ -296,6 +440,34 @@ pub(super) fn run_agent(command: AgentCommand, format: OutputFormat) -> Result<(
         } => return watch(scope, after, wait, follow, format),
     };
     render(&data, format)
+}
+
+/// Preserve coverage metadata on every page without buffering an entire conversation.
+fn read_all_pages(
+    mut params: AgentReadParams,
+    mut fetch: impl FnMut(&AgentReadParams) -> Result<serde_json::Value, ControlError>,
+    mut emit: impl FnMut(&serde_json::Value) -> Result<(), ControlError>,
+) -> Result<(), ControlError> {
+    loop {
+        let page = fetch(&params)?;
+        emit(&page)?;
+        if page["has_more"] != true || page["pending_record"] == true {
+            return Ok(());
+        }
+        let cursor = page["next_cursor"]
+            .as_str()
+            .filter(|cursor| !cursor.is_empty() && params.after.as_deref() != Some(*cursor));
+        params.after = Some(
+            cursor
+                .ok_or_else(|| {
+                    ControlError::new(
+                        ErrorCode::InvalidRequest,
+                        "history did not advance; inspect the last emitted page before continuing",
+                    )
+                })?
+                .to_owned(),
+        );
+    }
 }
 
 fn read_prompt(
@@ -398,3 +570,234 @@ pub(super) fn run_pane_read(args: PaneReadArgs, format: OutputFormat) -> Result<
 #[cfg(test)]
 #[path = "agents_tests.rs"]
 mod tests;
+
+#[derive(Debug, Clone, Args)]
+pub struct AgentLaunchArgs {
+    #[command(flatten)]
+    instance: InstanceArgs,
+    #[arg(long)]
+    provider: local_control::agents::AgentProvider,
+    #[arg(long)]
+    project: String,
+    #[arg(long)]
+    section: Option<String>,
+    #[arg(long)]
+    cwd: Option<String>,
+    #[arg(long)]
+    title: Option<String>,
+    #[arg(long, conflicts_with = "prompt_file")]
+    prompt: Option<String>,
+    /// Read an initial prompt from a UTF-8 file or '-' for stdin.
+    #[arg(long)]
+    prompt_file: Option<std::path::PathBuf>,
+    #[arg(long)]
+    background: bool,
+    /// Wait up to this many seconds for exact pane identity/readiness. Zero returns creation only.
+    #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u32).range(0..=3600))]
+    timeout: u32,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct AgentWaitArgs {
+    #[command(flatten)]
+    target: AgentArgs,
+    #[arg(long, value_enum, default_value_t = WaitCondition::Ready)]
+    until: WaitCondition,
+    #[arg(long, default_value_t = 120, value_parser = clap::value_parser!(u32).range(1..=86400))]
+    timeout: u32,
+}
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub enum WaitCondition {
+    Ready,
+    Working,
+    Attention,
+    TurnComplete,
+}
+fn condition_matches(condition: WaitCondition, data: &serde_json::Value) -> bool {
+    match condition {
+        WaitCondition::Ready => data["ready"] == true,
+        WaitCondition::Working => data["state"] == "working",
+        WaitCondition::Attention => matches!(
+            data["state"].as_str(),
+            Some("needs_attention" | "rate_limited")
+        ),
+        WaitCondition::TurnComplete => data["state"] == "turn_complete",
+    }
+}
+/// Read-only observation runs on one bounded worker per call. A hung socket cannot keep the
+/// wait command alive past its deadline; an expired read is never retried or used for a mutation.
+fn observe_before_deadline<T: Serialize>(
+    instance: &local_control::discovery::InstanceRecord,
+    kind: ActionKind,
+    params: T,
+    deadline: Instant,
+) -> Result<Option<serde_json::Value>, ControlError> {
+    let params = serde_json::to_value(params).map_err(|_| {
+        ControlError::new(ErrorCode::InvalidParams, "invalid observation parameters")
+    })?;
+    let instance = instance.clone();
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        return Ok(None);
+    }
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    std::thread::Builder::new()
+        .name("clinch-cli-observe".into())
+        .spawn(move || {
+            let _ = sender.send(request(&instance, kind, params));
+        })
+        .map_err(|_| {
+            ControlError::new(ErrorCode::Internal, "could not start bounded observation")
+        })?;
+    match receiver.recv_timeout(remaining) {
+        Ok(result) => result.map(Some),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Ok(None),
+        Err(_) => Err(ControlError::new(
+            ErrorCode::TransportUnavailable,
+            "observation worker stopped",
+        )),
+    }
+}
+fn wait_for_agent(args: AgentWaitArgs, format: OutputFormat) -> Result<(), ControlError> {
+    let instance = instance(&args.target.instance)?;
+    let deadline = Instant::now() + Duration::from_secs(args.timeout.into());
+    let mut latest = serde_json::Value::Null;
+    loop {
+        let Some(agent) = observe_before_deadline(
+            &instance,
+            ActionKind::AgentInspect,
+            AgentTargetParams {
+                agent_id: args.target.agent_id.clone(),
+            },
+            deadline,
+        )?
+        else {
+            return render(
+                &serde_json::json!({"action": "agent.wait", "matched": false, "timed_out": true, "agent": latest}),
+                format,
+            );
+        };
+        if condition_matches(args.until, &agent) {
+            return render(
+                &serde_json::json!({"action": "agent.wait", "matched": true, "timed_out": false, "agent": agent}),
+                format,
+            );
+        }
+        latest = agent;
+        std::thread::sleep(
+            Duration::from_millis(250).min(deadline.saturating_duration_since(Instant::now())),
+        );
+    }
+}
+
+fn launch(args: AgentLaunchArgs, format: OutputFormat) -> Result<(), ControlError> {
+    let instance = instance(&args.instance)?;
+    let prompt = if args.prompt.is_some() || args.prompt_file.is_some() {
+        Some(read_prompt(args.prompt, args.prompt_file)?)
+    } else {
+        None
+    };
+    let scope = AgentScope {
+        projects: vec![args.project.clone()],
+        sections: vec![],
+    };
+    let mut created = request(
+        &instance,
+        ActionKind::AgentLaunch,
+        local_control::agents::AgentLaunchParams {
+            provider: args.provider,
+            project_id: args.project,
+            section_id: args.section,
+            cwd: args.cwd,
+            title: args.title,
+            prompt,
+            background: args.background,
+        },
+    )?;
+    let deadline = Instant::now() + Duration::from_secs(args.timeout.into());
+    while Instant::now() < deadline {
+        // Poll only the newly created pane; never attach a different nearby provider.
+        match observe_before_deadline(&instance, ActionKind::AgentList, &scope, deadline) {
+            Ok(Some(snapshot)) => {
+                if let Some(agent) =
+                    snapshot["agents"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .find(|agent| {
+                            agent["pane_id"] == created["pane_id"]
+                                && agent["provider"]
+                                    == (if args.provider
+                                        == local_control::agents::AgentProvider::Claude
+                                    {
+                                        "claude-code"
+                                    } else {
+                                        "codex"
+                                    })
+                                && agent["conversation_id"].as_str().is_some()
+                        })
+                {
+                    created["agent"] = agent.clone();
+                    created["ready"] = agent["ready"].clone();
+                    if agent["ready"] == true
+                        || agent["state"] == "working"
+                        || condition_matches(WaitCondition::Attention, agent)
+                    {
+                        created["identity_discovered"] = true.into();
+                        return render(&created, format);
+                    }
+                }
+            }
+            Ok(None) => break,
+            Err(error) => {
+                // Creation happened: retain its exact IDs and never silently repeat the launch.
+                created["observation_error"] = serde_json::to_value(error).unwrap_or_default();
+                break;
+            }
+        }
+        if Instant::now() >= deadline {
+            break;
+        }
+        std::thread::sleep(
+            Duration::from_millis(250).min(deadline.saturating_duration_since(Instant::now())),
+        );
+    }
+    created["identity_discovered"] = created["agent"]["agent_id"].is_string().into();
+    created["timed_out"] = (args.timeout > 0 && Instant::now() >= deadline).into();
+    render(&created, format)
+}
+fn events(
+    args: ScopeArgs,
+    mut after: Option<String>,
+    limit: u32,
+    follow: bool,
+    format: OutputFormat,
+) -> Result<(), ControlError> {
+    let instance = instance(&args.instance)?;
+    loop {
+        let data = request(
+            &instance,
+            ActionKind::AgentEvents,
+            local_control::agents::AgentEventsParams {
+                after: after.clone(),
+                scope: args.scope(),
+                limit: limit as usize,
+            },
+        )?;
+        if !follow {
+            return render(&data, format);
+        }
+        write_json_line(&data)?;
+        after = data["next_cursor"].as_str().map(str::to_owned);
+        if after.is_none() {
+            return Err(ControlError::new(
+                ErrorCode::InvalidRequest,
+                "event journal returned no cursor",
+            ));
+        }
+        if data["has_more"] != true {
+            std::thread::sleep(Duration::from_secs(1));
+        }
+    }
+}

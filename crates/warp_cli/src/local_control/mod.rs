@@ -347,8 +347,12 @@ pub enum TabCommand {
     /// Create a new terminal tab in the active window.
     Create(TabCreateArgs),
 
-    /// Transfer a live session into another project in the same window.
+    /// Transfer a live session into another project, including another native window.
     Transfer(projects::TabTransferArgs),
+    /// Pin a session at the top of its sidebar.
+    Pin(TargetArgs),
+    /// Unpin a session.
+    Unpin(TargetArgs),
 
     /// Activate a tab.
     Activate(TabActivateArgs),
@@ -644,6 +648,10 @@ pub enum SectionCommand {
 
     /// Remove a section while preserving its tabs.
     Delete(SectionIdArgs),
+    /// Pin a whole section.
+    Pin(SectionIdArgs),
+    /// Unpin a whole section.
+    Unpin(SectionIdArgs),
 
     /// Move a section one sidebar slot up or down.
     Move(SectionMoveArgs),

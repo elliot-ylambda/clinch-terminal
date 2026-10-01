@@ -103,7 +103,8 @@ clinch ctrl workspace tree
 clinch ctrl project list
 clinch ctrl agent list [--project ID ...] [--section ID ...]
 clinch ctrl agent inspect AGENT_ID
-clinch ctrl agent read AGENT_ID [--after CURSOR | --tail N] [--limit N]
+clinch ctrl agent read AGENT_ID [--after CURSOR | --tail | --from-start] [--limit N | --last N]
+clinch ctrl --output-format ndjson agent read AGENT_ID --all [--limit N]
 clinch ctrl pane read --pane PANE_ID [--limit-bytes N]
 clinch ctrl agent send AGENT_ID --text-file PATH --request-id UUID [--queue --expires-in DURATION]
 clinch ctrl agent message inspect MESSAGE_ID
@@ -120,6 +121,11 @@ examples do not supersede binding. Define `--text-file -` as stdin; allow direct
 short messages, but recommend files/stdin for multiline content. Publish typed response schemas,
 capability flags, bounded output defaults, and error codes. Proposed starting limits: read 100
 records/256 KiB per page; send 64 KiB; bounded watch up to 45 seconds. Reject invalid limits.
+The implemented CLI defaults to three recent records, with a `CLINCH_AGENT_READ_LIMIT`
+environment override and command-line precedence. Explicit history modes default to 100 per
+page. Protocol defaults stay unchanged. Full-history mode streams each native response as an
+NDJSON line, follows cursors without buffering prior pages, and stops on EOF, pending provider
+records, or errors. Nonadvancing cursors fail explicitly; coverage remains attached to each page.
 
 Reads receive read permissions; send/cancel/coordinator changes are mutations. Validate settings
 again at dispatch, not only when queued. Capability metadata covers history availability, target
@@ -305,8 +311,8 @@ local-control bridge and catalog; no new service or coordinator requirement.
   protocol-1 decoders ignored unknown selector fields.
 - Add project create/inspect/activate/close/export/restore actions plus exact live-tab transfer.
   Use `ProjectWindow` parent-owned updates so child workspace extraction and adoption cannot
-  cause reentrant view borrows. Restrict live transfers to one native window initially, matching
-  the existing sibling-project drag operation; cross-window drags keep their current machinery.
+  cause reentrant view borrows. Live transfers support sibling projects and other native windows; the latter move the
+  complete framework view subtree before extracting/adopting its sidebar bookkeeping.
 - Reuse `take_tab_for_project_transfer`, reparenting, and `accept_project_tab_drag`. Validate
   destination section/index and contiguous/pinned ordering first. CLI calls finish placement;
   mouse calls retain their active draggable. Return refreshed project/agent metadata after moves.
@@ -325,3 +331,35 @@ trip (sections, colors, ordering, split ratios, resume identity); live-transfer 
 same pane group/terminal survives and invalid placement leaves both projects untouched; existing
 project hover-drag and mouse-up tests. Finish with a disposable signed development-app smoke run,
 repository formatting, relevant tests, and Clippy. Do not modify the user's real layouts as a test.
+
+## Coordination CLI completion implementation (2026-09-30)
+
+- Extend typed protocol contracts, capability catalog, validation, CLI parsing and bundled skills
+  together. Filter normalized transcript records before count/byte limiting; bind filters in cursors.
+- Keep inbox checkpoint and event journal IO off the UI thread. Use private bounded persistence,
+  reader UUIDs, stable provider/conversation checkpoint keys, and acknowledgment tokens with
+  compare-and-swap semantics. Missing/rotated sources report per-agent coverage errors. Do not
+  advance checkpoints on preview-only data or failed rendering. Initial inbox reads use recent
+  assistant text, subsequent reads paginate forward. A peek does not acknowledge its batch.
+- Implement wait/follow loops in the CLI against one resolved app instance. Launch registers the
+  provider startup command on the newly created terminal and returns its tab/pane; identity polling
+  targets that exact pane. Codex startup probes `--no-daemon` support on the terminal shell
+  and uses it when present so provider hooks inherit that pane; older versions keep their original
+  invocation. No shared daemon is stopped and global provider configuration is not edited.
+  Background insertion preserves the previous active pane-group identity
+  and does not invoke activation, group-move focus, palette or selection side effects.
+- Add a terminal-native interrupt beside guarded sending. Check identity/revision, working state,
+  draft and writer conditions immediately before mode-correct Escape. Advance input/user epochs
+  and cancel auto-continue without fabricating a human draft. Preserve PTY and conversation.
+- Expose native tab/section pin methods and task validation. Cross-window live transfer moves the
+  view subtree with framework transfer/reparent APIs, validates placement before extraction and
+  retains rollback/source-window cleanup semantics of native project transfer.
+- Start app event capture with the control server, subscribe to native agent and workspace
+  semantic events, and cache owned metadata only. Persist bounded records on a dedicated worker;
+  use instance-bound sequence cursors and explicit retention/gap errors. Stop capture when local
+  control stops. Polling consumers read the journal rather than synthesize events from snapshots.
+
+Verification: focused protocol/CLI tests, transcript and persistence fixtures, native app integration
+tests for launch/interrupt/organization, then disposable signed-app smoke checks with real providers.
+Run affected formatting and Clippy gates before PR review and merge. A merge does not install a
+new production app; report live development-build validation separately from release status.

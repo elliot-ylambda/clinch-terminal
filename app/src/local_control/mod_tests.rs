@@ -160,7 +160,7 @@ fn surface_list_rejects_target_selectors() {
 
 #[test]
 fn capabilities_advertises_the_complete_catalog() {
-    assert_eq!(capabilities().len(), 115);
+    assert_eq!(capabilities().len(), 129);
 }
 
 #[test]
@@ -402,7 +402,7 @@ fn disabling_scripting_invalidates_existing_grant_and_prevents_new_grants() {
         let expected_host = "127.0.0.1:1234".to_owned();
         let bridge = app.add_singleton_model(LocalControlBridge::new);
         let state = bridge.update(&mut app, |bridge, ctx| {
-            bridge.set_instance_id(instance_id.clone());
+            bridge.set_instance_id(instance_id.clone(), ctx);
             ControlServerState {
                 bridge_spawner: ctx.spawner(),
                 instance_id: instance_id.clone(),

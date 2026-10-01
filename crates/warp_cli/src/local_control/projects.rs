@@ -17,6 +17,9 @@ use crate::agent::OutputFormat;
 
 #[derive(Debug, Clone, Subcommand)]
 pub enum ProjectCommand {
+    /// Manage the project's pending task list. Completion removes a task, as in the UI.
+    #[command(subcommand)]
+    Task(ProjectTaskCommand),
     /// List all projects, including inactive ones.
     List(ScopeArgs),
     /// Read one project's complete section/tab/pane hierarchy.
@@ -54,7 +57,7 @@ pub enum ProjectCommand {
 
 #[derive(Debug, Clone, Args)]
 pub struct TabTransferArgs {
-    /// Exact destination project ID in the same native window.
+    /// Exact destination project ID, including another native window.
     #[arg(long)]
     pub to_project: String,
     /// Destination section ID; omit to leave the session ungrouped.
@@ -101,6 +104,7 @@ pub(super) fn run_project(
     format: OutputFormat,
 ) -> Result<(), ControlError> {
     match command {
+        ProjectCommand::Task(command) => run_task(command, format),
         ProjectCommand::List(args) => agents::render(
             &agents::request(
                 &agents::instance(&args.instance)?,
@@ -169,3 +173,69 @@ pub(super) fn run_project(
 #[cfg(test)]
 #[path = "projects_tests.rs"]
 mod tests;
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum ProjectTaskCommand {
+    List(TargetArgs),
+    Create {
+        #[arg(long)]
+        text: String,
+        #[command(flatten)]
+        target: TargetArgs,
+    },
+    Update {
+        task_id: String,
+        #[arg(long)]
+        text: String,
+        #[command(flatten)]
+        target: TargetArgs,
+    },
+    Complete {
+        task_id: String,
+        #[command(flatten)]
+        target: TargetArgs,
+    },
+    Delete {
+        task_id: String,
+        #[command(flatten)]
+        target: TargetArgs,
+    },
+}
+fn run_task(command: ProjectTaskCommand, format: OutputFormat) -> Result<(), ControlError> {
+    use local_control::projects::{
+        ProjectTaskCreateParams, ProjectTaskIdParams, ProjectTaskUpdateParams,
+    };
+    match command {
+        ProjectTaskCommand::List(target) => {
+            run_action_with_params(target, ActionKind::ProjectTaskList, EmptyParams {}, format)
+        }
+        ProjectTaskCommand::Create { text, target } => run_action_with_params(
+            target,
+            ActionKind::ProjectTaskCreate,
+            ProjectTaskCreateParams { text },
+            format,
+        ),
+        ProjectTaskCommand::Update {
+            task_id,
+            text,
+            target,
+        } => run_action_with_params(
+            target,
+            ActionKind::ProjectTaskUpdate,
+            ProjectTaskUpdateParams { task_id, text },
+            format,
+        ),
+        ProjectTaskCommand::Complete { task_id, target } => run_action_with_params(
+            target,
+            ActionKind::ProjectTaskComplete,
+            ProjectTaskIdParams { task_id },
+            format,
+        ),
+        ProjectTaskCommand::Delete { task_id, target } => run_action_with_params(
+            target,
+            ActionKind::ProjectTaskDelete,
+            ProjectTaskIdParams { task_id },
+            format,
+        ),
+    }
+}

@@ -197,6 +197,16 @@ pub(crate) fn handle(
         );
     }
     let project = selected_project(target, action.kind, ctx)?;
+    if matches!(
+        action.kind,
+        ActionKind::ProjectTaskList
+            | ActionKind::ProjectTaskCreate
+            | ActionKind::ProjectTaskUpdate
+            | ActionKind::ProjectTaskComplete
+            | ActionKind::ProjectTaskDelete
+    ) {
+        return tasks(action, &project, ctx);
+    }
     let id = project.id.opaque_id();
     match action.kind {
         ActionKind::ProjectInspect => {
@@ -255,10 +265,10 @@ fn transfer(
     let source = target_workspace(action.kind, target, ctx)?;
     let destination = resolve_project(&params.destination_project, ctx)?;
     let source_window = target_window_id_for_target(ctx, target, action.kind)?;
-    if source_window != destination.window_id || source.id() == destination.workspace.id() {
+    if source.id() == destination.workspace.id() {
         return Err(ControlError::new(
             ErrorCode::InvalidParams,
-            "tab.transfer requires a different project in the same native window",
+            "tab.transfer requires a different destination project",
         ));
     }
     let tab_id = source.read(ctx, |workspace, ctx| {
@@ -277,9 +287,14 @@ fn transfer(
     let insertion = destination.workspace.read(ctx, |workspace, _| {
         transfer_index(workspace, section, params.index)
     })?;
-    if !destination.parent.update(ctx, |parent, ctx| {
-        parent.move_inner_tab_to_project(source.id(), tab_id, destination.id, ctx)
-    }) {
+    let transferred = if source_window == destination.window_id {
+        destination.parent.update(ctx, |parent, ctx| {
+            parent.move_inner_tab_to_project(source.id(), tab_id, destination.id, ctx)
+        })
+    } else {
+        transfer_across_windows(&source, source_window, tab_id, &destination, ctx)?
+    };
+    if !transferred {
         return Err(ControlError::new(
             ErrorCode::StaleTarget,
             "source session could not be transferred",
@@ -354,4 +369,123 @@ fn parse_tab_color(color: Option<String>) -> Result<SelectedTabColor, ControlErr
             .map(SelectedTabColor::Color)
             .map_err(|_| ControlError::new(ErrorCode::InvalidParams, "invalid tab color")),
     }
+}
+
+fn tasks(
+    action: &Action,
+    project: &ProjectTarget,
+    ctx: &mut ModelContext<LocalControlBridge>,
+) -> Result<Value, ControlError> {
+    use ::local_control::projects::{
+        ProjectTaskCreateParams, ProjectTaskIdParams, ProjectTaskUpdateParams,
+    };
+
+    use crate::workspace::task::{WorkspaceTask, WorkspaceTaskId};
+    let invalid = || {
+        ControlError::new(
+            ErrorCode::InvalidParams,
+            "task text must be nonempty and at most 256 KiB",
+        )
+    };
+    let stale = || {
+        ControlError::new(
+            ErrorCode::StaleTarget,
+            "task is not in the selected project",
+        )
+    };
+    let parse_id = |id: &str| {
+        Uuid::parse_str(id)
+            .map(WorkspaceTaskId)
+            .map_err(|_| ControlError::new(ErrorCode::InvalidParams, "invalid task ID"))
+    };
+    project.workspace.update(ctx, |workspace, ctx| {
+        let task_id = match action.kind {
+            ActionKind::ProjectTaskList => None,
+            ActionKind::ProjectTaskCreate => {
+                let params: ProjectTaskCreateParams = action.params_as()?;
+                Some(
+                    workspace
+                        .add_workspace_task(params.text, ctx)
+                        .ok_or_else(invalid)?,
+                )
+            }
+            ActionKind::ProjectTaskUpdate => {
+                let params: ProjectTaskUpdateParams = action.params_as()?;
+                let id = parse_id(&params.task_id)?;
+                let task = WorkspaceTask::new(params.text).ok_or_else(invalid)?;
+                if !workspace.update_workspace_task(id, task.text, ctx) {
+                    return Err(stale());
+                }
+                Some(id)
+            }
+            _ => {
+                let params: ProjectTaskIdParams = action.params_as()?;
+                let id = parse_id(&params.task_id)?;
+                if !workspace.remove_workspace_task(id, ctx) {
+                    return Err(stale());
+                }
+                Some(id)
+            }
+        };
+        Ok(
+            json!({"action": action.kind.as_str(), "project_id": project.id.opaque_id(),
+            "task_id": task_id, "tasks": workspace.workspace_tasks(),
+            "completed": action.kind == ActionKind::ProjectTaskComplete,
+            "completion_behavior": "remove_from_pending_tasks"}),
+        )
+    })
+}
+
+fn transfer_across_windows(
+    source: &ViewHandle<Workspace>,
+    source_window: WindowId,
+    tab_id: warpui::EntityId,
+    destination: &ProjectTarget,
+    ctx: &mut ModelContext<LocalControlBridge>,
+) -> Result<bool, ControlError> {
+    let source_parent = project_parent(source_window, ctx)?;
+    let colors = source
+        .as_ref(ctx)
+        .tabs
+        .iter()
+        .find(|tab| tab.pane_group.id() == tab_id)
+        .map(|tab| (tab.selected_color, tab.default_directory_color))
+        .ok_or_else(|| ControlError::new(ErrorCode::StaleTarget, "source tab disappeared"))?;
+    // Move the view tree before extraction: failure leaves all sidebar bookkeeping untouched.
+    // Framework effects run after this synchronous transaction finishes.
+    let moved = ctx.transfer_view_tree_to_window(tab_id, source_window, destination.window_id);
+    if !moved.contains(&tab_id) {
+        for id in moved.into_iter().rev() {
+            ctx.transfer_view_to_window(id, destination.window_id, source_window);
+        }
+        return Ok(false);
+    }
+    let Some(tab) = source.update(ctx, |workspace, ctx| {
+        workspace.take_tab_for_project_transfer(tab_id, ctx)
+    }) else {
+        for id in moved.into_iter().rev() {
+            ctx.transfer_view_to_window(id, destination.window_id, source_window);
+        }
+        ctx.reparent_view(source_window, tab_id, source.id());
+        return Ok(false);
+    };
+    ctx.reparent_view(destination.window_id, tab_id, destination.workspace.id());
+    destination.workspace.update(ctx, |workspace, ctx| {
+        workspace.accept_project_tab_drag(tab, ctx);
+        if let Some(tab) = workspace
+            .tabs
+            .iter_mut()
+            .find(|tab| tab.pane_group.id() == tab_id)
+        {
+            tab.selected_color = colors.0;
+            tab.default_directory_color = colors.1;
+        }
+    });
+    source_parent.update(ctx, |parent, ctx| {
+        parent.settle_empty_workspace_after_tab_transfer(source.id(), ctx)
+    });
+    destination.parent.update(ctx, |parent, ctx| {
+        parent.activate_project(destination.id, ctx)
+    });
+    Ok(true)
 }

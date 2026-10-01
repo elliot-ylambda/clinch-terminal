@@ -1936,6 +1936,7 @@ impl Workspace {
         self.clear_tab_group_name_editor(ctx);
         self.focus_active_tab(ctx);
         ctx.dispatch_global_action("workspace:save_app", ());
+        self.notify_project_metadata_changed(ctx);
         ctx.notify();
     }
 
@@ -2063,8 +2064,28 @@ impl Workspace {
         let task_id = task.id;
         self.tasks.push(task);
         ctx.dispatch_global_action("workspace:save_app", ());
+        self.notify_project_metadata_changed(ctx);
         ctx.notify();
         Some(task_id)
+    }
+
+    pub(crate) fn update_workspace_task(
+        &mut self,
+        task_id: WorkspaceTaskId,
+        text: String,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        let Some(replacement) = WorkspaceTask::new(text) else {
+            return false;
+        };
+        let Some(task) = self.tasks.iter_mut().find(|task| task.id == task_id) else {
+            return false;
+        };
+        task.text = replacement.text;
+        ctx.dispatch_global_action("workspace:save_app", ());
+        self.notify_project_metadata_changed(ctx);
+        ctx.notify();
+        true
     }
 
     pub(crate) fn remove_workspace_task(
@@ -2077,6 +2098,7 @@ impl Workspace {
         let removed = self.tasks.len() != previous_len;
         if removed {
             ctx.dispatch_global_action("workspace:save_app", ());
+            self.notify_project_metadata_changed(ctx);
             ctx.notify();
         }
         removed
@@ -2113,6 +2135,7 @@ impl Workspace {
         if launched {
             self.tasks.retain(|task| task.id != task_id);
             ctx.dispatch_global_action("workspace:save_app", ());
+            self.notify_project_metadata_changed(ctx);
             ctx.notify();
         }
         launched
@@ -4118,8 +4141,9 @@ impl Workspace {
         ws.sync_settings_error_state_into_settings_pane(ctx);
 
         let weak_handle = ctx.handle();
-        WorkspaceRegistry::handle(ctx).update(ctx, |registry, _| {
+        WorkspaceRegistry::handle(ctx).update(ctx, |registry, ctx| {
             registry.register(window_id, weak_handle);
+            ctx.notify();
         });
 
         ws
@@ -6349,6 +6373,7 @@ impl Workspace {
             },
             ctx
         );
+        self.notify_project_metadata_changed(ctx);
         ctx.notify();
     }
 
@@ -7932,6 +7957,7 @@ impl Workspace {
         if let Some(group) = self.tab_groups.get_mut(&group_id) {
             group.collapsed = !group.collapsed;
             ctx.dispatch_global_action("workspace:save_app", ());
+            self.notify_project_metadata_changed(ctx);
             ctx.notify();
         }
     }
@@ -7953,6 +7979,7 @@ impl Workspace {
 
         group.color = color;
         ctx.dispatch_global_action("workspace:save_app", ());
+        self.notify_project_metadata_changed(ctx);
         ctx.notify();
     }
 
@@ -7977,6 +8004,7 @@ impl Workspace {
     fn expand_tab_group(&mut self, group_id: TabGroupId, ctx: &mut ViewContext<Self>) {
         if let Some(group) = self.tab_groups.get_mut(&group_id) {
             group.collapsed = false;
+            self.notify_project_metadata_changed(ctx);
             ctx.notify();
         }
     }
@@ -8085,6 +8113,7 @@ impl Workspace {
         }
 
         ctx.dispatch_global_action("workspace:save_app", ());
+        self.notify_project_metadata_changed(ctx);
         ctx.notify();
         Some(group_id)
     }
@@ -8124,6 +8153,7 @@ impl Workspace {
 
         self.focus_active_tab(ctx);
         ctx.dispatch_global_action("workspace:save_app", ());
+        self.notify_project_metadata_changed(ctx);
         ctx.notify();
     }
 
@@ -8158,6 +8188,7 @@ impl Workspace {
 
         self.focus_active_tab(ctx);
         ctx.dispatch_global_action("workspace:save_app", ());
+        self.notify_project_metadata_changed(ctx);
         ctx.notify();
     }
 
@@ -8199,6 +8230,7 @@ impl Workspace {
         }
 
         ctx.dispatch_global_action("workspace:save_app", ());
+        self.notify_project_metadata_changed(ctx);
         ctx.notify();
     }
 
@@ -8411,6 +8443,7 @@ impl Workspace {
             }
         }
 
+        self.notify_project_metadata_changed(ctx);
         ctx.notify();
     }
 
@@ -8448,6 +8481,7 @@ impl Workspace {
             self.prune_empty_tab_group(previous_group_id, ctx);
         }
 
+        self.notify_project_metadata_changed(ctx);
         ctx.notify();
     }
 
@@ -8499,6 +8533,7 @@ impl Workspace {
                 self.active_tab_index = new_active;
             }
         }
+        self.notify_project_metadata_changed(ctx);
         ctx.notify();
     }
 
@@ -9646,6 +9681,24 @@ impl Workspace {
         cwd: Option<String>,
         ctx: &mut ViewContext<Self>,
     ) -> bool {
+        self.launch_command_in_new_tab_placed(command, cwd, None, None, ctx)
+            .is_some()
+    }
+
+    pub(crate) fn has_open_tab_context_menu(&self) -> bool {
+        self.show_tab_right_click_menu.is_some()
+            || self.show_tab_selection_right_click_menu.is_some()
+            || self.show_move_to_group_sidecar
+    }
+
+    pub(crate) fn launch_command_in_new_tab_placed(
+        &mut self,
+        command: String,
+        cwd: Option<String>,
+        title: Option<String>,
+        placement: Option<(bool, Option<TabGroupId>)>,
+        ctx: &mut ViewContext<Self>,
+    ) -> Option<ViewHandle<PaneGroup>> {
         #[cfg(feature = "local_tty")]
         let agent_session_seed =
             crate::agent_resume::agent_session_seed_from_restore_command(&command);
@@ -9654,29 +9707,30 @@ impl Workspace {
         // working-directory setting, so forks and transfers stay beside their source pane).
         let options = NewTerminalOptions::default()
             .with_initial_directory_opt(cwd.as_deref().map(PathBuf::from));
-        self.add_tab_with_pane_layout(
+        let pane_group = self.add_tab_with_pane_layout_placed(
             PanesLayout::SingleTerminal(Box::new(options)),
             Arc::new(HashMap::new()),
-            None,
+            title,
+            placement,
             ctx,
         );
 
         #[cfg(feature = "local_tty")]
-        if let (Some((provider, session_id)), Some(terminal_view)) =
-            (agent_session_seed, self.active_session_view(ctx))
-        {
+        if let (Some((provider, session_id)), Some(terminal_view)) = (
+            agent_session_seed,
+            pane_group.as_ref(ctx).terminal_views(ctx).first().cloned(),
+        ) {
             CLIAgentSessionsModel::handle(ctx).update(ctx, |model, ctx| {
                 model.seed_resumed_session(terminal_view.id(), provider, session_id, ctx);
             });
         }
 
-        // Attach the one-shot replay command to the new (now active) tab's single pane,
+        // Attach the one-shot replay command to the exact newly created tab's single pane,
         // mirroring the snapshot-restore path (pane_group/mod.rs:1672).
         #[cfg(feature = "local_tty")]
         let command_registered = {
-            let manager_handle = self
-                .active_tab_pane_group()
-                .read(ctx, |pane_group, ctx| pane_group.terminal_manager(0, ctx));
+            let manager_handle =
+                pane_group.read(ctx, |pane_group, ctx| pane_group.terminal_manager(0, ctx));
             if let Some(manager_handle) = manager_handle {
                 manager_handle.update(ctx, |terminal_manager, ctx| {
                     if let Some(manager) = terminal_manager
@@ -9711,7 +9765,7 @@ impl Workspace {
             false
         };
 
-        command_registered
+        command_registered.then_some(pane_group)
     }
 
     #[cfg(feature = "local_fs")]
@@ -13482,8 +13536,9 @@ impl Workspace {
         }
         let window_id = ctx.window_id();
         let workspace_id = ctx.handle().id();
-        WorkspaceRegistry::handle(ctx).update(ctx, |registry, _| {
+        WorkspaceRegistry::handle(ctx).update(ctx, |registry, ctx| {
             registry.unregister_workspace(window_id, workspace_id);
+            ctx.notify();
         });
         SettingsPaneManager::handle(ctx).update(ctx, |manager, _| {
             manager.unregister_view(self.settings_pane.id());
@@ -13725,8 +13780,9 @@ impl Workspace {
         // `Workspace::new`, so register it again.
         let window_id = ctx.window_id();
         let weak_handle = ctx.handle();
-        WorkspaceRegistry::handle(ctx).update(ctx, |registry, _| {
+        WorkspaceRegistry::handle(ctx).update(ctx, |registry, ctx| {
             registry.register(window_id, weak_handle);
+            ctx.notify();
         });
     }
 
@@ -14298,6 +14354,23 @@ impl Workspace {
         custom_tab_title: Option<String>,
         ctx: &mut ViewContext<Self>,
     ) {
+        self.add_tab_with_pane_layout_placed(
+            panes_layout,
+            block_lists,
+            custom_tab_title,
+            None,
+            ctx,
+        );
+    }
+
+    fn add_tab_with_pane_layout_placed(
+        &mut self,
+        panes_layout: PanesLayout,
+        block_lists: Arc<HashMap<PaneUuid, Vec<SerializedBlockListItem>>>,
+        custom_tab_title: Option<String>,
+        placement: Option<(bool, Option<TabGroupId>)>,
+        ctx: &mut ViewContext<Self>,
+    ) -> ViewHandle<PaneGroup> {
         // Remember whether the left panel was open on the current active pane group
         // before creating a new active pane group.
         let left_panel_was_open = if self.tabs.is_empty() {
@@ -14314,7 +14387,7 @@ impl Workspace {
         let is_new_terminal = matches!(panes_layout, PanesLayout::SingleTerminal(_));
         let is_restoration = matches!(panes_layout, PanesLayout::Snapshot(_));
         let new_pane_group = ctx.add_typed_action_view(|ctx| {
-            let mut pane_group = PaneGroup::new_with_panes_layout(
+            let mut pane_group = PaneGroup::new_with_panes_layout_and_focus(
                 self.tips_completed.clone(),
                 self.user_default_shell_unsupported_banner_model_handle
                     .clone(),
@@ -14322,10 +14395,15 @@ impl Workspace {
                 panes_layout,
                 block_lists,
                 self.model_event_sender.clone(),
+                !placement.is_some_and(|(background, _)| background),
                 ctx,
             );
             if let Some(title) = custom_tab_title {
-                pane_group.set_title(&title, ctx);
+                if placement.is_some_and(|(background, _)| background) {
+                    pane_group.set_title_without_focus(&title);
+                } else {
+                    pane_group.set_title(&title, ctx);
+                }
             }
             pane_group
         });
@@ -14337,30 +14415,53 @@ impl Workspace {
         // Compute where the new tab goes and which group it inherits, then
         // insert it. An empty workspace has no active tab to key off of, so it
         // takes index 0 with no group; the helper covers every other case.
-        let (insert_idx, inherited_group_id) = if self.tab_count() == 0 {
+        let background =
+            placement.is_some_and(|(background, _)| background) && !self.tabs.is_empty();
+        let (insert_idx, inherited_group_id) = if let Some((_, section)) = placement {
+            let index = section
+                .and_then(|id| self.tabs.iter().rposition(|tab| tab.group_id == Some(id)))
+                .map_or(self.tabs.len(), |index| index + 1);
+            (index, section)
+        } else if self.tab_count() == 0 {
             (0, None)
         } else {
             self.new_tab_index_and_group(ctx)
         };
-        self.tabs.insert(insert_idx, TabData::new(new_pane_group));
+        self.tabs
+            .insert(insert_idx, TabData::new(new_pane_group.clone()));
         self.tab_mru_order
             .push(self.tabs[insert_idx].pane_group.id());
-        self.activate_tab_internal(insert_idx, ctx);
+        if background {
+            if let Some(index) = self
+                .current_workspace_state
+                .tab_being_renamed()
+                .filter(|index| *index >= insert_idx)
+            {
+                self.current_workspace_state
+                    .set_tab_being_renamed(index + 1);
+            }
+            if insert_idx <= self.active_tab_index {
+                self.active_tab_index += 1;
+            }
+        } else {
+            self.activate_tab_internal(insert_idx, ctx);
+        }
 
         // Inherit the active tab's group membership.
         if let Some(group_id) = inherited_group_id {
-            let new_idx = self.active_tab_index;
+            let new_idx = insert_idx;
             if let Some(new_tab) = self.tabs.get_mut(new_idx) {
                 new_tab.group_id = Some(group_id);
             }
-            self.expand_tab_group(group_id, ctx);
+            if !background {
+                self.expand_tab_group(group_id, ctx);
+            }
         }
 
         if !is_restoration {
             if *TabSettings::as_ref(ctx).preserve_active_tab_color.value() {
                 if let Some(SelectedTabColor::Color(color)) = active_tab_selected_color {
-                    self.tabs[self.active_tab_index].selected_color =
-                        SelectedTabColor::Color(color);
+                    self.tabs[insert_idx].selected_color = SelectedTabColor::Color(color);
                 }
             }
 
@@ -14374,7 +14475,7 @@ impl Workspace {
                         == WorkingDirectoryMode::PreviousDir;
                 if inherits_cwd {
                     if let Some(color) = active_tab_default_color {
-                        self.tabs[self.active_tab_index].default_directory_color = Some(color);
+                        self.tabs[insert_idx].default_directory_color = Some(color);
                     }
                 }
             }
@@ -14385,11 +14486,16 @@ impl Workspace {
         if FeatureFlag::AgentViewConversationListView.is_enabled()
             && !is_restoration
             && left_panel_was_open
+            && !background
         {
             self.active_tab_pane_group().update(ctx, |pg, ctx| {
                 pg.set_left_panel_open(true, ctx);
             });
         }
+        self.notify_project_metadata_changed(ctx);
+        ctx.dispatch_global_action("workspace:save_app", ());
+        ctx.notify();
+        new_pane_group
     }
 
     pub fn add_tab_from_existing_pane(
@@ -22947,7 +23053,7 @@ impl Workspace {
     /// directory when known (so the color stays stable across subdirectories of
     /// the same project), falling back to the working directory itself. `None`
     /// for remote sessions or when there is no local cwd.
-    fn active_header_project_dir(&self, ctx: &AppContext) -> Option<PathBuf> {
+    pub(crate) fn active_header_project_dir(&self, ctx: &AppContext) -> Option<PathBuf> {
         self.project_dir_for_tab(self.tabs.get(self.active_tab_index)?, ctx)
     }
 
@@ -28118,6 +28224,9 @@ impl View for Workspace {
     }
 
     fn keymap_context(&self, app: &AppContext) -> warpui::keymap::Context {
+        if self.tabs.is_empty() {
+            return warpui::keymap::Context::default();
+        }
         let mut context = Self::default_keymap_context();
 
         if NetworkStatus::as_ref(app).is_online() {
@@ -28312,6 +28421,11 @@ impl View for Workspace {
     }
 
     fn render(&self, app: &AppContext) -> Box<dyn Element> {
+        // Moving the last live tab leaves this workspace empty until its parent/window
+        // finishes closing. Pending invalidations may still render it in that interval.
+        if self.tabs.is_empty() {
+            return Empty::new().finish();
+        }
         let appearance = Appearance::as_ref(app);
 
         let tab_bar_mode = self.tab_bar_mode(app);
@@ -29635,9 +29749,10 @@ impl View for Workspace {
         self.window_id = target_window_id;
         let workspace_id = ctx.handle().id();
         let weak_handle = ctx.handle();
-        WorkspaceRegistry::handle(ctx).update(ctx, |registry, _| {
+        WorkspaceRegistry::handle(ctx).update(ctx, |registry, ctx| {
             registry.unregister_workspace(source_window_id, workspace_id);
             registry.register(target_window_id, weak_handle);
+            ctx.notify();
         });
         SettingsPaneManager::handle(ctx).update(ctx, |manager, _| {
             manager.move_view(self.settings_pane.id(), source_window_id, target_window_id);
@@ -29662,8 +29777,9 @@ impl View for Workspace {
 
         let window_id = ctx.window_id();
 
-        WorkspaceRegistry::handle(ctx).update(ctx, |registry, _| {
+        WorkspaceRegistry::handle(ctx).update(ctx, |registry, ctx| {
             registry.unregister(window_id);
+            ctx.notify();
         });
         SettingsPaneManager::handle(ctx).update(ctx, |manager, _| {
             manager.unregister_view(self.settings_pane.id());

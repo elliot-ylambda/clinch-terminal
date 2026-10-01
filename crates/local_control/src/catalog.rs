@@ -71,6 +71,15 @@ pub enum ActionParameterSpec {
     AgentSend,
     AgentMessage,
     AgentMessageList,
+    AgentLaunch,
+    AgentInterrupt,
+    AgentInbox,
+    AgentInboxAck,
+    AgentEvents,
+    ProjectTaskCreate,
+    ProjectTaskUpdate,
+    ProjectTaskId,
+
     PaneRead,
     ProjectCreate,
     ProjectRestore,
@@ -209,6 +218,21 @@ define_action_catalog! {
     }
 
     coordination {
+        AgentLaunch => { name: "agent.launch", status: Implemented, target: Instance, params: AgentLaunch, result: TargetMetadata },
+        AgentInterrupt => { name: "agent.interrupt", status: Implemented, target: Instance, params: AgentInterrupt, result: Acknowledgement },
+        AgentInbox => { name: "agent.inbox", status: Implemented, target: Instance, params: AgentInbox, result: TargetList },
+        AgentInboxAck => { name: "agent.inbox.ack", status: Implemented, target: Instance, params: AgentInboxAck, result: Acknowledgement },
+        AgentEvents => { name: "agent.events", status: Implemented, target: Instance, params: AgentEvents, result: TargetList },
+        TabPin => { name: "tab.pin", status: Implemented, target: Tab, params: None, result: Acknowledgement },
+        TabUnpin => { name: "tab.unpin", status: Implemented, target: Tab, params: None, result: Acknowledgement },
+        SectionPin => { name: "section.pin", status: Implemented, target: Window, params: SectionId, result: SectionState },
+        SectionUnpin => { name: "section.unpin", status: Implemented, target: Window, params: SectionId, result: SectionState },
+        ProjectTaskList => { name: "project.task.list", status: Implemented, target: Project, params: None, result: TargetList },
+        ProjectTaskCreate => { name: "project.task.create", status: Implemented, target: Project, params: ProjectTaskCreate, result: TargetMetadata },
+        ProjectTaskUpdate => { name: "project.task.update", status: Implemented, target: Project, params: ProjectTaskUpdate, result: TargetMetadata },
+        ProjectTaskComplete => { name: "project.task.complete", status: Implemented, target: Project, params: ProjectTaskId, result: Acknowledgement },
+        ProjectTaskDelete => { name: "project.task.delete", status: Implemented, target: Project, params: ProjectTaskId, result: Acknowledgement },
+
         PaneRead => { name: "pane.read", status: Implemented, target: Instance, params: PaneRead, result: TargetMetadata },
         WorkspaceTree => { name: "workspace.tree", status: Implemented, target: Instance, params: AgentScope, result: TargetList },
         ProjectList => { name: "project.list", status: Implemented, target: Instance, params: AgentScope, result: TargetList },

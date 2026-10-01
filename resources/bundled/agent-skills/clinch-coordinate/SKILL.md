@@ -3,7 +3,7 @@ name: clinch-coordinate
 description: Coordinates Claude Code and Codex sessions across Clinch projects and sections using the local CLI. Use when the user wants one conversation to inspect other sessions, summarize progress, send delegated instructions, or organize reviews and deployments across sessions.
 ---
 
-<!-- managed-by: Clinch; version: 1.3.0 -->
+<!-- managed-by: Clinch; version: 1.5.0 -->
 
 # Clinch coordination
 
@@ -61,13 +61,27 @@ before sending: original message targets are never automatically rebound.
 
 ```sh
 <ctl> agent inspect AGENT_ID --pid "$CLINCH_CONTROL_PID"
-<ctl> agent read AGENT_ID --tail --limit 30 --pid "$CLINCH_CONTROL_PID"
+<ctl> agent read AGENT_ID --pid "$CLINCH_CONTROL_PID"
+<ctl> agent read AGENT_ID --last 2 --pid "$CLINCH_CONTROL_PID"
+<ctl> agent read AGENT_ID --from-start --limit 100 --pid "$CLINCH_CONTROL_PID"
 <ctl> agent read AGENT_ID --after CURSOR --limit 100 --pid "$CLINCH_CONTROL_PID"
+<ctl> --output-format ndjson agent read AGENT_ID --all --pid "$CLINCH_CONTROL_PID"
 <ctl> pane read --pane PANE_ID --max-bytes 65536 --pid "$CLINCH_CONTROL_PID"
 <ctl> agent watch --after SNAPSHOT_CURSOR --wait 30 --pid "$CLINCH_CONTROL_PID"
 ```
 
-Use returned IDs/cursors exactly. Agent reads normalize supported captured user,
+Start with the latest three records (the default), expanding only when needed.
+`--last N` aliases `--limit N`; `--tail --limit N` remains supported. Set
+`CLINCH_AGENT_READ_LIMIT=2` to change your default count (1–500); explicit flags win.
+`--from-start` reads the first page, and `--after` reads the next page. History pages
+default to 100 records unless the count is configured. `--all` streams available
+history as NDJSON pages without buffering it all; it stops at EOF or an incomplete
+provider record. This is a read, not a persistent watch. Save large history output
+to a file instead of loading it all into the coordinating conversation.
+
+Use returned IDs/cursors exactly. Limits count normalized records after filtering. Use `--role assistant --messages-only`
+to read recent text answers; `--role` also accepts `user` and `tool`. Keep the same
+filters when continuing a cursor. Agent reads normalize supported captured user,
 assistant, and tool transcript records. Images, reasoning, and provider metadata
 are omitted. Report `coverage`, truncation, and unavailable sources honestly;
 `preview_only` is not full conversation history. A partial final JSONL record
@@ -83,6 +97,50 @@ bounded `--wait` calls while coordinating in your own conversation.
 tests passed, a PR merged, or a deployment succeeded. Unknown or unavailable
 status is not evidence that work is idle or finished. Read relevant transcripts
 and verify repository, CI, and deployment results through their own tools.
+
+## Inbox, replay, and lifecycle
+
+```sh
+<ctl> agent read AGENT_ID --role assistant --messages-only --last 2 --pid "$CLINCH_CONTROL_PID"
+<ctl> agent inbox --reader READER_UUID --project PROJECT_ID --pid "$CLINCH_CONTROL_PID"
+<ctl> agent inbox --reader READER_UUID --peek --pid "$CLINCH_CONTROL_PID"
+<ctl> agent inbox-ack --reader READER_UUID --batch BATCH_UUID --pid "$CLINCH_CONTROL_PID"
+<ctl> agent events --after EVENT_CURSOR --limit 100 --pid "$CLINCH_CONTROL_PID"
+<ctl> agent wait AGENT_ID --until ready --timeout 120 --pid "$CLINCH_CONTROL_PID"
+<ctl> agent launch --provider claude --project PROJECT_ID --background --pid "$CLINCH_CONTROL_PID"
+<ctl> agent interrupt AGENT_ID --expected-revision REVISION --pid "$CLINCH_CONTROL_PID"
+```
+
+Keep one reader UUID per coordinating conversation (or set `CLINCH_INBOX_READER`).
+Inbox returns recent assistant text on first encounter and then drains new records
+forward. Check `older_content_omitted`, `has_more`, `deferred_conversations`, and per-agent
+errors. Checkpoints follow provider conversations through moves/restarts and expire
+after 90 inactive days. Normal inbox acknowledges only after successful output;
+`--peek` leaves checkpoints alone. A batch can be acknowledged explicitly within
+ten minutes. A concurrent checkpoint conflict requires another read. Different
+reader UUIDs never consume each other's messages. A replaced transcript requires
+rediscovery and a new reader if the old source can no longer be read.
+
+Events replay app-recorded lifecycle/status and organization changes, including
+while this CLI is disconnected. `--since` aliases `--after`; `--follow` streams
+NDJSON pages. Retention is seven days or 10,000 events. On `collection_gap` or an
+expired/wrong-instance cursor, inspect current state and start a fresh replay.
+This is not terminal-output capture or a guarantee of every transient readiness
+state. Historical scope filters can include closed project/section IDs.
+
+Wait supports `ready`, `working`, `attention`, and `turn-complete`; inspect its
+`matched`/`timed_out` result. Launch supports `claude` or `codex`, optional `--section`,
+`--cwd`, `--title`, `--prompt`/`--prompt-file`, and `--timeout` (default 30 seconds).
+Always use `--background` for delegated workers unless the user wants activation.
+Creation and readiness are separate: retain returned tab/pane IDs after timeout
+or observation error, and inspect before retrying so you do not duplicate workers.
+Provider installation, sign-in, and Clinch hooks are still required.
+
+Interrupt only when the user delegated stopping that worker's turn. Inspect first
+and copy its current revision. A writable working session is required; drafts,
+interactive prompts, stale identities and remote writers are rejected. The command
+requests a provider interrupt without closing the conversation. Verify subsequent
+state/output before assuming work stopped. No coordinator is required for these controls.
 
 ## Send delegated instructions
 

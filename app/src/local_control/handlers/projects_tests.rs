@@ -349,3 +349,254 @@ fn mismatched_window_and_project_fail_without_changing_focus() {
         assert_eq!(parent.read(&app, |parent, _| parent.projects().count()), 1);
     });
 }
+
+#[test]
+fn local_control_background_launch_preserves_inactive_project_selection_and_section_state() {
+    let _drag = warp_core::features::FeatureFlag::DragTabsToWindows.override_enabled(true);
+    let _groups = warp_core::features::FeatureFlag::GroupedTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        let parent = mock_projects(&mut app);
+        let bridge = app.add_singleton_model(LocalControlBridge::new);
+        let (id, workspace) = parent.read(&app, |parent, _| {
+            let (id, ws) = parent.projects().next().unwrap();
+            (id.opaque_id(), ws.clone())
+        });
+        let section = workspace.update(&mut app, |workspace, ctx| {
+            let section = workspace
+                .create_named_tab_group_from_tab(0, "Background".into(), ctx)
+                .unwrap();
+            workspace.tab_groups.get_mut(&section).unwrap().collapsed = true;
+            section
+        });
+        let selected = workspace.read(&app, |workspace, _| workspace.active_tab_pane_group().id());
+        parent.update(&mut app, |parent, ctx| parent.add_project(ctx));
+        let window_id = parent.update(&mut app, |_, ctx| ctx.window_id());
+        let focus = app.focused_view_id(window_id);
+        assert!(focus.is_some());
+        let active = parent.read(&app, |parent, _| parent.active_project_index());
+        bridge.update(&mut app, |_, ctx| {
+            let params = ::local_control::agents::AgentLaunchParams {
+                provider: ::local_control::agents::AgentProvider::Claude,
+                project_id: id,
+                section_id: Some(section.0.to_string()),
+                cwd: Some("/tmp".into()),
+                title: Some("Worker".into()),
+                prompt: Some("--literal prompt".into()),
+                background: true,
+            };
+            let created = crate::local_control::agents::launch(
+                &InstanceId("launch-test".into()),
+                params.clone(),
+                ctx,
+            )
+            .unwrap();
+            assert_eq!(created["created"], true);
+            assert!(created["pane_id"].is_string());
+            assert_eq!(parent.as_ref(ctx).active_project_index(), active);
+            assert_eq!(workspace.as_ref(ctx).active_tab_pane_group().id(), selected);
+            assert!(workspace.as_ref(ctx).tab_groups[&section].collapsed);
+            assert_eq!(workspace.as_ref(ctx).tabs[1].group_id, Some(section));
+            let mut invalid = params;
+            invalid.section_id = Some(Uuid::new_v4().to_string());
+            assert!(crate::local_control::agents::launch(
+                &InstanceId("launch-test".into()),
+                invalid,
+                ctx
+            )
+            .is_err());
+            assert_eq!(workspace.as_ref(ctx).tab_count(), 2);
+        });
+        app.update(|_| ());
+        assert_eq!(app.focused_view_id(window_id), focus);
+        async_io::Timer::after(std::time::Duration::from_millis(30)).await;
+        assert_eq!(app.focused_view_id(window_id), focus);
+    });
+}
+
+#[test]
+fn local_control_tasks_edit_stable_ids_and_complete_pending_items() {
+    App::test((), |mut app| async move {
+        let parent = mock_projects(&mut app);
+        let bridge = app.add_singleton_model(LocalControlBridge::new);
+        let id = parent.read(&app, |parent, _| {
+            parent.projects().next().unwrap().0.opaque_id()
+        });
+        bridge.update(&mut app, |_, ctx| {
+            let instance = InstanceId("tasks-test".into());
+            let target = TargetSelector {
+                project: Some(id),
+                ..Default::default()
+            };
+            let result = handle(
+                &instance,
+                &Action::with_params(
+                    ActionKind::ProjectTaskCreate,
+                    ::local_control::projects::ProjectTaskCreateParams {
+                        text: " review ".into(),
+                    },
+                )
+                .unwrap(),
+                &target,
+                ctx,
+            )
+            .unwrap();
+            let id = result["task_id"].as_str().unwrap().to_owned();
+            assert_eq!(result["tasks"][0]["text"], "review");
+            let updated = handle(
+                &instance,
+                &Action::with_params(
+                    ActionKind::ProjectTaskUpdate,
+                    ::local_control::projects::ProjectTaskUpdateParams {
+                        task_id: id.clone(),
+                        text: " ship ".into(),
+                    },
+                )
+                .unwrap(),
+                &target,
+                ctx,
+            )
+            .unwrap();
+            assert_eq!(updated["tasks"][0]["id"], id);
+            assert_eq!(updated["tasks"][0]["text"], "ship");
+            let result = handle(
+                &instance,
+                &Action::with_params(
+                    ActionKind::ProjectTaskComplete,
+                    ::local_control::projects::ProjectTaskIdParams {
+                        task_id: id.clone(),
+                    },
+                )
+                .unwrap(),
+                &target,
+                ctx,
+            )
+            .unwrap();
+            assert_eq!(result["completed"], true);
+            assert!(result["tasks"].as_array().unwrap().is_empty());
+            assert!(handle(
+                &instance,
+                &Action::with_params(
+                    ActionKind::ProjectTaskDelete,
+                    ::local_control::projects::ProjectTaskIdParams { task_id: id }
+                )
+                .unwrap(),
+                &target,
+                ctx
+            )
+            .is_err());
+        });
+    });
+}
+
+fn exercise_cross_window_transfer(keep_tasks: bool) {
+    let _groups = warp_core::features::FeatureFlag::GroupedTabs.override_enabled(true);
+    let _pins = warp_core::features::FeatureFlag::PinnedTabs.override_enabled(true);
+    App::test((), move |mut app| async move {
+        let source_parent = mock_projects(&mut app);
+        let resources = GlobalResourceHandles::mock(&mut app);
+        let (_, root) = app.add_window(WindowStyle::NotStealFocus, |ctx| {
+            RootView::new(
+                resources,
+                NewWorkspaceSource::Empty {
+                    previous_active_window: None,
+                    shell: None,
+                },
+                ctx,
+            )
+        });
+        let destination_parent = root.read(&app, |root, _| root.project_window()).unwrap();
+        let (source_id, source) = source_parent.read(&app, |parent, _| {
+            let (id, ws) = parent.projects().next().unwrap();
+            (id.opaque_id(), ws.clone())
+        });
+        let (destination_id, destination) = destination_parent.read(&app, |parent, _| {
+            let (id, ws) = parent.projects().next().unwrap();
+            (id.opaque_id(), ws.clone())
+        });
+        let destination_window = destination.update(&mut app, |_, ctx| ctx.window_id());
+        let section = destination.update(&mut app, |workspace, ctx| {
+            let id = workspace
+                .create_named_tab_group_from_tab(0, "Pinned".into(), ctx)
+                .unwrap();
+            workspace.pin_tab_group(id, ctx);
+            id
+        });
+        let pane = source.read(&app, |workspace, _| {
+            workspace.active_tab_pane_group().clone()
+        });
+        let terminal = pane.read(&app, |pane, ctx| pane.terminal_views(ctx)[0].clone());
+        source.update(&mut app, |workspace, ctx| {
+            workspace.tabs[0].selected_color = SelectedTabColor::Cleared;
+            if keep_tasks {
+                workspace.add_workspace_task("keep this task".into(), ctx);
+            }
+        });
+        let bridge = app.add_singleton_model(LocalControlBridge::new);
+        bridge.update(&mut app, |_, ctx| {
+            let target = TargetSelector {
+                project: Some(source_id),
+                tab: Some(TabTarget::Id {
+                    id: TabSelector(pane.id().to_string()),
+                }),
+                ..Default::default()
+            };
+            let params = TabTransferParams {
+                destination_project: destination_id,
+                section_id: Some(section.0.to_string()),
+                index: Some(0),
+            };
+            let moved = handle(
+                &InstanceId("cross-window".into()),
+                &Action::with_params(ActionKind::TabTransfer, params).unwrap(),
+                &target,
+                ctx,
+            )
+            .unwrap();
+            assert_eq!(moved["tab_id"], pane.id().to_string());
+            assert_eq!(source.as_ref(ctx).tab_count(), usize::from(keep_tasks));
+            assert_eq!(
+                source.as_ref(ctx).workspace_tasks().len(),
+                usize::from(keep_tasks)
+            );
+            let tab = destination
+                .as_ref(ctx)
+                .tabs
+                .iter()
+                .find(|tab| tab.pane_group.id() == pane.id())
+                .unwrap();
+            assert_eq!(tab.selected_color, SelectedTabColor::Cleared);
+            assert_eq!(tab.group_id, Some(section));
+            assert!(destination.as_ref(ctx).tab_groups[&section].pinned);
+            assert_eq!(destination.as_ref(ctx).tabs[0].pane_group.id(), pane.id());
+            assert_eq!(
+                tab.pane_group.as_ref(ctx).terminal_views(ctx)[0].id(),
+                terminal.id()
+            );
+        });
+        assert_eq!(
+            terminal.update(&mut app, |_, ctx| ctx.window_id()),
+            destination_window
+        );
+        terminal.update(&mut app, |view, ctx| {
+            assert_eq!(
+                view.input().update(ctx, |_, ctx| ctx.window_id()),
+                destination_window
+            );
+        });
+        // The test platform's close_window_async is a no-op; assert the project was
+        // removed before the native close request, while task-owning projects remain.
+        assert_eq!(
+            source_parent.read(&app, |parent, _| parent.projects().count()),
+            usize::from(keep_tasks)
+        );
+    });
+}
+
+#[test]
+fn local_control_cross_window_transfer_retains_project_tasks_and_live_terminal() {
+    exercise_cross_window_transfer(true);
+}
+#[test]
+fn local_control_cross_window_transfer_removes_empty_source_without_killing_terminal() {
+    exercise_cross_window_transfer(false);
+}

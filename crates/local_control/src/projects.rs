@@ -95,3 +95,20 @@ pub enum ResumeProvider {
     Claude,
     Codex,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectTaskCreateParams {
+    pub text: String,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectTaskUpdateParams {
+    pub task_id: String,
+    pub text: String,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectTaskIdParams {
+    pub task_id: String,
+}
