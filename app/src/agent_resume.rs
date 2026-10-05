@@ -961,6 +961,53 @@ pub fn agent_session_seed_from_restore_command(
     is_safe_session_id(launch.id).then(|| (provider, launch.id.to_string()))
 }
 
+/// Extracts the session a user resumes directly through the provider CLI (`codex resume <id>`,
+/// `claude --resume <id>`, `claude -r <id>`). Command detection already settled the provider, so
+/// shell aliases such as `cx resume <id>` resolve too. Without this, a hand-resumed pane stays
+/// anonymous until the agent emits a hook event, which Codex only does on the next prompt.
+///
+/// Only canonical UUIDs are accepted, so prompt words never pass for an id. Forks are rejected:
+/// they mint a new session, and the parent id would point the pane at the wrong conversation.
+pub fn session_id_from_direct_resume_command(
+    provider: AgentResumeProvider,
+    command: &str,
+) -> Option<String> {
+    let tokens: Vec<&str> = command
+        .split_whitespace()
+        .map(|token| token.trim_matches(|c| c == '\'' || c == '"'))
+        .collect();
+    match provider {
+        AgentResumeProvider::Codex => {
+            // The id is the subcommand's first positional argument; anything later (e.g. a
+            // prompt after `--last`) is not the resumed session.
+            let resume_index = tokens.iter().position(|token| *token == "resume")?;
+            let id = tokens[resume_index + 1..]
+                .iter()
+                .find(|token| !token.starts_with('-'))?;
+            is_session_uuid(id).then(|| (*id).to_owned())
+        }
+        AgentResumeProvider::Claude => {
+            if tokens.contains(&"--fork-session") {
+                return None;
+            }
+            tokens.iter().enumerate().find_map(|(index, token)| {
+                let id = match token.strip_prefix("--resume=") {
+                    Some(id) => id,
+                    None if matches!(*token, "--resume" | "-r") => {
+                        tokens.get(index + 1).copied()?
+                    }
+                    None => return None,
+                };
+                is_session_uuid(id).then(|| id.to_owned())
+            })
+        }
+    }
+}
+
+fn is_session_uuid(token: &str) -> bool {
+    token.len() == 36 && uuid::Uuid::parse_str(token).is_ok()
+}
+
 fn is_safe_session_id(session_id: &str) -> bool {
     !session_id.is_empty()
         && session_id

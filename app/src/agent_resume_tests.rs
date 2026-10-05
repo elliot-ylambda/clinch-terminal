@@ -117,6 +117,57 @@ fn prompt_timestamp_formatting_rejects_missing_or_invalid_values() {
 }
 
 #[test]
+fn direct_resume_command_yields_the_resumed_session_id() {
+    const ID: &str = "019fbab0-2150-7f93-9b10-7195f6c800e8";
+    let codex = AgentResumeProvider::Codex;
+    let claude = AgentResumeProvider::Claude;
+
+    for command in [
+        format!("codex resume {ID} --dangerously-bypass-approvals-and-sandbox --model gpt-5.6-sol"),
+        format!("cx resume {ID}"),
+        format!("codex --model x resume '{ID}' --search"),
+    ] {
+        assert_eq!(
+            session_id_from_direct_resume_command(codex, &command).as_deref(),
+            Some(ID),
+            "{command}"
+        );
+    }
+    for command in [
+        format!("claude --resume {ID} --dangerously-skip-permissions"),
+        format!("ca -r {ID}"),
+        format!("claude --resume={ID}"),
+    ] {
+        assert_eq!(
+            session_id_from_direct_resume_command(claude, &command).as_deref(),
+            Some(ID),
+            "{command}"
+        );
+    }
+
+    for (provider, command) in [
+        // Forks mint a new session; the parent id is not this pane's conversation.
+        (codex, format!("codex fork {ID}")),
+        (claude, format!("claude --resume {ID} --fork-session")),
+        // No explicit id (interactive picker / most recent) or a non-UUID token.
+        (codex, "codex resume --last".to_owned()),
+        (codex, "codex resume".to_owned()),
+        (claude, "claude --resume".to_owned()),
+        (claude, "claude --resume not-a-session".to_owned()),
+        // An id outside resume position, e.g. quoted in a fresh prompt.
+        (codex, format!("codex 'look at {ID}'")),
+        (codex, format!("codex resume --last 'look at {ID}'")),
+        (claude, format!("claude 'look at {ID}'")),
+    ] {
+        assert_eq!(
+            session_id_from_direct_resume_command(provider, &command),
+            None,
+            "{command}"
+        );
+    }
+}
+
+#[test]
 fn restore_command_seed_accepts_current_and_legacy_launchers() {
     assert_eq!(
         agent_session_seed_from_restore_command(
