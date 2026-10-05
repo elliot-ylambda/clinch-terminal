@@ -514,7 +514,7 @@ impl CLIAgentSession {
     }
 }
 
-fn provider_for_agent(agent: CLIAgent) -> Option<AgentResumeProvider> {
+pub(crate) fn provider_for_agent(agent: CLIAgent) -> Option<AgentResumeProvider> {
     match agent {
         CLIAgent::Claude => Some(AgentResumeProvider::Claude),
         CLIAgent::Codex => Some(AgentResumeProvider::Codex),

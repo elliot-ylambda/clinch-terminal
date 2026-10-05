@@ -16,7 +16,9 @@ use crate::ai::blocklist::agent_view::agent_input_footer::{
 use crate::terminal::cli_agent_sessions::auto_continue::AutoContinueModel;
 #[cfg(feature = "local_tty")]
 use crate::terminal::cli_agent_sessions::CLIAgentSessionContext;
-use crate::terminal::cli_agent_sessions::{CLIAgentInputEntrypoint, CLIAgentSessionsModel};
+use crate::terminal::cli_agent_sessions::{
+    provider_for_agent, CLIAgentInputEntrypoint, CLIAgentSessionsModel,
+};
 use crate::terminal::shared_session::{
     SharedSessionActionSource, SharedSessionScrollbackType, SharedSessionSource,
 };
@@ -54,7 +56,10 @@ use warpui::{
 };
 
 use super::{RichContentInsertionPosition, TerminalAction, TerminalView};
-use crate::agent_resume::{agent_session_seed_from_restore_command, AgentResumeProvider};
+use crate::agent_resume::{
+    agent_session_seed_from_restore_command, session_id_from_direct_resume_command,
+    AgentResumeProvider,
+};
 use crate::ai::blocklist::agent_view::agent_view_bg_fill;
 use crate::ai::blocklist::block::cli_controller::CLISubagentEvent;
 use crate::cmd_or_ctrl_shift;
@@ -781,20 +786,44 @@ impl TerminalView {
         })
     }
 
-    pub(super) fn active_resume_command_seed(&self) -> Option<(AgentResumeProvider, String)> {
+    fn active_long_running_command(&self) -> Option<String> {
         let model = self.model.lock();
         let active_block = model.block_list().active_block();
         active_block
             .is_active_and_long_running()
             .then(|| active_block.command_with_secrets_obfuscated(false))
+    }
+
+    pub(super) fn active_resume_command_seed(&self) -> Option<(AgentResumeProvider, String)> {
+        self.active_long_running_command()
             .and_then(|command| agent_session_seed_from_restore_command(&command))
     }
 
-    /// Hydrates a manually launched Clinch resume wrapper with its provider session identity.
-    /// Command detection knows the agent but otherwise creates an anonymous session, which cannot
-    /// load durable history until an optional structured provider event arrives.
+    /// Identity for a session the user resumed directly through the provider CLI
+    /// (`codex resume <id>`, `claude --resume <id>`), keyed by the agent command detection found.
+    fn active_direct_resume_command_seed(
+        &self,
+        ctx: &ViewContext<Self>,
+    ) -> Option<(AgentResumeProvider, String)> {
+        let agent = CLIAgentSessionsModel::as_ref(ctx)
+            .session(self.view_id)?
+            .agent;
+        let provider = provider_for_agent(agent)?;
+        let command = self.active_long_running_command()?;
+        session_id_from_direct_resume_command(provider, &command)
+            .map(|session_id| (provider, session_id))
+    }
+
+    /// Hydrates a manually resumed agent (the Clinch resume wrapper, or the provider CLI's own
+    /// resume command) with its provider session identity. Command detection knows the agent but
+    /// otherwise creates an anonymous session, which cannot load durable history or offer
+    /// Transfer until an optional structured provider event arrives, and Codex emits none until
+    /// the next prompt.
     pub(super) fn seed_cli_agent_from_active_resume_command(&self, ctx: &mut ViewContext<Self>) {
-        let Some((provider, session_id)) = self.active_resume_command_seed() else {
+        let Some((provider, session_id)) = self
+            .active_resume_command_seed()
+            .or_else(|| self.active_direct_resume_command_seed(ctx))
+        else {
             return;
         };
 

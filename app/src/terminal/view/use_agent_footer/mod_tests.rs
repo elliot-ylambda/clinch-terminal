@@ -317,6 +317,71 @@ fn manual_resume_wrapper_exposes_history_identity_from_the_active_command() {
     });
 }
 
+#[test]
+fn direct_codex_resume_exposes_identity_for_the_detected_agent() {
+    const ID: &str = "019fbab0-2150-7f93-9b10-7195f6c800e8";
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let terminal = add_window_with_terminal(&mut app, None);
+
+        terminal.update(&mut app, |view, ctx| {
+            {
+                let mut model = view.model.lock();
+                model.init_shell(InitShellValue {
+                    session_id: 0.into(),
+                    shell: "zsh".to_owned(),
+                    ..Default::default()
+                });
+                model.bootstrapped(BootstrappedValue {
+                    shell: "zsh".to_owned(),
+                    ..Default::default()
+                });
+                model.simulate_long_running_block(
+                    format!("codex resume {ID} --dangerously-bypass-approvals-and-sandbox")
+                        .as_str(),
+                    "",
+                );
+            }
+
+            // Codex emits no hook event until the next prompt, so command text is the only
+            // identity source. Without one the Transfer button stays disabled.
+            assert_eq!(view.active_resume_command_seed(), None);
+            assert_eq!(view.active_direct_resume_command_seed(ctx), None);
+
+            let view_id = view.view_id;
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                sessions.set_session(
+                    view_id,
+                    CLIAgentSession {
+                        agent: CLIAgent::Codex,
+                        status: CLIAgentSessionStatus::InProgress,
+                        session_context: CLIAgentSessionContext::default(),
+                        input_state: CLIAgentInputState::Closed,
+                        listener: None,
+                        plugin_version: None,
+                        remote_host: None,
+                        draft_text: None,
+                        custom_command_prefix: None,
+                        received_rich_notification: false,
+                        has_observed_turn_activity: false,
+                        turn_interrupted_by_user: false,
+                        prompt_history: Default::default(),
+                        prompt_history_load_state: Default::default(),
+                        prompt_history_generation: 0,
+                        should_auto_toggle_input: false,
+                    },
+                    ctx,
+                );
+            });
+
+            assert_eq!(
+                view.active_direct_resume_command_seed(ctx),
+                Some((AgentResumeProvider::Codex, ID.to_owned()))
+            );
+        });
+    });
+}
+
 fn transition_to_user_handoff_state(
     view: &mut TerminalView,
     reason: UserTakeOverReason,
