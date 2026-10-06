@@ -76,6 +76,33 @@ fn prompt_title_prefers_the_first_sentence_within_the_limit() {
 }
 
 #[test]
+fn prompt_titles_unwrap_pasted_content_before_selecting_a_sentence() {
+    for text in [
+        "<pasted_content id='d961'>Fix the sidebar. Then run tests.</pasted_content>",
+        "<pasted_content id=\"d961\">Fix the sidebar. Then run tests.</pasted_content>",
+        "<pasted_content>Fix the sidebar. Then run tests.",
+    ] {
+        assert_eq!(prompt_title(text).as_deref(), Some("Fix the sidebar."));
+    }
+    assert_eq!(
+        clean_prompt_title_text("Compare <pasted_content id='a'>one</pasted_content> and <pasted_content id='b'>two</pasted_content>").as_deref(),
+        Some("Compare one and two")
+    );
+    assert_eq!(
+        prompt_title("<pasted_content id='a'> </pasted_content>"),
+        None
+    );
+    assert_eq!(
+        prompt_title("Fix <div> markup").as_deref(),
+        Some("Fix <div> markup")
+    );
+    assert_eq!(
+        prompt_title("Keep <pasted_content_example> intact").as_deref(),
+        Some("Keep <pasted_content_example> intact")
+    );
+}
+
+#[test]
 fn prompt_title_collapses_whitespace_and_truncates_at_graphemes() {
     let long = format!("{} tail", "🧑🏽‍💻".repeat(80));
     let title = prompt_title(&long).unwrap();

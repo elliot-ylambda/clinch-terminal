@@ -42,7 +42,9 @@ use super::{
     is_running_project_command, project_cli_agent_activity, render_group_member_icon_collage,
     select_unique_pane_kinds, ProjectCliAgentActivity,
 };
-use crate::agent_resume::AgentConversation;
+use crate::agent_resume::{
+    clean_prompt_title_text, prompt_title, AgentConversation, AgentResumeProvider,
+};
 use crate::ai::agent::conversation::{ConversationStatus, StatusColorStyle};
 use crate::ai::agent::icons::yellow_stop_icon;
 use crate::ai::agent_management::AgentNotificationsModel;
@@ -67,7 +69,7 @@ use crate::safe_triangle::SafeTriangle;
 use crate::settings::ClinchSettings;
 use crate::tab::{tab_position_id, SelectedTabColor, TabData};
 use crate::terminal::cli_agent_sessions::{
-    session_context_enabled, CLIAgentSessionStatus, CLIAgentSessionsModel,
+    session_context_enabled, CLIAgentSessionKey, CLIAgentSessionStatus, CLIAgentSessionsModel,
 };
 use crate::terminal::session_settings::SessionSettings;
 use crate::terminal::view::TerminalViewState;
@@ -494,6 +496,12 @@ struct TabGroupMouseStates {
     add: MouseStateHandle,
     kebab: MouseStateHandle,
     close: MouseStateHandle,
+}
+
+#[derive(Clone, Default)]
+struct BookmarkedSessionMouseStates {
+    row: MouseStateHandle,
+    remove: MouseStateHandle,
 }
 
 #[derive(Clone, Default)]
@@ -1030,7 +1038,8 @@ pub(super) struct VerticalTabsPanelState {
     panel_right_click_mouse_state: MouseStateHandle,
     attention_chip_mouse_state: MouseStateHandle,
     bookmarked_section_mouse_states: TabGroupMouseStates,
-    bookmarked_session_mouse_states: RefCell<HashMap<(String, String), MouseStateHandle>>,
+    bookmarked_session_mouse_states:
+        RefCell<HashMap<(String, String), BookmarkedSessionMouseStates>>,
     pub(super) bookmarked_section_is_drop_target: bool,
     tasks_header_mouse_state: MouseStateHandle,
     tasks_add_mouse_state: MouseStateHandle,
@@ -2263,7 +2272,7 @@ fn render_new_tab_button(
     .finish()
 }
 
-fn render_workspace_task_action_button(
+fn render_sidebar_action_button(
     appearance: &Appearance,
     icon: WarpIcon,
     mouse_state: MouseStateHandle,
@@ -2321,13 +2330,17 @@ fn bookmarked_session_agent(conversation: &AgentConversation) -> Option<CLIAgent
 }
 
 fn bookmarked_session_title(conversation: &AgentConversation) -> String {
-    conversation.first_prompt.clone().unwrap_or_else(|| {
-        let short_id = conversation.session_id.chars().take(8).collect::<String>();
-        let provider = bookmarked_session_agent(conversation)
-            .map(|agent| agent.display_name())
-            .unwrap_or("Agent");
-        format!("{provider} session {short_id}")
-    })
+    conversation
+        .first_prompt
+        .as_deref()
+        .and_then(prompt_title)
+        .unwrap_or_else(|| {
+            let short_id = conversation.session_id.chars().take(8).collect::<String>();
+            let provider = bookmarked_session_agent(conversation)
+                .map(|agent| agent.display_name())
+                .unwrap_or("Agent");
+            format!("{provider} session {short_id}")
+        })
 }
 
 fn bookmarked_session_subtitle(conversation: &AgentConversation) -> String {
@@ -2352,10 +2365,11 @@ fn render_bookmarked_session_row(
     app: &AppContext,
 ) -> Option<Box<dyn Element>> {
     let command = conversation.reopen_command()?;
+    let provider = AgentResumeProvider::from_agent_name(&conversation.agent)?;
     let appearance = Appearance::as_ref(app);
     let theme = appearance.theme();
     let key = (conversation.agent.clone(), conversation.session_id.clone());
-    let mouse_state = state
+    let mouse_states = state
         .bookmarked_session_mouse_states
         .borrow_mut()
         .entry(key)
@@ -2408,11 +2422,21 @@ fn render_bookmarked_session_row(
         .with_spacing(8.)
         .with_child(icon)
         .with_child(Shrinkable::new(1., labels).finish())
+        .with_child(render_sidebar_action_button(
+            appearance,
+            WarpIcon::X,
+            mouse_states.remove,
+            "Unbookmark session",
+            WorkspaceAction::UnbookmarkAgentConversation(CLIAgentSessionKey {
+                provider,
+                session_id: conversation.session_id.clone(),
+            }),
+        ))
         .finish();
 
     let cwd = conversation.cwd.clone();
     Some(
-        Hoverable::new(mouse_state, move |mouse_state| {
+        Hoverable::new(mouse_states.row, move |mouse_state| {
             let mut container = Container::new(row)
                 .with_padding(Padding::uniform(6.).with_left(8.))
                 .with_corner_radius(CornerRadius::with_all(Radius::Pixels(ROW_CORNER_RADIUS)));
@@ -2421,6 +2445,7 @@ fn render_bookmarked_session_row(
             }
             container.finish()
         })
+        .with_defer_events_to_children()
         .with_cursor(Cursor::PointingHand)
         .on_click(move |ctx, _, _| {
             ctx.dispatch_typed_action(WorkspaceAction::ReopenAgentConversation {
@@ -2600,7 +2625,7 @@ fn render_workspace_task_row(
         .with_main_axis_size(MainAxisSize::Min)
         .with_cross_axis_alignment(CrossAxisAlignment::Center)
         .with_spacing(2.)
-        .with_child(render_workspace_task_action_button(
+        .with_child(render_sidebar_action_button(
             appearance,
             WarpIcon::ClaudeLogo,
             mouse_states.claude,
@@ -2610,7 +2635,7 @@ fn render_workspace_task_row(
                 agent: WorkspaceTaskAgent::Claude,
             },
         ))
-        .with_child(render_workspace_task_action_button(
+        .with_child(render_sidebar_action_button(
             appearance,
             WarpIcon::OpenAILogo,
             mouse_states.codex,
@@ -2620,7 +2645,7 @@ fn render_workspace_task_row(
                 agent: WorkspaceTaskAgent::Codex,
             },
         ))
-        .with_child(render_workspace_task_action_button(
+        .with_child(render_sidebar_action_button(
             appearance,
             WarpIcon::X,
             mouse_states.remove,
@@ -2698,7 +2723,7 @@ fn render_workspace_tasks(
         )
         .finish();
 
-    let add_button = render_workspace_task_action_button(
+    let add_button = render_sidebar_action_button(
         appearance,
         WarpIcon::Plus,
         state.tasks_add_mouse_state.clone(),
@@ -5301,11 +5326,16 @@ fn terminal_agent_text(terminal_view: &TerminalView, app: &AppContext) -> Termin
 
     if let Some(session) = cli_agent_session {
         if has_clinch_session_context {
-            agent_text.cli_agent_title = session.title_for_tab(false);
-            agent_text.cli_agent_latest_user_prompt = session.latest_user_prompt_for_chrome();
+            agent_text.cli_agent_title = terminal_view.cli_agent_title_for_chrome(false, app);
+            agent_text.cli_agent_latest_user_prompt = session
+                .latest_user_prompt_for_chrome()
+                .and_then(|prompt| clean_prompt_title_text(&prompt));
         } else {
             agent_text.cli_agent_title = session.session_context.title_like_text();
-            agent_text.cli_agent_latest_user_prompt = session.session_context.latest_user_prompt();
+            agent_text.cli_agent_latest_user_prompt = session
+                .session_context
+                .latest_user_prompt()
+                .and_then(|prompt| clean_prompt_title_text(&prompt));
         }
     }
 

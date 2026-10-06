@@ -49,6 +49,19 @@ No new section persistence schema is required for this MVP: membership, names, c
 and effective order already round-trip through `TabGroupSnapshot`, `tabs.tab_group_id`, and tab
 order. Empty sections remain intentionally unsupported.
 
+### Agent titles and saved-session actions
+
+Route pane headers and vertical-tab rows through the same CLI-agent title resolver. Prefer the
+terminal's natural OSC title after excluding shell, directory, and provider placeholders; preserve
+the explicit latest-prompt setting and fall back to the stable first-prompt title. Strip known
+paste wrapper tags only when deriving display titles, leaving prompt history unchanged.
+
+Saved-session rows dispatch removal with a durable provider/session key rather than requiring a
+terminal view ID. Use the existing bookmark persistence setter with `false`, refresh the shared
+bookmark snapshot, notify observing workspaces, and emit session updates for open copies. Give the
+row's Unbookmark button its own mouse state and defer row events to children so removal does not
+trigger the row's reopen action.
+
 ### Project tasks
 
 Add `workspace/task.rs` with:

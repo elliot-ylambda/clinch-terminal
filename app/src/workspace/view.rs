@@ -3706,6 +3706,9 @@ impl Workspace {
         ctx.subscribe_to_model(&CLIAgentSessionsModel::handle(ctx), |me, _, event, ctx| {
             me.handle_cli_agent_sessions_event(event, ctx);
         });
+        ctx.observe(&CLIAgentSessionsModel::handle(ctx), |_, _, ctx| {
+            ctx.notify();
+        });
 
         // Re-render tabs when a CLI-agent session's model changes.
         ctx.subscribe_to_model(&CliAgentUsageModel::handle(ctx), |_, _, _, ctx| {
@@ -25903,6 +25906,22 @@ impl TypedActionView for Workspace {
             UnpinTabGroup(group_id) => self.unpin_tab_group(*group_id, ctx),
             ToggleBookmarkedSessionsCollapsed => self.toggle_bookmarked_sessions_collapsed(ctx),
             SetBookmarkedSessionsColor(color) => self.set_bookmarked_sessions_color(*color, ctx),
+            UnbookmarkAgentConversation(key) => {
+                let result = CLIAgentSessionsModel::handle(ctx).update(ctx, |model, ctx| {
+                    model.remove_conversation_bookmark(key, ctx)
+                });
+                if let Err(error) = result {
+                    self.toast_stack.update(ctx, |toast_stack, ctx| {
+                        toast_stack.add_ephemeral_toast(
+                            DismissibleToast::error(format!(
+                                "Could not unbookmark this conversation: {error}"
+                            )),
+                            ctx,
+                        );
+                    });
+                }
+                ctx.notify();
+            }
             ToggleTasksCollapsed => self.toggle_tasks_collapsed(ctx),
             FocusTaskInput => self.focus_task_input(ctx),
             RemoveWorkspaceTask(task_id) => {

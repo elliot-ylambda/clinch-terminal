@@ -4,6 +4,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, Read};
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 use chrono::{DateTime, Local, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
@@ -53,14 +54,22 @@ pub struct AgentPromptHistory {
     pub is_partial: bool,
 }
 
+/// Removes paste transport markup from display titles without changing stored prompt history.
+pub fn clean_prompt_title_text(text: &str) -> Option<String> {
+    static PASTE_WRAPPER: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r"</?pasted_content(?:\s+[^<>]*?)?\s*>")
+            .expect("valid pasted-content wrapper pattern")
+    });
+    let unwrapped = PASTE_WRAPPER.replace_all(text, "");
+    let collapsed = unwrapped.split_whitespace().collect::<Vec<_>>().join(" ");
+    (!collapsed.is_empty()).then_some(collapsed)
+}
+
 /// Creates the stable, one-line title used for a CLI-agent session.
 pub fn prompt_title(text: &str) -> Option<String> {
     const MAX_GRAPHEMES: usize = 80;
 
-    let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    if collapsed.is_empty() {
-        return None;
-    }
+    let collapsed = clean_prompt_title_text(text)?;
 
     let graphemes = UnicodeSegmentation::graphemes(collapsed.as_str(), true).collect::<Vec<_>>();
     let visible_prefix_len = graphemes.len().min(MAX_GRAPHEMES);

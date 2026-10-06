@@ -1147,6 +1147,18 @@ impl TerminalView {
     }
 
     fn selected_cli_agent_title_for_chrome(&self, ctx: &AppContext) -> Option<String> {
+        self.cli_agent_title_for_chrome(
+            *TabSettings::as_ref(ctx).use_latest_user_prompt_as_conversation_title_in_tab_names,
+            ctx,
+        )
+    }
+
+    /// Shared by pane headers and both grouped and ungrouped sidebar rows.
+    pub(crate) fn cli_agent_title_for_chrome(
+        &self,
+        use_latest_prompt: bool,
+        ctx: &AppContext,
+    ) -> Option<String> {
         let session = CLIAgentSessionsModel::as_ref(ctx).session(self.view_id)?;
 
         let supports_session_context = session_context_enabled()
@@ -1158,10 +1170,9 @@ impl TerminalView {
             return None;
         }
 
-        let use_latest_prompt =
-            *TabSettings::as_ref(ctx).use_latest_user_prompt_as_conversation_title_in_tab_names;
         if supports_session_context {
-            session.title_for_tab(use_latest_prompt)
+            let agent_title = self.cli_agent_terminal_title(ctx);
+            session.title_for_tab(use_latest_prompt, agent_title.as_deref())
         } else if use_latest_prompt {
             session
                 .session_context

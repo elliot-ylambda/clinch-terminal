@@ -249,13 +249,28 @@ impl CLIAgentSession {
             .and_then(|prompt| prompt_title(&prompt.text))
     }
 
-    pub fn title_for_tab(&self, use_latest_prompt: bool) -> Option<String> {
+    pub fn title_for_tab(
+        &self,
+        use_latest_prompt: bool,
+        agent_title: Option<&str>,
+    ) -> Option<String> {
+        let agent_title = agent_title
+            .and_then(crate::agent_resume::clean_prompt_title_text)
+            .filter(|title| {
+                !matches!(
+                    title.to_ascii_lowercase().as_str(),
+                    "claude" | "claude code" | "codex"
+                )
+            });
         if use_latest_prompt {
             self.latest_user_prompt_for_chrome()
+                .and_then(|prompt| crate::agent_resume::clean_prompt_title_text(&prompt))
+                .or(agent_title)
                 .or_else(|| self.initial_prompt_title())
                 .or_else(|| self.session_context.title_like_text())
         } else {
-            self.initial_prompt_title()
+            agent_title
+                .or_else(|| self.initial_prompt_title())
                 .or_else(|| self.session_context.title_like_text())
         }
     }
@@ -757,6 +772,17 @@ impl CLIAgentSessionsModel {
         Ok(is_bookmarked)
     }
 
+    /// Removes a saved conversation directly, including sessions with no open pane.
+    pub fn remove_conversation_bookmark(
+        &mut self,
+        key: &CLIAgentSessionKey,
+        ctx: &mut ModelContext<Self>,
+    ) -> std::io::Result<()> {
+        crate::agent_resume::set_conversation_bookmark(key.provider, &key.session_id, false)?;
+        self.refresh_conversation_bookmarks_and_emit(key, ctx);
+        Ok(())
+    }
+
     fn conversation_session_key(
         &self,
         terminal_view_id: EntityId,
@@ -778,6 +804,9 @@ impl CLIAgentSessionsModel {
         ctx: &mut ModelContext<Self>,
     ) {
         self.bookmarked_conversations = bookmarked_conversations();
+        // Closed bookmarks have no pane to emit SessionUpdated for. Notify observers too so
+        // every project/window refreshes its saved-session section in that case.
+        ctx.notify();
         let affected_sessions = self
             .sessions
             .iter()
