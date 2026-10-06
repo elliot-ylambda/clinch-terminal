@@ -145,7 +145,7 @@ rollback_bundle() {
   done
   "$swap_tool" "$destination" "$backup" \
     || fail "could not atomically restore the previous Clinch bundle"
-  rm -f "$home/.warp/agent-resume/.app-terminating"
+  # Keep shutdown protection until the launched app initializes its capture runtime.
   launch_as_user "$uid" "$home" "$destination" "" 0 \
     || fail "previous Clinch was restored but could not be relaunched"
   rm -rf "$backup"
@@ -244,7 +244,8 @@ install_update() {
 
   preinstall_cleanup=0
   trap - EXIT
-  rm -f "$home/.warp/agent-resume/.app-terminating" "$success"
+  # Old agent hooks can outlive the app process; swapping bundles must not clear their guard.
+  rm -f "$success"
   {
     echo "Installing authenticated Clinch $version"
     if ! "$swap_tool" "$destination" "$candidate"; then

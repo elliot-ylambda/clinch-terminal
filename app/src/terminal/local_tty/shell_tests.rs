@@ -52,19 +52,19 @@ fn clinch_control_environment_requires_current_bundle_wrapper() {
     assert!(clinch_control_environment_for(
         "sh.clinch.ClinchDev",
         Some(bundle.path().to_owned()),
-        "warpctrl-local",
+        "clinch-local",
     )
     .is_none());
 
-    let wrapper = bin.join("warpctrl-local");
+    let wrapper = bin.join("clinch-local");
     write_executable(&wrapper);
     assert_eq!(
         clinch_control_environment_for(
             "sh.clinch.ClinchDev",
             Some(bundle.path().to_owned()),
-            "warpctrl-local",
+            "clinch-local",
         ),
-        Some(("warpctrl-local".to_owned(), wrapper))
+        Some(("clinch-local".to_owned(), wrapper))
     );
 }
 
@@ -72,7 +72,7 @@ fn clinch_control_environment_requires_current_bundle_wrapper() {
 #[cfg(unix)]
 fn clinch_control_environment_rejects_non_clinch_apps() {
     let bundle = tempfile::tempdir().unwrap();
-    let wrapper = bundle.path().join("bin/warpctrl");
+    let wrapper = bundle.path().join("bin/clinch");
     std::fs::create_dir_all(wrapper.parent().unwrap()).unwrap();
     write_executable(&wrapper);
 

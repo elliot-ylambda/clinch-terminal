@@ -43,6 +43,26 @@ use crate::{report_if_error, ASSETS};
 
 const BASH_HISTORY_SIZE_SENTINEL: &str = "57265949261";
 
+/// Command runners often disable terminal styling in their child environment.
+/// A GUI app launched from one of those commands must not pass that policy into
+/// every real PTY. Explicit launch overrides and shell startup preferences are
+/// applied after this scrub and remain authoritative.
+const INHERITED_AUTOMATION_ENV_VARS: &[&str] = &[
+    "NO_COLOR",
+    "FORCE_COLOR",
+    "CLICOLOR",
+    "CLICOLOR_FORCE",
+    "NODE_DISABLE_COLORS",
+    "CI",
+    "CONTINUOUS_INTEGRATION",
+];
+
+fn remove_inherited_automation_environment(builder: &mut Command) {
+    for key in INHERITED_AUTOMATION_ENV_VARS {
+        builder.env_remove(key);
+    }
+}
+
 fn apply_clinch_control_environment(
     builder: &mut Command,
     binding: Option<(String, PathBuf)>,
@@ -325,6 +345,7 @@ fn build_host_shell_command(
     builder.env("TERM_PROGRAM", "WarpTerminal");
     // Advertise 24-bit color support.
     builder.env("COLORTERM", "truecolor");
+    remove_inherited_automation_environment(&mut builder);
 
     // Prevent child processes from inheriting startup notification env.
     // See: https://specifications.freedesktop.org/startup-notification-spec/startup-notification-latest.txt
@@ -870,6 +891,7 @@ fn build_docker_sandbox_command(
     builder.env("TERM", "xterm-256color");
     builder.env("TERM_PROGRAM", "WarpTerminal");
     builder.env("COLORTERM", "truecolor");
+    remove_inherited_automation_environment(&mut builder);
     builder.env_remove("DESKTOP_STARTUP_ID");
     if let Some(version) = ChannelState::app_version() {
         builder.env("TERM_PROGRAM_VERSION", version);

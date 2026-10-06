@@ -356,8 +356,9 @@ impl TemplatableMCPServerManager {
 
         me.fetch_cloud_servers(ctx);
 
-        // If we're not in a test, try to load credentials from secure storage.
-        if !cfg!(test) {
+        // Clinch's CLI providers manage their own MCP credentials. Do not load
+        // the inherited account-backed agent's credentials in that channel.
+        if !cfg!(test) && warp_core::channel::ChannelState::has_backend() {
             me.server_credentials = load_credentials_from_secure_storage::<PersistedCredentialsMap>(
                 ctx,
                 TEMPLATABLE_MCP_CREDENTIALS_KEY,

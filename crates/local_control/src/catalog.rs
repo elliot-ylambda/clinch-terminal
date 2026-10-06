@@ -9,6 +9,7 @@ pub const PROTOCOL_VERSION: u32 = 1;
 pub enum TargetScope {
     Instance,
     Window,
+    Project,
     Tab,
     Pane,
     Session,
@@ -51,16 +52,38 @@ pub enum ActionParameterSpec {
     TabActivate,
     TabClose,
     TabCreate,
+    TabGrep,
     Text,
     ThemeName,
     ToolbeltButtonCreate,
     ToolbeltButtonDelete,
     ToolbeltButtonMove,
     ToolbeltList,
+    ToolbeltSuggestionList,
+    ToolbeltSuggestionResolve,
     SectionCreate,
     SectionId,
     SectionMove,
     SectionUpdate,
+    AgentScope,
+    AgentTarget,
+    AgentRead,
+    AgentSend,
+    AgentMessage,
+    AgentMessageList,
+    AgentLaunch,
+    AgentInterrupt,
+    AgentInbox,
+    AgentInboxAck,
+    AgentEvents,
+    ProjectTaskCreate,
+    ProjectTaskUpdate,
+    ProjectTaskId,
+
+    PaneRead,
+    ProjectCreate,
+    ProjectRestore,
+    TabTransfer,
 }
 
 /// Typed result contract for a catalog action.
@@ -81,9 +104,11 @@ pub enum ActionResultSpec {
     SurfaceList,
     TargetList,
     TargetMetadata,
+    TabGrep,
     ThemeList,
     ThemeState,
     ToolbeltState,
+    ToolbeltSuggestionState,
     SectionState,
 }
 
@@ -192,6 +217,44 @@ define_action_catalog! {
         CapabilityInspect => { name: "capability.inspect", status: Implemented, target: Capability, params: ActionName, result: CapabilityMetadata },
     }
 
+    coordination {
+        AgentLaunch => { name: "agent.launch", status: Implemented, target: Instance, params: AgentLaunch, result: TargetMetadata },
+        AgentInterrupt => { name: "agent.interrupt", status: Implemented, target: Instance, params: AgentInterrupt, result: Acknowledgement },
+        AgentInbox => { name: "agent.inbox", status: Implemented, target: Instance, params: AgentInbox, result: TargetList },
+        AgentInboxAck => { name: "agent.inbox.ack", status: Implemented, target: Instance, params: AgentInboxAck, result: Acknowledgement },
+        AgentEvents => { name: "agent.events", status: Implemented, target: Instance, params: AgentEvents, result: TargetList },
+        TabPin => { name: "tab.pin", status: Implemented, target: Tab, params: None, result: Acknowledgement },
+        TabUnpin => { name: "tab.unpin", status: Implemented, target: Tab, params: None, result: Acknowledgement },
+        SectionPin => { name: "section.pin", status: Implemented, target: Window, params: SectionId, result: SectionState },
+        SectionUnpin => { name: "section.unpin", status: Implemented, target: Window, params: SectionId, result: SectionState },
+        ProjectTaskList => { name: "project.task.list", status: Implemented, target: Project, params: None, result: TargetList },
+        ProjectTaskCreate => { name: "project.task.create", status: Implemented, target: Project, params: ProjectTaskCreate, result: TargetMetadata },
+        ProjectTaskUpdate => { name: "project.task.update", status: Implemented, target: Project, params: ProjectTaskUpdate, result: TargetMetadata },
+        ProjectTaskComplete => { name: "project.task.complete", status: Implemented, target: Project, params: ProjectTaskId, result: Acknowledgement },
+        ProjectTaskDelete => { name: "project.task.delete", status: Implemented, target: Project, params: ProjectTaskId, result: Acknowledgement },
+
+        PaneRead => { name: "pane.read", status: Implemented, target: Instance, params: PaneRead, result: TargetMetadata },
+        WorkspaceTree => { name: "workspace.tree", status: Implemented, target: Instance, params: AgentScope, result: TargetList },
+        ProjectList => { name: "project.list", status: Implemented, target: Instance, params: AgentScope, result: TargetList },
+        AgentList => { name: "agent.list", status: Implemented, target: Instance, params: AgentScope, result: TargetList },
+        AgentInspect => { name: "agent.inspect", status: Implemented, target: Instance, params: AgentTarget, result: TargetMetadata },
+        AgentRead => { name: "agent.read", status: Implemented, target: Instance, params: AgentRead, result: TargetMetadata },
+        AgentSend => { name: "agent.send", status: Implemented, target: Instance, params: AgentSend, result: Acknowledgement },
+        AgentMessageInspect => { name: "agent.message.inspect", status: Implemented, target: Instance, params: AgentMessage, result: TargetMetadata },
+        AgentMessageCancel => { name: "agent.message.cancel", status: Implemented, target: Instance, params: AgentMessage, result: Acknowledgement },
+        AgentMessageList => { name: "agent.message.list", status: Implemented, target: Instance, params: AgentMessageList, result: TargetList },
+    }
+
+    project {
+        ProjectInspect => { name: "project.inspect", status: Implemented, target: Project, params: None, result: TargetMetadata },
+        ProjectCreate => { name: "project.create", status: Implemented, target: Project, params: ProjectCreate, result: TargetMetadata },
+        ProjectActivate => { name: "project.activate", status: Implemented, target: Project, params: None, result: Acknowledgement },
+        ProjectClose => { name: "project.close", status: Implemented, target: Project, params: None, result: Acknowledgement },
+        ProjectExport => { name: "project.export", status: Implemented, target: Project, params: None, result: TargetMetadata },
+        ProjectRestore => { name: "project.restore", status: Implemented, target: Project, params: ProjectRestore, result: TargetMetadata },
+        TabTransfer => { name: "tab.transfer", status: Implemented, target: Tab, params: TabTransfer, result: TargetMetadata },
+    }
+
     window {
         WindowList => { name: "window.list", status: Implemented, target: Window, params: None, result: TargetList },
         WindowInspect => { name: "window.inspect", status: Implemented, target: Window, params: None, result: TargetMetadata },
@@ -203,6 +266,7 @@ define_action_catalog! {
     tab {
         TabList => { name: "tab.list", status: Implemented, target: Tab, params: None, result: TargetList },
         TabInspect => { name: "tab.inspect", status: Implemented, target: Tab, params: None, result: TargetMetadata },
+        TabGrep => { name: "tab.grep", status: Implemented, target: Tab, params: TabGrep, result: TabGrep },
         TabCreate => { name: "tab.create", status: Implemented, target: Tab, params: TabCreate, result: Acknowledgement },
         TabActivate => { name: "tab.activate", status: Implemented, target: Tab, params: TabActivate, result: Acknowledgement },
         TabMove => { name: "tab.move", status: Implemented, target: Tab, params: Direction, result: Acknowledgement },
@@ -272,6 +336,8 @@ define_action_catalog! {
         ToolbeltButtonCreate => { name: "toolbelt.button.create", status: Implemented, target: Settings, params: ToolbeltButtonCreate, result: ToolbeltState },
         ToolbeltButtonDelete => { name: "toolbelt.button.delete", status: Implemented, target: Settings, params: ToolbeltButtonDelete, result: ToolbeltState },
         ToolbeltButtonMove => { name: "toolbelt.button.move", status: Implemented, target: Settings, params: ToolbeltButtonMove, result: ToolbeltState },
+        ToolbeltSuggestionList => { name: "toolbelt.suggestion.list", status: Implemented, target: Settings, params: ToolbeltSuggestionList, result: ToolbeltSuggestionState },
+        ToolbeltSuggestionResolve => { name: "toolbelt.suggestion.resolve", status: Implemented, target: Settings, params: ToolbeltSuggestionResolve, result: Acknowledgement },
     }
 
     section {

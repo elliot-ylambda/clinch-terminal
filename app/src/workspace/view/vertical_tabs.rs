@@ -35,6 +35,7 @@ use warpui::prelude::Align;
 use warpui::text_layout::ClipConfig;
 use warpui::ui_components::components::{UiComponent, UiComponentStyles};
 use warpui::ui_components::text_input::TextInput;
+use warpui::units::IntoPixels;
 use warpui::{AppContext, EntityId, SingletonEntity, ViewHandle, WindowId};
 
 use super::{
@@ -189,6 +190,13 @@ pub(crate) fn vtab_group_position_id(group_id: TabGroupId) -> String {
 /// Stable hit-test rect for the built-in Bookmarked sessions section.
 pub(crate) const BOOKMARKED_SESSIONS_SECTION_POSITION_ID: &str =
     "vertical_tabs:bookmarked_sessions_section";
+/// Hit-test rect for the scrollable tab list, used to auto-scroll during drags.
+pub(crate) const VERTICAL_TABS_SCROLL_VIEWPORT_POSITION_ID: &str = "vertical_tabs:scroll_viewport";
+/// Depth of the band at each end of the tab list that auto-scrolls a drag.
+const DRAG_AUTOSCROLL_EDGE_BAND: f32 = 48.;
+/// Largest per-tick scroll, reached once the dragged tab is at (or past) the edge.
+const DRAG_AUTOSCROLL_MAX_STEP: f32 = 14.;
+
 /// Save-position id for the built-in bookmark section's kebab menu.
 pub(crate) const BOOKMARKED_SESSIONS_KEBAB_POSITION_ID: &str =
     "vertical_tabs:bookmarked_sessions_kebab";
@@ -668,7 +676,7 @@ fn render_pane_row_element(
         pane_color,
         badge_mouse_states: _,
         detail_hover_state,
-        display_granularity: _,
+        display_granularity,
         renamable_tab_index,
         pane_context_menu_tab_index,
         is_tab_being_renamed,
@@ -841,7 +849,10 @@ fn render_pane_row_element(
         pane_group_id,
         pane_id,
     };
-    if pane_context_menu_tab_index.is_some() && !is_pane_being_renamed {
+    if row_renames_pane(display_granularity, renamable_tab_index)
+        && !is_tab_being_renamed
+        && !is_pane_being_renamed
+    {
         row = row.on_double_click(move |ctx, _, _| {
             ctx.dispatch_typed_action(WorkspaceAction::RenamePane(pane_locator));
         });
@@ -1075,6 +1086,23 @@ impl Default for VerticalTabsPanelState {
             tasks_add_mouse_state: Default::default(),
             task_mouse_states: RefCell::default(),
             show_settings_popup: false,
+        }
+    }
+}
+
+impl VerticalTabsPanelState {
+    pub(super) fn width(&self) -> f32 {
+        self.resizable_state
+            .lock()
+            .map(|state| state.size())
+            .unwrap_or(PANEL_WIDTH)
+    }
+
+    pub(super) fn set_width(&self, width: f32) {
+        if width.is_finite() && width > 0. {
+            if let Ok(mut state) = self.resizable_state.lock() {
+                state.set_size(width.max(MIN_PANEL_WIDTH));
+            }
         }
     }
 }
@@ -1464,7 +1492,30 @@ fn resolve_summary_pane_kind_icons(
     }))
 }
 
+/// Per-tick scroll delta for a drag whose dragged element is centred at `drag_y`
+/// over a tab list occupying `viewport`: negative scrolls up, positive scrolls
+/// down, zero outside the edge bands. Speed ramps with depth into a band, and
+/// drags past the edge (e.g. onto the control bar) keep scrolling at full speed.
+pub(crate) fn drag_autoscroll_step(viewport: RectF, drag_y: f32) -> f32 {
+    let band = DRAG_AUTOSCROLL_EDGE_BAND.min(viewport.height() / 2.);
+    if band <= 0. || drag_y < viewport.min_y() - band || drag_y > viewport.max_y() + band {
+        return 0.;
+    }
+    let depth = if drag_y < viewport.min_y() + band {
+        -(viewport.min_y() + band - drag_y)
+    } else if drag_y > viewport.max_y() - band {
+        drag_y - (viewport.max_y() - band)
+    } else {
+        return 0.;
+    };
+    (depth / band).clamp(-1., 1.) * DRAG_AUTOSCROLL_MAX_STEP
+}
+
 impl VerticalTabsPanelState {
+    pub(super) fn scroll_by(&self, delta: f32) {
+        self.scroll_state.scroll_by(delta.into_pixels());
+    }
+
     pub(super) fn scroll_to_tab(&self, tab_index: usize) {
         self.scroll_state.scroll_to_position(ScrollTarget {
             position_id: tab_position_id(tab_index),
@@ -2778,15 +2829,19 @@ fn render_vertical_tabs_panel(
     let appearance = Appearance::as_ref(app);
     let theme = appearance.theme();
 
-    let scrollable_groups = ClippedScrollable::vertical(
-        state.scroll_state.clone(),
-        render_groups(state, workspace, app),
-        ScrollbarWidth::Custom(4.),
-        theme.nonactive_ui_detail().into(),
-        theme.active_ui_detail().into(),
-        ElementFill::None,
+    let scrollable_groups = SavePosition::new(
+        ClippedScrollable::vertical(
+            state.scroll_state.clone(),
+            render_groups(state, workspace, app),
+            ScrollbarWidth::Custom(4.),
+            theme.nonactive_ui_detail().into(),
+            theme.active_ui_detail().into(),
+            ElementFill::None,
+        )
+        .with_overlayed_scrollbar()
+        .finish(),
+        VERTICAL_TABS_SCROLL_VIEWPORT_POSITION_ID,
     )
-    .with_overlayed_scrollbar()
     .finish();
 
     // Lay out Tasks before the flexible tab list so a short task section gives its unused
@@ -2854,6 +2909,9 @@ fn render_vertical_tabs_panel(
         .with_dragbar_side(drag_side)
         .on_resize(|ctx, _| {
             ctx.notify();
+        })
+        .on_end_resizing(|ctx, _| {
+            ctx.dispatch_action("workspace:save_app", ());
         })
         .with_bounds_callback(Box::new(|window_size| {
             let max_width = window_size.x() * MAX_PANEL_WIDTH_RATIO;
@@ -3229,20 +3287,14 @@ fn render_tab_group_internal(
     let per_pane_colors = color_mode.into_per_pane_colors(&visible_pane_ids);
     let is_being_renamed = is_active && workspace.current_workspace_state.is_tab_being_renamed();
     let rename_editor = workspace.tab_rename_editor.clone();
-    let has_custom_title = pane_group.custom_title(app).is_some();
-    // In Panes view, tabs inside a group render individual pane rows, so each
-    // pane keeps its own generated title. Propagating the tab's custom title as
-    // an override here would shadow every pane's title with the same string.
-    // In Tabs/Summary modes there is only one row per tab, so the tab-level
-    // custom title is still the right thing to show.
-    let displayed_tab_title_override =
-        if in_tab_group && matches!(display_granularity, VerticalTabsDisplayGranularity::Panes) {
-            None
-        } else {
-            (!uses_outer_group_container)
-                .then(|| pane_group.custom_title(app))
-                .flatten()
-        };
+    let custom_title = pane_group.custom_title(app);
+    let has_custom_title = custom_title.is_some();
+    // A tab with one displayed session has no pane-title ambiguity, so its manual tab name
+    // replaces the generated title (including CLI-agent prompt titles). Split tabs retain their
+    // distinct pane names and show the manual tab name once in a header instead.
+    let use_tab_title_header = tab_title_uses_header(display_granularity, visible_pane_ids.len());
+    let show_tab_title_header = use_tab_title_header && (has_custom_title || is_being_renamed);
+    let displayed_tab_title_override = (!use_tab_title_header).then_some(custom_title).flatten();
     let is_menu_open_for_tab = workspace
         .show_tab_right_click_menu
         .is_some_and(|(idx, _)| idx == tab_index);
@@ -3304,8 +3356,8 @@ fn render_tab_group_internal(
                     displayed_tab_title_override.clone(),
                     (!uses_outer_group_container).then_some(tab_index),
                     None,
-                    !uses_outer_group_container && is_being_renamed,
-                    (!uses_outer_group_container).then_some(rename_editor.clone()),
+                    !use_tab_title_header && is_being_renamed,
+                    (!use_tab_title_header).then_some(rename_editor.clone()),
                     false,
                     None,
                     tab.pinned,
@@ -3360,10 +3412,10 @@ fn render_tab_group_internal(
                     display_granularity,
                     true,
                     displayed_tab_title_override.clone(),
-                    (!uses_outer_group_container).then_some(tab_index),
+                    (!use_tab_title_header).then_some(tab_index),
                     uses_outer_group_container.then_some(tab_index),
-                    !uses_outer_group_container && is_being_renamed,
-                    (!uses_outer_group_container).then_some(rename_editor.clone()),
+                    !use_tab_title_header && is_being_renamed,
+                    (!use_tab_title_header).then_some(rename_editor.clone()),
                     is_pane_being_renamed,
                     is_pane_being_renamed.then_some(workspace.pane_rename_editor.clone()),
                     tab.pinned,
@@ -3392,7 +3444,7 @@ fn render_tab_group_internal(
             let mut group = Flex::column()
                 .with_main_axis_size(MainAxisSize::Min)
                 .with_cross_axis_alignment(CrossAxisAlignment::Stretch);
-            if has_custom_title || is_being_renamed {
+            if show_tab_title_header {
                 group.add_child(render_group_header(
                     GroupHeaderProps {
                         tab_index,
@@ -3405,14 +3457,13 @@ fn render_tab_group_internal(
                 ));
             }
 
-            let show_header = has_custom_title || is_being_renamed;
             // The rows carry their own padding, so the card only needs enough of a
             // margin to keep a row's rounded highlight off the card's outline.
             let mut body_padding = Padding::uniform(0.)
                 .with_left(TAB_CARD_BODY_PADDING)
                 .with_right(TAB_CARD_BODY_PADDING)
                 .with_bottom(TAB_CARD_BODY_PADDING);
-            if !show_header {
+            if !show_tab_title_header {
                 body_padding = body_padding.with_top(TAB_CARD_BODY_PADDING);
             }
             group.add_child(
@@ -3452,7 +3503,27 @@ fn render_tab_group_internal(
             } else {
                 GROUP_BODY_BOTTOM_PADDING
             };
-            let mut container = Container::new(build_rows())
+            let rows = build_rows();
+            let tab_content = if show_tab_title_header {
+                Flex::column()
+                    .with_main_axis_size(MainAxisSize::Min)
+                    .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+                    .with_child(render_group_header(
+                        GroupHeaderProps {
+                            tab_index,
+                            pane_group,
+                            is_being_renamed,
+                            rename_editor: rename_editor.clone(),
+                            header_mouse_state: group_header_mouse_state.clone(),
+                        },
+                        app,
+                    ))
+                    .with_child(rows)
+                    .finish()
+            } else {
+                rows
+            };
+            let mut container = Container::new(tab_content)
                 .with_background(card_state.background(theme))
                 .with_corner_radius(CornerRadius::with_all(Radius::Pixels(ROW_CORNER_RADIUS)));
             // Same rule as the grouped-container branch: only a top-level tab is
@@ -3580,13 +3651,9 @@ fn render_tab_group_internal(
         .and_then(|gid| workspace.tab_groups.get(&gid))
         .is_some_and(|group| group.draggable_state.is_dragging());
 
-    // Sole group member: skip the per-tab drag so the outer group drag fires instead.
-    let is_sole_group_member = in_tab_group
-        && tab
-            .group_id
-            .is_some_and(|gid| super::group_has_single_member(&workspace.tabs, gid));
-
-    let draggable: Box<dyn Element> = if is_parent_group_dragging || is_sole_group_member {
+    // A sole member still needs its own drag so it can move to another project;
+    // dragging the section header continues to move the whole section.
+    let draggable: Box<dyn Element> = if is_parent_group_dragging {
         group_element
     } else {
         let draggable = Draggable::new(tab.draggable_state.clone(), group_element)
@@ -4920,10 +4987,11 @@ impl<'a> PaneProps<'a> {
     }
 
     fn displayed_title(&self) -> &str {
-        self.custom_vertical_tabs_title
-            .as_deref()
-            .or(self.display_title_override.as_deref())
-            .unwrap_or(self.title.as_str())
+        preferred_vertical_tab_title_override(
+            self.display_title_override.as_deref(),
+            self.custom_vertical_tabs_title.as_deref(),
+        )
+        .unwrap_or(self.title.as_str())
     }
 
     fn generated_or_tab_title(&self) -> &str {
@@ -4972,6 +5040,31 @@ fn pane_matches_query(props: &PaneProps<'_>, query_lower: &str, app: &AppContext
 
 fn uses_outer_group_container(display_granularity: VerticalTabsDisplayGranularity) -> bool {
     matches!(display_granularity, VerticalTabsDisplayGranularity::Panes)
+}
+
+fn tab_title_uses_header(
+    display_granularity: VerticalTabsDisplayGranularity,
+    visible_pane_count: usize,
+) -> bool {
+    matches!(display_granularity, VerticalTabsDisplayGranularity::Panes) && visible_pane_count > 1
+}
+
+/// A row renames its pane only when it shows the pane's own title: in Panes view
+/// with no tab to rename (split tabs, whose tab name lives in the header). Rows
+/// that display the tab name rename the tab instead.
+fn row_renames_pane(
+    display_granularity: VerticalTabsDisplayGranularity,
+    renamable_tab_index: Option<usize>,
+) -> bool {
+    matches!(display_granularity, VerticalTabsDisplayGranularity::Panes)
+        && renamable_tab_index.is_none()
+}
+
+fn preferred_vertical_tab_title_override<'a>(
+    tab_title: Option<&'a str>,
+    pane_title: Option<&'a str>,
+) -> Option<&'a str> {
+    tab_title.or(pane_title)
 }
 
 fn search_fragments_contain_query(fragments: &[String], query_lower: &str) -> bool {
@@ -5635,16 +5728,16 @@ fn render_title_override(
             .map(|rename_editor| render_inline_tab_rename_editor(rename_editor, appearance, app));
     }
 
-    props
-        .custom_vertical_tabs_title
-        .as_ref()
-        .or(props.display_title_override.as_ref())
-        .map(|title| {
-            Text::new_inline(title.clone(), appearance.ui_font_family(), font_size)
-                .with_clip(clip)
-                .with_color(text_color.into())
-                .finish()
-        })
+    preferred_vertical_tab_title_override(
+        props.display_title_override.as_deref(),
+        props.custom_vertical_tabs_title.as_deref(),
+    )
+    .map(|title| {
+        Text::new_inline(title.to_string(), appearance.ui_font_family(), font_size)
+            .with_clip(clip)
+            .with_color(text_color.into())
+            .finish()
+    })
 }
 
 fn render_pane_title_slot(
@@ -5659,10 +5752,10 @@ fn render_pane_title_slot(
     let title = render_title_override(props, font_size, text_color, clip, appearance, app)
         .unwrap_or_else(generated_title);
 
-    if !matches!(
-        props.display_granularity,
-        VerticalTabsDisplayGranularity::Panes
-    ) || props.shows_inline_tab_rename_editor()
+    // A row that renames its tab must not also rename the pane: both handlers
+    // fire on one double-click, and the losing editor commits a stale name.
+    if !row_renames_pane(props.display_granularity, props.renamable_tab_index)
+        || props.shows_inline_tab_rename_editor()
     {
         return title;
     }
@@ -6541,24 +6634,9 @@ fn render_badge_container(content: Box<dyn Element>, background: ThemeFill) -> B
 fn render_passive_worktree_badge(appearance: &Appearance) -> Box<dyn Element> {
     let theme = appearance.theme();
     let sub_text_color = theme.sub_text_color(theme.background());
-    let content = Flex::row()
-        .with_cross_axis_alignment(CrossAxisAlignment::Center)
-        .with_spacing(4.)
-        .with_child(
-            ConstrainedBox::new(UiIcon::Dataflow02.to_warpui_icon(sub_text_color).finish())
-                .with_width(BADGE_ICON_SIZE)
-                .with_height(BADGE_ICON_SIZE)
-                .finish(),
-        )
-        .with_child(
-            Text::new_inline(
-                TerminalView::LINKED_WORKTREE_LABEL.to_string(),
-                appearance.ui_font_family(),
-                10.,
-            )
-            .with_color(sub_text_color.into())
-            .finish(),
-        )
+    let content = ConstrainedBox::new(UiIcon::Dataflow02.to_warpui_icon(sub_text_color).finish())
+        .with_width(BADGE_ICON_SIZE)
+        .with_height(BADGE_ICON_SIZE)
         .finish();
 
     render_badge_container(content, internal_colors::fg_overlay_1(theme))

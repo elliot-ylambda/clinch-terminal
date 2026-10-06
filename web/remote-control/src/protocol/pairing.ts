@@ -22,6 +22,45 @@ async function post<T>(endpoint: string, body: unknown): Promise<T> {
   return payload as T;
 }
 
+/**
+ * The short code both screens show while a claim waits for approval. It is the head of the phone
+ * key's SHA-256 fingerprint, so a match proves the Mac is approving this phone's key and not one a
+ * bystander claimed with the same QR code.
+ */
+export function pairingCode(fingerprint: string): string {
+  const head = fingerprint.slice(0, 8).toUpperCase();
+  return `${head.slice(0, 4)}-${head.slice(4)}`;
+}
+
+function devicePlatform(userAgent: string, maxTouchPoints: number): "ipados" | "ios" | "other" {
+  // iPadOS asks for desktop sites by default and then reports itself as a Mac with a touchscreen.
+  if (/iPad/i.test(userAgent) || (/Macintosh/i.test(userAgent) && maxTouchPoints > 1)) return "ipados";
+  return /iPhone|iPod/i.test(userAgent) ? "ios" : "other";
+}
+
+/** A short, recognizable name for the Mac's approval prompt and paired-phones list. */
+export function defaultDeviceName(userAgent: string, maxTouchPoints: number): string {
+  const platform = devicePlatform(userAgent, maxTouchPoints);
+  const device = platform === "ipados"
+    ? "iPad"
+    : platform === "ios"
+      ? "iPhone"
+      : /Android/i.test(userAgent)
+        ? "Android"
+        : undefined;
+  if (!device) return "Mobile browser";
+  const browser = /EdgiOS|EdgA/i.test(userAgent)
+    ? "Edge"
+    : /FxiOS|Firefox/i.test(userAgent)
+      ? "Firefox"
+      : /CriOS/i.test(userAgent) || (device === "Android" && /Chrome/i.test(userAgent))
+        ? "Chrome"
+        : device === "Android"
+          ? "Browser"
+          : "Safari";
+  return `${device} · ${browser}`;
+}
+
 export async function claimPhone(
   invitation: PairingFragment,
   identity: DeviceIdentity,
@@ -30,7 +69,7 @@ export async function claimPhone(
     invitation_id: invitation.invitationId,
     secret: invitation.secret,
     device_name: identity.deviceName,
-    platform: /iPad/i.test(navigator.userAgent) ? "ipados" : /iPhone/i.test(navigator.userAgent) ? "ios" : "other",
+    platform: devicePlatform(navigator.userAgent, navigator.maxTouchPoints),
     public_key_p256_raw: identity.publicKeyP256Raw,
   });
 }
@@ -43,7 +82,7 @@ export async function waitForApproval(receipt: PairingClaimReceipt): Promise<Pai
       claim_secret: receipt.claim_secret,
     });
     if (status.status !== "pending") return status;
-    await new Promise((resolve) => setTimeout(resolve, 3_000));
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
   }
   return { status: "expired" };
 }

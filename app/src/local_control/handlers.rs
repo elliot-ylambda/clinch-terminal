@@ -7,8 +7,10 @@ pub(super) mod close;
 pub(super) mod layout;
 pub(super) mod metadata;
 pub(super) mod metadata_config;
+pub(super) mod projects;
 pub(super) mod sections;
 pub(super) mod settings_surfaces;
+pub(super) mod tab_grep;
 pub(super) mod toolbelt;
 
 /// Standard acknowledgement payload shared by mutation handlers.

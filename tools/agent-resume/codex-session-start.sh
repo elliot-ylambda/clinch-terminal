@@ -13,7 +13,7 @@ BIN="$(cd "$(dirname "$0")" && pwd)"
 owner_fields="$("$BIN/clinch-agent-resume" hook-owner-fields 2>/dev/null)" || exit 0
 IFS='|' read -r owner_pid owner_tty64 <<<"$owner_fields"
 fields="$(printf '%s' "$payload" | "$BIN/agent-json" hook-fields 2>/dev/null)" || exit 0
-IFS='|' read -r sid64 cwd64 _event64 pmode64 model64 <<<"$fields"
+IFS='|' read -r sid64 cwd64 _event64 pmode64 model64 _reason64 <<<"$fields"
 decode() { printf '%s' "$1" | /usr/bin/base64 -D 2>/dev/null; }
 sid="$(decode "$sid64")" || exit 0
 cwd="$(decode "$cwd64")" || exit 0

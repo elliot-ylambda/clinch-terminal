@@ -3084,6 +3084,7 @@ impl PaneGroup {
         server_api: Arc<ServerApi>,
         model_event_sender: Option<SyncSender<ModelEvent>>,
         initial_layout_callback: InitialLayoutCallback,
+        focus_on_create: bool,
         ctx: &mut ViewContext<Self>,
     ) -> Self {
         let windowing_state = WindowManager::handle(ctx);
@@ -3245,7 +3246,7 @@ impl PaneGroup {
 
         // Notify any restored panes that they belong to this pane group.
         pane_group.reattach_panes(ctx);
-        if FeatureFlag::DragTabsToWindows.is_enabled() {
+        if focus_on_create && FeatureFlag::DragTabsToWindows.is_enabled() {
             pane_group.focus(ctx);
         }
         ctx.notify();
@@ -3465,6 +3466,29 @@ impl PaneGroup {
         model_event_sender: Option<SyncSender<ModelEvent>>,
         ctx: &mut ViewContext<Self>,
     ) -> Self {
+        Self::new_with_panes_layout_and_focus(
+            tips_completed,
+            user_default_shell_unsupported_banner_model_handle,
+            server_api,
+            panes_layout,
+            block_lists,
+            model_event_sender,
+            true,
+            ctx,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_with_panes_layout_and_focus(
+        tips_completed: ModelHandle<TipsCompleted>,
+        user_default_shell_unsupported_banner_model_handle: ModelHandle<BannerState>,
+        server_api: Arc<ServerApi>,
+        panes_layout: PanesLayout,
+        block_lists: Arc<HashMap<PaneUuid, Vec<SerializedBlockListItem>>>,
+        model_event_sender: Option<SyncSender<ModelEvent>>,
+        focus_on_create: bool,
+        ctx: &mut ViewContext<Self>,
+    ) -> Self {
         let unsupported_banner_model_handle =
             user_default_shell_unsupported_banner_model_handle.clone();
         let model_event_sender_clone = model_event_sender.clone();
@@ -3550,6 +3574,7 @@ impl PaneGroup {
             server_api,
             model_event_sender.clone(),
             Box::new(initial_layout),
+            focus_on_create,
             ctx,
         );
 
@@ -3592,6 +3617,7 @@ impl PaneGroup {
             server_api,
             model_event_sender,
             Box::new(initial_layout),
+            true,
             ctx,
         )
     }
@@ -3635,6 +3661,7 @@ impl PaneGroup {
             server_api,
             model_event_sender,
             Box::new(initial_layout),
+            true,
             ctx,
         )
     }
@@ -3679,6 +3706,7 @@ impl PaneGroup {
             server_api,
             model_event_sender,
             Box::new(initial_layout),
+            true,
             ctx,
         )
     }
@@ -3726,6 +3754,7 @@ impl PaneGroup {
             server_api,
             model_event_sender,
             Box::new(initial_layout),
+            true,
             ctx,
         )
     }
@@ -5223,12 +5252,16 @@ impl PaneGroup {
     }
 
     pub fn set_title(&mut self, title: &str, ctx: &mut ViewContext<Self>) {
-        self.custom_title = Some(title.to_string()).filter(|t| !t.is_empty());
+        self.set_title_without_focus(title);
 
         // refocus on the focused pane
         if let Some(pane) = self.focused_pane_content(ctx) {
             pane.focus(ctx);
         }
+    }
+
+    pub(crate) fn set_title_without_focus(&mut self, title: &str) {
+        self.custom_title = Some(title.to_string()).filter(|t| !t.is_empty());
     }
 
     pub fn clear_title(&mut self, ctx: &mut ViewContext<Self>) {

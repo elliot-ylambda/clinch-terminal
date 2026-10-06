@@ -459,6 +459,7 @@ diesel::table! {
         tasks -> Text,
         tasks_collapsed -> Bool,
         bookmarked_sessions_color -> Nullable<Text>,
+        vertical_tabs_panel_width -> Nullable<Float>,
     }
 }
 

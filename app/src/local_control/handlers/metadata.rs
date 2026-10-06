@@ -40,7 +40,11 @@ fn active_session_target(target: &TargetSelector) -> TargetSelector {
         return target.clone();
     }
     TargetSelector {
-        window: target.window.clone().or(Some(WindowTarget::Active)),
+        project: target.project.clone(),
+        window: target
+            .window
+            .clone()
+            .or_else(|| target.project.is_none().then_some(WindowTarget::Active)),
         tab: target.tab.clone().or(Some(TabTarget::Active)),
         pane: target.pane.clone().or(Some(PaneTarget::Active)),
         session: target.session.clone(),
@@ -104,6 +108,7 @@ pub(super) struct TabEntry {
     pub(super) window_index: usize,
     pub(super) index: usize,
     pub(super) workspace_active_tab_index: usize,
+    pub(super) workspace: ViewHandle<Workspace>,
     pub(super) pane_group: ViewHandle<PaneGroup>,
 }
 
@@ -408,7 +413,11 @@ pub(crate) fn window_inspect(
         "tab, pane, or session selectors",
     )?;
     let target = TargetSelector {
-        window: target.window.clone().or(Some(WindowTarget::Active)),
+        project: target.project.clone(),
+        window: target
+            .window
+            .clone()
+            .or_else(|| target.project.is_none().then_some(WindowTarget::Active)),
         tab: None,
         pane: None,
         session: None,
@@ -459,6 +468,7 @@ pub(crate) fn tab_inspect(
         "pane or session selectors",
     )?;
     let target = TargetSelector {
+        project: target.project.clone(),
         window: target.window.clone(),
         tab: target.tab.clone().or(Some(TabTarget::Active)),
         pane: None,
@@ -519,6 +529,7 @@ pub(crate) fn pane_inspect(
         "session selectors",
     )?;
     let target = TargetSelector {
+        project: target.project.clone(),
         window: target.window.clone(),
         tab: target.tab.clone(),
         pane: target.pane.clone().or(Some(PaneTarget::Active)),
@@ -646,6 +657,14 @@ fn select_window_entries(
     ctx: &mut ModelContext<LocalControlBridge>,
 ) -> Result<Vec<WindowEntry>, ControlError> {
     let entries = window_entries(ctx);
+    if target.project.is_some() {
+        let window_id =
+            crate::local_control::resolver::target_window_id_for_target(ctx, target, action)?;
+        return Ok(entries
+            .into_iter()
+            .filter(|entry| entry.window_id == window_id)
+            .collect());
+    }
     match target.window.as_ref() {
         None if force_active_default => {
             let active =
@@ -715,7 +734,15 @@ fn select_tab_entries(
         Some(PaneTarget::Active | PaneTarget::Index { .. })
     );
     let windows = select_window_entries(target, force_active_window, action, ctx)?;
-    let entries = tab_entries_for_windows(windows, action, ctx)?;
+    let entries = if let Some(id) = &target.project {
+        let project = super::projects::resolve_project(id, ctx)?;
+        tab_entries_for_windows_including_projects(windows, action, ctx)?
+            .into_iter()
+            .filter(|entry| entry.workspace.id() == project.workspace.id())
+            .collect()
+    } else {
+        tab_entries_for_windows(windows, action, ctx)?
+    };
     let requires_active_tab_default = matches!(
         target.pane,
         Some(PaneTarget::Active | PaneTarget::Index { .. })
@@ -768,7 +795,7 @@ fn select_tab_entries(
     }
 }
 
-fn select_pane_entries(
+pub(super) fn select_pane_entries(
     target: &TargetSelector,
     action: ActionKind,
     ctx: &mut ModelContext<LocalControlBridge>,
@@ -825,24 +852,48 @@ pub(super) fn tab_entries_for_windows(
     action: ActionKind,
     ctx: &mut ModelContext<LocalControlBridge>,
 ) -> Result<Vec<TabEntry>, ControlError> {
+    tab_entries_for_windows_with_project_scope(windows, action, false, ctx)
+}
+
+pub(super) fn tab_entries_for_windows_including_projects(
+    windows: Vec<WindowEntry>,
+    action: ActionKind,
+    ctx: &mut ModelContext<LocalControlBridge>,
+) -> Result<Vec<TabEntry>, ControlError> {
+    tab_entries_for_windows_with_project_scope(windows, action, true, ctx)
+}
+
+fn tab_entries_for_windows_with_project_scope(
+    windows: Vec<WindowEntry>,
+    action: ActionKind,
+    include_inactive_projects: bool,
+    ctx: &mut ModelContext<LocalControlBridge>,
+) -> Result<Vec<TabEntry>, ControlError> {
     let mut entries = Vec::new();
     for window in windows {
-        let Some(workspace) = workspace_for_window(window.window_id, action, ctx)? else {
-            continue;
+        let workspaces = if include_inactive_projects {
+            WorkspaceRegistry::as_ref(ctx).get_all(window.window_id, ctx)
+        } else {
+            workspace_for_window(window.window_id, action, ctx)?
+                .into_iter()
+                .collect()
         };
-        entries.extend(workspace.read(ctx, |workspace, _| {
-            workspace
-                .tab_views()
-                .enumerate()
-                .map(|(index, pane_group)| TabEntry {
-                    window_id: window.window_id,
-                    window_index: window.index,
-                    index,
-                    workspace_active_tab_index: workspace.active_tab_index(),
-                    pane_group: pane_group.clone(),
-                })
-                .collect::<Vec<_>>()
-        }));
+        for workspace in workspaces {
+            entries.extend(workspace.read(ctx, |workspace_ref, _| {
+                workspace_ref
+                    .tab_views()
+                    .enumerate()
+                    .map(|(index, pane_group)| TabEntry {
+                        window_id: window.window_id,
+                        window_index: window.index,
+                        index,
+                        workspace_active_tab_index: workspace_ref.active_tab_index(),
+                        workspace: workspace.clone(),
+                        pane_group: pane_group.clone(),
+                    })
+                    .collect::<Vec<_>>()
+            }));
+        }
     }
     Ok(entries)
 }

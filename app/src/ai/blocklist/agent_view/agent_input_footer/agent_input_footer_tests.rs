@@ -21,6 +21,76 @@ enum ObservedEvent {
     CopyAndClearDraft,
 }
 
+fn codex_session(session_id: Option<&str>) -> CLIAgentSession {
+    CLIAgentSession {
+        agent: CLIAgent::Codex,
+        status: CLIAgentSessionStatus::InProgress,
+        session_context: CLIAgentSessionContext {
+            session_id: session_id.map(str::to_owned),
+            ..CLIAgentSessionContext::default()
+        },
+        input_state: CLIAgentInputState::Closed,
+        listener: None,
+        plugin_version: None,
+        remote_host: None,
+        draft_text: None,
+        custom_command_prefix: None,
+        received_rich_notification: false,
+        has_observed_turn_activity: false,
+        turn_interrupted_by_user: false,
+        prompt_history: Default::default(),
+        prompt_history_load_state: Default::default(),
+        prompt_history_generation: 0,
+        should_auto_toggle_input: false,
+    }
+}
+
+#[test]
+fn conversation_actions_keep_their_slots_while_session_identity_is_pending() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let terminal = add_window_with_terminal(&mut app, None);
+        let footer = terminal.read(&app, |view, ctx| {
+            view.input().as_ref(ctx).agent_input_footer().clone()
+        });
+        let bookmark_button = footer.read(&app, |footer, _| {
+            footer.bookmark_conversation_button.clone()
+        });
+
+        assert!(footer.read(&app, |footer, ctx| {
+            footer
+                .render_cli_toolbar_item(
+                    &AgentToolbarItemKind::BookmarkConversation,
+                    &SharedSessionStatus::NotShared,
+                    false,
+                    ctx,
+                )
+                .is_some()
+        }));
+        assert!(bookmark_button.read(&app, |button, _| button.is_disabled()));
+
+        CLIAgentSessionsModel::handle(&app).update(&mut app, |sessions, ctx| {
+            sessions.set_session(terminal.id(), codex_session(None), ctx);
+        });
+        assert!(footer.read(&app, |footer, ctx| {
+            footer
+                .render_cli_toolbar_item(
+                    &AgentToolbarItemKind::TransferAgent,
+                    &SharedSessionStatus::NotShared,
+                    false,
+                    ctx,
+                )
+                .is_some()
+        }));
+        assert!(bookmark_button.read(&app, |button, _| button.is_disabled()));
+
+        CLIAgentSessionsModel::handle(&app).update(&mut app, |sessions, ctx| {
+            sessions.set_session(terminal.id(), codex_session(Some("codex-session")), ctx);
+        });
+        assert!(!bookmark_button.read(&app, |button, _| button.is_disabled()));
+    });
+}
+
 #[test]
 fn custom_insert_writes_command_in_terminal_and_submits_text_to_cli_agent() {
     App::test((), |mut app| async move {
@@ -81,28 +151,7 @@ fn custom_insert_writes_command_in_terminal_and_submits_text_to_cli_agent() {
 
         observed.borrow_mut().clear();
         CLIAgentSessionsModel::handle(&app).update(&mut app, |sessions, ctx| {
-            sessions.set_session(
-                terminal.id(),
-                CLIAgentSession {
-                    agent: CLIAgent::Codex,
-                    status: CLIAgentSessionStatus::InProgress,
-                    session_context: CLIAgentSessionContext::default(),
-                    input_state: CLIAgentInputState::Closed,
-                    listener: None,
-                    plugin_version: None,
-                    remote_host: None,
-                    draft_text: None,
-                    custom_command_prefix: None,
-                    received_rich_notification: false,
-                    has_observed_turn_activity: false,
-                    turn_interrupted_by_user: false,
-                    prompt_history: Default::default(),
-                    prompt_history_load_state: Default::default(),
-                    prompt_history_generation: 0,
-                    should_auto_toggle_input: false,
-                },
-                ctx,
-            );
+            sessions.set_session(terminal.id(), codex_session(None), ctx);
         });
 
         footer.update(&mut app, |footer, ctx| {

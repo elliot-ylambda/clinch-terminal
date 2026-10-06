@@ -520,7 +520,48 @@ impl CLIAgentToolbarChipSelection {
         }
     }
 
+    fn retired_default_snapshot_item_count(&self) -> usize {
+        match self {
+            Self::Default => 0,
+            Self::Custom { left, right, .. } => left
+                .iter()
+                .chain(right)
+                .filter(|item| item.is_retired_cli_default_snapshot_item())
+                .count(),
+        }
+    }
+
+    fn should_normalize_retired_default_snapshot(&self) -> bool {
+        let Self::Custom {
+            left,
+            right,
+            inherit_defaults,
+            ..
+        } = self
+        else {
+            return false;
+        };
+        if !*inherit_defaults {
+            return true;
+        }
+
+        // During the provider-split release, opening and saving an inherited legacy footer could
+        // materialize it as a modern live overlay. Recognize that otherwise-unversioned snapshot
+        // by the complete historical quick-insert catalog plus at least one retired host control.
+        // A user who opted into one (or even several) presets does not match this signature.
+        let presets = AgentToolbarItemKind::retired_cli_default_quick_insert_snapshot_items();
+        let contains_all_presets = presets
+            .iter()
+            .all(|preset| left.iter().chain(right).any(|item| item == preset));
+        let contains_retired_host_control = left
+            .iter()
+            .chain(right)
+            .any(|item| item.is_retired_cli_default_snapshot_item() && !presets.contains(item));
+        contains_all_presets && contains_retired_host_control
+    }
+
     fn effective_items(&self) -> (Vec<AgentToolbarItemKind>, Vec<AgentToolbarItemKind>) {
+        let normalize_retired_snapshot = self.should_normalize_retired_default_snapshot();
         match self {
             Self::Default => (
                 AgentToolbarItemKind::cli_default_left(),
@@ -537,12 +578,29 @@ impl CLIAgentToolbarChipSelection {
             } => {
                 let default_left = AgentToolbarItemKind::cli_default_left();
                 let default_right = AgentToolbarItemKind::cli_default_right();
+                // Before live-default overlays existed, settings serialized the complete footer;
+                // the provider-split release could then re-save that inherited snapshot as an
+                // overlay. Items Clinch shipped at the time otherwise survive forever as apparent
+                // user customizations when product defaults change. Strip only exact historical
+                // definitions from recognized snapshots; edited/custom variants remain.
+                let normalize_legacy_snapshot = |items: &[AgentToolbarItemKind]| {
+                    items
+                        .iter()
+                        .filter(|item| {
+                            !normalize_retired_snapshot
+                                || !item.is_retired_cli_default_snapshot_item()
+                        })
+                        .cloned()
+                        .collect::<Vec<_>>()
+                };
+                let left = normalize_legacy_snapshot(left);
+                let right = normalize_legacy_snapshot(right);
                 if *preserve_order {
                     merge_ordered_toolbar_defaults_and_custom_items(
                         default_left,
                         default_right,
-                        left,
-                        right,
+                        &left,
+                        &right,
                         hidden_defaults,
                         overridden_defaults,
                         *inherit_defaults,
@@ -551,8 +609,8 @@ impl CLIAgentToolbarChipSelection {
                     merge_toolbar_defaults_and_custom_items(
                         default_left,
                         default_right,
-                        left,
-                        right,
+                        &left,
+                        &right,
                         hidden_defaults,
                         *inherit_defaults,
                     )
@@ -718,6 +776,34 @@ impl ToolbarChipSelection for TerminalToolbarChipSelection {
     }
 }
 
+fn choose_pre_unified_coding_agent_selection<'a>(
+    legacy: &'a CLIAgentToolbarChipSelection,
+    claude: Option<&'a CLIAgentToolbarChipSelection>,
+    codex: Option<&'a CLIAgentToolbarChipSelection>,
+) -> &'a CLIAgentToolbarChipSelection {
+    match (claude, codex) {
+        (Some(claude), None) => claude,
+        (None, Some(codex)) => codex,
+        (Some(claude), Some(codex)) if claude == codex => claude,
+        (Some(claude), Some(codex)) => {
+            // If the short-lived split settings disagree, prefer the side with fewer exact
+            // retired product defaults. That recovers the deliberately cleaned layout from the
+            // common "one provider reset, one provider inherited the old snapshot" case. Equal
+            // ambiguity falls back to the pre-split shared preference without deleting either
+            // deprecated value.
+            match claude
+                .retired_default_snapshot_item_count()
+                .cmp(&codex.retired_default_snapshot_item_count())
+            {
+                std::cmp::Ordering::Less => claude,
+                std::cmp::Ordering::Greater => codex,
+                std::cmp::Ordering::Equal => legacy,
+            }
+        }
+        (None, None) => legacy,
+    }
+}
+
 #[cfg(test)]
 mod toolbar_chip_selection_tests {
     use settings_value::SettingsValue;
@@ -729,15 +815,48 @@ mod toolbar_chip_selection_tests {
     }
 
     #[test]
-    fn legacy_cli_snapshot_gains_live_defaults_and_keeps_custom_items_last() {
+    fn legacy_cli_snapshot_drops_retired_defaults_and_keeps_custom_items_last() {
+        let mut edited_retired_preset =
+            AgentToolbarItemKind::custom_insert("Push2Main", "Push all these changes to main.");
+        let AgentToolbarItemKind::CustomInsert { auto_send, .. } = &mut edited_retired_preset
+        else {
+            unreachable!();
+        };
+        *auto_send = false;
+        // This reproduces the full shipped recipe set from before live-default overlays, plus
+        // context/input controls that appeared in still-older snapshots. None of those product
+        // entries should be promoted into permanent user-authored buttons during migration.
+        let mut retired_presets =
+            AgentToolbarItemKind::retired_cli_default_quick_insert_snapshot_items();
+        let push_to_main = retired_presets
+            .pop()
+            .expect("the historical preset catalog includes Push2Main");
+        let mut legacy_left = vec![
+            AgentToolbarItemKind::ForkSession,
+            AgentToolbarItemKind::Compact,
+            AgentToolbarItemKind::ContinuePrompt,
+            AgentToolbarItemKind::LooksGoodPrompt,
+            AgentToolbarItemKind::TransferAgent,
+        ];
+        legacy_left.extend(retired_presets);
+        legacy_left.extend([
+            AgentToolbarItemKind::VoiceInput,
+            push_to_main,
+            AgentToolbarItemKind::FileAttach,
+            AgentToolbarItemKind::ShareSession,
+            AgentToolbarItemKind::FileExplorer,
+            AgentToolbarItemKind::RichInput,
+            AgentToolbarItemKind::Settings,
+            custom_insert("Mine", "mine"),
+            edited_retired_preset.clone(),
+        ]);
         let legacy = CLIAgentToolbarChipSelection::Custom {
-            left: vec![
-                AgentToolbarItemKind::ForkSession,
-                custom_insert("Mine", "mine"),
+            left: legacy_left,
+            right: vec![
+                AgentToolbarItemKind::ContextChip(ContextChipKind::WorkingDirectory),
+                AgentToolbarItemKind::ContextChip(ContextChipKind::ShellGitBranch),
+                AgentToolbarItemKind::ContextChip(ContextChipKind::GitDiffStats),
             ],
-            right: vec![AgentToolbarItemKind::ContextChip(
-                ContextChipKind::WorkingDirectory,
-            )],
             hidden_defaults: vec![],
             inherit_defaults: false,
             overridden_defaults: vec![],
@@ -755,13 +874,38 @@ mod toolbar_chip_selection_tests {
         let migrated = CLIAgentToolbarChipSelection::from_file_value(&serialized).unwrap();
         let mut expected_left = AgentToolbarItemKind::cli_default_left();
         expected_left.push(custom_insert("Mine", "mine"));
+        expected_left.push(edited_retired_preset);
         assert_eq!(migrated.left_items(), expected_left);
-        assert_eq!(
-            migrated.right_items(),
-            vec![AgentToolbarItemKind::ContextChip(
-                ContextChipKind::WorkingDirectory
-            )]
+        assert!(migrated.right_items().is_empty());
+    }
+
+    #[test]
+    fn pre_unified_provider_resolution_prefers_the_cleaned_split_layout() {
+        let legacy = CLIAgentToolbarChipSelection::Default;
+        let claude = CLIAgentToolbarChipSelection::Custom {
+            left: AgentToolbarItemKind::retired_cli_default_quick_insert_snapshot_items(),
+            right: vec![AgentToolbarItemKind::ContextChip(
+                ContextChipKind::WorkingDirectory,
+            )],
+            hidden_defaults: Vec::new(),
+            inherit_defaults: true,
+            overridden_defaults: Vec::new(),
+            hidden_custom_inserts: Vec::new(),
+            preserve_order: true,
+        };
+        let codex = CLIAgentToolbarChipSelection::custom_from_effective_items(
+            AgentToolbarItemKind::cli_default_left(),
+            Vec::new(),
         );
+
+        assert!(std::ptr::eq(
+            choose_pre_unified_coding_agent_selection(&legacy, Some(&claude), Some(&codex),),
+            &codex,
+        ));
+        assert!(std::ptr::eq(
+            choose_pre_unified_coding_agent_selection(&legacy, Some(&codex), None),
+            &codex,
+        ));
     }
 
     #[test]
@@ -841,6 +985,38 @@ mod toolbar_chip_selection_tests {
             &restored.left_items(),
             &removed
         ));
+    }
+
+    #[test]
+    fn explicitly_selected_historical_preset_survives_live_default_overlay() {
+        let preset = AgentToolbarItemKind::cli_quick_insert_presets()
+            .into_iter()
+            .find(|item| item.display_label() == "Create a Plan")
+            .expect("Create a Plan is a shipped optional preset");
+        let mut selected = AgentToolbarItemKind::cli_default_left();
+        selected.push(preset.clone());
+
+        let selection =
+            CLIAgentToolbarChipSelection::custom_from_effective_items(selected, Vec::new());
+        assert!(selection.left_items().contains(&preset));
+
+        let restored =
+            CLIAgentToolbarChipSelection::from_file_value(&selection.to_file_value()).unwrap();
+        assert!(restored.left_items().contains(&preset));
+    }
+
+    #[test]
+    fn resaved_full_historical_snapshot_is_normalized_without_losing_custom_buttons() {
+        let custom = custom_insert("Mine", "mine");
+        let mut selected = AgentToolbarItemKind::cli_default_left();
+        selected.extend(AgentToolbarItemKind::retired_cli_default_quick_insert_snapshot_items());
+        selected.extend([AgentToolbarItemKind::VoiceInput, custom.clone()]);
+
+        let selection =
+            CLIAgentToolbarChipSelection::custom_from_effective_items(selected, Vec::new());
+        let mut expected = AgentToolbarItemKind::cli_default_left();
+        expected.push(custom);
+        assert_eq!(selection.left_items(), expected);
     }
 
     #[test]
@@ -1028,8 +1204,23 @@ define_settings_group!(SessionSettings, settings: [
         sync_to_cloud: SyncToCloud::Globally(RespectUserSyncSetting::Yes),
         private: false,
         toml_path: "agents.third_party.cli_agent_toolbar_chip_selection_setting",
-        description: "Controls the layout of context chips in the CLI Agent toolbar.",
+        description: "Legacy shared coding-agent toolbar layout used during compatibility migration.",
     },
+    // Canonical coding-agent footer introduced after the provider-specific experiment. `None`
+    // means this profile has not yet written the unified format and should use the compatibility
+    // resolver in `coding_agent_footer_chip_selection_value`.
+    coding_agent_footer_chip_selection: CodingAgentToolbarChipSelectionSetting {
+        type: Option<CLIAgentToolbarChipSelection>,
+        default: None,
+        supported_platforms: SupportedPlatforms::ALL,
+        sync_to_cloud: SyncToCloud::Globally(RespectUserSyncSetting::Yes),
+        private: false,
+        toml_path: "agents.third_party.coding_agent_toolbar_chip_selection_setting",
+        description: "Controls the shared quick-action layout for coding-agent toolbars.",
+    },
+    // Retained for backwards-compatible settings deserialization. A short-lived release allowed
+    // Claude Code and Codex to diverge; the effective coding-agent footer is shared again through
+    // `coding_agent_footer_chip_selection` so every coding-agent tab and window stays consistent.
     claude_code_footer_chip_selection: ClaudeCodeToolbarChipSelectionSetting {
         type: Option<CLIAgentToolbarChipSelection>,
         default: None,
@@ -1037,8 +1228,9 @@ define_settings_group!(SessionSettings, settings: [
         sync_to_cloud: SyncToCloud::Globally(RespectUserSyncSetting::Yes),
         private: false,
         toml_path: "agents.third_party.claude_code_toolbar_chip_selection_setting",
-        description: "Controls the layout of quick actions in the Claude Code toolbar.",
+        description: "Deprecated provider-specific Claude Code quick-action layout.",
     },
+    // See `claude_code_footer_chip_selection` above. Do not use this as an effective selection.
     codex_footer_chip_selection: CodexToolbarChipSelectionSetting {
         type: Option<CLIAgentToolbarChipSelection>,
         default: None,
@@ -1046,7 +1238,7 @@ define_settings_group!(SessionSettings, settings: [
         sync_to_cloud: SyncToCloud::Globally(RespectUserSyncSetting::Yes),
         private: false,
         toml_path: "agents.third_party.codex_toolbar_chip_selection_setting",
-        description: "Controls the layout of quick actions in the Codex toolbar.",
+        description: "Deprecated provider-specific Codex quick-action layout.",
     },
     terminal_footer_chip_selection: TerminalToolbarChipSelectionSetting {
         type: TerminalToolbarChipSelection,
@@ -1098,32 +1290,33 @@ define_settings_group!(SessionSettings, settings: [
 ]);
 
 impl SessionSettings {
-    /// Claude Code and Codex originally shared the legacy CLI-agent footer setting. Keep using
-    /// that value until the user customizes a provider-specific tab so existing layouts migrate
-    /// without a one-time settings rewrite.
+    pub fn coding_agent_footer_chip_selection_value(&self) -> &CLIAgentToolbarChipSelection {
+        if let Some(selection) = self.coding_agent_footer_chip_selection.value().as_ref() {
+            return selection;
+        }
+
+        let legacy = self.cli_agent_footer_chip_selection.value();
+        let claude = self.claude_code_footer_chip_selection.value().as_ref();
+        let codex = self.codex_footer_chip_selection.value().as_ref();
+        choose_pre_unified_coding_agent_selection(legacy, claude, codex)
+    }
+
+    /// Claude Code and Codex share one coding-agent footer layout. The provider-specific fields
+    /// above remain readable only so settings written by the short-lived split-layout release do
+    /// not fail to deserialize.
     pub fn claude_code_footer_chip_selection_value(&self) -> &CLIAgentToolbarChipSelection {
-        self.claude_code_footer_chip_selection
-            .value()
-            .as_ref()
-            .unwrap_or_else(|| self.cli_agent_footer_chip_selection.value())
+        self.coding_agent_footer_chip_selection_value()
     }
 
     pub fn codex_footer_chip_selection_value(&self) -> &CLIAgentToolbarChipSelection {
-        self.codex_footer_chip_selection
-            .value()
-            .as_ref()
-            .unwrap_or_else(|| self.cli_agent_footer_chip_selection.value())
+        self.coding_agent_footer_chip_selection_value()
     }
 
     pub fn footer_chip_selection_for_cli_agent(
         &self,
-        agent: crate::terminal::CLIAgent,
+        _agent: crate::terminal::CLIAgent,
     ) -> &CLIAgentToolbarChipSelection {
-        match agent {
-            crate::terminal::CLIAgent::Claude => self.claude_code_footer_chip_selection_value(),
-            crate::terminal::CLIAgent::Codex => self.codex_footer_chip_selection_value(),
-            _ => self.cli_agent_footer_chip_selection.value(),
-        }
+        self.coding_agent_footer_chip_selection_value()
     }
 }
 

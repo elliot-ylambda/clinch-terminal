@@ -1,0 +1,200 @@
+#!/usr/bin/env python3
+"""Preview, then explicitly remove a finished Clinch-managed Git worktree."""
+
+import argparse
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+
+def run(*args, check=True, timeout=30):
+    result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
+    if check and result.returncode:
+        raise RuntimeError(os.fsdecode(result.stderr).strip() or f"{args[0]} failed")
+    return result
+
+
+def git(repo, *args, **kwargs):
+    return run("git", "-C", str(repo), *args, **kwargs)
+
+
+def worktrees(repo):
+    # NUL framing preserves paths containing tabs, newlines, and Git quote characters.
+    records = []
+    record = {}
+    for field in git(repo, "worktree", "list", "--porcelain", "-z").stdout.split(b"\0"):
+        if not field:
+            if record:
+                records.append(record)
+                record = {}
+            continue
+        key, _, value = field.partition(b" ")
+        record[os.fsdecode(key)] = os.fsdecode(value)
+    if record:
+        records.append(record)
+    return records
+
+
+def within(child, parent):
+    return child == parent or parent in child.parents
+
+
+def live_directories():
+    # Inspect cwd only, never command arguments or terminal contents. A missing or
+    # unsuccessful lsof blocks cleanup; it must not be mistaken for an idle tree.
+    output = run("lsof", "-n", "-P", "-a", "-u", str(os.getuid()), "-d", "cwd", "-F0pn").stdout
+    directories = []
+    pid = None
+    for field in output.split(b"\0"):
+        field = field.lstrip(b"\n")
+        if field.startswith(b"p"):
+            pid = int(field[1:])
+        elif field.startswith(b"n") and pid is not None:
+            directories.append((pid, Path(os.fsdecode(field[1:])).resolve()))
+    if not directories:
+        raise RuntimeError("lsof returned no process directories; cannot verify that worktrees are idle")
+    return directories
+
+
+def base_commit(repo, requested):
+    for candidate in [requested] if requested else ["refs/heads/main", "refs/heads/master", "refs/remotes/origin/HEAD"]:
+        result = git(repo, "rev-parse", "--verify", "--end-of-options", f"{candidate}^{{commit}}", check=False)
+        if result.returncode == 0:
+            return candidate, result.stdout.decode().strip()
+    raise RuntimeError("Cannot resolve a base branch; pass --base with the branch containing completed work")
+
+
+def inspect(repo, record, primary, managed_root, base_sha, directories, process_error=None):
+    checkout = Path(record["worktree"])
+    resolved = checkout.resolve()
+    reasons = []
+    if resolved == primary:
+        reasons.append("primary checkout")
+    if resolved == managed_root or not within(resolved, managed_root):
+        reasons.append("outside the managed worktree root")
+    if within(Path.cwd().resolve(), resolved):
+        reasons.append("current working directory")
+    if any(part.is_symlink() for part in [checkout, *checkout.parents]):
+        reasons.append("path contains a symlink")
+    # lsof escapes backslashes/control bytes even in NUL mode, and may escape
+    # non-ASCII bytes depending on locale. Never mistake that for an idle cwd.
+    if any(character == "\\" or not 32 <= ord(character) <= 126 for character in str(checkout)):
+        reasons.append("path contains characters that process inspection may escape")
+    if "locked" in record:
+        reasons.append("locked")
+    if "prunable" in record or not checkout.is_dir():
+        reasons.append("missing/stale registration (inspect with git worktree prune --dry-run)")
+    if "branch" not in record:
+        reasons.append("detached HEAD or bare repository")
+    if process_error:
+        reasons.append(process_error)
+    busy = sorted({pid for pid, directory in directories if within(directory, resolved)})
+    if busy:
+        reasons.append("in use by process(es): " + ", ".join(map(str, busy)))
+    ignored = []
+    if not reasons:
+        # Re-read HEAD and status from this checkout, not just the inventory.
+        head = git(checkout, "rev-parse", "--verify", "HEAD").stdout.decode().strip()
+        merged = git(repo, "merge-base", "--is-ancestor", head, base_sha, check=False)
+        if merged.returncode == 1:
+            reasons.append("commits not merged into base")
+        elif merged.returncode:
+            raise RuntimeError(os.fsdecode(merged.stderr).strip())
+        # Git status AND unforced worktree removal trust these index flags,
+        # even when a tracked file actually contains uncommitted changes.
+        index = git(checkout, "ls-files", "-v", "-z").stdout.split(b"\0")
+        if any(item and (item[:1].islower() or item[:1] == b"S") for item in index):
+            reasons.append("index hides changes (assume-unchanged or skip-worktree)")
+        if git(checkout, "-c", "core.fsmonitor=false", "status", "--porcelain", "-z", "--untracked-files=all", "--ignore-submodules=none").stdout:
+            reasons.append("uncommitted changes or untracked files")
+        ignored = [os.fsdecode(item) for item in git(
+            checkout, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"
+        ).stdout.split(b"\0") if item]
+    return {
+        "path": str(checkout),
+        "branch": record.get("branch", "").removeprefix("refs/heads/"),
+        "eligible": not reasons,
+        "blocked_by": reasons,
+        "ignored_paths_removed_with_checkout": ignored,
+    }
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--repo", type=Path, default=Path.cwd(), help="repository to inspect (default: current directory)")
+    parser.add_argument("--managed-root", type=Path, help="default: ~/.clinch/worktrees/<primary checkout name>")
+    parser.add_argument("--base", help="branch containing completed work (default: main, master, or origin/HEAD)")
+    parser.add_argument("--remove", type=Path, help="preview one exact registered worktree path")
+    parser.add_argument("--apply", action="store_true", help="remove the selected checkout, including ignored files; preserve its branch")
+    parser.add_argument("--size", action="store_true", help="also measure worktree disk usage (can be slow)")
+    parser.add_argument("--json", action="store_true", help="machine-readable preview")
+    args = parser.parse_args()
+    if args.apply and not args.remove:
+        parser.error("--apply requires --remove PATH; bulk removal is not supported")
+    if args.apply and args.json:
+        parser.error("--json is for previews only")
+    records = worktrees(args.repo)
+    if not records:
+        raise RuntimeError("No registered worktrees")
+    primary = Path(records[0]["worktree"]).resolve()
+    managed_root = (args.managed_root or Path.home() / ".clinch/worktrees" / primary.name).resolve()
+    base_name, base_sha = base_commit(args.repo, args.base)
+    if args.remove:
+        selected = os.path.abspath(args.remove.expanduser())
+        records = [record for record in records if record["worktree"] == selected]
+        if not records:
+            raise RuntimeError("--remove must name an exact registered worktree path (not a symlink or subdirectory)")
+    process_error = None
+    try:
+        directories = live_directories()
+    except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
+        directories = []
+        process_error = f"cannot verify live process directories: {error}"
+    preview = []
+    for record in records:
+        entry = inspect(args.repo, record, primary, managed_root, base_sha, directories, process_error)
+        if args.size and within(Path(entry["path"]).resolve(), managed_root) and Path(entry["path"]).is_dir():
+            measured = run("du", "-sk", entry["path"], check=False, timeout=120)
+            entry["disk_bytes"] = int(measured.stdout.split()[0]) * 1024 if measured.returncode == 0 else None
+        preview.append(entry)
+    if args.json:
+        print(json.dumps({"base": base_name, "base_commit": base_sha, "worktrees": preview}, indent=2))
+    else:
+        print(f"Base: {base_name} ({base_sha[:12]})")
+        for entry in preview:
+            size = f"  {entry['disk_bytes'] / 1024**3:.2f} GiB" if entry.get("disk_bytes") is not None else ""
+            print(f"{'READY' if entry['eligible'] else 'KEEP '}  {json.dumps(entry['path'])}{size}")
+            print("       " + ("; ".join(entry["blocked_by"]) or f"merged branch {entry['branch']}"))
+            for ignored in entry["ignored_paths_removed_with_checkout"]:
+                print(f"       ignored content removed with checkout: {json.dumps(ignored)}")
+    if args.apply:
+        if not preview[0]["eligible"]:
+            raise RuntimeError("Selected worktree is protected; nothing removed")
+        # Repeat every safety check immediately before Git performs its own
+        # dirty/locked/submodule checks. Never force removal or delete branches.
+        records = worktrees(args.repo)
+        record = next((record for record in records if record["worktree"] == selected), None)
+        if record is None:
+            raise RuntimeError("Worktree registration changed; nothing removed")
+        _, fresh_base = base_commit(args.repo, base_name)
+        fresh = inspect(args.repo, record, primary, managed_root, fresh_base, live_directories())
+        if not fresh["eligible"]:
+            raise RuntimeError("Worktree changed; nothing removed: " + "; ".join(fresh["blocked_by"]))
+        if fresh["ignored_paths_removed_with_checkout"] != preview[0]["ignored_paths_removed_with_checkout"]:
+            raise RuntimeError("Ignored paths changed; preview again before removing")
+        git(args.repo, "worktree", "remove", "--", selected, timeout=120)
+        print(f"Removed {json.dumps(selected)}. Branch {fresh['branch']} preserved.")
+    elif not args.json:
+        print("Preview only. Close tabs/processes for a finished worktree, then use --remove PATH --apply.")
+        print("Removal includes ignored files and prevents Undo Close from reopening that checkout.")
+    return 1 if args.remove and not preview[0]["eligible"] else 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
+        print(f"clean-worktrees: {error}", file=sys.stderr)
+        sys.exit(1)

@@ -4,7 +4,6 @@ use std::collections::HashMap;
 
 use settings::Setting as _;
 #[cfg(target_os = "macos")]
-use warp_core::channel::ChannelState;
 use warpui::elements::{ChildView, Element, MouseStateHandle};
 #[cfg(target_os = "macos")]
 use warpui::ui_components::button::ButtonVariant;
@@ -106,7 +105,7 @@ impl ScriptingSettingsPageView {
 
     #[cfg(target_os = "macos")]
     fn install_warpctrl(&mut self, ctx: &mut ViewContext<Self>) {
-        if self.warpctrl_installing || cli_install::is_warpctrl_installed() {
+        if self.warpctrl_installing || cli_install::is_local_control_cli_installed() {
             return;
         }
 
@@ -114,14 +113,14 @@ impl ScriptingSettingsPageView {
         ctx.notify();
         let window_id = ctx.window_id();
         ctx.spawn(
-            async { cli_install::install_warpctrl() },
+            async { cli_install::install_local_control_cli() },
             move |view, result, ctx| {
                 view.warpctrl_installing = false;
                 match result {
                     Ok(()) => {
-                        let command_name = ChannelState::channel().warpctrl_command_name();
+                        let command = cli_install::local_control_cli_invocation();
                         let message = format!(
-                            "Successfully installed '{command_name}' for optional use outside Clinch."
+                            "Successfully installed '{command}' for optional use outside Clinch."
                         );
                         ToastStack::handle(ctx).update(ctx, |toast_stack, ctx| {
                             toast_stack.add_ephemeral_toast(
@@ -132,7 +131,7 @@ impl ScriptingSettingsPageView {
                         });
                     }
                     Err(error) => {
-                        let message = format!("Failed to install Warp Control command: {error}");
+                        let message = format!("Failed to install Clinch CLI command: {error}");
                         log::warn!("{message}");
                         ToastStack::handle(ctx).update(ctx, |toast_stack, ctx| {
                             toast_stack.add_persistent_toast(
@@ -219,7 +218,7 @@ impl SettingsWidget for WarpControlCliInstallWidget {
     type View = ScriptingSettingsPageView;
 
     fn search_terms(&self) -> &str {
-        "local control cli command warpctrl optional global install scripting"
+        "local control cli command clinch ctrl optional global install scripting warpctrl"
     }
 
     fn render(
@@ -228,7 +227,7 @@ impl SettingsWidget for WarpControlCliInstallWidget {
         appearance: &Appearance,
         _app: &AppContext,
     ) -> Box<dyn Element> {
-        let installed = cli_install::is_warpctrl_installed();
+        let installed = cli_install::is_local_control_cli_installed();
         let disabled = view.warpctrl_installing || installed;
         let label = if view.warpctrl_installing {
             "Installing…"
@@ -265,10 +264,10 @@ impl SettingsWidget for WarpControlCliInstallWidget {
             ToggleState::Enabled,
             appearance,
             button,
-            Some(
-                "Install warpctrl for use from terminals outside Clinch. Claude Code and Codex running inside Clinch use the bundled command and do not need this."
-                    .to_owned(),
-            ),
+            Some(format!(
+                "Install `{}` for use from terminals outside Clinch. Claude Code and Codex running inside Clinch use the bundled command and do not need this.",
+                cli_install::local_control_cli_invocation()
+            )),
         )
     }
 }
@@ -278,7 +277,7 @@ impl SettingsWidget for LocalControlModeWidget {
     type View = ScriptingSettingsPageView;
 
     fn search_terms(&self) -> &str {
-        "local control automation warpctrl cli same user typed actions disabled enabled scripting"
+        "local control automation clinch ctrl cli same user typed actions disabled enabled scripting warpctrl"
     }
 
     fn render(

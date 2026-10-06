@@ -61,10 +61,9 @@ pub(super) fn span(
     .finish()
 }
 
-/// The plan gauges' clickable affordance ("Turn on" / "Authorize"): accent
-/// text that ensures the `show_plan_limits` setting is on and sanctions one
-/// Keychain read. If macOS needs to raise its credential prompt, it does so
-/// right after this click — never unprompted at launch.
+/// The plan gauges' clickable affordance ("Turn on" / "Retry"): accent
+/// text that enables plan limits and requests a silent refresh using the
+/// existing provider login. Local usage works if the login is unavailable.
 pub(super) fn plan_limits_affordance_link(
     affordance: PlanLimitsAffordance,
     appearance: &Appearance,
@@ -138,6 +137,10 @@ pub fn render_cli_agent_usage_panel(
             plan_limits_affordance_link(affordance, appearance, bg, turn_on_mouse_state),
             scale,
         ));
+    }
+    if plan_limits.enabled && provider.plan_unavailable {
+        col.add_child(span("Plan limits unavailable.", sub, appearance));
+        col.add_child(span("Local usage still works.", sub, appearance));
     }
     col.add_child(configurable_panel_row(
         kind,

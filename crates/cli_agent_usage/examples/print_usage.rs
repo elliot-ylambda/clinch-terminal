@@ -1,5 +1,7 @@
 //! Manual end-to-end check: prints real usage for the current machine.
 //! Run: cargo run -p cli_agent_usage --example print_usage
+//! Optional Claude plan limits use existing credentials only when silently
+//! accessible; this diagnostic never requests a computer password.
 
 use cli_agent_usage::http::ReqwestUsage;
 use cli_agent_usage::keychain::MacKeychain;
@@ -34,6 +36,17 @@ fn fmt_provider(name: &str, p: &Provider) {
 }
 
 fn main() {
+    #[cfg(target_os = "macos")]
+    {
+        // This standalone process owns its permanent no-UI policy, just as
+        // Clinch does at startup. Never restore interaction after the read.
+        let status =
+            unsafe { security_framework_sys::keychain::SecKeychainSetUserInteractionAllowed(0) };
+        if status != security_framework_sys::base::errSecSuccess {
+            eprintln!("Could not disable Keychain interaction; skipping the diagnostic.");
+            std::process::exit(1);
+        }
+    }
     let paths = Paths::detect().expect("HOME set");
     let mut caches = Caches::new();
     let now = chrono::Utc::now();

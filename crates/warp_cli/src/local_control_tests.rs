@@ -43,10 +43,74 @@ fn parses_typed_create_and_setting_list_params() {
 }
 
 #[test]
+fn parses_origin_terminal_session_uuid_from_shell_context() {
+    let uuid = uuid::Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+
+    assert_eq!(
+        origin_terminal_session_uuid(
+            123,
+            Some("123".into()),
+            Some("550e8400e29b41d4a716446655440000".into())
+        )
+        .expect("simple UUID parses for the bound app"),
+        Some(uuid)
+    );
+    assert_eq!(
+        origin_terminal_session_uuid(123, Some("123".into()), None)
+            .expect("missing origin is accepted"),
+        None
+    );
+    assert_eq!(
+        origin_terminal_session_uuid(123, Some("123".into()), Some("not-a-uuid".into()))
+            .expect_err("malformed origin is rejected")
+            .code,
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        origin_terminal_session_uuid(
+            456,
+            Some("123".into()),
+            Some("550e8400e29b41d4a716446655440000".into())
+        )
+        .expect("a foreign terminal origin is ignored"),
+        None
+    );
+    assert_eq!(
+        origin_terminal_session_uuid(123, None, Some("550e8400e29b41d4a716446655440000".into()))
+            .expect("an unbound terminal origin is ignored"),
+        None
+    );
+}
+
+#[test]
 fn tab_startup_command_requires_explicit_cwd() {
     let err = ControlArgs::try_parse_from(["warpctrl", "tab", "create", "--", "npm", "run", "dev"])
         .expect_err("startup command without cwd must be rejected");
     assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+}
+
+#[test]
+fn parses_tab_grep_search_options_and_scope() {
+    let args = ControlArgs::try_parse_from([
+        "warpctrl",
+        "tab",
+        "grep",
+        "build (failed|error)",
+        "--ignore-case",
+        "--max-matches",
+        "12",
+        "--window-index",
+        "2",
+    ])
+    .expect("tab grep parses");
+    let ControlCommand::Tab(TabCommand::Grep(args)) = args.command else {
+        panic!("expected tab grep command");
+    };
+    assert_eq!(args.pattern, "build (failed|error)");
+    assert!(args.ignore_case);
+    assert!(!args.fixed_strings);
+    assert_eq!(args.max_matches, 12);
+    assert_eq!(args.target.window_index, Some(2));
 }
 
 #[test]
@@ -84,6 +148,24 @@ fn parses_toolbelt_auto_send_and_section_collapsed_false() {
         panic!("expected section update command");
     };
     assert_eq!(args.collapsed, Some(false));
+
+    let args = ControlArgs::try_parse_from([
+        "warpctrl",
+        "toolbelt",
+        "suggestion",
+        "resolve",
+        "00000000-0000-4000-8000-000000000001",
+        "--outcome",
+        "declined",
+    ])
+    .expect("suggestion outcome parses");
+    let ControlCommand::Toolbelt(ToolbeltCommand::Suggestion(ToolbeltSuggestionCommand::Resolve(
+        args,
+    ))) = args.command
+    else {
+        panic!("expected toolbelt suggestion resolve command");
+    };
+    assert_eq!(args.outcome, CliToolbeltSuggestionOutcome::Declined);
 }
 
 #[test]
@@ -194,6 +276,19 @@ fn parses_control_mode_args_after_hidden_flag() {
 }
 
 #[test]
+fn control_mode_help_uses_the_clinch_ctrl_command_path() {
+    let err = ControlArgs::try_parse_control_mode_from([
+        "/Applications/Clinch.app/Contents/Resources/bin/clinch",
+        "--warpctrl",
+        "--help",
+    ])
+    .expect("control mode flag is present")
+    .expect_err("help exits through clap");
+    assert_eq!(err.kind(), clap::error::ErrorKind::DisplayHelp);
+    assert!(err.to_string().contains("Usage: clinch ctrl"));
+}
+
+#[test]
 fn ignores_args_without_control_mode_flag() {
     assert!(ControlArgs::try_parse_control_mode_from(["warp", "tab", "create"]).is_none());
 }
@@ -283,6 +378,15 @@ fn generated_bash_completions_include_readonly_commands() {
 }
 
 #[test]
+fn generated_bash_completions_nest_control_under_clinch_ctrl() {
+    let completions = generate_completion_string_for_bin(Shell::Bash, "clinch")
+        .expect("Clinch bash completions render to UTF-8");
+    assert!(completions.contains("complete -F _clinch"));
+    assert!(completions.contains("clinch,ctrl"));
+    assert!(completions.contains("tab"));
+}
+
+#[test]
 fn every_retained_catalog_action_has_a_parseable_cli_example() {
     let mut covered = HashSet::new();
     for (kind, argv) in retained_action_examples() {
@@ -353,8 +457,203 @@ fn renders_human_readable_tab_create_output() {
     );
 }
 
+#[test]
+fn renders_human_readable_tab_grep_output() {
+    let rendered = render_human_readable_for_test(
+        ActionKind::TabGrep,
+        &json!({
+            "searched_tabs": 2,
+            "searched_panes": 2,
+            "content_truncated": false,
+            "matches_truncated": false,
+            "matches": [{
+                "window_index": 0,
+                "tab_index": 3,
+                "pane_index": 0,
+                "line_number": 42,
+                "tab_title": "API server",
+                "text": "error: port already in use"
+            }]
+        }),
+    );
+    assert_eq!(rendered, "0:3:0:42:API server: error: port already in use");
+}
+
 fn retained_action_examples() -> Vec<(ActionKind, Vec<&'static str>)> {
     vec![
+        (
+            ActionKind::AgentLaunch,
+            vec![
+                "warpctrl",
+                "agent",
+                "launch",
+                "--provider",
+                "claude",
+                "--project",
+                "p",
+                "--background",
+            ],
+        ),
+        (
+            ActionKind::AgentInterrupt,
+            vec![
+                "warpctrl",
+                "agent",
+                "interrupt",
+                "id",
+                "--expected-revision",
+                "rev",
+            ],
+        ),
+        (
+            ActionKind::AgentInbox,
+            vec!["warpctrl", "agent", "inbox", "--reader", "reader"],
+        ),
+        (
+            ActionKind::AgentInboxAck,
+            vec![
+                "warpctrl",
+                "agent",
+                "inbox-ack",
+                "--reader",
+                "reader",
+                "--batch",
+                "batch",
+            ],
+        ),
+        (ActionKind::AgentEvents, vec!["warpctrl", "agent", "events"]),
+        (ActionKind::TabPin, vec!["warpctrl", "tab", "pin"]),
+        (ActionKind::TabUnpin, vec!["warpctrl", "tab", "unpin"]),
+        (
+            ActionKind::SectionPin,
+            vec!["warpctrl", "section", "pin", "section"],
+        ),
+        (
+            ActionKind::SectionUnpin,
+            vec!["warpctrl", "section", "unpin", "section"],
+        ),
+        (
+            ActionKind::ProjectTaskList,
+            vec!["warpctrl", "project", "task", "list"],
+        ),
+        (
+            ActionKind::ProjectTaskCreate,
+            vec!["warpctrl", "project", "task", "create", "--text", "todo"],
+        ),
+        (
+            ActionKind::ProjectTaskUpdate,
+            vec![
+                "warpctrl", "project", "task", "update", "id", "--text", "updated",
+            ],
+        ),
+        (
+            ActionKind::ProjectTaskComplete,
+            vec!["warpctrl", "project", "task", "complete", "id"],
+        ),
+        (
+            ActionKind::ProjectTaskDelete,
+            vec!["warpctrl", "project", "task", "delete", "id"],
+        ),
+        (
+            ActionKind::PaneRead,
+            vec!["warpctrl", "pane", "read", "--pane", "opaque-pane-id"],
+        ),
+        (
+            ActionKind::WorkspaceTree,
+            vec!["warpctrl", "workspace", "tree"],
+        ),
+        (ActionKind::ProjectList, vec!["warpctrl", "project", "list"]),
+        (
+            ActionKind::ProjectInspect,
+            vec!["warpctrl", "project", "inspect", "--project", "project-id"],
+        ),
+        (
+            ActionKind::ProjectCreate,
+            vec!["warpctrl", "project", "create", "--cwd", "/tmp"],
+        ),
+        (
+            ActionKind::ProjectActivate,
+            vec!["warpctrl", "project", "activate", "--project", "project-id"],
+        ),
+        (
+            ActionKind::ProjectClose,
+            vec!["warpctrl", "project", "close", "--project", "project-id"],
+        ),
+        (
+            ActionKind::ProjectExport,
+            vec![
+                "warpctrl",
+                "project",
+                "export",
+                "--file",
+                "/tmp/layout.json",
+            ],
+        ),
+        (
+            ActionKind::ProjectRestore,
+            vec![
+                "warpctrl",
+                "project",
+                "restore",
+                "--file",
+                "/tmp/layout.json",
+                "--resume-agents",
+            ],
+        ),
+        (
+            ActionKind::TabTransfer,
+            vec![
+                "warpctrl",
+                "tab",
+                "transfer",
+                "--project",
+                "source",
+                "--tab",
+                "session",
+                "--to-project",
+                "destination",
+                "--section",
+                "section-id",
+                "--index",
+                "0",
+            ],
+        ),
+        (ActionKind::AgentList, vec!["warpctrl", "agent", "list"]),
+        (
+            ActionKind::AgentInspect,
+            vec!["warpctrl", "agent", "inspect", "agent-id"],
+        ),
+        (
+            ActionKind::AgentMessageInspect,
+            vec!["warpctrl", "agent", "message", "inspect", "id"],
+        ),
+        (
+            ActionKind::AgentMessageCancel,
+            vec!["warpctrl", "agent", "message", "cancel", "id"],
+        ),
+        (
+            ActionKind::AgentMessageList,
+            vec!["warpctrl", "agent", "message", "list"],
+        ),
+        (
+            ActionKind::AgentRead,
+            vec!["warpctrl", "agent", "read", "agent-id"],
+        ),
+        (
+            ActionKind::AgentSend,
+            vec![
+                "warpctrl",
+                "agent",
+                "send",
+                "agent-id",
+                "--text",
+                "hello",
+                "--expected-revision",
+                "revision",
+                "--request-id",
+                "00000000-0000-0000-0000-000000000001",
+            ],
+        ),
         (
             ActionKind::InstanceList,
             vec!["warpctrl", "instance", "list"],
@@ -388,6 +687,10 @@ fn retained_action_examples() -> Vec<(ActionKind, Vec<&'static str>)> {
         (ActionKind::WindowClose, vec!["warpctrl", "window", "close"]),
         (ActionKind::TabList, vec!["warpctrl", "tab", "list"]),
         (ActionKind::TabInspect, vec!["warpctrl", "tab", "inspect"]),
+        (
+            ActionKind::TabGrep,
+            vec!["warpctrl", "tab", "grep", "error"],
+        ),
         (ActionKind::TabCreate, vec!["warpctrl", "tab", "create"]),
         (ActionKind::TabActivate, vec!["warpctrl", "tab", "activate"]),
         (
@@ -575,6 +878,29 @@ fn retained_action_examples() -> Vec<(ActionKind, Vec<&'static str>)> {
                 "Review",
             ],
         ),
+        (
+            ActionKind::ToolbeltSuggestionList,
+            vec![
+                "warpctrl",
+                "toolbelt",
+                "suggestion",
+                "list",
+                "--footer",
+                "codex",
+            ],
+        ),
+        (
+            ActionKind::ToolbeltSuggestionResolve,
+            vec![
+                "warpctrl",
+                "toolbelt",
+                "suggestion",
+                "resolve",
+                "00000000-0000-4000-8000-000000000001",
+                "--outcome",
+                "accepted",
+            ],
+        ),
         (ActionKind::SectionList, vec!["warpctrl", "section", "list"]),
         (
             ActionKind::SectionCreate,
@@ -750,9 +1076,13 @@ fn parsed_action_kind(command: &ControlCommand) -> Option<ActionKind> {
             WindowCommand::Close(_) => Some(ActionKind::WindowClose),
         },
         ControlCommand::Tab(command) => match command {
+            TabCommand::Pin(_) => Some(ActionKind::TabPin),
+            TabCommand::Unpin(_) => Some(ActionKind::TabUnpin),
             TabCommand::List(_) => Some(ActionKind::TabList),
             TabCommand::Inspect(_) => Some(ActionKind::TabInspect),
+            TabCommand::Grep(_) => Some(ActionKind::TabGrep),
             TabCommand::Create(_) => Some(ActionKind::TabCreate),
+            TabCommand::Transfer(_) => Some(ActionKind::TabTransfer),
             TabCommand::Activate(_) => Some(ActionKind::TabActivate),
             TabCommand::Move(_) => Some(ActionKind::TabMove),
             TabCommand::Close(_) => Some(ActionKind::TabClose),
@@ -764,6 +1094,7 @@ fn parsed_action_kind(command: &ControlCommand) -> Option<ActionKind> {
             },
         },
         ControlCommand::Pane(command) => match command {
+            PaneCommand::Read(_) => Some(ActionKind::PaneRead),
             PaneCommand::List(_) => Some(ActionKind::PaneList),
             PaneCommand::Inspect(_) => Some(ActionKind::PaneInspect),
             PaneCommand::Split(_) => Some(ActionKind::PaneSplit),
@@ -812,8 +1143,16 @@ fn parsed_action_kind(command: &ControlCommand) -> Option<ActionKind> {
                 ToolbeltButtonCommand::Delete(_) => Some(ActionKind::ToolbeltButtonDelete),
                 ToolbeltButtonCommand::Move(_) => Some(ActionKind::ToolbeltButtonMove),
             },
+            ToolbeltCommand::Suggestion(command) => match command {
+                ToolbeltSuggestionCommand::List(_) => Some(ActionKind::ToolbeltSuggestionList),
+                ToolbeltSuggestionCommand::Resolve(_) => {
+                    Some(ActionKind::ToolbeltSuggestionResolve)
+                }
+            },
         },
         ControlCommand::Section(command) => match command {
+            SectionCommand::Pin(_) => Some(ActionKind::SectionPin),
+            SectionCommand::Unpin(_) => Some(ActionKind::SectionUnpin),
             SectionCommand::List(_) => Some(ActionKind::SectionList),
             SectionCommand::Create(_) => Some(ActionKind::SectionCreate),
             SectionCommand::Update(_) => Some(ActionKind::SectionUpdate),
@@ -890,6 +1229,44 @@ fn parsed_action_kind(command: &ControlCommand) -> Option<ActionKind> {
             SurfaceCommand::AgentManagement(command) => match command {
                 SurfaceOpenCommand::Open(_) => Some(ActionKind::SurfaceAgentManagementOpen),
             },
+        },
+        ControlCommand::Workspace(_) => Some(ActionKind::WorkspaceTree),
+        ControlCommand::Project(command) => Some(match command {
+            super::projects::ProjectCommand::Task(command) => match command {
+                super::projects::ProjectTaskCommand::List(_) => ActionKind::ProjectTaskList,
+                super::projects::ProjectTaskCommand::Create { .. } => ActionKind::ProjectTaskCreate,
+                super::projects::ProjectTaskCommand::Update { .. } => ActionKind::ProjectTaskUpdate,
+                super::projects::ProjectTaskCommand::Complete { .. } => {
+                    ActionKind::ProjectTaskComplete
+                }
+                super::projects::ProjectTaskCommand::Delete { .. } => ActionKind::ProjectTaskDelete,
+            },
+            super::projects::ProjectCommand::List(_) => ActionKind::ProjectList,
+            super::projects::ProjectCommand::Inspect(_) => ActionKind::ProjectInspect,
+            super::projects::ProjectCommand::Create { .. } => ActionKind::ProjectCreate,
+            super::projects::ProjectCommand::Activate(_) => ActionKind::ProjectActivate,
+            super::projects::ProjectCommand::Close(_) => ActionKind::ProjectClose,
+            super::projects::ProjectCommand::Export { .. } => ActionKind::ProjectExport,
+            super::projects::ProjectCommand::Restore { .. } => ActionKind::ProjectRestore,
+        }),
+        ControlCommand::Agent(command) => match command {
+            super::agents::AgentCommand::Launch(_) => Some(ActionKind::AgentLaunch),
+            super::agents::AgentCommand::Wait(_) => Some(ActionKind::AgentInspect),
+            super::agents::AgentCommand::Interrupt { .. } => Some(ActionKind::AgentInterrupt),
+            super::agents::AgentCommand::Inbox { .. } => Some(ActionKind::AgentInbox),
+            super::agents::AgentCommand::InboxAck { .. } => Some(ActionKind::AgentInboxAck),
+            super::agents::AgentCommand::Events { .. } => Some(ActionKind::AgentEvents),
+            super::agents::AgentCommand::List(_) | super::agents::AgentCommand::Watch { .. } => {
+                Some(ActionKind::AgentList)
+            }
+            super::agents::AgentCommand::Inspect(_) => Some(ActionKind::AgentInspect),
+            super::agents::AgentCommand::Read { .. } => Some(ActionKind::AgentRead),
+            super::agents::AgentCommand::Send { .. } => Some(ActionKind::AgentSend),
+            super::agents::AgentCommand::Message(command) => Some(match command {
+                super::agents::AgentMessageCommand::Inspect(_) => ActionKind::AgentMessageInspect,
+                super::agents::AgentMessageCommand::Cancel(_) => ActionKind::AgentMessageCancel,
+                super::agents::AgentMessageCommand::List { .. } => ActionKind::AgentMessageList,
+            }),
         },
         ControlCommand::Completions { .. } => None,
     }

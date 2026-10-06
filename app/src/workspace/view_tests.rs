@@ -448,6 +448,86 @@ fn project_display_name_falls_back_when_no_project_directory_is_available() {
     );
 }
 
+#[test]
+#[cfg(feature = "local_fs")]
+fn project_display_name_uses_main_repo_for_linked_worktrees_only() {
+    use warp_util::standardized_path::StandardizedPath;
+
+    App::test((), |mut app| async move {
+        let repositories = app.add_singleton_model(|_| DetectedRepositories::default());
+        let watcher = app.add_singleton_model(DirectoryWatcher::new_for_testing);
+        let temp_root = TempDir::new().unwrap();
+        let main_repo = temp_root.path().join("main-repo");
+        let worktree_git_dir = main_repo.join(".git/worktrees/random-worktree");
+        let submodule_git_dir = main_repo.join(".git/modules/dependency");
+        for git_dir in [
+            &main_repo.join(".git"),
+            &worktree_git_dir,
+            &submodule_git_dir,
+        ] {
+            std::fs::create_dir_all(git_dir).unwrap();
+        }
+
+        for (directory, external_git_dir, expected_name) in [
+            (main_repo.clone(), None, "main-repo"),
+            (
+                temp_root.path().join("random-worktree"),
+                Some(worktree_git_dir),
+                "main-repo",
+            ),
+            (
+                main_repo.join("dependency"),
+                Some(submodule_git_dir),
+                "dependency",
+            ),
+        ] {
+            std::fs::create_dir_all(&directory).unwrap();
+            let root = StandardizedPath::from_local_canonicalized(&directory).unwrap();
+            repositories.update(&mut app, |repositories, _| {
+                repositories.insert_test_repo_root(root.clone());
+            });
+            watcher.update(&mut app, |watcher, ctx| {
+                watcher
+                    .add_directory_with_git_dir(
+                        root,
+                        external_git_dir
+                            .map(|dir| StandardizedPath::from_local_canonicalized(&dir).unwrap()),
+                        ctx,
+                    )
+                    .unwrap();
+            });
+            app.read(|ctx| {
+                assert_eq!(
+                    Workspace::project_display_name_for_dir(Some(&directory), ctx),
+                    expected_name
+                );
+                // Project naming must not redirect commands or repo lookups to the main checkout.
+                assert_eq!(
+                    DetectedRepositories::as_ref(ctx)
+                        .get_root_for_path(&LocalOrRemotePath::Local(directory.clone()))
+                        .unwrap()
+                        .to_local_path(),
+                    Some(std::fs::canonicalize(&directory).unwrap().as_path())
+                );
+            });
+        }
+
+        app.read(|ctx| {
+            assert_eq!(
+                Workspace::project_display_name_for_dir(
+                    Some(temp_root.path().join("notes").as_path()),
+                    ctx
+                ),
+                "notes"
+            );
+            assert_eq!(
+                Workspace::project_display_name_for_dir(None, ctx),
+                "New Project"
+            );
+        });
+    });
+}
+
 pub(crate) fn initialize_app(app: &mut App) {
     initialize_settings_for_tests(app);
 
@@ -682,7 +762,7 @@ fn terminal_targeted_quick_insert_save_updates_only_terminal_toolbar() {
 }
 
 #[test]
-fn codex_targeted_quick_insert_save_does_not_change_claude_or_legacy_toolbar() {
+fn coding_agent_quick_insert_save_updates_one_shared_toolbar() {
     App::test((), |mut app| async move {
         initialize_app(&mut app);
         let workspace = mock_workspace(&mut app);
@@ -700,9 +780,9 @@ fn codex_targeted_quick_insert_save_does_not_change_claude_or_legacy_toolbar() {
         workspace.update(&mut app, |workspace, ctx| {
             workspace.handle_quick_insert_modal_event(
                 &QuickInsertModalEvent::Save {
-                    target: QuickInsertModalTarget::Codex,
-                    label: "Codex only".to_owned(),
-                    text: "codex prompt".to_owned(),
+                    target: QuickInsertModalTarget::CLIAgent,
+                    label: "Review".to_owned(),
+                    text: "review prompt".to_owned(),
                     auto_send: false,
                     visible: true,
                 },
@@ -716,19 +796,22 @@ fn codex_targeted_quick_insert_save_does_not_change_claude_or_legacy_toolbar() {
                 &legacy_selection
             );
             assert!(settings.claude_code_footer_chip_selection.value().is_none());
-            let codex = settings
-                .codex_footer_chip_selection
+            assert!(settings.codex_footer_chip_selection.value().is_none());
+            let shared = settings
+                .coding_agent_footer_chip_selection
                 .value()
                 .as_ref()
-                .expect("Codex should have an independent footer after adding a button");
-            assert!(codex.left_items().iter().any(|item| matches!(
+                .expect("coding agents should have one canonical footer");
+            assert!(shared.left_items().iter().any(|item| matches!(
                 item,
                 AgentToolbarItemKind::CustomInsert {
                     label,
                     text,
                     auto_send: false,
-                } if label == "Codex only" && text == "codex prompt"
+                } if label == "Review" && text == "review prompt"
             )));
+            assert_eq!(settings.claude_code_footer_chip_selection_value(), shared);
+            assert_eq!(settings.codex_footer_chip_selection_value(), shared);
         });
     });
 }
@@ -867,6 +950,7 @@ fn remote_control_header_uses_discovery_copy_without_a_live_device() {
         RemoteControlHeaderPresentation {
             label: "Remote Control".to_owned(),
             connected_device_name: None,
+            awaiting_approval: false,
         }
     );
 }
@@ -903,12 +987,31 @@ fn remote_control_header_uses_the_latest_live_device() {
         RemoteControlHeaderPresentation {
             label: "Elliot's iPhone connected".to_owned(),
             connected_device_name: Some("Elliot's iPhone".to_owned()),
+            awaiting_approval: false,
         }
     );
 }
 
 #[test]
-fn remote_control_header_uses_compact_muted_styles() {
+fn remote_control_header_asks_for_a_pending_approval_first() {
+    let state = RemoteControlViewState {
+        pending_claims: vec![crate::remote_control::PendingClaimSummary {
+            id: clinch_companion_protocol::PairingClaimId::new(),
+            device_name: "iPhone · Safari".to_owned(),
+            platform: clinch_companion_protocol::DevicePlatform::Ios,
+            public_key_fingerprint: "ab".repeat(32),
+            expires_at: chrono::Utc::now(),
+        }],
+        ..RemoteControlViewState::default()
+    };
+
+    let presentation = remote_control_header_presentation(Some(&state));
+    assert_eq!(presentation.label, "Approve iPhone · Safari");
+    assert!(presentation.awaiting_approval);
+}
+
+#[test]
+fn remote_control_header_uses_green_outline_with_muted_content() {
     let font_family_id = warpui::fonts::FamilyId(42);
     let muted_color = ColorU {
         r: 0x77,
@@ -924,7 +1027,12 @@ fn remote_control_header_uses_compact_muted_styles() {
     assert_eq!(default_styles.font_color, Some(muted_color));
     assert_eq!(default_styles.font_size, Some(11.));
     assert_eq!(default_styles.width, None);
-    assert_eq!(default_styles.border_color, Some(muted_color.into()));
+    assert_eq!(default_styles.border_color, Some(CLINCH_LOGO_GREEN.into()));
+    assert_eq!(interactive_styles.font_color, Some(muted_color));
+    assert_eq!(
+        interactive_styles.border_color,
+        Some(CLINCH_LOGO_GREEN.into())
+    );
 }
 
 #[test]
@@ -1148,6 +1256,38 @@ fn test_clinch_update_header_pill_stays_visible_during_install() {
         clinch_update_header_pill(&AutoupdateStage::NoUpdateAvailable),
         None
     );
+}
+
+#[test]
+fn test_clinch_update_header_rechecks_before_installing_a_discovered_release() {
+    let new_version = channel_versions::VersionInfo::new("v2".to_owned());
+    for stage in [
+        AutoupdateStage::UpdateAvailable {
+            new_version: new_version.clone(),
+            update_id: "available".to_owned(),
+        },
+        AutoupdateStage::UpdateReady {
+            new_version: new_version.clone(),
+            update_id: "downloaded".to_owned(),
+        },
+    ] {
+        assert!(matches!(
+            update_header_install_action(true, &stage),
+            WorkspaceAction::CheckForUpdate
+        ));
+        assert!(matches!(
+            update_header_install_action(false, &stage),
+            WorkspaceAction::ApplyUpdate
+        ));
+    }
+
+    assert!(matches!(
+        update_header_install_action(
+            true,
+            &AutoupdateStage::UpdatedPendingRestart { new_version }
+        ),
+        WorkspaceAction::ApplyUpdate
+    ));
 }
 
 #[test]
@@ -5704,6 +5844,144 @@ fn test_move_tab_to_group_expands_collapsed_group() {
                 !workspace.tab_groups[&group_id].collapsed,
                 "group should expand when a tab is moved into it"
             );
+        });
+    });
+}
+
+#[test]
+fn transferred_sidebar_tab_clears_filter_and_receives_mouse_up() {
+    let _vertical_tabs_guard = FeatureFlag::VerticalTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+        let (window_id, drag_state) = workspace.update(&mut app, |workspace, ctx| {
+            workspace.add_terminal_tab(false, ctx);
+            let id = workspace.tabs[1].pane_group.id();
+            let tab = workspace.take_tab_for_project_transfer(id, ctx).unwrap();
+            let drag_state = tab.draggable_state.clone();
+            drag_state.set_dragging(vec2f(120., 260.), vec2f(-20., -8.));
+            workspace.vertical_tabs_panel.search_query = "no-session-matches-this-query".into();
+            workspace
+                .vertical_tabs_search_input
+                .update(ctx, |editor, ctx| {
+                    editor.set_buffer_text("no-session-matches-this-query", ctx);
+                });
+            workspace.accept_project_tab_drag(tab, ctx);
+            assert!(workspace.vertical_tabs_panel.search_query.is_empty());
+            assert!(workspace
+                .vertical_tabs_search_input
+                .as_ref(ctx)
+                .buffer_text(ctx)
+                .is_empty());
+            (ctx.window_id(), drag_state)
+        });
+        let presenter =
+            std::rc::Rc::new(std::cell::RefCell::new(warpui::Presenter::new(window_id)));
+        app.update(|ctx| {
+            presenter.borrow_mut().invalidate(
+                warpui::WindowInvalidation {
+                    updated: std::collections::HashSet::from([workspace.id()]),
+                    ..Default::default()
+                },
+                ctx,
+            );
+            presenter
+                .borrow_mut()
+                .build_scene(vec2f(1200., 800.), 1., None, ctx);
+            ctx.simulate_window_event(
+                warpui::Event::LeftMouseUp {
+                    position: vec2f(120., 260.),
+                    modifiers: Default::default(),
+                },
+                window_id,
+                presenter.clone(),
+            );
+        });
+        assert!(
+            !drag_state.is_dragging(),
+            "the visible destination row must receive mouse-up"
+        );
+        assert_eq!(
+            workspace.read(&app, |workspace, _| workspace.tab_count()),
+            2
+        );
+    });
+}
+
+#[test]
+fn dragging_tab_into_collapsed_section_expands_before_membership_changes() {
+    let _grouped_tabs_guard = FeatureFlag::GroupedTabs.override_enabled(true);
+    let _vertical_tabs_guard = FeatureFlag::VerticalTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+        let (window_id, group_id, dragged_id, original_count) =
+            workspace.update(&mut app, |workspace, ctx| {
+                workspace.vertical_tabs_panel_open = true;
+                workspace.handle_action(
+                    &WorkspaceAction::SelectNewSessionMenuItem(
+                        NewSessionMenuItem::CreateNewTabGroup,
+                    ),
+                    ctx,
+                );
+                let group_id = workspace.tabs[workspace.active_tab_index()]
+                    .group_id
+                    .unwrap();
+                workspace.handle_action(&WorkspaceAction::ToggleTabGroupCollapsed(group_id), ctx);
+                let dragged = workspace
+                    .tabs
+                    .iter()
+                    .find(|tab| tab.group_id.is_none())
+                    .unwrap();
+                (
+                    ctx.window_id(),
+                    group_id,
+                    dragged.pane_group.id(),
+                    workspace.tabs.len(),
+                )
+            });
+        let mut presenter = warpui::Presenter::new(window_id);
+        app.update(|ctx| {
+            presenter.invalidate(
+                warpui::WindowInvalidation {
+                    updated: std::collections::HashSet::from([workspace.id()]),
+                    ..Default::default()
+                },
+                ctx,
+            );
+            presenter.build_scene(vec2f(1200., 800.), 1., None, ctx);
+        });
+        workspace.update(&mut app, |workspace, ctx| {
+            let position_id = if uses_vertical_tabs() {
+                vtab_group_position_id(group_id)
+            } else {
+                htab_group_position_id(group_id)
+            };
+            let section = ctx
+                .element_position_by_id(position_id)
+                .expect("collapsed section must have a drop target");
+            let index = workspace
+                .tabs
+                .iter()
+                .position(|tab| tab.pane_group.id() == dragged_id)
+                .unwrap();
+            workspace.tabs[index]
+                .draggable_state
+                .set_dragging(section.center(), vec2f(-20., -8.));
+            workspace.on_tab_drag(
+                index,
+                RectF::new(section.center() - vec2f(20., 8.), vec2f(40., 16.)),
+                ctx,
+            );
+            assert!(!workspace.tab_groups[&group_id].collapsed);
+            assert_eq!(workspace.tabs.len(), original_count);
+            let moved = workspace
+                .tabs
+                .iter()
+                .find(|tab| tab.pane_group.id() == dragged_id)
+                .unwrap();
+            assert_eq!(moved.group_id, Some(group_id));
+            assert!(moved.draggable_state.is_dragging());
         });
     });
 }

@@ -1,4 +1,6 @@
 //! Implementations for user-facing `warpctrl` command groups.
+use std::ffi::OsString;
+
 use local_control::discovery::InstanceRecord;
 use local_control::protocol::{
     Action, ActionKind, ActionNameParams, BindingNameParams, BooleanValueParams, ColorValueParams,
@@ -6,11 +8,13 @@ use local_control::protocol::{
     KeyValueParams, PageQueryParams, QueryParams, RenameParams, RequestEnvelope, ResizeParams,
     SectionCreateParams, SectionIdParams, SectionMoveParams, SectionUpdateParams,
     SettingListParams, TabActivateParams, TabActivationMode, TabCloseMode, TabCloseParams,
-    TabCreateParams, TextParams, ThemeNameParams, ToolbeltButtonCreateParams,
+    TabCreateParams, TabGrepParams, TextParams, ThemeNameParams, ToolbeltButtonCreateParams,
     ToolbeltButtonDeleteParams, ToolbeltButtonMoveParams, ToolbeltListParams,
+    ToolbeltSuggestionListParams, ToolbeltSuggestionResolveParams,
 };
 use local_control::selection::select_instance;
 use serde::Serialize;
+use uuid::Uuid;
 use warp_core::channel::ChannelState;
 
 use crate::agent::OutputFormat;
@@ -22,7 +26,7 @@ use crate::local_control::{
     SectionTabCommand, SessionCommand, SettingCommand, SurfaceCommand, SurfaceOpenCommand,
     SurfaceOpenToggleCommand, SurfaceQueryCommand, SurfaceSettingsCommand, SurfaceToggleCommand,
     TabActivateArgs, TabCloseArgs, TabColorCommand, TabCommand, TargetArgs, ThemeCommand,
-    ToolbeltButtonCommand, ToolbeltCommand, WindowCommand,
+    ToolbeltButtonCommand, ToolbeltCommand, ToolbeltSuggestionCommand, WindowCommand,
 };
 
 pub(super) fn run_surface_command(
@@ -156,12 +160,55 @@ fn render_human_readable(action: ActionKind, data: &serde_json::Value) -> String
             nested_value_or_unknown(data, &["tab", "active_index"]),
             nested_value_or_unknown(data, &["tab", "count"])
         ),
+        ActionKind::TabGrep => render_tab_grep(data),
         ActionKind::PaneSplit => format!(
             "Split created pane {}",
             nested_value_or_unknown(data, &["pane", "id"])
         ),
         _ => serde_json::to_string_pretty(data).unwrap_or_else(|_| data.to_string()),
     }
+}
+
+fn render_tab_grep(data: &serde_json::Value) -> String {
+    let mut lines = data
+        .get("matches")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|item| {
+            format!(
+                "{}:{}:{}:{}:{}: {}",
+                value_or_unknown(item, "window_index"),
+                value_or_unknown(item, "tab_index"),
+                value_or_unknown(item, "pane_index"),
+                value_or_unknown(item, "line_number"),
+                value_or_unknown(item, "tab_title"),
+                value_or_unknown(item, "text"),
+            )
+        })
+        .collect::<Vec<_>>();
+    if lines.is_empty() {
+        lines.push(format!(
+            "No matches across {} tabs and {} terminal panes",
+            value_or_unknown(data, "searched_tabs"),
+            value_or_unknown(data, "searched_panes"),
+        ));
+    }
+    if data
+        .get("content_truncated")
+        .and_then(serde_json::Value::as_bool)
+        == Some(true)
+    {
+        lines.push("[some terminal text exceeded the search byte bounds]".to_owned());
+    }
+    if data
+        .get("matches_truncated")
+        .and_then(serde_json::Value::as_bool)
+        == Some(true)
+    {
+        lines.push("[additional matching lines omitted by --max-matches]".to_owned());
+    }
+    lines.join("\n")
 }
 
 fn value_or_unknown(data: &serde_json::Value, key: &str) -> String {
@@ -198,7 +245,7 @@ pub(super) fn run_instance_command(
             output_format,
         ),
         InstanceCommand::Inspect(args) => run_action_with_params(
-            args,
+            *args,
             ActionKind::InstanceInspect,
             EmptyParams {},
             output_format,
@@ -369,6 +416,17 @@ pub(super) fn run_tab_command(
         TabCommand::Inspect(args) => {
             run_action_with_params(args, ActionKind::TabInspect, EmptyParams {}, output_format)
         }
+        TabCommand::Grep(args) => run_action_with_params(
+            args.target,
+            ActionKind::TabGrep,
+            TabGrepParams {
+                pattern: args.pattern,
+                ignore_case: args.ignore_case,
+                fixed_strings: args.fixed_strings,
+                max_matches: args.max_matches,
+            },
+            output_format,
+        ),
         TabCommand::Create(args) => run_action_with_params(
             args.target,
             ActionKind::TabCreate,
@@ -377,6 +435,22 @@ pub(super) fn run_tab_command(
                 shell: args.shell,
                 cwd: args.cwd,
                 command: args.command,
+            },
+            output_format,
+        ),
+        TabCommand::Pin(args) => {
+            run_action_with_params(args, ActionKind::TabPin, EmptyParams {}, output_format)
+        }
+        TabCommand::Unpin(args) => {
+            run_action_with_params(args, ActionKind::TabUnpin, EmptyParams {}, output_format)
+        }
+        TabCommand::Transfer(args) => run_action_with_params(
+            args.target,
+            ActionKind::TabTransfer,
+            local_control::projects::TabTransferParams {
+                destination_project: args.to_project,
+                section_id: args.section,
+                index: args.index,
             },
             output_format,
         ),
@@ -432,6 +506,7 @@ pub(super) fn run_pane_command(
     output_format: OutputFormat,
 ) -> Result<(), ControlError> {
     match command {
+        PaneCommand::Read(args) => super::agents::run_pane_read(args, output_format),
         PaneCommand::List(args) => {
             run_action_with_params(args, ActionKind::PaneList, EmptyParams {}, output_format)
         }
@@ -675,6 +750,25 @@ pub(super) fn run_toolbelt_command(
                 output_format,
             ),
         },
+        ToolbeltCommand::Suggestion(command) => match command {
+            ToolbeltSuggestionCommand::List(args) => run_action_with_params(
+                args.target,
+                ActionKind::ToolbeltSuggestionList,
+                ToolbeltSuggestionListParams {
+                    footer: args.footer.into(),
+                },
+                output_format,
+            ),
+            ToolbeltSuggestionCommand::Resolve(args) => run_action_with_params(
+                args.target,
+                ActionKind::ToolbeltSuggestionResolve,
+                ToolbeltSuggestionResolveParams {
+                    suggestion_id: args.suggestion_id,
+                    outcome: args.outcome.into(),
+                },
+                output_format,
+            ),
+        },
     }
 }
 
@@ -706,6 +800,22 @@ pub(super) fn run_section_command(
         SectionCommand::Delete(args) => run_action_with_params(
             args.target,
             ActionKind::SectionDelete,
+            SectionIdParams {
+                section_id: args.section_id,
+            },
+            output_format,
+        ),
+        SectionCommand::Pin(args) => run_action_with_params(
+            args.target,
+            ActionKind::SectionPin,
+            SectionIdParams {
+                section_id: args.section_id,
+            },
+            output_format,
+        ),
+        SectionCommand::Unpin(args) => run_action_with_params(
+            args.target,
+            ActionKind::SectionUnpin,
             SectionIdParams {
                 section_id: args.section_id,
             },
@@ -887,25 +997,13 @@ fn run_action(
     run_action_with_params(args, action, EmptyParams {}, output_format)
 }
 
-fn run_action_with_params<T: Serialize>(
+pub(super) fn run_action_with_params<T: Serialize>(
     args: TargetArgs,
     action: ActionKind,
     params: T,
     output_format: OutputFormat,
 ) -> Result<(), ControlError> {
-    let selector = instance_selector(&args);
-    let records = local_control::discovery::list_instances(&ChannelState::channel().to_string());
-    let target = target_selector(&args)?;
-    let instance = select_instance(&records, &selector)?;
-    let mut request = RequestEnvelope::new(Action::with_params(action, params)?);
-    request.target = target;
-    let response = local_control::client::send_request(&instance, &request)?;
-    let local_control::protocol::ControlResponse::Ok { data } = response.response else {
-        return Err(ControlError::new(
-            ErrorCode::Internal,
-            "local-control request failed without an error payload",
-        ));
-    };
+    let data = request_action_with_params(args, action, params)?;
     match output_format {
         OutputFormat::Json => write_json(&data),
         OutputFormat::Ndjson => write_json_line(&data),
@@ -914,6 +1012,72 @@ fn run_action_with_params<T: Serialize>(
             Ok(())
         }
     }
+}
+
+pub(super) fn request_action_with_params<T: Serialize>(
+    args: TargetArgs,
+    action: ActionKind,
+    params: T,
+) -> Result<serde_json::Value, ControlError> {
+    let has_explicit_window =
+        args.window.is_some() || args.window_index.is_some() || args.window_title.is_some();
+    let selector = instance_selector(&args);
+    let records = local_control::discovery::list_instances(&ChannelState::channel().to_string());
+    let target = target_selector(&args)?;
+    let instance = select_instance(&records, &selector)?;
+    let mut request = RequestEnvelope::new(Action::with_params(action, params)?);
+    if action == ActionKind::TabCreate && !has_explicit_window && args.project.is_none() {
+        request.origin_terminal_session_uuid = origin_terminal_session_uuid(
+            instance.pid,
+            std::env::var_os(local_control::CLINCH_CONTROL_PID_ENV),
+            std::env::var_os(local_control::TERMINAL_SESSION_UUID_ENV),
+        )?;
+    }
+    request.target = target;
+    let response = local_control::client::send_request(&instance, &request)?;
+    let local_control::protocol::ControlResponse::Ok { data } = response.response else {
+        return Err(ControlError::new(
+            ErrorCode::Internal,
+            "local-control request failed without an error payload",
+        ));
+    };
+    Ok(data)
+}
+
+pub(crate) fn origin_terminal_session_uuid(
+    selected_instance_pid: u32,
+    bound_instance_pid: Option<OsString>,
+    value: Option<OsString>,
+) -> Result<Option<Uuid>, ControlError> {
+    // Every Warp terminal has a session UUID, but only a matching Clinch PID
+    // proves that the session belongs to the selected local-control instance.
+    let bound_instance_pid = bound_instance_pid
+        .and_then(|pid| pid.into_string().ok())
+        .and_then(|pid| pid.parse::<u32>().ok());
+    if bound_instance_pid != Some(selected_instance_pid) {
+        return Ok(None);
+    }
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let value = value.into_string().map_err(|_| {
+        ControlError::new(
+            ErrorCode::InvalidRequest,
+            format!(
+                "{} must contain a UTF-8 UUID",
+                local_control::TERMINAL_SESSION_UUID_ENV
+            ),
+        )
+    })?;
+    Uuid::parse_str(&value).map(Some).map_err(|_| {
+        ControlError::new(
+            ErrorCode::InvalidRequest,
+            format!(
+                "{} must contain a valid UUID",
+                local_control::TERMINAL_SESSION_UUID_ENV
+            ),
+        )
+    })
 }
 
 fn parse_json_value_or_string(value: String) -> serde_json::Value {

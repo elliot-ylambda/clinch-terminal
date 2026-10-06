@@ -108,7 +108,7 @@ fn failed_first_attempt_is_shared_without_fabricating_a_plan() {
 }
 
 #[test]
-fn authorization_retries_an_empty_throttled_attempt_immediately() {
+fn explicit_retry_retries_an_empty_throttled_attempt_immediately() {
     let snapshot = temp_snapshot_path();
     let now = Utc.with_ymd_and_hms(2026, 7, 13, 18, 0, 0).unwrap();
     assert_eq!(
@@ -118,7 +118,7 @@ fn authorization_retries_an_empty_throttled_attempt_immediately() {
 
     let calls = Cell::new(0);
     assert_eq!(
-        refresh_shared_after_authorization(&snapshot, now + Duration::seconds(30), || {
+        refresh_shared_after_retry(&snapshot, now + Duration::seconds(30), || {
             calls.set(calls.get() + 1);
             PlanFetchOutcome::Success(plan(14.0))
         }),
@@ -130,7 +130,7 @@ fn authorization_retries_an_empty_throttled_attempt_immediately() {
 }
 
 #[test]
-fn authorization_does_not_bypass_retry_after() {
+fn explicit_retry_does_not_bypass_retry_after() {
     let snapshot = temp_snapshot_path();
     let now = Utc.with_ymd_and_hms(2026, 7, 13, 18, 0, 0).unwrap();
     assert_eq!(
@@ -142,7 +142,7 @@ fn authorization_does_not_bypass_retry_after() {
 
     let calls = Cell::new(0);
     assert_eq!(
-        refresh_shared_after_authorization(&snapshot, now + Duration::seconds(30), || {
+        refresh_shared_after_retry(&snapshot, now + Duration::seconds(30), || {
             calls.set(calls.get() + 1);
             PlanFetchOutcome::Success(plan(14.0))
         }),

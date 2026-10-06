@@ -16,12 +16,24 @@
 # A pane shell must never launch Claude with another session's identity in its environment.
 # A `make update` launched from inside Claude once leaked stale child/bridge ids through the
 # app relaunch; every later session then behaved as a child and skipped its local transcript
-# entirely (2026-07-09, see specs/claude-transcript-durability). `env` resolves the real
-# executable through PATH, bypassing this function, and "$@" preserves every launch arg.
+# entirely (2026-07-09, see specs/claude-transcript-durability). Resolve the real executable
+# before calling `env` so the function cannot recurse. Restored zsh panes begin with --no-rcs,
+# and a degraded rcfile bootstrap can leave the native install directory out of PATH; prefer
+# normal PATH resolution, then fall back to Claude's native ~/.local/bin install location.
+# "$@" preserves every launch arg.
 #
 # Scrub identity/implementation markers only. User-selected behavior such as
 # CLAUDE_EFFORT and CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING must continue to pass through.
 claude() {
+  local claude_executable
+  claude_executable="$(whence -p claude 2>/dev/null)" || claude_executable=""
+  if [[ -z "$claude_executable" && -x "$HOME/.local/bin/claude" ]]; then
+    claude_executable="$HOME/.local/bin/claude"
+  fi
+  if [[ -z "$claude_executable" ]]; then
+    print -u2 -- "clinch: Claude executable not found in PATH or at $HOME/.local/bin/claude."
+    return 127
+  fi
   env \
     -u CLAUDE_CODE_SESSION_ID \
     -u CLAUDE_CODE_BRIDGE_SESSION_ID \
@@ -31,7 +43,7 @@ claude() {
     -u CLAUDE_CODE_ENTRYPOINT \
     -u CLAUDE_CODE_EXECPATH \
     -u AI_AGENT \
-    claude "$@"
+    "$claude_executable" "$@"
 }
 
 # Returns 0 if <agent>'s session <id> has a *resumable* conversation on disk.

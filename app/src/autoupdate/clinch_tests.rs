@@ -50,6 +50,8 @@ fn fixture() -> (Manifest, GithubRelease) {
             html_url: format!(
                 "https://github.com/{EXPECTED_REPOSITORY}/releases/tag/{version}"
             ),
+            draft: false,
+            prerelease: false,
             assets: vec![
                 GithubAsset {
                     name: MANIFEST_ASSET.to_owned(),
@@ -78,6 +80,13 @@ fn fixture() -> (Manifest, GithubRelease) {
             ],
         },
     )
+}
+
+fn release_with_version(version: &str) -> GithubRelease {
+    let (_, mut release) = fixture();
+    release.tag_name = version.to_owned();
+    release.html_url = format!("https://github.com/{EXPECTED_REPOSITORY}/releases/tag/{version}");
+    release
 }
 
 fn signed_manifest(manifest: &Manifest) -> (Vec<u8>, Vec<u8>, TrustedKey) {
@@ -245,6 +254,42 @@ fn version_comparison_handles_clinch_date_tags() {
 }
 
 #[test]
+fn selects_the_newest_update_release_across_the_public_feed() {
+    let selected = select_latest_update_release(vec![
+        release_with_version("v0.2026.08.11.1800"),
+        release_with_version("v0.2026.08.14.1635"),
+        release_with_version("v0.2026.08.13.1925"),
+    ])
+    .expect("latest update release");
+
+    assert_eq!(selected.tag_name, "v0.2026.08.14.1635");
+}
+
+#[test]
+fn latest_update_selection_ignores_ineligible_releases() {
+    let mut draft = release_with_version("v0.2026.08.20.1200");
+    draft.draft = true;
+    let mut prerelease = release_with_version("v0.2026.08.19.1200");
+    prerelease.prerelease = true;
+    let mut without_manifest = release_with_version("v0.2026.08.18.1200");
+    without_manifest
+        .assets
+        .retain(|candidate| candidate.name != MANIFEST_ASSET);
+    let malformed = release_with_version("not-a-version");
+
+    let selected = select_latest_update_release(vec![
+        draft,
+        prerelease,
+        without_manifest,
+        malformed,
+        release_with_version("v0.2026.08.14.1635"),
+    ])
+    .expect("eligible update release");
+
+    assert_eq!(selected.tag_name, "v0.2026.08.14.1635");
+}
+
+#[test]
 fn validates_rotated_public_keys() {
     let pair = Ed25519KeyPair::from_seed_unchecked(&[9; 32]).expect("test seed");
     let key = TrustedKey {
@@ -272,51 +317,52 @@ fn a_record_with_no_history_is_due_for_an_automatic_check() {
 }
 
 #[test]
-fn a_successful_check_suppresses_automatic_checks_for_one_week() {
+fn a_successful_check_suppresses_automatic_checks_for_one_day() {
     let mut record = UpdateCheckRecord::default();
     record.record_success(instant("2026-07-27T12:00:00Z"));
 
-    assert!(!record.automatic_check_due(instant("2026-08-02T11:59:59Z")));
-    assert!(record.automatic_check_due(instant("2026-08-03T12:00:00Z")));
+    assert!(!record.automatic_check_due(instant("2026-07-28T11:59:59Z")));
+    assert!(record.automatic_check_due(instant("2026-07-28T12:00:00Z")));
 }
 
 #[test]
-fn a_failed_check_backs_off_instead_of_rechecking_immediately() {
+fn an_automatic_attempt_backs_off_before_its_result_is_known() {
     let mut record = UpdateCheckRecord::default();
-    record.record_failure(instant("2026-07-27T12:00:00Z"));
+    record.record_attempt(instant("2026-07-27T12:00:00Z"));
 
-    // The bug this replaces: a failed check recorded nothing, so every window
-    // focus re-fired a request.
+    // Recording before the request starts prevents a crash, cancellation, or failure from
+    // firing another automatic request on the next launch or window focus.
     assert!(!record.automatic_check_due(instant("2026-07-27T12:00:01Z")));
-    assert!(!record.automatic_check_due(instant("2026-07-27T17:59:59Z")));
-    assert!(record.automatic_check_due(instant("2026-07-27T18:00:00Z")));
+    assert!(!record.automatic_check_due(instant("2026-07-28T11:59:59Z")));
+    assert!(record.automatic_check_due(instant("2026-07-28T12:00:00Z")));
 }
 
 #[test]
-fn a_failure_backoff_applies_even_after_the_weekly_window_elapses() {
+fn an_attempt_backoff_applies_even_after_the_success_window_elapses() {
     let mut record = UpdateCheckRecord::default();
     record.record_success(instant("2026-07-01T12:00:00Z"));
-    record.record_failure(instant("2026-07-27T12:00:00Z"));
+    record.record_attempt(instant("2026-07-27T12:00:00Z"));
 
-    assert!(!record.automatic_check_due(instant("2026-07-27T13:00:00Z")));
+    assert!(!record.automatic_check_due(instant("2026-07-28T11:59:59Z")));
+    assert!(record.automatic_check_due(instant("2026-07-28T12:00:00Z")));
 }
 
 #[test]
-fn a_successful_check_clears_a_pending_failure_backoff() {
+fn a_successful_check_clears_a_pending_attempt_backoff() {
     let mut record = UpdateCheckRecord::default();
-    record.record_failure(instant("2026-07-27T12:00:00Z"));
+    record.record_attempt(instant("2026-07-27T12:00:00Z"));
     record.record_success(instant("2026-07-27T13:00:00Z"));
 
     assert!(!record.automatic_check_due(instant("2026-07-27T14:00:00Z")));
-    assert!(record.automatic_check_due(instant("2026-08-03T13:00:00Z")));
+    assert!(record.automatic_check_due(instant("2026-07-28T13:00:00Z")));
 }
 
 #[test]
 fn legacy_date_only_records_are_read_as_a_successful_check() {
     let record = UpdateCheckRecord::parse("2026-07-27\n");
 
-    assert!(!record.automatic_check_due(instant("2026-07-30T12:00:00Z")));
-    assert!(record.automatic_check_due(instant("2026-08-04T00:00:00Z")));
+    assert!(!record.automatic_check_due(instant("2026-07-27T23:59:59Z")));
+    assert!(record.automatic_check_due(instant("2026-07-28T00:00:00Z")));
 }
 
 #[test]
@@ -333,7 +379,7 @@ fn unreadable_records_fall_back_to_checking() {
 fn records_round_trip_through_serialization() {
     let mut record = UpdateCheckRecord::default();
     record.record_success(instant("2026-07-27T12:00:00Z"));
-    record.record_failure(instant("2026-07-28T12:00:00Z"));
+    record.record_attempt(instant("2026-07-28T12:00:00Z"));
 
     let restored = UpdateCheckRecord::parse(&record.to_json());
 

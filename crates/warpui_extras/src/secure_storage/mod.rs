@@ -56,6 +56,16 @@ pub fn register(service_name: &str, ctx: &mut warpui_core::AppContext) {
     ctx.add_singleton_model(|_| -> Model { Box::new(imp::SecureStorage::new(service_name)) });
 }
 
+/// Registers native macOS storage without permitting computer-password prompts.
+/// Inaccessible items remain errors, and failure to establish the policy blocks
+/// all storage operations without treating existing data as missing.
+#[cfg(target_os = "macos")]
+pub fn register_noninteractive(service_name: &str, ctx: &mut warpui_core::AppContext) {
+    ctx.add_singleton_model(|_| -> Model {
+        Box::new(imp::SecureStorage::new_noninteractive(service_name))
+    });
+}
+
 /// Registers a no-op Secure Storage provider with the application.
 pub fn register_noop(service_name: &str, ctx: &mut warpui_core::AppContext) {
     ctx.add_singleton_model(|_| -> Model { Box::new(noop::SecureStorage::new(service_name)) });
