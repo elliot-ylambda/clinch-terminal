@@ -64,8 +64,17 @@ happens only after a local terminal manager accepts the one-shot command.
 
 Render the Tasks area below the sessions scroller in `vertical_tabs.rs`. Keep its own bounded
 scroll state and stable mouse handles in `VerticalTabsPanelState`. Reuse the existing theme,
-`TextInput`, provider icons, and hover treatment. Give the Tasks container a one-pixel green top
-border using the exact same fill helper as the full-width section button outline.
+`TextInput`, provider icons, and hover treatment. Keep the Tasks container's one-pixel green top
+border and add a top-edge `Resizable` drag target for expanded, nonempty task lists using the same
+fill helper as the full-width section button outline. Store the height in `VerticalTabsPanelState`
+for the lifetime of the workspace. Keep the heading and input fixed around flexible scrolling rows.
+
+Lay out the sidebar in reverse orientation with Tasks allocated before the session scroller. Tasks
+uses a loose flex weight of three and sessions a tight weight of one, so Tasks can use at most
+three quarters of the height left after fixed controls and bookmarks. Unused Tasks space flows
+back to sessions. The resizer's parent-relative bounds clamp its remembered height to its actual
+allocation during layout, keeping subsequent drags responsive after the window shrinks. Collapsed
+and empty Tasks sections use their natural height and leave the remembered expanded size intact.
 
 ### Persistence
 

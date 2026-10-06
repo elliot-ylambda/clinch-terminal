@@ -144,7 +144,9 @@ const TAB_COLOR_HOVER_OPACITY: Opacity = 50;
 const BOOKMARKED_SESSIONS_MAX_HEIGHT: f32 = 220.;
 const BOOKMARKED_SESSION_ICON_SIZE: f32 = VERTICAL_TABS_ICON_SIZE;
 const BOOKMARKED_SESSIONS_DEFAULT_COLOR: SectionColor = SectionColor::ClinchGreen;
-const TASKS_MAX_HEIGHT: f32 = 220.;
+const TASKS_DEFAULT_HEIGHT: f32 = 292.;
+const TASKS_MIN_HEIGHT: f32 = 120.;
+const TASKS_RESIZE_HANDLE_HEIGHT: f32 = 6.;
 const TASKS_HEADER_ICON_SIZE: f32 = 14.;
 const SECTION_ACCENT_BORDER_OPACITY: Opacity = 55;
 const SECTION_ACCENT_HOVER_OPACITY: Opacity = 10;
@@ -991,6 +993,7 @@ pub(super) struct VerticalTabsPanelState {
     scroll_state: ClippedScrollStateHandle,
     bookmarked_session_scroll_state: ClippedScrollStateHandle,
     task_scroll_state: ClippedScrollStateHandle,
+    tasks_resizable_state: ResizableStateHandle,
     resizable_state: ResizableStateHandle,
     group_mouse_states: RefCell<HashMap<EntityId, PaneGroupStateHandles>>,
     /// Hover states per tab group, keyed by `TabGroupId`.
@@ -1041,6 +1044,7 @@ impl Default for VerticalTabsPanelState {
             scroll_state: ClippedScrollStateHandle::default(),
             bookmarked_session_scroll_state: ClippedScrollStateHandle::default(),
             task_scroll_state: ClippedScrollStateHandle::default(),
+            tasks_resizable_state: resizable_state_handle(TASKS_DEFAULT_HEIGHT),
             resizable_state: resizable_state_handle(PANEL_WIDTH),
             group_mouse_states: RefCell::default(),
             tab_group_mouse_states: RefCell::default(),
@@ -2664,6 +2668,7 @@ fn render_workspace_tasks(
     let theme = appearance.theme();
     let sub_text = theme.sub_text_color(theme.background());
     let task_count = workspace.tasks.len();
+    let resizable = !workspace.tasks_collapsed && task_count > 0;
 
     let chevron = if workspace.tasks_collapsed {
         WarpIcon::ChevronRight
@@ -2727,8 +2732,16 @@ fn render_workspace_tasks(
 
     let mut section = Flex::column()
         .with_main_axis_size(MainAxisSize::Min)
-        .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
-        .with_child(header);
+        .with_cross_axis_alignment(CrossAxisAlignment::Stretch);
+    if resizable {
+        // Keep the drag target separate from the clickable collapse/expand header.
+        section.add_child(
+            ConstrainedBox::new(Empty::new().finish())
+                .with_height(TASKS_RESIZE_HANDLE_HEIGHT)
+                .finish(),
+        );
+    }
+    section.add_child(header);
 
     if !workspace.tasks_collapsed {
         if !workspace.tasks.is_empty() {
@@ -2749,11 +2762,7 @@ fn render_workspace_tasks(
             )
             .with_overlayed_scrollbar()
             .finish();
-            section.add_child(
-                ConstrainedBox::new(scrollable)
-                    .with_max_height(TASKS_MAX_HEIGHT)
-                    .finish(),
-            );
+            section.add_child(Expanded::new(1., scrollable).finish());
         }
 
         let task_input = TextInput::new(
@@ -2788,13 +2797,27 @@ fn render_workspace_tasks(
         .borrow_mut()
         .retain(|task_id, _| active_task_ids.contains(task_id));
 
-    Container::new(section.finish())
+    let section = Container::new(section.finish())
         .with_border(
             Border::new(1.)
                 .with_sides(true, false, false, false)
                 .with_border_fill(section_accent_border_fill()),
         )
-        .finish()
+        .finish();
+
+    if resizable {
+        Resizable::new(state.tasks_resizable_state.clone(), section)
+            .with_dragbar_side(DragBarSide::Top)
+            .with_dragbar_color(section_accent_border_fill().into())
+            .on_resize(|ctx, _| ctx.notify())
+            .with_parent_bounds_callback(Box::new(|available_size| {
+                let max_height = available_size.y().max(0.);
+                (TASKS_MIN_HEIGHT.min(max_height), max_height)
+            }))
+            .finish()
+    } else {
+        section
+    }
 }
 
 fn render_vertical_tabs_panel(
@@ -2821,19 +2844,23 @@ fn render_vertical_tabs_panel(
     )
     .finish();
 
+    // Lay out Tasks before the flexible tab list so a short task section gives its unused
+    // space back to tabs. Reserve at least a quarter of the remaining height for tabs;
+    // the control bar, bookmarks, and footer are measured before either flexible child.
     let panel_content = Flex::column()
+        .with_reverse_orientation()
         .with_main_axis_size(MainAxisSize::Max)
         .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .with_child(render_create_section_button(state, app))
+        .with_child(Shrinkable::new(3., render_workspace_tasks(state, workspace, app)).finish())
+        .with_child(render_bookmarked_sessions(state, workspace, app))
+        .with_child(Expanded::new(1., scrollable_groups).finish())
         .with_child(render_control_bar(
             state,
             workspace,
             &workspace.vertical_tabs_search_input,
             app,
         ))
-        .with_child(Expanded::new(1., scrollable_groups).finish())
-        .with_child(render_bookmarked_sessions(state, workspace, app))
-        .with_child(render_workspace_tasks(state, workspace, app))
-        .with_child(render_create_section_button(state, app))
         .finish();
 
     // The settings popup is rendered at the workspace level (with Dismiss for click-outside-

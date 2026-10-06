@@ -28,6 +28,7 @@ pub struct Resizable {
     state_handle: ResizableStateHandle,
     size: Option<Vector2F>,
     bounds_callback: Option<BoundsCallback>,
+    bounds_relative_to_parent: bool,
     resize_handler: Option<Handler>,
     start_resize_handler: Option<Handler>,
     end_resize_handler: Option<Handler>,
@@ -219,6 +220,7 @@ impl Resizable {
             state_handle,
             size: None,
             bounds_callback: None,
+            bounds_relative_to_parent: false,
             resize_handler: None,
             start_resize_handler: None,
             end_resize_handler: None,
@@ -257,9 +259,18 @@ impl Resizable {
     }
 
     /// Sets a function that computes the (min, max) bounds on the width/height
-    /// of the resizable. The bounds are updated at paint time.
+    /// of the resizable. The bounds are updated at layout time.
     pub fn with_bounds_callback(mut self, callback: BoundsCallback) -> Self {
         self.bounds_callback = Some(callback);
+        self.bounds_relative_to_parent = false;
+        self
+    }
+
+    /// Computes resize bounds from the parent's available size instead of the window size.
+    /// Use this for panels that share space with other elements in a bounded layout.
+    pub fn with_parent_bounds_callback(mut self, callback: BoundsCallback) -> Self {
+        self.bounds_callback = Some(callback);
+        self.bounds_relative_to_parent = true;
         self
     }
 
@@ -328,9 +339,14 @@ impl Element for Resizable {
         ctx: &mut crate::LayoutContext,
         app: &AppContext,
     ) -> Vector2F {
-        // Use the window size to set bounds on the width/height
+        // Nested panels can use their actual allocation rather than the entire window.
         if let Some(bounds_callback) = self.bounds_callback.as_mut() {
-            let mut new_bounds = bounds_callback(ctx.window_size);
+            let available_size = if self.bounds_relative_to_parent {
+                constraint.max
+            } else {
+                ctx.window_size
+            };
+            let mut new_bounds = bounds_callback(available_size);
             if new_bounds.0 > new_bounds.1 {
                 log::error!("Resizable: min bound is greater than max bound");
                 new_bounds = (new_bounds.0, new_bounds.0);
@@ -497,3 +513,7 @@ fn dispatch_callback(callback: Option<&mut Handler>, ctx: &mut EventContext, app
         callback(ctx, app);
     }
 }
+
+#[cfg(test)]
+#[path = "resizable_tests.rs"]
+mod tests;

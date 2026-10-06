@@ -62,9 +62,13 @@ visual language for this MVP.
 ### Tasks
 
 10. An expanded **Tasks** area appears below the session list for the current project. It has a
-   clear green top divider matching the thickness, brightness, and opacity of the **Create new
-   section** button outline, an open-task count, a collapse affordance, and an **Add a task...**
-   single-line input.
+   clear green top divider matching the color of the **Create new section** button outline, an
+   open-task count, a collapse affordance, and an **Add a task...** single-line input. When tasks
+   are present, drag the divider up or down to expand or shrink the area. The heading and input
+   remain visible while task rows scroll independently. The resize limit reserves at least a
+   quarter of the available height for sessions after accounting for fixed sidebar controls and
+   bookmarks. Collapsing and reopening Tasks retains its height for the current workspace session;
+   the height is not persisted across application restarts.
 
 11. Entering non-whitespace text and pressing Enter adds one task to the end of the current
     project's list, clears the input, and saves the workspace. Empty input does nothing.
