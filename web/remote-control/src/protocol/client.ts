@@ -132,7 +132,8 @@ export class CompanionClient {
         this.events.connection("authorization_revoked", message);
       } else {
         this.events.connection("mac_offline", message);
-        this.scheduleReconnect();
+        // Keep saying why while backing off; "Reconnecting" would hide that the Mac is down.
+        this.scheduleReconnect(false);
       }
     }
   }
@@ -226,9 +227,9 @@ export class CompanionClient {
     this.events.envelope(envelope);
   }
 
-  private scheduleReconnect(): void {
+  private scheduleReconnect(announce = true): void {
     if (this.stopped || this.reconnectTimer) return;
-    this.events.connection("reconnecting");
+    if (announce) this.events.connection("reconnecting");
     const delay = Math.min(15_000, 750 * 2 ** this.reconnectAttempt++);
     this.reconnectTimer = window.setTimeout(() => {
       this.reconnectTimer = undefined;

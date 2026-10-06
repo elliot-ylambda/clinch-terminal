@@ -6,17 +6,28 @@ import type { PairingStatus } from "../generated/types/PairingStatus";
 import { base64ToBytes, bytesToBase64, type DeviceIdentity, saveIdentity } from "./storage";
 import { apiUrl, type PairingFragment } from "./urls";
 
+/** Tailscale reached the Mac, but nothing serves Clinch's route there: the app is not running. */
+export const CLINCH_NOT_RUNNING = "Clinch isn't running on your Mac";
+/** The request never reached the Mac: it is asleep, off the tailnet, or this phone's path is down. */
+export const MAC_UNREACHABLE = "Can't reach your Mac";
+
 async function post<T>(endpoint: string, body: unknown): Promise<T> {
-  const response = await fetch(apiUrl(endpoint), {
-    method: "POST",
-    credentials: "same-origin",
-    cache: "no-store",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  let response: Response;
+  try {
+    response = await fetch(apiUrl(endpoint), {
+      method: "POST",
+      credentials: "same-origin",
+      cache: "no-store",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    throw new Error(MAC_UNREACHABLE);
+  }
   const payload = (await response.json().catch(() => null)) as T | { error?: { message?: string } } | null;
   if (!response.ok) {
     const message = payload && typeof payload === "object" && "error" in payload ? payload.error?.message : undefined;
+    if (!message && response.status >= 502 && response.status <= 504) throw new Error(CLINCH_NOT_RUNNING);
     throw new Error(message ?? `Remote Control request failed (${response.status})`);
   }
   return payload as T;

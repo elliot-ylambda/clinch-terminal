@@ -9,6 +9,7 @@ import type { ProjectBadgeSnapshot } from "../generated/types/ProjectBadgeSnapsh
 import type { ProjectSnapshot } from "../generated/types/ProjectSnapshot";
 import type { ServerEnvelope } from "../generated/types/ServerEnvelope";
 import type { SessionKind } from "../generated/types/SessionKind";
+import type { SectionSnapshot } from "../generated/types/SectionSnapshot";
 import type { TabSnapshot } from "../generated/types/TabSnapshot";
 import type { TargetRef } from "../generated/types/TargetRef";
 import type { TerminalKey } from "../generated/types/TerminalKey";
@@ -19,6 +20,7 @@ import { MAX_UPLOAD_CHUNK_BYTES } from "../generated/constants";
 import { encodeUploadChunk } from "../protocol/binary";
 import { CompanionClient } from "../protocol/client";
 import {
+  CLINCH_NOT_RUNNING,
   claimPhone,
   defaultDeviceName,
   finishPairing,
@@ -61,6 +63,35 @@ const connectionLabels: Record<ConnectionState, string> = {
   authorization_revoked: "Authorization revoked",
   version_incompatible: "Update required",
 };
+
+/** The protocol has one "unreachable" state; say which side actually dropped. */
+function connectionLabel(
+  connection: ConnectionState,
+  phoneOnline: boolean,
+  disconnectedHere: boolean,
+  detail: string | undefined,
+): string {
+  if (connection === "mac_offline") {
+    if (disconnectedHere) return "Disconnected";
+    if (!phoneOnline) return "Phone offline";
+    if (detail === CLINCH_NOT_RUNNING) return "Clinch not running";
+  }
+  return connectionLabels[connection];
+}
+
+function usePhoneOnline(): boolean {
+  const [online, setOnline] = useState(() => navigator.onLine);
+  useEffect(() => {
+    const update = () => setOnline(navigator.onLine);
+    window.addEventListener("online", update);
+    window.addEventListener("offline", update);
+    return () => {
+      window.removeEventListener("online", update);
+      window.removeEventListener("offline", update);
+    };
+  }, []);
+  return online;
+}
 
 // Capture and remove the one-time secret exactly once, before React StrictMode can render the
 // component twice. The secret never becomes part of an HTTP request or referrer.
@@ -152,27 +183,35 @@ function resolveTarget(snapshot: WorkspaceSnapshot | undefined, target: TargetRe
   return { project, tab, pane };
 }
 
+/**
+ * Follows the Mac when its active target MOVES (the user switched tabs there), and otherwise keeps
+ * the phone's own choice. Re-adopting an unchanged active target on every workspace update would
+ * undo any phone selection the Mac does not mirror, such as a project in another Mac window.
+ */
 export function synchronizedSelection(
   snapshot: WorkspaceSnapshot,
   currentProjectId: string | undefined,
   currentTarget: TargetRef | undefined,
+  previousMacTarget?: TargetRef | null,
 ): { projectId: string | undefined; target: TargetRef | undefined } {
   const active = resolveTarget(snapshot, snapshot.active_target ?? undefined);
-  if (snapshot.active_target && active.project && active.pane?.dimensions) {
+  const macMoved = !previousMacTarget
+    || !snapshot.active_target
+    || targetKey(previousMacTarget) !== targetKey(snapshot.active_target);
+  if (macMoved && snapshot.active_target && active.project && active.pane?.dimensions) {
     return { projectId: active.project.id, target: snapshot.active_target };
   }
 
   const current = resolveTarget(snapshot, currentTarget);
-  const activeProject = snapshot.projects.find((project) => project.active);
+  if (current.project && current.pane?.dimensions) {
+    return { projectId: current.project.id, target: currentTarget };
+  }
   const preferredProject =
-    activeProject ??
     snapshot.projects.find((project) => project.id === currentProjectId) ??
-    current.project ??
+    active.project ??
+    snapshot.projects.find((project) => project.active) ??
     snapshot.projects[0];
   if (!preferredProject) return { projectId: undefined, target: undefined };
-  if (current.project?.id === preferredProject.id && current.pane?.dimensions) {
-    return { projectId: preferredProject.id, target: currentTarget };
-  }
   return { projectId: preferredProject.id, target: firstTarget(snapshot, preferredProject) };
 }
 
@@ -297,17 +336,31 @@ function drawerTabActivity(tab: TabSnapshot): { className: string; label: string
 export interface DrawerSessionSection {
   id: string | undefined;
   name: string | undefined;
+  /** `#rrggbb` from the Mac's theme; undefined for unsectioned runs or the default treatment. */
+  color: string | undefined;
+  collapsed: boolean;
   tabs: TabSnapshot[];
 }
 
-export function drawerSessionSections(tabs: TabSnapshot[]): DrawerSessionSection[] {
+export function drawerSessionSections(
+  tabs: TabSnapshot[],
+  sectionInfo: SectionSnapshot[] = [],
+): DrawerSessionSection[] {
+  const infoById = new Map(sectionInfo.map((section) => [section.id, section]));
   const sections: DrawerSessionSection[] = [];
   for (const tab of tabs) {
     const name = tab.section_name?.trim() || undefined;
     const id = tab.section_id ?? (name ? `legacy:${name}` : undefined);
     const current = sections.at(-1);
     if (!current || current.id !== id) {
-      sections.push({ id, name, tabs: [tab] });
+      const info = tab.section_id ? infoById.get(tab.section_id) : undefined;
+      sections.push({
+        id,
+        name,
+        color: info?.color ?? undefined,
+        collapsed: info?.collapsed ?? false,
+        tabs: [tab],
+      });
     } else {
       current.tabs.push(tab);
     }
@@ -328,6 +381,8 @@ export function App() {
   const connectionRef = useRef<ConnectionState>("reconnecting");
   connectionRef.current = connection;
   const [connectionDetail, setConnectionDetail] = useState<string>();
+  const phoneOnline = usePhoneOnline();
+  const [disconnectedHere, setDisconnectedHere] = useState(false);
   const [snapshot, setSnapshot] = useState<WorkspaceSnapshot>();
   const snapshotRef = useRef<WorkspaceSnapshot | undefined>(undefined);
   snapshotRef.current = snapshot;
@@ -337,6 +392,7 @@ export function App() {
   const [selectedTarget, setSelectedTarget] = useState<TargetRef>();
   const selectedTargetRef = useRef<TargetRef | undefined>(undefined);
   selectedTargetRef.current = selectedTarget;
+  const lastMacTargetRef = useRef<TargetRef | null>(null);
   const lastTargetByProject = useRef(new Map<string, TargetRef>());
   const loadedRememberedTargets = useRef(false);
   if (!loadedRememberedTargets.current) {
@@ -361,6 +417,10 @@ export function App() {
   const [unpairArmed, setUnpairArmed] = useState(false);
   const [unpairing, setUnpairing] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
+  const [newSectionOpen, setNewSectionOpen] = useState(false);
+  const [sectionName, setSectionName] = useState("");
+  /** Phone-only expand/collapse, layered over the Mac's own collapsed state. */
+  const [sectionCollapseOverrides, setSectionCollapseOverrides] = useState<Record<string, boolean>>({});
   const [newMode, setNewMode] = useState<NewSessionMode>("create");
   const [newKind, setNewKind] = useState<SessionKind>("terminal");
   const [newCwd, setNewCwd] = useState("");
@@ -370,7 +430,18 @@ export function App() {
   const [taskText, setTaskText] = useState("");
   const [quickInsertBusy, setQuickInsertBusy] = useState(false);
   const [resyncing, setResyncing] = useState(false);
-  const [notice, setNotice] = useState<string>();
+  const [notice, setNoticeState] = useState<{ text: string; tone: "error" | "info" }>();
+  /** Errors stay until dismissed; they explain something the user has to act on. */
+  const setNotice = useCallback((text: string | undefined) => {
+    setNoticeState(text === undefined ? undefined : { text, tone: "error" });
+  }, []);
+  /** Confirmations clear themselves so they never sit on top of the drawer or the toolbelt. */
+  const showInfo = useCallback((text: string) => setNoticeState({ text, tone: "info" }), []);
+  useEffect(() => {
+    if (notice?.tone !== "info") return;
+    const timer = window.setTimeout(() => setNoticeState((current) => (current === notice ? undefined : current)), 4000);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
   const [uploadProgress, setUploadProgress] = useState<number>();
   const [uploadActive, setUploadActive] = useState(false);
   const [uploadRetryFile, setUploadRetryFile] = useState<File>();
@@ -485,7 +556,9 @@ export function App() {
             payload.data,
             selectedProjectIdRef.current,
             selectedTargetRef.current,
+            lastMacTargetRef.current,
           );
+          lastMacTargetRef.current = payload.data.active_target ?? null;
           if (
             previousTarget
             && (!selection.target || targetKey(previousTarget) !== targetKey(selection.target))
@@ -507,7 +580,9 @@ export function App() {
             payload.data.snapshot,
             selectedProjectIdRef.current,
             selectedTargetRef.current,
+            lastMacTargetRef.current,
           );
+          lastMacTargetRef.current = payload.data.snapshot.active_target ?? null;
           if (
             previousTarget
             && (!selection.target || targetKey(previousTarget) !== targetKey(selection.target))
@@ -583,7 +658,7 @@ export function App() {
         setUploadActive(false);
         setUploadRetryFile(undefined);
         setUploadProgress(undefined);
-        setNotice(`Inserted ${payload.data.inserted_path} without pressing Enter.`);
+        showInfo(`Inserted ${payload.data.inserted_path} without pressing Enter.`);
         break;
       case "connection_state":
         if (payload.data !== "connected") targetSelectionInFlight.current = undefined;
@@ -849,7 +924,14 @@ export function App() {
             // Acquiring the lease triggers a React commit before TerminalSurface can report the
             // writer-owned viewport. Keep the originating tap alive through that short handoff so
             // accessory keys and one-tap quick inserts cannot disappear on first use.
-            if (Date.now() >= viewportDeadline) return false;
+            if (Date.now() >= viewportDeadline) {
+              // Never drop typing silently: say so, so a stuck terminal is not mistaken for lag.
+              if (queuedTerminalInput.current.some((input) => input.targetKey === expectedTargetKey)) {
+                queuedTerminalInput.current = [];
+                setNotice("That typing didn't reach the Mac. Tap the terminal and try again.");
+              }
+              return false;
+            }
             await new Promise<void>((resolve) => window.setTimeout(resolve, 16));
             continue;
           }
@@ -939,6 +1021,10 @@ export function App() {
   // second, and identical ones must not churn this.
   const mirrorColumns = mirrorSize?.columns;
   const mirrorRows = mirrorSize?.rows;
+  // Attaching a new terminal stream resets preparation, which clears the viewport seeded below, so
+  // re-seed per stream; otherwise opening a pane the Mac is showing left typing dead until its
+  // size or lease happened to change.
+  const mirrorStreamId = liveTerminalSnapshot?.stream_id;
   useEffect(() => {
     if (mirrorColumns === undefined || mirrorRows === undefined || !selectedTarget) {
       lastMirrorKey.current = undefined;
@@ -965,7 +1051,7 @@ export function App() {
     // the old ones, so replace the local buffer with the Mac's authoritative render rather than
     // leaving that debris in the transcript.
     refreshTerminalSnapshot();
-  }, [mirrorColumns, mirrorRows, ownsWriterLease, refreshTerminalSnapshot, selectedTarget]);
+  }, [mirrorColumns, mirrorRows, mirrorStreamId, ownsWriterLease, refreshTerminalSnapshot, selectedTarget]);
 
   const setSizePin = useCallback((pinned: boolean) => {
     const currentSnapshot = snapshotRef.current;
@@ -1168,6 +1254,35 @@ export function App() {
     }
   }, [runCreation, selectedLocalCwd, selectedProject, snapshot]);
 
+  const createSection = useCallback(async (name: string) => {
+    const currentSnapshot = snapshotRef.current;
+    const target = selectedTargetRef.current;
+    const trimmed = name.trim();
+    if (!trimmed || !currentSnapshot || !target) return false;
+    try {
+      return await runCreation({
+        type: "create_section",
+        data: { target, workspace_revision: currentSnapshot.revision, name: trimmed },
+      });
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+      return false;
+    }
+  }, [runCreation, setNotice]);
+
+  const setTabSection = useCallback(async (target: TargetRef, sectionId: string | null) => {
+    const currentSnapshot = snapshotRef.current;
+    if (!currentSnapshot) return;
+    try {
+      await runCreation({
+        type: "set_tab_section",
+        data: { target, workspace_revision: currentSnapshot.revision, section_id: sectionId },
+      });
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    }
+  }, [runCreation, setNotice]);
+
   const createTask = useCallback(async () => {
     const text = taskText.trim();
     const currentSnapshot = snapshotRef.current;
@@ -1369,7 +1484,8 @@ export function App() {
         activeUploadId.current = undefined;
         setUploadActive(false);
         setUploadProgress(undefined);
-        setNotice(canceled ? "Upload canceled. You can retry when ready." : error instanceof Error ? error.message : String(error));
+        if (canceled) showInfo("Upload canceled. You can retry when ready.");
+        else setNotice(error instanceof Error ? error.message : String(error));
       }
     },
     [canWrite, selectedTarget, snapshot],
@@ -1423,7 +1539,8 @@ export function App() {
     ? `${selected.pane.writer_lease.device_name} has control`
     : undefined;
   const sessionActivity = selected.tab ? drawerTabActivity(selected.tab) : undefined;
-  const connectionStatus = resyncing ? "Resyncing" : connectionLabels[connection];
+  const currentConnectionLabel = connectionLabel(connection, phoneOnline, disconnectedHere, connectionDetail);
+  const connectionStatus = resyncing ? "Resyncing" : currentConnectionLabel;
 
   return (
     <div className="app-shell">
@@ -1512,7 +1629,7 @@ export function App() {
           {terminalSnapshot && (terminalStale || connection !== "connected") && (
             <div className="reconnect-pill" role="status">
               <span className={`activity-dot ${connection === "connected" ? "reconnecting" : connection}`} />
-              {connection === "connected" || connection === "reconnecting" ? "Reconnecting…" : connectionLabels[connection]}
+              {connection === "connected" || connection === "reconnecting" ? "Reconnecting…" : currentConnectionLabel}
             </div>
           )}
           {terminalSnapshot ? (
@@ -1542,6 +1659,8 @@ export function App() {
           ) : (
             <EmptyFocus
               connected={connection === "connected"}
+              phoneOffline={!phoneOnline}
+              clinchNotRunning={connection === "mac_offline" && connectionDetail === CLINCH_NOT_RUNNING}
               hasProjects={projects.length > 0}
               startingSession={Boolean(selectedProject?.tabs.some((tab) =>
                 tab.panes.some((pane) => !pane.dimensions),
@@ -1636,14 +1755,53 @@ export function App() {
                   void createProject();
                 }}
               >＋ New project</button>
+              <button
+                className="drawer-new-project"
+                disabled={!selectedTarget || connection !== "connected" || creating}
+                onClick={() => {
+                  setSectionName("");
+                  setNewSectionOpen(true);
+                }}
+              >＋ New section</button>
             </div>
             {selectedProject ? (
               <section key={selectedProject.id}>
                 <h2>{selectedProject.title}</h2>
-                {drawerSessionSections(selectedProject.tabs).map((section, sectionIndex) => (
-                  <div className="drawer-session-section" key={`${section.id ?? "sessions"}-${sectionIndex}`}>
-                    <h3>{section.name ?? (selectedProject.tabs.some((tab) => tab.section_name) ? "Other sessions" : "Sessions")}</h3>
-                    {section.tabs.map((tab) => {
+                {drawerSessionSections(selectedProject.tabs, selectedProject.sections ?? []).map((section, sectionIndex) => {
+                  const isSection = Boolean(section.name);
+                  const sectionId = section.id && !section.id.startsWith("legacy:") ? section.id : undefined;
+                  const collapsed = isSection && (sectionCollapseOverrides[section.id ?? ""] ?? section.collapsed);
+                  const holdsSelected = section.tabs.some((tab) => tab.id === selectedTarget?.tab_id);
+                  return (
+                  <div
+                    className={`drawer-session-section${isSection ? " section-card" : ""}`}
+                    key={`${section.id ?? "sessions"}-${sectionIndex}`}
+                    style={section.color ? { "--section-color": section.color } as React.CSSProperties : undefined}
+                  >
+                    {isSection ? (
+                      <div className="section-header">
+                        <button
+                          className="section-toggle"
+                          aria-expanded={!collapsed}
+                          onClick={() => setSectionCollapseOverrides((current) => ({ ...current, [section.id ?? ""]: !collapsed }))}
+                        >
+                          <span className="section-chevron" aria-hidden="true">{collapsed ? "›" : "⌄"}</span>
+                          <span className="section-name">{section.name}</span>
+                          <small>{section.tabs.length} {section.tabs.length === 1 ? "session" : "sessions"}</small>
+                        </button>
+                        {sectionId && selectedTarget && selectedTarget.project_id === selectedProject.id && (
+                          <button
+                            className="section-move"
+                            disabled={creating || connection !== "connected"}
+                            aria-label={holdsSelected ? `Take the current tab out of ${section.name}` : `Move the current tab into ${section.name}`}
+                            onClick={() => void setTabSection(selectedTarget, holdsSelected ? null : sectionId)}
+                          >{holdsSelected ? "−" : "＋"}</button>
+                        )}
+                      </div>
+                    ) : (
+                      <h3>{selectedProject.tabs.some((tab) => tab.section_name) ? "Other sessions" : "Sessions"}</h3>
+                    )}
+                    {!collapsed && section.tabs.map((tab) => {
                       const activity = drawerTabActivity(tab);
                       return (
                         <div className="drawer-tab-group" key={tab.id}>
@@ -1664,7 +1822,8 @@ export function App() {
                       );
                     })}
                   </div>
-                ))}
+                  );
+                })}
                 {selectedProject.tabs.length === 0 && <p className="muted">No sessions in this project yet.</p>}
                 <div className="drawer-task-section">
                   <div className="drawer-task-heading"><h3>Tasks</h3><span>{selectedProject.tasks?.length ?? 0}</span></div>
@@ -1698,10 +1857,32 @@ export function App() {
         </>
       )}
 
+      {newSectionOpen && (
+        <Sheet title="New section" onClose={() => setNewSectionOpen(false)}>
+          <form className="new-section-form" onSubmit={(event) => {
+            event.preventDefault();
+            void createSection(sectionName).then((created) => {
+              if (created) setNewSectionOpen(false);
+            });
+          }}>
+            <input
+              aria-label="Section name"
+              placeholder="Section name"
+              autoFocus
+              maxLength={256}
+              value={sectionName}
+              onChange={(event) => setSectionName(event.target.value)}
+            />
+            <p className="muted">Starts with the tab you're viewing. Use ＋ on a section to move other tabs in.</p>
+            <button className="primary-wide" disabled={!sectionName.trim() || creating || connection !== "connected"}>Create section</button>
+          </form>
+        </Sheet>
+      )}
+
       {settingsOpen && (
         <Sheet title="Settings" onClose={() => { setSettingsOpen(false); setUnpairArmed(false); }}>
           <div className="sheet-connection">
-            <span className={`activity-dot ${connection}`} />{connectionLabels[connection]}
+            <span className={`activity-dot ${connection}`} />{currentConnectionLabel}
             <small>
               {identity?.deviceName ?? "This phone"} · {snapshot?.host.name ?? "Mac"} · {connectionPathLabel(snapshot?.host.connection_path)}
               {connectionDetail ? ` · ${connectionDetail}` : ""}
@@ -1711,6 +1892,7 @@ export function App() {
           <button className="secondary-wide" onClick={() => {
             client.current?.stop();
             setConnection("mac_offline");
+            setDisconnectedHere(true);
             setConnectionDetail("Disconnected on this phone until the page is reopened.");
             setSettingsOpen(false);
           }}>Disconnect for now</button>
@@ -1858,7 +2040,13 @@ export function App() {
         </Sheet>
       )}
 
-      {notice && <button className="notice" role="alert" onClick={() => setNotice(undefined)}>{notice}<span>×</span></button>}
+      {notice && (
+        <button
+          className={`notice ${notice.tone}`}
+          role={notice.tone === "error" ? "alert" : "status"}
+          onClick={() => setNotice(undefined)}
+        >{notice.text}<span>×</span></button>
+      )}
     </div>
   );
 }
@@ -1901,16 +2089,20 @@ function PairingCountdown({ expiresAt }: { expiresAt: string }) {
   );
 }
 
-function EmptyFocus({ connected, hasProjects, startingSession, onNew }: { connected: boolean; hasProjects: boolean; startingSession: boolean; onNew: (kind: SessionKind) => void }) {
+function EmptyFocus({ connected, phoneOffline, clinchNotRunning, hasProjects, startingSession, onNew }: { connected: boolean; phoneOffline: boolean; clinchNotRunning: boolean; hasProjects: boolean; startingSession: boolean; onNew: (kind: SessionKind) => void }) {
   const heading = !connected
-    ? "Waiting for your Mac"
+    ? phoneOffline ? "This phone is offline" : clinchNotRunning ? "Clinch isn't running" : "Waiting for your Mac"
     : startingSession
       ? "Starting terminal…"
       : hasProjects
         ? "Choose a live session"
         : "Your Mac is ready";
   const detail = !connected
-    ? "Clinch will reconnect automatically when the Mac wakes and comes online."
+    ? phoneOffline
+      ? "Clinch will reconnect automatically as soon as this phone is back online."
+      : clinchNotRunning
+        ? "Your Mac is reachable, but the Clinch app is closed. Open it and this page reconnects on its own."
+        : "Clinch will reconnect automatically when the Mac wakes and comes online."
     : startingSession
       ? "Clinch is finishing the private shell setup before terminal output is shared."
       : "Open an existing tab from the drawer or start something new without leaving focus mode.";

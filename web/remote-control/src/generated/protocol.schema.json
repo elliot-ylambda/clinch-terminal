@@ -485,6 +485,38 @@
           "type": "object",
           "properties": {
             "data": {
+              "$ref": "#/$defs/CreateSection"
+            },
+            "type": {
+              "type": "string",
+              "const": "create_section"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/SetTabSection"
+            },
+            "type": {
+              "type": "string",
+              "const": "set_tab_section"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
               "$ref": "#/$defs/QuickInsertPreviewRequest"
             },
             "type": {
@@ -636,6 +668,28 @@
         "app_instance_id",
         "workspace_revision",
         "project_id"
+      ]
+    },
+    "CreateSection": {
+      "description": "Creates a section containing the target's tab, like \"Create new section\" on the Mac.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/TargetRef"
+        },
+        "workspace_revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "target",
+        "workspace_revision",
+        "name"
       ]
     },
     "CreateSession": {
@@ -1174,6 +1228,13 @@
           "format": "uint32",
           "minimum": 0
         },
+        "sections": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/SectionSnapshot"
+          }
+        },
         "tabs": {
           "type": "array",
           "items": {
@@ -1452,6 +1513,33 @@
         "provider",
         "durable_session_id",
         "cwd"
+      ]
+    },
+    "SectionSnapshot": {
+      "description": "A named group of tabs in a project's sidebar, in the order the Mac shows it.",
+      "type": "object",
+      "properties": {
+        "collapsed": {
+          "type": "boolean"
+        },
+        "color": {
+          "description": "`#rrggbb` resolved through the Mac's current theme, so the phone matches the desktop\nexactly; `None` means the section uses the default (accent) treatment.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "collapsed"
       ]
     },
     "SelectTarget": {
@@ -1822,6 +1910,30 @@
         "terminal",
         "claude_code",
         "codex"
+      ]
+    },
+    "SetTabSection": {
+      "description": "Moves the target's tab into a section, or out of any section when `section_id` is `None`.",
+      "type": "object",
+      "properties": {
+        "section_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "target": {
+          "$ref": "#/$defs/TargetRef"
+        },
+        "workspace_revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "target",
+        "workspace_revision"
       ]
     },
     "SetTerminalSizePin": {

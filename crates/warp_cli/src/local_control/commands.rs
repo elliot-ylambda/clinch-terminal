@@ -22,11 +22,11 @@ use crate::local_control::output::{write_json, write_json_line};
 use crate::local_control::selectors::{instance_selector, target_selector};
 use crate::local_control::{
     ActionCatalogCommand, AppCommand, AppearanceCommand, CapabilityCommand, FileCommand,
-    InputCommand, InstanceCommand, KeybindingCommand, PaneCommand, SectionCommand,
-    SectionTabCommand, SessionCommand, SettingCommand, SurfaceCommand, SurfaceOpenCommand,
-    SurfaceOpenToggleCommand, SurfaceQueryCommand, SurfaceSettingsCommand, SurfaceToggleCommand,
-    TabActivateArgs, TabCloseArgs, TabColorCommand, TabCommand, TargetArgs, ThemeCommand,
-    ToolbeltButtonCommand, ToolbeltCommand, ToolbeltSuggestionCommand, WindowCommand,
+    InputCommand, InstanceCommand, KeybindingCommand, PaneCommand, RemoteControlCommand,
+    SectionCommand, SectionTabCommand, SessionCommand, SettingCommand, SurfaceCommand,
+    SurfaceOpenCommand, SurfaceOpenToggleCommand, SurfaceQueryCommand, SurfaceSettingsCommand,
+    SurfaceToggleCommand, TabActivateArgs, TabCloseArgs, TabColorCommand, TabCommand, TargetArgs,
+    ThemeCommand, ToolbeltButtonCommand, ToolbeltCommand, ToolbeltSuggestionCommand, WindowCommand,
 };
 
 pub(super) fn run_surface_command(
@@ -903,6 +903,20 @@ pub(super) fn run_keybinding_command(
             BindingNameParams {
                 binding_name: args.name,
             },
+            output_format,
+        ),
+    }
+}
+
+pub(super) fn run_remote_control_command(
+    command: RemoteControlCommand,
+    output_format: OutputFormat,
+) -> Result<(), ControlError> {
+    match command {
+        RemoteControlCommand::TestPair(args) => run_action_with_params(
+            args,
+            ActionKind::RemoteControlTestPair,
+            EmptyParams {},
             output_format,
         ),
     }

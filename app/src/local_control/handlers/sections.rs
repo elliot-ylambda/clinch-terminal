@@ -8,6 +8,7 @@ use ::local_control::protocol::{
     TargetSelector,
 };
 use ::local_control::{ActionKind, ControlError, ErrorCode};
+use clinch_companion_protocol::MAX_SECTION_NAME_BYTES;
 use serde_json::json;
 use uuid::Uuid;
 use warp_core::features::FeatureFlag;
@@ -19,8 +20,6 @@ use crate::local_control::resolver::{
 use crate::local_control::LocalControlBridge;
 use crate::workspace::tab_group::{SectionColor, SelectedSectionColor, TabGroupId};
 use crate::workspace::{TabMovement, Workspace};
-
-const MAX_SECTION_NAME_BYTES: usize = 256;
 
 pub(crate) fn handle(
     action: &::local_control::Action,

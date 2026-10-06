@@ -116,4 +116,20 @@ describe("Remote Control session reuse", () => {
     vi.mocked(Date.now).mockRestore();
     client.stop();
   });
+
+  it("keeps reporting why the Mac is unreachable while it backs off", async () => {
+    vi.mocked(authenticate).mockReset().mockRejectedValue(new Error("Clinch isn't running on your Mac"));
+    const states: string[] = [];
+    const client = new CompanionClient(identity, {
+      connection: (state) => states.push(state),
+      envelope: () => {},
+      terminal: () => {},
+      resync: () => {},
+    });
+    client.start();
+    await vi.waitFor(() => expect(states).toContain("mac_offline"));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(states.at(-1)).toBe("mac_offline");
+    client.stop();
+  });
 });

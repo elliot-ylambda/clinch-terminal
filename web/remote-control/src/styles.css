@@ -644,6 +644,88 @@ button:disabled {
   border-top: 1px solid var(--stroke-strong);
 }
 
+/* A Mac section: outlined and tinted in its color, like the desktop sidebar's group card. */
+.drawer-session-section.section-card {
+  --section-color: var(--accent);
+  margin-top: 10px;
+  padding: 4px 6px 2px;
+  border: 1px solid color-mix(in srgb, var(--section-color) 55%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--section-color) 9%, transparent);
+}
+
+.drawer-session-section.section-card + .drawer-session-section {
+  border-top: 0;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.section-toggle {
+  display: flex;
+  flex: 1;
+  min-height: 40px;
+  padding: 4px 6px;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+  background: transparent;
+  text-align: left;
+}
+
+.section-chevron {
+  width: 12px;
+  color: color-mix(in srgb, var(--section-color) 70%, #b6b9c4);
+  font-size: 14px;
+}
+
+.section-name {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.section-toggle small {
+  margin-left: auto;
+  color: #8c91a0;
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.section-move {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border-radius: 9px;
+  color: var(--section-color);
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 16px;
+}
+
+.section-card .drawer-tab-group {
+  border-color: color-mix(in srgb, var(--section-color) 22%, var(--stroke));
+}
+
+.new-section-form {
+  display: grid;
+  gap: 10px;
+}
+
+.new-section-form input {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--stroke-strong);
+  border-radius: 10px;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 16px;
+}
+
 .drawer-session-section > h3,
 .drawer-task-heading h3 {
   margin: 0 3px 7px;
@@ -1225,6 +1307,12 @@ button:disabled {
 
 .notice span {
   font-size: 17px;
+}
+
+.notice.info {
+  border-color: rgba(191, 255, 0, 0.24);
+  color: #e6edf7;
+  background: rgba(20, 27, 38, 0.98);
 }
 
 .pairing-screen {

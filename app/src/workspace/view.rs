@@ -23099,8 +23099,27 @@ impl Workspace {
     /// Label for the outer project tab. Linked worktrees use the main repository's
     /// name, while the active project directory remains the selected checkout.
     pub(crate) fn project_display_name(&self, ctx: &AppContext) -> String {
-        let project_dir = self.active_header_project_dir(ctx);
+        let project_dir = self
+            .active_header_project_dir(ctx)
+            .or_else(|| self.fallback_project_dir(ctx));
         Self::project_display_name_for_dir(project_dir.as_deref(), ctx)
+    }
+
+    /// For naming only, when the active tab has no live local shell: a Settings or other
+    /// non-terminal tab, or a restored tab in a project that has not been shown yet (no
+    /// bootstrapped session, but its last block still records the directory). Without this the
+    /// project reads "New Project". Paths are used as recorded since this runs on every render.
+    fn fallback_project_dir(&self, ctx: &AppContext) -> Option<PathBuf> {
+        let active = self.tabs.get(self.active_tab_index).into_iter();
+        active.chain(self.tabs.iter()).find_map(|tab| {
+            let terminal = tab.pane_group.as_ref(ctx).active_session_view(ctx)?;
+            let pwd = terminal.as_ref(ctx).pwd()?;
+            let cwd_key = LocalOrRemotePath::Local(PathBuf::from(pwd));
+            let root = DetectedRepositories::as_ref(ctx)
+                .get_root_for_path(&cwd_key)
+                .unwrap_or(cwd_key);
+            root.to_local_path().map(|path| path.to_path_buf())
+        })
     }
 
     pub(crate) fn contains_pane_group(&self, pane_group_id: EntityId) -> bool {
