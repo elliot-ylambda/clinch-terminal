@@ -11,6 +11,29 @@ use crate::terminal::TerminalView;
 impl TerminalView {
     pub const LINKED_WORKTREE_LABEL: &'static str = "Worktree";
 
+    /// A CLI's OSC title can summarize the conversation. Ignore the shell's placeholder title
+    /// and current directory while waiting for the agent to supply one.
+    pub(super) fn cli_agent_terminal_title(&self, ctx: &AppContext) -> Option<String> {
+        let title = {
+            let model = self.model.lock();
+            model
+                .terminal_title()
+                .filter(|title| title.trim() != model.shell_launch_state().display_name())?
+        };
+        let display_directory = self.display_working_directory(ctx);
+        let directory = self.pwd();
+        let is_directory = [display_directory.as_deref(), directory.as_deref()]
+            .into_iter()
+            .flatten()
+            .any(|directory| {
+                title.trim() == directory
+                    || std::path::Path::new(directory)
+                        .file_name()
+                        .is_some_and(|name| name == title.trim())
+            });
+        (!is_directory).then_some(title)
+    }
+
     fn prompt_chip_value(&self, chip_kind: &ContextChipKind, ctx: &AppContext) -> Option<String> {
         self.current_prompt
             .as_ref(ctx)

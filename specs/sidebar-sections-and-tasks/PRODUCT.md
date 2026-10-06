@@ -59,6 +59,18 @@ visual language for this MVP.
 9. Section names, membership, order, collapsed state, and selected color survive quitting and
    restarting Clinch.
 
+### Agent titles and bookmarks
+
+- Claude Code and Codex tabs prefer the short title supplied by the agent, falling back to the
+  first sentence of the initial prompt when no useful agent title is available. The same title
+  selection applies inside and outside sections and to pane headers. Manually renamed tabs and
+  the explicit latest-prompt title setting retain their precedence.
+- Prompt-derived tab and bookmark titles omit `<pasted_content>` wrappers. The pasted text remains
+  visible, and stored prompt history retains the original text.
+- Each saved-session row has an **Unbookmark session** action. It removes the bookmark even when
+  that session has no open pane, leaves open sessions running, and updates other open copies.
+  Clicking Unbookmark does not also reopen the session.
+
 ### Tasks
 
 10. An expanded **Tasks** area appears below the session list for the current project. It has a
