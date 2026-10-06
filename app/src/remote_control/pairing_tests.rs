@@ -127,6 +127,32 @@ fn invitation_is_single_use_and_requires_desktop_approval() {
 }
 
 #[test]
+fn only_claims_on_an_auto_approving_invitation_are_auto_approvable() {
+    let manager = PairingManager::new(DeviceRegistry::default()).unwrap();
+    let now = Utc::now();
+
+    let manual = manager
+        .create_invitation("https://mac.example.ts.net", now)
+        .unwrap();
+    manager.claim(claim_request(&manual), now).unwrap();
+    assert!(manager.auto_approvable_claims(now).unwrap().is_empty());
+
+    let automatic = manager
+        .create_auto_approving_invitation("https://mac.example.ts.net", now)
+        .unwrap();
+    let receipt = manager.claim(claim_request(&automatic), now).unwrap();
+    assert_eq!(
+        manager.auto_approvable_claims(now).unwrap(),
+        vec![receipt.claim_id]
+    );
+
+    manager
+        .approve(receipt.claim_id, vec![Capability::View], now)
+        .unwrap();
+    assert!(manager.auto_approvable_claims(now).unwrap().is_empty());
+}
+
+#[test]
 fn rescanning_the_same_phone_key_reuses_its_device_record() {
     let manager = PairingManager::new(DeviceRegistry::default()).unwrap();
     let now = Utc::now();

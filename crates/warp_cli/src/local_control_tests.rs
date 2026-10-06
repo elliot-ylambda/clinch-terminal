@@ -964,6 +964,10 @@ fn retained_action_examples() -> Vec<(ActionKind, Vec<&'static str>)> {
             ActionKind::ActionInspect,
             vec!["warpctrl", "action", "inspect", "tab.create"],
         ),
+        (
+            ActionKind::RemoteControlTestPair,
+            vec!["warpctrl", "remote-control", "test-pair"],
+        ),
         (ActionKind::SurfaceList, vec!["warpctrl", "surface", "list"]),
         (
             ActionKind::SurfaceSettingsOpen,
@@ -1175,6 +1179,9 @@ fn parsed_action_kind(command: &ControlCommand) -> Option<ActionKind> {
         },
         ControlCommand::File(command) => match command {
             FileCommand::Open(_) => Some(ActionKind::FileOpen),
+        },
+        ControlCommand::RemoteControl(command) => match command {
+            RemoteControlCommand::TestPair(_) => Some(ActionKind::RemoteControlTestPair),
         },
         ControlCommand::Surface(command) => match command {
             SurfaceCommand::List(_) => Some(ActionKind::SurfaceList),

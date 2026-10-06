@@ -1,3 +1,4 @@
+mod desktop_presence;
 mod gateway;
 mod pairing;
 mod registry_storage;
@@ -14,7 +15,7 @@ use instant::Instant;
 pub use pairing::PendingClaimSummary;
 use settings::Setting as _;
 pub use status::{RemoteControlStatus, RemoteControlViewState};
-use warp_core::channel::ChannelState;
+use warp_core::channel::{Channel, ChannelState};
 use warpui::{AppContext, Entity, ModelContext, SingletonEntity};
 use warpui_extras::secure_storage;
 
@@ -164,6 +165,36 @@ impl RemoteControlService {
         }
         self.ensure_pairing_ticker(ctx);
         ctx.notify();
+    }
+
+    /// Mints a pairing link whose claim is approved without a click in Settings, so automated
+    /// end-to-end tests can pair a browser. Refused outside the local development channel: on
+    /// shipped builds a person must always approve a new phone on the Mac.
+    pub fn start_test_pairing(
+        &mut self,
+        ctx: &mut ModelContext<Self>,
+    ) -> Result<clinch_companion_protocol::PairingInvitation, String> {
+        if ChannelState::channel() != Channel::Local {
+            return Err("Test pairing is only available in Clinch Dev.".to_owned());
+        }
+        if !self.view_state.status.is_ready() {
+            return Err(
+                "Remote Control is not ready; enable it and finish Tailscale setup.".to_owned(),
+            );
+        }
+        self.ensure_registry_loaded(ctx)?;
+        let base_origin = self
+            .base_origin
+            .as_deref()
+            .ok_or_else(|| "Remote Control is not ready yet.".to_owned())?;
+        let invitation = self
+            .pairing
+            .create_auto_approving_invitation(base_origin, Utc::now())
+            .map_err(|error| format!("Could not create a pairing code: {error}"))?;
+        // Minting replaced any QR shown in Settings.
+        self.view_state.active_invitation = None;
+        ctx.notify();
+        Ok(invitation)
     }
 
     fn issue_invitation(&mut self) -> Result<(), String> {
@@ -590,6 +621,14 @@ impl RemoteControlService {
                 // The scanned QR was consumed server-side and cannot be replayed; stop showing
                 // it so the approval panel is the only thing asking for attention.
                 self.view_state.active_invitation = None;
+                for claim_id in self
+                    .pairing
+                    .auto_approvable_claims(Utc::now())
+                    .unwrap_or_default()
+                {
+                    log::info!("Remote Control auto-approved a test pairing claim");
+                    self.approve_pairing(claim_id, ctx);
+                }
             }
             GatewayEvent::ClientConnected | GatewayEvent::ClientDisconnected => {}
         }

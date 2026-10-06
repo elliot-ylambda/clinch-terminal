@@ -178,6 +178,9 @@ struct PairingState {
 struct Invitation {
     secret_hash: [u8; 32],
     expires_at: DateTime<Utc>,
+    /// Test pairing on the local development channel: a claim against this invitation is
+    /// approved without a click in Settings. Only the holder of its secret can claim it.
+    auto_approve: bool,
 }
 
 #[derive(Debug)]
@@ -189,6 +192,7 @@ struct Claim {
     public_key_fingerprint: String,
     expires_at: DateTime<Utc>,
     resolution: ClaimResolution,
+    auto_approve: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -316,6 +320,24 @@ impl PairingManager {
         base_url: &str,
         now: DateTime<Utc>,
     ) -> Result<PairingInvitation, PairingError> {
+        self.insert_invitation(base_url, now, false)
+    }
+
+    /// An invitation whose claim needs no approval click; see [`Invitation::auto_approve`].
+    pub fn create_auto_approving_invitation(
+        &self,
+        base_url: &str,
+        now: DateTime<Utc>,
+    ) -> Result<PairingInvitation, PairingError> {
+        self.insert_invitation(base_url, now, true)
+    }
+
+    fn insert_invitation(
+        &self,
+        base_url: &str,
+        now: DateTime<Utc>,
+        auto_approve: bool,
+    ) -> Result<PairingInvitation, PairingError> {
         let mut state = self.lock()?;
         prune(&mut state, now);
         state.invitations.clear();
@@ -328,6 +350,7 @@ impl PairingManager {
             Invitation {
                 secret_hash: secret_hash(&secret),
                 expires_at,
+                auto_approve,
             },
         );
         let route_path = state.registry.route_path();
@@ -399,6 +422,7 @@ impl PairingManager {
                 public_key_fingerprint: public_key_fingerprint.clone(),
                 expires_at,
                 resolution: ClaimResolution::Pending,
+                auto_approve: invitation.auto_approve,
             },
         );
 
@@ -436,6 +460,23 @@ impl PairingManager {
                 public_key_fingerprint: claim.public_key_fingerprint.clone(),
                 expires_at: claim.expires_at,
             })
+            .collect())
+    }
+
+    /// Pending claims made against an auto-approving invitation.
+    pub fn auto_approvable_claims(
+        &self,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<PairingClaimId>, PairingError> {
+        let mut state = self.lock()?;
+        prune(&mut state, now);
+        Ok(state
+            .claims
+            .iter()
+            .filter(|(_, claim)| {
+                claim.auto_approve && matches!(claim.resolution, ClaimResolution::Pending)
+            })
+            .map(|(id, _)| *id)
             .collect())
     }
 

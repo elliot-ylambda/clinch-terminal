@@ -92,6 +92,7 @@ function workspace(activeTarget: TargetRef): WorkspaceSnapshot {
           }],
         },
       ],
+      sections: [],
       tasks: [],
     }],
     active_target: activeTarget,
@@ -120,6 +121,26 @@ describe("bidirectional workspace selection", () => {
       projectId: "project",
       target: activeMacTarget,
     });
+  });
+
+  it("keeps the phone's own selection while the Mac's active target is unchanged", () => {
+    const macTarget = target("tab-b", "pane-b");
+    const phoneTarget = target("tab-a", "pane-a");
+
+    expect(synchronizedSelection(workspace(macTarget), "project", phoneTarget, macTarget)).toEqual({
+      projectId: "project",
+      target: phoneTarget,
+    });
+  });
+
+  it("follows the Mac again once its active target moves", () => {
+    const phoneTarget = target("tab-a", "pane-a");
+    const previousMacTarget = target("tab-a", "pane-a");
+    const movedMacTarget = target("tab-b", "pane-b");
+
+    expect(
+      synchronizedSelection(workspace(movedMacTarget), "project", phoneTarget, previousMacTarget),
+    ).toEqual({ projectId: "project", target: movedMacTarget });
   });
 
   it("restores the last live tab when returning to a project", () => {
@@ -191,6 +212,24 @@ describe("bidirectional workspace selection", () => {
       ["Build", ["tab-a", "tab-b"]],
       ["Build", ["tab-review"]],
       [undefined, ["tab-other"]],
+    ]);
+  });
+});
+
+describe("drawer sections", () => {
+  it("carries the Mac's section color and collapsed state onto the matching run", () => {
+    const tabs = workspace(target("tab-b", "pane-b")).projects[0]!.tabs;
+    const sections = drawerSessionSections(
+      [
+        { ...tabs[0]!, section_id: "s1", section_name: "Test one" },
+        { ...tabs[1]!, section_id: null, section_name: null },
+      ],
+      [{ id: "s1", name: "Test one", color: "#3b8eea", collapsed: true }],
+    );
+
+    expect(sections.map(({ name, color, collapsed }) => ({ name, color, collapsed }))).toEqual([
+      { name: "Test one", color: "#3b8eea", collapsed: true },
+      { name: undefined, color: undefined, collapsed: false },
     ]);
   });
 });

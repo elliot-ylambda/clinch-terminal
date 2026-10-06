@@ -110,6 +110,7 @@ pub enum ActionResultSpec {
     ToolbeltState,
     ToolbeltSuggestionState,
     SectionState,
+    RemoteControlPairing,
 }
 
 /// Discoverable metadata describing one local-control action.
@@ -353,6 +354,10 @@ define_action_catalog! {
     keybinding {
         KeybindingList => { name: "keybinding.list", status: Implemented, target: Keybinding, params: None, result: KeybindingList },
         KeybindingGet => { name: "keybinding.get", status: Implemented, target: Keybinding, params: BindingName, result: KeybindingMetadata },
+    }
+
+    remote_control {
+        RemoteControlTestPair => { name: "remote_control.test_pair", status: Implemented, target: Instance, params: None, result: RemoteControlPairing },
     }
 
     action {

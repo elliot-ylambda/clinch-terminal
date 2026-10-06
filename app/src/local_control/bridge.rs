@@ -10,7 +10,8 @@ use ::local_control::{
 use warpui::{Entity, ModelContext, SingletonEntity};
 
 use crate::local_control::handlers::{
-    app_state, close, metadata, metadata_config, sections, settings_surfaces, tab_grep, toolbelt,
+    app_state, close, metadata, metadata_config, remote_control, sections, settings_surfaces,
+    tab_grep, toolbelt,
 };
 use crate::local_control::permissions::{
     ensure_action_allowed, ensure_feature_enabled, ensure_protocol_version,
@@ -414,6 +415,7 @@ impl LocalControlBridge {
             | ActionKind::ToolbeltButtonMove
             | ActionKind::ToolbeltSuggestionList
             | ActionKind::ToolbeltSuggestionResolve => toolbelt::handle(&request.action, ctx),
+            ActionKind::RemoteControlTestPair => remote_control::test_pair(ctx),
             ActionKind::SectionPin
             | ActionKind::SectionUnpin
             | ActionKind::SectionList

@@ -14,9 +14,9 @@ use clap_complete::aot::Shell;
 use commands::{
     run_action_catalog_command, run_app_command, run_appearance_command, run_capability_command,
     run_file_command, run_input_command, run_instance_command, run_keybinding_command,
-    run_pane_command, run_section_command, run_session_command, run_setting_command,
-    run_surface_command, run_tab_command, run_theme_command, run_toolbelt_command,
-    run_window_command,
+    run_pane_command, run_remote_control_command, run_section_command, run_session_command,
+    run_setting_command, run_surface_command, run_tab_command, run_theme_command,
+    run_toolbelt_command, run_window_command,
 };
 use completions::generate_completions_to_stdout;
 use output::write_control_error;
@@ -239,6 +239,10 @@ pub enum ControlCommand {
     /// Open or toggle local Warp surfaces.
     #[command(subcommand)]
     Surface(SurfaceCommand),
+
+    /// Test hooks for Clinch Remote Control.
+    #[command(subcommand)]
+    RemoteControl(RemoteControlCommand),
 
     /// Generate shell completions for your shell to stdout.
     ///
@@ -692,6 +696,13 @@ pub enum KeybindingCommand {
 
     /// Read one keybinding by name.
     Get(KeybindingGetArgs),
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum RemoteControlCommand {
+    /// Print a single-use pairing link that is approved without a click in Settings (Clinch Dev
+    /// only), for pairing an automated test browser.
+    TestPair(TargetArgs),
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -1306,6 +1317,9 @@ fn run_inner(args: ControlArgs) -> Result<(), local_control::protocol::ControlEr
         ControlCommand::Keybinding(command) => run_keybinding_command(command, output_format),
         ControlCommand::File(command) => run_file_command(command, output_format),
         ControlCommand::Surface(command) => run_surface_command(command, output_format),
+        ControlCommand::RemoteControl(command) => {
+            run_remote_control_command(command, output_format)
+        }
         ControlCommand::Completions { shell } => generate_completions_to_stdout(shell),
     }
 }
