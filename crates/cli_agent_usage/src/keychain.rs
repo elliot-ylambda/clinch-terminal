@@ -184,6 +184,12 @@ mod native {
         if !interaction_is_disabled() {
             return SecretRead::Unavailable;
         }
+        // Claude Code saves its login through `/usr/bin/security`, so the item
+        // trusts that tool and never Clinch: the in-process read below fails
+        // without UI on every rewrite. Delegate when metadata proves silent.
+        if let Some(read) = super::security_cli::read_if_silent(service, account) {
+            return read;
+        }
         let (Ok(service_len), Ok(account_len)) =
             (u32::try_from(service.len()), u32::try_from(account.len()))
         else {
@@ -288,6 +294,349 @@ mod native {
     }
 }
 
+/// Reads through `/usr/bin/security`, but only after item metadata (which
+/// neither decrypts nor prompts) proves the tool's read cannot raise a dialog:
+/// the keychain is unlocked, the decrypt ACL trusts the tool, and the
+/// partition list admits Apple tools. The child does not inherit Clinch's
+/// no-UI policy, so anything short of that proof skips the tool entirely.
+#[cfg(target_os = "macos")]
+mod security_cli {
+    use std::ffi::{c_char, c_void, CStr, OsStr};
+    use std::io::Read;
+    use std::os::unix::ffi::OsStrExt;
+    use std::process::Stdio;
+    use std::time::Duration;
+    use std::{ptr, slice};
+
+    use core_foundation_sys::array::{CFArrayGetCount, CFArrayGetValueAtIndex, CFArrayRef};
+    use core_foundation_sys::base::{CFEqual, CFRelease, CFTypeRef, OSStatus};
+    use core_foundation_sys::data::{CFDataGetBytePtr, CFDataGetLength, CFDataRef};
+    use core_foundation_sys::string::{
+        kCFStringEncodingUTF8, CFStringGetCString, CFStringGetLength,
+        CFStringGetMaximumSizeForEncoding, CFStringRef,
+    };
+    use security_framework_sys::base::{
+        errSecItemNotFound, errSecSuccess, SecAccessRef, SecKeychainItemRef, SecKeychainRef,
+    };
+    use security_framework_sys::keychain::SecKeychainFindGenericPassword;
+
+    use super::SecretRead;
+
+    const SECURITY_TOOL: &CStr = c"/usr/bin/security";
+    /// Shorter than the outer read deadline so a stuck child is killed here.
+    const CLI_TIMEOUT: Duration = Duration::from_secs(5);
+    /// `security` exits 44 when the item does not exist.
+    const ITEM_NOT_FOUND_EXIT: i32 = 44;
+    const UNLOCK_STATE_STATUS: u32 = 1; // kSecUnlockStateStatus
+
+    type SecAclRef = *mut c_void;
+    type SecTrustedApplicationRef = *mut c_void;
+
+    extern "C" {
+        fn SecKeychainItemCopyKeychain(
+            item: SecKeychainItemRef,
+            keychain: *mut SecKeychainRef,
+        ) -> OSStatus;
+        fn SecKeychainGetStatus(keychain: SecKeychainRef, status: *mut u32) -> OSStatus;
+        fn SecKeychainItemCopyAccess(
+            item: SecKeychainItemRef,
+            access: *mut SecAccessRef,
+        ) -> OSStatus;
+        fn SecAccessCopyACLList(access: SecAccessRef, acl_list: *mut CFArrayRef) -> OSStatus;
+        fn SecACLCopyAuthorizations(acl: SecAclRef) -> CFArrayRef;
+        fn SecACLCopyContents(
+            acl: SecAclRef,
+            application_list: *mut CFArrayRef,
+            description: *mut CFStringRef,
+            prompt_selector: *mut u16,
+        ) -> OSStatus;
+        fn SecTrustedApplicationCopyData(
+            application: SecTrustedApplicationRef,
+            data: *mut CFDataRef,
+        ) -> OSStatus;
+        fn SecTrustedApplicationCreateFromPath(
+            path: *const c_char,
+            application: *mut SecTrustedApplicationRef,
+        ) -> OSStatus;
+
+        #[link_name = "kSecACLAuthorizationDecrypt"]
+        static ACL_DECRYPT: CFStringRef;
+        #[link_name = "kSecACLAuthorizationPartitionID"]
+        static ACL_PARTITION_ID: CFStringRef;
+    }
+
+    struct OwnedCf(CFTypeRef);
+
+    impl OwnedCf {
+        fn new(value: CFTypeRef) -> Result<Self, ()> {
+            if value.is_null() {
+                Err(())
+            } else {
+                Ok(Self(value))
+            }
+        }
+    }
+
+    impl Drop for OwnedCf {
+        fn drop(&mut self) {
+            unsafe { CFRelease(self.0) };
+        }
+    }
+
+    pub(super) fn read_if_silent(service: &str, account: &str) -> Option<SecretRead> {
+        let service_len = u32::try_from(service.len()).ok()?;
+        let account_len = u32::try_from(account.len()).ok()?;
+        let mut item: SecKeychainItemRef = ptr::null_mut();
+        // No password out-params: this locates the item without decrypting it.
+        let status = unsafe {
+            SecKeychainFindGenericPassword(
+                ptr::null(),
+                service_len,
+                service.as_ptr().cast(),
+                account_len,
+                account.as_ptr().cast(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+                &mut item,
+            )
+        };
+        if status == errSecItemNotFound {
+            return Some(SecretRead::ItemMissing);
+        }
+        if status != errSecSuccess {
+            return None;
+        }
+        let _item = OwnedCf::new(item.cast()).ok()?;
+        if keychain_unlocked(item) != Ok(true) || tool_may_decrypt(item) != Ok(true) {
+            return None;
+        }
+        Some(read_with_tool(service, account))
+    }
+
+    fn keychain_unlocked(item: SecKeychainItemRef) -> Result<bool, ()> {
+        let mut keychain: SecKeychainRef = ptr::null_mut();
+        if unsafe { SecKeychainItemCopyKeychain(item, &mut keychain) } != errSecSuccess {
+            return Err(());
+        }
+        let _keychain = OwnedCf::new(keychain.cast())?;
+        let mut status = 0;
+        if unsafe { SecKeychainGetStatus(keychain, &mut status) } != errSecSuccess {
+            return Err(());
+        }
+        Ok(status & UNLOCK_STATE_STATUS != 0)
+    }
+
+    fn tool_may_decrypt(item: SecKeychainItemRef) -> Result<bool, ()> {
+        let mut access: SecAccessRef = ptr::null_mut();
+        if unsafe { SecKeychainItemCopyAccess(item, &mut access) } != errSecSuccess {
+            return Err(());
+        }
+        let _access = OwnedCf::new(access.cast())?;
+        let mut acl_list: CFArrayRef = ptr::null();
+        if unsafe { SecAccessCopyACLList(access, &mut acl_list) } != errSecSuccess {
+            return Err(());
+        }
+        let _acl_list = OwnedCf::new(acl_list.cast())?;
+
+        let mut tool_trusted = false;
+        let mut saw_partition = false;
+        let mut partition_admits_tool = false;
+        for index in 0..array_count(acl_list)? {
+            let acl = unsafe { CFArrayGetValueAtIndex(acl_list, index) } as SecAclRef;
+            if acl.is_null() {
+                return Err(());
+            }
+            let authorizations = unsafe { SecACLCopyAuthorizations(acl) };
+            let _authorizations = OwnedCf::new(authorizations.cast())?;
+            let decrypt = array_contains(authorizations, unsafe { ACL_DECRYPT });
+            let partition = array_contains(authorizations, unsafe { ACL_PARTITION_ID });
+            if !decrypt && !partition {
+                continue;
+            }
+            let mut applications: CFArrayRef = ptr::null();
+            let mut description: CFStringRef = ptr::null();
+            let mut prompt_selector = 0;
+            let status = unsafe {
+                SecACLCopyContents(
+                    acl,
+                    &mut applications,
+                    &mut description,
+                    &mut prompt_selector,
+                )
+            };
+            if status != errSecSuccess {
+                return Err(());
+            }
+            let _applications = OwnedCf::new(applications.cast()).ok();
+            let _description = OwnedCf::new(description.cast()).ok();
+            if decrypt {
+                tool_trusted |= application_list_trusts_tool(applications)?;
+            }
+            if partition {
+                saw_partition = true;
+                let description = cf_string(description).ok_or(())?;
+                partition_admits_tool |= super::partition_admits_apple_tools(&description);
+            }
+        }
+        // No partition entry = pre-partition item with no extra gate.
+        Ok(tool_trusted && (!saw_partition || partition_admits_tool))
+    }
+
+    fn array_count(array: CFArrayRef) -> Result<isize, ()> {
+        let count = unsafe { CFArrayGetCount(array) };
+        (count >= 0).then_some(count).ok_or(())
+    }
+
+    fn array_contains(array: CFArrayRef, target: CFStringRef) -> bool {
+        !target.is_null()
+            && (0..array_count(array).unwrap_or(0)).any(|index| unsafe {
+                let value: CFTypeRef = CFArrayGetValueAtIndex(array, index);
+                !value.is_null() && CFEqual(value, target.cast()) != 0
+            })
+    }
+
+    fn cf_string(value: CFStringRef) -> Option<String> {
+        if value.is_null() {
+            return None;
+        }
+        let max = unsafe {
+            CFStringGetMaximumSizeForEncoding(CFStringGetLength(value), kCFStringEncodingUTF8)
+        };
+        let capacity = usize::try_from(max).ok()?.checked_add(1)?;
+        let mut buffer = vec![0u8; capacity];
+        let copied = unsafe {
+            CFStringGetCString(
+                value,
+                buffer.as_mut_ptr().cast(),
+                isize::try_from(capacity).ok()?,
+                kCFStringEncodingUTF8,
+            )
+        };
+        if copied == 0 {
+            return None;
+        }
+        let end = buffer.iter().position(|byte| *byte == 0)?;
+        buffer.truncate(end);
+        String::from_utf8(buffer).ok()
+    }
+
+    fn application_data(application: SecTrustedApplicationRef) -> Result<Vec<u8>, ()> {
+        let mut data: CFDataRef = ptr::null();
+        if unsafe { SecTrustedApplicationCopyData(application, &mut data) } != errSecSuccess {
+            return Err(());
+        }
+        let _data = OwnedCf::new(data.cast())?;
+        let length = usize::try_from(unsafe { CFDataGetLength(data) }).map_err(|_| ())?;
+        let bytes = unsafe { CFDataGetBytePtr(data) };
+        if length == 0 || bytes.is_null() {
+            return Ok(Vec::new());
+        }
+        Ok(unsafe { slice::from_raw_parts(bytes, length) }.to_vec())
+    }
+
+    fn application_list_trusts_tool(applications: CFArrayRef) -> Result<bool, ()> {
+        // A null list means every application may use this entry.
+        if applications.is_null() {
+            return Ok(true);
+        }
+        let mut tool: SecTrustedApplicationRef = ptr::null_mut();
+        let status =
+            unsafe { SecTrustedApplicationCreateFromPath(SECURITY_TOOL.as_ptr(), &mut tool) };
+        if status != errSecSuccess {
+            return Err(());
+        }
+        let _tool = OwnedCf::new(tool.cast())?;
+        let expected = application_data(tool)?;
+        for index in 0..array_count(applications)? {
+            let application =
+                unsafe { CFArrayGetValueAtIndex(applications, index) } as SecTrustedApplicationRef;
+            if application.is_null() {
+                return Err(());
+            }
+            if application_data(application)? == expected {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    fn read_with_tool(service: &str, account: &str) -> SecretRead {
+        let child = command::blocking::Command::new(OsStr::from_bytes(SECURITY_TOOL.to_bytes()))
+            .args(["find-generic-password", "-s", service, "-a", account, "-w"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn();
+        let Ok(mut child) = child else {
+            return SecretRead::Unavailable;
+        };
+        // The secret is far smaller than a pipe buffer, so the child never
+        // blocks on output before exiting; poll it against the deadline.
+        let deadline = instant::Instant::now() + CLI_TIMEOUT;
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) if instant::Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                _ => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return SecretRead::Unavailable;
+                }
+            }
+        };
+        if status.code() == Some(ITEM_NOT_FOUND_EXIT) {
+            return SecretRead::ItemMissing;
+        }
+        let mut stdout = Vec::new();
+        let read = child
+            .stdout
+            .take()
+            .map(|mut out| out.read_to_end(&mut stdout));
+        if !status.success() || !matches!(read, Some(Ok(_))) {
+            return SecretRead::Unavailable;
+        }
+        super::secret_from_tool_stdout(stdout)
+            .map(SecretRead::Secret)
+            .unwrap_or(SecretRead::Unavailable)
+    }
+}
+
+/// Whether a partition-list ACL description admits Apple tools such as
+/// `/usr/bin/security`. The description is a hex-encoded plist on current
+/// macOS and a comma-separated list on older releases.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn partition_admits_apple_tools(description: &str) -> bool {
+    let decoded = description
+        .len()
+        .is_multiple_of(2)
+        .then(|| {
+            description
+                .as_bytes()
+                .chunks_exact(2)
+                .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok())
+                .collect::<Option<Vec<u8>>>()
+        })
+        .flatten()
+        .and_then(|bytes| String::from_utf8(bytes).ok());
+    let description = decoded.as_deref().unwrap_or(description);
+    description.contains("<string>apple-tool:</string>")
+        || description
+            .split(',')
+            .any(|partition| partition.trim() == "apple-tool:")
+}
+
+/// `security find-generic-password -w` prints the secret plus one newline.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn secret_from_tool_stdout(stdout: Vec<u8>) -> Option<String> {
+    let mut secret = String::from_utf8(stdout).ok()?;
+    if secret.ends_with('\n') {
+        secret.pop();
+    }
+    (!secret.is_empty()).then_some(secret)
+}
+
 #[cfg(target_os = "macos")]
 impl ReadSecret for MacKeychain {
     fn read(&self, service: &str, account: &str) -> SecretRead {
@@ -334,6 +683,32 @@ mod tests {
     #[test]
     fn garbage_blob_is_none() {
         assert!(parse_claude_token("not json").is_none());
+    }
+
+    #[test]
+    fn partition_list_must_admit_apple_tools() {
+        let hex = |s: &str| s.bytes().map(|b| format!("{b:02x}")).collect::<String>();
+        let plist = |ids: &str| {
+            format!("<plist><dict><key>Partitions</key><array>{ids}</array></dict></plist>")
+        };
+        assert!(partition_admits_apple_tools(&hex(&plist(
+            "<string>apple-tool:</string><string>apple:</string>"
+        ))));
+        assert!(!partition_admits_apple_tools(&hex(&plist(
+            "<string>teamid:2BBY89MBSN</string>"
+        ))));
+        assert!(partition_admits_apple_tools("apple:, apple-tool:"));
+        assert!(!partition_admits_apple_tools("teamid:ABC"));
+    }
+
+    #[test]
+    fn tool_stdout_drops_one_trailing_newline() {
+        assert_eq!(
+            secret_from_tool_stdout(b"{\"a\":1}\n".to_vec()).as_deref(),
+            Some("{\"a\":1}")
+        );
+        assert_eq!(secret_from_tool_stdout(b"\n".to_vec()), None);
+        assert_eq!(secret_from_tool_stdout(vec![0xff]), None);
     }
 
     fn token(expires_at_ms: i64) -> ClaudeToken {
