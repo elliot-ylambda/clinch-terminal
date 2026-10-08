@@ -1286,6 +1286,7 @@ impl TerminalView {
         };
 
         ctx.emit(super::Event::TransferCliAgentSession {
+            from: source_agent,
             command: transfer.launch_command,
             cwd: transfer.cwd,
         });

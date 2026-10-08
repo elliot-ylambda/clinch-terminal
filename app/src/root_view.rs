@@ -699,6 +699,7 @@ pub fn create_transferred_window(
             let mut view = RootView::new(
                 global_resource_handles.clone(),
                 NewWorkspaceSource::TransferredTab {
+                    origin: transferred_tab.origin.clone(),
                     tab_color: transferred_tab.color,
                     custom_title: transferred_tab.custom_title.clone(),
                     left_panel_open: transferred_tab.left_panel_open,
@@ -1657,6 +1658,7 @@ pub enum NewWorkspaceSource {
     /// The workspace will create a placeholder tab, which will be replaced by the transferred
     /// PaneGroup after window creation.
     TransferredTab {
+        origin: Option<crate::tab::TabOrigin>,
         /// Tab color from the source tab
         tab_color: Option<AnsiColorIdentifier>,
         /// Custom title from the source tab

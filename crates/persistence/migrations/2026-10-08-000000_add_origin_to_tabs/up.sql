@@ -1,0 +1,1 @@
+ALTER TABLE tabs ADD COLUMN origin TEXT;

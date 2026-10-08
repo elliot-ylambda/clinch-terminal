@@ -79,6 +79,7 @@ pub(crate) fn create_tab(
                         if !workspace.launch_command_in_new_tab(
                             command,
                             Some(cwd.to_string_lossy().into_owned()),
+                            None,
                             ctx,
                         ) {
                             return Err(ControlError::new(

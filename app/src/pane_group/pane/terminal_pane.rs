@@ -1285,13 +1285,22 @@ fn handle_terminal_view_event(
                 terminal_view_id,
                 cwd,
             } => {
+                let Some(pane) = group.terminal_session_by_id(pane_id) else {
+                    return;
+                };
                 ctx.emit(pane_group::Event::ForkCliAgentSession {
                     terminal_view_id: *terminal_view_id,
+                    source_pane_uuid: crate::app_state::PaneUuid(pane.session_uuid()),
                     cwd: cwd.clone(),
                 });
             }
-            Event::TransferCliAgentSession { command, cwd } => {
+            Event::TransferCliAgentSession { command, cwd, from } => {
+                let Some(pane) = group.terminal_session_by_id(pane_id) else {
+                    return;
+                };
                 ctx.emit(pane_group::Event::TransferCliAgentSession {
+                    source_pane_uuid: crate::app_state::PaneUuid(pane.session_uuid()),
+                    from: *from,
                     command: command.clone(),
                     cwd: cwd.clone(),
                 });

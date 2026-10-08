@@ -374,8 +374,8 @@ use crate::settings_view::{flags, SettingsSection, SettingsView, SettingsViewEve
 use crate::shell_indicator::ShellIndicatorType;
 use crate::tab::{
     tab_position_id, uses_vertical_tabs, NewSessionMenuItem, PaneNameMenuTarget, SelectedTabColor,
-    TabBarState, TabComponent, TabData, TabTelemetryAction, MOVE_TO_GROUP_LABEL,
-    TAB_BAR_BORDER_HEIGHT, TAB_PIN_INDICATOR_ICON_SIZE,
+    TabBarState, TabComponent, TabData, TabOrigin, TabOriginKind, TabTelemetryAction,
+    MOVE_TO_GROUP_LABEL, TAB_BAR_BORDER_HEIGHT, TAB_PIN_INDICATOR_ICON_SIZE,
 };
 use crate::tab_configs::action_sidecar::SidecarItemKind;
 use crate::tab_configs::remove_confirmation_dialog::{
@@ -1030,6 +1030,7 @@ fn query_for_rewind_prefill(inputs: &[AIAgentInput]) -> Option<String> {
 /// metadata, panel-open state, and `DraggableState` so an in-progress drag
 /// animation continues seamlessly after a handoff.
 pub struct TransferredTab {
+    pub origin: Option<TabOrigin>,
     pub pane_group: ViewHandle<PaneGroup>,
     pub color: Option<AnsiColorIdentifier>,
     pub custom_title: Option<String>,
@@ -4654,6 +4655,7 @@ impl Workspace {
                         self.tabs[tab_index].default_directory_color =
                             saved_tab.default_directory_color;
                         self.tabs[tab_index].selected_color = saved_tab.selected_color;
+                        self.tabs[tab_index].origin = saved_tab.origin.clone();
                         // Only restore pinned state when the Pinned Tabs
                         // feature is enabled.
                         if FeatureFlag::PinnedTabs.is_enabled() {
@@ -4756,6 +4758,7 @@ impl Workspace {
             }
             #[cfg(feature = "local_fs")]
             NewWorkspaceSource::TransferredTab {
+                origin,
                 tab_color,
                 custom_title,
                 left_panel_open,
@@ -4771,6 +4774,10 @@ impl Workspace {
                     custom_title,
                     ctx,
                 );
+                self.tabs
+                    .last_mut()
+                    .expect("transfer placeholder exists")
+                    .origin = origin;
                 if let (Some(color), Some(tab)) = (tab_color, self.tabs.last_mut()) {
                     tab.selected_color = SelectedTabColor::Color(color);
                 }
@@ -4787,6 +4794,7 @@ impl Workspace {
             }
             #[cfg(not(feature = "local_fs"))]
             NewWorkspaceSource::TransferredTab {
+                origin,
                 tab_color,
                 custom_title,
                 left_panel_open,
@@ -4800,6 +4808,10 @@ impl Workspace {
                     custom_title,
                     ctx,
                 );
+                self.tabs
+                    .last_mut()
+                    .expect("transfer placeholder exists")
+                    .origin = origin;
                 if let (Some(color), Some(tab)) = (tab_color, self.tabs.last_mut()) {
                     tab.selected_color = SelectedTabColor::Color(color);
                 }
@@ -9466,6 +9478,7 @@ impl Workspace {
         self.launch_command_in_new_tab(
             command,
             cwd.map(|cwd| cwd.to_string_lossy().into_owned()),
+            None,
             ctx,
         )
     }
@@ -9483,7 +9496,7 @@ impl Workspace {
         else {
             return false;
         };
-        self.launch_command_in_new_tab(command, Some(cwd.to_string_lossy().into_owned()), ctx)
+        self.launch_command_in_new_tab(command, Some(cwd.to_string_lossy().into_owned()), None, ctx)
     }
 
     /// Forks the Claude/Codex session in the pane owning `terminal_view_id` into a NEW tab.
@@ -9496,6 +9509,7 @@ impl Workspace {
         &mut self,
         pane_group: &ViewHandle<PaneGroup>,
         terminal_view_id: EntityId,
+        source_pane_uuid: PaneUuid,
         source_pane_cwd: Option<String>,
         ctx: &mut ViewContext<Self>,
     ) {
@@ -9507,7 +9521,12 @@ impl Workspace {
         };
 
         let cwd = cli_agent_action_cwd(source_pane_cwd, fork.cwd);
-        let _ = self.launch_command_in_new_tab(fork.command, cwd, ctx);
+        let origin = TabOrigin {
+            kind: TabOriginKind::Fork,
+            parent_pane_uuid: source_pane_uuid,
+            parent_title: pane_group.as_ref(ctx).display_title(ctx),
+        };
+        let _ = self.launch_command_in_new_tab(fork.command, cwd, Some(origin), ctx);
     }
 
     /// Opens a Claude Code ↔ Codex transfer in a new tab while preserving the
@@ -9516,10 +9535,11 @@ impl Workspace {
         &mut self,
         command: String,
         cwd: Option<String>,
+        origin: TabOrigin,
         ctx: &mut ViewContext<Self>,
     ) {
         let cwd = cli_agent_action_cwd(cwd, None);
-        let _ = self.launch_command_in_new_tab(command, cwd, ctx);
+        let _ = self.launch_command_in_new_tab(command, cwd, Some(origin), ctx);
     }
 
     /// Reopens a past CLI-agent conversation (picked in the "Reopen agent conversation"
@@ -9563,7 +9583,7 @@ impl Workspace {
             self.active_header_project_dir(ctx),
             cwd,
         );
-        let _ = self.launch_command_in_new_tab(command, cwd, ctx);
+        let _ = self.launch_command_in_new_tab(command, cwd, None, ctx);
     }
 
     /// Opens a NEW tab at `cwd` and auto-runs `command` once its shell bootstraps,
@@ -9573,6 +9593,7 @@ impl Workspace {
         &mut self,
         command: String,
         cwd: Option<String>,
+        origin: Option<TabOrigin>,
         ctx: &mut ViewContext<Self>,
     ) -> bool {
         #[cfg(feature = "local_tty")]
@@ -9583,12 +9604,17 @@ impl Workspace {
         // working-directory setting, so forks and transfers stay beside their source pane).
         let options = NewTerminalOptions::default()
             .with_initial_directory_opt(cwd.as_deref().map(PathBuf::from));
-        self.add_tab_with_pane_layout(
+        let placement = origin
+            .as_ref()
+            .and_then(|origin| self.origin_tab_placement(origin, ctx));
+        self.add_tab_with_pane_layout_at(
             PanesLayout::SingleTerminal(Box::new(options)),
             Arc::new(HashMap::new()),
             None,
+            placement,
             ctx,
         );
+        self.tabs[self.active_tab_index].origin = origin;
 
         #[cfg(feature = "local_tty")]
         if let (Some((provider, session_id)), Some(terminal_view)) =
@@ -12686,6 +12712,7 @@ impl Workspace {
                     } else {
                         None
                     },
+                    origin: self.tabs.get(tab_index).and_then(|tab| tab.origin.clone()),
                     // Only persist pinned state when the Pinned Tabs feature is
                     // enabled.
                     pinned: FeatureFlag::PinnedTabs.is_enabled()
@@ -14226,6 +14253,43 @@ impl Workspace {
         custom_tab_title: Option<String>,
         ctx: &mut ViewContext<Self>,
     ) {
+        self.add_tab_with_pane_layout_at(panes_layout, block_lists, custom_tab_title, None, ctx);
+    }
+
+    fn origin_tab_placement(
+        &self,
+        origin: &TabOrigin,
+        ctx: &AppContext,
+    ) -> Option<(usize, Option<TabGroupId>)> {
+        use crate::tab::lineage::{index_after_family, lineage_nesting, TabLineage};
+        let tabs: Vec<_> = self
+            .tabs
+            .iter()
+            .map(|tab| TabLineage::for_tab(tab, ctx))
+            .collect();
+        let parent_index = tabs
+            .iter()
+            .position(|tab| tab.pane_uuids.contains(&origin.parent_pane_uuid))?;
+        let index = index_after_family(&lineage_nesting(&tabs), parent_index);
+        let group_id = self.tabs[parent_index].group_id;
+        // A child of a standalone pinned tab stays in the unpinned region. A
+        // child joining a section inherits that section's existing position.
+        let index = if group_id.is_none() {
+            self.clamp_to_unpinned_region(&self.tabs, index)
+        } else {
+            index
+        };
+        Some((index, group_id))
+    }
+
+    fn add_tab_with_pane_layout_at(
+        &mut self,
+        panes_layout: PanesLayout,
+        block_lists: Arc<HashMap<PaneUuid, Vec<SerializedBlockListItem>>>,
+        custom_tab_title: Option<String>,
+        placement: Option<(usize, Option<TabGroupId>)>,
+        ctx: &mut ViewContext<Self>,
+    ) {
         // Remember whether the left panel was open on the current active pane group
         // before creating a new active pane group.
         let left_panel_was_open = if self.tabs.is_empty() {
@@ -14265,11 +14329,13 @@ impl Workspace {
         // Compute where the new tab goes and which group it inherits, then
         // insert it. An empty workspace has no active tab to key off of, so it
         // takes index 0 with no group; the helper covers every other case.
-        let (insert_idx, inherited_group_id) = if self.tab_count() == 0 {
-            (0, None)
-        } else {
-            self.new_tab_index_and_group(ctx)
-        };
+        let (insert_idx, inherited_group_id) = placement.unwrap_or_else(|| {
+            if self.tab_count() == 0 {
+                (0, None)
+            } else {
+                self.new_tab_index_and_group(ctx)
+            }
+        });
         self.tabs.insert(insert_idx, TabData::new(new_pane_group));
         self.tab_mru_order
             .push(self.tabs[insert_idx].pane_group.id());
@@ -17798,12 +17864,29 @@ impl Workspace {
             }
             pane_group::Event::ForkCliAgentSession {
                 terminal_view_id,
+                source_pane_uuid,
                 cwd,
             } => {
-                self.fork_cli_agent_session(&pane_group, *terminal_view_id, cwd.clone(), ctx);
+                self.fork_cli_agent_session(
+                    &pane_group,
+                    *terminal_view_id,
+                    source_pane_uuid.clone(),
+                    cwd.clone(),
+                    ctx,
+                );
             }
-            pane_group::Event::TransferCliAgentSession { command, cwd } => {
-                self.transfer_cli_agent_session(command.clone(), cwd.clone(), ctx);
+            pane_group::Event::TransferCliAgentSession {
+                command,
+                cwd,
+                source_pane_uuid,
+                from,
+            } => {
+                let origin = TabOrigin {
+                    kind: TabOriginKind::Transfer { from: *from },
+                    parent_pane_uuid: source_pane_uuid.clone(),
+                    parent_title: pane_group.as_ref(ctx).display_title(ctx),
+                };
+                self.transfer_cli_agent_session(command.clone(), cwd.clone(), origin, ctx);
             }
             pane_group::Event::RunWorkflow {
                 workflow,
@@ -29583,6 +29666,7 @@ impl Workspace {
         let vertical_tabs_panel_open = self.vertical_tabs_panel_open;
 
         Some(TransferredTab {
+            origin: tab.origin.clone(),
             pane_group,
             color,
             custom_title,
@@ -29639,6 +29723,7 @@ impl Workspace {
         ctx: &mut ViewContext<Self>,
     ) {
         let TransferredTab {
+            origin,
             pane_group,
             color,
             draggable_state,
@@ -29657,6 +29742,7 @@ impl Workspace {
         let mut tab_data = TabData::new(pane_group);
         tab_data.selected_color = color.map_or(SelectedTabColor::Unset, SelectedTabColor::Color);
         tab_data.draggable_state = draggable_state;
+        tab_data.origin = origin;
         self.tabs.insert(index, tab_data);
         self.activate_tab_internal(index, ctx);
         ctx.notify();
