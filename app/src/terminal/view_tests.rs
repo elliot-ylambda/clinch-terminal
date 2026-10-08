@@ -348,6 +348,93 @@ fn resumed_cli_agent_header_reads_latest_history_when_dropdown_selection_is_empt
 /// This test mutates the process-global channel state. The repository's required nextest runner
 /// isolates tests by process, so the Clinch app ID cannot leak into another test.
 #[test]
+fn claude_history_header_recovers_from_capture_without_rich_notifications() {
+    let registry = tempfile::tempdir().unwrap();
+    std::env::set_var("WARP_AGENT_RESUME_DIR", registry.path());
+    std::env::set_var("CLAUDE_CONFIG_DIR", registry.path().join("claude-config"));
+    ChannelState::set(ChannelState::new(
+        Channel::Local,
+        ChannelConfig::no_backend(AppId::new("sh", "clinch", "ClinchDev"), "clinch-test.log"),
+    ));
+
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let terminal = add_window_with_terminal(&mut app, None);
+        terminal.update(&mut app, |view, ctx| {
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                sessions.seed_resumed_session(
+                    view.view_id,
+                    crate::agent_resume::AgentResumeProvider::Claude,
+                    "capture-only-session".to_owned(),
+                    ctx,
+                );
+            });
+        });
+        assert_eventually!(1600 => terminal.read(&app, |view, ctx| {
+            CLIAgentSessionsModel::as_ref(ctx).session(view.view_id).unwrap()
+                .prompt_history_load_state == PromptHistoryLoadState::Unavailable
+        }), "The first load should finish before capture has any prompts");
+        assert!(!terminal.read(&app, |view, ctx| view.should_render_header(ctx)));
+
+        let mirrors = registry.path().join("prompts/claude");
+        std::fs::create_dir_all(&mirrors).unwrap();
+        let mirror = mirrors.join("capture-only-session.jsonl");
+        let mut records = String::new();
+        for (index, prompt) in ["First captured prompt", "Follow-up captured prompt"]
+            .iter()
+            .enumerate()
+        {
+            records.push_str(&format!("{{\"prompt\":\"{prompt}\"}}\n"));
+            std::fs::write(&mirror, &records).unwrap();
+            assert_eventually!(1600 => terminal.read(&app, |view, ctx| {
+                CLIAgentSessionsModel::as_ref(ctx).session(view.view_id).unwrap()
+                    .prompt_count() == index + 1
+            }), "The header should refresh without a provider event");
+            terminal.read(&app, |view, ctx| {
+                assert!(view.should_render_header(ctx));
+                let session = CLIAgentSessionsModel::as_ref(ctx)
+                    .session(view.view_id)
+                    .unwrap();
+                assert!(!session.received_rich_notification);
+                assert!(!session.has_observed_turn_activity);
+                view.cli_agent_message_history_dropdown
+                    .read(ctx, |dropdown, ctx| {
+                        assert_eq!(dropdown.top_bar_text_for_test(ctx), *prompt);
+                        assert_eq!(dropdown.item_actions_for_test(ctx).len(), index + 2);
+                    });
+            });
+        }
+
+        // Replacing the pane session invalidates its in-flight refresh even if identity and
+        // generation happen to be reused by the replacement.
+        terminal.update(&mut app, |view, ctx| {
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                let mut replacement = cli_agent_session_with_prompts(vec![]);
+                replacement.agent = CLIAgent::Claude;
+                replacement.session_context.session_id = Some("capture-only-session".to_owned());
+                sessions.set_session(view.view_id, replacement, ctx);
+            });
+        });
+        std::fs::write(
+            &mirror,
+            format!("{records}{{\"prompt\":\"Late old prompt\"}}\n"),
+        )
+        .unwrap();
+        warpui::r#async::Timer::after(std::time::Duration::from_secs(3)).await;
+        terminal.read(&app, |view, ctx| {
+            assert_eq!(
+                CLIAgentSessionsModel::as_ref(ctx)
+                    .session(view.view_id)
+                    .unwrap()
+                    .prompt_count(),
+                0
+            );
+        });
+    });
+}
+
+/// Nextest isolates this process-global channel override from other tests.
+#[test]
 fn cli_agent_history_header_updates_after_live_prompts_for_claude_and_codex() {
     ChannelState::set(ChannelState::new(
         Channel::Local,

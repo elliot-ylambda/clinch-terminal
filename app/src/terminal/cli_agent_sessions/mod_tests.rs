@@ -22,6 +22,23 @@ use crate::terminal::CLIAgent;
 #[derive(Default)]
 struct CapturedSessionEvents(Vec<CLIAgentSessionsModelEvent>);
 
+#[test]
+fn history_poll_only_follows_identified_local_sessions_without_rich_notifications() {
+    for agent in [CLIAgent::Claude, CLIAgent::Codex] {
+        let mut session = idle_test_session(agent);
+        session.session_context.session_id = None;
+        session.received_rich_notification = false;
+        assert!(!session.needs_prompt_history_poll());
+        session.session_context.session_id = Some("session".to_owned());
+        assert!(session.needs_prompt_history_poll());
+        session.remote_host = Some("remote".to_owned());
+        assert!(!session.needs_prompt_history_poll());
+        session.remote_host = None;
+        session.received_rich_notification = true;
+        assert!(!session.needs_prompt_history_poll());
+    }
+}
+
 impl Entity for CapturedSessionEvents {
     type Event = ();
 }

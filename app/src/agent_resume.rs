@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, Read};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
+use std::time::SystemTime;
 
 use chrono::{DateTime, Local, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
@@ -130,6 +131,50 @@ pub fn read_prompt_history(
         transcript_path,
         registry_dir().as_deref(),
         &roots,
+    )
+}
+
+/// Cheap change detection for capture hooks that cannot send terminal notifications.
+/// Inspect only the deterministic mirror paths, never scan the provider transcript tree.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct PromptMirrorVersion(Vec<(PathBuf, u64, Option<SystemTime>)>);
+
+pub(crate) fn prompt_mirror_version(
+    provider: AgentResumeProvider,
+    session_id: &str,
+) -> PromptMirrorVersion {
+    prompt_mirror_version_in(provider, session_id, registry_dir().as_deref())
+}
+
+fn prompt_mirror_version_in(
+    provider: AgentResumeProvider,
+    session_id: &str,
+    registry: Option<&Path>,
+) -> PromptMirrorVersion {
+    let Some(registry) = registry.filter(|_| is_safe_session_id(session_id)) else {
+        return PromptMirrorVersion::default();
+    };
+    let prompts = registry.join("prompts");
+    if path_is_symlink(&prompts) {
+        return PromptMirrorVersion::default();
+    }
+    let mut paths = Vec::new();
+    if !path_is_symlink(&prompts.join(provider.as_str())) {
+        paths.push(prompt_mirror_path(registry, provider, session_id));
+    }
+    if provider == AgentResumeProvider::Claude {
+        paths.push(legacy_claude_prompt_mirror_path(registry, session_id));
+    }
+    PromptMirrorVersion(
+        paths
+            .into_iter()
+            .filter_map(|path| {
+                let metadata = std::fs::symlink_metadata(&path).ok()?;
+                metadata
+                    .is_file()
+                    .then(|| (path, metadata.len(), metadata.modified().ok()))
+            })
+            .collect(),
     )
 }
 

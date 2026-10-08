@@ -9,16 +9,20 @@ pub(crate) mod plugin_manager;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
 
 use blocking::unblock;
 use event::{CLIAgentEvent, CLIAgentEventSource, CLIAgentEventType, CLIAgentStopReason};
+use warpui::r#async::Timer;
 use warpui::{Entity, EntityId, ModelContext, ModelHandle, SingletonEntity};
 
 use self::listener::CLIAgentSessionListener;
 use super::CLIAgent;
 use crate::agent_resume::{
-    bookmarked_conversations, is_injected_task_notification, prompt_title, read_prompt_history,
-    AgentConversation, AgentPrompt, AgentPromptHistory, AgentResumeProvider,
+    bookmarked_conversations, is_injected_task_notification, prompt_mirror_version, prompt_title,
+    read_prompt_history, AgentConversation, AgentPrompt, AgentPromptHistory, AgentResumeProvider,
+    PromptMirrorVersion,
 };
 use crate::ai::blocklist::InputConfig;
 use crate::channel::ChannelState;
@@ -282,6 +286,10 @@ impl CLIAgentSession {
             provider,
             session_id: session_id.to_owned(),
         })
+    }
+
+    fn needs_prompt_history_poll(&self) -> bool {
+        !self.is_remote() && !self.received_rich_notification && self.session_key().is_some()
     }
 
     fn reset_identity_scoped_state(&mut self) {
@@ -670,6 +678,8 @@ impl CLIAgentSessionsModelEvent {
 /// Singleton model that tracks pane-scoped CLI agent state and plugin-enriched session context.
 pub struct CLIAgentSessionsModel {
     sessions: HashMap<EntityId, CLIAgentSession>,
+    /// Cancels capture-only history refreshes when a pane/session is replaced or removed.
+    prompt_history_poll_tokens: HashMap<EntityId, (u64, Arc<()>)>,
     /// Shared snapshot backing the project-scoped Bookmarked sessions sections. It is refreshed
     /// once per successful toggle instead of re-reading the journal from every sidebar render.
     bookmarked_conversations: Vec<AgentConversation>,
@@ -688,6 +698,7 @@ impl CLIAgentSessionsModel {
     pub fn new() -> Self {
         Self {
             sessions: HashMap::new(),
+            prompt_history_poll_tokens: HashMap::new(),
             bookmarked_conversations: bookmarked_conversations(),
             plugin_auto_failures: HashSet::new(),
         }
@@ -1052,6 +1063,98 @@ impl CLIAgentSessionsModel {
             terminal_view_id,
             agent: session.agent,
         });
+        self.ensure_prompt_history_poll(terminal_view_id, ctx);
+    }
+
+    /// Capture hooks persist exact prompts independently of the optional rich plugin. An initial
+    /// read can finish before the first prompt exists, so keep observing the mirror in that case.
+    fn ensure_prompt_history_poll(
+        &mut self,
+        terminal_view_id: EntityId,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        let Some(session) = self
+            .sessions
+            .get(&terminal_view_id)
+            .filter(|session| session.needs_prompt_history_poll())
+        else {
+            return;
+        };
+        let generation = session.prompt_history_generation;
+        if self
+            .prompt_history_poll_tokens
+            .get(&terminal_view_id)
+            .is_some_and(|(current, _)| *current == generation)
+        {
+            return;
+        }
+        let key = session.session_key().unwrap();
+        let token = Arc::new(());
+        self.prompt_history_poll_tokens
+            .insert(terminal_view_id, (generation, token.clone()));
+        self.poll_prompt_history(
+            terminal_view_id,
+            key,
+            token,
+            PromptMirrorVersion::default(),
+            ctx,
+        );
+    }
+
+    fn poll_prompt_history(
+        &mut self,
+        terminal_view_id: EntityId,
+        key: CLIAgentSessionKey,
+        token: Arc<()>,
+        previous_version: PromptMirrorVersion,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        let provider = key.provider;
+        let session_id = key.session_id.clone();
+        ctx.spawn(
+            async move {
+                Timer::after(Duration::from_secs(2)).await;
+                unblock(move || {
+                    // Sample before reading, so an append racing the read is retried next time.
+                    let version = prompt_mirror_version(provider, &session_id);
+                    let loaded = (version != previous_version)
+                        .then(|| read_prompt_history(provider, &session_id, None));
+                    (version, loaded)
+                })
+                .await
+            },
+            move |model, (version, loaded), ctx| {
+                let Some((generation, current)) =
+                    model.prompt_history_poll_tokens.get(&terminal_view_id)
+                else {
+                    return;
+                };
+                if !Arc::ptr_eq(current, &token) {
+                    return;
+                }
+                let Some(session) = model.sessions.get_mut(&terminal_view_id).filter(|session| {
+                    session.needs_prompt_history_poll()
+                        && session.session_key().as_ref() == Some(&key)
+                        && session.prompt_history_generation == *generation
+                }) else {
+                    model.prompt_history_poll_tokens.remove(&terminal_view_id);
+                    return;
+                };
+                if let Some(loaded) = loaded {
+                    let history =
+                        merge_loaded_and_live_history(loaded, session.prompt_history.clone());
+                    if history != session.prompt_history {
+                        session.prompt_history = history;
+                        session.prompt_history_load_state = PromptHistoryLoadState::Ready;
+                        ctx.emit(CLIAgentSessionsModelEvent::SessionUpdated {
+                            terminal_view_id,
+                            agent: session.agent,
+                        });
+                    }
+                }
+                model.poll_prompt_history(terminal_view_id, key, token, version, ctx);
+            },
+        );
     }
 
     /// Returns `true` if the rich input editor is currently open for this terminal.
@@ -1160,6 +1263,7 @@ impl CLIAgentSessionsModel {
         remove_conversation_bookmark: bool,
         ctx: &mut ModelContext<Self>,
     ) {
+        self.prompt_history_poll_tokens.remove(&terminal_view_id);
         if let Some(session) = self.sessions.remove(&terminal_view_id) {
             let bookmark_key = if remove_conversation_bookmark {
                 session.session_key()
@@ -1321,6 +1425,7 @@ impl CLIAgentSessionsModel {
         let conversation_id = session.session_context.session_id.clone();
         // Close any open rich input before replacing, so subscribers can
         // restore input config before the session ends.
+        self.prompt_history_poll_tokens.remove(&terminal_view_id);
         self.close_input(terminal_view_id, false, ctx);
         if let Some(old) = self.sessions.insert(terminal_view_id, session) {
             ctx.emit(CLIAgentSessionsModelEvent::Ended {

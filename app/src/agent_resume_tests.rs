@@ -19,6 +19,33 @@ fn shutdown_owner_preserves_exact_pane_metadata_across_global_marker_cleanup() {
     assert!(!dir.path().join("shutdown-owners/ef.json").exists());
 }
 
+#[test]
+fn prompt_mirror_version_tracks_creation_append_and_legacy_provider_scope() {
+    let registry = tempfile::tempdir().unwrap();
+    let version = |provider, id| prompt_mirror_version_in(provider, id, Some(registry.path()));
+    let claude = AgentResumeProvider::Claude;
+    let codex = AgentResumeProvider::Codex;
+    let missing = version(claude, "session");
+    std::fs::create_dir_all(registry.path().join("prompts/claude")).unwrap();
+    let legacy = registry.path().join("prompts/session.jsonl");
+    std::fs::write(&legacy, "{\"prompt\":\"first\"}\n").unwrap();
+    let created = version(claude, "session");
+    assert_ne!(missing, created);
+    assert_eq!(created, version(claude, "session"));
+    assert_eq!(missing, version(codex, "session"));
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(&legacy)
+        .unwrap()
+        .write_all(b"{\"prompt\":\"second\"}\n")
+        .unwrap();
+    assert_ne!(created, version(claude, "session"));
+    let appended = version(claude, "session");
+    std::fs::write(registry.path().join("prompts/claude/session.jsonl"), "{}\n").unwrap();
+    assert_ne!(appended, version(claude, "session"));
+    assert_eq!(missing, version(claude, "../session"));
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn capture_installer_failure_includes_compact_stderr() {
