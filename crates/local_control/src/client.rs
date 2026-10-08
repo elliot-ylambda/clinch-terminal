@@ -44,6 +44,7 @@ pub fn send_request(
     request: &RequestEnvelope,
 ) -> Result<ResponseEnvelope, ControlError> {
     instance.validate_local_control_authority()?;
+    validate_target_support(instance, request)?;
     let credential = request_credential(instance, request.action.kind)?;
     let endpoint = instance.endpoint.as_ref().ok_or_else(|| {
         ControlError::new(
@@ -94,12 +95,34 @@ pub fn send_request(
     instance: &InstanceRecord,
     request: &RequestEnvelope,
 ) -> Result<ResponseEnvelope, ControlError> {
+    validate_target_support(instance, request)?;
     request_credential(instance, request.action.kind)?;
     Err(ControlError::new(
         ErrorCode::LocalControlDisabled,
         "local control requires a native HTTP transport",
     ))
 }
+// Protocol 1 originally had no project selector; its decoder ignored unknown fields.
+// Check advertised support before contacting it so an older app cannot widen the target.
+fn validate_target_support(
+    instance: &InstanceRecord,
+    request: &RequestEnvelope,
+) -> Result<(), ControlError> {
+    if request.target.project.is_some()
+        && !instance.actions.iter().any(|action| {
+            action.kind == ActionKind::ProjectInspect
+                && action.implementation_status
+                    == crate::catalog::ActionImplementationStatus::Implemented
+        })
+    {
+        return Err(ControlError::new(
+            ErrorCode::UnsupportedAction,
+            "the selected Clinch app does not support project selectors; update the running app",
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(unix)]
 /// Resolves the selected instance's validated broker path and requests a credential.
 fn request_credential_over_owner_ipc(

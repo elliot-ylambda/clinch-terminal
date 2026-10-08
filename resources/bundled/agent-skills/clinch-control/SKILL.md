@@ -1,9 +1,9 @@
 ---
 name: clinch-control
-description: Control the running Clinch app from Claude Code or Codex with its local control CLI. Use when the user asks to manipulate Clinch windows, tabs, panes, sessions, sidebar sections, toolbelts, or UI surfaces, or to launch a long-lived, interactive, or user-visible project process such as a dev server, watcher, REPL, or log tail in a new tab. Do not use for tests, lint, builds, Git commands, or other bounded work the agent can run in its own shell.
+description: Control and inspect the running Clinch app from Claude Code or Codex with its local control CLI. Use when the user asks to manipulate Clinch windows, project tabs, layouts, panes, sessions, sidebar sections, toolbelts, or UI surfaces; inspect or search rendered terminal contents across tabs; or launch a long-lived, interactive, or user-visible project process such as a dev server, watcher, REPL, or log tail in a new tab. Do not use for tests, lint, builds, Git commands, or other bounded work the agent can run in its own shell.
 ---
 
-<!-- managed-by: Clinch; version: 1.3.0 -->
+<!-- managed-by: Clinch; version: 1.8.0 -->
 
 # Clinch control
 
@@ -27,27 +27,30 @@ Do not create a tab merely because a command is a subprocess.
 
 ## Bind to the current Clinch app
 
-Current Clinch versions inject three values into every local host terminal
+Current Clinch versions inject four values into every local host terminal
 shell:
 
 - `CLINCH_CONTROL_COMMAND`: the current channel's command name.
 - `CLINCH_CONTROL_WRAPPER`: the exact wrapper inside the app that launched the
   shell.
 - `CLINCH_CONTROL_PID`: the process ID of that exact app instance.
+- `WARP_TERMINAL_SESSION_UUID`: the durable identity of the terminal and outer
+  project tab that launched the agent.
 
 When `CLINCH_CONTROL_WRAPPER` is set and executable, use that exact path as
-`<control-command>` and add `--pid "$CLINCH_CONTROL_PID"` to every command that
-accepts a target selector. The wrapper takes precedence over `PATH`; the PID
-also distinguishes separate local worktree builds that share one channel. If
-the wrapper is set but missing, or its PID is absent, stop and tell the user to
-relaunch or rebuild that Clinch app. Do not fall back to another channel or
-instance. Invoke the wrapper with its value quoted; `<control-command>` in the
-examples means `"$CLINCH_CONTROL_WRAPPER"` in a bound terminal.
+the executable in the `"$CLINCH_CONTROL_WRAPPER" ctrl` command prefix. Add
+`--pid "$CLINCH_CONTROL_PID"` to every command that accepts a target selector.
+The wrapper takes precedence over `PATH`; the PID also distinguishes separate
+local worktree builds that share one channel. If the wrapper is set but
+missing, or its PID is absent, stop and tell the user to relaunch or rebuild
+that Clinch app. Do not fall back to another channel or instance. Always quote
+the wrapper path and include the `ctrl` subcommand.
 
 Before the first requested control action, verify the bound app responds:
 
 ```sh
-<control-command> --output-format json app ping --pid "$CLINCH_CONTROL_PID"
+"$CLINCH_CONTROL_WRAPPER" ctrl --output-format json app ping \
+  --pid "$CLINCH_CONTROL_PID"
 ```
 
 New Clinch installs enable local control by default. If this returns
@@ -69,18 +72,53 @@ terminal/agent session. `TERM_PROGRAM=WarpTerminal` alone is not sufficient to
 identify Clinch because Warp uses the same value. Do not use an absolute bundle
 path saved in this user-scope skill and do not guess from running processes.
 
-Outside a Clinch terminal, check `warpctrl` and `warpctrl-local` on `PATH` and
-run `instance list` for each available command. Use it only if exactly one live
-Clinch channel is found; ask the user to select when more than one is live. If
-none is available, tell the user to install and run the latest Clinch. The
-optional global command for use outside Clinch is available in **Settings >
-Local control**. Never create or replace a `/usr/local/bin` symlink without
-explicit approval.
+Outside a Clinch terminal, check `clinch` and `clinch-local` on `PATH` and run
+`<available-command> ctrl instance list` for each. Use it only if exactly one
+live Clinch channel is found; ask the user to select when more than one is
+live. If none is available, tell the user to install and run the latest
+Clinch. The optional global command for use outside Clinch is available in
+**Settings > Local control**. Never create or replace a `/usr/local/bin`
+symlink without explicit approval. `warpctrl` is a legacy compatibility alias,
+not the user-facing Clinch command.
 
 Run control commands serially because creating or activating a tab changes the
 active target. Outside a bound Clinch terminal, if multiple same-channel
 instances are running, select the intended instance explicitly with
 `--instance <id>`.
+
+In a bound Clinch terminal, keep `WARP_TERMINAL_SESSION_UUID` in the command
+environment and omit `--window` when creating a tab unless the user explicitly
+chooses another window. The CLI carries that identity automatically so an
+implicit `tab create` targets the project tab that launched the agent, even if
+another project is active when the request arrives.
+
+## Search terminal contents across tabs
+
+Use the read-only `tab grep` action when the user asks what is running, shown,
+or mentioned in other tabs. It searches inactive tabs without activating them
+and returns JSON identities for the window, tab, pane, and matching snapshot
+line. With no window, tab, or pane selector it searches all terminal panes in
+the active project window. Prefer an exact `--window <window-id>` from `window
+list` when it is already known:
+
+```sh
+"$CLINCH_CONTROL_WRAPPER" ctrl --output-format json tab grep "error|failed" \
+  --pid "$CLINCH_CONTROL_PID" --window <window-id> --ignore-case
+```
+
+Patterns are regular expressions by default. Use `--fixed-strings` for literal
+text and `--max-matches <count>` to lower the default result limit. Add an exact
+`--tab <tab-id>` or `--pane <pane-id>` when the user's request is narrower.
+Search only terms relevant to the request; do not use an empty or catch-all
+pattern to reconstruct every tab's contents.
+
+The searchable text is a live, bounded snapshot: retained plaintext
+prompt/output for normal shells and the currently rendered viewport for
+full-screen terminal apps. Secret cells remain obfuscated. Check
+`content_truncated`, `matches_truncated`, and `skipped_non_terminal_panes`
+before claiming the search was exhaustive; individual matches also report
+`text_truncated`. This action does not expose hidden conversation history or
+non-terminal document contents.
 
 ## Launch a persistent project process
 
@@ -92,7 +130,7 @@ instances are running, select the intended instance explicitly with
    reuse:
 
    ```sh
-   <control-command> --output-format json tab create \
+   "$CLINCH_CONTROL_WRAPPER" ctrl --output-format json tab create \
      --cwd "/absolute/project/path" \
      --pid "$CLINCH_CONTROL_PID" \
      -- npm run dev
@@ -103,11 +141,11 @@ instances are running, select the intended instance explicitly with
    is running. Pass arguments directly after `--`. To intentionally use shell
    syntax such as a pipeline, make the shell explicit, for example
    `-- sh -lc 'cmd | other'`.
-3. Use the returned IDs for any follow-up mutation. For example, give the new
-   tab a useful name with an exact selector:
+3. Use the returned IDs for supported exact follow-up mutations. For example,
+   give the new tab a useful name with an exact selector:
 
    ```sh
-   <control-command> tab rename "Dev server" \
+   "$CLINCH_CONTROL_WRAPPER" ctrl tab rename "Dev server" \
      --pid "$CLINCH_CONTROL_PID" --window <window-id> --tab <tab-id>
    ```
 4. Do not wait for the persistent process to exit. Report which tab was
@@ -117,15 +155,56 @@ instances are running, select the intended instance explicitly with
 If launch fails, report the control error. Do not silently fall back to an
 untracked background process in the agent shell.
 
+## Manage projects and move live sessions
+
+First discover IDs with `workspace tree` or `project list`, then inspect a project
+with `project inspect --project PROJECT_ID`. These include inactive projects.
+Retain `--pid "$CLINCH_CONTROL_PID"` on every command below. If `project --help`
+does not expose the command, the running app must be updated first.
+
+```sh
+"$CLINCH_CONTROL_WRAPPER" ctrl project create --cwd /absolute/project --window WINDOW_ID --pid "$CLINCH_CONTROL_PID"
+"$CLINCH_CONTROL_WRAPPER" ctrl tab list --project PROJECT_ID --pid "$CLINCH_CONTROL_PID"
+"$CLINCH_CONTROL_WRAPPER" ctrl tab create --project PROJECT_ID --cwd /absolute/project --pid "$CLINCH_CONTROL_PID"
+"$CLINCH_CONTROL_WRAPPER" ctrl section list --project PROJECT_ID --pid "$CLINCH_CONTROL_PID"
+"$CLINCH_CONTROL_WRAPPER" ctrl tab transfer --project SOURCE_ID --tab TAB_ID --to-project DESTINATION_ID --section SECTION_ID --index 0 --pid "$CLINCH_CONTROL_PID"
+```
+
+Shared `--project` accepts one exact ID and takes precedence over originating-tab
+inference. Add it to tab, pane, session, input, and section actions to target an
+inactive project. An accompanying `--window` must match. Reads preserve focus.
+`project activate` switches projects; `project close` retains normal close warnings.
+Project names follow their directory, as in the UI. A coordinator is never required.
+
+Transfers move the existing live pane/PTY to a different project in the same native
+window. Omit `--section` for ungrouped placement and `--index` to append; the index
+is zero-based within that section or the unpinned ungrouped sessions. The destination
+opens and its section expands. An emptied source project closes unless it owns tasks.
+Agent and content-read pane IDs change: use returned metadata or rediscover after a
+move before reading/sending; do not reuse queued-message targets.
+
+`project export --project PROJECT_ID --file /absolute/layout.json` writes a new file.
+`project restore --file /absolute/layout.json --window WINDOW_ID` creates a new project
+with fresh runtime identities. Add `--resume-agents` only to resume saved local
+Claude/Codex conversation identities. Layouts preserve terminal splits/proportions,
+section order, names, colors, collapse/pin state, tab titles/colors and project tasks.
+They do not capture terminal output, arbitrary running commands, custom shell/profile
+settings, or provider launch flags. Other pane types produce an explicit export error.
+Paths must exist locally when restored. Do not treat export as a full session backup.
+
+Section `color` values are reusable: a named color (including `clinch-green`), `none`
+for explicitly cleared, or null for default. Set defaults with `--color default`.
+Use exact `--project` on section mutations; section IDs belong to that project.
+
 ## Handle other Clinch changes
 
-- Discover the installed surface with `<control-command> help` and
-  `<control-command> <group> --help`; do not invent actions.
+- Discover the installed surface with `"$CLINCH_CONTROL_WRAPPER" ctrl help`
+  and `"$CLINCH_CONTROL_WRAPPER" ctrl <group> --help`; do not invent actions.
 - Inspect targets before mutating them and reuse opaque IDs from CLI results.
 - Use `section list` to inspect project sidebar sections. A section ID is scoped
-  to its window and must be reused exactly.
+  to its project and must be reused exactly.
 - Create a named section from an existing tab with
-  `section create "Backend" --window <window-id> --tab <tab-id>`. Empty sections
+  `section create "Backend" --project <project-id> --tab <tab-id>`. Empty sections
   are not supported.
 - Manage a section with `section update <section-id> --name "API"`,
   `--collapsed true|false`, or `--color red|default`; reorder it one slot with
@@ -138,7 +217,7 @@ untracked background process in the agent shell.
   and `section list --window <window-id>`. Delete with exact selectors:
 
   ```sh
-  <control-command> section delete <section-id> \
+  "$CLINCH_CONTROL_WRAPPER" ctrl section delete <section-id> \
     --pid "$CLINCH_CONTROL_PID" --window <window-id>
   ```
 
@@ -146,9 +225,36 @@ untracked background process in the agent shell.
   --window <window-id>` before and after; never substitute a close action.
 - Use the separately installed `clinch-toolbelt` skill for explicit quick-insert
   button requests. Typed `toolbelt` actions can list, create, delete, and move
-  buttons independently for Claude Code, Codex, and terminal footers.
+  buttons in the shared Claude Code/Codex coding-agent footer or the independent
+  terminal footer.
 - Suggest creating a quick-insert button when the user repeatedly supplies the
   same prompt or command, but wait for confirmation before changing a toolbelt.
 - If a requested mutation is not exposed by the installed CLI, say so rather
   than editing internal persistence.
 - Invoke close actions only when the user explicitly asks to close something.
+
+## Pinning and project tasks
+
+Use exact project/tab/section IDs from discovery:
+
+```sh
+<ctl> tab pin --project PROJECT_ID --tab TAB_ID --pid PID
+<ctl> tab unpin --project PROJECT_ID --tab TAB_ID --pid PID
+<ctl> section pin SECTION_ID --project PROJECT_ID --pid PID
+<ctl> section unpin SECTION_ID --project PROJECT_ID --pid PID
+<ctl> project task list --project PROJECT_ID --pid PID
+<ctl> project task create --text "Review integration" --project PROJECT_ID --pid PID
+<ctl> project task update TASK_ID --text "Review and merge integration" --project PROJECT_ID --pid PID
+<ctl> project task complete TASK_ID --project PROJECT_ID --pid PID
+<ctl> project task delete TASK_ID --project PROJECT_ID --pid PID
+```
+
+Here `<ctl>` means the same bound wrapper plus `ctrl`; retain the injected PID.
+Pinning a grouped tab extracts it from that section. Pinning a section moves its
+members together. Task IDs stay stable on edit; completing removes the pending
+task, matching the UI. Live `tab transfer` also works between native windows and
+preserves the running process. Rediscover agent IDs after any transfer.
+
+For background Claude/Codex startup, guarded interruption, unread inboxes, bounded
+waits, and replayable events, use the `clinch-coordinate` skill. Those CLI controls
+also work for independent sessions without creating a coordinator.

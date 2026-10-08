@@ -182,12 +182,26 @@ pub struct ApiKeyManager {
     pub(crate) geap_credentials_state: GeapCredentialsState,
     secure_storage_write_version: u64,
     grok_secure_storage_write_version: u64,
+    /// Backend-free hosts leave the inherited agent's saved credentials alone.
+    persist_credentials: bool,
 }
 
 impl ApiKeyManager {
     pub fn new(ctx: &mut ModelContext<Self>) -> Self {
-        let keys = Self::load_keys_from_secure_storage(ctx);
-        let grok_tokens = Self::load_grok_tokens_from_secure_storage(ctx);
+        Self::new_with_backend(warp_core::channel::ChannelState::has_backend(), ctx)
+    }
+
+    fn new_with_backend(has_backend: bool, ctx: &mut ModelContext<Self>) -> Self {
+        // Backend-free Clinch launches the providers' own CLIs. Its inherited
+        // in-app AI models do not need a second copy of provider credentials.
+        let (keys, grok_tokens) = if has_backend {
+            (
+                Self::load_keys_from_secure_storage(ctx),
+                Self::load_grok_tokens_from_secure_storage(ctx),
+            )
+        } else {
+            (ApiKeys::default(), None)
+        };
         Self {
             keys,
             grok_tokens,
@@ -200,6 +214,7 @@ impl ApiKeyManager {
             geap_credentials_state: GeapCredentialsState::Missing,
             secure_storage_write_version: 0,
             grok_secure_storage_write_version: 0,
+            persist_credentials: has_backend,
         }
     }
 
@@ -550,6 +565,9 @@ impl ApiKeyManager {
     }
 
     fn write_keys_to_secure_storage(&mut self, ctx: &mut ModelContext<Self>) {
+        if !self.persist_credentials {
+            return;
+        }
         let json = match serde_json::to_string(&self.keys) {
             Ok(json) => json,
             Err(e) => {
@@ -597,6 +615,9 @@ impl ApiKeyManager {
     }
 
     fn write_grok_tokens_to_secure_storage(&mut self, ctx: &mut ModelContext<Self>) {
+        if !self.persist_credentials {
+            return;
+        }
         // `Some(json)` writes the tokens; `None` removes the stored entry (the
         // user disconnected). Serialize up front so the deferred callback only
         // touches the keychain.

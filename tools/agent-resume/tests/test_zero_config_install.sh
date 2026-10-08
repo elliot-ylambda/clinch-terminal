@@ -103,18 +103,19 @@ grep -q '^model = "gpt-5"$' "$HOME/.codex/config.toml" \
   || { echo "FAIL: Codex prompt hook missing or duplicated"; exit 1; }
 
 # The executable launcher sources its own runtime and resumes immediately; no rcfile source
-# or new interactive shell is involved.
-mkdir -p "$HOME/.claude/projects/test"
+# or new interactive shell is involved. It must also find Claude's native install when a
+# restored --no-rcs shell has not added ~/.local/bin to PATH.
+mkdir -p "$HOME/.claude/projects/test" "$HOME/.local/bin"
 printf '%s\n' '{"type":"user","message":{}}' \
   > "$HOME/.claude/projects/test/session-ready.jsonl"
-cat > "$TMP/bin/claude" <<EOF
+cat > "$HOME/.local/bin/claude" <<EOF
 #!/bin/sh
 printf '%s\n' "\$*" > "$TMP/claude-args"
 EOF
-chmod +x "$TMP/bin/claude"
-"$BIN/clinch_agent_resume_launch" claude session-ready
+chmod +x "$HOME/.local/bin/claude"
+PATH=/usr/bin:/bin "$BIN/clinch_agent_resume_launch" claude session-ready
 grep -q -- '--resume session-ready' "$TMP/claude-args" \
-  || { echo "FAIL: standalone launcher did not resume the session"; exit 1; }
+  || { echo "FAIL: standalone launcher did not resume from ~/.local/bin with a stripped PATH"; exit 1; }
 
 # Disable removes only managed hooks/runtime and retains user settings plus captured metadata.
 printf '%s\n' '{"keep":true}' > "$HOME/.warp/agent-resume/keep.json"

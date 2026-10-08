@@ -55,6 +55,9 @@ pub enum TabCloseMode {
 }
 
 /// Footer whose quick-insert toolbelt is being managed.
+///
+/// `ClaudeCode` and `Codex` are provider-oriented compatibility selectors for the same shared
+/// coding-agent layout. `Terminal` remains independent.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolbeltFooter {
@@ -199,6 +202,45 @@ pub struct TabCreateParams {
     pub command: Vec<String>,
 }
 
+/// Parameters for searching bounded, rendered terminal text across tabs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TabGrepParams {
+    pub pattern: String,
+    #[serde(default)]
+    pub ignore_case: bool,
+    #[serde(default)]
+    pub fixed_strings: bool,
+    pub max_matches: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TabGrepMatch {
+    pub window_id: String,
+    pub window_index: u32,
+    pub tab_id: String,
+    pub tab_index: u32,
+    pub tab_title: String,
+    pub pane_id: String,
+    pub pane_index: u32,
+    pub line_number: u32,
+    pub text_truncated: bool,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TabGrepResult {
+    pub action: ActionKind,
+    pub pattern: String,
+    pub searched_tabs: u32,
+    pub searched_panes: u32,
+    pub skipped_non_terminal_panes: u32,
+    pub match_count: u32,
+    pub content_truncated: bool,
+    pub matches_truncated: bool,
+    pub matches: Vec<TabGrepMatch>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TextParams {
@@ -243,6 +285,26 @@ pub struct ToolbeltButtonMoveParams {
     pub label: String,
     pub side: ToolbeltSide,
     pub position: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolbeltSuggestionListParams {
+    pub footer: ToolbeltFooter,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolbeltSuggestionOutcome {
+    Accepted,
+    Declined,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolbeltSuggestionResolveParams {
+    pub suggestion_id: String,
+    pub outcome: ToolbeltSuggestionOutcome,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -406,6 +468,12 @@ pub enum ControlResult {
 pub struct RequestEnvelope {
     pub protocol_version: u32,
     pub request_id: Uuid,
+    /// Durable identity of the terminal session that initiated this request.
+    ///
+    /// This is source context, not an explicit target. Handlers may use it to
+    /// resolve an implicit target, while explicit selectors continue to win.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_terminal_session_uuid: Option<Uuid>,
     #[serde(default)]
     pub target: TargetSelector,
     pub action: Action,
@@ -416,6 +484,7 @@ impl RequestEnvelope {
         Self {
             protocol_version: PROTOCOL_VERSION,
             request_id: Uuid::new_v4(),
+            origin_terminal_session_uuid: None,
             target: TargetSelector::default(),
             action,
         }

@@ -8,18 +8,19 @@ use warpui::{Element, EntityId};
 use super::{
     automatic_worktree_toggle_tooltip, branch_label_display, coalesce_summary_branch_entries,
     code_detail_kind_label, compact_branch_subtitle_display, detail_sidecar_width_and_bounds,
-    detail_target_for_hovered_row, non_terminal_search_text_fragments,
+    detail_target_for_hovered_row, drag_autoscroll_step, non_terminal_search_text_fragments,
     pane_ids_for_display_granularity, pane_search_text_fragments, path_belongs_to_project,
-    preferred_agent_tab_titles, push_normalized_unique_summary_label,
-    search_fragments_contain_query, select_summary_pane_kind_icons, separate_title_indicator_kind,
+    preferred_agent_tab_titles, preferred_vertical_tab_title_override,
+    push_normalized_unique_summary_label, row_renames_pane, search_fragments_contain_query,
+    select_summary_pane_kind_icons, separate_title_indicator_kind,
     should_keep_detail_sidecar_visible_for_mouse_position,
     should_render_separate_activity_indicator, sort_summary_primary_labels_status_first,
-    summary_overflow_count, summary_search_text_fragments, terminal_command_status,
-    terminal_kind_badge_label, terminal_primary_line_data, terminal_pull_request_badge_label,
-    terminal_search_text_fragments, terminal_title_fallback_font, title_indicator_color,
-    uses_outer_group_container, vertical_tab_activity_dot_color,
-    visible_pane_ids_for_detail_target, vtab_diff_stats_text, AgentTabTextPreference,
-    SummaryPaneKind, SummaryPaneKindIcons, TabCardState, TerminalAgentText,
+    summary_overflow_count, summary_search_text_fragments, tab_title_uses_header,
+    terminal_command_status, terminal_kind_badge_label, terminal_primary_line_data,
+    terminal_pull_request_badge_label, terminal_search_text_fragments,
+    terminal_title_fallback_font, title_indicator_color, uses_outer_group_container,
+    vertical_tab_activity_dot_color, visible_pane_ids_for_detail_target, vtab_diff_stats_text,
+    AgentTabTextPreference, SummaryPaneKind, SummaryPaneKindIcons, TabCardState, TerminalAgentText,
     TerminalPrimaryLineData, TerminalPrimaryLineFont, TitleIndicatorKind, VerticalTabsDetailTarget,
     VerticalTabsDetailTargetKind, VerticalTabsSummaryBranchEntry, VerticalTabsSummaryData,
     VerticalTabsSummaryPrimaryLabel, BOOKMARKED_SESSIONS_DEFAULT_COLOR,
@@ -1067,6 +1068,53 @@ fn pane_search_fragments_dedupe_custom_title_against_generated_text() {
 }
 
 #[test]
+fn single_pane_tab_names_replace_generated_titles() {
+    assert!(!tab_title_uses_header(
+        VerticalTabsDisplayGranularity::Panes,
+        1
+    ));
+    assert_eq!(
+        preferred_vertical_tab_title_override(Some("My renamed tab"), None),
+        Some("My renamed tab")
+    );
+    assert_eq!(
+        preferred_vertical_tab_title_override(Some("My renamed tab"), Some("My pane name")),
+        Some("My renamed tab")
+    );
+}
+
+#[test]
+fn split_tab_names_use_a_header_without_replacing_pane_titles() {
+    assert!(tab_title_uses_header(
+        VerticalTabsDisplayGranularity::Panes,
+        2
+    ));
+    assert!(!tab_title_uses_header(
+        VerticalTabsDisplayGranularity::Tabs,
+        2
+    ));
+}
+
+#[test]
+fn double_click_renames_exactly_one_target() {
+    // Rows that display the tab name (single-pane tabs, Tabs view) rename the tab;
+    // only split-tab pane rows rename the pane. Doing both from one double-click
+    // let the losing editor commit the old name, so a rename appeared to revert.
+    assert!(!row_renames_pane(
+        VerticalTabsDisplayGranularity::Panes,
+        Some(0)
+    ));
+    assert!(row_renames_pane(
+        VerticalTabsDisplayGranularity::Panes,
+        None
+    ));
+    assert!(!row_renames_pane(
+        VerticalTabsDisplayGranularity::Tabs,
+        Some(0)
+    ));
+}
+
+#[test]
 fn non_terminal_search_fragments_only_include_rendered_text() {
     let fragments = non_terminal_search_text_fragments("Pane title", "and 2 more");
 
@@ -1394,4 +1442,34 @@ fn summary_search_fragments_include_hidden_overflow_values() {
     assert!(search_fragments_contain_query(&fragments, "#789"));
     assert!(search_fragments_contain_query(&fragments, "+2"));
     assert!(search_fragments_contain_query(&fragments, "-3"));
+}
+
+#[test]
+fn drag_autoscroll_scrolls_toward_the_nearer_edge_and_ramps_with_depth() {
+    // A 500px-tall tab list starting 100px down the window.
+    let viewport = RectF::new(Vector2F::new(0., 100.), Vector2F::new(240., 500.));
+
+    // Middle of the list: no scroll.
+    assert_eq!(drag_autoscroll_step(viewport, 350.), 0.);
+    // Top band scrolls up, faster the closer to the edge.
+    let shallow_up = drag_autoscroll_step(viewport, 140.);
+    let deep_up = drag_autoscroll_step(viewport, 105.);
+    assert!(shallow_up < 0. && deep_up < shallow_up);
+    // Bottom band scrolls down.
+    assert!(drag_autoscroll_step(viewport, 590.) > 0.);
+    // Just past an edge (over the control bar) keeps scrolling at full speed...
+    assert_eq!(
+        drag_autoscroll_step(viewport, 90.),
+        drag_autoscroll_step(viewport, 60.)
+    );
+    assert!(drag_autoscroll_step(viewport, 90.) < 0.);
+    // ...but a drag well away from the list does not scroll it.
+    assert_eq!(drag_autoscroll_step(viewport, 0.), 0.);
+    assert_eq!(drag_autoscroll_step(viewport, 700.), 0.);
+}
+
+#[test]
+fn drag_autoscroll_ignores_collapsed_list() {
+    let viewport = RectF::new(Vector2F::new(0., 100.), Vector2F::new(240., 0.));
+    assert_eq!(drag_autoscroll_step(viewport, 100.), 0.);
 }

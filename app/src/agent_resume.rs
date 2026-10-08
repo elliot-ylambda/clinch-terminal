@@ -4,8 +4,9 @@
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, Read};
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Local, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use unicode_segmentation::UnicodeSegmentation;
@@ -53,14 +54,22 @@ pub struct AgentPromptHistory {
     pub is_partial: bool,
 }
 
+/// Removes paste transport markup from display titles without changing stored prompt history.
+pub fn clean_prompt_title_text(text: &str) -> Option<String> {
+    static PASTE_WRAPPER: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r"</?pasted_content(?:\s+[^<>]*?)?\s*>")
+            .expect("valid pasted-content wrapper pattern")
+    });
+    let unwrapped = PASTE_WRAPPER.replace_all(text, "");
+    let collapsed = unwrapped.split_whitespace().collect::<Vec<_>>().join(" ");
+    (!collapsed.is_empty()).then_some(collapsed)
+}
+
 /// Creates the stable, one-line title used for a CLI-agent session.
 pub fn prompt_title(text: &str) -> Option<String> {
     const MAX_GRAPHEMES: usize = 80;
 
-    let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    if collapsed.is_empty() {
-        return None;
-    }
+    let collapsed = clean_prompt_title_text(text)?;
 
     let graphemes = UnicodeSegmentation::graphemes(collapsed.as_str(), true).collect::<Vec<_>>();
     let visible_prefix_len = graphemes.len().min(MAX_GRAPHEMES);
@@ -330,8 +339,8 @@ pub fn install_bundled_capture_layer() {
         return;
     }
 
-    // A graceful previous shutdown intentionally left this marker while PTYs emitted
-    // SessionEnd. It must be gone before the first restored/new agent can exit.
+    // Clear only the legacy global guard. Per-pane shutdown owners must survive startup:
+    // an old agent can emit SessionEnd minutes after its replacement app starts.
     clear_app_terminating_marker();
 
     if let Err(error) = run_capture_installer(command) {
@@ -394,7 +403,274 @@ fn registry_dir() -> Option<PathBuf> {
 const ACTIVE_PANES_FILE: &str = "active-panes";
 const APP_TERMINATING_FILE: &str = ".app-terminating";
 const CONVERSATION_BOOKMARKS_FILE: &str = "conversation-bookmarks.json";
+const TOOLBELT_LEARNING_FILE: &str = "toolbelt-learning.json";
+const TOOLBELT_RESOLUTIONS_FILE: &str = "toolbelt-learning-resolutions.json";
+const MAX_TOOLBELT_LEARNING_BYTES: u64 = 4 * 1024 * 1024;
 const TOMBSTONES_DIR: &str = "tombstones";
+
+/// A safe, aggregate quick-insert candidate learned by the local prompt-capture hook.
+/// Raw transcript/session contents are intentionally not part of this API.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct LearnedToolbeltSuggestion {
+    pub id: String,
+    pub text: String,
+    pub conversation_count: usize,
+    pub providers: Vec<String>,
+    pub last_seen: String,
+}
+
+#[derive(Default, Deserialize)]
+struct ToolbeltLearningFile {
+    #[serde(default)]
+    schema: u32,
+    #[serde(default)]
+    patterns: Vec<ToolbeltLearningPattern>,
+}
+
+#[derive(Deserialize)]
+struct ToolbeltLearningPattern {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    sessions: Vec<String>,
+    #[serde(default)]
+    conversation_count: usize,
+    #[serde(default)]
+    providers: Vec<String>,
+    #[serde(default)]
+    last_seen: String,
+    #[serde(default)]
+    text: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ToolbeltSuggestionResolutionOutcome {
+    Accepted,
+    Declined,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct ToolbeltSuggestionResolution {
+    suggestion_id: String,
+    outcome: ToolbeltSuggestionResolutionOutcome,
+    resolved_at: String,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+struct ToolbeltSuggestionResolutionsFile {
+    #[serde(default)]
+    schema: u32,
+    #[serde(default)]
+    resolutions: Vec<ToolbeltSuggestionResolution>,
+}
+
+/// Whether cross-conversation quick-insert learning is active for this Clinch user.
+pub fn toolbelt_learning_enabled() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        capture_layer_enabled()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
+}
+
+fn read_toolbelt_resolutions_in(dir: &Path) -> ToolbeltSuggestionResolutionsFile {
+    let Some(contents) = read_small_regular_file(
+        &dir.join(TOOLBELT_RESOLUTIONS_FILE),
+        MAX_TOOLBELT_LEARNING_BYTES,
+    ) else {
+        return ToolbeltSuggestionResolutionsFile::default();
+    };
+    serde_json::from_str(&contents).unwrap_or_default()
+}
+
+fn learned_toolbelt_suggestions_in(dir: &Path) -> Vec<LearnedToolbeltSuggestion> {
+    let Some(contents) = read_small_regular_file(
+        &dir.join(TOOLBELT_LEARNING_FILE),
+        MAX_TOOLBELT_LEARNING_BYTES,
+    ) else {
+        return Vec::new();
+    };
+    let Ok(file) = serde_json::from_str::<ToolbeltLearningFile>(&contents) else {
+        return Vec::new();
+    };
+    if file.schema != 1 {
+        return Vec::new();
+    }
+    let resolved = read_toolbelt_resolutions_in(dir)
+        .resolutions
+        .into_iter()
+        .map(|resolution| resolution.suggestion_id)
+        .collect::<HashSet<_>>();
+    let mut suggestions = file
+        .patterns
+        .into_iter()
+        .filter_map(|pattern| {
+            if resolved.contains(&pattern.id) || uuid::Uuid::parse_str(&pattern.id).is_err() {
+                return None;
+            }
+            let text = pattern.text.filter(|text| !text.trim().is_empty())?;
+            let observed_conversation_count = pattern
+                .sessions
+                .into_iter()
+                .filter(|session| {
+                    session.split_once(':').is_some_and(|(provider, id)| {
+                        matches!(provider, "claude" | "codex") && is_safe_session_id(id)
+                    })
+                })
+                .collect::<HashSet<_>>()
+                .len();
+            let conversation_count = pattern.conversation_count.max(observed_conversation_count);
+            if conversation_count < 2 {
+                return None;
+            }
+            let mut providers = pattern
+                .providers
+                .into_iter()
+                .filter(|provider| matches!(provider.as_str(), "claude" | "codex"))
+                .collect::<Vec<_>>();
+            providers.sort_unstable();
+            providers.dedup();
+            Some(LearnedToolbeltSuggestion {
+                id: pattern.id,
+                text,
+                conversation_count,
+                providers,
+                last_seen: pattern.last_seen,
+            })
+        })
+        .collect::<Vec<_>>();
+    suggestions.sort_by(|left, right| {
+        right
+            .conversation_count
+            .cmp(&left.conversation_count)
+            .then_with(|| right.last_seen.cmp(&left.last_seen))
+    });
+    suggestions.truncate(3);
+    suggestions
+}
+
+fn read_small_regular_file(path: &Path, max_bytes: u64) -> Option<String> {
+    let metadata = std::fs::symlink_metadata(path).ok()?;
+    if !metadata.file_type().is_file() || metadata.len() > max_bytes {
+        return None;
+    }
+    std::fs::read_to_string(path).ok()
+}
+
+fn toolbelt_learning_pattern_ids_in(dir: &Path) -> HashSet<String> {
+    let Some(contents) = read_small_regular_file(
+        &dir.join(TOOLBELT_LEARNING_FILE),
+        MAX_TOOLBELT_LEARNING_BYTES,
+    ) else {
+        return HashSet::new();
+    };
+    serde_json::from_str::<ToolbeltLearningFile>(&contents)
+        .ok()
+        .filter(|file| file.schema == 1)
+        .map(|file| {
+            file.patterns
+                .into_iter()
+                .filter_map(|pattern| {
+                    uuid::Uuid::parse_str(&pattern.id)
+                        .is_ok()
+                        .then_some(pattern.id)
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Returns at most three eligible unresolved candidates, ordered by recurrence and recency.
+pub fn learned_toolbelt_suggestions() -> Vec<LearnedToolbeltSuggestion> {
+    let dir = registry_dir();
+    learned_toolbelt_suggestions_for_state(toolbelt_learning_enabled(), dir.as_deref())
+}
+
+fn learned_toolbelt_suggestions_for_state(
+    enabled: bool,
+    dir: Option<&Path>,
+) -> Vec<LearnedToolbeltSuggestion> {
+    if !enabled {
+        return Vec::new();
+    }
+    dir.map(learned_toolbelt_suggestions_in).unwrap_or_default()
+}
+
+fn resolve_toolbelt_suggestion_in(
+    dir: &Path,
+    suggestion_id: &str,
+    outcome: ToolbeltSuggestionResolutionOutcome,
+) -> std::io::Result<()> {
+    if uuid::Uuid::parse_str(suggestion_id).is_err() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "eligible toolbelt suggestion was not found",
+        ));
+    }
+    let mut file = read_toolbelt_resolutions_in(dir);
+    let current_ids = toolbelt_learning_pattern_ids_in(dir);
+    file.resolutions
+        .retain(|resolution| current_ids.contains(&resolution.suggestion_id));
+    if let Some(existing) = file
+        .resolutions
+        .iter()
+        .find(|resolution| resolution.suggestion_id == suggestion_id)
+    {
+        if existing.outcome == outcome {
+            return Ok(());
+        }
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "toolbelt suggestion is already resolved",
+        ));
+    }
+    if !learned_toolbelt_suggestions_in(dir)
+        .iter()
+        .any(|suggestion| suggestion.id == suggestion_id)
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "eligible toolbelt suggestion was not found",
+        ));
+    }
+    file.schema = 1;
+    file.resolutions.push(ToolbeltSuggestionResolution {
+        suggestion_id: suggestion_id.to_owned(),
+        outcome,
+        resolved_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+    });
+    let contents = serde_json::to_vec_pretty(&file).map_err(std::io::Error::other)?;
+    write_private_atomic(dir, TOOLBELT_RESOLUTIONS_FILE, &contents)
+}
+
+/// Permanently accepts or declines an eligible learned suggestion for this user.
+pub fn resolve_toolbelt_suggestion(suggestion_id: &str, accepted: bool) -> std::io::Result<()> {
+    if !toolbelt_learning_enabled() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "Claude Code and Codex session capture is disabled",
+        ));
+    }
+    let dir = registry_dir().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "agent conversation registry is unavailable",
+        )
+    })?;
+    resolve_toolbelt_suggestion_in(
+        &dir,
+        suggestion_id,
+        if accepted {
+            ToolbeltSuggestionResolutionOutcome::Accepted
+        } else {
+            ToolbeltSuggestionResolutionOutcome::Declined
+        },
+    )
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 struct ConversationBookmark {
@@ -589,9 +865,9 @@ fn write_private_atomic(dir: &Path, name: &str, contents: &[u8]) -> std::io::Res
 }
 
 /// Preserve live registry entries while graceful app shutdown sends SIGHUP to agent PTYs.
-/// SessionEnd hooks remove entries for normal user exits, but skip removal while this marker
-/// exists. The next Clinch launch clears it before any pane can start.
-pub fn mark_app_terminating() {
+/// Persist the exact exiting owners as well as the legacy global marker. Startup clears the
+/// global marker, but late hooks must still recognize owners from the previous app lifetime.
+pub fn mark_app_terminating(pane_uuids: &[Vec<u8>]) {
     if !runtime_enabled() {
         return;
     }
@@ -603,6 +879,21 @@ pub fn mark_app_terminating() {
     ) {
         log::warn!("could not mark agent-resume app shutdown: {err}");
     }
+    for uuid in pane_uuids {
+        if let Err(err) = preserve_shutdown_owner_in(&dir, uuid) {
+            log::warn!("could not preserve agent-resume shutdown owner: {err}");
+        }
+    }
+}
+
+fn preserve_shutdown_owner_in(dir: &Path, uuid: &[u8]) -> std::io::Result<()> {
+    let filename = format!("{}.json", hex::encode(uuid));
+    let contents = match std::fs::read(dir.join(&filename)) {
+        Ok(contents) => contents,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(err),
+    };
+    write_private_atomic(&dir.join("shutdown-owners"), &filename, &contents)
 }
 
 fn clear_app_terminating_marker() {
@@ -677,6 +968,53 @@ pub fn agent_session_seed_from_restore_command(
     let launch = parse_launch_command(command)?;
     let provider = AgentResumeProvider::from_agent_name(launch.agent)?;
     is_safe_session_id(launch.id).then(|| (provider, launch.id.to_string()))
+}
+
+/// Extracts the session a user resumes directly through the provider CLI (`codex resume <id>`,
+/// `claude --resume <id>`, `claude -r <id>`). Command detection already settled the provider, so
+/// shell aliases such as `cx resume <id>` resolve too. Without this, a hand-resumed pane stays
+/// anonymous until the agent emits a hook event, which Codex only does on the next prompt.
+///
+/// Only canonical UUIDs are accepted, so prompt words never pass for an id. Forks are rejected:
+/// they mint a new session, and the parent id would point the pane at the wrong conversation.
+pub fn session_id_from_direct_resume_command(
+    provider: AgentResumeProvider,
+    command: &str,
+) -> Option<String> {
+    let tokens: Vec<&str> = command
+        .split_whitespace()
+        .map(|token| token.trim_matches(|c| c == '\'' || c == '"'))
+        .collect();
+    match provider {
+        AgentResumeProvider::Codex => {
+            // The id is the subcommand's first positional argument; anything later (e.g. a
+            // prompt after `--last`) is not the resumed session.
+            let resume_index = tokens.iter().position(|token| *token == "resume")?;
+            let id = tokens[resume_index + 1..]
+                .iter()
+                .find(|token| !token.starts_with('-'))?;
+            is_session_uuid(id).then(|| (*id).to_owned())
+        }
+        AgentResumeProvider::Claude => {
+            if tokens.contains(&"--fork-session") {
+                return None;
+            }
+            tokens.iter().enumerate().find_map(|(index, token)| {
+                let id = match token.strip_prefix("--resume=") {
+                    Some(id) => id,
+                    None if matches!(*token, "--resume" | "-r") => {
+                        tokens.get(index + 1).copied()?
+                    }
+                    None => return None,
+                };
+                is_session_uuid(id).then(|| id.to_owned())
+            })
+        }
+    }
+}
+
+fn is_session_uuid(token: &str) -> bool {
+    token.len() == 36 && uuid::Uuid::parse_str(token).is_ok()
 }
 
 fn is_safe_session_id(session_id: &str) -> bool {
@@ -1095,6 +1433,21 @@ fn read_prompt_history_in(
     find_provider_transcript(provider, session_id, roots)
         .map(|path| prompt_history_from_transcript(provider, &path))
         .unwrap_or_default()
+}
+
+/// Resolves only an attached provider session's native transcript for local coordination.
+/// Call from a blocking worker, never while holding the UI model.
+pub(crate) fn coordination_transcript_path(
+    provider: AgentResumeProvider,
+    session_id: &str,
+    path: Option<&Path>,
+) -> Option<PathBuf> {
+    let roots = agent_transcript_roots();
+    path.and_then(|path| safe_provider_transcript(path, provider, session_id, &roots))
+        .or_else(|| {
+            find_provider_transcript(provider, session_id, &roots)
+                .and_then(|path| safe_provider_transcript(&path, provider, session_id, &roots))
+        })
 }
 
 fn provider_transcript_root(

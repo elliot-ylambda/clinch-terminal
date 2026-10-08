@@ -1,3 +1,6 @@
+use std::ffi::OsString;
+
+use tempfile::TempDir;
 use warp_core::channel::{Channel, ChannelConfig, ChannelState};
 use warp_core::AppId;
 use warpui::{App, Entity, EntityId};
@@ -21,6 +24,29 @@ struct CapturedSessionEvents(Vec<CLIAgentSessionsModelEvent>);
 
 impl Entity for CapturedSessionEvents {
     type Event = ();
+}
+
+struct EnvVarGuard {
+    key: &'static str,
+    original: Option<OsString>,
+}
+
+impl EnvVarGuard {
+    fn set(key: &'static str, value: impl Into<OsString>) -> Self {
+        let original = std::env::var_os(key);
+        std::env::set_var(key, value.into());
+        Self { key, original }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        if let Some(original) = &self.original {
+            std::env::set_var(self.key, original);
+        } else {
+            std::env::remove_var(self.key);
+        }
+    }
 }
 
 #[test]
@@ -337,6 +363,152 @@ fn idle_test_session(agent: CLIAgent) -> CLIAgentSession {
         prompt_history_load_state: Default::default(),
         prompt_history_generation: 0,
     }
+}
+
+#[test]
+#[serial_test::serial]
+fn agent_exit_removes_bookmark_while_view_detach_preserves_it() {
+    let registry = TempDir::new().unwrap();
+    let _registry_env = EnvVarGuard::set("WARP_AGENT_RESUME_DIR", registry.path());
+    std::fs::write(
+        registry.path().join("journal.jsonl"),
+        concat!(
+            r#"{"ts":"2026-08-15T10:00:00Z","op":"write","pane":"pane-1","command":"clinch_agent_resume_launch codex session-id","cwd":"/tmp/project"}"#,
+            "\n",
+        ),
+    )
+    .unwrap();
+    assert!(crate::agent_resume::set_conversation_bookmark(
+        AgentResumeProvider::Codex,
+        "session-id",
+        true,
+    )
+    .unwrap());
+
+    App::test((), |mut app| async move {
+        let sessions = app.add_model(|_| CLIAgentSessionsModel::new());
+        let terminal_view_id = EntityId::new();
+        let mut session = idle_test_session(CLIAgent::Codex);
+        session.session_context.session_id = Some("session-id".to_owned());
+
+        sessions.update(&mut app, |model, ctx| {
+            assert_eq!(model.bookmarked_conversations().len(), 1);
+            model.set_session(terminal_view_id, session.clone(), ctx);
+            model.remove_session(terminal_view_id, ctx);
+        });
+        assert!(crate::agent_resume::is_conversation_bookmarked(
+            AgentResumeProvider::Codex,
+            "session-id"
+        ));
+
+        sessions.update(&mut app, |model, ctx| {
+            assert_eq!(model.bookmarked_conversations().len(), 1);
+            model.set_session(terminal_view_id, session, ctx);
+            model.remove_session_after_agent_exit(terminal_view_id, ctx);
+            assert!(model.bookmarked_conversations().is_empty());
+        });
+        assert!(!crate::agent_resume::is_conversation_bookmarked(
+            AgentResumeProvider::Codex,
+            "session-id"
+        ));
+    });
+}
+
+#[test]
+#[serial_test::serial]
+fn saved_bookmark_removal_works_without_an_open_pane_and_preserves_other_providers() {
+    let registry = TempDir::new().unwrap();
+    let _registry_env = EnvVarGuard::set("WARP_AGENT_RESUME_DIR", registry.path());
+    std::fs::write(
+        registry.path().join("journal.jsonl"),
+        concat!(
+            r#"{"ts":"2026-08-15T10:00:00Z","op":"write","pane":"pane-1","command":"clinch_agent_resume_launch codex session-id","cwd":"/tmp/project"}"#,
+            "\n",
+            r#"{"ts":"2026-08-15T10:00:00Z","op":"write","pane":"pane-2","command":"clinch_agent_resume_launch claude other-session-id","cwd":"/tmp/project"}"#,
+            "\n",
+        ),
+    ).unwrap();
+    for (provider, id) in [
+        (AgentResumeProvider::Claude, "other-session-id"),
+        (AgentResumeProvider::Codex, "session-id"),
+    ] {
+        crate::agent_resume::set_conversation_bookmark(provider, id, true).unwrap();
+    }
+
+    App::test((), |mut app| async move {
+        let sessions = app.add_model(|_| CLIAgentSessionsModel::new());
+        sessions.update(&mut app, |model, ctx| {
+            assert_eq!(model.bookmarked_conversations().len(), 2);
+            let key = CLIAgentSessionKey {
+                provider: AgentResumeProvider::Codex,
+                session_id: "session-id".to_owned(),
+            };
+            model.remove_conversation_bookmark(&key, ctx).unwrap();
+            // Repeated clicks are idempotent and cannot re-add the removed bookmark.
+            model.remove_conversation_bookmark(&key, ctx).unwrap();
+            assert_eq!(model.bookmarked_conversations().len(), 1);
+            assert_eq!(model.bookmarked_conversations()[0].agent, "claude");
+        });
+        assert!(!crate::agent_resume::is_conversation_bookmarked(
+            AgentResumeProvider::Codex,
+            "session-id"
+        ));
+        assert!(crate::agent_resume::is_conversation_bookmarked(
+            AgentResumeProvider::Claude,
+            "other-session-id"
+        ));
+    });
+}
+
+#[test]
+#[serial_test::serial]
+fn saved_bookmark_removal_updates_all_open_copies_without_closing_them() {
+    let registry = TempDir::new().unwrap();
+    let _registry_env = EnvVarGuard::set("WARP_AGENT_RESUME_DIR", registry.path());
+    App::test((), |mut app| async move {
+        let sessions = app.add_model(|_| CLIAgentSessionsModel::new());
+        let captured_events = app.add_model(|_| CapturedSessionEvents::default());
+        captured_events.update(&mut app, |_, ctx| {
+            ctx.subscribe_to_model(&sessions, |captured, _, event, _| {
+                captured.0.push(event.clone());
+            });
+        });
+        let panes = [EntityId::new(), EntityId::new()];
+        sessions.update(&mut app, |model, ctx| {
+            for pane in panes {
+                let mut session = idle_test_session(CLIAgent::Codex);
+                session.session_context.session_id = Some("session-id".to_owned());
+                model.set_session(pane, session, ctx);
+            }
+            model
+                .set_conversation_bookmark(panes[0], true, ctx)
+                .unwrap();
+        });
+        captured_events.update(&mut app, |captured, _| captured.0.clear());
+        sessions.update(&mut app, |model, ctx| {
+            model
+                .remove_conversation_bookmark(
+                    &CLIAgentSessionKey {
+                        provider: AgentResumeProvider::Codex,
+                        session_id: "session-id".to_owned(),
+                    },
+                    ctx,
+                )
+                .unwrap();
+            for pane in panes {
+                assert!(model.session(pane).is_some());
+                assert!(!model.is_conversation_bookmarked(pane));
+            }
+        });
+        captured_events.read(&app, |captured, _| {
+            for pane in panes {
+                assert!(captured.0.iter().any(|event| matches!(event,
+                    CLIAgentSessionsModelEvent::SessionUpdated { terminal_view_id, .. }
+                    if *terminal_view_id == pane
+                )));
+            }
+        });
+    });
 }
 
 fn activity_event(agent: CLIAgent, event: CLIAgentEventType) -> CLIAgentEvent {
@@ -1586,7 +1758,7 @@ fn native_codex_osc9_query_is_not_used_as_a_prompt_title() {
     };
 
     assert_eq!(session.latest_user_prompt_for_chrome(), None);
-    assert_eq!(session.title_for_tab(true), None);
+    assert_eq!(session.title_for_tab(true, None), None);
 
     session.received_rich_notification = true;
     assert_eq!(
@@ -1631,12 +1803,87 @@ fn default_title_is_stable_first_prompt_and_explicit_preference_uses_latest() {
     ];
 
     assert_eq!(
-        session.title_for_tab(false).as_deref(),
+        session.title_for_tab(false, None).as_deref(),
         Some("Plan the implementation.")
     );
     assert_eq!(
-        session.title_for_tab(true).as_deref(),
+        session.title_for_tab(true, None).as_deref(),
         Some("Now open a pull request")
+    );
+}
+
+#[test]
+fn tab_titles_prefer_agent_summary_and_keep_explicit_latest_prompt_preference() {
+    let mut session = idle_test_session(CLIAgent::Codex);
+    session.prompt_history.prompts = vec![AgentPrompt {
+        timestamp: None,
+        text: "Please fix the sidebar titles. They are too long.".to_owned(),
+    }];
+    assert_eq!(
+        session
+            .title_for_tab(false, Some("  Sidebar title cleanup  "))
+            .as_deref(),
+        Some("Sidebar title cleanup")
+    );
+    assert_eq!(
+        session
+            .title_for_tab(true, Some("Sidebar title cleanup"))
+            .as_deref(),
+        Some("Please fix the sidebar titles. They are too long.")
+    );
+    for placeholder in [None, Some("  "), Some("Codex"), Some("Claude Code")] {
+        assert_eq!(
+            session.title_for_tab(false, placeholder).as_deref(),
+            Some("Please fix the sidebar titles.")
+        );
+    }
+    session.prompt_history = AgentPromptHistory::default();
+    assert_eq!(
+        session
+            .title_for_tab(false, Some("Sidebar title cleanup"))
+            .as_deref(),
+        Some("Sidebar title cleanup")
+    );
+    assert_eq!(
+        session
+            .title_for_tab(true, Some("Sidebar title cleanup"))
+            .as_deref(),
+        Some("Sidebar title cleanup")
+    );
+}
+
+#[test]
+fn tab_titles_unwrap_pasted_content_but_preserve_exact_prompt_history() {
+    let mut session = idle_test_session(CLIAgent::Codex);
+    let first = "<pasted_content id='first'>Fix the sidebar. Include tests.</pasted_content>";
+    let latest = "<pasted_content id='latest'>Now run tests. Then review.</pasted_content>";
+    session.prompt_history.prompts = [first, latest]
+        .into_iter()
+        .map(|text| AgentPrompt {
+            timestamp: None,
+            text: text.to_owned(),
+        })
+        .collect();
+    assert_eq!(
+        session.title_for_tab(false, None).as_deref(),
+        Some("Fix the sidebar.")
+    );
+    assert_eq!(
+        session.title_for_tab(true, None).as_deref(),
+        Some("Now run tests. Then review.")
+    );
+    assert_eq!(session.first_prompt().unwrap().text, first);
+    assert_eq!(
+        session.latest_user_prompt_for_chrome().as_deref(),
+        Some(latest)
+    );
+
+    session.prompt_history = AgentPromptHistory::default();
+    session.received_rich_notification = true;
+    session.session_context.query = Some(latest.to_owned());
+    assert_eq!(
+        session.title_for_tab(true, None).as_deref(),
+        Some("Now run tests. Then review.")
     );
 }
 

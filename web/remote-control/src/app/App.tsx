@@ -2,12 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { ClientMessage } from "../generated/types/ClientMessage";
 import type { ConnectionState } from "../generated/types/ConnectionState";
+import type { PairingClaimReceipt } from "../generated/types/PairingClaimReceipt";
 import type { PaneSnapshot } from "../generated/types/PaneSnapshot";
 import type { ProtocolErrorCode } from "../generated/types/ProtocolErrorCode";
 import type { ProjectBadgeSnapshot } from "../generated/types/ProjectBadgeSnapshot";
 import type { ProjectSnapshot } from "../generated/types/ProjectSnapshot";
 import type { ServerEnvelope } from "../generated/types/ServerEnvelope";
 import type { SessionKind } from "../generated/types/SessionKind";
+import type { SectionSnapshot } from "../generated/types/SectionSnapshot";
 import type { TabSnapshot } from "../generated/types/TabSnapshot";
 import type { TargetRef } from "../generated/types/TargetRef";
 import type { TerminalKey } from "../generated/types/TerminalKey";
@@ -17,7 +19,14 @@ import type { WriterLeaseSnapshot } from "../generated/types/WriterLeaseSnapshot
 import { MAX_UPLOAD_CHUNK_BYTES } from "../generated/constants";
 import { encodeUploadChunk } from "../protocol/binary";
 import { CompanionClient } from "../protocol/client";
-import { claimPhone, finishPairing, waitForApproval } from "../protocol/pairing";
+import {
+  CLINCH_NOT_RUNNING,
+  claimPhone,
+  defaultDeviceName,
+  finishPairing,
+  pairingCode,
+  waitForApproval,
+} from "../protocol/pairing";
 import {
   bytesToBase64,
   clearIdentity,
@@ -54,6 +63,35 @@ const connectionLabels: Record<ConnectionState, string> = {
   authorization_revoked: "Authorization revoked",
   version_incompatible: "Update required",
 };
+
+/** The protocol has one "unreachable" state; say which side actually dropped. */
+function connectionLabel(
+  connection: ConnectionState,
+  phoneOnline: boolean,
+  disconnectedHere: boolean,
+  detail: string | undefined,
+): string {
+  if (connection === "mac_offline") {
+    if (disconnectedHere) return "Disconnected";
+    if (!phoneOnline) return "Phone offline";
+    if (detail === CLINCH_NOT_RUNNING) return "Clinch not running";
+  }
+  return connectionLabels[connection];
+}
+
+function usePhoneOnline(): boolean {
+  const [online, setOnline] = useState(() => navigator.onLine);
+  useEffect(() => {
+    const update = () => setOnline(navigator.onLine);
+    window.addEventListener("online", update);
+    window.addEventListener("offline", update);
+    return () => {
+      window.removeEventListener("online", update);
+      window.removeEventListener("offline", update);
+    };
+  }, []);
+  return online;
+}
 
 // Capture and remove the one-time secret exactly once, before React StrictMode can render the
 // component twice. The secret never becomes part of an HTTP request or referrer.
@@ -145,27 +183,35 @@ function resolveTarget(snapshot: WorkspaceSnapshot | undefined, target: TargetRe
   return { project, tab, pane };
 }
 
+/**
+ * Follows the Mac when its active target MOVES (the user switched tabs there), and otherwise keeps
+ * the phone's own choice. Re-adopting an unchanged active target on every workspace update would
+ * undo any phone selection the Mac does not mirror, such as a project in another Mac window.
+ */
 export function synchronizedSelection(
   snapshot: WorkspaceSnapshot,
   currentProjectId: string | undefined,
   currentTarget: TargetRef | undefined,
+  previousMacTarget?: TargetRef | null,
 ): { projectId: string | undefined; target: TargetRef | undefined } {
   const active = resolveTarget(snapshot, snapshot.active_target ?? undefined);
-  if (snapshot.active_target && active.project && active.pane?.dimensions) {
+  const macMoved = !previousMacTarget
+    || !snapshot.active_target
+    || targetKey(previousMacTarget) !== targetKey(snapshot.active_target);
+  if (macMoved && snapshot.active_target && active.project && active.pane?.dimensions) {
     return { projectId: active.project.id, target: snapshot.active_target };
   }
 
   const current = resolveTarget(snapshot, currentTarget);
-  const activeProject = snapshot.projects.find((project) => project.active);
+  if (current.project && current.pane?.dimensions) {
+    return { projectId: current.project.id, target: currentTarget };
+  }
   const preferredProject =
-    activeProject ??
     snapshot.projects.find((project) => project.id === currentProjectId) ??
-    current.project ??
+    active.project ??
+    snapshot.projects.find((project) => project.active) ??
     snapshot.projects[0];
   if (!preferredProject) return { projectId: undefined, target: undefined };
-  if (current.project?.id === preferredProject.id && current.pane?.dimensions) {
-    return { projectId: preferredProject.id, target: currentTarget };
-  }
   return { projectId: preferredProject.id, target: firstTarget(snapshot, preferredProject) };
 }
 
@@ -203,12 +249,6 @@ export function isRetryableWorkspaceResponse(response: ServerEnvelope | undefine
   return response?.payload.type === "error"
     && response.payload.data.retryable
     && shouldResynchronizeWorkspace(response.payload.data.code);
-}
-
-function defaultDeviceName(): string {
-  if (/iPad/i.test(navigator.userAgent)) return "iPad";
-  if (/iPhone/i.test(navigator.userAgent)) return "iPhone";
-  return "Mobile browser";
 }
 
 const compactNumber = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 });
@@ -259,6 +299,29 @@ function projectBadgeLabel(project: ProjectSnapshot): string {
   return labels.length > 0 ? `${project.title}, ${labels.join(", ")}` : project.title;
 }
 
+function sessionKindLabel(kind: TabSnapshot["kind"]): string {
+  if (kind === "claude_code") return "Claude Code";
+  if (kind === "codex") return "Codex";
+  if (kind === "notebook") return "Notebook";
+  if (kind === "other") return "Session";
+  return "Terminal";
+}
+
+const HOME_SCREEN_TIP_STORAGE_KEY = "clinch-remote-control:home-screen-tip-dismissed";
+
+function shouldOfferHomeScreenTip(): boolean {
+  const apple = /iPhone|iPad|iPod/i.test(navigator.userAgent)
+    || (/Macintosh/i.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+  const standalone = matchMedia("(display-mode: standalone)").matches
+    || Boolean((navigator as Navigator & { standalone?: boolean }).standalone);
+  if (!apple || standalone) return false;
+  try {
+    return localStorage.getItem(HOME_SCREEN_TIP_STORAGE_KEY) !== "true";
+  } catch {
+    return true;
+  }
+}
+
 function drawerTabActivity(tab: TabSnapshot): { className: string; label: string } | undefined {
   if (tab.activity === "working") return { className: "working", label: "Working" };
   if (tab.activity === "done") return { className: "done", label: "Done" };
@@ -273,17 +336,31 @@ function drawerTabActivity(tab: TabSnapshot): { className: string; label: string
 export interface DrawerSessionSection {
   id: string | undefined;
   name: string | undefined;
+  /** `#rrggbb` from the Mac's theme; undefined for unsectioned runs or the default treatment. */
+  color: string | undefined;
+  collapsed: boolean;
   tabs: TabSnapshot[];
 }
 
-export function drawerSessionSections(tabs: TabSnapshot[]): DrawerSessionSection[] {
+export function drawerSessionSections(
+  tabs: TabSnapshot[],
+  sectionInfo: SectionSnapshot[] = [],
+): DrawerSessionSection[] {
+  const infoById = new Map(sectionInfo.map((section) => [section.id, section]));
   const sections: DrawerSessionSection[] = [];
   for (const tab of tabs) {
     const name = tab.section_name?.trim() || undefined;
     const id = tab.section_id ?? (name ? `legacy:${name}` : undefined);
     const current = sections.at(-1);
     if (!current || current.id !== id) {
-      sections.push({ id, name, tabs: [tab] });
+      const info = tab.section_id ? infoById.get(tab.section_id) : undefined;
+      sections.push({
+        id,
+        name,
+        color: info?.color ?? undefined,
+        collapsed: info?.collapsed ?? false,
+        tabs: [tab],
+      });
     } else {
       current.tabs.push(tab);
     }
@@ -296,6 +373,7 @@ export function App() {
 
   const [boot, setBoot] = useState<BootState>("loading");
   const [bootMessage, setBootMessage] = useState("Opening your private Clinch connection…");
+  const [pairingReceipt, setPairingReceipt] = useState<PairingClaimReceipt>();
   const [identity, setIdentity] = useState<DeviceIdentity>();
   const identityRef = useRef<DeviceIdentity | undefined>(undefined);
   identityRef.current = identity;
@@ -303,6 +381,8 @@ export function App() {
   const connectionRef = useRef<ConnectionState>("reconnecting");
   connectionRef.current = connection;
   const [connectionDetail, setConnectionDetail] = useState<string>();
+  const phoneOnline = usePhoneOnline();
+  const [disconnectedHere, setDisconnectedHere] = useState(false);
   const [snapshot, setSnapshot] = useState<WorkspaceSnapshot>();
   const snapshotRef = useRef<WorkspaceSnapshot | undefined>(undefined);
   snapshotRef.current = snapshot;
@@ -312,6 +392,7 @@ export function App() {
   const [selectedTarget, setSelectedTarget] = useState<TargetRef>();
   const selectedTargetRef = useRef<TargetRef | undefined>(undefined);
   selectedTargetRef.current = selectedTarget;
+  const lastMacTargetRef = useRef<TargetRef | null>(null);
   const lastTargetByProject = useRef(new Map<string, TargetRef>());
   const loadedRememberedTargets = useRef(false);
   if (!loadedRememberedTargets.current) {
@@ -324,11 +405,22 @@ export function App() {
   }
   const [terminalSnapshot, setTerminalSnapshot] = useState<TerminalSnapshot>();
   const terminalSnapshotRef = useRef<TerminalSnapshot | undefined>(undefined);
+  // While reconnecting, the last terminal stays on screen instead of blanking. It is not live:
+  // terminalSnapshotRef is cleared so no input can target it, and the next terminal_snapshot
+  // replaces it wholesale.
+  const [terminalStale, setTerminalStale] = useState(false);
+  const terminalStaleRef = useRef(false);
+  terminalStaleRef.current = terminalStale;
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [usageOpen, setUsageOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [homeScreenTip, setHomeScreenTip] = useState(shouldOfferHomeScreenTip);
   const [unpairArmed, setUnpairArmed] = useState(false);
   const [unpairing, setUnpairing] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
+  const [newSectionOpen, setNewSectionOpen] = useState(false);
+  const [sectionName, setSectionName] = useState("");
+  /** Phone-only expand/collapse, layered over the Mac's own collapsed state. */
+  const [sectionCollapseOverrides, setSectionCollapseOverrides] = useState<Record<string, boolean>>({});
   const [newMode, setNewMode] = useState<NewSessionMode>("create");
   const [newKind, setNewKind] = useState<SessionKind>("terminal");
   const [newCwd, setNewCwd] = useState("");
@@ -338,7 +430,18 @@ export function App() {
   const [taskText, setTaskText] = useState("");
   const [quickInsertBusy, setQuickInsertBusy] = useState(false);
   const [resyncing, setResyncing] = useState(false);
-  const [notice, setNotice] = useState<string>();
+  const [notice, setNoticeState] = useState<{ text: string; tone: "error" | "info" }>();
+  /** Errors stay until dismissed; they explain something the user has to act on. */
+  const setNotice = useCallback((text: string | undefined) => {
+    setNoticeState(text === undefined ? undefined : { text, tone: "error" });
+  }, []);
+  /** Confirmations clear themselves so they never sit on top of the drawer or the toolbelt. */
+  const showInfo = useCallback((text: string) => setNoticeState({ text, tone: "info" }), []);
+  useEffect(() => {
+    if (notice?.tone !== "info") return;
+    const timer = window.setTimeout(() => setNoticeState((current) => (current === notice ? undefined : current)), 4000);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
   const [uploadProgress, setUploadProgress] = useState<number>();
   const [uploadActive, setUploadActive] = useState(false);
   const [uploadRetryFile, setUploadRetryFile] = useState<File>();
@@ -395,25 +498,26 @@ export function App() {
         const invitation = pairingFragment.current;
         if (invitation) {
           setBootMessage("Creating this phone's private device key…");
-          localIdentity ??= await createIdentity(defaultDeviceName());
+          localIdentity ??= await createIdentity(defaultDeviceName(navigator.userAgent, navigator.maxTouchPoints));
           setIdentity(localIdentity);
           setBootMessage("Sending the one-time pairing request…");
           pendingReceipt = await claimPhone(invitation, localIdentity);
           await savePendingPairing(pendingReceipt);
         }
         if (pendingReceipt && localIdentity) {
+          setPairingReceipt(pendingReceipt);
           setBoot("waiting_approval");
-          setBootMessage(`Approve “${pendingReceipt.device_name}” in Clinch on your Mac.`);
+          setBootMessage("Check that your Mac shows this code, then click Approve.");
           const status = await waitForApproval(pendingReceipt);
           if (status.status === "approved") {
             localIdentity = await finishPairing(localIdentity, status);
             await clearPendingPairing();
           } else if (status.status === "rejected") {
             await clearPendingPairing();
-            throw new Error("The pairing request was rejected on the Mac.");
+            throw new Error("The pairing request was rejected on the Mac. Scan a new QR code to try again.");
           } else {
             await clearPendingPairing();
-            throw new Error("The pairing QR code expired. Generate a new one in Clinch.");
+            throw new Error("That pairing code expired. Click “Pair a phone” in Clinch on your Mac to get a fresh QR code.");
           }
         } else if (pendingReceipt) {
           await clearPendingPairing();
@@ -424,7 +528,7 @@ export function App() {
           setBoot("ready");
         } else {
           setBoot("needs_qr");
-          setBootMessage("Open Clinch Settings on your Mac and scan a pairing QR code.");
+          setBootMessage("On your Mac, open Clinch → Settings → Clinch and click “Pair a phone”, then scan the QR code with this phone's camera.");
         }
       } catch (error) {
         if (!cancelled) {
@@ -452,7 +556,9 @@ export function App() {
             payload.data,
             selectedProjectIdRef.current,
             selectedTargetRef.current,
+            lastMacTargetRef.current,
           );
+          lastMacTargetRef.current = payload.data.active_target ?? null;
           if (
             previousTarget
             && (!selection.target || targetKey(previousTarget) !== targetKey(selection.target))
@@ -474,7 +580,9 @@ export function App() {
             payload.data.snapshot,
             selectedProjectIdRef.current,
             selectedTargetRef.current,
+            lastMacTargetRef.current,
           );
+          lastMacTargetRef.current = payload.data.snapshot.active_target ?? null;
           if (
             previousTarget
             && (!selection.target || targetKey(previousTarget) !== targetKey(selection.target))
@@ -503,6 +611,7 @@ export function App() {
           targetSelectionInFlight.current = undefined;
         }
         terminalSnapshotRef.current = payload.data;
+        setTerminalStale(false);
         setTerminalSnapshot(payload.data);
         break;
       case "terminal_stream_closed":
@@ -510,6 +619,7 @@ export function App() {
         terminalSnapshotRef.current = undefined;
         resetTerminalPreparation();
         setNotice(payload.data.reason);
+        setTerminalStale(false);
         setTerminalSnapshot(undefined);
         break;
       case "writer_lease_changed":
@@ -548,7 +658,7 @@ export function App() {
         setUploadActive(false);
         setUploadRetryFile(undefined);
         setUploadProgress(undefined);
-        setNotice(`Inserted ${payload.data.inserted_path} without pressing Enter.`);
+        showInfo(`Inserted ${payload.data.inserted_path} without pressing Enter.`);
         break;
       case "connection_state":
         if (payload.data !== "connected") targetSelectionInFlight.current = undefined;
@@ -561,7 +671,7 @@ export function App() {
           setResyncing(true);
           terminalSnapshotRef.current = undefined;
           resetTerminalPreparation();
-          setTerminalSnapshot(undefined);
+          setTerminalStale(true);
           if (!resyncRequested.current) {
             resyncRequested.current = true;
             try {
@@ -590,7 +700,8 @@ export function App() {
           targetSelectionInFlight.current = undefined;
           terminalSnapshotRef.current = undefined;
           resetTerminalPreparation();
-          setTerminalSnapshot(undefined);
+          // Keep showing the last frame; the reconnect's own terminal_snapshot replaces it.
+          setTerminalStale(true);
         }
       },
       envelope: handleEnvelope,
@@ -638,17 +749,20 @@ export function App() {
     // longer be trusted; the next input must re-run the full lease/resize handshake.
     if (!ownsWriterLease) terminalReadyViewport.current = undefined;
   }, [ownsWriterLease]);
+  // The terminal on screen is only live once this connection's own terminal_snapshot arrived.
+  const liveTerminalSnapshot = terminalStale ? undefined : terminalSnapshot;
   const canWrite =
     connection === "connected" &&
     !resyncing &&
+    !terminalStale &&
     Boolean(selectedTarget) &&
     (!selected.pane?.writer_lease || selected.pane.writer_lease.device_id === identity?.deviceId);
 
   useEffect(() => {
     if (connection !== "connected" || !snapshot || !selectedTarget) return;
     if (
-      terminalSnapshot &&
-      targetKey(terminalSnapshot.target) === targetKey(selectedTarget)
+      liveTerminalSnapshot &&
+      targetKey(liveTerminalSnapshot.target) === targetKey(selectedTarget)
     ) {
       return;
     }
@@ -666,7 +780,7 @@ export function App() {
       }
       setNotice(error instanceof Error ? error.message : String(error));
     }
-  }, [connection, selectedTarget, snapshot, terminalSnapshot]);
+  }, [connection, liveTerminalSnapshot, selectedTarget, snapshot]);
 
   const selectTarget = useCallback(
     (target: TargetRef | undefined) => {
@@ -691,6 +805,7 @@ export function App() {
       resetTerminalPreparation();
       setSelectedTarget(target);
       setDrawerOpen(false);
+      setTerminalStale(false);
       setTerminalSnapshot(undefined);
     },
     [rememberTarget, resetTerminalPreparation, selectedTarget],
@@ -809,7 +924,14 @@ export function App() {
             // Acquiring the lease triggers a React commit before TerminalSurface can report the
             // writer-owned viewport. Keep the originating tap alive through that short handoff so
             // accessory keys and one-tap quick inserts cannot disappear on first use.
-            if (Date.now() >= viewportDeadline) return false;
+            if (Date.now() >= viewportDeadline) {
+              // Never drop typing silently: say so, so a stuck terminal is not mistaken for lag.
+              if (queuedTerminalInput.current.some((input) => input.targetKey === expectedTargetKey)) {
+                queuedTerminalInput.current = [];
+                setNotice("That typing didn't reach the Mac. Tap the terminal and try again.");
+              }
+              return false;
+            }
             await new Promise<void>((resolve) => window.setTimeout(resolve, 16));
             continue;
           }
@@ -899,6 +1021,10 @@ export function App() {
   // second, and identical ones must not churn this.
   const mirrorColumns = mirrorSize?.columns;
   const mirrorRows = mirrorSize?.rows;
+  // Attaching a new terminal stream resets preparation, which clears the viewport seeded below, so
+  // re-seed per stream; otherwise opening a pane the Mac is showing left typing dead until its
+  // size or lease happened to change.
+  const mirrorStreamId = liveTerminalSnapshot?.stream_id;
   useEffect(() => {
     if (mirrorColumns === undefined || mirrorRows === undefined || !selectedTarget) {
       lastMirrorKey.current = undefined;
@@ -925,7 +1051,7 @@ export function App() {
     // the old ones, so replace the local buffer with the Mac's authoritative render rather than
     // leaving that debris in the transcript.
     refreshTerminalSnapshot();
-  }, [mirrorColumns, mirrorRows, ownsWriterLease, refreshTerminalSnapshot, selectedTarget]);
+  }, [mirrorColumns, mirrorRows, mirrorStreamId, ownsWriterLease, refreshTerminalSnapshot, selectedTarget]);
 
   const setSizePin = useCallback((pinned: boolean) => {
     const currentSnapshot = snapshotRef.current;
@@ -964,10 +1090,10 @@ export function App() {
     // lease/resize handshake as soon as a terminal snapshot for the selected pane is showing,
     // at most once per attach: re-running on later dependency churn could snatch the lease
     // back after the Mac's keyboard deliberately evicted this device.
-    if (connection !== "connected" || resyncing || !terminalSnapshot || !selectedTarget) return;
-    if (targetKey(terminalSnapshot.target) !== targetKey(selectedTarget)) return;
-    if (autoPreparedSnapshot.current === terminalSnapshot) return;
-    autoPreparedSnapshot.current = terminalSnapshot;
+    if (connection !== "connected" || resyncing || !liveTerminalSnapshot || !selectedTarget) return;
+    if (targetKey(liveTerminalSnapshot.target) !== targetKey(selectedTarget)) return;
+    if (autoPreparedSnapshot.current === liveTerminalSnapshot) return;
+    autoPreparedSnapshot.current = liveTerminalSnapshot;
     if (document.visibilityState === "hidden") return;
     // Viewing must never steal control from another device.
     const lease = resolveTarget(snapshotRef.current, selectedTarget).pane?.writer_lease;
@@ -977,14 +1103,20 @@ export function App() {
     // Mac's pane down to phone width and left it there until someone typed on the Mac.
     if (!phoneOwnsSizeRef.current) return;
     void prepareTerminalForInput();
-  }, [connection, prepareTerminalForInput, resyncing, selectedTarget, terminalSnapshot]);
+  }, [connection, liveTerminalSnapshot, prepareTerminalForInput, resyncing, selectedTarget]);
 
   const sendRawInput = useCallback((data: string): boolean => {
     if (!data) return true;
     const currentSnapshot = snapshotRef.current;
     const currentTarget = selectedTargetRef.current;
     const deviceId = identityRef.current?.deviceId;
-    if (!currentSnapshot || !currentTarget || !deviceId || connectionRef.current !== "connected") {
+    if (
+      !currentSnapshot
+      || !currentTarget
+      || !deviceId
+      || !terminalSnapshotRef.current
+      || connectionRef.current !== "connected"
+    ) {
       return false;
     }
     const lease = resolveTarget(currentSnapshot, currentTarget).pane?.writer_lease;
@@ -1121,6 +1253,35 @@ export function App() {
       setNotice(error instanceof Error ? error.message : String(error));
     }
   }, [runCreation, selectedLocalCwd, selectedProject, snapshot]);
+
+  const createSection = useCallback(async (name: string) => {
+    const currentSnapshot = snapshotRef.current;
+    const target = selectedTargetRef.current;
+    const trimmed = name.trim();
+    if (!trimmed || !currentSnapshot || !target) return false;
+    try {
+      return await runCreation({
+        type: "create_section",
+        data: { target, workspace_revision: currentSnapshot.revision, name: trimmed },
+      });
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+      return false;
+    }
+  }, [runCreation, setNotice]);
+
+  const setTabSection = useCallback(async (target: TargetRef, sectionId: string | null) => {
+    const currentSnapshot = snapshotRef.current;
+    if (!currentSnapshot) return;
+    try {
+      await runCreation({
+        type: "set_tab_section",
+        data: { target, workspace_revision: currentSnapshot.revision, section_id: sectionId },
+      });
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    }
+  }, [runCreation, setNotice]);
 
   const createTask = useCallback(async () => {
     const text = taskText.trim();
@@ -1323,7 +1484,8 @@ export function App() {
         activeUploadId.current = undefined;
         setUploadActive(false);
         setUploadProgress(undefined);
-        setNotice(canceled ? "Upload canceled. You can retry when ready." : error instanceof Error ? error.message : String(error));
+        if (canceled) showInfo("Upload canceled. You can retry when ready.");
+        else setNotice(error instanceof Error ? error.message : String(error));
       }
     },
     [canWrite, selectedTarget, snapshot],
@@ -1368,28 +1530,27 @@ export function App() {
   }, [prepareTerminalForInput]);
 
   if (boot !== "ready") {
-    return <PairingScreen state={boot} message={bootMessage} />;
+    return <PairingScreen state={boot} message={bootMessage} receipt={pairingReceipt} />;
   }
 
   const projects = snapshot?.projects ?? [];
   const quickInserts = selected.pane?.quick_inserts ?? [];
-  const leaseMessage = selected.pane?.writer_lease
-    ? selected.pane.writer_lease.device_id === identity?.deviceId
-      ? "This phone has control"
-      : `${selected.pane.writer_lease.device_name} has control`
+  const leaseMessage = selected.pane?.writer_lease && selected.pane.writer_lease.device_id !== identity?.deviceId
+    ? `${selected.pane.writer_lease.device_name} has control`
     : undefined;
+  const sessionActivity = selected.tab ? drawerTabActivity(selected.tab) : undefined;
+  const currentConnectionLabel = connectionLabel(connection, phoneOnline, disconnectedHere, connectionDetail);
+  const connectionStatus = resyncing ? "Resyncing" : currentConnectionLabel;
 
   return (
     <div className="app-shell">
       <header className="project-strip" aria-label="Projects">
         <button
-          className="project-drawer-button"
+          className="menu-button"
           aria-label="Open project and tab drawer"
           aria-expanded={drawerOpen}
           onClick={() => setDrawerOpen(true)}
-        >
-          <ClinchMark className="wordmark" />
-        </button>
+        ><span aria-hidden="true" /></button>
         <div className="project-scroll">
           {projects.map((project) => {
             const badges = badgesForProject(project);
@@ -1429,74 +1590,90 @@ export function App() {
             );
           })}
         </div>
-        <button
-          className="project-add-button"
-          aria-label="New project"
-          disabled={!selectedProject || connection !== "connected" || creating}
-          onClick={() => void createProject()}
-        >＋</button>
         <span
           className={`header-connection ${connection}`}
           role="status"
-          aria-label={resyncing ? "Resyncing" : connectionLabels[connection]}
-          title={resyncing ? "Resyncing" : connectionLabels[connection]}
+          aria-label={connectionStatus}
+          title={connectionStatus}
         ><span className={`activity-dot ${resyncing ? "reconnecting" : connection}`} /></span>
-        <button className="icon-button" aria-label="Usage and settings" onClick={() => setUsageOpen(true)}>•••</button>
+        <button className="icon-button" aria-label="Settings" onClick={() => setSettingsOpen(true)}>•••</button>
       </header>
 
       <main className="focus-area">
-        {terminalSnapshot && (mirrorSize || sizePinnedHere) && (
-          <div className="sizing-chip" role="status">
-            <span>
-              {sizePinnedHere
-                ? "Sized for this phone"
-                : sizePinnedElsewhere
-                  ? `Sized for ${selected.pane?.writer_lease?.device_name ?? "another phone"}`
-                  : `Sized for the Mac · ${mirrorSize?.columns}×${mirrorSize?.rows}`}
-            </span>
-            <button
-              disabled={!canWrite}
-              onClick={() => setSizePin(!sizePinnedHere)}
-            >{sizePinnedHere ? "Give back" : "Fit to phone"}</button>
+        {selected.tab && selected.pane && (
+          <div className="session-bar">
+            <button className="session-bar-title" onClick={() => setDrawerOpen(true)}>
+              <i
+                className={`session-bar-dot ${sessionActivity?.className ?? "idle"}`}
+                aria-label={sessionActivity?.label ?? "Idle"}
+                title={sessionActivity?.label ?? "Idle"}
+              />
+              <strong>{selected.pane.title || selected.tab.title}</strong>
+              <small>{sessionKindLabel(selected.pane.kind)}</small>
+            </button>
+            {liveTerminalSnapshot && (mirrorSize || sizePinnedHere) && (
+              <button
+                className="session-bar-size"
+                title={sizePinnedHere
+                  ? "Sized for this phone"
+                  : sizePinnedElsewhere
+                    ? `Sized for ${selected.pane.writer_lease?.device_name ?? "another phone"}`
+                    : `Sized for the Mac · ${mirrorSize?.columns}×${mirrorSize?.rows}`}
+                disabled={!canWrite}
+                onClick={() => setSizePin(!sizePinnedHere)}
+              >{sizePinnedHere ? "Give back" : "Fit to phone"}</button>
+            )}
           </div>
         )}
-        {terminalSnapshot ? (
-          <TerminalSurface
-            ref={terminalSurface}
-            snapshot={terminalSnapshot}
-            bus={terminalBus}
-            canResize={ownsWriterLease && phoneOwnsSize}
-            mirror={mirrorSize}
-            onViewport={rememberTerminalViewport}
-            onFocus={acquireLease}
-            onStreamGap={() => {
-              targetSelectionInFlight.current = undefined;
-              terminalSnapshotRef.current = undefined;
-              resetTerminalPreparation();
-              setTerminalSnapshot(undefined);
-            }}
-            onData={(data) => {
-              sendRawInput(data);
-            }}
-            onResize={(columns, rows) => {
-              resizeSelectedTerminal(columns, rows);
-            }}
-          />
-        ) : (
-          <EmptyFocus
-            connected={connection === "connected"}
-            hasProjects={projects.length > 0}
-            startingSession={Boolean(selectedProject?.tabs.some((tab) =>
-              tab.panes.some((pane) => !pane.dimensions),
-            ))}
-            onNew={(kind) => {
-              setNewMode("create");
-              setNewKind(kind);
-              setNewCwd(selectedLocalCwd ?? "");
-              setNewOpen(true);
-            }}
-          />
-        )}
+        <div className="focus-body">
+          {terminalSnapshot && (terminalStale || connection !== "connected") && (
+            <div className="reconnect-pill" role="status">
+              <span className={`activity-dot ${connection === "connected" ? "reconnecting" : connection}`} />
+              {connection === "connected" || connection === "reconnecting" ? "Reconnecting…" : currentConnectionLabel}
+            </div>
+          )}
+          {terminalSnapshot ? (
+            <TerminalSurface
+              ref={terminalSurface}
+              snapshot={terminalSnapshot}
+              bus={terminalBus}
+              canResize={ownsWriterLease && phoneOwnsSize}
+              mirror={mirrorSize}
+              onViewport={rememberTerminalViewport}
+              onFocus={acquireLease}
+              onStreamGap={() => {
+                // A stale frame is already waiting on its replacement snapshot; keep it on screen.
+                if (terminalStaleRef.current) return;
+                targetSelectionInFlight.current = undefined;
+                terminalSnapshotRef.current = undefined;
+                resetTerminalPreparation();
+                setTerminalSnapshot(undefined);
+              }}
+              onData={(data) => {
+                sendRawInput(data);
+              }}
+              onResize={(columns, rows) => {
+                resizeSelectedTerminal(columns, rows);
+              }}
+            />
+          ) : (
+            <EmptyFocus
+              connected={connection === "connected"}
+              phoneOffline={!phoneOnline}
+              clinchNotRunning={connection === "mac_offline" && connectionDetail === CLINCH_NOT_RUNNING}
+              hasProjects={projects.length > 0}
+              startingSession={Boolean(selectedProject?.tabs.some((tab) =>
+                tab.panes.some((pane) => !pane.dimensions),
+              ))}
+              onNew={(kind) => {
+                setNewMode("create");
+                setNewKind(kind);
+                setNewCwd(selectedLocalCwd ?? "");
+                setNewOpen(true);
+              }}
+            />
+          )}
+        </div>
       </main>
 
       <footer className="keyboard-accessory" aria-label="Terminal keyboard tools">
@@ -1565,17 +1742,66 @@ export function App() {
           <button className="drawer-scrim" aria-label="Close tab drawer" onClick={() => setDrawerOpen(false)} />
           <aside className="tab-drawer" aria-label="Current project sessions">
             <div className="drawer-heading"><strong>Open sessions</strong><button aria-label="Close drawer" onClick={() => setDrawerOpen(false)}>×</button></div>
-            <button className="drawer-new" onClick={() => {
-              setDrawerOpen(false);
-              void createBlankTerminal();
-            }}>＋ New tab</button>
+            <div className="drawer-actions">
+              <button className="drawer-new" onClick={() => {
+                setDrawerOpen(false);
+                void createBlankTerminal();
+              }}>＋ New tab</button>
+              <button
+                className="drawer-new-project"
+                disabled={!selectedProject || connection !== "connected" || creating}
+                onClick={() => {
+                  setDrawerOpen(false);
+                  void createProject();
+                }}
+              >＋ New project</button>
+              <button
+                className="drawer-new-project"
+                disabled={!selectedTarget || connection !== "connected" || creating}
+                onClick={() => {
+                  setSectionName("");
+                  setNewSectionOpen(true);
+                }}
+              >＋ New section</button>
+            </div>
             {selectedProject ? (
               <section key={selectedProject.id}>
                 <h2>{selectedProject.title}</h2>
-                {drawerSessionSections(selectedProject.tabs).map((section, sectionIndex) => (
-                  <div className="drawer-session-section" key={`${section.id ?? "sessions"}-${sectionIndex}`}>
-                    <h3>{section.name ?? (selectedProject.tabs.some((tab) => tab.section_name) ? "Other sessions" : "Sessions")}</h3>
-                    {section.tabs.map((tab) => {
+                {drawerSessionSections(selectedProject.tabs, selectedProject.sections ?? []).map((section, sectionIndex) => {
+                  const isSection = Boolean(section.name);
+                  const sectionId = section.id && !section.id.startsWith("legacy:") ? section.id : undefined;
+                  const collapsed = isSection && (sectionCollapseOverrides[section.id ?? ""] ?? section.collapsed);
+                  const holdsSelected = section.tabs.some((tab) => tab.id === selectedTarget?.tab_id);
+                  return (
+                  <div
+                    className={`drawer-session-section${isSection ? " section-card" : ""}`}
+                    key={`${section.id ?? "sessions"}-${sectionIndex}`}
+                    style={section.color ? { "--section-color": section.color } as React.CSSProperties : undefined}
+                  >
+                    {isSection ? (
+                      <div className="section-header">
+                        <button
+                          className="section-toggle"
+                          aria-expanded={!collapsed}
+                          onClick={() => setSectionCollapseOverrides((current) => ({ ...current, [section.id ?? ""]: !collapsed }))}
+                        >
+                          <span className="section-chevron" aria-hidden="true">{collapsed ? "›" : "⌄"}</span>
+                          <span className="section-name">{section.name}</span>
+                          <small>{section.tabs.length} {section.tabs.length === 1 ? "session" : "sessions"}</small>
+                        </button>
+                        {sectionId && selectedTarget && selectedTarget.project_id === selectedProject.id && (
+                          <button
+                            className="section-move"
+                            disabled={creating || connection !== "connected"}
+                            aria-label={holdsSelected ? `Take the current tab out of ${section.name}` : `Move the current tab into ${section.name}`}
+                            onClick={() => void setTabSection(selectedTarget, holdsSelected ? null : sectionId)}
+                          >{holdsSelected ? "−" : "＋"}</button>
+                        )}
+                      </div>
+                    ) : (
+                      <h3>{selectedProject.tabs.some((tab) => tab.section_name) ? "Other sessions" : "Sessions"}</h3>
+                    )}
+                    {!collapsed && section.tabs.map((tab) => {
                       const activity = drawerTabActivity(tab);
                       return (
                         <div className="drawer-tab-group" key={tab.id}>
@@ -1596,7 +1822,8 @@ export function App() {
                       );
                     })}
                   </div>
-                ))}
+                  );
+                })}
                 {selectedProject.tabs.length === 0 && <p className="muted">No sessions in this project yet.</p>}
                 <div className="drawer-task-section">
                   <div className="drawer-task-heading"><h3>Tasks</h3><span>{selectedProject.tasks?.length ?? 0}</span></div>
@@ -1630,56 +1857,44 @@ export function App() {
         </>
       )}
 
-      {usageOpen && (
-        <Sheet title="Usage & connection" onClose={() => { setUsageOpen(false); setUnpairArmed(false); }}>
+      {newSectionOpen && (
+        <Sheet title="New section" onClose={() => setNewSectionOpen(false)}>
+          <form className="new-section-form" onSubmit={(event) => {
+            event.preventDefault();
+            void createSection(sectionName).then((created) => {
+              if (created) setNewSectionOpen(false);
+            });
+          }}>
+            <input
+              aria-label="Section name"
+              placeholder="Section name"
+              autoFocus
+              maxLength={256}
+              value={sectionName}
+              onChange={(event) => setSectionName(event.target.value)}
+            />
+            <p className="muted">Starts with the tab you're viewing. Use ＋ on a section to move other tabs in.</p>
+            <button className="primary-wide" disabled={!sectionName.trim() || creating || connection !== "connected"}>Create section</button>
+          </form>
+        </Sheet>
+      )}
+
+      {settingsOpen && (
+        <Sheet title="Settings" onClose={() => { setSettingsOpen(false); setUnpairArmed(false); }}>
           <div className="sheet-connection">
-            <span className={`activity-dot ${connection}`} />{connectionLabels[connection]}
+            <span className={`activity-dot ${connection}`} />{currentConnectionLabel}
             <small>
               {identity?.deviceName ?? "This phone"} · {snapshot?.host.name ?? "Mac"} · {connectionPathLabel(snapshot?.host.connection_path)}
               {connectionDetail ? ` · ${connectionDetail}` : ""}
             </small>
           </div>
-          <h3>Claude Code & Codex</h3>
-          {(snapshot?.usage.length ?? 0) === 0 ? <p className="muted">No local usage snapshot is available yet.</p> : snapshot?.usage.map((usage) => (
-            <div className="usage-card" key={usage.provider}>
-              <div><strong>{usage.provider === "claude_code" ? "Claude Code" : "Codex"}</strong><span>{usage.state}</span></div>
-              {usage.limit_windows.length > 0 ? (
-                <div className="usage-limit-list">
-                  {usage.limit_windows.map((window) => (
-                    <div className="usage-limit" key={window.label}>
-                      <div><span>{window.label}</span><strong>{Math.round(window.used_percent)}%</strong></div>
-                      <div className="usage-track"><i style={{ width: `${Math.max(0, Math.min(100, window.used_percent))}%` }} /></div>
-                      {window.resets_at && <small>Resets {new Date(window.resets_at).toLocaleString()}</small>}
-                    </div>
-                  ))}
-                </div>
-              ) : usage.used_percent != null ? (
-                <div className="usage-track"><i style={{ width: `${Math.max(0, Math.min(100, usage.used_percent))}%` }} /></div>
-              ) : null}
-              <div className="usage-token-grid">
-                {usage.token_windows.map((window) => (
-                  <div key={window.label}>
-                    <span>{window.label}</span>
-                    <strong>{formatTokens(window.input_tokens + window.output_tokens)} I/O</strong>
-                    <small>
-                      {formatTokens(window.cache_read_tokens + window.cache_write_tokens)} cache
-                      {window.estimated_cost_usd > 0 ? ` · $${window.estimated_cost_usd.toFixed(2)}` : ""}
-                    </small>
-                  </div>
-                ))}
-              </div>
-              <small>{usage.updated_at ? `Updated ${new Date(usage.updated_at).toLocaleTimeString()}` : usage.source}</small>
-            </div>
-          ))}
-          <p className="privacy-copy">Terminal data travels directly through your tailnet. Clinch has no account, analytics, or hosted relay in this connection.</p>
-          <p className="muted">On iPhone or iPad, use Chrome or Safari&apos;s Share menu → Add to Home Screen, then open the Clinch icon for a full-screen app without browser bars. Installation is optional.</p>
-          <a className="connection-help" href="https://clinch.sh/remote-control" target="_blank" rel="noreferrer">Connection help & security guide ↗</a>
           <button className="secondary-wide" onClick={() => location.reload()}>Refresh this page</button>
           <button className="secondary-wide" onClick={() => {
             client.current?.stop();
             setConnection("mac_offline");
+            setDisconnectedHere(true);
             setConnectionDetail("Disconnected on this phone until the page is reopened.");
-            setUsageOpen(false);
+            setSettingsOpen(false);
           }}>Disconnect for now</button>
           <button
             className="danger-wide"
@@ -1713,6 +1928,58 @@ export function App() {
             {unpairing ? "Unpairing…" : unpairArmed ? "Tap again to unpair" : "Unpair this phone"}
           </button>
           {connection !== "connected" && <p className="muted">Unpairing needs a live connection so the Mac forgets this phone too.</p>}
+          <details className="usage-details">
+            <summary>Claude Code &amp; Codex usage</summary>
+            {(snapshot?.usage.length ?? 0) === 0 ? <p className="muted">No local usage snapshot is available yet.</p> : snapshot?.usage.map((usage) => (
+              <div className="usage-card" key={usage.provider}>
+                <div><strong>{usage.provider === "claude_code" ? "Claude Code" : "Codex"}</strong><span>{usage.state}</span></div>
+                {usage.limit_windows.length > 0 ? (
+                  <div className="usage-limit-list">
+                    {usage.limit_windows.map((window) => (
+                      <div className="usage-limit" key={window.label}>
+                        <div><span>{window.label}</span><strong>{Math.round(window.used_percent)}%</strong></div>
+                        <div className="usage-track"><i style={{ width: `${Math.max(0, Math.min(100, window.used_percent))}%` }} /></div>
+                        {window.resets_at && <small>Resets {new Date(window.resets_at).toLocaleString()}</small>}
+                      </div>
+                    ))}
+                  </div>
+                ) : usage.used_percent != null ? (
+                  <div className="usage-track"><i style={{ width: `${Math.max(0, Math.min(100, usage.used_percent))}%` }} /></div>
+                ) : null}
+                <div className="usage-token-grid">
+                  {usage.token_windows.map((window) => (
+                    <div key={window.label}>
+                      <span>{window.label}</span>
+                      <strong>{formatTokens(window.input_tokens + window.output_tokens)} I/O</strong>
+                      <small>
+                        {formatTokens(window.cache_read_tokens + window.cache_write_tokens)} cache
+                        {window.estimated_cost_usd > 0 ? ` · $${window.estimated_cost_usd.toFixed(2)}` : ""}
+                      </small>
+                    </div>
+                  ))}
+                </div>
+                <small>{usage.updated_at ? `Updated ${new Date(usage.updated_at).toLocaleTimeString()}` : usage.source}</small>
+              </div>
+            ))}
+          </details>
+          {homeScreenTip && (
+            <div className="home-screen-tip">
+              <p className="muted">Tip: use Safari or Chrome&apos;s Share menu → Add to Home Screen, then open the Clinch icon for a full-screen app without browser bars.</p>
+              <button
+                aria-label="Dismiss Home Screen tip"
+                onClick={() => {
+                  setHomeScreenTip(false);
+                  try {
+                    localStorage.setItem(HOME_SCREEN_TIP_STORAGE_KEY, "true");
+                  } catch {
+                    // Without storage the tip simply returns next visit.
+                  }
+                }}
+              >×</button>
+            </div>
+          )}
+          <p className="privacy-copy">Terminal data travels directly through your tailnet. Clinch has no account, analytics, or hosted relay in this connection.</p>
+          <a className="connection-help" href="https://clinch.sh/remote-control" target="_blank" rel="noreferrer">Connection help & security guide ↗</a>
         </Sheet>
       )}
 
@@ -1773,18 +2040,31 @@ export function App() {
         </Sheet>
       )}
 
-      {notice && <button className="notice" role="alert" onClick={() => setNotice(undefined)}>{notice}<span>×</span></button>}
+      {notice && (
+        <button
+          className={`notice ${notice.tone}`}
+          role={notice.tone === "error" ? "alert" : "status"}
+          onClick={() => setNotice(undefined)}
+        >{notice.text}<span>×</span></button>
+      )}
     </div>
   );
 }
 
-function PairingScreen({ state, message }: { state: BootState; message: string }) {
+function PairingScreen({ state, message, receipt }: { state: BootState; message: string; receipt?: PairingClaimReceipt }) {
+  const waiting = state === "waiting_approval" && receipt;
   return (
     <main className="pairing-screen">
       <ClinchMark className="pairing-mark" />
       <p className="eyebrow">Clinch Remote Control</p>
-      <h1>{state === "needs_qr" ? "Scan once. Stay connected." : state === "error" ? "Couldn’t connect" : state === "waiting_approval" ? "Approve on your Mac" : "Securing this phone"}</h1>
+      <h1>{state === "needs_qr" ? "Pair this phone" : state === "error" ? "Couldn’t connect" : state === "waiting_approval" ? "Approve on your Mac" : "Securing this phone"}</h1>
       <p>{message}</p>
+      {waiting && (
+        <>
+          <output className="pairing-code" aria-label="Matching code">{pairingCode(receipt.public_key_fingerprint)}</output>
+          <PairingCountdown expiresAt={receipt.expires_at} />
+        </>
+      )}
       {(state === "loading" || state === "waiting_approval") && <div className="spinner" aria-label="Working" />}
       {state === "error" && <button className="primary-wide" onClick={() => location.reload()}>Try again</button>}
       <div className="pairing-security"><span>◇</span><div><strong>Two private gates</strong><small>Your tailnet admits the phone; Clinch separately verifies this device key. No Clinch sign-in or relay.</small></div></div>
@@ -1792,16 +2072,37 @@ function PairingScreen({ state, message }: { state: BootState; message: string }
   );
 }
 
-function EmptyFocus({ connected, hasProjects, startingSession, onNew }: { connected: boolean; hasProjects: boolean; startingSession: boolean; onNew: (kind: SessionKind) => void }) {
+function PairingCountdown({ expiresAt }: { expiresAt: string }) {
+  const deadline = new Date(expiresAt).getTime();
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const seconds = Math.max(0, Math.ceil((deadline - now) / 1_000));
+  // A claim window is about two minutes; anything longer (like a test fixture) needs no clock.
+  if (seconds > 60 * 60) return null;
+  return (
+    <p className="pairing-expiry">
+      {seconds > 0 ? `Expires in ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}` : "Expired"}
+    </p>
+  );
+}
+
+function EmptyFocus({ connected, phoneOffline, clinchNotRunning, hasProjects, startingSession, onNew }: { connected: boolean; phoneOffline: boolean; clinchNotRunning: boolean; hasProjects: boolean; startingSession: boolean; onNew: (kind: SessionKind) => void }) {
   const heading = !connected
-    ? "Waiting for your Mac"
+    ? phoneOffline ? "This phone is offline" : clinchNotRunning ? "Clinch isn't running" : "Waiting for your Mac"
     : startingSession
       ? "Starting terminal…"
       : hasProjects
         ? "Choose a live session"
         : "Your Mac is ready";
   const detail = !connected
-    ? "Clinch will reconnect automatically when the Mac wakes and comes online."
+    ? phoneOffline
+      ? "Clinch will reconnect automatically as soon as this phone is back online."
+      : clinchNotRunning
+        ? "Your Mac is reachable, but the Clinch app is closed. Open it and this page reconnects on its own."
+        : "Clinch will reconnect automatically when the Mac wakes and comes online."
     : startingSession
       ? "Clinch is finishing the private shell setup before terminal output is shared."
       : "Open an existing tab from the drawer or start something new without leaving focus mode.";

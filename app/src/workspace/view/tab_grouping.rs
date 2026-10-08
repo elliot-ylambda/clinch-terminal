@@ -57,6 +57,7 @@ impl Workspace {
             .for_each(|(_, tab)| tab.in_multi_selection = true);
 
         ctx.dispatch_global_action("workspace:save_app", ());
+        self.notify_project_metadata_changed(ctx);
         ctx.notify();
     }
 
@@ -259,6 +260,7 @@ impl Workspace {
         }
 
         ctx.dispatch_global_action("workspace:save_app", ());
+        self.notify_project_metadata_changed(ctx);
         ctx.notify();
 
         ctx.dispatch_typed_action_deferred(WorkspaceAction::RenameTabGroup(group_id));
@@ -342,6 +344,7 @@ impl Workspace {
         }
 
         ctx.dispatch_global_action("workspace:save_app", ());
+        self.notify_project_metadata_changed(ctx);
         ctx.notify();
     }
 
@@ -417,6 +420,7 @@ impl Workspace {
         self.prune_empty_tab_group(group_id, ctx);
 
         ctx.dispatch_global_action("workspace:save_app", ());
+        self.notify_project_metadata_changed(ctx);
         ctx.notify();
     }
 
@@ -519,7 +523,7 @@ impl Workspace {
     /// Pins the tab. Grouped tabs are extracted from their group first
     /// regardless of whether that group itself is pinned — tab pinning and
     /// group pinning are independent concepts.
-    pub(super) fn pin_tab(&mut self, tab_index: usize, ctx: &mut ViewContext<Self>) {
+    pub(crate) fn pin_tab(&mut self, tab_index: usize, ctx: &mut ViewContext<Self>) {
         if !FeatureFlag::PinnedTabs.is_enabled() {
             return;
         }
@@ -545,11 +549,12 @@ impl Workspace {
         }
 
         ctx.dispatch_global_action("workspace:save_app", ());
+        self.notify_project_metadata_changed(ctx);
         ctx.notify();
     }
 
     /// Unpins a pinned tab and moves it to the start of the unpinned region.
-    pub(super) fn unpin_tab(&mut self, tab_index: usize, ctx: &mut ViewContext<Self>) {
+    pub(crate) fn unpin_tab(&mut self, tab_index: usize, ctx: &mut ViewContext<Self>) {
         if !FeatureFlag::PinnedTabs.is_enabled() {
             return;
         }
@@ -569,6 +574,7 @@ impl Workspace {
         self.move_tab_to_index(tab_index, target, ctx);
 
         ctx.dispatch_global_action("workspace:save_app", ());
+        self.notify_project_metadata_changed(ctx);
         ctx.notify();
     }
 
@@ -577,7 +583,7 @@ impl Workspace {
     /// don't touch individual member `tab.pinned` flags because the block
     /// always travels as a unit, and we want to support pinning a tab even if
     /// it already belongs to a (pinned) group.
-    pub(super) fn pin_tab_group(&mut self, group_id: TabGroupId, ctx: &mut ViewContext<Self>) {
+    pub(crate) fn pin_tab_group(&mut self, group_id: TabGroupId, ctx: &mut ViewContext<Self>) {
         if !FeatureFlag::PinnedTabs.is_enabled() {
             return;
         }
@@ -597,12 +603,13 @@ impl Workspace {
         self.move_group_block(group_id, target, ctx);
 
         ctx.dispatch_global_action("workspace:save_app", ());
+        self.notify_project_metadata_changed(ctx);
         ctx.notify();
     }
 
     /// Unpins the entire tab group: clears the group's `pinned` flag and
     /// moves the group's block to the start of the unpinned region.
-    pub(super) fn unpin_tab_group(&mut self, group_id: TabGroupId, ctx: &mut ViewContext<Self>) {
+    pub(crate) fn unpin_tab_group(&mut self, group_id: TabGroupId, ctx: &mut ViewContext<Self>) {
         if !FeatureFlag::PinnedTabs.is_enabled() {
             return;
         }
@@ -622,6 +629,7 @@ impl Workspace {
         self.move_group_block(group_id, target, ctx);
 
         ctx.dispatch_global_action("workspace:save_app", ());
+        self.notify_project_metadata_changed(ctx);
         ctx.notify();
     }
 

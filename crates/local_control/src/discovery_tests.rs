@@ -335,3 +335,30 @@ impl RegisteredInstance {
         })
     }
 }
+
+#[test]
+fn unfamiliar_action_metadata_never_deletes_another_live_apps_record() {
+    let dir = tempfile::tempdir().unwrap();
+    let record = InstanceRecord::for_current_process(
+        Some(ControlEndpoint::localhost(4000)),
+        "future-channel",
+        "future.app",
+        None,
+        crate::protocol::ActionKind::implemented_metadata(),
+    );
+    let path = record_path(dir.path(), &record.instance_id);
+    let socket = dir.path().join(broker_socket_filename(&record.instance_id));
+    let mut value = serde_json::to_value(&record).unwrap();
+    value["actions"][0]["kind"] = serde_json::json!("future.action");
+    fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+    fs::write(&socket, "").unwrap();
+    assert!(list_instances_from_dir(dir.path(), "local").is_empty());
+    assert!(
+        path.exists(),
+        "a live incompatible record must be preserved"
+    );
+    assert!(
+        socket.exists(),
+        "a live incompatible broker must be preserved"
+    );
+}

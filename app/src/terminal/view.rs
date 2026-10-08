@@ -2688,6 +2688,11 @@ pub struct TerminalView {
 
     /// The [`EntityId`] for this terminal view.
     view_id: EntityId,
+    /// Tracks input changes between local-control inspection and submission.
+    coordination_input_epoch: u64,
+    coordination_user_input_epoch: u64,
+    coordination_input_dirty: bool,
+    coordination_send_pending: bool,
 
     current_state: TerminalViewStateChange,
 
@@ -3150,6 +3155,25 @@ fn remote_control_trim_final_row_terminator(snapshot: &mut Vec<u8>) {
     }
 }
 
+fn local_control_trim_final_row_terminator(snapshot: &mut String) {
+    if snapshot.ends_with("\r\n") {
+        snapshot.truncate(snapshot.len() - 2);
+    } else if snapshot.ends_with('\n') {
+        snapshot.truncate(snapshot.len() - 1);
+    }
+}
+
+fn local_control_utf8_suffix(value: &str, max_bytes: usize) -> &str {
+    if value.len() <= max_bytes {
+        return value;
+    }
+    let mut start = value.len() - max_bytes;
+    while !value.is_char_boundary(start) {
+        start += 1;
+    }
+    &value[start..]
+}
+
 const REMOTE_CONTROL_PROMPT_START: &[u8] = b"\x1b]133;A\x07";
 const REMOTE_CONTROL_PROMPT_END: &[u8] = b"\x1b]133;B\x07";
 
@@ -3187,6 +3211,22 @@ fn remote_control_prompt_and_command_bytes(block: &Block, is_active: bool) -> Ve
     }
     bytes.extend_from_slice(command.as_bytes());
     bytes
+}
+
+fn local_control_prompt_and_command_text(block: &Block) -> String {
+    let command = block
+        .prompt_and_command_grid()
+        .contents_to_string_force_secrets_obfuscated(false, Some(1_000));
+    if block.honor_ps1() {
+        return command;
+    }
+
+    let mut prompt = block
+        .prompt_grid()
+        .contents_to_string_force_secrets_obfuscated(false, Some(1_000));
+    local_control_trim_final_row_terminator(&mut prompt);
+    prompt.push_str(&command);
+    prompt
 }
 
 fn remote_control_has_visible_live_primary_grid(block: &Block) -> bool {
@@ -3282,6 +3322,36 @@ fn remote_control_live_grid_snapshot(
         snapshot.drain(..snapshot.len() - max_bytes);
     }
     snapshot
+}
+
+fn local_control_live_grid_text(grid: &GridHandler, max_bytes: usize) -> (String, bool) {
+    if max_bytes == 0 || grid.visible_rows() == 0 || grid.columns() == 0 {
+        return (String::new(), false);
+    }
+
+    let first_visible_row = grid.history_size();
+    let last_visible_row = first_visible_row + grid.visible_rows() - 1;
+    let mut text = String::new();
+    for grid_row in first_visible_row..=last_visible_row {
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        let contents = grid.bounds_to_string(
+            Point::new(grid_row, 0),
+            Point::new(grid_row, grid.columns() - 1),
+            false,
+            RespectObfuscatedSecrets::Yes,
+            true,
+            RespectDisplayedOutput::No,
+        );
+        text.push_str(contents.trim_end_matches(&['\r', '\n'][..]));
+    }
+
+    let truncated = text.len() > max_bytes;
+    if truncated {
+        text = local_control_utf8_suffix(&text, max_bytes).to_owned();
+    }
+    (text, truncated)
 }
 
 impl TerminalView {
@@ -4730,6 +4800,10 @@ impl TerminalView {
             privacy_settings_snapshot: privacy_settings_handle.as_ref(ctx).get_snapshot(ctx),
             was_ever_visible: false,
             view_id: ctx.view_id(),
+            coordination_input_epoch: 0,
+            coordination_user_input_epoch: 0,
+            coordination_input_dirty: false,
+            coordination_send_pending: false,
             current_state: TerminalViewStateChange::default(),
             did_notify_long_running: false,
             is_focused_and_active: true,
@@ -5494,7 +5568,7 @@ impl TerminalView {
         if self.has_active_cli_agent_session(ctx)
             && Self::uses_git_status_chips(
                 SessionSettings::as_ref(ctx)
-                    .cli_agent_footer_chip_selection
+                    .coding_agent_footer_chip_selection_value()
                     .all_chips(),
             )
         {
@@ -5531,7 +5605,7 @@ impl TerminalView {
         }
         if self.has_active_cli_agent_session(ctx)
             && SessionSettings::as_ref(ctx)
-                .cli_agent_footer_chip_selection
+                .coding_agent_footer_chip_selection_value()
                 .all_chips()
                 .contains(&ContextChipKind::GithubPullRequest)
         {
@@ -9649,6 +9723,9 @@ impl TerminalView {
         // auto-continue (the user has taken over). The auto-continue's own
         // send also lands here, but only after its armed state was consumed,
         // so this is a no-op for that path.
+        self.coordination_user_input_epoch = self.coordination_user_input_epoch.wrapping_add(1);
+        self.coordination_input_epoch = self.coordination_input_epoch.wrapping_add(1);
+        self.coordination_input_dirty = true;
         self.cancel_auto_continue_on_user_input(ctx);
 
         // Neither Claude Code nor Codex fires a hook for an aborted turn, so the interrupt
@@ -12121,10 +12198,10 @@ impl TerminalView {
                     // Close the rich input editor if it was open (side effects
                     // like input config restore happen reactively).
                     // The auto-toggle flag is irrelevant here because the
-                    // session is removed immediately afterwards.
+                    // session and any bookmark are removed immediately afterwards.
                     self.close_cli_agent_rich_input(CLIAgentRichInputCloseReason::Other, ctx);
                     CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions_model, ctx| {
-                        sessions_model.remove_session(self.view_id, ctx);
+                        sessions_model.remove_session_after_agent_exit(self.view_id, ctx);
                     });
                 }
 
@@ -13408,14 +13485,31 @@ impl TerminalView {
             return;
         }
 
-        if !self.register_cli_agent_listener_from_event(&notification, ctx) {
-            return;
+        let registered = self.register_cli_agent_listener_from_event(&notification, ctx);
+        if registered {
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions_model, ctx| {
+                sessions_model.update_from_event(self.view_id, &notification, ctx);
+            });
         }
 
-        CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions_model, ctx| {
-            sessions_model.update_from_event(self.view_id, &notification, ctx);
-        });
-
+        // Subsequent events are applied by the listener, but input acknowledgement must
+        // also reach this view; otherwise the first submission would leave it dirty forever.
+        if matches!(
+            notification.event,
+            CLIAgentEventType::PromptSubmit | CLIAgentEventType::SessionStart
+        ) && CLIAgentSessionsModel::as_ref(ctx)
+            .session(self.view_id)
+            .is_some_and(|session| {
+                session.agent == notification.agent
+                    && session.session_context.session_id == notification.session_id
+            })
+        {
+            self.coordination_input_dirty = false;
+            self.coordination_input_epoch = self.coordination_input_epoch.wrapping_add(1);
+        }
+        if !registered {
+            return;
+        }
         if notification.event == CLIAgentEventType::SessionStart {
             send_telemetry_from_ctx!(
                 TelemetryEvent::CLIAgentPluginDetected {
@@ -16808,6 +16902,83 @@ impl TerminalView {
             snapshot.extend_from_slice(&chunk);
         }
         snapshot
+    }
+
+    /// Produces bounded plaintext for local-control search without activating the terminal.
+    /// Secret cells remain obfuscated. Logical shell blocks include retained prompt/output text;
+    /// full-screen applications contribute their currently rendered viewport.
+    pub(crate) fn local_control_searchable_text(&self, max_bytes: usize) -> (String, bool) {
+        use std::collections::VecDeque;
+
+        if max_bytes == 0 {
+            return (String::new(), false);
+        }
+
+        let model = self.model.lock();
+        if model.is_alt_screen_active() {
+            return local_control_live_grid_text(model.alt_screen().grid_handler(), max_bytes);
+        }
+
+        let block_list = model.block_list();
+        let active_block = block_list.active_block();
+        if remote_control_bootstrap_stage_is_visible(active_block.bootstrap_stage())
+            && !active_block.should_hide_block(block_list.agent_view_state())
+            && remote_control_has_visible_live_primary_grid(active_block)
+        {
+            return local_control_live_grid_text(
+                active_block.output_grid().grid_handler(),
+                max_bytes,
+            );
+        }
+
+        let visible_blocks = block_list
+            .blocks()
+            .iter()
+            .filter(|block| {
+                remote_control_bootstrap_stage_is_visible(block.bootstrap_stage())
+                    && !block.should_hide_block(block_list.agent_view_state())
+            })
+            .collect::<Vec<_>>();
+        let mut chunks = VecDeque::new();
+        let mut total = 0usize;
+        let mut truncated = false;
+        for (offset, block) in visible_blocks.iter().rev().enumerate() {
+            let remaining = max_bytes.saturating_sub(total);
+            if remaining == 0 {
+                truncated = true;
+                break;
+            }
+
+            let prompt = local_control_prompt_and_command_text(block);
+            let output = block
+                .output_grid()
+                .contents_to_string_force_secrets_obfuscated(false, Some(4_000));
+            let mut chunk = String::with_capacity(prompt.len() + output.len() + 2);
+            chunk.push_str(&prompt);
+            if !prompt.is_empty() && !output.is_empty() {
+                chunk.push('\n');
+            }
+            chunk.push_str(&output);
+            if !chunk.ends_with('\n') {
+                chunk.push('\n');
+            }
+            if chunk.len() > remaining {
+                chunk = local_control_utf8_suffix(&chunk, remaining).to_owned();
+                truncated = true;
+            }
+            total += chunk.len();
+            chunks.push_front(chunk);
+            if total >= max_bytes && offset + 1 < visible_blocks.len() {
+                truncated = true;
+                break;
+            }
+        }
+
+        let mut text = String::with_capacity(total);
+        for chunk in chunks {
+            text.push_str(&chunk);
+        }
+        (text, truncated)
     }
 
     /// Whether the active shell has declared its visible prompt zero-width so Clinch can paint
@@ -22492,6 +22663,15 @@ impl TerminalView {
                 block_id,
                 operations,
             } => {
+                // Selection updates also occur during automated submission. Only
+                // changes to text preempt queued coordination messages.
+                if operations.iter().any(|operation| {
+                    matches!(operation, CrdtOperation::Edit(_) | CrdtOperation::Undo(_))
+                }) {
+                    self.coordination_user_input_epoch =
+                        self.coordination_user_input_epoch.wrapping_add(1);
+                    self.coordination_input_epoch = self.coordination_input_epoch.wrapping_add(1);
+                }
                 // Editing the rich input means the user has taken over this
                 // stopped pane, just like typing directly into its PTY.
                 self.cancel_auto_continue_on_user_input(ctx);
@@ -23915,6 +24095,7 @@ impl TerminalView {
                 self.update_git_status_subscription(ctx);
             }
             SessionSettingsChangedEvent::CLIAgentToolbarChipSelectionSetting { .. }
+            | SessionSettingsChangedEvent::CodingAgentToolbarChipSelectionSetting { .. }
             | SessionSettingsChangedEvent::ClaudeCodeToolbarChipSelectionSetting { .. }
             | SessionSettingsChangedEvent::CodexToolbarChipSelectionSetting { .. } => {
                 // Force-close rich input when the Rich Input chip is removed so
@@ -28976,11 +29157,14 @@ impl View for TerminalView {
             context.set.insert(init::KEYBOARD_PROTOCOL_ENABLED_KEY);
         }
 
-        if CLIAgentSessionsModel::as_ref(app)
+        if let Some(cli_agent) = CLIAgentSessionsModel::as_ref(app)
             .session(self.view_id)
-            .is_some()
+            .map(|session| session.agent)
         {
             context.set.insert(init::CLI_AGENT_SESSION_ACTIVE_KEY);
+            if cli_agent == CLIAgent::Claude {
+                context.set.insert(init::CLAUDE_CODE_SESSION_ACTIVE_KEY);
+            }
             if *AISettings::as_ref(app).should_render_cli_agent_footer {
                 context.set.insert(flags::CLI_AGENT_FOOTER_ENABLED);
 
@@ -29539,7 +29723,7 @@ fn maybe_wrap_terminal_element_in_scrollable(
 /// Returns `true` when the Rich Input chip is present in the user's CLI agent
 /// footer toolbar configuration.
 fn is_rich_input_chip_in_cli_toolbar(app: &AppContext) -> bool {
-    let sel = &SessionSettings::as_ref(app).cli_agent_footer_chip_selection;
+    let sel = SessionSettings::as_ref(app).coding_agent_footer_chip_selection_value();
     sel.left_items()
         .iter()
         .chain(sel.right_items().iter())

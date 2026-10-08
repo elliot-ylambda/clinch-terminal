@@ -1,9 +1,12 @@
-//! Command-line interface for controlling a running local Warp app.
+//! Command-line interface for controlling a running local app.
+mod agents;
 mod commands;
 mod completions;
 mod output;
+mod projects;
 mod selectors;
 use std::ffi::OsString;
+use std::path::Path;
 use std::process::ExitCode;
 
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
@@ -11,24 +14,24 @@ use clap_complete::aot::Shell;
 use commands::{
     run_action_catalog_command, run_app_command, run_appearance_command, run_capability_command,
     run_file_command, run_input_command, run_instance_command, run_keybinding_command,
-    run_pane_command, run_section_command, run_session_command, run_setting_command,
-    run_surface_command, run_tab_command, run_theme_command, run_toolbelt_command,
-    run_window_command,
+    run_pane_command, run_remote_control_command, run_section_command, run_session_command,
+    run_setting_command, run_surface_command, run_tab_command, run_theme_command,
+    run_toolbelt_command, run_window_command,
 };
 use completions::generate_completions_to_stdout;
 use output::write_control_error;
 
 use crate::agent::OutputFormat;
 
-/// Hidden flag used by the channel-specific Warp app binary to enter `warpctrl` mode.
+/// Hidden compatibility flag used by the shared app binary to enter local-control mode.
 pub const CONTROL_MODE_FLAG: &str = "--warpctrl";
 
-/// Parsed top-level arguments for `warpctrl`.
+/// Parsed top-level arguments for the local-control CLI.
 #[derive(Debug, Parser)]
 #[command(
     name = "warpctrl",
     display_name = "warpctrl",
-    about = "Control a running local Warp app instance"
+    about = "Control a running local app instance"
 )]
 pub struct ControlArgs {
     /// Set the output format.
@@ -60,15 +63,16 @@ pub enum ActionCatalogCommand {
 
 impl ControlArgs {
     pub fn from_env() -> Self {
-        let bin_name = crate::binary_name().unwrap_or_else(|| "warpctrl".to_owned());
+        let bin_name = Self::display_bin_name();
         Self::try_parse_from_args(std::env::args_os(), bin_name).unwrap_or_else(|err| err.exit())
     }
 
-    /// Parse Warp Control arguments only when the wrapper-injected mode flag is present.
+    /// Parse local-control arguments only when the wrapper-injected mode flag is present.
     ///
     /// Startup calls this before the normal Warp/Oz parser. Arguments through
     /// `--warpctrl` are removed, and the remaining arguments are parsed as if
-    /// the standalone command name were `warpctrl`.
+    /// the standalone command name were `clinch ctrl`. The legacy `warpctrl`
+    /// wrappers continue to retain their invocation name in help and errors.
     pub fn from_control_mode_env() -> Option<Self> {
         Self::try_parse_control_mode_from(std::env::args_os())
             .map(|result| result.unwrap_or_else(|err| err.exit()))
@@ -80,11 +84,12 @@ impl ControlArgs {
         I: IntoIterator<Item = T>,
         T: Into<OsString>,
     {
-        let mut stripped_args = vec![OsString::from("warpctrl")];
+        let args = args.into_iter().map(Into::into).collect::<Vec<_>>();
+        let bin_name = Self::display_bin_name_for(args.first());
+        let mut stripped_args = vec![OsString::from(&bin_name)];
         let mut found_control_mode = false;
 
         for arg in args {
-            let arg = arg.into();
             if !found_control_mode {
                 if arg.to_str() == Some(CONTROL_MODE_FLAG) {
                     found_control_mode = true;
@@ -94,12 +99,37 @@ impl ControlArgs {
             stripped_args.push(arg);
         }
 
-        found_control_mode.then(|| Self::try_parse_from_args(stripped_args, "warpctrl"))
+        if stripped_args.get(1).is_some_and(|arg| arg == "ctrl") {
+            stripped_args.remove(1);
+        }
+        found_control_mode.then(|| Self::try_parse_from_args(stripped_args, bin_name))
     }
 
     pub fn clap_command() -> clap::Command {
-        let bin_name = crate::binary_name().unwrap_or_else(|| "warpctrl".to_owned());
+        let bin_name = Self::display_bin_name();
         Self::clap_command_for_bin_name(bin_name)
+    }
+
+    pub(crate) fn display_bin_name() -> String {
+        let invocation = std::env::args_os().next();
+        Self::display_bin_name_for(invocation.as_ref())
+    }
+
+    fn display_bin_name_for(invocation: Option<&OsString>) -> String {
+        let Some(name) = invocation
+            .and_then(|arg| Path::new(arg).file_name())
+            .and_then(|name| name.to_str())
+        else {
+            return "warpctrl".to_owned();
+        };
+
+        if name == "clinch" || name.starts_with("clinch-") {
+            format!("{name} ctrl")
+        } else if name == "warpctrl" || name.starts_with("warpctrl-") {
+            name.to_owned()
+        } else {
+            "warpctrl".to_owned()
+        }
     }
 
     fn try_parse_from_args<I, T>(args: I, bin_name: impl Into<String>) -> Result<Self, clap::Error>
@@ -134,9 +164,18 @@ impl ControlArgs {
     }
 }
 
-/// Top-level `warpctrl` command groups.
+/// Top-level local-control command groups.
 #[derive(Debug, Clone, Subcommand)]
 pub enum ControlCommand {
+    /// Inspect the complete Clinch hierarchy, including inactive projects.
+    #[command(subcommand)]
+    Workspace(agents::WorkspaceCommand),
+    /// Inspect every open project.
+    #[command(subcommand)]
+    Project(projects::ProjectCommand),
+    /// Read, message, and monitor Claude Code and Codex sessions across projects.
+    #[command(subcommand)]
+    Agent(agents::AgentCommand),
     /// Inspect local Warp app instances.
     #[command(subcommand)]
     Instance(InstanceCommand),
@@ -201,21 +240,25 @@ pub enum ControlCommand {
     #[command(subcommand)]
     Surface(SurfaceCommand),
 
+    /// Test hooks for Clinch Remote Control.
+    #[command(subcommand)]
+    RemoteControl(RemoteControlCommand),
+
     /// Generate shell completions for your shell to stdout.
     ///
     /// For bash, add the following to ~/.bashrc:
-    ///     source <(path/to/warpctrl completions bash)
+    ///     source <(clinch ctrl completions bash)
     ///
     /// For zsh, add the following to ~/.zshrc:
-    ///     source <(path/to/warpctrl completions zsh)
+    ///     source <(clinch ctrl completions zsh)
     ///
     /// For fish, add the following to ~/.config/fish/config.fish:
-    ///     path/to/warpctrl completions fish | source
+    ///     clinch ctrl completions fish | source
     ///
     /// For Powershell, add the following to $PROFILE:
-    ///     path\to\warpctrl completions powershell | Out-String | Invoke-Expression
+    ///     clinch ctrl completions powershell | Out-String | Invoke-Expression
     ///
-    /// If no shell is provided, this defaults to the shell that Warp was run from.
+    /// If no shell is provided, this defaults to the current shell.
     #[command(verbatim_doc_comment)]
     Completions {
         /// Shell to generate completions for.
@@ -231,7 +274,7 @@ pub enum InstanceCommand {
     List,
 
     /// Print app, protocol, active target, and action metadata for the selected instance.
-    Inspect(TargetArgs),
+    Inspect(Box<TargetArgs>),
 }
 
 /// Commands that inspect the selected Warp app instance.
@@ -302,8 +345,18 @@ pub enum TabCommand {
     /// Inspect one tab in the selected local Warp app.
     Inspect(TargetArgs),
 
+    /// Search bounded terminal text across tabs without activating them.
+    Grep(TabGrepArgs),
+
     /// Create a new terminal tab in the active window.
     Create(TabCreateArgs),
+
+    /// Transfer a live session into another project, including another native window.
+    Transfer(projects::TabTransferArgs),
+    /// Pin a session at the top of its sidebar.
+    Pin(TargetArgs),
+    /// Unpin a session.
+    Unpin(TargetArgs),
 
     /// Activate a tab.
     Activate(TabActivateArgs),
@@ -338,6 +391,8 @@ pub enum TabColorCommand {
 /// Commands that inspect local Warp panes.
 #[derive(Debug, Clone, Subcommand)]
 pub enum PaneCommand {
+    /// Read bounded terminal output in any project using a workspace-tree pane ID.
+    Read(agents::PaneReadArgs),
     /// List panes in the selected local Warp app.
     List(TargetArgs),
 
@@ -557,6 +612,10 @@ pub enum ToolbeltCommand {
     /// Create, delete, or move a footer button.
     #[command(subcommand)]
     Button(ToolbeltButtonCommand),
+
+    /// List or resolve locally learned cross-conversation button suggestions.
+    #[command(subcommand)]
+    Suggestion(ToolbeltSuggestionCommand),
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -572,6 +631,15 @@ pub enum ToolbeltButtonCommand {
 }
 
 #[derive(Debug, Clone, Subcommand)]
+pub enum ToolbeltSuggestionCommand {
+    /// List eligible unresolved suggestions for a Claude Code or Codex footer.
+    List(ToolbeltSuggestionListArgs),
+
+    /// Record a suggestion as accepted or declined so it is not proposed again.
+    Resolve(ToolbeltSuggestionResolveArgs),
+}
+
+#[derive(Debug, Clone, Subcommand)]
 pub enum SectionCommand {
     /// List sidebar sections in the target project window.
     List(TargetArgs),
@@ -584,6 +652,10 @@ pub enum SectionCommand {
 
     /// Remove a section while preserving its tabs.
     Delete(SectionIdArgs),
+    /// Pin a whole section.
+    Pin(SectionIdArgs),
+    /// Unpin a whole section.
+    Unpin(SectionIdArgs),
 
     /// Move a section one sidebar slot up or down.
     Move(SectionMoveArgs),
@@ -627,6 +699,13 @@ pub enum KeybindingCommand {
 }
 
 #[derive(Debug, Clone, Subcommand)]
+pub enum RemoteControlCommand {
+    /// Print a single-use pairing link that is approved without a click in Settings (Clinch Dev
+    /// only), for pairing an automated test browser.
+    TestPair(TargetArgs),
+}
+
+#[derive(Debug, Clone, Subcommand)]
 pub enum FileCommand {
     /// Open a file in Warp.
     Open(FileOpenArgs),
@@ -635,7 +714,10 @@ pub enum FileCommand {
 /// Exact selectors for a target within the selected Warp instance.
 #[derive(Debug, Clone, Args, Default)]
 pub struct TargetArgs {
-    /// Target a specific local Warp instance id from `warpctrl instance list`.
+    /// Exact project ID, including inactive projects.
+    #[arg(long = "project")]
+    pub project: Option<String>,
+    /// Target a specific local app instance id from `clinch ctrl instance list`.
     #[arg(long = "instance", conflicts_with = "pid")]
     pub instance: Option<String>,
 
@@ -697,6 +779,27 @@ pub struct TabCreateArgs {
     /// Pass these after `--`. A startup command requires an explicit `--cwd`.
     #[arg(last = true, value_name = "COMMAND", num_args = 1.., requires = "cwd")]
     pub command: Vec<String>,
+
+    #[command(flatten)]
+    pub target: TargetArgs,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct TabGrepArgs {
+    /// Regular expression to search for, or literal text with --fixed-strings.
+    pub pattern: String,
+
+    /// Match without regard to ASCII or Unicode case.
+    #[arg(short = 'i', long = "ignore-case")]
+    pub ignore_case: bool,
+
+    /// Treat the pattern as literal text instead of a regular expression.
+    #[arg(short = 'F', long = "fixed-strings")]
+    pub fixed_strings: bool,
+
+    /// Maximum matching lines to return.
+    #[arg(short = 'm', long = "max-matches", default_value_t = 100)]
+    pub max_matches: u32,
 
     #[command(flatten)]
     pub target: TargetArgs,
@@ -957,6 +1060,26 @@ pub struct ToolbeltButtonMoveArgs {
 }
 
 #[derive(Debug, Clone, Args)]
+pub struct ToolbeltSuggestionListArgs {
+    #[arg(long, value_enum)]
+    pub footer: CliToolbeltFooter,
+
+    #[command(flatten)]
+    pub target: TargetArgs,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct ToolbeltSuggestionResolveArgs {
+    pub suggestion_id: String,
+
+    #[arg(long, value_enum)]
+    pub outcome: CliToolbeltSuggestionOutcome,
+
+    #[command(flatten)]
+    pub target: TargetArgs,
+}
+
+#[derive(Debug, Clone, Args)]
 pub struct SectionCreateArgs {
     pub name: String,
 
@@ -1003,8 +1126,11 @@ pub struct SectionMoveArgs {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum CliToolbeltFooter {
+    /// Shared coding-agent layout, addressed from Claude Code.
     ClaudeCode,
+    /// Shared coding-agent layout, addressed from Codex.
     Codex,
+    /// Independent plain-terminal layout.
     Terminal,
 }
 
@@ -1014,6 +1140,21 @@ impl From<CliToolbeltFooter> for local_control::protocol::ToolbeltFooter {
             CliToolbeltFooter::ClaudeCode => Self::ClaudeCode,
             CliToolbeltFooter::Codex => Self::Codex,
             CliToolbeltFooter::Terminal => Self::Terminal,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum CliToolbeltSuggestionOutcome {
+    Accepted,
+    Declined,
+}
+
+impl From<CliToolbeltSuggestionOutcome> for local_control::protocol::ToolbeltSuggestionOutcome {
+    fn from(value: CliToolbeltSuggestionOutcome) -> Self {
+        match value {
+            CliToolbeltSuggestionOutcome::Accepted => Self::Accepted,
+            CliToolbeltSuggestionOutcome::Declined => Self::Declined,
         }
     }
 }
@@ -1156,6 +1297,9 @@ fn run_exit_code(args: ControlArgs) -> u8 {
 fn run_inner(args: ControlArgs) -> Result<(), local_control::protocol::ControlError> {
     let output_format = args.output_format;
     match args.command {
+        ControlCommand::Workspace(command) => agents::run_workspace(command, output_format),
+        ControlCommand::Project(command) => projects::run_project(command, output_format),
+        ControlCommand::Agent(command) => agents::run_agent(command, output_format),
         ControlCommand::Instance(command) => run_instance_command(command, output_format),
         ControlCommand::App(command) => run_app_command(command, output_format),
         ControlCommand::Capability(command) => run_capability_command(command, output_format),
@@ -1173,14 +1317,17 @@ fn run_inner(args: ControlArgs) -> Result<(), local_control::protocol::ControlEr
         ControlCommand::Keybinding(command) => run_keybinding_command(command, output_format),
         ControlCommand::File(command) => run_file_command(command, output_format),
         ControlCommand::Surface(command) => run_surface_command(command, output_format),
+        ControlCommand::RemoteControl(command) => {
+            run_remote_control_command(command, output_format)
+        }
         ControlCommand::Completions { shell } => generate_completions_to_stdout(shell),
     }
 }
 
 #[cfg(test)]
-pub(crate) use commands::render_human_readable_for_test;
+pub(crate) use commands::{origin_terminal_session_uuid, render_human_readable_for_test};
 #[cfg(test)]
-pub(crate) use completions::generate_completion_string;
+pub(crate) use completions::{generate_completion_string, generate_completion_string_for_bin};
 #[cfg(test)]
 pub(crate) use output::ErrorSummary;
 

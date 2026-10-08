@@ -6,20 +6,70 @@ import type { PairingStatus } from "../generated/types/PairingStatus";
 import { base64ToBytes, bytesToBase64, type DeviceIdentity, saveIdentity } from "./storage";
 import { apiUrl, type PairingFragment } from "./urls";
 
+/** Tailscale reached the Mac, but nothing serves Clinch's route there: the app is not running. */
+export const CLINCH_NOT_RUNNING = "Clinch isn't running on your Mac";
+/** The request never reached the Mac: it is asleep, off the tailnet, or this phone's path is down. */
+export const MAC_UNREACHABLE = "Can't reach your Mac";
+
 async function post<T>(endpoint: string, body: unknown): Promise<T> {
-  const response = await fetch(apiUrl(endpoint), {
-    method: "POST",
-    credentials: "same-origin",
-    cache: "no-store",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  let response: Response;
+  try {
+    response = await fetch(apiUrl(endpoint), {
+      method: "POST",
+      credentials: "same-origin",
+      cache: "no-store",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    throw new Error(MAC_UNREACHABLE);
+  }
   const payload = (await response.json().catch(() => null)) as T | { error?: { message?: string } } | null;
   if (!response.ok) {
     const message = payload && typeof payload === "object" && "error" in payload ? payload.error?.message : undefined;
+    if (!message && response.status >= 502 && response.status <= 504) throw new Error(CLINCH_NOT_RUNNING);
     throw new Error(message ?? `Remote Control request failed (${response.status})`);
   }
   return payload as T;
+}
+
+/**
+ * The short code both screens show while a claim waits for approval. It is the head of the phone
+ * key's SHA-256 fingerprint, so a match proves the Mac is approving this phone's key and not one a
+ * bystander claimed with the same QR code.
+ */
+export function pairingCode(fingerprint: string): string {
+  const head = fingerprint.slice(0, 8).toUpperCase();
+  return `${head.slice(0, 4)}-${head.slice(4)}`;
+}
+
+function devicePlatform(userAgent: string, maxTouchPoints: number): "ipados" | "ios" | "other" {
+  // iPadOS asks for desktop sites by default and then reports itself as a Mac with a touchscreen.
+  if (/iPad/i.test(userAgent) || (/Macintosh/i.test(userAgent) && maxTouchPoints > 1)) return "ipados";
+  return /iPhone|iPod/i.test(userAgent) ? "ios" : "other";
+}
+
+/** A short, recognizable name for the Mac's approval prompt and paired-phones list. */
+export function defaultDeviceName(userAgent: string, maxTouchPoints: number): string {
+  const platform = devicePlatform(userAgent, maxTouchPoints);
+  const device = platform === "ipados"
+    ? "iPad"
+    : platform === "ios"
+      ? "iPhone"
+      : /Android/i.test(userAgent)
+        ? "Android"
+        : undefined;
+  if (!device) return "Mobile browser";
+  const browser = /EdgiOS|EdgA/i.test(userAgent)
+    ? "Edge"
+    : /FxiOS|Firefox/i.test(userAgent)
+      ? "Firefox"
+      : /CriOS/i.test(userAgent) || (device === "Android" && /Chrome/i.test(userAgent))
+        ? "Chrome"
+        : device === "Android"
+          ? "Browser"
+          : "Safari";
+  return `${device} · ${browser}`;
 }
 
 export async function claimPhone(
@@ -30,7 +80,7 @@ export async function claimPhone(
     invitation_id: invitation.invitationId,
     secret: invitation.secret,
     device_name: identity.deviceName,
-    platform: /iPad/i.test(navigator.userAgent) ? "ipados" : /iPhone/i.test(navigator.userAgent) ? "ios" : "other",
+    platform: devicePlatform(navigator.userAgent, navigator.maxTouchPoints),
     public_key_p256_raw: identity.publicKeyP256Raw,
   });
 }
@@ -43,7 +93,7 @@ export async function waitForApproval(receipt: PairingClaimReceipt): Promise<Pai
       claim_secret: receipt.claim_secret,
     });
     if (status.status !== "pending") return status;
-    await new Promise((resolve) => setTimeout(resolve, 3_000));
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
   }
   return { status: "expired" };
 }

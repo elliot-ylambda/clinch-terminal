@@ -13,14 +13,15 @@ use chrono::{Duration, Utc};
 use clinch_companion_protocol::{
     javascript_safe_integer, AcquireWriterLease, AgentProvider, AgentState, AppInstanceId,
     AuthSessionId, Capability, ClientEnvelope, ClientMessage, ConnectionPath, CreateProject,
-    CreateSession, CreateTask, DeleteTask, DeviceId, HostSnapshot, InterruptTerminal, LaunchTask,
-    PaneKind, PaneSnapshot, ProjectActivity, ProjectBadgeSnapshot, ProjectSnapshot, ProtocolError,
-    ProtocolErrorCode, QuickInsertDescriptor, QuickInsertKind, QuickInsertPreviewRequest,
-    QuickInsertSubmit, RawTerminalInput, RecentAgentSessionSnapshot, RequestId, ResumeSession,
-    ServerEnvelope, ServerMessage, SessionKind, SetTerminalSizePin, SubmitComposerText, TabKind,
-    TabSnapshot, TargetRef, TaskId, TaskSnapshot, TerminalDimensions, TerminalKey,
-    TerminalKeyInput, TerminalResize, TerminalSnapshot, TerminalStreamId, UploadBegin, UploadId,
-    UploadReady, UsageLimitWindowSnapshot, UsageSnapshot, UsageState, UsageTokenWindowSnapshot,
+    CreateSection, CreateSession, CreateTask, DeleteTask, DeviceId, HostSnapshot,
+    InterruptTerminal, LaunchTask, PaneKind, PaneSnapshot, ProjectActivity, ProjectBadgeSnapshot,
+    ProjectSnapshot, ProtocolError, ProtocolErrorCode, QuickInsertDescriptor, QuickInsertKind,
+    QuickInsertPreviewRequest, QuickInsertSubmit, RawTerminalInput, RecentAgentSessionSnapshot,
+    RequestId, ResumeSession, SectionSnapshot, ServerEnvelope, ServerMessage, SessionKind,
+    SetTabSection, SetTerminalSizePin, SubmitComposerText, TabKind, TabSnapshot, TargetRef, TaskId,
+    TaskSnapshot, TerminalDimensions, TerminalKey, TerminalKeyInput, TerminalResize,
+    TerminalSnapshot, TerminalStreamId, UploadBegin, UploadId, UploadReady,
+    UsageLimitWindowSnapshot, UsageSnapshot, UsageState, UsageTokenWindowSnapshot,
     WorkspaceChanged, WorkspaceSnapshot, WriterLeaseSnapshot, MAX_IDEMPOTENCY_RESULTS_PER_SESSION,
     MAX_JAVASCRIPT_SAFE_INTEGER, MAX_OPAQUE_ID_BYTES, MAX_PATH_BYTES, MAX_TERMINAL_SNAPSHOT_BYTES,
     MAX_UPLOAD_CHUNK_BYTES, PROTOCOL_VERSION, WRITER_LEASE_TTL_SECS,
@@ -36,6 +37,7 @@ use super::pairing::{PairingManager, SessionAuthorization};
 use crate::agent_resume::AgentResumeProvider;
 use crate::ai::blocklist::agent_view::toolbar_item::AgentToolbarItemKind;
 use crate::ai::blocklist::usage::CliAgentUsageModel;
+use crate::appearance::Appearance;
 use crate::pane_group::{ActivationReason, PaneGroup, PaneGroupAction, PaneId};
 use crate::project_window::{ProjectId, ProjectWindow};
 use crate::root_view::RootView;
@@ -44,6 +46,7 @@ use crate::terminal::cli_agent_sessions::{CLIAgentSessionStatus, CLIAgentSession
 use crate::terminal::session_settings::{SessionSettings, ToolbarChipSelection as _};
 use crate::terminal::view::TerminalViewState;
 use crate::terminal::{CLIAgent, Event as TerminalViewEvent, TerminalView};
+use crate::workspace::tab_group::TabGroupId;
 use crate::workspace::task::{WorkspaceTaskAgent, WorkspaceTaskId};
 use crate::workspace::Workspace;
 use crate::AgentNotificationsModel;
@@ -238,6 +241,30 @@ impl WorkspaceAdapter {
         }
     }
 
+    pub(super) fn has_writer_for_terminal(&self, terminal_id: EntityId, ctx: &AppContext) -> bool {
+        if self.writer_leases.is_empty() {
+            return false;
+        }
+        for (_, workspace) in crate::workspace::WorkspaceRegistry::as_ref(ctx).all_workspaces(ctx) {
+            for tab in workspace.as_ref(ctx).tab_views() {
+                let group = tab.as_ref(ctx);
+                for pane in group.pane_ids() {
+                    if group
+                        .terminal_view_from_pane_id(pane, ctx)
+                        .is_some_and(|view| view.id() == terminal_id)
+                    {
+                        let pane_id = pane_opaque_id(pane);
+                        return self.writer_leases.iter().any(|(target, lease)| {
+                            target.pane_id == pane_id
+                                && self.connected_sessions.contains(&lease.session_id)
+                        });
+                    }
+                }
+            }
+        }
+        false
+    }
+
     pub fn initial_snapshot(&mut self, ctx: &mut ModelContext<Self>) -> ServerEnvelope {
         let snapshot = self.snapshot(ctx);
         self.response(None, ServerMessage::Snapshot(snapshot))
@@ -326,6 +353,8 @@ impl WorkspaceAdapter {
             ClientMessage::CreateSession(message) => self.create_session(request_id, message, ctx),
             ClientMessage::ResumeSession(message) => self.resume_session(request_id, message, ctx),
             ClientMessage::CreateTask(message) => self.create_task(request_id, message, ctx),
+            ClientMessage::CreateSection(message) => self.create_section(request_id, message, ctx),
+            ClientMessage::SetTabSection(message) => self.set_tab_section(request_id, message, ctx),
             ClientMessage::DeleteTask(message) => self.delete_task(request_id, message, ctx),
             ClientMessage::LaunchTask(message) => self.launch_task(request_id, message, ctx),
             ClientMessage::QuickInsertPreview(message) => {
@@ -1037,6 +1066,108 @@ impl WorkspaceAdapter {
         AdapterReply::envelope(self.command_accepted(request_id))
     }
 
+    fn create_section(
+        &mut self,
+        request_id: RequestId,
+        message: CreateSection,
+        ctx: &mut ModelContext<Self>,
+    ) -> AdapterReply {
+        let resolved =
+            match self.resolve_valid_target(&message.target, Some(message.workspace_revision), ctx)
+            {
+                Ok(resolved) => resolved,
+                Err((code, text, retryable)) => {
+                    return AdapterReply::envelope(self.error(
+                        Some(request_id),
+                        code,
+                        text,
+                        retryable,
+                    ))
+                }
+            };
+        let name = message.name.trim().to_owned();
+        if name.is_empty() || name.chars().any(char::is_control) {
+            return AdapterReply::envelope(self.error(
+                Some(request_id),
+                ProtocolErrorCode::InvalidRequest,
+                "Give the section a name.".to_owned(),
+                false,
+            ));
+        }
+        let created = resolved.workspace.update(ctx, |workspace, ctx| {
+            workspace.create_named_tab_group_from_tab(resolved.tab_index, name, ctx)
+        });
+        if created.is_none() {
+            return AdapterReply::envelope(self.error(
+                Some(request_id),
+                ProtocolErrorCode::TargetGone,
+                "That tab can no longer start a section.".to_owned(),
+                true,
+            ));
+        }
+        self.bump_topology_revision();
+        AdapterReply::envelope(self.command_accepted(request_id))
+    }
+
+    fn set_tab_section(
+        &mut self,
+        request_id: RequestId,
+        message: SetTabSection,
+        ctx: &mut ModelContext<Self>,
+    ) -> AdapterReply {
+        let resolved =
+            match self.resolve_valid_target(&message.target, Some(message.workspace_revision), ctx)
+            {
+                Ok(resolved) => resolved,
+                Err((code, text, retryable)) => {
+                    return AdapterReply::envelope(self.error(
+                        Some(request_id),
+                        code,
+                        text,
+                        retryable,
+                    ))
+                }
+            };
+        let section_id = match message.section_id.as_deref().map(uuid::Uuid::parse_str) {
+            None => None,
+            Some(Ok(id)) => Some(TabGroupId(id)),
+            Some(Err(_)) => {
+                return AdapterReply::envelope(self.error(
+                    Some(request_id),
+                    ProtocolErrorCode::InvalidRequest,
+                    "That section id is not valid.".to_owned(),
+                    false,
+                ))
+            }
+        };
+        let moved = resolved.workspace.update(ctx, |workspace, ctx| {
+            match section_id {
+                Some(section_id) => {
+                    if !workspace.tab_groups.contains_key(&section_id) {
+                        return false;
+                    }
+                    workspace.move_tab_to_group(resolved.tab_index, section_id, ctx);
+                }
+                None => {
+                    if workspace.tabs[resolved.tab_index].group_id.is_some() {
+                        workspace.remove_tab_from_group(resolved.tab_index, ctx);
+                    }
+                }
+            }
+            true
+        });
+        if !moved {
+            return AdapterReply::envelope(self.error(
+                Some(request_id),
+                ProtocolErrorCode::TargetGone,
+                "That section no longer exists.".to_owned(),
+                true,
+            ));
+        }
+        self.bump_topology_revision();
+        AdapterReply::envelope(self.command_accepted(request_id))
+    }
+
     fn delete_task(
         &mut self,
         request_id: RequestId,
@@ -1551,15 +1682,15 @@ impl WorkspaceAdapter {
         }
     }
 
-    /// Panes the Mac is itself showing right now: Clinch is the frontmost app, the pane lives in
-    /// the active window, and its project and tab are the visible ones.
+    /// Panes the Mac is itself showing right now: Clinch is the frontmost app on an unlocked, awake
+    /// screen, the pane lives in the active window, and its project and tab are the visible ones.
     ///
     /// A PTY carries exactly one `winsize`, so a pane cannot be one width for the Mac and another
     /// for a phone. These panes therefore belong to the person at the keyboard, and a remote
     /// viewport mirrors their width rather than imposing its own.
     fn desktop_watched_targets(&self, ctx: &mut ModelContext<Self>) -> HashSet<TargetKey> {
         let mut watched = HashSet::new();
-        if !ctx.windows().app_is_active() {
+        if !ctx.windows().app_is_active() || super::desktop_presence::desktop_unattended() {
             return watched;
         }
         let Some(active_window) = ctx.windows().active_window() else {
@@ -1631,7 +1762,11 @@ impl WorkspaceAdapter {
         self.reclaim_desktop_sizes(&desktop_watched, ctx);
         self.refresh_recent_agent_sessions(ctx);
         let mut projects = Vec::new();
-        let mut active_target = None;
+        // Every window has an active pane; the focused window's is the one the user is looking at.
+        // Without that preference the last window iterated would win arbitrarily.
+        let focused_window = ctx.windows().active_window();
+        let mut focused_active_target = None;
+        let mut fallback_active_target = None;
         let mut order = 0u32;
         let mut topology = DefaultHasher::new();
 
@@ -1764,7 +1899,11 @@ impl WorkspaceAdapter {
                             tab_kind = merge_tab_kind(tab_kind, &pane_kind);
                             tab_activity = merge_activity(tab_activity, activity.clone());
                             if project_active && tab_active && pane_active && dimensions.is_some() {
-                                active_target = Some(target.clone());
+                                if focused_window == Some(window_id) {
+                                    focused_active_target = Some(target.clone());
+                                } else if fallback_active_target.is_none() {
+                                    fallback_active_target = Some(target.clone());
+                                }
                             }
                             let target_key = TargetKey::from(&target);
                             panes.push(PaneSnapshot {
@@ -1832,6 +1971,7 @@ impl WorkspaceAdapter {
                                 .unwrap_or(u32::MAX),
                         },
                         tabs,
+                        sections: section_snapshots(workspace, ctx),
                         tasks,
                     });
                     order = order.saturating_add(1);
@@ -1864,7 +2004,7 @@ impl WorkspaceAdapter {
                 ],
             },
             projects,
-            active_target,
+            active_target: focused_active_target.or(fallback_active_target),
             usage: usage_snapshots(ctx),
             recent_agent_sessions: self.recent_agent_sessions.clone(),
             paired_devices: self.pairing.paired_devices(Utc::now()).unwrap_or_default(),
@@ -2274,7 +2414,7 @@ fn usage_snapshots(ctx: &ModelContext<WorkspaceAdapter>) -> Vec<UsageSnapshot> {
         UsageSnapshot {
             provider,
             state: if selected_window.is_some() || has_local_usage {
-                if usage.plan_needs_authorization {
+                if usage.plan_unavailable {
                     UsageState::Stale
                 } else {
                     UsageState::Available
@@ -2311,7 +2451,9 @@ fn required_capability(message: &ClientMessage) -> Option<Capability> {
         | ClientMessage::QuickInsertPreview(_)
         | ClientMessage::QuickInsertSubmit(_)
         | ClientMessage::CreateTask(_)
-        | ClientMessage::DeleteTask(_) => Some(Capability::Control),
+        | ClientMessage::DeleteTask(_)
+        | ClientMessage::CreateSection(_)
+        | ClientMessage::SetTabSection(_) => Some(Capability::Control),
         ClientMessage::CreateProject(_)
         | ClientMessage::CreateSession(_)
         | ClientMessage::ResumeSession(_)
@@ -2323,6 +2465,43 @@ fn required_capability(message: &ClientMessage) -> Option<Capability> {
         // never reaches the adapter: the gateway answers it directly.
         ClientMessage::UnpairDevice | ClientMessage::Disconnect => None,
     }
+}
+
+/// Sections in the order the sidebar shows them: by their first tab, then any empty ones.
+fn section_snapshots(workspace: &Workspace, ctx: &AppContext) -> Vec<SectionSnapshot> {
+    let ansi = Appearance::as_ref(ctx).theme().terminal_colors().normal;
+    let mut seen = HashSet::new();
+    let mut ordered = workspace
+        .tabs
+        .iter()
+        .filter_map(|tab| tab.group_id)
+        .filter(|group_id| seen.insert(*group_id))
+        .collect::<Vec<_>>();
+    ordered.extend(
+        workspace
+            .tab_groups
+            .keys()
+            .copied()
+            .filter(|group_id| seen.insert(*group_id)),
+    );
+    ordered
+        .into_iter()
+        .filter_map(|group_id| {
+            let group = workspace.tab_groups.get(&group_id)?;
+            Some(SectionSnapshot {
+                id: group_id.0.to_string(),
+                name: group
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| "New Section".to_owned()),
+                color: group.color.resolve(None).map(|color| {
+                    let color = color.to_color(&ansi);
+                    format!("#{:02x}{:02x}{:02x}", color.r, color.g, color.b)
+                }),
+                collapsed: group.collapsed,
+            })
+        })
+        .collect()
 }
 
 fn is_idempotent_mutation(message: &ClientMessage) -> bool {
@@ -2342,6 +2521,8 @@ fn is_idempotent_mutation(message: &ClientMessage) -> bool {
             | ClientMessage::CreateTask(_)
             | ClientMessage::DeleteTask(_)
             | ClientMessage::LaunchTask(_)
+            | ClientMessage::CreateSection(_)
+            | ClientMessage::SetTabSection(_)
             | ClientMessage::QuickInsertSubmit(_)
     )
 }

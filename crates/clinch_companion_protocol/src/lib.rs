@@ -52,6 +52,7 @@ pub const MAX_PATH_BYTES: usize = 4096;
 pub const MAX_FILENAME_BYTES: usize = 255;
 pub const MAX_MIME_BYTES: usize = 128;
 pub const MAX_OPAQUE_ID_BYTES: usize = 256;
+pub const MAX_SECTION_NAME_BYTES: usize = 256;
 pub const MAX_REPLAY_EVENTS: usize = 4096;
 pub const MAX_CONNECTIONS_PER_DEVICE: usize = 3;
 pub const MAX_IDEMPOTENCY_RESULTS_PER_SESSION: usize = 1024;
@@ -310,6 +311,17 @@ pub struct TabSnapshot {
     pub panes: Vec<PaneSnapshot>,
 }
 
+/// A named group of tabs in a project's sidebar, in the order the Mac shows it.
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize, TS)]
+pub struct SectionSnapshot {
+    pub id: String,
+    pub name: String,
+    /// `#rrggbb` resolved through the Mac's current theme, so the phone matches the desktop
+    /// exactly; `None` means the section uses the default (accent) treatment.
+    pub color: Option<String>,
+    pub collapsed: bool,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize, TS)]
 pub struct TaskSnapshot {
     pub id: TaskId,
@@ -334,6 +346,8 @@ pub struct ProjectSnapshot {
     #[serde(default)]
     pub badges: ProjectBadgeSnapshot,
     pub tabs: Vec<TabSnapshot>,
+    #[serde(default)]
+    pub sections: Vec<SectionSnapshot>,
     #[serde(default)]
     pub tasks: Vec<TaskSnapshot>,
 }
@@ -662,6 +676,24 @@ pub struct CreateTask {
     pub text: String,
 }
 
+/// Creates a section containing the target's tab, like "Create new section" on the Mac.
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize, TS)]
+pub struct CreateSection {
+    pub target: TargetRef,
+    #[ts(type = "number")]
+    pub workspace_revision: u64,
+    pub name: String,
+}
+
+/// Moves the target's tab into a section, or out of any section when `section_id` is `None`.
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize, TS)]
+pub struct SetTabSection {
+    pub target: TargetRef,
+    #[ts(type = "number")]
+    pub workspace_revision: u64,
+    pub section_id: Option<String>,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize, TS)]
 pub struct DeleteTask {
     pub app_instance_id: AppInstanceId,
@@ -772,6 +804,8 @@ pub enum ClientMessage {
     CreateTask(CreateTask),
     DeleteTask(DeleteTask),
     LaunchTask(LaunchTask),
+    CreateSection(CreateSection),
+    SetTabSection(SetTabSection),
     QuickInsertPreview(QuickInsertPreviewRequest),
     QuickInsertSubmit(QuickInsertSubmit),
     UploadBegin(UploadBegin),
@@ -915,6 +949,16 @@ impl ClientEnvelope {
             }
             ClientMessage::LaunchTask(message) => {
                 validate_opaque_id("project_id", &message.project_id)?;
+            }
+            ClientMessage::CreateSection(message) => {
+                message.target.validate()?;
+                validate_text("section_name", &message.name, 1, MAX_SECTION_NAME_BYTES)?;
+            }
+            ClientMessage::SetTabSection(message) => {
+                message.target.validate()?;
+                if let Some(section_id) = &message.section_id {
+                    validate_opaque_id("section_id", section_id)?;
+                }
             }
             ClientMessage::QuickInsertPreview(message) => {
                 message.target.validate()?;

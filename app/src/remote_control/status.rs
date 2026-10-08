@@ -28,6 +28,17 @@ impl RemoteControlStatus {
     pub fn is_ready(&self) -> bool {
         matches!(self, Self::Ready { .. })
     }
+
+    /// Waiting on something the user finishes in Tailscale, which Clinch re-checks on its own.
+    pub fn is_blocked_on_tailscale(&self) -> bool {
+        matches!(
+            self,
+            Self::TailscaleNotInstalled
+                | Self::TailscaleStopped
+                | Self::TailscaleSignInRequired { .. }
+                | Self::TailscaleConsentRequired { .. }
+        )
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -37,6 +48,8 @@ pub struct RemoteControlViewState {
     pub active_invitation: Option<PairingInvitation>,
     pub pending_claims: Vec<PendingClaimSummary>,
     pub paired_devices: Vec<DeviceSummary>,
+    /// Last pairing or device-management failure, shown in Settings until dismissed.
+    pub pairing_error: Option<String>,
 }
 
 impl Default for RemoteControlViewState {
@@ -47,6 +60,7 @@ impl Default for RemoteControlViewState {
             active_invitation: None,
             pending_claims: Vec::new(),
             paired_devices: Vec::new(),
+            pairing_error: None,
         }
     }
 }

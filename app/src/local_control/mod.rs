@@ -57,8 +57,12 @@
 //!
 //! Discovery records never include raw bearer tokens: discovery only exposes
 //! endpoint metadata and credential broker references while local control is enabled.
+mod agents;
 mod bridge;
+mod conversation;
+mod delivery;
 mod handlers;
+mod observation;
 mod permissions;
 mod resolver;
 
@@ -170,7 +174,8 @@ impl LocalControlServer {
     }
 
     /// Stops both listeners and removes the discovery record and broker socket.
-    fn stop(&mut self, _ctx: &mut ModelContext<Self>) {
+    fn stop(&mut self, ctx: &mut ModelContext<Self>) {
+        LocalControlBridge::handle(ctx).update(ctx, |bridge, _| bridge.stop());
         self.registered_instance = None;
         self.control_endpoint = None;
         self._runtime = None;
@@ -231,10 +236,6 @@ impl LocalControlServer {
         let control_endpoint = ControlEndpoint::localhost(port.port());
         let record = discovery_record_for_settings(ctx, control_endpoint.clone());
         let instance_id = record.instance_id.clone();
-        let bridge_spawner = LocalControlBridge::handle(ctx).update(ctx, |bridge, ctx| {
-            bridge.set_instance_id(instance_id.clone());
-            ctx.spawner()
-        });
         let registered_instance = RegisteredInstance::register(record)?;
         #[cfg(unix)]
         let broker_listener = {
@@ -243,6 +244,11 @@ impl LocalControlServer {
             drop(runtime_guard);
             listener
         };
+        let bridge_spawner = LocalControlBridge::handle(ctx).update(ctx, |bridge, ctx| {
+            bridge.set_instance_id(instance_id.clone(), ctx);
+            bridge.start_observations(ctx);
+            ctx.spawner()
+        });
         let state = ControlServerState {
             bridge_spawner,
             instance_id,
@@ -580,7 +586,31 @@ async fn handle_control_request(
         .spawn(move |bridge, ctx| bridge.handle_request(request, grant, ctx))
         .await
     {
-        Ok(response) => response,
+        Ok(bridge::BridgeReply::Immediate(response)) => response,
+        Ok(bridge::BridgeReply::Delivery {
+            request_id,
+            receiver,
+        }) => match receiver.recv().await {
+            Ok(Ok(data)) => ResponseEnvelope::ok(request_id, data),
+            Ok(Err(error)) => ResponseEnvelope::error(request_id, error),
+            Err(_) => ResponseEnvelope::error(
+                request_id,
+                ControlError::new(
+                    ErrorCode::BridgeUnavailable,
+                    "agent delivery worker stopped",
+                ),
+            ),
+        },
+        Ok(bridge::BridgeReply::Read { request_id, plan }) => {
+            match tokio::task::spawn_blocking(move || plan.execute()).await {
+                Ok(Ok(data)) => ResponseEnvelope::ok(request_id, data),
+                Ok(Err(error)) => ResponseEnvelope::error(request_id, error),
+                Err(_) => ResponseEnvelope::error(
+                    request_id,
+                    ControlError::new(ErrorCode::Internal, "conversation reader failed"),
+                ),
+            }
+        }
         Err(_) => ResponseEnvelope::error(
             request_id,
             ControlError::new(

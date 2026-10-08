@@ -53,7 +53,7 @@ alongside Warp without inheriting Warp's settings.
   Tailscale network. Off until you turn it on.
 - **Stay local-first.** No telemetry, no analytics, no crash reporting, no account. Clinch
   collects nothing about you or your work, and the only thing it reaches for on its own is a
-  weekly update check against this repository—which you can turn off. See
+  once-daily-at-most update check against this repository—which you can turn off. See
   [Privacy and network behavior](#privacy-and-network-behavior)—including how to verify it
   yourself.
 
@@ -211,17 +211,19 @@ privileged update authorizer.
 
 | Activity | Runs when | Destination |
 | --- | --- | --- |
-| Update check | Automatically, at most once a week — **and you can turn it off** | `api.github.com`, this repository's releases |
+| Update check | Automatically, at most once a day — **and you can turn it off** | `api.github.com`, this repository's releases |
 | Update download | Only after you approve the update | GitHub release assets |
 | Claude plan-limit gauges | **Off by default**; only if you enable them in Settings | `api.anthropic.com` |
 | [Remote Control](#remote-control-beta) | **Off by default**; only while you have it enabled | Your own tailnet, phone to Mac — no Clinch relay |
 | Language servers, MCP servers, remote assets | Only when you start them | Wherever you point them |
 | Claude Code, Codex, SSH, package tooling | Only when you run them | Their own services |
 
-The update check is an ordinary HTTPS GET for signed release metadata. Clinch attaches no
-identifier, machine fingerprint, or usage data to it, and it downloads nothing until you approve
-the update. A successful check is not repeated for another week; a failed one backs off for six
-hours rather than retrying on every window focus.
+An update check uses ordinary HTTPS GETs for the release feed, manifest, and signature. Clinch
+attaches no unique identifier, machine fingerprint, installed version, operating-system version,
+or usage data to them, and it downloads no app archive until you approve the update. GitHub
+necessarily sees ordinary transport metadata such as the requesting IP address and time. Clinch
+records an automatic check before sending it, so successes, failures, cancellations, and app
+restarts are all capped at one check per 24 hours.
 
 **To make Clinch issue no automatic network requests at all**, turn off **Settings → Clinch →
 Updates → Check for updates automatically**. Checking on demand from **Clinch → Check for
@@ -272,6 +274,17 @@ telemetry destination, a crash reporter, or a live backend URL fails the build.
 Session-capture data stays in local Clinch-owned files. Claude Code and Codex continue to manage
 their own transcripts and credentials. Clinch does not delete provider transcripts or Keychain
 credentials during uninstall.
+
+Clinch launches the provider CLIs with their existing sign-ins. On macOS, Clinch's own Keychain
+access never opens a password dialog. The optional Claude plan meter uses the existing Claude
+Code login only when macOS permits a silent read; **Retry** follows the same rule. If access is
+unavailable, plan limits remain unavailable while local transcript statistics and agent sessions
+continue to work. The provider CLIs still control their own authentication flows.
+
+Blocked Keychain access does not erase saved data or create replacement credentials. Local and
+Remote Control remain disabled when their saved authorization cannot be read. Stable app signing
+is needed to preserve Keychain trust across updates; suppressing dialogs does not grant access to
+an entry that trusts an older build.
 
 ## Updates and removal
 
@@ -344,7 +357,9 @@ unchanged.
 After a version-and-commit-specific publication confirmation,
 it pushes the signed tag, creates or refreshes a private draft release, downloads the uploaded
 assets into a fresh directory, verifies them again, and publishes the draft. The command does not
-require or record a manual QA attestation. Advanced users can override `VERSION`.
+require or record a manual QA attestation. A running installation discovers the release on its
+next at-most-daily check; choose **Clinch → Check for Updates…** to refresh immediately without
+resetting the automatic privacy cadence. Advanced users can override `VERSION`.
 
 Release publication runs no GitHub Actions job. Immediately before publication, the local command
 rechecks the signed remote tag, current `main`, both manifest signatures, exact asset set and
@@ -366,6 +381,53 @@ legacy universal build optimization.
 After these changes land on `main`, run `make configure-release-repository` once. It validates both
 workstation key copies before deleting the obsolete GitHub signing secrets and `public-release`
 environment, then reapplies branch, scanning, Actions-token, and immutable-release controls.
+
+## Local disk and resource maintenance
+
+From a source checkout, `make worktrees` previews registered worktrees, their disk use, and
+what prevents cleanup. It deletes nothing. Once a worktree is finished, close its tabs and
+processes, review its ignored files in the preview, then select its exact path:
+
+```bash
+./script/clean-worktrees --remove "$HOME/.clinch/worktrees/clinch-terminal/finished-branch"
+./script/clean-worktrees --remove "$HOME/.clinch/worktrees/clinch-terminal/finished-branch" --apply
+```
+
+Removal requires a clean, unlocked, attached worktree under the managed worktree directory,
+with its commits merged into the selected base. The default base is local `main`, `master`,
+or `origin/HEAD`; use `--base` for another branch. This check does not fetch and conservatively
+keeps squash-merged branches whose commits are not ancestors of the base. Primary/current
+checkouts, symlink paths, indexes that hide tracked changes, and checkouts used as one of your
+running processes' working directories are protected. Paths with backslashes, control characters, or
+non-ASCII characters are kept because process inspection may escape them. If process inspection
+fails, cleanup is blocked. Checks run again before removal;
+Git performs the final removal without force, and the branch is preserved.
+
+Removing a checkout **also removes ignored files**, including build outputs and local `.env`
+files, and means Undo Close can no longer reopen that checkout. Move any local files you want
+to keep first. Process checks are a snapshot: don't start new work in a checkout while removing
+it. Tab closure alone never deletes a worktree. `--repo`, `--managed-root`, `--json`, and `--size`
+are available for other repositories and scripted previews. To reclaim only regenerable Cargo
+caches while retaining checkouts and compiled dependencies, use `make prune` (default: seven
+days old), or preview with `./script/reclaim-build-space --dry-run`.
+
+On macOS, `make resources` watches the Clinch process bound to the current terminal. It uses
+OS counters every five seconds and displays CPU, resident memory, full physical footprint
+(including compressed memory), and separate totals for child processes such as shells and
+coding agents. CPU at 100% means one core. Child totals are approximate: shared memory may be
+counted more than once, short-lived processes may exit between samples, and unreadable children
+are counted separately. It reads no terminal text or provider transcripts and sends nothing
+over the network. To record a bounded sample from another terminal:
+
+```bash
+./script/watch-clinch-resources --pid 12345 --samples 60 --csv /tmp/clinch-resources.csv
+```
+
+Replace `12345` with the Clinch PID from Activity Monitor. CSV output creates a new file and
+refuses to overwrite an existing one. Ctrl-C stops an interactive watch; nothing is installed
+to run in the background. Clinch also logs a local warning when its own footprint reaches
+2 GB, with resident memory and estimated open/Undo Close terminal retention. That warning
+re-arms only after the footprint falls below 1.5 GB.
 
 ## License and attribution
 

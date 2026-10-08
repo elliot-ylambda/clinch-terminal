@@ -333,6 +333,7 @@ fn test_terminal_window_snapshot(vertical_tabs_panel_open: bool) -> WindowSnapsh
         warp_drive_index_width: None,
         left_panel_open: false,
         vertical_tabs_panel_open,
+        vertical_tabs_panel_width: None,
         left_panel_width: None,
         right_panel_width: None,
         agent_management_filters: None,
@@ -417,8 +418,10 @@ fn test_sqlite_round_trips_projects_in_one_physical_window() {
     let database_path = tempdir.path().join("warp.sqlite");
     let mut conn = setup_database(&database_path).expect("database should initialize");
 
-    let first = test_terminal_window_snapshot(false);
-    let second = test_terminal_window_snapshot(true);
+    let mut first = test_terminal_window_snapshot(false);
+    first.vertical_tabs_panel_width = Some(310.);
+    let mut second = test_terminal_window_snapshot(true);
+    second.vertical_tabs_panel_width = Some(425.);
     let app_state = AppState {
         windows: vec![ProjectWindowSnapshot {
             projects: vec![first, second],
@@ -436,6 +439,14 @@ fn test_sqlite_round_trips_projects_in_one_physical_window() {
 
     assert_eq!(restored.windows.len(), 1);
     assert_eq!(restored.windows[0].projects.len(), 2);
+    assert_eq!(
+        restored.windows[0].projects[0].vertical_tabs_panel_width,
+        Some(310.)
+    );
+    assert_eq!(
+        restored.windows[0].projects[1].vertical_tabs_panel_width,
+        Some(425.)
+    );
     assert_eq!(restored.windows[0].active_project_index, 1);
     assert_eq!(restored.active_window_index, Some(0));
     assert_eq!(
@@ -526,6 +537,7 @@ fn test_sqlite_round_trips_custom_vertical_tabs_title() {
             warp_drive_index_width: None,
             left_panel_open: false,
             vertical_tabs_panel_open: false,
+            vertical_tabs_panel_width: None,
             left_panel_width: None,
             right_panel_width: None,
             agent_management_filters: None,
@@ -607,6 +619,7 @@ fn test_sqlite_round_trips_code_pane_with_multiple_tabs() {
             warp_drive_index_width: None,
             left_panel_open: false,
             vertical_tabs_panel_open: false,
+            vertical_tabs_panel_width: None,
             left_panel_width: None,
             right_panel_width: None,
             agent_management_filters: None,
@@ -731,6 +744,7 @@ fn test_sqlite_round_trips_tab_groups() {
             warp_drive_index_width: None,
             left_panel_open: false,
             vertical_tabs_panel_open: false,
+            vertical_tabs_panel_width: None,
             left_panel_width: None,
             right_panel_width: None,
             agent_management_filters: None,
@@ -896,6 +910,7 @@ fn test_sqlite_round_trips_pinned_state() {
             warp_drive_index_width: None,
             left_panel_open: false,
             vertical_tabs_panel_open: false,
+            vertical_tabs_panel_width: None,
             left_panel_width: None,
             right_panel_width: None,
             agent_management_filters: None,

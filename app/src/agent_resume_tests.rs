@@ -2,6 +2,23 @@ use std::io::Write;
 
 use super::*;
 
+#[test]
+fn shutdown_owner_preserves_exact_pane_metadata_across_global_marker_cleanup() {
+    let dir = tempfile::tempdir().unwrap();
+    let uuid = vec![0xab, 0xcd];
+    let entry = br#"{"command":"clinch_agent_resume_launch claude session-1","cwd":"/repo","owner_pid":"123","owner_tty":"ttys001"}"#;
+    write_private_atomic(dir.path(), "abcd.json", entry).unwrap();
+    write_private_atomic(dir.path(), APP_TERMINATING_FILE, b"456\n").unwrap();
+    preserve_shutdown_owner_in(dir.path(), &uuid).unwrap();
+    std::fs::remove_file(dir.path().join(APP_TERMINATING_FILE)).unwrap();
+    assert_eq!(
+        std::fs::read(dir.path().join("shutdown-owners/abcd.json")).unwrap(),
+        entry
+    );
+    preserve_shutdown_owner_in(dir.path(), &[0xef]).unwrap();
+    assert!(!dir.path().join("shutdown-owners/ef.json").exists());
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn capture_installer_failure_includes_compact_stderr() {
@@ -59,6 +76,33 @@ fn prompt_title_prefers_the_first_sentence_within_the_limit() {
 }
 
 #[test]
+fn prompt_titles_unwrap_pasted_content_before_selecting_a_sentence() {
+    for text in [
+        "<pasted_content id='d961'>Fix the sidebar. Then run tests.</pasted_content>",
+        "<pasted_content id=\"d961\">Fix the sidebar. Then run tests.</pasted_content>",
+        "<pasted_content>Fix the sidebar. Then run tests.",
+    ] {
+        assert_eq!(prompt_title(text).as_deref(), Some("Fix the sidebar."));
+    }
+    assert_eq!(
+        clean_prompt_title_text("Compare <pasted_content id='a'>one</pasted_content> and <pasted_content id='b'>two</pasted_content>").as_deref(),
+        Some("Compare one and two")
+    );
+    assert_eq!(
+        prompt_title("<pasted_content id='a'> </pasted_content>"),
+        None
+    );
+    assert_eq!(
+        prompt_title("Fix <div> markup").as_deref(),
+        Some("Fix <div> markup")
+    );
+    assert_eq!(
+        prompt_title("Keep <pasted_content_example> intact").as_deref(),
+        Some("Keep <pasted_content_example> intact")
+    );
+}
+
+#[test]
 fn prompt_title_collapses_whitespace_and_truncates_at_graphemes() {
     let long = format!("{} tail", "🧑🏽‍💻".repeat(80));
     let title = prompt_title(&long).unwrap();
@@ -97,6 +141,57 @@ fn prompt_timestamp_formatting_rejects_missing_or_invalid_values() {
     assert_eq!(format_prompt_time_short(Some("garbage")), None);
     assert_eq!(format_prompt_time_full(None), None);
     assert_eq!(format_prompt_time_full(Some("garbage")), None);
+}
+
+#[test]
+fn direct_resume_command_yields_the_resumed_session_id() {
+    const ID: &str = "019fbab0-2150-7f93-9b10-7195f6c800e8";
+    let codex = AgentResumeProvider::Codex;
+    let claude = AgentResumeProvider::Claude;
+
+    for command in [
+        format!("codex resume {ID} --dangerously-bypass-approvals-and-sandbox --model gpt-5.6-sol"),
+        format!("cx resume {ID}"),
+        format!("codex --model x resume '{ID}' --search"),
+    ] {
+        assert_eq!(
+            session_id_from_direct_resume_command(codex, &command).as_deref(),
+            Some(ID),
+            "{command}"
+        );
+    }
+    for command in [
+        format!("claude --resume {ID} --dangerously-skip-permissions"),
+        format!("ca -r {ID}"),
+        format!("claude --resume={ID}"),
+    ] {
+        assert_eq!(
+            session_id_from_direct_resume_command(claude, &command).as_deref(),
+            Some(ID),
+            "{command}"
+        );
+    }
+
+    for (provider, command) in [
+        // Forks mint a new session; the parent id is not this pane's conversation.
+        (codex, format!("codex fork {ID}")),
+        (claude, format!("claude --resume {ID} --fork-session")),
+        // No explicit id (interactive picker / most recent) or a non-UUID token.
+        (codex, "codex resume --last".to_owned()),
+        (codex, "codex resume".to_owned()),
+        (claude, "claude --resume".to_owned()),
+        (claude, "claude --resume not-a-session".to_owned()),
+        // An id outside resume position, e.g. quoted in a fresh prompt.
+        (codex, format!("codex 'look at {ID}'")),
+        (codex, format!("codex resume --last 'look at {ID}'")),
+        (claude, format!("claude 'look at {ID}'")),
+    ] {
+        assert_eq!(
+            session_id_from_direct_resume_command(provider, &command),
+            None,
+            "{command}"
+        );
+    }
 }
 
 #[test]
@@ -1183,4 +1278,128 @@ fn persisted_command_survives_without_a_removal_tombstone() {
         Some("clinch_agent_resume_launch claude old")
     );
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn toolbelt_learning_requires_two_distinct_safe_conversations() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join(TOOLBELT_LEARNING_FILE),
+        serde_json::json!({
+            "schema": 1,
+            "patterns": [
+                {
+                    "id": "00000000-0000-4000-8000-000000000001",
+                    "sessions": ["codex:same-session", "codex:same-session"],
+                    "providers": ["codex"],
+                    "last_seen": "2026-08-13T01:00:00Z",
+                    "text": "Run the same local server"
+                },
+                {
+                    "id": "00000000-0000-4000-8000-000000000002",
+                    "sessions": ["codex:session-one", "claude:session-two"],
+                    "providers": ["codex", "claude", "invalid"],
+                    "last_seen": "2026-08-13T02:00:00Z",
+                    "text": "Run the reusable local server"
+                },
+                {
+                    "id": "not-a-uuid",
+                    "sessions": ["codex:session-three", "codex:session-four"],
+                    "providers": ["codex"],
+                    "last_seen": "2026-08-13T03:00:00Z",
+                    "text": "This invalid record stays hidden"
+                }
+            ]
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let suggestions = learned_toolbelt_suggestions_in(dir.path());
+    assert_eq!(suggestions.len(), 1);
+    assert_eq!(
+        suggestions[0],
+        LearnedToolbeltSuggestion {
+            id: "00000000-0000-4000-8000-000000000002".to_owned(),
+            text: "Run the reusable local server".to_owned(),
+            conversation_count: 2,
+            providers: vec!["claude".to_owned(), "codex".to_owned()],
+            last_seen: "2026-08-13T02:00:00Z".to_owned(),
+        }
+    );
+    assert!(learned_toolbelt_suggestions_for_state(false, Some(dir.path())).is_empty());
+}
+
+#[test]
+fn toolbelt_suggestion_resolution_is_private_durable_and_idempotent() {
+    let dir = tempfile::tempdir().unwrap();
+    let suggestion_id = "00000000-0000-4000-8000-000000000003";
+    std::fs::write(
+        dir.path().join(TOOLBELT_LEARNING_FILE),
+        serde_json::json!({
+            "schema": 1,
+            "patterns": [{
+                "id": suggestion_id,
+                "sessions": ["codex:session-one", "codex:session-two"],
+                "providers": ["codex"],
+                "last_seen": "2026-08-13T02:00:00Z",
+                "text": "Run the reusable local server"
+            }]
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    resolve_toolbelt_suggestion_in(
+        dir.path(),
+        suggestion_id,
+        ToolbeltSuggestionResolutionOutcome::Declined,
+    )
+    .unwrap();
+    resolve_toolbelt_suggestion_in(
+        dir.path(),
+        suggestion_id,
+        ToolbeltSuggestionResolutionOutcome::Declined,
+    )
+    .expect("repeating the same resolution is idempotent");
+    assert!(learned_toolbelt_suggestions_in(dir.path()).is_empty());
+
+    let saved = std::fs::read_to_string(dir.path().join(TOOLBELT_RESOLUTIONS_FILE)).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&saved).unwrap();
+    assert_eq!(value["schema"], 1);
+    assert_eq!(value["resolutions"][0]["outcome"], "declined");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(dir.path().join(TOOLBELT_RESOLUTIONS_FILE))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn toolbelt_learning_rejects_symlinked_and_oversized_stores() {
+    use std::os::unix::fs::symlink;
+
+    let dir = tempfile::tempdir().unwrap();
+    let outside = dir.path().join("outside.json");
+    std::fs::write(
+        &outside,
+        r#"{"schema":1,"patterns":[{"id":"00000000-0000-4000-8000-000000000004","sessions":["codex:one","codex:two"],"providers":["codex"],"text":"Run the local preview server"}]}"#,
+    )
+    .unwrap();
+    let store = dir.path().join(TOOLBELT_LEARNING_FILE);
+    symlink(&outside, &store).unwrap();
+    assert!(learned_toolbelt_suggestions_in(dir.path()).is_empty());
+
+    std::fs::remove_file(&store).unwrap();
+    let file = std::fs::File::create(&store).unwrap();
+    file.set_len(MAX_TOOLBELT_LEARNING_BYTES + 1).unwrap();
+    assert!(learned_toolbelt_suggestions_in(dir.path()).is_empty());
 }

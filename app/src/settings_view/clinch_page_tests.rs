@@ -6,10 +6,12 @@ use warp_core::AppId;
 use warpui::platform::WindowStyle;
 use warpui::{App, SingletonEntity, TypedActionView};
 
+#[cfg(feature = "local_fs")]
+use super::{countdown, device_activity_label, pairing_code};
 use super::{
-    remote_control_browser_url, remote_control_setup_widget_id, ClinchSettingsPageAction,
-    ClinchSettingsPageView, RemoteControlSetupWidget, CLINCH_REMOTE_CONTROL_GUIDE_URL,
-    TAILSCALE_IOS_DOWNLOAD_URL, TAILSCALE_MAC_DOWNLOAD_URL,
+    remote_control_setup_widget_id, ClinchSettingsPageAction, ClinchSettingsPageView,
+    RemoteControlSetupWidget, CLINCH_REMOTE_CONTROL_GUIDE_URL, TAILSCALE_IOS_DOWNLOAD_URL,
+    TAILSCALE_MAC_DOWNLOAD_URL,
 };
 use crate::appearance::Appearance;
 use crate::auth::AuthStateProvider;
@@ -45,18 +47,27 @@ fn remote_control_setup_widget_has_stable_discovery_metadata() {
 }
 
 #[test]
-fn remote_control_browser_link_gets_a_fresh_load_marker() {
+#[cfg(feature = "local_fs")]
+fn pairing_code_matches_the_phone_format() {
+    assert_eq!(pairing_code(&"0123456789abcdef".repeat(4)), "0123-4567");
+    assert_eq!(pairing_code("abc"), "ABC");
+}
+
+#[test]
+#[cfg(feature = "local_fs")]
+fn pairing_countdowns_and_activity_read_naturally() {
+    let now = chrono::Utc::now();
+    assert_eq!(countdown(now + chrono::Duration::seconds(125), now), "2:05");
+    assert_eq!(countdown(now - chrono::Duration::seconds(5), now), "0:00");
+    assert_eq!(device_activity_label(true, None, now), "Connected now");
+    assert_eq!(device_activity_label(false, None, now), "Not connected yet");
     assert_eq!(
-        remote_control_browser_url("https://mac.example/clinch-remote", 1234),
-        "https://mac.example/clinch-remote/?clinch_refresh=1234"
+        device_activity_label(false, Some(now - chrono::Duration::minutes(12)), now),
+        "Last seen 12 min ago"
     );
     assert_eq!(
-        remote_control_browser_url("https://mac.example/clinch-remote/", 1234),
-        "https://mac.example/clinch-remote/?clinch_refresh=1234"
-    );
-    assert_eq!(
-        remote_control_browser_url("https://mac.example/clinch-remote?source=settings", 1234),
-        "https://mac.example/clinch-remote/?source=settings&clinch_refresh=1234"
+        device_activity_label(false, Some(now - chrono::Duration::hours(3)), now),
+        "Last seen 3 h ago"
     );
 }
 
@@ -102,6 +113,41 @@ fn remote_control_model_notifications_redraw_the_visible_settings_page() {
             frames_after > frames_before,
             "a background Remote Control notification must redraw the visible settings page"
         );
+    });
+}
+
+/// Mutates the process-global channel; isolated by the process-per-test nextest runner.
+#[test]
+#[cfg(feature = "local_fs")]
+fn removing_a_paired_phone_takes_a_second_click() {
+    App::test((), |mut app| async move {
+        ChannelState::set(ChannelState::new(
+            Channel::Local,
+            ChannelConfig::no_backend(AppId::new("test", "warp", "WarpTest"), "warp-test.log"),
+        ));
+        initialize_settings_for_tests(&mut app);
+        app.add_singleton_model(|_| AuthStateProvider::new_logged_out_for_test());
+        app.add_singleton_model(|_| KeybindingChangedNotifier::new());
+        app.add_singleton_model(|_| Appearance::mock());
+        app.update(crate::remote_control::register);
+        let (_, view) = app.add_window(WindowStyle::NotStealFocus, ClinchSettingsPageView::new);
+        let device_id = clinch_companion_protocol::DeviceId::new();
+        let revoke = ClinchSettingsPageAction::RemoteControlRevoke(device_id);
+
+        view.update(&mut app, |view, ctx| view.handle_action(&revoke, ctx));
+        view.read(&app, |view, _| {
+            assert_eq!(
+                view.armed_removal,
+                Some(super::ArmedRemoval::Device(device_id))
+            );
+        });
+
+        view.update(&mut app, |view, ctx| view.handle_action(&revoke, ctx));
+        view.read(&app, |view, _| assert_eq!(view.armed_removal, None));
+        // The unknown device surfaces an error instead of failing silently.
+        RemoteControlService::handle(&app).read(&app, |service, _| {
+            assert!(service.view_state().pairing_error.is_some());
+        });
     });
 }
 

@@ -625,12 +625,14 @@ impl ProjectWindow {
 
     fn register_active_workspace(&self, ctx: &mut ViewContext<Self>) {
         let workspace = self.active_workspace();
-        WorkspaceRegistry::handle(ctx).update(ctx, |registry, _| {
+        WorkspaceRegistry::handle(ctx).update(ctx, |registry, ctx| {
             registry.set_active(self.window_id, workspace.downgrade());
+            ctx.notify();
         });
     }
 
     fn notify_project_header(&self, ctx: &mut ViewContext<Self>) {
+        ctx.emit(());
         if let Some(project) = self.projects.get(self.active_project_index) {
             project.workspace.update(ctx, |_, ctx| ctx.notify());
         }
@@ -693,13 +695,21 @@ impl ProjectWindow {
         insertion_index: usize,
         ctx: &mut ViewContext<Self>,
     ) -> (ProjectId, ViewHandle<Workspace>, usize) {
+        let inherited_sidebar_width = matches!(&source, NewWorkspaceSource::Empty { .. })
+            .then(|| self.projects.get(self.active_project_index))
+            .flatten()
+            .map(|project| project.workspace.as_ref(ctx).vertical_tabs_panel_width());
         let workspace = ctx.add_typed_action_view(|ctx| {
-            Workspace::new(
+            let mut workspace = Workspace::new(
                 self.global_resource_handles.clone(),
                 self.server_time.clone(),
                 source,
                 ctx,
-            )
+            );
+            if let Some(width) = inherited_sidebar_width {
+                workspace.set_vertical_tabs_panel_width(width);
+            }
+            workspace
         });
         Self::subscribe_to_workspace_metadata(&workspace, ctx);
         let id = ProjectId::new();
@@ -798,6 +808,72 @@ impl ProjectWindow {
         if let Some(index) = self.projects.iter().position(|project| project.id == id) {
             self.activate_project_index(index, ctx);
         }
+    }
+
+    /// Hand off an in-progress sidebar drag without recreating the terminal or its PTY.
+    pub(crate) fn move_inner_tab_to_project(
+        &mut self,
+        source_workspace_id: EntityId,
+        pane_group_id: EntityId,
+        target_project_id: ProjectId,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        let Some(source) = self
+            .projects
+            .iter()
+            .find(|project| project.workspace.id() == source_workspace_id)
+        else {
+            return false;
+        };
+        if source.id == target_project_id {
+            return false;
+        }
+        let source_id = source.id;
+        let source_workspace = source.workspace.clone();
+        let Some(target_workspace) = self
+            .projects
+            .iter()
+            .find(|project| project.id == target_project_id)
+            .map(|project| project.workspace.clone())
+        else {
+            return false;
+        };
+        let original_colors = source_workspace
+            .as_ref(ctx)
+            .tabs
+            .iter()
+            .find(|tab| tab.pane_group.id() == pane_group_id)
+            .map(|tab| (tab.selected_color, tab.default_directory_color));
+        let Some(transferred_tab) = source_workspace.update(ctx, |workspace, ctx| {
+            workspace.take_tab_for_project_transfer(pane_group_id, ctx)
+        }) else {
+            return false;
+        };
+        ctx.reparent_view(
+            self.window_id,
+            transferred_tab.pane_group.id(),
+            target_workspace.id(),
+        );
+        target_workspace.update(ctx, |workspace, ctx| {
+            workspace.accept_project_tab_drag(transferred_tab, ctx);
+            if let Some((selected, default)) = original_colors {
+                if let Some(tab) = workspace
+                    .tabs
+                    .iter_mut()
+                    .find(|tab| tab.pane_group.id() == pane_group_id)
+                {
+                    tab.selected_color = selected;
+                    tab.default_directory_color = default;
+                }
+            }
+        });
+        if source_workspace.as_ref(ctx).tab_count() == 0 {
+            self.take_project_for_transfer(source_id, ctx);
+        }
+        self.incoming_drag_insertion_index = None;
+        self.activate_project(target_project_id, ctx);
+        self.notify_project_header(ctx);
+        true
     }
 
     pub(crate) fn activate_project_containing_pane_group(
@@ -1028,6 +1104,9 @@ impl ProjectWindow {
         if !self.supports_project_container() {
             return None;
         }
+        if self.inner_tab_drop_project(tab_position, app).is_some() {
+            return None;
+        }
         let header_bounds = self.project_header_drop_bounds(app)?;
         if !header_bounds.contains_point(tab_position.center()) {
             return None;
@@ -1037,6 +1116,24 @@ impl ProjectWindow {
             window_bounds.origin() + tab_position.center(),
             app,
         ))
+    }
+
+    pub(crate) fn inner_tab_drop_project(
+        &self,
+        tab_position: GeometryRect,
+        app: &AppContext,
+    ) -> Option<ProjectId> {
+        if !self.supports_project_container() {
+            return None;
+        }
+        self.projects.iter().find_map(|project| {
+            app.element_position_by_id_at_last_frame(
+                self.window_id,
+                project_tab_position_id(project.id),
+            )
+            .filter(|bounds| bounds.contains_point(tab_position.center()))
+            .map(|_| project.id)
+        })
     }
 
     pub(crate) fn can_promote_tab_from_workspace(&self, workspace_id: warpui::EntityId) -> bool {
@@ -1199,15 +1296,34 @@ impl ProjectWindow {
         cursor_on_screen: Vector2F,
         app: &AppContext,
     ) -> Option<ProjectAttachTarget> {
+        self.attach_target_in_windows(
+            cursor_on_screen,
+            WindowManager::as_ref(app).ordered_window_ids(),
+            app,
+        )
+    }
+
+    fn attach_target_in_windows(
+        &self,
+        cursor_on_screen: Vector2F,
+        window_ids: impl IntoIterator<Item = WindowId>,
+        app: &AppContext,
+    ) -> Option<ProjectAttachTarget> {
         const HIT_MARGIN: f32 = 12.;
-        for window_id in WindowManager::as_ref(app).ordered_window_ids() {
+        for window_id in window_ids {
             let Some(root_view) = app.root_view::<crate::root_view::RootView>(window_id) else {
                 continue;
             };
             let Some(project_window) = root_view.as_ref(app).project_window() else {
                 continue;
             };
-            let candidate = project_window.as_ref(app);
+            // The drag action already leases this view. Reborrowing it through its
+            // handle panics as soon as the source appears in the window hit test.
+            let candidate = if window_id == self.window_id {
+                self
+            } else {
+                project_window.as_ref(app)
+            };
             if candidate.projects.is_empty() || !candidate.supports_project_tabs(app) {
                 continue;
             }
@@ -1235,6 +1351,27 @@ impl ProjectWindow {
             }
         }
         None
+    }
+
+    /// Finish a live tab transfer without running process-closing hooks.
+    pub(crate) fn settle_empty_workspace_after_tab_transfer(
+        &mut self,
+        workspace_id: EntityId,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        if let Some(id) = self
+            .projects
+            .iter()
+            .find(|project| {
+                project.workspace.id() == workspace_id
+                    && project.workspace.as_ref(ctx).tab_count() == 0
+            })
+            .map(|project| project.id)
+        {
+            self.take_project_for_transfer(id, ctx);
+            self.settle_after_project_transfer_out(ctx);
+        }
+        self.notify_project_header(ctx);
     }
 
     fn take_project_for_transfer(
@@ -1878,6 +2015,11 @@ pub(crate) enum ProjectWindowAction {
         pane_group_id: EntityId,
         insertion_index: usize,
     },
+    MoveInnerTabToProject {
+        source_workspace_id: EntityId,
+        pane_group_id: EntityId,
+        target_project_id: ProjectId,
+    },
 }
 
 impl TypedActionView for ProjectWindow {
@@ -1958,6 +2100,18 @@ impl TypedActionView for ProjectWindow {
             } => {
                 self.promote_inner_tab(*source_workspace_id, *pane_group_id, *insertion_index, ctx);
             }
+            ProjectWindowAction::MoveInnerTabToProject {
+                source_workspace_id,
+                pane_group_id,
+                target_project_id,
+            } => {
+                self.move_inner_tab_to_project(
+                    *source_workspace_id,
+                    *pane_group_id,
+                    *target_project_id,
+                    ctx,
+                );
+            }
         }
     }
 
@@ -2006,7 +2160,9 @@ impl TypedActionView for ProjectWindow {
                     WarpA11yRole::UserAction,
                 ))
             }
-            ProjectWindowAction::Reorder { .. } | ProjectWindowAction::PromoteInnerTab { .. } => {
+            ProjectWindowAction::Reorder { .. }
+            | ProjectWindowAction::PromoteInnerTab { .. }
+            | ProjectWindowAction::MoveInnerTabToProject { .. } => {
                 ActionAccessibilityContent::Empty
             }
         }

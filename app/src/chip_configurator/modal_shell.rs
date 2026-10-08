@@ -39,8 +39,7 @@ pub struct ChipEditorMouseHandles {
     pub add: MouseStateHandle,
     pub restore_default: MouseStateHandle,
     pub terminal_tab: MouseStateHandle,
-    pub codex_tab: MouseStateHandle,
-    pub claude_code_tab: MouseStateHandle,
+    pub coding_agents_tab: MouseStateHandle,
 }
 
 pub struct ChipEditorTab<'a, A> {

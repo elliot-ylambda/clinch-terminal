@@ -3,6 +3,10 @@ use std::collections::HashSet;
 use warp_core::channel::ChannelState;
 pub use warp_core::features::*;
 
+#[cfg(test)]
+#[path = "features_tests.rs"]
+mod tests;
+
 /// Mark all features which should be enabled on the current channel as enabled.
 /// This sets global feature flag state and should never be called in a unit test.
 pub fn init_feature_flags() {
@@ -14,11 +18,20 @@ pub fn init_feature_flags() {
 
 /// Returns all feature flags which should be enabled in the current channel.
 fn enabled_features() -> HashSet<FeatureFlag> {
-    // Enable features overridden for the given channel.
-    let mut flags = ChannelState::additional_features();
+    enabled_features_for_channel(
+        ChannelState::additional_features(),
+        ChannelState::is_release_bundle(),
+        ChannelState::has_backend(),
+    )
+}
 
+fn enabled_features_for_channel(
+    mut flags: HashSet<FeatureFlag>,
+    is_release_bundle: bool,
+    has_backend: bool,
+) -> HashSet<FeatureFlag> {
     // Enable flags for release builds, if appropriate.
-    if ChannelState::is_release_bundle() {
+    if is_release_bundle {
         flags.extend(RELEASE_FLAGS);
     }
 
@@ -508,6 +521,12 @@ fn enabled_features() -> HashSet<FeatureFlag> {
         #[cfg(feature = "prompt_cache_expiry_warning")]
         FeatureFlag::PromptCacheExpiryWarning,
     ]);
+
+    // The SSH extension is distributed by Warp's backend. Backend-free channels
+    // must bootstrap the shell directly instead of waiting on an unavailable download.
+    if !has_backend {
+        flags.remove(&FeatureFlag::SshRemoteServer);
+    }
 
     flags
 }

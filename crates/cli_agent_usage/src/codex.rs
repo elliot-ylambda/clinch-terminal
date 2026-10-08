@@ -5,7 +5,7 @@ use std::path::Path;
 use chrono::{DateTime, TimeZone, Utc};
 use serde::Deserialize;
 
-use crate::cache::{scan_dir, ScanCache};
+use crate::cache::ScanCache;
 use crate::{
     aggregate_windows, Entry, LimitWindow, PlanLimits, Provider, Severity, TokenCounts,
     WindowTotals,
@@ -346,7 +346,7 @@ pub fn scan(
     let mut provider = Provider::default();
     let mut seen = std::collections::HashSet::new();
 
-    let mut files = scan_dir(sessions_dir, ".jsonl");
+    let mut files = cache.scan_dir(sessions_dir, ".jsonl");
     files.retain(|(p, _, _)| {
         p.file_name()
             .and_then(|n| n.to_str())
@@ -385,7 +385,7 @@ pub fn scan(
 
     for (path, mtime, size) in &files {
         let parsed = cache.get_or_parse(path, *mtime, *size, parse_rollout_file);
-        let entries = parsed.entries.clone();
+        let entries = &parsed.entries;
         let is_latest = Some(path) == latest.as_ref();
         let last_total = parsed.last_total;
 
@@ -408,7 +408,7 @@ pub fn scan(
         }
 
         aggregate_windows(
-            &entries,
+            entries,
             now,
             &mut seen,
             &mut provider.today,

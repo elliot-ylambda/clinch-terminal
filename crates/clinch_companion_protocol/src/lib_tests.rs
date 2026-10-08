@@ -250,3 +250,50 @@ fn browser_round_tripped_integers_are_normalized_to_javascript_precision() {
     );
     assert!(javascript_safe_integer(u64::MAX) <= MAX_JAVASCRIPT_SAFE_INTEGER);
 }
+
+#[test]
+fn section_messages_validate_name_and_section_id() {
+    let envelope = |payload| ClientEnvelope {
+        version: PROTOCOL_VERSION,
+        request_id: RequestId::new(),
+        payload,
+    };
+    for payload in [
+        ClientMessage::CreateSection(CreateSection {
+            target: target(),
+            workspace_revision: 7,
+            name: "Review".to_owned(),
+        }),
+        ClientMessage::SetTabSection(SetTabSection {
+            target: target(),
+            workspace_revision: 7,
+            section_id: Some("3f0c8a52-6a9e-4b8e-9d1f-0b7a2c3d4e5f".to_owned()),
+        }),
+        ClientMessage::SetTabSection(SetTabSection {
+            target: target(),
+            workspace_revision: 7,
+            section_id: None,
+        }),
+    ] {
+        assert_eq!(envelope(payload).validate(), Ok(()));
+    }
+
+    assert!(
+        envelope(ClientMessage::CreateSection(CreateSection {
+            target: target(),
+            workspace_revision: 7,
+            name: String::new(),
+        }))
+        .validate()
+        .is_err()
+    );
+    assert!(
+        envelope(ClientMessage::CreateSection(CreateSection {
+            target: target(),
+            workspace_revision: 7,
+            name: "x".repeat(MAX_SECTION_NAME_BYTES + 1),
+        }))
+        .validate()
+        .is_err()
+    );
+}

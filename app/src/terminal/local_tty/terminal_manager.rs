@@ -1130,7 +1130,7 @@ impl TerminalManager {
                     .all_chips()
                     .contains(&ContextChipKind::NodeVersion)
                 || settings
-                    .cli_agent_footer_chip_selection
+                    .coding_agent_footer_chip_selection_value()
                     .all_chips()
                     .contains(&ContextChipKind::NodeVersion)
         };

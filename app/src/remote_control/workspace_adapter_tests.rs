@@ -66,6 +66,31 @@ fn task_mutations_use_control_and_session_creation_capabilities() {
 }
 
 #[test]
+fn section_mutations_need_control_and_are_idempotent() {
+    let target = TargetRef {
+        app_instance_id: AppInstanceId::new(),
+        project_id: "project".to_owned(),
+        tab_id: "tab".to_owned(),
+        pane_id: "pane".to_owned(),
+    };
+    let create = ClientMessage::CreateSection(CreateSection {
+        target: target.clone(),
+        workspace_revision: 1,
+        name: "Review".to_owned(),
+    });
+    let assign = ClientMessage::SetTabSection(SetTabSection {
+        target,
+        workspace_revision: 1,
+        section_id: None,
+    });
+
+    assert_eq!(required_capability(&create), Some(Capability::Control));
+    assert_eq!(required_capability(&assign), Some(Capability::Control));
+    assert!(is_idempotent_mutation(&create));
+    assert!(is_idempotent_mutation(&assign));
+}
+
+#[test]
 fn activity_aggregation_keeps_attention_and_work_visible() {
     assert_eq!(
         merge_activity(ProjectActivity::Working, ProjectActivity::NeedsAttention),

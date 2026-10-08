@@ -39,6 +39,7 @@ use crate::settings_view::{SettingsAction as SettingsTabAction, SettingsSection}
 use crate::tab::{NewSessionMenuItem, SelectedTabColor};
 use crate::tab_configs::TabConfig;
 use crate::terminal::available_shells::AvailableShell;
+use crate::terminal::cli_agent_sessions::CLIAgentSessionKey;
 use crate::terminal::view::inline_banner::ZeroStatePromptSuggestionType;
 use crate::themes::theme::AnsiColorIdentifier;
 use crate::themes::theme_chooser::ThemeChooserMode;
@@ -257,6 +258,7 @@ pub enum WorkspaceAction {
     UnpinTabGroup(TabGroupId),
     ToggleBookmarkedSessionsCollapsed,
     SetBookmarkedSessionsColor(SelectedSectionColor),
+    UnbookmarkAgentConversation(CLIAgentSessionKey),
     ToggleTasksCollapsed,
     FocusTaskInput,
     RemoveWorkspaceTask(WorkspaceTaskId),
@@ -461,9 +463,8 @@ pub enum WorkspaceAction {
         metric: CliAgentUsageMetric,
     },
     /// Enable the Claude plan-limit gauges from the usage widget's "Turn on"
-    /// or "Authorize" affordance. Ensures the `show_plan_limits` setting is on
-    /// and sanctions one Keychain read on the poller's next tick — the only
-    /// path on which the macOS credential prompt is allowed to appear.
+    /// or "Retry" affordance. Ensures the `show_plan_limits` setting is on
+    /// and requests a non-interactive refresh on the poller's next tick.
     EnableCliAgentPlanLimits,
     Reauth,
     SignupAnonymousUser,
@@ -691,10 +692,10 @@ pub enum WorkspaceAction {
     /// Uninstall the Oz CLI command from /usr/local/bin
     #[cfg(target_os = "macos")]
     UninstallOz,
-    /// Install the Warp Control CLI command to /usr/local/bin
+    /// Install the Clinch CLI command to /usr/local/bin.
     #[cfg(target_os = "macos")]
     InstallWarpctrl,
-    /// Uninstall the Warp Control CLI command from /usr/local/bin
+    /// Uninstall the Clinch CLI command from /usr/local/bin.
     #[cfg(target_os = "macos")]
     UninstallWarpctrl,
     UndoRevertInCodeReviewPane {
@@ -988,6 +989,7 @@ impl WorkspaceAction {
             | UnpinTabGroup(_)
             | ToggleBookmarkedSessionsCollapsed
             | SetBookmarkedSessionsColor(_)
+            | UnbookmarkAgentConversation(_)
             | ToggleTasksCollapsed
             | RemoveWorkspaceTask(_)
             | LaunchWorkspaceTask { .. }
