@@ -294,6 +294,7 @@ fn test_deduplicate_no_snapshots() {
 fn test_terminal_window_snapshot(vertical_tabs_panel_open: bool) -> WindowSnapshot {
     WindowSnapshot {
         tabs: vec![TabSnapshot {
+            origin: None,
             custom_title: None,
             root: PaneNodeSnapshot::Leaf(LeafSnapshot {
                 is_focused: true,
@@ -497,6 +498,7 @@ fn test_sqlite_round_trips_custom_vertical_tabs_title() {
     let app_state = AppState {
         windows: vec![project_window(WindowSnapshot {
             tabs: vec![TabSnapshot {
+                origin: None,
                 custom_title: None,
                 root: PaneNodeSnapshot::Leaf(LeafSnapshot {
                     is_focused: true,
@@ -577,6 +579,7 @@ fn test_sqlite_round_trips_code_pane_with_multiple_tabs() {
     let app_state = AppState {
         windows: vec![project_window(WindowSnapshot {
             tabs: vec![TabSnapshot {
+                origin: None,
                 custom_title: None,
                 root: PaneNodeSnapshot::Leaf(LeafSnapshot {
                     is_focused: true,
@@ -668,6 +671,7 @@ fn test_sqlite_round_trips_tab_groups() {
 
     let group_id = TabGroupId::new();
     let tab_in_group = TabSnapshot {
+        origin: None,
         custom_title: None,
         root: PaneNodeSnapshot::Leaf(LeafSnapshot {
             is_focused: true,
@@ -697,6 +701,7 @@ fn test_sqlite_round_trips_tab_groups() {
         pinned: false,
     };
     let tab_outside_group = TabSnapshot {
+        origin: None,
         custom_title: None,
         root: PaneNodeSnapshot::Leaf(LeafSnapshot {
             is_focused: false,
@@ -802,6 +807,7 @@ fn test_sqlite_round_trips_pinned_state() {
     let unpinned_group_id = TabGroupId::new();
 
     let pinned_tab = TabSnapshot {
+        origin: None,
         custom_title: None,
         root: PaneNodeSnapshot::Leaf(LeafSnapshot {
             is_focused: true,
@@ -831,6 +837,7 @@ fn test_sqlite_round_trips_pinned_state() {
         pinned: true,
     };
     let unpinned_tab = TabSnapshot {
+        origin: None,
         custom_title: None,
         root: PaneNodeSnapshot::Leaf(LeafSnapshot {
             is_focused: false,
@@ -860,6 +867,7 @@ fn test_sqlite_round_trips_pinned_state() {
         pinned: false,
     };
     let tab_in_pinned_group = TabSnapshot {
+        origin: None,
         custom_title: None,
         root: PaneNodeSnapshot::Leaf(LeafSnapshot {
             is_focused: false,
@@ -963,6 +971,77 @@ fn test_sqlite_round_trips_pinned_state() {
         .expect("unpinned group should restore");
     assert!(restored_pinned_group.pinned);
     assert!(!restored_loose_group.pinned);
+}
+
+#[test]
+fn test_sqlite_round_trips_tab_origin() {
+    use diesel::prelude::*;
+
+    use crate::app_state::PaneUuid;
+    use crate::persistence::schema;
+    use crate::tab::{TabOrigin, TabOriginKind};
+    use crate::terminal::CLIAgent;
+
+    let tempdir = tempfile::tempdir().expect("tempdir should be created");
+    let mut conn = setup_database(&tempdir.path().join("warp.sqlite")).unwrap();
+    let mut window = test_terminal_window_snapshot(true);
+    let origins = vec![
+        None,
+        Some(TabOrigin {
+            kind: TabOriginKind::Fork,
+            parent_pane_uuid: PaneUuid(vec![1]),
+            parent_title: "Source conversation".into(),
+        }),
+        Some(TabOrigin {
+            kind: TabOriginKind::Transfer {
+                from: CLIAgent::Claude,
+            },
+            parent_pane_uuid: PaneUuid(vec![2]),
+            parent_title: "Forked conversation".into(),
+        }),
+    ];
+    let template = window.tabs[0].clone();
+    window.tabs = origins
+        .iter()
+        .enumerate()
+        .map(|(index, origin)| {
+            let mut tab = template.clone();
+            tab.origin = origin.clone();
+            if let PaneNodeSnapshot::Leaf(LeafSnapshot {
+                contents: LeafContents::Terminal(terminal),
+                ..
+            }) = &mut tab.root
+            {
+                terminal.uuid = vec![index as u8 + 1];
+            }
+            tab
+        })
+        .collect();
+    let state = AppState {
+        windows: vec![project_window(window)],
+        active_window_index: Some(0),
+        block_lists: Default::default(),
+        running_mcp_servers: Default::default(),
+    };
+    save_app_state(&mut conn, &state).unwrap();
+    let restored = read_sqlite_data(&mut conn, None).unwrap().app_state;
+    let tabs = &restored.windows[0].active_project().unwrap().tabs;
+    assert_eq!(
+        tabs.iter()
+            .map(|tab| tab.origin.clone())
+            .collect::<Vec<_>>(),
+        origins
+    );
+
+    // Future or malformed origin data must not discard the rest of a saved tab.
+    diesel::update(schema::tabs::table)
+        .set(schema::tabs::origin.eq(Some("{\"kind\":\"FutureOrigin\"}")))
+        .execute(&mut conn)
+        .unwrap();
+    let restored = read_sqlite_data(&mut conn, None).unwrap().app_state;
+    let tabs = &restored.windows[0].active_project().unwrap().tabs;
+    assert_eq!(tabs.len(), 3);
+    assert!(tabs.iter().all(|tab| tab.origin.is_none()));
 }
 
 fn assert_encode_then_decode_preserves_original_path(original_path: PathBuf) {

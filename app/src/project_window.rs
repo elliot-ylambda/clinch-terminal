@@ -738,6 +738,7 @@ impl ProjectWindow {
         ctx: &mut ViewContext<Self>,
     ) -> ProjectId {
         let TransferredTab {
+            origin,
             pane_group,
             color,
             custom_title,
@@ -751,6 +752,7 @@ impl ProjectWindow {
 
         let (id, workspace, insertion_index) = self.insert_project_from_source(
             NewWorkspaceSource::TransferredTab {
+                origin,
                 tab_color: color,
                 custom_title,
                 left_panel_open,

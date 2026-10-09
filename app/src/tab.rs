@@ -60,6 +60,9 @@ use crate::workspace::{
 };
 use crate::BlocklistAIHistoryModel;
 
+pub(crate) mod lineage;
+pub use lineage::{TabOrigin, TabOriginKind};
+
 pub const TAB_BAR_BORDER_HEIGHT: f32 = 1.0;
 const TAB_INDICATOR_HEIGHT: f32 = 14.0;
 
@@ -181,6 +184,9 @@ pub struct TabData {
     pub in_multi_selection: bool,
     /// True when this tab is pinned to the front of the tab list.
     pub pinned: bool,
+    /// How this tab was created; retained even when its parent is closed or moved.
+    pub origin: Option<TabOrigin>,
+    pub origin_mouse_state: MouseStateHandle,
 }
 
 const TAB_COLOR_ICON_PATH: &str = "bundled/svg/ellipse.svg";
@@ -201,6 +207,8 @@ impl TabData {
             group_id: None,
             in_multi_selection: false,
             pinned: false,
+            origin: None,
+            origin_mouse_state: Default::default(),
         }
     }
 

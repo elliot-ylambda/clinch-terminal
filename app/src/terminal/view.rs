@@ -1774,6 +1774,7 @@ pub enum Event {
     },
     /// Open the other CLI agent in a new tab with context from this conversation.
     TransferCliAgentSession {
+        from: CLIAgent,
         command: String,
         cwd: Option<String>,
     },

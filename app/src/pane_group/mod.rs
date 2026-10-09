@@ -577,10 +577,13 @@ pub enum Event {
     ToggleCodeReviewPane(CodeReviewPanelArg),
     ForkCliAgentSession {
         terminal_view_id: EntityId,
+        source_pane_uuid: PaneUuid,
         cwd: Option<String>,
     },
     /// Open a transferred CLI-agent conversation in a new tab.
     TransferCliAgentSession {
+        source_pane_uuid: PaneUuid,
+        from: crate::terminal::CLIAgent,
         command: String,
         cwd: Option<String>,
     },
@@ -2334,6 +2337,13 @@ impl PaneGroup {
         self.panes_of::<TerminalPane>()
             .find(|pane| pane.session_uuid() == uuid && !self.is_pane_hidden_for_close(pane.id()))
             .map(|pane| pane.id())
+    }
+
+    pub(crate) fn terminal_pane_uuids(&self) -> Vec<PaneUuid> {
+        self.panes_of::<TerminalPane>()
+            .filter(|pane| !self.is_pane_hidden_for_close(pane.id()))
+            .map(|pane| PaneUuid(pane.session_uuid()))
+            .collect()
     }
 
     /// Resolves the agent-resume "fork" launch (command + cwd) for the pane that owns

@@ -13,6 +13,7 @@ fn single_tab_snapshot(root: PaneNodeSnapshot) -> AppState {
     AppState {
         windows: vec![ProjectWindowSnapshot::singleton(WindowSnapshot {
             tabs: vec![TabSnapshot {
+                origin: None,
                 custom_title: None,
                 default_directory_color: None,
                 selected_color: SelectedTabColor::default(),
@@ -250,6 +251,7 @@ fn test_config_with_active_tab_index() {
         1,
         vec![
             TabSnapshot {
+                origin: None,
                 custom_title: None,
                 default_directory_color: None,
                 selected_color: SelectedTabColor::default(),
@@ -295,6 +297,7 @@ fn test_config_with_active_tab_index_and_filtered_tabs() {
         1,
         vec![
             TabSnapshot {
+                origin: None,
                 custom_title: None,
                 default_directory_color: None,
                 selected_color: SelectedTabColor::default(),
@@ -318,6 +321,7 @@ fn test_config_with_active_tab_index_and_filtered_tabs() {
                 pinned: false,
             },
             TabSnapshot {
+                origin: None,
                 custom_title: None,
                 default_directory_color: None,
                 selected_color: SelectedTabColor::default(),
@@ -362,6 +366,7 @@ fn test_config_with_active_tab_being_filtered() {
         1,
         vec![
             TabSnapshot {
+                origin: None,
                 custom_title: None,
                 default_directory_color: None,
                 selected_color: SelectedTabColor::default(),
@@ -394,6 +399,7 @@ fn test_config_with_active_tab_being_filtered() {
                 pinned: false,
             },
             TabSnapshot {
+                origin: None,
                 custom_title: None,
                 default_directory_color: None,
                 selected_color: SelectedTabColor::default(),
@@ -426,6 +432,7 @@ fn test_config_with_active_tab_being_filtered() {
 fn terminal_project_snapshot(cwd: &str) -> WindowSnapshot {
     WindowSnapshot {
         tabs: vec![TabSnapshot {
+            origin: None,
             custom_title: None,
             default_directory_color: None,
             selected_color: SelectedTabColor::default(),

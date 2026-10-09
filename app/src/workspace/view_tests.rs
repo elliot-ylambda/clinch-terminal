@@ -1151,6 +1151,7 @@ fn transferred_tab_workspace(
             global_resource_handles,
             None,
             NewWorkspaceSource::TransferredTab {
+                origin: None,
                 tab_color: None,
                 custom_title: None,
                 left_panel_open: false,
@@ -2388,6 +2389,7 @@ fn cli_agent_transfer_opens_new_tab_without_replacing_source_tab() {
 
         source_terminal.update(&mut app, |_terminal, ctx| {
             ctx.emit(crate::terminal::view::Event::TransferCliAgentSession {
+                from: crate::terminal::CLIAgent::Claude,
                 command: "true".to_owned(),
                 cwd: Some(expected_cwd.to_string_lossy().into_owned()),
             });
@@ -2402,12 +2404,148 @@ fn cli_agent_transfer_opens_new_tab_without_replacing_source_tab() {
             assert!(source_tab
                 .as_ref(ctx)
                 .contains_terminal_view(source_terminal.id(), ctx));
+            let origin = workspace.tabs[workspace.active_tab_index()]
+                .origin
+                .as_ref()
+                .unwrap();
+            assert_eq!(
+                origin.kind,
+                crate::tab::TabOriginKind::Transfer {
+                    from: crate::terminal::CLIAgent::Claude
+                }
+            );
+            assert!(source_tab
+                .as_ref(ctx)
+                .find_terminal_pane_by_session_uuid(&origin.parent_pane_uuid.0)
+                .is_some());
             let new_tab_cwd = workspace
                 .active_tab_pane_group()
                 .read(ctx, |pane_group, ctx| {
                     pane_group.startup_path_for_new_session(pane_group.active_session_id(ctx), ctx)
                 });
             assert_eq!(new_tab_cwd.as_deref(), Some(expected_cwd.as_path()));
+        });
+    });
+}
+
+#[test]
+fn tab_origin_launch_joins_source_family_and_section() {
+    let _grouped_guard = FeatureFlag::GroupedTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        TabSettings::handle(&app).update(&mut app, |settings, ctx| {
+            settings
+                .new_tab_placement
+                .set_value(NewTabPlacement::AfterAllTabs, ctx)
+                .unwrap();
+        });
+        let workspace = mock_workspace(&mut app);
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.handle_action(
+                &WorkspaceAction::SelectNewSessionMenuItem(NewSessionMenuItem::CreateNewTabGroup),
+                ctx,
+            );
+            let parent = workspace.active_tab_index();
+            let parent_group = workspace.tabs[parent].group_id;
+            let origin = crate::tab::TabOrigin {
+                kind: crate::tab::TabOriginKind::Fork,
+                parent_pane_uuid: workspace.tabs[parent]
+                    .pane_group
+                    .as_ref(ctx)
+                    .terminal_pane_uuids()[0]
+                    .clone(),
+                parent_title: "Source".into(),
+            };
+            workspace.add_terminal_tab(false, ctx);
+            let unrelated_id = workspace.active_tab_pane_group().id();
+            // Source identity, not active tab, controls insertion and grouping.
+            workspace.tabs[workspace.active_tab_index].group_id = None;
+            workspace.launch_command_in_new_tab("true".into(), None, Some(origin.clone()), ctx);
+            assert_eq!(workspace.active_tab_index(), parent + 1);
+            assert_eq!(workspace.tabs[parent + 1].group_id, parent_group);
+            assert_eq!(workspace.tabs[parent + 1].origin.as_ref(), Some(&origin));
+            workspace.launch_command_in_new_tab("true".into(), None, Some(origin.clone()), ctx);
+            assert_eq!(workspace.active_tab_index(), parent + 2);
+            assert_eq!(workspace.tabs[parent + 3].pane_group.id(), unrelated_id);
+            // Tab moves retain origin metadata, even when the parent stays behind.
+            let child_id = workspace.tabs[parent + 2].pane_group.id();
+            let transferred = workspace.take_tab_for_new_project(child_id, ctx).unwrap();
+            assert_eq!(transferred.origin.as_ref(), Some(&origin));
+            workspace.insert_transferred_tab_at_index(transferred, workspace.tabs.len(), ctx);
+            assert_eq!(
+                workspace.tabs[workspace.active_tab_index()].origin.as_ref(),
+                Some(&origin)
+            );
+        });
+    });
+}
+
+#[test]
+fn tab_origin_survives_workspace_snapshot_restore() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+        let (snapshot, origin) = workspace.update(&mut app, |workspace, ctx| {
+            let origin = crate::tab::TabOrigin {
+                kind: crate::tab::TabOriginKind::Fork,
+                parent_pane_uuid: workspace.tabs[0]
+                    .pane_group
+                    .as_ref(ctx)
+                    .terminal_pane_uuids()[0]
+                    .clone(),
+                parent_title: "Original conversation".into(),
+            };
+            workspace.launch_command_in_new_tab("true".into(), None, Some(origin.clone()), ctx);
+            (workspace.snapshot(ctx.window_id(), false, ctx), origin)
+        });
+        assert_eq!(snapshot.tabs[1].origin.as_ref(), Some(&origin));
+        let restored = restored_workspace(&mut app, snapshot);
+        restored.read(&app, |workspace, ctx| {
+            assert_eq!(workspace.tabs[1].origin.as_ref(), Some(&origin));
+            let lineage: Vec<_> = workspace
+                .tabs
+                .iter()
+                .map(|tab| crate::tab::lineage::TabLineage::for_tab(tab, ctx))
+                .collect();
+            assert_eq!(
+                crate::tab::lineage::lineage_nesting(&lineage),
+                [false, true]
+            );
+        });
+    });
+}
+
+#[test]
+fn tab_origin_child_of_pinned_source_is_unpinned() {
+    let _pinned_guard = FeatureFlag::PinnedTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.add_terminal_tab(false, ctx);
+            workspace.tabs[0].pinned = true;
+            workspace.tabs[1].pinned = true;
+            let origin = crate::tab::TabOrigin {
+                kind: crate::tab::TabOriginKind::Fork,
+                parent_pane_uuid: workspace.tabs[0]
+                    .pane_group
+                    .as_ref(ctx)
+                    .terminal_pane_uuids()[0]
+                    .clone(),
+                parent_title: "Pinned source".into(),
+            };
+            workspace.launch_command_in_new_tab("true".into(), None, Some(origin), ctx);
+            assert_eq!(workspace.active_tab_index(), 2);
+            assert!(!workspace.tabs[2].pinned);
+            let lineage: Vec<_> = workspace
+                .tabs
+                .iter()
+                .map(|tab| crate::tab::lineage::TabLineage::for_tab(tab, ctx))
+                .collect();
+            assert_eq!(
+                crate::tab::lineage::lineage_nesting(&lineage),
+                [false, false, false]
+            );
         });
     });
 }

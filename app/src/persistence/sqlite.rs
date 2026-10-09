@@ -1157,6 +1157,10 @@ fn save_app_state(conn: &mut SqliteConnection, app_state: &AppState) -> Result<(
                             .group_id
                             .and_then(|group_id| tab_group_row_ids.get(&group_id).copied()),
                         pinned: tab.pinned,
+                        origin: tab
+                            .origin
+                            .as_ref()
+                            .and_then(|origin| serde_json::to_string(origin).ok()),
                     })
                     .collect();
 
@@ -2696,6 +2700,10 @@ fn read_sqlite_data(
                         .tab_group_id
                         .and_then(|row_id| tab_group_id_by_row_id.get(&row_id).copied());
                     Some(TabSnapshot {
+                        origin: tab
+                            .origin
+                            .as_deref()
+                            .and_then(|origin| serde_json::from_str(origin).ok()),
                         root,
                         custom_title: tab.custom_title,
                         default_directory_color: None,

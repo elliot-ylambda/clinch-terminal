@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use pathfinder_geometry::rect::RectF;
 use pathfinder_geometry::vector::Vector2F;
 use warpui::elements::PositionedElementOffsetBounds;
-use warpui::EntityId;
+use warpui::{Element, EntityId};
 
 use super::{
     automatic_worktree_toggle_tooltip, branch_label_display, coalesce_summary_branch_entries,
@@ -87,6 +87,86 @@ fn bookmarked_sessions_section_uses_the_light_clinch_green_palette_color() {
 
 fn pane_id() -> PaneId {
     TerminalPaneId::dummy_terminal_pane_id().into()
+}
+
+struct LineageConnectorLayoutView;
+
+impl warpui::Entity for LineageConnectorLayoutView {
+    type Event = ();
+}
+
+impl warpui::TypedActionView for LineageConnectorLayoutView {
+    type Action = ();
+}
+
+impl warpui::View for LineageConnectorLayoutView {
+    fn ui_name() -> &'static str {
+        "LineageConnectorLayoutView"
+    }
+
+    fn render(&self, app: &warpui::AppContext) -> Box<dyn warpui::Element> {
+        use warpui::elements::{
+            ConstrainedBox, CrossAxisAlignment, Empty, Flex, MainAxisSize, ParentElement,
+            SavePosition, Stack,
+        };
+        use warpui::SingletonEntity;
+
+        let card = SavePosition::new(
+            ConstrainedBox::new(Empty::new().finish())
+                .with_height(40.)
+                .finish(),
+            "lineage_card",
+        )
+        .finish();
+        let connector = super::render_lineage_connector(
+            card,
+            true,
+            crate::appearance::Appearance::as_ref(app).theme(),
+        );
+        // Sidebar rows are measured with unbounded height by their column.
+        Stack::new()
+            .with_child(
+                Flex::column()
+                    .with_main_axis_size(MainAxisSize::Min)
+                    .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+                    .with_child(SavePosition::new(connector, "lineage_connector").finish())
+                    .finish(),
+            )
+            .finish()
+    }
+}
+
+#[test]
+fn tab_origin_connector_preserves_card_height_in_sidebar_layout() {
+    use pathfinder_geometry::vector::vec2f;
+    use warpui::{App, Presenter, WindowInvalidation};
+
+    App::test((), |mut app| async move {
+        crate::workspace::view::tests::initialize_app(&mut app);
+        let (window_id, _) = app.add_window(warpui::platform::WindowStyle::NotStealFocus, |_| {
+            LineageConnectorLayoutView
+        });
+        let mut presenter = Presenter::new(window_id);
+        let invalidation = WindowInvalidation {
+            updated: std::collections::HashSet::from([app.root_view_id(window_id).unwrap()]),
+            ..Default::default()
+        };
+        app.update(move |ctx| {
+            presenter.invalidate(invalidation, ctx);
+            presenter.build_scene(vec2f(500., 300.), 1., None, ctx);
+            let bounds = presenter
+                .position_cache()
+                .get_position("lineage_connector")
+                .unwrap();
+            let card = presenter
+                .position_cache()
+                .get_position("lineage_card")
+                .unwrap();
+            assert_eq!(bounds.size(), vec2f(500., 40.));
+            assert_eq!(card.size(), vec2f(486., 40.));
+            assert_eq!(card.min_x() - bounds.min_x(), 14.);
+        });
+    });
 }
 fn code_summary_kind(title: &str) -> SummaryPaneKind {
     SummaryPaneKind::Code {

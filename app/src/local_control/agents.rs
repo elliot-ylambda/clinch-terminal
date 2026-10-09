@@ -395,6 +395,7 @@ pub(super) fn launch(
                 cwd,
                 params.title,
                 Some((params.background, section)),
+                None,
                 ctx,
             )
         })

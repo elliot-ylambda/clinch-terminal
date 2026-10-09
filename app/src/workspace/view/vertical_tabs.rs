@@ -67,7 +67,8 @@ use crate::pane_group::{
 };
 use crate::safe_triangle::SafeTriangle;
 use crate::settings::ClinchSettings;
-use crate::tab::{tab_position_id, SelectedTabColor, TabData};
+use crate::tab::lineage::{lineage_nesting, TabLineage};
+use crate::tab::{tab_position_id, SelectedTabColor, TabData, TabOriginKind};
 use crate::terminal::cli_agent_sessions::{
     session_context_enabled, CLIAgentSessionKey, CLIAgentSessionStatus, CLIAgentSessionsModel,
 };
@@ -693,6 +694,7 @@ fn render_pane_row_element(
         pane_rename_editor: _,
         is_pinned,
         container_is_hovered,
+        origin_badge: _,
     } = props;
     let is_selected = is_active_tab && is_focused;
     let show_pin = FeatureFlag::PinnedTabs.is_enabled() && is_pinned && !container_is_hovered;
@@ -1163,7 +1165,15 @@ impl VerticalTabsPanelState {
     }
 }
 
+#[derive(Clone)]
+struct TabOriginBadge {
+    kind: TabOriginKind,
+    tooltip: String,
+    mouse_state: MouseStateHandle,
+}
+
 struct PaneProps<'a> {
+    origin_badge: Option<TabOriginBadge>,
     pane_id: PaneId,
     pane_group_id: EntityId,
     is_active_tab: bool,
@@ -1314,6 +1324,7 @@ impl TabGroupColorMode {
 }
 
 struct GroupHeaderProps<'a> {
+    origin_badge: Option<TabOriginBadge>,
     tab_index: usize,
     pane_group: &'a PaneGroup,
     is_being_renamed: bool,
@@ -2945,6 +2956,105 @@ fn render_vertical_tabs_panel(
         .finish()
 }
 
+/// A passive gutter outside the tab card keeps its existing drag/click targets intact.
+fn render_lineage_connector(
+    content: Box<dyn Element>,
+    nested: bool,
+    theme: &WarpTheme,
+) -> Box<dyn Element> {
+    if !nested {
+        return content;
+    }
+    let divider = crate::workspace::chrome_divider_fill(theme);
+    let upper = Container::new(Empty::new().finish())
+        .with_border(Border::left(1.).with_border_fill(divider))
+        .finish();
+    let tick = ConstrainedBox::new(
+        Container::new(Empty::new().finish())
+            .with_background(divider)
+            .finish(),
+    )
+    .with_height(1.)
+    .finish();
+    let gutter = Flex::column()
+        .with_main_axis_size(MainAxisSize::Max)
+        .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .with_child(Expanded::new(1., upper).finish())
+        .with_child(tick)
+        .with_child(Expanded::new(1., Empty::new().finish()).finish())
+        .finish();
+    // Measure the card first. Sidebar columns give rows unbounded height, so
+    // the expanding gutter must be laid out against the measured card bounds.
+    let mut stack =
+        Stack::new().with_child(Container::new(content).with_padding_left(14.).finish());
+    stack.add_positioned_child(
+        ConstrainedBox::new(
+            Container::new(gutter)
+                .with_padding_left(4.)
+                .with_padding_right(3.)
+                .finish(),
+        )
+        .with_width(14.)
+        .finish(),
+        OffsetPositioning::offset_from_parent(
+            vec2f(0., 0.),
+            ParentOffsetBounds::ParentBySize,
+            ParentAnchor::TopLeft,
+            ChildAnchor::TopLeft,
+        ),
+    );
+    stack.finish()
+}
+
+fn render_title_with_origin(
+    title: Box<dyn Element>,
+    badge: Option<&TabOriginBadge>,
+    appearance: &Appearance,
+) -> Box<dyn Element> {
+    let Some(badge) = badge else {
+        return title;
+    };
+    let color = appearance
+        .theme()
+        .sub_text_color(appearance.theme().background());
+    let icon = match badge.kind {
+        TabOriginKind::Fork => UiIcon::GitBranch,
+        TabOriginKind::Transfer { .. } => UiIcon::SwitchHorizontal01,
+    };
+    let glyph = Hoverable::new(badge.mouse_state.clone(), |hover| {
+        let glyph = ConstrainedBox::new(icon.to_warpui_icon(color).finish())
+            .with_width(11.)
+            .with_height(11.)
+            .finish();
+        if !hover.is_hovered() {
+            return glyph;
+        }
+        let mut stack = Stack::new().with_child(glyph);
+        stack.add_positioned_overlay_child(
+            appearance
+                .ui_builder()
+                .clone()
+                .tool_tip(badge.tooltip.clone())
+                .build()
+                .finish(),
+            OffsetPositioning::offset_from_parent(
+                vec2f(0., 4.),
+                ParentOffsetBounds::WindowByPosition,
+                ParentAnchor::BottomMiddle,
+                ChildAnchor::TopMiddle,
+            ),
+        );
+        stack.finish()
+    })
+    .finish();
+    Flex::row()
+        .with_cross_axis_alignment(CrossAxisAlignment::Center)
+        .with_spacing(4.)
+        .with_child(glyph)
+        .with_child(Shrinkable::new(1., title).finish())
+        .finish()
+}
+
 fn render_groups(
     state: &VerticalTabsPanelState,
     workspace: &Workspace,
@@ -3114,6 +3224,11 @@ fn render_groups(
 
     // Consecutive tabs sharing a group_id collapse into a single group container.
     // TODO(johnturcoo) adopt horizontal tabs 'tab slot' pattern to remove this while loop.
+    let lineage: Vec<_> = visible_tabs
+        .iter()
+        .map(|(index, _)| TabLineage::for_tab(&workspace.tabs[*index], app))
+        .collect();
+    let nesting = lineage_nesting(&lineage);
     let total_visible = visible_tabs.len();
     let mut i = 0;
     while i < total_visible {
@@ -3153,7 +3268,7 @@ fn render_groups(
             None => {
                 let insert_before_index = tab_index;
                 let insert_after_index = (i == total_visible - 1).then_some(tab_index + 1);
-                groups.add_child(render_tab_group(
+                let tab_element = render_tab_group(
                     state,
                     workspace,
                     tab_index,
@@ -3166,7 +3281,8 @@ fn render_groups(
                     },
                     false, // in_tab_group
                     app,
-                ));
+                );
+                groups.add_child(render_lineage_connector(tab_element, nesting[i], theme));
                 i += 1;
             }
         }
@@ -3320,6 +3436,29 @@ fn render_tab_group_internal(
     let use_tab_title_header = tab_title_uses_header(display_granularity, visible_pane_ids.len());
     let show_tab_title_header = use_tab_title_header && (has_custom_title || is_being_renamed);
     let displayed_tab_title_override = (!use_tab_title_header).then_some(custom_title).flatten();
+    let origin_badge = tab.origin.as_ref().map(|origin| {
+        let find_parent_title = |workspace: &Workspace| {
+            workspace.tabs.iter().find_map(|parent| {
+                let group = parent.pane_group.as_ref(app);
+                group
+                    .find_terminal_pane_by_session_uuid(&origin.parent_pane_uuid.0)
+                    .map(|_| group.display_title(app))
+            })
+        };
+        let parent_title = find_parent_title(workspace).or_else(|| {
+            // A source in another project/window is still open. The currently
+            // rendering workspace may be leased, so inspect it directly above.
+            crate::workspace::WorkspaceRegistry::as_ref(app)
+                .all_workspaces(app)
+                .iter()
+                .find_map(|(_, handle)| handle.try_as_ref(app).and_then(find_parent_title))
+        });
+        TabOriginBadge {
+            kind: origin.kind,
+            tooltip: origin.tooltip(parent_title.as_deref()),
+            mouse_state: tab.origin_mouse_state.clone(),
+        }
+    });
     let is_menu_open_for_tab = workspace
         .show_tab_right_click_menu
         .is_some_and(|(idx, _)| idx == tab_index);
@@ -3362,7 +3501,7 @@ fn render_tab_group_internal(
                     .entry(*pane_id)
                     .or_default()
                     .clone();
-                let Some(pane_props) = PaneProps::new(
+                let Some(mut pane_props) = PaneProps::new(
                     pane_group,
                     *pane_id,
                     pane_group_id,
@@ -3391,6 +3530,9 @@ fn render_tab_group_internal(
                 ) else {
                     return Empty::new().finish();
                 };
+                if !show_tab_title_header {
+                    pane_props.origin_badge = origin_badge.clone();
+                }
                 rows.add_child(render_summary_tab_item(
                     pane_props,
                     summary
@@ -3449,6 +3591,9 @@ fn render_tab_group_internal(
                 ) else {
                     continue;
                 };
+                if !show_tab_title_header && row_idx == 0 {
+                    pane_props.origin_badge = origin_badge.clone();
+                }
                 if stack_panes_flush {
                     pane_props.stack_position = PaneRowStackPosition::Flush {
                         is_first: row_idx == 0,
@@ -3472,6 +3617,7 @@ fn render_tab_group_internal(
             if show_tab_title_header {
                 group.add_child(render_group_header(
                     GroupHeaderProps {
+                        origin_badge: origin_badge.clone(),
                         tab_index,
                         pane_group,
                         is_being_renamed,
@@ -3535,6 +3681,7 @@ fn render_tab_group_internal(
                     .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
                     .with_child(render_group_header(
                         GroupHeaderProps {
+                            origin_badge: origin_badge.clone(),
                             tab_index,
                             pane_group,
                             is_being_renamed,
@@ -4153,6 +4300,11 @@ fn render_grouped_tab_container(
         .or_default()
         .clone();
 
+    let lineage: Vec<_> = members
+        .iter()
+        .map(|(index, _)| TabLineage::for_tab(&workspace.tabs[*index], app))
+        .collect();
+    let nesting = lineage_nesting(&lineage);
     let member_count = members.len();
     let group_id = group.id;
     let group = group.clone();
@@ -4235,7 +4387,7 @@ fn render_grouped_tab_container(
                     app,
                 );
                 content.add_child(
-                    Container::new(tab_element)
+                    Container::new(render_lineage_connector(tab_element, nesting[i], theme))
                         .with_padding(
                             Padding::uniform(0.)
                                 .with_left(TAB_GROUP_MEMBER_INDENT)
@@ -4322,6 +4474,7 @@ fn render_grouped_tab_container(
 
 fn render_group_header(props: GroupHeaderProps<'_>, app: &AppContext) -> Box<dyn Element> {
     let GroupHeaderProps {
+        origin_badge,
         tab_index,
         pane_group,
         is_being_renamed,
@@ -4340,7 +4493,7 @@ fn render_group_header(props: GroupHeaderProps<'_>, app: &AppContext) -> Box<dyn
     let title_color = theme.sub_text_color(theme.background());
 
     Hoverable::new(header_mouse_state, move |_header_state| {
-        Container::new(if is_being_renamed {
+        let title = if is_being_renamed {
             TextInput::new(
                 rename_editor.clone(),
                 UiComponentStyles::default()
@@ -4355,7 +4508,12 @@ fn render_group_header(props: GroupHeaderProps<'_>, app: &AppContext) -> Box<dyn
                 .with_clip(ClipConfig::ellipsis())
                 .with_color(title_color.into())
                 .finish()
-        })
+        };
+        Container::new(render_title_with_origin(
+            title,
+            origin_badge.as_ref(),
+            appearance,
+        ))
         .with_padding(
             Padding::uniform(0.)
                 .with_left(GROUP_HORIZONTAL_PADDING)
@@ -5008,6 +5166,7 @@ impl<'a> PaneProps<'a> {
             pane_rename_editor,
             is_pinned,
             container_is_hovered,
+            origin_badge: None,
         })
     }
 
@@ -5781,6 +5940,7 @@ fn render_pane_title_slot(
 ) -> Box<dyn Element> {
     let title = render_title_override(props, font_size, text_color, clip, appearance, app)
         .unwrap_or_else(generated_title);
+    let title = render_title_with_origin(title, props.origin_badge.as_ref(), appearance);
 
     // A row that renames its tab must not also rename the pane: both handlers
     // fire on one double-click, and the losing editor commits a stale name.
@@ -5846,12 +6006,15 @@ fn render_summary_tab_item(
         appearance,
         app,
     ) {
-        title_region.add_child(title_override);
+        title_region.add_child(render_title_with_origin(
+            title_override,
+            props.origin_badge.as_ref(),
+            appearance,
+        ));
     } else if summary.primary_labels.is_empty() {
-        title_region.add_child(render_text_line(
-            &props.title,
-            main_text_color,
-            ClipConfig::end(),
+        title_region.add_child(render_title_with_origin(
+            render_text_line(&props.title, main_text_color, ClipConfig::end(), appearance),
+            props.origin_badge.as_ref(),
             appearance,
         ));
     } else {
@@ -5870,7 +6033,7 @@ fn render_summary_tab_item(
                 appearance,
             );
             title_region.add_child(if idx == 0 {
-                line
+                render_title_with_origin(line, props.origin_badge.as_ref(), appearance)
             } else {
                 Container::new(line)
                     .with_margin_top(INTRA_REGION_GAP)

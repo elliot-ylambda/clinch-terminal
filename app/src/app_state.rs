@@ -72,7 +72,7 @@ impl ProjectWindowSnapshot {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PaneUuid(pub Vec<u8>);
 
 /// Wrapper for persisting agent management filters to restore.
@@ -117,6 +117,7 @@ pub struct TabGroupSnapshot {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TabSnapshot {
+    pub origin: Option<crate::tab::TabOrigin>,
     pub custom_title: Option<String>,
     pub root: PaneNodeSnapshot,
     pub default_directory_color: Option<AnsiColorIdentifier>,

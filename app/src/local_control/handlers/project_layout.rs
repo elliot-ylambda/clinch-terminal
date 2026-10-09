@@ -253,6 +253,7 @@ pub(super) fn restore(
             return Err(invalid("a tab can have at most one focused pane"));
         }
         tabs.push(TabSnapshot {
+            origin: None,
             custom_title: tab.title,
             root,
             default_directory_color: None,
