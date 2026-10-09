@@ -1907,6 +1907,11 @@ pub(crate) fn initialize_app(
     });
     ctx.add_singleton_model(move |_| RestoredAgentConversations::new(multi_agent_conversations));
     ctx.add_singleton_model(|_| CLIAgentSessionsModel::new());
+    // Must come after CLIAgentSessionsModel: it watches session status to blink "needs input"
+    // indicators only while a Claude Code / Codex session is waiting on the user.
+    ctx.add_singleton_model(
+        crate::terminal::cli_agent_sessions::attention_pulse::AgentAttentionPulse::new,
+    );
     // Must come after CLIAgentSessionsModel and CliAgentUsageModel: it observes
     // both session events and late usage snapshots to arm/cancel per-pane
     // rate-limit auto-continues.

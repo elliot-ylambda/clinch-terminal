@@ -371,6 +371,37 @@ OUTPUT=$(echo '{"session_id":"s1","cwd":"/tmp/proj"}' \
 assert_eq "identity-less starts are ignored" "" "$OUTPUT"
 
 echo ""
+echo "--- Needs-input routing ---"
+
+OUTPUT=$(echo '{"session_id":"s1","cwd":"/tmp/proj","tool_name":"AskUserQuestion","tool_input":{"questions":[{"question":"Red or blue?","options":[{"label":"Red"},{"label":"Blue"}]}]}}' \
+    | bash "$HOOK_DIR/on-permission-request.sh")
+SEQUENCE=$(echo "$OUTPUT" | jq -r '.terminalSequence // empty' 2>/dev/null)
+assert_contains "AskUserQuestion is reported as a question" "$SEQUENCE" '"event":"question_asked"'
+assert_contains "AskUserQuestion summary is the question" "$SEQUENCE" '"summary":"Red or blue?"'
+
+OUTPUT=$(echo '{"session_id":"s1","cwd":"/tmp/proj","tool_name":"ExitPlanMode","tool_input":{"plan":"say hi"}}' \
+    | bash "$HOOK_DIR/on-permission-request.sh")
+SEQUENCE=$(echo "$OUTPUT" | jq -r '.terminalSequence // empty' 2>/dev/null)
+assert_contains "plan approval is a permission request" "$SEQUENCE" '"event":"permission_request"'
+assert_contains "plan approval has a readable summary" "$SEQUENCE" '"summary":"Plan ready for your approval"'
+
+OUTPUT=$(echo '{"session_id":"s1","cwd":"/tmp/proj","tool_name":"Bash","tool_input":{"command":"rm -rf build"}}' \
+    | bash "$HOOK_DIR/on-permission-request.sh")
+SEQUENCE=$(echo "$OUTPUT" | jq -r '.terminalSequence // empty' 2>/dev/null)
+assert_contains "tool approval stays a permission request" "$SEQUENCE" '"event":"permission_request"'
+assert_contains "tool approval previews the command" "$SEQUENCE" '"summary":"Wants to run Bash: rm -rf build"'
+
+OUTPUT=$(echo '{"session_id":"s1","cwd":"/tmp/proj","notification_type":"elicitation_dialog","message":"MCP server needs input"}' \
+    | bash "$HOOK_DIR/on-notification.sh")
+SEQUENCE=$(echo "$OUTPUT" | jq -r '.terminalSequence // empty' 2>/dev/null)
+assert_contains "MCP elicitation is reported as a question" "$SEQUENCE" '"event":"question_asked"'
+
+OUTPUT=$(echo '{"session_id":"s1","cwd":"/tmp/proj","notification_type":"idle_prompt","message":"Claude is waiting"}' \
+    | bash "$HOOK_DIR/on-notification.sh")
+SEQUENCE=$(echo "$OUTPUT" | jq -r '.terminalSequence // empty' 2>/dev/null)
+assert_contains "idle prompt keeps its event" "$SEQUENCE" '"event":"idle_prompt"'
+
+echo ""
 echo "--- StopFailure routing ---"
 : > "$DIRECT_TTY"
 OUTPUT=$(echo '{"session_id":"s1","cwd":"/tmp/proj","error":"rate_limit","error_details":"429 Too Many Requests","last_assistant_message":"API Error: Rate limit reached"}' \

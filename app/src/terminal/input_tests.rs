@@ -248,6 +248,9 @@ pub fn initialize_app(app: &mut App) {
         )
     });
     app.add_singleton_model(|_| CLIAgentSessionsModel::new());
+    app.add_singleton_model(
+        crate::terminal::cli_agent_sessions::attention_pulse::AgentAttentionPulse::new,
+    );
     // AutoContinueModel observes fresh usage snapshots as well as session
     // events, so both dependencies must be registered first.
     app.add_singleton_model(|_| crate::ai::blocklist::usage::CliAgentUsageModel::new_for_test());

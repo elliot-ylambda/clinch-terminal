@@ -179,14 +179,18 @@ fn project_command_count_excludes_cli_agent_sessions_and_non_running_commands() 
 }
 
 #[test]
-fn project_agent_activity_prioritizes_live_work_then_attention_then_done() {
+fn project_agent_activity_prioritizes_live_work_then_input_then_attention_then_done() {
     assert_eq!(
         project_cli_agent_activity(true, false, true, true, true),
         ProjectCliAgentActivity::Working
     );
     assert_eq!(
         project_cli_agent_activity(false, true, true, false, false),
-        ProjectCliAgentActivity::NeedsAttention
+        ProjectCliAgentActivity::NeedsInput
+    );
+    assert_eq!(
+        project_cli_agent_activity(false, true, false, true, true),
+        ProjectCliAgentActivity::NeedsInput
     );
     assert_eq!(
         project_cli_agent_activity(false, false, false, true, true),
@@ -583,6 +587,9 @@ pub(crate) fn initialize_app(app: &mut App) {
     app.add_singleton_model(crate::ai::blocklist::QueuedQueryModel::new);
     app.add_singleton_model(|ctx| OrchestrationPillBarModel::new(Default::default(), ctx));
     app.add_singleton_model(|_| CLIAgentSessionsModel::new());
+    app.add_singleton_model(
+        crate::terminal::cli_agent_sessions::attention_pulse::AgentAttentionPulse::new,
+    );
     // AutoContinueModel observes fresh usage snapshots as well as session
     // events, so both dependencies must be registered first. The test
     // constructor omits the keychain/HTTP producer thread.

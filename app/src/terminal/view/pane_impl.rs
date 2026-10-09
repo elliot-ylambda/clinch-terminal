@@ -42,6 +42,7 @@ use crate::pane_group::{BackingView, SplitPaneState, TOGGLE_MAXIMIZE_PANE_BINDIN
 use crate::settings::app_installation_detection::{
     UserAppInstallDetectionSettings, UserAppInstallStatus,
 };
+use crate::terminal::cli_agent_sessions::title_glyph::agent_title_text;
 use crate::terminal::cli_agent_sessions::{session_context_enabled, CLIAgentSessionsModel};
 use crate::terminal::shared_session::participant_avatar_view::render_participants_and_role_elements;
 use crate::terminal::shared_session::render_util::shared_session_indicator_color;
@@ -128,11 +129,13 @@ impl TerminalView {
             self.is_using_conversation_for_pane_header_title = false;
             self.is_using_cli_agent_prompt_for_pane_header_title =
                 selected_cli_agent_uses_prompt_title;
-            cli_agent_title
+            self.standardized_agent_title(Some(&cli_agent_title), ctx)
+                .unwrap_or(cli_agent_title)
         } else if self.is_long_running_and_user_controlled() && !self.terminal_title.is_empty() {
             self.is_using_conversation_for_pane_header_title = false;
             self.is_using_cli_agent_prompt_for_pane_header_title = false;
-            self.terminal_title.clone()
+            self.standardized_agent_title(None, ctx)
+                .unwrap_or_else(|| self.terminal_title.clone())
         } else {
             match selected_conversation_title {
                 Some(conversation_title) => {
@@ -145,7 +148,8 @@ impl TerminalView {
                     if is_ambient_agent {
                         default_agent_conversation_title(is_ambient_agent)
                     } else {
-                        self.terminal_title.clone()
+                        self.standardized_agent_title(None, ctx)
+                            .unwrap_or_else(|| self.terminal_title.clone())
                     }
                 }
             }
@@ -1172,7 +1176,10 @@ impl TerminalView {
 
         if supports_session_context {
             let agent_title = self.cli_agent_terminal_title(ctx);
-            session.title_for_tab(use_latest_prompt, agent_title.as_deref())
+            let agent_title = agent_title
+                .as_deref()
+                .map(|title| agent_title_text(session.agent, title));
+            session.title_for_tab(use_latest_prompt, agent_title)
         } else if use_latest_prompt {
             session
                 .session_context

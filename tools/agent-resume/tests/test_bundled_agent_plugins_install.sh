@@ -79,18 +79,18 @@ if grep -Fxq "codex plugin marketplace remove codex-warp" "$LOG"; then
 fi
 grep -Fq "source = \"$CODEX_ROOT\"" "$TMP/codex/config.toml"
 grep -Fxq '[plugins."warp@clinch-codex-warp"]' "$TMP/codex/config.toml"
-[[ -f "$TMP/codex/plugins/cache/clinch-codex-warp/warp/0.5.1/.codex-plugin/plugin.json" ]]
+[[ -f "$TMP/codex/plugins/cache/clinch-codex-warp/warp/0.6.0/.codex-plugin/plugin.json" ]]
 
 # Current provider state must make a later launch a true no-op.
 mkdir -p \
   "$TMP/claude/plugins" \
-  "$TMP/codex/plugins/cache/clinch-codex-warp/warp/0.5.1/.codex-plugin"
+  "$TMP/codex/plugins/cache/clinch-codex-warp/warp/0.6.0/.codex-plugin"
 cat >"$TMP/claude/plugins/installed_plugins.json" <<'EOF'
 {
   "version": 2,
   "plugins": {
     "warp@clinch-claude-code-warp": [
-      { "scope": "user", "version": "2.3.0" }
+      { "scope": "user", "version": "2.4.0" }
     ]
   }
 }
@@ -103,8 +103,8 @@ source = "$CODEX_ROOT"
 [plugins."warp@clinch-codex-warp"]
 enabled = true
 EOF
-cat >"$TMP/codex/plugins/cache/clinch-codex-warp/warp/0.5.1/.codex-plugin/plugin.json" <<'EOF'
-{ "name": "warp", "version": "0.5.1" }
+cat >"$TMP/codex/plugins/cache/clinch-codex-warp/warp/0.6.0/.codex-plugin/plugin.json" <<'EOF'
+{ "name": "warp", "version": "0.6.0" }
 EOF
 : >"$LOG"
 
@@ -124,7 +124,7 @@ PATH="$TMP/bin:/usr/bin:/bin" \
 # The fail-open prompt-hook patch must upgrade the previously bundled 0.5.0 snapshot without
 # deleting the old generation that a running Codex process may still reference.
 mv \
-  "$TMP/codex/plugins/cache/clinch-codex-warp/warp/0.5.1" \
+  "$TMP/codex/plugins/cache/clinch-codex-warp/warp/0.6.0" \
   "$TMP/codex/plugins/cache/clinch-codex-warp/warp/0.5.0"
 cat >"$TMP/codex/plugins/cache/clinch-codex-warp/warp/0.5.0/.codex-plugin/plugin.json" <<'EOF'
 { "name": "warp", "version": "0.5.0" }
@@ -144,14 +144,14 @@ PATH="$TMP/bin:/usr/bin:/bin" \
   exit 1
 }
 [[ -f "$TMP/codex/plugins/cache/clinch-codex-warp/warp/0.5.0/.codex-plugin/plugin.json" ]]
-[[ -f "$TMP/codex/plugins/cache/clinch-codex-warp/warp/0.5.1/.codex-plugin/plugin.json" ]]
+[[ -f "$TMP/codex/plugins/cache/clinch-codex-warp/warp/0.6.0/.codex-plugin/plugin.json" ]]
 diff -qr \
   "$CODEX_ROOT/plugins/warp" \
-  "$TMP/codex/plugins/cache/clinch-codex-warp/warp/0.5.1"
+  "$TMP/codex/plugins/cache/clinch-codex-warp/warp/0.6.0"
 
 # A live but obsolete marketplace source must be re-registered transactionally. Preserve its old
 # cache generation while publishing the current bundle and switching the config to the new path.
-rm -rf "$TMP/codex/plugins/cache/clinch-codex-warp/warp/0.5.1"
+rm -rf "$TMP/codex/plugins/cache/clinch-codex-warp/warp/0.6.0"
 old_codex_marketplace="$TMP/old-codex-marketplace"
 mkdir -p "$old_codex_marketplace"
 cat >"$TMP/codex/config.toml" <<EOF
@@ -176,7 +176,7 @@ grep -Fxq "codex plugin marketplace add $CODEX_ROOT" "$LOG"
 grep -Fxq "codex plugin add warp@clinch-codex-warp" "$LOG"
 grep -Fq "source = \"$CODEX_ROOT\"" "$TMP/codex/config.toml"
 [[ -f "$TMP/codex/plugins/cache/clinch-codex-warp/warp/0.5.0/.codex-plugin/plugin.json" ]]
-[[ -f "$TMP/codex/plugins/cache/clinch-codex-warp/warp/0.5.1/.codex-plugin/plugin.json" ]]
+[[ -f "$TMP/codex/plugins/cache/clinch-codex-warp/warp/0.6.0/.codex-plugin/plugin.json" ]]
 
 # A migration from an older upstream plugin leaves that marketplace's cache intact for any live
 # session, while atomically disabling it and enabling the bundled plugin for future sessions.
@@ -203,7 +203,7 @@ grep -Fxq "codex plugin remove warp@codex-warp" "$LOG"
 grep -Fxq "codex plugin marketplace add $CODEX_ROOT" "$LOG"
 grep -Fxq "codex plugin add warp@clinch-codex-warp" "$LOG"
 [[ -f "$TMP/codex/plugins/cache/codex-warp/warp/0.4.1/.codex-plugin/plugin.json" ]]
-[[ -f "$TMP/codex/plugins/cache/clinch-codex-warp/warp/0.5.1/.codex-plugin/plugin.json" ]]
+[[ -f "$TMP/codex/plugins/cache/clinch-codex-warp/warp/0.6.0/.codex-plugin/plugin.json" ]]
 grep -Fxq '[plugins."warp@clinch-codex-warp"]' "$TMP/codex/config.toml"
 if grep -Fxq '[plugins."warp@codex-warp"]' "$TMP/codex/config.toml"; then
   echo "installer left the outdated upstream Codex plugin enabled" >&2

@@ -6974,8 +6974,11 @@ impl TerminalView {
                     });
                 }
                 // When the active conversation is invalidated, fall back to the original pane title
+                let title = self
+                    .standardized_agent_title(None, ctx)
+                    .unwrap_or_else(|| self.terminal_title.clone());
                 self.pane_configuration.update(ctx, |pane_config, ctx| {
-                    pane_config.set_title(self.terminal_title.clone(), ctx);
+                    pane_config.set_title(title, ctx);
                 });
                 self.is_using_conversation_for_pane_header_title = false;
             }

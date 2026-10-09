@@ -34,14 +34,28 @@ pub fn render_status_element(
     icon_size: f32,
     appearance: &Appearance,
 ) -> Box<dyn Element> {
+    render_status_element_with_opacity(status, icon_size, 1., appearance)
+}
+
+/// [`render_status_element`] with the glyph faded to `opacity`, for indicators that blink.
+pub fn render_status_element_with_opacity(
+    status: &impl StatusElementStyle,
+    icon_size: f32,
+    opacity: f32,
+    appearance: &Appearance,
+) -> Box<dyn Element> {
     let theme = appearance.theme();
     let (icon, color) = status.status_icon_and_color(theme);
 
     Container::new(
-        ConstrainedBox::new(icon.to_warpui_icon(Fill::from(color)).finish())
-            .with_width(icon_size)
-            .with_height(icon_size)
-            .finish(),
+        ConstrainedBox::new(
+            icon.to_warpui_icon(Fill::from(color))
+                .with_opacity(opacity)
+                .finish(),
+        )
+        .with_width(icon_size)
+        .with_height(icon_size)
+        .finish(),
     )
     .with_uniform_padding(STATUS_ELEMENT_PADDING)
     .with_background(coloru_with_opacity(color, 10))

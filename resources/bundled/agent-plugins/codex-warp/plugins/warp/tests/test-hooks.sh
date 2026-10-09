@@ -62,5 +62,41 @@ assert_success "prompt hook fails open when jq fails" \
 assert_success "prompt hook fails open for malformed input" \
     run_prompt_hook "$PATH" '{not-json'
 
+# Run a hook from a copy of the scripts whose notifier records the payload instead of writing
+# an OSC sequence, and print that payload (empty when the hook stayed silent).
+CAPTURE_DIR="$TMP_DIR/capture-scripts"
+cp -R "$SCRIPT_DIR" "$CAPTURE_DIR"
+printf '#!/bin/bash\nprintf "%%s" "$2" > "%s/body"\n' "$TMP_DIR" > "$CAPTURE_DIR/warp-notify.sh"
+run_captured_hook() {
+    local hook="$1"
+    local payload="$2"
+    rm -f "$TMP_DIR/body"
+    printf '%s\n' "$payload" | env \
+        WARP_CLI_AGENT_PROTOCOL_VERSION=1 \
+        WARP_CLIENT_VERSION=v0.test \
+        /bin/bash "$CAPTURE_DIR/$hook" >/dev/null 2>&1
+    cat "$TMP_DIR/body" 2>/dev/null || true
+}
+
+BODY=$(run_captured_hook on-pre-tool-use.sh \
+    '{"session_id":"s1","cwd":"/tmp/project","tool_name":"request_user_input","tool_input":{"questions":[{"id":"color","question":"Red or blue?"}]}}')
+assert_eq "request_user_input is a question" "question_asked" "$(echo "$BODY" | jq -r '.event')"
+assert_eq "question summary is the question" "Red or blue?" "$(echo "$BODY" | jq -r '.summary')"
+
+BODY=$(run_captured_hook on-pre-tool-use.sh \
+    '{"session_id":"s1","cwd":"/tmp/project","tool_name":"request_user_input","tool_input":"{\"questions\":[{\"question\":\"Cats or dogs?\"}]}"}')
+assert_eq "string tool_input is decoded" "Cats or dogs?" "$(echo "$BODY" | jq -r '.summary')"
+
+BODY=$(run_captured_hook on-pre-tool-use.sh \
+    '{"session_id":"s1","cwd":"/tmp/project","tool_name":"request_user_input","tool_input":{}}')
+assert_eq "missing question falls back" "Codex has a question for you" "$(echo "$BODY" | jq -r '.summary')"
+
+assert_eq "async questions end the turn instead" "" \
+    "$(run_captured_hook on-pre-tool-use.sh '{"tool_name":"request_user_input_async","tool_input":{}}')"
+assert_eq "other tools are ignored" "" \
+    "$(run_captured_hook on-pre-tool-use.sh '{"tool_name":"shell","tool_input":{"command":"ls"}}')"
+assert_success "pre-tool hook fails open for malformed input" \
+    run_captured_hook on-pre-tool-use.sh '{not-json'
+
 printf '%s passed, %s failed\n' "$passed" "$failed"
 test "$failed" -eq 0

@@ -21,10 +21,27 @@ TOOL_INPUT=$(echo "$INPUT" | jq -c '.tool_input // {}' 2>/dev/null)
 # Fallback to empty object if jq failed or returned empty
 [ -z "$TOOL_INPUT" ] && TOOL_INPUT='{}'
 
+# AskUserQuestion is routed through the permission prompt (even with permissions bypassed), but
+# it is a question, not a tool approval: report the question itself.
+if [ "$TOOL_NAME" = "AskUserQuestion" ]; then
+    QUESTION=$(echo "$INPUT" | jq -r '.tool_input.questions[0].question // empty' 2>/dev/null)
+    [ -z "$QUESTION" ] && QUESTION="Claude has a question for you"
+    if [ ${#QUESTION} -gt 120 ]; then
+        QUESTION="${QUESTION:0:117}..."
+    fi
+    BODY=$(build_payload "$INPUT" "question_asked" \
+        --arg summary "$QUESTION" \
+        --arg tool_name "$TOOL_NAME")
+    "$SCRIPT_DIR/warp-notify.sh" "warp://cli-agent" "$BODY"
+    exit 0
+fi
+
 # Build a human-readable summary
 TOOL_PREVIEW=$(echo "$INPUT" | jq -r '(.tool_input | if .command then .command elif .file_path then .file_path else (tostring | .[0:80]) end) // ""' 2>/dev/null)
 SUMMARY="Wants to run $TOOL_NAME"
-if [ -n "$TOOL_PREVIEW" ]; then
+if [ "$TOOL_NAME" = "ExitPlanMode" ]; then
+    SUMMARY="Plan ready for your approval"
+elif [ -n "$TOOL_PREVIEW" ]; then
     if [ ${#TOOL_PREVIEW} -gt 120 ]; then
         TOOL_PREVIEW="${TOOL_PREVIEW:0:117}..."
     fi

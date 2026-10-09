@@ -1,3 +1,4 @@
+pub mod attention_pulse;
 pub mod auto_continue;
 #[cfg(not(target_family = "wasm"))]
 #[cfg_attr(not(feature = "local_tty"), allow(dead_code))]
@@ -6,6 +7,7 @@ pub mod event;
 pub mod listener;
 #[cfg(not(target_family = "wasm"))]
 pub(crate) mod plugin_manager;
+pub(crate) mod title_glyph;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -704,6 +706,14 @@ impl CLIAgentSessionsModel {
         }
     }
 
+    /// Whether any tracked session is waiting on the user to answer a question or approve an
+    /// action.
+    pub fn has_blocked_session(&self) -> bool {
+        self.sessions
+            .values()
+            .any(|session| matches!(session.status, CLIAgentSessionStatus::Blocked { .. }))
+    }
+
     pub fn session(&self, terminal_view_id: EntityId) -> Option<&CLIAgentSession> {
         self.sessions.get(&terminal_view_id)
     }
@@ -873,6 +883,9 @@ impl CLIAgentSessionsModel {
     /// interrupt gesture (lone Esc / Ctrl-C) into the pane. Neither provider fires a hook
     /// when a turn is aborted this way, so the keystroke itself is the only end-of-turn
     /// signal — without it the working indicators stay lit until the next completed turn.
+    /// The same holds while the agent waits on a question or approval: Esc dismisses the
+    /// prompt and ends the turn without a hook, which would otherwise leave the session
+    /// flagged as needing input forever.
     ///
     /// The status moves to `Success` like the `IdlePrompt` completion fallback, but with a
     /// `SessionUpdated` emission instead of `StatusChanged`: an interrupt must not mint a
@@ -887,7 +900,10 @@ impl CLIAgentSessionsModel {
             return;
         };
         if !matches!(session.agent, CLIAgent::Claude | CLIAgent::Codex)
-            || !matches!(session.status, CLIAgentSessionStatus::InProgress)
+            || !matches!(
+                session.status,
+                CLIAgentSessionStatus::InProgress | CLIAgentSessionStatus::Blocked { .. }
+            )
         {
             return;
         }
@@ -895,6 +911,7 @@ impl CLIAgentSessionsModel {
         session.status = CLIAgentSessionStatus::Success;
         session.turn_interrupted_by_user = true;
         session.session_context.stop_reason = None;
+        session.clear_permission_scoped_state();
 
         ctx.emit(CLIAgentSessionsModelEvent::SessionUpdated {
             terminal_view_id,

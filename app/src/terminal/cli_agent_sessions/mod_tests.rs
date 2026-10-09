@@ -361,7 +361,7 @@ fn parse_pi_stop_notification() {
     assert_eq!(notif.payload.response.as_deref(), Some("Memory is safe"));
 }
 
-fn idle_test_session(agent: CLIAgent) -> CLIAgentSession {
+pub(super) fn idle_test_session(agent: CLIAgent) -> CLIAgentSession {
     CLIAgentSession {
         agent,
         status: CLIAgentSessionStatus::InProgress,

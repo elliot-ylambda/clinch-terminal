@@ -1,6 +1,7 @@
 #!/bin/bash
-# Hook script for Claude Code Notification event (idle_prompt only)
-# Sends a structured Warp notification when Claude has been idle
+# Hook script for Claude Code Notification event (idle_prompt and elicitation_dialog)
+# Sends a structured Warp notification when Claude has been idle, or when an MCP server is
+# waiting on the user to fill in an elicitation form
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/should-use-structured.sh"
@@ -21,7 +22,11 @@ NOTIF_TYPE=$(echo "$INPUT" | jq -r '.notification_type // "unknown"' 2>/dev/null
 MSG=$(echo "$INPUT" | jq -r '.message // "Input needed"' 2>/dev/null)
 [ -z "$MSG" ] && MSG="Input needed"
 
-BODY=$(build_payload "$INPUT" "$NOTIF_TYPE" \
+# An MCP elicitation form blocks the turn until the user answers it.
+EVENT="$NOTIF_TYPE"
+[ "$NOTIF_TYPE" = "elicitation_dialog" ] && EVENT="question_asked"
+
+BODY=$(build_payload "$INPUT" "$EVENT" \
     --arg summary "$MSG")
 
 "$SCRIPT_DIR/warp-notify.sh" "warp://cli-agent" "$BODY"

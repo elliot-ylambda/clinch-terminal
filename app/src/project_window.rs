@@ -26,8 +26,11 @@ use warpui::{
 use crate::appearance::Appearance;
 use crate::root_view::NewWorkspaceSource;
 use crate::server::server_api::ServerTime;
+use crate::terminal::cli_agent_sessions::attention_pulse::{
+    attention_pulse_color, AgentAttentionPulse,
+};
 use crate::ui_components::icons::Icon;
-use crate::ui_components::{CLINCH_DONE_BLUE, CLINCH_LOGO_GREEN};
+use crate::ui_components::{CLINCH_ATTENTION_AMBER, CLINCH_DONE_BLUE, CLINCH_LOGO_GREEN};
 use crate::util::bindings::{self, CustomAction};
 use crate::workspace::view::{
     ProjectCliAgentActivity, ProjectCliAgentCounts, ProjectCliAgentSummary, TransferredTab,
@@ -272,6 +275,7 @@ fn render_project_agent_hover_card(
                 .unwrap_or_else(|| Empty::new().finish());
             let activity_color = match summary.activity {
                 ProjectCliAgentActivity::Working => CLINCH_LOGO_GREEN,
+                ProjectCliAgentActivity::NeedsInput => CLINCH_ATTENTION_AMBER,
                 ProjectCliAgentActivity::Done | ProjectCliAgentActivity::NeedsAttention => {
                     CLINCH_DONE_BLUE
                 }
@@ -457,6 +461,12 @@ impl ProjectWindow {
         ctx: &mut ViewContext<Self>,
     ) -> Self {
         debug_assert!(!workspace_sources.is_empty());
+
+        // Horizontal project badges are rendered here, outside Workspace's view. Refresh
+        // this view too when the shared attention clock changes phase.
+        ctx.subscribe_to_model(&AgentAttentionPulse::handle(ctx), |_, _, _, ctx| {
+            ctx.notify();
+        });
 
         let projects = workspace_sources
             .into_iter()
@@ -1646,6 +1656,12 @@ impl ProjectWindow {
             let has_other_unread = workspace.has_other_unread_project_activity(app);
             let agent_counts = workspace.project_cli_agent_counts(app);
             let agent_summaries = workspace.project_cli_agent_summaries(app);
+            let needs_input_count = agent_summaries
+                .iter()
+                .filter(|summary| summary.activity == ProjectCliAgentActivity::NeedsInput)
+                .count();
+            let needs_input_color =
+                (needs_input_count > 0).then(|| attention_pulse_color(CLINCH_ATTENTION_AMBER, app));
             let tab_count = workspace.tab_count();
             let is_active = index == self.active_project_index;
             let is_dragging = project.draggable_state.is_dragging();
@@ -1698,6 +1714,30 @@ impl ProjectWindow {
                             .with_height(6.)
                             .finish(),
                         )
+                        .with_margin_right(6.)
+                        .finish(),
+                    );
+                }
+                // An agent waiting on the user outranks every other badge, and blinks so it is
+                // noticed even when the project is in the background.
+                if let Some(needs_input_color) = needs_input_color {
+                    let badge_text = if needs_input_count == 1 {
+                        "!".to_string()
+                    } else {
+                        format!("!{needs_input_count}")
+                    };
+                    label.add_child(
+                        Container::new(
+                            Text::new_inline(badge_text, font_family, (font_size - 2.).max(8.))
+                                .with_color(needs_input_color)
+                                .finish(),
+                        )
+                        .with_horizontal_padding(4.)
+                        .with_border(
+                            Border::all(PROJECT_AGENT_COUNT_BADGE_BORDER_WIDTH)
+                                .with_border_fill(Fill::Solid(needs_input_color)),
+                        )
+                        .with_corner_radius(CornerRadius::with_all(Radius::Percentage(50.)))
                         .with_margin_right(6.)
                         .finish(),
                     );

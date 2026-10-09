@@ -46,11 +46,11 @@ use crate::agent_resume::{
     clean_prompt_title_text, prompt_title, AgentConversation, AgentResumeProvider,
 };
 use crate::ai::agent::conversation::{ConversationStatus, StatusColorStyle};
-use crate::ai::agent::icons::yellow_stop_icon;
+use crate::ai::agent::icons::needs_input_icon;
 use crate::ai::agent_management::AgentNotificationsModel;
 use crate::ai::blocklist::usage::{cli_agent_model_label, CliAgentUsageModel};
 use crate::ai::cloud_environments::CloudAmbientAgentEnvironment;
-use crate::ai::conversation_status_ui::render_status_element;
+use crate::ai::conversation_status_ui::render_status_element_with_opacity;
 use crate::appearance::Appearance;
 use crate::cloud_object::model::generic_string_model::StringModel;
 use crate::cloud_object::CloudObjectLookup as _;
@@ -69,6 +69,9 @@ use crate::safe_triangle::SafeTriangle;
 use crate::settings::ClinchSettings;
 use crate::tab::lineage::{lineage_nesting, TabLineage};
 use crate::tab::{tab_position_id, SelectedTabColor, TabData, TabOriginKind};
+use crate::terminal::cli_agent_sessions::attention_pulse::{
+    attention_pulse_color, attention_pulse_opacity,
+};
 use crate::terminal::cli_agent_sessions::{
     session_context_enabled, CLIAgentSessionKey, CLIAgentSessionStatus, CLIAgentSessionsModel,
 };
@@ -82,7 +85,7 @@ use crate::ui_components::agent_icon::{
 use crate::ui_components::buttons::{combo_inner_button, icon_button_with_color};
 use crate::ui_components::icon_with_status::{render_icon_with_status, IconWithStatusVariant};
 use crate::ui_components::icons::Icon as UiIcon;
-use crate::ui_components::{CLINCH_DONE_BLUE, CLINCH_LOGO_GREEN};
+use crate::ui_components::{CLINCH_ATTENTION_AMBER, CLINCH_DONE_BLUE, CLINCH_LOGO_GREEN};
 use crate::util::bindings::keybinding_name_to_display_string;
 use crate::util::color::Opacity;
 use crate::workspace::action::{NewSessionMenuAnchor, WorkspaceAction};
@@ -171,6 +174,8 @@ const VERTICAL_TABS_AGENT_ACTIVITY_DOT_SIZE: f32 = 6.;
 const VERTICAL_TABS_AGENT_ACTIVITY_DOT_RING_PADDING: f32 = 1.;
 /// Match the existing status badge's bottom-right placement within the 24px icon box.
 const VERTICAL_TABS_AGENT_ACTIVITY_DOT_CORNER_OFFSET: f32 = -1.;
+/// The "needs your input" glyph replaces the activity dot, and is larger so its "!" reads.
+const VERTICAL_TABS_AGENT_NEEDS_INPUT_GLYPH_SIZE: f32 = 11.;
 
 /// Icon size for the per-line conversation status pill in Summary mode. Pairs with
 /// `STATUS_ELEMENT_PADDING` (2px) for an overall ~14px element next to a 12pt title.
@@ -374,14 +379,27 @@ fn render_pane_icon_with_status(
     };
 
     let dot_color = vertical_tab_activity_dot_color(activity, theme);
+    let (dot_icon, dot_color, dot_size) = if activity == ProjectCliAgentActivity::NeedsInput {
+        (
+            WarpIcon::AlertCircle,
+            attention_pulse_color(dot_color, app),
+            VERTICAL_TABS_AGENT_NEEDS_INPUT_GLYPH_SIZE,
+        )
+    } else {
+        (
+            WarpIcon::CircleFilled,
+            dot_color,
+            VERTICAL_TABS_AGENT_ACTIVITY_DOT_SIZE,
+        )
+    };
     let dot = Container::new(
         ConstrainedBox::new(
-            WarpIcon::CircleFilled
+            dot_icon
                 .to_warpui_icon(WarpThemeFill::Solid(dot_color))
                 .finish(),
         )
-        .with_width(VERTICAL_TABS_AGENT_ACTIVITY_DOT_SIZE)
-        .with_height(VERTICAL_TABS_AGENT_ACTIVITY_DOT_SIZE)
+        .with_width(dot_size)
+        .with_height(dot_size)
         .finish(),
     )
     .with_uniform_padding(VERTICAL_TABS_AGENT_ACTIVITY_DOT_RING_PADDING)
@@ -411,6 +429,7 @@ fn render_pane_icon_with_status(
 fn vertical_tab_activity_dot_color(activity: ProjectCliAgentActivity, theme: &WarpTheme) -> ColorU {
     match activity {
         ProjectCliAgentActivity::Working => CLINCH_LOGO_GREEN,
+        ProjectCliAgentActivity::NeedsInput => CLINCH_ATTENTION_AMBER,
         ProjectCliAgentActivity::Done | ProjectCliAgentActivity::NeedsAttention => CLINCH_DONE_BLUE,
         ProjectCliAgentActivity::Idle => theme.disabled_text_color(theme.background()).into_solid(),
     }
@@ -450,6 +469,27 @@ fn vertical_tab_cli_agent_activity(
         notifications.has_unread_completed_project_cli_agent_for_terminal_view(terminal_view.id()),
         notifications.has_other_unread_project_activity_for_terminal_view(terminal_view.id()),
     ))
+}
+
+/// Whether any visible pane in the tab hosts a Claude/Codex agent waiting on the user.
+fn tab_has_agent_needing_input(tab: &TabData, app: &AppContext) -> bool {
+    let pane_group = tab.pane_group.as_ref(app);
+    pane_group.visible_pane_ids().into_iter().any(|pane_id| {
+        vertical_tab_cli_agent_activity(&pane_group.resolve_pane_type(pane_id, app), app)
+            == Some(ProjectCliAgentActivity::NeedsInput)
+    })
+}
+
+/// Outline for a card that holds an agent waiting on the user, pulsing with the shared attention
+/// clock. `None` for the active card (the user is already there) and while a drag targets it.
+fn needs_input_card_border(
+    has_agent_needing_input: bool,
+    is_active: bool,
+    is_drag_target: bool,
+    app: &AppContext,
+) -> Option<ThemeFill> {
+    (has_agent_needing_input && !is_active && !is_drag_target)
+        .then(|| ThemeFill::Solid(attention_pulse_color(CLINCH_ATTENTION_AMBER, app)))
 }
 
 fn should_render_separate_activity_indicator(
@@ -1778,7 +1818,7 @@ fn render_agent_attention_chip(
         Hoverable::new(
             state.attention_chip_mouse_state.clone(),
             move |hover_state| {
-                let icon = ConstrainedBox::new(yellow_stop_icon(appearance).finish())
+                let icon = ConstrainedBox::new(needs_input_icon(appearance).finish())
                     .with_width(SEARCH_ICON_SIZE)
                     .with_height(SEARCH_ICON_SIZE)
                     .finish();
@@ -3468,6 +3508,12 @@ fn render_tab_group_internal(
     let summary_pane_kind_icons = matches!(resolved_mode, VerticalTabsResolvedMode::Summary)
         .then(|| resolve_summary_pane_kind_icons(pane_group, &visible_pane_ids, app))
         .flatten();
+    let needs_input_border = needs_input_card_border(
+        tab_has_agent_needing_input(tab, app),
+        is_active,
+        is_drag_target,
+        app,
+    );
     let active_pane_context_menu_target = PaneViewLocator {
         pane_group_id,
         pane_id: pane_group.focused_pane_id(app),
@@ -3650,8 +3696,8 @@ fn render_tab_group_internal(
             // A tab nested in a group is enclosed by the group's own card, so it
             // stays outline-free to avoid stacking two frames a few pixels apart.
             if !in_tab_group {
-                container = container
-                    .with_border(Border::all(1.).with_border_fill(card_state.border(theme)));
+                let border = needs_input_border.unwrap_or_else(|| card_state.border(theme));
+                container = container.with_border(Border::all(1.).with_border_fill(border));
             }
             container.finish()
         } else {
@@ -3701,8 +3747,8 @@ fn render_tab_group_internal(
             // Same rule as the grouped-container branch: only a top-level tab is
             // outlined, so a nested tab doesn't double up on its group's frame.
             if !in_tab_group {
-                container = container
-                    .with_border(Border::all(1.).with_border_fill(card_state.border(theme)));
+                let border = needs_input_border.unwrap_or_else(|| card_state.border(theme));
+                container = container.with_border(Border::all(1.).with_border_fill(border));
             }
             if needs_action_button_band {
                 container = container.with_margin_top(action_button_band);
@@ -4315,6 +4361,20 @@ fn render_grouped_tab_container(
     let any_member_active = members
         .iter()
         .any(|(tab_index, _)| *tab_index == workspace.active_tab_index);
+    // Member tabs are not outlined inside a group, so the group card carries the pulse for a
+    // background member whose agent is waiting on the user.
+    let needs_input_border = needs_input_card_border(
+        members.iter().any(|(tab_index, _)| {
+            *tab_index != workspace.active_tab_index
+                && workspace
+                    .tabs
+                    .get(*tab_index)
+                    .is_some_and(|tab| tab_has_agent_needing_input(tab, app))
+        }),
+        false,
+        false,
+        app,
+    );
     let is_collapsed = group.collapsed;
 
     let resolved_mode = resolve_vertical_tabs_mode(app);
@@ -4402,6 +4462,7 @@ fn render_grouped_tab_container(
         // treatment as a standalone tab card.
         let card_state = TabCardState::resolve(false, any_member_active, hover_state.is_hovered());
         let (card_background, card_border) = section_card_colors(card_state, group_tint, theme);
+        let card_border = needs_input_border.unwrap_or(card_border);
 
         // Pane view: uniform `GROUP_HORIZONTAL_PADDING` matches ungrouped-tab body padding.
         // Tab view: only apply bottom padding when expanded so a collapsed group has no trailing band.
@@ -4990,7 +5051,7 @@ fn build_vertical_tabs_summary_data(
                         .is_some(),
                     terminal_view.is_long_running_and_user_controlled(),
                 );
-                let title_text = terminal_view.terminal_title_from_shell();
+                let title_text = terminal_view.display_title_from_shell(app);
                 let working_directory = resolved_terminal_working_directory(terminal_view, app);
                 let working_directory_text = working_directory
                     .clone()
@@ -5288,7 +5349,7 @@ fn terminal_pane_search_text_fragments(
 ) -> Vec<String> {
     let terminal_view = terminal_pane.terminal_view(app);
     let terminal_view = terminal_view.as_ref(app);
-    let title_text = terminal_view.terminal_title_from_shell();
+    let title_text = terminal_view.display_title_from_shell(app);
     let working_directory = resolved_terminal_working_directory(terminal_view, app)
         .unwrap_or_else(|| title_text.clone());
     let agent_text = terminal_agent_text(terminal_view, app);
@@ -5484,18 +5545,27 @@ fn terminal_agent_text(terminal_view: &TerminalView, app: &AppContext) -> Termin
         agent_text.conversation_display_title.is_some() || agent_text.is_oz_agent;
 
     if let Some(session) = cli_agent_session {
-        if has_clinch_session_context {
-            agent_text.cli_agent_title = terminal_view.cli_agent_title_for_chrome(false, app);
-            agent_text.cli_agent_latest_user_prompt = session
-                .latest_user_prompt_for_chrome()
-                .and_then(|prompt| clean_prompt_title_text(&prompt));
+        let (title, latest_user_prompt) = if has_clinch_session_context {
+            (
+                terminal_view.cli_agent_title_for_chrome(false, app),
+                session.latest_user_prompt_for_chrome(),
+            )
         } else {
-            agent_text.cli_agent_title = session.session_context.title_like_text();
-            agent_text.cli_agent_latest_user_prompt = session
-                .session_context
-                .latest_user_prompt()
-                .and_then(|prompt| clean_prompt_title_text(&prompt));
-        }
+            (
+                session.session_context.title_like_text(),
+                session.session_context.latest_user_prompt(),
+            )
+        };
+        // Claude Code and Codex titles carry the same status glyph however the text was chosen.
+        let with_glyph = |text: String| {
+            terminal_view
+                .standardized_agent_title(Some(&text), app)
+                .unwrap_or(text)
+        };
+        agent_text.cli_agent_title = title.map(with_glyph);
+        agent_text.cli_agent_latest_user_prompt = latest_user_prompt
+            .and_then(|prompt| clean_prompt_title_text(&prompt))
+            .map(with_glyph);
     }
 
     agent_text
@@ -5645,7 +5715,7 @@ fn render_terminal_row_content(
     let sub_text_color = theme.sub_text_color(theme.background());
     let primary_info = *TabSettings::as_ref(app).vertical_tabs_primary_info.value();
 
-    let title_text = terminal_view.terminal_title_from_shell();
+    let title_text = terminal_view.display_title_from_shell(app);
     let working_directory = resolved_terminal_working_directory(terminal_view, app)
         .unwrap_or_else(|| title_text.clone());
 
@@ -6031,6 +6101,7 @@ fn render_summary_tab_item(
                 reserve_prefix_slot,
                 main_text_color,
                 appearance,
+                app,
             );
             title_region.add_child(if idx == 0 {
                 render_title_with_origin(line, props.origin_badge.as_ref(), appearance)
@@ -6166,6 +6237,7 @@ fn render_summary_primary_label_line(
     reserve_prefix_slot: bool,
     text_color: WarpThemeFill,
     appearance: &Appearance,
+    app: &AppContext,
 ) -> Box<dyn Element> {
     // Reserve a slot wide enough for the status pill so non-conversation lines align with
     // conversation lines in the same region. STATUS_ELEMENT_PADDING is the 2px padding inside
@@ -6175,9 +6247,10 @@ fn render_summary_primary_label_line(
     let text = render_text_line(&label.text, text_color, ClipConfig::end(), appearance);
 
     let prefix: Option<Box<dyn Element>> = match (label.status.as_ref(), reserve_prefix_slot) {
-        (Some(status), _) => Some(render_status_element(
+        (Some(status), _) => Some(render_status_element_with_opacity(
             status,
             VERTICAL_TABS_SUMMARY_STATUS_ICON_SIZE,
+            status_blink_opacity(status, app),
             appearance,
         )),
         (None, true) => Some(
@@ -6495,7 +6568,7 @@ fn render_terminal_primary_line_for_view(
     text_color: WarpThemeFill,
     app: &AppContext,
 ) -> Box<dyn Element> {
-    let title_text = terminal_view.terminal_title_from_shell();
+    let title_text = terminal_view.display_title_from_shell(app);
     let working_directory = resolved_terminal_working_directory(terminal_view, app)
         .unwrap_or_else(|| title_text.clone());
     let agent_text = terminal_agent_text(terminal_view, app);
@@ -7928,19 +8001,25 @@ fn render_detail_badge(
 fn render_detail_status_pill(
     status: &ConversationStatus,
     appearance: &Appearance,
+    app: &AppContext,
 ) -> Box<dyn Element> {
     let theme = appearance.theme();
     let (icon, color) = status.status_icon_and_color(theme, StatusColorStyle::Standard);
+    let opacity = status_blink_opacity(status, app);
     Container::new(
         Flex::row()
             .with_main_axis_size(MainAxisSize::Min)
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
             .with_spacing(4.)
             .with_child(
-                ConstrainedBox::new(icon.to_warpui_icon(WarpThemeFill::Solid(color)).finish())
-                    .with_width(12.)
-                    .with_height(12.)
-                    .finish(),
+                ConstrainedBox::new(
+                    icon.to_warpui_icon(WarpThemeFill::Solid(color))
+                        .with_opacity(opacity)
+                        .finish(),
+                )
+                .with_width(12.)
+                .with_height(12.)
+                .finish(),
             )
             .with_child(
                 Text::new_inline(status.to_string(), appearance.ui_font_family(), 10.)
@@ -7953,6 +8032,16 @@ fn render_detail_status_pill(
     .with_background(ThemeFill::Solid(coloru_with_opacity(color, 10)))
     .with_corner_radius(CornerRadius::with_all(Radius::Pixels(2.)))
     .finish()
+}
+
+/// A blocked agent's status glyph blinks with the shared attention pulse; every other status is
+/// drawn steady.
+fn status_blink_opacity(status: &ConversationStatus, app: &AppContext) -> f32 {
+    if matches!(status, ConversationStatus::Blocked { .. }) {
+        attention_pulse_opacity(app)
+    } else {
+        1.
+    }
 }
 
 fn render_detail_wrapping_text(
@@ -8062,7 +8151,7 @@ fn render_terminal_detail_section(
         None
     };
 
-    let title_text = terminal_view.terminal_title_from_shell();
+    let title_text = terminal_view.display_title_from_shell(app);
     let primary_line = terminal_primary_line_data(
         terminal_view.is_long_running_and_user_controlled(),
         conversation_display_title,
@@ -8078,7 +8167,7 @@ fn render_terminal_detail_section(
         .with_spacing(DETAIL_SIDECAR_SECTION_GAP);
 
     if let Some(status) = status.as_ref() {
-        section.add_child(render_detail_status_pill(status, appearance));
+        section.add_child(render_detail_status_pill(status, appearance, app));
     }
     if let Some(working_directory) = working_directory.filter(|wd| !wd.trim().is_empty()) {
         section.add_child(render_detail_wrapping_text(
@@ -8514,7 +8603,7 @@ fn render_compact_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn El
     let (title_element, subtitle_element): (Box<dyn Element>, Option<Box<dyn Element>>) =
         if let TypedPane::Terminal(terminal_pane) = &props.typed {
             let terminal_view = terminal_pane.terminal_view(app).as_ref(app);
-            let terminal_title = terminal_view.terminal_title_from_shell();
+            let terminal_title = terminal_view.display_title_from_shell(app);
             let git_branch = terminal_view.current_git_branch(app);
             let working_directory = resolved_terminal_working_directory(terminal_view, app);
             let working_directory_text = working_directory

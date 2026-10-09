@@ -181,7 +181,7 @@ use crate::ai::agent_management::notifications::view::{
 use crate::ai::agent_management::notifications::NotificationFilter;
 use crate::ai::agent_management::telemetry::AgentManagementTelemetryEvent;
 use crate::ai::agent_management::view::{AgentManagementView, AgentManagementViewEvent};
-use crate::ai::agent_management::AgentManagementEvent;
+use crate::ai::agent_management::{active_focused_terminal_id, AgentManagementEvent};
 use crate::ai::ambient_agents::telemetry::{CloudAgentTelemetryEvent, CloudModeEntryPoint};
 #[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
 use crate::ai::ambient_agents::telemetry::{HandoffEntryPoint, HandoffInjectionPath};
@@ -397,6 +397,7 @@ use crate::terminal::available_shells::AvailableShell;
 #[cfg(target_os = "windows")]
 use crate::terminal::available_shells::AvailableShells;
 use crate::terminal::block_list_viewport::InputMode;
+use crate::terminal::cli_agent_sessions::attention_pulse::AgentAttentionPulse;
 #[cfg(not(target_family = "wasm"))]
 use crate::terminal::cli_agent_sessions::plugin_manager::{plugin_manager_for, PluginModalKind};
 #[cfg(feature = "local_tty")]
@@ -1386,6 +1387,9 @@ pub(crate) struct ProjectCliAgentCounts {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ProjectCliAgentActivity {
+    /// The agent is blocked on a question, a tool approval, or a plan approval.
+    NeedsInput,
+    /// The agent has an unread notification other than a completed turn.
     NeedsAttention,
     Done,
     Working,
@@ -1395,6 +1399,7 @@ pub(crate) enum ProjectCliAgentActivity {
 impl ProjectCliAgentActivity {
     pub(crate) fn label(self) -> &'static str {
         match self {
+            Self::NeedsInput => "Needs input",
             Self::NeedsAttention => "Needs attention",
             Self::Done => "Done",
             Self::Working => "Working",
@@ -1404,10 +1409,11 @@ impl ProjectCliAgentActivity {
 
     fn priority(self) -> u8 {
         match self {
-            Self::NeedsAttention => 0,
-            Self::Done => 1,
-            Self::Working => 2,
-            Self::Idle => 3,
+            Self::NeedsInput => 0,
+            Self::NeedsAttention => 1,
+            Self::Done => 2,
+            Self::Working => 3,
+            Self::Idle => 4,
         }
     }
 }
@@ -1428,7 +1434,9 @@ fn project_cli_agent_activity(
 ) -> ProjectCliAgentActivity {
     if is_working {
         ProjectCliAgentActivity::Working
-    } else if is_blocked || has_other_unread {
+    } else if is_blocked {
+        ProjectCliAgentActivity::NeedsInput
+    } else if has_other_unread {
         ProjectCliAgentActivity::NeedsAttention
     } else if was_interrupted_by_user || has_unread_completed {
         ProjectCliAgentActivity::Done
@@ -3708,6 +3716,11 @@ impl Workspace {
             me.handle_cli_agent_sessions_event(event, ctx);
         });
         ctx.observe(&CLIAgentSessionsModel::handle(ctx), |_, _, ctx| {
+            ctx.notify();
+        });
+        // "Needs input" glyphs, tab outlines, and project pills blink with the shared clock,
+        // which only ticks while some agent is waiting on the user.
+        ctx.subscribe_to_model(&AgentAttentionPulse::handle(ctx), |_, _, _, ctx| {
             ctx.notify();
         });
 
@@ -13143,21 +13156,25 @@ impl Workspace {
         )
     }
 
-    /// Whether the tab's focused pane currently derives the yellow "needs your attention" badge:
-    /// an agent status of `Blocked`, which `terminal_view_agent_icon_variant` also applies to a
-    /// CLI-agent turn that finished on an unfocused terminal (see `apply_awaiting_user_treatment`
-    /// in `agent_icon.rs`). Reuses the badge derivation directly rather than tracking a second
-    /// "needs input" state.
+    /// Whether the tab's focused pane has an agent waiting on the user: one blocked on a question
+    /// or approval, or a CLI-agent turn that finished on a terminal the user is not viewing.
     fn tab_needs_agent_attention(tab: &TabData, ctx: &AppContext) -> bool {
         let Some(view) = tab.pane_group.as_ref(ctx).focused_session_view(ctx) else {
             return false;
         };
-        let Some(variant) = terminal_view_agent_icon_variant(view.as_ref(ctx), ctx) else {
+        let terminal_view = view.as_ref(ctx);
+        let Some(variant) = terminal_view_agent_icon_variant(terminal_view, ctx) else {
             return false;
         };
         match variant {
-            IconWithStatusVariant::CLIAgent { status, .. }
-            | IconWithStatusVariant::OzAgent { status, .. } => {
+            IconWithStatusVariant::CLIAgent { status, .. } => match status {
+                Some(ConversationStatus::Blocked { .. }) => true,
+                Some(ConversationStatus::Success) => {
+                    active_focused_terminal_id(ctx) != Some(terminal_view.id())
+                }
+                _ => false,
+            },
+            IconWithStatusVariant::OzAgent { status, .. } => {
                 matches!(status, Some(ConversationStatus::Blocked { .. }))
             }
             IconWithStatusVariant::Neutral { .. }

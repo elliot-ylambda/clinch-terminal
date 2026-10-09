@@ -40,6 +40,17 @@
         ]
       }
     ],
+    "PreToolUse": [
+      {
+        "matcher": "request_user_input",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${PLUGIN_ROOT}/scripts/on-pre-tool-use.sh"
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "hooks": [

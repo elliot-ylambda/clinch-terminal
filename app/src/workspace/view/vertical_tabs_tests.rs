@@ -8,16 +8,16 @@ use warpui::{Element, EntityId};
 use super::{
     automatic_worktree_toggle_tooltip, branch_label_display, coalesce_summary_branch_entries,
     code_detail_kind_label, compact_branch_subtitle_display, detail_sidecar_width_and_bounds,
-    detail_target_for_hovered_row, drag_autoscroll_step, non_terminal_search_text_fragments,
-    pane_ids_for_display_granularity, pane_search_text_fragments, path_belongs_to_project,
-    preferred_agent_tab_titles, preferred_vertical_tab_title_override,
-    push_normalized_unique_summary_label, row_renames_pane, search_fragments_contain_query,
-    select_summary_pane_kind_icons, separate_title_indicator_kind,
+    detail_target_for_hovered_row, drag_autoscroll_step, needs_input_card_border,
+    non_terminal_search_text_fragments, pane_ids_for_display_granularity,
+    pane_search_text_fragments, path_belongs_to_project, preferred_agent_tab_titles,
+    preferred_vertical_tab_title_override, push_normalized_unique_summary_label, row_renames_pane,
+    search_fragments_contain_query, select_summary_pane_kind_icons, separate_title_indicator_kind,
     should_keep_detail_sidecar_visible_for_mouse_position,
     should_render_separate_activity_indicator, sort_summary_primary_labels_status_first,
-    summary_overflow_count, summary_search_text_fragments, tab_title_uses_header,
-    terminal_command_status, terminal_kind_badge_label, terminal_primary_line_data,
-    terminal_pull_request_badge_label, terminal_search_text_fragments,
+    status_blink_opacity, summary_overflow_count, summary_search_text_fragments,
+    tab_title_uses_header, terminal_command_status, terminal_kind_badge_label,
+    terminal_primary_line_data, terminal_pull_request_badge_label, terminal_search_text_fragments,
     terminal_title_fallback_font, title_indicator_color, uses_outer_group_container,
     vertical_tab_activity_dot_color, visible_pane_ids_for_detail_target, vtab_diff_stats_text,
     AgentTabTextPreference, SummaryPaneKind, SummaryPaneKindIcons, TabCardState, TerminalAgentText,
@@ -32,7 +32,9 @@ use crate::pane_group::{PaneId, TerminalPaneId};
 use crate::safe_triangle::SafeTriangle;
 use crate::terminal::view::TerminalViewState;
 use crate::terminal::CLIAgent;
-use crate::ui_components::{CLINCH_DONE_BLUE, CLINCH_LOGO_GREEN, CLINCH_SECTION_GREEN};
+use crate::ui_components::{
+    CLINCH_ATTENTION_AMBER, CLINCH_DONE_BLUE, CLINCH_LOGO_GREEN, CLINCH_SECTION_GREEN,
+};
 use crate::workspace::tab_group::{SectionColor, SECTION_COLOR_OPTIONS};
 use crate::workspace::tab_settings::VerticalTabsDisplayGranularity;
 use crate::workspace::view::ProjectCliAgentActivity;
@@ -199,6 +201,10 @@ fn agent_activity_dots_match_project_tab_working_and_done_colors() {
     assert_eq!(
         vertical_tab_activity_dot_color(ProjectCliAgentActivity::NeedsAttention, &theme),
         CLINCH_DONE_BLUE
+    );
+    assert_eq!(
+        vertical_tab_activity_dot_color(ProjectCliAgentActivity::NeedsInput, &theme),
+        CLINCH_ATTENTION_AMBER
     );
     assert_eq!(
         vertical_tab_activity_dot_color(ProjectCliAgentActivity::Idle, &theme),
@@ -1442,6 +1448,57 @@ fn summary_search_fragments_include_hidden_overflow_values() {
     assert!(search_fragments_contain_query(&fragments, "#789"));
     assert!(search_fragments_contain_query(&fragments, "+2"));
     assert!(search_fragments_contain_query(&fragments, "-3"));
+}
+
+#[test]
+fn needs_input_outline_pulses_only_on_background_cards() {
+    warpui::App::test((), |app| async move {
+        app.add_singleton_model(|_| {
+            crate::terminal::cli_agent_sessions::CLIAgentSessionsModel::new()
+        });
+        app.add_singleton_model(
+            crate::terminal::cli_agent_sessions::attention_pulse::AgentAttentionPulse::new,
+        );
+        app.read(|ctx| {
+            assert!(
+                needs_input_card_border(true, false, false, ctx).is_some(),
+                "a background tab with a waiting agent pulses"
+            );
+            assert!(
+                needs_input_card_border(true, true, false, ctx).is_none(),
+                "the active tab is where the user already is"
+            );
+            assert!(
+                needs_input_card_border(true, false, true, ctx).is_none(),
+                "a drag target keeps its drop highlight"
+            );
+            assert!(needs_input_card_border(false, false, false, ctx).is_none());
+        });
+    });
+}
+
+#[test]
+fn only_blocked_status_glyphs_blink() {
+    warpui::App::test((), |app| async move {
+        app.add_singleton_model(|_| {
+            crate::terminal::cli_agent_sessions::CLIAgentSessionsModel::new()
+        });
+        app.add_singleton_model(
+            crate::terminal::cli_agent_sessions::attention_pulse::AgentAttentionPulse::new,
+        );
+        app.read(|ctx| {
+            // With nothing blocked the clock rests lit, so every status draws at full opacity.
+            for status in [
+                ConversationStatus::InProgress,
+                ConversationStatus::Success,
+                ConversationStatus::Blocked {
+                    blocked_action: String::new(),
+                },
+            ] {
+                assert_eq!(status_blink_opacity(&status, ctx), 1.);
+            }
+        });
+    });
 }
 
 #[test]

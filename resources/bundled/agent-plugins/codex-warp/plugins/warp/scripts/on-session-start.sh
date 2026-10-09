@@ -5,7 +5,7 @@
 set -euo pipefail
 
 # Bump on every bundled release; keep in sync with the marketplace manifest and startup installer.
-PLUGIN_VERSION="0.5.1"
+PLUGIN_VERSION="0.6.0"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/should-use-structured.sh"

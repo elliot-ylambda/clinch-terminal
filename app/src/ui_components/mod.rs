@@ -50,4 +50,14 @@ pub(crate) const CLINCH_DONE_BLUE: ColorU = ColorU {
     a: 0xFF,
 };
 
+/// Amber used for "agent needs your input" indicators (a question, a tool approval, or a plan
+/// approval). A fixed color rather than the theme's yellow, which some themes push close to the
+/// lime of [`CLINCH_LOGO_GREEN`].
+pub(crate) const CLINCH_ATTENTION_AMBER: ColorU = ColorU {
+    r: 0xFF,
+    g: 0xA5,
+    b: 0x1F,
+    a: 0xFF,
+};
+
 const BORDER_RADIUS: f32 = 4.;

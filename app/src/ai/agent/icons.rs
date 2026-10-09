@@ -1,8 +1,8 @@
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::AnsiColorIdentifier;
 
-use crate::ui_components::blended_colors;
 use crate::ui_components::icons::Icon;
+use crate::ui_components::{blended_colors, CLINCH_ATTENTION_AMBER};
 
 pub fn todo_list_icon(appearance: &Appearance) -> warpui::elements::Icon {
     warpui::elements::Icon::new(
@@ -76,6 +76,12 @@ pub fn yellow_stop_icon(appearance: &Appearance) -> warpui::elements::Icon {
         Icon::StopFilled.into(),
         AnsiColorIdentifier::Yellow.to_ansi_color(&appearance.theme().terminal_colors().normal),
     )
+}
+
+/// "Needs your input" glyph for an agent waiting on a question, a tool approval, or a plan
+/// approval.
+pub fn needs_input_icon(_appearance: &Appearance) -> warpui::elements::Icon {
+    warpui::elements::Icon::new(Icon::AlertCircle.into(), CLINCH_ATTENTION_AMBER)
 }
 
 /// To be used for actions (like running commands/reading files) that are long-running and executing.

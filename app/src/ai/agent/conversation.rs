@@ -43,7 +43,7 @@ use crate::ai::agent::api::convert_conversation::{
 };
 use crate::ai::agent::comment::CodeReview;
 use crate::ai::agent::icons::{
-    failed_icon, gray_stop_icon, in_progress_icon, succeeded_icon, yellow_stop_icon,
+    failed_icon, gray_stop_icon, in_progress_icon, needs_input_icon, succeeded_icon,
 };
 use crate::ai::agent::linearization::compute_task_depths;
 use crate::ai::agent::todos::AIAgentTodoList;
@@ -72,6 +72,7 @@ use crate::terminal::model::block::{
     AgentInteractionMetadata, AgentViewVisibility, BlockId, SerializedAIMetadata, SerializedBlock,
 };
 use crate::ui_components::icons::Icon;
+use crate::ui_components::CLINCH_ATTENTION_AMBER;
 use crate::workspaces::user_profiles::UserProfileWithUID;
 use crate::{BlocklistAIHistoryModel, GlobalResourceHandlesProvider};
 
@@ -4291,7 +4292,7 @@ impl ConversationStatus {
         match self {
             ConversationStatus::InProgress => in_progress_icon(appearance),
             ConversationStatus::Success => succeeded_icon(appearance),
-            ConversationStatus::Blocked { .. } => yellow_stop_icon(appearance),
+            ConversationStatus::Blocked { .. } => needs_input_icon(appearance),
             ConversationStatus::Error => failed_icon(appearance),
             // Recovery pending: keep the in-progress treatment rather than an error one.
             ConversationStatus::TransientError => in_progress_icon(appearance),
@@ -4335,13 +4336,9 @@ impl ConversationStatus {
                 },
             ),
             ConversationStatus::Cancelled => (Icon::StopFilled, internal_colors::neutral_5(theme)),
-            ConversationStatus::Blocked { .. } => (
-                Icon::StopFilled,
-                match color_style {
-                    StatusColorStyle::Standard => theme.ansi_fg_yellow(),
-                    StatusColorStyle::Cloud => theme.ansi_bg_yellow(),
-                },
-            ),
+            // "Needs your input": a fixed amber "!" so it never reads as a stop or blends into
+            // a theme yellow near the working green.
+            ConversationStatus::Blocked { .. } => (Icon::AlertCircle, CLINCH_ATTENTION_AMBER),
             ConversationStatus::WaitingForEvents => (
                 Icon::ClockLoader,
                 match color_style {

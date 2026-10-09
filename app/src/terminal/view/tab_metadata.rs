@@ -1,11 +1,11 @@
 #[cfg(feature = "local_fs")]
 use repo_metadata::repositories::DetectedRepositories;
-use warpui::AppContext;
-#[cfg(feature = "local_fs")]
-use warpui::SingletonEntity as _;
+use warpui::{AppContext, SingletonEntity as _};
 
 use crate::context_chips::display_chip::GitLineChanges;
 use crate::context_chips::{git_line_changes_from_chips, ContextChipKind};
+use crate::terminal::cli_agent_sessions::title_glyph::{standardize_agent_title, AgentTitleStatus};
+use crate::terminal::cli_agent_sessions::{CLIAgentSessionStatus, CLIAgentSessionsModel};
 use crate::terminal::TerminalView;
 
 impl TerminalView {
@@ -112,6 +112,33 @@ impl TerminalView {
                 None
             }
         })
+    }
+
+    /// [`Self::terminal_title_from_shell`] as tab chrome shows it: a Claude Code or Codex title
+    /// gets the standardized status glyph (see `title_glyph`).
+    pub fn display_title_from_shell(&self, ctx: &AppContext) -> String {
+        self.standardized_agent_title(None, ctx)
+            .unwrap_or_else(|| self.terminal_title_from_shell())
+    }
+
+    /// The tab title for a Claude Code or Codex pane with the standardized status glyph, or
+    /// `None` when the pane runs no such agent. `display_text` is the text chosen for the tab
+    /// (such as the session's prompt); `None` uses the agent's own terminal title.
+    pub(crate) fn standardized_agent_title(
+        &self,
+        display_text: Option<&str>,
+        ctx: &AppContext,
+    ) -> Option<String> {
+        let session = CLIAgentSessionsModel::as_ref(ctx).session(self.view_id)?;
+        standardize_agent_title(
+            session.agent,
+            &self.terminal_title_from_shell(),
+            display_text,
+            AgentTitleStatus {
+                needs_input: matches!(session.status, CLIAgentSessionStatus::Blocked { .. }),
+                is_working: session.is_actively_working(),
+            },
+        )
     }
 
     pub fn terminal_title_text(&self) -> String {
