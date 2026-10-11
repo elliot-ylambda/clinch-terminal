@@ -9359,3 +9359,57 @@ fn local_control_interrupt_preserves_conversation_and_does_not_invent_a_draft() 
         assert_eq!(*writes.borrow(), vec![vec![0x1b]]);
     });
 }
+
+/// A restored tab's agent starts the first time the pane is shown, exactly once,
+/// and coordination sees it as `not_started`, then `starting` until it is up.
+#[test]
+fn deferred_agent_starts_once_when_the_pane_is_first_shown() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let terminal = add_window_with_terminal(&mut app, None);
+        let starts = Rc::new(RefCell::new(0));
+
+        terminal.update(&mut app, |view, ctx| {
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                sessions.set_session(view.view_id, cli_agent_session_with_prompts(vec![]), ctx);
+            });
+            let counter = starts.clone();
+            view.defer_agent_start(Box::new(move |_| *counter.borrow_mut() += 1));
+            assert!(view.deferred_agent_start.is_some());
+            assert_eq!(
+                view.local_control_agent_readiness(ctx).1,
+                Some("not_started")
+            );
+
+            view.mark_as_visible(ctx);
+            view.mark_as_visible(ctx);
+            assert!(view.deferred_agent_start.is_none());
+            assert_eq!(
+                view.local_control_agent_readiness(ctx).1,
+                Some("starting"),
+                "a released agent that has not taken over the terminal is still starting"
+            );
+
+            // Past the grace period it is judged like any other agent again.
+            view.deferred_agent_started_at =
+                Instant::now().checked_sub(DEFERRED_AGENT_START_GRACE + Duration::from_secs(1));
+            assert_ne!(view.local_control_agent_readiness(ctx).1, Some("starting"));
+        });
+
+        assert_eq!(*starts.borrow(), 1, "the agent must start exactly once");
+    });
+}
+
+/// A pane with no deferred start is untouched by being shown.
+#[test]
+fn showing_a_pane_without_a_deferred_agent_starts_nothing() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let terminal = add_window_with_terminal(&mut app, None);
+        terminal.update(&mut app, |view, ctx| {
+            assert!(!view.start_deferred_agent(ctx));
+            view.mark_as_visible(ctx);
+            assert!(!view.deferred_agent_is_starting());
+        });
+    });
+}

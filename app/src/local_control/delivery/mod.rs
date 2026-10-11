@@ -17,6 +17,12 @@ use super::bridge::LocalControlBridge;
 use super::permissions::{ensure_action_allowed, ensure_feature_enabled};
 
 type Reply = Result<Value, ControlError>;
+
+/// Readiness reasons of a restored tab whose agent starts when first shown.
+const LAZY_NOT_STARTED: &str = "not_started";
+const LAZY_STARTING: &str = "starting";
+/// Guard recorded for a message queued while its agent was not yet running.
+const LAZY_START_GUARD: &str = "lazy-start";
 pub(super) type PendingReply = async_channel::Receiver<Reply>;
 
 enum Operation {
@@ -230,10 +236,23 @@ fn handle(
                 check_bridge(bridge, &owner, ctx)?;
                 let entry = super::agents::resolve(&owner, &target.agent_id, ctx)?;
                 let (revision, reason) = entry.terminal.as_ref(ctx).local_control_agent_readiness(ctx);
-                if revision != target.expected_revision || !(reason.is_none() || (target.queue && reason == Some("working"))) {
+                // A restored tab's agent starts when the tab is first shown; a message
+                // to it starts it now and, queued, waits for it to come up.
+                let lazy = matches!(reason, Some(LAZY_NOT_STARTED) | Some(LAZY_STARTING));
+                if reason == Some(LAZY_NOT_STARTED) {
+                    entry.terminal.update(ctx, |terminal, ctx| {
+                        terminal.start_deferred_agent(ctx);
+                    });
+                }
+                if revision == target.expected_revision && lazy && !target.queue {
+                    return Err(ControlError::new(ErrorCode::StaleTarget, "this restored tab's agent had not started yet (Clinch starts restored agents when their tab is first shown); it is starting now. Retry in a few seconds, or send with --queue to deliver it once the agent is ready"));
+                }
+                if revision != target.expected_revision || !(reason.is_none() || (target.queue && (reason == Some("working") || lazy))) {
                     return Err(ControlError::new(ErrorCode::StaleTarget, "input revision changed or target is unavailable; inspect it again (only working agents can be queued)"));
                 }
-                Ok(entry.terminal.as_ref(ctx).local_control_queue_guard())
+                // Launching the agent replaces the active block, which would read as a
+                // human change to the ordinary guard and cancel the message.
+                Ok(if lazy { LAZY_START_GUARD.to_string() } else { entry.terminal.as_ref(ctx).local_control_queue_guard() })
             })).map_err(|_| unavailable())??;
             let message = journal.insert(Message::new(params, instance.0.clone(), guard, now()))?;
             dispatch_pending(journal, instance, spawner, completion)?;
@@ -288,8 +307,21 @@ fn probe(
 ) -> Result<Readiness, ControlError> {
     check_bridge(bridge, instance, ctx)?;
     let entry = super::agents::resolve(instance, &message.params.agent_id, ctx)?;
+    if entry
+        .terminal
+        .as_ref(ctx)
+        .local_control_agent_readiness(ctx)
+        .1
+        == Some(LAZY_NOT_STARTED)
+    {
+        entry.terminal.update(ctx, |terminal, ctx| {
+            terminal.start_deferred_agent(ctx);
+        });
+    }
     let terminal = entry.terminal.as_ref(ctx);
-    if terminal.local_control_queue_guard() != message.guard {
+    // A message queued while its agent was starting cannot pin the block that
+    // launch replaced; the readiness checks below still hold it for drafts.
+    if message.guard != LAZY_START_GUARD && terminal.local_control_queue_guard() != message.guard {
         return Ok(Readiness::Cancel(
             "user input or foreground process changed",
         ));
@@ -302,6 +334,8 @@ fn probe(
             && matches!(
                 reason,
                 "working"
+                    | LAZY_NOT_STARTED
+                    | LAZY_STARTING
                     | "human_input_or_draft"
                     | "submission_pending"
                     | "interactive_attention_required"

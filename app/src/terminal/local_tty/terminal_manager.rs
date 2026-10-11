@@ -1058,6 +1058,23 @@ impl TerminalManager {
         });
     }
 
+    /// Registers the restore command but holds it until
+    /// `start_deferred_restore_command`, so a restored tab's agent starts when
+    /// the tab is first shown.
+    pub fn set_deferred_on_restore_command(&self, command: String, app_ctx: &mut AppContext) {
+        self.pty_controller.update(app_ctx, |pty_controller, _ctx| {
+            pty_controller.set_deferred_on_restore_command(command);
+        });
+    }
+
+    /// Runs a deferred restore command now (or at bootstrap if the shell is not
+    /// ready yet). Returns whether one was deferred.
+    pub fn start_deferred_restore_command(&self, app_ctx: &mut AppContext) -> bool {
+        self.pty_controller.update(app_ctx, |pty_controller, ctx| {
+            pty_controller.start_deferred_restore_command(ctx)
+        })
+    }
+
     /// Records the PTY throughput by emitting a metric whenever the throughput
     /// is non-zero over some time interval.
     fn record_pty_throughput(

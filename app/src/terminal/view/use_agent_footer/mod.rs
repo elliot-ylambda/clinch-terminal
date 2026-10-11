@@ -1267,7 +1267,17 @@ impl TerminalView {
         };
         let rich_draft = self.has_active_cli_agent_input_session(ctx)
             && !self.input.as_ref(ctx).buffer_text(ctx).is_empty();
-        let reason = if !matches!(session.agent, CLIAgent::Claude | CLIAgent::Codex) {
+        let reason = if self.deferred_agent_start.is_some() {
+            // A restored tab whose agent waits until the tab is first shown;
+            // local-control delivery starts it on demand.
+            Some("not_started")
+        } else if self.deferred_agent_is_starting()
+            && (!block.is_active_and_long_running() || !session.supports_rich_status())
+        {
+            // Released but still booting: not yet owning the terminal, or not yet
+            // reporting status through its hooks. Queued messages wait this out.
+            Some("starting")
+        } else if !matches!(session.agent, CLIAgent::Claude | CLIAgent::Codex) {
             Some("unsupported_provider")
         } else if session.is_remote() {
             Some("remote_session")
