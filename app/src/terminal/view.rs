@@ -621,6 +621,14 @@ pub const WARP_PROMPT_HEIGHT_LINES: f32 = 0.9;
 
 const SCROLLBAR_WIDTH: ScrollbarWidth = ScrollbarWidth::Auto;
 
+/// How long a lazily started agent may take to own its terminal before
+/// coordination stops treating it as "starting" (a cold `claude --resume` of a
+/// long conversation takes several seconds on a loaded machine).
+const DEFERRED_AGENT_START_GRACE: Duration = Duration::from_secs(60);
+
+/// Starts a restored pane's agent; run once, the first time the pane is shown.
+type DeferredAgentStart = Box<dyn FnOnce(&mut AppContext)>;
+
 /// Width of the bookmark indicator
 const BOOKMARK_INDICATOR_WIDTH: f32 = 15.;
 /// Offset from the right for the bookmark preview
@@ -2693,6 +2701,13 @@ pub struct TerminalView {
     coordination_user_input_epoch: u64,
     coordination_input_dirty: bool,
     coordination_send_pending: bool,
+    /// Starts this restored pane's agent (`claude --resume …`). Set only for panes
+    /// restored at launch, and run the first time the pane is shown, so tabs the
+    /// user never opens cost a shell, not a Claude/Codex process.
+    deferred_agent_start: Option<DeferredAgentStart>,
+    /// When a deferred agent start was released; readiness reports `starting`
+    /// until the agent takes over the terminal.
+    deferred_agent_started_at: Option<Instant>,
 
     current_state: TerminalViewStateChange,
 
@@ -4804,6 +4819,8 @@ impl TerminalView {
             coordination_user_input_epoch: 0,
             coordination_input_dirty: false,
             coordination_send_pending: false,
+            deferred_agent_start: None,
+            deferred_agent_started_at: None,
             current_state: TerminalViewStateChange::default(),
             did_notify_long_running: false,
             is_focused_and_active: true,
@@ -17261,8 +17278,30 @@ impl TerminalView {
             .is_block_in_view(block_index, block_visibility)
     }
 
-    pub fn mark_as_visible(&mut self) {
+    pub fn mark_as_visible(&mut self, ctx: &mut ViewContext<Self>) {
         self.was_ever_visible = true;
+        self.start_deferred_agent(ctx);
+    }
+
+    /// Holds this restored pane's agent start until the pane is first shown.
+    pub(crate) fn defer_agent_start(&mut self, start: DeferredAgentStart) {
+        self.deferred_agent_start = Some(start);
+    }
+
+    /// Starts a deferred agent now. Returns whether one was waiting.
+    pub(crate) fn start_deferred_agent(&mut self, ctx: &mut ViewContext<Self>) -> bool {
+        let Some(start) = self.deferred_agent_start.take() else {
+            return false;
+        };
+        self.deferred_agent_started_at = Some(Instant::now());
+        start(ctx);
+        true
+    }
+
+    /// True while a just-released deferred agent is still booting.
+    pub(crate) fn deferred_agent_is_starting(&self) -> bool {
+        self.deferred_agent_started_at
+            .is_some_and(|started| started.elapsed() < DEFERRED_AGENT_START_GRACE)
     }
 
     pub fn set_active_session_state(

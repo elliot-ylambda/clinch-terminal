@@ -106,6 +106,11 @@ pub struct PtyController<T: EventLoopSender> {
     // bootstrapping on restore. Taken (and cleared) on the first non-subshell
     // `Bootstrapped` event.
     pending_on_restore_command: Option<String>,
+    // A restored tab's agent starts when the tab is first shown, not at launch.
+    // While set, bootstrap keeps `pending_on_restore_command` and records the
+    // session here instead; `start_deferred_restore_command` runs it.
+    defer_on_restore_command: bool,
+    restore_session_ready: Option<SessionId>,
 }
 
 impl<T: EventLoopSender> PtyController<T> {
@@ -233,6 +238,8 @@ impl<T: EventLoopSender> PtyController<T> {
             bootstrap_file: None,
             in_flight_native_completions_state: None,
             pending_on_restore_command: None,
+            defer_on_restore_command: false,
+            restore_session_ready: None,
         }
     }
 
@@ -514,22 +521,30 @@ impl<T: EventLoopSender> PtyController<T> {
         self.bootstrap_file.take();
 
         // On the first non-subshell bootstrap, run the one-shot agent-resume
-        // command (if any) exactly once. `take()` guarantees it fires only once.
-        if !is_subshell {
-            if let Some(command) = self.pending_on_restore_command.take() {
-                if let Some(shell_type) = self
-                    .sessions
-                    .as_ref(ctx)
-                    .get(session_id)
-                    .map(|session| session.shell().shell_type())
-                {
-                    self.write_command(&command, shell_type, CommandExecutionSource::User, ctx);
-                } else {
-                    log::warn!(
-                        "on_restore_command: no shell type for session {session_id:?}; skipping"
-                    );
-                }
+        // command (if any) exactly once, unless its start is deferred until the
+        // pane is first shown. `take()` guarantees it fires only once.
+        if !is_subshell && self.pending_on_restore_command.is_some() {
+            if self.defer_on_restore_command {
+                self.restore_session_ready.get_or_insert(session_id);
+            } else {
+                self.run_pending_restore_command(session_id, ctx);
             }
+        }
+    }
+
+    fn run_pending_restore_command(&mut self, session_id: SessionId, ctx: &mut ModelContext<Self>) {
+        let Some(command) = self.pending_on_restore_command.take() else {
+            return;
+        };
+        if let Some(shell_type) = self
+            .sessions
+            .as_ref(ctx)
+            .get(session_id)
+            .map(|session| session.shell().shell_type())
+        {
+            self.write_command(&command, shell_type, CommandExecutionSource::User, ctx);
+        } else {
+            log::warn!("on_restore_command: no shell type for session {session_id:?}; skipping");
         }
     }
 
@@ -542,6 +557,27 @@ impl<T: EventLoopSender> PtyController<T> {
         // and run the Clinch-branded restore command on their first post-update launch.
         self.pending_on_restore_command =
             Some(crate::agent_resume::normalize_restore_command(command));
+    }
+
+    /// Like `set_on_restore_command`, but the command waits past bootstrap until
+    /// `start_deferred_restore_command`: a restored tab's agent costs hundreds of
+    /// MB, so it starts when the tab is first shown rather than at launch.
+    pub fn set_deferred_on_restore_command(&mut self, command: String) {
+        self.set_on_restore_command(command);
+        self.defer_on_restore_command = true;
+    }
+
+    /// Releases a deferred restore command: it runs now if the shell has already
+    /// bootstrapped, otherwise when it does. Returns whether a command was pending.
+    pub fn start_deferred_restore_command(&mut self, ctx: &mut ModelContext<Self>) -> bool {
+        if !self.defer_on_restore_command {
+            return false;
+        }
+        self.defer_on_restore_command = false;
+        if let Some(session_id) = self.restore_session_ready.take() {
+            self.run_pending_restore_command(session_id, ctx);
+        }
+        true
     }
 
     /// Converts the given `command` into a byte array and writes its corresponding bytes to the PTY.

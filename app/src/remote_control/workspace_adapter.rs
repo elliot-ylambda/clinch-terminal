@@ -686,10 +686,15 @@ impl WorkspaceAdapter {
             terminal.remote_control_submit_text(message.text, ctx)
         });
         if !submitted {
+            let starting = resolved.terminal.as_ref(ctx).deferred_agent_is_starting();
             return AdapterReply::envelope(self.error(
                 Some(request_id),
                 ProtocolErrorCode::InvalidRequest,
-                "That agent is not currently accepting prompt input.".to_owned(),
+                if starting {
+                    "That agent is still starting (Clinch starts restored agents when they are first opened); send again in a few seconds.".to_owned()
+                } else {
+                    "That agent is not currently accepting prompt input.".to_owned()
+                },
                 true,
             ));
         }
@@ -1416,6 +1421,11 @@ impl WorkspaceAdapter {
             true,
         ))?;
         self.subscribe_to_desktop_input(&resolved.terminal, ctx);
+        // Opening a restored tab from the phone counts as showing it: start its
+        // agent if Clinch deferred that until the tab was first opened.
+        resolved.terminal.update(ctx, |terminal, ctx| {
+            terminal.start_deferred_agent(ctx);
+        });
         Ok(resolved)
     }
 

@@ -225,3 +225,69 @@ fn abort_command_start_is_noop_once_command_is_executing() {
         assert!(active_block.is_executing());
     });
 }
+
+/// A restored tab's agent-resume command survives shell bootstrap while
+/// deferred, and runs exactly once when the pane is first shown.
+#[test]
+fn deferred_restore_command_waits_past_bootstrap_until_started() {
+    App::test((), |mut app| async move {
+        let harness = build_pty_controller(&mut app);
+        let session_id = SessionId::from(1);
+        harness.controller.update(&mut app, |controller, ctx| {
+            controller.set_deferred_on_restore_command("claude --resume abc".to_owned());
+            controller.shell_bootstrapped(false, session_id, ctx);
+            assert!(
+                controller.pending_on_restore_command.is_some(),
+                "a deferred command must not run at bootstrap"
+            );
+            assert_eq!(controller.restore_session_ready, Some(session_id));
+
+            assert!(controller.start_deferred_restore_command(ctx));
+            assert!(
+                controller.pending_on_restore_command.is_none(),
+                "starting a bootstrapped pane runs the command now"
+            );
+            assert!(
+                !controller.start_deferred_restore_command(ctx),
+                "it runs only once"
+            );
+        });
+    });
+}
+
+/// Shown before its shell finished bootstrapping: the command runs at bootstrap.
+#[test]
+fn deferred_restore_command_started_early_runs_at_bootstrap() {
+    App::test((), |mut app| async move {
+        let harness = build_pty_controller(&mut app);
+        harness.controller.update(&mut app, |controller, ctx| {
+            controller.set_deferred_on_restore_command("codex resume abc".to_owned());
+            assert!(controller.start_deferred_restore_command(ctx));
+            assert!(
+                controller.pending_on_restore_command.is_some(),
+                "no shell yet"
+            );
+            controller.shell_bootstrapped(false, SessionId::from(2), ctx);
+            assert!(controller.pending_on_restore_command.is_none());
+        });
+    });
+}
+
+/// Panes restored outside launch (undo-close, transfer) keep running at bootstrap.
+#[test]
+fn plain_restore_command_still_runs_at_bootstrap() {
+    App::test((), |mut app| async move {
+        let harness = build_pty_controller(&mut app);
+        harness.controller.update(&mut app, |controller, ctx| {
+            controller.set_on_restore_command("claude --resume abc".to_owned());
+            controller.shell_bootstrapped(true, SessionId::from(3), ctx);
+            assert!(
+                controller.pending_on_restore_command.is_some(),
+                "a subshell bootstrap never runs it"
+            );
+            controller.shell_bootstrapped(false, SessionId::from(3), ctx);
+            assert!(controller.pending_on_restore_command.is_none());
+            assert!(!controller.start_deferred_restore_command(ctx));
+        });
+    });
+}

@@ -1743,8 +1743,11 @@ impl PaneGroup {
                 .with_restored_local_cwd_fallback(restored_local_cwd_fallback);
 
                 // Auto-resume agent sessions: if this pane had a live agent session
-                // captured at snapshot time, run its resume command (e.g.
-                // `claude --resume <id>`) once the restored shell finishes bootstrapping.
+                // captured at snapshot time, its resume command (e.g.
+                // `claude --resume <id>`) runs the first time the pane is shown, not
+                // at launch: each agent costs hundreds of MB, and most restored tabs
+                // are never opened before the next restart. The shell still starts
+                // now; the sidebar already lists the session from the seed above.
                 #[cfg(feature = "local_tty")]
                 {
                     if let Some(on_restore_command) = on_restore_command {
@@ -1754,8 +1757,24 @@ impl PaneGroup {
                                 .as_any()
                                 .downcast_ref::<local_tty::TerminalManager>()
                             {
-                                manager.set_on_restore_command(on_restore_command, ctx);
+                                manager.set_deferred_on_restore_command(on_restore_command, ctx);
                             }
+                        });
+                        let manager = manager_handle.downgrade();
+                        pane_data.terminal_view(ctx).update(ctx, |view, _ctx| {
+                            view.defer_agent_start(Box::new(move |ctx| {
+                                let Some(manager_handle) = manager.upgrade(ctx) else {
+                                    return;
+                                };
+                                manager_handle.update(ctx, |terminal_manager, ctx| {
+                                    if let Some(manager) = terminal_manager
+                                        .as_any()
+                                        .downcast_ref::<local_tty::TerminalManager>(
+                                    ) {
+                                        manager.start_deferred_restore_command(ctx);
+                                    }
+                                });
+                            }));
                         });
                     }
                 }
@@ -6843,8 +6862,8 @@ impl PaneGroup {
         let active_window_id = ctx.windows().state().active_window;
         if active_window_id == Some(ctx.window_id()) {
             for session in self.panes_of::<TerminalPane>() {
-                session.terminal_view(ctx).update(ctx, |view, _ctx| {
-                    view.mark_as_visible();
+                session.terminal_view(ctx).update(ctx, |view, ctx| {
+                    view.mark_as_visible(ctx);
                 });
             }
         }
