@@ -107,6 +107,7 @@ verify_app() {
     "$app/Contents/Resources/agent-resume/clinch-agent-resume" \
     "$app/Contents/Resources/agent-resume/warp-agent-resume" \
     "$app/Contents/Resources/agent-resume/clinch_agent_resume_launch" \
+    "$app/Contents/Resources/agent-resume/clinch_codex_launch" \
     "$app/Contents/Resources/agent-resume/claude-capture.sh" \
     "$app/Contents/Resources/agent-resume/prompt-mirror.sh" \
     "$app/Contents/Resources/agent-resume/claude.zsh" \
@@ -114,6 +115,7 @@ verify_app() {
     "$app/Contents/Resources/agent-resume/codex-prompt-submit.sh" \
     "$app/Contents/Resources/agent-resume/codex-session-end.sh" \
     "$app/Contents/Resources/bin/clinch_agent_resume_launch" \
+    "$app/Contents/Resources/bin/clinch_codex_launch" \
     "$app/Contents/Resources/bin/warp_agent_resume_launch" \
     "$app/Contents/Resources/bin/clinch" \
     "$app/Contents/Resources/bin/warpctrl" \

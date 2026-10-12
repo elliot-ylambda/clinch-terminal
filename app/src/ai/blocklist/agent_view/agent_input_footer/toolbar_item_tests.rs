@@ -1,6 +1,30 @@
 use super::*;
 
 #[test]
+fn only_unchanged_codex_terminal_buttons_use_typed_launches() {
+    let defaults = AgentToolbarItemKind::terminal_default_left();
+    assert_eq!(
+        defaults[1].terminal_codex_launch_args(),
+        Some("--dangerously-bypass-approvals-and-sandbox")
+    );
+    assert_eq!(defaults[3].terminal_codex_launch_args(), Some("resume"));
+    for custom in [
+        AgentToolbarItemKind::custom_insert(
+            "My Codex",
+            "codex --dangerously-bypass-approvals-and-sandbox",
+        ),
+        AgentToolbarItemKind::custom_insert("Codex", "codex --model custom-model"),
+        AgentToolbarItemKind::CustomInsert {
+            label: "Codex resume".to_owned(),
+            text: "codex resume".to_owned(),
+            auto_send: false,
+        },
+    ] {
+        assert_eq!(custom.terminal_codex_launch_args(), None);
+    }
+}
+
+#[test]
 fn terminal_default_left_contains_exact_quick_actions() {
     assert_eq!(
         AgentToolbarItemKind::terminal_default_left(),

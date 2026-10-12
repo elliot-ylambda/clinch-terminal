@@ -44,9 +44,10 @@ fn claude_transfer_launches_codex_with_session_transcript_hint() {
     .expect("Claude session should be transferable");
 
     assert_eq!(transfer.cwd.as_deref(), Some("/tmp/project"));
-    assert!(transfer
-        .launch_command
-        .starts_with("codex --dangerously-bypass-approvals-and-sandbox "));
+    assert!(transfer.launch_command.starts_with(&format!(
+        "{} --dangerously-bypass-approvals-and-sandbox ",
+        AgentResumeProvider::Codex.launch_command_prefix(true)
+    )));
     assert!(transfer.launch_command.contains("last Claude Code agent"));
     assert!(transfer.launch_command.contains("claude-session-123.jsonl"));
     assert!(transfer.launch_command.contains("/tmp/project"));
@@ -100,6 +101,147 @@ fn transfer_requires_supported_agent_and_conversation_reference() {
         ShellType::Zsh,
     )
     .is_none());
+}
+
+/// Exercise the footer action itself, including a pane whose resume identity has not yet
+/// reached the UI. Nextest isolates the Clinch channel and capture-directory overrides.
+#[test]
+#[cfg(feature = "local_tty")]
+fn transfer_footer_retries_resume_identity_and_reports_missing_capture() {
+    use warp_core::channel::{Channel, ChannelConfig, ChannelState};
+    use warp_core::AppId;
+
+    use crate::terminal::model::block::BlockMetadata;
+    use crate::terminal::model::session::SessionInfo;
+    use crate::workspace::ToastStack;
+
+    const ID: &str = "019fbab0-2150-7f93-9b10-7195f6c800e8";
+    let registry = tempfile::tempdir().unwrap();
+    std::env::set_var("WARP_AGENT_RESUME_DIR", registry.path());
+    std::env::set_var("CODEX_HOME", registry.path().join("codex"));
+    ChannelState::set(ChannelState::new(
+        Channel::Local,
+        ChannelConfig::no_backend(AppId::new("sh", "clinch", "ClinchDev"), "clinch-test.log"),
+    ));
+
+    for (command, known_id, should_transfer) in [
+        ("codex".to_owned(), None, false),
+        ("codex".to_owned(), Some(ID), true),
+        (format!("codex resume {ID}"), None, true),
+    ] {
+        App::test((), |mut app| async move {
+            initialize_app_for_terminal_view(&mut app);
+            let toasts = app.add_singleton_model(|_| ToastStack);
+            let terminal = add_window_with_terminal(&mut app, None);
+            let (window_id, footer) = terminal.update(&mut app, |view, ctx| {
+                {
+                    let mut model = view.model.lock();
+                    model.init_shell(InitShellValue {
+                        session_id: 0.into(),
+                        shell: "zsh".to_owned(),
+                        ..Default::default()
+                    });
+                    model.bootstrapped(BootstrappedValue {
+                        shell: "zsh".to_owned(),
+                        ..Default::default()
+                    });
+                    model.simulate_long_running_block(command.as_str(), "");
+                }
+                view.active_block_metadata =
+                    Some(BlockMetadata::new(Some(0.into()), Some("/tmp".into())));
+                view.sessions.update(ctx, |sessions, _| {
+                    sessions.register_session_for_test(
+                        SessionInfo::new_for_test().with_shell_type(ShellType::Zsh),
+                    );
+                });
+                assert_eq!(view.active_session_shell_type(ctx), Some(ShellType::Zsh));
+                CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                    sessions.set_session(
+                        view.view_id,
+                        CLIAgentSession {
+                            agent: CLIAgent::Codex,
+                            status: CLIAgentSessionStatus::Success,
+                            session_context: CLIAgentSessionContext {
+                                session_id: known_id.map(str::to_owned),
+                                cwd: Some("/tmp".to_owned()),
+                                ..Default::default()
+                            },
+                            input_state: CLIAgentInputState::Closed,
+                            listener: None,
+                            plugin_version: None,
+                            remote_host: None,
+                            draft_text: None,
+                            custom_command_prefix: None,
+                            received_rich_notification: false,
+                            has_observed_turn_activity: false,
+                            turn_interrupted_by_user: false,
+                            prompt_history: Default::default(),
+                            prompt_history_load_state: Default::default(),
+                            prompt_history_generation: 0,
+                            should_auto_toggle_input: false,
+                        },
+                        ctx,
+                    );
+                });
+                (
+                    ctx.window_id(),
+                    view.use_agent_footer.as_ref(ctx).agent_input_footer.clone(),
+                )
+            });
+            let transfers = Rc::new(RefCell::new(Vec::new()));
+            let captured_transfers = transfers.clone();
+            let toast_count = Rc::new(RefCell::new(0));
+            let captured_toast_count = toast_count.clone();
+            app.update(|ctx| {
+                ctx.subscribe_to_view(&terminal, move |_, event, _| {
+                    if let super::super::Event::TransferCliAgentSession { command, cwd, .. } = event
+                    {
+                        captured_transfers
+                            .borrow_mut()
+                            .push((command.clone(), cwd.clone()));
+                    }
+                });
+                ctx.subscribe_to_model(&toasts, move |_, _, _| {
+                    *captured_toast_count.borrow_mut() += 1;
+                });
+                ctx.dispatch_typed_action_for_view(
+                    window_id,
+                    footer.id(),
+                    &AgentInputFooterAction::TransferAgent,
+                );
+            });
+            if should_transfer {
+                let transfers = transfers.borrow();
+                assert_eq!(transfers.len(), 1);
+                assert!(transfers[0]
+                    .0
+                    .starts_with("claude --dangerously-skip-permissions "));
+                assert!(transfers[0].0.contains(ID));
+                assert_eq!(transfers[0].1.as_deref(), Some("/tmp"));
+                assert_eq!(*toast_count.borrow(), 0);
+            } else {
+                assert!(transfers.borrow().is_empty());
+                assert_eq!(
+                    *toast_count.borrow(),
+                    1,
+                    "A click must explain missing capture"
+                );
+            }
+            terminal.read(&app, |view, ctx| {
+                assert_eq!(
+                    view.active_long_running_command().as_deref(),
+                    Some(command.as_str())
+                );
+                assert_eq!(
+                    CLIAgentSessionsModel::as_ref(ctx)
+                        .session(view.view_id)
+                        .unwrap()
+                        .agent,
+                    CLIAgent::Codex
+                );
+            });
+        });
+    }
 }
 
 struct PendingAIBlockModel {
@@ -261,10 +403,16 @@ fn terminal_footer_action_relay_emits_submitted_pty_command() {
         let observed = Rc::new(RefCell::new(Vec::new()));
         let observed_for_subscription = observed.clone();
         app.update(|ctx| {
-            ctx.subscribe_to_view(&toolbar, move |_, event, _| {
-                if let UseAgentToolbarEvent::WriteToPty(text) = event {
+            ctx.subscribe_to_view(&toolbar, move |_, event, _| match event {
+                UseAgentToolbarEvent::WriteToPty(text) => {
                     observed_for_subscription.borrow_mut().push(text.clone());
                 }
+                UseAgentToolbarEvent::LaunchTerminalCodex(args) => {
+                    observed_for_subscription
+                        .borrow_mut()
+                        .push(format!("codex launch: {args}"));
+                }
+                _ => (),
             });
         });
 
@@ -280,6 +428,17 @@ fn terminal_footer_action_relay_emits_submitted_pty_command() {
         });
 
         assert_eq!(*observed.borrow(), vec!["git status\n".to_owned()]);
+        app.update(|ctx| {
+            ctx.dispatch_typed_action_for_view(
+                window_id,
+                relay.id(),
+                &AgentInputFooterAction::LaunchTerminalCodex("resume"),
+            );
+        });
+        assert_eq!(
+            *observed.borrow(),
+            vec!["git status\n".to_owned(), "codex launch: resume".to_owned()]
+        );
     });
 }
 

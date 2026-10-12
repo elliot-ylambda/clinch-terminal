@@ -24,6 +24,20 @@ pub enum AgentResumeProvider {
 }
 
 impl AgentResumeProvider {
+    /// Executable for an app-owned launch. Remote sessions and other app variants keep
+    /// their provider command; only local Clinch panes have this Codex launcher.
+    pub(crate) fn launch_command_prefix(self, is_local: bool) -> &'static str {
+        self.launch_command_prefix_for(&ChannelState::app_id().to_string(), is_local)
+    }
+
+    fn launch_command_prefix_for(self, app_id: &str, is_local: bool) -> &'static str {
+        if is_local && self == Self::Codex && app_id_enables_runtime(app_id) {
+            "clinch_codex_launch"
+        } else {
+            self.as_str()
+        }
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Claude => "claude",
@@ -1077,7 +1091,10 @@ fn derive_fork_command(command: &str) -> Option<String> {
     let LaunchCommand { agent, id, flags } = parse_launch_command(command)?;
     match agent {
         "claude" => Some(format!("claude --resume {id}{flags} --fork-session")),
-        "codex" => Some(format!("codex fork {id}{flags}")),
+        "codex" => Some(format!(
+            "{} fork {id}{flags}",
+            AgentResumeProvider::Codex.launch_command_prefix(true)
+        )),
         _ => None,
     }
 }
@@ -1205,7 +1222,10 @@ impl AgentConversation {
                 }
                 Some(_) | None => format!("claude --resume {session_id}{flags}"),
             }),
-            "codex" => Some(format!("codex resume {session_id}{flags}")),
+            "codex" => Some(format!(
+                "{} resume {session_id}{flags}",
+                AgentResumeProvider::Codex.launch_command_prefix(true)
+            )),
             _ => None,
         }
     }

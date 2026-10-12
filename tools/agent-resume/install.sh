@@ -77,6 +77,7 @@ install_runtime() {
     "$SRC/clinch-agent-resume" \
     "$SRC/warp-agent-resume" \
     "$SRC/clinch_agent_resume_launch" \
+    "$SRC/clinch_codex_launch" \
     "$SRC/claude-capture.sh" \
     "$SRC/prompt-mirror.sh" \
     "$SRC/codex-session-start.sh" \
@@ -92,7 +93,7 @@ remove_runtime() {
   local name
   for name in \
     agent-json agent-json.js clinch-agent-resume warp-agent-resume \
-    clinch_agent_resume_launch warp_agent_resume_launch claude-capture.sh \
+    clinch_agent_resume_launch warp_agent_resume_launch clinch_codex_launch claude-capture.sh \
     prompt-mirror.sh claude-session-start.sh claude.zsh codex-session-start.sh \
     codex-prompt-submit.sh codex-session-end.sh \
     install-agent-plugins.sh wire-claude-hooks.sh unwire-claude-hooks.sh; do

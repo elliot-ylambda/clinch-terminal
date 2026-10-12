@@ -19,7 +19,7 @@ use crate::auth::AuthStateProvider;
 use crate::remote_control::RemoteControlService;
 #[cfg(target_os = "macos")]
 use crate::settings::CliAgentUsageSettings;
-use crate::settings::ClinchSettings;
+use crate::settings::{ClinchSettings, LocalControlMode, LocalControlSettings};
 use crate::settings_view::keybindings::KeybindingChangedNotifier;
 use crate::settings_view::settings_page::SettingsWidget;
 use crate::terminal::session_settings::SessionSettings;
@@ -113,6 +113,43 @@ fn remote_control_model_notifications_redraw_the_visible_settings_page() {
             frames_after > frames_before,
             "a background Remote Control notification must redraw the visible settings page"
         );
+    });
+}
+
+/// Uses a test app ID so changing the setting cannot write the user's Clinch preference.
+#[test]
+#[cfg(feature = "local_fs")]
+fn local_control_can_be_enabled_from_clinch_settings_and_redraws_on_changes() {
+    let _flag = warp_core::features::FeatureFlag::WarpControlCli.override_enabled(true);
+    App::test((), |mut app| async move {
+        ChannelState::set(ChannelState::new(
+            Channel::Local,
+            ChannelConfig::no_backend(AppId::new("test", "warp", "WarpTest"), "warp-test.log"),
+        ));
+        initialize_settings_for_tests(&mut app);
+        app.add_singleton_model(|_| AuthStateProvider::new_logged_out_for_test());
+        app.add_singleton_model(|_| KeybindingChangedNotifier::new());
+        app.add_singleton_model(|_| Appearance::mock());
+        app.update(crate::remote_control::register);
+        let (window_id, view) =
+            app.add_window(WindowStyle::NotStealFocus, ClinchSettingsPageView::new);
+        assert!(!app.read(|ctx| LocalControlSettings::as_ref(ctx).is_enabled()));
+
+        view.update(&mut app, |view, ctx| {
+            view.handle_action(&ClinchSettingsPageAction::LocalControl, ctx);
+        });
+        assert!(app.read(|ctx| LocalControlSettings::as_ref(ctx).is_enabled()));
+        let frames_before =
+            app.read(|ctx| ctx.presenter(window_id).unwrap().borrow().frame_count());
+        LocalControlSettings::handle(&app).update(&mut app, |settings, ctx| {
+            settings
+                .local_control_mode
+                .set_value(LocalControlMode::Disabled, ctx)
+                .unwrap();
+        });
+        assert!(!app.read(|ctx| LocalControlSettings::as_ref(ctx).is_enabled()));
+        let frames_after = app.read(|ctx| ctx.presenter(window_id).unwrap().borrow().frame_count());
+        assert!(frames_after > frames_before);
     });
 }
 

@@ -6,7 +6,6 @@ use ::settings::{Setting, ToggleableSetting};
 use chrono::{DateTime, Local, Utc};
 #[cfg(feature = "local_fs")]
 use clinch_companion_protocol::{DeviceId, DevicePlatform, PairingClaimId};
-#[cfg(feature = "local_fs")]
 use warp_core::channel::ChannelState;
 #[cfg(feature = "local_fs")]
 use warpui::clipboard::ClipboardContent;
@@ -28,12 +27,13 @@ use super::settings_page::{
 use super::{SettingsSection, ToggleState};
 use crate::appearance::Appearance;
 use crate::drive::sharing::qr_code::{qr_matrix_for_url, QrMatrix, QUIET_ZONE_MODULES};
+use crate::features::FeatureFlag;
 #[cfg(feature = "local_fs")]
 use crate::remote_control::{RemoteControlService, RemoteControlStatus, RemoteControlViewState};
 use crate::report_if_error;
 use crate::settings::{
     AutoCreateWorktreesForNewTabs, CliAgentUsageSettings, ClinchAutomaticUpdateCheck,
-    ClinchSettings, ShowCliAgentPlanLimits,
+    ClinchSettings, LocalControlMode, LocalControlSettings, ShowCliAgentPlanLimits,
 };
 use crate::terminal::session_settings::{NotificationsSettings, SessionSettings};
 use crate::ui_components::icons::Icon;
@@ -109,6 +109,9 @@ enum ArmedRemoval {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ClinchSettingsPageAction {
+    LocalControl,
+    #[cfg(target_os = "macos")]
+    InstallLocalControlCli,
     SessionCapture,
     AgentStatusOnTabs,
     AutoCreateWorktreesForNewTabs,
@@ -143,6 +146,8 @@ pub struct ClinchSettingsPageView {
     page: PageType<Self>,
     local_only_icon_tooltip_states: RefCell<HashMap<String, MouseStateHandle>>,
     session_capture_enabled: bool,
+    #[cfg(target_os = "macos")]
+    local_control_cli_installing: bool,
     #[cfg(feature = "local_fs")]
     armed_removal: Option<ArmedRemoval>,
     #[cfg(feature = "local_fs")]
@@ -156,6 +161,11 @@ impl ClinchSettingsPageView {
             ctx.notify()
         });
         ctx.subscribe_to_model(&ClinchSettings::handle(ctx), |_, _, _, ctx| ctx.notify());
+        if FeatureFlag::WarpControlCli.is_enabled() {
+            ctx.subscribe_to_model(&LocalControlSettings::handle(ctx), |_, _, _, ctx| {
+                ctx.notify()
+            });
+        }
         #[cfg(feature = "local_fs")]
         if !ChannelState::has_backend() {
             ctx.observe(&RemoteControlService::handle(ctx), |_, _, ctx| ctx.notify());
@@ -199,6 +209,14 @@ impl ClinchSettingsPageView {
         if !project_widgets.is_empty() {
             categories.push(Category::new("Projects", project_widgets));
         }
+        if !ChannelState::has_backend() && FeatureFlag::WarpControlCli.is_enabled() {
+            #[allow(unused_mut)]
+            let mut widgets: Vec<Box<dyn SettingsWidget<View = Self>>> =
+                vec![Box::new(LocalControlWidget::default())];
+            #[cfg(target_os = "macos")]
+            widgets.push(Box::new(LocalControlCliWidget::default()));
+            categories.push(Category::new("Local control", widgets));
+        }
         categories.push(Category::new("Agents", agent_widgets));
         if !usage_widgets.is_empty() {
             categories.push(Category::new("Usage", usage_widgets));
@@ -214,6 +232,8 @@ impl ClinchSettingsPageView {
             session_capture_enabled: crate::agent_resume::capture_layer_enabled(),
             #[cfg(not(target_os = "macos"))]
             session_capture_enabled: false,
+            #[cfg(target_os = "macos")]
+            local_control_cli_installing: false,
             #[cfg(feature = "local_fs")]
             armed_removal: None,
             #[cfg(feature = "local_fs")]
@@ -231,6 +251,59 @@ impl TypedActionView for ClinchSettingsPageView {
 
     fn handle_action(&mut self, action: &Self::Action, ctx: &mut ViewContext<Self>) {
         match action {
+            #[cfg(target_os = "macos")]
+            ClinchSettingsPageAction::InstallLocalControlCli => {
+                if self.local_control_cli_installing
+                    || crate::workspace::cli_install::is_local_control_cli_installed()
+                {
+                    return;
+                }
+                self.local_control_cli_installing = true;
+                let window_id = ctx.window_id();
+                ctx.spawn(
+                    async { crate::workspace::cli_install::install_local_control_cli() },
+                    move |view, result, ctx| {
+                        view.local_control_cli_installing = false;
+                        let toast = match result {
+                            Ok(()) => crate::view_components::DismissibleToast::success(
+                                "Installed Clinch CLI for use outside Clinch.".to_owned(),
+                            ),
+                            Err(error) => crate::view_components::DismissibleToast::error(format!(
+                                "Could not install Clinch CLI: {error}"
+                            )),
+                        };
+                        crate::ToastStack::handle(ctx).update(ctx, |toast_stack, ctx| {
+                            toast_stack.add_ephemeral_toast(toast, window_id, ctx);
+                        });
+                        ctx.notify();
+                    },
+                );
+                ctx.notify();
+            }
+            ClinchSettingsPageAction::LocalControl => {
+                let next = if LocalControlSettings::as_ref(ctx).is_enabled() {
+                    LocalControlMode::Disabled
+                } else {
+                    LocalControlMode::Enabled
+                };
+                let result = LocalControlSettings::handle(ctx).update(ctx, |settings, ctx| {
+                    settings.local_control_mode.set_value(next, ctx)
+                });
+                if let Err(error) = result {
+                    log::error!("could not change Clinch local control: {error:#}");
+                    let window_id = ctx.window_id();
+                    crate::ToastStack::handle(ctx).update(ctx, |toast_stack, ctx| {
+                        toast_stack.add_ephemeral_toast(
+                            crate::view_components::DismissibleToast::error(format!(
+                                "Could not change local control: {error:#}"
+                            )),
+                            window_id,
+                            ctx,
+                        );
+                    });
+                }
+                ctx.notify();
+            }
             ClinchSettingsPageAction::SessionCapture => {
                 #[cfg(target_os = "macos")]
                 {
@@ -1259,6 +1332,115 @@ impl SettingsWidget for RemoteControlSetupWidget {
                 .with_child(Self::render_privacy_note(appearance))
                 .finish()
         }
+    }
+}
+
+#[derive(Default)]
+struct LocalControlWidget {
+    switch_state: SwitchStateHandle,
+}
+
+impl SettingsWidget for LocalControlWidget {
+    type View = ClinchSettingsPageView;
+
+    fn search_terms(&self) -> &str {
+        "local control clinch ctrl cli automation scripting enabled disabled keychain recovery"
+    }
+
+    fn render(
+        &self,
+        _view: &Self::View,
+        appearance: &Appearance,
+        app: &AppContext,
+    ) -> Box<dyn Element> {
+        let settings = LocalControlSettings::as_ref(app);
+        let switch = appearance
+            .ui_builder()
+            .switch(self.switch_state.clone())
+            .check(settings.is_enabled())
+            .build()
+            .on_click(|ctx, _, _| {
+                ctx.dispatch_typed_action(ClinchSettingsPageAction::LocalControl);
+            })
+            .finish();
+        let mut description = "Allow programs running as your macOS user, including Claude Code \
+            and Codex, to inspect and manage Clinch tabs through the Clinch CLI. Access stays on \
+            this Mac. Clinch includes the CLI; no separate installation is needed."
+            .to_owned();
+        if settings.load_error().is_some() {
+            description.push_str(
+                " Your saved choice could not be read, so local control is off. Turn it on here to save your choice again."
+            );
+        }
+        render_body_item::<ClinchSettingsPageAction>(
+            "Allow local control".into(),
+            None,
+            LocalOnlyIconState::Hidden,
+            ToggleState::Enabled,
+            appearance,
+            switch,
+            Some(description),
+        )
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Default)]
+struct LocalControlCliWidget {
+    mouse_state: MouseStateHandle,
+}
+
+#[cfg(target_os = "macos")]
+impl SettingsWidget for LocalControlCliWidget {
+    type View = ClinchSettingsPageView;
+
+    fn search_terms(&self) -> &str {
+        "clinch cli command install global local control"
+    }
+
+    fn render(
+        &self,
+        view: &Self::View,
+        appearance: &Appearance,
+        _app: &AppContext,
+    ) -> Box<dyn Element> {
+        let installed = crate::workspace::cli_install::is_local_control_cli_installed();
+        let label = if installed {
+            "Installed"
+        } else if view.local_control_cli_installing {
+            "Installing…"
+        } else {
+            "Install command"
+        };
+        let mut button = appearance
+            .ui_builder()
+            .button(ButtonVariant::Secondary, self.mouse_state.clone())
+            .with_text_label(label.to_owned());
+        let disabled = installed || view.local_control_cli_installing;
+        if disabled {
+            button = button.disabled();
+        }
+        let button = if disabled {
+            button.build().finish()
+        } else {
+            button
+                .build()
+                .on_click(|ctx, _, _| {
+                    ctx.dispatch_typed_action(ClinchSettingsPageAction::InstallLocalControlCli);
+                })
+                .finish()
+        };
+        render_body_item::<ClinchSettingsPageAction>(
+            "Use Clinch CLI in other terminals".into(),
+            None,
+            LocalOnlyIconState::Hidden,
+            ToggleState::Enabled,
+            appearance,
+            button,
+            Some(
+                "Optionally install the clinch command on your PATH for use outside Clinch.".into(),
+            ),
+        )
     }
 }
 

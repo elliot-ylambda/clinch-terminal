@@ -1102,7 +1102,9 @@ fn next_stop_index(current: usize, len: usize, direction: CycleDirection) -> usi
 /// navigation (arrow keys, deep links) against landing on a page that's
 /// hidden in backendless builds.
 fn visible_section_or_fallback(section: SettingsSection, has_backend: bool) -> SettingsSection {
-    if !has_backend && section.requires_backend() {
+    if !has_backend && section == SettingsSection::Scripting {
+        SettingsSection::Clinch
+    } else if !has_backend && section.requires_backend() {
         SettingsSection::Appearance
     } else {
         section
@@ -1280,11 +1282,12 @@ impl SettingsView {
         ctx.subscribe_to_view(&referrals_page_handle, |me, _, event, ctx| {
             me.handle_referrals_page_event(event, ctx);
         });
-        let scripting_page_handle = if FeatureFlag::WarpControlCli.is_enabled() {
-            Some(ctx.add_typed_action_view(ScriptingSettingsPageView::new))
-        } else {
-            None
-        };
+        let scripting_page_handle =
+            if ChannelState::has_backend() && FeatureFlag::WarpControlCli.is_enabled() {
+                Some(ctx.add_typed_action_view(ScriptingSettingsPageView::new))
+            } else {
+                None
+            };
 
         // Warp Drive page
         let warp_drive_page_handle =
@@ -1395,7 +1398,7 @@ impl SettingsView {
             SettingsNavItem::Page(SettingsSection::About),
         ];
 
-        if FeatureFlag::WarpControlCli.is_enabled() {
+        if ChannelState::has_backend() && FeatureFlag::WarpControlCli.is_enabled() {
             let shared_blocks_index = nav_items
                 .iter()
                 .position(|item| {

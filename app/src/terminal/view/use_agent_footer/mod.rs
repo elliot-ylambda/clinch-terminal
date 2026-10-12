@@ -463,7 +463,10 @@ fn build_cli_agent_transfer(
             format!("claude --dangerously-skip-permissions {quoted_prompt}")
         }
         CLIAgent::Codex => {
-            format!("codex --dangerously-bypass-approvals-and-sandbox {quoted_prompt}")
+            format!(
+                "{} --dangerously-bypass-approvals-and-sandbox {quoted_prompt}",
+                AgentResumeProvider::Codex.launch_command_prefix(true)
+            )
         }
         _ => return None,
     };
@@ -554,6 +557,11 @@ impl TerminalView {
                 // forward the write request to the sharer instead of only
                 // emitting a local PTY write event.
                 self.write_user_bytes_to_pty(text.as_bytes().to_vec(), ctx);
+            }
+            UseAgentToolbarEvent::LaunchTerminalCodex(args) => {
+                let prefix = AgentResumeProvider::Codex
+                    .launch_command_prefix(self.active_session_is_local(ctx) == Some(true));
+                self.write_user_bytes_to_pty(format!("{prefix} {args}\n").into_bytes(), ctx);
             }
             UseAgentToolbarEvent::InsertIntoRichInput(text) => {
                 self.input.update(ctx, |input, ctx| {
@@ -1515,12 +1523,32 @@ impl TerminalView {
     /// source agent and its tab untouched.
     #[cfg(feature = "local_tty")]
     fn open_cli_agent_transfer_in_new_tab(&mut self, ctx: &mut ViewContext<Self>) {
+        // A resumed agent can be visible before command detection or its provider hook has
+        // attached the conversation ID. Retry using this pane's exact resume command on click.
+        self.seed_cli_agent_from_active_resume_command(ctx);
         let Some((source_agent, mut session_context)) = CLIAgentSessionsModel::as_ref(ctx)
             .session(self.view_id)
             .map(|session| (session.agent, session.session_context.clone()))
         else {
+            self.show_error_toast(
+                "This pane no longer has an active agent conversation to transfer.".to_owned(),
+                ctx,
+            );
             return;
         };
+        if nonempty(session_context.session_id.as_deref()).is_none()
+            && nonempty(session_context.transcript_path.as_deref()).is_none()
+        {
+            self.show_error_toast(
+                format!(
+                    "Clinch has not identified this conversation yet. Send a message in {}, \
+                     then try Transfer again.",
+                    source_agent.display_name()
+                ),
+                ctx,
+            );
+            return;
+        }
         // Agent hook metadata can lag behind the terminal's working-directory updates.
         // Prefer the live pane directory so the target agent starts exactly where the source
         // conversation is running, while keeping the recorded directory as a fallback.
@@ -2074,6 +2102,9 @@ impl UseAgentToolbar {
             AgentInputFooterEvent::WriteToPty(text) => {
                 ctx.emit(UseAgentToolbarEvent::WriteToPty(text.clone()));
             }
+            AgentInputFooterEvent::LaunchTerminalCodex(args) => {
+                ctx.emit(UseAgentToolbarEvent::LaunchTerminalCodex(*args));
+            }
             AgentInputFooterEvent::InsertIntoCLIRichInput(text) => {
                 ctx.emit(UseAgentToolbarEvent::InsertIntoRichInput(text.clone()));
             }
@@ -2201,6 +2232,8 @@ pub enum UseAgentToolbarEvent {
     Dismiss,
     /// Write text to the PTY (from CLI agent view).
     WriteToPty(String),
+    /// Run an unchanged built-in Codex button, resolving the launcher on the target host.
+    LaunchTerminalCodex(&'static str),
     /// Insert text into CLI agent rich input.
     InsertIntoRichInput(String),
     /// Toggle the code review pane (from CLI agent view).

@@ -31,6 +31,15 @@ echo '{"session_id":"sess-nested","cwd":"/tmp/child"}' \
   | WARP_AGENT_RESUME_FAKE_ANCESTRY="codex,zsh,claude" bash "$HERE/codex-session-end.sh"
 grep -q 'sess-99' "$f" || { echo "FAIL: nested Codex end removed outer owner"; exit 1; }
 
+# A shared app-server can be a second Codex ancestor and carry another TUI's pane env.
+# It is not safe to exempt that process from the guard: Clinch launches use --no-daemon.
+echo '{"session_id":"daemon-client","cwd":"/tmp/other-pane"}' \
+  | WARP_AGENT_RESUME_FAKE_ANCESTRY="codex,codex" bash "$HERE/codex-session-start.sh"
+grep -q 'sess-99' "$f" || { echo "FAIL: shared daemon replaced pane owner"; exit 1; }
+echo '{"session_id":"sess-99","cwd":"/tmp/other-pane"}' \
+  | WARP_AGENT_RESUME_FAKE_ANCESTRY="codex,codex" bash "$HERE/codex-session-end.sh"
+grep -q 'sess-99' "$f" || { echo "FAIL: shared daemon removed pane owner"; exit 1; }
+
 # A mismatched end is a no-op; app termination preserves; a normal matching end removes.
 echo '{"session_id":"sess-77","cwd":"/tmp/repo"}' | bash "$HERE/codex-session-end.sh"
 grep -q 'sess-99' "$f" || { echo "FAIL: mismatched Codex end removed owner"; exit 1; }

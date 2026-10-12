@@ -2536,6 +2536,7 @@ impl Input {
                 // The UseAgentToolbar shares this same AgentInputFooter instance,
                 // so its subscriber always fires alongside ours for every chip click.
                 AgentInputFooterEvent::WriteToPty(_)
+                | AgentInputFooterEvent::LaunchTerminalCodex(_)
                 | AgentInputFooterEvent::InsertIntoCLIRichInput(_)
                 | AgentInputFooterEvent::ToggleCodeReviewPane(_)
                 | AgentInputFooterEvent::ToggleFileExplorer(_)

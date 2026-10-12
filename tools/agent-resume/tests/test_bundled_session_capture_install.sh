@@ -10,10 +10,12 @@ NO_LICENSES=1 SKIP_SETTINGS_SCHEMA=1 \
   "$ROOT/script/prepare_bundled_resources" "$TMP/resources" >/dev/null
 
 BUNDLE="$TMP/resources/agent-resume"
-for helper in prompt-mirror.sh codex-prompt-submit.sh; do
+for helper in prompt-mirror.sh codex-prompt-submit.sh clinch_codex_launch; do
   [[ -x "$BUNDLE/$helper" ]] \
     || { echo "FAIL: prepared resources omitted $helper"; exit 1; }
 done
+[[ -x "$TMP/resources/bin/clinch_codex_launch" ]] \
+  || { echo "FAIL: prepared PATH omitted Codex launch helper"; exit 1; }
 
 export HOME="$TMP/home"
 export CLINCH_AGENT_BIN_DIR="$TMP/runtime"
@@ -29,5 +31,7 @@ export CLINCH_CODEX_CONFIG="$TMP/config/codex.toml"
   || { echo "FAIL: bundled installer omitted prompt-mirror.sh"; exit 1; }
 [[ -x "$CLINCH_AGENT_BIN_DIR/codex-prompt-submit.sh" ]] \
   || { echo "FAIL: bundled installer omitted codex-prompt-submit.sh"; exit 1; }
+[[ -x "$CLINCH_AGENT_BIN_DIR/clinch_codex_launch" ]] \
+  || { echo "FAIL: bundled installer omitted Codex launch helper"; exit 1; }
 
 echo "PASS"

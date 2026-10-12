@@ -281,10 +281,18 @@ Code login only when macOS permits a silent read; **Retry** follows the same rul
 unavailable, plan limits remain unavailable while local transcript statistics and agent sessions
 continue to work. The provider CLIs still control their own authentication flows.
 
-Blocked Keychain access does not erase saved data or create replacement credentials. Local and
-Remote Control remain disabled when their saved authorization cannot be read. Stable app signing
-is needed to preserve Keychain trust across updates; suppressing dialogs does not grant access to
-an entry that trusts an older build.
+Blocked Keychain access does not erase saved data or create replacement credentials. Local control
+is managed in **Clinch Settings → Local control**, including the optional command installation for
+other terminals. Clinch stores that non-secret choice in an owner-only local file, so app-signature
+changes cannot make it unreadable. New installs default to enabled, and readable legacy Keychain
+choices (including disabled) migrate automatically. If the old Keychain choice is unreadable or
+invalid, the upgrade saves Clinch's enabled default without changing the legacy entry; no manual
+toggle is needed. An existing local preference always takes precedence, and local file errors
+leave control off rather than replacing a saved choice.
+
+Remote Control still remains disabled when its saved authorization cannot be read. Stable app
+signing is needed to preserve Keychain trust across updates; suppressing dialogs does not grant
+access to an entry that trusts an older build.
 
 ## Updates and removal
 

@@ -83,11 +83,20 @@ fn conversation_actions_keep_their_slots_while_session_identity_is_pending() {
                 .is_some()
         }));
         assert!(bookmark_button.read(&app, |button, _| button.is_disabled()));
+        assert!(
+            footer.read(&app, |footer, ctx| {
+                !footer.cli_transfer_button(ctx).unwrap().is_disabled()
+            }),
+            "Transfer must allow a click to retry capture or explain missing identity"
+        );
 
         CLIAgentSessionsModel::handle(&app).update(&mut app, |sessions, ctx| {
             sessions.set_session(terminal.id(), codex_session(Some("codex-session")), ctx);
         });
         assert!(!bookmark_button.read(&app, |button, _| button.is_disabled()));
+        assert!(footer.read(&app, |footer, ctx| {
+            !footer.cli_transfer_button(ctx).unwrap().is_disabled()
+        }));
     });
 }
 

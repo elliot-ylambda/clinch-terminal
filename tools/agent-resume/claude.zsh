@@ -46,6 +46,28 @@ claude() {
     "$claude_executable" "$@"
 }
 
+# The shared Codex app-server keeps the environment of its first client, including that
+# client's pane UUID and tty. Hooks from another pane therefore cannot safely capture its
+# session. Keep Clinch-owned launches in the TUI's own process. Probe the executable rather
+# than assuming a version: older Codex builds have no shared daemon or --no-daemon flag.
+# Do not replace the user's `codex` command or change global Codex configuration.
+clinch_agent_resume_codex() {
+  local codex_help arg
+  for arg in "$@"; do
+    [[ "$arg" == -- ]] && break
+    if [[ "$arg" == --no-daemon ]]; then
+      command codex "$@"
+      return $?
+    fi
+  done
+  if codex_help="$(command codex --help 2>/dev/null)" \
+      && [[ "$codex_help" == *"--no-daemon"* ]]; then
+    command codex --no-daemon "$@"
+  else
+    command codex "$@"
+  fi
+}
+
 # Returns 0 if <agent>'s session <id> has a *resumable* conversation on disk.
 #
 # Resumable means a session file exists AND contains at least one real turn. We locate the
@@ -192,7 +214,7 @@ clinch_agent_resume_launch() {
   if clinch_agent_resume_resumable "$agent" "$id"; then
     case "$agent" in
       claude) claude --resume "$id" "$@" ;;
-      codex)  codex resume "$id" "$@" ;;
+      codex)  clinch_agent_resume_codex resume "$id" "$@" ;;
     esac
     return $?
   fi
@@ -214,14 +236,14 @@ clinch_agent_resume_launch() {
     echo "clinch: recorded $agent session ($id) has no conversation -- resuming newest session in this directory ($adopt) instead." >&2
     case "$agent" in
       claude) claude --resume "$adopt" "$@" ;;
-      codex)  codex resume "$adopt" "$@" ;;
+      codex)  clinch_agent_resume_codex resume "$adopt" "$@" ;;
     esac
     return $?
   fi
   echo "clinch: no resumable $agent session ($id) -- starting fresh." >&2
   case "$agent" in
     claude) WARP_AGENT_RESUME_STARTED_FRESH=1 claude "$@" ;;
-    codex)  codex "$@" ;;
+    codex)  clinch_agent_resume_codex "$@" ;;
   esac
 }
 

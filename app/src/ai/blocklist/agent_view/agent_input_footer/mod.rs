@@ -1548,6 +1548,7 @@ impl AgentInputFooter {
         text: &str,
         auto_send: bool,
         auto_send_verb: &str,
+        launch_action: Option<AgentInputFooterAction>,
         app: &AppContext,
     ) -> Box<dyn Element> {
         let mouse_state = self
@@ -1573,10 +1574,12 @@ impl AgentInputFooter {
             .with_tooltip_alignment(TooltipAlignment::Left)
             .with_mouse_state_handle(mouse_state)
             .on_click(move |ctx| {
-                ctx.dispatch_typed_action(AgentInputFooterAction::InsertCustomText {
-                    text: text.clone(),
-                    auto_send,
-                });
+                ctx.dispatch_typed_action(launch_action.clone().unwrap_or_else(|| {
+                    AgentInputFooterAction::InsertCustomText {
+                        text: text.clone(),
+                        auto_send,
+                    }
+                }));
             })
             .render(app)
     }
@@ -1597,9 +1600,60 @@ impl AgentInputFooter {
                 label,
                 text,
                 auto_send,
-            } => Some(self.render_custom_insert_button(label, text, *auto_send, "Run", app)),
+            } => Some(
+                self.render_custom_insert_button(
+                    label,
+                    text,
+                    *auto_send,
+                    "Run",
+                    item.terminal_codex_launch_args()
+                        .map(AgentInputFooterAction::LaunchTerminalCodex),
+                    app,
+                ),
+            ),
             _ => None,
         }
+    }
+
+    fn cli_transfer_button(&self, app: &AppContext) -> Option<ActionButton> {
+        let session = CLIAgentSessionsModel::as_ref(app).session(self.terminal_view_id)?;
+        let target = session.agent.transfer_target()?;
+        let has_conversation_reference = session
+            .session_context
+            .session_id
+            .as_deref()
+            .is_some_and(|id| !id.trim().is_empty())
+            || session
+                .session_context
+                .transcript_path
+                .as_deref()
+                .is_some_and(|path| !path.trim().is_empty());
+
+        let label = format!("Transfer to {}", target.display_name());
+        let tooltip = if has_conversation_reference {
+            format!(
+                "Continue this conversation in a new {} tab without closing {}",
+                target.display_name(),
+                session.agent.display_name()
+            )
+        } else {
+            "Clinch has not identified this conversation yet. Click to retry.".to_owned()
+        };
+        Some(
+            ActionButton::new(label, AgentInputButtonTheme)
+                .with_icon(Icon::SwitchHorizontal01)
+                .with_icon_color(CLINCH_LOGO_GREEN)
+                .with_size(ButtonSize::AgentInputButtonLarge)
+                .with_tooltip(tooltip)
+                .with_tooltip_alignment(TooltipAlignment::Left)
+                .with_mouse_state_handle(self.transfer_agent_mouse_state.clone())
+                // Keep the action reachable while capture metadata is pending. The
+                // terminal retries identity detection and explains any remaining
+                // blocker; a disabled button silently swallowed these clicks.
+                .on_click(|ctx| {
+                    ctx.dispatch_typed_action(AgentInputFooterAction::TransferAgent);
+                }),
+        )
     }
 
     fn render_cli_toolbar_item(
@@ -1650,46 +1704,8 @@ impl AgentInputFooter {
                 if !cfg!(feature = "local_tty") || is_conversation_transcript_context {
                     return None;
                 }
-                let session = CLIAgentSessionsModel::as_ref(app).session(self.terminal_view_id)?;
-                let target = session.agent.transfer_target()?;
-                let has_conversation_reference = session
-                    .session_context
-                    .session_id
-                    .as_deref()
-                    .is_some_and(|id| !id.trim().is_empty())
-                    || session
-                        .session_context
-                        .transcript_path
-                        .as_deref()
-                        .is_some_and(|path| !path.trim().is_empty());
-
-                let label = format!("Transfer to {}", target.display_name());
-                let tooltip = if has_conversation_reference {
-                    format!(
-                        "Continue this conversation in a new {} tab without closing {}",
-                        target.display_name(),
-                        session.agent.display_name()
-                    )
-                } else {
-                    format!(
-                        "Send a message first so {} can provide a resumable conversation ID",
-                        session.agent.display_name()
-                    )
-                };
-                Some(
-                    ActionButton::new(label, AgentInputButtonTheme)
-                        .with_icon(Icon::SwitchHorizontal01)
-                        .with_icon_color(CLINCH_LOGO_GREEN)
-                        .with_size(ButtonSize::AgentInputButtonLarge)
-                        .with_tooltip(tooltip)
-                        .with_tooltip_alignment(TooltipAlignment::Left)
-                        .with_mouse_state_handle(self.transfer_agent_mouse_state.clone())
-                        .with_disabled(!has_conversation_reference)
-                        .on_click(|ctx| {
-                            ctx.dispatch_typed_action(AgentInputFooterAction::TransferAgent);
-                        })
-                        .render(app),
-                )
+                self.cli_transfer_button(app)
+                    .map(|button| button.render(app))
             }
             AgentToolbarItemKind::CustomInsert {
                 label,
@@ -1699,7 +1715,7 @@ impl AgentInputFooter {
                 if !FeatureFlag::CliAgentQuickInsertButtons.is_enabled() {
                     return None;
                 }
-                Some(self.render_custom_insert_button(label, text, *auto_send, "Send", app))
+                Some(self.render_custom_insert_button(label, text, *auto_send, "Send", None, app))
             }
             AgentToolbarItemKind::RichInput => FeatureFlag::CLIAgentRichInput
                 .is_enabled()
@@ -2966,6 +2982,8 @@ pub enum AgentInputFooterAction {
         text: String,
         auto_send: bool,
     },
+    /// Activate an unchanged built-in terminal Codex launch button.
+    LaunchTerminalCodex(&'static str),
     /// Open the standalone quick-insert creator used by the terminal context menu.
     OpenQuickInsertModal,
     /// Open the unified editor for the active CLI-agent or terminal footer.
@@ -3050,6 +3068,9 @@ impl TypedActionView for AgentInputFooter {
                 } else {
                     ctx.emit(AgentInputFooterEvent::WriteToPty(path_with_space));
                 }
+            }
+            AgentInputFooterAction::LaunchTerminalCodex(args) => {
+                ctx.emit(AgentInputFooterEvent::LaunchTerminalCodex(*args));
             }
             AgentInputFooterAction::InsertCustomText { text, auto_send } => {
                 if *auto_send {
@@ -3336,6 +3357,8 @@ pub enum AgentInputFooterEvent {
     ToggleVoiceInput(voice_input::VoiceInputToggledFrom),
     SelectFile,
     WriteToPty(String),
+    /// The terminal resolves the local Clinch launcher or the remote provider command.
+    LaunchTerminalCodex(&'static str),
     /// Insert text into the CLI agent rich input.
     InsertIntoCLIRichInput(String),
     ToggleCodeReviewPane(CLIAgent),

@@ -1,9 +1,11 @@
-//! Secure local setting that gates local control.
+//! Local setting that gates local control.
 //!
-//! This setting is local-only, kept out of the user-visible settings file, and
-//! persisted through Warp's secure storage provider. It is the authoritative
-//! enablement bit for local control.
-use anyhow::Result;
+//! Clinch stores this non-secret preference in an owner-only file so a new app
+//! signature cannot make it unreadable. Other apps retain secure storage.
+use std::io::{Read as _, Write as _};
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context as _, Result};
 use serde::{Deserialize, Serialize};
 use settings::macros::define_settings_group;
 use settings::{SecureSetting, Setting, SupportedPlatforms, SyncToCloud};
@@ -73,9 +75,86 @@ define_settings_group!(LocalControlSettings, settings: [
 pub struct LocalControlModeSetting {
     inner: LocalControlMode,
     is_explicitly_set: bool,
+    local_path: Option<PathBuf>,
+    load_error: Option<String>,
 }
 
 impl LocalControlModeSetting {
+    /// Why startup left control disabled. An explicit selection recovers it.
+    pub fn load_error(&self) -> Option<&str> {
+        self.load_error.as_deref()
+    }
+
+    fn from_storage(
+        storage: &dyn secure_storage::SecureStorage,
+        local_path: Option<PathBuf>,
+    ) -> Self {
+        let loaded = (|| -> Result<Option<LocalControlMode>> {
+            if let Some(path) = &local_path {
+                if let Some(mode) = read_local_mode(path)? {
+                    return Ok(Some(mode));
+                }
+            }
+            let legacy = (|| -> Result<Option<LocalControlMode>> {
+                let value = match storage.read_value(Self::storage_key()) {
+                    Ok(value) => value,
+                    Err(secure_storage::Error::NotFound) => return Ok(None),
+                    // Debug retains the underlying Security.framework OSStatus;
+                    // Display currently reduces these errors to "unknown error".
+                    Err(err) => {
+                        anyhow::bail!("Could not read the saved local control setting: {err:?}")
+                    }
+                };
+                serde_json::from_str(&value)
+                    .context("The saved local control setting is invalid")
+                    .map(Some)
+            })();
+            let mode = match legacy {
+                Ok(mode) => mode,
+                Err(err) if local_path.is_some() => {
+                    // Clinch enables local control by default, including upgrades whose
+                    // old app signature can no longer read the Keychain preference.
+                    // Readable opt-outs above are preserved. Persist this default once
+                    // without changing the inaccessible legacy item. Existing local
+                    // preference errors have already returned, so they cannot reset an
+                    // explicit choice to the default.
+                    log::warn!("Using Clinch's enabled local control default: {err:#}");
+                    Some(LocalControlMode::Enabled)
+                }
+                Err(err) => return Err(err),
+            };
+            if let (Some(path), Some(mode)) = (&local_path, mode) {
+                write_local_mode(path, mode)
+                    .context("Could not migrate the local control setting")?;
+            }
+            Ok(mode)
+        })();
+        let mut setting = match loaded {
+            Ok(value) => Self::new(value),
+            Err(err) => {
+                log::error!("Failed to load local control setting: {err:#}");
+                let mut setting = Self::new(Some(LocalControlMode::Disabled));
+                setting.load_error = Some(format!(
+                    "Local control is off because its saved setting could not be read. Select Enabled or Disabled to save your choice again. {err:#}"
+                ));
+                setting
+            }
+        };
+        setting.local_path = local_path;
+        setting
+    }
+
+    fn persist_value(&self, mode: LocalControlMode, ctx: &AppContext) -> Result<bool> {
+        if let Some(path) = &self.local_path {
+            // A direct user choice supersedes an inaccessible legacy value,
+            // without reading, overwriting, or deleting the Keychain item.
+            write_local_mode(path, mode)?;
+            Ok(true)
+        } else {
+            Self::write_to_secure_storage(&mode, ctx)
+        }
+    }
+
     fn emit_changed(
         ctx: &mut ModelContext<LocalControlSettings>,
         change_event_reason: settings::ChangeEventReason,
@@ -100,15 +179,11 @@ impl Setting for LocalControlModeSetting {
     type Value = LocalControlMode;
 
     fn new(value: Option<Self::Value>) -> Self {
-        match value {
-            Some(value) => Self {
-                inner: value,
-                is_explicitly_set: true,
-            },
-            None => Self {
-                inner: Self::default_value(),
-                is_explicitly_set: false,
-            },
+        Self {
+            inner: value.unwrap_or_else(Self::default_value),
+            is_explicitly_set: value.is_some(),
+            local_path: clinch_mode_path(),
+            load_error: None,
         }
     }
 
@@ -137,9 +212,16 @@ impl Setting for LocalControlModeSetting {
     }
 
     fn clear_value(&mut self, ctx: &mut ModelContext<Self::Group>) -> Result<()> {
-        Self::clear_from_secure_storage(ctx)?;
+        if self.local_path.is_some() {
+            // Keep a local value so clearing cannot resurrect a stale legacy
+            // preference on the next launch.
+            self.persist_value(Self::default_value(), ctx)?;
+        } else {
+            Self::clear_from_secure_storage(ctx)?;
+        }
         self.inner = self.validate(Self::default_value());
         self.is_explicitly_set = false;
+        self.load_error = None;
         Self::emit_changed(ctx, settings::ChangeEventReason::Clear);
         Ok(())
     }
@@ -172,10 +254,11 @@ impl Setting for LocalControlModeSetting {
         new_value: Self::Value,
         ctx: &mut ModelContext<Self::Group>,
     ) -> Result<()> {
-        let changed_in_storage = Self::write_to_secure_storage(&new_value, ctx)?;
-        if self.value() != &new_value || changed_in_storage {
+        let changed_in_storage = self.persist_value(new_value, ctx)?;
+        if self.value() != &new_value || changed_in_storage || self.load_error.is_some() {
             self.inner = self.validate(new_value);
             self.is_explicitly_set = true;
+            self.load_error = None;
             Self::emit_changed(ctx, settings::ChangeEventReason::LocalChange);
         }
         Ok(())
@@ -186,26 +269,7 @@ impl Setting for LocalControlModeSetting {
     }
 
     fn new_from_storage(ctx: &mut AppContext) -> Self {
-        match ctx.secure_storage().read_value(Self::storage_key()) {
-            Ok(value) => match serde_json::from_str(&value) {
-                Ok(value) => Self::new(Some(value)),
-                Err(err) => {
-                    log::error!(
-                        "Failed to deserialize {} from secure storage: {err:#}",
-                        Self::setting_name()
-                    );
-                    Self::new(Some(LocalControlMode::Disabled))
-                }
-            },
-            Err(secure_storage::Error::NotFound) => Self::new(None),
-            Err(err) => {
-                log::error!(
-                    "Failed to read {} from secure storage: {err:#}",
-                    Self::setting_name()
-                );
-                Self::new(Some(LocalControlMode::Disabled))
-            }
-        }
+        Self::from_storage(ctx.secure_storage(), clinch_mode_path())
     }
 
     fn is_supported_on_current_platform(&self) -> bool {
@@ -226,6 +290,10 @@ impl std::ops::Deref for LocalControlModeSetting {
 }
 
 impl LocalControlSettings {
+    pub fn load_error(&self) -> Option<&str> {
+        self.local_control_mode.load_error()
+    }
+
     pub fn mode(&self) -> LocalControlMode {
         *self.local_control_mode
     }
@@ -233,6 +301,104 @@ impl LocalControlSettings {
     pub fn is_enabled(&self) -> bool {
         self.mode().is_enabled()
     }
+}
+
+fn clinch_mode_path() -> Option<PathBuf> {
+    // Clinch currently ships on Unix, where these permissions enforce the
+    // owner-only policy. Keep native secure storage on other platforms.
+    (cfg!(unix) && is_clinch_app_id(&ChannelState::app_id().to_string())).then(|| {
+        warp_core::paths::state_dir()
+            .join("local-control-settings")
+            .join("mode.json")
+    })
+}
+
+fn validate_local_path(path: &Path, directory: bool) -> Result<std::fs::Metadata> {
+    let metadata = std::fs::symlink_metadata(path)?;
+    anyhow::ensure!(
+        if directory {
+            metadata.is_dir()
+        } else {
+            metadata.is_file()
+        },
+        "Local control preference path has an unexpected file type"
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        anyhow::ensure!(
+            metadata.uid() == nix::unistd::geteuid().as_raw() && metadata.mode() & 0o077 == 0,
+            "Local control preference must be accessible only by its owner"
+        );
+    }
+    Ok(metadata)
+}
+
+fn read_local_mode(path: &Path) -> Result<Option<LocalControlMode>> {
+    let parent = path
+        .parent()
+        .context("Local control preference has no directory")?;
+    let read = (|| -> Result<LocalControlMode> {
+        validate_local_path(parent, true)?;
+        validate_local_path(path, false)?;
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            options.custom_flags(nix::libc::O_NOFOLLOW);
+        }
+        let file = options.open(path)?;
+        serde_json::from_reader(file.take(4096)).context("The local control preference is invalid")
+    })();
+    match read {
+        Ok(mode) => Ok(Some(mode)),
+        Err(err)
+            if err
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|err| err.kind() == std::io::ErrorKind::NotFound) =>
+        {
+            Ok(None)
+        }
+        Err(err) => Err(err).context("Could not read the local control preference"),
+    }
+}
+
+fn write_local_mode(path: &Path, mode: LocalControlMode) -> Result<()> {
+    let parent = path
+        .parent()
+        .context("Local control preference has no directory")?;
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt as _;
+        builder.mode(0o700);
+    }
+    builder
+        .create(parent)
+        .context("Could not create the local control preference directory")?;
+    validate_local_path(parent, true)?;
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => {
+            validate_local_path(path, false)?;
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err.into()),
+    }
+    let mut file = tempfile::NamedTempFile::new_in(parent)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        file.as_file()
+            .set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
+    file.write_all(&serde_json::to_vec(&mode)?)?;
+    file.as_file().sync_all()?;
+    file.persist(path)
+        .map_err(|err| err.error)
+        .context("Could not save the local control preference")?;
+    Ok(())
 }
 
 #[cfg(test)]

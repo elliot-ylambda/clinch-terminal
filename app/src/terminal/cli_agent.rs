@@ -404,9 +404,17 @@ impl CLIAgent {
     ) -> Cow<'a, str> {
         const CLINCH_WRAPPER: &str = "clinch_agent_resume_launch";
         const LEGACY_WARP_WRAPPER: &str = "warp_agent_resume_launch";
+        const CLINCH_CODEX_WRAPPER: &str = "clinch_codex_launch";
         let wrapper = match Self::extract_first_command(&command, escape_char).as_deref() {
             Some(CLINCH_WRAPPER) => CLINCH_WRAPPER,
             Some(LEGACY_WARP_WRAPPER) => LEGACY_WARP_WRAPPER,
+            Some(CLINCH_CODEX_WRAPPER) => {
+                return Cow::Owned(
+                    command
+                        .trim_start()
+                        .replacen(CLINCH_CODEX_WRAPPER, "codex", 1),
+                );
+            }
             _ => return command,
         };
         // First word is exactly the wrapper; drop it and the remainder begins with the agent.

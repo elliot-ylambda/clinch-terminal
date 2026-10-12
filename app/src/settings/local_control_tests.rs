@@ -346,3 +346,206 @@ fn cloud_sync_cannot_disable_local_control() {
         });
     });
 }
+
+struct UnavailableLegacyStorage;
+
+impl secure_storage::SecureStorage for UnavailableLegacyStorage {
+    fn read_value(&self, _: &str) -> Result<String, secure_storage::Error> {
+        Err(secure_storage::Error::Unknown(anyhow::anyhow!(
+            "interaction is not allowed (OSStatus -25308)"
+        )))
+    }
+
+    fn write_value(&self, _: &str, _: &str) -> Result<(), secure_storage::Error> {
+        panic!("legacy storage must remain untouched")
+    }
+
+    fn remove_value(&self, _: &str) -> Result<(), secure_storage::Error> {
+        panic!("legacy storage must remain untouched")
+    }
+}
+
+#[test]
+fn clinch_migrates_both_legacy_choices_and_survives_keychain_failure() {
+    for mode in LocalControlMode::ALL {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("local-control-settings/mode.json");
+        let storage = InMemorySecureStorage::default();
+        secure_storage::SecureStorage::write_value(
+            &storage,
+            LocalControlModeSetting::storage_key(),
+            &serde_json::to_string(&mode).unwrap(),
+        )
+        .unwrap();
+        let migrated = LocalControlModeSetting::from_storage(&storage, Some(path.clone()));
+        assert_eq!(*migrated.value(), mode);
+        assert!(migrated.load_error().is_none());
+        assert_eq!(super::read_local_mode(&path).unwrap(), Some(mode));
+        let restarted =
+            LocalControlModeSetting::from_storage(&UnavailableLegacyStorage, Some(path));
+        assert_eq!(*restarted.value(), mode);
+        assert!(restarted.load_error().is_none());
+    }
+}
+
+#[test]
+fn clinch_missing_legacy_preference_uses_default_without_writing() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("local-control-settings/mode.json");
+    let setting = LocalControlModeSetting::from_storage(
+        &InMemorySecureStorage::default(),
+        Some(path.clone()),
+    );
+    assert_eq!(*setting.value(), LocalControlModeSetting::default_value());
+    assert!(!setting.is_value_explicitly_set());
+    assert!(setting.load_error().is_none());
+    assert!(!path.exists());
+}
+
+#[test]
+fn clinch_unavailable_legacy_preference_automatically_enables_and_persists() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("local-control-settings/mode.json");
+    let setting =
+        LocalControlModeSetting::from_storage(&UnavailableLegacyStorage, Some(path.clone()));
+    assert_eq!(*setting.value(), LocalControlMode::Enabled);
+    assert!(setting.load_error().is_none());
+    assert_eq!(
+        super::read_local_mode(&path).unwrap(),
+        Some(LocalControlMode::Enabled)
+    );
+    let restarted = LocalControlModeSetting::from_storage(&UnavailableLegacyStorage, Some(path));
+    assert_eq!(*restarted.value(), LocalControlMode::Enabled);
+    assert!(restarted.load_error().is_none());
+}
+
+#[test]
+fn clinch_explicit_disable_recovers_and_clear_does_not_revisit_legacy() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("local-control-settings/mode.json");
+    let setting =
+        LocalControlModeSetting::from_storage(&UnavailableLegacyStorage, Some(path.clone()));
+    let test_path = path.clone();
+    warpui::App::test((), |mut app| async move {
+        app.update(|ctx| {
+            ctx.add_singleton_model(|_| -> secure_storage::Model {
+                Box::new(UnavailableLegacyStorage)
+            });
+            ctx.add_singleton_model(|_| LocalControlSettings {
+                local_control_mode: setting,
+            });
+            LocalControlSettings::handle(ctx).update(ctx, |settings, ctx| {
+                settings
+                    .local_control_mode
+                    .set_value(LocalControlMode::Disabled, ctx)
+                    .unwrap();
+                assert!(settings.load_error().is_none());
+                assert_eq!(
+                    super::read_local_mode(&test_path).unwrap(),
+                    Some(LocalControlMode::Disabled)
+                );
+                settings.local_control_mode.clear_value(ctx).unwrap();
+                assert!(settings.load_error().is_none());
+                assert!(!settings.local_control_mode.is_value_explicitly_set());
+            });
+        });
+    });
+    let restarted = LocalControlModeSetting::from_storage(&UnavailableLegacyStorage, Some(path));
+    assert_eq!(*restarted.value(), LocalControlModeSetting::default_value());
+    assert!(restarted.load_error().is_none());
+}
+
+#[test]
+fn clinch_malformed_legacy_preference_is_preserved_and_uses_enabled_default() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("local-control-settings/mode.json");
+    let storage = InMemorySecureStorage::default();
+    secure_storage::SecureStorage::write_value(
+        &storage,
+        LocalControlModeSetting::storage_key(),
+        "broken",
+    )
+    .unwrap();
+    let setting = LocalControlModeSetting::from_storage(&storage, Some(path.clone()));
+    assert_eq!(*setting.value(), LocalControlMode::Enabled);
+    assert!(setting.load_error().is_none());
+    assert_eq!(
+        super::read_local_mode(&path).unwrap(),
+        Some(LocalControlMode::Enabled)
+    );
+    assert_eq!(
+        secure_storage::SecureStorage::read_value(&storage, LocalControlModeSetting::storage_key())
+            .unwrap(),
+        "broken"
+    );
+}
+
+#[test]
+fn clinch_corrupt_local_preference_does_not_fall_back_to_enabled_legacy() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("local-control-settings/mode.json");
+    super::write_local_mode(&path, LocalControlMode::Disabled).unwrap();
+    std::fs::write(&path, "broken").unwrap();
+    let storage = InMemorySecureStorage::default();
+    secure_storage::SecureStorage::write_value(
+        &storage,
+        LocalControlModeSetting::storage_key(),
+        "\"Enabled\"",
+    )
+    .unwrap();
+    let setting = LocalControlModeSetting::from_storage(&storage, Some(path));
+    assert_eq!(*setting.value(), LocalControlMode::Disabled);
+    assert!(setting.load_error().is_some());
+}
+
+#[cfg(unix)]
+#[test]
+fn clinch_preference_is_owner_only_and_rejects_symlinks() {
+    use std::os::unix::fs::{symlink, PermissionsExt as _};
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("local-control-settings/mode.json");
+    super::write_local_mode(&path, LocalControlMode::Enabled).unwrap();
+    assert_eq!(
+        std::fs::metadata(path.parent().unwrap())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o700
+    );
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    let target = directory.path().join("unrelated.json");
+    std::fs::write(&target, "do not change").unwrap();
+    std::fs::remove_file(&path).unwrap();
+    symlink(&target, &path).unwrap();
+    assert!(super::read_local_mode(&path).is_err());
+    assert!(super::write_local_mode(&path, LocalControlMode::Disabled).is_err());
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "do not change");
+}
+
+#[cfg(unix)]
+#[test]
+fn clinch_preference_rejects_shared_permissions_and_symlinked_directory() {
+    use std::os::unix::fs::{symlink, PermissionsExt as _};
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("local-control-settings/mode.json");
+    super::write_local_mode(&path, LocalControlMode::Enabled).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o666)).unwrap();
+    let setting =
+        LocalControlModeSetting::from_storage(&UnavailableLegacyStorage, Some(path.clone()));
+    assert_eq!(*setting.value(), LocalControlMode::Disabled);
+    assert!(setting.load_error().is_some());
+    assert!(super::write_local_mode(&path, LocalControlMode::Enabled).is_err());
+    std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    let target = directory.path().join("unrelated-directory");
+    std::fs::create_dir(&target).unwrap();
+    symlink(&target, path.parent().unwrap()).unwrap();
+    assert!(super::read_local_mode(&path).is_err());
+    assert!(super::write_local_mode(&path, LocalControlMode::Enabled).is_err());
+    assert!(!target.join("mode.json").exists());
+}

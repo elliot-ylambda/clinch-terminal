@@ -97,6 +97,7 @@ if [ "$(uname -s)" = "Darwin" ]; then
     "$AGENT_RESUME_SRC/clinch-agent-resume" \
     "$AGENT_RESUME_SRC/warp-agent-resume" \
     "$AGENT_RESUME_SRC/clinch_agent_resume_launch" \
+    "$AGENT_RESUME_SRC/clinch_codex_launch" \
     "$AGENT_RESUME_SRC/claude-capture.sh" \
     "$AGENT_RESUME_SRC/prompt-mirror.sh" \
     "$AGENT_RESUME_SRC/codex-session-start.sh" \
@@ -114,6 +115,8 @@ if [ "$(uname -s)" = "Darwin" ]; then
     "$DEST_DIR/bin/clinch_agent_resume_launch"
   install -m 0755 "$AGENT_RESUME_SRC/clinch_agent_resume_launch" \
     "$DEST_DIR/bin/warp_agent_resume_launch"
+  install -m 0755 "$AGENT_RESUME_SRC/clinch_codex_launch" \
+    "$DEST_DIR/bin/clinch_codex_launch"
 
   # The pinned Claude/Codex notification hooks use jq. Put a universal, release-pinned binary on
   # the PATH that Clinch appends to every local pane so plugin setup stays zero-dependency.

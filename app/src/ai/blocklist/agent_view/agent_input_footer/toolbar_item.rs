@@ -577,6 +577,26 @@ impl AgentToolbarItemKind {
         Vec::new()
     }
 
+    /// Exact historical defaults receive a typed launch action without rewriting saved
+    /// toolbelts. Renamed, edited, and pre-fill-only custom buttons retain their own text.
+    pub(crate) fn terminal_codex_launch_args(&self) -> Option<&'static str> {
+        let Self::CustomInsert {
+            label,
+            text,
+            auto_send: true,
+        } = self
+        else {
+            return None;
+        };
+        match (label.as_str(), text.as_str()) {
+            ("Codex", "codex --dangerously-bypass-approvals-and-sandbox") => {
+                Some("--dangerously-bypass-approvals-and-sandbox")
+            }
+            ("Codex resume", "codex resume") => Some("resume"),
+            _ => None,
+        }
+    }
+
     /// Items available when resetting the plain terminal footer configurator.
     pub fn all_available_for_terminal_input() -> Vec<Self> {
         Self::terminal_default_left()

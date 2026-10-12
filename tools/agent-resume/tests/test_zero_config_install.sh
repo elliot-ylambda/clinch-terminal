@@ -63,7 +63,7 @@ after="$(shasum "$HOME/.claude/settings.json" "$HOME/.codex/config.toml")"
 [[ "$before" == "$after" ]] || { echo "FAIL: rerun changed managed config"; exit 1; }
 
 BIN="$HOME/.warp/agent-resume-bin"
-for file in agent-json agent-json.js clinch-agent-resume clinch_agent_resume_launch \
+for file in agent-json agent-json.js clinch-agent-resume clinch_agent_resume_launch clinch_codex_launch \
   claude-capture.sh prompt-mirror.sh claude.zsh codex-session-start.sh \
   codex-prompt-submit.sh codex-session-end.sh; do
   [[ -f "$BIN/$file" ]] || { echo "FAIL: installer omitted $file"; exit 1; }
@@ -126,6 +126,7 @@ bash "$HERE/install.sh" disable --quiet
 [[ -f "$STATE/disabled" ]] || { echo "FAIL: disable did not persist the opt-out"; exit 1; }
 [[ ! -e "$BIN/claude-capture.sh" ]] || { echo "FAIL: disable kept owned runtime"; exit 1; }
 [[ ! -e "$BIN/codex-prompt-submit.sh" ]] || { echo "FAIL: disable kept Codex prompt helper"; exit 1; }
+[[ ! -e "$BIN/clinch_codex_launch" ]] || { echo "FAIL: disable kept Codex launch helper"; exit 1; }
 [[ -f "$HOME/.warp/agent-resume/keep.json" ]] \
   || { echo "FAIL: disable deleted captured metadata"; exit 1; }
 grep -q '"model": "opus"' "$HOME/.claude/settings.json" \

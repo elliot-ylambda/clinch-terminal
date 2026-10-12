@@ -217,6 +217,18 @@ fn visible_section_or_fallback_redirects_backend_only_sections_when_backendless(
 }
 
 #[test]
+fn local_control_links_open_clinch_settings_without_a_backend() {
+    assert_eq!(
+        visible_section_or_fallback(SettingsSection::Scripting, false),
+        SettingsSection::Clinch
+    );
+    assert_eq!(
+        visible_section_or_fallback(SettingsSection::Scripting, true),
+        SettingsSection::Scripting
+    );
+}
+
+#[test]
 fn visible_section_or_fallback_is_a_no_op_when_backend_available_or_local_only() {
     // With a backend, backend-only sections pass through unchanged.
     assert_eq!(

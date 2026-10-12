@@ -3,6 +3,28 @@ use std::io::Write;
 use super::*;
 
 #[test]
+fn codex_launch_prefix_is_pane_bound_only_in_local_clinch() {
+    for app_id in ["sh.clinch.Clinch", "sh.clinch.ClinchDev"] {
+        assert_eq!(
+            AgentResumeProvider::Codex.launch_command_prefix_for(app_id, true),
+            "clinch_codex_launch"
+        );
+        assert_eq!(
+            AgentResumeProvider::Codex.launch_command_prefix_for(app_id, false),
+            "codex"
+        );
+        assert_eq!(
+            AgentResumeProvider::Claude.launch_command_prefix_for(app_id, true),
+            "claude"
+        );
+    }
+    assert_eq!(
+        AgentResumeProvider::Codex.launch_command_prefix_for("dev.warp.Warp-Stable", true),
+        "codex"
+    );
+}
+
+#[test]
 fn shutdown_owner_preserves_exact_pane_metadata_across_global_marker_cleanup() {
     let dir = tempfile::tempdir().unwrap();
     let uuid = vec![0xab, 0xcd];
@@ -179,6 +201,7 @@ fn direct_resume_command_yields_the_resumed_session_id() {
     for command in [
         format!("codex resume {ID} --dangerously-bypass-approvals-and-sandbox --model gpt-5.6-sol"),
         format!("cx resume {ID}"),
+        format!("clinch_codex_launch resume {ID} --model gpt-6-astra"),
         format!("codex --model x resume '{ID}' --search"),
     ] {
         assert_eq!(
@@ -324,7 +347,13 @@ fn normalizes_and_parses_legacy_warp_launcher() {
     );
     assert_eq!(
         derive_fork_command("warp_agent_resume_launch codex legacy-456").as_deref(),
-        Some("codex fork legacy-456")
+        Some(
+            format!(
+                "{} fork legacy-456",
+                AgentResumeProvider::Codex.launch_command_prefix(true)
+            )
+            .as_str()
+        )
     );
     assert_eq!(
         normalize_restore_command("warp_agent_resume_launcher claude untouched".to_string()),
@@ -336,7 +365,13 @@ fn normalizes_and_parses_legacy_warp_launcher() {
 fn derives_codex_fork_command() {
     assert_eq!(
         derive_fork_command("clinch_agent_resume_launch codex abc-123").as_deref(),
-        Some("codex fork abc-123")
+        Some(
+            format!(
+                "{} fork abc-123",
+                AgentResumeProvider::Codex.launch_command_prefix(true)
+            )
+            .as_str()
+        )
     );
 }
 
@@ -379,7 +414,13 @@ fn fork_command_carries_launch_flags() {
             "clinch_agent_resume_launch codex abc-123 --dangerously-bypass-approvals-and-sandbox"
         )
         .as_deref(),
-        Some("codex fork abc-123 --dangerously-bypass-approvals-and-sandbox")
+        Some(
+            format!(
+                "{} fork abc-123 --dangerously-bypass-approvals-and-sandbox",
+                AgentResumeProvider::Codex.launch_command_prefix(true)
+            )
+            .as_str()
+        )
     );
 }
 
@@ -480,7 +521,10 @@ fn reopen_command_resumes_codex_sessions_and_rejects_unknown_agents() {
             true,
         )
         .reopen_command(),
-        Some("codex resume xyz-9 --dangerously-bypass-approvals-and-sandbox".to_string())
+        Some(format!(
+            "{} resume xyz-9 --dangerously-bypass-approvals-and-sandbox",
+            AgentResumeProvider::Codex.launch_command_prefix(true)
+        ))
     );
     assert_eq!(
         conversation("gemini", "abc", None, "", false).reopen_command(),
@@ -1154,7 +1198,13 @@ fn read_fork_launch_reads_derived_command_and_cwd() {
     .unwrap();
 
     let launch = read_fork_launch_in(&dir, "feedface").unwrap();
-    assert_eq!(launch.command, "codex fork xyz-9");
+    assert_eq!(
+        launch.command,
+        format!(
+            "{} fork xyz-9",
+            AgentResumeProvider::Codex.launch_command_prefix(true)
+        )
+    );
     assert_eq!(launch.cwd.as_deref(), Some("/work"));
 
     // No cwd in the file → None cwd, still derives the command (flags carried).

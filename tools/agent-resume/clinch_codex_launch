@@ -1,0 +1,16 @@
+#!/bin/zsh
+# Clinch-owned fresh, resume, and fork entrypoint. Keep hooks bound to this pane without
+# changing the user's general Codex configuration or requiring a shell rcfile edit.
+set -u
+
+script_dir="${0:A:h}"
+if [[ -r "$script_dir/claude.zsh" ]]; then
+  source "$script_dir/claude.zsh"
+elif [[ -r "$script_dir/../agent-resume/claude.zsh" ]]; then
+  source "$script_dir/../agent-resume/claude.zsh"
+else
+  print -u2 "clinch: bundled agent-resume runtime is missing; reinstall Clinch."
+  exit 1
+fi
+
+clinch_agent_resume_codex "$@"

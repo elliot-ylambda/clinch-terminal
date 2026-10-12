@@ -368,6 +368,15 @@ fn test_detect_agent_resume_launch_wrapper() {
                 CLIAgent::detect("clinch_agent_resume_launch codex sess-77", None, None, ctx),
                 Some(CLIAgent::Codex),
             );
+            for command in [
+                "clinch_codex_launch",
+                "clinch_codex_launch --model gpt-5.6-sol",
+                "clinch_codex_launch resume sess-77",
+                "clinch_codex_launch fork sess-77",
+            ] {
+                assert_eq!(CLIAgent::detect(command, None, None, ctx), Some(CLIAgent::Codex));
+            }
+            assert_eq!(CLIAgent::detect("clinch_codex_launcher", None, None, ctx), None);
             // Restored entries written before the Clinch rename still detect correctly.
             assert_eq!(
                 CLIAgent::detect("warp_agent_resume_launch claude legacy-1", None, None, ctx),

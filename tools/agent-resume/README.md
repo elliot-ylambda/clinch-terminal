@@ -43,6 +43,13 @@ capture (agent SessionStart hooks)          replay (Rust, in Clinch)
 - **Key = the pane UUID** (`WARP_TERMINAL_SESSION_UUID`), which is stable across
   quit/restore and unique per tab — so multiple agents in the *same directory* are
   disambiguated (a directory-based scheme can't do that).
+- **Clinch-owned Codex launches stay in their pane.** Replay and `clinch_codex_launch`
+  add `--no-daemon` when the installed CLI supports it. Codex's shared background server
+  inherits its first client's pane environment; using it for another pane makes hook
+  capture unsafe. Older CLIs retain their original arguments. The outer-agent guard
+  remains intact, and no global Codex setting or user command is replaced. Manually
+  launched Codex sessions need `codex --no-daemon` or `clinch_codex_launch` for the same
+  guarantee.
 - **The recorded command self-heals**: it is `clinch_agent_resume_launch <agent> <id>`,
   a shell function (sourced from `claude.zsh`) that resumes the session only if it has a
   real conversation on disk, and otherwise starts a *fresh* agent in that pane. This
@@ -271,6 +278,7 @@ separate data dir (`~/.warp-oss`), so the two never clobber each other's session
 | `prompt-mirror.sh` | shared private, capped append-only writer for provider-scoped prompt history; prompt payload stays on stdin |
 | `claude.zsh` | Claude launch-identity scrub + replay functions (`clinch_agent_resume_resumable` / `clinch_agent_resume_launch`) loaded by the standalone launcher |
 | `clinch_agent_resume_launch` | executable replay entrypoint bundled in `Clinch.app/Contents/Resources/bin`; works without an rcfile edit |
+| `clinch_codex_launch` | pane-local Codex entrypoint for Clinch-owned fresh sessions, resumes, and forks; detects `--no-daemon` support |
 | `codex-session-start.sh` / `codex-prompt-submit.sh` / `codex-session-end.sh` | Codex registry lifecycle plus prompt-only history capture |
 | `config.toml.snippet` | Codex hook registration (installer applies it) |
 | `install-agent-plugins.sh` | legacy/manual development helper; not bundled or run by the public installer |

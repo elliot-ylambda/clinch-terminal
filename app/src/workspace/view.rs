@@ -9592,7 +9592,7 @@ impl Workspace {
         initial_prompt: Option<String>,
         ctx: &mut ViewContext<Self>,
     ) -> bool {
-        let mut command = provider.as_str().to_owned();
+        let mut command = provider.launch_command_prefix(true).to_owned();
         if let Some(prompt) = initial_prompt.filter(|prompt| !prompt.trim().is_empty()) {
             command.push(' ');
             command.push_str(&shell_words::quote(&prompt));
