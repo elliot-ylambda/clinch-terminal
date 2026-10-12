@@ -2103,7 +2103,7 @@ impl UseAgentToolbar {
                 ctx.emit(UseAgentToolbarEvent::WriteToPty(text.clone()));
             }
             AgentInputFooterEvent::LaunchTerminalCodex(args) => {
-                ctx.emit(UseAgentToolbarEvent::LaunchTerminalCodex(*args));
+                ctx.emit(UseAgentToolbarEvent::LaunchTerminalCodex(args));
             }
             AgentInputFooterEvent::InsertIntoCLIRichInput(text) => {
                 ctx.emit(UseAgentToolbarEvent::InsertIntoRichInput(text.clone()));

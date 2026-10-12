@@ -3070,7 +3070,7 @@ impl TypedActionView for AgentInputFooter {
                 }
             }
             AgentInputFooterAction::LaunchTerminalCodex(args) => {
-                ctx.emit(AgentInputFooterEvent::LaunchTerminalCodex(*args));
+                ctx.emit(AgentInputFooterEvent::LaunchTerminalCodex(args));
             }
             AgentInputFooterAction::InsertCustomText { text, auto_send } => {
                 if *auto_send {
