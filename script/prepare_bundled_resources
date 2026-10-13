@@ -71,6 +71,14 @@ else
   echo "Warning: No bundled directory found at $RESOURCES_SRC/bundled" >&2
 fi
 
+# Session transfer also runs on headless Linux; keep it outside the macOS hook installer.
+SESSION_TRANSFER_DEST="$DEST_DIR/session-transfer"
+mkdir -p "$SESSION_TRANSFER_DEST"
+install -m 0755 "$REPO_ROOT/tools/session-transfer/clinch-sessions" "$SESSION_TRANSFER_DEST/"
+for module in session_cli.py session_inventory.py session_worker.py session_handoff.py; do
+  install -m 0644 "$REPO_ROOT/tools/session-transfer/$module" "$SESSION_TRANSFER_DEST/"
+done
+
 # Clinch's macOS distribution carries the local agent-resume runtime. The GUI enables its managed
 # capture hooks on first launch, refreshes them while enabled, and honors a persisted user opt-out.
 if [ "$(uname -s)" = "Darwin" ]; then

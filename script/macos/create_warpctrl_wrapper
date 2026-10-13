@@ -43,15 +43,19 @@ script_dir="\$(cd -P "\$(dirname "\$wrapper_path")" && pwd)"
 # enter the same parser directly for compatibility.
 if [[ "$REQUIRES_CTRL" == "true" ]]; then
   case "\${1:-}" in
+    sessions)
+      shift
+      exec "\$script_dir/../session-transfer/clinch-sessions" "\$@"
+      ;;
     ctrl)
       shift
       ;;
     ""|-h|--help)
-      echo "Usage: \$(basename "\$0") ctrl <command> [options]"
+      echo "Usage: \$(basename "\$0") {ctrl|sessions} <command> [options]"
       exit 0
       ;;
     *)
-      echo "Unknown command '\$1'. Usage: \$(basename "\$0") ctrl <command> [options]" >&2
+      echo "Unknown command '\$1'. Usage: \$(basename "\$0") {ctrl|sessions} <command> [options]" >&2
       exit 2
       ;;
   esac
