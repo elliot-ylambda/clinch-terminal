@@ -153,8 +153,6 @@ pub enum NewSessionMenuItem {
 #[derive(Clone, Copy)]
 pub struct PaneNameMenuTarget {
     pub locator: PaneViewLocator,
-    pub rename_label: &'static str,
-    pub reset_label: &'static str,
 }
 
 /// TabData struct holds the state of the given tab. It includes the pane group and mouse states
@@ -256,29 +254,38 @@ impl TabData {
         let appearance = Appearance::as_ref(ctx);
         let terminal_colors = appearance.theme().terminal_colors().normal;
         let mut menu_items = vec![];
+        let pane_name_target = pane_name_target.or_else(|| {
+            uses_vertical_tabs().then(|| PaneNameMenuTarget {
+                locator: PaneViewLocator {
+                    pane_group_id: self.pane_group.id(),
+                    pane_id: self.pane_group.as_ref(ctx).focused_pane_id(ctx),
+                },
+            })
+        });
+        let mut name_and_pin_items = self.rename_menu_items(index, pane_name_target, ctx);
+        name_and_pin_items.extend(self.pin_menu_items(index));
+        let mut organize_items = self.tab_group_menu_items(index, tab_groups);
+        organize_items.extend(self.move_tab_menu_items(
+            index,
+            tabs_len,
+            can_move_to_new_project,
+            can_move_left,
+            can_move_right,
+        ));
 
         for section_items in [
-            self.pin_menu_items(index),
-            self.tab_group_menu_items(index, tab_groups),
-            self.session_sharing_menu_items(index, ctx),
             self.copy_metadata_menu_items(pane_name_target, ctx),
-            self.modify_tab_menu_items(
-                index,
-                tabs_len,
-                can_move_to_new_project,
-                can_move_left,
-                can_move_right,
-                pane_name_target,
-                ctx,
-            ),
-            self.close_tab_menu_items(index, tabs_len),
+            name_and_pin_items,
+            organize_items,
+            self.session_sharing_menu_items(index, ctx),
             Self::save_config_menu_items(index),
             self.color_option_menu_items(index, terminal_colors),
+            self.close_tab_menu_items(index, tabs_len),
         ] {
-            if menu_items
-                .last()
-                .is_some_and(|item| !matches!(item, MenuItem::Separator))
-            {
+            if section_items.is_empty() {
+                continue;
+            }
+            if !menu_items.is_empty() {
                 menu_items.push(MenuItem::Separator);
             }
             menu_items.extend(section_items);
@@ -440,11 +447,6 @@ impl TabData {
                     Some(session_id),
                 );
             }
-            Self::push_copy_metadata_menu_item(
-                &mut menu_items,
-                "Copy branch",
-                Self::copyable_metadata_value(terminal_view.current_git_branch(ctx)),
-            );
             Self::push_copy_metadata_menu_item(&mut menu_items, title_label, title);
             Self::push_copy_metadata_menu_item(
                 &mut menu_items,
@@ -454,6 +456,11 @@ impl TabData {
                         .pwd()
                         .or_else(|| terminal_view.display_working_directory(ctx)),
                 ),
+            );
+            Self::push_copy_metadata_menu_item(
+                &mut menu_items,
+                "Copy branch",
+                Self::copyable_metadata_value(terminal_view.current_git_branch(ctx)),
             );
             Self::push_copy_metadata_menu_item(
                 &mut menu_items,
@@ -485,19 +492,13 @@ impl TabData {
         value.filter(|value| !value.trim().is_empty())
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn modify_tab_menu_items(
+    fn rename_menu_items(
         &self,
         index: usize,
-        tabs_len: usize,
-        can_move_to_new_project: bool,
-        can_move_left: bool,
-        can_move_right: bool,
         pane_name_target: Option<PaneNameMenuTarget>,
         ctx: &AppContext,
     ) -> Vec<MenuItem<WorkspaceAction>> {
         let mut menu_items = vec![];
-        let uses_vertical_tabs = uses_vertical_tabs();
 
         // TODO add option to show the keybinding once we figure out a nice API to retrieve
         // the actual keybinding (based on the user's preferences etc.)
@@ -517,28 +518,41 @@ impl TabData {
         if let Some(pane_name_target) = pane_name_target {
             menu_items.extend(self.pane_name_menu_items(pane_name_target, ctx));
         }
+        menu_items
+    }
+
+    fn move_tab_menu_items(
+        &self,
+        index: usize,
+        tabs_len: usize,
+        can_move_to_new_project: bool,
+        can_move_left: bool,
+        can_move_right: bool,
+    ) -> Vec<MenuItem<WorkspaceAction>> {
+        let mut menu_items = vec![];
+        let uses_vertical_tabs = uses_vertical_tabs();
         // `can_move_left` / `can_move_right` come from `Workspace::can_move_tab`
-        // and gate the "Move Tab Up/Down" entries so they disappear when the
+        // and gate the "Move tab up/down" entries so they disappear when the
         // move would cross the pinned/unpinned boundary, group boundary or tab list bounds.
-        if can_move_right {
-            menu_items.push(
-                MenuItemFields::new(if uses_vertical_tabs {
-                    "Move Tab Down"
-                } else {
-                    "Move Tab Right"
-                })
-                .with_on_select_action(WorkspaceAction::MoveTabRight(index))
-                .into_item(),
-            );
-        }
         if can_move_left {
             menu_items.push(
                 MenuItemFields::new(if uses_vertical_tabs {
-                    "Move Tab Up"
+                    "Move tab up"
                 } else {
-                    "Move Tab Left"
+                    "Move tab left"
                 })
                 .with_on_select_action(WorkspaceAction::MoveTabLeft(index))
+                .into_item(),
+            );
+        }
+        if can_move_right {
+            menu_items.push(
+                MenuItemFields::new(if uses_vertical_tabs {
+                    "Move tab down"
+                } else {
+                    "Move tab right"
+                })
+                .with_on_select_action(WorkspaceAction::MoveTabRight(index))
                 .into_item(),
             );
         }
@@ -547,14 +561,14 @@ impl TabData {
         // has another tab left to keep (the handler re-validates both).
         if FeatureFlag::DragTabsToWindows.is_enabled() && tabs_len > 1 {
             menu_items.push(
-                MenuItemFields::new("Move Tab to New Window")
+                MenuItemFields::new("Move tab to new window")
                     .with_on_select_action(WorkspaceAction::MoveTabToNewWindow(index))
                     .into_item(),
             );
         }
         if can_move_to_new_project && tabs_len > 1 {
             menu_items.push(
-                MenuItemFields::new("Move Tab to New Project")
+                MenuItemFields::new("Move tab to new project")
                     .with_on_select_action(WorkspaceAction::MoveTabToNewProject(index))
                     .into_item(),
             );
@@ -580,12 +594,12 @@ impl TabData {
             .custom_vertical_tabs_title()
             .is_some();
 
-        let mut menu_items = vec![MenuItemFields::new(target.rename_label)
+        let mut menu_items = vec![MenuItemFields::new("Rename pane")
             .with_on_select_action(WorkspaceAction::RenamePane(target.locator))
             .into_item()];
         if has_custom_name {
             menu_items.push(
-                MenuItemFields::new(target.reset_label)
+                MenuItemFields::new("Reset pane name")
                     .with_on_select_action(WorkspaceAction::ResetPaneName(target.locator))
                     .into_item(),
             );
@@ -619,9 +633,9 @@ impl TabData {
         if not_last_tab {
             menu_items.push(
                 MenuItemFields::new(if uses_vertical_tabs {
-                    "Close Tabs Below"
+                    "Close tabs below"
                 } else {
-                    "Close Tabs to the Right"
+                    "Close tabs to the right"
                 })
                 .with_on_select_action(WorkspaceAction::CloseTabsRight(index))
                 .into_item(),

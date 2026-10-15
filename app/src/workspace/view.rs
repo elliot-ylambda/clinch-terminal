@@ -16,6 +16,9 @@ pub(crate) mod orchestration_launch_modal;
 pub(crate) mod right_panel;
 pub(crate) mod skills_panel;
 mod startup_directory;
+#[cfg(test)]
+#[path = "tab_context_menu_tests.rs"]
+mod tab_context_menu_tests;
 mod tab_grouping;
 #[cfg(test)]
 #[path = "view_tests.rs"]
@@ -8617,33 +8620,75 @@ impl Workspace {
         anchor: TabContextMenuAnchor,
         ctx: &mut ViewContext<Self>,
     ) {
+        self.toggle_tab_context_menu(tab_index, anchor, None, ctx);
+    }
+
+    fn toggle_tab_context_menu(
+        &mut self,
+        tab_index: usize,
+        anchor: TabContextMenuAnchor,
+        pane_name_target: Option<PaneNameMenuTarget>,
+        ctx: &mut ViewContext<Self>,
+    ) {
         if self.show_tab_right_click_menu.is_some() {
-            self.show_tab_right_click_menu = None;
-            self.hide_move_to_group_sidecar(ctx);
-            ctx.notify();
+            self.handle_tab_right_click_menu_event(
+                &MenuEvent::Close {
+                    via_select_item: false,
+                },
+                ctx,
+            );
             return;
         }
 
+        let Some(tab) = self.tabs.get(tab_index) else {
+            return;
+        };
+        if let Some(target) = pane_name_target {
+            if tab.pane_group.id() != target.locator.pane_group_id
+                || tab
+                    .pane_group
+                    .as_ref(ctx)
+                    .pane_by_id(target.locator.pane_id)
+                    .is_none()
+            {
+                return;
+            }
+        }
         let can_move_left = self.can_move_tab(tab_index, TabMovement::Left);
         let can_move_right = self.can_move_tab(tab_index, TabMovement::Right);
         let can_move_to_new_project = self.can_move_tab_to_new_project(ctx);
         let menu_items = {
             let tab = &self.tabs[tab_index];
-            tab.menu_items(
-                tab_index,
-                self.tabs.len(),
-                can_move_to_new_project,
-                &self.tab_groups,
-                can_move_left,
-                can_move_right,
-                ctx,
-            )
+            if pane_name_target.is_some() {
+                tab.menu_items_with_pane_name_target(
+                    tab_index,
+                    self.tabs.len(),
+                    can_move_to_new_project,
+                    &self.tab_groups,
+                    can_move_left,
+                    can_move_right,
+                    pane_name_target,
+                    ctx,
+                )
+            } else {
+                tab.menu_items(
+                    tab_index,
+                    self.tabs.len(),
+                    can_move_to_new_project,
+                    &self.tab_groups,
+                    can_move_left,
+                    can_move_right,
+                    ctx,
+                )
+            }
         };
         ctx.update_view(&self.tab_right_click_menu, |context_menu, view_ctx| {
             context_menu.set_items(menu_items, view_ctx);
         });
         self.show_tab_group_right_click_menu = None;
         self.show_bookmarked_sessions_right_click_menu = None;
+        self.show_tab_selection_right_click_menu = None;
+        self.hide_move_to_group_sidecar(ctx);
         self.show_tab_right_click_menu = Some((tab_index, anchor));
         ctx.focus(&self.tab_right_click_menu);
         ctx.notify();
@@ -8656,8 +8701,12 @@ impl Workspace {
         ctx: &mut ViewContext<Self>,
     ) {
         if self.show_tab_group_right_click_menu.is_some() {
-            self.show_tab_group_right_click_menu = None;
-            ctx.notify();
+            self.handle_tab_right_click_menu_event(
+                &MenuEvent::Close {
+                    via_select_item: false,
+                },
+                ctx,
+            );
             return;
         }
         if !self.tab_groups.contains_key(&group_id) {
@@ -8682,8 +8731,12 @@ impl Workspace {
         ctx: &mut ViewContext<Self>,
     ) {
         if self.show_bookmarked_sessions_right_click_menu.is_some() {
-            self.show_bookmarked_sessions_right_click_menu = None;
-            ctx.notify();
+            self.handle_tab_right_click_menu_event(
+                &MenuEvent::Close {
+                    via_select_item: false,
+                },
+                ctx,
+            );
             return;
         }
 
@@ -8706,55 +8759,14 @@ impl Workspace {
         position: Vector2F,
         ctx: &mut ViewContext<Self>,
     ) {
-        if self.show_tab_right_click_menu.is_some() {
-            self.show_tab_right_click_menu = None;
-            ctx.notify();
-            return;
-        }
-
-        let Some(tab) = self.tabs.get(tab_index) else {
-            log::warn!("Tried to open pane context menu for a missing tab");
-            return;
-        };
-        let pane = target.locator();
-        if tab.pane_group.id() != pane.pane_group_id {
-            log::warn!("Tried to open pane context menu for a pane in another tab");
-            return;
-        }
-
-        let pane_name_target = match target {
-            VerticalTabsPaneContextMenuTarget::ClickedPane(locator) => PaneNameMenuTarget {
-                locator,
-                rename_label: "Rename pane",
-                reset_label: "Reset pane name",
-            },
-            VerticalTabsPaneContextMenuTarget::ActivePane(locator) => PaneNameMenuTarget {
-                locator,
-                rename_label: "Rename active pane",
-                reset_label: "Reset active pane name",
-            },
-        };
-        let can_move_left = self.can_move_tab(tab_index, TabMovement::Left);
-        let can_move_right = self.can_move_tab(tab_index, TabMovement::Right);
-        let can_move_to_new_project = self.can_move_tab_to_new_project(ctx);
-        let tab = &self.tabs[tab_index];
-        let menu_items = tab.menu_items_with_pane_name_target(
+        self.toggle_tab_context_menu(
             tab_index,
-            self.tabs.len(),
-            can_move_to_new_project,
-            &self.tab_groups,
-            can_move_left,
-            can_move_right,
-            Some(pane_name_target),
+            TabContextMenuAnchor::Pointer(position),
+            Some(PaneNameMenuTarget {
+                locator: target.locator(),
+            }),
             ctx,
         );
-
-        ctx.update_view(&self.tab_right_click_menu, |context_menu, view_ctx| {
-            context_menu.set_items(menu_items, view_ctx);
-        });
-        self.show_tab_right_click_menu = Some((tab_index, TabContextMenuAnchor::Pointer(position)));
-        ctx.focus(&self.tab_right_click_menu);
-        ctx.notify();
     }
 
     /// The tab bar overflow menu is the context menu that appears when
@@ -11050,11 +11062,21 @@ impl Workspace {
     ) {
         match event {
             MenuEvent::Close { via_select_item: _ } => {
+                // Copy, pin, and other actions can leave the menu focused after
+                // it disappears. Restore terminal input without stealing focus
+                // from an editor or dialog opened by the selected action.
+                let restore_focus = self.tab_right_click_menu.is_self_or_child_focused(ctx)
+                    || self
+                        .move_to_group_sidecar_menu
+                        .is_self_or_child_focused(ctx);
                 self.show_tab_right_click_menu = None;
                 self.show_tab_group_right_click_menu = None;
                 self.show_bookmarked_sessions_right_click_menu = None;
                 self.show_tab_selection_right_click_menu = None;
                 self.hide_move_to_group_sidecar(ctx);
+                if restore_focus {
+                    self.focus_active_tab(ctx);
+                }
                 ctx.notify();
             }
             MenuEvent::ItemHovered | MenuEvent::ItemSelected => {
@@ -11428,14 +11450,20 @@ impl Workspace {
                 // Item dispatch fires the move action itself; we just tear down
                 // the parent menu (single-tab or multi-tab selection) on a pick.
                 if *via_select_item {
-                    self.show_tab_right_click_menu = None;
-                    self.show_tab_selection_right_click_menu = None;
+                    self.handle_tab_right_click_menu_event(event, ctx);
+                    return;
                 }
+                let restore_focus = self
+                    .move_to_group_sidecar_menu
+                    .is_self_or_child_focused(ctx);
                 self.show_move_to_group_sidecar = false;
                 self.tab_right_click_menu.update(ctx, |menu, _| {
                     menu.set_safe_zone_target(None);
                     menu.set_submenu_being_shown_for_item_index(None);
                 });
+                if restore_focus {
+                    ctx.focus(&self.tab_right_click_menu);
+                }
                 ctx.notify();
             }
             MenuEvent::ItemHovered | MenuEvent::ItemSelected => {}
@@ -15742,7 +15770,7 @@ impl Workspace {
 
     /// True when reordering the tab at `index` in `direction` would not
     /// split a group or cross the pinned/unpinned boundary. Used by the
-    /// action handler to no-op blocked moves and by `modify_tab_menu_items`
+    /// action handler to no-op blocked moves and by `move_tab_menu_items`
     /// to hide the entry.
     pub(super) fn can_move_tab(&self, index: usize, direction: TabMovement) -> bool {
         let Some(tab) = self.tabs.get(index) else {

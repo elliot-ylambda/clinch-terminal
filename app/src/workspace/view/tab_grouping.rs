@@ -464,9 +464,12 @@ impl Workspace {
         ctx: &mut ViewContext<Self>,
     ) {
         if self.show_tab_selection_right_click_menu.is_some() {
-            self.show_tab_selection_right_click_menu = None;
-            self.hide_move_to_group_sidecar(ctx);
-            ctx.notify();
+            self.handle_tab_right_click_menu_event(
+                &crate::menu::Event::Close {
+                    via_select_item: false,
+                },
+                ctx,
+            );
             return;
         }
 

@@ -3440,11 +3440,8 @@ fn test_tab_context_menu_share_session_items() {
         workspace.read(&app, |workspace, ctx| {
             let items =
                 workspace.tabs[1].menu_items(1, 3, false, &workspace.tab_groups, true, true, ctx);
-            assert!(items[0]
-                .is_approximately_same_item_as(&MenuItemFields::new("Stop sharing").into_item()));
-            assert!(items[1].is_approximately_same_item_as(
-                &MenuItemFields::new("Stop sharing all").into_item()
-            ));
+            assert!(menu_contains_item(&items, "Stop sharing"));
+            assert!(menu_contains_item(&items, "Stop sharing all"));
         });
 
         // Focus the other, non-shared pane in the tab
@@ -3462,11 +3459,8 @@ fn test_tab_context_menu_share_session_items() {
         workspace.read(&app, |workspace, ctx| {
             let items =
                 workspace.tabs[1].menu_items(1, 3, false, &workspace.tab_groups, true, true, ctx);
-            assert!(items[0]
-                .is_approximately_same_item_as(&MenuItemFields::new("Share session").into_item()));
-            assert!(items[1].is_approximately_same_item_as(
-                &MenuItemFields::new("Stop sharing all").into_item()
-            ));
+            assert!(menu_contains_item(&items, "Share session"));
+            assert!(menu_contains_item(&items, "Stop sharing all"));
         });
 
         // Stop sharing.
@@ -3479,9 +3473,9 @@ fn test_tab_context_menu_share_session_items() {
         workspace.read(&app, |workspace, ctx| {
             let items =
                 workspace.tabs[1].menu_items(1, 3, false, &workspace.tab_groups, true, true, ctx);
-            assert!(items[0]
-                .is_approximately_same_item_as(&MenuItemFields::new("Share session").into_item()));
-            assert!(items[1].is_approximately_same_item_as(&MenuItem::Separator));
+            assert!(menu_contains_item(&items, "Share session"));
+            assert!(!menu_contains_item(&items, "Stop sharing"));
+            assert!(!menu_contains_item(&items, "Stop sharing all"));
         });
     });
 }
@@ -3492,7 +3486,7 @@ fn menu_contains_item(items: &[MenuItem<WorkspaceAction>], label: &str) -> bool 
         .any(|item| item.is_approximately_same_item_as(&MenuItemFields::new(label).into_item()))
 }
 
-fn cli_agent_session_with_id(
+pub(super) fn cli_agent_session_with_id(
     agent: crate::terminal::CLIAgent,
     session_id: Option<&str>,
 ) -> CLIAgentSession {
@@ -3748,14 +3742,14 @@ fn test_tab_context_menu_move_to_new_window_gating() {
             // Multi-tab window: the entry is offered.
             let items =
                 workspace.tabs[0].menu_items(0, 3, true, &workspace.tab_groups, true, true, ctx);
-            assert!(menu_contains_item(&items, "Move Tab to New Window"));
-            assert!(menu_contains_item(&items, "Move Tab to New Project"));
+            assert!(menu_contains_item(&items, "Move tab to new window"));
+            assert!(menu_contains_item(&items, "Move tab to new project"));
 
             // Single-tab window: moving the only tab is pointless; hidden.
             let items =
                 workspace.tabs[0].menu_items(0, 1, true, &workspace.tab_groups, false, false, ctx);
-            assert!(!menu_contains_item(&items, "Move Tab to New Window"));
-            assert!(!menu_contains_item(&items, "Move Tab to New Project"));
+            assert!(!menu_contains_item(&items, "Move tab to new window"));
+            assert!(!menu_contains_item(&items, "Move tab to new project"));
         });
     });
 }
@@ -3771,8 +3765,8 @@ fn test_tab_context_menu_move_to_new_window_hidden_when_flag_off() {
         workspace.read(&app, |workspace, ctx| {
             let items =
                 workspace.tabs[0].menu_items(0, 3, true, &workspace.tab_groups, true, true, ctx);
-            assert!(!menu_contains_item(&items, "Move Tab to New Window"));
-            assert!(menu_contains_item(&items, "Move Tab to New Project"));
+            assert!(!menu_contains_item(&items, "Move tab to new window"));
+            assert!(menu_contains_item(&items, "Move tab to new project"));
         });
     });
 }
