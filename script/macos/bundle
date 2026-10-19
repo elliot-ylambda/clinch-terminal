@@ -97,8 +97,33 @@ cleanup_codesign_keychain() {
     fi
 }
 
+# Clinch releases sign from a dedicated keychain. codesign resolves identities only from keychains on
+# the user search list, and a locked keychain left on that list makes every app that searches
+# keychains prompt for its password, so it joins the list, unlocked, only while signing.
+CLINCH_SEARCH_LIST=()
+attach_clinch_codesign_keychain() {
+    local keychain
+    while IFS= read -r keychain; do
+        keychain="${keychain#*\"}"
+        keychain="${keychain%\"}"
+        [[ "$keychain" == "$CLINCH_CODESIGN_KEYCHAIN" ]] || CLINCH_SEARCH_LIST+=("$keychain")
+    done < <(security list-keychains -d user)
+    tr -d '\n' < "${CLINCH_CODESIGN_KEYCHAIN_PASSWORD_FILE:?}" \
+        | security unlock-keychain "$CLINCH_CODESIGN_KEYCHAIN" >/dev/null 2>&1 \
+        || { echo "Could not unlock $CLINCH_CODESIGN_KEYCHAIN" >&2; exit 1; }
+    security list-keychains -d user -s "${CLINCH_SEARCH_LIST[@]}" "$CLINCH_CODESIGN_KEYCHAIN"
+}
+
+detach_clinch_codesign_keychain() {
+    if [[ ${#CLINCH_SEARCH_LIST[@]} -gt 0 ]]; then
+        security list-keychains -d user -s "${CLINCH_SEARCH_LIST[@]}"
+        security lock-keychain "$CLINCH_CODESIGN_KEYCHAIN"
+        CLINCH_SEARCH_LIST=()
+    fi
+}
+
 # Set up cleanup trap
-trap 'cleanup_dmg_files "$DMG_DIR"; cleanup_codesign_keychain' EXIT
+trap 'cleanup_dmg_files "$DMG_DIR"; cleanup_codesign_keychain; detach_clinch_codesign_keychain' EXIT
 
 # Define a helper function that uses Python to compute a relative path.
 function relpath() {
@@ -817,12 +842,18 @@ fi
 ##############################
 
 if [[ $SELFSIGN = true ]]; then
+  SIGNING_KEYCHAIN_ARGS=()
   if [[ "$BUNDLE_ID" == "sh.clinch.Clinch" || "$BUNDLE_ID" == "sh.clinch.ClinchDev" ]]; then
-    # The no-fee public preview has no Apple-issued distribution identity. Always produce the
-    # same ad-hoc identity unless an explicit identity is supplied by a future release process.
+    # `make release` supplies the committed Clinch Code Signing certificate so macOS privacy
+    # grants survive updates. Local builds without that key fall back to ad-hoc, which
+    # verify-clinch-release refuses to publish.
     SIGNING_CERT="${CLINCH_CODESIGN_IDENTITY:--}"
+    if [[ -n "${CLINCH_CODESIGN_KEYCHAIN:-}" ]]; then
+      attach_clinch_codesign_keychain
+      SIGNING_KEYCHAIN_ARGS=(--keychain "$CLINCH_CODESIGN_KEYCHAIN")
+    fi
     SIGNING_ENTITLEMENTS="script/Clinch-Entitlements.plist"
-    echo "Signing Clinch with the public-preview identity '${SIGNING_CERT}'."
+    echo "Signing Clinch with the identity '${SIGNING_CERT}'."
   else
     SIGNING_CERT="$(security find-identity -p codesigning -v | grep "Apple Development" | awk '{print $2}' | head -1)"
     if [[ -z "$SIGNING_CERT" ]]; then
@@ -844,11 +875,14 @@ if [[ $SELFSIGN = true ]]; then
   if [[ "$ARTIFACT" == app ]]; then
     echo "Self-signing $BUNDLE_DIR/$WARP_APP_NAME.app with ${SIGNING_CERT}..."
     # The deep pass signs inherited nested code.
-    codesign --force --deep --options runtime --sign "$SIGNING_CERT" "$BUNDLE_DIR/$WARP_APP_NAME.app" --entitlements "$SIGNING_ENTITLEMENTS"
+    codesign --force --deep --options runtime "${SIGNING_KEYCHAIN_ARGS[@]}" \
+      --sign "$SIGNING_CERT" "$BUNDLE_DIR/$WARP_APP_NAME.app" --entitlements "$SIGNING_ENTITLEMENTS"
   elif [[ "$ARTIFACT" == cli || "$ARTIFACT" == warpctrl ]]; then
     echo "Self-signing $OUT_DIR/$WARP_BIN with ${SIGNING_CERT}..."
-    codesign --force --options runtime --sign "$SIGNING_CERT" "$OUT_DIR/$WARP_BIN" --entitlements "$SIGNING_ENTITLEMENTS"
+    codesign --force --options runtime "${SIGNING_KEYCHAIN_ARGS[@]}" \
+      --sign "$SIGNING_CERT" "$OUT_DIR/$WARP_BIN" --entitlements "$SIGNING_ENTITLEMENTS"
   fi
+  detach_clinch_codesign_keychain
 elif [[ $CODESIGN = true ]]; then
   if [[ "$BUNDLE_ID" == "sh.clinch.Clinch" || "$BUNDLE_ID" == "sh.clinch.ClinchDev" ]]; then
     SIGNING_ENTITLEMENTS="script/Clinch-Entitlements.plist"

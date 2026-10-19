@@ -15,6 +15,7 @@ SSH_SIGNATURE="${8:?missing SSH release signature}"
 UPDATE_SEQUENCE="${9:?missing update sequence}"
 MINIMUM_MACOS="${CLINCH_MINIMUM_MACOS_VERSION:-14.0}"
 ALLOWED_SIGNERS="resources/release/clinch-release-allowed-signers"
+CODESIGN_CERT="resources/release/clinch-codesign-cert.pem"
 
 fail() { echo "release verification failed: $*" >&2; exit 1; }
 
@@ -32,16 +33,22 @@ verify_binary_minimum_macos() {
 
 for item in \
   "$APP" "$ZIP" "$SHA_FILE" "$DMG" "$MANIFEST" "$RAW_SIGNATURE" \
-  "$SSH_SIGNATURE" "$ALLOWED_SIGNERS"; do
+  "$SSH_SIGNATURE" "$ALLOWED_SIGNERS" "$CODESIGN_CERT"; do
   [[ -e "$item" ]] || fail "missing $item"
 done
+# macOS keys privacy grants on the designated requirement. Pinning it to the committed certificate
+# keeps Screen Recording and similar grants valid across updates; an ad-hoc cdhash requirement
+# would revoke them on every release.
+CODESIGN_SHA1="$(openssl x509 -in "$CODESIGN_CERT" -noout -fingerprint -sha1 \
+  | cut -d= -f2 | tr -d : | tr '[:upper:]' '[:lower:]')"
+EXPECTED_REQUIREMENT="identifier \"sh.clinch.Clinch\" and certificate root = H\"$CODESIGN_SHA1\""
 [[ "$VERSION" =~ ^v[0-9]+(\.[0-9]+)+$ ]] \
   || fail "release tag must contain only dot-separated integers: $VERSION"
 [[ "$UPDATE_SEQUENCE" =~ ^[0-9]+$ && "$UPDATE_SEQUENCE" -gt 0 ]] \
   || fail "invalid update sequence"
 
 verify_app() {
-  local app="$1" label="$2" plist binary entitlements forbidden key item resources
+  local app="$1" label="$2" plist binary entitlements requirement forbidden key item resources
   local third_party figma_license plugin plugin_plist plugin_binary plugin_resources
   plist="$app/Contents/Info.plist"
   [[ -f "$plist" ]] || fail "$label has no Info.plist"
@@ -63,6 +70,9 @@ verify_app() {
     || fail "$label minimum macOS is not $MINIMUM_MACOS"
 
   codesign --verify --deep --strict "$app" || fail "$label code signature is invalid"
+  requirement="$(codesign -d -r- "$app" 2>&1 | sed -n 's/^#* *designated => //p')"
+  [[ "$requirement" == "$EXPECTED_REQUIREMENT" ]] \
+    || fail "$label is not signed by Clinch Code Signing (designated => ${requirement:-missing})"
   entitlements="$(codesign -d --entitlements :- "$app" 2>/dev/null || true)"
   for forbidden in \
     get-task-allow disable-library-validation device.audio-input \

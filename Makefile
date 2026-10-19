@@ -45,6 +45,15 @@ UPDATE_SEQUENCE ?= auto
 CLINCH_UPDATE_SIGNING_KEY  ?= $(HOME)/.config/clinch/update-signing-key.pem
 CLINCH_RELEASE_SIGNING_KEY ?= $(HOME)/.config/clinch/release-signing-key
 
+# Every release is signed by one committed self-signed certificate. macOS keys privacy grants
+# (Screen Recording, Accessibility) on the code-signing requirement; an ad-hoc signature pins that
+# requirement to one build's hash, so each update silently revoked every grant and re-prompted.
+# The private key lives in a dedicated keychain that script/bundle unlocks only while signing.
+CLINCH_CODESIGN_CERT                   := resources/release/clinch-codesign-cert.pem
+CLINCH_CODESIGN_IDENTITY                = $(shell /usr/bin/openssl x509 -in $(CLINCH_CODESIGN_CERT) -noout -fingerprint -sha1 | cut -d= -f2 | tr -d :)
+CLINCH_CODESIGN_KEYCHAIN              ?= $(HOME)/.config/clinch/codesign.keychain-db
+CLINCH_CODESIGN_KEYCHAIN_PASSWORD_FILE ?= $(HOME)/.config/clinch/codesign-keychain-password
+
 # How cold a build cache must be before an automatic prune reclaims it. A week
 # keeps everything the current branch and the last release still benefit from.
 PRUNE_DAYS ?= 7
@@ -69,6 +78,11 @@ consent. Builds older than the updater bridge `v0.2026.07.20.1643` need one fina
 manual install. An app that is not user-writable also uses the manual installer instead of
 requesting administrator access. Agent completion alerts use standard macOS notifications and are
 never sent through Messages or AppleScript.
+
+Clinch is signed with one stable certificate, so macOS privacy permissions such as Screen Recording
+survive updates. Updating from an older ad-hoc signed build may ask for those permissions one last
+time; if Clinch already appears enabled, turn it off and on again in System Settings > Privacy &
+Security.
 $(if $(filter 1,$(UNIVERSAL_ENABLED)),,Intel installations that predate native-archive selection need one authenticated manual install for this transition.)
 
 Complete Corresponding Source for this exact release, including locked Cargo dependencies, is
@@ -79,7 +93,7 @@ export RELEASE_NOTES
 .DEFAULT_GOAL := help
 .PHONY: help dev dev-app dev-open candidate release update release-check require-latest-main \
 	prune worktrees resources _prune _require-create-dmg _bundle _package _verify _verify-existing \
-	_validate-release-layout _write-release-checksums agent-resume-enable \
+	_check-codesign-identity _validate-release-layout _write-release-checksums agent-resume-enable \
 	configure-release-repository
 
 help: ## List available targets
@@ -134,9 +148,25 @@ _validate-release-layout:
 	@case "$(UNIVERSAL)" in 0|1|true|false|yes|no) ;; \
 	  *) echo "UNIVERSAL must be 0 or 1" >&2; exit 1 ;; esac
 
-_bundle: _validate-release-layout _require-create-dmg
+_check-codesign-identity:
+	@test -f "$(CLINCH_CODESIGN_CERT)" && test -n "$(CLINCH_CODESIGN_IDENTITY)" \
+	  || { echo "missing or unreadable $(CLINCH_CODESIGN_CERT)" >&2; exit 1; }
+	@test -f "$(CLINCH_CODESIGN_KEYCHAIN)" \
+	  || { echo "missing code-signing keychain $(CLINCH_CODESIGN_KEYCHAIN)" >&2; exit 1; }
+	@tr -d '\n' < "$(CLINCH_CODESIGN_KEYCHAIN_PASSWORD_FILE)" \
+	  | security unlock-keychain "$(CLINCH_CODESIGN_KEYCHAIN)" >/dev/null 2>&1 \
+	  && security lock-keychain "$(CLINCH_CODESIGN_KEYCHAIN)" \
+	  || { echo "$(CLINCH_CODESIGN_KEYCHAIN_PASSWORD_FILE) does not unlock the code-signing keychain" >&2; exit 1; }
+	@security find-identity -v -p codesigning "$(CLINCH_CODESIGN_KEYCHAIN)" \
+	  | grep -q "$(CLINCH_CODESIGN_IDENTITY)" \
+	  || { echo "Clinch Code Signing is not trusted for code signing; see SECURITY.md" >&2; exit 1; }
+
+_bundle: _validate-release-layout _require-create-dmg _check-codesign-identity
 	@test "$(UPDATE_SEQUENCE)" != auto || { echo "UPDATE_SEQUENCE must be resolved first" >&2; exit 1; }
 	@set -e; \
+	export CLINCH_CODESIGN_IDENTITY="$(CLINCH_CODESIGN_IDENTITY)"; \
+	export CLINCH_CODESIGN_KEYCHAIN="$(CLINCH_CODESIGN_KEYCHAIN)"; \
+	export CLINCH_CODESIGN_KEYCHAIN_PASSWORD_FILE="$(CLINCH_CODESIGN_KEYCHAIN_PASSWORD_FILE)"; \
 	if [ "$(UNIVERSAL_ENABLED)" = 1 ]; then \
 	  GIT_RELEASE_TAG="$(VERSION)" CLINCH_UPDATE_SEQUENCE="$(UPDATE_SEQUENCE)" \
 	    ./script/bundle -c stable --selfsign; \

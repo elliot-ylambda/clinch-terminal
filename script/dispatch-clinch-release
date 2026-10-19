@@ -436,6 +436,8 @@ done
   "$UPDATE_KEY" "$ROOT/resources/update/clinch-update-public-key.json" >/dev/null \
   || fail "update signing key preflight failed"
 verify_release_key
+make --no-print-directory _check-codesign-identity \
+  || fail "code-signing identity preflight failed"
 gh auth status >/dev/null || fail "authenticate gh before releasing"
 git remote get-url "$REMOTE" >/dev/null || fail "missing Git remote $REMOTE"
 available_kib="$(df -Pk "$ROOT" | awk 'NR == 2 {print $4}')"

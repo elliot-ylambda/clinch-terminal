@@ -266,7 +266,7 @@ if validation.get("artifact_checks") != [
         if release_layout == "universal"
         else "separate native arm64 and x86_64 bundles"
     ),
-    "ad-hoc hardened-runtime signature",
+    "pinned Clinch Code Signing hardened-runtime signature",
     "no Apple Events entitlement or usage description",
     "no bundled iMessage helper",
     (

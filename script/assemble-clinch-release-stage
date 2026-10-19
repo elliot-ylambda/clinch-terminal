@@ -109,7 +109,7 @@ value = {
             if sys.argv[7] == "universal"
             else "separate native arm64 and x86_64 bundles"
         ),
-        "ad-hoc hardened-runtime signature",
+        "pinned Clinch Code Signing hardened-runtime signature",
         "no Apple Events entitlement or usage description",
         "no bundled iMessage helper",
         (
