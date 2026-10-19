@@ -19,6 +19,21 @@ CODESIGN_CERT="resources/release/clinch-codesign-cert.pem"
 
 fail() { echo "release verification failed: $*" >&2; exit 1; }
 
+# arm64: one Apple Silicon bundle (the default). native: separate arm64 and x86_64 bundles, each
+# verified with REQUIRE_ARCHITECTURE. universal: one legacy fat bundle.
+LAYOUT="${RELEASE_LAYOUT:-arm64}"
+case "$LAYOUT" in
+  arm64) REQUIRE_ARCHITECTURE=arm64 ;;
+  native)
+    case "${REQUIRE_ARCHITECTURE:-}" in
+      arm64|x86_64) ;;
+      *) fail "REQUIRE_ARCHITECTURE must be arm64 or x86_64 for a native release" ;;
+    esac
+    ;;
+  universal) REQUIRE_ARCHITECTURE= ;;
+  *) fail "RELEASE_LAYOUT must be arm64, native, or universal" ;;
+esac
+
 verify_binary_minimum_macos() {
   local binary="$1"
   local label="$2"
@@ -97,14 +112,10 @@ verify_app() {
   binary="$app/Contents/MacOS/stable"
   [[ -x "$binary" ]] || fail "$label omitted its stable executable"
   verify_binary_minimum_macos "$binary" "$label stable executable"
-  if [[ "${REQUIRE_UNIVERSAL:-1}" == "1" ]]; then
+  if [[ "$LAYOUT" == universal ]]; then
     lipo "$binary" -verify_arch x86_64 arm64 >/dev/null \
       || fail "$label is not universal (x86_64 + arm64)"
   else
-    case "${REQUIRE_ARCHITECTURE:-}" in
-      arm64|x86_64) ;;
-      *) fail "REQUIRE_ARCHITECTURE must be arm64 or x86_64 for a native release" ;;
-    esac
     [[ "$(lipo -archs "$binary")" == "$REQUIRE_ARCHITECTURE" ]] \
       || fail "$label is not a native $REQUIRE_ARCHITECTURE bundle"
   fi
@@ -251,13 +262,13 @@ ssh-keygen -Y verify -f "$ALLOWED_SIGNERS" -I clinch-release -n clinch-install \
   || fail "release SSH signature is invalid"
 
 /usr/bin/python3 - "$MANIFEST" "$ZIP" "$VERSION" "$UPDATE_SEQUENCE" "$MINIMUM_MACOS" \
-  "${REQUIRE_UNIVERSAL:-1}" "${REQUIRE_ARCHITECTURE:-}" <<'PY' \
+  "$LAYOUT" "$REQUIRE_ARCHITECTURE" <<'PY' \
   || exit 1
 import hashlib, json, pathlib, sys
 manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 archive = pathlib.Path(sys.argv[2])
 version = sys.argv[3]
-universal = sys.argv[6] == "1"
+layout = sys.argv[6]
 architecture = sys.argv[7]
 expected = {
     "schema_version": 1,
@@ -269,13 +280,13 @@ expected = {
     "bundle_id": "sh.clinch.Clinch",
     "signing_key_id": "a353cda3ad59f128",
     "notarized": False,
-    "architectures": ["arm64", "x86_64"],
+    "architectures": ["arm64"] if layout == "arm64" else ["arm64", "x86_64"],
     "release_url": f"https://github.com/elliot-ylambda/clinch-terminal/releases/tag/{version}",
 }
 for key, value in expected.items():
     if manifest.get(key) != value:
         raise SystemExit(f"release verification failed: manifest {key} mismatch")
-expected_name = "Clinch.app.zip" if universal or architecture == "arm64" else (
+expected_name = "Clinch.app.zip" if layout != "native" or architecture == "arm64" else (
     "Clinch-x86_64.app.zip"
 )
 expected_url = (
@@ -285,9 +296,10 @@ expected_url = (
 legacy_archive = manifest.get("archive", {})
 if legacy_archive.get("name") != "Clinch.app.zip":
     raise SystemExit("release verification failed: unexpected legacy manifest archive name")
-if universal:
+if layout != "native":
+    # Installed clients accept only the legacy single-archive shape for one-archive releases.
     if "archives" in manifest:
-        raise SystemExit("release verification failed: universal manifest has native archives")
+        raise SystemExit(f"release verification failed: {layout} manifest has native archives")
     selected_archive = legacy_archive
 else:
     archives = manifest.get("archives")

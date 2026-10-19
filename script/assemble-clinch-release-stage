@@ -10,16 +10,13 @@ COMMIT="${2:?missing commit}"
 UPDATE_SEQUENCE="${3:?missing sequence}"
 
 RELEASE_DIR="target/release-lto/bundle/osx"
-case "${UNIVERSAL:-0}" in
-  1|true|yes)
-    RELEASE_LAYOUT=universal
-    STABLE_APP="$RELEASE_DIR/Clinch.app"
-    ;;
-  0|false|no)
-    RELEASE_LAYOUT=native
-    STABLE_APP="target/aarch64-apple-darwin/release-lto/bundle/osx/Clinch.app"
-    ;;
-  *) echo "release staging failed: UNIVERSAL must be 0 or 1" >&2; exit 1 ;;
+# arm64 (the default) ships Apple Silicon only; native adds a separate Intel bundle; universal
+# ships one legacy fat bundle.
+RELEASE_LAYOUT="${RELEASE_LAYOUT:-arm64}"
+case "$RELEASE_LAYOUT" in
+  universal) STABLE_APP="$RELEASE_DIR/Clinch.app" ;;
+  arm64|native) STABLE_APP="target/aarch64-apple-darwin/release-lto/bundle/osx/Clinch.app" ;;
+  *) echo "release staging failed: RELEASE_LAYOUT must be arm64, native, or universal" >&2; exit 1 ;;
 esac
 STAGE="target/release-stage/$VERSION"
 DIST="$STAGE/dist"
@@ -104,11 +101,11 @@ import sys
 output = pathlib.Path(sys.argv[1])
 value = {
     "artifact_checks": [
-        (
-            "universal x86_64+arm64"
-            if sys.argv[7] == "universal"
-            else "separate native arm64 and x86_64 bundles"
-        ),
+        {
+            "universal": "universal x86_64+arm64",
+            "native": "separate native arm64 and x86_64 bundles",
+            "arm64": "native arm64 bundle only",
+        }[sys.argv[7]],
         "pinned Clinch Code Signing hardened-runtime signature",
         "no Apple Events entitlement or usage description",
         "no bundled iMessage helper",
@@ -276,15 +273,26 @@ done
 ssh-keygen -Y sign -f "$RELEASE_KEY" -n clinch-checksums - \
   < "$DIST/Clinch.checksums.txt" > "$DIST/Clinch.checksums.sshsig"
 
-if [[ "$RELEASE_LAYOUT" == native ]]; then
-  download_note='Download **Clinch.dmg** on Apple Silicon or **Clinch-x86_64.dmg** on Intel'
-  transition_note='Intel installations that predate native-archive selection need one authenticated manual install for this transition.'
-else
-  download_note='Download the universal **Clinch.dmg**'
-  transition_note=
-fi
+platforms='Intel and Apple Silicon'
+case "$RELEASE_LAYOUT" in
+  native)
+    download_note='Download **Clinch.dmg** on Apple Silicon or **Clinch-x86_64.dmg** on Intel'
+    transition_note='Intel installations that predate native-archive selection need one authenticated manual install for this transition.'
+    ;;
+  universal)
+    download_note='Download the universal **Clinch.dmg**'
+    transition_note=
+    ;;
+  arm64)
+    last_intel_release="$(sed -n 's/^LAST_INTEL_RELEASE="\(.*\)"$/\1/p' install.sh)"
+    [[ -n "$last_intel_release" ]] || fail "install.sh does not name the last Intel release"
+    platforms='Apple Silicon'
+    download_note='Download **Clinch.dmg**'
+    transition_note="This release supports Apple Silicon Macs only. Intel Macs should stay on **$last_intel_release** (the last Intel release); install it with \`curl -fsSL https://clinch.sh/install | sh -s -- --version $last_intel_release\`."
+    ;;
+esac
 cat > "$STAGE/release-notes.md" <<EOF
-Clinch $VERSION is an unnotarized public preview for macOS 14 or later on Intel and Apple Silicon.
+Clinch $VERSION is an unnotarized public preview for macOS 14 or later on $platforms.
 
 $download_note, authenticate
 **Clinch.checksums.txt** with **Clinch.checksums.sshsig**, compare the DMG digest, and drag Clinch to Applications.

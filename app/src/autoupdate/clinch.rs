@@ -169,6 +169,9 @@ pub struct Manifest {
     pub archive: Archive,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub archives: BTreeMap<String, Archive>,
+    /// Mac architectures this release runs on. Apple Silicon-only releases list just `arm64`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub architectures: Vec<String>,
     pub release_notes: String,
     pub release_url: String,
     #[serde(default)]
@@ -201,6 +204,11 @@ impl VerifiedRelease {
 
 impl Manifest {
     fn archive_for_architecture(&self, architecture: &str) -> Result<&Archive> {
+        ensure!(
+            self.architectures.is_empty() || self.architectures.iter().any(|a| a == architecture),
+            "Clinch {} does not support this Mac ({architecture})",
+            self.version
+        );
         if self.archives.is_empty() {
             return Ok(&self.archive);
         }
@@ -431,6 +439,18 @@ fn validate_manifest(manifest: &Manifest, release: &GithubRelease) -> Result<()>
         "invalid Clinch release version"
     );
     validate_archive(&manifest.archive, ARCHIVE_ASSET, manifest, release)?;
+    let architectures: Vec<&str> = manifest.architectures.iter().map(String::as_str).collect();
+    ensure!(
+        matches!(
+            architectures.as_slice(),
+            [] | ["arm64"] | ["arm64", "x86_64"]
+        ),
+        "update manifest lists unsupported Mac architectures"
+    );
+    ensure!(
+        architectures != ["arm64"] || manifest.archives.is_empty(),
+        "an Apple Silicon-only update manifest must not contain architecture archives"
+    );
     if !manifest.archives.is_empty() {
         ensure!(
             manifest.archives.len() == 2

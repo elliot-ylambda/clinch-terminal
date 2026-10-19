@@ -26,7 +26,7 @@ cp \
 cp "$ROOT/Cargo.lock" "$FIXTURE/Cargo.lock"
 cp "$ROOT/LICENSE-AGPL" "$ROOT/LICENSE-MIT" "$ROOT/NOTICE" "$FIXTURE/"
 printf '[workspace]\nmembers = []\n' > "$FIXTURE/Cargo.toml"
-printf '#!/bin/sh\n' > "$FIXTURE/install.sh"
+printf '#!/bin/sh\nLAST_INTEL_RELEASE="v0.2099.01.01.0000"\n' > "$FIXTURE/install.sh"
 printf '#!/bin/sh\n' > "$FIXTURE/uninstall.sh"
 cat > "$FIXTURE/web/remote-control/package.json" <<'EOF'
 {
@@ -261,6 +261,7 @@ assemble_output="$(cd "$FIXTURE" && env \
   PATH="$TMP/bin:$PATH" \
   FIXTURE_COMMIT="$COMMIT" \
   CLINCH_RELEASE_SIGNING_KEY="$TMP/release-key" \
+  RELEASE_LAYOUT=native \
   ./script/assemble-clinch-release-stage \
     "$VERSION" "$COMMIT" "$SEQUENCE")"
 grep -Fq "target/release-stage/$VERSION" <<< "$assemble_output"
@@ -279,12 +280,41 @@ assert "manual_qa" not in validation
 PY
 
 verify() {
-  (cd "$FIXTURE" && PATH="$TMP/bin:$PATH" ./script/verify-clinch-release-stage "$@")
+  (cd "$FIXTURE" && PATH="$TMP/bin:$PATH" RELEASE_LAYOUT=native \
+    ./script/verify-clinch-release-stage "$@")
 }
 
 verify_universal() {
-  (cd "$FIXTURE" && PATH="$TMP/bin:$PATH" UNIVERSAL=1 \
+  (cd "$FIXTURE" && PATH="$TMP/bin:$PATH" RELEASE_LAYOUT=universal \
     ./script/verify-clinch-release-stage "$@")
+}
+
+verify_arm64() {
+  (cd "$FIXTURE" && PATH="$TMP/bin:$PATH" ./script/verify-clinch-release-stage "$@")
+}
+
+# Rewrites the staged update manifest and signs it again with the fixture keys.
+rewrite_manifest() {
+  /usr/bin/python3 - "$RELEASE_DIR/Clinch.update.json" "$1" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+manifest = json.loads(path.read_text(encoding="utf-8"))
+manifest.pop("archives", None)
+manifest["architectures"] = sys.argv[2].split(",")
+path.write_text(
+    json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n",
+    encoding="utf-8",
+)
+PY
+  "$OPENSSL3" pkeyutl -sign -rawin -inkey "$TMP/update-key.pem" \
+    -in "$RELEASE_DIR/Clinch.update.json" -out "$TMP/update-signature.bin"
+  base64 < "$TMP/update-signature.bin" | tr -d '\n' > "$RELEASE_DIR/Clinch.update.sig"
+  printf '\n' >> "$RELEASE_DIR/Clinch.update.sig"
+  ssh-keygen -Y sign -f "$TMP/release-key" -n clinch-install - \
+    < "$RELEASE_DIR/Clinch.update.json" > "$RELEASE_DIR/Clinch.update.sshsig"
 }
 
 expect_failure() {
@@ -340,33 +370,40 @@ cp "$TMP/provenance.sshsig" "$DIST/Clinch.build-provenance.sshsig"
 # The explicit legacy flag still assembles and verifies the smaller, original
 # universal asset set without carrying stale native-mode files into the draft.
 mkdir -p "$RELEASE_DIR/Clinch.app"
-/usr/bin/python3 - "$RELEASE_DIR/Clinch.update.json" <<'PY'
-import json
-import pathlib
-import sys
-
-path = pathlib.Path(sys.argv[1])
-manifest = json.loads(path.read_text(encoding="utf-8"))
-manifest.pop("archives")
-path.write_text(
-    json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n",
-    encoding="utf-8",
-)
-PY
-"$OPENSSL3" pkeyutl -sign -rawin -inkey "$TMP/update-key.pem" \
-  -in "$RELEASE_DIR/Clinch.update.json" -out "$TMP/update-signature.bin"
-base64 < "$TMP/update-signature.bin" | tr -d '\n' > "$RELEASE_DIR/Clinch.update.sig"
-printf '\n' >> "$RELEASE_DIR/Clinch.update.sig"
-ssh-keygen -Y sign -f "$TMP/release-key" -n clinch-install - \
-  < "$RELEASE_DIR/Clinch.update.json" > "$RELEASE_DIR/Clinch.update.sshsig"
+rewrite_manifest arm64,x86_64
 (cd "$FIXTURE" && env \
   PATH="$TMP/bin:$PATH" \
   FIXTURE_COMMIT="$COMMIT" \
   CLINCH_RELEASE_SIGNING_KEY="$TMP/release-key" \
-  UNIVERSAL=1 \
+  RELEASE_LAYOUT=universal \
   ./script/assemble-clinch-release-stage "$VERSION" "$COMMIT" "$SEQUENCE" \
   >/dev/null)
 verify_universal "$DIST" "$VERSION" "$COMMIT" "$SEQUENCE" >/dev/null
 [[ ! -e "$DIST/Clinch-x86_64.app.zip" ]]
+
+# The default layout ships Apple Silicon only: one native arm64 bundle, a manifest that lists only
+# arm64, and release notes that send Intel Macs to the last Intel release.
+rewrite_manifest arm64
+(cd "$FIXTURE" && env \
+  PATH="$TMP/bin:$PATH" \
+  FIXTURE_COMMIT="$COMMIT" \
+  CLINCH_RELEASE_SIGNING_KEY="$TMP/release-key" \
+  ./script/assemble-clinch-release-stage "$VERSION" "$COMMIT" "$SEQUENCE" \
+  >/dev/null)
+verify_arm64 "$DIST" "$VERSION" "$COMMIT" "$SEQUENCE" >/dev/null
+[[ ! -e "$DIST/Clinch-x86_64.app.zip" && ! -e "$DIST/Clinch-x86_64.dmg" ]]
+grep -Fq "Apple Silicon Macs only" "$FIXTURE/target/release-stage/$VERSION/release-notes.md"
+grep -Fq -- "--version v0.2099.01.01.0000" "$FIXTURE/target/release-stage/$VERSION/release-notes.md"
+/usr/bin/python3 - "$DIST/Clinch.release-validation.json" <<'PY'
+import json
+import pathlib
+import sys
+
+validation = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert validation["release_layout"] == "arm64"
+assert validation["artifact_checks"][0] == "native arm64 bundle only"
+PY
+expect_failure arm64_as_universal verify_universal "$DIST" "$VERSION" "$COMMIT" "$SEQUENCE"
+expect_failure arm64_as_native verify "$DIST" "$VERSION" "$COMMIT" "$SEQUENCE"
 
 echo "PASS"

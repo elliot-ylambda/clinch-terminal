@@ -817,6 +817,13 @@ fn test_cloud_preferences_setting_initial_load_skipped_when_setting_is_off() {
             &mut server_api,
         ));
 
+        // The initial load starts the periodic poll for changed objects. Whether that poll runs
+        // before the test finishes depends on scheduling, so answer it with no changes rather
+        // than letting an unexpected call panic the mock under load.
+        server_api
+            .expect_fetch_changed_objects()
+            .returning(|_, _| Ok(InitialLoadResponse::default()));
+
         let UpdateManagerStruct { update_manager, .. } =
             create_update_manager_struct(&mut app, Arc::new(server_api));
 

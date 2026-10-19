@@ -38,6 +38,7 @@ fn fixture() -> (Manifest, GithubRelease) {
                 ("arm64".to_owned(), arm64_archive),
                 ("x86_64".to_owned(), x86_64_archive),
             ]),
+            architectures: vec!["arm64".to_owned(), "x86_64".to_owned()],
             release_notes: "Reliable updates.".to_owned(),
             release_url: format!(
                 "https://github.com/{EXPECTED_REPOSITORY}/releases/tag/{version}"
@@ -183,6 +184,39 @@ fn legacy_universal_manifest_remains_compatible() {
             .name,
         ARCHIVE_ASSET
     );
+}
+
+#[test]
+fn apple_silicon_only_release_is_not_offered_to_intel_macs() {
+    let (mut manifest, mut release) = fixture();
+    manifest.archives.clear();
+    manifest.architectures = vec!["arm64".to_owned()];
+    release
+        .assets
+        .retain(|asset| asset.name != X86_64_ARCHIVE_ASSET);
+
+    validate_manifest(&manifest, &release).expect("Apple Silicon-only manifest");
+    assert_eq!(
+        manifest
+            .archive_for_architecture("arm64")
+            .expect("Apple Silicon archive")
+            .name,
+        ARCHIVE_ASSET
+    );
+    assert!(manifest.archive_for_architecture("x86_64").is_err());
+}
+
+#[test]
+fn rejects_unsupported_or_inconsistent_architecture_lists() {
+    let (manifest, release) = fixture();
+
+    let mut intel_only = manifest.clone();
+    intel_only.architectures = vec!["x86_64".to_owned()];
+    assert!(validate_manifest(&intel_only, &release).is_err());
+
+    let mut arm64_with_archives = manifest.clone();
+    arm64_with_archives.architectures = vec!["arm64".to_owned()];
+    assert!(validate_manifest(&arm64_with_archives, &release).is_err());
 }
 
 #[test]

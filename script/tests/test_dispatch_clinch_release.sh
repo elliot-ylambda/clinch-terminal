@@ -61,7 +61,7 @@ files=(
   Clinch.update.json Clinch.update.sig Clinch.update.sshsig
   clinch-release-allowed-signers install.sh uninstall.sh
 )
-if [[ "${UNIVERSAL:-0}" != 1 ]]; then
+if [[ "${RELEASE_LAYOUT:-}" == native ]]; then
   files+=(
     Clinch-x86_64.app.zip Clinch-x86_64.app.zip.sha256
     Clinch-x86_64.dmg Clinch-x86_64.dmg.sha256 Clinch-x86_64.sbom.cdx.json
@@ -212,7 +212,7 @@ case "${1:-} ${2:-}" in
       Clinch.update.json Clinch.update.sig Clinch.update.sshsig \
       clinch-release-allowed-signers install.sh uninstall.sh
     )
-    if [[ "${UNIVERSAL:-0}" != 1 ]]; then
+    if [[ "${RELEASE_LAYOUT:-}" == native ]]; then
       names+=(
         Clinch-x86_64.app.zip Clinch-x86_64.app.zip.sha256
         Clinch-x86_64.dmg Clinch-x86_64.dmg.sha256 Clinch-x86_64.sbom.cdx.json
@@ -399,7 +399,9 @@ reset_state
 run_release_tty "PUBLISH $VERSION ${COMMIT:0:12}" NONBLOCKING_STDIN=1 > "$TMP/happy.out"
 grep -Fq "Locally built, verified, signed, and published $VERSION" "$TMP/happy.out"
 grep -Fq 'make release-check' "$TMP/ops.log"
-grep -Fq "make _verify VERSION=$VERSION UPDATE_SEQUENCE=$SEQUENCE UNIVERSAL=0" "$TMP/ops.log"
+grep -Fq "make _verify VERSION=$VERSION UPDATE_SEQUENCE=$SEQUENCE UNIVERSAL=0 INTEL=0" "$TMP/ops.log"
+# The default release ships Apple Silicon only.
+[[ ! -e "$FIXTURE/target/release-stage/$VERSION/dist/Clinch-x86_64.app.zip" ]]
 grep -Fq 'git tag' "$TMP/ops.log"
 grep -Fq 'git push-tag' "$TMP/ops.log"
 grep -Fq 'gh release-create' "$TMP/ops.log"
@@ -662,6 +664,19 @@ run_release_tty "PUBLISH $VERSION ${COMMIT:0:12}" UNIVERSAL=1 \
 grep -Fq "make _verify VERSION=$VERSION UPDATE_SEQUENCE=$SEQUENCE UNIVERSAL=1" \
   "$TMP/ops.log"
 [[ ! -e "$FIXTURE/target/release-stage/$VERSION/dist/Clinch-x86_64.app.zip" ]]
+
+# An Intel build happens only on request, as a separate native bundle.
+reset_state
+run_release_tty "PUBLISH $VERSION ${COMMIT:0:12}" INTEL=1 > "$TMP/native.out"
+grep -Fq "make _verify VERSION=$VERSION UPDATE_SEQUENCE=$SEQUENCE UNIVERSAL=0 INTEL=1" \
+  "$TMP/ops.log"
+[[ -e "$FIXTURE/target/release-stage/$VERSION/dist/Clinch-x86_64.app.zip" ]]
+
+if run_release INTEL=1 UNIVERSAL=1 < /dev/null > "$TMP/both-layouts.out" 2>&1; then
+  echo "FAIL: INTEL=1 with UNIVERSAL=1 was accepted" >&2
+  exit 1
+fi
+grep -Fq 'not both' "$TMP/both-layouts.out"
 
 # A cached candidate from one layout must never be reused for the other.
 reset_state

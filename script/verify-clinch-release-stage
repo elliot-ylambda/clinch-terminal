@@ -9,10 +9,10 @@ DIST="${1:?usage: verify-clinch-release-stage <dist> <version> <commit> <sequenc
 VERSION="${2:?missing version}"
 EXPECTED_COMMIT="${3:?missing commit}"
 EXPECTED_SEQUENCE="${4:?missing sequence}"
-case "${UNIVERSAL:-0}" in
-  1|true|yes) RELEASE_LAYOUT=universal ;;
-  0|false|no) RELEASE_LAYOUT=native ;;
-  *) echo "staged release verification failed: UNIVERSAL must be 0 or 1" >&2; exit 1 ;;
+RELEASE_LAYOUT="${RELEASE_LAYOUT:-arm64}"
+case "$RELEASE_LAYOUT" in
+  arm64|native|universal) ;;
+  *) echo "staged release verification failed: RELEASE_LAYOUT must be arm64, native, or universal" >&2; exit 1 ;;
 esac
 ALLOWED_SIGNERS="${CLINCH_ALLOWED_SIGNERS:-$ROOT/resources/release/clinch-release-allowed-signers}"
 UPDATE_PUBLIC_KEY_JSON="${CLINCH_UPDATE_PUBLIC_KEY_JSON:-$ROOT/resources/update/clinch-update-public-key.json}"
@@ -198,7 +198,7 @@ manifest_expected = {
     "bundle_id": "sh.clinch.Clinch",
     "minimum_macos_version": "14.0",
     "notarized": False,
-    "architectures": ["arm64", "x86_64"],
+    "architectures": ["arm64"] if release_layout == "arm64" else ["arm64", "x86_64"],
     "release_url": (
         "https://github.com/elliot-ylambda/clinch-terminal/releases/tag/"
         f"{version}"
@@ -240,7 +240,7 @@ if release_layout == "native":
     if intel.get("sha256") != digest(dist / "Clinch-x86_64.app.zip"):
         fail("manifest Intel archive digest mismatch")
 elif "archives" in manifest:
-    fail("universal manifest unexpectedly contains architecture archives")
+    fail(f"{release_layout} manifest unexpectedly contains architecture archives")
 if not isinstance(manifest.get("release_notes"), str) or not manifest["release_notes"].strip():
     fail("manifest release notes are empty")
 
@@ -261,11 +261,11 @@ if validation.get("gates") != ["Local full release gate"]:
 if validation.get("notarized") is not False:
     fail("validation record notarization state mismatch")
 if validation.get("artifact_checks") != [
-    (
-        "universal x86_64+arm64"
-        if release_layout == "universal"
-        else "separate native arm64 and x86_64 bundles"
-    ),
+    {
+        "universal": "universal x86_64+arm64",
+        "native": "separate native arm64 and x86_64 bundles",
+        "arm64": "native arm64 bundle only",
+    }[release_layout],
     "pinned Clinch Code Signing hardened-runtime signature",
     "no Apple Events entitlement or usage description",
     "no bundled iMessage helper",

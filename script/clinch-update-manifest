@@ -134,8 +134,15 @@ def archive_record(archive):
 next_key = os.environ.get("CLINCH_UPDATE_NEXT_PUBLIC_KEY")
 if info.get("ClinchUpdateSequence") != str(sequence):
     raise SystemExit("app bundle update sequence does not match the manifest sequence")
+# An Apple Silicon-only release lists only arm64 (CLINCH_MANIFEST_ARCHITECTURES=arm64) so
+# installers and current clients reject it on Intel Macs before downloading.
+architectures = os.environ.get("CLINCH_MANIFEST_ARCHITECTURES", "arm64,x86_64").split(",")
+if architectures not in (["arm64"], ["arm64", "x86_64"]):
+    raise SystemExit("CLINCH_MANIFEST_ARCHITECTURES must be arm64 or arm64,x86_64")
+if x86_64_archive and architectures != ["arm64", "x86_64"]:
+    raise SystemExit("an Intel update archive requires both manifest architectures")
 manifest = {
-    "architectures": ["arm64", "x86_64"],
+    "architectures": architectures,
     # Keep the arm64 archive in the legacy field so existing Apple Silicon
     # clients can cross the split-archive release without another bridge build.
     "archive": archive_record(arm64_archive),

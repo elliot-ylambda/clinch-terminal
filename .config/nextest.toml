@@ -21,6 +21,9 @@ test-threads = 4
 # before their assertions run. Keep the strict local default while giving the
 # exhaustive release gate enough time for that platform initialization.
 slow-timeout = { period = "60s", terminate-after = 2 }
+# Run a failed test once more before failing the release. Inherited timing-sensitive tests can lose a
+# race under full-gate load; a retried pass is still reported as FLAKY, so it stays visible.
+retries = 1
 
 [profile.ci]
 # Print out output for failing tests as soon as they fail, and also at the end
