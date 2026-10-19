@@ -153,8 +153,8 @@ _check-codesign-identity:
 	  || { echo "missing or unreadable $(CLINCH_CODESIGN_CERT)" >&2; exit 1; }
 	@test -f "$(CLINCH_CODESIGN_KEYCHAIN)" \
 	  || { echo "missing code-signing keychain $(CLINCH_CODESIGN_KEYCHAIN)" >&2; exit 1; }
-	@tr -d '\n' < "$(CLINCH_CODESIGN_KEYCHAIN_PASSWORD_FILE)" \
-	  | security unlock-keychain "$(CLINCH_CODESIGN_KEYCHAIN)" >/dev/null 2>&1 \
+	@./script/unlock-clinch-codesign-keychain \
+	  "$(CLINCH_CODESIGN_KEYCHAIN)" "$(CLINCH_CODESIGN_KEYCHAIN_PASSWORD_FILE)" \
 	  && security lock-keychain "$(CLINCH_CODESIGN_KEYCHAIN)" \
 	  || { echo "$(CLINCH_CODESIGN_KEYCHAIN_PASSWORD_FILE) does not unlock the code-signing keychain" >&2; exit 1; }
 	@security find-identity -v -p codesigning "$(CLINCH_CODESIGN_KEYCHAIN)" \

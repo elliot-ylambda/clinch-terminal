@@ -29,7 +29,7 @@ that certificate, so macOS privacy grants (Screen Recording, Accessibility) carr
 instead of being revoked by each new build hash.
 
 The certificate's private key stays in a dedicated keychain on the release workstation. `make release`
-unlocks it from a local password file (read on stdin, never in process arguments) and adds it to the
+unlocks it from a local password file (on stdin from a detached session, never in process arguments) and adds it to the
 keychain search list only while `codesign` runs, then removes and locks it again, so it never
 prompts other apps. A new release workstation must import the key backup and trust the certificate
 for code signing once:
