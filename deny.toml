@@ -12,6 +12,7 @@ ignore = [
     # Newly published and transitive through the font stack; no safe upgrade exists:
     "RUSTSEC-2026-0192", # ttf-parser is unmaintained; migrate the parent font crates post-launch
     { id = "RUSTSEC-2026-0206", reason = "rustybuzz is an unmaintained transitive dependency of the latest resvg/usvg release; the advisory reports no vulnerability and no safe upgrade. Migrate when resvg adopts harfrust." },
+    { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml is an unmaintained dependency of the deprecated serde_yaml 0.9 used by the pinned mermaid_to_svg git dependency; the advisory reports no vulnerability and no safe upgrade. Migrate when mermaid_to_svg moves off serde_yaml." },
 ]
 
 [licenses]
