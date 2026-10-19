@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Unlocks the Clinch code-signing keychain from its password file without putting the password in
+# process arguments, which macOS shows to every local user. `security unlock-keychain` reads the
+# password from stdin only when it has no controlling terminal; otherwise it waits for input on the
+# terminal, and `make release` runs under one for its publish confirmation. So it runs in a new
+# session, detached from any terminal.
+set -euo pipefail
+
+KEYCHAIN="${1:?usage: unlock-clinch-codesign-keychain <keychain> <password-file>}"
+PASSWORD_FILE="${2:?missing password file}"
+
+tr -d '\n' < "$PASSWORD_FILE" | /usr/bin/python3 -I -c '
+import os, sys
+pid = os.fork()
+if pid == 0:
+    os.setsid()
+    os.execvp("security", ["security", "unlock-keychain", sys.argv[1]])
+sys.exit(os.waitstatus_to_exitcode(os.waitpid(pid, 0)[1]))
+' "$KEYCHAIN" >/dev/null 2>&1

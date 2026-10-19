@@ -40,6 +40,7 @@ failure_root="$TMP/failure-root"
 mkdir -p "$failure_root/script" "$failure_root/resources/release"
 cp "$ROOT/Makefile" "$failure_root/Makefile"
 cp "$ROOT/resources/release/clinch-codesign-cert.pem" "$failure_root/resources/release/"
+cp "$ROOT/script/unlock-clinch-codesign-keychain" "$failure_root/script/"
 cat > "$failure_root/script/bundle" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "${BUNDLE_CALLS:?}"
