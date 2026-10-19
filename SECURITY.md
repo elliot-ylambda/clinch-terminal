@@ -28,9 +28,11 @@ Anyway**. Release verification refuses any build whose designated requirement is
 that certificate, so macOS privacy grants (Screen Recording, Accessibility) carry across updates
 instead of being revoked by each new build hash.
 
-The certificate's private key stays in a dedicated keychain on the release workstation, unlocked by
-`make release` from a local password file. A new release workstation must import the key backup and
-trust the certificate for code signing once:
+The certificate's private key stays in a dedicated keychain on the release workstation. `make release`
+unlocks it from a local password file (read on stdin, never in process arguments) and adds it to the
+keychain search list only while `codesign` runs, then removes and locks it again, so it never
+prompts other apps. A new release workstation must import the key backup and trust the certificate
+for code signing once:
 `security add-trusted-cert -r trustRoot -p codeSign -k <keychain> resources/release/clinch-codesign-cert.pem`.
 Losing the key forces every user to re-grant macOS permissions once.
 
