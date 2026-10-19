@@ -20,7 +20,9 @@ DEFAULT_TARGET="$3"
 ADDITIONAL_TARGET="$4"
 FEATURES="$5"
 WORKSPACE_ROOT="$6"
-MODE="${CLINCH_PARALLEL_ARCH_BUILDS:-auto}"
+# Building both architectures at once roughly doubles peak memory and CPU load, so it is opt-in
+# (1, or auto to enable it on hosts with enough RAM and CPUs).
+MODE="${CLINCH_PARALLEL_ARCH_BUILDS:-0}"
 MIN_MEMORY_GIB="${CLINCH_PARALLEL_ARCH_MIN_MEMORY_GIB:-32}"
 MIN_CPUS="${CLINCH_PARALLEL_ARCH_MIN_CPUS:-8}"
 

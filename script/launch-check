@@ -25,93 +25,8 @@ for tool in cargo cargo-nextest cargo-deny node corepack; do
   }
 done
 
-echo "==> Formatting"
-./script/format --check
-
-echo "==> Installer and agent-runtime syntax"
-sh -n install.sh
-/usr/bin/python3 -c \
-  'compile(open("script/vendor-clinch-cargo-sources", encoding="utf-8").read(), "script/vendor-clinch-cargo-sources", "exec")'
-bash -n \
-  uninstall.sh \
-  script/assemble-clinch-corresponding-source \
-  script/build-clinch-remote-control-web \
-  script/check_license_config_sync \
-  script/assemble-clinch-release-stage \
-  script/configure-clinch-release-repository \
-  script/dispatch-clinch-release \
-  script/launch-check \
-  script/release-from-clean-worktree \
-  script/macos/build-universal-targets-parallel \
-  script/macos/bundle \
-  script/macos/run \
-  script/next-clinch-update-sequence \
-  script/prepare_bundled_resources \
-  script/clinch-update-manifest \
-  script/update-installed-clinch \
-  script/update_plist \
-  script/verify-clinch-release \
-  script/verify-clinch-source-archive \
-  script/verify-clinch-release-stage
-/usr/bin/python3 -c \
-  'compile(open("script/generate-clinch-remote-control-notices", encoding="utf-8").read(), "script/generate-clinch-remote-control-notices", "exec")'
-bash -n resources/update/clinch-update-helper
-bash -n tools/agent-resume/*.sh \
-  tools/agent-resume/clinch-agent-resume \
-  tools/agent-resume/warp-agent-resume
-zsh -n tools/agent-resume/claude.zsh \
-  tools/agent-resume/clinch_agent_resume_launch \
-  tools/agent-resume/clinch_codex_launch
-while IFS= read -r plugin_script; do
-  bash -n "$plugin_script"
-done < <(find resources/bundled/agent-plugins -type f -name '*.sh' -print | LC_ALL=C sort)
-
-echo "==> Release dispatcher tests"
-for test in script/tests/test_*.sh; do
-  echo "running $test"
-  bash "$test"
-done
-
-echo "==> Agent capture, durability, install, and replay tests"
-for test in tools/agent-resume/tests/test_*.sh; do
-  echo "running $test"
-  if [[ "$(head -n 1 "$test")" == *zsh* ]]; then
-    zsh "$test"
-  else
-    bash "$test"
-  fi
-done
-
-echo "==> Bundled notification plugin tests"
-for test in resources/bundled/agent-plugins/*/plugins/warp/tests/test*.sh; do
-  echo "running $test"
-  # Provider hooks run detached from a controlling terminal. Reproduce that environment even when
-  # the interactive release command itself owns a TTY, so pane-path fallback tests stay meaningful.
-  /usr/bin/python3 -c \
-    'import subprocess, sys; raise SystemExit(subprocess.run(["bash", sys.argv[1]], start_new_session=True).returncode)' \
-    "$test"
-done
-
-echo "==> Stable Clinch build configuration"
-cargo check --locked --bin stable
-
-echo "==> Remote Control protocol and mobile PWA"
-./script/check-clinch-companion-protocol
-./script/build-clinch-remote-control-web
-corepack yarn --cwd web/remote-control test
-
-echo "==> Shipped component tests"
-cargo nextest run --locked -p warp -p warpui -p cli_agent_usage \
-  --profile clinch-release \
-  --no-fail-fast --failure-output immediate-final --status-level fail \
-  --show-progress none
-
-echo "==> Shipped component lints"
-# Do not select the inherited dev/preview binaries: they require Warp's private channel config
-# and are not Clinch artifacts. The stable binary, library, and test targets are the launch set.
-cargo clippy --locked -p warp --lib --bin stable --tests --all-features -- -D warnings
-cargo clippy --locked -p cli_agent_usage --all-targets --all-features -- -D warnings
-
+# Dependency licenses and advisories come first: the advisory database is a live feed, so a newly
+# published advisory can fail an untouched commit, and that should cost seconds, not the whole gate.
 echo "==> Dependency licenses"
 ./script/check_license_config_sync
 cargo deny check licenses
@@ -126,5 +41,135 @@ for target in aarch64-apple-darwin x86_64-apple-darwin; do
 done
 rm -rf "$ADVISORY_METADATA_DIR"
 trap - EXIT
+
+# The release dispatcher sets CLINCH_GATE_STATE for its pinned, clean commit; each stage that passes
+# is recorded there so a rerun after a failure resumes at the failing stage. The dependency checks
+# above read live data and always run.
+GATE_STATE="${CLINCH_GATE_STATE:-}"
+GATE_COMMIT=
+if [[ -n "$GATE_STATE" ]]; then
+  GATE_COMMIT="$(git rev-parse HEAD)"
+  mkdir -p "$(dirname "$GATE_STATE")"
+fi
+
+run_stage() {
+  local name="$1" stage="$2"
+  echo "==> $name"
+  if [[ -n "$GATE_STATE" ]] && grep -Fxq "$GATE_COMMIT $name" "$GATE_STATE" 2>/dev/null; then
+    echo "    already passed for ${GATE_COMMIT:0:12}; skipping"
+    return
+  fi
+  "$stage"
+  if [[ -n "$GATE_STATE" ]]; then
+    printf '%s %s\n' "$GATE_COMMIT" "$name" >> "$GATE_STATE"
+  fi
+}
+
+stage_formatting() {
+  ./script/format --check
+}
+
+stage_syntax() {
+  sh -n install.sh
+  /usr/bin/python3 -c \
+    'compile(open("script/vendor-clinch-cargo-sources", encoding="utf-8").read(), "script/vendor-clinch-cargo-sources", "exec")'
+  bash -n \
+    uninstall.sh \
+    script/assemble-clinch-corresponding-source \
+    script/build-clinch-remote-control-web \
+    script/check_license_config_sync \
+    script/assemble-clinch-release-stage \
+    script/configure-clinch-release-repository \
+    script/dispatch-clinch-release \
+    script/launch-check \
+    script/release-from-clean-worktree \
+    script/macos/build-universal-targets-parallel \
+    script/macos/bundle \
+    script/macos/run \
+    script/next-clinch-update-sequence \
+    script/prepare_bundled_resources \
+    script/clinch-update-manifest \
+    script/unlock-clinch-codesign-keychain \
+    script/update-installed-clinch \
+    script/update_plist \
+    script/verify-clinch-release \
+    script/verify-clinch-source-archive \
+    script/verify-clinch-release-stage
+  /usr/bin/python3 -c \
+    'compile(open("script/generate-clinch-remote-control-notices", encoding="utf-8").read(), "script/generate-clinch-remote-control-notices", "exec")'
+  bash -n resources/update/clinch-update-helper
+  bash -n tools/agent-resume/*.sh \
+    tools/agent-resume/clinch-agent-resume \
+    tools/agent-resume/warp-agent-resume
+  zsh -n tools/agent-resume/claude.zsh \
+    tools/agent-resume/clinch_agent_resume_launch \
+    tools/agent-resume/clinch_codex_launch
+  while IFS= read -r plugin_script; do
+    bash -n "$plugin_script"
+  done < <(find resources/bundled/agent-plugins -type f -name '*.sh' -print | LC_ALL=C sort)
+}
+
+stage_dispatcher_tests() {
+  for test in script/tests/test_*.sh; do
+    echo "running $test"
+    bash "$test"
+  done
+}
+
+stage_agent_runtime_tests() {
+  for test in tools/agent-resume/tests/test_*.sh; do
+    echo "running $test"
+    if [[ "$(head -n 1 "$test")" == *zsh* ]]; then
+      zsh "$test"
+    else
+      bash "$test"
+    fi
+  done
+}
+
+stage_plugin_tests() {
+  for test in resources/bundled/agent-plugins/*/plugins/warp/tests/test*.sh; do
+    echo "running $test"
+    # Provider hooks run detached from a controlling terminal. Reproduce that environment even when
+    # the interactive release command itself owns a TTY, so pane-path fallback tests stay meaningful.
+    /usr/bin/python3 -c \
+      'import subprocess, sys; raise SystemExit(subprocess.run(["bash", sys.argv[1]], start_new_session=True).returncode)' \
+      "$test"
+  done
+}
+
+stage_build_configuration() {
+  cargo check --locked --bin stable
+}
+
+stage_remote_control() {
+  ./script/check-clinch-companion-protocol
+  ./script/build-clinch-remote-control-web
+  corepack yarn --cwd web/remote-control test
+}
+
+stage_component_tests() {
+  cargo nextest run --locked -p warp -p warpui -p cli_agent_usage \
+    --profile clinch-release \
+    --no-fail-fast --failure-output immediate-final --status-level fail \
+    --show-progress none
+}
+
+stage_component_lints() {
+  # Do not select the inherited dev/preview binaries: they require Warp's private channel config
+  # and are not Clinch artifacts. The stable binary, library, and test targets are the launch set.
+  cargo clippy --locked -p warp --lib --bin stable --tests --all-features -- -D warnings
+  cargo clippy --locked -p cli_agent_usage --all-targets --all-features -- -D warnings
+}
+
+run_stage "Formatting" stage_formatting
+run_stage "Installer and agent-runtime syntax" stage_syntax
+run_stage "Release dispatcher tests" stage_dispatcher_tests
+run_stage "Agent capture, durability, install, and replay tests" stage_agent_runtime_tests
+run_stage "Bundled notification plugin tests" stage_plugin_tests
+run_stage "Stable Clinch build configuration" stage_build_configuration
+run_stage "Remote Control protocol and mobile PWA" stage_remote_control
+run_stage "Shipped component tests" stage_component_tests
+run_stage "Shipped component lints" stage_component_lints
 
 echo "✓ Clinch source launch gate passed"

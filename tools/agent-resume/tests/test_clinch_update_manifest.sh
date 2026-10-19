@@ -80,6 +80,38 @@ with open(sys.argv[1], encoding="utf-8") as source:
     manifest = json.load(source)
 assert "archives" not in manifest
 assert manifest["archive"]["name"] == "Clinch.app.zip"
+assert manifest["architectures"] == ["arm64", "x86_64"]
 PY
+
+# An Apple Silicon-only release keeps the single legacy archive and lists only arm64.
+ARM64_MANIFEST="$TMP/Clinch.arm64.update.json"
+ARM64_SIGNATURE="$TMP/Clinch.arm64.update.sig"
+CLINCH_OPENSSL_BIN="$OPENSSL3" \
+CLINCH_UPDATE_SIGNING_KEY="$KEY" \
+CLINCH_UPDATE_PUBLIC_KEY_JSON="$PUBLIC" \
+CLINCH_MANIFEST_ARCHITECTURES=arm64 \
+  "$ROOT/script/clinch-update-manifest" generate \
+    "$APP" "$ZIP" "$VERSION" "$SEQUENCE" "$ARM64_MANIFEST" "$ARM64_SIGNATURE"
+CLINCH_OPENSSL_BIN="$OPENSSL3" \
+  "$ROOT/script/clinch-update-manifest" verify "$ARM64_MANIFEST" "$ARM64_SIGNATURE" "$PUBLIC"
+/usr/bin/python3 - "$ARM64_MANIFEST" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as source:
+    manifest = json.load(source)
+assert manifest["architectures"] == ["arm64"]
+assert "archives" not in manifest
+assert manifest["archive"]["name"] == "Clinch.app.zip"
+PY
+
+if CLINCH_OPENSSL_BIN="$OPENSSL3" \
+    CLINCH_UPDATE_SIGNING_KEY="$KEY" \
+    CLINCH_UPDATE_PUBLIC_KEY_JSON="$PUBLIC" \
+    CLINCH_MANIFEST_ARCHITECTURES=arm64 \
+    "$ROOT/script/clinch-update-manifest" generate \
+      "$APP" "$ZIP" "$INTEL_ZIP" "$VERSION" "$SEQUENCE" "$TMP/bad.json" "$TMP/bad.sig" \
+    >/dev/null 2>&1; then
+  echo "an Intel archive in an Apple Silicon-only manifest was accepted" >&2
+  exit 1
+fi
 
 echo "clinch signed update manifest tests passed"

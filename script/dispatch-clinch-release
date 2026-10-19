@@ -24,12 +24,25 @@ GH_RETRY_DELAY_SECONDS="${CLINCH_GH_RETRY_DELAY_SECONDS:-5}"
 ISOLATED_WORKTREE="${CLINCH_RELEASE_ISOLATED_WORKTREE:-0}"
 PINNED_COMMIT="${CLINCH_RELEASE_PINNED_COMMIT:-}"
 RESUME_ENABLED="${CLINCH_RELEASE_RESUME:-1}"
+# Releases ship Apple Silicon only unless Intel is explicitly requested: INTEL=1 adds a separate
+# native Intel bundle and UNIVERSAL=1 ships one legacy fat bundle.
 case "${UNIVERSAL:-0}" in
-  1|true|yes) UNIVERSAL=1; RELEASE_LAYOUT=universal ;;
-  0|false|no) UNIVERSAL=0; RELEASE_LAYOUT=native ;;
+  1|true|yes) UNIVERSAL=1 ;;
+  0|false|no) UNIVERSAL=0 ;;
   *) echo "local release failed: UNIVERSAL must be 0 or 1" >&2; exit 1 ;;
 esac
-export UNIVERSAL
+case "${INTEL:-0}" in
+  1|true|yes) INTEL=1 ;;
+  0|false|no) INTEL=0 ;;
+  *) echo "local release failed: INTEL must be 0 or 1" >&2; exit 1 ;;
+esac
+case "$UNIVERSAL$INTEL" in
+  11) echo "local release failed: set INTEL=1 or UNIVERSAL=1, not both" >&2; exit 1 ;;
+  10) RELEASE_LAYOUT=universal ;;
+  01) RELEASE_LAYOUT=native ;;
+  00) RELEASE_LAYOUT=arm64 ;;
+esac
+export UNIVERSAL INTEL RELEASE_LAYOUT
 
 publish_tmp=
 RESUME_DIR=
@@ -147,7 +160,7 @@ write_resume_state() {
 
 clear_resume_state() {
   [[ -n "$RESUME_STATE" ]] || return 0
-  rm -f "$RESUME_STATE"
+  rm -f "$RESUME_STATE" "$RESUME_DIR/gate-stages"
   rmdir "$RESUME_DIR" >/dev/null 2>&1 || true
 }
 
@@ -443,7 +456,7 @@ git remote get-url "$REMOTE" >/dev/null || fail "missing Git remote $REMOTE"
 available_kib="$(df -Pk "$ROOT" | awk 'NR == 2 {print $4}')"
 [[ "$available_kib" =~ ^[0-9]+$ ]] || fail "could not determine free disk space"
 (( available_kib >= MINIMUM_FREE_KIB )) \
-  || fail "at least 40 GiB of free disk space is required for a two-architecture local release"
+  || fail "at least 40 GiB of free disk space is required for a local release"
 
 if [[ "$ISOLATED_WORKTREE" == 1 ]]; then
   [[ "$PINNED_COMMIT" =~ ^[0-9a-f]{40}$ ]] \
@@ -543,7 +556,7 @@ if [[ "$stage_ready" == 0 && "$RESUME_PHASE" == candidate_verified ]]; then
   if make _verify-existing \
       VERSION="$REQUESTED_VERSION" \
       UPDATE_SEQUENCE="$UPDATE_SEQUENCE" \
-      UNIVERSAL="$UNIVERSAL"; then
+      UNIVERSAL="$UNIVERSAL" INTEL="$INTEL"; then
     candidate_ready=1
   else
     echo "Cached candidate artifacts are no longer valid; rebuilding them."
@@ -556,7 +569,10 @@ if [[ "$stage_ready" == 0 && "$candidate_ready" == 0 ]]; then
     echo "==> Reusing the launch gate already passed for ${COMMIT_SHA:0:12}"
   else
     echo "==> Running the complete local release gate for ${COMMIT_SHA:0:12}"
-    make release-check
+    # Stages that pass are recorded per commit so a rerun resumes at the stage that failed.
+    gate_state=
+    [[ "$RESUME_ENABLED" == 0 ]] || gate_state="$RESUME_DIR/gate-stages"
+    CLINCH_GATE_STATE="$gate_state" make release-check
   fi
   verify_source_state "$COMMIT_SHA"
 
@@ -576,7 +592,7 @@ if [[ "$stage_ready" == 0 && "$candidate_ready" == 0 ]]; then
   make _verify \
     VERSION="$REQUESTED_VERSION" \
     UPDATE_SEQUENCE="$UPDATE_SEQUENCE" \
-    UNIVERSAL="$UNIVERSAL" \
+    UNIVERSAL="$UNIVERSAL" INTEL="$INTEL" \
     CLINCH_UPDATE_SIGNING_KEY="$UPDATE_KEY" \
     CLINCH_RELEASE_SIGNING_KEY="$RELEASE_KEY"
   verify_source_state "$COMMIT_SHA"
@@ -588,10 +604,10 @@ if [[ "$stage_ready" == 0 ]]; then
   echo "==> Assembling signed local release provenance and draft assets"
   CLINCH_RELEASE_SIGNING_KEY="$RELEASE_KEY" \
   CLINCH_RELEASE_STARTED_AT="$RELEASE_STARTED_AT" \
-  UNIVERSAL="$UNIVERSAL" \
+  RELEASE_LAYOUT="$RELEASE_LAYOUT" \
   ./script/assemble-clinch-release-stage \
     "$REQUESTED_VERSION" "$COMMIT_SHA" "$UPDATE_SEQUENCE"
-  UNIVERSAL="$UNIVERSAL" ./script/verify-clinch-release-stage \
+  RELEASE_LAYOUT="$RELEASE_LAYOUT" ./script/verify-clinch-release-stage \
     "$STAGE/dist" "$REQUESTED_VERSION" "$COMMIT_SHA" "$UPDATE_SEQUENCE"
   verify_source_state "$COMMIT_SHA"
   write_resume_state stage_verified

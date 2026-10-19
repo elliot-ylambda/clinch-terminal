@@ -13,6 +13,9 @@
 
 CLINCH_REPO ?= elliot-ylambda/clinch-terminal
 
+# Builds and the release gate run at a lower CPU priority so the Mac stays responsive meanwhile.
+RELEASE_NICE ?= 10
+
 STABLE_APP         ?= Clinch
 STABLE_PROFILE_DIR := release-lto
 STABLE_BUNDLE      := target/$(STABLE_PROFILE_DIR)/bundle/osx/$(STABLE_APP).app
@@ -31,11 +34,16 @@ RELEASE_MANIFEST   := $(RELEASE_DIR)/$(STABLE_APP).update.json
 RELEASE_SIGNATURE  := $(RELEASE_DIR)/$(STABLE_APP).update.sig
 RELEASE_SSHSIG     := $(RELEASE_DIR)/$(STABLE_APP).update.sshsig
 
-# The default release publishes separate Apple Silicon and Intel bundles so each
-# Mac downloads only its native executable. UNIVERSAL=1 retains the legacy fat
-# bundle as an explicit release option.
+# Releases ship Apple Silicon only. Build Intel only when it is explicitly wanted:
+# INTEL=1 adds a separate native Intel bundle, and UNIVERSAL=1 ships one legacy fat
+# bundle that also runs on Intel.
 UNIVERSAL         ?= 0
+INTEL             ?= 0
 UNIVERSAL_ENABLED := $(if $(filter 1 true yes,$(UNIVERSAL)),1,0)
+INTEL_ENABLED     := $(if $(filter 1 true yes,$(INTEL)),1,0)
+RELEASE_LAYOUT    := $(if $(filter 1,$(UNIVERSAL_ENABLED)),universal,$(if $(filter 1,$(INTEL_ENABLED)),native,arm64))
+# Intel Macs are pointed at this release once a release ships without Intel.
+LAST_INTEL_RELEASE = $(shell sed -n 's/^LAST_INTEL_RELEASE="\(.*\)"$$/\1/p' install.sh 2>/dev/null)
 ifeq ($(origin VERSION), undefined)
 VERSION := v0.$(shell date +%Y.%m.%d.%H%M)
 endif
@@ -61,12 +69,12 @@ SKIP_DMG_APPLESCRIPT       ?= 1
 export SKIP_DMG_APPLESCRIPT
 
 define RELEASE_NOTES
-Clinch $(VERSION) is an unnotarized public preview for macOS 14 or later on Intel and Apple Silicon.
+Clinch $(VERSION) is an unnotarized public preview for macOS 14 or later on $(if $(filter arm64,$(RELEASE_LAYOUT)),Apple Silicon,Intel and Apple Silicon).
 
 Install with `curl -fsSL https://clinch.sh/install | sh` — the authenticated install.sh asset
 verifies this exact release, stages Clinch in Applications, and opens it. Command-line downloads
 are not quarantined, so no Gatekeeper approval is needed. To install manually instead, download
-$(if $(filter 1,$(UNIVERSAL_ENABLED)),Clinch.dmg,Clinch.dmg on Apple Silicon or Clinch-x86_64.dmg on Intel), authenticate
+$(if $(filter native,$(RELEASE_LAYOUT)),Clinch.dmg on Apple Silicon or Clinch-x86_64.dmg on Intel,Clinch.dmg), authenticate
 Clinch.checksums.txt with Clinch.checksums.sshsig, compare the DMG SHA-256, and drag Clinch
 to Applications; then use System Settings > Privacy & Security >
 Open Anyway when macOS blocks the browser-downloaded first launch.
@@ -83,7 +91,8 @@ Clinch is signed with one stable certificate, so macOS privacy permissions such 
 survive updates. Updating from an older ad-hoc signed build may ask for those permissions one last
 time; if Clinch already appears enabled, turn it off and on again in System Settings > Privacy &
 Security.
-$(if $(filter 1,$(UNIVERSAL_ENABLED)),,Intel installations that predate native-archive selection need one authenticated manual install for this transition.)
+$(if $(filter native,$(RELEASE_LAYOUT)),Intel installations that predate native-archive selection need one authenticated manual install for this transition.)
+$(if $(filter arm64,$(RELEASE_LAYOUT)),This release supports Apple Silicon Macs only. Intel Macs should stay on $(LAST_INTEL_RELEASE) (the last Intel release); install it with `curl -fsSL https://clinch.sh/install | sh -s -- --version $(LAST_INTEL_RELEASE)`.)
 
 Complete Corresponding Source for this exact release, including locked Cargo dependencies, is
 attached to the same GitHub release as `Clinch.source.tar.gz`.
@@ -147,6 +156,10 @@ _require-create-dmg:
 _validate-release-layout:
 	@case "$(UNIVERSAL)" in 0|1|true|false|yes|no) ;; \
 	  *) echo "UNIVERSAL must be 0 or 1" >&2; exit 1 ;; esac
+	@case "$(INTEL)" in 0|1|true|false|yes|no) ;; \
+	  *) echo "INTEL must be 0 or 1" >&2; exit 1 ;; esac
+	@test "$(UNIVERSAL_ENABLED)$(INTEL_ENABLED)" != 11 \
+	  || { echo "set INTEL=1 or UNIVERSAL=1, not both" >&2; exit 1; }
 
 _check-codesign-identity:
 	@test -f "$(CLINCH_CODESIGN_CERT)" && test -n "$(CLINCH_CODESIGN_IDENTITY)" \
@@ -167,9 +180,12 @@ _bundle: _validate-release-layout _require-create-dmg _check-codesign-identity
 	export CLINCH_CODESIGN_IDENTITY="$(CLINCH_CODESIGN_IDENTITY)"; \
 	export CLINCH_CODESIGN_KEYCHAIN="$(CLINCH_CODESIGN_KEYCHAIN)"; \
 	export CLINCH_CODESIGN_KEYCHAIN_PASSWORD_FILE="$(CLINCH_CODESIGN_KEYCHAIN_PASSWORD_FILE)"; \
-	if [ "$(UNIVERSAL_ENABLED)" = 1 ]; then \
+	if [ "$(RELEASE_LAYOUT)" = universal ]; then \
 	  GIT_RELEASE_TAG="$(VERSION)" CLINCH_UPDATE_SEQUENCE="$(UPDATE_SEQUENCE)" \
 	    ./script/bundle -c stable --selfsign; \
+	elif [ "$(RELEASE_LAYOUT)" = arm64 ]; then \
+	  GIT_RELEASE_TAG="$(VERSION)" CLINCH_UPDATE_SEQUENCE="$(UPDATE_SEQUENCE)" \
+	    ./script/bundle -c stable --selfsign --arch aarch64; \
 	else \
 	  schema_cache="$(RELEASE_DIR)/settings-schema.split-release.json"; \
 	  rm -f "$$schema_cache"; \
@@ -187,7 +203,7 @@ _bundle: _validate-release-layout _require-create-dmg _check-codesign-identity
 _write-release-checksums:
 	cd "$(RELEASE_DIR)" && shasum -a 256 "$(STABLE_APP).app.zip" > "$(STABLE_APP).app.zip.sha256"
 	cd "$(RELEASE_DIR)" && shasum -a 256 "$(STABLE_APP).dmg" > "$(STABLE_APP).dmg.sha256"
-	@if [ "$(UNIVERSAL_ENABLED)" != 1 ]; then \
+	@if [ "$(RELEASE_LAYOUT)" = native ]; then \
 	  cd "$(RELEASE_DIR)" && \
 	    shasum -a 256 "$(STABLE_APP)-x86_64.app.zip" \
 	      > "$(STABLE_APP)-x86_64.app.zip.sha256" && \
@@ -199,18 +215,25 @@ _package: _bundle
 	@test -f "$(CLINCH_UPDATE_SIGNING_KEY)" || { echo "missing update signing key" >&2; exit 1; }
 	@test -f "$(CLINCH_RELEASE_SIGNING_KEY)" || { echo "missing release signing key" >&2; exit 1; }
 	rm -f "$(RELEASE_ZIP)" "$(RELEASE_SHA)" "$(RELEASE_DMG_SHA)" \
-	  "$(X86_64_ZIP)" "$(X86_64_SHA)" "$(X86_64_DMG_SHA)" \
+	  "$(X86_64_ZIP)" "$(X86_64_SHA)" "$(X86_64_DMG)" "$(X86_64_DMG_SHA)" \
 	  "$(RELEASE_MANIFEST)" "$(RELEASE_SIGNATURE)" "$(RELEASE_SSHSIG)"
-	@if [ "$(UNIVERSAL_ENABLED)" = 1 ]; then \
+	@if [ "$(RELEASE_LAYOUT)" = universal ]; then \
 	  ditto -c -k --keepParent "$(STABLE_BUNDLE)" "$(RELEASE_ZIP)"; \
 	else \
 	  ditto -c -k --keepParent "$(ARM64_BUNDLE)" "$(RELEASE_ZIP)"; \
+	fi
+	@if [ "$(RELEASE_LAYOUT)" = native ]; then \
 	  ditto -c -k --keepParent "$(X86_64_BUNDLE)" "$(X86_64_ZIP)"; \
 	fi
-	$(MAKE) --no-print-directory _write-release-checksums UNIVERSAL="$(UNIVERSAL)"
-	@if [ "$(UNIVERSAL_ENABLED)" = 1 ]; then \
+	$(MAKE) --no-print-directory _write-release-checksums UNIVERSAL="$(UNIVERSAL)" INTEL="$(INTEL)"
+	@if [ "$(RELEASE_LAYOUT)" = universal ]; then \
 	  CLINCH_UPDATE_SIGNING_KEY="$(CLINCH_UPDATE_SIGNING_KEY)" RELEASE_NOTES="$$RELEASE_NOTES" \
 	    ./script/clinch-update-manifest generate "$(STABLE_BUNDLE)" "$(RELEASE_ZIP)" \
+	    "$(VERSION)" "$(UPDATE_SEQUENCE)" "$(RELEASE_MANIFEST)" "$(RELEASE_SIGNATURE)"; \
+	elif [ "$(RELEASE_LAYOUT)" = arm64 ]; then \
+	  CLINCH_UPDATE_SIGNING_KEY="$(CLINCH_UPDATE_SIGNING_KEY)" RELEASE_NOTES="$$RELEASE_NOTES" \
+	  CLINCH_MANIFEST_ARCHITECTURES=arm64 \
+	    ./script/clinch-update-manifest generate "$(ARM64_BUNDLE)" "$(RELEASE_ZIP)" \
 	    "$(VERSION)" "$(UPDATE_SEQUENCE)" "$(RELEASE_MANIFEST)" "$(RELEASE_SIGNATURE)"; \
 	else \
 	  CLINCH_UPDATE_SIGNING_KEY="$(CLINCH_UPDATE_SIGNING_KEY)" RELEASE_NOTES="$$RELEASE_NOTES" \
@@ -222,17 +245,19 @@ _package: _bundle
 	  < "$(RELEASE_MANIFEST)" > "$(RELEASE_SSHSIG)"
 
 _verify-existing:
-	@if [ "$(UNIVERSAL_ENABLED)" = 1 ]; then \
-	  REQUIRE_NOTARIZATION=0 REQUIRE_UNIVERSAL=1 \
+	@if [ "$(RELEASE_LAYOUT)" = universal ]; then \
+	  REQUIRE_NOTARIZATION=0 RELEASE_LAYOUT=universal \
 	    ./script/verify-clinch-release \
 	    "$(STABLE_BUNDLE)" "$(RELEASE_ZIP)" "$(RELEASE_SHA)" "$(RELEASE_DMG)" "$(VERSION)" \
 	    "$(RELEASE_MANIFEST)" "$(RELEASE_SIGNATURE)" "$(RELEASE_SSHSIG)" "$(UPDATE_SEQUENCE)"; \
 	else \
-	  REQUIRE_NOTARIZATION=0 REQUIRE_UNIVERSAL=0 REQUIRE_ARCHITECTURE=arm64 \
+	  REQUIRE_NOTARIZATION=0 RELEASE_LAYOUT="$(RELEASE_LAYOUT)" REQUIRE_ARCHITECTURE=arm64 \
 	    ./script/verify-clinch-release \
 	    "$(ARM64_BUNDLE)" "$(RELEASE_ZIP)" "$(RELEASE_SHA)" "$(RELEASE_DMG)" "$(VERSION)" \
 	    "$(RELEASE_MANIFEST)" "$(RELEASE_SIGNATURE)" "$(RELEASE_SSHSIG)" "$(UPDATE_SEQUENCE)"; \
-	  REQUIRE_NOTARIZATION=0 REQUIRE_UNIVERSAL=0 REQUIRE_ARCHITECTURE=x86_64 \
+	fi
+	@if [ "$(RELEASE_LAYOUT)" = native ]; then \
+	  REQUIRE_NOTARIZATION=0 RELEASE_LAYOUT=native REQUIRE_ARCHITECTURE=x86_64 \
 	    ./script/verify-clinch-release \
 	    "$(X86_64_BUNDLE)" "$(X86_64_ZIP)" "$(X86_64_SHA)" "$(X86_64_DMG)" "$(VERSION)" \
 	    "$(RELEASE_MANIFEST)" "$(RELEASE_SIGNATURE)" "$(RELEASE_SSHSIG)" "$(UPDATE_SEQUENCE)"; \
@@ -240,22 +265,25 @@ _verify-existing:
 
 _verify: _package
 	$(MAKE) _verify-existing VERSION="$(VERSION)" UPDATE_SEQUENCE="$(UPDATE_SEQUENCE)" \
-	  UNIVERSAL="$(UNIVERSAL)"
+	  UNIVERSAL="$(UNIVERSAL)" INTEL="$(INTEL)"
 
-candidate: _prune release-check ## Build and verify native Intel and Apple Silicon candidates
+candidate: _prune ## Build and verify a local candidate (Apple Silicon; INTEL=1 adds Intel)
+	nice -n $(RELEASE_NICE) $(MAKE) --no-print-directory release-check
 	@sequence="$(UPDATE_SEQUENCE)"; \
 	if [ "$$sequence" = auto ]; then sequence="$$(./script/next-clinch-update-sequence)"; fi; \
-	$(MAKE) _verify VERSION="$(VERSION)" UPDATE_SEQUENCE="$$sequence" UNIVERSAL="$(UNIVERSAL)"
+	nice -n $(RELEASE_NICE) $(MAKE) _verify VERSION="$(VERSION)" UPDATE_SEQUENCE="$$sequence" \
+	  UNIVERSAL="$(UNIVERSAL)" INTEL="$(INTEL)"
 	@echo "✓ Verified local candidate $(VERSION). No tag or release was created."
 
 release: _prune ## Build, sign, remotely verify, and publish without GitHub Actions
 	@UNIVERSAL="$(UNIVERSAL)" \
+	  INTEL="$(INTEL)" \
 	  CLINCH_REPO="$(CLINCH_REPO)" \
 	  CLINCH_UPDATE_SIGNING_KEY="$(CLINCH_UPDATE_SIGNING_KEY)" \
 	  CLINCH_RELEASE_SIGNING_KEY="$(CLINCH_RELEASE_SIGNING_KEY)" \
 	  VERSION="$(VERSION)" \
 	  CLINCH_AUTO_VERSION="$(CLINCH_AUTO_VERSION)" \
-	  ./script/release-from-clean-worktree
+	  nice -n $(RELEASE_NICE) ./script/release-from-clean-worktree
 
 update: ## Install the latest authenticated public release (Clinch must be quit)
 	./install.sh

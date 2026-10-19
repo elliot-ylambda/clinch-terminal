@@ -46,7 +46,9 @@ Clinch adds its own release controls:
   digest;
 - the convenience installer authenticates the manifest before parsing it, detects the Mac's
   hardware architecture (including processes running under Rosetta), and downloads only that
-  archive from the authenticated exact tag;
+  archive from the authenticated exact tag. Releases are Apple Silicon only unless an Intel build
+  is explicitly requested; their manifest lists only `arm64`, so the installer and current updaters
+  refuse them on Intel Macs before downloading;
 - the local release gate verifies the app, ZIP, and mounted DMG, including their identity,
   exact native architecture (or both slices for an explicit legacy universal release), absence of
   unused privacy entitlements and the privileged update authorizer, presence of the universal
@@ -126,8 +128,9 @@ handle credentials according to their own policies.
   fall back to the authenticated manual installer. No administrator authorization shim is bundled.
 - The updater and release controls have not received an independent audit. A client released before
   the updater bridge in `v0.2026.07.20.1643` cannot discover it and needs one final authenticated
-  manual installation. An Intel client that predates architecture-specific archive selection also
-  needs one manual bridge install unless an intervening universal release carries the new updater.
+  manual installation. Intel clients stay on the last Intel release; an Intel updater that predates
+  the manifest architecture check still offers an Apple Silicon-only release, and its download then
+  fails the staged architecture check before anything is installed.
 - Restoring a pane intentionally executes a captured provider resume command. A compromised local
   account, provider config, transcript, hook, plugin, or Clinch state file can affect that command.
 - The self-signed certificate verifies internal bundle consistency, not publisher identity. macOS

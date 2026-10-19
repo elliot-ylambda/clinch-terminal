@@ -68,6 +68,9 @@ app/src/persistence/schema.rs.orig
 **/.vscode/
 AGENTS.md
 CLAUDE.md
+# The repo-root agent notes are shared project rules (for example, the release layout policy).
+!/AGENTS.md
+!/CLAUDE.md
 WARP.md
 /docs/
 /skills-lock.json

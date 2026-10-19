@@ -186,4 +186,37 @@ grep -q '/v0.0.99/Clinch-x86_64.app.zip$' "$TMP/requests"
 ! grep -q '/v0.0.99/Clinch.app.zip$' "$TMP/requests"
 grep -q 'v0.0.99 Intel app (1 MiB)' "$TMP/native-intel-output"
 
+# An Apple Silicon-only release lists only arm64. Apple Silicon installs it; an Intel Mac is
+# refused before any download and pointed at the last Intel release.
+/usr/bin/python3 - "$TMP/native-manifest.json" "$TMP/arm64-manifest.json" <<'PY'
+import json
+import pathlib
+import sys
+
+manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+manifest.pop("archives")
+manifest["architectures"] = ["arm64"]
+pathlib.Path(sys.argv[2]).write_text(
+    json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n",
+    encoding="utf-8",
+)
+PY
+ssh-keygen -Y sign -f "$TMP/native-release-key" -n clinch-install - \
+  < "$TMP/arm64-manifest.json" > "$TMP/arm64-manifest.sshsig"
+
+CLINCH_TEST_UNAME_MACHINE=arm64 CLINCH_TEST_ARM64_SUPPORTED=1 \
+  run_installer "$TMP/arm64-manifest.json" "$TMP/arm64-manifest.sshsig" \
+    "$TMP/arm64-arm-output" "$TMP/native-install.sh"
+grep -q '/v0.0.99/Clinch.app.zip$' "$TMP/requests"
+grep -q 'v0.0.99 Apple Silicon app (1 MiB)' "$TMP/arm64-arm-output"
+
+last_intel_release="$(sed -n 's/^LAST_INTEL_RELEASE="\(.*\)"$/\1/p' "$ROOT/install.sh")"
+CLINCH_TEST_UNAME_MACHINE=x86_64 CLINCH_TEST_ARM64_SUPPORTED=0 \
+  run_installer "$TMP/arm64-manifest.json" "$TMP/arm64-manifest.sshsig" \
+    "$TMP/arm64-intel-output" "$TMP/native-install.sh"
+! grep -q 'Clinch.app.zip' "$TMP/requests" \
+  || { echo "FAIL: Intel Mac downloaded an Apple Silicon-only archive"; exit 1; }
+grep -q 'supports Apple Silicon Macs only' "$TMP/arm64-intel-output"
+grep -q -- "--version $last_intel_release" "$TMP/arm64-intel-output"
+
 echo "PASS"

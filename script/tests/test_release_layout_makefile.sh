@@ -5,10 +5,30 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 TMP="$(mktemp -d -t clinch-release-layout-test)"
 trap 'rm -rf "$TMP"' EXIT
 
+# Releases ship Apple Silicon only unless Intel is explicitly requested.
 make -C "$ROOT" -n _bundle VERSION=v0.2099.01.02.0304 UPDATE_SEQUENCE=1 \
-  > "$TMP/native.out"
+  > "$TMP/arm64.out"
+grep -Fq -- '--arch aarch64' "$TMP/arm64.out"
+! grep -Fq -- '--arch x86_64' "$TMP/arm64.out"
+
+make -C "$ROOT" -n _bundle VERSION=v0.2099.01.02.0304 UPDATE_SEQUENCE=1 \
+  INTEL=1 > "$TMP/native.out"
 grep -Fq -- '--arch aarch64' "$TMP/native.out"
 grep -Fq -- '--arch x86_64 --dmg-name-suffix x86_64' "$TMP/native.out"
+
+print_notes() {
+  make -s -C "$ROOT" -f Makefile -f - print-release-notes "$@" <<'MAKE'
+print-release-notes: ; @printf '%s\n' "$$RELEASE_NOTES"
+MAKE
+}
+last_intel_release="$(sed -n 's/^LAST_INTEL_RELEASE="\(.*\)"$/\1/p' "$ROOT/install.sh")"
+[[ -n "$last_intel_release" ]]
+print_notes > "$TMP/arm64-notes.out"
+grep -Fq 'macOS 14 or later on Apple Silicon.' "$TMP/arm64-notes.out"
+grep -Fq -- "--version $last_intel_release" "$TMP/arm64-notes.out"
+print_notes INTEL=1 > "$TMP/native-notes.out"
+grep -Fq 'on Intel and Apple Silicon.' "$TMP/native-notes.out"
+! grep -Fq 'Apple Silicon Macs only' "$TMP/native-notes.out"
 
 make -C "$ROOT" -n _bundle VERSION=v0.2099.01.02.0304 UPDATE_SEQUENCE=1 \
   UNIVERSAL=1 > "$TMP/universal.out"
@@ -55,7 +75,7 @@ if TRUSTED_IDENTITY= make -C "$failure_root" _bundle VERSION=v0.2099.01.02.0304 
 fi
 grep -Fq 'not trusted for code signing' "$TMP/untrusted.out"
 [[ ! -e "$BUNDLE_CALLS" ]]
-if make -C "$failure_root" _bundle VERSION=v0.2099.01.02.0304 UPDATE_SEQUENCE=1 \
+if make -C "$failure_root" _bundle VERSION=v0.2099.01.02.0304 UPDATE_SEQUENCE=1 INTEL=1 \
     "${codesign_args[@]}" > "$TMP/failure.out" 2>&1; then
   echo "FAIL: architecture bundle failure was masked" >&2
   exit 1
@@ -74,8 +94,12 @@ for artifact in \
     Clinch-x86_64.dmg; do
   printf '%s\n' "$artifact" > "$checksum_dir/$artifact"
 done
-make -C "$checksum_root" _write-release-checksums UNIVERSAL=0 \
-  > "$TMP/checksums.out"
+make -C "$checksum_root" _write-release-checksums > "$TMP/checksums.out"
+for artifact in Clinch.app.zip Clinch.dmg; do
+  (cd "$checksum_dir" && shasum -a 256 -c "$artifact.sha256")
+done
+[[ ! -e "$checksum_dir/Clinch-x86_64.app.zip.sha256" ]]
+make -C "$checksum_root" _write-release-checksums INTEL=1 > "$TMP/checksums.out"
 for artifact in \
     Clinch.app.zip \
     Clinch.dmg \
@@ -90,5 +114,15 @@ if make -C "$ROOT" _validate-release-layout \
   exit 1
 fi
 grep -Fq 'UNIVERSAL must be 0 or 1' "$TMP/invalid.out"
+if make -C "$ROOT" _validate-release-layout INTEL=maybe > "$TMP/invalid.out" 2>&1; then
+  echo "FAIL: invalid INTEL value was accepted" >&2
+  exit 1
+fi
+grep -Fq 'INTEL must be 0 or 1' "$TMP/invalid.out"
+if make -C "$ROOT" _validate-release-layout INTEL=1 UNIVERSAL=1 > "$TMP/invalid.out" 2>&1; then
+  echo "FAIL: INTEL=1 with UNIVERSAL=1 was accepted" >&2
+  exit 1
+fi
+grep -Fq 'not both' "$TMP/invalid.out"
 
 echo "PASS"

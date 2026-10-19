@@ -17,6 +17,8 @@ RELEASE_NAMESPACE="clinch-install"
 RELEASE_PUBLIC_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGr+qT8+Fx8TjATDpWlhzzfbL08AsS1EXbaaOUBi0wJp"
 GITHUB_API="https://api.github.com/repos/$REPO"
 GITHUB_RELEASES="https://github.com/$REPO/releases"
+# Releases ship Apple Silicon only unless Intel is explicitly built; Intel Macs are pointed here.
+LAST_INTEL_RELEASE="v0.2026.10.19.1321"
 
 VERSION=""
 INSTALL_DIR="${CLINCH_INSTALL_DIR:-}"
@@ -174,15 +176,18 @@ function run(argv) {
         !/^[0-9]+(?:\.[0-9]+){0,2}$/.test(m.minimum_macos_version)) {
         fail("invalid minimum macOS version");
     }
-    if (!Array.isArray(m.architectures) || m.architectures.length !== 2 ||
-        m.architectures.slice().sort().join(",") !== "arm64,x86_64") {
-        fail("manifest does not support both Mac architectures");
+    const architectures = Array.isArray(m.architectures)
+        ? m.architectures.slice().sort().join(",") : "";
+    if (architectures !== "arm64" && architectures !== "arm64,x86_64") {
+        fail("manifest architectures are invalid");
     }
     validateArchive(m.archive, "Clinch.app.zip");
 
+    // An Apple Silicon-only release lists only arm64 and keeps the single legacy archive.
     let selected = m.archive;
-    let layout = "universal";
+    let layout = architectures === "arm64" ? "arm64" : "universal";
     if (m.archives !== undefined) {
+        if (layout === "arm64") fail("an Apple Silicon-only manifest has architecture archives");
         if (!m.archives || typeof m.archives !== "object" || Array.isArray(m.archives) ||
             Object.keys(m.archives).sort().join(",") !== "arm64,x86_64") {
             fail("manifest architecture archives are invalid");
@@ -338,6 +343,9 @@ MINIMUM_MACOS=$(printf '%s\n' "$MANIFEST_VALUES" | /usr/bin/sed -n '3p')
 UPDATE_SEQUENCE=$(printf '%s\n' "$MANIFEST_VALUES" | /usr/bin/sed -n '4p')
 ARCHIVE_URL=$(printf '%s\n' "$MANIFEST_VALUES" | /usr/bin/sed -n '5p')
 ARCHIVE_LAYOUT=$(printf '%s\n' "$MANIFEST_VALUES" | /usr/bin/sed -n '6p')
+if [ "$ARCHIVE_LAYOUT" = arm64 ] && [ "$MACHINE_ARCHITECTURE" != arm64 ]; then
+    fail "Clinch $VERSION supports Apple Silicon Macs only. Install $LAST_INTEL_RELEASE, the last Intel release, with: curl -fsSL https://clinch.sh/install | sh -s -- --version $LAST_INTEL_RELEASE"
+fi
 
 CURRENT_MACOS=$(/usr/bin/sw_vers -productVersion)
 version_at_least "$CURRENT_MACOS" "$MINIMUM_MACOS" \
