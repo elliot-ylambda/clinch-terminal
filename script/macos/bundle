@@ -817,12 +817,17 @@ fi
 ##############################
 
 if [[ $SELFSIGN = true ]]; then
+  SIGNING_KEYCHAIN_ARGS=()
   if [[ "$BUNDLE_ID" == "sh.clinch.Clinch" || "$BUNDLE_ID" == "sh.clinch.ClinchDev" ]]; then
-    # The no-fee public preview has no Apple-issued distribution identity. Always produce the
-    # same ad-hoc identity unless an explicit identity is supplied by a future release process.
+    # `make release` supplies the committed Clinch Code Signing certificate so macOS privacy
+    # grants survive updates. Local builds without that key fall back to ad-hoc, which
+    # verify-clinch-release refuses to publish.
     SIGNING_CERT="${CLINCH_CODESIGN_IDENTITY:--}"
+    if [[ -n "${CLINCH_CODESIGN_KEYCHAIN:-}" ]]; then
+      SIGNING_KEYCHAIN_ARGS=(--keychain "$CLINCH_CODESIGN_KEYCHAIN")
+    fi
     SIGNING_ENTITLEMENTS="script/Clinch-Entitlements.plist"
-    echo "Signing Clinch with the public-preview identity '${SIGNING_CERT}'."
+    echo "Signing Clinch with the identity '${SIGNING_CERT}'."
   else
     SIGNING_CERT="$(security find-identity -p codesigning -v | grep "Apple Development" | awk '{print $2}' | head -1)"
     if [[ -z "$SIGNING_CERT" ]]; then
@@ -844,10 +849,12 @@ if [[ $SELFSIGN = true ]]; then
   if [[ "$ARTIFACT" == app ]]; then
     echo "Self-signing $BUNDLE_DIR/$WARP_APP_NAME.app with ${SIGNING_CERT}..."
     # The deep pass signs inherited nested code.
-    codesign --force --deep --options runtime --sign "$SIGNING_CERT" "$BUNDLE_DIR/$WARP_APP_NAME.app" --entitlements "$SIGNING_ENTITLEMENTS"
+    codesign --force --deep --options runtime "${SIGNING_KEYCHAIN_ARGS[@]}" \
+      --sign "$SIGNING_CERT" "$BUNDLE_DIR/$WARP_APP_NAME.app" --entitlements "$SIGNING_ENTITLEMENTS"
   elif [[ "$ARTIFACT" == cli || "$ARTIFACT" == warpctrl ]]; then
     echo "Self-signing $OUT_DIR/$WARP_BIN with ${SIGNING_CERT}..."
-    codesign --force --options runtime --sign "$SIGNING_CERT" "$OUT_DIR/$WARP_BIN" --entitlements "$SIGNING_ENTITLEMENTS"
+    codesign --force --options runtime "${SIGNING_KEYCHAIN_ARGS[@]}" \
+      --sign "$SIGNING_CERT" "$OUT_DIR/$WARP_BIN" --entitlements "$SIGNING_ENTITLEMENTS"
   fi
 elif [[ $CODESIGN = true ]]; then
   if [[ "$BUNDLE_ID" == "sh.clinch.Clinch" || "$BUNDLE_ID" == "sh.clinch.ClinchDev" ]]; then

@@ -177,10 +177,11 @@ release, while real-device hardening continues. Report anything that misbehaves 
 
 ## Public preview
 
-Clinch is distributed as an **unnotarized public preview**. The app is ad-hoc signed with the
-macOS hardened runtime, but it has no Apple-issued Developer ID and Apple has not notarized it.
-macOS may block the first launch. That warning is expected and is not evidence that Apple has
-reviewed the app.
+Clinch is distributed as an **unnotarized public preview**. The app is signed with Clinch's own
+self-signed certificate and the macOS hardened runtime, but it has no Apple-issued Developer ID and
+Apple has not notarized it. macOS may block the first launch. That warning is expected and is not
+evidence that Apple has reviewed the app. Because every release carries the same certificate,
+privacy permissions you grant Clinch, such as Screen Recording, survive updates.
 
 This repository has automated security checks and a documented release process. It has not had an
 independent security audit. See [SECURITY.md](SECURITY.md) for the trust model and known limits.

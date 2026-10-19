@@ -21,9 +21,18 @@ but they are not maintained security branches.
 ## Release trust model
 
 Clinch does not use Apple's Developer ID and notarization distribution path. Public builds are
-ad-hoc signed with the hardened runtime and are not notarized. Apple does not identify the
+signed with the hardened runtime by the self-signed **Clinch Code Signing** certificate committed at
+`resources/release/clinch-codesign-cert.pem`, and are not notarized. Apple does not identify the
 publisher or vouch for the artifact, and Gatekeeper may require **Privacy & Security → Open
-Anyway**.
+Anyway**. Release verification refuses any build whose designated requirement is not pinned to
+that certificate, so macOS privacy grants (Screen Recording, Accessibility) carry across updates
+instead of being revoked by each new build hash.
+
+The certificate's private key stays in a dedicated keychain on the release workstation, unlocked by
+`make release` from a local password file. A new release workstation must import the key backup and
+trust the certificate for code signing once:
+`security add-trusted-cert -r trustRoot -p codeSign -k <keychain> resources/release/clinch-codesign-cert.pem`.
+Losing the key forces every user to re-grant macOS permissions once.
 
 Clinch adds its own release controls:
 
@@ -119,9 +128,9 @@ handle credentials according to their own policies.
   needs one manual bridge install unless an intervening universal release carries the new updater.
 - Restoring a pane intentionally executes a captured provider resume command. A compromised local
   account, provider config, transcript, hook, plugin, or Clinch state file can affect that command.
-- Ad-hoc signing verifies internal bundle consistency, not publisher identity. Anyone can create a
-  different ad-hoc signed app; users must also authenticate the Clinch checksum list and compare
-  the artifact digest.
+- The self-signed certificate verifies internal bundle consistency, not publisher identity. macOS
+  does not trust it, so anyone can create a different self-signed app; users must also
+  authenticate the Clinch checksum list and compare the artifact digest.
 - Session recovery is best-effort after crashes, power loss, provider changes, or transcript
   retention. Security controls do not guarantee data recovery.
 The current target is a public preview, not a claim that the app is risk-free or independently
