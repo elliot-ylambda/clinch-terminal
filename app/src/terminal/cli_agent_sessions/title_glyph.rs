@@ -69,6 +69,20 @@ pub(crate) fn standardize_agent_title(
     Some(format!("{glyph} {text}"))
 }
 
+/// Whether an agent's own terminal title shows it working (`Some(true)`) or idle and waiting
+/// (`Some(false)`). `None` when the title carries no status, or for other agents. Claude Code
+/// always prefixes a glyph; Codex shows none while idle.
+pub(crate) fn title_shows_working(agent: CLIAgent, raw_terminal_title: &str) -> Option<bool> {
+    if !matches!(agent, CLIAgent::Claude | CLIAgent::Codex) {
+        return None;
+    }
+    match split_agent_title(agent, raw_terminal_title) {
+        (Some(glyph), _) => Some(working_frame(glyph).is_some()),
+        (None, text) if agent == CLIAgent::Codex && !text.is_empty() => Some(false),
+        (None, _) => None,
+    }
+}
+
 /// Removes provider chrome before a raw title participates in Clinch's title selection.
 /// Prompt-derived titles must not pass through this cleanup.
 pub(crate) fn agent_title_text(agent: CLIAgent, raw_terminal_title: &str) -> &str {

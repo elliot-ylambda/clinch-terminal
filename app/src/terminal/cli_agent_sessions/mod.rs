@@ -688,6 +688,9 @@ pub struct CLIAgentSessionsModel {
     /// Tracks (agent, remote_host) pairs where an auto plugin operation (install or update) has failed.
     /// Shared across all views so failure in one tab is reflected everywhere.
     plugin_auto_failures: HashSet<(CLIAgent, Option<String>)>,
+    /// Blocked sessions whose agent title has shown its idle glyph since they blocked; see
+    /// `update_from_terminal_title`.
+    blocked_idle_title_seen: HashSet<EntityId>,
 }
 
 impl Entity for CLIAgentSessionsModel {
@@ -703,6 +706,7 @@ impl CLIAgentSessionsModel {
             prompt_history_poll_tokens: HashMap::new(),
             bookmarked_conversations: bookmarked_conversations(),
             plugin_auto_failures: HashSet::new(),
+            blocked_idle_title_seen: HashSet::new(),
         }
     }
 
@@ -917,6 +921,46 @@ impl CLIAgentSessionsModel {
             terminal_view_id,
             agent: session.agent,
         });
+    }
+
+    /// Ends the needs-input state once the user has answered. Neither Claude Code nor Codex fires a
+    /// hook when a permission prompt or question is answered, so a session would otherwise stay
+    /// blocked until its next tool or turn event, which for an approved long-running command can
+    /// be minutes. Both keep an idle title glyph while waiting and show their working spinner
+    /// again once they resume, so a spinner after an idle title means the user answered. The idle
+    /// title must come first: a spinner frame rendered just before the prompt appeared can arrive
+    /// after the blocking event and must not clear it.
+    pub fn update_from_terminal_title(
+        &mut self,
+        terminal_view_id: EntityId,
+        raw_terminal_title: &str,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        let Some(session) = self.sessions.get_mut(&terminal_view_id) else {
+            return;
+        };
+        if !matches!(session.status, CLIAgentSessionStatus::Blocked { .. }) {
+            self.blocked_idle_title_seen.remove(&terminal_view_id);
+            return;
+        }
+        match title_glyph::title_shows_working(session.agent, raw_terminal_title) {
+            Some(false) => {
+                self.blocked_idle_title_seen.insert(terminal_view_id);
+            }
+            Some(true) if self.blocked_idle_title_seen.remove(&terminal_view_id) => {
+                session.has_observed_turn_activity = true;
+                session.session_context.stop_reason = None;
+                session.clear_permission_scoped_state();
+                session.status = CLIAgentSessionStatus::InProgress;
+                ctx.emit(CLIAgentSessionsModelEvent::StatusChanged {
+                    terminal_view_id,
+                    agent: session.agent,
+                    status: CLIAgentSessionStatus::InProgress,
+                    session_context: Box::new(session.session_context.clone()),
+                });
+            }
+            _ => {}
+        }
     }
 
     /// Seeds a restored pane from its persisted provider resume command before any plugin event.
@@ -1280,6 +1324,7 @@ impl CLIAgentSessionsModel {
         remove_conversation_bookmark: bool,
         ctx: &mut ModelContext<Self>,
     ) {
+        self.blocked_idle_title_seen.remove(&terminal_view_id);
         self.prompt_history_poll_tokens.remove(&terminal_view_id);
         if let Some(session) = self.sessions.remove(&terminal_view_id) {
             let bookmark_key = if remove_conversation_bookmark {
@@ -1341,6 +1386,10 @@ impl CLIAgentSessionsModel {
             live_prompt = None;
         }
         if let Some(new_status) = session.apply_event(event) {
+            if matches!(new_status, CLIAgentSessionStatus::Blocked { .. }) {
+                // A new wait starts over: only a title seen after this event can clear it.
+                self.blocked_idle_title_seen.remove(&terminal_view_id);
+            }
             let agent = session.agent;
             ctx.emit(CLIAgentSessionsModelEvent::StatusChanged {
                 terminal_view_id,
@@ -1443,6 +1492,7 @@ impl CLIAgentSessionsModel {
         // Close any open rich input before replacing, so subscribers can
         // restore input config before the session ends.
         self.prompt_history_poll_tokens.remove(&terminal_view_id);
+        self.blocked_idle_title_seen.remove(&terminal_view_id);
         self.close_input(terminal_view_id, false, ctx);
         if let Some(old) = self.sessions.insert(terminal_view_id, session) {
             ctx.emit(CLIAgentSessionsModelEvent::Ended {

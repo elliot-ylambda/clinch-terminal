@@ -182,8 +182,11 @@ write_codex_config() {
   fi
   {
     printf '\n# >>> clinch agent-resume >>>\n'
+    # No matcher: every root session start (startup, resume, clear, compact, and fork) records
+    # the pane's current conversation, as Claude's capture does. A forked thread reports
+    # `source: "fork"`, so a startup|resume matcher left forks impossible to restore.
+    # Subagent threads fire SubagentStart instead, so they never replace the pane's entry.
     printf '[[hooks.SessionStart]]\n'
-    printf 'matcher = "startup|resume"\n'
     printf '[[hooks.SessionStart.hooks]]\n'
     printf 'type = "command"\n'
     printf 'command = "%s/codex-session-start.sh"\n\n' "$BIN"

@@ -1,4 +1,4 @@
-use super::{agent_title_text, standardize_agent_title, AgentTitleStatus};
+use super::{agent_title_text, standardize_agent_title, title_shows_working, AgentTitleStatus};
 use crate::terminal::CLIAgent;
 
 // Raw titles below were captured from Claude Code 2.1.293 and Codex 0.161.0.
@@ -172,4 +172,33 @@ fn other_agents_are_left_alone() {
         standardize_agent_title(CLIAgent::Unknown, "⠏ something", None, IDLE),
         None
     );
+}
+
+#[test]
+fn reads_working_and_idle_from_the_agents_own_title() {
+    assert_eq!(
+        title_shows_working(CLIAgent::Claude, "✳ Fix the build"),
+        Some(false)
+    );
+    assert_eq!(
+        title_shows_working(CLIAgent::Claude, "◐ Fix the build"),
+        Some(true)
+    );
+    assert_eq!(
+        title_shows_working(CLIAgent::Claude, "◒ Fix the build"),
+        Some(true)
+    );
+    // Claude always shows a glyph, so a bare title says nothing about its state.
+    assert_eq!(title_shows_working(CLIAgent::Claude, "Claude Code"), None);
+    // Codex shows no glyph while idle and a braille spinner while working.
+    assert_eq!(
+        title_shows_working(CLIAgent::Codex, "Fix the build | repo"),
+        Some(false)
+    );
+    assert_eq!(
+        title_shows_working(CLIAgent::Codex, "⠏ Fix the build | repo"),
+        Some(true)
+    );
+    assert_eq!(title_shows_working(CLIAgent::Codex, ""), None);
+    assert_eq!(title_shows_working(CLIAgent::Unknown, "◐ something"), None);
 }

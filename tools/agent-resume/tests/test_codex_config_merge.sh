@@ -94,7 +94,8 @@ assert_state_outside_block() {
 # TOML validity is the point of re-homing whole tables, so parse the result where a parser exists.
 toml_python() {
   local candidate
-  for candidate in python3 /opt/homebrew/bin/python3 /usr/local/bin/python3; do
+  for candidate in python3 python3.14 python3.13 python3.12 python3.11 \
+      /opt/homebrew/bin/python3 /usr/local/bin/python3; do
     command -v "$candidate" >/dev/null 2>&1 || continue
     "$candidate" -c 'import tomllib' 2>/dev/null && { printf '%s\n' "$candidate"; return 0; }
   done
@@ -103,7 +104,11 @@ toml_python() {
 
 assert_parses() {
   local context="$1" py
-  py="$(toml_python)" || return 0
+  # Skipping these checks would let the test pass without verifying anything.
+  py="$(toml_python)" || {
+    echo "FAIL: these checks need Python 3.11+ (tomllib); none was found" >&2
+    exit 1
+  }
   "$py" - "$CFG" "$context" "$HOME/.warp/agent-resume-bin" "$EXPECTED_HASHES" <<'PY' || exit 1
 import sys, tomllib
 
@@ -138,9 +143,24 @@ if "# >>> clinch agent-resume >>>" in open(path, encoding="utf-8").read():
         command = entries[0]["hooks"][0]["command"]
         if not command.startswith(bin_dir):
             fail(f"kept a stale {event} command: {command}")
+    # Forks report source "fork"; any matcher here would leave them impossible to restore.
+    if "matcher" in hooks["SessionStart"][0]:
+        fail(f"SessionStart kept a matcher: {hooks['SessionStart'][0]['matcher']}")
 elif any(event in hooks for event in ("SessionStart", "UserPromptSubmit", "SessionEnd")):
     fail("left managed hooks behind after disable")
 PY
+}
+
+# Forks report source "fork"; a matcher on the managed SessionStart hook would skip them. Checked as
+# text too, so it holds wherever the TOML checks above run.
+assert_session_start_has_no_matcher() {
+  if awk '/^# >>> clinch agent-resume >>>/{managed=1} /^# <<< clinch agent-resume <<</{managed=0}
+      managed && /^\[\[hooks\.SessionStart\]\]/{start=1; next}
+      managed && /^\[/{start=0}
+      managed && start && /^matcher/{found=1} END{exit !found}' "$CFG"; then
+    echo "FAIL: the managed SessionStart hook kept a matcher" >&2
+    exit 1
+  fi
 }
 
 for markers in "clinch" "warp"; do
@@ -148,6 +168,7 @@ for markers in "clinch" "warp"; do
   EXPECTED_HASHES="sha256:aaa sha256:bbb"
 
   bash "$HERE/install.sh" enable --quiet
+  assert_session_start_has_no_matcher
   assert_state_survived "enable ($markers markers)"
   assert_state_outside_block "enable ($markers markers)"
   assert_parses "enable ($markers markers)"
