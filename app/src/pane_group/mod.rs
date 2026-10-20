@@ -38,8 +38,8 @@ use warpui::keymap::{Context, EditableBinding, FixedBinding};
 use warpui::notification::NotificationSendError;
 use warpui::windowing::WindowManager;
 use warpui::{
-    AppContext, Entity, EntityId, ModelHandle, SingletonEntity, TypedActionView, View, ViewContext,
-    ViewHandle, WeakViewHandle, WindowId,
+    AppContext, Entity, EntityId, FocusContext, ModelHandle, SingletonEntity, TypedActionView,
+    View, ViewContext, ViewHandle, WeakViewHandle, WindowId,
 };
 
 use crate::ai::active_agent_views_model::ActiveAgentViewsModel;
@@ -8198,6 +8198,14 @@ impl TypedActionView for PaneGroup {
 impl View for PaneGroup {
     fn ui_name() -> &'static str {
         "PaneGroup"
+    }
+
+    /// `focus()` and `focus_active_session()` check session visibility before focus moves into
+    /// this group, so the check fails when focus arrives from outside it (e.g. a sidebar tab
+    /// click). Re-check once focus has landed here: being shown is what starts a restored pane's
+    /// deferred agent.
+    fn on_focus(&mut self, _focus_ctx: &FocusContext, ctx: &mut ViewContext<Self>) {
+        self.update_session_visibility(ctx);
     }
 
     fn keymap_context(&self, app: &AppContext) -> Context {
