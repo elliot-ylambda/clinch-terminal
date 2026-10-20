@@ -12,10 +12,10 @@ use super::{
     non_terminal_search_text_fragments, pane_ids_for_display_granularity,
     pane_search_text_fragments, path_belongs_to_project, preferred_agent_tab_titles,
     preferred_vertical_tab_title_override, push_normalized_unique_summary_label, row_renames_pane,
-    search_fragments_contain_query, select_summary_pane_kind_icons, separate_title_indicator_kind,
-    should_keep_detail_sidecar_visible_for_mouse_position,
+    search_fragments_contain_query, section_needs_input_pulse, select_summary_pane_kind_icons,
+    separate_title_indicator_kind, should_keep_detail_sidecar_visible_for_mouse_position,
     should_render_separate_activity_indicator, sort_summary_primary_labels_status_first,
-    status_blink_opacity, summary_overflow_count, summary_search_text_fragments,
+    status_blink_opacity, summary_overflow_count, summary_search_text_fragments, tab_card_border,
     tab_title_uses_header, terminal_command_status, terminal_kind_badge_label,
     terminal_primary_line_data, terminal_pull_request_badge_label, terminal_search_text_fragments,
     terminal_title_fallback_font, title_indicator_color, uses_outer_group_container,
@@ -1529,4 +1529,31 @@ fn drag_autoscroll_scrolls_toward_the_nearer_edge_and_ramps_with_depth() {
 fn drag_autoscroll_ignores_collapsed_list() {
     let viewport = RectF::new(Vector2F::new(0., 100.), Vector2F::new(240., 0.));
     assert_eq!(drag_autoscroll_step(viewport, 100.), 0.);
+}
+
+/// The tab waiting on the user pulses, not the whole section; the section pulses only while it is
+/// collapsed and hides that tab.
+#[test]
+fn needs_input_pulses_the_tab_and_only_a_collapsed_section() {
+    use pathfinder_color::ColorU;
+
+    use crate::themes::theme::Fill as ThemeFill;
+
+    let pulse = ThemeFill::Solid(ColorU::new(255, 176, 0, 255));
+    let idle = || ThemeFill::Solid(ColorU::new(40, 40, 40, 255));
+
+    assert!(
+        tab_card_border(true, None, idle).is_none(),
+        "a quiet nested tab has no frame"
+    );
+    assert_eq!(tab_card_border(true, Some(pulse), idle), Some(pulse));
+    assert_eq!(tab_card_border(false, Some(pulse), idle), Some(pulse));
+    assert_eq!(tab_card_border(false, None, idle), Some(idle()));
+
+    assert!(
+        !section_needs_input_pulse(false, true),
+        "an expanded section never pulses"
+    );
+    assert!(section_needs_input_pulse(true, true));
+    assert!(!section_needs_input_pulse(true, false));
 }

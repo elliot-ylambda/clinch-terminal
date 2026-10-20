@@ -492,6 +492,27 @@ fn needs_input_card_border(
         .then(|| ThemeFill::Solid(attention_pulse_color(CLINCH_ATTENTION_AMBER, app)))
 }
 
+/// A top-level tab card always has an outline. A tab nested in a group is framed by the group's
+/// card, so it stays outline-free to avoid two frames a few pixels apart, except while its agent
+/// waits on the user: then the tab itself pulses rather than its whole group.
+fn tab_card_border(
+    in_tab_group: bool,
+    needs_input_border: Option<ThemeFill>,
+    idle_border: impl FnOnce() -> ThemeFill,
+) -> Option<ThemeFill> {
+    if in_tab_group {
+        needs_input_border
+    } else {
+        Some(needs_input_border.unwrap_or_else(idle_border))
+    }
+}
+
+/// Whether a group card pulses for a member waiting on the user. Visible members pulse their own
+/// outline, so the group does only while it is collapsed and hides them.
+fn section_needs_input_pulse(collapsed: bool, hidden_member_needs_input: bool) -> bool {
+    collapsed && hidden_member_needs_input
+}
+
 fn should_render_separate_activity_indicator(
     has_unread_activity: bool,
     icon_activity: Option<ProjectCliAgentActivity>,
@@ -3693,10 +3714,9 @@ fn render_tab_group_internal(
             let mut container = Container::new(group.finish())
                 .with_background(card_state.background(theme))
                 .with_corner_radius(CornerRadius::with_all(Radius::Pixels(ROW_CORNER_RADIUS)));
-            // A tab nested in a group is enclosed by the group's own card, so it
-            // stays outline-free to avoid stacking two frames a few pixels apart.
-            if !in_tab_group {
-                let border = needs_input_border.unwrap_or_else(|| card_state.border(theme));
+            if let Some(border) = tab_card_border(in_tab_group, needs_input_border, || {
+                card_state.border(theme)
+            }) {
                 container = container.with_border(Border::all(1.).with_border_fill(border));
             }
             container.finish()
@@ -3744,10 +3764,9 @@ fn render_tab_group_internal(
             let mut container = Container::new(tab_content)
                 .with_background(card_state.background(theme))
                 .with_corner_radius(CornerRadius::with_all(Radius::Pixels(ROW_CORNER_RADIUS)));
-            // Same rule as the grouped-container branch: only a top-level tab is
-            // outlined, so a nested tab doesn't double up on its group's frame.
-            if !in_tab_group {
-                let border = needs_input_border.unwrap_or_else(|| card_state.border(theme));
+            if let Some(border) = tab_card_border(in_tab_group, needs_input_border, || {
+                card_state.border(theme)
+            }) {
                 container = container.with_border(Border::all(1.).with_border_fill(border));
             }
             if needs_action_button_band {
@@ -4361,16 +4380,17 @@ fn render_grouped_tab_container(
     let any_member_active = members
         .iter()
         .any(|(tab_index, _)| *tab_index == workspace.active_tab_index);
-    // Member tabs are not outlined inside a group, so the group card carries the pulse for a
-    // background member whose agent is waiting on the user.
     let needs_input_border = needs_input_card_border(
-        members.iter().any(|(tab_index, _)| {
-            *tab_index != workspace.active_tab_index
-                && workspace
-                    .tabs
-                    .get(*tab_index)
-                    .is_some_and(|tab| tab_has_agent_needing_input(tab, app))
-        }),
+        section_needs_input_pulse(
+            group.collapsed,
+            members.iter().any(|(tab_index, _)| {
+                *tab_index != workspace.active_tab_index
+                    && workspace
+                        .tabs
+                        .get(*tab_index)
+                        .is_some_and(|tab| tab_has_agent_needing_input(tab, app))
+            }),
+        ),
         false,
         false,
         app,

@@ -1910,3 +1910,111 @@ fn session_context_is_clinch_only() {
     assert!(session_context_enabled_for("sh.clinch.ClinchDev"));
     assert!(!session_context_enabled_for("dev.warp.Warp-Stable"));
 }
+
+/// Neither agent reports answering a permission prompt, so the needs-input state ends when the
+/// agent's title goes from its idle glyph back to its working spinner.
+#[test]
+fn answering_a_blocked_agent_resumes_it_when_its_title_spins_again() {
+    App::test((), |mut app| async move {
+        let sessions = app.add_model(|_| CLIAgentSessionsModel::new());
+        let captured_events = app.add_model(|_| CapturedSessionEvents::default());
+        captured_events.update(&mut app, |_, ctx| {
+            ctx.subscribe_to_model(&sessions, |captured, _, event, _| {
+                captured.0.push(event.clone());
+            });
+        });
+        let terminal = EntityId::new();
+        sessions.update(&mut app, |model, ctx| {
+            model.set_session(
+                terminal,
+                blocked_claude_session_with_permission_state(),
+                ctx,
+            );
+        });
+        captured_events.update(&mut app, |captured, _| captured.0.clear());
+        let status = |app: &App| {
+            sessions.read(app, |model, _| {
+                model.session(terminal).unwrap().status.clone()
+            })
+        };
+
+        // A spinner frame that predates the prompt must not clear it.
+        sessions.update(&mut app, |model, ctx| {
+            model.update_from_terminal_title(terminal, "◐ Fix the build", ctx);
+        });
+        assert!(matches!(
+            status(&app),
+            CLIAgentSessionStatus::Blocked { .. }
+        ));
+
+        // Waiting shows the idle glyph; answering brings the spinner back.
+        sessions.update(&mut app, |model, ctx| {
+            model.update_from_terminal_title(terminal, "✳ Fix the build", ctx);
+        });
+        assert!(matches!(
+            status(&app),
+            CLIAgentSessionStatus::Blocked { .. }
+        ));
+        sessions.update(&mut app, |model, ctx| {
+            model.update_from_terminal_title(terminal, "◓ Fix the build", ctx);
+        });
+        assert!(matches!(status(&app), CLIAgentSessionStatus::InProgress));
+        sessions.read(&app, |model, _| {
+            let session = model.session(terminal).unwrap();
+            assert!(session.session_context.summary.is_none());
+            assert!(session.session_context.tool_name.is_none());
+        });
+        captured_events.read(&app, |captured, _| {
+            assert!(captured.0.iter().any(|event| matches!(
+                event,
+                CLIAgentSessionsModelEvent::StatusChanged {
+                    status: CLIAgentSessionStatus::InProgress,
+                    ..
+                }
+            )));
+        });
+
+        // A new prompt starts over: an idle title seen before it does not count.
+        sessions.update(&mut app, |model, ctx| {
+            model.update_from_event(
+                terminal,
+                &activity_event(CLIAgent::Claude, CLIAgentEventType::PermissionRequest),
+                ctx,
+            );
+        });
+        assert!(matches!(
+            status(&app),
+            CLIAgentSessionStatus::Blocked { .. }
+        ));
+        sessions.update(&mut app, |model, ctx| {
+            model.update_from_terminal_title(terminal, "◑ Fix the build", ctx);
+        });
+        assert!(matches!(
+            status(&app),
+            CLIAgentSessionStatus::Blocked { .. }
+        ));
+    });
+}
+
+#[test]
+fn an_idle_title_while_blocked_never_ends_the_wait() {
+    App::test((), |mut app| async move {
+        let sessions = app.add_model(|_| CLIAgentSessionsModel::new());
+        let terminal = EntityId::new();
+        sessions.update(&mut app, |model, ctx| {
+            model.set_session(
+                terminal,
+                blocked_claude_session_with_permission_state(),
+                ctx,
+            );
+            model.update_from_terminal_title(terminal, "✳ Fix the build", ctx);
+            model.update_from_terminal_title(terminal, "✳ Fix the build", ctx);
+        });
+        sessions.read(&app, |model, _| {
+            assert!(matches!(
+                model.session(terminal).unwrap().status,
+                CLIAgentSessionStatus::Blocked { .. }
+            ));
+        });
+    });
+}
