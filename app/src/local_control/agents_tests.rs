@@ -1,3 +1,5 @@
+use ::local_control::protocol::PaneTarget;
+use ::local_control::{PaneSelector, TargetSelector};
 use warp_core::channel::{Channel, ChannelConfig, ChannelState};
 use warp_core::AppId;
 use warpui::platform::WindowStyle;
@@ -178,4 +180,150 @@ fn codex_launch_preserves_pane_hooks_and_supports_older_cli_without_relaunching(
         assert_eq!(std::fs::read_to_string(&log).unwrap(), expected);
         assert!(!dir.path().join("injected").exists());
     }
+}
+
+/// Pane ids from workspace tree and `pane list` selectors name the same panes, so every command
+/// accepts either one, including for panes in an inactive project.
+#[test]
+fn opaque_pane_ids_resolve_to_selectors_in_every_project() {
+    App::test((), |mut app| async move {
+        crate::workspace::view::tests::initialize_app(&mut app);
+        app.update(crate::root_view::init);
+        ChannelState::set(ChannelState::new(
+            Channel::Local,
+            ChannelConfig::no_backend(AppId::new("test", "warp", "WarpTest"), "warp-test.log"),
+        ));
+        let resources = GlobalResourceHandles::mock(&mut app);
+        let (_, root) = app.add_window(WindowStyle::NotStealFocus, |ctx| {
+            RootView::new(
+                resources,
+                NewWorkspaceSource::Empty {
+                    previous_active_window: None,
+                    shell: None,
+                },
+                ctx,
+            )
+        });
+        let project_window = root.read(&app, |root, _| root.project_window()).unwrap();
+        project_window.update(&mut app, |window, ctx| window.add_project(ctx));
+        let instance = InstanceId("test-instance".into());
+        let tree = app.read(|ctx| {
+            snapshot(&instance, &AgentScope::default(), ctx)
+                .unwrap()
+                .tree
+        });
+        let projects = tree["windows"][0]["projects"].as_array().unwrap().clone();
+        assert_eq!(projects.len(), 2);
+        for project in &projects {
+            let tab = &project["tabs"][0];
+            for key in [
+                "name",
+                "custom_title",
+                "position",
+                "section_id",
+                "pinned",
+                "color",
+            ] {
+                assert!(tab.get(key).is_some(), "tree tab is missing {key}");
+            }
+            let pane = &tab["panes"][0];
+            let opaque = pane["pane_id"].as_str().unwrap().to_owned();
+            let selector = pane["pane_selector"].as_str().unwrap().to_owned();
+            app.read(|ctx| {
+                let resolved = resolve_opaque_pane(&instance, &opaque, ctx)
+                    .expect("opaque id decodes")
+                    .expect("opaque id names a live pane");
+                assert_eq!(resolved.project_id, project["project_id"].as_str().unwrap());
+                assert_eq!(resolved.tab_id, tab["tab_id"].as_str().unwrap());
+                assert_eq!(resolved.pane_selector, selector);
+                assert!(resolve_opaque_pane(&instance, &selector, ctx).is_none());
+                assert!(matches!(
+                    resolve_opaque_pane(&InstanceId("other-instance".into()), &opaque, ctx),
+                    Some(Err(_))
+                ));
+
+                let mut target = TargetSelector {
+                    pane: Some(PaneTarget::Id {
+                        id: PaneSelector(opaque.clone()),
+                    }),
+                    ..Default::default()
+                };
+                crate::local_control::resolver::normalize_opaque_pane_targets(
+                    &instance,
+                    &mut target,
+                    ctx,
+                )
+                .unwrap();
+                assert_eq!(target.project.as_deref(), project["project_id"].as_str());
+                assert!(matches!(
+                    &target.pane,
+                    Some(PaneTarget::Id { id }) if id.0 == selector
+                ));
+                let mut conflicting = TargetSelector {
+                    project: Some("another-project".into()),
+                    pane: Some(PaneTarget::Id {
+                        id: PaneSelector(opaque.clone()),
+                    }),
+                    ..Default::default()
+                };
+                assert!(
+                    crate::local_control::resolver::normalize_opaque_pane_targets(
+                        &instance,
+                        &mut conflicting,
+                        ctx,
+                    )
+                    .is_err()
+                );
+
+                for (id, format) in [
+                    (&opaque, PaneReadFormat::Ansi),
+                    (&selector, PaneReadFormat::Plain),
+                ] {
+                    let read = read_pane(
+                        &instance,
+                        ::local_control::agents::PaneReadParams {
+                            pane_id: id.clone(),
+                            max_bytes: 4096,
+                            format,
+                        },
+                        ctx,
+                    )
+                    .expect("both id formats are readable");
+                    assert_eq!(read["format"], format.as_str());
+                    if format == PaneReadFormat::Plain {
+                        assert!(!read["text"].as_str().unwrap().contains('\u{1b}'));
+                    }
+                }
+            });
+        }
+    });
+}
+
+#[test]
+fn ansi_cuts_never_start_inside_an_escape_sequence_or_character() {
+    let text = "a\u{1b}[31mred\u{1b}[0m\u{1b}]133;B\u{7}é!";
+    let bytes = text.as_bytes();
+    for min_start in 0..=bytes.len() {
+        let start = ansi_safe_start(bytes, min_start);
+        assert!(start >= min_start);
+        let tail = &bytes[start..];
+        assert!(
+            std::str::from_utf8(tail).is_ok(),
+            "cut at {start} splits a character"
+        );
+        // A clean cut never leaves the tail of a sequence (`31m`, `0m`, `133;B`) at the front.
+        let tail = std::str::from_utf8(tail).unwrap();
+        for fragment in ["[31m", "31m", "1m", "[0m", "0m", "]133;B", "133;B", ";B"] {
+            assert!(
+                !tail.starts_with(fragment),
+                "cut at {start} starts mid-sequence: {tail:?}"
+            );
+        }
+    }
+    // The ESC that opens a sequence is a valid cut point.
+    let open = text.find('\u{1b}').unwrap();
+    assert_eq!(ansi_safe_start(bytes, open), open);
+    // An ST-terminated string (ESC \) is skipped as a whole.
+    let st = "x\u{1b}]0;title\u{1b}\\y".as_bytes();
+    assert_eq!(ansi_safe_start(st, 2), st.len() - 1);
 }

@@ -3,7 +3,7 @@ name: clinch-coordinate
 description: Coordinates Claude Code and Codex sessions across Clinch projects and sections using the local CLI. Use when the user wants one conversation to inspect other sessions, summarize progress, send delegated instructions, or organize reviews and deployments across sessions.
 ---
 
-<!-- managed-by: Clinch; version: 1.5.0 -->
+<!-- managed-by: Clinch; version: 1.6.0 -->
 
 # Clinch coordination
 
@@ -66,7 +66,7 @@ before sending: original message targets are never automatically rebound.
 <ctl> agent read AGENT_ID --from-start --limit 100 --pid "$CLINCH_CONTROL_PID"
 <ctl> agent read AGENT_ID --after CURSOR --limit 100 --pid "$CLINCH_CONTROL_PID"
 <ctl> --output-format ndjson agent read AGENT_ID --all --pid "$CLINCH_CONTROL_PID"
-<ctl> pane read --pane PANE_ID --max-bytes 65536 --pid "$CLINCH_CONTROL_PID"
+<ctl> pane read --pane PANE_ID --format plain --max-bytes 65536 --pid "$CLINCH_CONTROL_PID"
 <ctl> agent watch --after SNAPSHOT_CURSOR --wait 30 --pid "$CLINCH_CONTROL_PID"
 ```
 

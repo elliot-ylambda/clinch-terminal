@@ -236,8 +236,53 @@ fn parses_first_slice_instance_list() {
         .expect("instance list parses");
     assert!(matches!(
         args.command,
-        ControlCommand::Instance(InstanceCommand::List)
+        ControlCommand::Instance(InstanceCommand::List(_))
     ));
+}
+
+#[test]
+fn instance_free_commands_accept_instance_selection() {
+    // The control skill passes --pid to every command; these must accept it too.
+    for argv in [
+        vec!["warpctrl", "instance", "list", "--pid", "42"],
+        vec!["warpctrl", "capability", "list", "--pid", "42"],
+        vec![
+            "warpctrl",
+            "capability",
+            "inspect",
+            "tab.create",
+            "--pid",
+            "42",
+        ],
+        vec!["warpctrl", "action", "list", "--instance", "inst_1"],
+        vec!["warpctrl", "action", "inspect", "tab.create", "--pid", "42"],
+    ] {
+        assert!(
+            ControlArgs::try_parse_from(&argv).is_ok(),
+            "{argv:?} should parse"
+        );
+    }
+    let args =
+        ControlArgs::try_parse_from(["warpctrl", "action", "inspect", "tab.create", "--pid", "42"])
+            .expect("action inspect parses");
+    let ControlCommand::Action(ActionCatalogCommand::Inspect { action, instance }) = args.command
+    else {
+        panic!("expected action inspect command");
+    };
+    assert_eq!(action, "tab.create");
+    assert_eq!(instance.pid, Some(42));
+    assert!(
+        ControlArgs::try_parse_from([
+            "warpctrl",
+            "capability",
+            "list",
+            "--pid",
+            "42",
+            "--instance",
+            "inst_1"
+        ])
+        .is_err()
+    );
 }
 
 #[test]
@@ -253,7 +298,7 @@ fn parses_catalog_metadata_commands() {
     let args =
         ControlArgs::try_parse_from(["warpctrl", "action", "inspect", "surface.settings.open"])
             .expect("action inspect parses");
-    let ControlCommand::Action(ActionCatalogCommand::Inspect { action }) = args.command else {
+    let ControlCommand::Action(ActionCatalogCommand::Inspect { action, .. }) = args.command else {
         panic!("expected action inspect command");
     };
     assert_eq!(action, "surface.settings.open");
@@ -1055,7 +1100,7 @@ fn retained_action_examples() -> Vec<(ActionKind, Vec<&'static str>)> {
 fn parsed_action_kind(command: &ControlCommand) -> Option<ActionKind> {
     match command {
         ControlCommand::Instance(command) => match command {
-            InstanceCommand::List => Some(ActionKind::InstanceList),
+            InstanceCommand::List(_) => Some(ActionKind::InstanceList),
             InstanceCommand::Inspect(_) => Some(ActionKind::InstanceInspect),
         },
         ControlCommand::App(command) => match command {
@@ -1065,11 +1110,11 @@ fn parsed_action_kind(command: &ControlCommand) -> Option<ActionKind> {
             AppCommand::Focus(_) => Some(ActionKind::AppFocus),
         },
         ControlCommand::Capability(command) => match command {
-            CapabilityCommand::List => Some(ActionKind::CapabilityList),
+            CapabilityCommand::List(_) => Some(ActionKind::CapabilityList),
             CapabilityCommand::Inspect { .. } => Some(ActionKind::CapabilityInspect),
         },
         ControlCommand::Action(command) => match command {
-            ActionCatalogCommand::List => Some(ActionKind::ActionList),
+            ActionCatalogCommand::List(_) => Some(ActionKind::ActionList),
             ActionCatalogCommand::Inspect { .. } => Some(ActionKind::ActionInspect),
         },
         ControlCommand::Window(command) => match command {

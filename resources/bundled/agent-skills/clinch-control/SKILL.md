@@ -3,7 +3,7 @@ name: clinch-control
 description: Control and inspect the running Clinch app from Claude Code or Codex with its local control CLI. Use when the user asks to manipulate Clinch windows, project tabs, layouts, panes, sessions, sidebar sections, toolbelts, or UI surfaces; inspect or search rendered terminal contents across tabs; or launch a long-lived, interactive, or user-visible project process such as a dev server, watcher, REPL, or log tail in a new tab. Do not use for tests, lint, builds, Git commands, or other bounded work the agent can run in its own shell.
 ---
 
-<!-- managed-by: Clinch; version: 1.8.0 -->
+<!-- managed-by: Clinch; version: 1.9.0 -->
 
 # Clinch control
 
@@ -39,7 +39,7 @@ shell:
 
 When `CLINCH_CONTROL_WRAPPER` is set and executable, use that exact path as
 the executable in the `"$CLINCH_CONTROL_WRAPPER" ctrl` command prefix. Add
-`--pid "$CLINCH_CONTROL_PID"` to every command that accepts a target selector.
+`--pid "$CLINCH_CONTROL_PID"` to every `ctrl` command except `completions`.
 The wrapper takes precedence over `PATH`; the PID also distinguishes separate
 local worktree builds that share one channel. If the wrapper is set but
 missing, or its PID is absent, stop and tell the user to relaunch or rebuild
@@ -195,6 +195,19 @@ Paths must exist locally when restored. Do not treat export as a full session ba
 Section `color` values are reusable: a named color (including `clinch-green`), `none`
 for explicitly cleared, or null for default. Set defaults with `--color default`.
 Use exact `--project` on section mutations; section IDs belong to that project.
+
+## Read panes and tabs
+
+- Pane ids come in two formats: opaque `pane_id` values from `workspace tree`,
+  `project inspect`, and `agent list`, and selectors from `pane list` and
+  `session list` (the tree also reports them as `pane_selector`). Every pane and
+  session command accepts either. An opaque id carries its project and tab, so it
+  reaches panes in inactive projects without activating them.
+- `tab list` and `tab inspect` report each tab's `name`, `custom_title`,
+  `position`, `section_id`, `pinned`, and `color`.
+- Read a pane's terminal text with `pane read --pane <id> --format plain`: the
+  escape-free text that `tab grep` searches, with secrets obfuscated. The default
+  `--format ansi` keeps terminal styling. Both are bounded by `--max-bytes`.
 
 ## Handle other Clinch changes
 

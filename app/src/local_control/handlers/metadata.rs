@@ -443,13 +443,21 @@ pub(crate) fn tab_list(
     let tabs = entries
         .into_iter()
         .map(|entry| {
-            json!({
-                "tab_id": entry.pane_group.id().to_string(),
-                "window_id": entry.window_id.to_string(),
-                "window_index": entry.window_index as u32,
-                "index": entry.index as u32,
-                "is_active": entry.index == entry.workspace_active_tab_index,
-            })
+            let mut tab = crate::local_control::agents::tab_summary(
+                entry.workspace.as_ref(ctx),
+                entry.index,
+                entry.pane_group.as_ref(ctx),
+                ctx,
+            );
+            tab.insert("tab_id".into(), json!(entry.pane_group.id().to_string()));
+            tab.insert("window_id".into(), json!(entry.window_id.to_string()));
+            tab.insert("window_index".into(), json!(entry.window_index as u32));
+            tab.insert("index".into(), json!(entry.index as u32));
+            tab.insert(
+                "is_active".into(),
+                json!(entry.index == entry.workspace_active_tab_index),
+            );
+            serde_json::Value::Object(tab)
         })
         .collect::<Vec<_>>();
     Ok(json!({

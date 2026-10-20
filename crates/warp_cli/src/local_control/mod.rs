@@ -52,12 +52,14 @@ pub struct ControlArgs {
 #[derive(Debug, Clone, Subcommand)]
 pub enum ActionCatalogCommand {
     /// List allowlisted catalog actions.
-    List,
+    List(InstanceSelectArgs),
 
     /// Inspect a single allowlisted catalog action.
     Inspect {
         /// Canonical action name, such as `tab.create` or `surface.settings.open`.
         action: String,
+        #[command(flatten)]
+        instance: InstanceSelectArgs,
     },
 }
 
@@ -270,8 +272,8 @@ pub enum ControlCommand {
 /// Commands that inspect locally discoverable Warp instances.
 #[derive(Debug, Clone, Subcommand)]
 pub enum InstanceCommand {
-    /// List locally discoverable Warp instances.
-    List,
+    /// List locally discoverable Warp instances, or only the one `--instance`/`--pid` selects.
+    List(InstanceSelectArgs),
 
     /// Print app, protocol, active target, and action metadata for the selected instance.
     Inspect(Box<TargetArgs>),
@@ -297,12 +299,14 @@ pub enum AppCommand {
 #[derive(Debug, Clone, Subcommand)]
 pub enum CapabilityCommand {
     /// List allowlisted local-control capabilities.
-    List,
+    List(InstanceSelectArgs),
 
     /// Inspect a single local-control capability by canonical action name.
     Inspect {
         /// Canonical action name, such as `tab.create` or `surface.settings.open`.
         action: String,
+        #[command(flatten)]
+        instance: InstanceSelectArgs,
     },
 }
 
@@ -709,6 +713,36 @@ pub enum RemoteControlCommand {
 pub enum FileCommand {
     /// Open a file in Warp.
     Open(FileOpenArgs),
+}
+
+/// Selects the local app instance for commands that take no other target, so `--instance` and
+/// `--pid` work on every command and disambiguate several running instances of one channel.
+#[derive(Debug, Clone, Args, Default)]
+pub struct InstanceSelectArgs {
+    /// Target a specific local app instance id from `clinch ctrl instance list`.
+    #[arg(long = "instance", conflicts_with = "pid")]
+    pub instance: Option<String>,
+
+    /// Target a specific local Warp process id.
+    #[arg(long = "pid", conflicts_with = "instance")]
+    pub pid: Option<u32>,
+}
+
+impl InstanceSelectArgs {
+    fn into_target(self) -> TargetArgs {
+        TargetArgs {
+            instance: self.instance,
+            pid: self.pid,
+            ..TargetArgs::default()
+        }
+    }
+
+    fn matches(&self, record: &local_control::discovery::InstanceRecord) -> bool {
+        self.instance
+            .as_ref()
+            .is_none_or(|instance| record.instance_id.0 == *instance)
+            && self.pid.is_none_or(|pid| record.pid == pid)
+    }
 }
 
 /// Exact selectors for a target within the selected Warp instance.

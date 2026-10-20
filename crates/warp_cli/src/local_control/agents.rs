@@ -551,6 +551,9 @@ pub struct PaneReadArgs {
     pane_id: String,
     #[arg(long, default_value_t = 65536, value_parser = clap::value_parser!(u32).range(1..=262144))]
     max_bytes: u32,
+    /// `ansi` keeps terminal styling; `plain` returns the escape-free text that `tab grep` searches.
+    #[arg(long, default_value = "ansi")]
+    format: local_control::agents::PaneReadFormat,
 }
 
 pub(super) fn run_pane_read(args: PaneReadArgs, format: OutputFormat) -> Result<(), ControlError> {
@@ -561,6 +564,7 @@ pub(super) fn run_pane_read(args: PaneReadArgs, format: OutputFormat) -> Result<
             local_control::agents::PaneReadParams {
                 pane_id: args.pane_id,
                 max_bytes: args.max_bytes as usize,
+                format: args.format,
             },
         )?,
         format,

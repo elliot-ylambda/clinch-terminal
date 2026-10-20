@@ -267,3 +267,21 @@ fn parses_filtered_reads_and_bounded_lifecycle_commands() {
         &serde_json::json!({"state": "working", "ready": false})
     ));
 }
+
+#[test]
+fn pane_read_accepts_plain_and_ansi_formats() {
+    for format in ["plain", "ansi"] {
+        assert!(
+            ControlArgs::try_parse_from([
+                "clinch", "pane", "read", "--pane", "p", "--format", format
+            ])
+            .is_ok(),
+            "--format {format} should parse"
+        );
+    }
+    assert!(
+        ControlArgs::try_parse_from(["clinch", "pane", "read", "--pane", "p", "--format", "html"])
+            .is_err()
+    );
+    assert!(ControlArgs::try_parse_from(["clinch", "pane", "read", "--pane", "p"]).is_ok());
+}

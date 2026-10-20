@@ -3,7 +3,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 
-use ::local_control::agents::{AgentReadParams, AgentScope};
+use ::local_control::agents::{AgentReadParams, AgentScope, PaneReadFormat};
 use ::local_control::{ActionKind, ControlError, ErrorCode, InstanceId};
 use base64::Engine as _;
 use serde_json::{json, Value};
@@ -11,9 +11,11 @@ use warpui::{AppContext, SingletonEntity, ViewHandle};
 
 use super::conversation::ReadPlan;
 use crate::agent_resume::AgentResumeProvider;
+use crate::pane_group::{PaneGroup, PaneId};
 use crate::root_view::RootView;
 use crate::terminal::cli_agent_sessions::{CLIAgentSessionStatus, CLIAgentSessionsModel};
 use crate::terminal::{CLIAgent, TerminalView};
+use crate::workspace::Workspace;
 
 pub(super) struct AgentEntry {
     pub data: Value,
@@ -27,7 +29,8 @@ pub(super) struct AgentEntry {
 pub(super) struct Snapshot {
     pub tree: Value,
     pub agents: Vec<AgentEntry>,
-    pub panes: Vec<(String, Option<ViewHandle<TerminalView>>)>,
+    /// Every pane as (opaque id, `pane list` selector, readable terminal).
+    pub panes: Vec<(String, String, Option<ViewHandle<TerminalView>>)>,
 }
 
 fn fingerprint(value: &Value) -> String {
@@ -38,6 +41,97 @@ fn fingerprint(value: &Value) -> String {
 
 fn opaque_id(parts: Value) -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(parts.to_string())
+}
+
+/// The pane id reported by workspace tree, project inspect, and agent list. Agent ids embed it,
+/// so its encoding must stay stable.
+fn pane_opaque_id(
+    instance: &InstanceId,
+    project_id: &str,
+    tab_id: &str,
+    pane_id: PaneId,
+) -> String {
+    opaque_id(json!([
+        instance.0,
+        project_id,
+        tab_id,
+        format!("{pane_id:?}")
+    ]))
+}
+
+/// The live pane an opaque pane id names, as the exact selectors other actions resolve.
+pub(super) struct OpaquePane {
+    pub project_id: String,
+    pub tab_id: String,
+    pub pane_selector: String,
+}
+
+/// Resolves a pane id minted by `pane_opaque_id`. Returns `None` for any other format, such as
+/// the `pane list` selector, and `stale_target` when the id no longer names a live pane here.
+pub(super) fn resolve_opaque_pane(
+    instance: &InstanceId,
+    id: &str,
+    ctx: &AppContext,
+) -> Option<Result<OpaquePane, ControlError>> {
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(id)
+        .ok()?;
+    let [owner, project_id, tab_id, pane_debug]: [String; 4] =
+        serde_json::from_slice(&bytes).ok()?;
+    let stale = || {
+        ControlError::new(
+            ErrorCode::StaleTarget,
+            "pane is no longer present; discover it with workspace tree",
+        )
+    };
+    if owner != instance.0 {
+        return Some(Err(stale()));
+    }
+    let resolved = super::handlers::projects::resolve_project(&project_id, ctx)
+        .ok()
+        .and_then(|project| {
+            let group = project
+                .workspace
+                .as_ref(ctx)
+                .tab_views()
+                .find(|group| group.id().to_string() == tab_id)?
+                .as_ref(ctx);
+            let pane_id = group
+                .pane_ids()
+                .find(|pane_id| format!("{pane_id:?}") == pane_debug)?;
+            Some(pane_id.to_string())
+        });
+    Some(match resolved {
+        Some(pane_selector) => Ok(OpaquePane {
+            project_id,
+            tab_id,
+            pane_selector,
+        }),
+        None => Err(stale()),
+    })
+}
+
+/// Tab metadata shared by workspace tree, project inspect, tab list, and tab inspect.
+pub(super) fn tab_summary(
+    workspace: &Workspace,
+    tab_index: usize,
+    group: &PaneGroup,
+    ctx: &AppContext,
+) -> serde_json::Map<String, Value> {
+    let tab = workspace.tabs.get(tab_index);
+    let section_id = tab
+        .and_then(|tab| tab.group_id)
+        .filter(|id| workspace.tab_groups.contains_key(id))
+        .map(|id| id.0.to_string());
+    let color = tab.and_then(|tab| super::handlers::projects::tab_color_value(tab.selected_color));
+    let mut summary = serde_json::Map::new();
+    summary.insert("name".into(), json!(group.display_title(ctx)));
+    summary.insert("custom_title".into(), json!(group.custom_title(ctx)));
+    summary.insert("position".into(), json!(tab_index));
+    summary.insert("section_id".into(), json!(section_id));
+    summary.insert("pinned".into(), json!(tab.is_some_and(|tab| tab.pinned)));
+    summary.insert("color".into(), json!(color));
+    summary
 }
 
 /// Enumerates root project containers rather than WorkspaceRegistry's active-project lookup.
@@ -112,14 +206,13 @@ pub(super) fn snapshot(
                 hidden.sort_by_key(|id| format!("{id:?}"));
                 pane_ids.extend(hidden);
                 for pane_id in pane_ids {
-                    let pane_id_string = opaque_id(json!([
-                        instance.0,
-                        project_id,
-                        tab_id,
-                        format!("{pane_id:?}")
-                    ]));
+                    let pane_id_string = pane_opaque_id(instance, &project_id, &tab_id, pane_id);
                     let terminal = group.terminal_view_from_pane_id(pane_id, ctx);
-                    all_panes.push((pane_id_string.clone(), terminal.clone()));
+                    all_panes.push((
+                        pane_id_string.clone(),
+                        pane_id.to_string(),
+                        terminal.clone(),
+                    ));
                     let mut pane = json!({"pane_id": pane_id_string, "pane_selector": pane_id.to_string(), "title": group.pane_title(pane_id, ctx), "visible": visible.contains(&pane_id), "active": group.focused_pane_id(ctx) == pane_id, "kind": "other", "content_read": false});
                     if let Some(terminal) = terminal {
                         let terminal_ref = terminal.as_ref(ctx);
@@ -197,7 +290,14 @@ pub(super) fn snapshot(
                     }
                     panes.push(pane);
                 }
-                tabs.push(json!({"tab_id": tab_id, "name": tab_title, "custom_title": group.custom_title(ctx), "position": tab_index, "active": workspace.active_tab_index() == tab_index, "section_id": section_id, "pinned": workspace.tabs[tab_index].pinned, "color": super::handlers::projects::tab_color_value(workspace.tabs[tab_index].selected_color), "panes": panes}));
+                let mut tab = tab_summary(workspace, tab_index, group, ctx);
+                tab.insert("tab_id".into(), json!(tab_id));
+                tab.insert(
+                    "active".into(),
+                    json!(workspace.active_tab_index() == tab_index),
+                );
+                tab.insert("panes".into(), json!(panes));
+                tabs.push(Value::Object(tab));
             }
             projects.push(json!({"project_id": project_id, "name": project_name, "position": project_index, "active": project_window.active_project_index() == project_index, "sections": sections, "tabs": tabs, "tasks": workspace.tasks}));
         }
@@ -290,31 +390,81 @@ pub(super) fn read_pane(
             "max_bytes must be between 1 and 262144",
         ));
     }
+    // Accept the opaque id from workspace tree as well as the `pane list` selector.
     let terminal = snapshot(instance, &AgentScope::default(), ctx)?
         .panes
         .into_iter()
-        .find(|(id, _)| *id == params.pane_id)
+        .find(|(id, selector, _)| *id == params.pane_id || *selector == params.pane_id)
         .ok_or_else(|| {
             ControlError::new(
                 ErrorCode::StaleTarget,
                 "pane is no longer present; discover it with workspace tree",
             )
         })?
-        .1
+        .2
         .ok_or_else(|| {
             ControlError::new(
                 ErrorCode::UnsupportedAction,
                 "this pane is not a readable terminal",
             )
         })?;
-    let bytes = terminal
-        .as_ref(ctx)
-        .remote_control_scrollback_bytes(params.max_bytes + 1);
-    let truncated = bytes.len() > params.max_bytes;
-    let slice = &bytes[bytes.len().saturating_sub(params.max_bytes)..];
+    let (text, truncated) = match params.format {
+        PaneReadFormat::Plain => terminal
+            .as_ref(ctx)
+            .local_control_searchable_text(params.max_bytes),
+        PaneReadFormat::Ansi => {
+            // Read past the limit so the cut can move forward to a sequence boundary.
+            let bytes = terminal
+                .as_ref(ctx)
+                .remote_control_scrollback_bytes(params.max_bytes + ANSI_BOUNDARY_SLACK);
+            let truncated = bytes.len() > params.max_bytes;
+            let start = ansi_safe_start(&bytes, bytes.len().saturating_sub(params.max_bytes));
+            (
+                String::from_utf8_lossy(&bytes[start..]).into_owned(),
+                truncated,
+            )
+        }
+    };
     Ok(
-        json!({"action": "pane.read", "pane_id": params.pane_id, "format": "ansi", "source": "bounded_terminal_snapshot", "coverage": "partial", "content_truncated": truncated, "text": String::from_utf8_lossy(slice)}),
+        json!({"action": "pane.read", "pane_id": params.pane_id, "format": params.format.as_str(), "source": "bounded_terminal_snapshot", "coverage": "partial", "content_truncated": truncated, "text": text}),
     )
+}
+
+/// Extra bytes read before an ANSI cut, enough to find the end of any escape sequence there.
+const ANSI_BOUNDARY_SLACK: usize = 4096;
+
+/// The first offset at or after `min_start` that begins neither inside an escape sequence nor
+/// inside a UTF-8 character, so a bounded ANSI read never starts with a broken sequence.
+pub(super) fn ansi_safe_start(bytes: &[u8], min_start: usize) -> usize {
+    #[derive(Clone, Copy, PartialEq)]
+    enum State {
+        Ground,
+        Escape,
+        Csi,
+        String,
+        StringEscape,
+    }
+    let mut state = State::Ground;
+    for (index, &byte) in bytes.iter().enumerate() {
+        if index >= min_start && state == State::Ground && (byte & 0b1100_0000) != 0b1000_0000 {
+            return index;
+        }
+        state = match (state, byte) {
+            (State::Ground, 0x1b) => State::Escape,
+            (State::Ground, _) => State::Ground,
+            (State::Escape, b'[') => State::Csi,
+            (State::Escape, b']' | b'P' | b'_' | b'^' | b'X') => State::String,
+            (State::Escape, _) => State::Ground,
+            (State::Csi, 0x40..=0x7e) => State::Ground,
+            (State::Csi, _) => State::Csi,
+            (State::String, 0x07) => State::Ground,
+            (State::String, 0x1b) => State::StringEscape,
+            (State::String, _) => State::String,
+            (State::StringEscape, b'\\') => State::Ground,
+            (State::StringEscape, _) => State::String,
+        };
+    }
+    bytes.len()
 }
 
 #[cfg(test)]

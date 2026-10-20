@@ -105,7 +105,7 @@ clinch ctrl agent list [--project ID ...] [--section ID ...]
 clinch ctrl agent inspect AGENT_ID
 clinch ctrl agent read AGENT_ID [--after CURSOR | --tail | --from-start] [--limit N | --last N]
 clinch ctrl --output-format ndjson agent read AGENT_ID --all [--limit N]
-clinch ctrl pane read --pane PANE_ID [--limit-bytes N]
+clinch ctrl pane read --pane PANE_ID [--max-bytes N] [--format ansi|plain]
 clinch ctrl agent send AGENT_ID --text-file PATH --request-id UUID [--queue --expires-in DURATION]
 clinch ctrl agent message inspect MESSAGE_ID
 clinch ctrl agent message cancel MESSAGE_ID
