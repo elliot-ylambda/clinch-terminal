@@ -2474,6 +2474,43 @@ fn test_update_session_visibility() {
     });
 }
 
+/// Focus that lands on a terminal from outside the pane group (as after a sidebar tab click)
+/// still shows the tab's panes, which is what starts a restored pane's deferred agent.
+#[test]
+fn focusing_a_terminal_inside_the_tab_marks_its_sessions_visible() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+
+        let pane_group = mock_pane_group(&mut app, Default::default());
+        let terminal_view = pane_group.update(&mut app, |panes, ctx| {
+            // Same unfocused starting point as `test_update_session_visibility`.
+            panes.add_terminal_pane(Direction::Left, None, ctx);
+            let window_id = ctx.window_id();
+            WindowManager::handle(ctx).update(ctx, |state, ctx| {
+                state.overwrite_for_test(ApplicationStage::Active, Some(window_id));
+                ctx.notify();
+            });
+            panes
+                .panes_of::<TerminalPane>()
+                .next()
+                .expect("terminal pane")
+                .terminal_view(ctx)
+        });
+        terminal_view.read(&app, |view, _| {
+            assert!(!view.was_ever_visible(), "an unfocused tab is not shown");
+        });
+
+        pane_group.update(&mut app, |_, ctx| ctx.focus(&terminal_view));
+
+        terminal_view.read(&app, |view, _| {
+            assert!(
+                view.was_ever_visible(),
+                "focusing a terminal inside the tab must mark it visible"
+            );
+        });
+    });
+}
+
 #[test]
 fn test_initial_widths_are_computed_correctly() {
     use launch_config::PaneTemplateType::*;
