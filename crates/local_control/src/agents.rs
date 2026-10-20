@@ -91,6 +91,39 @@ pub const MAX_READ_BYTES: usize = 256 * 1024;
 pub struct PaneReadParams {
     pub pane_id: String,
     pub max_bytes: usize,
+    /// Omitted for the default so requests stay readable by apps that predate the field.
+    #[serde(default, skip_serializing_if = "PaneReadFormat::is_ansi")]
+    pub format: PaneReadFormat,
+}
+
+/// `ansi` replays the terminal with its styling; `plain` is the text `tab grep` searches.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaneReadFormat {
+    #[default]
+    Ansi,
+    Plain,
+}
+impl PaneReadFormat {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ansi => "ansi",
+            Self::Plain => "plain",
+        }
+    }
+    fn is_ansi(&self) -> bool {
+        *self == Self::Ansi
+    }
+}
+impl std::str::FromStr for PaneReadFormat {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "ansi" => Ok(Self::Ansi),
+            "plain" => Ok(Self::Plain),
+            _ => Err("format must be ansi or plain".into()),
+        }
+    }
 }
 
 #[cfg(test)]

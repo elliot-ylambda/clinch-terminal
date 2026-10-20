@@ -240,8 +240,11 @@ pub(super) fn run_instance_command(
     output_format: OutputFormat,
 ) -> Result<(), ControlError> {
     match command {
-        InstanceCommand::List => render_instance_list(
-            local_control::discovery::list_instances(&ChannelState::channel().to_string()),
+        InstanceCommand::List(selection) => render_instance_list(
+            local_control::discovery::list_instances(&ChannelState::channel().to_string())
+                .into_iter()
+                .filter(|record| selection.matches(record))
+                .collect(),
             output_format,
         ),
         InstanceCommand::Inspect(args) => run_action_with_params(
@@ -336,14 +339,14 @@ pub(super) fn run_action_catalog_command(
     output_format: OutputFormat,
 ) -> Result<(), ControlError> {
     match command {
-        ActionCatalogCommand::List => run_action_with_params(
-            TargetArgs::default(),
+        ActionCatalogCommand::List(instance) => run_action_with_params(
+            instance.into_target(),
             ActionKind::ActionList,
             EmptyParams {},
             output_format,
         ),
-        ActionCatalogCommand::Inspect { action } => run_action_with_params(
-            TargetArgs::default(),
+        ActionCatalogCommand::Inspect { action, instance } => run_action_with_params(
+            instance.into_target(),
             ActionKind::ActionInspect,
             ActionNameParams { action },
             output_format,
@@ -356,14 +359,14 @@ pub(super) fn run_capability_command(
     output_format: OutputFormat,
 ) -> Result<(), ControlError> {
     match command {
-        CapabilityCommand::List => run_action_with_params(
-            TargetArgs::default(),
+        CapabilityCommand::List(instance) => run_action_with_params(
+            instance.into_target(),
             ActionKind::CapabilityList,
             EmptyParams {},
             output_format,
         ),
-        CapabilityCommand::Inspect { action } => run_action_with_params(
-            TargetArgs::default(),
+        CapabilityCommand::Inspect { action, instance } => run_action_with_params(
+            instance.into_target(),
             ActionKind::CapabilityInspect,
             ActionNameParams { action },
             output_format,

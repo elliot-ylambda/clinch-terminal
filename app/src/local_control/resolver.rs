@@ -9,7 +9,10 @@ use ::local_control::protocol::{
     ToolbeltButtonMoveParams, ToolbeltListParams, ToolbeltSuggestionListParams,
     ToolbeltSuggestionResolveParams, WindowTarget,
 };
-use ::local_control::{ActionKind, ControlError, ErrorCode, TargetScope};
+use ::local_control::{
+    ActionKind, ControlError, ErrorCode, InstanceId, PaneSelector, SessionSelector, TabSelector,
+    TargetScope,
+};
 use uuid::Uuid;
 use warpui::{AppContext, ModelContext, SingletonEntity, TypedActionView, ViewHandle, WindowId};
 
@@ -17,6 +20,68 @@ use crate::local_control::handlers::metadata::action_metadata_for_name;
 use crate::local_control::LocalControlBridge;
 use crate::pane_group::{ActivationReason, PaneGroup, PaneGroupAction, PaneId};
 use crate::workspace::{Workspace, WorkspaceAction, WorkspaceRegistry};
+
+/// Pane and session ids come in two formats: opaque ids from workspace tree, project inspect, and
+/// agent list, and selectors from pane list and session list. Resolvers match selectors, so this
+/// rewrites an opaque id to its selector and pins the project and tab it encodes, which also lets
+/// it reach panes in inactive projects and tabs. Selectors pass through unchanged.
+pub(crate) fn normalize_opaque_pane_targets(
+    instance: &InstanceId,
+    target: &mut TargetSelector,
+    ctx: &AppContext,
+) -> Result<(), ControlError> {
+    if let Some(PaneTarget::Id { id }) = target.pane.clone() {
+        if let Some(selector) = pin_opaque_pane(instance, &id.0, target, ctx)? {
+            target.pane = Some(PaneTarget::Id {
+                id: PaneSelector(selector),
+            });
+        }
+    }
+    if let Some(SessionTarget::Id { id }) = target.session.clone() {
+        if let Some(selector) = pin_opaque_pane(instance, &id.0, target, ctx)? {
+            target.session = Some(SessionTarget::Id {
+                id: SessionSelector(selector),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Pins the project and tab an opaque pane id encodes onto `target` and returns the pane's
+/// selector, or `None` when `id` is not an opaque pane id.
+fn pin_opaque_pane(
+    instance: &InstanceId,
+    id: &str,
+    target: &mut TargetSelector,
+    ctx: &AppContext,
+) -> Result<Option<String>, ControlError> {
+    let Some(resolved) = crate::local_control::agents::resolve_opaque_pane(instance, id, ctx)
+    else {
+        return Ok(None);
+    };
+    let resolved = resolved?;
+    let conflict = |what: &str| {
+        ControlError::new(
+            ErrorCode::InvalidSelector,
+            format!("the pane id belongs to a different {what} than the one selected"),
+        )
+    };
+    match &target.project {
+        Some(project) if *project != resolved.project_id => return Err(conflict("project")),
+        Some(_) => {}
+        None => target.project = Some(resolved.project_id),
+    }
+    match &target.tab {
+        Some(TabTarget::Id { id }) if id.0 != resolved.tab_id => return Err(conflict("tab")),
+        Some(_) => {}
+        None => {
+            target.tab = Some(TabTarget::Id {
+                id: TabSelector(resolved.tab_id),
+            })
+        }
+    }
+    Ok(Some(resolved.pane_selector))
+}
 
 pub(crate) fn validate_tab_create_target(target: &TargetSelector) -> Result<(), ControlError> {
     if target.tab.is_some() || target.pane.is_some() || target.session.is_some() {

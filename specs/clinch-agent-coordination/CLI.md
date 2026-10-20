@@ -63,7 +63,7 @@ Using `<ctl>` below to mean `"$CLINCH_CONTROL_WRAPPER" ctrl`:
 <ctl> agent read AGENT_ID --from-start --limit 100 --pid PID
 <ctl> agent read AGENT_ID --after CURSOR --limit 100 --pid PID
 <ctl> --output-format ndjson agent read AGENT_ID --all --pid PID
-<ctl> pane read --pane PANE_ID --max-bytes 65536 --pid PID
+<ctl> pane read --pane PANE_ID --format plain --max-bytes 65536 --pid PID
 <ctl> agent watch --after SNAPSHOT_CURSOR --wait 30 --pid PID
 <ctl> agent watch --follow --pid PID
 ```

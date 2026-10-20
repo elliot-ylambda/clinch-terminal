@@ -16,7 +16,9 @@ use crate::local_control::handlers::{
 use crate::local_control::permissions::{
     ensure_action_allowed, ensure_feature_enabled, ensure_protocol_version,
 };
-use crate::local_control::resolver::{validate_action_params, validate_action_target};
+use crate::local_control::resolver::{
+    normalize_opaque_pane_targets, validate_action_params, validate_action_target,
+};
 
 /// WarpUI model that executes already-authenticated local-control actions.
 pub struct LocalControlBridge {
@@ -156,7 +158,7 @@ impl LocalControlBridge {
 
     pub(super) fn handle_request(
         &mut self,
-        request: RequestEnvelope,
+        mut request: RequestEnvelope,
         grant: CredentialGrant,
         ctx: &mut ModelContext<Self>,
     ) -> BridgeReply {
@@ -183,6 +185,9 @@ impl LocalControlBridge {
             return ResponseEnvelope::error(request.request_id, error).into();
         }
         if let Err(error) = validate_action_target(request.action.kind, &request.target) {
+            return ResponseEnvelope::error(request.request_id, error).into();
+        }
+        if let Err(error) = normalize_opaque_pane_targets(instance_id, &mut request.target, ctx) {
             return ResponseEnvelope::error(request.request_id, error).into();
         }
         if matches!(
