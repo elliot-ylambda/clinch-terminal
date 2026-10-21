@@ -78,6 +78,7 @@ fn terminal_availability_admits_only_custom_insert() {
         AgentToolbarItemKind::BookmarkConversation,
         AgentToolbarItemKind::ContinuePrompt,
         AgentToolbarItemKind::LooksGoodPrompt,
+        AgentToolbarItemKind::CopyDraft,
         AgentToolbarItemKind::CopyAndClearDraft,
         AgentToolbarItemKind::FastForwardToggle,
         AgentToolbarItemKind::HandoffToCloud,
@@ -155,13 +156,17 @@ fn quick_replies_have_expected_labels_and_icons() {
 }
 
 #[test]
-fn copy_and_clear_draft_is_a_cli_host_control() {
-    let kind = AgentToolbarItemKind::CopyAndClearDraft;
-    assert_eq!(kind.available_in(), ToolbarAvailability::CLIAgentOnly);
-    assert!(kind.available_to_session_viewer(&SharedSessionStatus::NotShared, false));
-    assert!(!kind.available_to_session_viewer(&SharedSessionStatus::reader(), false));
-    assert_eq!(kind.auto_send_behavior(), None);
-    assert!(!kind.is_available_during_handoff_compose());
+fn copy_actions_are_cli_host_controls() {
+    for kind in [
+        AgentToolbarItemKind::CopyDraft,
+        AgentToolbarItemKind::CopyAndClearDraft,
+    ] {
+        assert_eq!(kind.available_in(), ToolbarAvailability::CLIAgentOnly);
+        assert!(kind.available_to_session_viewer(&SharedSessionStatus::NotShared, false));
+        assert!(!kind.available_to_session_viewer(&SharedSessionStatus::reader(), false));
+        assert_eq!(kind.auto_send_behavior(), None);
+        assert!(!kind.is_available_during_handoff_compose());
+    }
 }
 
 #[test]
@@ -190,7 +195,7 @@ fn quick_replies_hidden_during_handoff_compose() {
 fn cli_default_left_places_session_actions_before_quick_replies() {
     let items = AgentToolbarItemKind::cli_default_left();
     assert_eq!(
-        &items[..7],
+        &items[..8],
         &[
             AgentToolbarItemKind::BookmarkConversation,
             AgentToolbarItemKind::ForkSession,
@@ -198,6 +203,7 @@ fn cli_default_left_places_session_actions_before_quick_replies() {
             AgentToolbarItemKind::Compact,
             AgentToolbarItemKind::ContinuePrompt,
             AgentToolbarItemKind::LooksGoodPrompt,
+            AgentToolbarItemKind::CopyDraft,
             AgentToolbarItemKind::CopyAndClearDraft,
         ]
     );
@@ -303,6 +309,7 @@ fn cli_quick_insert_presets_are_available_but_hidden_by_default() {
             AgentToolbarItemKind::Compact,
             AgentToolbarItemKind::ContinuePrompt,
             AgentToolbarItemKind::LooksGoodPrompt,
+            AgentToolbarItemKind::CopyDraft,
             AgentToolbarItemKind::CopyAndClearDraft,
         ]
     );

@@ -124,6 +124,9 @@ pub enum AgentToolbarItemKind {
     // CLI agent only – submits "Looks good to me, continue" to the running agent.
     LooksGoodPrompt,
 
+    // CLI agent only – copies the unsent draft without changing the composer.
+    CopyDraft,
+
     // CLI agent only – copies the unsent draft and clears the composer.
     CopyAndClearDraft,
 
@@ -253,6 +256,7 @@ impl AgentToolbarItemKind {
             | Self::ForkSession
             | Self::BookmarkConversation
             | Self::ContinuePrompt
+            | Self::CopyDraft
             | Self::CopyAndClearDraft
             | Self::TransferAgent
             | Self::CustomInsert { .. }
@@ -280,6 +284,7 @@ impl AgentToolbarItemKind {
             | Self::ForkSession
             | Self::BookmarkConversation
             | Self::ContinuePrompt
+            | Self::CopyDraft
             | Self::CopyAndClearDraft
             | Self::TransferAgent
             | Self::CustomInsert { .. }
@@ -315,6 +320,7 @@ impl AgentToolbarItemKind {
             Self::BookmarkConversation => Cow::Borrowed("Bookmark Session"),
             Self::ContinuePrompt => Cow::Borrowed("Continue"),
             Self::LooksGoodPrompt => Cow::Borrowed("LGTM"),
+            Self::CopyDraft => Cow::Borrowed("Copy"),
             Self::CopyAndClearDraft => Cow::Borrowed("Copy & Clear"),
             Self::TransferAgent => Cow::Borrowed("Transfer agent"),
             Self::FastForwardToggle => Cow::Borrowed("Fast Forward"),
@@ -340,7 +346,7 @@ impl AgentToolbarItemKind {
             Self::BookmarkConversation => Some(Icon::Bookmark),
             Self::ContinuePrompt => Some(Icon::Play),
             Self::LooksGoodPrompt => Some(Icon::ThumbsUp),
-            Self::CopyAndClearDraft => Some(Icon::Copy),
+            Self::CopyDraft | Self::CopyAndClearDraft => Some(Icon::Copy),
             Self::TransferAgent => Some(Icon::SwitchHorizontal01),
             Self::FastForwardToggle => Some(Icon::FastForward),
             // The bundled `upload-cloud-01.svg` (cloud-with-upward-arrow) is the
@@ -376,6 +382,7 @@ impl AgentToolbarItemKind {
             | Self::ForkSession
             | Self::BookmarkConversation
             | Self::ContinuePrompt
+            | Self::CopyDraft
             | Self::CopyAndClearDraft
             | Self::TransferAgent
             | Self::CustomInsert { .. }
@@ -493,6 +500,7 @@ impl AgentToolbarItemKind {
             Self::Compact,
             Self::ContinuePrompt,
             Self::LooksGoodPrompt,
+            Self::CopyDraft,
             Self::CopyAndClearDraft,
         ]
     }
@@ -611,6 +619,7 @@ impl AgentToolbarItemKind {
             Self::Compact,
             Self::ContinuePrompt,
             Self::LooksGoodPrompt,
+            Self::CopyDraft,
             Self::CopyAndClearDraft,
         ];
         items.extend(Self::cli_quick_insert_presets());

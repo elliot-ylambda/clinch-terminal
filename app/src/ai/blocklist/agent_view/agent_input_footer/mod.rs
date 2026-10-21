@@ -232,6 +232,7 @@ pub struct AgentInputFooter {
     bookmark_conversation_button: ViewHandle<ActionButton>,
     continue_button: ViewHandle<ActionButton>,
     looks_good_button: ViewHandle<ActionButton>,
+    copy_draft_button: ViewHandle<ActionButton>,
     copy_and_clear_draft_button: ViewHandle<ActionButton>,
     /// Opens the unified footer-button editor, including its add-button flow.
     quick_insert_edit_button: ViewHandle<ActionButton>,
@@ -482,6 +483,16 @@ impl AgentInputFooter {
                 .with_tooltip_alignment(TooltipAlignment::Left)
                 .on_click(|ctx| {
                     ctx.dispatch_typed_action(AgentInputFooterAction::SendLooksGood);
+                })
+        });
+        let copy_draft_button = ctx.add_typed_action_view(|_ctx| {
+            ActionButton::new("Copy", AgentInputButtonTheme)
+                .with_icon(Icon::Copy)
+                .with_tooltip("Copy the unsent draft without clearing the composer")
+                .with_size(cli_button_size)
+                .with_tooltip_alignment(TooltipAlignment::Left)
+                .on_click(|ctx| {
+                    ctx.dispatch_typed_action(AgentInputFooterAction::CopyDraft);
                 })
         });
         let copy_and_clear_draft_button = ctx.add_typed_action_view(|_ctx| {
@@ -956,6 +967,7 @@ impl AgentInputFooter {
             bookmark_conversation_button,
             continue_button,
             looks_good_button,
+            copy_draft_button,
             copy_and_clear_draft_button,
             quick_insert_edit_button,
             rich_input_button,
@@ -1696,6 +1708,9 @@ impl AgentInputFooter {
             }
             AgentToolbarItemKind::LooksGoodPrompt => {
                 Some(ChildView::new(&self.looks_good_button).finish())
+            }
+            AgentToolbarItemKind::CopyDraft => {
+                Some(ChildView::new(&self.copy_draft_button).finish())
             }
             AgentToolbarItemKind::CopyAndClearDraft => {
                 Some(ChildView::new(&self.copy_and_clear_draft_button).finish())
@@ -2706,6 +2721,7 @@ impl AgentInputFooter {
             | AgentToolbarItemKind::ForkSession
             | AgentToolbarItemKind::BookmarkConversation
             | AgentToolbarItemKind::ContinuePrompt
+            | AgentToolbarItemKind::CopyDraft
             | AgentToolbarItemKind::CopyAndClearDraft
             | AgentToolbarItemKind::TransferAgent
             | AgentToolbarItemKind::CustomInsert { .. }
@@ -2998,7 +3014,9 @@ pub enum AgentInputFooterAction {
     SendContinue,
     /// Submit "Looks good to me, continue" to the running CLI agent.
     SendLooksGood,
-    /// Copy the unsent CLI-agent draft and clear the composer.
+    /// Copy the unsent CLI-agent draft without clearing the composer.
+    CopyDraft,
+    /// Copy the unsent draft and clear the composer.
     CopyAndClearDraft,
     /// Continue the captured conversation in the other agent in a new tab.
     TransferAgent,
@@ -3156,8 +3174,23 @@ impl TypedActionView for AgentInputFooter {
                     ));
                 }
             }
-            AgentInputFooterAction::CopyAndClearDraft => {
-                if self.cli_agent(ctx).is_some() {
+            AgentInputFooterAction::CopyDraft | AgentInputFooterAction::CopyAndClearDraft => {
+                if self.cli_agent(ctx).is_none() {
+                    return;
+                }
+                #[cfg(feature = "voice_input")]
+                if matches!(action, AgentInputFooterAction::CopyAndClearDraft)
+                    && !matches!(self.cli_voice_input_state, CLIVoiceInputState::Stopped)
+                {
+                    self.show_cli_voice_error_toast(
+                        "Finish dictation and wait for transcription before copying the draft.",
+                        ctx,
+                    );
+                    return;
+                }
+                if matches!(action, AgentInputFooterAction::CopyDraft) {
+                    ctx.emit(AgentInputFooterEvent::CopyDraft);
+                } else {
                     ctx.emit(AgentInputFooterEvent::CopyAndClearDraft);
                 }
             }
@@ -3368,7 +3401,9 @@ pub enum AgentInputFooterEvent {
     /// Submit a fixed prompt string to this pane's live CLI agent using the
     /// per-agent submission strategy (types the text, then presses Enter).
     SubmitTextToCliAgent(String),
-    /// Copy the unsent rich-input draft and clear it without closing the composer.
+    /// Copy the unsent draft without clearing the composer.
+    CopyDraft,
+    /// Copy the unsent draft and clear the composer.
     CopyAndClearDraft,
     /// Continue the captured conversation in the other agent in a new tab.
     TransferAgent,

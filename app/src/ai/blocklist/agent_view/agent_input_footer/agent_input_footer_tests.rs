@@ -18,6 +18,7 @@ enum ObservedEvent {
     WriteToPty(String),
     SubmitTextToCliAgent(String),
     InsertIntoCLIRichInput(String),
+    CopyDraft,
     CopyAndClearDraft,
 }
 
@@ -104,6 +105,7 @@ fn conversation_actions_keep_their_slots_while_session_identity_is_pending() {
 fn custom_insert_writes_command_in_terminal_and_submits_text_to_cli_agent() {
     App::test((), |mut app| async move {
         initialize_app_for_terminal_view(&mut app);
+        app.add_singleton_model(|_| crate::workspace::ToastStack);
         let terminal = add_window_with_terminal(&mut app, None);
         let footer = terminal.read(&app, |view, ctx| {
             view.input().as_ref(ctx).agent_input_footer().clone()
@@ -122,6 +124,9 @@ fn custom_insert_writes_command_in_terminal_and_submits_text_to_cli_agent() {
                 AgentInputFooterEvent::InsertIntoCLIRichInput(text) => observed_for_subscription
                     .borrow_mut()
                     .push(ObservedEvent::InsertIntoCLIRichInput(text.clone())),
+                AgentInputFooterEvent::CopyDraft => observed_for_subscription
+                    .borrow_mut()
+                    .push(ObservedEvent::CopyDraft),
                 AgentInputFooterEvent::CopyAndClearDraft => observed_for_subscription
                     .borrow_mut()
                     .push(ObservedEvent::CopyAndClearDraft),
@@ -185,6 +190,7 @@ fn custom_insert_writes_command_in_terminal_and_submits_text_to_cli_agent() {
                 AgentInputFooterAction::Compact,
                 AgentInputFooterAction::SendContinue,
                 AgentInputFooterAction::SendLooksGood,
+                AgentInputFooterAction::CopyDraft,
                 AgentInputFooterAction::CopyAndClearDraft,
             ] {
                 footer.handle_action(&action, ctx);
@@ -196,6 +202,7 @@ fn custom_insert_writes_command_in_terminal_and_submits_text_to_cli_agent() {
                 ObservedEvent::SubmitTextToCliAgent("/compact".to_owned()),
                 ObservedEvent::SubmitTextToCliAgent("Continue".to_owned()),
                 ObservedEvent::SubmitTextToCliAgent("Looks good to me, continue".to_owned()),
+                ObservedEvent::CopyDraft,
                 ObservedEvent::CopyAndClearDraft,
             ]
         );
@@ -244,5 +251,51 @@ fn custom_insert_writes_command_in_terminal_and_submits_text_to_cli_agent() {
                 "review in rich input".to_owned()
             )]
         );
+    });
+}
+
+#[test]
+#[cfg(feature = "voice_input")]
+fn copy_only_remains_available_during_cli_voice_input() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        app.add_singleton_model(|_| crate::workspace::ToastStack);
+        let terminal = add_window_with_terminal(&mut app, None);
+        let footer = terminal.read(&app, |view, ctx| {
+            view.input().as_ref(ctx).agent_input_footer().clone()
+        });
+        CLIAgentSessionsModel::handle(&app).update(&mut app, |sessions, ctx| {
+            sessions.set_session(terminal.id(), codex_session(None), ctx);
+        });
+        let observed = Rc::new(RefCell::new(Vec::new()));
+        let observed_for_subscription = observed.clone();
+        app.update(|ctx| {
+            ctx.subscribe_to_view(&footer, move |_, event, _| match event {
+                AgentInputFooterEvent::CopyDraft => {
+                    observed_for_subscription.borrow_mut().push(false)
+                }
+                AgentInputFooterEvent::CopyAndClearDraft => {
+                    observed_for_subscription.borrow_mut().push(true)
+                }
+                _ => {}
+            });
+        });
+        footer.update(&mut app, |footer, ctx| {
+            for state in [
+                CLIVoiceInputState::Listening,
+                CLIVoiceInputState::Transcribing,
+            ] {
+                footer.cli_voice_input_state = state;
+                footer.handle_action(&AgentInputFooterAction::CopyDraft, ctx);
+                footer.handle_action(&AgentInputFooterAction::CopyAndClearDraft, ctx);
+            }
+        });
+        assert_eq!(*observed.borrow(), vec![false, false]);
+        footer.update(&mut app, |footer, ctx| {
+            footer.cli_voice_input_state = CLIVoiceInputState::Stopped;
+            footer.handle_action(&AgentInputFooterAction::CopyDraft, ctx);
+            footer.handle_action(&AgentInputFooterAction::CopyAndClearDraft, ctx);
+        });
+        assert_eq!(*observed.borrow(), vec![false, false, false, true]);
     });
 }

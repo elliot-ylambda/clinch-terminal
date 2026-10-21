@@ -2542,6 +2542,7 @@ impl Input {
                 | AgentInputFooterEvent::ToggleFileExplorer(_)
                 | AgentInputFooterEvent::ForkSession
                 | AgentInputFooterEvent::SubmitTextToCliAgent(_)
+                | AgentInputFooterEvent::CopyDraft
                 | AgentInputFooterEvent::CopyAndClearDraft
                 | AgentInputFooterEvent::TransferAgent
                 | AgentInputFooterEvent::OpenQuickInsertModal

@@ -8017,6 +8017,29 @@ fn copy_and_clear_cli_agent_draft_updates_clipboard_and_keeps_composer_open() {
                 input.replace_buffer_content("unfinished prompt\nwith details", ctx);
             });
 
+            // Copy-only can be repeated without changing the editor or its saved draft.
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, _| {
+                sessions.set_draft(view.view_id, "saved draft".to_owned());
+            });
+            for _ in 0..2 {
+                assert!(view.copy_cli_agent_draft(ctx));
+                assert_eq!(
+                    ctx.clipboard().read().plain_text,
+                    "unfinished prompt\nwith details"
+                );
+                assert_eq!(
+                    view.input.as_ref(ctx).buffer_text(ctx),
+                    "unfinished prompt\nwith details"
+                );
+                assert_eq!(
+                    CLIAgentSessionsModel::as_ref(ctx)
+                        .session(view.view_id)
+                        .unwrap()
+                        .draft_text
+                        .as_deref(),
+                    Some("saved draft")
+                );
+            }
             assert!(view.copy_and_clear_cli_agent_draft(ctx));
             assert!(view.has_active_cli_agent_input_session(ctx));
             assert!(view.input.as_ref(ctx).buffer_text(ctx).is_empty());
@@ -8045,6 +8068,54 @@ fn copy_and_clear_cli_agent_draft_updates_clipboard_and_keeps_composer_open() {
             "keep me"
         );
     })
+}
+
+#[test]
+fn copy_cli_agent_draft_preserves_saved_draft_and_refuses_locked_input() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let _agent_view = FeatureFlag::AgentView.override_enabled(true);
+        let _cli_rich = FeatureFlag::CLIAgentRichInput.override_enabled(true);
+        let terminal = open_cli_agent_rich_input_for_agent(&mut app, CLIAgent::Codex);
+        terminal.update(&mut app, |view, ctx| {
+            view.input.update(ctx, |input, ctx| {
+                input.replace_buffer_content("draft before dictation", ctx);
+                input.editor().update(ctx, |editor, ctx| {
+                    editor.set_interaction_state(crate::editor::InteractionState::Selectable, ctx);
+                });
+            });
+            ctx.clipboard()
+                .write(ClipboardContent::plain_text("keep me".to_owned()));
+            assert!(!view.copy_and_clear_cli_agent_draft(ctx));
+            assert_eq!(ctx.clipboard().read().plain_text, "keep me");
+            assert_eq!(
+                view.input.as_ref(ctx).buffer_text(ctx),
+                "draft before dictation"
+            );
+            assert!(view.copy_cli_agent_draft(ctx));
+            assert_eq!(ctx.clipboard().read().plain_text, "draft before dictation");
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                sessions.close_input(view.view_id, false, ctx);
+                sessions.set_draft(view.view_id, "saved prompt".to_owned());
+            });
+            assert!(view.copy_cli_agent_draft(ctx));
+            assert_eq!(ctx.clipboard().read().plain_text, "saved prompt");
+            assert_eq!(
+                CLIAgentSessionsModel::as_ref(ctx)
+                    .session(view.view_id)
+                    .unwrap()
+                    .draft_text
+                    .as_deref(),
+                Some("saved prompt")
+            );
+            assert!(view.copy_and_clear_cli_agent_draft(ctx));
+            assert!(CLIAgentSessionsModel::as_ref(ctx)
+                .session(view.view_id)
+                .unwrap()
+                .draft_text
+                .is_none());
+        });
+    });
 }
 
 #[test]
@@ -8104,6 +8175,8 @@ fn copy_and_clear_native_codex_draft_copies_grid_text_and_clears_composer() {
             assert!(!model.is_alt_screen_active());
             drop(model);
 
+            assert!(view.copy_cli_agent_draft(ctx));
+            assert!(view.copy_cli_agent_draft(ctx));
             assert!(view.copy_and_clear_cli_agent_draft(ctx));
 
             // Codex enables Kitty keyboard disambiguation in current releases. Exercise that
@@ -8218,6 +8291,8 @@ fn copy_and_clear_native_claude_draft_copies_grid_text_and_stashes_prompt() {
             model.process_bytes(claude_frame.as_str());
             drop(model);
 
+            assert!(view.copy_cli_agent_draft(ctx));
+            assert!(view.copy_cli_agent_draft(ctx));
             assert!(view.copy_and_clear_cli_agent_draft(ctx));
 
             // Claude may opt into Kitty's keyboard protocol. The synthetic Ctrl+S must use the

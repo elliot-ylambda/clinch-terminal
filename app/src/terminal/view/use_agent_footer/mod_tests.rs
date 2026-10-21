@@ -941,3 +941,91 @@ fn long_running_resume_command_trims_trailing_blanks_despite_seeded_session() {
         });
     })
 }
+
+#[test]
+fn native_composer_drafts_preserve_visible_paragraphs_and_reject_hidden_text() {
+    use crate::terminal::{SizeInfo, SizeUpdate, SizeUpdateReason};
+
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let terminal = add_window_with_terminal(&mut app, None);
+        terminal.update(&mut app, |view, _| {
+            let mut model = view.model.lock();
+            let last_size = *model.block_list().size();
+            let new_size = SizeInfo::new_without_font_metrics(24, 120);
+            model.resize(SizeUpdate {
+                update_reason: SizeUpdateReason::Refresh,
+                last_size,
+                new_size,
+                new_gap_height: None,
+                natural_rows: new_size.rows(),
+                natural_cols: new_size.columns(),
+            });
+            model.enter_alt_screen(true);
+            let columns = model.alt_screen().grid_handler().columns();
+            let rule = "─".repeat(columns);
+            let claude_frame = format!(
+                "\x1b[0m\x1b[2J\x1b[3;1H{rule}\x1b[4;1H❯ first paragraph\x1b[6;3H  second café\x1b[7;1H{rule}\x1b[6;8H"
+            );
+            model.process_bytes(claude_frame.as_str());
+            assert_eq!(
+                claude_native_composer_draft(model.alt_screen().grid_handler()).as_deref(),
+                Some("first paragraph\n\n  second café")
+            );
+            // Moving back into the first line must not omit subsequent text.
+            model.process_bytes("\x1b[4;8H");
+            assert_eq!(
+                claude_native_composer_draft(model.alt_screen().grid_handler()).as_deref(),
+                Some("first paragraph\n\n  second café")
+            );
+            model.process_bytes("\x1b[4;3H[Pasted text #1 +12 lines]\x1b[4;5H");
+            assert!(claude_native_composer_draft(model.alt_screen().grid_handler()).is_none());
+
+            // Codex paints the entire composer band, including both blank inset rows. Its
+            // indented footer must not be confused with the paragraph after an internal blank.
+            let mut codex_frame = "\x1b[0m\x1b[2J\x1b[?25h\x1b[48;2;30;30;30m".to_owned();
+            for row in 3..=7 {
+                codex_frame.push_str(&format!("\x1b[{row};1H\x1b[2K"));
+            }
+            codex_frame.push_str("\x1b[4;1H\x1b[1m›\x1b[22m first paragraph\x1b[6;3H  second café\x1b[0m\x1b[8;3Hgpt-5.6-sol max · Ready\x1b[6;8H");
+            model.process_bytes(codex_frame.as_str());
+            assert_eq!(
+                codex_native_composer_draft(model.alt_screen().grid_handler()).as_deref(),
+                Some("first paragraph\n\n  second café")
+            );
+            model.process_bytes("\x1b[4;8H");
+            assert_eq!(
+                codex_native_composer_draft(model.alt_screen().grid_handler()).as_deref(),
+                Some("first paragraph\n\n  second café")
+            );
+            // Codex's higher-effort composer uses a different prompt glyph.
+            model.process_bytes("\x1b[4;1H\x1b[48;2;30;30;30m\x1b[1m»\x1b[0m\x1b[6;8H");
+            assert_eq!(
+                codex_native_composer_draft(model.alt_screen().grid_handler()).as_deref(),
+                Some("first paragraph\n\n  second café")
+            );
+            model.process_bytes(format!("\x1b[6;{columns}H\x1b[2m↓\x1b[22m\x1b[4;8H").as_str());
+            assert!(codex_native_composer_draft(model.alt_screen().grid_handler()).is_none());
+            model.process_bytes(codex_frame.as_str());
+            model.process_bytes("\x1b[?25l");
+            assert!(codex_native_composer_draft(model.alt_screen().grid_handler()).is_none());
+            model.process_bytes(codex_frame.as_str());
+            model.process_bytes("\x1b[4;3H[Pasted Content 1200 chars]\x1b[4;5H");
+            assert!(codex_native_composer_draft(model.alt_screen().grid_handler()).is_none());
+
+            model.process_bytes(codex_frame.as_str());
+            model.process_bytes("\x1b[48;2;30;30;30m\x1b[1;1H\x1b[2K\x1b[2;1H\x1b[2K\x1b[0m\x1b[4;8H");
+            assert!(codex_native_composer_draft(model.alt_screen().grid_handler()).is_none());
+
+            // A known terminal wrap must retain the space separating the last and next word.
+            let first_line = format!("{}hello ", "x".repeat(columns - 8));
+            model.process_bytes(format!("\x1b[0m\x1b[2J\x1b[4;1H❯ {first_line}  world\x1b[5;8H").as_str());
+            assert_eq!(native_composer_rows(model.alt_screen().grid_handler(), 3, 4, 2), Some(format!("{first_line}world")));
+
+            // Without a distinguishable background/footer, blank paragraphs must not look
+            // like the end of a one-row draft and permit a partial copy followed by a clear.
+            model.process_bytes("\x1b[0m\x1b[2J\x1b[4;1H\x1b[1m›\x1b[22m first paragraph\x1b[6;3Hsecond paragraph\x1b[8;3Hfooter\x1b[4;8H");
+            assert!(codex_native_composer_draft(model.alt_screen().grid_handler()).is_none());
+        });
+    });
+}
