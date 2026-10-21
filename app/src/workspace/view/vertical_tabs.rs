@@ -436,6 +436,7 @@ fn vertical_tab_activity_dot_color(activity: ProjectCliAgentActivity, theme: &Wa
 }
 
 /// Returns the same Claude/Codex activity classification used by the project-tab hover card.
+/// Working follows the title glyph, so the dot never disagrees with the title beside it.
 /// Ambient runs keep their cloud/status treatment, and disabling agent status on tabs preserves
 /// the existing plain-terminal fallback.
 fn vertical_tab_cli_agent_activity(
@@ -463,7 +464,7 @@ fn vertical_tab_cli_agent_activity(
     let session = sessions.session(terminal_view.id())?;
     let notifications = AgentNotificationsModel::as_ref(app).notifications();
     Some(project_cli_agent_activity(
-        session.is_actively_working(),
+        terminal_view.cli_agent_shows_working(session),
         matches!(session.status, CLIAgentSessionStatus::Blocked { .. }),
         session.turn_interrupted_by_user,
         notifications.has_unread_completed_project_cli_agent_for_terminal_view(terminal_view.id()),
@@ -1477,7 +1478,7 @@ fn summary_conversation_status_for_terminal(
 ) -> Option<ConversationStatus> {
     let cli_agent_session = CLIAgentSessionsModel::as_ref(app).session(terminal_view.id());
     if let Some(session) = cli_agent_session.filter(|s| !matches!(s.agent, CLIAgent::Unknown)) {
-        return cli_agent_session_status_for_display(session);
+        return cli_agent_session_status_for_display(terminal_view, session);
     }
 
     if let Some(status) = terminal_command_status(terminal_view.current_state().state) {
@@ -8162,7 +8163,7 @@ fn render_terminal_detail_section(
     let status = if let Some(session) =
         cli_agent_session.filter(|s| !matches!(s.agent, CLIAgent::Unknown))
     {
-        cli_agent_session_status_for_display(session)
+        cli_agent_session_status_for_display(terminal_view, session)
     } else if let Some(status) = terminal_command_status(terminal_view.current_state().state) {
         Some(status)
     } else if agent_text.is_oz_agent {

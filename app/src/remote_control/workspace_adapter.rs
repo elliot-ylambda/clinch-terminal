@@ -1860,8 +1860,12 @@ impl WorkspaceAdapter {
                                     let pane_kind = pane_kind(session.map(|session| session.agent));
                                     let notifications =
                                         AgentNotificationsModel::as_ref(ctx).notifications();
+                                    let shows_working = session.is_some_and(|session| {
+                                        terminal_ref.cli_agent_shows_working(session)
+                                    });
                                     let activity = pane_activity(
                                         session,
+                                        shows_working,
                                         terminal_ref.current_state().state,
                                         notifications
                                             .has_unread_completed_project_cli_agent_for_terminal_view(
@@ -1872,7 +1876,8 @@ impl WorkspaceAdapter {
                                                 terminal.id(),
                                             ),
                                     );
-                                    let agent_state = session.map(agent_state);
+                                    let agent_state =
+                                        session.map(|session| agent_state(session, shows_working));
                                     let cwd = terminal_ref
                                         .pwd_if_local(ctx)
                                         .or_else(|| terminal_ref.pwd());
@@ -2269,26 +2274,32 @@ fn merge_tab_kind(current: TabKind, pane: &PaneKind) -> TabKind {
     }
 }
 
-fn agent_state(session: &crate::terminal::cli_agent_sessions::CLIAgentSession) -> AgentState {
+/// `shows_working` is the desktop title glyph's answer (`TerminalView::cli_agent_shows_working`),
+/// so the phone and the desktop tab agree on whether an agent is working.
+fn agent_state(
+    session: &crate::terminal::cli_agent_sessions::CLIAgentSession,
+    shows_working: bool,
+) -> AgentState {
     if session.session_context.stop_reason.is_some() {
         return AgentState::RateLimited;
     }
     match &session.status {
         CLIAgentSessionStatus::Blocked { .. } => AgentState::NeedsAttention,
+        _ if shows_working => AgentState::Working,
         CLIAgentSessionStatus::Success => AgentState::Done,
-        CLIAgentSessionStatus::InProgress if session.is_actively_working() => AgentState::Working,
         CLIAgentSessionStatus::InProgress => AgentState::Idle,
     }
 }
 
 fn pane_activity(
     session: Option<&crate::terminal::cli_agent_sessions::CLIAgentSession>,
+    shows_working: bool,
     terminal_state: TerminalViewState,
     has_unread_completed: bool,
     has_other_unread: bool,
 ) -> ProjectActivity {
     if let Some(session) = session {
-        return if session.is_actively_working() {
+        return if shows_working {
             ProjectActivity::Working
         } else if matches!(session.status, CLIAgentSessionStatus::Blocked { .. })
             || session.session_context.stop_reason.is_some()

@@ -1,4 +1,6 @@
-use super::{agent_title_text, standardize_agent_title, title_shows_working, AgentTitleStatus};
+use super::{
+    agent_title_text, shows_working, standardize_agent_title, title_shows_working, AgentTitleStatus,
+};
 use crate::terminal::CLIAgent;
 
 // Raw titles below were captured from Claude Code 2.1.293 and Codex 0.161.0.
@@ -201,4 +203,54 @@ fn reads_working_and_idle_from_the_agents_own_title() {
     );
     assert_eq!(title_shows_working(CLIAgent::Codex, ""), None);
     assert_eq!(title_shows_working(CLIAgent::Unknown, "◐ something"), None);
+}
+
+#[test]
+fn chrome_shows_working_from_either_the_title_or_session_events() {
+    // Codex on its shared background server sends Clinch no session events; its title still spins.
+    assert!(shows_working(
+        CLIAgent::Codex,
+        "⠏ Fix the build | repo",
+        IDLE
+    ));
+    assert!(shows_working(CLIAgent::Claude, "◐ Fix the build", IDLE));
+    // Clinch's events count even when the title shows no spinner.
+    assert!(shows_working(CLIAgent::Claude, "Claude Code", WORKING));
+    assert!(shows_working(CLIAgent::Claude, "✳ Fix the build", WORKING));
+    assert!(!shows_working(CLIAgent::Claude, "✳ Fix the build", IDLE));
+    assert!(!shows_working(
+        CLIAgent::Codex,
+        "Fix the build | repo",
+        IDLE
+    ));
+    // Waiting on the user outranks the spinner shown when the prompt appeared.
+    assert!(!shows_working(
+        CLIAgent::Claude,
+        "◐ Fix the build",
+        NEEDS_INPUT
+    ));
+}
+
+#[test]
+fn the_title_glyph_and_the_status_dots_always_agree() {
+    let raws = [
+        "✳ Fix the build",
+        "◐ Fix the build",
+        "Fix the build | repo",
+        "⠏ Fix the build | repo",
+        "Claude Code",
+        "",
+    ];
+    for agent in [CLIAgent::Claude, CLIAgent::Codex] {
+        for raw in raws {
+            for status in [IDLE, WORKING, NEEDS_INPUT] {
+                let shown = title(agent, raw, None, status);
+                assert_eq!(
+                    is_working_frame(&shown),
+                    shows_working(agent, raw, status),
+                    "{agent:?} {raw:?} {status:?} -> {shown}"
+                );
+            }
+        }
+    }
 }
