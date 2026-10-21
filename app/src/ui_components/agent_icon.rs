@@ -27,7 +27,8 @@ use crate::ui_components::icon_with_status::IconWithStatusVariant;
 ///
 /// Resolution order:
 /// 1. A [`CLIAgentSessionsModel`] session with a known agent wins. Plugin-backed sessions
-///    surface rich status; command-detected sessions don't.
+///    surface rich status; command-detected sessions don't. Either shows as in progress while
+///    tab chrome shows it working (see [`TerminalView::cli_agent_shows_working`]).
 /// 2. A task-backed run uses task status and harness so the terminal chrome and the
 ///    matching conversation list card stay in lockstep.
 /// 3. Live ambient pre-dispatch or a selected local conversation falls through to the
@@ -79,6 +80,7 @@ pub(crate) fn terminal_view_agent_icon_variant(
             status: session.status.to_conversation_status(),
             supports_rich_status: session.supports_rich_status(),
             has_observed_turn_activity: session.has_observed_turn_activity,
+            shows_working: terminal_view.cli_agent_shows_working(session),
         }),
         selected_third_party_cli_agent: terminal_view
             .ambient_agent_view_model()
@@ -114,8 +116,10 @@ pub(crate) fn terminal_view_agent_icon_variant_respecting_tab_setting(
 /// Rich plugin sessions expose their lifecycle after a turn event is observed. Session creation
 /// and `SessionStart` only prove that the interactive CLI is open, so their bootstrap
 /// `InProgress` value is intentionally withheld. Command-detected sessions and Codex's native
-/// OSC 9 fallback do not describe enough of the lifecycle to display a status.
+/// OSC 9 fallback do not describe enough of the lifecycle to display a status, except that any
+/// session shows as in progress while tab chrome shows it working.
 pub(crate) fn cli_agent_session_status_for_display(
+    terminal_view: &TerminalView,
     session: &CLIAgentSession,
 ) -> Option<ConversationStatus> {
     cli_session_status_for_display(
@@ -123,6 +127,7 @@ pub(crate) fn cli_agent_session_status_for_display(
         session.listener.is_some(),
         session.supports_rich_status(),
         session.has_observed_turn_activity,
+        terminal_view.cli_agent_shows_working(session),
     )
 }
 
@@ -166,6 +171,8 @@ struct CLISessionInputs {
     supports_rich_status: bool,
     /// Whether a lifecycle event beyond session startup proves that a turn has run.
     has_observed_turn_activity: bool,
+    /// Whether tab chrome shows the session working, from its title or its turn events.
+    shows_working: bool,
 }
 
 /// Pure waterfall from primitive inputs to an [`IconWithStatusVariant`]. Mirrors the
@@ -186,6 +193,7 @@ fn agent_icon_variant_from_terminal_inputs(
             session.has_listener,
             session.supports_rich_status,
             session.has_observed_turn_activity,
+            session.shows_working,
         );
         return Some(IconWithStatusVariant::CLIAgent {
             agent: session.agent,
@@ -226,7 +234,11 @@ fn cli_session_status_for_display(
     has_listener: bool,
     supports_rich_status: bool,
     has_observed_turn_activity: bool,
+    shows_working: bool,
 ) -> Option<ConversationStatus> {
+    if shows_working {
+        return Some(ConversationStatus::InProgress);
+    }
     (has_observed_turn_activity && has_listener && supports_rich_status).then(|| status.clone())
 }
 

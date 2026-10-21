@@ -4,8 +4,8 @@ use warpui::{AppContext, SingletonEntity as _};
 
 use crate::context_chips::display_chip::GitLineChanges;
 use crate::context_chips::{git_line_changes_from_chips, ContextChipKind};
-use crate::terminal::cli_agent_sessions::title_glyph::{standardize_agent_title, AgentTitleStatus};
-use crate::terminal::cli_agent_sessions::{CLIAgentSessionStatus, CLIAgentSessionsModel};
+use crate::terminal::cli_agent_sessions::title_glyph::{shows_working, standardize_agent_title};
+use crate::terminal::cli_agent_sessions::{CLIAgentSession, CLIAgentSessionsModel};
 use crate::terminal::TerminalView;
 
 impl TerminalView {
@@ -134,10 +134,17 @@ impl TerminalView {
             session.agent,
             &self.terminal_title_from_shell(),
             display_text,
-            AgentTitleStatus {
-                needs_input: matches!(session.status, CLIAgentSessionStatus::Blocked { .. }),
-                is_working: session.is_actively_working(),
-            },
+            session.into(),
+        )
+    }
+
+    /// Whether tab chrome shows this pane's agent session as working. The title glyph, status
+    /// dots, and project summaries all read this, so they cannot disagree.
+    pub(crate) fn cli_agent_shows_working(&self, session: &CLIAgentSession) -> bool {
+        shows_working(
+            session.agent,
+            &self.terminal_title_from_shell(),
+            session.into(),
         )
     }
 

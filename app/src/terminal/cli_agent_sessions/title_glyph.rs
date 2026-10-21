@@ -10,6 +10,10 @@
 //! Tab chrome shows either that title or Clinch's own prompt-based title, so every Claude Code and
 //! Codex title is given Claude Code's glyph. Neither agent changes its title while waiting on the
 //! user (Claude keeps `✳`), so Clinch's own session status supplies a `!` for that state.
+//!
+//! [`shows_working`] also drives the rest of the agent chrome, so the title, the tab's status dot,
+//! and the project and phone summaries agree on whether an agent is working.
+use super::{CLIAgentSession, CLIAgentSessionStatus};
 use crate::terminal::CLIAgent;
 
 /// Claude Code's working spinner frames, in its rotation order.
@@ -28,12 +32,21 @@ pub(crate) struct AgentTitleStatus {
     pub(crate) is_working: bool,
 }
 
+impl From<&CLIAgentSession> for AgentTitleStatus {
+    fn from(session: &CLIAgentSession) -> Self {
+        Self {
+            needs_input: matches!(session.status, CLIAgentSessionStatus::Blocked { .. }),
+            is_working: session.is_actively_working(),
+        }
+    }
+}
+
 /// A Claude Code or Codex tab title in Claude Code's glyph style, or `None` for other agents.
 ///
 /// `display_text` is the text Clinch chose for the tab (such as the session's prompt); when it is
-/// `None` the agent's own terminal title text is used. The glyph comes from `status` when the
-/// agent needs input, otherwise from the spinner in `raw_terminal_title`, falling back to
-/// `status.is_working` for a title that carries no glyph.
+/// `None` the agent's own terminal title text is used. The glyph is `!` when the agent needs
+/// input, a spinner frame when [`shows_working`], and `✳` otherwise. The spinner keeps the agent's
+/// own frame so the title animates.
 pub(crate) fn standardize_agent_title(
     agent: CLIAgent,
     raw_terminal_title: &str,
@@ -47,10 +60,10 @@ pub(crate) fn standardize_agent_title(
     let (leading_glyph, title_text) = split_agent_title(agent, raw_terminal_title);
     let glyph = if status.needs_input {
         NEEDS_INPUT_GLYPH
-    } else if let Some(frame) = leading_glyph.and_then(working_frame) {
-        frame
-    } else if status.is_working {
-        WORKING_FRAMES[0]
+    } else if shows_working(agent, raw_terminal_title, status) {
+        leading_glyph
+            .and_then(working_frame)
+            .unwrap_or(WORKING_FRAMES[0])
     } else {
         IDLE_GLYPH
     };
@@ -67,6 +80,22 @@ pub(crate) fn standardize_agent_title(
         text
     };
     Some(format!("{glyph} {text}"))
+}
+
+/// Whether tab chrome shows the agent working: its own title shows a spinner, or Clinch's session
+/// events report a turn under way. Waiting on the user outranks both, since a spinner frame drawn
+/// just before the prompt appeared can still be in the title.
+///
+/// Either signal can be missing. Codex started on its shared background server runs its hooks in
+/// that server, outside the pane, so Clinch receives no session events; a title with no glyph
+/// carries no status.
+pub(crate) fn shows_working(
+    agent: CLIAgent,
+    raw_terminal_title: &str,
+    status: AgentTitleStatus,
+) -> bool {
+    !status.needs_input
+        && (status.is_working || title_shows_working(agent, raw_terminal_title) == Some(true))
 }
 
 /// Whether an agent's own terminal title shows it working (`Some(true)`) or idle and waiting

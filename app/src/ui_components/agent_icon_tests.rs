@@ -244,6 +244,7 @@ impl CanonicalRunState {
                     status: ConversationStatus::InProgress,
                     supports_rich_status: true,
                     has_observed_turn_activity: true,
+                    shows_working: true,
                 }),
                 selected_third_party_cli_agent: None,
                 selected_conversation_status: None,
@@ -259,6 +260,7 @@ impl CanonicalRunState {
                     },
                     supports_rich_status: true,
                     has_observed_turn_activity: true,
+                    shows_working: false,
                 }),
                 selected_third_party_cli_agent: None,
                 selected_conversation_status: None,
@@ -272,6 +274,7 @@ impl CanonicalRunState {
                     status: ConversationStatus::InProgress,
                     supports_rich_status: false,
                     has_observed_turn_activity: false,
+                    shows_working: false,
                 }),
                 selected_third_party_cli_agent: None,
                 selected_conversation_status: None,
@@ -285,6 +288,7 @@ impl CanonicalRunState {
                     status: ConversationStatus::InProgress,
                     supports_rich_status: false,
                     has_observed_turn_activity: false,
+                    shows_working: false,
                 }),
                 selected_third_party_cli_agent: None,
                 selected_conversation_status: None,
@@ -298,6 +302,7 @@ impl CanonicalRunState {
                     status: ConversationStatus::Success,
                     supports_rich_status: false,
                     has_observed_turn_activity: true,
+                    shows_working: false,
                 }),
                 selected_third_party_cli_agent: None,
                 selected_conversation_status: None,
@@ -389,6 +394,7 @@ fn idle_rich_cli_sessions_keep_branding_without_an_in_progress_status() {
                 status: ConversationStatus::InProgress,
                 supports_rich_status: true,
                 has_observed_turn_activity: false,
+                shows_working: false,
             }),
             selected_third_party_cli_agent: None,
             selected_conversation_status: None,
@@ -399,6 +405,35 @@ fn idle_rich_cli_sessions_keep_branding_without_an_in_progress_status() {
         let fields = AgentIconFields::from_variant(&variant).unwrap();
         assert_eq!(fields.cli_agent, Some(agent));
         assert_eq!(fields.status, None);
+    }
+}
+
+#[test]
+fn cli_sessions_show_in_progress_whenever_their_title_shows_working() {
+    // A Codex session on the shared background server runs its hooks outside the pane, so Clinch
+    // sees only command detection. Its title spinner still marks the turn.
+    for (has_listener, supports_rich_status, status) in [
+        (false, false, ConversationStatus::InProgress),
+        (true, true, ConversationStatus::Success),
+    ] {
+        let inputs = TerminalIconInputs {
+            is_ambient: false,
+            cli_session: Some(CLISessionInputs {
+                agent: CLIAgent::Codex,
+                has_listener,
+                status,
+                supports_rich_status,
+                has_observed_turn_activity: has_listener,
+                shows_working: true,
+            }),
+            selected_third_party_cli_agent: None,
+            selected_conversation_status: None,
+            has_selected_conversation: false,
+        };
+
+        let variant = agent_icon_variant_from_terminal_inputs(&inputs).unwrap();
+        let fields = AgentIconFields::from_variant(&variant).unwrap();
+        assert_eq!(fields.status, Some(ConversationStatus::InProgress));
     }
 }
 

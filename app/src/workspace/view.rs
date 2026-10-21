@@ -1370,8 +1370,8 @@ pub struct Workspace {
     create_auth_secret_modal: Option<ViewHandle<Modal<AuthSecretFtuxView>>>,
 }
 
-fn is_in_progress_project_agent(agent: CLIAgent, is_actively_working: bool) -> bool {
-    matches!(agent, CLIAgent::Claude | CLIAgent::Codex) && is_actively_working
+fn is_in_progress_project_agent(agent: CLIAgent, shows_working: bool) -> bool {
+    matches!(agent, CLIAgent::Claude | CLIAgent::Codex) && shows_working
 }
 
 fn is_running_project_command(
@@ -23275,8 +23275,8 @@ impl Workspace {
 
     /// Claude Code, Codex, and ordinary terminal activity summarized for this project's outer tab.
     ///
-    /// `working` is based on observed turn activity. `done` is the number of unread completed
-    /// turns, matching the blue notification dots on the corresponding inner tabs.
+    /// `working` follows the same title glyph as the inner tabs. `done` is the number of unread
+    /// completed turns, matching the blue notification dots on the corresponding inner tabs.
     pub(crate) fn project_cli_agent_counts(&self, ctx: &AppContext) -> ProjectCliAgentCounts {
         let sessions = CLIAgentSessionsModel::as_ref(ctx);
         let notifications = AgentNotificationsModel::as_ref(ctx).notifications();
@@ -23287,9 +23287,13 @@ impl Workspace {
             .iter()
             .flat_map(|tab| tab.pane_group.as_ref(ctx).terminal_views(ctx))
         {
+            let terminal_view = terminal.as_ref(ctx);
             let cli_agent_session = sessions.session(terminal.id());
             let is_working = cli_agent_session.is_some_and(|session| {
-                is_in_progress_project_agent(session.agent, session.is_actively_working())
+                is_in_progress_project_agent(
+                    session.agent,
+                    terminal_view.cli_agent_shows_working(session),
+                )
             });
             if is_working {
                 counts.working += 1;
@@ -23300,7 +23304,7 @@ impl Workspace {
             }
             if is_running_project_command(
                 cli_agent_session.is_some(),
-                terminal.as_ref(ctx).is_long_running_and_user_controlled(),
+                terminal_view.is_long_running_and_user_controlled(),
             ) {
                 counts.running_commands += 1;
             }
@@ -23350,7 +23354,7 @@ impl Workspace {
                 let has_other_unread = notifications
                     .has_other_unread_project_activity_for_terminal_view(terminal_view.id());
                 let activity = project_cli_agent_activity(
-                    session.is_actively_working(),
+                    terminal_view.cli_agent_shows_working(session),
                     matches!(session.status, CLIAgentSessionStatus::Blocked { .. }),
                     session.turn_interrupted_by_user,
                     has_unread_completed,
