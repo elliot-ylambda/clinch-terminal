@@ -87,10 +87,16 @@ manual install. An app that is not user-writable also uses the manual installer 
 requesting administrator access. Agent completion alerts use standard macOS notifications and are
 never sent through Messages or AppleScript.
 
-Clinch is signed with one stable certificate, so macOS privacy permissions such as Screen Recording
-survive updates. Updating from an older ad-hoc signed build may ask for those permissions one last
-time; if Clinch already appears enabled, turn it off and on again in System Settings > Privacy &
-Security.
+Clinch releases use one stable signing certificate so macOS privacy permissions can survive updates.
+Upgrading from an older ad-hoc or Apple Development signed build may require a one-time permission
+repair. If computer use is denied even though Clinch is enabled, quit Clinch, remove its entry with
+the minus button from both Accessibility and Screen & System Audio Recording in System Settings >
+Privacy & Security, then add the current /Applications/Clinch.app with the plus button and enable
+both permissions. Reopen Clinch, resume your agent, and retry. Toggling the existing entries or
+restarting alone may leave the old signing identity in place.
+
+New installations only need these permissions when using computer use; ordinary terminal use does
+not require them. Setup and recovery instructions are available in Clinch Settings > Computer use.
 $(if $(filter native,$(RELEASE_LAYOUT)),Intel installations that predate native-archive selection need one authenticated manual install for this transition.)
 $(if $(filter arm64,$(RELEASE_LAYOUT)),This release supports Apple Silicon Macs only. Intel Macs should stay on $(LAST_INTEL_RELEASE) (the last Intel release); install it with `curl -fsSL https://clinch.sh/install | sh -s -- --version $(LAST_INTEL_RELEASE)`.)
 

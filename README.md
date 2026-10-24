@@ -181,11 +181,48 @@ release, while real-device hardening continues. Report anything that misbehaves 
 Clinch is distributed as an **unnotarized public preview**. The app is signed with Clinch's own
 self-signed certificate and the macOS hardened runtime, but it has no Apple-issued Developer ID and
 Apple has not notarized it. macOS may block the first launch. That warning is expected and is not
-evidence that Apple has reviewed the app. Because every release carries the same certificate,
-privacy permissions you grant Clinch, such as Screen Recording, survive updates.
+evidence that Apple has reviewed the app. Releases use the same signing identity so privacy
+permissions you grant Clinch, such as Screen Recording, can survive updates. Upgrading from an
+older signing identity may require the one-time repair described below.
 
 This repository has automated security checks and a documented release process. It has not had an
 independent security audit. See [SECURITY.md](SECURITY.md) for the trust model and known limits.
+
+## Computer use permissions on macOS
+
+Ordinary terminal use does not require Screen Recording or Accessibility. Grant them when an
+agent such as Claude Code asks to see your screen or control other apps. In-app instructions and
+links to the macOS permission panes are under **Clinch Settings → Computer use → Setup and
+troubleshooting**. Opening the guide does not request or change permissions.
+
+For a new installation:
+
+1. Open **System Settings → Privacy & Security → Accessibility** and enable **Clinch**. This
+   allows the agent to click, type, and scroll in other apps.
+2. Open **Screen & System Audio Recording** (called **Screen Recording** on older macOS versions)
+   and enable **Clinch** in the screen-recording list, not the audio-only list. This allows the
+   agent to see your screen. If Clinch is missing from either pane, use **+** to add the copy you
+   run, normally `/Applications/Clinch.app`.
+3. Quit and reopen Clinch, resume your agent, and retry computer use. In Claude Code, choose
+   **Try again** if its permission prompt is still open.
+
+### Permissions are enabled, but the agent still reports access denied
+
+Older Clinch builds used ad-hoc or Apple Development signing. When upgrading to the current
+**Clinch Code Signing** identity, macOS can retain permission entries for the old identity.
+Both switches may appear enabled even though access is denied. Toggling them or restarting alone
+may not replace the stale entries.
+
+1. Save your work and quit Clinch.
+2. In **each** permission pane above, select **Clinch** and click **−** to remove its entry.
+3. Click **+**, select the current `/Applications/Clinch.app` (or the actual copy you run), and
+   enable it. Repeat for both Accessibility and Screen Recording.
+4. Reopen Clinch, resume your agent, and retry computer use.
+
+Only remove Clinch's entries. **Clinch Dev** is a separate app with separate permissions; grant
+access to the app you actually run. Once granted to the current release identity, permissions
+should carry across releases that retain that identity. This repair does not grant an agent
+access to individual apps within its own computer-use approval flow.
 
 ## Privacy and network behavior
 

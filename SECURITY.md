@@ -36,6 +36,14 @@ for code signing once:
 `security add-trusted-cert -r trustRoot -p codeSign -k <keychain> resources/release/clinch-codesign-cert.pem`.
 Losing the key forces every user to re-grant macOS permissions once.
 
+Upgrading from older ad-hoc or Apple Development signed builds changes this identity. Existing
+Screen Recording and Accessibility entries may still appear enabled while macOS rejects access.
+Users must re-create the affected Clinch entries for the currently installed app; toggling an
+entry or restarting may not be sufficient. See the [computer use permission recovery
+instructions](README.md#permissions-are-enabled-but-the-agent-still-reports-access-denied).
+Clinch's in-app guide opens only on demand and does not request, grant, or reset permissions.
+Ordinary terminal use does not require these grants.
+
 Clinch adds its own release controls:
 
 - a dedicated OpenSSH Ed25519 key signs annotated Git tags and an SSHSIG envelope over the exact

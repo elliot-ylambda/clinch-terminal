@@ -112,6 +112,8 @@ pub enum ClinchSettingsPageAction {
     LocalControl,
     #[cfg(target_os = "macos")]
     InstallLocalControlCli,
+    #[cfg(target_os = "macos")]
+    ToggleComputerUsePermissionsHelp,
     SessionCapture,
     AgentStatusOnTabs,
     AutoCreateWorktreesForNewTabs,
@@ -148,6 +150,8 @@ pub struct ClinchSettingsPageView {
     session_capture_enabled: bool,
     #[cfg(target_os = "macos")]
     local_control_cli_installing: bool,
+    #[cfg(target_os = "macos")]
+    computer_use_permissions_help_visible: bool,
     #[cfg(feature = "local_fs")]
     armed_removal: Option<ArmedRemoval>,
     #[cfg(feature = "local_fs")]
@@ -218,6 +222,13 @@ impl ClinchSettingsPageView {
             categories.push(Category::new("Local control", widgets));
         }
         categories.push(Category::new("Agents", agent_widgets));
+        #[cfg(target_os = "macos")]
+        if !ChannelState::has_backend() {
+            categories.push(Category::new(
+                "Computer use",
+                vec![Box::new(ComputerUsePermissionsWidget::default())],
+            ));
+        }
         if !usage_widgets.is_empty() {
             categories.push(Category::new("Usage", usage_widgets));
         }
@@ -234,6 +245,8 @@ impl ClinchSettingsPageView {
             session_capture_enabled: false,
             #[cfg(target_os = "macos")]
             local_control_cli_installing: false,
+            #[cfg(target_os = "macos")]
+            computer_use_permissions_help_visible: false,
             #[cfg(feature = "local_fs")]
             armed_removal: None,
             #[cfg(feature = "local_fs")]
@@ -251,6 +264,12 @@ impl TypedActionView for ClinchSettingsPageView {
 
     fn handle_action(&mut self, action: &Self::Action, ctx: &mut ViewContext<Self>) {
         match action {
+            #[cfg(target_os = "macos")]
+            ClinchSettingsPageAction::ToggleComputerUsePermissionsHelp => {
+                self.computer_use_permissions_help_visible =
+                    !self.computer_use_permissions_help_visible;
+                ctx.notify();
+            }
             #[cfg(target_os = "macos")]
             ClinchSettingsPageAction::InstallLocalControlCli => {
                 if self.local_control_cli_installing
@@ -1441,6 +1460,125 @@ impl SettingsWidget for LocalControlCliWidget {
                 "Optionally install the clinch command on your PATH for use outside Clinch.".into(),
             ),
         )
+    }
+}
+
+/// On-demand guidance only: rendering this widget never checks, requests, or resets TCC access.
+#[cfg(target_os = "macos")]
+#[derive(Default)]
+struct ComputerUsePermissionsWidget {
+    guide_mouse_state: MouseStateHandle,
+    accessibility_mouse_state: MouseStateHandle,
+    screen_recording_mouse_state: MouseStateHandle,
+}
+
+#[cfg(target_os = "macos")]
+impl SettingsWidget for ComputerUsePermissionsWidget {
+    type View = ClinchSettingsPageView;
+
+    fn search_terms(&self) -> &str {
+        "computer use macos permissions privacy accessibility screen recording system audio \
+         claude denied troubleshooting upgrade enabled restart"
+    }
+
+    fn render(
+        &self,
+        view: &Self::View,
+        appearance: &Appearance,
+        _app: &AppContext,
+    ) -> Box<dyn Element> {
+        let guide_button = appearance
+            .ui_builder()
+            .button(ButtonVariant::Secondary, self.guide_mouse_state.clone())
+            .with_text_label(if view.computer_use_permissions_help_visible {
+                "Hide guide".to_owned()
+            } else {
+                "Setup and troubleshooting".to_owned()
+            })
+            .build()
+            .on_click(|ctx, _, _| {
+                ctx.dispatch_typed_action(
+                    ClinchSettingsPageAction::ToggleComputerUsePermissionsHelp,
+                );
+            })
+            .finish();
+        let mut content = Flex::column().with_child(render_body_item::<ClinchSettingsPageAction>(
+            "macOS permissions".into(),
+            None,
+            LocalOnlyIconState::Hidden,
+            ToggleState::Enabled,
+            appearance,
+            guide_button,
+            Some(
+                "Screen Recording and Accessibility are needed when an agent uses your screen \
+                 or controls other apps. Ordinary terminal use does not need these permissions."
+                    .into(),
+            ),
+        ));
+        if !view.computer_use_permissions_help_visible {
+            return content.finish();
+        }
+
+        let app_id = ChannelState::app_id();
+        let app_name = app_id.application_name();
+        content.add_child(render_sub_header_with_description(
+            appearance,
+            "First-time setup",
+            format!(
+                "When your agent asks for computer use access, enable {app_name} in both panes \
+                 below. If it is missing, use + to add the copy of {app_name}.app you are running. \
+                 Then quit and reopen {app_name}, resume the agent, and retry computer use. \
+                 These buttons only open System Settings; you choose whether to grant access."
+            ),
+        ));
+        for (label, description, url, mouse_state) in [
+            (
+                "Accessibility",
+                "Allows an agent to click, type, and scroll in other apps.",
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+                self.accessibility_mouse_state.clone(),
+            ),
+            (
+                "Screen & System Audio Recording",
+                "Screen Recording allows an agent to see your screen. Use the screen-recording list, not the audio-only list.",
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+                self.screen_recording_mouse_state.clone(),
+            ),
+        ] {
+            let button = appearance
+                .ui_builder()
+                .button(ButtonVariant::Secondary, mouse_state)
+                .with_text_label("Open Settings".to_owned())
+                .build()
+                .on_click(move |ctx, _, _| {
+                    ctx.dispatch_typed_action(ClinchSettingsPageAction::OpenUrl(url.to_owned()));
+                })
+                .finish();
+            content.add_child(render_body_item::<ClinchSettingsPageAction>(
+                label.into(),
+                None,
+                LocalOnlyIconState::Hidden,
+                ToggleState::Enabled,
+                appearance,
+                button,
+                Some(description.into()),
+            ));
+        }
+        content.add_child(render_sub_header_with_description(
+            appearance,
+            "Enabled, but still denied?",
+            format!(
+                "After an upgrade, macOS may keep permissions for an older copy of {app_name}. \
+                 The switches can appear on while access is denied. If restarting did not help:\n\n\
+                 1. Save your work and quit {app_name}.\n\
+                 2. In each pane above, select {app_name} and click − to remove its entry.\n\
+                 3. Click +, choose the current {app_name}.app (normally in Applications), and \
+                 enable it. Do this for both Accessibility and Screen Recording.\n\
+                 4. Reopen {app_name}, resume the agent, and retry computer use.\n\n\
+                 Use the same app copy you granted access to. Clinch Dev has separate permissions."
+            ),
+        ));
+        content.finish()
     }
 }
 
