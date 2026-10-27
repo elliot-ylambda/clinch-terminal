@@ -14089,14 +14089,7 @@ impl Workspace {
             | DefaultSessionMode::CloudAgent
             | DefaultSessionMode::DockerSandbox => return false,
         };
-        let Some(repo_path) = self.active_session_view(ctx).and_then(|terminal| {
-            terminal.read(ctx, |terminal, ctx| {
-                terminal
-                    .canonical_session_pwd_if_local(ctx)
-                    .map(|path| path.as_path().to_path_buf())
-                    .or_else(|| terminal.current_local_repo_path().map(Path::to_path_buf))
-            })
-        }) else {
+        let Some(repo_path) = self.automatic_worktree_repo(ctx) else {
             return false;
         };
         let Some(config) = self.automatic_worktree_tab_config_for_repo(session_type, &repo_path)

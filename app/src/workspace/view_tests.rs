@@ -4823,6 +4823,196 @@ fn init_repo_for_automatic_worktree_test() -> (TempDir, PathBuf) {
 
 #[test]
 #[cfg(feature = "local_fs")]
+fn test_automatic_worktree_routing_recovers_a_local_scratchpad_tab() {
+    use crate::terminal::event::BlockMetadataReceivedEvent;
+    use crate::terminal::model::block::BlockMetadata;
+    use crate::terminal::model::session::{BootstrapSessionType, SessionInfo};
+    use crate::terminal::model::terminal_model::BlockIndex;
+    use crate::terminal::model_events::ModelEvent;
+    use crate::terminal::shell::ShellType;
+
+    let (_repo_dir, repo_path) = init_repo_for_automatic_worktree_test();
+    let scratchpad = tempfile::tempdir().expect("create non-Git agent scratchpad");
+    let expected_primary = dunce::canonicalize(&repo_path).unwrap();
+
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        ClinchSettings::handle(&app).update(&mut app, |settings, ctx| {
+            settings
+                .auto_create_worktrees_for_new_tabs
+                .set_value(true, ctx)
+                .unwrap();
+        });
+        let workspace = mock_workspace(&mut app);
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.add_terminal_tab(false, ctx);
+        });
+        let terminals = workspace.read(&app, |workspace, ctx| {
+            workspace
+                .tabs
+                .iter()
+                .map(|tab| tab.pane_group.as_ref(ctx).active_session_view(ctx).unwrap())
+                .collect::<Vec<_>>()
+        });
+        let local_session = || {
+            let mut session = SessionInfo::new_for_test();
+            session.launch_data = Some(crate::terminal::ShellLaunchData::Executable {
+                executable_path: PathBuf::from("/bin/bash"),
+                shell_type: ShellType::Bash,
+            });
+            session
+        };
+        for (terminal, cwd) in terminals
+            .iter()
+            .zip([repo_path.as_path(), scratchpad.path()])
+        {
+            let (sessions, dispatcher) = terminal.read(&app, |terminal, _| {
+                (
+                    terminal.sessions_model().clone(),
+                    terminal.model_event_dispatcher().clone(),
+                )
+            });
+            sessions.update(&mut app, |sessions, _| {
+                sessions.register_session_for_test(local_session());
+            });
+            dispatcher.update(&mut app, |_, ctx| {
+                ctx.emit(ModelEvent::BlockMetadataReceived(
+                    BlockMetadataReceivedEvent {
+                        block_metadata: BlockMetadata::new(
+                            Some(0.into()),
+                            Some(cwd.to_string_lossy().into_owned()),
+                        ),
+                        block_index: BlockIndex(0),
+                        is_after_in_band_command: false,
+                        is_done_bootstrapping: false,
+                    },
+                ));
+            });
+        }
+        workspace.read(&app, |workspace, ctx| {
+            assert_eq!(
+                workspace.automatic_worktree_repo(ctx),
+                Some(expected_primary.clone())
+            );
+        });
+
+        // A remote pane must never borrow the local repository from a sibling.
+        let scratchpad_sessions =
+            terminals[1].read(&app, |terminal, _| terminal.sessions_model().clone());
+        scratchpad_sessions.update(&mut app, |sessions, _| {
+            sessions.register_session_for_test(
+                SessionInfo::new_for_test()
+                    .with_session_type(BootstrapSessionType::WarpifiedRemote),
+            );
+        });
+        workspace.read(&app, |workspace, ctx| {
+            assert!(workspace.automatic_worktree_repo(ctx).is_none());
+        });
+        scratchpad_sessions.update(&mut app, |sessions, _| {
+            sessions.register_session_for_test(local_session());
+        });
+
+        workspace.update(&mut app, |workspace, ctx| {
+            let original_tab_count = workspace.tab_count();
+            assert!(workspace.try_add_automatic_worktree_tab(DefaultSessionMode::Terminal, ctx));
+            assert_eq!(workspace.tab_count(), original_tab_count + 1);
+            assert_eq!(workspace.reserved_automatic_worktree_branches.len(), 1);
+            let startup_path = workspace
+                .active_tab_pane_group()
+                .as_ref(ctx)
+                .startup_path_for_new_session(
+                    workspace
+                        .active_tab_pane_group()
+                        .as_ref(ctx)
+                        .active_session_id(ctx),
+                    ctx,
+                )
+                .expect("new worktree command starts in the primary repository");
+            assert_eq!(dunce::canonicalize(startup_path).unwrap(), expected_primary);
+        });
+    });
+}
+
+#[test]
+#[cfg(feature = "local_fs")]
+fn test_automatic_worktree_recovers_scratchpad_from_project_worktrees() {
+    let (_repo_dir, repo_path) = init_repo_for_automatic_worktree_test();
+    let scratchpad = tempfile::tempdir().expect("create non-Git agent scratchpad");
+    let linked_worktree = repo_path.join("linked-worktree");
+    let output = command::blocking::Command::new("git")
+        .args(["worktree", "add", "-b", "feature"])
+        .arg(&linked_worktree)
+        .arg("main")
+        .current_dir(&repo_path)
+        .output()
+        .expect("create linked worktree");
+    assert!(output.status.success());
+    let subdirectory = linked_worktree.join("src");
+    std::fs::create_dir(&subdirectory).expect("create worktree subdirectory");
+
+    assert_eq!(
+        startup_directory::resolve_automatic_worktree_repo(
+            [scratchpad.path().to_path_buf()],
+            [
+                scratchpad.path().to_path_buf(),
+                linked_worktree,
+                subdirectory,
+                repo_path.clone(),
+                repo_path.clone(),
+            ],
+        ),
+        Some(dunce::canonicalize(repo_path).unwrap()),
+        "a scratchpad tab should recover the one project shared by sibling worktrees"
+    );
+}
+
+#[test]
+#[cfg(feature = "local_fs")]
+fn test_automatic_worktree_prefers_active_repo_then_recorded_agent_directory() {
+    let (_repo_dir, repo_path) = init_repo_for_automatic_worktree_test();
+    let (_other_repo_dir, other_repo_path) = init_repo_for_automatic_worktree_test();
+    let scratchpad = tempfile::tempdir().expect("create non-Git agent scratchpad");
+
+    for active_paths in [
+        vec![repo_path.clone(), other_repo_path.clone()],
+        vec![scratchpad.path().to_path_buf(), repo_path.clone()],
+    ] {
+        assert_eq!(
+            startup_directory::resolve_automatic_worktree_repo(
+                active_paths,
+                [other_repo_path.clone()],
+            ),
+            Some(dunce::canonicalize(&repo_path).unwrap()),
+            "valid active-session context takes precedence over sibling repositories"
+        );
+    }
+}
+
+#[test]
+#[cfg(feature = "local_fs")]
+fn test_automatic_worktree_does_not_guess_between_projects_or_non_git_paths() {
+    let (_repo_dir, repo_path) = init_repo_for_automatic_worktree_test();
+    let (_other_repo_dir, other_repo_path) = init_repo_for_automatic_worktree_test();
+    let scratchpad = tempfile::tempdir().expect("create non-Git agent scratchpad");
+
+    for project_paths in [
+        vec![repo_path, other_repo_path],
+        vec![scratchpad.path().to_path_buf()],
+        vec![PathBuf::from(".")],
+        Vec::new(),
+    ] {
+        assert_eq!(
+            startup_directory::resolve_automatic_worktree_repo(
+                [scratchpad.path().to_path_buf()],
+                project_paths,
+            ),
+            None,
+        );
+    }
+}
+
+#[test]
+#[cfg(feature = "local_fs")]
 fn test_automatic_worktree_planning_reserves_unique_terminal_and_agent_tabs() {
     let (_temp_dir, repo_path) = init_repo_for_automatic_worktree_test();
 

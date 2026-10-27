@@ -1,18 +1,47 @@
 //! Logic to determine the working directory for new terminal sessions.
 
-use std::path::PathBuf;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 
-use warpui::{AppContext, SingletonEntity, ViewContext, WindowId};
+use warpui::{AppContext, SingletonEntity, ViewContext, ViewHandle, WindowId};
 
 use super::Workspace;
 use crate::terminal::available_shells::AvailableShell;
 #[cfg(feature = "local_tty")]
 use crate::terminal::available_shells::AvailableShells;
+use crate::terminal::cli_agent_sessions::CLIAgentSessionsModel;
 use crate::terminal::session_settings::{NewSessionSource, SessionSettings};
+use crate::terminal::view::TerminalView;
 use crate::terminal::ShellLaunchData;
 use crate::workspace::WorkspaceRegistry;
 
 impl Workspace {
+    /// Resolve a repository even if a running agent has reported a temporary
+    /// scratch directory through OSC 7. Only use sibling panes when this project
+    /// contains one unambiguous repository; never borrow another project's cwd.
+    pub(super) fn automatic_worktree_repo(&self, ctx: &AppContext) -> Option<PathBuf> {
+        let terminal = self
+            .tabs
+            .get(self.active_tab_index)?
+            .pane_group
+            .as_ref(ctx)
+            .active_session_view(ctx)?;
+        if terminal.as_ref(ctx).active_session_is_local(ctx) != Some(true) {
+            return None;
+        }
+
+        resolve_automatic_worktree_repo(
+            local_worktree_repo_candidates(&terminal, ctx),
+            self.tabs.iter().flat_map(|tab| {
+                tab.pane_group
+                    .as_ref(ctx)
+                    .terminal_views(ctx)
+                    .into_iter()
+                    .flat_map(|terminal| local_worktree_repo_candidates(&terminal, ctx))
+            }),
+        )
+    }
+
     /// Helper function to compute the initial directory for a new session
     /// that is inheriting its initial directory from the active session in
     /// the given workspace.
@@ -120,6 +149,77 @@ impl Workspace {
             ctx,
         )
     }
+}
+
+fn local_worktree_repo_candidates(
+    terminal: &ViewHandle<TerminalView>,
+    ctx: &AppContext,
+) -> Vec<PathBuf> {
+    let view = terminal.as_ref(ctx);
+    if view.active_session_is_local(ctx) != Some(true) {
+        return Vec::new();
+    }
+
+    let cwd = view
+        .canonical_session_pwd_if_local(ctx)
+        .map(|path| path.as_path().to_path_buf());
+    let agent_cwd = CLIAgentSessionsModel::as_ref(ctx)
+        .session(terminal.id())
+        .filter(|session| session.remote_host.is_none())
+        .and_then(|session| session.session_context.cwd.as_deref())
+        .map(PathBuf::from);
+    [
+        cwd,
+        agent_cwd,
+        view.current_local_repo_path().map(PathBuf::from),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
+pub(super) fn resolve_automatic_worktree_repo(
+    active_paths: impl IntoIterator<Item = PathBuf>,
+    project_paths: impl IntoIterator<Item = PathBuf>,
+) -> Option<PathBuf> {
+    let mut checked_repositories = HashSet::new();
+    for path in active_paths {
+        if path.is_absolute() && checked_repositories.insert(worktree_repository_key(&path)) {
+            if let Some(root) = crate::util::git::primary_worktree_root_sync(&path) {
+                return Some(root);
+            }
+        }
+    }
+
+    let mut project_repo = None;
+    for path in project_paths {
+        if !path.is_absolute() || !checked_repositories.insert(worktree_repository_key(&path)) {
+            continue;
+        }
+        let Some(root) = crate::util::git::primary_worktree_root_sync(&path) else {
+            continue;
+        };
+        if project_repo
+            .as_ref()
+            .is_some_and(|previous| previous != &root)
+        {
+            return None;
+        }
+        project_repo = Some(root);
+    }
+    project_repo
+}
+
+fn worktree_repository_key(path: &Path) -> PathBuf {
+    // Many project tabs share Git metadata. Discover it without a subprocess so
+    // the fallback runs `git worktree list` only once per repository, including
+    // across linked checkouts and their subdirectories.
+    #[cfg(not(target_family = "wasm"))]
+    if let Ok(repository) = git2::Repository::discover(path) {
+        return dunce::canonicalize(repository.commondir())
+            .unwrap_or_else(|_| repository.commondir().to_path_buf());
+    }
+    path.to_path_buf()
 }
 
 /// The shell to be used in the new session,
