@@ -1,6 +1,7 @@
 //! Restore saved conversations in their existing panes, independently of focus or rendering.
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use instant::Instant;
 use warpui::r#async::Timer;
 use warpui::{
     AppContext, Entity, EntityId, ModelContext, SingletonEntity, ViewHandle, WeakViewHandle,
@@ -12,6 +13,8 @@ use crate::terminal::view::TerminalView;
 const CONCURRENT_STARTS: usize = 2;
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 const START_TIMEOUT: Duration = Duration::from_secs(90);
+
+type CancelPendingCommand = Box<dyn FnOnce(&mut AppContext) -> bool>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RestoreState {
@@ -38,7 +41,7 @@ struct RestoreEntry {
     key: CLIAgentSessionKey,
     state: RestoreState,
     started_at: Option<Instant>,
-    cancel_pending_command: Option<Box<dyn FnOnce(&mut AppContext) -> bool>>,
+    cancel_pending_command: Option<CancelPendingCommand>,
 }
 
 #[derive(Default)]
@@ -79,7 +82,7 @@ impl AgentRestoreQueue {
         &mut self,
         terminal: &ViewHandle<TerminalView>,
         key: CLIAgentSessionKey,
-        cancel_pending_command: Box<dyn FnOnce(&mut AppContext) -> bool>,
+        cancel_pending_command: CancelPendingCommand,
         ctx: &mut ModelContext<Self>,
     ) {
         if self
