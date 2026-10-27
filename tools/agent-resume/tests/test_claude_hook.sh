@@ -72,6 +72,16 @@ WARP_AGENT_RESUME_FAKE_ARGV="node /x/cli.js --permission-mode acceptEdits" \
   bash -c 'echo "{\"session_id\":\"sess-ddd\",\"cwd\":\"/tmp/repo\",\"hook_event_name\":\"UserPromptSubmit\",\"permission_mode\":\"weird\"}" | "$0"' "$BIN/claude-capture.sh"
 grep -q '"command": "clinch_agent_resume_launch claude sess-ddd --permission-mode acceptEdits"' "$f" || { echo "FAIL: unknown mode did not fall back to argv"; exit 1; }
 
+# Live /model selection takes precedence over the original argv, including a fork child.
+WARP_AGENT_RESUME_FAKE_ARGV="claude --dangerously-skip-permissions --model opus" \
+  bash -c 'echo "{\"session_id\":\"fork-child\",\"cwd\":\"/tmp/repo\",\"hook_event_name\":\"SessionStart\",\"model\":\"sonnet\"}" | "$0"' "$BIN/claude-capture.sh"
+grep -q 'clinch_agent_resume_launch claude fork-child --dangerously-skip-permissions --model sonnet' "$f" || { echo "FAIL: fork child or live model lost"; exit 1; }
+WARP_AGENT_RESUME_FAKE_ARGV="claude --model opus" \
+  bash -c 'echo "{\"session_id\":\"fork-child\",\"cwd\":\"/tmp/repo\",\"hook_event_name\":\"Stop\",\"permission_mode\":\"plan\",\"model\":\"claude-sonnet-4-6\"}" | "$0"' "$BIN/claude-capture.sh"
+grep -q 'clinch_agent_resume_launch claude fork-child --permission-mode plan --model claude-sonnet-4-6' "$f" || { echo "FAIL: updated model/permissions not saved"; exit 1; }
+# Restore the owner expected by the nested-agent checks below.
+echo '{"session_id":"sess-ddd","cwd":"/tmp/repo"}' | "$BIN/claude-capture.sh"
+
 # A nested session's updater event must not clobber the outer entry…
 echo '{"session_id":"sess-intruder","cwd":"/tmp/other","hook_event_name":"UserPromptSubmit","permission_mode":"bypassPermissions"}' \
   | WARP_AGENT_RESUME_FAKE_ANCESTRY="claude,zsh,claude" "$BIN/claude-capture.sh"

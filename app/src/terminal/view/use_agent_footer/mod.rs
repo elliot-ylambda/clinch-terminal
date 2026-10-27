@@ -219,6 +219,11 @@ fn native_composer_rows(
 
 /// Reads Claude Code's composer between its horizontal rules, including visible multiline text.
 fn claude_native_composer_draft(grid: &GridHandler) -> Option<String> {
+    claude_native_composer(grid).flatten()
+}
+
+// Outer Option proves the composer is present; inner Option holds an optional draft.
+fn claude_native_composer(grid: &GridHandler) -> Option<Option<String>> {
     let columns = grid.columns();
     if columns == 0 {
         return None;
@@ -257,10 +262,15 @@ fn claude_native_composer_draft(grid: &GridHandler) -> Option<String> {
                 // Claude paints an empty composer's suggestion as dim text under the cursor. It is
                 // presentation only and must never be mistaken for a draft.
                 if first_content_is_dim && cursor == Point::new(prompt_row, content_col) {
-                    return None;
+                    return Some(None);
                 }
 
-                return native_composer_rows(grid, prompt_row, lower_rule_idx - 1, content_col);
+                return Some(native_composer_rows(
+                    grid,
+                    prompt_row,
+                    lower_rule_idx - 1,
+                    content_col,
+                ));
             }
         }
 
@@ -274,6 +284,10 @@ fn claude_native_composer_draft(grid: &GridHandler) -> Option<String> {
 /// multiline input (including blank paragraphs) from the footer, which has the same left inset.
 /// Older unstyled layouts retain the single-row fallback.
 fn codex_native_composer_draft(grid: &GridHandler) -> Option<String> {
+    codex_native_composer(grid).flatten()
+}
+
+fn codex_native_composer(grid: &GridHandler) -> Option<Option<String>> {
     let columns = grid.columns();
     if columns <= 2 || !grid.is_mode_set(TermMode::SHOW_CURSOR) {
         return None;
@@ -305,7 +319,7 @@ fn codex_native_composer_draft(grid: &GridHandler) -> Option<String> {
         })
         .is_some_and(|cell| cell.flags.contains(Flags::DIM));
     if first_content_is_dim && cursor == Point::new(prompt_row, 2) {
-        return None;
+        return Some(None);
     }
 
     let background = row[0].bg;
@@ -347,7 +361,7 @@ fn codex_native_composer_draft(grid: &GridHandler) -> Option<String> {
         }
         prompt_row
     };
-    native_composer_rows(grid, prompt_row, last_row, 2)
+    Some(native_composer_rows(grid, prompt_row, last_row, 2))
 }
 
 fn mode_correct_control_key_bytes(
@@ -1345,6 +1359,32 @@ impl TerminalView {
             self.coordination_user_input_epoch,
             self.model.lock().block_list().active_block().id()
         )
+    }
+
+    /// Restoration is complete when the exact seeded session has a live provider notification
+    /// or a native composer. Drafts and ongoing work do not make restoration unsuccessful.
+    pub(crate) fn agent_restore_is_ready(&self, ctx: &AppContext) -> bool {
+        let Some(session) = CLIAgentSessionsModel::as_ref(ctx).session(self.view_id) else {
+            return false;
+        };
+        let model = self.model.lock();
+        let block = model.block_list().active_block();
+        if !block.is_active_and_long_running() {
+            return false;
+        }
+        if session.received_rich_notification {
+            return true;
+        }
+        let grid = if model.is_alt_screen_active() {
+            model.alt_screen().grid_handler()
+        } else {
+            block.output_grid().grid_handler()
+        };
+        match session.agent {
+            CLIAgent::Claude => claude_native_composer(grid).is_some(),
+            CLIAgent::Codex => codex_native_composer(grid).is_some(),
+            _ => false,
+        }
     }
 
     /// Revision includes input epochs and provider state; inspection itself never consumes input.

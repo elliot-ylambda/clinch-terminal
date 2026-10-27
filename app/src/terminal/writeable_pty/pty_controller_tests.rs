@@ -291,3 +291,20 @@ fn plain_restore_command_still_runs_at_bootstrap() {
         });
     });
 }
+
+#[test]
+fn deferred_restore_command_cancel_removes_only_the_parked_restore_write() {
+    App::test((), |mut app| async move {
+        let harness = build_pty_controller(&mut app);
+        harness.controller.update(&mut app, |controller, ctx| {
+            assert!(!controller.can_write_to_pty(ctx));
+            controller.write_restore_command("codex resume child-id", ShellType::Zsh, ctx);
+            assert!(matches!(controller.pending_writes.front(), Some(PtyWrite::Command { is_restore: true, .. })));
+            controller.pending_writes.push_back(PtyWrite::Bytes { bytes: Cow::Borrowed(b"user draft") });
+            assert!(controller.cancel_pending_restore_command());
+            assert_eq!(controller.pending_writes.len(), 1);
+            assert!(matches!(controller.pending_writes.front(), Some(PtyWrite::Bytes { bytes }) if &bytes[..] == b"user draft"));
+            assert!(!controller.cancel_pending_restore_command());
+        });
+    });
+}

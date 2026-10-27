@@ -50,31 +50,19 @@ capture (agent SessionStart hooks)          replay (Rust, in Clinch)
   remains intact, and no global Codex setting or user command is replaced. Manually
   launched Codex sessions need `codex --no-daemon` or `clinch_codex_launch` for the same
   guarantee.
-- **The recorded command self-heals**: it is `clinch_agent_resume_launch <agent> <id>`,
-  a shell function (sourced from `claude.zsh`) that resumes the session only if it has a
-  real conversation on disk, and otherwise starts a *fresh* agent in that pane. This
-  matters because the command is captured eagerly at launch (you usually quit with the
-  agent still running), so it can point at a session that was opened but never used — and
-  `claude --resume`/`codex resume` reject those with "No conversation found". Resumability
-  is checked by locating the session file by its globally-unique id, so we never replicate
-  each agent's brittle cwd→directory hashing.
-  Entries captured before the Clinch rename are normalized when read, and a legacy shell
-  alias remains installed so the first restore after an update cannot strand an older pane.
-- **A dead Claude id adopts the directory's newest unclaimed session before going fresh.**
-  Registry entries rot silently (overwritten by a session that was never used, transcript
-  rolled away by retention), and starting fresh on a rotted entry silently orphans the
-  pane's real conversation — the root cause of the 2026-07-08 blank-session incident. So
-  when the recorded id has no conversation, `clinch_agent_resume_launch` first looks for the
-  newest resumable session whose transcript records the pane's directory as its `cwd`
-  (`clinch_agent_resume_fallback_id`, reading transcript heads newest-first) and resumes
-  that instead. Only *unclaimed* sessions — recorded in no pane's registry entry — are
-  adopted, so a pane whose id died can never steal a sibling pane's live session when
-  several panes share one project directory. An atomic `.adopt-claim-<session>` file also
-  closes the restore-time race before the adopted session's hook can write its registry entry;
-  abandoned claims expire after 120 seconds. Bridged panes skip adoption (their
-  conversation lives at claude.ai; adopting a local session would silently swap
-  conversations), and codex keeps plain resume-or-fresh (its session filenames don't
-  yield a bare id to adopt by).
+- **App startup restores every saved conversation in place.** One app-wide queue admits
+  two agent starts at a time across all projects and windows. No tab activation is required.
+  The global progress row and each queued/starting tab show restoration state; successful
+  completion appears briefly, and failures remain marked. A native provider notification or
+  native composer proves readiness; releasing a command alone does not. A 90-second timeout
+  cancels any undispatched bootstrap/PTY write and advances the queue without replaying it.
+  Human input cancels an undispatched restore rather than replacing the user's command.
+- **Startup uses the exact saved identity.** Snapshot restore sets
+  `CLINCH_AGENT_RESTORE_EXACT=1`: an unavailable conversation stops visibly instead of
+  adopting a sibling's conversation or starting blank. Forks resume their captured child ID.
+  The legacy standalone recovery function retains explicit recovery's adopt/fresh fallback;
+  that fallback is not used by app startup. Entries from before the Clinch rename still
+  normalize to the current launcher.
 - **Machinery-spawned blanks can't destroy a recoverable mapping.** When the launcher
   does start fresh, it tags the session with `WARP_AGENT_RESUME_STARTED_FRESH`; the
   capture hook then skips its usual SessionStart takeover while the pane's entry still
@@ -108,21 +96,19 @@ capture (agent SessionStart hooks)          replay (Rust, in Clinch)
   15s, distinguishes the two). Note teleport performs git operations (branch checkout), so
   restore of a bridged pane can move a shared checkout's branch — worktree-per-session
   layouts avoid this.
-- **Permission mode + model are carried over.** A session running with a non-default
-  permission mode (`--dangerously-skip-permissions`, e.g. the `CA` alias, or
-  `--permission-mode <mode>`) or a `--model` reopens *the same way* — those flags are
-  appended to the recorded `clinch_agent_resume_launch <agent> <id> …` and forwarded on
-  resume.
-  - *Claude*: `SessionStart`'s payload doesn't include the permission mode, so at launch
-    the hook reads it off the live `claude` process argv (the alias expands before exec),
-    matching on the flags themselves rather than the string "claude" so a plain launch
-    carries nothing. The same script is also wired to `UserPromptSubmit` and `Stop`,
-    whose payloads *do* carry `permission_mode` — so a mode toggled mid-session
-    (shift+tab) sticks, toggling back to default strips the flag again, and entries
-    written by older flag-less installs heal on the session's next prompt.
-  - *Codex*: the `SessionStart` payload carries `permission_mode` and `model` directly;
-    `bypassPermissions` maps to `--dangerously-bypass-approvals-and-sandbox`. Its separate
-    `UserPromptSubmit` helper only appends history and cannot strip those recorded flags.
+- **Restore preserves current settings, not only startup flags.**
+  - *Claude*: live hook `model` and `permission_mode` override original process argv.
+    Missing fields on older providers retain argv fallback. This captures `/model` and
+    permission changes made during a conversation.
+  - *Codex*: current CLIs restore the exact durable model, reasoning effort, permission
+    profile, reviewer, and workspace roots when direct overrides are omitted. Clinch removes
+    stale launch overrides on resume and lets Codex restore those saved settings. For forks
+    and older CLIs requiring explicit flags, the launcher folds `turn_context` and applicable
+    `thread_settings_applied` records in file order, ignoring settings events owned by a
+    copied parent thread. Supported canonical profiles are reproduced explicitly; custom
+    profiles that cannot be represented faithfully stop visibly. Missing optional reviewer
+    fields retain the prior reviewer. The hook's lossy `permission_mode` alone never grants
+    full access. Capture always retains the new child UUID even if settings are unsupported.
 - **Clinch stays agent-agnostic**: Rust only stores/replays an opaque command string.
   Adding another agent later is just another capture script — no Rust change.
 

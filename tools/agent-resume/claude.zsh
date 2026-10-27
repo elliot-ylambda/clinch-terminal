@@ -1,3 +1,4 @@
+CLINCH_AGENT_RESUME_RUNTIME_DIR="${${(%):-%N}:A:h}"
 # Clinch agent-resume shell integration (loaded by the bundled standalone launcher; older
 # installs may also source it from ~/.zshrc).
 #
@@ -53,6 +54,52 @@ claude() {
 # Do not replace the user's `codex` command or change global Codex configuration.
 clinch_agent_resume_codex() {
   local codex_help arg
+  codex_help="$(command codex --help 2>/dev/null)" || codex_help=""
+  # Reconcile stale startup flags with the exact conversation's latest durable settings.
+  # Both restart and Clinch's Fork command enter here. Fresh launches are untouched.
+  local -a original=("$@") resolved_args=() retained=() trailing=()
+  local offset=1 mode sid transcript resolved helper key settings_mode
+  [[ "${original[1]:-}" == --no-daemon ]] && offset=2
+  mode="${original[$offset]:-}"
+  sid="${original[$((offset + 1))]:-}"
+  if [[ "$mode" == resume || "$mode" == fork ]] && [[ -n "$sid" && "$sid" != *[^A-Za-z0-9-]* ]]; then
+    transcript="$(find "${CODEX_HOME:-$HOME/.codex}/sessions" -name "*-$sid.jsonl" -print -quit 2>/dev/null)"
+    helper="${CLINCH_AGENT_RESUME_RUNTIME_DIR:-}/agent-json"
+    if [[ -n "$transcript" && -x "$helper" ]]; then
+      settings_mode="$mode"
+      if [[ "$mode" == resume && "$codex_help" == *"--approve-for-me"* ]]; then
+        settings_mode=native-resume
+      fi
+      if ! resolved="$("$helper" codex-resume-flags "$transcript" "$sid" "$settings_mode")"; then
+        print -u2 -- "clinch: cannot safely restore saved Codex settings for $sid; inspect this tab."
+        return 1
+      fi
+      if [[ -n "$resolved" ]]; then
+        if [[ "$resolved" != CLINCH_NATIVE_SAVED_SETTINGS ]]; then
+          resolved_args=("${(@f)resolved}")
+        fi
+        local i=1
+        while (( i <= ${#original} )); do
+          arg="${original[$i]}"
+          case "$arg" in
+            --) trailing=("${original[@]:$((i - 1))}"); break ;;
+            --config=model=*|--config=model_reasoning_effort=*|--config=approval_policy=*|--config=approvals_reviewer=*|--config=sandbox_mode=*) (( i += 1 )); continue ;;
+            --model|-m|--sandbox|-s|--ask-for-approval|-a) (( i += 2 )); continue ;;
+            --model=*|--sandbox=*|--ask-for-approval=*|--dangerously-bypass-approvals-and-sandbox|--yolo|--approve-for-me|--full-auto) (( i += 1 )); continue ;;
+            -c|--config)
+              key="${original[$((i + 1))]:-}"
+              case "$key" in
+                model=*|model_reasoning_effort=*|approval_policy=*|approvals_reviewer=*|sandbox_mode=*) (( i += 2 )); continue ;;
+              esac
+              ;;
+          esac
+          retained+=("$arg")
+          (( i += 1 ))
+        done
+        set -- "${retained[@]}" "${resolved_args[@]}" "${trailing[@]}"
+      fi
+    fi
+  fi
   for arg in "$@"; do
     [[ "$arg" == -- ]] && break
     if [[ "$arg" == --no-daemon ]]; then
@@ -60,8 +107,7 @@ clinch_agent_resume_codex() {
       return $?
     fi
   done
-  if codex_help="$(command codex --help 2>/dev/null)" \
-      && [[ "$codex_help" == *"--no-daemon"* ]]; then
+  if [[ "$codex_help" == *"--no-daemon"* ]]; then
     command codex --no-daemon "$@"
   else
     command codex "$@"
@@ -84,7 +130,7 @@ clinch_agent_resume_resumable() {
       [[ -n "$f" ]] && grep -Eq '"type":"(user|assistant)"' "$f"
       ;;
     codex)
-      f="$(find "$HOME/.codex/sessions" -name "*-$id.jsonl" -print -quit 2>/dev/null)"
+      f="$(find "${CODEX_HOME:-$HOME/.codex}/sessions" -name "*-$id.jsonl" -print -quit 2>/dev/null)"
       [[ -n "$f" ]] && grep -Eq '"role":"(user|assistant)"' "$f"
       ;;
     *) return 1 ;;
@@ -227,6 +273,10 @@ clinch_agent_resume_launch() {
       return $_clinch_rc
     fi
     echo "clinch: teleport failed -- falling back (cloud copy: https://claude.ai/code/$bridge)." >&2
+  fi
+  if [[ "${CLINCH_AGENT_RESTORE_EXACT:-}" == 1 ]]; then
+    print -u2 -- "clinch: saved $agent conversation $id is unavailable; restoration stopped without substituting another session."
+    return 1
   fi
   local adopt=""
   if [[ -z "$bridge" ]]; then

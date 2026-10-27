@@ -160,7 +160,7 @@ _clinch_agent_resume_capture_main() {
   set -uo pipefail
   [[ -n "${WARP_TERMINAL_SESSION_UUID:-}" ]] || return 0   # only act inside a Clinch pane
   local payload fields sid64 cwd64 event64 pmode64 model64 reason64
-  local sid cwd event pmode extra mode_part entry_file BIN nested=0
+  local sid cwd event pmode model extra mode_part model_part argv entry_file BIN nested=0
   local owner_fields owner_pid owner_tty64 owner_tty
   payload="$(cat)"
   fields="$(printf '%s' "$payload" | _clinch_agent_resume_json hook-fields 2>/dev/null)" || return 0
@@ -169,6 +169,7 @@ _clinch_agent_resume_capture_main() {
   cwd="$(_clinch_agent_resume_decode "$cwd64")" || return 0
   event="$(_clinch_agent_resume_decode "$event64")" || return 0
   pmode="$(_clinch_agent_resume_decode "$pmode64")" || return 0
+  model="$(_clinch_agent_resume_decode "$model64")" || return 0
   [[ "$sid" =~ ^[A-Za-z0-9-]+$ ]] || return 0
   BIN="$(cd "$(dirname "$0")" && pwd)"
   if owner_fields="$("$BIN/clinch-agent-resume" hook-owner-fields 2>/dev/null)"; then
@@ -196,7 +197,6 @@ _clinch_agent_resume_capture_main() {
          && _clinch_agent_resume_entry_protected "$entry_file"; then
         return 0
       fi
-      extra="$(_clinch_agent_resume_extract_flags "$(_clinch_agent_resume_claude_argv)")"
       ;;
     UserPromptSubmit|Stop)
       # Mirror prompts and their Stop turn boundaries BEFORE the pane-ownership guard below: the
@@ -208,11 +208,6 @@ _clinch_agent_resume_capture_main() {
       (( nested )) && return 0
       # An outer session is authoritative even if a hook from an older build let a nested
       # child clobber the entry. Its next prompt/Stop event repairs that mapping in place.
-      if mode_part="$(_clinch_agent_resume_mode_flags_from_payload "$pmode")"; then
-        extra="${mode_part}$(_clinch_agent_resume_extract_model "$(_clinch_agent_resume_claude_argv)")"
-      else
-        extra="$(_clinch_agent_resume_extract_flags "$(_clinch_agent_resume_claude_argv)")"
-      fi
       ;;
     SessionEnd)
       (( nested )) && return 0
@@ -230,6 +225,20 @@ _clinch_agent_resume_capture_main() {
       ;;
     *) return 0 ;;
   esac
+  # Live hook fields override startup argv: /model and Shift+Tab can change both.
+  # Missing/unknown fields retain argv fallback for older provider versions.
+  argv="$(_clinch_agent_resume_claude_argv)"
+  if ! mode_part="$(_clinch_agent_resume_mode_flags_from_payload "$pmode")"; then
+    mode_part="$(_clinch_agent_resume_extract_flags "$argv")"
+    # Extract only mode flags below; the model is chosen independently.
+    mode_part="$(printf '%s' "$mode_part" | sed -E 's/ --model [A-Za-z0-9._:\/-]+//g')"
+  fi
+  if _clinch_agent_resume_safe_token "$model"; then
+    model_part=" --model $model"
+  else
+    model_part="$(_clinch_agent_resume_extract_model "$argv")"
+  fi
+  extra="${mode_part}${model_part}"
   # Call the registry CLI by absolute path (sibling of this script) so the hook does not
   # depend on the agent inheriting the shell PATH.
   #

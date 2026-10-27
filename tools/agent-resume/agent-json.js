@@ -55,6 +55,106 @@ function hookFields() {
     ].join("|");
 }
 
+// Forking through older embedded Codex needs explicit standard settings. A builtin label
+// alone is insufficient: custom network rules, roots, or filesystem entries must not be lost.
+function canonicalCodexProfile(settings, id) {
+    const active = settings.active_permission_profile;
+    const profile = settings.permission_profile;
+    if (!active || active.id !== id || profile.network !== "restricted") return false;
+    const fs = profile.file_system;
+    if (!fs || fs.type !== "restricted" || !Array.isArray(fs.entries)) return false;
+    const cwd = settings.cwd;
+    const roots = settings.runtime_workspace_roots;
+    if (roots && (roots.length !== 1 || roots[0] !== cwd)) return false;
+    const required = new Set(["special:root:read"]);
+    const allowed = new Set(required);
+    if (id === ":workspace") {
+        if (typeof cwd !== "string" || !cwd.startsWith("/")) return false;
+        ["special:slash_tmp:write", "special:tmpdir:write", "path:" + cwd + ":write"].forEach(key => {
+            required.add(key); allowed.add(key);
+        });
+        [".git", ".agents", ".codex", ".aws"].forEach(name => allowed.add("path:" + cwd + "/" + name + ":read"));
+    }
+    for (const entry of fs.entries) {
+        const path = entry.path || {};
+        const key = path.type === "special" ? "special:" + ((path.value || {}).kind) + ":" + entry.access
+            : "path:" + path.path + ":" + entry.access;
+        if (!allowed.has(key)) return false;
+        required.delete(key);
+    }
+    return required.size === 0;
+}
+
+// Fold the same durable settings records used by Codex resume. Hook permission_mode is
+// deliberately not used: "bypassPermissions" can mean never-ask inside a read-only sandbox.
+function codexResumeFlags(path, sessionId, mode) {
+    let identity = "";
+    let settings = null;
+    let reviewer = "user";
+    const lines = readFile(path).split("\n");
+    for (const line of lines) {
+        let record;
+        try { record = JSON.parse(line); } catch (_) { continue; }
+        const payload = record.payload || {};
+        if (record.type === "session_meta") identity = asString(payload.id, "");
+        if (record.type === "turn_context") {
+            settings = payload;
+            if (payload.approvals_reviewer) reviewer = payload.approvals_reviewer;
+        }
+        if (record.type === "event_msg" && payload.type === "thread_settings_applied"
+            && payload.thread_id === sessionId) {
+            settings = payload.thread_settings;
+            if (settings && settings.approvals_reviewer) reviewer = settings.approvals_reviewer;
+        }
+    }
+    if (!settings || !identity) return ""; // Older transcripts retain their recorded flags.
+    if (identity !== sessionId) throw new Error("saved settings belong to another conversation");
+    // Modern Codex restores the complete persisted profile and workspace roots when direct
+    // launch overrides are omitted. Keep this authoritative path instead of flattening it.
+    if (mode === "native-resume") return "CLINCH_NATIVE_SAVED_SETTINGS";
+    const token = value => typeof value === "string" && /^[A-Za-z0-9._:/-]+$/.test(value);
+    const profile = settings.permission_profile;
+    const active = settings.active_permission_profile;
+    let sandbox = settings.sandbox_policy && settings.sandbox_policy.type;
+    if (profile) {
+        if (profile.type === "disabled") sandbox = "danger-full-access";
+        else if (profile.type === "managed" && canonicalCodexProfile(settings, ":workspace")) sandbox = "workspace-write";
+        else if (profile.type === "managed" && canonicalCodexProfile(settings, ":read-only")) sandbox = "read-only";
+        else throw new Error("custom saved permission profile cannot be restored as a built-in mode");
+    }
+    const policy = settings.approval_policy;
+    if (!["read-only", "workspace-write", "danger-full-access"].includes(sandbox)
+        || !["on-request", "never"].includes(policy)
+        || !["user", "auto_review"].includes(reviewer)) {
+        throw new Error("saved permission settings are not supported by this launcher");
+    }
+    const args = [];
+    if (sandbox === "workspace-write" && policy === "on-request" && reviewer === "auto_review") {
+        args.push("--approve-for-me");
+    } else {
+        args.push("--sandbox", sandbox, "--ask-for-approval", policy,
+            "-c", "approvals_reviewer=" + reviewer);
+    }
+    if (token(settings.model)) args.push("--model", settings.model);
+    const effort = settings.reasoning_effort || settings.effort;
+    if (token(effort)) args.push("-c", "model_reasoning_effort=" + effort);
+    return args.join("\n");
+}
+
+function codexHookFlags() {
+    const payload = parseObject(readStdin(), "Codex hook payload");
+    const path = asString(payload.transcript_path, "");
+    const sessionId = asString(payload.session_id, "");
+    if (path && sessionId) {
+        const flags = codexResumeFlags(path, sessionId);
+        if (flags) return flags;
+    }
+    // Older providers may omit transcript_path. Never turn a lossy permission_mode into
+    // full access. Native resume remains authoritative when complete settings are absent.
+    const model = asString(payload.model, "");
+    return /^[A-Za-z0-9._:/-]+$/.test(model) ? "--model\n" + model : "";
+}
+
 function promptLine(argv) {
     const payload = parseObject(readStdin(), "hook payload");
     const event = asString(payload.hook_event_name, "");
@@ -627,6 +727,10 @@ function run(argv) {
     switch (command) {
     case "hook-fields":
         return hookFields();
+    case "codex-resume-flags":
+        return codexResumeFlags(argv[0], argv[1], argv[2]);
+    case "codex-hook-flags":
+        return codexHookFlags();
     case "prompt-line":
         return promptLine(argv);
     case "toolbelt-learn":

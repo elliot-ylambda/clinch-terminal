@@ -1727,7 +1727,7 @@ impl PaneGroup {
                 let terminal_view_id = terminal_view.id();
 
                 #[cfg(feature = "local_tty")]
-                if let Some((provider, session_id)) = agent_session_seed {
+                if let Some((provider, session_id)) = agent_session_seed.clone() {
                     CLIAgentSessionsModel::handle(ctx).update(ctx, |model, ctx| {
                         model.seed_resumed_session(terminal_view_id, provider, session_id, ctx);
                     });
@@ -1742,12 +1742,8 @@ impl PaneGroup {
                 )
                 .with_restored_local_cwd_fallback(restored_local_cwd_fallback);
 
-                // Auto-resume agent sessions: if this pane had a live agent session
-                // captured at snapshot time, its resume command (e.g.
-                // `claude --resume <id>`) runs the first time the pane is shown, not
-                // at launch: each agent costs hundreds of MB, and most restored tabs
-                // are never opened before the next restart. The shell still starts
-                // now; the sidebar already lists the session from the seed above.
+                // Restore in the existing pane, through one app-wide bounded queue.
+                // Shells bootstrap immediately; agents start without requiring tab activation.
                 #[cfg(feature = "local_tty")]
                 {
                     if let Some(on_restore_command) = on_restore_command {
@@ -1757,7 +1753,10 @@ impl PaneGroup {
                                 .as_any()
                                 .downcast_ref::<local_tty::TerminalManager>()
                             {
-                                manager.set_deferred_on_restore_command(on_restore_command, ctx);
+                                manager.set_deferred_on_restore_command(
+                                    format!("CLINCH_AGENT_RESTORE_EXACT=1 {on_restore_command}"),
+                                    ctx,
+                                );
                             }
                         });
                         let manager = manager_handle.downgrade();
@@ -1776,6 +1775,21 @@ impl PaneGroup {
                                 });
                             }));
                         });
+                        if let Some((provider, session_id)) = agent_session_seed {
+                            let terminal = pane_data.terminal_view(ctx);
+                            let cancel_manager = manager_handle.downgrade();
+                            crate::terminal::cli_agent_sessions::restore::AgentRestoreQueue::handle(ctx).update(ctx, |queue, ctx| {
+                                queue.enqueue(&terminal, crate::terminal::cli_agent_sessions::CLIAgentSessionKey { provider, session_id }, Box::new(move |ctx| {
+                                    if let Some(manager) = cancel_manager.upgrade(ctx) {
+                                        return manager.update(ctx, |manager, ctx| {
+                                            manager.as_any().downcast_ref::<local_tty::TerminalManager>()
+                                                .is_some_and(|manager| manager.cancel_pending_restore_command(ctx))
+                                        });
+                                    }
+                                    false
+                                }), ctx);
+                            });
+                        }
                     }
                 }
 
@@ -6859,6 +6873,12 @@ impl PaneGroup {
             return;
         }
 
+        self.mark_sessions_visible(ctx);
+    }
+
+    /// Marks a selected tab's sessions visible without requiring render-time focus ancestry.
+    /// The caller must establish that this is the selected tab of the active project.
+    pub(crate) fn mark_sessions_visible(&mut self, ctx: &mut ViewContext<Self>) {
         let active_window_id = ctx.windows().state().active_window;
         if active_window_id == Some(ctx.window_id()) {
             for session in self.panes_of::<TerminalPane>() {

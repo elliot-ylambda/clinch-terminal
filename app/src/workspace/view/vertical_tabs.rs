@@ -5874,6 +5874,15 @@ fn render_terminal_row_content(
         .with_main_axis_size(MainAxisSize::Min)
         .with_cross_axis_alignment(CrossAxisAlignment::Start);
     content.add_child(first_line_element);
+    let second_line = if let Some(label) =
+        crate::terminal::cli_agent_sessions::restore::AgentRestoreQueue::as_ref(app)
+            .state(terminal_view.id())
+            .and_then(|state| state.label())
+    {
+        render_text_line(label, main_text_color, ClipConfig::ellipsis(), appearance)
+    } else {
+        second_line
+    };
     content.add_child(Container::new(second_line).with_margin_top(2.).finish());
     content.add_child(
         Container::new(render_terminal_metadata_line(

@@ -15,9 +15,9 @@ f="$WARP_AGENT_RESUME_DIR/bb22.json"
 grep -q '"command": "clinch_agent_resume_launch codex sess-77"' "$f" || { echo "FAIL: start"; exit 1; }
 grep -q '"cwd": "/tmp/repo"' "$f" || { echo "FAIL: cwd"; exit 1; }
 
-# Bypass + model from the payload are carried into the resume command.
+# Hook permission_mode is lossy; model is safe to capture, full access is not.
 echo '{"session_id":"sess-88","cwd":"/tmp/repo","permission_mode":"bypassPermissions","model":"gpt-5.3-codex"}' | bash "$HERE/codex-session-start.sh"
-grep -q '"command": "clinch_agent_resume_launch codex sess-88 --dangerously-bypass-approvals-and-sandbox --model gpt-5.3-codex"' "$f" || { echo "FAIL: codex bypass+model"; exit 1; }
+grep -q '"command": "clinch_agent_resume_launch codex sess-88 --model gpt-5.3-codex"' "$f" || { echo "FAIL: codex bypass+model"; exit 1; }
 
 # Non-bypass modes carry only the model (conservative mapping).
 echo '{"session_id":"sess-99","cwd":"/tmp/repo","permission_mode":"acceptEdits","model":"gpt-5.3-codex"}' | bash "$HERE/codex-session-start.sh"

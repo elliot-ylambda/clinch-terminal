@@ -1029,3 +1029,47 @@ fn native_composer_drafts_preserve_visible_paragraphs_and_reject_hidden_text() {
         });
     });
 }
+
+#[test]
+fn native_composer_proves_restore_ready_without_rich_hooks_or_a_draft() {
+    use crate::terminal::{SizeInfo, SizeUpdate, SizeUpdateReason};
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let terminal = add_window_with_terminal(&mut app, None);
+        terminal.update(&mut app, |view, ctx| {
+            for agent in [CLIAgent::Claude, CLIAgent::Codex] {
+                CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                    let mut session = crate::terminal::cli_agent_sessions::tests::idle_test_session(agent);
+                    session.session_context.session_id = Some("restored-child-id".into());
+                    session.received_rich_notification = false;
+                    sessions.set_session(view.id(), session, ctx);
+                });
+                {
+                    let mut model = view.model.lock();
+                    model.simulate_long_running_block("agent", "");
+                    let last_size = *model.block_list().size();
+                    let new_size = SizeInfo::new_without_font_metrics(24, 120);
+                    model.resize(SizeUpdate {
+                        update_reason: SizeUpdateReason::Refresh,
+                        last_size, new_size, new_gap_height: None,
+                        natural_rows: new_size.rows(), natural_cols: new_size.columns(),
+                    });
+                    model.enter_alt_screen(true);
+                    model.process_bytes("\x1b[0m\x1b[2J\x1b[?25h");
+                }
+                assert!(!view.agent_restore_is_ready(ctx), "a blank live process is not ready");
+                {
+                    let mut model = view.model.lock();
+                    let frame = if agent == CLIAgent::Claude {
+                        let rule = "─".repeat(120);
+                        format!("\x1b[3;1H{rule}\x1b[4;1H❯ \x1b[2mAsk Claude\x1b[0m\x1b[5;1H{rule}\x1b[4;3H")
+                    } else {
+                        "\x1b[48;2;30;30;30m\x1b[3;1H\x1b[2K\x1b[4;1H\x1b[2K\x1b[5;1H\x1b[2K\x1b[4;1H\x1b[1m›\x1b[22m \x1b[2mAsk Codex\x1b[0m\x1b[6;1HReady\x1b[4;3H".into()
+                    };
+                    model.process_bytes(frame.as_str());
+                }
+                assert!(view.agent_restore_is_ready(ctx), "an empty native composer proves successful restore");
+            }
+        });
+    });
+}

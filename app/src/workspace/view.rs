@@ -3726,6 +3726,12 @@ impl Workspace {
         ctx.subscribe_to_model(&AgentAttentionPulse::handle(ctx), |_, _, _, ctx| {
             ctx.notify();
         });
+        ctx.subscribe_to_model(
+            &crate::terminal::cli_agent_sessions::restore::AgentRestoreQueue::handle(ctx),
+            |_, _, _, ctx| {
+                ctx.notify();
+            },
+        );
 
         // Re-render tabs when a CLI-agent session's model changes.
         ctx.subscribe_to_model(&CliAgentUsageModel::handle(ctx), |_, _, _, ctx| {
@@ -20766,6 +20772,9 @@ impl Workspace {
                 if cached_window_is_active
                     && (did_window_change_focus || (app_became_active && platform_window_is_active))
                 {
+                    // Startup can select the restored tab before the native window becomes
+                    // active, while its terminal still has no render-time focus ancestors.
+                    self.mark_active_tab_sessions_visible(ctx);
                     if let Some(terminal_view) = self
                         .active_tab_pane_group()
                         .as_ref(ctx)
@@ -21320,9 +21329,20 @@ impl Workspace {
     }
 
     pub(crate) fn focus_active_tab(&mut self, ctx: &mut ViewContext<Self>) {
+        // A restored tab's first focus can precede its first render, so PaneGroup::on_focus
+        // cannot yet be reached through the terminal's ancestor chain.
+        self.mark_active_tab_sessions_visible(ctx);
         self.active_tab_pane_group().update(ctx, |tab, ctx| {
             tab.focus(ctx);
         })
+    }
+
+    fn mark_active_tab_sessions_visible(&mut self, ctx: &mut ViewContext<Self>) {
+        if WorkspaceRegistry::as_ref(ctx).is_active(ctx.window_id(), ctx.handle().id()) {
+            self.active_tab_pane_group().update(ctx, |tab, ctx| {
+                tab.mark_sessions_visible(ctx);
+            });
+        }
     }
 
     fn focus_theme_chooser(&self, ctx: &mut ViewContext<Self>) {
@@ -24181,6 +24201,27 @@ impl Workspace {
                 .with_child(Shrinkable::new(1., active_content).finish())
                 .finish(),
             None => active_content,
+        };
+
+        let terminal_content = if let Some(progress) =
+            crate::terminal::cli_agent_sessions::restore::AgentRestoreQueue::as_ref(app)
+                .progress_text()
+        {
+            let theme = appearance.theme();
+            let status = Container::new(
+                Text::new_inline(progress, appearance.ui_font_family(), 12.)
+                    .with_color(theme.main_text_color(theme.background()).into())
+                    .with_clip(ClipConfig::ellipsis())
+                    .finish(),
+            )
+            .with_uniform_padding(8.)
+            .finish();
+            Flex::column()
+                .with_child(status)
+                .with_child(Shrinkable::new(1., terminal_content).finish())
+                .finish()
+        } else {
+            terminal_content
         };
 
         let vertical_tabs_active = uses_vertical_tabs();

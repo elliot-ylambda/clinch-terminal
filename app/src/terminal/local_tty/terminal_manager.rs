@@ -1059,8 +1059,7 @@ impl TerminalManager {
     }
 
     /// Registers the restore command but holds it until
-    /// `start_deferred_restore_command`, so a restored tab's agent starts when
-    /// the tab is first shown.
+    /// `start_deferred_restore_command`, when the background queue admits the session.
     pub fn set_deferred_on_restore_command(&self, command: String, app_ctx: &mut AppContext) {
         self.pty_controller.update(app_ctx, |pty_controller, _ctx| {
             pty_controller.set_deferred_on_restore_command(command);
@@ -1072,6 +1071,12 @@ impl TerminalManager {
     pub fn start_deferred_restore_command(&self, app_ctx: &mut AppContext) -> bool {
         self.pty_controller.update(app_ctx, |pty_controller, ctx| {
             pty_controller.start_deferred_restore_command(ctx)
+        })
+    }
+
+    pub fn cancel_pending_restore_command(&self, app_ctx: &mut AppContext) -> bool {
+        self.pty_controller.update(app_ctx, |controller, _| {
+            controller.cancel_pending_restore_command()
         })
     }
 

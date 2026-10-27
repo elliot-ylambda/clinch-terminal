@@ -2702,9 +2702,9 @@ pub struct TerminalView {
     coordination_input_dirty: bool,
     coordination_send_pending: bool,
     /// Starts this restored pane's agent (`claude --resume …`). Set only for panes
-    /// restored at launch, and run the first time the pane is shown, so tabs the
-    /// user never opens cost a shell, not a Claude/Codex process.
+    /// restored at launch. The app-wide restore queue admits two starts at a time.
     deferred_agent_start: Option<DeferredAgentStart>,
+    background_agent_restore: bool,
     /// When a deferred agent start was released; readiness reports `starting`
     /// until the agent takes over the terminal.
     deferred_agent_started_at: Option<Instant>,
@@ -4820,6 +4820,7 @@ impl TerminalView {
             coordination_input_dirty: false,
             coordination_send_pending: false,
             deferred_agent_start: None,
+            background_agent_restore: false,
             deferred_agent_started_at: None,
             current_state: TerminalViewStateChange::default(),
             did_notify_long_running: false,
@@ -17290,13 +17291,29 @@ impl TerminalView {
         self.start_deferred_agent(ctx);
     }
 
-    /// Holds this restored pane's agent start until the pane is first shown.
+    /// Holds an agent start until visibility or the background restore queue releases it.
     pub(crate) fn defer_agent_start(&mut self, start: DeferredAgentStart) {
         self.deferred_agent_start = Some(start);
     }
 
     /// Starts a deferred agent now. Returns whether one was waiting.
     pub(crate) fn start_deferred_agent(&mut self, ctx: &mut ViewContext<Self>) -> bool {
+        // Focus and local-control delivery must not bypass the global startup limit.
+        if self.background_agent_restore {
+            return false;
+        }
+        self.release_deferred_agent(ctx)
+    }
+
+    pub(crate) fn agent_restore_has_user_input(&self) -> bool {
+        self.coordination_user_input_epoch != 0
+    }
+
+    pub(crate) fn manage_agent_restore_in_background(&mut self) {
+        self.background_agent_restore = true;
+    }
+
+    pub(crate) fn release_deferred_agent(&mut self, ctx: &mut ViewContext<Self>) -> bool {
         let Some(start) = self.deferred_agent_start.take() else {
             return false;
         };

@@ -587,6 +587,7 @@ pub(crate) fn initialize_app(app: &mut App) {
     app.add_singleton_model(crate::ai::blocklist::QueuedQueryModel::new);
     app.add_singleton_model(|ctx| OrchestrationPillBarModel::new(Default::default(), ctx));
     app.add_singleton_model(|_| CLIAgentSessionsModel::new());
+    app.add_singleton_model(crate::terminal::cli_agent_sessions::restore::AgentRestoreQueue::new);
     app.add_singleton_model(
         crate::terminal::cli_agent_sessions::attention_pulse::AgentAttentionPulse::new,
     );
@@ -712,6 +713,163 @@ pub(crate) fn mock_workspace(app: &mut App) -> ViewHandle<Workspace> {
         )
     });
     workspace
+}
+
+#[test]
+fn first_activation_resumes_an_unrendered_tab_in_place_once() {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+        let starts = Rc::new(Cell::new(0));
+        let sibling_starts = Rc::new(Cell::new(0));
+
+        workspace.update(&mut app, |workspace, ctx| {
+            let window_id = ctx.window_id();
+            WindowManager::handle(ctx).update(ctx, |state, _| {
+                state.overwrite_for_test(ApplicationStage::Active, Some(window_id));
+            });
+
+            // Keep both tabs unrendered until after the first activation. Their
+            // terminal views do not yet have render-time PaneGroup ancestors.
+            let mut restored = Vec::new();
+            for counter in [&starts, &sibling_starts] {
+                let group = workspace.add_tab_with_pane_layout_placed(
+                    PanesLayout::SingleTerminal(Box::default()),
+                    Arc::new(HashMap::new()),
+                    None,
+                    Some((true, None)),
+                    None,
+                    ctx,
+                );
+                let terminal = group.as_ref(ctx).active_session_view(ctx).unwrap();
+                assert!(!ctx
+                    .view_ancestors(window_id, terminal.id())
+                    .contains(&group.id()));
+                let counter = counter.clone();
+                terminal.update(ctx, |view, _| {
+                    view.defer_agent_start(Box::new(move |_| counter.set(counter.get() + 1)));
+                });
+                restored.push((group, terminal));
+            }
+            let tab_ids: Vec<_> = workspace
+                .tabs
+                .iter()
+                .map(|tab| tab.pane_group.id())
+                .collect();
+            let (group, terminal) = &restored[0];
+            let index = tab_ids.iter().position(|id| *id == group.id()).unwrap();
+
+            workspace.activate_tab(index, ctx);
+            assert_eq!(
+                starts.get(),
+                1,
+                "the first selection must release the resume"
+            );
+            assert_eq!(
+                sibling_starts.get(),
+                0,
+                "unselected tabs must remain deferred"
+            );
+            workspace.activate_tab(index, ctx);
+            assert_eq!(
+                starts.get(),
+                1,
+                "selection must not launch a duplicate agent"
+            );
+            assert_eq!(
+                workspace
+                    .tabs
+                    .iter()
+                    .map(|tab| tab.pane_group.id())
+                    .collect::<Vec<_>>(),
+                tab_ids,
+                "resuming must preserve the existing tabs"
+            );
+            assert_eq!(
+                workspace
+                    .active_tab_pane_group()
+                    .as_ref(ctx)
+                    .active_session_view(ctx)
+                    .unwrap()
+                    .id(),
+                terminal.id(),
+                "resuming must preserve the existing pane"
+            );
+        });
+    });
+}
+
+#[test]
+fn native_window_activation_resumes_the_selected_unrendered_tab() {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+        let starts = Rc::new(Cell::new(0));
+        let sibling_starts = Rc::new(Cell::new(0));
+
+        workspace.update(&mut app, |workspace, ctx| {
+            let window_id = ctx.window_id();
+            WindowManager::handle(ctx).update(ctx, |state, _| {
+                state.overwrite_for_test(ApplicationStage::Starting, None);
+            });
+            let mut groups = Vec::new();
+            for counter in [&starts, &sibling_starts] {
+                let group = workspace.add_tab_with_pane_layout_placed(
+                    PanesLayout::SingleTerminal(Box::default()),
+                    Arc::new(HashMap::new()),
+                    None,
+                    Some((true, None)),
+                    None,
+                    ctx,
+                );
+                let terminal = group.as_ref(ctx).active_session_view(ctx).unwrap();
+                assert!(!ctx
+                    .view_ancestors(window_id, terminal.id())
+                    .contains(&group.id()));
+                let counter = counter.clone();
+                terminal.update(ctx, |view, _| {
+                    view.defer_agent_start(Box::new(move |_| counter.set(counter.get() + 1)));
+                });
+                groups.push(group);
+            }
+            let index = workspace
+                .tabs
+                .iter()
+                .position(|tab| tab.pane_group.id() == groups[0].id())
+                .unwrap();
+            workspace.activate_tab(index, ctx);
+            assert_eq!(
+                starts.get(),
+                0,
+                "inactive windows must keep agents deferred"
+            );
+
+            let previous = ctx.windows().state().clone();
+            WindowManager::handle(ctx).update(ctx, |state, _| {
+                state.overwrite_for_test(ApplicationStage::Active, Some(window_id));
+            });
+            let current = ctx.windows().state().clone();
+            let event = StateEvent::ValueChanged { current, previous };
+            workspace.handle_window_state_change(&event, ctx);
+            workspace.handle_window_state_change(&event, ctx);
+            assert_eq!(
+                starts.get(),
+                1,
+                "native activation must release the selected resume once"
+            );
+            assert_eq!(
+                sibling_starts.get(),
+                0,
+                "native activation must not start unselected tabs"
+            );
+        });
+    });
 }
 
 #[test]

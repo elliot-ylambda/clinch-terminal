@@ -21,8 +21,11 @@ pmode="$(decode "$pmode64")" || exit 0
 model="$(decode "$model64")" || exit 0
 owner_tty="$(decode "$owner_tty64")" || exit 0
 [[ "$sid" =~ ^[A-Za-z0-9-]+$ ]] || exit 0
+# Use exact native settings, not permission_mode (which loses sandbox/reviewer information).
+flags="$(printf '%s' "$payload" | "$BIN/agent-json" codex-hook-flags 2>/dev/null)" || flags=""
 extra=""
-[[ "$pmode" == "bypassPermissions" ]] && extra+=" --dangerously-bypass-approvals-and-sandbox"
-[[ "$model" =~ ^[A-Za-z0-9._:/-]+$ ]] && extra+=" --model $model"
+while IFS= read -r flag; do
+  [[ -n "$flag" ]] && extra+=" $flag"
+done <<<"$flags"
 "$BIN/clinch-agent-resume" write "$WARP_TERMINAL_SESSION_UUID" \
   "clinch_agent_resume_launch codex $sid$extra" "$cwd" "" "$owner_pid" "$owner_tty"

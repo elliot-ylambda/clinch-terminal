@@ -46,6 +46,7 @@ const SWITCH_TO_WARP_PROMPT_ESCAPE_SEQUENCE: &[u8] = &[escape_sequences::C0::ESC
 enum PtyWrite {
     Command {
         command: String,
+        is_restore: bool,
         shell_type: ShellType,
         /// The id if the command is an in-band command or `None` if the command is not an in-band
         /// command.
@@ -106,7 +107,7 @@ pub struct PtyController<T: EventLoopSender> {
     // bootstrapping on restore. Taken (and cleared) on the first non-subshell
     // `Bootstrapped` event.
     pending_on_restore_command: Option<String>,
-    // A restored tab's agent starts when the tab is first shown, not at launch.
+    // The app-wide queue releases a restored agent when a startup slot is available.
     // While set, bootstrap keeps `pending_on_restore_command` and records the
     // session here instead; `start_deferred_restore_command` runs it.
     defer_on_restore_command: bool,
@@ -327,6 +328,7 @@ impl<T: EventLoopSender> PtyController<T> {
         let terminal_model = self.terminal_model.clone();
         self.pending_writes.push_back(PtyWrite::Command {
             command: command.to_owned(),
+            is_restore: false,
             shell_type,
             in_band_command_id: Some(command_id),
             before_write_fn: Some(Box::new(move || {
@@ -542,7 +544,7 @@ impl<T: EventLoopSender> PtyController<T> {
             .get(session_id)
             .map(|session| session.shell().shell_type())
         {
-            self.write_command(&command, shell_type, CommandExecutionSource::User, ctx);
+            self.write_restore_command(&command, shell_type, ctx);
         } else {
             log::warn!("on_restore_command: no shell type for session {session_id:?}; skipping");
         }
@@ -560,8 +562,7 @@ impl<T: EventLoopSender> PtyController<T> {
     }
 
     /// Like `set_on_restore_command`, but the command waits past bootstrap until
-    /// `start_deferred_restore_command`: a restored tab's agent costs hundreds of
-    /// MB, so it starts when the tab is first shown rather than at launch.
+    /// `start_deferred_restore_command`: the app-wide queue limits simultaneous starts.
     pub fn set_deferred_on_restore_command(&mut self, command: String) {
         self.set_on_restore_command(command);
         self.defer_on_restore_command = true;
@@ -578,6 +579,40 @@ impl<T: EventLoopSender> PtyController<T> {
             self.run_pending_restore_command(session_id, ctx);
         }
         true
+    }
+
+    /// Cancel a restore that has not yet reached the shell. Never interrupts a live command.
+    pub fn cancel_pending_restore_command(&mut self) -> bool {
+        let pending_bootstrap = self.pending_on_restore_command.take().is_some();
+        let before = self.pending_writes.len();
+        self.pending_writes.retain(|write| {
+            !matches!(
+                write,
+                PtyWrite::Command {
+                    is_restore: true,
+                    ..
+                }
+            )
+        });
+        let cancelled_write = self.pending_writes.len() != before;
+        if cancelled_write {
+            self.is_user_command_executing = false;
+        }
+        self.defer_on_restore_command = false;
+        self.restore_session_ready = None;
+        pending_bootstrap || cancelled_write
+    }
+
+    fn write_restore_command(
+        &mut self,
+        command: &str,
+        shell_type: ShellType,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        self.write_command(command, shell_type, CommandExecutionSource::User, ctx);
+        if let Some(PtyWrite::Command { is_restore, .. }) = self.pending_writes.back_mut() {
+            *is_restore = true;
+        }
     }
 
     /// Converts the given `command` into a byte array and writes its corresponding bytes to the PTY.
@@ -636,6 +671,7 @@ impl<T: EventLoopSender> PtyController<T> {
         // Send the write to the PTY event loop.
         let write = PtyWrite::Command {
             command: command.to_owned(),
+            is_restore: false,
             shell_type,
             in_band_command_id: None,
             before_write_fn: Some(before_write_fn),
@@ -745,6 +781,7 @@ impl<T: EventLoopSender> PtyController<T> {
                 shell_type,
                 in_band_command_id,
                 before_write_fn: on_write_fn,
+                ..
             } => (
                 Cow::Owned(bytes_to_execute_command(
                     command.as_str(),

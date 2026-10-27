@@ -7,6 +7,7 @@ pub mod event;
 pub mod listener;
 #[cfg(not(target_family = "wasm"))]
 pub(crate) mod plugin_manager;
+pub(crate) mod restore;
 pub(crate) mod title_glyph;
 
 use std::collections::{HashMap, HashSet};
@@ -1551,4 +1552,4 @@ impl CLIAgentSessionsModel {
 
 #[cfg(test)]
 #[path = "mod_tests.rs"]
-mod tests;
+pub(crate) mod tests;
