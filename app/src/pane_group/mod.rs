@@ -2390,7 +2390,14 @@ impl PaneGroup {
     ) -> Option<crate::agent_resume::ForkLaunch> {
         let pane_id = self.find_pane_id_for_terminal_view(terminal_view_id, ctx)?;
         let pane = self.downcast_pane_by_id::<TerminalPane>(pane_id)?;
-        crate::agent_resume::read_fork_launch(&pane.session_uuid())
+        let key = CLIAgentSessionsModel::as_ref(ctx)
+            .session(terminal_view_id)
+            .and_then(|session| session.session_key());
+        crate::agent_resume::fork_launch_for_live_session(
+            &pane.session_uuid(),
+            key.as_ref()
+                .map(|key| (key.provider, key.session_id.as_str())),
+        )
     }
 
     /// Iterate over the code editors in this pane group.

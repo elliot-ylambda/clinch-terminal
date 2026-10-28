@@ -140,11 +140,18 @@ fn cli_agent_session_seed_poll_never_overwrites_a_structured_identity() {
     };
 
     assert_eq!(
-        unidentified_cli_agent_provider(Some(&session)),
+        cli_agent_registry_poll_provider(Some(&session)),
         Some(crate::agent_resume::AgentResumeProvider::Claude)
     );
     session.session_context.session_id = Some("structured-session".to_owned());
-    assert_eq!(unidentified_cli_agent_provider(Some(&session)), None);
+    assert_eq!(cli_agent_registry_poll_provider(Some(&session)), None);
+    session.agent = crate::terminal::CLIAgent::Codex;
+    assert_eq!(
+        cli_agent_registry_poll_provider(Some(&session)),
+        Some(crate::agent_resume::AgentResumeProvider::Codex)
+    );
+    session.remote_host = Some("remote".into());
+    assert_eq!(cli_agent_registry_poll_provider(Some(&session)), None);
 }
 
 #[test]
@@ -3843,7 +3850,7 @@ fn reopening_an_open_cli_agent_conversation_focuses_it_without_launching_a_dupli
 }
 
 #[test]
-fn test_tab_context_menu_omits_unavailable_or_unsupported_session_ids() {
+fn test_tab_context_menu_explains_unavailable_and_omits_unsupported_session_ids() {
     let _vertical_tabs_guard = FeatureFlag::VerticalTabs.override_enabled(true);
 
     App::test((), |mut app| async move {
@@ -3881,8 +3888,17 @@ fn test_tab_context_menu_omits_unavailable_or_unsupported_session_ids() {
                     false,
                     ctx,
                 );
-                assert!(!menu_contains_item(&items, "Copy Claude Code session ID"));
-                assert!(!menu_contains_item(&items, "Copy Codex session ID"));
+                let copy_session = items.iter().find_map(|item| {
+                    item.fields()
+                        .filter(|fields| fields.label().ends_with(" session ID"))
+                });
+                if agent == crate::terminal::CLIAgent::Gemini {
+                    assert!(copy_session.is_none());
+                } else {
+                    let item = copy_session.expect("both providers keep the same copy menu");
+                    assert!(item.is_disabled());
+                    assert!(item.on_select_action().is_none());
+                }
             });
         }
     });

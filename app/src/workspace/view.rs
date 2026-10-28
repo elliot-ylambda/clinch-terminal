@@ -1114,10 +1114,17 @@ fn cli_agent_session_seed_poll_delay(attempt: u32) -> Duration {
 }
 
 #[cfg(feature = "local_tty")]
-fn unidentified_cli_agent_provider(
+fn cli_agent_registry_poll_provider(
     session: Option<&crate::terminal::cli_agent_sessions::CLIAgentSession>,
 ) -> Option<crate::agent_resume::AgentResumeProvider> {
     let session = session?;
+    if session.is_remote() {
+        return None;
+    }
+    // Codex's native /fork and /resume can change the conversation in the same process.
+    if session.agent == crate::terminal::CLIAgent::Codex {
+        return Some(crate::agent_resume::AgentResumeProvider::Codex);
+    }
     if session
         .session_context
         .session_id
@@ -4374,7 +4381,7 @@ impl Workspace {
     ) {
         let should_poll = session_context_enabled()
             && self.workspace_contains_terminal_view(terminal_view_id, ctx)
-            && unidentified_cli_agent_provider(
+            && cli_agent_registry_poll_provider(
                 CLIAgentSessionsModel::as_ref(ctx).session(terminal_view_id),
             )
             .is_some();
@@ -4410,7 +4417,7 @@ impl Workspace {
     ) {
         if !self.cli_agent_session_seed_poll_is_current(terminal_view_id, &token)
             || !self.workspace_contains_terminal_view(terminal_view_id, ctx)
-            || unidentified_cli_agent_provider(
+            || cli_agent_registry_poll_provider(
                 CLIAgentSessionsModel::as_ref(ctx).session(terminal_view_id),
             )
             .is_none()
@@ -4424,6 +4431,9 @@ impl Workspace {
             self.stop_cli_agent_session_seed_poll(terminal_view_id, &token);
             return;
         };
+        let expected_key = CLIAgentSessionsModel::as_ref(ctx)
+            .session(terminal_view_id)
+            .and_then(|session| session.session_key());
         let delay = cli_agent_session_seed_poll_delay(attempt);
         let callback_token = token.clone();
         ctx.spawn(
@@ -4431,11 +4441,7 @@ impl Workspace {
                 if !delay.is_zero() {
                     Timer::after(delay).await;
                 }
-                unblock(move || {
-                    let command = crate::agent_resume::read_on_restore_command(&pane_uuid)?;
-                    crate::agent_resume::agent_session_seed_from_restore_command(&command)
-                })
-                .await
+                unblock(move || crate::agent_resume::read_session_seed(&pane_uuid)).await
             },
             move |workspace, seed, ctx| {
                 if !workspace
@@ -4448,25 +4454,30 @@ impl Workspace {
                     return;
                 }
 
-                let Some(expected_provider) = unidentified_cli_agent_provider(
+                let Some(expected_provider) = cli_agent_registry_poll_provider(
                     CLIAgentSessionsModel::as_ref(ctx).session(terminal_view_id),
                 ) else {
                     workspace.stop_cli_agent_session_seed_poll(terminal_view_id, &callback_token);
                     return;
                 };
-                if let Some((provider, session_id)) =
-                    seed.filter(|(provider, _)| *provider == expected_provider)
-                {
-                    workspace.stop_cli_agent_session_seed_poll(terminal_view_id, &callback_token);
-                    CLIAgentSessionsModel::handle(ctx).update(ctx, |model, ctx| {
-                        model.seed_resumed_session_if_unidentified(
-                            terminal_view_id,
-                            provider,
-                            session_id,
-                            ctx,
-                        );
-                    });
-                    return;
+                let current_key = CLIAgentSessionsModel::as_ref(ctx)
+                    .session(terminal_view_id)
+                    .and_then(|session| session.session_key());
+                // A structured event received during the worker read is newer than this snapshot.
+                if current_key == expected_key {
+                    if let Some((provider, session_id, live_owner)) =
+                        seed.filter(|(provider, _, _)| *provider == expected_provider)
+                    {
+                        CLIAgentSessionsModel::handle(ctx).update(ctx, |model, ctx| {
+                            model.reconcile_registry_session(
+                                terminal_view_id,
+                                provider,
+                                session_id,
+                                live_owner,
+                                ctx,
+                            );
+                        });
+                    }
                 }
 
                 workspace.poll_cli_agent_session_seed(
@@ -4511,7 +4522,7 @@ impl Workspace {
 
         // Provider hooks publish durable identity to the pane registry. Interactive pickers can
         // do that long after command detection emits `Started`, so keep reconciling for the
-        // lifetime of an unidentified session instead of taking a one-time snapshot.
+        // lifetime of an unidentified session. Codex also needs updates after native /fork.
         #[cfg(feature = "local_tty")]
         if belongs_to_workspace {
             match event {
@@ -9657,6 +9668,15 @@ impl Workspace {
             pane_group.fork_launch_for_terminal_view(terminal_view_id, ctx)
         }) else {
             log::warn!("fork: no forkable CLI-agent session for the focused pane");
+            self.toast_stack.update(ctx, |toast_stack, ctx| {
+                toast_stack.add_ephemeral_toast(
+                    DismissibleToast::error(
+                        "Cannot fork yet: this tab's conversation could not be identified. Try again shortly, or resume the conversation using its session ID.".to_owned(),
+                    ),
+                    ctx,
+                );
+            });
+            ctx.notify();
             return;
         };
 

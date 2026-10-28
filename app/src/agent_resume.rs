@@ -197,6 +197,92 @@ struct RegistryEntry {
     command: String,
     #[serde(default)]
     cwd: Option<String>,
+    #[serde(default)]
+    owner_pid: Option<String>,
+    #[serde(default)]
+    owner_tty: Option<String>,
+}
+
+/// Read on a worker: only a live, pane-local Codex owner may replace an identified session.
+/// Saved entries from a previous process remain useful for initial restore seeding.
+#[cfg(feature = "local_tty")]
+pub(crate) fn read_session_seed(uuid: &[u8]) -> Option<(AgentResumeProvider, String, bool)> {
+    let dir = registry_dir()?;
+    let uuid_hex = hex::encode(uuid);
+    let entry = read_entry_in(&dir, &uuid_hex)?;
+    let (provider, id) = agent_session_seed_from_restore_command(&entry.command)?;
+    let captured_at = std::fs::metadata(dir.join(format!("{uuid_hex}.json")))
+        .and_then(|metadata| metadata.modified())
+        .ok();
+    let live_owner = provider == AgentResumeProvider::Codex
+        && codex_registry_owner_is_live(&entry, &uuid_hex, captured_at);
+    Some((provider, id, live_owner))
+}
+
+#[cfg(feature = "local_tty")]
+fn codex_registry_owner_is_live(
+    entry: &RegistryEntry,
+    uuid_hex: &str,
+    captured_at: Option<SystemTime>,
+) -> bool {
+    let Some(pid) = entry
+        .owner_pid
+        .as_deref()
+        .and_then(|pid| pid.parse::<u32>().ok())
+    else {
+        return false;
+    };
+    let Some(tty) = entry
+        .owner_tty
+        .as_deref()
+        .filter(|tty| !tty.is_empty() && *tty != "??")
+    else {
+        return false;
+    };
+    let pid = sysinfo::Pid::from_u32(pid);
+    let mut system = sysinfo::System::new();
+    system.refresh_processes_specifics(
+        sysinfo::ProcessesToUpdate::Some(&[pid]),
+        true,
+        sysinfo::ProcessRefreshKind::nothing()
+            .with_exe(sysinfo::UpdateKind::Always)
+            .with_cmd(sysinfo::UpdateKind::Always)
+            .with_environ(sysinfo::UpdateKind::Always),
+    );
+    system.process(pid).is_some_and(|process| {
+        captured_at
+            .and_then(|time| time.duration_since(SystemTime::UNIX_EPOCH).ok())
+            .is_some_and(|time| process.start_time() > 0 && process.start_time() <= time.as_secs())
+            && codex_registry_owner_matches(
+                process.exe(),
+                process.cmd(),
+                process.environ(),
+                uuid_hex,
+                tty,
+            )
+    })
+}
+
+fn codex_registry_owner_matches(
+    executable: Option<&Path>,
+    args: &[std::ffi::OsString],
+    environment: &[std::ffi::OsString],
+    uuid_hex: &str,
+    tty: &str,
+) -> bool {
+    executable
+        .and_then(Path::file_name)
+        .is_some_and(|name| name == "codex")
+        && !args.iter().any(|arg| arg == "app-server")
+        && environment
+            .iter()
+            .any(|value| value == format!("WARP_TERMINAL_SESSION_UUID={uuid_hex}").as_str())
+        && environment.iter().any(|value| {
+            value
+                .to_str()
+                .and_then(|value| value.strip_prefix("WARP_TTY="))
+                .is_some_and(|value| value.strip_prefix("/dev/").unwrap_or(value) == tty)
+        })
 }
 
 const CLINCH_RESUME_LAUNCHER: &str = "clinch_agent_resume_launch";
@@ -1162,6 +1248,51 @@ fn latest_journal_op_for_pane(dir: &Path, uuid_hex: &str) -> Option<String> {
 pub fn read_fork_launch(uuid: &[u8]) -> Option<ForkLaunch> {
     let dir = registry_dir()?;
     read_fork_launch_in(&dir, &hex::encode(uuid))
+}
+
+/// Codex can recover settings from its exact transcript when capture was missed.
+/// Conflicting identities must first be reconciled by the background owner check; neither
+/// the registry nor a previously seeded UI identity alone establishes which is newer.
+pub fn fork_launch_for_live_session(
+    uuid: &[u8],
+    live_session: Option<(AgentResumeProvider, &str)>,
+) -> Option<ForkLaunch> {
+    let entry = registry_dir().and_then(|dir| read_entry_in(&dir, &hex::encode(uuid)));
+    resolve_fork_launch(entry, live_session)
+}
+
+fn resolve_fork_launch(
+    entry: Option<RegistryEntry>,
+    live_session: Option<(AgentResumeProvider, &str)>,
+) -> Option<ForkLaunch> {
+    match (entry, live_session) {
+        (Some(entry), Some((provider, id)))
+            if agent_session_seed_from_restore_command(&entry.command).is_some_and(
+                |(recorded_provider, recorded_id)| {
+                    recorded_provider == provider && recorded_id == id
+                },
+            ) =>
+        {
+            Some(ForkLaunch {
+                command: derive_fork_command(&entry.command)?,
+                cwd: entry.cwd,
+            })
+        }
+        (None, Some((AgentResumeProvider::Codex, id))) => Some(ForkLaunch {
+            command: derive_fork_command(&build_remote_resume_command(
+                AgentResumeProvider::Codex,
+                id,
+            )?)?,
+            cwd: None,
+        }),
+        // Claude needs the captured launch settings; never borrow another conversation's.
+        (_, Some(_)) => None,
+        (Some(entry), None) => Some(ForkLaunch {
+            command: derive_fork_command(&entry.command)?,
+            cwd: entry.cwd,
+        }),
+        (None, None) => None,
+    }
 }
 
 /// A past CLI-agent conversation registered to a Clinch pane. The append-only journal

@@ -446,6 +446,81 @@ fn no_fork_command_for_unknown() {
     );
 }
 
+#[test]
+fn codex_fork_uses_live_identity_without_capture_and_rejects_stale_flags() {
+    let resolve = |entry| {
+        resolve_fork_launch(entry, Some((AgentResumeProvider::Codex, "live-child")))
+            .expect("a known Codex conversation can fork without a registry")
+    };
+    let expected = format!(
+        "{} fork live-child",
+        AgentResumeProvider::Codex.launch_command_prefix(true)
+    );
+    assert_eq!(resolve(None).command, expected);
+    let stale = resolve_fork_launch(
+        Some(RegistryEntry {
+            command: "clinch_agent_resume_launch codex stale-parent --model wrong-model".into(),
+            cwd: Some("/unrelated/directory".into()),
+            owner_pid: None,
+            owner_tty: None,
+        }),
+        Some((AgentResumeProvider::Codex, "live-child")),
+    );
+    assert!(
+        stale.is_none(),
+        "conflicts wait for verified owner reconciliation"
+    );
+    let newer_child = RegistryEntry {
+        command: "clinch_agent_resume_launch codex live-child".into(),
+        cwd: None,
+        owner_pid: Some("123".into()),
+        owner_tty: Some("ttys-test".into()),
+    };
+    assert!(resolve_fork_launch(
+        Some(newer_child),
+        Some((AgentResumeProvider::Codex, "stale-parent"))
+    )
+    .is_none());
+    let matching = resolve(Some(RegistryEntry {
+        command: "clinch_agent_resume_launch codex live-child --model original-model".into(),
+        cwd: Some("/correct/directory".into()),
+        owner_pid: None,
+        owner_tty: None,
+    }));
+    assert_eq!(
+        matching.command,
+        format!("{expected} --model original-model")
+    );
+    assert_eq!(matching.cwd.as_deref(), Some("/correct/directory"));
+    assert!(resolve_fork_launch(None, None).is_none());
+    assert!(resolve_fork_launch(None, Some((AgentResumeProvider::Codex, "bad;id"))).is_none());
+}
+
+#[test]
+fn claude_fork_retains_matching_settings_and_rejects_another_conversation() {
+    let entry = || RegistryEntry {
+        command: "clinch_agent_resume_launch claude saved-id --permission-mode plan --model opus"
+            .into(),
+        cwd: Some("/source".into()),
+        owner_pid: None,
+        owner_tty: None,
+    };
+    let launch = resolve_fork_launch(
+        Some(entry()),
+        Some((AgentResumeProvider::Claude, "saved-id")),
+    )
+    .unwrap();
+    assert_eq!(
+        launch.command,
+        "claude --resume saved-id --permission-mode plan --model opus --fork-session"
+    );
+    assert!(resolve_fork_launch(
+        Some(entry()),
+        Some((AgentResumeProvider::Claude, "different-id"))
+    )
+    .is_none());
+}
+
 fn conversation(
     agent: &str,
     session_id: &str,
@@ -1479,4 +1554,57 @@ fn toolbelt_learning_rejects_symlinked_and_oversized_stores() {
     let file = std::fs::File::create(&store).unwrap();
     file.set_len(MAX_TOOLBELT_LEARNING_BYTES + 1).unwrap();
     assert!(learned_toolbelt_suggestions_in(dir.path()).is_empty());
+}
+
+#[test]
+fn codex_registry_owner_requires_exact_pane_process_and_tty() {
+    use std::ffi::OsString;
+    let environment = vec![
+        OsString::from("WARP_TERMINAL_SESSION_UUID=abcd"),
+        OsString::from("WARP_TTY=/dev/ttys001"),
+    ];
+    let executable = Some(Path::new("/native/codex"));
+    let args = vec![OsString::from("codex"), OsString::from("--no-daemon")];
+    assert!(codex_registry_owner_matches(
+        executable,
+        &args,
+        &environment,
+        "abcd",
+        "ttys001"
+    ));
+    assert!(!codex_registry_owner_matches(
+        executable,
+        &args,
+        &environment,
+        "other-pane",
+        "ttys001"
+    ));
+    assert!(!codex_registry_owner_matches(
+        executable,
+        &args,
+        &environment,
+        "abcd",
+        "ttys002"
+    ));
+    assert!(!codex_registry_owner_matches(
+        Some(Path::new("/bin/sh")),
+        &args,
+        &environment,
+        "abcd",
+        "ttys001"
+    ));
+    assert!(!codex_registry_owner_matches(
+        executable,
+        &[OsString::from("codex"), OsString::from("app-server")],
+        &environment,
+        "abcd",
+        "ttys001"
+    ));
+    assert!(!codex_registry_owner_matches(
+        executable,
+        &args,
+        &[],
+        "abcd",
+        "ttys001"
+    ));
 }

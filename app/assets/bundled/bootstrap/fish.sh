@@ -762,6 +762,8 @@ esac
     end
 end
 
+#include bundled/bootstrap/clinch_codex.fish
+
 warp_precmd
 
 # Print the MotD if this is a login shell. Normally, login(1) or pam_motd(8)

@@ -57,6 +57,30 @@ HOME="$TMP/home" "$HERE/clinch_agent_resume_launch" codex missing-session --mode
 [[ "$(< "$TMP/argv")" == $'--no-daemon\n--\n--no-daemon' ]] \
   || { echo 'FAIL: prompt mistaken for no-daemon option'; exit 1; }
 
+# Explicit connections and the shared-server overview keep their native semantics.
+"$HERE/clinch_codex_launch" --remote unix:///tmp/codex.sock
+[[ "$(< "$TMP/argv")" == $'--remote\nunix:///tmp/codex.sock' ]] \
+  || { echo 'FAIL: remote connection forced into a pane process'; exit 1; }
+"$HERE/clinch_codex_launch" --model model-a agents
+[[ "$(< "$TMP/argv")" == $'--model\nmodel-a\nagents' ]] \
+  || { echo 'FAIL: agents overview lost shared-server access'; exit 1; }
+"$HERE/clinch_codex_launch" --model agents -- 'agents'
+[[ "$(< "$TMP/argv")" == $'--no-daemon\n--model\nagents\n--\nagents' ]] \
+  || { echo 'FAIL: model or prompt mistaken for agents subcommand'; exit 1; }
+
+"$HERE/clinch_codex_launch" resume good-session --remote unix:///tmp/codex.sock
+[[ "$(< "$TMP/argv")" == $'resume\ngood-session\n--remote\nunix:///tmp/codex.sock' ]] \
+  || { echo 'FAIL: remote resume forced into a pane process'; exit 1; }
+"$HERE/clinch_codex_launch" fork good-session --remote=unix:///tmp/codex.sock
+[[ "$(< "$TMP/argv")" == $'fork\ngood-session\n--remote=unix:///tmp/codex.sock' ]] \
+  || { echo 'FAIL: remote fork forced into a pane process'; exit 1; }
+"$HERE/clinch_codex_launch" resume good-session agents
+[[ "$(< "$TMP/argv")" == $'--no-daemon\nresume\ngood-session\nagents' ]] \
+  || { echo 'FAIL: resume prompt mistaken for agents subcommand'; exit 1; }
+"$HERE/clinch_codex_launch" fork good-session -- --remote
+[[ "$(< "$TMP/argv")" == $'--no-daemon\nfork\ngood-session\n--\n--remote' ]] \
+  || { echo 'FAIL: fork prompt mistaken for remote option'; exit 1; }
+
 for capability in old failed; do
   printf '%s\n' "$capability" > "$TMP/capability"
   HOME="$TMP/home" clinch_agent_resume_launch codex good-session --model old-model

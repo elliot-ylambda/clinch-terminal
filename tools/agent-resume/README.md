@@ -47,9 +47,15 @@ capture (agent SessionStart hooks)          replay (Rust, in Clinch)
   add `--no-daemon` when the installed CLI supports it. Codex's shared background server
   inherits its first client's pane environment; using it for another pane makes hook
   capture unsafe. Older CLIs retain their original arguments. The outer-agent guard
-  remains intact, and no global Codex setting or user command is replaced. Manually
-  launched Codex sessions need `codex --no-daemon` or `clinch_codex_launch` for the same
-  guarantee.
+  remains intact. While capture is enabled, Clinch's local bash/zsh/fish bootstrap also
+  routes plain interactive `codex` commands through this launcher. Existing user aliases
+  and functions, noninteractive scripts, and other terminals remain unchanged. Explicit
+  remote connections and the `agents` overview retain their shared-server behavior.
+- **Copy and fork use the live conversation.** Both providers expose the same tab menu.
+  An unidentified session keeps a disabled copy row with an explanation. Codex forks can
+  use a known live ID even if the registry is missing. Background polling follows native
+  Codex forks only after verifying the recorded process owns this pane and tty. Conflicting
+  identities wait for that check; a missing fork target produces visible feedback.
 - **App startup restores every saved conversation in place.** One app-wide queue admits
   two agent starts at a time across all projects and windows. No tab activation is required.
   The global progress row and each queued/starting tab show restoration state; successful

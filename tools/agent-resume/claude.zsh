@@ -51,8 +51,30 @@ claude() {
 # client's pane UUID and tty. Hooks from another pane therefore cannot safely capture its
 # session. Keep Clinch-owned launches in the TUI's own process. Probe the executable rather
 # than assuming a version: older Codex builds have no shared daemon or --no-daemon flag.
-# Do not replace the user's `codex` command or change global Codex configuration.
+# Shell bootstrap also routes ordinary interactive Codex launches here, within Clinch only.
+# Explicit remote connections and the agents overview require the shared server.
 clinch_agent_resume_codex() {
+  local skip_next=0 first_positional=1 candidate
+  for candidate in "$@"; do
+    if (( skip_next )); then skip_next=0; continue; fi
+    case "$candidate" in
+      --) break ;;
+      --remote|--remote=*)
+        command codex "$@"
+        return $?
+        ;;
+      -c|--config|-m|--model|-p|--profile|-C|--cd|-s|--sandbox|-a|--ask-for-approval|-i|--image|--enable|--disable|--local-provider|--add-dir|--remote-auth-token-env)
+        skip_next=1 ;;
+      -*) ;;
+      *)
+        if (( first_positional )) && [[ "$candidate" == agents ]]; then
+          command codex "$@"
+          return $?
+        fi
+        first_positional=0
+        ;;
+    esac
+  done
   local codex_help arg
   codex_help="$(command codex --help 2>/dev/null)" || codex_help=""
   # Reconcile stale startup flags with the exact conversation's latest durable settings.

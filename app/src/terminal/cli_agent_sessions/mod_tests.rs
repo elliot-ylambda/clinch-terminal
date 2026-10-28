@@ -2018,3 +2018,83 @@ fn an_idle_title_while_blocked_never_ends_the_wait() {
         });
     });
 }
+
+#[test]
+fn codex_registry_reconciliation_follows_verified_child_and_preserves_pane_state() {
+    ChannelState::set(ChannelState::new(
+        Channel::Local,
+        ChannelConfig::no_backend(AppId::new("sh", "clinch", "ClinchDev"), "clinch-test.log"),
+    ));
+    App::test((), |mut app| async move {
+        let sessions = app.add_model(|_| CLIAgentSessionsModel::new());
+        let view_id = EntityId::new();
+        sessions.update(&mut app, |model, ctx| {
+            let mut parent = idle_test_session(CLIAgent::Codex);
+            parent.session_context.session_id = Some("parent".into());
+            parent.session_context.transcript_path = Some("/old-parent.jsonl".into());
+            parent.session_context.query = Some("parent prompt".into());
+            parent.draft_text = Some("unsent draft".into());
+            parent.custom_command_prefix = Some("custom codex".into());
+            let status = parent.status.clone();
+            model.set_session(view_id, parent, ctx);
+            model.reconcile_registry_session(
+                view_id,
+                AgentResumeProvider::Codex,
+                "child".into(),
+                false,
+                ctx,
+            );
+            assert_eq!(
+                model
+                    .session(view_id)
+                    .unwrap()
+                    .session_context
+                    .session_id
+                    .as_deref(),
+                Some("parent")
+            );
+            model.reconcile_registry_session(
+                view_id,
+                AgentResumeProvider::Claude,
+                "other-provider".into(),
+                true,
+                ctx,
+            );
+            assert_eq!(
+                model
+                    .session(view_id)
+                    .unwrap()
+                    .session_context
+                    .session_id
+                    .as_deref(),
+                Some("parent")
+            );
+            model.reconcile_registry_session(
+                view_id,
+                AgentResumeProvider::Codex,
+                "child".into(),
+                true,
+                ctx,
+            );
+            let child = model.session(view_id).unwrap();
+            assert_eq!(child.session_context.session_id.as_deref(), Some("child"));
+            assert_eq!(child.session_context.transcript_path, None);
+            assert_eq!(child.session_context.query, None);
+            assert_eq!(child.status, status);
+            assert_eq!(child.draft_text.as_deref(), Some("unsent draft"));
+            assert_eq!(child.custom_command_prefix.as_deref(), Some("custom codex"));
+            let generation = child.prompt_history_generation;
+            model.reconcile_registry_session(
+                view_id,
+                AgentResumeProvider::Codex,
+                "child".into(),
+                true,
+                ctx,
+            );
+            assert_eq!(
+                model.session(view_id).unwrap().prompt_history_generation,
+                generation
+            );
+        });
+    });
+}

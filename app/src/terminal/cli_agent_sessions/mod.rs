@@ -1038,6 +1038,44 @@ impl CLIAgentSessionsModel {
         self.seed_resumed_session(terminal_view_id, provider, session_id, ctx);
     }
 
+    /// Registry entries may refresh Codex identity only after their live pane owner was checked
+    /// on a worker. Legacy entries retain the weaker, fill-only restore behavior.
+    pub(crate) fn reconcile_registry_session(
+        &mut self,
+        terminal_view_id: EntityId,
+        provider: AgentResumeProvider,
+        session_id: String,
+        live_owner: bool,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        let Some(session) = self.sessions.get_mut(&terminal_view_id) else {
+            return;
+        };
+        if session.agent != agent_for_provider(provider) || session.is_remote() {
+            return;
+        }
+        if !live_owner || provider != AgentResumeProvider::Codex {
+            self.seed_resumed_session_if_unidentified(terminal_view_id, provider, session_id, ctx);
+            return;
+        }
+        if session_id.trim().is_empty()
+            || session.session_context.session_id.as_deref() == Some(session_id.as_str())
+        {
+            return;
+        }
+        session.session_context.transcript_path = None;
+        session.session_context.summary = None;
+        session.session_context.query = None;
+        session.session_context.response = None;
+        session.session_context.tool_name = None;
+        session.session_context.tool_input_preview = None;
+        self.seed_resumed_session(terminal_view_id, provider, session_id, ctx);
+        ctx.emit(CLIAgentSessionsModelEvent::SessionUpdated {
+            terminal_view_id,
+            agent: agent_for_provider(provider),
+        });
+    }
+
     fn start_prompt_history_load(
         &mut self,
         terminal_view_id: EntityId,

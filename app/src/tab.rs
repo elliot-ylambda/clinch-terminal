@@ -433,19 +433,23 @@ impl TabData {
 
         if let Some(terminal_view) = terminal_view {
             let terminal_view = terminal_view.as_ref(ctx);
-            if let Some((agent_name, session_id)) = CLIAgentSessionsModel::as_ref(ctx)
+            if let Some(session) = CLIAgentSessionsModel::as_ref(ctx)
                 .session(terminal_view.id())
-                .and_then(|session| {
-                    session
-                        .session_key()
-                        .map(|key| (session.agent.display_name(), key.session_id))
-                })
+                .filter(|session| matches!(session.agent, CLIAgent::Claude | CLIAgent::Codex))
             {
-                Self::push_copy_metadata_menu_item(
-                    &mut menu_items,
-                    format!("Copy {agent_name} session ID"),
-                    Some(session_id),
-                );
+                let item = MenuItemFields::new(format!(
+                    "Copy {} session ID",
+                    session.agent.display_name()
+                ));
+                menu_items.push(match session.session_key() {
+                    Some(key) => item
+                        .with_on_select_action(WorkspaceAction::CopyTextToClipboard(key.session_id))
+                        .into_item(),
+                    None => item
+                        .with_disabled(true)
+                        .with_tooltip("The conversation has not been identified yet. Resume it using its session ID to reconnect this tab.")
+                        .into_item(),
+                });
             }
             Self::push_copy_metadata_menu_item(&mut menu_items, title_label, title);
             Self::push_copy_metadata_menu_item(

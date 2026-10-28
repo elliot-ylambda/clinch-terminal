@@ -1195,6 +1195,8 @@ esac
 
   local -a shell_plugins
 
+#include bundled/bootstrap/clinch_codex.sh
+
   if [[ ${precmd_functions[(I)_p9k_precmd]} != 0 ]]; then
     # The variable P9K_VERSION was added in the first version of p10k that
     # supports Warp, so if it is non-empty, the user is on a supported version.

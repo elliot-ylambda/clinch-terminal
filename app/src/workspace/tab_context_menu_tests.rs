@@ -414,6 +414,41 @@ fn tab_menu_copies_clicked_background_pane_without_changing_active_pane() {
 }
 
 #[test]
+fn claude_and_codex_have_identical_tab_menus_before_and_after_identification() {
+    let _vertical_tabs = FeatureFlag::VerticalTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        let workspace = setup_workspace(&mut app);
+        let terminal = workspace.read(&app, |workspace, ctx| {
+            workspace.active_terminal_view_handle(ctx).unwrap()
+        });
+        for id in ["", "identified-conversation"] {
+            let mut signatures = Vec::new();
+            for agent in [CLIAgent::Claude, CLIAgent::Codex] {
+                seed_session(terminal.id(), agent, id, &mut app);
+                workspace.update(&mut app, |workspace, ctx| {
+                    workspace.toggle_tab_right_click_menu(
+                        0,
+                        TabContextMenuAnchor::Pointer(vec2f(80., 100.)),
+                        ctx,
+                    );
+                });
+                signatures.push(workspace.read(&app, |workspace, ctx| {
+                    menu_signature(workspace.tab_right_click_menu.as_ref(ctx).items())
+                        .into_iter()
+                        .map(|row| {
+                            row.replace("Claude Code", "Agent")
+                                .replace("Codex", "Agent")
+                        })
+                        .collect::<Vec<_>>()
+                }));
+                dispatch_menu_action(&workspace, &mut app, MenuAction::Close(false));
+            }
+            assert_eq!(signatures[0], signatures[1]);
+        }
+    });
+}
+
+#[test]
 fn tab_menu_dismissal_restores_focus_but_rename_keeps_its_editor_focused() {
     let _vertical_tabs = FeatureFlag::VerticalTabs.override_enabled(true);
     App::test((), |mut app| async move {

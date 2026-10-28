@@ -1292,6 +1292,8 @@ esac
         unset WARP_PATH_APPEND
     fi
 
+#include bundled/bootstrap/clinch_codex.sh
+
     # Read through shell options to determine if the user has enabled vi mode.
     vi_mode_enabled=0
     IFS=':' read -ra SHELLOPT <<< "$SHELLOPTS"
