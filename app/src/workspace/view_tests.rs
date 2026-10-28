@@ -3651,7 +3651,7 @@ fn menu_contains_item(items: &[MenuItem<WorkspaceAction>], label: &str) -> bool 
         .any(|item| item.is_approximately_same_item_as(&MenuItemFields::new(label).into_item()))
 }
 
-pub(super) fn cli_agent_session_with_id(
+pub(crate) fn cli_agent_session_with_id(
     agent: crate::terminal::CLIAgent,
     session_id: Option<&str>,
 ) -> CLIAgentSession {

@@ -1678,8 +1678,8 @@ impl TerminalView {
         {
             self.show_error_toast(
                 format!(
-                    "Clinch has not identified this conversation yet. Send a message in {}, \
-                     then try Transfer again.",
+                    "Clinch has not identified this conversation yet. Wait a moment and try again, \
+                     or resume {} using the conversation's session ID.",
                     source_agent.display_name()
                 ),
                 ctx,

@@ -103,6 +103,166 @@ fn transfer_requires_supported_agent_and_conversation_reference() {
     .is_none());
 }
 
+/// A freshly captured bare Codex launch becomes transferable through the real background
+/// registry poll, without typing another prompt or replacing its source tab.
+#[test]
+#[cfg(feature = "local_tty")]
+fn captured_codex_transfers_after_background_identification_without_a_prompt() {
+    use warp_core::channel::{Channel, ChannelConfig, ChannelState};
+    use warp_core::AppId;
+
+    use crate::terminal::cli_agent_sessions::CLIAgentSessionsModelEvent;
+    use crate::terminal::model::block::BlockMetadata;
+    use crate::terminal::model::session::SessionInfo;
+    use crate::workspace::view::tests::{
+        cli_agent_session_with_id, initialize_app, mock_workspace,
+    };
+
+    const ID: &str = "019fbab0-2150-7f93-9b10-7195f6c800e8";
+    let registry = tempfile::tempdir().unwrap();
+    std::env::set_var("WARP_AGENT_RESUME_DIR", registry.path());
+    std::env::set_var("CODEX_HOME", registry.path().join("codex"));
+    ChannelState::set(ChannelState::new(
+        Channel::Local,
+        ChannelConfig::no_backend(AppId::new("sh", "clinch", "ClinchDev"), "clinch-test.log"),
+    ));
+
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+        let (source_tab, source, initial_tabs) = workspace.read(&app, |workspace, ctx| {
+            let tab = workspace
+                .get_pane_group_view(workspace.active_tab_index())
+                .unwrap()
+                .clone();
+            let terminal = tab
+                .read(ctx, |pane_group, ctx| pane_group.active_session_view(ctx))
+                .unwrap();
+            (tab, terminal, workspace.tab_count())
+        });
+        let uuid = source_tab.read(&app, |pane_group, ctx| {
+            pane_group
+                .agent_session_uuid_for_terminal_view(source.id(), ctx)
+                .unwrap()
+        });
+        std::fs::write(
+            registry.path().join(format!("{}.json", hex::encode(uuid))),
+            serde_json::json!({
+                "command": format!("clinch_agent_resume_launch codex {ID}"),
+                "cwd": "/tmp",
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let (window_id, footer) = source.update(&mut app, |view, ctx| {
+            {
+                let mut model = view.model.lock();
+                model.init_shell(InitShellValue {
+                    session_id: 0.into(),
+                    shell: "zsh".into(),
+                    ..Default::default()
+                });
+                model.bootstrapped(BootstrappedValue {
+                    shell: "zsh".into(),
+                    ..Default::default()
+                });
+                model.simulate_long_running_block("codex", "");
+            }
+            view.active_block_metadata =
+                Some(BlockMetadata::new(Some(0.into()), Some("/tmp".into())));
+            view.sessions.update(ctx, |sessions, _| {
+                sessions.register_session_for_test(
+                    SessionInfo::new_for_test().with_shell_type(ShellType::Zsh),
+                );
+            });
+            (
+                ctx.window_id(),
+                view.use_agent_footer.as_ref(ctx).agent_input_footer.clone(),
+            )
+        });
+        let source_id = source.id();
+        let sessions = CLIAgentSessionsModel::handle(&app);
+        let (identified_tx, identified_rx) = async_channel::bounded(1);
+        app.update(|ctx| {
+            ctx.subscribe_to_model(&sessions, move |model, event, ctx| {
+                let source_updated = matches!(
+                    event,
+                    CLIAgentSessionsModelEvent::SessionUpdated { terminal_view_id, .. }
+                        if *terminal_view_id == source_id
+                );
+                let identified = model.read(ctx, |model, _| {
+                    model
+                        .session(source_id)
+                        .and_then(|session| session.session_context.session_id.as_deref())
+                        == Some(ID)
+                });
+                if source_updated && identified {
+                    let _ = identified_tx.try_send(());
+                }
+            });
+        });
+        sessions.update(&mut app, |model, ctx| {
+            model.set_session(
+                source_id,
+                cli_agent_session_with_id(CLIAgent::Codex, None),
+                ctx,
+            );
+        });
+        match futures::future::select(
+            Box::pin(identified_rx.recv()),
+            Box::pin(Timer::after(Duration::from_secs(10))),
+        )
+        .await
+        {
+            futures::future::Either::Left((result, _)) => {
+                result.expect("identity listener remains connected")
+            }
+            futures::future::Either::Right(_) => {
+                panic!("background poll did not identify captured Codex")
+            }
+        }
+
+        let transfers = Rc::new(RefCell::new(Vec::new()));
+        let captured = transfers.clone();
+        app.update(|ctx| {
+            ctx.subscribe_to_view(&source, move |_, event, _| {
+                if let super::super::Event::TransferCliAgentSession { command, .. } = event {
+                    captured.borrow_mut().push(command.clone());
+                }
+            });
+            ctx.dispatch_typed_action_for_view(
+                window_id,
+                footer.id(),
+                &AgentInputFooterAction::TransferAgent,
+            );
+        });
+        assert_eq!(transfers.borrow().len(), 1);
+        assert!(transfers.borrow()[0].starts_with("claude --dangerously-skip-permissions "));
+        assert!(transfers.borrow()[0].contains(ID));
+        workspace.read(&app, |workspace, ctx| {
+            assert_eq!(workspace.tab_count(), initial_tabs + 1);
+            assert!(workspace
+                .get_pane_group_view(0)
+                .is_some_and(|tab| tab.id() == source_tab.id()));
+            assert!(source_tab
+                .as_ref(ctx)
+                .contains_terminal_view(source_id, ctx));
+        });
+        source.read(&app, |view, ctx| {
+            assert_eq!(view.active_long_running_command().as_deref(), Some("codex"));
+            assert_eq!(
+                CLIAgentSessionsModel::as_ref(ctx)
+                    .session(source_id)
+                    .unwrap()
+                    .session_context
+                    .session_id
+                    .as_deref(),
+                Some(ID)
+            );
+        });
+    });
+}
+
 /// Exercise the footer action itself, including a pane whose resume identity has not yet
 /// reached the UI. Nextest isolates the Clinch channel and capture-directory overrides.
 #[test]

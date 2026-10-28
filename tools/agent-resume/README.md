@@ -51,11 +51,14 @@ capture (agent SessionStart hooks)          replay (Rust, in Clinch)
   routes plain interactive `codex` commands through this launcher. Existing user aliases
   and functions, noninteractive scripts, and other terminals remain unchanged. Explicit
   remote connections and the `agents` overview retain their shared-server behavior.
-- **Copy and fork use the live conversation.** Both providers expose the same tab menu.
+- **Copy, fork, and transfer use the live conversation.** Both providers expose the same tab menu.
   An unidentified session keeps a disabled copy row with an explanation. Codex forks can
   use a known live ID even if the registry is missing. Background polling follows native
   Codex forks only after verifying the recorded process owns this pane and tty. Conflicting
   identities wait for that check; a missing fork target produces visible feedback.
+  Transfer uses the same background-captured identity and does not require another prompt.
+  Uncaptured older sessions must be resumed by their exact ID; sending a message alone cannot
+  reliably attach a shared-daemon session to its pane.
 - **App startup restores every saved conversation in place.** One app-wide queue admits
   two agent starts at a time across all projects and windows. No tab activation is required.
   The global progress row and each queued/starting tab show restoration state; successful

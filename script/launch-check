@@ -125,6 +125,11 @@ stage_agent_runtime_tests() {
       bash "$test"
     fi
   done
+  for test in tools/agent-resume/tests/test_*.py; do
+    [[ -f "$test" ]] || continue
+    echo "running $test"
+    /usr/bin/python3 "$test"
+  done
 }
 
 stage_plugin_tests() {
