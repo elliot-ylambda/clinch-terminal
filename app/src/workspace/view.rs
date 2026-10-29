@@ -14645,7 +14645,16 @@ impl Workspace {
                 .terminal_pane_uuids()
                 .contains(&origin.parent_pane_uuid)
         })?;
-        // Directly under the source's own forks, so a fork of a fork nests a level deeper.
+        Some(self.placement_after_family(parent_index, ctx))
+    }
+
+    /// Where a tab placed directly under `parent_index` goes: after the parent's own
+    /// forks and transfers, in the parent's section, so a fork of a fork nests a level deeper.
+    fn placement_after_family(
+        &self,
+        parent_index: usize,
+        ctx: &AppContext,
+    ) -> (usize, Option<TabGroupId>) {
         let index = index_for_child(&self.tab_lineage_depths(ctx), parent_index);
         let group_id = self.tabs[parent_index].group_id;
         // A child of a standalone pinned tab stays in the unpinned region. A
@@ -14655,7 +14664,47 @@ impl Workspace {
         } else {
             index
         };
-        Some((index, group_id))
+        (index, group_id)
+    }
+
+    /// Opens a plain terminal directly below the tab at `index`, in `cwd` when
+    /// it is still a local directory and the default new-tab directory otherwise.
+    fn new_tab_below(&mut self, index: usize, cwd: Option<String>, ctx: &mut ViewContext<Self>) {
+        if index >= self.tabs.len() {
+            return;
+        }
+        let (target_index, group_id) = self.placement_after_family(index, ctx);
+        let initial_directory = cwd
+            .map(PathBuf::from)
+            .filter(|path| path.is_dir())
+            .or_else(|| {
+                self.get_new_tab_startup_directory(
+                    NewSessionSource::Tab,
+                    Some(ctx.window_id()),
+                    None,
+                    ctx,
+                )
+            });
+        self.add_tab_with_pane_layout(
+            PanesLayout::SingleTerminal(Box::new(NewTerminalOptions {
+                initial_directory,
+                ..Default::default()
+            })),
+            Arc::new(HashMap::new()),
+            None,
+            ctx,
+        );
+        // The new tab is active; it may have landed before `target_index`.
+        let new_index = self.active_tab_index;
+        let target_index = target_index + usize::from(new_index <= target_index);
+        if let Some(tab) = self.tabs.get_mut(new_index) {
+            tab.group_id = group_id;
+        }
+        self.move_tab_to_index(new_index, target_index, ctx);
+        if let Some(group_id) = group_id {
+            self.expand_tab_group(group_id, ctx);
+        }
+        ctx.notify();
     }
 
     fn add_tab_with_pane_layout_placed(
@@ -26278,6 +26327,7 @@ impl TypedActionView for Workspace {
             MoveTabToNewProject(index) => {
                 self.move_tab_to_new_project(*index, None, ctx);
             }
+            NewTabBelow { index, cwd } => self.new_tab_below(*index, cwd.clone(), ctx),
             RenameTab(index) => self.rename_tab(*index, ctx),
             ResetTabName(index) => self.clear_tab_name(*index, ctx),
             RenamePane(locator) => self.rename_pane(*locator, ctx),
