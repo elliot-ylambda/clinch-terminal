@@ -85,6 +85,7 @@ stage_syntax() {
     script/release-from-clean-worktree \
     script/macos/build-universal-targets-parallel \
     script/macos/bundle \
+    script/macos/cargo-bundle \
     script/macos/run \
     script/next-clinch-update-sequence \
     script/prepare_bundled_resources \
