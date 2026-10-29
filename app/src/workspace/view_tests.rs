@@ -2722,6 +2722,80 @@ fn tab_origin_child_of_pinned_source_is_unpinned() {
     });
 }
 
+#[test]
+fn new_tab_below_lands_after_source_family_in_its_section() {
+    let _grouped_guard = FeatureFlag::GroupedTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        TabSettings::handle(&app).update(&mut app, |settings, ctx| {
+            settings
+                .new_tab_placement
+                .set_value(NewTabPlacement::AfterAllTabs, ctx)
+                .unwrap();
+        });
+        let workspace = mock_workspace(&mut app);
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.handle_action(
+                &WorkspaceAction::SelectNewSessionMenuItem(NewSessionMenuItem::CreateNewTabGroup),
+                ctx,
+            );
+            let source = workspace.active_tab_index();
+            let source_group = workspace.tabs[source].group_id;
+            let origin = crate::tab::TabOrigin {
+                kind: crate::tab::TabOriginKind::Fork,
+                parent_pane_uuid: workspace.tabs[source]
+                    .pane_group
+                    .as_ref(ctx)
+                    .terminal_pane_uuids()[0]
+                    .clone(),
+                parent_title: "Source".into(),
+            };
+            workspace.launch_command_in_new_tab("true".into(), None, Some(origin), ctx);
+            workspace.add_terminal_tab(false, ctx);
+            workspace.tabs[workspace.active_tab_index].group_id = None;
+            let unrelated_id = workspace.active_tab_pane_group().id();
+
+            // A missing directory falls back to the default new-tab directory.
+            workspace.handle_action(
+                &WorkspaceAction::NewTabBelow {
+                    index: source,
+                    cwd: Some("/nonexistent/clinch-new-tab-below".into()),
+                },
+                ctx,
+            );
+            assert_eq!(workspace.active_tab_index(), source + 2);
+            let new_tab = &workspace.tabs[source + 2];
+            assert_eq!(new_tab.group_id, source_group);
+            assert!(new_tab.origin.is_none());
+            assert_eq!(workspace.tabs[source + 3].pane_group.id(), unrelated_id);
+        });
+    });
+}
+
+#[test]
+fn new_tab_below_pinned_source_is_unpinned() {
+    let _pinned_guard = FeatureFlag::PinnedTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.add_terminal_tab(false, ctx);
+            workspace.tabs[0].pinned = true;
+            workspace.tabs[1].pinned = true;
+            workspace.handle_action(
+                &WorkspaceAction::NewTabBelow {
+                    index: 0,
+                    cwd: None,
+                },
+                ctx,
+            );
+            assert_eq!(workspace.tab_count(), 3);
+            assert_eq!(workspace.active_tab_index(), 2);
+            assert!(!workspace.tabs[2].pinned);
+        });
+    });
+}
+
 #[cfg(feature = "local_fs")]
 #[test]
 fn cli_agent_action_cwd_prefers_the_live_source_pane_directory() {

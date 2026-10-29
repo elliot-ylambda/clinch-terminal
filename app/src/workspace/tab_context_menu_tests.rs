@@ -477,3 +477,24 @@ fn tab_menu_dismissal_restores_focus_but_rename_keeps_its_editor_focused() {
         assert_eq!(app.focused_view_id(window_id), Some(editor_id));
     });
 }
+
+#[test]
+fn tab_menu_new_tab_below_opens_a_tab_directly_under_the_clicked_tab() {
+    let _vertical_tabs = FeatureFlag::VerticalTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        let workspace = setup_workspace(&mut app);
+        let last_tab_id = workspace.update(&mut app, |workspace, ctx| {
+            workspace.add_terminal_tab(false, ctx);
+            workspace.active_tab_pane_group().id()
+        });
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.toggle_tab_right_click_menu(0, TabContextMenuAnchor::VerticalTabsKebab, ctx);
+        });
+        choose_menu_item(&workspace, &mut app, "New tab below");
+        workspace.read(&app, |workspace, _| {
+            assert_eq!(workspace.tab_count(), 3);
+            assert_eq!(workspace.active_tab_index(), 1);
+            assert_eq!(workspace.tabs[2].pane_group.id(), last_tab_id);
+        });
+    });
+}

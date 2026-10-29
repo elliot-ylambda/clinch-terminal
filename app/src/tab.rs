@@ -264,7 +264,8 @@ impl TabData {
         });
         let mut name_and_pin_items = self.rename_menu_items(index, pane_name_target, ctx);
         name_and_pin_items.extend(self.pin_menu_items(index));
-        let mut organize_items = self.tab_group_menu_items(index, tab_groups);
+        let mut organize_items = self.new_tab_below_menu_items(index, pane_name_target, ctx);
+        organize_items.extend(self.tab_group_menu_items(index, tab_groups));
         organize_items.extend(self.move_tab_menu_items(
             index,
             tabs_len,
@@ -523,6 +524,29 @@ impl TabData {
             menu_items.extend(self.pane_name_menu_items(pane_name_target, ctx));
         }
         menu_items
+    }
+
+    /// Opens a plain terminal next to this tab, in the directory of the pane
+    /// the menu targets (or the tab's focused session).
+    fn new_tab_below_menu_items(
+        &self,
+        index: usize,
+        pane_name_target: Option<PaneNameMenuTarget>,
+        ctx: &AppContext,
+    ) -> Vec<MenuItem<WorkspaceAction>> {
+        let pane_group = self.pane_group.as_ref(ctx);
+        let cwd = pane_name_target
+            .filter(|target| self.pane_group.id() == target.locator.pane_group_id)
+            .and_then(|target| pane_group.terminal_view_from_pane_id(target.locator.pane_id, ctx))
+            .or_else(|| pane_group.focused_session_view(ctx))
+            .and_then(|terminal_view| terminal_view.as_ref(ctx).pwd_if_local(ctx));
+        vec![MenuItemFields::new(if uses_vertical_tabs() {
+            "New tab below"
+        } else {
+            "New tab to the right"
+        })
+        .with_on_select_action(WorkspaceAction::NewTabBelow { index, cwd })
+        .into_item()]
     }
 
     fn move_tab_menu_items(
