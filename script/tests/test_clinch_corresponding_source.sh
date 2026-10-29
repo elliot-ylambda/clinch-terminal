@@ -27,7 +27,18 @@ cat > "$FIXTURE/Cargo.toml" <<'EOF'
 name = "clinch-source-fixture"
 version = "0.1.0"
 edition = "2021"
+
+[patch.crates-io]
+local-fixture = { path = "third_party/local patch" }
 EOF
+mkdir -p "$FIXTURE/third_party/local patch/src"
+cat > "$FIXTURE/third_party/local patch/Cargo.toml" <<'EOF'
+[package]
+name = "local-fixture"
+version = "1.0.0"
+edition = "2021"
+EOF
+printf 'pub fn local_fixture() {}\n' > "$FIXTURE/third_party/local patch/src/lib.rs"
 printf 'version = 3\n' > "$FIXTURE/Cargo.lock"
 printf 'fn main() {}\n' > "$FIXTURE/src/main.rs"
 cat > "$FIXTURE/web/remote-control/package.json" <<'EOF'
@@ -67,6 +78,23 @@ cat > "$BIN/cargo" <<'STUB'
 set -euo pipefail
 case "${1:-}" in
   vendor)
+    manifest=
+    previous=
+    for argument in "$@"; do
+      [[ "$previous" == --manifest-path ]] && manifest="$argument"
+      previous="$argument"
+    done
+    /usr/bin/python3 - "$manifest" <<'PY'
+import json
+import pathlib
+import re
+import sys
+manifest = pathlib.Path(sys.argv[1]).read_text()
+literal = re.search(r'local-fixture = \{ path = (".*") \}', manifest).group(1)
+path = pathlib.Path(json.loads(literal))
+assert path.is_absolute(), path
+assert (path / "Cargo.toml").is_file(), path
+PY
     destination="${@: -1}/fixture-1.0.0"
     mkdir -p "$destination/src"
     cp "$FIXTURE_GIT_MANIFEST" "$destination/Cargo.toml"

@@ -177,7 +177,26 @@ def crates_io_patch_section(root):
         r"(?ms)^\[patch\.crates-io\]\s*$.*?(?=^\[|\Z)",
         manifest,
     )
-    return match.group(0).rstrip() if match else ""
+    if not match:
+        return ""
+
+    def absolute_patch_path(match):
+        literal = match.group(2)
+        value = json.loads(literal) if literal.startswith('"') else literal[1:-1]
+        path = (root / value).resolve()
+        try:
+            path.relative_to(root.resolve())
+        except ValueError:
+            fail(f"local patch is outside the source tree: {value}")
+        # Synthetic manifests live in a temporary directory, so their patch paths
+        # must point back to the exported source. The archived manifest stays relative.
+        return match.group(1) + toml_string(str(path))
+
+    return re.sub(
+        r'''(\bpath\s*=\s*)("(?:\\.|[^"\\])*"|'[^']*')''',
+        absolute_patch_path,
+        match.group(0).rstrip(),
+    )
 
 
 def vendor_git_source(

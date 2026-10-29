@@ -3,6 +3,7 @@ members = [
   "crates/*",
   "app",
 ]
+exclude = ["third_party/security-patches/*"]
 resolver = "2"
 
 # Include all members except serve-wasm (since it's a helper helper for serving
@@ -284,7 +285,7 @@ strum_macros = "0.27"
 tempfile = "3.8.0"
 thiserror = "2.0.17"
 ts-rs = { version = "12.0.1", features = ["chrono-impl", "no-serde-warnings", "uuid-impl"] }
-tokio = "1.47.1"
+tokio = "1.51.6"
 tokio-util = { version = "0.7", features = ["io"] }
 toml_edit = "0.25.5"
 tower = "0.5.2"
@@ -530,6 +531,11 @@ inherits = "dev"
 opt-level = "s"
 
 [patch.crates-io]
+# Compatibility-only dependency updates until these parents adopt the fixed
+# crypto/compression releases. Provenance and removal criteria live in the patch README.
+aws-config = { path = "third_party/security-patches/aws-config-1.8.16" }
+opentelemetry-otlp = { path = "third_party/security-patches/opentelemetry-otlp-0.32.0" }
+tantivy-sstable = { path = "third_party/security-patches/tantivy-sstable-0.7.0" }
 # Pinned to the merge commit of servo/core-foundation-rs#746, which fixes a
 # double-retain bug in `CTFontCollection::get_descriptors` that leaks the
 # CoreText font-descriptor NSArray on every call. The fix is not yet in any
@@ -545,7 +551,7 @@ yaml-rust = { git = "https://github.com/warpdotdev/yaml-rust.git", rev = "516847
 
 tink-core = { git = "https://github.com/warpdotdev/tink-rust", rev = "54b9ac9af93b0c08b446a7bc0582836c9403a71b" }
 tink-proto = { git = "https://github.com/warpdotdev/tink-rust", rev = "54b9ac9af93b0c08b446a7bc0582836c9403a71b" }
-tink-hybrid = { git = "https://github.com/warpdotdev/tink-rust", rev = "54b9ac9af93b0c08b446a7bc0582836c9403a71b" }
+tink-hybrid = { path = "third_party/security-patches/tink-hybrid-0.3.0" }
 
 tikv-jemallocator = { git = "https://github.com/warpdotdev/jemallocator.git", rev = "2ee30bfdf7059223b54810e4ea6c666f0a379e0b" }
 tikv-jemalloc-sys = { git = "https://github.com/warpdotdev/jemallocator.git", rev = "2ee30bfdf7059223b54810e4ea6c666f0a379e0b" }

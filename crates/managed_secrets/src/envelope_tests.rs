@@ -7,6 +7,59 @@ use super::UploadKey;
 use crate::ManagedSecretValue;
 
 #[test]
+fn p256_ecies_roundtrip_rejects_modified_context_and_ciphertext() {
+    super::init();
+    for template in [
+        tink_hybrid::ecies_hkdf_aes128_gcm_key_template(),
+        tink_hybrid::ecies_hkdf_aes128_ctr_hmac_sha256_key_template(),
+    ] {
+        let private = tink_core::keyset::Handle::new(&template).unwrap();
+        let public = private.public().unwrap();
+        let encrypt = tink_hybrid::new_encrypt(&public).unwrap();
+        let decrypt = tink_hybrid::new_decrypt(&private).unwrap();
+        let plaintext = b"P-256 compatibility regression";
+        let context = b"managed-secret context";
+        let mut ciphertext = encrypt.encrypt(plaintext, context).unwrap();
+        assert_eq!(decrypt.decrypt(&ciphertext, context).unwrap(), plaintext);
+        assert!(decrypt.decrypt(&ciphertext, b"wrong context").is_err());
+        let last = ciphertext.len() - 1;
+        ciphertext[last] ^= 1;
+        assert!(decrypt.decrypt(&ciphertext, context).is_err());
+    }
+}
+
+#[test]
+fn p256_point_and_scalar_compatibility() {
+    use tink_hybrid::subtle::{EcPrivateKey, EcPublicKey, compute_shared_secret};
+    use tink_proto::EllipticCurveType::NistP256;
+
+    fn bytes(hex: &str) -> Vec<u8> {
+        (0..hex.len())
+            .step_by(2)
+            .map(|index| u8::from_str_radix(&hex[index..index + 2], 16).unwrap())
+            .collect()
+    }
+
+    // Valid point from upstream Tink's elliptic_curves_test.rs (Apache-2.0).
+    let x = bytes("700c48f77f56584c5cc632ca65640db91b6bacce3a4df6b42ce7cc838833d287");
+    let mut y = bytes("db71e509e3fd9b060ddb20ba5c51dcc5948d46fbf640dfe0441782cab85fa4ac");
+    let public = EcPublicKey::new(NistP256, &x, &y).unwrap();
+    assert_eq!(public.x_y_bytes().unwrap(), (x.clone(), y.clone()));
+    // Multiplication by scalar one preserves the peer point's x coordinate.
+    let private = EcPrivateKey::new(NistP256, &[1]).unwrap();
+    assert_eq!(compute_shared_secret(&public, &private).unwrap(), x);
+    let mut padded = vec![0; 33];
+    padded[32] = 1;
+    let padded_private = EcPrivateKey::new(NistP256, &padded).unwrap();
+    assert_eq!(compute_shared_secret(&public, &padded_private).unwrap(), x);
+    padded[0] = 1;
+    assert!(EcPrivateKey::new(NistP256, &padded).is_err());
+    assert!(EcPrivateKey::new(NistP256, &[0]).is_err());
+    y[31] ^= 1;
+    assert!(EcPublicKey::new(NistP256, &x, &y).is_err());
+}
+
+#[test]
 fn test_import_public_keyset() {
     super::init();
 

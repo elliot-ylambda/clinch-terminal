@@ -155,6 +155,7 @@ stage_remote_control() {
 
 stage_component_tests() {
   cargo nextest run --locked -p warp -p warpui -p cli_agent_usage \
+    -p warp_managed_secrets -p warp_search_core \
     --profile clinch-release \
     --no-fail-fast --failure-output immediate-final --status-level fail \
     --show-progress none
