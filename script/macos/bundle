@@ -516,10 +516,10 @@ if [[ "$ARTIFACT" == "app" ]]; then
   echo "Building and bundling $DEFAULT_TARGET for channel $RELEASE_CHANNEL and bundle id $BUNDLE_ID with profile $CARGO_PROFILE"
   if [[ $DEFAULT_TARGET_PREBUILT = true ]]; then
     CARGO_BUNDLE_SKIP_BUILD=1 \
-      cargo bundle --profile "$CARGO_PROFILE" --bin "$WARP_BIN" \
+      ../script/macos/cargo-bundle --profile "$CARGO_PROFILE" --bin "$WARP_BIN" \
         --target "$DEFAULT_TARGET" --features "$FEATURES"
   else
-    cargo bundle --profile "$CARGO_PROFILE" --bin "$WARP_BIN" \
+    ../script/macos/cargo-bundle --profile "$CARGO_PROFILE" --bin "$WARP_BIN" \
       --target "$DEFAULT_TARGET" --features "$FEATURES"
   fi
   popd > /dev/null

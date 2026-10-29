@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Run `cargo bundle`, tolerating terminals without color support.
+#
+# cargo-bundle prints its status lines through the `term` crate, which fails
+# with ColorOutOfRange on terminals that report fewer than eight colors (agent
+# shells set TERM=dumb) and then panics while reporting that failure, aborting
+# an otherwise successful bundle. Without TERM it prints plain status lines.
+set -euo pipefail
+
+if [[ -n "${TERM:-}" ]] && (( $(tput colors 2>/dev/null || echo -1) < 8 )); then
+  unset TERM
+fi
+exec cargo bundle "$@"
