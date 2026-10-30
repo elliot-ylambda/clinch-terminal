@@ -262,6 +262,7 @@ pub(super) fn restore(
             right_panel: None,
             group_id: section,
             pinned: tab.pinned,
+            coordinator: false,
         });
     }
     if tab_groups

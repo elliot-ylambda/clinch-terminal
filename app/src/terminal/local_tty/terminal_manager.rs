@@ -1074,6 +1074,18 @@ impl TerminalManager {
         })
     }
 
+    /// Replaces the command this restored pane replays; see
+    /// `PtyController::rewrite_on_restore_command`.
+    pub fn rewrite_on_restore_command(
+        &self,
+        rewrite: impl FnOnce(Option<&str>) -> String,
+        app_ctx: &mut AppContext,
+    ) {
+        self.pty_controller.update(app_ctx, |pty_controller, _ctx| {
+            pty_controller.rewrite_on_restore_command(rewrite);
+        });
+    }
+
     pub fn cancel_pending_restore_command(&self, app_ctx: &mut AppContext) -> bool {
         self.pty_controller.update(app_ctx, |controller, _| {
             controller.cancel_pending_restore_command()

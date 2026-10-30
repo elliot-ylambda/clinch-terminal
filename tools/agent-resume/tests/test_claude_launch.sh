@@ -179,6 +179,14 @@ grep -q -- '--resume lost-2' "$TMP/last_args" || { echo "FAIL: dead id should ad
 grep -q -- '--dangerously-skip-permissions' "$TMP/last_args" || { echo "FAIL: flags not forwarded on adoption"; exit 1; }
 [[ -z "$(cat "$TMP/last_fresh_marker")" ]] || { echo "FAIL: adoption must not set the fresh marker"; exit 1; }
 
+# A coordinator restores with CLINCH_AGENT_RESTORE_FRESH: it lives in a primary checkout shared
+# with other tabs, so a dead id starts fresh (with its role arguments) instead of adopting.
+rm -f "$TMP/last_args"
+( cd "$WORK" && HOME="$EHOME" CLINCH_AGENT_RESTORE_FRESH=1 clinch_agent_resume_launch claude dead-1 --append-system-prompt role )
+grep -q -- '--resume' "$TMP/last_args" && { echo "FAIL: coordinator restore must not adopt a sibling session"; exit 1; }
+grep -q -- '--append-system-prompt role' "$TMP/last_args" || { echo "FAIL: coordinator role not forwarded on fresh start"; exit 1; }
+[[ "$(cat "$TMP/last_fresh_marker")" == "1" ]] || { echo "FAIL: coordinator fresh start must set the marker"; exit 1; }
+
 # A session claimed by another pane's registry entry is skipped -> next unclaimed wins
 # (a pane whose id died must never steal a sibling pane's live session).
 printf '{ "command": "clinch_agent_resume_launch claude lost-2 --model opus", "cwd": "%s" }\n' "$WORK" \

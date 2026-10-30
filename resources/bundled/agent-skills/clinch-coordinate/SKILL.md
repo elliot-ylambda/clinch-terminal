@@ -3,13 +3,17 @@ name: clinch-coordinate
 description: Coordinates Claude Code and Codex sessions across Clinch projects and sections using the local CLI. Use when the user wants one conversation to inspect other sessions, summarize progress, send delegated instructions, or organize reviews and deployments across sessions.
 ---
 
-<!-- managed-by: Clinch; version: 1.7.0 -->
+<!-- managed-by: Clinch; version: 1.8.0 -->
 
 # Clinch coordination
 
 Use the app's authenticated local CLI. Scope can span every open project and
-section. A coordinator is currently an ordinary agent conversation using these
-commands; there is no persistent background coordinator or sidebar control yet.
+section. Each project can keep a **Coordinator** tab pinned first in its tab list,
+started in the project's primary checkout (never a linked worktree). It is an
+ordinary Claude or Codex conversation using these commands, and any other
+conversation can coordinate the same way. Users switch its agent from the tab's
+right-click menu; closing it turns the default off until they choose "New
+coordinator session" from a tab's right-click menu.
 
 Independent chats are the default; coordination is optional. Ordinary Claude/Codex
 sessions need no coordinator or worker registration to run. Use this workflow only

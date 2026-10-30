@@ -374,6 +374,7 @@ diesel::table! {
         tab_group_id -> Nullable<Integer>,
         pinned -> Bool,
         origin -> Nullable<Text>,
+        coordinator -> Bool,
     }
 }
 

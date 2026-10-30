@@ -1161,6 +1161,7 @@ fn save_app_state(conn: &mut SqliteConnection, app_state: &AppState) -> Result<(
                             .origin
                             .as_ref()
                             .and_then(|origin| serde_json::to_string(origin).ok()),
+                        coordinator: tab.coordinator,
                     })
                     .collect();
 
@@ -2725,6 +2726,7 @@ fn read_sqlite_data(
                         right_panel,
                         group_id,
                         pinned: tab.pinned,
+                        coordinator: tab.coordinator,
                     })
                 })
                 .collect();

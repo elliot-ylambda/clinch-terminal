@@ -3,6 +3,7 @@ mod build_plan_migration_modal;
 pub(crate) mod cloud_agent_capacity_modal;
 pub(crate) mod codex_modal;
 pub mod conversation_list;
+mod coordinator;
 #[cfg(enable_crash_recovery)]
 mod crash_recovery;
 pub(crate) mod free_ai_removal_modal;
@@ -1154,6 +1155,10 @@ pub struct Workspace {
     /// Tracks tab activation order (most-recently-used first).
     /// Each entry is the `pane_group.id()` of the corresponding tab.
     tab_mru_order: Vec<EntityId>,
+    /// Progress creating this project's default coordinator tab.
+    coordinator_bootstrap: coordinator::CoordinatorBootstrap,
+    /// Whether this workspace may create a default coordinator on its own; off in unit tests.
+    coordinator_auto_create: bool,
     pub(crate) hovered_tab_index: Option<TabBarHoverIndex>,
     tab_bar_hover_state: MouseStateHandle,
     /// The CLI-agent provider whose focused tab-bar usage panel is expanded.
@@ -3985,6 +3990,8 @@ impl Workspace {
             tabs: Vec::new(),
             active_tab_index: 0,
             tab_mru_order: Vec::new(),
+            coordinator_bootstrap: Default::default(),
+            coordinator_auto_create: !cfg!(test),
             hovered_tab_index: None,
             tab_bar_hover_state: Default::default(),
             cli_agent_usage_panel_provider: None,
@@ -4725,6 +4732,25 @@ impl Workspace {
     ) {
         self.vertical_tabs_panel_open =
             Self::initial_vertical_tabs_panel_open(&workspace_setting, ctx);
+        // Ordinary projects get a default coordinator; viewers, notebooks, templates and moved
+        // tabs keep exactly the tabs they were opened with.
+        let wants_coordinator = matches!(
+            workspace_setting,
+            NewWorkspaceSource::Empty { .. }
+                | NewWorkspaceSource::Session { .. }
+                | NewWorkspaceSource::Restored { .. }
+        );
+        self.configure_workspace_source(workspace_setting, ctx);
+        if wants_coordinator {
+            self.request_default_coordinator(ctx);
+        }
+    }
+
+    fn configure_workspace_source(
+        &mut self,
+        workspace_setting: NewWorkspaceSource,
+        ctx: &mut ViewContext<Self>,
+    ) {
         match workspace_setting {
             NewWorkspaceSource::Empty {
                 previous_active_window,
@@ -4787,6 +4813,11 @@ impl Workspace {
                         // feature is enabled.
                         if FeatureFlag::PinnedTabs.is_enabled() {
                             self.tabs[tab_index].pinned = saved_tab.pinned;
+                        }
+                        if saved_tab.coordinator {
+                            self.tabs[tab_index].coordinator = true;
+                            self.tabs[tab_index].pinned = true;
+                            self.prepare_restored_coordinator(tab_index, ctx);
                         }
                         // Drop the group reference if the group itself didn't restore.
                         self.tabs[tab_index].group_id = saved_tab
@@ -8699,6 +8730,10 @@ impl Workspace {
                 )
             }
         };
+        let menu_items = coordinator::with_coordinator_section(
+            menu_items,
+            self.coordinator_menu_items(tab_index, ctx),
+        );
         ctx.update_view(&self.tab_right_click_menu, |context_menu, view_ctx| {
             context_menu.set_items(menu_items, view_ctx);
         });
@@ -12909,6 +12944,7 @@ impl Workspace {
                     // enabled.
                     pinned: FeatureFlag::PinnedTabs.is_enabled()
                         && self.tabs.get(tab_index).is_some_and(|tab| tab.pinned),
+                    coordinator: self.tabs.get(tab_index).is_some_and(|tab| tab.coordinator),
                 }
             })
             .filter(|tab| {
@@ -13344,6 +13380,12 @@ impl Workspace {
         }
 
         let tab_data = self.tabs.remove(index);
+        // Closing the coordinator keeps it closed: new projects and later launches stop
+        // creating one until the user opens one again. Agent switches and tab moves
+        // (`remove_tab_without_undo`) clear the marker before removing the tab.
+        if tab_data.coordinator {
+            coordinator::set_coordinator_enabled(false, ctx);
+        }
 
         let removed_pane_group_id = tab_data.pane_group.id();
         self.tab_mru_order.retain(|id| *id != removed_pane_group_id);
@@ -17780,10 +17822,12 @@ impl Workspace {
                     }
                 }
                 self.notify_project_metadata_changed(ctx);
+                self.maybe_start_default_coordinator(ctx);
             }
             pane_group::Event::ActiveSessionChanged => {
                 self.update_active_session(ctx);
                 self.notify_project_metadata_changed(ctx);
+                self.maybe_start_default_coordinator(ctx);
             }
             pane_group::Event::Escape => {
                 if self.current_workspace_state.is_resource_center_open {
@@ -26098,6 +26142,8 @@ impl TypedActionView for Workspace {
             CloseTabsAboveGroup(group_id) => self.close_tabs_above_group(*group_id, ctx),
             CloseTabsBelowGroup(group_id) => self.close_tabs_below_group(*group_id, ctx),
             PinTab(tab_index) => self.pin_tab(*tab_index, ctx),
+            SwitchCoordinatorAgent(tab_index) => self.switch_coordinator_agent(*tab_index, ctx),
+            OpenCoordinatorSession => self.open_coordinator_from_menu(ctx),
             UnpinTab(tab_index) => self.unpin_tab(*tab_index, ctx),
             PinTabGroup(group_id) => self.pin_tab_group(*group_id, ctx),
             UnpinTabGroup(group_id) => self.unpin_tab_group(*group_id, ctx),
@@ -30315,6 +30361,11 @@ impl Workspace {
     }
 
     pub fn remove_tab_without_undo(&mut self, index: usize, ctx: &mut ViewContext<Self>) {
+        // Every caller moves the tab elsewhere. A moved coordinator becomes an ordinary tab,
+        // and moving it is not closing it, so the coordinator default stays on.
+        if let Some(tab) = self.tabs.get_mut(index) {
+            tab.coordinator = false;
+        }
         self.remove_tab(index, false, false, ctx);
     }
 

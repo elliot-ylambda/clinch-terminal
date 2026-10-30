@@ -74,6 +74,9 @@ use crate::{experiments, AgentNotificationsModel};
 pub fn initialize_app_for_terminal_view(app: &mut App) {
     initialize_history_persistence_for_tests(app);
 
+    // The Codex host preflight resolves its PATH through this model on a timer, so a slow test
+    // run can reach it after any agent submission.
+    app.add_singleton_model(|_| crate::terminal::local_shell::LocalShellState::NotLoaded);
     app.add_singleton_model(|_| ServerApiProvider::new_for_test());
     // Register a disabled `IapManager` (no IAP state) so code paths that read
     // the singleton (e.g. the shared-session viewer network) don't panic in

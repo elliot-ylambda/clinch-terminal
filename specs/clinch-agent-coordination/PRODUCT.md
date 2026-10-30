@@ -20,7 +20,14 @@ input revision, and sender UUID; only a working or ready agent may be queued. Hu
 pending messages; ten pending per target and 100 per app instance are allowed. Queued messages
 expire after 30 minutes by default (configurable up to one day). Receipts survive restart, but
 old queued messages are cancelled and interrupted dispatches become uncertain, never replayed.
-Persistent coordinators, event replay, durable target IDs, and sidebar controls are future work.
+Each project now keeps a **Coordinator** tab pinned first in its tab list (on by default,
+setting `clinch.coordinator.enabled`). It runs Claude Code or Codex (`clinch.coordinator.agent`)
+in the project's primary checkout, never a linked worktree, falling back to the home directory,
+with coordinator instructions passed as a system prompt so creating one spends no turn. It
+restores its own conversation, or starts fresh, but never adopts another tab's session. Its
+right-click menu switches the agent and remembers the choice. Closing it turns the setting off;
+"New coordinator session" on any tab's right-click menu turns it back on. Scope selection,
+event replay, durable target IDs, and the coordinator list below are future work.
 Design: use the current Clinch styling; no separate Figma mock was supplied.
 
 ## Behavior

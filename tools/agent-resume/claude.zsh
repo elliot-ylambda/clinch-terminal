@@ -270,6 +270,7 @@ clinch_agent_resume_bridge_id() {
 #    degrade into a near-miss, not silently orphan the pane's real conversation. Bridged
 #    panes skip this -- their conversation lives at claude.ai, and adopting some other
 #    local session would silently swap conversations.
+#    CLINCH_AGENT_RESTORE_FRESH (set when restoring a coordinator) skips this step.
 # 4. Otherwise start fresh (the SessionStart hook re-captures the new session for next
 #    time). WARP_AGENT_RESUME_STARTED_FRESH tells the capture hook the fresh session was
 #    machinery-spawned, so until its first real prompt it must not overwrite a pane entry
@@ -300,8 +301,10 @@ clinch_agent_resume_launch() {
     print -u2 -- "clinch: saved $agent conversation $id is unavailable; restoration stopped without substituting another session."
     return 1
   fi
+  # A coordinator restores with CLINCH_AGENT_RESTORE_FRESH: it lives in a project's primary
+  # checkout, where adopting the newest session would take over another tab's conversation.
   local adopt=""
-  if [[ -z "$bridge" ]]; then
+  if [[ -z "$bridge" && "${CLINCH_AGENT_RESTORE_FRESH:-}" != 1 ]]; then
     adopt="$(clinch_agent_resume_fallback_id "$agent" "$PWD")" || adopt=""
   fi
   if [[ -n "$adopt" ]]; then
