@@ -626,6 +626,12 @@ const SCROLLBAR_WIDTH: ScrollbarWidth = ScrollbarWidth::Auto;
 /// long conversation takes several seconds on a loaded machine).
 const DEFERRED_AGENT_START_GRACE: Duration = Duration::from_secs(60);
 
+/// How long unacknowledged input keeps coordination from writing to an agent even when its
+/// composer looks empty: keystrokes may not be echoed yet and prompt-submit hooks may still
+/// be running. Local slash commands, cancelled pickers and deleted text never send a
+/// prompt-submit acknowledgement, so afterwards only a provably empty composer releases it.
+const COORDINATION_INPUT_SETTLE: Duration = Duration::from_secs(5);
+
 /// Starts a restored pane's agent; run once, the first time the pane is shown.
 type DeferredAgentStart = Box<dyn FnOnce(&mut AppContext)>;
 
@@ -2699,7 +2705,9 @@ pub struct TerminalView {
     /// Tracks input changes between local-control inspection and submission.
     coordination_input_epoch: u64,
     coordination_user_input_epoch: u64,
-    coordination_input_dirty: bool,
+    /// When the latest keystroke or Clinch submission reached the agent, if the provider has
+    /// not acknowledged a prompt or session start since.
+    coordination_unacked_input_at: Option<Instant>,
     coordination_send_pending: bool,
     /// Starts this restored pane's agent (`claude --resume …`). Set only for panes
     /// restored at launch. The app-wide restore queue admits two starts at a time.
@@ -4817,7 +4825,7 @@ impl TerminalView {
             view_id: ctx.view_id(),
             coordination_input_epoch: 0,
             coordination_user_input_epoch: 0,
-            coordination_input_dirty: false,
+            coordination_unacked_input_at: None,
             coordination_send_pending: false,
             deferred_agent_start: None,
             background_agent_restore: false,
@@ -9746,7 +9754,7 @@ impl TerminalView {
         // so this is a no-op for that path.
         self.coordination_user_input_epoch = self.coordination_user_input_epoch.wrapping_add(1);
         self.coordination_input_epoch = self.coordination_input_epoch.wrapping_add(1);
-        self.coordination_input_dirty = true;
+        self.coordination_unacked_input_at = Some(Instant::now());
         self.cancel_auto_continue_on_user_input(ctx);
 
         // Neither Claude Code nor Codex fires a hook for an aborted turn, so the interrupt
@@ -13521,7 +13529,7 @@ impl TerminalView {
         }
 
         // Subsequent events are applied by the listener, but input acknowledgement must
-        // also reach this view; otherwise the first submission would leave it dirty forever.
+        // also reach this view; otherwise every submission would wait for the composer check.
         if matches!(
             notification.event,
             CLIAgentEventType::PromptSubmit | CLIAgentEventType::SessionStart
@@ -13532,7 +13540,7 @@ impl TerminalView {
                     && session.session_context.session_id == notification.session_id
             })
         {
-            self.coordination_input_dirty = false;
+            self.coordination_unacked_input_at = None;
             self.coordination_input_epoch = self.coordination_input_epoch.wrapping_add(1);
         }
         if !registered {

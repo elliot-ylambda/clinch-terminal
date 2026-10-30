@@ -5669,6 +5669,74 @@ fn test_tab_mru_order() {
     });
 }
 
+/// Switching tabs reports focus to the agent TUI, which is terminal plumbing, not human input:
+/// a coordinator activating an agent's tab must not invalidate its revision or readiness.
+#[test]
+fn activating_an_agent_tab_keeps_its_coordination_readiness() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use crate::terminal::cli_agent_sessions::{CLIAgentSessionStatus, CLIAgentSessionsModel};
+    use crate::terminal::model::ansi;
+    use crate::terminal::model::escape_sequences::EscCodes;
+    use crate::terminal::view::Event as TerminalEvent;
+    use crate::terminal::CLIAgent;
+
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+        let agent_terminal = workspace.update(&mut app, |workspace, ctx| {
+            workspace.add_terminal_tab(false, ctx);
+            workspace
+                .get_pane_group_view(0)
+                .expect("first tab should exist")
+                .as_ref(ctx)
+                .focused_session_view(ctx)
+                .expect("first tab should contain a terminal")
+        });
+        let pty_writes = Rc::new(RefCell::new(Vec::<Vec<u8>>::new()));
+        let writes = pty_writes.clone();
+        app.update(|ctx| {
+            ctx.subscribe_to_view(&agent_terminal, move |_, event, _| {
+                if let TerminalEvent::WriteBytesToPty { bytes } = event {
+                    writes.borrow_mut().push(bytes.to_vec());
+                }
+            })
+        });
+        agent_terminal.update(&mut app, |terminal, ctx| {
+            let mut model = terminal.model.lock();
+            model.simulate_long_running_block("claude", "");
+            ansi::Handler::set_mode(&mut *model, ansi::Mode::ReportFocusInOut);
+            drop(model);
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                let mut session =
+                    crate::terminal::cli_agent_sessions::tests::idle_test_session(CLIAgent::Claude);
+                session.status = CLIAgentSessionStatus::Success;
+                session.session_context.session_id = Some("activated-agent".into());
+                sessions.set_session(terminal.id(), session, ctx);
+            });
+        });
+        let before = agent_terminal.read(&app, |terminal, ctx| {
+            terminal.local_control_agent_readiness(ctx)
+        });
+        assert_eq!(before.1, None);
+
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.handle_action(&WorkspaceAction::ActivateTab(0), ctx);
+            workspace.handle_action(&WorkspaceAction::ActivateTab(1), ctx);
+            workspace.handle_action(&WorkspaceAction::ActivateTab(0), ctx);
+        });
+
+        assert!(
+            pty_writes.borrow().contains(&EscCodes::FOCUS_IN.to_vec()),
+            "activation should have reached the agent's focus reporting"
+        );
+        agent_terminal.read(&app, |terminal, ctx| {
+            assert_eq!(terminal.local_control_agent_readiness(ctx), before);
+        });
+    });
+}
+
 #[test]
 fn test_workspace_tasks_add_trim_order_and_remove() {
     App::test((), |mut app| async move {
