@@ -366,6 +366,7 @@ pub struct Tab {
     pub tab_group_id: Option<i32>,
     pub pinned: bool,
     pub origin: Option<String>,
+    pub coordinator: bool,
 }
 
 #[derive(Insertable)]
@@ -377,6 +378,7 @@ pub struct NewTab {
     pub tab_group_id: Option<i32>,
     pub pinned: bool,
     pub origin: Option<String>,
+    pub coordinator: bool,
 }
 
 /// Persisted form of a tab group. `name` is optional — untitled groups omit

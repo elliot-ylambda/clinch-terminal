@@ -561,6 +561,13 @@ impl<T: EventLoopSender> PtyController<T> {
             Some(crate::agent_resume::normalize_restore_command(command));
     }
 
+    /// Replaces the command a restored pane replays, keeping whether it waits for the restore
+    /// queue. `rewrite` receives the pending command, if any.
+    pub fn rewrite_on_restore_command(&mut self, rewrite: impl FnOnce(Option<&str>) -> String) {
+        let command = rewrite(self.pending_on_restore_command.as_deref());
+        self.set_on_restore_command(command);
+    }
+
     /// Like `set_on_restore_command`, but the command waits past bootstrap until
     /// `start_deferred_restore_command`: the app-wide queue limits simultaneous starts.
     pub fn set_deferred_on_restore_command(&mut self, command: String) {

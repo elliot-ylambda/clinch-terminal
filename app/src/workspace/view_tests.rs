@@ -21,7 +21,12 @@ use warpui::platform::WindowStyle;
 use warpui::{AddSingletonModel, App, ViewHandle};
 use watcher::HomeDirectoryWatcher;
 
+use super::coordinator::{
+    coordinator_directory, coordinator_launch_command, coordinator_restore_command,
+    CoordinatorBootstrap,
+};
 use super::*;
+use crate::agent_resume::AgentResumeProvider;
 use crate::ai::active_agent_views_model::ActiveAgentViewsModel;
 use crate::ai::agent_conversations_model::AgentConversationsModel;
 use crate::ai::agent_tips::AITipModel;
@@ -62,7 +67,7 @@ use crate::server::server_api::ServerApiProvider;
 use crate::server::sync_queue::SyncQueue;
 use crate::server::telemetry::context_provider::AppTelemetryContextProvider;
 use crate::settings::cloud_preferences_syncer::CloudPreferencesSyncer;
-use crate::settings::PrivacySettings;
+use crate::settings::{ClinchSettings, PrivacySettings};
 use crate::settings_view::keybindings::KeybindingChangedNotifier;
 use crate::settings_view::DisplayCount;
 use crate::suggestions::ignored_suggestions_model::IgnoredSuggestionsModel;
@@ -6859,6 +6864,229 @@ fn test_pin_tab_on_grouped_tab_extracts_then_pins() {
             assert_eq!(workspace.tabs[2].pane_group.id(), id2);
             assert!(workspace.tabs[2].group_id.is_none());
             assert!(!workspace.tabs[2].pinned);
+        });
+    });
+}
+
+fn coordinator_settings(app: &App) -> (bool, String) {
+    app.read(|ctx| {
+        let settings = ClinchSettings::as_ref(ctx);
+        (
+            *settings.coordinator_enabled,
+            settings.coordinator_agent.as_str().to_owned(),
+        )
+    })
+}
+
+#[test]
+fn coordinator_commands_carry_the_role_and_restore_fresh() {
+    let claude = coordinator_launch_command(AgentResumeProvider::Claude);
+    assert!(
+        claude.starts_with("claude --append-system-prompt '"),
+        "{claude}"
+    );
+    assert!(claude.contains("clinch-coordinate"), "{claude}");
+    let codex = coordinator_launch_command(AgentResumeProvider::Codex);
+    assert!(codex.contains(" -c 'developer_instructions=\""), "{codex}");
+
+    // A saved conversation resumes with its role and falls back to a fresh coordinator instead
+    // of stopping at a bare shell or adopting a sibling session.
+    let restored = coordinator_restore_command(
+        Some("CLINCH_AGENT_RESTORE_EXACT=1 clinch_agent_resume_launch codex 019a-id --model gpt-5"),
+        AgentResumeProvider::Claude,
+    );
+    assert!(
+        restored.starts_with(
+            "CLINCH_AGENT_RESTORE_FRESH=1 clinch_agent_resume_launch codex 019a-id --model gpt-5 -c "
+        ),
+        "{restored}"
+    );
+    assert!(!restored.contains("RESTORE_EXACT"), "{restored}");
+    // Nothing recorded, or a command that is not an agent resume: start a fresh coordinator.
+    assert_eq!(
+        coordinator_restore_command(None, AgentResumeProvider::Codex),
+        coordinator_launch_command(AgentResumeProvider::Codex)
+    );
+    assert_eq!(
+        coordinator_restore_command(Some("npm run dev"), AgentResumeProvider::Claude),
+        claude
+    );
+}
+
+#[test]
+fn coordinator_starts_in_the_primary_checkout_of_a_linked_worktree() {
+    let temp = TempDir::new().unwrap();
+    let repo = temp.path().join("repo");
+    let worktree = temp.path().join("worktrees").join("feature");
+    std::fs::create_dir_all(&repo).unwrap();
+    let git = |dir: &std::path::Path, args: &[&str]| {
+        let status = command::blocking::Command::new("git")
+            .args([
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "commit.gpgsign=false",
+            ])
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap()
+            .status;
+        assert!(status.success(), "git {args:?}");
+    };
+    git(&repo, &["init", "-q", "-b", "main"]);
+    git(&repo, &["commit", "-q", "--allow-empty", "-m", "init"]);
+    git(
+        &repo,
+        &["worktree", "add", "-q", worktree.to_str().unwrap()],
+    );
+    std::fs::create_dir_all(worktree.join("src")).unwrap();
+
+    let primary = dunce::canonicalize(&repo).unwrap();
+    assert_eq!(
+        coordinator_directory(Some(&worktree.join("src"))),
+        Some(primary.clone())
+    );
+    assert_eq!(coordinator_directory(Some(&repo)), Some(primary));
+    // Outside any repository, and with no directory at all, it starts at home.
+    let plain = temp.path().join("plain");
+    std::fs::create_dir_all(&plain).unwrap();
+    assert_eq!(coordinator_directory(Some(&plain)), dirs::home_dir());
+    assert_eq!(coordinator_directory(None), dirs::home_dir());
+}
+
+#[test]
+fn coordinator_opens_pinned_first_without_taking_focus() {
+    let _pinned_guard = FeatureFlag::PinnedTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.add_terminal_tab(false, ctx);
+            workspace.tabs[1].pinned = true;
+            let active = workspace.active_tab_pane_group().id();
+            assert!(workspace.open_coordinator_tab(None, AgentResumeProvider::Claude, false, ctx));
+            assert_eq!(workspace.tabs.len(), 3);
+            assert!(workspace.tabs[0].coordinator);
+            assert!(workspace.tabs[0].pinned);
+            assert!(workspace.tabs[1..].iter().all(|tab| !tab.coordinator));
+            assert_eq!(workspace.active_tab_pane_group().id(), active);
+            assert_eq!(
+                workspace.tabs[0]
+                    .pane_group
+                    .as_ref(ctx)
+                    .custom_title(ctx)
+                    .as_deref(),
+                Some("Coordinator")
+            );
+        });
+    });
+}
+
+#[test]
+fn coordinator_waits_for_a_directory_and_is_never_duplicated() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+        workspace.update(&mut app, |workspace, ctx| {
+            assert_eq!(
+                workspace.coordinator_bootstrap,
+                CoordinatorBootstrap::Idle,
+                "unit-test workspaces never create one on their own"
+            );
+            workspace.coordinator_auto_create = true;
+            // The mock tab has not reported a directory, so nothing is created yet.
+            workspace.request_default_coordinator(ctx);
+            assert_eq!(
+                workspace.coordinator_bootstrap,
+                CoordinatorBootstrap::AwaitingDirectory
+            );
+            assert_eq!(workspace.tabs.len(), 1);
+
+            workspace.coordinator_bootstrap = CoordinatorBootstrap::Idle;
+            workspace.open_coordinator_tab(None, AgentResumeProvider::Claude, false, ctx);
+            workspace.request_default_coordinator(ctx);
+            assert_eq!(workspace.coordinator_bootstrap, CoordinatorBootstrap::Idle);
+        });
+    });
+}
+
+#[test]
+fn closing_the_coordinator_turns_the_default_off_but_moving_it_does_not() {
+    let _pinned_guard = FeatureFlag::PinnedTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+        let provider = AgentResumeProvider::Claude;
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.add_terminal_tab(false, ctx);
+            workspace.open_coordinator_tab(None, provider, false, ctx);
+            let coordinator = workspace.tabs[0].pane_group.id();
+            workspace
+                .take_tab_for_new_project(coordinator, ctx)
+                .unwrap();
+            assert!(workspace.coordinator_tab_index().is_none());
+        });
+        assert!(coordinator_settings(&app).0, "moving it is not closing it");
+
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.open_coordinator_tab(None, provider, false, ctx);
+            workspace.close_tab(0, true, false, ctx);
+            assert!(workspace.coordinator_tab_index().is_none());
+        });
+        assert!(!coordinator_settings(&app).0, "closing it keeps it closed");
+
+        // Reopening it from the tab menu turns the default back on.
+        workspace.update(&mut app, |workspace, ctx| {
+            let items = workspace.coordinator_menu_items(0, ctx);
+            assert_eq!(items.len(), 1);
+            workspace.handle_action(&WorkspaceAction::OpenCoordinatorSession, ctx);
+            assert_eq!(workspace.coordinator_tab_index(), Some(0));
+            assert!(workspace.coordinator_menu_items(1, ctx).is_empty());
+        });
+        assert!(coordinator_settings(&app).0);
+    });
+}
+
+#[test]
+fn switching_the_coordinator_agent_keeps_it_first_and_remembers_the_choice() {
+    let _pinned_guard = FeatureFlag::PinnedTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+        let original = workspace.update(&mut app, |workspace, ctx| {
+            workspace.open_coordinator_tab(None, AgentResumeProvider::Claude, false, ctx);
+            workspace.tabs[0].pane_group.id()
+        });
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.handle_action(&WorkspaceAction::SwitchCoordinatorAgent(0), ctx);
+            assert_eq!(workspace.tabs.len(), 2);
+            assert_eq!(workspace.coordinator_tab_index(), Some(0));
+            assert!(workspace.tabs[0].pinned);
+            assert_ne!(workspace.tabs[0].pane_group.id(), original);
+        });
+        assert_eq!(coordinator_settings(&app), (true, "codex".to_owned()));
+    });
+}
+
+#[test]
+fn coordinator_survives_snapshot_restore() {
+    let _pinned_guard = FeatureFlag::PinnedTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+        let snapshot = workspace.update(&mut app, |workspace, ctx| {
+            workspace.open_coordinator_tab(None, AgentResumeProvider::Claude, false, ctx);
+            workspace.snapshot(ctx.window_id(), false, ctx)
+        });
+        assert!(snapshot.tabs[0].coordinator && snapshot.tabs[0].pinned);
+        assert!(!snapshot.tabs[1].coordinator);
+        let restored = restored_workspace(&mut app, snapshot);
+        restored.read(&app, |workspace, _| {
+            assert_eq!(workspace.coordinator_tab_index(), Some(0));
+            assert!(workspace.tabs[0].pinned);
         });
     });
 }

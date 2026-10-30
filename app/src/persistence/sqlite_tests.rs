@@ -322,6 +322,7 @@ fn test_terminal_window_snapshot(vertical_tabs_panel_open: bool) -> WindowSnapsh
             right_panel: None,
             group_id: None,
             pinned: false,
+            coordinator: false,
         }],
         active_tab_index: 0,
         bounds: None,
@@ -526,6 +527,7 @@ fn test_sqlite_round_trips_custom_vertical_tabs_title() {
                 right_panel: None,
                 group_id: None,
                 pinned: false,
+                coordinator: false,
             }],
             active_tab_index: 0,
             bounds: None,
@@ -608,6 +610,7 @@ fn test_sqlite_round_trips_code_pane_with_multiple_tabs() {
                 right_panel: None,
                 group_id: None,
                 pinned: false,
+                coordinator: false,
             }],
             active_tab_index: 0,
             bounds: None,
@@ -699,6 +702,7 @@ fn test_sqlite_round_trips_tab_groups() {
         right_panel: None,
         group_id: Some(group_id),
         pinned: false,
+        coordinator: false,
     };
     let tab_outside_group = TabSnapshot {
         origin: None,
@@ -729,6 +733,7 @@ fn test_sqlite_round_trips_tab_groups() {
         right_panel: None,
         group_id: None,
         pinned: false,
+        coordinator: false,
     };
 
     let app_state = AppState {
@@ -795,8 +800,8 @@ fn test_sqlite_round_trips_tab_groups() {
     assert_eq!(restored_window.tabs[1].group_id, None);
 }
 
-/// Verifies that the `pinned` flag on tabs and tab groups round-trips through
-/// save/restore so the user's pinned layout survives an app restart.
+/// Verifies that the `pinned` flag on tabs and tab groups, and the tab coordinator marker,
+/// round-trip through save/restore so the user's pinned layout survives an app restart.
 #[test]
 fn test_sqlite_round_trips_pinned_state() {
     let tempdir = tempfile::tempdir().expect("tempdir should be created");
@@ -835,6 +840,7 @@ fn test_sqlite_round_trips_pinned_state() {
         right_panel: None,
         group_id: None,
         pinned: true,
+        coordinator: true,
     };
     let unpinned_tab = TabSnapshot {
         origin: None,
@@ -865,6 +871,7 @@ fn test_sqlite_round_trips_pinned_state() {
         right_panel: None,
         group_id: Some(unpinned_group_id),
         pinned: false,
+        coordinator: false,
     };
     let tab_in_pinned_group = TabSnapshot {
         origin: None,
@@ -895,6 +902,7 @@ fn test_sqlite_round_trips_pinned_state() {
         right_panel: None,
         group_id: Some(pinned_group_id),
         pinned: false,
+        coordinator: false,
     };
 
     let app_state = AppState {
@@ -955,6 +963,9 @@ fn test_sqlite_round_trips_pinned_state() {
     assert!(restored_window.tabs[0].pinned);
     assert!(!restored_window.tabs[1].pinned);
     assert!(!restored_window.tabs[2].pinned);
+    // The coordinator marker round-trips with it.
+    assert!(restored_window.tabs[0].coordinator);
+    assert!(!restored_window.tabs[1].coordinator);
 
     // Both groups round-trip with their pinned state preserved. Group ids are
     // minted fresh on restore, so we look them up by name.

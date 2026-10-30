@@ -45,6 +45,26 @@ define_settings_group!(ClinchSettings, settings: [
         private: false,
         toml_path: "clinch.agent_conversation_finder.agent",
         description: "The default agent filter for the agent conversation finder.",
+    },
+    // Closing a project's coordinator tab turns this off, so a closed coordinator stays closed
+    // across launches until the user opens one again from the tab menu.
+    coordinator_enabled: CoordinatorSessionEnabled {
+        type: bool,
+        default: true,
+        supported_platforms: SupportedPlatforms::DESKTOP,
+        sync_to_cloud: SyncToCloud::Never,
+        private: false,
+        toml_path: "clinch.coordinator.enabled",
+        description: "Pin a coordinator Claude Code or Codex session first in each project's tab list. Closing a coordinator turns this off.",
+    },
+    coordinator_agent: CoordinatorSessionAgent {
+        type: String,
+        default: "claude".to_string(),
+        supported_platforms: SupportedPlatforms::DESKTOP,
+        sync_to_cloud: SyncToCloud::Never,
+        private: false,
+        toml_path: "clinch.coordinator.agent",
+        description: "The agent that new coordinator sessions start: \"claude\" or \"codex\".",
     }
 ]);
 

@@ -250,6 +250,10 @@ pub enum WorkspaceAction {
     PinTab(usize),
     /// Unpins the tab at the given index.
     UnpinTab(usize),
+    /// Restarts the coordinator tab at the given index with the other agent (Claude ↔ Codex).
+    SwitchCoordinatorAgent(usize),
+    /// Opens a coordinator session for this project and turns the default back on.
+    OpenCoordinatorSession,
     /// Pins the entire tab group: sets the group as pinned
     /// and moves the group block to the end of the pinned region.
     PinTabGroup(TabGroupId),
@@ -985,6 +989,8 @@ impl WorkspaceAction {
             | CloseTabsBelowGroup(_)
             | PinTab(_)
             | UnpinTab(_)
+            | SwitchCoordinatorAgent(_)
+            | OpenCoordinatorSession
             | PinTabGroup(_)
             | UnpinTabGroup(_)
             | ToggleBookmarkedSessionsCollapsed

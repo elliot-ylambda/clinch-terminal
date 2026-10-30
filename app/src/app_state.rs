@@ -128,6 +128,8 @@ pub struct TabSnapshot {
     pub group_id: Option<TabGroupId>,
     /// True when this tab is pinned to the front of the tab list.
     pub pinned: bool,
+    /// True for the project's coordinator session, which stays first in the pinned region.
+    pub coordinator: bool,
 }
 
 impl TabSnapshot {
