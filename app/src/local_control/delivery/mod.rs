@@ -244,11 +244,20 @@ fn handle(
                         terminal.start_deferred_agent(ctx);
                     });
                 }
-                if revision == target.expected_revision && lazy && !target.queue {
-                    return Err(ControlError::new(ErrorCode::StaleTarget, "this restored tab's agent had not started yet (Clinch starts restored agents when their tab is first shown); it is starting now. Retry in a few seconds, or send with --queue to deliver it once the agent is ready"));
+                if lazy && !target.queue {
+                    return Err(ControlError::new(ErrorCode::TargetStateConflict, "this restored tab's agent had not started yet (Clinch starts restored agents when their tab is first shown); it is starting now. Retry in a few seconds, or send with --queue to deliver it once the agent is ready"));
                 }
-                if revision != target.expected_revision || !(reason.is_none() || (target.queue && (reason == Some("working") || lazy))) {
-                    return Err(ControlError::new(ErrorCode::StaleTarget, "input revision changed or target is unavailable; inspect it again (only working agents can be queued)"));
+                // Report a blocking state before the revision: a revision taken while the agent
+                // was blocked is current, so calling it stale hides the real reason.
+                if !(reason.is_none() || (target.queue && (reason == Some("working") || lazy))) {
+                    return Err(super::agents::agent_unavailable(
+                        reason,
+                        entry.terminal.as_ref(ctx).local_control_draft_source(ctx),
+                        "send requires a ready agent, or a working one with --queue",
+                    ));
+                }
+                if revision != target.expected_revision {
+                    return Err(ControlError::new(ErrorCode::StaleTarget, "input revision changed; inspect it again"));
                 }
                 // Launching the agent replaces the active block, which would read as a
                 // human change to the ordinary guard and cancel the message.

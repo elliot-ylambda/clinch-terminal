@@ -1140,6 +1140,22 @@ fn native_composer_drafts_preserve_visible_paragraphs_and_reject_hidden_text() {
             );
             model.process_bytes("\x1b[4;3H[Pasted text #1 +12 lines]\x1b[4;5H");
             assert!(claude_native_composer_draft(model.alt_screen().grid_handler()).is_none());
+            assert_eq!(
+                claude_native_composer(model.alt_screen().grid_handler()),
+                Some(NativeComposer::Unreadable)
+            );
+
+            // Only one untouched row proves a composer empty; blank rows still hold newlines.
+            model.process_bytes(format!("\x1b[0m\x1b[2J\x1b[3;1H{rule}\x1b[4;1H❯ \x1b[5;1H{rule}\x1b[4;3H").as_str());
+            assert_eq!(
+                claude_native_composer(model.alt_screen().grid_handler()),
+                Some(NativeComposer::Empty)
+            );
+            model.process_bytes(format!("\x1b[0m\x1b[2J\x1b[3;1H{rule}\x1b[4;1H❯ \x1b[7;1H{rule}\x1b[4;3H").as_str());
+            assert_eq!(
+                claude_native_composer(model.alt_screen().grid_handler()),
+                Some(NativeComposer::Unreadable)
+            );
 
             // Codex paints the entire composer band, including both blank inset rows. Its
             // indented footer must not be confused with the paragraph after an internal blank.
@@ -1180,7 +1196,7 @@ fn native_composer_drafts_preserve_visible_paragraphs_and_reject_hidden_text() {
             // A known terminal wrap must retain the space separating the last and next word.
             let first_line = format!("{}hello ", "x".repeat(columns - 8));
             model.process_bytes(format!("\x1b[0m\x1b[2J\x1b[4;1H❯ {first_line}  world\x1b[5;8H").as_str());
-            assert_eq!(native_composer_rows(model.alt_screen().grid_handler(), 3, 4, 2), Some(format!("{first_line}world")));
+            assert_eq!(native_composer_rows(model.alt_screen().grid_handler(), 3, 4, 2), NativeComposer::Draft(format!("{first_line}world")));
 
             // Without a distinguishable background/footer, blank paragraphs must not look
             // like the end of a one-row draft and permit a partial copy followed by a clear.

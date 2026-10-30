@@ -100,6 +100,13 @@ Alternatively use `--text` or `--text-file -` for stdin. Preserve the exact
 UUID/revision/target/text when retrying. The CLI waits briefly for a receipt;
 repeating an identical request retrieves it without a duplicate dispatch.
 
+When inspection reports `unavailable_reason: human_input_or_draft`, `draft_source`
+names the blocking input: `recent_input` (input in the last five seconds),
+`native_composer`, `rich_input`, `saved_draft` (unsent user text), or
+`unverified_composer` (input since the last prompt and a composer that cannot be
+proven empty). A send to a blocked agent fails with `target_state_conflict`
+naming both fields; `stale_target` means only that the revision changed.
+
 ## Project control and layout restoration
 
 ```text

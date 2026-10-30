@@ -266,6 +266,7 @@ pub(super) fn snapshot(
                                     "tab_id": tab_id, "title": tab_title, "pane_id": pane_id_string, "cwd": pane["cwd"],
                                     "state": state, "state_source": if session.supports_rich_status() { "provider_notifications" } else { "command_detection" },
                                     "input_revision": revision, "ready": unavailable.is_none(), "unavailable_reason": unavailable,
+                                    "draft_source": terminal_ref.local_control_draft_source(ctx),
                                     "latest_prompt": session.latest_user_prompt_for_chrome(), "latest_response_preview": session.session_context.response,
                                     "tool_name": session.session_context.tool_name, "tool_input_preview": session.session_context.tool_input_preview,
                                     "capabilities": {"read": true, "send": unavailable.is_none(), "queue": true, "durable_receipts": true, "event_replay": true, "interrupt": unavailable == Some("working")},
@@ -599,12 +600,41 @@ fn provider_launch_command(
     command
 }
 
+/// Rejects a request because of the agent's current state rather than a stale revision, naming
+/// the readiness signal so a coordinator can act on it without reading Clinch's code.
+pub(super) fn agent_unavailable(
+    reason: Option<&str>,
+    draft_source: Option<&str>,
+    requirement: &str,
+) -> ControlError {
+    let state = match (reason, draft_source) {
+        (None, _) => "the agent is idle and ready".to_owned(),
+        (Some(reason @ "human_input_or_draft"), Some(source)) => {
+            format!("unavailable_reason is {reason} (draft_source {source})")
+        }
+        (Some(reason), _) => format!("unavailable_reason is {reason}"),
+    };
+    ControlError::new(
+        ErrorCode::TargetStateConflict,
+        format!("{requirement}, but {state}; inspect it again"),
+    )
+}
+
 pub(super) fn interrupt(
     instance: &InstanceId,
     params: ::local_control::agents::AgentInterruptParams,
     ctx: &mut warpui::ModelContext<super::LocalControlBridge>,
 ) -> Result<Value, ControlError> {
     let entry = resolve(instance, &params.agent_id, ctx)?;
+    let terminal = entry.terminal.as_ref(ctx);
+    let (_, reason) = terminal.local_control_agent_readiness(ctx);
+    if reason != Some("working") {
+        return Err(agent_unavailable(
+            reason,
+            terminal.local_control_draft_source(ctx),
+            "interrupt requires a writable working agent",
+        ));
+    }
     if !entry.terminal.update(ctx, |terminal, ctx| {
         terminal.local_control_interrupt_agent(&params.expected_revision, ctx)
     }) {

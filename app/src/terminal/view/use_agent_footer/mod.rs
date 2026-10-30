@@ -30,6 +30,7 @@ use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use anyhow::anyhow;
+use instant::Instant;
 use parking_lot::FairMutex;
 use pathfinder_color::ColorU;
 use warp_core::features::FeatureFlag;
@@ -55,7 +56,9 @@ use warpui::{
     ViewContext, ViewHandle,
 };
 
-use super::{RichContentInsertionPosition, TerminalAction, TerminalView};
+use super::{
+    RichContentInsertionPosition, TerminalAction, TerminalView, COORDINATION_INPUT_SETTLE,
+};
 use crate::agent_resume::{
     agent_session_seed_from_restore_command, session_id_from_direct_resume_command,
     AgentResumeProvider,
@@ -117,6 +120,28 @@ const CLAUDE_COMPOSER_PROMPT: char = '❯';
 const CLAUDE_COMPOSER_RULE: char = '─';
 const CODEX_COMPOSER_PROMPT: char = '›';
 
+/// What a provider TUI's native composer shows.
+#[derive(Debug, PartialEq)]
+enum NativeComposer {
+    /// A single visible row with nothing typed: the cursor rests where text would start, apart
+    /// from the provider's dim placeholder suggestion.
+    Empty,
+    /// Visible unsent text.
+    Draft(String),
+    /// Not provably empty, yet no text can be copied: hidden behind a paste summary or scroll
+    /// indicator, only whitespace, or laid out in a way this reader does not recognize.
+    Unreadable,
+}
+
+impl NativeComposer {
+    fn into_draft(self) -> Option<String> {
+        match self {
+            NativeComposer::Draft(draft) => Some(draft),
+            NativeComposer::Empty | NativeComposer::Unreadable => None,
+        }
+    }
+}
+
 fn grid_row_is_blank(grid: &GridHandler, row_idx: usize) -> bool {
     grid.row(row_idx)
         .is_some_and(|row| (0..row.len()).all(|col| matches!(row[col].c, '\0' | ' ' | '\u{a0}')))
@@ -157,24 +182,26 @@ fn native_composer_rows(
     first_row: usize,
     last_row: usize,
     content_col: usize,
-) -> Option<String> {
+) -> NativeComposer {
     let columns = grid.columns();
     if content_col >= columns {
-        return None;
+        return NativeComposer::Unreadable;
     }
     let cursor = grid.cursor_render_point();
     let mut draft = String::new();
     for row_idx in first_row..=last_row {
-        let row = grid.row(row_idx)?;
+        let Some(row) = grid.row(row_idx) else {
+            return NativeComposer::Unreadable;
+        };
         if (0..row.len())
             .any(|col| matches!(row[col].c, '↑' | '↓') && row[col].flags.contains(Flags::DIM))
         {
-            return None;
+            return NativeComposer::Unreadable;
         }
         if row_idx > first_row
             && (0..content_col).any(|col| !matches!(row[col].c, '\0' | ' ' | '\u{a0}'))
         {
-            return None;
+            return NativeComposer::Unreadable;
         }
         let last_content_col = (content_col..row.len().min(columns))
             .rev()
@@ -211,19 +238,23 @@ fn native_composer_rows(
             draft.push('\n');
         }
     }
-    if draft.contains("[Pasted") || draft.trim().is_empty() {
-        return None;
+    // Blank rows between separators still hold newlines, so only one untouched row is empty.
+    if draft.is_empty() {
+        NativeComposer::Empty
+    } else if draft.contains("[Pasted") || draft.trim().is_empty() {
+        NativeComposer::Unreadable
+    } else {
+        NativeComposer::Draft(draft)
     }
-    Some(draft)
 }
 
 /// Reads Claude Code's composer between its horizontal rules, including visible multiline text.
 fn claude_native_composer_draft(grid: &GridHandler) -> Option<String> {
-    claude_native_composer(grid).flatten()
+    claude_native_composer(grid).and_then(NativeComposer::into_draft)
 }
 
-// Outer Option proves the composer is present; inner Option holds an optional draft.
-fn claude_native_composer(grid: &GridHandler) -> Option<Option<String>> {
+/// `None` when no Claude Code composer is visible.
+fn claude_native_composer(grid: &GridHandler) -> Option<NativeComposer> {
     let columns = grid.columns();
     if columns == 0 {
         return None;
@@ -262,7 +293,7 @@ fn claude_native_composer(grid: &GridHandler) -> Option<Option<String>> {
                 // Claude paints an empty composer's suggestion as dim text under the cursor. It is
                 // presentation only and must never be mistaken for a draft.
                 if first_content_is_dim && cursor == Point::new(prompt_row, content_col) {
-                    return Some(None);
+                    return Some(NativeComposer::Empty);
                 }
 
                 return Some(native_composer_rows(
@@ -284,10 +315,11 @@ fn claude_native_composer(grid: &GridHandler) -> Option<Option<String>> {
 /// multiline input (including blank paragraphs) from the footer, which has the same left inset.
 /// Older unstyled layouts retain the single-row fallback.
 fn codex_native_composer_draft(grid: &GridHandler) -> Option<String> {
-    codex_native_composer(grid).flatten()
+    codex_native_composer(grid).and_then(NativeComposer::into_draft)
 }
 
-fn codex_native_composer(grid: &GridHandler) -> Option<Option<String>> {
+/// `None` when no Codex composer is visible.
+fn codex_native_composer(grid: &GridHandler) -> Option<NativeComposer> {
     let columns = grid.columns();
     if columns <= 2 || !grid.is_mode_set(TermMode::SHOW_CURSOR) {
         return None;
@@ -319,7 +351,7 @@ fn codex_native_composer(grid: &GridHandler) -> Option<Option<String>> {
         })
         .is_some_and(|cell| cell.flags.contains(Flags::DIM));
     if first_content_is_dim && cursor == Point::new(prompt_row, 2) {
-        return Some(None);
+        return Some(NativeComposer::Empty);
     }
 
     let background = row[0].bg;
@@ -439,6 +471,13 @@ impl Drop for LocalAgentDeliveryCompletion {
             callback(false);
         }
     }
+}
+
+/// Built-in slash commands run inside the provider without prompt-submit or stop hooks, so
+/// marking one as a started turn would show the agent working until an unrelated hook. A slash
+/// command that does start a turn reports it through its own prompt-submit hook.
+fn submission_starts_agent_turn(text: &[u8]) -> bool {
+    !text.trim_ascii_start().starts_with(b"/")
 }
 
 /// Returns the strategy for submitting rich input text to a CLI agent's PTY.
@@ -1387,6 +1426,51 @@ impl TerminalView {
         }
     }
 
+    /// Names the unsent input that makes readiness report `human_input_or_draft`, if any.
+    ///
+    /// Unacknowledged keystrokes block until they settle and the provider's own composer is
+    /// provably empty; a hidden or unrecognized composer is never assumed to be empty.
+    pub(crate) fn local_control_draft_source(&self, ctx: &AppContext) -> Option<&'static str> {
+        let session = CLIAgentSessionsModel::as_ref(ctx).session(self.view_id)?;
+        if self.has_active_cli_agent_input_session(ctx)
+            && !self.input.as_ref(ctx).buffer_text(ctx).is_empty()
+        {
+            return Some("rich_input");
+        }
+        let composer = {
+            let model = self.model.lock();
+            let grid = if model.is_alt_screen_active() {
+                model.alt_screen().grid_handler()
+            } else {
+                model
+                    .block_list()
+                    .active_block()
+                    .output_grid()
+                    .grid_handler()
+            };
+            match session.agent {
+                CLIAgent::Claude => claude_native_composer(grid),
+                CLIAgent::Codex => codex_native_composer(grid),
+                _ => None,
+            }
+        };
+        if matches!(composer, Some(NativeComposer::Draft(_))) {
+            return Some("native_composer");
+        }
+        if session
+            .draft_text
+            .as_ref()
+            .is_some_and(|text| !text.is_empty())
+        {
+            return Some("saved_draft");
+        }
+        match self.coordination_unacked_input_at {
+            Some(at) if at.elapsed() < COORDINATION_INPUT_SETTLE => Some("recent_input"),
+            Some(_) if composer != Some(NativeComposer::Empty) => Some("unverified_composer"),
+            _ => None,
+        }
+    }
+
     /// Revision includes input epochs and provider state; inspection itself never consumes input.
     pub(crate) fn local_control_agent_readiness(
         &self,
@@ -1398,20 +1482,9 @@ impl TerminalView {
         let Some(session) = CLIAgentSessionsModel::as_ref(ctx).session(self.view_id) else {
             return (String::new(), Some("no_agent"));
         };
+        let draft_source = self.local_control_draft_source(ctx);
         let model = self.model.lock();
         let block = model.block_list().active_block();
-        let native_grid = if model.is_alt_screen_active() {
-            model.alt_screen().grid_handler()
-        } else {
-            block.output_grid().grid_handler()
-        };
-        let native_draft = match session.agent {
-            CLIAgent::Claude => claude_native_composer_draft(native_grid),
-            CLIAgent::Codex => codex_native_composer_draft(native_grid),
-            _ => None,
-        };
-        let rich_draft = self.has_active_cli_agent_input_session(ctx)
-            && !self.input.as_ref(ctx).buffer_text(ctx).is_empty();
         let reason = if self.deferred_agent_start.is_some() {
             // A restored tab whose agent waits until the tab is first shown;
             // local-control delivery starts it on demand.
@@ -1441,14 +1514,7 @@ impl TerminalView {
             Some("interactive_attention_required")
         } else if session.session_context.stop_reason.is_some() {
             Some("rate_limited")
-        } else if self.coordination_input_dirty
-            || rich_draft
-            || native_draft.is_some()
-            || session
-                .draft_text
-                .as_ref()
-                .is_some_and(|text| !text.is_empty())
-        {
+        } else if draft_source.is_some() {
             Some("human_input_or_draft")
         } else if session.is_actively_working() {
             Some("working")
@@ -1521,6 +1587,7 @@ impl TerminalView {
         let input_epoch = self.coordination_input_epoch;
         let block_id = self.model.lock().block_list().active_block().id().clone();
         let text_bytes = text.into_bytes();
+        let starts_turn = submission_starts_agent_turn(&text_bytes);
         self.coordination_send_pending = true;
         // write_to_pty avoids marking our own insertion as intervening human input.
         if matches!(
@@ -1568,13 +1635,15 @@ impl TerminalView {
                 && same_foreground
                 && rich_input_empty;
             me.coordination_send_pending = false;
-            me.coordination_input_dirty = true;
+            me.coordination_unacked_input_at = Some(Instant::now());
             me.coordination_input_epoch = me.coordination_input_epoch.wrapping_add(1);
             if valid {
                 me.write_to_pty(vec![b'\r'], ctx);
-                CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
-                    sessions.mark_project_cli_agent_turn_started_from_clinch_submission(me.view_id, ctx);
-                });
+                if starts_turn {
+                    CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                        sessions.mark_project_cli_agent_turn_started_from_clinch_submission(me.view_id, ctx);
+                    });
+                }
                 me.maybe_close_rich_input_after_submit(ctx);
             }
             if let Some(callback) = completion.0.take() {
@@ -1915,10 +1984,12 @@ impl TerminalView {
         // This pipeline is only reached with a known, non-empty agent prompt. Mark it directly
         // instead of inferring activity from arbitrary carriage returns written to the raw TUI;
         // those can also confirm startup menus or be sent while the agent is idle.
-        let view_id = self.view_id;
-        CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
-            sessions.mark_project_cli_agent_turn_started_from_clinch_submission(view_id, ctx);
-        });
+        if submission_starts_agent_turn(&text_bytes) {
+            let view_id = self.view_id;
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                sessions.mark_project_cli_agent_turn_started_from_clinch_submission(view_id, ctx);
+            });
+        }
 
         match strategy {
             RichInputSubmitStrategy::Inline => {

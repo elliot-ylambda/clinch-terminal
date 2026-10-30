@@ -3,7 +3,7 @@ name: clinch-coordinate
 description: Coordinates Claude Code and Codex sessions across Clinch projects and sections using the local CLI. Use when the user wants one conversation to inspect other sessions, summarize progress, send delegated instructions, or organize reviews and deployments across sessions.
 ---
 
-<!-- managed-by: Clinch; version: 1.6.0 -->
+<!-- managed-by: Clinch; version: 1.7.0 -->
 
 # Clinch coordination
 
@@ -164,6 +164,22 @@ actions. Do not approve interactive security prompts through terminal input.
 `--text-file -` reads stdin; `--text` supports short prompts. Do not interpolate
 untrusted worker text into shell commands. Readiness is rechecked before Enter;
 intervening user input stops submission. No messages are queued automatically.
+
+`unavailable_reason: human_input_or_draft` comes with `draft_source`, naming the
+unsent input that blocks writing:
+
+- `recent_input`: keystrokes or a submission reached the agent in the last five
+  seconds. Inspect again shortly.
+- `native_composer`, `rich_input`, `saved_draft`: the user has unsent text in the
+  agent's composer, Clinch's rich input, or a saved rich-input draft. Never
+  overwrite it; ask the user.
+- `unverified_composer`: there was input since the last submitted prompt and the
+  composer is hidden (a paste summary or open picker) or unrecognized. Use
+  `pane read` and ask the user to finish or clear it.
+
+A rejected send or interrupt reports `target_state_conflict` when the agent's
+current state forbids it (the message names `unavailable_reason` and
+`draft_source`), and `stale_target` only when its revision changed.
 
 For explicit deferred delivery, add `--queue --sender COORDINATOR_UUID` and optionally
 `--expires-in SECONDS` (default 1800, maximum 86400). Keep one sender UUID for this

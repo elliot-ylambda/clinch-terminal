@@ -9329,14 +9329,220 @@ fn local_control_input_acknowledgement_reaches_an_existing_listener() {
             view.handle_cli_agent_notification(Some(CLI_AGENT_NOTIFICATION_SENTINEL), &start, ctx);
             assert!(CLIAgentSessionsModel::as_ref(ctx).session(view.view_id).unwrap().listener.is_some());
             view.write_user_bytes_to_pty(b"hello".to_vec(), ctx);
-            assert!(view.coordination_input_dirty);
+            assert!(view.coordination_unacked_input_at.is_some());
             let submit = serde_json::json!({"v": 1, "agent": "claude", "event": "prompt_submit", "session_id": "existing-listener", "query": "hello"}).to_string();
             view.handle_cli_agent_notification(Some(CLI_AGENT_NOTIFICATION_SENTINEL), &submit, ctx);
-            assert!(!view.coordination_input_dirty);
+            assert!(view.coordination_unacked_input_at.is_none());
             view.write_user_bytes_to_pty(b"draft".to_vec(), ctx);
             let other = serde_json::json!({"v": 1, "agent": "claude", "event": "prompt_submit", "session_id": "different-conversation", "query": "hello"}).to_string();
             view.handle_cli_agent_notification(Some(CLI_AGENT_NOTIFICATION_SENTINEL), &other, ctx);
-            assert!(view.coordination_input_dirty);
+            assert!(view.coordination_unacked_input_at.is_some());
+        });
+    });
+}
+
+/// An idle Claude pane coordination can write to, on a 24×120 alternate screen.
+fn claude_pane_ready_for_coordination(
+    view: &mut TerminalView,
+    ctx: &mut ViewContext<TerminalView>,
+) {
+    use crate::terminal::{SizeInfo, SizeUpdate, SizeUpdateReason};
+    {
+        let mut model = view.model.lock();
+        model.simulate_long_running_block("claude", "");
+        let last_size = *model.block_list().size();
+        let new_size = SizeInfo::new_without_font_metrics(24, 120);
+        model.resize(SizeUpdate {
+            update_reason: SizeUpdateReason::Refresh,
+            last_size,
+            new_size,
+            new_gap_height: None,
+            natural_rows: new_size.rows(),
+            natural_cols: new_size.columns(),
+        });
+        model.enter_alt_screen(true);
+    }
+    CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+        let mut session = cli_agent_session_with_prompts(Vec::new());
+        session.agent = CLIAgent::Claude;
+        session.status = CLIAgentSessionStatus::Success;
+        session.session_context.session_id = Some("coordination-draft".into());
+        session.received_rich_notification = true;
+        sessions.set_session(view.view_id, session, ctx);
+    });
+}
+
+/// Paints Claude Code's composer holding `text` below the transcript line `above`. Rules span
+/// the current width, which layout may have changed since the pane was sized.
+fn paint_claude_composer(view: &TerminalView, above: &str, text: &str) {
+    let mut model = view.model.lock();
+    let rule = "─".repeat(model.alt_screen().grid_handler().columns());
+    let cursor_col = 3 + text.chars().count();
+    model.process_bytes(
+        format!("\x1b[0m\x1b[2J\x1b[1;1H{above}\x1b[3;1H{rule}\x1b[4;1H❯ {text}\x1b[5;1H{rule}\x1b[6;1H⏵⏵ auto mode on\x1b[4;{cursor_col}H")
+            .as_str(),
+    );
+}
+
+/// Ages unacknowledged input past the settle window, as if the user then left the pane alone.
+fn settle_coordination_input(view: &mut TerminalView) {
+    view.coordination_unacked_input_at =
+        Instant::now().checked_sub(COORDINATION_INPUT_SETTLE + Duration::from_secs(1));
+}
+
+fn coordination_state(
+    view: &TerminalView,
+    ctx: &AppContext,
+) -> (Option<&'static str>, Option<&'static str>) {
+    (
+        view.local_control_agent_readiness(ctx).1,
+        view.local_control_draft_source(ctx),
+    )
+}
+
+/// Claude Code runs built-in slash commands locally and sends no prompt-submit hook for them,
+/// so a cancelled `/effort` used to leave the pane refusing coordination until a human typed.
+#[test]
+fn local_control_cancelled_slash_command_releases_readiness() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        app.update(crate::remote_control::register);
+        let terminal = add_window_with_terminal(&mut app, None);
+        terminal.update(&mut app, |view, ctx| {
+            claude_pane_ready_for_coordination(view, ctx);
+            paint_claude_composer(view, "⏺ done", "");
+            assert_eq!(coordination_state(view, ctx), (None, None));
+
+            view.write_user_bytes_to_pty(b"/effort\r".to_vec(), ctx);
+            view.model.lock().process_bytes(
+                "\x1b[0m\x1b[2J\x1b[1;1H❯ /effort\x1b[3;1HEffort  Faster ▲ Smarter\x1b[5;1H←/→ to adjust · Enter to confirm · Esc to cancel\x1b[5;1H",
+            );
+            assert_eq!(
+                coordination_state(view, ctx),
+                (Some("human_input_or_draft"), Some("recent_input"))
+            );
+            settle_coordination_input(view);
+            assert_eq!(
+                coordination_state(view, ctx),
+                (Some("human_input_or_draft"), Some("unverified_composer")),
+                "an open picker has no composer that could prove the input is gone"
+            );
+
+            view.write_user_bytes_to_pty(b"\x1b".to_vec(), ctx);
+            paint_claude_composer(view, "❯ /effort  ⎿  Cancelled", "");
+            assert_eq!(
+                coordination_state(view, ctx),
+                (Some("human_input_or_draft"), Some("recent_input")),
+                "keystrokes may still be in flight"
+            );
+            settle_coordination_input(view);
+            assert_eq!(coordination_state(view, ctx), (None, None));
+        });
+    });
+}
+
+#[test]
+fn local_control_deleted_text_releases_readiness_but_unsent_text_blocks() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        app.update(crate::remote_control::register);
+        let terminal = add_window_with_terminal(&mut app, None);
+        terminal.update(&mut app, |view, ctx| {
+            claude_pane_ready_for_coordination(view, ctx);
+            view.write_user_bytes_to_pty(b"hello".to_vec(), ctx);
+            paint_claude_composer(view, "", "hello");
+            settle_coordination_input(view);
+            assert_eq!(
+                coordination_state(view, ctx),
+                (Some("human_input_or_draft"), Some("native_composer")),
+                "visible unsent text blocks however long it has been there"
+            );
+
+            view.write_user_bytes_to_pty(vec![0x7f; 5], ctx);
+            paint_claude_composer(view, "", "");
+            assert_eq!(
+                coordination_state(view, ctx),
+                (Some("human_input_or_draft"), Some("recent_input"))
+            );
+            settle_coordination_input(view);
+            assert_eq!(coordination_state(view, ctx), (None, None));
+
+            // Text the reader cannot see in full is never assumed to be gone.
+            for hidden in ["[Pasted text #1 +12 lines]", "   "] {
+                view.write_user_bytes_to_pty(b"x".to_vec(), ctx);
+                paint_claude_composer(view, "", hidden);
+                settle_coordination_input(view);
+                assert_eq!(
+                    coordination_state(view, ctx),
+                    (Some("human_input_or_draft"), Some("unverified_composer")),
+                    "{hidden:?} must keep blocking"
+                );
+            }
+
+            paint_claude_composer(view, "", "");
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, _| {
+                sessions.set_draft(view.view_id, "saved draft".to_owned());
+            });
+            assert_eq!(
+                coordination_state(view, ctx),
+                (Some("human_input_or_draft"), Some("saved_draft"))
+            );
+        });
+    });
+}
+
+/// Coordination's own local slash command is not acknowledged either: it must neither look like
+/// a running turn nor lock out the next message once Claude Code redraws an empty composer.
+#[test]
+#[cfg(feature = "local_tty")]
+fn local_control_own_slash_command_does_not_block_the_next_send() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        app.update(crate::remote_control::register);
+        app.update(crate::settings::LocalControlSettings::register);
+        app.update(|ctx| {
+            crate::settings::LocalControlSettings::handle(ctx).update(ctx, |settings, ctx| {
+                settings
+                    .local_control_mode
+                    .set_value(crate::settings::LocalControlMode::Enabled, ctx)
+            })
+        })
+        .unwrap();
+        let terminal = add_window_with_terminal(&mut app, None);
+        let submitted = Arc::new(std::sync::Mutex::new(None));
+        let callback = submitted.clone();
+        terminal.update(&mut app, |view, ctx| {
+            claude_pane_ready_for_coordination(view, ctx);
+            paint_claude_composer(view, "", "");
+            let (revision, reason) = view.local_control_agent_readiness(ctx);
+            assert_eq!(reason, None);
+            assert!(view.local_control_send_agent_text(
+                "/model sonnet".into(),
+                &revision,
+                move |ok| *callback.lock().unwrap() = Some(ok),
+                ctx
+            ));
+        });
+        assert_eventually!(
+            submitted.lock().unwrap().is_some(),
+            "submission callback should resolve"
+        );
+        assert_eq!(*submitted.lock().unwrap(), Some(true));
+        terminal.update(&mut app, |view, ctx| {
+            assert!(
+                !CLIAgentSessionsModel::as_ref(ctx)
+                    .session(view.view_id)
+                    .unwrap()
+                    .is_actively_working(),
+                "a local slash command sends no stop hook, so it must not start a turn"
+            );
+            paint_claude_composer(view, "❯ /model sonnet  ⎿  Set model to Sonnet", "");
+            assert_eq!(
+                coordination_state(view, ctx),
+                (Some("human_input_or_draft"), Some("recent_input"))
+            );
+            settle_coordination_input(view);
+            assert_eq!(coordination_state(view, ctx), (None, None));
         });
     });
 }
@@ -9417,7 +9623,7 @@ fn local_control_interrupt_preserves_conversation_and_does_not_invent_a_draft() 
             assert_eq!(reason, Some("working"));
             assert!(!view.local_control_interrupt_agent("stale", ctx));
             assert!(view.local_control_interrupt_agent(&revision, ctx));
-            assert!(!view.coordination_input_dirty);
+            assert!(view.coordination_unacked_input_at.is_none());
             assert_ne!(view.local_control_queue_guard(), guard);
             assert_eq!(view.local_control_agent_readiness(ctx).1, None);
             assert_eq!(

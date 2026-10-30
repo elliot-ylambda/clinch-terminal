@@ -163,6 +163,14 @@ and local-control mode. Unknown prompt readiness returns a reason or waits when 
 Human keyboard/draft activity preempts automated dispatch; remote writer ownership participates in
 the same conflict check while preserving its existing desktop-preemption semantics.
 
+A provider prompt-submit or session-start notification acknowledges input immediately. Input that
+never gets one (built-in slash commands, cancelled pickers, deleted text, scrolling) blocks for a
+five-second settle window and then until the provider's own composer is provably empty: one
+untouched visible row. A hidden composer (paste summary, scroll indicator, open picker) or
+unrecognized layout is never assumed empty. Inspection reports which signal blocks as
+`draft_source`, and send or interrupt rejects a blocked target with `target_state_conflict`
+naming it; `stale_target` means only that the revision changed.
+
 Extend native send with staged callbacks and final checks before delayed Enter. If text was pasted
 but the target changes before Enter, record uncertain delivery and do not submit into the new
 process or try to clear unknown user input. Test both Claude delayed Enter and Codex paste/Enter.
