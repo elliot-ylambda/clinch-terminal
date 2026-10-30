@@ -4809,6 +4809,14 @@ impl Workspace {
                             saved_tab.default_directory_color;
                         self.tabs[tab_index].selected_color = saved_tab.selected_color;
                         self.tabs[tab_index].origin = saved_tab.origin.clone();
+                        if saved_tab
+                            .origin
+                            .as_ref()
+                            .is_some_and(|origin| origin.kind == TabOriginKind::Fork)
+                        {
+                            let pane_group = self.tabs[tab_index].pane_group.clone();
+                            Self::mark_forked_tab(&pane_group, ctx);
+                        }
                         // Only restore pinned state when the Pinned Tabs
                         // feature is enabled.
                         if FeatureFlag::PinnedTabs.is_enabled() {
@@ -9721,7 +9729,20 @@ impl Workspace {
             parent_pane_uuid: source_pane_uuid,
             parent_title: pane_group.as_ref(ctx).display_title(ctx),
         };
-        let _ = self.launch_command_in_new_tab(fork.command, cwd, Some(origin), ctx);
+        if let Some(pane_group) =
+            self.launch_command_in_new_tab_placed(fork.command, cwd, None, None, Some(origin), ctx)
+        {
+            Self::mark_forked_tab(&pane_group, ctx);
+        }
+    }
+
+    fn mark_forked_tab(pane_group: &ViewHandle<PaneGroup>, ctx: &mut ViewContext<Self>) {
+        let terminal_views = pane_group.as_ref(ctx).terminal_views(ctx);
+        CLIAgentSessionsModel::handle(ctx).update(ctx, |model, _| {
+            for terminal_view in terminal_views {
+                model.mark_forked_session(terminal_view.id());
+            }
+        });
     }
 
     /// Opens a Claude Code ↔ Codex transfer in a new tab while preserving the

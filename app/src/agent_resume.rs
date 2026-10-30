@@ -67,6 +67,8 @@ pub struct AgentPromptHistory {
     pub prompts: Vec<AgentPrompt>,
     /// True when the durable source reports that capture stopped at its safety cap.
     pub is_partial: bool,
+    /// How many leading `prompts` a forked session inherited from its parent conversation.
+    pub inherited_prompts: usize,
 }
 
 /// Removes paste transport markup from display titles without changing stored prompt history.
@@ -1598,6 +1600,9 @@ fn agent_transcript_roots() -> AgentTranscriptRoots {
     }
 }
 
+/// Bounds how far a chain of Codex forks is followed back through its parents.
+const MAX_CODEX_FORK_DEPTH: usize = 8;
+
 fn read_prompt_history_in(
     provider: AgentResumeProvider,
     session_id: &str,
@@ -1609,26 +1614,104 @@ fn read_prompt_history_in(
         return AgentPromptHistory::default();
     }
 
-    if let Some(registry) = registry {
-        if let Some(mirror) = read_scoped_prompt_mirror(registry, provider, session_id) {
-            return mirror.history;
-        }
-        if provider == AgentResumeProvider::Claude {
-            if let Some(mirror) = read_legacy_claude_prompt_mirror(registry, session_id) {
-                return mirror.history;
-            }
-        }
-    }
+    let mirror = registry.and_then(|registry| {
+        read_scoped_prompt_mirror(registry, provider, session_id).or_else(|| {
+            (provider == AgentResumeProvider::Claude)
+                .then(|| read_legacy_claude_prompt_mirror(registry, session_id))
+                .flatten()
+        })
+    });
+    let transcript = transcript_path
+        .and_then(|path| safe_provider_transcript(path, provider, session_id, roots))
+        .or_else(|| find_provider_transcript(provider, session_id, roots));
 
-    if let Some(path) =
-        transcript_path.and_then(|path| safe_provider_transcript(path, provider, session_id, roots))
-    {
-        return prompt_history_from_transcript(provider, &path);
+    let history = match (mirror, transcript.as_deref()) {
+        (Some(mirror), Some(transcript)) if provider == AgentResumeProvider::Claude => {
+            with_claude_inherited_prompts(
+                mirror.history,
+                prompt_history_from_claude_transcript(transcript).prompts,
+            )
+        }
+        (Some(mirror), _) => mirror.history,
+        (None, Some(transcript)) => prompt_history_from_transcript(provider, transcript),
+        (None, None) => return AgentPromptHistory::default(),
+    };
+    match transcript.as_deref() {
+        Some(transcript) if provider == AgentResumeProvider::Codex => with_inherited_prompts(
+            history,
+            codex_inherited_prompts(transcript, roots, MAX_CODEX_FORK_DEPTH).unwrap_or_default(),
+        ),
+        _ => history,
     }
+}
 
-    find_provider_transcript(provider, session_id, roots)
-        .map(|path| prompt_history_from_transcript(provider, &path))
-        .unwrap_or_default()
+/// A forked Claude transcript copies the parent's prompts, while the mirror only records prompts
+/// submitted in the fork. The mirror stays authoritative for those; whatever precedes them in the
+/// transcript is inherited. Only the transcript's tail can align, so a normal session that repeats
+/// a prompt is never mistaken for a fork. The tail may lag the mirror by one in-flight prompt.
+fn with_claude_inherited_prompts(
+    mirror: AgentPromptHistory,
+    transcript: Vec<AgentPrompt>,
+) -> AgentPromptHistory {
+    let tail_matches = |mirrored: &[AgentPrompt]| {
+        transcript.len() >= mirrored.len()
+            && transcript[transcript.len() - mirrored.len()..]
+                .iter()
+                .zip(mirrored)
+                .all(|(recorded, prompt)| recorded.text.trim() == prompt.text.trim())
+    };
+    let aligned = match mirror.prompts.as_slice() {
+        [] => None,
+        prompts if tail_matches(prompts) => Some(prompts.len()),
+        [earlier @ .., _] if !earlier.is_empty() && tail_matches(earlier) => Some(earlier.len()),
+        _ => None,
+    };
+    let Some(aligned) = aligned else {
+        return mirror;
+    };
+    let inherited = transcript[..transcript.len() - aligned].to_vec();
+    with_inherited_prompts(mirror, inherited)
+}
+
+fn with_inherited_prompts(
+    mut history: AgentPromptHistory,
+    mut inherited: Vec<AgentPrompt>,
+) -> AgentPromptHistory {
+    history.inherited_prompts = inherited.len();
+    inherited.append(&mut history.prompts);
+    history.prompts = inherited;
+    history
+}
+
+/// A forked Codex rollout does not copy its parent's prompts: its `session_meta` names the parent
+/// rollout and how many of its records the fork continues from.
+fn codex_inherited_prompts(
+    path: &Path,
+    roots: &AgentTranscriptRoots,
+    remaining_depth: usize,
+) -> Option<Vec<AgentPrompt>> {
+    let remaining_depth = remaining_depth.checked_sub(1)?;
+    let jsonl = read_bounded_jsonl(path)?;
+    let meta = jsonl
+        .values
+        .first()
+        .filter(|record| record.get("type").and_then(Value::as_str) == Some("session_meta"))?;
+    let parent_id = meta
+        .pointer("/payload/forked_from_id")
+        .and_then(Value::as_str)
+        .filter(|id| is_safe_session_id(id))?;
+    let parent_path = find_provider_transcript(AgentResumeProvider::Codex, parent_id, roots)?;
+    let parent = read_bounded_jsonl(&parent_path)?;
+    let forked_at = meta
+        .pointer("/payload/forked_from_ordinal_exclusive")
+        .and_then(Value::as_u64)
+        .map_or(parent.values.len(), |ordinal| {
+            (ordinal as usize).min(parent.values.len())
+        });
+    let mut prompts =
+        codex_inherited_prompts(&parent_path, roots, remaining_depth).unwrap_or_default();
+    prompts.extend(codex_prompts(&parent.values[..forked_at]));
+    Some(prompts)
 }
 
 /// Resolves only an attached provider session's native transcript for local coordination.
@@ -1923,6 +2006,7 @@ fn read_prompt_mirror(path: &Path) -> Option<PromptMirrorRead> {
     let mut history = AgentPromptHistory {
         prompts: Vec::new(),
         is_partial: jsonl.is_partial,
+        inherited_prompts: 0,
     };
     let mut first_record = None;
     let mut latest_prompt_in_open_turn: Option<String> = None;
@@ -2031,6 +2115,7 @@ fn prompt_history_from_claude_transcript(path: &Path) -> AgentPromptHistory {
     AgentPromptHistory {
         prompts,
         is_partial: jsonl.is_partial,
+        inherited_prompts: 0,
     }
 }
 
@@ -2058,9 +2143,17 @@ fn prompt_history_from_codex_transcript(path: &Path) -> AgentPromptHistory {
     let Some(jsonl) = read_bounded_jsonl(path) else {
         return AgentPromptHistory::default();
     };
+    AgentPromptHistory {
+        prompts: codex_prompts(&jsonl.values),
+        is_partial: jsonl.is_partial,
+        inherited_prompts: 0,
+    }
+}
+
+fn codex_prompts(records: &[Value]) -> Vec<AgentPrompt> {
     let mut event_prompts = Vec::new();
     let mut response_item_prompts = Vec::new();
-    for record in jsonl.values {
+    for record in records {
         let timestamp = record
             .get("timestamp")
             .and_then(Value::as_str)
@@ -2100,13 +2193,10 @@ fn prompt_history_from_codex_transcript(path: &Path) -> AgentPromptHistory {
     // Current rollouts record the same submission as both a response_item and an event_msg. The
     // event stream is canonical when present; response_item is an all-history fallback for older
     // rollouts. This avoids synthetic deduplication that would erase intentional repeated turns.
-    AgentPromptHistory {
-        prompts: if event_prompts.is_empty() {
-            response_item_prompts
-        } else {
-            event_prompts
-        },
-        is_partial: jsonl.is_partial,
+    if event_prompts.is_empty() {
+        response_item_prompts
+    } else {
+        event_prompts
     }
 }
 

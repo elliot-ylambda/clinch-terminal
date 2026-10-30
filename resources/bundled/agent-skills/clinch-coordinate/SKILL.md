@@ -3,7 +3,7 @@ name: clinch-coordinate
 description: Coordinates Claude Code and Codex sessions across Clinch projects and sections using the local CLI. Use when the user wants one conversation to inspect other sessions, summarize progress, send delegated instructions, or organize reviews and deployments across sessions.
 ---
 
-<!-- managed-by: Clinch; version: 1.8.0 -->
+<!-- managed-by: Clinch; version: 1.9.0 -->
 
 # Clinch coordination
 
@@ -60,6 +60,14 @@ shows the complete hierarchy for one project. These controls work without a
 coordinator. Project filters on discovery may repeat; mutation selectors accept
 one exact project. After transfer or restoration, rediscover agent and pane IDs
 before sending: original message targets are never automatically rebound.
+
+Give a session's tab a useful name when the user asks, or when you delegate new
+work to it. A name set this way stays until the user changes it; status keeps
+showing on the tab:
+
+```sh
+<ctl> tab rename "Billing fix" --window WINDOW_ID --tab TAB_ID --pid "$CLINCH_CONTROL_PID"
+```
 
 ## Read and monitor
 

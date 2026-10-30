@@ -7090,3 +7090,93 @@ fn coordinator_survives_snapshot_restore() {
         });
     });
 }
+
+#[test]
+fn forked_tab_is_named_by_its_first_prompt_and_can_be_renamed() {
+    let registry = TempDir::new().unwrap();
+    std::env::set_var("WARP_AGENT_RESUME_DIR", registry.path());
+    std::env::set_var("CLAUDE_CONFIG_DIR", registry.path().join("claude-config"));
+    ChannelState::set(ChannelState::new(
+        Channel::Local,
+        warp_core::channel::ChannelConfig::no_backend(
+            warp_core::AppId::new("sh", "clinch", "ClinchDev"),
+            "clinch-test.log",
+        ),
+    ));
+
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+        workspace.update(&mut app, |workspace, ctx| {
+            let parent_pane_uuid = workspace.tabs[0]
+                .pane_group
+                .as_ref(ctx)
+                .terminal_pane_uuids()[0]
+                .clone();
+            let fork = workspace
+                .launch_command_in_new_tab_placed(
+                    "true".to_owned(),
+                    None,
+                    None,
+                    None,
+                    Some(TabOrigin {
+                        kind: TabOriginKind::Fork,
+                        parent_pane_uuid,
+                        parent_title: "Parent".to_owned(),
+                    }),
+                    ctx,
+                )
+                .unwrap();
+            Workspace::mark_forked_tab(&fork, ctx);
+            let terminal_view = fork.as_ref(ctx).terminal_views(ctx)[0].id();
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |model, ctx| {
+                model.seed_resumed_session(
+                    terminal_view,
+                    AgentResumeProvider::Claude,
+                    "fork-session".to_owned(),
+                    ctx,
+                );
+                let event = CLIAgentEvent {
+                    source: CLIAgentEventSource::RichPlugin,
+                    v: 1,
+                    agent: crate::terminal::CLIAgent::Claude,
+                    event: CLIAgentEventType::PromptSubmit,
+                    session_id: Some("fork-session".to_owned()),
+                    cwd: None,
+                    project: None,
+                    payload: CLIAgentEventPayload {
+                        query: Some("Fork topic".to_owned()),
+                        ..Default::default()
+                    },
+                };
+                model.update_from_event(terminal_view, &event, ctx);
+            });
+            let session = CLIAgentSessionsModel::as_ref(ctx)
+                .session(terminal_view)
+                .unwrap();
+            assert_eq!(
+                session.session_context.fork_first_prompt.as_deref(),
+                Some("Fork topic")
+            );
+            assert_eq!(
+                session
+                    .title_for_tab(false, Some("Parent agent title"))
+                    .as_deref(),
+                Some("Fork topic")
+            );
+
+            // The tab row shows status in its own slot, so its title text carries no glyph while
+            // other chrome keeps the standardized one.
+            let terminal = fork.as_ref(ctx).terminal_views(ctx)[0].clone();
+            let terminal = terminal.as_ref(ctx);
+            let plain_title = terminal.agent_title_without_status(ctx).unwrap();
+            let glyph_title = terminal.display_title_from_shell(ctx);
+            assert!(glyph_title.starts_with(['◐', '◓', '◑', '◒', '✳']));
+            assert_eq!(glyph_title.split_once(' ').unwrap().1, plain_title);
+
+            // A name the user sets is independent of the session's title and stays.
+            fork.update(ctx, |pane_group, ctx| pane_group.set_title("My name", ctx));
+            assert_eq!(fork.as_ref(ctx).display_title(ctx), "My name");
+        });
+    });
+}

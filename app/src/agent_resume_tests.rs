@@ -1108,6 +1108,7 @@ fn claude_history_parser_keeps_exact_user_text_and_timestamps() {
                 },
             ],
             is_partial: false,
+            inherited_prompts: 0,
         }
     );
     std::fs::remove_dir_all(dir).unwrap();
@@ -1607,4 +1608,172 @@ fn codex_registry_owner_requires_exact_pane_process_and_tty() {
         "abcd",
         "ttys001"
     ));
+}
+
+fn prompts(texts: &[&str]) -> Vec<AgentPrompt> {
+    texts
+        .iter()
+        .map(|text| AgentPrompt {
+            timestamp: None,
+            text: (*text).to_owned(),
+        })
+        .collect()
+}
+
+fn mirror_history(texts: &[&str]) -> AgentPromptHistory {
+    AgentPromptHistory {
+        prompts: prompts(texts),
+        ..Default::default()
+    }
+}
+
+fn prompt_texts(history: &AgentPromptHistory) -> Vec<&str> {
+    history
+        .prompts
+        .iter()
+        .map(|prompt| prompt.text.as_str())
+        .collect()
+}
+
+#[test]
+fn claude_fork_keeps_inherited_prompts_ahead_of_its_mirror() {
+    let history = with_claude_inherited_prompts(
+        mirror_history(&["fork one", "fork two"]),
+        prompts(&["parent one", "parent two", "fork one", "fork two"]),
+    );
+    assert_eq!(
+        prompt_texts(&history),
+        ["parent one", "parent two", "fork one", "fork two"]
+    );
+    assert_eq!(history.inherited_prompts, 2);
+
+    // The transcript has not recorded the in-flight prompt yet.
+    let history = with_claude_inherited_prompts(
+        mirror_history(&["fork one", "fork two"]),
+        prompts(&["parent one", "fork one"]),
+    );
+    assert_eq!(
+        prompt_texts(&history),
+        ["parent one", "fork one", "fork two"]
+    );
+    assert_eq!(history.inherited_prompts, 1);
+}
+
+#[test]
+fn fork_that_repeats_its_parents_prompts_keeps_both() {
+    let history = with_claude_inherited_prompts(
+        mirror_history(&["a", "b", "c"]),
+        prompts(&["a", "b", "a", "b", "c"]),
+    );
+    assert_eq!(prompt_texts(&history), ["a", "b", "a", "b", "c"]);
+    assert_eq!(history.inherited_prompts, 2);
+
+    let history = with_inherited_prompts(mirror_history(&["a"]), prompts(&["a"]));
+    assert_eq!(prompt_texts(&history), ["a", "a"]);
+    assert_eq!(history.inherited_prompts, 1);
+}
+
+#[test]
+fn claude_session_that_repeats_a_prompt_is_not_a_fork() {
+    let same = ["same", "other", "same"];
+    let history = with_claude_inherited_prompts(mirror_history(&same), prompts(&same));
+    assert_eq!(prompt_texts(&history), same);
+    assert_eq!(history.inherited_prompts, 0);
+
+    // Text the transcript records differently cannot align, so the mirror stands alone.
+    let history =
+        with_claude_inherited_prompts(mirror_history(&["mirrored"]), prompts(&["recorded"]));
+    assert_eq!(prompt_texts(&history), ["mirrored"]);
+    assert_eq!(history.inherited_prompts, 0);
+}
+
+fn codex_rollout(root: &Path, id: &str, meta: serde_json::Value, user_prompts: &[&str]) {
+    let mut lines = vec![serde_json::json!({
+        "type": "session_meta",
+        "payload": meta,
+    })
+    .to_string()];
+    lines.extend(user_prompts.iter().map(|prompt| {
+        serde_json::json!({
+            "type": "event_msg",
+            "payload": {"type": "user_message", "message": prompt},
+        })
+        .to_string()
+    }));
+    std::fs::write(
+        root.join(format!("rollout-2026-10-30T13-00-00-{id}.jsonl")),
+        lines.join("\n") + "\n",
+    )
+    .unwrap();
+}
+
+#[test]
+fn codex_fork_reads_prompts_inherited_through_its_parents() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("2026/10/30");
+    std::fs::create_dir_all(&root).unwrap();
+    let id = |n: u8| format!("01a18e96-3ab8-76c2-b597-d78f48bdea{n:02}");
+    codex_rollout(
+        &root,
+        &id(1),
+        serde_json::json!({"id": id(1)}),
+        &["grand one", "grand two", "after child forked"],
+    );
+    // Record 0 is session_meta, so an ordinal of 3 keeps the first two prompts.
+    codex_rollout(
+        &root,
+        &id(2),
+        serde_json::json!({
+            "id": id(2),
+            "forked_from_id": id(1),
+            "forked_from_ordinal_exclusive": 3,
+        }),
+        &["parent one", "after fork forked"],
+    );
+    codex_rollout(
+        &root,
+        &id(3),
+        serde_json::json!({
+            "id": id(3),
+            "forked_from_id": id(2),
+            "forked_from_ordinal_exclusive": 2,
+        }),
+        &["fork one"],
+    );
+    let roots = AgentTranscriptRoots {
+        claude_projects: None,
+        codex_sessions: Some(dir.path().to_path_buf()),
+    };
+
+    let history = read_prompt_history_in(AgentResumeProvider::Codex, &id(3), None, None, &roots);
+    assert_eq!(
+        prompt_texts(&history),
+        ["grand one", "grand two", "parent one", "fork one"]
+    );
+    assert_eq!(history.inherited_prompts, 3);
+
+    // The mirror holds the fork's own prompts; inheritance is unchanged.
+    let registry = dir.path().join("registry");
+    std::fs::create_dir_all(registry.join("prompts/codex")).unwrap();
+    std::fs::write(
+        registry.join(format!("prompts/codex/{}.jsonl", id(3))),
+        "{\"ts\":\"t\",\"prompt\":\"fork one\"}\n",
+    )
+    .unwrap();
+    let history = read_prompt_history_in(
+        AgentResumeProvider::Codex,
+        &id(3),
+        None,
+        Some(&registry),
+        &roots,
+    );
+    assert_eq!(
+        prompt_texts(&history),
+        ["grand one", "grand two", "parent one", "fork one"]
+    );
+
+    // An unforked session is untouched.
+    let history = read_prompt_history_in(AgentResumeProvider::Codex, &id(1), None, None, &roots);
+    assert_eq!(history.inherited_prompts, 0);
+    assert_eq!(history.prompts.len(), 3);
 }
