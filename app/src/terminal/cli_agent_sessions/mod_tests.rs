@@ -1378,6 +1378,7 @@ fn prompt_history_merge_preserves_repeated_turns_by_occurrence() {
     let loaded = AgentPromptHistory {
         prompts: vec![prompt("repeat"), prompt("repeat")],
         is_partial: true,
+        inherited_prompts: 0,
     };
     let live = AgentPromptHistory {
         prompts: vec![
@@ -1387,6 +1388,7 @@ fn prompt_history_merge_preserves_repeated_turns_by_occurrence() {
             prompt("follow up"),
         ],
         is_partial: false,
+        inherited_prompts: 0,
     };
 
     let merged = merge_loaded_and_live_history(loaded, live);
@@ -1664,6 +1666,7 @@ fn listener_events_cannot_replace_the_outer_session_identity() {
                 text: "outer prompt".to_owned(),
             }],
             is_partial: false,
+            inherited_prompts: 0,
         },
         prompt_history_load_state: PromptHistoryLoadState::Ready,
         prompt_history_generation: 3,
@@ -1723,6 +1726,7 @@ fn durable_identity_seed_preserves_live_session_state_and_invalidates_old_histor
                 text: "stale prompt".to_owned(),
             }],
             is_partial: false,
+            inherited_prompts: 0,
         },
         prompt_history_load_state: PromptHistoryLoadState::Ready,
         prompt_history_generation: 4,
@@ -2097,4 +2101,86 @@ fn codex_registry_reconciliation_follows_verified_child_and_preserves_pane_state
             );
         });
     });
+}
+
+#[test]
+fn fork_title_comes_from_its_first_own_prompt() {
+    let prompt = |text: &str| AgentPrompt {
+        timestamp: None,
+        text: text.to_owned(),
+    };
+    let mut session = CLIAgentSession {
+        agent: CLIAgent::Claude,
+        status: CLIAgentSessionStatus::InProgress,
+        session_context: CLIAgentSessionContext::default(),
+        input_state: CLIAgentInputState::Closed,
+        should_auto_toggle_input: false,
+        listener: None,
+        plugin_version: None,
+        draft_text: None,
+        remote_host: None,
+        custom_command_prefix: None,
+        received_rich_notification: true,
+        has_observed_turn_activity: true,
+        turn_interrupted_by_user: false,
+        prompt_history: AgentPromptHistory {
+            prompts: vec![prompt("Parent topic"), prompt("Parent follow up")],
+            is_partial: false,
+            inherited_prompts: 2,
+        },
+        prompt_history_load_state: PromptHistoryLoadState::Ready,
+        prompt_history_generation: 1,
+    };
+
+    // Before its first prompt a fork still reads as the conversation it came from.
+    assert_eq!(
+        session.title_for_tab(false, None).as_deref(),
+        Some("Parent topic")
+    );
+    assert_eq!(
+        session
+            .title_for_tab(false, Some("Parent agent title"))
+            .as_deref(),
+        Some("Parent agent title")
+    );
+
+    // Its first own prompt names it, ahead of the inherited agent title, and later prompts
+    // do not rename it again.
+    session.prompt_history.prompts.push(prompt("Fork topic"));
+    session
+        .prompt_history
+        .prompts
+        .push(prompt("Fork follow up"));
+    assert_eq!(
+        session
+            .title_for_tab(false, Some("Parent agent title"))
+            .as_deref(),
+        Some("Fork topic")
+    );
+    // The latest-prompt preference is unchanged.
+    assert_eq!(
+        session.title_for_tab(true, None).as_deref(),
+        Some("Fork follow up")
+    );
+
+    // A fork whose history has not reloaded yet uses the prompt it observed live.
+    session.prompt_history.inherited_prompts = 0;
+    session.session_context.fork_first_prompt = Some("Live fork topic".to_owned());
+    assert_eq!(
+        session
+            .title_for_tab(false, Some("Parent agent title"))
+            .as_deref(),
+        Some("Live fork topic")
+    );
+
+    // Nothing changes for a conversation that was not forked.
+    session.session_context.fork_first_prompt = None;
+    assert_eq!(
+        session.title_for_tab(false, None).as_deref(),
+        Some("Parent topic")
+    );
+    assert_eq!(
+        session.title_for_tab(false, Some("Agent title")).as_deref(),
+        Some("Agent title")
+    );
 }

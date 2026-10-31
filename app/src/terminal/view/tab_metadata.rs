@@ -4,9 +4,11 @@ use warpui::{AppContext, SingletonEntity as _};
 
 use crate::context_chips::display_chip::GitLineChanges;
 use crate::context_chips::{git_line_changes_from_chips, ContextChipKind};
-use crate::terminal::cli_agent_sessions::title_glyph::{shows_working, standardize_agent_title};
+use crate::terminal::cli_agent_sessions::title_glyph::{
+    agent_title_text, shows_working, standardize_agent_title,
+};
 use crate::terminal::cli_agent_sessions::{CLIAgentSession, CLIAgentSessionsModel};
-use crate::terminal::TerminalView;
+use crate::terminal::{CLIAgent, TerminalView};
 
 impl TerminalView {
     pub const LINKED_WORKTREE_LABEL: &'static str = "Worktree";
@@ -119,6 +121,22 @@ impl TerminalView {
     pub fn display_title_from_shell(&self, ctx: &AppContext) -> String {
         self.standardized_agent_title(None, ctx)
             .unwrap_or_else(|| self.terminal_title_from_shell())
+    }
+
+    /// The agent's own terminal title without its status glyph, for chrome that shows status
+    /// separately. `None` when the pane runs no Claude Code or Codex session.
+    pub(crate) fn agent_title_without_status(&self, ctx: &AppContext) -> Option<String> {
+        let session = CLIAgentSessionsModel::as_ref(ctx)
+            .session(self.view_id)
+            .filter(|session| matches!(session.agent, CLIAgent::Claude | CLIAgent::Codex))?;
+        let raw_title = self.terminal_title_from_shell();
+        let text = agent_title_text(session.agent, &raw_title).trim();
+        let text = if text.is_empty() {
+            session.agent.display_name()
+        } else {
+            text
+        };
+        Some(text.to_owned())
     }
 
     /// The tab title for a Claude Code or Codex pane with the standardized status glyph, or

@@ -110,6 +110,8 @@ pub struct CLIAgentSessionContext {
     pub active_subagent_ids: HashSet<String>,
     /// Whether a parent Stop/idle-prompt completion is waiting for active subagents to finish.
     pub has_deferred_completion_for_subagents: bool,
+    /// The first prompt submitted in this forked conversation, before history has reloaded.
+    pub fork_first_prompt: Option<String>,
 }
 
 /// State of the rich input editor for composing a prompt to send to a CLI agent.
@@ -256,6 +258,18 @@ impl CLIAgentSession {
             .and_then(|prompt| prompt_title(&prompt.text))
     }
 
+    /// A forked conversation is about something new from its first own prompt on, so that prompt
+    /// names it instead of the inherited first prompt or the parent's agent title.
+    fn fork_prompt_title(&self) -> Option<String> {
+        let history = &self.prompt_history;
+        (history.inherited_prompts > 0)
+            .then(|| history.prompts.get(history.inherited_prompts))
+            .flatten()
+            .map(|prompt| prompt.text.as_str())
+            .or(self.session_context.fork_first_prompt.as_deref())
+            .and_then(prompt_title)
+    }
+
     pub fn title_for_tab(
         &self,
         use_latest_prompt: bool,
@@ -276,7 +290,8 @@ impl CLIAgentSession {
                 .or_else(|| self.initial_prompt_title())
                 .or_else(|| self.session_context.title_like_text())
         } else {
-            agent_title
+            self.fork_prompt_title()
+                .or(agent_title)
                 .or_else(|| self.initial_prompt_title())
                 .or_else(|| self.session_context.title_like_text())
         }
@@ -297,6 +312,7 @@ impl CLIAgentSession {
 
     fn reset_identity_scoped_state(&mut self) {
         self.prompt_history = AgentPromptHistory::default();
+        self.session_context.fork_first_prompt = None;
         self.prompt_history_load_state = PromptHistoryLoadState::NotRequested;
         self.prompt_history_generation = self.prompt_history_generation.wrapping_add(1);
         self.has_observed_turn_activity = false;
@@ -692,6 +708,8 @@ pub struct CLIAgentSessionsModel {
     /// Blocked sessions whose agent title has shown its idle glyph since they blocked; see
     /// `update_from_terminal_title`.
     blocked_idle_title_seen: HashSet<EntityId>,
+    /// Panes running a forked conversation that have not submitted a prompt of their own yet.
+    forks_awaiting_first_prompt: HashSet<EntityId>,
 }
 
 impl Entity for CLIAgentSessionsModel {
@@ -708,6 +726,7 @@ impl CLIAgentSessionsModel {
             bookmarked_conversations: bookmarked_conversations(),
             plugin_auto_failures: HashSet::new(),
             blocked_idle_title_seen: HashSet::new(),
+            forks_awaiting_first_prompt: HashSet::new(),
         }
     }
 
@@ -846,6 +865,11 @@ impl CLIAgentSessionsModel {
                 agent,
             });
         }
+    }
+
+    /// Records that this pane runs a forked conversation, so its first own prompt names the tab.
+    pub fn mark_forked_session(&mut self, terminal_view_id: EntityId) {
+        self.forks_awaiting_first_prompt.insert(terminal_view_id);
     }
 
     /// Marks a Claude Code or Codex turn as working when Clinch submits a known, non-empty prompt
@@ -1364,6 +1388,7 @@ impl CLIAgentSessionsModel {
         ctx: &mut ModelContext<Self>,
     ) {
         self.blocked_idle_title_seen.remove(&terminal_view_id);
+        self.forks_awaiting_first_prompt.remove(&terminal_view_id);
         self.prompt_history_poll_tokens.remove(&terminal_view_id);
         if let Some(session) = self.sessions.remove(&terminal_view_id) {
             let bookmark_key = if remove_conversation_bookmark {
@@ -1440,6 +1465,9 @@ impl CLIAgentSessionsModel {
 
         let prompt_history_changed = live_prompt.is_some();
         if let Some(prompt) = live_prompt {
+            if self.forks_awaiting_first_prompt.remove(&terminal_view_id) {
+                session.session_context.fork_first_prompt = Some(prompt.text.clone());
+            }
             session.prompt_history.prompts.push(prompt);
         }
 

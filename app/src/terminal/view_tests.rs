@@ -111,6 +111,7 @@ fn cli_agent_history_trigger_uses_latest_prompt() {
             },
         ],
         is_partial: false,
+        inherited_prompts: 0,
     };
 
     let trigger = cli_agent_history_trigger(&history, "Message history (2)".to_owned());
@@ -133,6 +134,7 @@ fn cli_agent_history_trigger_includes_the_latest_prompt_time() {
             },
         ],
         is_partial: false,
+        inherited_prompts: 0,
     };
 
     let trigger = cli_agent_history_trigger(&history, "Message history (2)".to_owned());
@@ -159,6 +161,7 @@ fn cli_agent_history_prompts_include_first_and_stay_chronological() {
             },
         ],
         is_partial: false,
+        inherited_prompts: 0,
     };
 
     let prompts = cli_agent_history_prompts(&history);
@@ -228,6 +231,7 @@ fn cli_agent_session_with_prompts(prompts: Vec<&str>) -> CLIAgentSession {
                 })
                 .collect(),
             is_partial: false,
+            inherited_prompts: 0,
         },
         prompt_history_load_state: PromptHistoryLoadState::Ready,
         prompt_history_generation: 1,
@@ -314,6 +318,7 @@ fn resumed_cli_agent_header_reads_latest_history_when_dropdown_selection_is_empt
                                 },
                             ],
                             is_partial: false,
+                            inherited_prompts: 0,
                         },
                         prompt_history_load_state: PromptHistoryLoadState::Ready,
                         prompt_history_generation: 1,
@@ -473,6 +478,7 @@ fn cli_agent_history_header_updates_after_live_prompts_for_claude_and_codex() {
                                     text: initial_prompt.clone(),
                                 }],
                                 is_partial: false,
+                                inherited_prompts: 0,
                             },
                             prompt_history_load_state: PromptHistoryLoadState::Ready,
                             prompt_history_generation: 1,

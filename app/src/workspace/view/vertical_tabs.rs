@@ -5577,16 +5577,9 @@ fn terminal_agent_text(terminal_view: &TerminalView, app: &AppContext) -> Termin
                 session.session_context.latest_user_prompt(),
             )
         };
-        // Claude Code and Codex titles carry the same status glyph however the text was chosen.
-        let with_glyph = |text: String| {
-            terminal_view
-                .standardized_agent_title(Some(&text), app)
-                .unwrap_or(text)
-        };
-        agent_text.cli_agent_title = title.map(with_glyph);
-        agent_text.cli_agent_latest_user_prompt = latest_user_prompt
-            .and_then(|prompt| clean_prompt_title_text(&prompt))
-            .map(with_glyph);
+        agent_text.cli_agent_title = title;
+        agent_text.cli_agent_latest_user_prompt =
+            latest_user_prompt.and_then(|prompt| clean_prompt_title_text(&prompt));
     }
 
     agent_text
@@ -5833,9 +5826,28 @@ fn render_terminal_row_content(
 
     let model_label = tab_agent_model_label(app, terminal_view.id());
     let title_indicator = terminal_title_indicator_kind(&props.typed, app);
+    let activity = vertical_tab_cli_agent_activity(&props.typed, app);
 
-    let first_line_element = if model_label.is_some() || title_indicator.is_some() {
+    let has_trailing = model_label.is_some() || title_indicator.is_some() || activity.is_some();
+    let first_line_element = if has_trailing {
         let mut trailing = Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center);
+        if let Some(activity) = activity {
+            let color = vertical_tab_activity_dot_color(activity, theme);
+            let color = if activity == ProjectCliAgentActivity::NeedsInput {
+                attention_pulse_color(color, app)
+            } else {
+                color
+            };
+            trailing.add_child(
+                Container::new(
+                    Text::new_inline(activity.label(), appearance.ui_font_family(), 11.)
+                        .with_color(color)
+                        .finish(),
+                )
+                .with_margin_left(6.)
+                .finish(),
+            );
+        }
         if let Some(label) = model_label {
             trailing.add_child(
                 Container::new(
@@ -6598,7 +6610,9 @@ fn render_terminal_primary_line_for_view(
     text_color: WarpThemeFill,
     app: &AppContext,
 ) -> Box<dyn Element> {
-    let title_text = terminal_view.display_title_from_shell(app);
+    let title_text = terminal_view
+        .agent_title_without_status(app)
+        .unwrap_or_else(|| terminal_view.display_title_from_shell(app));
     let working_directory = resolved_terminal_working_directory(terminal_view, app)
         .unwrap_or_else(|| title_text.clone());
     let agent_text = terminal_agent_text(terminal_view, app);
