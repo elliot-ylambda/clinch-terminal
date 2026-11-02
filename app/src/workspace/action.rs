@@ -579,6 +579,8 @@ pub enum WorkspaceAction {
     FocusTerminalViewInWorkspace {
         terminal_view_id: EntityId,
     },
+    /// Hide the session-restore notice until the next restore.
+    DismissRestoreNotice,
     /// Focus a specific pane by its locator (pane_group_id and pane_id).
     FocusPane(PaneViewLocator),
     /// Start a new AI conversation in a terminal view. This sets the pending query state
@@ -1185,6 +1187,7 @@ impl WorkspaceAction {
             | OpenAIFactCollection
             | OpenMCPServerCollection
             | FocusTerminalViewInWorkspace { .. }
+            | DismissRestoreNotice
             | FocusPane(..)
             | ShiftSelectTabRange { .. }
             | ToggleTabMultiSelection { .. }

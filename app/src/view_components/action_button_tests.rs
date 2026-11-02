@@ -7,8 +7,8 @@ use super::ButtonSize;
 fn agent_input_button_large_is_bigger() {
     assert_eq!(
         ButtonSize::AgentInputButtonLarge.button_horizontal_padding(),
-        9.0,
-        "large variant should use 9px horizontal padding"
+        12.0,
+        "large variant should use 12px horizontal padding"
     );
     assert!(
         ButtonSize::AgentInputButtonLarge.button_horizontal_padding()

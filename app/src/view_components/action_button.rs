@@ -8,7 +8,7 @@ use warp_core::ui::color::contrast::MinimumAllowedContrast;
 use warp_core::ui::color::{coloru_with_opacity, ContrastingColor};
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::{AnsiColorIdentifier, Fill};
-use warp_core::ui::tokens::{StatusKind, RADIUS_SM};
+use warp_core::ui::tokens::{StatusKind, RADIUS_MD, RADIUS_SM};
 use warpui::elements::{
     Border, ChildAnchor, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Flex,
     Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning, Padding,
@@ -875,6 +875,9 @@ impl View for ActionButton {
             let corner_radius = match self.adjoined_side {
                 Some(AdjoinedSide::Left) => CornerRadius::with_right(RADIUS_SM),
                 Some(AdjoinedSide::Right) => CornerRadius::with_left(RADIUS_SM),
+                None if self.size == ButtonSize::AgentInputButtonLarge => {
+                    CornerRadius::with_all(RADIUS_MD)
+                }
                 None => CornerRadius::with_all(RADIUS_SM),
             };
 
@@ -1383,7 +1386,7 @@ impl ButtonSize {
             ButtonSize::UDIButton => Properties::default(),
             ButtonSize::UDIPromptChip => Properties::default().weight(Weight::Semibold),
             ButtonSize::AgentInputButton => Properties::default(),
-            ButtonSize::AgentInputButtonLarge => Properties::default(),
+            ButtonSize::AgentInputButtonLarge => Properties::default().weight(Weight::Medium),
         }
     }
 
@@ -1515,9 +1518,8 @@ impl ButtonSize {
                 2. * vertical_padding + line_height
             }
             ButtonSize::AgentInputButtonLarge => {
-                // Larger vertical padding than AgentInputButton for a more
-                // prominent footer bar.
-                let vertical_padding = 6.;
+                // The agent footer's buttons: tall enough to hit comfortably all day.
+                let vertical_padding = 8.;
                 let line_height = app
                     .font_cache()
                     .line_height(self.font_size(appearance), appearance.line_height_ratio());
@@ -1553,7 +1555,7 @@ impl ButtonSize {
             ButtonSize::UDIPromptChip | ButtonSize::AgentInputButton => {
                 crate::context_chips::spacing::UDI_CHIP_HORIZONTAL_PADDING
             }
-            ButtonSize::AgentInputButtonLarge => 9.,
+            ButtonSize::AgentInputButtonLarge => 12.,
         }
     }
 

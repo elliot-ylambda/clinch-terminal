@@ -15,17 +15,20 @@ use settings::Setting as _;
 use warp_core::context_flag::ContextFlag;
 use warp_core::telemetry::TelemetryEvent as _;
 use warp_core::ui::color::coloru_with_opacity;
+use warp_core::ui::icons::SPINNER_FRAMES;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::{AnsiColorIdentifier, Fill as WarpThemeFill, WarpTheme};
-use warp_core::ui::tokens::{corners_lg, corners_pill, corners_sm, StatusKind, Tokens, RADIUS_SM};
+use warp_core::ui::tokens::{
+    corners_lg, corners_md, corners_pill, corners_sm, StatusKind, Tokens, RADIUS_SM,
+};
 use warp_core::ui::Icon as WarpIcon;
 use warp_util::local_or_remote_path::LocalOrRemotePath;
 use warpui::elements::{
     resizable_state_handle, Border, ChildAnchor, Clipped, ClippedScrollStateHandle,
     ClippedScrollable, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, DragAxis,
     DragBarSide, Draggable, DropTarget, Element, Empty, Expanded, Fill as ElementFill, Flex,
-    Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning, Padding,
-    ParentAnchor, ParentElement, ParentOffsetBounds, PositionedElementAnchor,
+    Hoverable, LiveElement, MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning,
+    Padding, ParentAnchor, ParentElement, ParentOffsetBounds, PositionedElementAnchor,
     PositionedElementOffsetBounds, Radius, Resizable, ResizableStateHandle, SavePosition,
     ScrollTarget, ScrollToPositionMode, ScrollbarWidth, Shrinkable, Stack, Text,
 };
@@ -63,7 +66,7 @@ use crate::pane_group::{
 use crate::safe_triangle::SafeTriangle;
 use crate::tab::lineage::{lineage_nesting, TabLineage};
 use crate::tab::{tab_position_id, SelectedTabColor, TabData, TabOriginKind};
-use crate::terminal::cli_agent_sessions::restore::AgentRestoreQueue;
+use crate::terminal::cli_agent_sessions::restore::{AgentRestoreQueue, RestoreState};
 use crate::terminal::cli_agent_sessions::{
     session_context_enabled, CLIAgentSessionKey, CLIAgentSessionStatus, CLIAgentSessionsModel,
 };
@@ -139,6 +142,13 @@ pub(super) const SIDEBAR_TASKS_LINK_POSITION_ID: &str = "vertical_tabs:tasks_lin
 pub(super) const SIDEBAR_BOOKMARKS_LINK_POSITION_ID: &str = "vertical_tabs:bookmarks_link";
 pub(super) const DETAIL_CARD_DELAY: std::time::Duration = std::time::Duration::from_millis(650);
 const ROW_MARK_SIZE: f32 = 16.;
+const COORDINATOR_TILE_OPACITY: Opacity = 28;
+/// A section's tint: strong enough to group its tabs, quiet enough to read titles on.
+const SECTION_TINT_OPACITY: Opacity = 14;
+const SECTION_BLOCK_PADDING: f32 = 4.;
+const SECTION_BLOCK_GAP: f32 = 8.;
+const ROW_SPINNER_SIZE: f32 = 14.;
+const SPINNER_FRAME_INTERVAL: std::time::Duration = std::time::Duration::from_millis(90);
 const ROW_LINEAGE_INDENT: f32 = 14.;
 const ROW_MARK_GAP: f32 = 10.;
 const ROW_TITLE_SIZE: f32 = 13.;
@@ -484,6 +494,7 @@ fn render_pane_row_element(
         is_pinned,
         container_is_hovered,
         origin_badge: _,
+        is_coordinator: _,
     } = props;
     let is_selected = is_active_tab && is_focused;
     let tokens = Tokens::new(theme);
@@ -914,6 +925,8 @@ struct TabOriginBadge {
 
 struct PaneProps<'a> {
     origin_badge: Option<TabOriginBadge>,
+    /// The project's coordinator tab, which gets its own mark and explanation.
+    is_coordinator: bool,
     pane_id: PaneId,
     pane_group_id: EntityId,
     is_active_tab: bool,
@@ -1468,42 +1481,58 @@ fn render_control_bar(
         .finish()
 }
 
-/// A quiet link at the foot of the sidebar that opens its popover.
-fn render_foot_link(
+/// A button at the foot of the sidebar that opens its popover.
+fn render_foot_button(
+    icon: WarpIcon,
     label: String,
     popover: SidebarPopover,
+    is_open: bool,
     mouse_state: MouseStateHandle,
     position_id: &'static str,
     appearance: &Appearance,
 ) -> Box<dyn Element> {
     let tokens = *appearance.tokens();
     let font_family = appearance.ui_font_family();
-    let link = Hoverable::new(mouse_state, move |hover_state| {
-        let is_hovered = hover_state.is_hovered();
-        let color = if is_hovered {
-            tokens.text_1
-        } else {
-            tokens.text_3
-        };
-        let mut container = Container::new(
-            Text::new_inline(label.clone(), font_family, 12.)
-                .with_color(color)
+    let button = Hoverable::new(mouse_state, move |hover_state| {
+        let content = Flex::row()
+            .with_main_axis_size(MainAxisSize::Max)
+            .with_main_axis_alignment(MainAxisAlignment::Center)
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_spacing(7.)
+            .with_child(
+                ConstrainedBox::new(
+                    icon.to_warpui_icon(WarpThemeFill::Solid(tokens.text_2))
+                        .finish(),
+                )
+                .with_width(15.)
+                .with_height(15.)
                 .finish(),
-        )
-        .with_horizontal_padding(8.)
-        .with_vertical_padding(5.)
-        .with_corner_radius(CornerRadius::with_all(CONTROL_BAR_BUTTON_RADIUS));
-        if is_hovered {
-            container = container.with_background(ThemeFill::Solid(tokens.surface_hover));
-        }
-        container.finish()
+            )
+            .with_child(
+                Text::new_inline(label.clone(), font_family, 13.)
+                    .with_style(Properties::default().weight(Weight::Medium))
+                    .with_color(tokens.text_1)
+                    .finish(),
+            )
+            .finish();
+        let background = if is_open || hover_state.is_hovered() {
+            tokens.surface_raised
+        } else {
+            tokens.surface_field
+        };
+        Container::new(content)
+            .with_vertical_padding(8.)
+            .with_horizontal_padding(10.)
+            .with_background(ThemeFill::Solid(background))
+            .with_corner_radius(corners_md())
+            .finish()
     })
     .with_cursor(Cursor::PointingHand)
     .on_click(move |ctx, _, _| {
         ctx.dispatch_typed_action(WorkspaceAction::ToggleSidebarPopover(popover));
     })
     .finish();
-    SavePosition::new(link, position_id).finish()
+    SavePosition::new(button, position_id).finish()
 }
 
 fn render_sidebar_foot(
@@ -1516,32 +1545,49 @@ fn render_sidebar_foot(
     let tasks_label = if task_count == 0 {
         "Tasks".to_string()
     } else {
-        format!("Tasks {task_count}")
+        format!("Tasks · {task_count}")
     };
     Container::new(
         Flex::row()
             .with_main_axis_size(MainAxisSize::Max)
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_spacing(2.)
-            .with_child(render_foot_link(
-                tasks_label,
-                SidebarPopover::Tasks,
-                state.tasks_link_mouse_state.clone(),
-                SIDEBAR_TASKS_LINK_POSITION_ID,
-                appearance,
-            ))
-            .with_child(render_foot_link(
-                "Bookmarks".to_string(),
-                SidebarPopover::Bookmarks,
-                state.bookmarks_link_mouse_state.clone(),
-                SIDEBAR_BOOKMARKS_LINK_POSITION_ID,
-                appearance,
-            ))
+            .with_spacing(6.)
+            .with_child(
+                Expanded::new(
+                    1.,
+                    render_foot_button(
+                        WarpIcon::Check,
+                        tasks_label,
+                        SidebarPopover::Tasks,
+                        state.open_popover == Some(SidebarPopover::Tasks),
+                        state.tasks_link_mouse_state.clone(),
+                        SIDEBAR_TASKS_LINK_POSITION_ID,
+                        appearance,
+                    ),
+                )
+                .finish(),
+            )
+            .with_child(
+                Expanded::new(
+                    1.,
+                    render_foot_button(
+                        WarpIcon::Bookmark,
+                        "Bookmarks".to_string(),
+                        SidebarPopover::Bookmarks,
+                        state.open_popover == Some(SidebarPopover::Bookmarks),
+                        state.bookmarks_link_mouse_state.clone(),
+                        SIDEBAR_BOOKMARKS_LINK_POSITION_ID,
+                        appearance,
+                    ),
+                )
+                .finish(),
+            )
             .finish(),
     )
     .with_padding(
-        Padding::uniform(6.)
-            .with_left(GROUP_HORIZONTAL_PADDING - 2.)
+        Padding::uniform(8.)
+            .with_left(GROUP_HORIZONTAL_PADDING)
+            .with_right(0.)
             .with_bottom(10.),
     )
     .finish()
@@ -2850,6 +2896,7 @@ fn render_tab_group_internal(
                 if !show_tab_title_header && row_idx == 0 {
                     pane_props.origin_badge = origin_badge.clone();
                 }
+                pane_props.is_coordinator = tab.coordinator;
                 if stack_panes_flush {
                     pane_props.stack_position = PaneRowStackPosition::Flush {
                         is_first: row_idx == 0,
@@ -3412,8 +3459,7 @@ fn render_section_header(
 
     let mut hoverable = Hoverable::new(mouse_states.header.clone(), move |state| {
         let mut container = Container::new(row)
-            .with_padding(Padding::uniform(6.).with_left(10.).with_right(6.))
-            .with_margin_top(8.)
+            .with_padding(Padding::uniform(6.).with_left(8.).with_right(6.))
             .with_corner_radius(corners_sm());
         if is_header_selected || state.is_hovered() {
             container = container.with_background(ThemeFill::Solid(tokens.surface_hover));
@@ -3511,6 +3557,9 @@ fn render_grouped_tab_container(
         .color
         .resolve(None)
         .map(|color| color.to_color(&theme.terminal_colors().normal));
+    let section_fill = section_color.map_or(appearance.tokens().surface_field, |color| {
+        coloru_with_opacity(color, SECTION_TINT_OPACITY)
+    });
     // Only a collapsed section has to report what is hiding inside it.
     let collapsed_needs_count = if is_collapsed {
         members
@@ -3597,7 +3646,13 @@ fn render_grouped_tab_container(
             }
         }
 
-        content.finish()
+        // The whole section is one tinted block, so what belongs to it reads at a glance.
+        Container::new(content.finish())
+            .with_uniform_padding(SECTION_BLOCK_PADDING)
+            .with_background(ThemeFill::Solid(section_fill))
+            .with_corner_radius(corners_lg())
+            .with_margin_top(SECTION_BLOCK_GAP)
+            .finish()
     })
     // Right-click on group chrome (not member rows) opens the group menu.
     .on_right_click(move |ctx, _, position| {
@@ -3728,19 +3783,68 @@ fn tab_is_only_settings(tab: &TabData, app: &AppContext) -> bool {
         })
 }
 
-/// What the session restore queue says about this row, while it still has something to say.
-fn terminal_restore_label(typed: &TypedPane<'_>, app: &AppContext) -> Option<&'static str> {
+/// Where this row's session is in the restore queue, while it still has something to say.
+fn terminal_restore_state(typed: &TypedPane<'_>, app: &AppContext) -> Option<RestoreState> {
     let TypedPane::Terminal(terminal_pane) = typed else {
         return None;
     };
     AgentRestoreQueue::as_ref(app)
         .state(terminal_pane.terminal_view(app).id())
-        .and_then(|state| state.label())
+        .filter(|state| state.label().is_some())
+}
+
+fn is_restoring(state: Option<RestoreState>) -> bool {
+    matches!(state, Some(RestoreState::Queued | RestoreState::Starting))
+}
+
+/// A ring that turns while a session restores. Each repaint picks the frame for the current time.
+fn render_restore_spinner(appearance: &Appearance) -> Box<dyn Element> {
+    let frame = (std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        / SPINNER_FRAME_INTERVAL.as_millis()) as usize
+        % SPINNER_FRAMES.len();
+    LiveElement::new(
+        ConstrainedBox::new(
+            SPINNER_FRAMES[frame]
+                .to_warpui_icon(WarpThemeFill::Solid(appearance.tokens().text_3))
+                .finish(),
+        )
+        .with_width(ROW_SPINNER_SIZE)
+        .with_height(ROW_SPINNER_SIZE)
+        .finish(),
+        SPINNER_FRAME_INTERVAL,
+    )
+    .finish()
 }
 
 /// The glyph at the start of a row: who the session is, tinted by what it is doing. A session that
 /// needs you swaps to a filled "!" so it differs in shape, not only color.
 fn render_row_mark(
+    typed: &TypedPane<'_>,
+    is_coordinator: bool,
+    appearance: &Appearance,
+    app: &AppContext,
+) -> Box<dyn Element> {
+    let mark = render_session_mark(typed, appearance, app);
+    if !is_coordinator {
+        return mark;
+    }
+    // The coordinator watches every other tab, so it gets a tile of its own.
+    Container::new(mark)
+        .with_uniform_padding(3.)
+        .with_background(ThemeFill::Solid(coloru_with_opacity(
+            appearance.tokens().accent,
+            COORDINATOR_TILE_OPACITY,
+        )))
+        .with_corner_radius(corners_sm())
+        .with_margin_left(-3.)
+        .with_margin_right(-3.)
+        .finish()
+}
+
+fn render_session_mark(
     typed: &TypedPane<'_>,
     appearance: &Appearance,
     app: &AppContext,
@@ -3752,8 +3856,12 @@ fn render_row_mark(
             .with_height(ROW_MARK_SIZE)
             .finish()
     };
-    if terminal_restore_label(typed, app).is_some() {
+    let restore_state = terminal_restore_state(typed, app);
+    if is_restoring(restore_state) {
         return sized_mark(WarpIcon::Restoring, tokens.text_3);
+    }
+    if matches!(restore_state, Some(RestoreState::Attention(_))) {
+        return sized_mark(WarpIcon::AlertCircle, tokens.status(StatusKind::NeedsYou));
     }
     let activity = vertical_tab_cli_agent_activity(typed, app);
     let color = activity.map_or(tokens.text_3, |activity| activity.color(tokens));
@@ -3798,8 +3906,9 @@ fn render_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn Element> {
     let is_quiet = !is_selected
         && vertical_tab_cli_agent_activity(&props.typed, app)
             .is_none_or(|activity| activity == ProjectCliAgentActivity::Idle);
-    let restore_label = terminal_restore_label(&props.typed, app);
-    let title_color = WarpThemeFill::Solid(if restore_label.is_some() {
+    let restore_state = terminal_restore_state(&props.typed, app);
+    let restore_label = restore_state.and_then(|state| state.label());
+    let title_color = WarpThemeFill::Solid(if is_restoring(restore_state) {
         tokens.text_3
     } else if is_quiet {
         tokens.text_2
@@ -3867,8 +3976,14 @@ fn render_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn Element> {
         .with_main_axis_size(MainAxisSize::Max)
         .with_cross_axis_alignment(CrossAxisAlignment::Center)
         .with_spacing(ROW_MARK_GAP)
-        .with_child(render_row_mark(&props.typed, appearance, app))
+        .with_child(render_row_mark(
+            &props.typed,
+            props.is_coordinator,
+            appearance,
+            app,
+        ))
         .with_child(Shrinkable::new(1., text.finish()).finish())
+        .with_children(is_restoring(restore_state).then(|| render_restore_spinner(appearance)))
         .finish();
 
     render_pane_row_element(
@@ -4113,6 +4228,7 @@ impl<'a> PaneProps<'a> {
             is_pinned,
             container_is_hovered,
             origin_badge: None,
+            is_coordinator: false,
         })
     }
 
@@ -5368,6 +5484,40 @@ struct DetailSidecarTextColors {
     disabled: WarpThemeFill,
 }
 
+/// What the coordinator tab is for, at the top of its details card.
+fn render_coordinator_explanation(appearance: &Appearance) -> Box<dyn Element> {
+    let tokens = appearance.tokens();
+    let font_family = appearance.ui_font_family();
+    Container::new(
+        Flex::column()
+            .with_cross_axis_alignment(CrossAxisAlignment::Start)
+            .with_spacing(4.)
+            .with_child(
+                Text::new_inline("Project coordinator", font_family, 13.)
+                    .with_style(Properties::default().weight(Weight::Semibold))
+                    .with_color(tokens.text_1)
+                    .finish(),
+            )
+            .with_child(
+                Text::new(COORDINATOR_EXPLANATION, font_family, 12.)
+                    .soft_wrap(true)
+                    .with_color(tokens.text_2)
+                    .finish(),
+            )
+            .finish(),
+    )
+    .with_uniform_padding(DETAIL_SIDECAR_SECTION_PADDING)
+    .with_background(ThemeFill::Solid(tokens.accent_soft))
+    .with_corner_radius(corners_md())
+    .with_margin_bottom(4.)
+    .finish()
+}
+
+const COORDINATOR_EXPLANATION: &str =
+    "One agent that keeps an eye on every tab in this project. Ask it \
+    what needs you, for a status of everything, or to prep finished work for review and deploy. It \
+    reads other sessions and can message them, and it asks before it closes or ships anything.";
+
 fn detail_sidecar_background(theme: &WarpTheme) -> ColorU {
     Tokens::new(theme).surface_overlay
 }
@@ -5912,6 +6062,9 @@ pub(super) fn render_detail_sidecar(
     let window_id = workspace.window_id;
 
     let mut sections = Flex::column().with_cross_axis_alignment(CrossAxisAlignment::Stretch);
+    if tab.coordinator {
+        sections.add_child(render_coordinator_explanation(appearance));
+    }
     for (index, pane_id) in pane_ids.iter().enumerate() {
         let Some(props) = detail_pane_props(
             state,

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use blocking::unblock;
 use settings::Setting;
-use warpui::{AppContext, SingletonEntity, ViewContext};
+use warpui::{AppContext, EntityId, SingletonEntity, ViewContext};
 
 use super::Workspace;
 use crate::agent_resume::AgentResumeProvider;
@@ -16,6 +16,7 @@ use crate::menu::{MenuItem, MenuItemFields};
 use crate::settings::ClinchSettings;
 use crate::terminal::cli_agent_sessions::{provider_for_agent, CLIAgentSessionsModel};
 use crate::workspace::action::WorkspaceAction;
+use crate::workspace::WorkspaceRegistry;
 
 pub(super) const COORDINATOR_TAB_TITLE: &str = "Coordinator";
 
@@ -353,3 +354,48 @@ fn set_coordinator_agent(provider: AgentResumeProvider, ctx: &mut AppContext) {
         }
     });
 }
+
+/// Whether `terminal_view_id` is a project's coordinator, so its footer can offer coordinator prompts.
+pub(crate) fn is_coordinator_terminal(terminal_view_id: EntityId, app: &AppContext) -> bool {
+    WorkspaceRegistry::as_ref(app)
+        .all_workspaces(app)
+        .iter()
+        .filter_map(|(_, workspace)| workspace.try_as_ref(app))
+        .any(|workspace| {
+            workspace.tabs.iter().any(|tab| {
+                tab.coordinator
+                    && tab
+                        .pane_group
+                        .as_ref(app)
+                        .terminal_views(app)
+                        .iter()
+                        .any(|terminal| terminal.id() == terminal_view_id)
+            })
+        })
+}
+
+/// The footer prompts on a coordinator tab, in place of a session's usual buttons.
+pub(crate) const COORDINATOR_PROMPTS: [(&str, &str); 5] = [
+    (
+        "What needs me?",
+        "Which sessions in this project need me right now? For each, say what it's waiting on.",
+    ),
+    (
+        "Status",
+        "Give me a short status of every session in this project: what each is doing, what's \
+         done, and what's blocked.",
+    ),
+    (
+        "Ready to ship",
+        "Which sessions have finished work that's ready to review, merge, or deploy? Prep it, \
+         and ask me before shipping anything.",
+    ),
+    (
+        "Clean up",
+        "Which tabs are finished and safe to close? List them and ask me before closing any.",
+    ),
+    (
+        "Organize",
+        "Suggest how to group this project's tabs into sections. Ask me before moving anything.",
+    ),
+];

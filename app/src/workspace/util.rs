@@ -30,6 +30,8 @@ pub(super) struct WorkspaceMouseStates {
     pub(super) ai_tab_bar_button: MouseStateHandle,
     pub(super) agent_management_view_button: MouseStateHandle,
     pub(super) remote_control_icon: MouseStateHandle,
+    pub(super) restore_notice: MouseStateHandle,
+    pub(super) restore_notice_dismiss: MouseStateHandle,
     pub(super) left_panel_icon: MouseStateHandle,
     pub(super) settings_icon: MouseStateHandle,
     pub(super) dismiss_banner_button: MouseStateHandle,

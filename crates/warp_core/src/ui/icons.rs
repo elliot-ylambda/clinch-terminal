@@ -349,6 +349,14 @@ pub enum Icon {
     Sun,
     Moon,
     Restoring,
+    Spinner0,
+    Spinner1,
+    Spinner2,
+    Spinner3,
+    Spinner4,
+    Spinner5,
+    Spinner6,
+    Spinner7,
 }
 
 impl From<Icon> for &'static str {
@@ -693,9 +701,29 @@ impl From<Icon> for &'static str {
             Icon::Sun => "bundled/svg/clinch/sun.svg",
             Icon::Moon => "bundled/svg/clinch/moon.svg",
             Icon::Restoring => "bundled/svg/clinch/restoring.svg",
+            Icon::Spinner0 => "bundled/svg/clinch/spinner-0.svg",
+            Icon::Spinner1 => "bundled/svg/clinch/spinner-1.svg",
+            Icon::Spinner2 => "bundled/svg/clinch/spinner-2.svg",
+            Icon::Spinner3 => "bundled/svg/clinch/spinner-3.svg",
+            Icon::Spinner4 => "bundled/svg/clinch/spinner-4.svg",
+            Icon::Spinner5 => "bundled/svg/clinch/spinner-5.svg",
+            Icon::Spinner6 => "bundled/svg/clinch/spinner-6.svg",
+            Icon::Spinner7 => "bundled/svg/clinch/spinner-7.svg",
         }
     }
 }
+
+/// One turn of the loading spinner, in order.
+pub const SPINNER_FRAMES: [Icon; 8] = [
+    Icon::Spinner0,
+    Icon::Spinner1,
+    Icon::Spinner2,
+    Icon::Spinner3,
+    Icon::Spinner4,
+    Icon::Spinner5,
+    Icon::Spinner6,
+    Icon::Spinner7,
+];
 
 impl Icon {
     pub fn to_warpui_icon(self, color: Fill) -> WarpUiIcon {

@@ -140,7 +140,7 @@ const CLOUD_MODE_V2_FOOTER_GAP: f32 = 4.;
 pub const FOOTER_MORE_BUTTON_POSITION_ID: &str = "agent_footer:more";
 const MAX_FOOTER_CHIPS: usize = 6;
 const MAX_COMPACT_FOOTER_CHIPS: usize = 3;
-const FOOTER_COMPACT_WIDTH: f32 = 820.;
+const FOOTER_COMPACT_WIDTH: f32 = 900.;
 const FOOTER_ICON_ONLY_WIDTH: f32 = 520.;
 
 /// Voice input state for the CLI agent footer. Unlike the editor-based voice
@@ -427,7 +427,7 @@ impl AgentInputFooter {
         });
 
         // CLI agent-specific buttons (only rendered when a CLI agent session is active).
-        let cli_button_size = ButtonSize::AgentInputButton;
+        let cli_button_size = ButtonSize::AgentInputButtonLarge;
         let file_explorer_button = ctx.add_typed_action_view(|ctx| {
             ActionButton::new("File explorer", AgentInputButtonTheme)
                 .with_icon(Icon::FileCopy)
@@ -1591,6 +1591,7 @@ impl AgentInputFooter {
             } else {
                 Icon::TextInput
             })
+            .with_icon_color(Appearance::as_ref(app).tokens().accent)
             .with_size(ButtonSize::AgentInputButtonLarge)
             .with_tooltip(format!("{tooltip_verb}: {text}"))
             .with_tooltip_alignment(TooltipAlignment::Left)
@@ -1664,7 +1665,7 @@ impl AgentInputFooter {
         Some(
             ActionButton::new(label, AgentInputButtonTheme)
                 .with_icon(Icon::SwitchHorizontal01)
-                .with_size(ButtonSize::AgentInputButton)
+                .with_size(ButtonSize::AgentInputButtonLarge)
                 .with_tooltip(tooltip)
                 .with_tooltip_alignment(TooltipAlignment::Left)
                 .with_mouse_state_handle(self.transfer_agent_mouse_state.clone())
@@ -1869,7 +1870,7 @@ impl AgentInputFooter {
 
         ActionButton::new(label, AgentInputButtonTheme)
             .with_icon(Icon::Clock)
-            .with_size(ButtonSize::AgentInputButton)
+            .with_size(ButtonSize::AgentInputButtonLarge)
             .with_tooltip(tooltip)
             .with_tooltip_alignment(TooltipAlignment::Left)
             .with_mouse_state_handle(self.auto_continue_mouse_state.clone())
@@ -2027,10 +2028,25 @@ impl AgentInputFooter {
         if let Some(status) = self.render_cli_status_label(app) {
             left_buttons.add_child(status);
         }
+        // A coordinator tab leads with prompts for coordinating; its session buttons move under More.
+        let coordinator_prompts = if crate::workspace::view::coordinator::is_coordinator_terminal(
+            self.terminal_view_id,
+            app,
+        ) {
+            crate::workspace::view::coordinator::COORDINATOR_PROMPTS
+                .iter()
+                .map(|(label, text)| {
+                    self.render_custom_insert_button(label, text, true, "Send", None, app)
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
         // The first few stay on the row. Everything else opens from More, so the footer never
         // grows a second line of buttons.
-        let mut chips = action_buttons
+        let mut chips = coordinator_prompts
             .into_iter()
+            .chain(action_buttons)
             .chain(quick_insert_buttons)
             .collect::<Vec<_>>();
         let mut overflow = chips.split_off(chips.len().min(max_chips));
@@ -3632,8 +3648,8 @@ impl ActionButtonTheme for QuickInsertButtonTheme {
         AgentInputButtonTheme.text_color(hovered, background, appearance)
     }
 
-    fn border(&self, appearance: &Appearance) -> Option<ColorU> {
-        Some(appearance.theme().outline().into_solid())
+    fn border(&self, _appearance: &Appearance) -> Option<ColorU> {
+        Some(ColorU::transparent_black())
     }
 
     fn should_opt_out_of_contrast_adjustment(&self) -> bool {

@@ -355,6 +355,9 @@ pub struct PaneDropTargetData {
     id: PaneId,
 }
 
+/// Space between the terminal card's rounded edge and its content.
+const CARD_CONTENT_PADDING: f32 = 10.;
+
 fn active_window_card_fill(app: &AppContext) -> Option<warpui::elements::Fill> {
     let window_id = app.windows().active_window()?;
     crate::workspace::util::get_terminal_card_fill(window_id, app)
@@ -399,7 +402,12 @@ impl<P: BackingView> View for PaneView<P> {
         // Add the underlying pane view.
         column.add_child(Shrinkable::new(1., ChildView::new(&active_child).finish()).finish());
 
-        let mut container = Container::new(column.finish()).with_corner_radius(corners_lg());
+        // An inner margin keeps text off the rounded edge; agents print bullets in column 0.
+        let mut container = Container::new(column.finish())
+            .with_corner_radius(corners_lg())
+            .with_padding_left(CARD_CONTENT_PADDING)
+            .with_padding_right(CARD_CONTENT_PADDING / 2.)
+            .with_padding_top(CARD_CONTENT_PADDING / 2.);
         if let Some(fill) = active_window_card_fill(app) {
             container = container.with_background(fill);
         }

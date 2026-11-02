@@ -3,7 +3,7 @@ mod build_plan_migration_modal;
 pub(crate) mod cloud_agent_capacity_modal;
 pub(crate) mod codex_modal;
 pub mod conversation_list;
-mod coordinator;
+pub(crate) mod coordinator;
 #[cfg(enable_crash_recovery)]
 mod crash_recovery;
 pub(crate) mod free_ai_removal_modal;
@@ -24275,6 +24275,110 @@ impl Workspace {
         }
     }
 
+    /// One strip above the card while sessions restore. When a tab needs the user, clicking the
+    /// strip jumps to it, and × hides the strip until the next restore.
+    fn render_restore_notice(
+        &self,
+        text: String,
+        attention_terminal: Option<EntityId>,
+        appearance: &Appearance,
+    ) -> Box<dyn Element> {
+        let tokens = *appearance.tokens();
+        let font_family = appearance.ui_font_family();
+        let needs_you = attention_terminal.is_some();
+        let (glyph, glyph_color) = if needs_you {
+            (Icon::AlertCircle, tokens.status(StatusKind::NeedsYou))
+        } else {
+            (Icon::Restoring, tokens.text_3)
+        };
+        let dismiss = Hoverable::new(
+            self.mouse_states.restore_notice_dismiss.clone(),
+            move |state| {
+                let (icon_color, background) = if state.is_hovered() {
+                    (tokens.text_1, tokens.surface_hover)
+                } else {
+                    (tokens.text_3, ColorU::transparent_black())
+                };
+                Container::new(
+                    ConstrainedBox::new(Icon::X.to_warpui_icon(Fill::Solid(icon_color)).finish())
+                        .with_width(14.)
+                        .with_height(14.)
+                        .finish(),
+                )
+                .with_uniform_padding(4.)
+                .with_corner_radius(corners_sm())
+                .with_background(Fill::Solid(background))
+                .finish()
+            },
+        )
+        .with_cursor(Cursor::PointingHand)
+        .on_click(|ctx, _, _| ctx.dispatch_typed_action(WorkspaceAction::DismissRestoreNotice))
+        .finish();
+
+        let strip = Hoverable::new(self.mouse_states.restore_notice.clone(), move |state| {
+            let mut row = Flex::row()
+                .with_main_axis_size(MainAxisSize::Max)
+                .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                .with_spacing(8.)
+                .with_child(
+                    ConstrainedBox::new(glyph.to_warpui_icon(Fill::Solid(glyph_color)).finish())
+                        .with_width(14.)
+                        .with_height(14.)
+                        .finish(),
+                )
+                .with_child(
+                    Shrinkable::new(
+                        1.,
+                        Text::new_inline(text.clone(), font_family, 12.)
+                            .with_color(tokens.text_2)
+                            .with_clip(ClipConfig::ellipsis())
+                            .finish(),
+                    )
+                    .finish(),
+                );
+            if needs_you {
+                row.add_child(
+                    Text::new_inline("Show", font_family, 12.)
+                        .with_color(glyph_color)
+                        .finish(),
+                );
+            }
+            let background = match (needs_you, state.is_hovered()) {
+                (true, true) => coloru_with_opacity(glyph_color, 25),
+                (true, false) => tokens.status_soft(StatusKind::NeedsYou),
+                (false, _) => tokens.surface_field,
+            };
+            Container::new(row.finish())
+                .with_horizontal_padding(12.)
+                .with_vertical_padding(6.)
+                .with_background(Fill::Solid(background))
+                .with_corner_radius(corners_md())
+                .finish()
+        });
+        let strip = match attention_terminal {
+            Some(terminal_view_id) => strip
+                .with_cursor(Cursor::PointingHand)
+                .on_click(move |ctx, _, _| {
+                    ctx.dispatch_typed_action(WorkspaceAction::FocusTerminalViewInWorkspace {
+                        terminal_view_id,
+                    });
+                })
+                .finish(),
+            None => strip.finish(),
+        };
+        Container::new(
+            Flex::row()
+                .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                .with_spacing(4.)
+                .with_child(Shrinkable::new(1., strip).finish())
+                .with_child(dismiss)
+                .finish(),
+        )
+        .with_margin_right(CARD_INSET)
+        .with_margin_bottom(6.)
+        .finish()
+    }
+
     fn render_banner_and_active_tab(
         &self,
         app: &AppContext,
@@ -24298,21 +24402,16 @@ impl Workspace {
             None => active_content,
         };
 
-        let terminal_content = if let Some(progress) =
-            crate::terminal::cli_agent_sessions::restore::AgentRestoreQueue::as_ref(app)
-                .progress_text()
-        {
-            let theme = appearance.theme();
-            let status = Container::new(
-                Text::new_inline(progress, appearance.ui_font_family(), 12.)
-                    .with_color(theme.main_text_color(theme.background()).into())
-                    .with_clip(ClipConfig::ellipsis())
-                    .finish(),
-            )
-            .with_uniform_padding(8.)
-            .finish();
+        let restore_queue =
+            crate::terminal::cli_agent_sessions::restore::AgentRestoreQueue::as_ref(app);
+        let terminal_content = if let Some(progress) = restore_queue.progress_text() {
+            let notice = self.render_restore_notice(
+                progress,
+                restore_queue.first_attention_terminal(app),
+                appearance,
+            );
             Flex::column()
-                .with_child(status)
+                .with_child(notice)
                 .with_child(Shrinkable::new(1., terminal_content).finish())
                 .finish()
         } else {
@@ -27671,6 +27770,10 @@ impl TypedActionView for Workspace {
                 // Clear the stored width when hover ends
                 self.tab_fixed_width = None;
                 ctx.notify();
+            }
+            DismissRestoreNotice => {
+                crate::terminal::cli_agent_sessions::restore::AgentRestoreQueue::handle(ctx)
+                    .update(ctx, |queue, ctx| queue.dismiss_notice(ctx));
             }
             FocusTerminalViewInWorkspace { terminal_view_id } => {
                 if !self.focus_terminal_view_locally(*terminal_view_id, ctx) {

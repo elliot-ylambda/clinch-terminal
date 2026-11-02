@@ -6,14 +6,28 @@ use warp::integration_testing::terminal::{
     clear_blocklist_to_remove_bootstrapped_blocks, execute_command_for_single_terminal_in_tab,
     execute_echo_str, wait_until_bootstrapped_single_pane_for_tab,
 };
+use warp::integration_testing::view_getters::workspace_view;
 use warp::settings::{AutoCreateWorktreesForNewTabs, Theme};
 use warp::themes::theme::ThemeKind;
+use warp::workspace::WorkspaceAction;
 use warpui_core::integration::TestStep;
 
 use crate::Builder;
 
 fn shot(name: &str) -> TestStep {
     TestStep::new(name).with_take_screenshot(format!("{name}.png"))
+}
+
+/// Dispatches a workspace action on the active window, then waits a moment for it to render.
+fn workspace_action(name: &str, action: WorkspaceAction) -> TestStep {
+    TestStep::new(name)
+        .with_action(move |app, window_id, _| {
+            let workspace = workspace_view(app, window_id);
+            app.update(|ctx| {
+                ctx.dispatch_typed_action_for_view(window_id, workspace.id(), &action);
+            });
+        })
+        .set_post_step_pause(std::time::Duration::from_millis(600))
 }
 
 fn press(name: &str, keystrokes: &[&str]) -> TestStep {
@@ -56,6 +70,10 @@ fn redesign_screens(mut user_defaults: HashMap<String, String>) -> Builder {
         .with_step(press("second tab", &["cmd-t"]))
         .with_step(press("third tab", &["cmd-t"]))
         .with_step(press("back to first tab", &["cmd-1"]))
+        .with_step(workspace_action(
+            "new section",
+            WorkspaceAction::CreateNewTabGroup,
+        ))
         .with_step(shot("main"))
         .with_step(press("open palette", &["cmd-p"]))
         .with_step(shot("palette"))
@@ -90,6 +108,11 @@ pub fn test_redesign_agent_screens() -> Builder {
         .with_step(
             TestStep::new("start the stand-in agent")
                 .with_input_string("claude", Some(&["enter"]))
+                .set_post_step_pause(std::time::Duration::from_secs(3)),
+        )
+        .with_step(workspace_action("open coordinator", WorkspaceAction::OpenCoordinatorSession))
+        .with_step(
+            TestStep::new("let the coordinator start")
                 .set_post_step_pause(std::time::Duration::from_secs(3)),
         )
         .with_step(shot("agent"))
