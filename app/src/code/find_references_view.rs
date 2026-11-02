@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use lsp::ReferenceLocation;
 use pathfinder_geometry::vector::Vector2F;
@@ -18,8 +19,8 @@ use warp_files::FileModel;
 use warpui::elements::{
     Border, ChildAnchor, ChildView, ClippedScrollStateHandle, ClippedScrollable, ConstrainedBox,
     Container, CornerRadius, CrossAxisAlignment, Fill, Flex, Hoverable, MouseStateHandle,
-    OffsetPositioning, ParentAnchor, ParentElement, ParentOffsetBounds, Radius, ScrollbarWidth,
-    Shrinkable, Stack, Text,
+    OffsetPositioning, ParentAnchor, ParentElement, ParentOffsetBounds, ScrollbarWidth, Shrinkable,
+    Stack, Text,
 };
 use warpui::keymap::FixedBinding;
 use warpui::platform::Cursor;
@@ -458,7 +459,7 @@ impl View for FindReferencesView {
         ConstrainedBox::new(
             Container::new(card_content)
                 .with_background_color(internal_colors::neutral_1(theme))
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                 .with_border(Border::all(1.).with_border_fill(internal_colors::neutral_4(theme)))
                 .finish(),
         )
@@ -524,7 +525,7 @@ fn render_header(
         .finish();
 
         let container = Container::new(close_icon)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .with_uniform_padding(2.);
 
         if state.is_hovered() {
@@ -551,7 +552,7 @@ fn render_header(
     .with_horizontal_padding(12.)
     .with_vertical_padding(8.)
     .with_background(theme.background())
-    .with_corner_radius(CornerRadius::with_top(Radius::Pixels(8.)))
+    .with_corner_radius(CornerRadius::with_top(RADIUS_MD))
     .finish()
 }
 

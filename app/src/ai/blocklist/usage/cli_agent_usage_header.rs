@@ -2,9 +2,10 @@ use chrono::{DateTime, Utc};
 use cli_agent_usage::format::{chip_halves, fmt_pct, fmt_reset, fmt_reset_short, fmt_tokens};
 use cli_agent_usage::{LimitWindow, Provider, Severity, UsageSnapshot, WindowTotals};
 use warp_core::ui::theme::Fill;
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::elements::{
     Container, CornerRadius, CrossAxisAlignment, Empty, Flex, Hoverable, MouseStateHandle,
-    ParentElement, Radius, SizeConstraintCondition, SizeConstraintSwitch,
+    ParentElement, SizeConstraintCondition, SizeConstraintSwitch,
 };
 use warpui::platform::Cursor;
 use warpui::Element;
@@ -282,7 +283,7 @@ fn clickable_provider(
         let mut container = Container::new(content)
             .with_horizontal_padding(4.)
             .with_vertical_padding(2.)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)));
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM));
         if state.is_hovered() {
             container = container.with_background(theme.surface_overlay_1());
         }

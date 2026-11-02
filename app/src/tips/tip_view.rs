@@ -1,9 +1,10 @@
 use pathfinder_geometry::vector::vec2f;
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::elements::{
     Align, Border, ChildAnchor, ClippedScrollStateHandle, ClippedScrollable, ConstrainedBox,
     Container, CornerRadius, CrossAxisAlignment, DispatchEventResult, Element, EventHandler, Flex,
     Hoverable, Icon, MouseStateHandle, OffsetPositioning, ParentElement, PositionedElementAnchor,
-    PositionedElementOffsetBounds, Radius, ScrollbarWidth, Shrinkable, Stack,
+    PositionedElementOffsetBounds, ScrollbarWidth, Shrinkable, Stack,
 };
 use warpui::fonts::Weight;
 use warpui::keymap::{FixedBinding, Keystroke};
@@ -411,7 +412,7 @@ impl TipsView {
 
                         theme.surface_2().blend(&overlay)
                     })
-                    .with_corner_radius(CornerRadius::with_bottom(Radius::Pixels(8.)))
+                    .with_corner_radius(CornerRadius::with_bottom(RADIUS_MD))
                     .finish()
                 })
                 .on_click(|ctx, _, _| ctx.dispatch_typed_action(TipsAction::DismissTips))
@@ -507,7 +508,7 @@ impl TipsView {
                 .finish(),
             )
             .with_background(Fill::black().with_opacity(85))
-            .with_corner_radius(CornerRadius::with_bottom(Radius::Pixels(8.)))
+            .with_corner_radius(CornerRadius::with_bottom(RADIUS_MD))
             .finish(),
         )
         .with_width(MODAL_WIDTH)

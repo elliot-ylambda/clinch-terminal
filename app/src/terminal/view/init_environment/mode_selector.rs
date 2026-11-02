@@ -2,6 +2,7 @@ use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::vec2f;
 use warp_core::ui::color::blend::Blend;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::elements::{
     Align, Border, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Dismiss,
     DropShadow, Element, Flex, Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle,
@@ -18,7 +19,7 @@ use crate::ui_components::icons::Icon;
 
 // Figma node 6583:23542
 const MODAL_WIDTH: f32 = 441.;
-const DIALOG_CORNER_RADIUS: f32 = 8.;
+const DIALOG_CORNER_RADIUS: f32 = 10.;
 
 const HEADER_PADDING_TOP: f32 = 16.;
 const HEADER_PADDING_BOTTOM: f32 = 16.;
@@ -29,7 +30,7 @@ const BODY_PADDING_HORIZONTAL: f32 = 20.;
 
 const OPTION_PADDING_VERTICAL: f32 = 8.;
 const OPTION_PADDING_HORIZONTAL: f32 = 12.;
-const OPTION_CORNER_RADIUS: f32 = 4.;
+const OPTION_CORNER_RADIUS: f32 = 6.;
 const OPTION_GAP: f32 = 12.;
 const OPTIONS_VERTICAL_GAP: f32 = 8.;
 
@@ -154,7 +155,7 @@ impl EnvironmentSetupModeSelector {
             .with_style(UiComponentStyles {
                 font_size: Some(OPTION_DESC_FONT_SIZE),
                 font_color: Some(theme.nonactive_ui_text_color().into_solid()),
-                border_radius: Some(CornerRadius::with_all(Radius::Pixels(4.))),
+                border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
                 padding: Some(Coords {
                     top: 0.,
                     bottom: 0.,

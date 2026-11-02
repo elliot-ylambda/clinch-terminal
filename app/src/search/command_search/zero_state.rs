@@ -1,10 +1,11 @@
 use std::collections::HashMap;
+use warp_core::ui::tokens::RADIUS_SM;
 
 use lazy_static::lazy_static;
 use warp_core::features::FeatureFlag;
 use warp_core::ui::theme::color::internal_colors;
 use warpui::elements::{
-    Container, CornerRadius, Flex, Hoverable, MouseStateHandle, ParentElement, Radius, Text, Wrap,
+    Container, CornerRadius, Flex, Hoverable, MouseStateHandle, ParentElement, Text, Wrap,
 };
 use warpui::platform::Cursor;
 use warpui::{AppContext, Element, Entity, SingletonEntity, TypedActionView, View, ViewContext};
@@ -139,7 +140,7 @@ impl CommandSearchZeroStateView {
                 } else {
                     internal_colors::neutral_3(theme).into()
                 })
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                 .finish()
             },
         )

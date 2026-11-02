@@ -34,7 +34,7 @@ use crate::{
 
 // UI does not scale, so we set a fixed size for all text.
 const FONT_SIZE: f32 = 14.;
-const DROPDOWN_BORDER_RADIUS: f32 = 8.;
+const DROPDOWN_BORDER_RADIUS: f32 = 10.;
 const DROPDOWN_HORIZONTAL_PADDING: f32 = 16.;
 const DROPDOWN_VERTICAL_PADDING: f32 = 12.;
 const DROPDOWN_HORIZONTAL_MARGIN: f32 = 16.;

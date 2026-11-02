@@ -7,6 +7,7 @@
 //! hover, drag) locally. Emits high-level events for immediate submission, deletion, and edit
 //! completion, which the host uses to submit or update the input editor.
 use std::collections::HashMap;
+use warp_core::ui::tokens::RADIUS_SM;
 
 use pathfinder_color::ColorU;
 use pathfinder_geometry::rect::RectF;
@@ -18,7 +19,7 @@ use warpui::elements::{
     Border, ChildAnchor, ChildView, Clipped, ClippedScrollStateHandle, ConstrainedBox, Container,
     CornerRadius, CrossAxisAlignment, DragAxis, Draggable, DraggableState, Empty, Expanded, Fill,
     Flex, Hoverable, MinSize, MouseStateHandle, OffsetPositioning, ParentAnchor, ParentElement,
-    ParentOffsetBounds, Radius, SavePosition, ScrollbarWidth, Shrinkable, Stack, Text,
+    ParentOffsetBounds, SavePosition, ScrollbarWidth, Shrinkable, Stack, Text,
     DEFAULT_UI_LINE_HEIGHT_RATIO,
 };
 use warpui::fonts::{Properties, Style, Weight};
@@ -1142,7 +1143,7 @@ fn render_row(props: RenderRowProps<'_>, app: &AppContext) -> Box<dyn Element> {
             ConstrainedBox::new(
                 Container::new(editor_viewport)
                     .with_border(Border::all(1.).with_border_fill(theme.outline()))
-                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                    .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                     .with_horizontal_padding(4.)
                     .finish(),
             )
@@ -1286,7 +1287,7 @@ fn render_row(props: RenderRowProps<'_>, app: &AppContext) -> Box<dyn Element> {
         let mut container = Container::new(row_content)
             .with_horizontal_padding(8.)
             .with_vertical_padding(4.)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)));
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM));
         if is_being_dragged || state.is_hovered() {
             container = container.with_background(theme.surface_overlay_1());
         }

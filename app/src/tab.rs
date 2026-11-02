@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::vec2f;
@@ -1480,7 +1481,7 @@ impl<'a> TabComponent<'a> {
 
             let default_styles = UiComponentStyles {
                 background: Some(default_background),
-                border_radius: Some(CornerRadius::with_all(Radius::Pixels(2.0))),
+                border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
                 ..UiComponentStyles::default()
             };
 
@@ -1940,7 +1941,7 @@ impl<'a> TabComponent<'a> {
         if self.grouped_member {
             let highlight = Container::new(stack)
                 .with_background(background_color)
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.0)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                 .finish();
             return Container::new(highlight)
                 .with_vertical_padding(3.)
@@ -1961,7 +1962,7 @@ impl<'a> TabComponent<'a> {
             );
         } else {
             tab = tab
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.0)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                 .with_border(Border::all(1.).with_border_fill(border_fill));
         }
 
@@ -2131,7 +2132,7 @@ impl UiComponent for TabComponent<'_> {
 
                     let tooltip = Container::new(tooltip_content)
                         .with_background(appearance.theme().tooltip_background())
-                        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                         .with_padding(Padding::uniform(6.))
                         .finish();
 

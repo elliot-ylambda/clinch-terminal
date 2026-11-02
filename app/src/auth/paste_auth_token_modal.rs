@@ -10,6 +10,7 @@ use pathfinder_color::ColorU;
 use ui_components::{button, Component as _, Options as _};
 use warp_core::safe_error;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warpui::actions::StandardAction;
 use warpui::elements::{
     Align, Border, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Dismiss, Fill,
@@ -37,7 +38,7 @@ use crate::themes::theme::Fill as ThemeFill;
 use crate::util::bindings::CustomAction;
 
 const MODAL_WIDTH: f32 = 460.;
-const AUTH_TOKEN_INPUT_BORDER_RADIUS: Radius = Radius::Pixels(4.);
+const AUTH_TOKEN_INPUT_BORDER_RADIUS: Radius = RADIUS_SM;
 
 pub fn init(app: &mut AppContext) {
     use warpui::keymap::macros::*;
@@ -397,7 +398,7 @@ impl View for PasteAuthTokenModalView {
             Container::new(dialog)
                 .with_background(dialog_surface)
                 .with_border(Border::all(1.).with_border_color(border_color))
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                 .finish(),
         )
         .with_width(MODAL_WIDTH)

@@ -1,11 +1,12 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use warp_core::ui::tokens::RADIUS_SM;
 
 use ::ai::api_keys::CustomEndpoint;
 use url::Url;
 use warp_editor::editor::NavigationKey;
 use warpui::elements::{
     Border, ChildView, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Empty,
-    Expanded, Flex, MainAxisSize, MouseStateHandle, ParentElement, Radius, Text,
+    Expanded, Flex, MainAxisSize, MouseStateHandle, ParentElement, Text,
 };
 use warpui::fonts::FamilyId;
 use warpui::ui_components::button::ButtonVariant;
@@ -699,7 +700,7 @@ impl View for CustomEndpointModal {
                     .finish(),
             )
             .with_border(Border::all(1.).with_border_fill(url_border_fill))
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .with_margin_bottom(16.)
             .finish(),
         );

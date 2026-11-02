@@ -1,7 +1,8 @@
 use pathfinder_color::ColorU;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::Fill;
-use warpui::elements::{CornerRadius, MouseState, Radius};
+use warp_core::ui::tokens::RADIUS_SM;
+use warpui::elements::{CornerRadius, MouseState};
 use warpui::Element;
 
 use crate::appearance::Appearance;
@@ -52,7 +53,7 @@ impl ItemHighlightState {
         match self {
             ItemHighlightState::None => None,
             ItemHighlightState::Selected | ItemHighlightState::Hovered => {
-                Some(CornerRadius::with_all(Radius::Pixels(4.)))
+                Some(CornerRadius::with_all(RADIUS_SM))
             }
         }
     }

@@ -25,7 +25,7 @@ use crate::workspace::WorkspaceAction;
 use crate::workspaces::user_workspaces::UserWorkspaces;
 
 const MODAL_WIDTH: f32 = 480.;
-const CORNER_RADIUS: f32 = 12.;
+const CORNER_RADIUS: f32 = 14.;
 const PANEL_PADDING: f32 = 24.;
 const CLOSE_BUTTON_DIAMETER: f32 = 20.;
 

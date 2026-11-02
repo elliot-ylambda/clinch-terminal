@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use warp_core::ui::tokens::{RADIUS_LG, RADIUS_MD};
 
 use instant::Instant;
 use pathfinder_geometry::vector::vec2f;
@@ -9,7 +10,7 @@ use warp_graphql::scalars::time::ServerTimestamp;
 use warpui::elements::{
     Align, Border, ChildAnchor, Clipped, ConstrainedBox, Container, CornerRadius,
     CrossAxisAlignment, Element, Empty, Expanded, Flex, Hoverable, MainAxisAlignment, MainAxisSize,
-    MouseStateHandle, OffsetPositioning, ParentAnchor, ParentElement, ParentOffsetBounds, Radius,
+    MouseStateHandle, OffsetPositioning, ParentAnchor, ParentElement, ParentOffsetBounds,
     Shrinkable, SizeConstraintCondition, SizeConstraintSwitch, Stack, Text,
 };
 use warpui::fonts::{Properties, Weight};
@@ -1271,7 +1272,7 @@ impl EnvironmentsPageWidget {
                     .finish(),
             )
             .with_horizontal_padding(12.)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .with_border(Border::all(CARD_BORDER_WIDTH).with_border_fill(theme.outline()))
             .with_background(theme.surface_2())
             .finish(),
@@ -1292,7 +1293,7 @@ impl EnvironmentsPageWidget {
             .finish(),
         )
         .with_uniform_padding(12.)
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .with_border(Border::all(CARD_BORDER_WIDTH).with_border_fill(theme.outline()))
         .with_background(theme.surface_2())
         .finish()
@@ -1516,7 +1517,7 @@ impl EnvironmentsPageWidget {
         ConstrainedBox::new(
             Container::new(content)
                 .with_uniform_padding(24.)
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                 .with_border(Border::all(CARD_BORDER_WIDTH).with_border_fill(theme.outline()))
                 .with_background(theme.surface_2())
                 .finish(),
@@ -1547,7 +1548,7 @@ impl EnvironmentsPageWidget {
                     .finish(),
             )
             .with_uniform_padding(8.)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .with_background(theme.surface_3())
             .finish()
         };
@@ -1579,7 +1580,7 @@ impl EnvironmentsPageWidget {
                 )
                 .with_horizontal_padding(6.)
                 .with_vertical_padding(2.)
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(10.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_LG))
                 .with_background(theme.surface_3())
                 .finish();
                 title_row.add_child(badge);
@@ -1614,7 +1615,7 @@ impl EnvironmentsPageWidget {
 
         let horizontal = Container::new(row)
             .with_uniform_padding(12.)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .with_border(Border::all(CARD_BORDER_WIDTH).with_border_fill(theme.outline()))
             .with_background(theme.surface_3())
             .finish();
@@ -1629,7 +1630,7 @@ impl EnvironmentsPageWidget {
 
         let vertical = Container::new(compact_row)
             .with_uniform_padding(12.)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .with_border(Border::all(CARD_BORDER_WIDTH).with_border_fill(theme.outline()))
             .with_background(theme.surface_3())
             .finish();
@@ -1994,7 +1995,7 @@ impl EnvironmentsPageWidget {
 
             Container::new(card_row.finish())
                 .with_uniform_padding(CARD_PADDING)
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                 .with_background(background)
                 .with_border(
                     Border::all(CARD_BORDER_WIDTH)

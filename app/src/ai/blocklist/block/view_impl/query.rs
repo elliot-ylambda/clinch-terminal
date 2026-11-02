@@ -5,9 +5,10 @@
 use pathfinder_color::ColorU;
 use warp_core::features::FeatureFlag;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::elements::{
     Container, CornerRadius, DispatchEventResult, EventHandler, Flex, MainAxisAlignment,
-    MainAxisSize, ParentElement, Radius, Shrinkable, Wrap,
+    MainAxisSize, ParentElement, Shrinkable, Wrap,
 };
 use warpui::fonts::{Properties, Style, Weight};
 use warpui::ui_components::chip::Chip;
@@ -144,7 +145,7 @@ fn render_attachments(
                 )),
                 border_width: Some(1.),
                 border_color: Some(internal_colors::neutral_4(appearance.theme()).into()),
-                border_radius: Some(CornerRadius::with_all(Radius::Pixels(5.))),
+                border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
                 ..Default::default()
             },
         )

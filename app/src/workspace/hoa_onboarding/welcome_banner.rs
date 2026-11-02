@@ -1,6 +1,7 @@
 use pathfinder_geometry::vector::vec2f;
 use warp_core::ui::theme::phenomenon::PhenomenonStyle;
 use warp_core::ui::theme::Fill;
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::assets::asset_cache::AssetSource;
 use warpui::elements::{
     CacheOption, ChildAnchor, ChildView, ConstrainedBox, Container, CornerRadius,
@@ -60,7 +61,7 @@ pub fn render_welcome_banner(
             },
             CacheOption::Original,
         )
-        .with_corner_radius(CornerRadius::with_top(Radius::Pixels(8.)))
+        .with_corner_radius(CornerRadius::with_top(RADIUS_MD))
         .cover()
         .top_aligned()
         .finish(),
@@ -179,7 +180,7 @@ pub fn render_welcome_banner(
     .with_horizontal_padding(32.)
     .with_vertical_padding(32.)
     .with_background(Fill::Solid(PhenomenonStyle::modal_background()))
-    .with_corner_radius(CornerRadius::with_bottom(Radius::Pixels(8.)))
+    .with_corner_radius(CornerRadius::with_bottom(RADIUS_MD))
     .finish();
 
     // Full banner
@@ -192,7 +193,7 @@ pub fn render_welcome_banner(
                 .finish(),
         )
         .with_background(Fill::Solid(PhenomenonStyle::modal_background()))
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .finish(),
     )
     .with_width(BANNER_WIDTH)

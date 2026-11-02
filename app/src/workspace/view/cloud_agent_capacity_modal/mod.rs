@@ -6,12 +6,13 @@ use thousands::Separable;
 use warp_core::channel::ChannelState;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::Fill;
+use warp_core::ui::tokens::RADIUS_LG;
 use warp_graphql::billing::StripeSubscriptionPlan;
 use warpui::elements::{
     Align, CacheOption, ChildAnchor, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment,
     DropShadow, Expanded, Flex, FormattedTextElement, HighlightedHyperlink, Image,
     MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning, ParentAnchor,
-    ParentElement, ParentOffsetBounds, Radius, Stack,
+    ParentElement, ParentOffsetBounds, Stack,
 };
 use warpui::fonts::Weight;
 use warpui::keymap::FixedBinding;
@@ -336,7 +337,7 @@ impl CloudAgentCapacityModal {
                 CacheOption::BySize,
             )
             .cover()
-            .with_corner_radius(CornerRadius::with_top(Radius::Pixels(10.)))
+            .with_corner_radius(CornerRadius::with_top(RADIUS_LG))
             .finish(),
         )
         .with_width(MODAL_WIDTH)
@@ -392,7 +393,7 @@ impl View for CloudAgentCapacityModal {
                 .finish(),
             )
             .with_background_color(blended_colors::neutral_1(theme))
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(10.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_LG))
             .with_drop_shadow(DropShadow::default())
             .finish(),
         );

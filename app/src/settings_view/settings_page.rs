@@ -1,6 +1,7 @@
 use core::fmt::{self, Display};
 use std::borrow::Cow;
 use std::collections::HashMap;
+use warp_core::ui::tokens::RADIUS_SM;
 
 use itertools::Itertools as _;
 use pathfinder_color::ColorU;
@@ -16,7 +17,7 @@ use warpui::elements::{
     Align, Border, ChildAnchor, ChildView, ClippedScrollStateHandle, ConstrainedBox, Container,
     CornerRadius, CrossAxisAlignment, Element, Empty, Expanded, Flex, Hoverable, MainAxisAlignment,
     MainAxisSize, MouseStateHandle, NewScrollable, OffsetPositioning, ParentAnchor, ParentElement,
-    ParentOffsetBounds, Radius, SavePosition, ScrollTarget, ScrollToPositionMode, Shrinkable,
+    ParentOffsetBounds, SavePosition, ScrollTarget, ScrollToPositionMode, Shrinkable,
     SizeConstraintCondition, SizeConstraintSwitch, Stack, Text,
 };
 use warpui::fonts::{Properties, Weight};
@@ -235,7 +236,7 @@ pub fn render_customer_type_badge(appearance: &Appearance, text: String) -> Box<
             .background()
             .blend(&appearance.theme().foreground().with_opacity(25)),
     )
-    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(3.)))
+    .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
     .with_margin_left(10.)
     .finish()
 }
@@ -449,7 +450,7 @@ pub fn render_full_pane_width_ai_button(
         .with_border(
             Border::new(1.).with_border_fill(internal_colors::neutral_4(appearance.theme())),
         )
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
         .with_horizontal_padding(16.)
         .with_vertical_padding(11.)
         .with_margin_bottom(12.)
@@ -1022,7 +1023,7 @@ pub(crate) fn render_settings_info_banner(
     )
     .with_background_color(appearance.theme().accent_overlay().into())
     .with_uniform_padding(12.)
-    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+    .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
     .finish()
 }
 
@@ -1215,7 +1216,7 @@ fn render_alternating_color_list_item<SettingsPageAction: Action + Clone>(
     )
     .with_background(background)
     .with_uniform_padding(ALTERNATING_LIST_ITEM_PADDING)
-    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+    .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
     // The bottom has a bit of extra padding b/c lines of text have more space above the text
     // than below. This visually balances that to make it look vertically centered.
     .with_padding_bottom(ALTERNATING_LIST_ITEM_PADDING + 2.)

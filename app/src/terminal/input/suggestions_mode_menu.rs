@@ -6,9 +6,10 @@
 //! - StaticWorkflowEnumSuggestions
 //! - DynamicWorkflowEnumSuggestions
 
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::elements::{
     Align, Border, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, DragBarSide,
-    DropShadow, Element, Empty, Flex, ParentElement, Radius, Resizable, Shrinkable,
+    DropShadow, Element, Empty, Flex, ParentElement, Resizable, Shrinkable,
     SizeConstraintCondition, SizeConstraintSwitch, Text,
 };
 use warpui::presenter::ChildView;
@@ -41,7 +42,7 @@ impl Input {
         menu_positioning: MenuPositioning,
     ) -> Box<dyn Element> {
         let theme = appearance.theme();
-        let radius = Radius::Pixels(6.);
+        let radius = RADIUS_MD;
 
         let corner_radius = match menu_positioning {
             MenuPositioning::AboveInputBox => CornerRadius::with_top(radius),
@@ -99,7 +100,7 @@ impl Input {
         menu_positioning: MenuPositioning,
     ) -> Box<dyn Element> {
         let theme = appearance.theme();
-        let corner_radius = CornerRadius::with_all(Radius::Pixels(6.));
+        let corner_radius = CornerRadius::with_all(RADIUS_MD);
 
         let content = ChildView::new(&self.input_suggestions).finish();
 
@@ -119,7 +120,7 @@ impl Input {
         menu_positioning: MenuPositioning,
     ) -> Box<dyn Element> {
         let theme = appearance.theme();
-        let corner_radius = CornerRadius::with_all(Radius::Pixels(6.));
+        let corner_radius = CornerRadius::with_all(RADIUS_MD);
 
         // Same styling as CompletionSuggestions
         let margin = 0.;
@@ -145,7 +146,7 @@ impl Input {
         suggestions: &[String],
     ) -> Box<dyn Element> {
         let theme = appearance.theme();
-        let corner_radius = CornerRadius::with_all(Radius::Pixels(6.));
+        let corner_radius = CornerRadius::with_all(RADIUS_MD);
 
         let (content, resize_config) = match status {
             DynamicEnumSuggestionStatus::Unapproved => (

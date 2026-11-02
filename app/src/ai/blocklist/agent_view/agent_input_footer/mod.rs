@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 #[cfg(not(target_family = "wasm"))]
 use std::time::Duration;
+use warp_core::ui::tokens::RADIUS_MD;
 
 use ai::document::{AIDocumentId, AIDocumentVersion};
 use chrono::{DateTime, Local};
@@ -38,8 +39,8 @@ use warpui::elements::{
     Border, ChildAnchor, ChildView, Clipped, ConstrainedBox, Container, CornerRadius,
     CrossAxisAlignment, DispatchEventResult, Element, EventHandler, Expanded, Flex,
     MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning, ParentElement,
-    PositionedElementAnchor, PositionedElementOffsetBounds, Radius, Rect, Shrinkable, Stack, Text,
-    Wrap, WrapFill, WrapFillEntireRun, DEFAULT_UI_LINE_HEIGHT_RATIO,
+    PositionedElementAnchor, PositionedElementOffsetBounds, Rect, Shrinkable, Stack, Text, Wrap,
+    WrapFill, WrapFillEntireRun, DEFAULT_UI_LINE_HEIGHT_RATIO,
 };
 use warpui::r#async::{SpawnedFutureHandle, Timer};
 use warpui::{
@@ -2938,7 +2939,7 @@ fn render_ftu_callout(
         .with_horizontal_padding(16.)
         .with_background(background)
         .with_border(Border::all(1.).with_border_fill(theme.accent()))
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .finish(),
     )
     .with_width(348.)
@@ -3455,12 +3456,12 @@ impl ActionButtonTheme for AgentInputButtonTheme {
     fn background(&self, hovered: bool, appearance: &Appearance) -> Option<Fill> {
         // Solid surface fills keep the button readable even when its parent
         // isn't `theme.background()` (for example, over an alt-screen CLI agent).
-        let theme = appearance.theme();
-        Some(if hovered {
-            theme.surface_2()
+        let tokens = appearance.tokens();
+        Some(Fill::Solid(if hovered {
+            tokens.surface_raised
         } else {
-            theme.surface_1()
-        })
+            tokens.surface_field
+        }))
     }
 
     fn text_color(
@@ -3480,8 +3481,9 @@ impl ActionButtonTheme for AgentInputButtonTheme {
         appearance.theme().sub_text_color(effective_bg).into_solid()
     }
 
-    fn border(&self, appearance: &Appearance) -> Option<ColorU> {
-        Some(internal_colors::neutral_3(appearance.theme()))
+    // Transparent rather than absent, so chips keep the size they had with an outline.
+    fn border(&self, _appearance: &Appearance) -> Option<ColorU> {
+        Some(ColorU::transparent_black())
     }
 
     fn should_opt_out_of_contrast_adjustment(&self) -> bool {

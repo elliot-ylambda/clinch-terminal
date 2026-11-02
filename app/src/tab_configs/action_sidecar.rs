@@ -1,7 +1,8 @@
+use warp_core::ui::tokens::RADIUS_MD;
 use warp_util::path::user_friendly_path;
 use warpui::elements::{
     Border, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Flex, MainAxisSize,
-    MouseStateHandle, ParentElement, Radius, Text,
+    MouseStateHandle, ParentElement, Text,
 };
 use warpui::platform::Cursor;
 use warpui::ui_components::button::{ButtonTooltipPosition, ButtonVariant};
@@ -236,7 +237,7 @@ pub(crate) fn render_action_sidecar(
             .with_padding_top(SIDECAR_PADDING)
             .with_padding_bottom(SIDECAR_PADDING)
             .with_background(theme.surface_2())
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .with_border(Border::all(1.).with_border_fill(theme.outline()))
             .finish(),
     )

@@ -19,7 +19,7 @@ pub fn font_size(appearance: &Appearance) -> f32 {
 
 pub const ICON_MARGIN: f32 = 8.0;
 pub const ITEM_HORIZONTAL_PADDING: f32 = 8.0;
-pub const ITEM_CORNER_RADIUS: f32 = 4.0;
+pub const ITEM_CORNER_RADIUS: f32 = 6.;
 pub const CONTENT_VERTICAL_PADDING: f32 = 8.;
 pub const CONTENT_BORDER_WIDTH: f32 = 1.;
 

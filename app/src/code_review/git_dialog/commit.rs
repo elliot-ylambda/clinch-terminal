@@ -3,12 +3,13 @@
 //! `create_pr` per the selected intent.
 
 use std::path::Path;
+use warp_core::ui::tokens::RADIUS_MD;
 
 use warp_core::send_telemetry_from_ctx;
 use warp_core::ui::appearance::Appearance;
 use warpui::elements::{
     ChildView, ClippedScrollStateHandle, Container, CornerRadius, CrossAxisAlignment, Element,
-    Flex, MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement, Radius, Text,
+    Flex, MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement, Text,
 };
 use warpui::ui_components::components::{UiComponent, UiComponentStyles};
 use warpui::ui_components::switch::SwitchStateHandle;
@@ -626,7 +627,7 @@ fn render_message_editor(
         .text_input(state.message_editor.clone())
         .with_style(UiComponentStyles {
             border_color: Some(appearance.theme().surface_3().into()),
-            border_radius: Some(CornerRadius::with_all(Radius::Pixels(6.))),
+            border_radius: Some(CornerRadius::with_all(RADIUS_MD)),
             height: Some(EDITOR_MIN_HEIGHT.max(line_height * 3.)),
             ..Default::default()
         })

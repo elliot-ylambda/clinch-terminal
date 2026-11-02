@@ -29,7 +29,7 @@ use crate::workspace::ToastStack;
 
 const FILE_PICKER_BUTTON_WIDTH: f32 = 250.;
 const BUTTON_FONT_SIZE: f32 = 14.;
-const BUTTON_BORDER_RADIUS: f32 = 4.;
+const BUTTON_BORDER_RADIUS: f32 = 6.;
 pub(super) const IMPORT_FONT_SIZE: f32 = 14.;
 pub(super) const INDENT_MARGIN: f32 = 22.;
 pub(super) const BASE_INDENT: f32 = 30.;

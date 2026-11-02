@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use warp_core::ui::tokens::RADIUS_SM;
 
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::Icon;
@@ -7,8 +8,8 @@ use warp_editor::editor::NavigationKey;
 use warpui::elements::{
     Border, ChildView, ClippedScrollStateHandle, ClippedScrollable, ConstrainedBox, Container,
     CornerRadius, CrossAxisAlignment, Fill, Flex, Hoverable, MainAxisAlignment, MainAxisSize,
-    MouseStateHandle, Padding, ParentElement, Radius, SavePosition, ScrollTarget,
-    ScrollToPositionMode, ScrollbarWidth, Shrinkable, Text,
+    MouseStateHandle, Padding, ParentElement, SavePosition, ScrollTarget, ScrollToPositionMode,
+    ScrollbarWidth, Shrinkable, Text,
 };
 use warpui::fonts::{Properties, Weight};
 use warpui::keymap::macros::*;
@@ -505,7 +506,7 @@ impl View for TabConfigParamsModal {
             )
             .with_horizontal_padding(2.)
             .with_background(internal_colors::neutral_2(theme))
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(3.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .finish();
 
             let close_icon = ConstrainedBox::new(Icon::X.to_warpui_icon(sub_text).finish())

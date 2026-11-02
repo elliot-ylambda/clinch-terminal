@@ -11,7 +11,7 @@ use crate::ui_components::dialog::{dialog_styles, Dialog};
 
 const BUTTON_PADDING: f32 = 12.;
 const BUTTON_FONT_SIZE: f32 = 14.;
-const BUTTON_BORDER_RADIUS: f32 = 4.;
+const BUTTON_BORDER_RADIUS: f32 = 6.;
 const BORDER_WIDTH: f32 = 1.;
 
 const DIALOG_WIDTH: f32 = 450.;

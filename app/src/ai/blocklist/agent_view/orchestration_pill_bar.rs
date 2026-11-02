@@ -6,6 +6,7 @@ use std::cell::RefCell;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::vec2f;
@@ -1538,7 +1539,7 @@ fn render_hover_card(
         .with_padding_bottom(HOVER_CARD_VERTICAL_PADDING)
         .with_background(bg)
         .with_border(warpui::elements::Border::all(1.).with_border_fill(outline))
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .finish();
 
     Some(
@@ -1584,7 +1585,7 @@ fn render_status_badge(
         .with_padding_top(2.)
         .with_padding_bottom(2.)
         .with_background_color(coloru_with_opacity(color, 10))
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
         .finish()
 }
 
@@ -1634,7 +1635,7 @@ fn render_chip(
         .with_padding_top(2.)
         .with_padding_bottom(2.)
         .with_background(internal_colors::neutral_2(theme))
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
         .finish()
 }
 
@@ -1852,7 +1853,7 @@ fn render_pill(
                             pin_hover_state.is_hovered() || pin_hover_state.is_clicked();
                         let mut container =
                             Container::new(render_pin_glyph_centered(is_pinned, text_color))
-                                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)));
+                                .with_corner_radius(CornerRadius::with_all(RADIUS_SM));
                         if pin_button_hovered {
                             container =
                                 container.with_background(internal_colors::fg_overlay_1(theme));
@@ -2037,7 +2038,7 @@ fn render_overflow_button(
             .with_height(PILL_ICON_SIZE)
             .finish();
         let mut container = Container::new(Align::new(icon).finish())
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)));
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM));
         if let Some(bg) = bg {
             container = container.with_background(bg);
         }
@@ -2197,7 +2198,7 @@ struct CrumbSpec {
 }
 
 const CRUMB_HEIGHT: f32 = 24.;
-const CRUMB_RADIUS: f32 = 4.;
+const CRUMB_RADIUS: f32 = 6.;
 const CRUMB_HORIZONTAL_PADDING: f32 = 6.;
 
 /// Renders a `[Parent Avatar] [Parent Title] > [Child Avatar] [Child Name]`

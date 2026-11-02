@@ -1,5 +1,6 @@
 #[cfg(not(target_family = "wasm"))]
 use std::collections::HashMap;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use instant::{Duration, Instant};
 use log::debug;
@@ -12,7 +13,7 @@ use warpui::elements::{
     ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Dismiss, Element, Empty, Expanded,
     Fill, Flex, Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning,
     ParentAnchor, ParentElement, ParentOffsetBounds, PositionedElementAnchor,
-    PositionedElementOffsetBounds, Radius, SavePosition, ScrollTarget, ScrollToPositionMode,
+    PositionedElementOffsetBounds, SavePosition, ScrollTarget, ScrollToPositionMode,
     ScrollbarWidth, SizeConstraintCondition, SizeConstraintSwitch, Stack, Text,
 };
 use warpui::fonts::{Properties, Weight};
@@ -1828,7 +1829,7 @@ impl UpdateEnvironmentForm {
             .with_height(FORM_INPUT_HEIGHT)
             .finish(),
         )
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .with_border(Border::all(CARD_BORDER_WIDTH).with_border_fill(theme.outline()))
         .with_background(theme.surface_2())
         .finish();
@@ -1944,7 +1945,7 @@ impl UpdateEnvironmentForm {
             )
             .with_horizontal_padding(FORM_INPUT_HORIZONTAL_PADDING)
             .with_vertical_padding(FORM_DESCRIPTION_VERTICAL_PADDING)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .with_border(Border::all(CARD_BORDER_WIDTH).with_border_fill(theme.outline()))
             .with_background(theme.surface_2())
             .finish(),
@@ -2037,7 +2038,7 @@ impl UpdateEnvironmentForm {
             .with_height(FORM_INPUT_HEIGHT)
             .finish(),
         )
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .with_border(Border::all(CARD_BORDER_WIDTH).with_border_fill(theme.outline()))
         .with_background(theme.surface_2())
         .finish();
@@ -2079,7 +2080,7 @@ impl UpdateEnvironmentForm {
             .with_height(FORM_INPUT_HEIGHT)
             .finish(),
         )
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .with_border(Border::all(CARD_BORDER_WIDTH).with_border_fill(theme.outline()))
         .with_background(theme.surface_2())
         .finish();
@@ -2122,7 +2123,7 @@ impl UpdateEnvironmentForm {
                 )
                 .with_horizontal_padding(12.)
                 .with_vertical_padding(8.)
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                 .with_border(Border::all(CARD_BORDER_WIDTH).with_border_fill(theme.outline()))
                 .with_background(bg)
                 .finish(),
@@ -2191,7 +2192,7 @@ impl UpdateEnvironmentForm {
             .with_height(FORM_INPUT_HEIGHT)
             .finish(),
         )
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .with_border(Border::all(CARD_BORDER_WIDTH).with_border_fill(theme.outline()))
         .with_background(theme.surface_2())
         .finish();
@@ -2236,7 +2237,7 @@ impl UpdateEnvironmentForm {
                     )
                     .with_horizontal_padding(12.)
                     .with_vertical_padding(8.)
-                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+                    .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                     .with_border(Border::all(CARD_BORDER_WIDTH).with_border_fill(theme.outline()))
                     .with_background(bg)
                     .finish(),
@@ -2346,7 +2347,7 @@ impl UpdateEnvironmentForm {
             .with_padding_left(8.)
             .with_vertical_padding(4.)
             .with_padding_right(4.)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .with_background(theme.surface_3())
             .finish();
 
@@ -2388,7 +2389,7 @@ impl UpdateEnvironmentForm {
                     .with_height(FORM_INPUT_HEIGHT)
                     .finish(),
                 )
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                 .with_border(Border::all(CARD_BORDER_WIDTH).with_border_fill(theme.outline()))
                 .with_background(theme.surface_2())
                 .finish()
@@ -2444,7 +2445,7 @@ impl UpdateEnvironmentForm {
             })
             .finish(),
         )
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .with_border(Border::all(CARD_BORDER_WIDTH).with_border_fill(theme.outline()))
         .with_background(theme.surface_2())
         .finish();
@@ -2774,7 +2775,7 @@ impl UpdateEnvironmentForm {
 
         // Wrap in container with border and background
         Container::new(dropdown_content)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .with_border(Border::all(CARD_BORDER_WIDTH).with_border_fill(theme.outline()))
             .with_background(theme.surface_2())
             .finish()
@@ -2825,7 +2826,7 @@ impl UpdateEnvironmentForm {
             .with_padding_left(8.)
             .with_vertical_padding(4.)
             .with_padding_right(4.)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .with_background(theme.surface_3())
             .finish();
 
@@ -2977,7 +2978,7 @@ impl UpdateEnvironmentForm {
             })
             .finish(),
         )
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .with_border(Border::all(CARD_BORDER_WIDTH).with_border_fill(theme.outline()))
         .with_background(theme.surface_2())
         .finish();
@@ -3017,7 +3018,7 @@ impl UpdateEnvironmentForm {
             .with_height(FORM_INPUT_HEIGHT)
             .finish(),
         )
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .with_border(Border::all(CARD_BORDER_WIDTH).with_border_fill(theme.outline()))
         .with_background(theme.surface_2())
         .finish();
@@ -3142,7 +3143,7 @@ impl UpdateEnvironmentForm {
                 )
                 .with_horizontal_padding(12.)
                 .with_vertical_padding(8.)
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                 .with_border(Border::all(CARD_BORDER_WIDTH).with_border_fill(theme.outline()))
                 .with_background(bg)
                 .finish();

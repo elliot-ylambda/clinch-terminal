@@ -22,7 +22,7 @@ use warpui_core::ui_components::radio_buttons::{
     RadioButtonItem, RadioButtonLayout, RadioButtonStateHandle, RadioButtons,
 };
 use warpui_core::ui_components::slider::{Slider, SliderStateHandle};
-use warpui_core::ui_components::switch::{Switch, SwitchStateHandle, TRACK_COLOR};
+use warpui_core::ui_components::switch::{Switch, SwitchStateHandle};
 use warpui_core::ui_components::text::{Paragraph, Span, WrappableText};
 use warpui_core::ui_components::text_input::TextInput;
 use warpui_core::ui_components::toggle_menu::{
@@ -36,6 +36,7 @@ use super::color::contrast::MinimumAllowedContrast;
 use super::color::ContrastingColor;
 use super::theme::color::internal_colors::{self, text_main};
 use super::theme::{Fill, WarpTheme};
+use super::tokens::{StatusKind, Tokens, RADIUS_MD, RADIUS_SM};
 
 const CLOSE_SVG_PATH: &str = "bundled/svg/close.svg";
 const COPY_SVG_PATH: &str = "bundled/svg/copy.svg";
@@ -53,6 +54,7 @@ pub const DEFAULT_KEYBOARD_SHORTCUT_HEIGHT: f32 = 24.;
 
 #[derive(Clone, Debug)]
 pub struct UiBuilder {
+    tokens: Tokens,
     warp_theme: WarpTheme,
     ui_font_family: FamilyId,
     ui_font_size: f32,
@@ -69,6 +71,7 @@ impl UiBuilder {
         line_height_ratio: f32,
     ) -> Self {
         UiBuilder {
+            tokens: Tokens::new(&warp_theme),
             warp_theme,
             ui_font_family,
             ui_font_size,
@@ -93,7 +96,7 @@ impl UiBuilder {
                 right: 15.,
             }),
             border_width: Some(1.),
-            border_radius: Some(CornerRadius::with_all(Radius::Pixels(4.))),
+            border_radius: Some(CornerRadius::with_all(RADIUS_MD)),
             background: background.map(|background| background.into()),
             border_color: Some(border.into()),
             font_color: Some(font_color.into_solid()),
@@ -121,9 +124,9 @@ impl UiBuilder {
                 right: 10.,
             }),
             border_width: Some(1.),
-            border_radius: Some(CornerRadius::with_all(Radius::Pixels(4.))),
-            background: Some(self.warp_theme.background().into()),
-            border_color: Some(self.warp_theme.foreground().with_opacity(20).into()),
+            border_radius: Some(CornerRadius::with_all(RADIUS_MD)),
+            background: Some(Fill::Solid(self.tokens.surface_field).into()),
+            border_color: Some(Fill::Solid(ColorU::transparent_black()).into()),
             font_color: None,
             ..Default::default()
         }
@@ -141,208 +144,128 @@ impl UiBuilder {
 
     pub fn default_tool_tip_styles(&self) -> UiComponentStyles {
         UiComponentStyles {
-            background: Some(self.warp_theme().tooltip_background().into()),
-            font_color: Some(self.warp_theme.background().into_solid()),
+            background: Some(Fill::Solid(self.tokens.surface_overlay).into()),
+            font_color: Some(self.tokens.text_1),
             padding: Some(Coords {
-                top: 4.,
-                bottom: 4.,
+                top: 5.,
+                bottom: 5.,
                 left: 8.,
                 right: 8.,
             }),
-            border_radius: Some(CornerRadius::with_all(Radius::Pixels(4.))),
+            border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
             border_width: Some(1.),
-            border_color: Some(self.warp_theme.outline().into()),
+            border_color: Some(Fill::Solid(self.tokens.hairline).into()),
             font_family_id: Some(self.ui_font_family),
-            font_size: Some(10.),
+            font_size: Some(11.),
             ..Default::default()
         }
     }
 
     fn autosuggestion_tool_tip_styles(&self) -> UiComponentStyles {
         UiComponentStyles {
-            background: Some(self.warp_theme().tooltip_background().into()),
-            font_color: Some(self.warp_theme.background().into_solid()),
+            background: Some(Fill::Solid(self.tokens.surface_overlay).into()),
+            font_color: Some(self.tokens.text_1),
             padding: Some(Coords {
-                top: 6.,
-                bottom: 6.,
+                top: 5.,
+                bottom: 5.,
                 left: 14.,
                 right: 14.,
             }),
-            border_radius: Some(CornerRadius::with_all(Radius::Pixels(4.))),
+            border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
             border_width: Some(1.),
-            border_color: Some(self.warp_theme.outline().into()),
+            border_color: Some(Fill::Solid(self.tokens.hairline).into()),
             font_family_id: Some(self.ui_font_family),
-            font_size: Some(10.),
+            font_size: Some(11.),
             ..Default::default()
         }
     }
 
-    // TODO default/hovered/clicked can most likely be refactored even more
-    fn default_button_styles(&self, variant: ButtonVariant) -> UiComponentStyles {
-        let details = self.warp_theme.details();
-        let (background, border) = match variant {
-            ButtonVariant::Accent => (
-                self.warp_theme.accent().blend(
-                    &self
-                        .warp_theme
-                        .foreground()
-                        .with_opacity(*details.accent_button_opacity()),
-                ),
-                self.warp_theme.foreground().with_opacity(0),
-            ),
-            ButtonVariant::Basic => (
-                self.warp_theme.background().blend(
-                    &self
-                        .warp_theme
-                        .foreground()
-                        .with_opacity(*details.foreground_button_opacity()),
-                ),
-                self.warp_theme.foreground().with_opacity(0),
-            ),
-            ButtonVariant::Secondary => {
-                return self.base_styles(
-                    None,
-                    self.warp_theme.outline(),
-                    self.warp_theme
-                        .main_text_color(self.warp_theme.background()),
-                )
-            }
-            ButtonVariant::Warn => (Fill::warn(), self.warp_theme.foreground().with_opacity(0)),
-            ButtonVariant::Error => (Fill::error(), self.warp_theme.foreground().with_opacity(0)),
-            ButtonVariant::Outlined => {
-                return self.base_styles(
-                    None,
-                    self.warp_theme.foreground().with_opacity(20),
-                    self.warp_theme.sub_text_color(self.warp_theme.background()),
-                );
-            }
-            ButtonVariant::Text => {
-                return self.text_button_styles(
-                    self.warp_theme.sub_text_color(self.warp_theme.background()),
-                );
-            }
-            ButtonVariant::Link => {
-                return self.text_button_styles(self.warp_theme.accent());
-            }
-        };
-        let font_color = match variant {
-            ButtonVariant::Outlined => self.warp_theme.sub_text_color(background),
-            ButtonVariant::Text => unreachable!(),
-            _ => self.warp_theme.main_text_color(background),
-        };
+    /// A filled button state on the token scale. Borders stay transparent so the layout does not
+    /// shift against the outlined variant.
+    fn filled_button(&self, background: ColorU, font_color: ColorU) -> UiComponentStyles {
+        self.base_styles(
+            Some(Fill::Solid(background)),
+            Fill::Solid(ColorU::transparent_black()),
+            Fill::Solid(font_color),
+        )
+    }
 
-        self.base_styles(Some(background), background.blend(&border), font_color)
+    fn default_button_styles(&self, variant: ButtonVariant) -> UiComponentStyles {
+        let tokens = &self.tokens;
+        match variant {
+            ButtonVariant::Accent => self.filled_button(tokens.accent, tokens.text_on_accent),
+            ButtonVariant::Basic | ButtonVariant::Secondary => {
+                self.filled_button(tokens.surface_field, tokens.text_1)
+            }
+            ButtonVariant::Warn => self.filled_button(
+                tokens.status_soft(StatusKind::NeedsYou),
+                tokens.status(StatusKind::NeedsYou),
+            ),
+            ButtonVariant::Error => self.filled_button(
+                tokens.status_soft(StatusKind::RateLimited),
+                tokens.status(StatusKind::RateLimited),
+            ),
+            ButtonVariant::Outlined => self.base_styles(
+                None,
+                Fill::Solid(tokens.hairline),
+                Fill::Solid(tokens.text_2),
+            ),
+            ButtonVariant::Text => self.text_button_styles(Fill::Solid(tokens.text_2)),
+            ButtonVariant::Link => self.text_button_styles(Fill::Solid(tokens.accent)),
+        }
     }
 
     fn disabled_button_styles(&self, variant: ButtonVariant) -> UiComponentStyles {
-        let background: Fill = self.warp_theme().surface_3();
-        let font_color = self.warp_theme().disabled_text_color(background);
+        let disabled_text = self
+            .warp_theme
+            .disabled_text_color(self.warp_theme.background());
         match variant {
-            // TODO: we should re-investigate if we want to do this for disabled Text buttons,
-            // as it doesn't conform to our design specification here:
-            // https://www.figma.com/file/chk9pwt35jTJhf9KnHmZyE/Components?node-id=401%3A260.
-            ButtonVariant::Text => self.text_button_styles(font_color),
-            ButtonVariant::Link => self.text_button_styles(font_color),
-            _ => self.base_styles(Some(background), background, font_color),
+            ButtonVariant::Text | ButtonVariant::Link => self.text_button_styles(disabled_text),
+            _ => self.filled_button(self.tokens.surface_field, disabled_text.into_solid()),
         }
     }
 
     fn hovered_button_styles(&self, variant: ButtonVariant) -> UiComponentStyles {
-        let details = self.warp_theme.details();
-        let (background, border) = match variant {
-            ButtonVariant::Accent => (
+        let tokens = &self.tokens;
+        match variant {
+            ButtonVariant::Accent => self.filled_button(
                 self.warp_theme
                     .accent()
-                    .blend(&self.warp_theme.foreground().with_opacity(
-                        details.accent_button_opacity() + details.button_hover_opacity(),
-                    )),
-                self.warp_theme.foreground().with_opacity(20),
+                    .blend(&self.warp_theme.foreground().with_opacity(15))
+                    .into_solid(),
+                tokens.text_on_accent,
             ),
-            ButtonVariant::Basic => (
-                self.warp_theme
-                    .background()
-                    .blend(&self.warp_theme.foreground().with_opacity(
-                        details.foreground_button_opacity() + details.button_hover_opacity(),
-                    )),
-                self.warp_theme.foreground().with_opacity(20),
-            ),
-            ButtonVariant::Secondary => (self.warp_theme.surface_3(), self.warp_theme.outline()),
-            ButtonVariant::Warn => (
-                Fill::warn().with_opacity(80),
-                self.warp_theme.foreground().with_opacity(20),
-            ),
-            ButtonVariant::Error => (
-                Fill::error().with_opacity(80),
-                self.warp_theme.foreground().with_opacity(20),
-            ),
-            ButtonVariant::Outlined => {
-                return self.base_styles(
-                    None,
-                    self.warp_theme.accent(),
-                    self.warp_theme.sub_text_color(self.warp_theme.background()),
-                );
+            ButtonVariant::Basic | ButtonVariant::Secondary => {
+                self.filled_button(tokens.surface_raised, tokens.text_1)
             }
-            ButtonVariant::Text => {
-                return self.text_button_styles(
-                    self.warp_theme
-                        .main_text_color(self.warp_theme.background()),
-                );
+            ButtonVariant::Warn | ButtonVariant::Error => {
+                let mut styles = self.default_button_styles(variant);
+                styles.border_color = styles.font_color.map(Into::into);
+                styles
             }
-            ButtonVariant::Link => {
-                return self.text_button_styles(self.warp_theme.accent());
-            }
-        };
-        let font_color = match variant {
-            ButtonVariant::Outlined => self.warp_theme.sub_text_color(background),
-            ButtonVariant::Text => unreachable!(),
-            _ => self.warp_theme.main_text_color(background),
-        };
-
-        self.base_styles(Some(background), background.blend(&border), font_color)
+            ButtonVariant::Outlined => self.filled_button(tokens.surface_hover, tokens.text_1),
+            ButtonVariant::Text => self.text_button_styles(Fill::Solid(tokens.text_1)),
+            ButtonVariant::Link => self.text_button_styles(Fill::Solid(tokens.accent)),
+        }
     }
 
     fn clicked_button_styles(&self, variant: ButtonVariant) -> UiComponentStyles {
-        let details = self.warp_theme.details();
-        let (background, border) = match variant {
-            ButtonVariant::Accent => (
+        let tokens = &self.tokens;
+        match variant {
+            ButtonVariant::Accent => self.filled_button(
                 self.warp_theme
                     .accent()
-                    .blend(&Fill::black().with_opacity(*details.button_click_opacity())),
-                Fill::black().with_opacity(30),
+                    .blend(&Fill::black().with_opacity(15))
+                    .into_solid(),
+                tokens.text_on_accent,
             ),
-            ButtonVariant::Basic => (
-                self.warp_theme
-                    .background()
-                    .blend(&Fill::black().with_opacity(*details.button_click_opacity())),
-                Fill::black().with_opacity(30),
-            ),
-            ButtonVariant::Secondary => (self.warp_theme.surface_3(), self.warp_theme.outline()),
-            ButtonVariant::Warn => (Fill::warn(), Fill::black().with_opacity(30)),
-            ButtonVariant::Error => (Fill::error(), Fill::black().with_opacity(30)),
-            ButtonVariant::Outlined => (
-                self.warp_theme.accent().blend(
-                    &self
-                        .warp_theme
-                        .foreground()
-                        .with_opacity(*details.accent_button_opacity()),
-                ),
-                Fill::black().with_opacity(30),
-            ),
-            ButtonVariant::Text => {
-                return self.text_button_styles(
-                    self.warp_theme
-                        .main_text_color(self.warp_theme.background()),
-                );
+            ButtonVariant::Basic | ButtonVariant::Secondary | ButtonVariant::Outlined => {
+                self.filled_button(tokens.surface_raised, tokens.text_1)
             }
-            ButtonVariant::Link => {
-                return self.text_button_styles(self.warp_theme.accent());
-            }
-        };
-        self.base_styles(
-            Some(background),
-            background.blend(&border),
-            self.warp_theme.main_text_color(background),
-        )
+            ButtonVariant::Warn | ButtonVariant::Error => self.hovered_button_styles(variant),
+            ButtonVariant::Text => self.text_button_styles(Fill::Solid(tokens.text_1)),
+            ButtonVariant::Link => self.text_button_styles(Fill::Solid(tokens.accent)),
+        }
     }
 
     pub fn default_keyboard_shortcut_styles(&self) -> UiComponentStyles {
@@ -354,8 +277,8 @@ impl UiBuilder {
                     .hint_text_color(self.warp_theme.background())
                     .into_solid(),
             ),
-            border_radius: Some(CornerRadius::with_all(Radius::Pixels(4.))),
-            background: Some(internal_colors::fg_overlay_1(self.warp_theme()).into()),
+            border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
+            background: Some(Fill::Solid(self.tokens.surface_field).into()),
             height: Some(DEFAULT_KEYBOARD_SHORTCUT_HEIGHT),
             padding: Some(Coords::default().left(6.).right(6.)),
             margin: Some(Coords::default().left(3.)),
@@ -647,7 +570,7 @@ impl UiBuilder {
         Switch::new(
             mouse_state,
             switch_margin_styles.merge(self.base_styles(
-                Some(Fill::Solid(*TRACK_COLOR)),
+                Some(Fill::Solid(self.tokens.control_track)),
                 Fill::white(),
                 self.warp_theme.main_text_color(self.warp_theme.surface_2()),
             )),
@@ -671,7 +594,7 @@ impl UiBuilder {
 
         let checked_checkbox_override_styles = UiComponentStyles {
             font_size: checkbox_size,
-            border_radius: Some(CornerRadius::with_all(Radius::Pixels(2.))),
+            border_radius: Some(CornerRadius::with_all(Radius::Pixels(3.))),
             ..Default::default()
         };
 
@@ -1128,7 +1051,7 @@ impl UiBuilder {
         mouse_state: MouseStateHandle,
     ) -> Button {
         let default_styles = UiComponentStyles {
-            border_radius: Some(CornerRadius::with_all(Radius::Pixels(4.))),
+            border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
             border_color: Some(self.warp_theme.surface_3().into()),
             border_width: Some(1.),
             padding: Some(Coords {

@@ -2,12 +2,13 @@ use chrono::Utc;
 use markdown_parser::{FormattedText, FormattedTextFragment, FormattedTextLine};
 use pathfinder_geometry::vector::vec2f;
 use warp_core::features::FeatureFlag;
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_server_client::auth::AgentIdentity;
 use warpui::elements::{
     Border, ChildAnchor, ChildView, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment,
     Empty, Expanded, Fill, Flex, FormattedTextElement, HighlightedHyperlink, MainAxisAlignment,
     MainAxisSize, MouseStateHandle, OffsetPositioning, Padding, ParentElement,
-    PositionedElementAnchor, PositionedElementOffsetBounds, Radius, SavePosition, Stack, Text,
+    PositionedElementAnchor, PositionedElementOffsetBounds, SavePosition, Stack, Text,
 };
 use warpui::ui_components::button::ButtonVariant;
 use warpui::ui_components::components::{Coords, UiComponent, UiComponentStyles};
@@ -496,7 +497,7 @@ impl CreateApiKeyModal {
         .with_border(Border::all(1.).with_border_fill(theme.outline()))
         .with_padding(Padding::uniform(8.))
         .with_background(theme.surface_2())
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
         .finish();
 
         let copy_label = if self.raw_key_copied {
@@ -762,7 +763,7 @@ impl View for CreateApiKeyModal {
                             .with_border(Border::all(1.).with_border_fill(theme.outline()))
                             .with_padding(Padding::uniform(16.))
                             .with_background(theme.surface_2())
-                            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                             .with_margin_bottom(16.)
                             .finish(),
                         );
@@ -792,7 +793,7 @@ impl View for CreateApiKeyModal {
                             .with_border(Border::all(1.).with_border_fill(theme.outline()))
                             .with_padding(Padding::uniform(4.))
                             .with_background(theme.surface_2())
-                            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                             .finish(),
                     )
                     .with_width(INPUT_WIDTH)
@@ -934,7 +935,7 @@ fn api_key_type_control_styles(app: &AppContext) -> UiComponentStyles {
     UiComponentStyles {
         font_family_id: Some(appearance.ui_font_family()),
         font_size: Some(appearance.ui_font_size()),
-        border_radius: Some(CornerRadius::with_all(Radius::Pixels(4.0))),
+        border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
         border_width: Some(1.0),
         border_color: Some(Fill::Solid(theme.outline().into())),
         background: Some(Fill::Solid(theme.surface_2().into())),

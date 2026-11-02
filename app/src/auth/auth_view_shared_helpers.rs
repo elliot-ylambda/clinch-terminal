@@ -5,6 +5,7 @@ use warp_core::ui::appearance::Appearance;
 use warp_core::ui::builder::UiBuilder;
 use warp_core::ui::color::{darken, lighten};
 use warp_core::ui::theme::ColorScheme;
+use warp_core::ui::tokens::{RADIUS_LG, RADIUS_MD, RADIUS_SM};
 use warpui::assets::asset_cache::AssetSource;
 use warpui::elements::{
     Border, CacheOption, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Fill, Flex,
@@ -22,7 +23,7 @@ use crate::themes::theme::ThemeKind;
 const PRIVACY_URL: &str = "https://warp.dev/privacy";
 
 pub const AUTH_MODAL_GAP: f32 = 16.;
-const MODAL_CORNER_RADIUS: Radius = Radius::Pixels(8.);
+const MODAL_CORNER_RADIUS: Radius = RADIUS_MD;
 
 pub fn action_button_color_and_variant(appearance: &Appearance) -> (ColorU, ButtonVariant) {
     let (button_color, button_variant) = match appearance.theme().name() {
@@ -64,7 +65,7 @@ where
         background: Some(Fill::Solid(button_color)),
         border_width: Some(2.),
         border_color: Some(Fill::Solid(ColorU::transparent_black())),
-        border_radius: Some(CornerRadius::with_all(Radius::Pixels(4.))),
+        border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
         padding: Some(Coords {
             top: 0.,
             bottom: 0.,
@@ -133,7 +134,7 @@ pub fn render_square_logo(appearance: &Appearance) -> Box<dyn Element> {
             .finish(),
         )
         .with_background(appearance.theme().surface_2())
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(10.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_LG))
         .with_horizontal_padding(11.)
         .finish(),
     )
@@ -258,7 +259,7 @@ where
         background: Some(Fill::Solid(button_color)),
         border_width: Some(2.),
         border_color: Some(Fill::Solid(ColorU::transparent_black())),
-        border_radius: Some(CornerRadius::with_all(Radius::Pixels(4.))),
+        border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
         padding: Some(Coords {
             top: 0.,
             bottom: 0.,

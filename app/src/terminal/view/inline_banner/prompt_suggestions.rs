@@ -1,4 +1,5 @@
 use std::rc::Rc;
+use warp_core::ui::tokens::RADIUS_SM;
 
 use pathfinder_geometry::vector::vec2f;
 use serde::Serialize;
@@ -8,7 +9,7 @@ use warp_core::ui::theme::color::internal_colors::{neutral_2, neutral_3};
 use warpui::elements::{
     ChildAnchor, ChildView, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Empty,
     Fill, Flex, HighlightedHyperlink, Hoverable, Icon, MainAxisAlignment, MainAxisSize,
-    MouseStateHandle, OffsetPositioning, ParentAnchor, ParentElement, ParentOffsetBounds, Radius,
+    MouseStateHandle, OffsetPositioning, ParentAnchor, ParentElement, ParentOffsetBounds,
     Shrinkable, Stack, Text,
 };
 use warpui::keymap::Keystroke;
@@ -209,7 +210,7 @@ fn render_button(
                 font_size: Some(icon_size),
                 height: Some(20.),
 
-                border_radius: Some(CornerRadius::with_all(Radius::Pixels(3.))),
+                border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
                 padding: Some(Coords::uniform(3.)),
                 margin: Some(Coords::default().left(KEYBOARD_SHORTCUT_MARGIN)),
 
@@ -231,7 +232,7 @@ fn render_button(
 
         let mut container = Container::new(flex.finish())
             .with_background(background_fill)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .with_padding_right(INLINE_BANNER_BUTTON_PADDING);
 
         if button_index != 0 {

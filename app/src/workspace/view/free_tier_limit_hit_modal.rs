@@ -6,12 +6,13 @@ use thousands::Separable;
 use warp_core::send_telemetry_from_ctx;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::{Fill, WarpTheme};
+use warp_core::ui::tokens::RADIUS_LG;
 use warp_graphql::billing::{PlanPricing, StripeSubscriptionPlan};
 use warpui::elements::{
     Align, Border, CacheOption, ChildAnchor, ConstrainedBox, Container, CornerRadius,
     CrossAxisAlignment, DropShadow, Flex, FormattedTextElement, HighlightedHyperlink, Image,
     MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning, ParentAnchor,
-    ParentElement, ParentOffsetBounds, Radius, Stack,
+    ParentElement, ParentOffsetBounds, Stack,
 };
 use warpui::fonts::Weight;
 use warpui::keymap::FixedBinding;
@@ -343,7 +344,7 @@ impl FreeTierLimitHitModal {
                 .finish(),
         )
         .with_background_color(blended_colors::neutral_1(theme))
-        .with_corner_radius(CornerRadius::with_left(Radius::Pixels(10.)))
+        .with_corner_radius(CornerRadius::with_left(RADIUS_LG))
         .with_uniform_padding(32.)
         .finish()
     }
@@ -354,7 +355,7 @@ impl FreeTierLimitHitModal {
                 bundled_or_fetched_asset!("png/free_tier_to_build.png"),
                 CacheOption::BySize,
             )
-            .with_corner_radius(CornerRadius::with_right(Radius::Pixels(10.)))
+            .with_corner_radius(CornerRadius::with_right(RADIUS_LG))
             .finish(),
         )
         .with_width(RIGHT_PANEL_WIDTH)
@@ -401,7 +402,7 @@ impl View for FreeTierLimitHitModal {
                 .with_height(MODAL_HEIGHT)
                 .finish(),
             )
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(10.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_LG))
             .with_border(Border::all(1.).with_border_fill(theme.outline()))
             .with_drop_shadow(DropShadow::default())
             .finish(),

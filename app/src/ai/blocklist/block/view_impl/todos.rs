@@ -1,8 +1,9 @@
 //! Rendering logic for todo list components in AI blocks.
 
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::elements::{
     Border, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Empty, Flex, Highlight,
-    ParentElement, Radius, Shrinkable, Text,
+    ParentElement, Shrinkable, Text,
 };
 use warpui::fonts::Properties;
 use warpui::text_layout::TextStyle;
@@ -80,7 +81,7 @@ pub(super) fn render_todos(
                         .with_border_fill(theme.outline()),
                 )
                 .with_background_color(theme.background().into_solid())
-                .with_corner_radius(CornerRadius::with_bottom(Radius::Pixels(8.)))
+                .with_corner_radius(CornerRadius::with_bottom(RADIUS_MD))
                 .finish(),
         );
     }

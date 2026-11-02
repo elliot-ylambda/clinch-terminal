@@ -41,7 +41,7 @@ use crate::terminal::warpify::settings::{SshExtensionInstallMode, WarpifySetting
 use crate::ui_components::blended_colors;
 use crate::{send_telemetry_from_ctx, Appearance};
 
-const PROMPT_BORDER_RADIUS: f32 = 8.;
+const PROMPT_BORDER_RADIUS: f32 = 10.;
 
 #[derive(Clone, Debug)]
 pub enum SshRemoteServerChoiceViewAction {

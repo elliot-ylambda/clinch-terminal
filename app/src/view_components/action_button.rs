@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::sync::Arc;
+use warp_core::ui::tokens::RADIUS_SM;
 
 use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::{vec2f, Vector2F};
@@ -8,10 +9,11 @@ use warp_core::ui::color::contrast::MinimumAllowedContrast;
 use warp_core::ui::color::{coloru_with_opacity, ContrastingColor};
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::{AnsiColorIdentifier, Fill};
+use warp_core::ui::tokens::StatusKind;
 use warpui::elements::{
     Border, ChildAnchor, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Flex,
     Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning, Padding,
-    ParentAnchor, ParentElement as _, ParentOffsetBounds, Radius, Stack, Text,
+    ParentAnchor, ParentElement as _, ParentOffsetBounds, Stack, Text,
     DEFAULT_UI_LINE_HEIGHT_RATIO,
 };
 use warpui::fonts::{Properties, Weight};
@@ -571,7 +573,7 @@ impl ActionButton {
                         .finish(),
                     )
                     .with_padding(padding)
-                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(3.)))
+                    .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                     .with_background_color(
                         appearance.theme().terminal_colors().bright.magenta.into(),
                     )
@@ -872,9 +874,9 @@ impl View for ActionButton {
             }
 
             let corner_radius = match self.adjoined_side {
-                Some(AdjoinedSide::Left) => CornerRadius::with_right(Radius::Pixels(4.)),
-                Some(AdjoinedSide::Right) => CornerRadius::with_left(Radius::Pixels(4.)),
-                None => CornerRadius::with_all(Radius::Pixels(4.)),
+                Some(AdjoinedSide::Left) => CornerRadius::with_right(RADIUS_SM),
+                Some(AdjoinedSide::Right) => CornerRadius::with_left(RADIUS_SM),
+                None => CornerRadius::with_all(RADIUS_SM),
             };
 
             let border = if let Some(adjoined_side_border) = theme.adjoined_side_border(appearance)
@@ -1021,12 +1023,13 @@ pub struct DangerPrimaryTheme;
 
 impl ActionButtonTheme for DangerPrimaryTheme {
     fn background(&self, hovered: bool, appearance: &Appearance) -> Option<Fill> {
-        let red_color = appearance.theme().ansi_fg_red();
-        if hovered {
-            Some(Fill::Solid(ColorU::new(255, 130, 114, 255)))
+        let tokens = appearance.tokens();
+        let red = tokens.status(StatusKind::RateLimited);
+        Some(Fill::Solid(if hovered {
+            coloru_with_opacity(red, 85)
         } else {
-            Some(Fill::Solid(red_color))
-        }
+            red
+        }))
     }
 
     fn text_color(
@@ -1098,7 +1101,7 @@ pub struct DisabledTheme;
 
 impl ActionButtonTheme for DisabledTheme {
     fn background(&self, _hovered: bool, appearance: &Appearance) -> Option<Fill> {
-        Some(internal_colors::neutral_4(appearance.theme()).into())
+        Some(Fill::Solid(appearance.tokens().surface_field))
     }
 
     fn text_color(
@@ -1123,7 +1126,7 @@ pub struct NakedTheme;
 impl ActionButtonTheme for NakedTheme {
     fn background(&self, hovered: bool, appearance: &Appearance) -> Option<Fill> {
         if hovered {
-            Some(internal_colors::fg_overlay_2(appearance.theme()))
+            Some(Fill::Solid(appearance.tokens().surface_hover))
         } else {
             None
         }
@@ -1135,7 +1138,7 @@ impl ActionButtonTheme for NakedTheme {
         _background: Option<Fill>,
         appearance: &Appearance,
     ) -> ColorU {
-        appearance.theme().foreground().into_solid()
+        appearance.tokens().text_1
     }
 }
 
@@ -1154,10 +1157,7 @@ impl ActionButtonTheme for PaneHeaderTheme {
         _background: Option<Fill>,
         appearance: &Appearance,
     ) -> ColorU {
-        appearance
-            .theme()
-            .sub_text_color(appearance.theme().background())
-            .into_solid()
+        appearance.tokens().text_2
     }
 }
 
@@ -1200,11 +1200,12 @@ pub struct SecondaryTheme;
 
 impl ActionButtonTheme for SecondaryTheme {
     fn background(&self, hovered: bool, appearance: &Appearance) -> Option<Fill> {
-        if hovered {
-            Some(internal_colors::fg_overlay_2(appearance.theme()))
+        let tokens = appearance.tokens();
+        Some(Fill::Solid(if hovered {
+            tokens.surface_raised
         } else {
-            None
-        }
+            tokens.surface_field
+        }))
     }
 
     fn text_color(
@@ -1213,11 +1214,12 @@ impl ActionButtonTheme for SecondaryTheme {
         _background: Option<Fill>,
         appearance: &Appearance,
     ) -> ColorU {
-        appearance.theme().foreground().into()
+        appearance.tokens().text_1
     }
 
-    fn border(&self, appearance: &Appearance) -> Option<ColorU> {
-        Some(internal_colors::neutral_4(appearance.theme()))
+    // Transparent rather than absent, so a button keeps its size against outlined neighbors.
+    fn border(&self, _appearance: &Appearance) -> Option<ColorU> {
+        Some(ColorU::transparent_black())
     }
 
     fn keyboard_shortcut_background(&self, appearance: &Appearance) -> Option<ColorU> {
@@ -1243,8 +1245,8 @@ impl ActionButtonTheme for DisabledSecondaryTheme {
         DisabledTheme.text_color(hovered, background, appearance)
     }
 
-    fn border(&self, appearance: &Appearance) -> Option<ColorU> {
-        Some(internal_colors::neutral_4(appearance.theme()))
+    fn border(&self, _appearance: &Appearance) -> Option<ColorU> {
+        Some(ColorU::transparent_black())
     }
 
     fn keyboard_shortcut_background(&self, appearance: &Appearance) -> Option<ColorU> {
@@ -1268,15 +1270,11 @@ impl ActionButtonTheme for PrimaryTheme {
 
     fn text_color(
         &self,
-        hovered: bool,
-        background: Option<Fill>,
+        _hovered: bool,
+        _background: Option<Fill>,
         appearance: &Appearance,
     ) -> ColorU {
-        let theme = appearance.theme();
-        let effective_background = background
-            .or_else(|| self.background(hovered, appearance))
-            .unwrap_or(theme.background());
-        theme.font_color(effective_background).into_solid()
+        appearance.tokens().text_on_accent
     }
 
     fn adjoined_side_border(&self, _appearance: &Appearance) -> Option<ColorU> {

@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use warp_core::ui::tokens::RADIUS_SM;
 
 use pathfinder_geometry::vector::vec2f;
 use warp_core::features::FeatureFlag;
@@ -232,9 +233,9 @@ impl PlanAndTodoListView {
         let chip_content = ConstrainedBox::new(chip_content).with_height(content_line_height);
 
         let corner_radius = if has_todo_list {
-            CornerRadius::with_left(Radius::Pixels(4.))
+            CornerRadius::with_left(RADIUS_SM)
         } else {
-            CornerRadius::with_all(Radius::Pixels(4.))
+            CornerRadius::with_all(RADIUS_SM)
         };
 
         let conversation_is_streaming = self
@@ -402,9 +403,9 @@ impl PlanAndTodoListView {
             .finish();
 
         let corner_radius = if has_planning_document {
-            CornerRadius::with_right(Radius::Pixels(4.))
+            CornerRadius::with_right(RADIUS_SM)
         } else {
-            CornerRadius::with_all(Radius::Pixels(4.))
+            CornerRadius::with_all(RADIUS_SM)
         };
 
         let todo_button = self

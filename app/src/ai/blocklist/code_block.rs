@@ -24,7 +24,7 @@ use crate::ui_components::blended_colors;
 use crate::ui_components::buttons::{icon_button, icon_button_with_color};
 use crate::ui_components::icons::Icon;
 
-const CODE_BLOCK_CORNER_RADIUS: f32 = 8.0;
+const CODE_BLOCK_CORNER_RADIUS: f32 = 10.;
 
 #[derive(Default, Clone)]
 pub struct CodeSnippetButtonHandles {

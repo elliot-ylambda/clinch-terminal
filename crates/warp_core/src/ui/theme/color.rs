@@ -148,8 +148,9 @@ impl WarpTheme {
         ColorU::new(28, 160, 90, 255)
     }
 
+    /// The hairline divider. Surfaces are separated by shade, so this stays barely visible.
     pub fn outline(&self) -> Fill {
-        fg_overlay_2(self)
+        self.foreground().with_opacity(7)
     }
 
     // text colors

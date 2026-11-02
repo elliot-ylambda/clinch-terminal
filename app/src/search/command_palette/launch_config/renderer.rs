@@ -1,5 +1,6 @@
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::elements::{
-    Align, Border, ConstrainedBox, Container, CornerRadius, Flex, Highlight, ParentElement, Radius,
+    Align, Border, ConstrainedBox, Container, CornerRadius, Flex, Highlight, ParentElement,
     Shrinkable, Text,
 };
 use warpui::fonts::{Properties, Weight};
@@ -58,7 +59,7 @@ impl LaunchConfig {
                     .hint_text_color(appearance.theme().background())
                     .into_solid(),
             ),
-            border_radius: Some(CornerRadius::with_all(Radius::Pixels(4.))),
+            border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
             background: Some(appearance.theme().background().into()),
             height: Some(24.),
             padding: Some(Coords::default().left(6.).right(6.)),

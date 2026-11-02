@@ -1,12 +1,12 @@
 use std::marker::PhantomData;
+use warp_core::ui::tokens::RADIUS_SM;
 
 use warp_editor::editor::NavigationKey;
 use warpui::elements::{
     Align, Border, ChildAnchor, ChildView, Clipped, ConstrainedBox, Container, CornerRadius,
     CrossAxisAlignment, Dismiss, DispatchEventResult, Element, EventHandler, Flex,
     MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning, ParentElement,
-    PositionedElementAnchor, PositionedElementOffsetBounds, Radius, SavePosition, Shrinkable,
-    Stack,
+    PositionedElementAnchor, PositionedElementOffsetBounds, SavePosition, Shrinkable, Stack,
 };
 use warpui::geometry::vector::vec2f;
 use warpui::ui_components::button::{ButtonVariant, TextAndIcon, TextAndIconAlignment};
@@ -547,7 +547,7 @@ where
             .with_border(
                 Border::all(1.).with_border_fill(appearance.theme().foreground().with_opacity(20)),
             )
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .finish()
     }
 
@@ -589,7 +589,7 @@ where
                     Border::all(1.)
                         .with_border_fill(appearance.theme().foreground().with_opacity(20)),
                 )
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                 .finish(),
         )
         .with_max_width(self.menu_width.unwrap_or(self.top_bar_max_width))

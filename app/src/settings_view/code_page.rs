@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use warp_core::ui::tokens::RADIUS_SM;
 
 use ai::index::full_source_code_embedding::manager::{
     CodebaseIndexFinishedStatus, CodebaseIndexManager, CodebaseIndexManagerEvent,
@@ -1623,7 +1624,7 @@ impl CodePageWidget {
         Container::new(workspace_content)
             .with_uniform_padding(MAIN_SECTION_MARGIN)
             .with_background(theme.surface_1())
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .with_margin_bottom(MAIN_SECTION_MARGIN)
             .finish()
     }
@@ -2184,7 +2185,7 @@ impl CodePageWidget {
         Container::new(row.finish())
             .with_uniform_padding(12.)
             .with_background(theme.surface_2())
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .finish()
     }
 
@@ -2376,7 +2377,7 @@ impl CodePageWidget {
         Container::new(row.finish())
             .with_uniform_padding(12.)
             .with_background(theme.surface_2())
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .finish()
     }
 

@@ -3,6 +3,7 @@ use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
+use warp_core::ui::tokens::RADIUS_SM;
 
 use lazy_static::lazy_static;
 use markdown_parser::{FormattedText, FormattedTextFragment, FormattedTextLine};
@@ -1763,7 +1764,7 @@ fn render_scrollable_container(props: ScrollableContainerProps, _app: &AppContex
         .with_background_color(background_color)
         .with_horizontal_padding(CONTENT_PADDING)
         .with_vertical_padding(CONTENT_PADDING)
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
         .with_drop_shadow(DropShadow::default());
 
     if let Some(border) = border {
@@ -2168,7 +2169,7 @@ fn render_blocked_action(props: BlockedActionProps<'_>, app: &AppContext) -> Box
     Expanded::new(
         1.0,
         Container::new(stack.finish())
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .with_border(Border::all(1.).with_border_color(internal_colors::neutral_3(theme)))
             .finish(),
     )

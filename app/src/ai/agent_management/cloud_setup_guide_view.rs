@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use warp_core::ui::tokens::RADIUS_MD;
 
 use serde::Serialize;
 use string_offset::CharCounter;
@@ -237,7 +238,7 @@ impl CloudSetupGuideView {
         )
         .with_background(theme.surface_overlay_1())
         .with_border(Border::all(1.).with_border_fill(border_color))
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .with_horizontal_padding(16.)
         .with_vertical_padding(12.)
         .finish()

@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use warp_core::ui::tokens::RADIUS_SM;
 
 use uuid::Uuid;
 use warp_core::features::FeatureFlag;
@@ -391,9 +392,7 @@ impl View for ExecutionProfileView {
         .with_border(
             warpui::elements::Border::new(1.).with_border_fill(appearance.theme().outline()),
         )
-        .with_corner_radius(warpui::elements::CornerRadius::with_all(
-            warpui::elements::Radius::Pixels(4.),
-        ))
+        .with_corner_radius(warpui::elements::CornerRadius::with_all(RADIUS_SM))
         .with_horizontal_padding(16.)
         .with_vertical_padding(12.)
         .finish()
@@ -451,9 +450,7 @@ where
                             warpui::elements::Border::all(1.)
                                 .with_border_fill(appearance.theme().outline()),
                         )
-                        .with_corner_radius(warpui::elements::CornerRadius::with_all(
-                            warpui::elements::Radius::Pixels(3.),
-                        ))
+                        .with_corner_radius(warpui::elements::CornerRadius::with_all(RADIUS_SM))
                         .with_horizontal_padding(6.)
                         .with_vertical_padding(2.)
                         .finish(),

@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
+use warp_core::ui::tokens::RADIUS_SM;
 
 use markdown_parser::{parse_html, parse_markdown, FormattedText};
 use pathfinder_geometry::vector::vec2f;
@@ -25,9 +26,8 @@ use warpui::clipboard::ClipboardContent;
 use warpui::elements::{
     AnchorPair, Axis, Border, ChildAnchor, Clipped, ConstrainedBox, Container, CornerRadius,
     Dismiss, Fill, Flex, Hoverable, Icon, MouseStateHandle, OffsetPositioning, OffsetType,
-    ParentAnchor, ParentElement, PositionedElementOffsetBounds, PositioningAxis, Radius,
-    ScrollStateHandle, Scrollable, ScrollableElement, ScrollbarWidth, Stack, XAxisAnchor,
-    YAxisAnchor,
+    ParentAnchor, ParentElement, PositionedElementOffsetBounds, PositioningAxis, ScrollStateHandle,
+    Scrollable, ScrollableElement, ScrollbarWidth, Stack, XAxisAnchor, YAxisAnchor,
 };
 use warpui::event::ModifiersState;
 use warpui::fonts::{FallbackFontEvent, FallbackFontModel};
@@ -2350,7 +2350,7 @@ impl RichTextEditorView {
                     background: Some(background.into()),
                     border_color: Some(appearance.theme().outline().into()),
                     border_width: Some(1.),
-                    border_radius: Some(CornerRadius::with_all(Radius::Pixels(4.))),
+                    border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
                     padding: Some(Coords {
                         top: 8.,
                         bottom: 8.,
@@ -2467,7 +2467,7 @@ impl RichTextEditorView {
                     .finish(),
                 )
                 .with_background(background)
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                 .with_border(Border::all(1.).with_border_fill(appearance.theme().outline()))
                 .finish()
             })

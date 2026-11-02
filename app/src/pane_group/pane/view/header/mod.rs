@@ -1,4 +1,5 @@
 use std::fmt::Debug;
+use warp_core::ui::tokens::RADIUS_MD;
 
 use pathfinder_geometry::rect::RectF;
 use pathfinder_geometry::vector::{vec2f, Vector2F};
@@ -10,7 +11,7 @@ use warpui::elements::{
     CornerRadius, CrossAxisAlignment, Dismiss, Draggable, DraggableState, Empty, Flex, Hoverable,
     MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning, ParentAnchor,
     ParentElement, ParentOffsetBounds, PositionedElementAnchor, PositionedElementOffsetBounds,
-    Radius, SavePosition, Shrinkable, Stack, Text,
+    SavePosition, Shrinkable, Stack, Text,
 };
 use warpui::presenter::ChildView;
 use warpui::{
@@ -1167,7 +1168,7 @@ fn render_draggable_placeholder_element(
     )
     .with_uniform_padding(4.)
     .with_border(Border::all(2.).with_border_color(appearance.theme().surface_2().into()))
-    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+    .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
     .with_background_color(appearance.theme().dark_overlay().into())
     .finish()
 }

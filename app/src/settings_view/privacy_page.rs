@@ -3,6 +3,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 use std::time::Duration;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use pathfinder_geometry::vector::vec2f;
 use regex::Regex;
@@ -14,8 +15,8 @@ use warp_core::ui::theme::WarpTheme;
 use warpui::elements::{
     Align, ChildAnchor, ChildView, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment,
     Empty, Expanded, Flex, Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle,
-    OffsetPositioning, ParentAnchor, ParentElement, ParentOffsetBounds, Radius, Rect, Shrinkable,
-    Stack, Text,
+    OffsetPositioning, ParentAnchor, ParentElement, ParentOffsetBounds, Rect, Shrinkable, Stack,
+    Text,
 };
 use warpui::fonts::Weight;
 use warpui::keymap::ContextPredicate;
@@ -712,7 +713,7 @@ impl SecretRedactionWidget {
             let mut container = Container::new(tab_content)
                 .with_vertical_padding(9.)
                 .with_horizontal_padding(12.)
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)));
+                .with_corner_radius(CornerRadius::with_all(RADIUS_MD));
 
             // Apply background based on hover state
             if is_hovered && !is_active {
@@ -835,7 +836,7 @@ impl SecretRedactionWidget {
         let background = appearance.theme().surface_overlay_1();
         Container::new(content)
             .with_background(background)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .with_uniform_padding(8.)
             .with_margin_bottom(4.)
             .finish()
@@ -1388,7 +1389,7 @@ impl AppAnalyticsWidget {
                     .finish(),
             )
             .with_background(background_color)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(3.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .with_uniform_padding(3.)
             .with_margin_left(8.)
             .finish();

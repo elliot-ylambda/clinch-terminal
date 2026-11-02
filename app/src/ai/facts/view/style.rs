@@ -1,6 +1,7 @@
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::color::internal_colors;
-use warpui::elements::{CornerRadius, Radius};
+use warp_core::ui::tokens::RADIUS_SM;
+use warpui::elements::CornerRadius;
 use warpui::fonts::Weight;
 use warpui::ui_components::components::{Coords, UiComponentStyles};
 
@@ -33,7 +34,7 @@ pub fn search_bar(appearance: &Appearance) -> UiComponentStyles {
     UiComponentStyles {
         background: Some(internal_colors::neutral_2(appearance.theme()).into()),
         border_color: Some(internal_colors::neutral_4(appearance.theme()).into()),
-        border_radius: Some(CornerRadius::with_all(Radius::Pixels(4.))),
+        border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
         padding: Some(Coords {
             top: 8.,
             bottom: 8.,

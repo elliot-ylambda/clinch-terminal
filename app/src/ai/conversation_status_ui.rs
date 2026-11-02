@@ -1,8 +1,9 @@
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::color::coloru_with_opacity;
 use warp_core::ui::theme::{Fill, WarpTheme};
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::color::ColorU;
-use warpui::elements::{ConstrainedBox, Container, CornerRadius, Radius};
+use warpui::elements::{ConstrainedBox, Container, CornerRadius};
 use warpui::Element;
 
 use crate::ai::agent::conversation::{ConversationStatus, StatusColorStyle};
@@ -59,6 +60,6 @@ pub fn render_status_element_with_opacity(
     )
     .with_uniform_padding(STATUS_ELEMENT_PADDING)
     .with_background(coloru_with_opacity(color, 10))
-    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+    .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
     .finish()
 }

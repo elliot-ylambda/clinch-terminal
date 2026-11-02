@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use warp_core::ui::tokens::RADIUS_SM;
 
 use ::settings::{Setting, ToggleableSetting};
 use lazy_static::lazy_static;
@@ -3813,7 +3814,7 @@ impl FeaturesPageView {
                 .with_padding_right(10.)
                 .with_padding_top(10.)
                 .with_margin_right(4.)
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)));
+                .with_corner_radius(CornerRadius::with_all(RADIUS_SM));
 
             if let Some(background) = background {
                 container.with_background(background).finish()

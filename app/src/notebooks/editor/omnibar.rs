@@ -4,6 +4,7 @@
 use itertools::Itertools;
 use pathfinder_geometry::rect::RectF;
 use pathfinder_geometry::vector::Vector2F;
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_editor::content::text::{
     BlockType as ContentBlockType, BufferBlockStyle, BufferTextStyle, TextStyles,
     TextStylesWithMetadata,
@@ -14,7 +15,7 @@ use warpui::accessibility::{AccessibilityContent, ActionAccessibilityContent, Wa
 use warpui::elements::{
     AnchorPair, Border, ConstrainedBox, Container, CornerRadius, DropShadow, Flex, MainAxisSize,
     MouseStateHandle, OffsetPositioning, OffsetType, ParentElement, Point,
-    PositionedElementOffsetBounds, PositioningAxis, Radius, Rect, XAxisAnchor, YAxisAnchor,
+    PositionedElementOffsetBounds, PositioningAxis, Rect, XAxisAnchor, YAxisAnchor,
 };
 use warpui::presenter::ChildView;
 use warpui::ui_components::components::{Coords, UiComponent, UiComponentStyles};
@@ -362,7 +363,7 @@ impl View for Omnibar {
                 .finish(),
         )
         .with_uniform_padding(OMNIBAR_PADDING)
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
         .with_background(appearance.theme().surface_2())
         .with_border(Border::all(1.).with_border_fill(appearance.theme().outline()))
         .with_drop_shadow(DropShadow::default())

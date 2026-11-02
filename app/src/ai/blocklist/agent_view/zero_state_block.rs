@@ -2,6 +2,7 @@ use std::borrow::Cow;
 use std::cmp::Reverse;
 use std::path::Path;
 use std::sync::Arc;
+use warp_core::ui::tokens::RADIUS_SM;
 
 use itertools::Itertools as _;
 use markdown_parser::{parse_markdown, FormattedText, FormattedTextFragment, FormattedTextLine};
@@ -826,7 +827,7 @@ fn render_body(props: ZeroStateBodyProps<'_>, app: &AppContext) -> Vec<Box<dyn E
                             .with_opacity(12)
                             .into_solid_bias_right_color(),
                     )
-                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                    .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                     .with_vertical_padding(4.)
                     .with_horizontal_padding(4.)
                     .finish()
@@ -906,7 +907,7 @@ fn render_recent_conversations_section(
                 .finish(),
             )
             .with_background_color(theme.surface_overlay_1().into_solid())
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(2.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .with_horizontal_padding(2.)
             .with_vertical_padding(1.)
             .finish(),
@@ -1205,7 +1206,7 @@ fn render_oz_updates(props: OzUpdatesProps<'_>, app: &AppContext) -> Option<Box<
             Container::new(body.finish())
                 .with_vertical_padding(8.)
                 .with_horizontal_padding(12.)
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                 .with_border(Border::all(1.).with_border_fill(theme.surface_overlay_2()))
                 .finish()
         })

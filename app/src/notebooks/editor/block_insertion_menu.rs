@@ -1,11 +1,11 @@
 use std::sync::Arc;
+use warp_core::ui::tokens::RADIUS_MD;
 
 use serde::{Deserialize, Serialize};
 use warp_editor::content::text::BufferBlockItem;
 use warpui::elements::{
     AnchorPair, Border, Container, CornerRadius, MouseStateHandle, OffsetPositioning, OffsetType,
-    PositionedElementOffsetBounds, PositioningAxis, Radius, SavePosition, Stack, XAxisAnchor,
-    YAxisAnchor,
+    PositionedElementOffsetBounds, PositioningAxis, SavePosition, Stack, XAxisAnchor, YAxisAnchor,
 };
 use warpui::presenter::ChildView;
 use warpui::ui_components::button::ButtonTooltipPosition;
@@ -354,7 +354,7 @@ impl RichTextEditorView {
             (
                 Container::new(menu)
                     .with_border(Border::all(1.).with_border_fill(appearance.theme().outline()))
-                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+                    .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                     .finish(),
                 PositionedElementOffsetBounds::ParentByPosition,
             )

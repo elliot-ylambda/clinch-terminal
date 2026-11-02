@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
+use warp_core::ui::tokens::RADIUS_MD;
 
 use itertools::Itertools;
 use markdown_parser::html_parser::WARP_EMBED_ATTRIBUTE_NAME;
@@ -22,7 +23,7 @@ use warp_editor::render::model::{
     EMBEDDED_ITEM_FIRST_LINE_HEIGHT,
 };
 use warp_editor::render::BLOCK_FOOTER_HEIGHT;
-use warpui::elements::{Border, ConstrainedBox, CornerRadius, Empty, Margin, Padding, Radius};
+use warpui::elements::{Border, ConstrainedBox, CornerRadius, Empty, Margin, Padding};
 use warpui::text_layout::TextFrame;
 use warpui::units::{IntoPixels, Pixels};
 use warpui::{AppContext, Element, LayoutContext, SingletonEntity, SizeConstraint};
@@ -533,7 +534,7 @@ impl RenderableBlock for RenderableEmbeddedWorkflow {
             .scene
             .draw_rect_without_hit_recording(background_rect)
             .with_border(border)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .with_background(model.styles().embedding_background);
 
         let mut content_origin = embedded_workflow.content_origin();

@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Keeps app chrome on the Soft Graphite token scale (crates/warp_core/src/ui/tokens.rs).
+#
+# Fails on a literal corner radius of 2px or more, and on a new file that hard-codes a color with
+# ColorU::new. Files that already hard-coded colors are listed in script/ui-literals-allowlist.txt;
+# that list only shrinks, so an entry whose file no longer has a literal also fails.
+set -euo pipefail
+export LC_ALL=C
+
+ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd)}"
+ALLOWLIST="$ROOT/script/ui-literals-allowlist.txt"
+cd "$ROOT"
+status=0
+
+radii=$(grep -rnE --include='*.rs' --exclude='*_tests.rs' \
+  'Radius::Pixels\(\s*([2-9]|[1-9][0-9])' app/src || true)
+if [[ -n "$radii" ]]; then
+  echo "Literal corner radii. Use RADIUS_SM, RADIUS_MD, RADIUS_LG or RADIUS_PILL from warp_core::ui::tokens:" >&2
+  echo "$radii" >&2
+  status=1
+fi
+
+colors=$(grep -rlE --include='*.rs' --exclude='*_tests.rs' 'ColorU::new\(' app/src | sort || true)
+allowed=$(sort "$ALLOWLIST")
+new_files=$(comm -23 <(echo "$colors") <(echo "$allowed"))
+if [[ -n "$new_files" ]]; then
+  echo "New hard-coded ColorU::new. Use appearance.tokens() instead:" >&2
+  echo "$new_files" >&2
+  status=1
+fi
+stale=$(comm -13 <(echo "$colors") <(echo "$allowed"))
+if [[ -n "$stale" ]]; then
+  echo "Remove from script/ui-literals-allowlist.txt, these no longer hard-code a color:" >&2
+  echo "$stale" >&2
+  status=1
+fi
+exit "$status"

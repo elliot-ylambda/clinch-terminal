@@ -2,9 +2,10 @@
 
 #[cfg(feature = "local_fs")]
 use std::path::Path;
+use warp_core::ui::tokens::RADIUS_SM;
 
 use warpui::elements::{
-    Border, Container, CornerRadius, Flex, MouseStateHandle, ParentElement, Radius, Text,
+    Border, Container, CornerRadius, Flex, MouseStateHandle, ParentElement, Text,
 };
 use warpui::ui_components::components::{Coords, UiComponent, UiComponentStyles};
 use warpui::{AppContext, Element, EventContext, SingletonEntity};
@@ -229,7 +230,7 @@ where
 
     Container::new(tooltip_element)
         .with_background(background_color)
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
         .with_border(Border::all(1.).with_border_fill(appearance.theme().outline()))
         .finish()
 }

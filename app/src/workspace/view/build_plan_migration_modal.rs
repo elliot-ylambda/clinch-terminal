@@ -34,7 +34,7 @@ const DROPDOWN_WIDTH: f32 = 160.;
 const MODAL_HEIGHT: f32 = 540.;
 const MODAL_WIDTH: f32 = 876.;
 const LEFT_PANEL_WIDTH: f32 = 333.;
-const CORNER_RADIUS: f32 = 20.;
+const CORNER_RADIUS: f32 = 14.;
 const PANEL_PADDING: f32 = 24.;
 
 #[derive(Debug, Clone, PartialEq, Copy)]

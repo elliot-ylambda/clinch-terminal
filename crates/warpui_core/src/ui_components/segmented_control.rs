@@ -225,7 +225,7 @@ impl<T: SegmentedControlOption> View for SegmentedControl<T> {
                 background: Some(option_config.background),
                 padding: Some(self.option_padding),
                 border_width: None,
-                border_radius: Some(CornerRadius::with_all(Radius::Pixels(3.0))),
+                border_radius: Some(CornerRadius::with_all(Radius::Pixels(6.))),
                 margin: None,
                 ..self.styles
             };
@@ -312,7 +312,7 @@ impl<T: SegmentedControlOption> View for SegmentedControl<T> {
                     let styles = UiComponentStyles {
                         font_color: Some(text_color),
                         background: Some(Fill::Solid(background_color)),
-                        border_radius: Some(CornerRadius::with_all(Radius::Pixels(4.0))),
+                        border_radius: Some(CornerRadius::with_all(Radius::Pixels(6.))),
                         border_width: Some(1.0),
                         border_color: Some(Fill::Solid(border_color)),
                         font_family_id: styles.font_family_id,

@@ -42,7 +42,7 @@ const CLEAR_CANCEL_BUTTONS_SPACING: f32 = 8.0;
 const ROW_INTERNAL_VERTICAL_PADDING: f32 = 8.0;
 const ROW_LEFT_MARGIN: f32 = 20.0;
 const ROW_HEIGHT: f32 = 28.;
-const EDIT_BUTTONS_BORDER_RADIUS: f32 = 4.0;
+const EDIT_BUTTONS_BORDER_RADIUS: f32 = 6.;
 
 pub const SEARCH_PLACEHOLDER: &str = "Search by name or by keys (ex. \"cmd d\")";
 const SHORTCUT_CONFLICT_WARNING_TEXT: &str = "This shortcut conflicts with other keybinds";

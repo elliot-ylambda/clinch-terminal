@@ -1,6 +1,7 @@
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::elements::{
     ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Flex, Hoverable, MouseStateHandle,
-    ParentElement, Radius, Text,
+    ParentElement, Text,
 };
 use warpui::platform::Cursor;
 use warpui::{AppContext, Element, Entity, SingletonEntity, TypedActionView, View, ViewContext};
@@ -70,7 +71,7 @@ impl FeaturePopup {
                     .theme()
                     .ansi_bg(appearance.theme().terminal_colors().normal.green),
             )
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(2.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .finish(),
             FeaturePopupBadge::AlertIcon => Container::new(
                 ConstrainedBox::new(
@@ -145,7 +146,7 @@ impl View for FeaturePopup {
             .with_horizontal_padding(4.)
             .with_vertical_padding(4.)
             .with_background(appearance.theme().main_text_color(background))
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .finish(),
         )
         .finish()

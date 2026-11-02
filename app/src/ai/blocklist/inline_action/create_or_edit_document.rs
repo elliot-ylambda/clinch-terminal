@@ -1,9 +1,10 @@
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::icons::Icon as CoreIcon;
 use warp_core::ui::theme::color::internal_colors::neutral_2;
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::elements::{
     Clipped, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Expanded, Flex,
-    Hoverable, Icon, MouseStateHandle, ParentElement, Radius, Text,
+    Hoverable, Icon, MouseStateHandle, ParentElement, Text,
 };
 use warpui::platform::Cursor;
 use warpui::{AppContext, Element, SingletonEntity};
@@ -101,7 +102,7 @@ impl CreateOrEditDocumentAction {
         let content = Container::new(row.finish())
             .with_horizontal_padding(INLINE_ACTION_HORIZONTAL_PADDING)
             .with_vertical_padding(INLINE_ACTION_VERTICAL_PADDING)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .with_background_color(neutral_2(theme))
             .with_border(warpui::elements::Border::all(1.).with_border_fill(theme.surface_2()))
             .finish();

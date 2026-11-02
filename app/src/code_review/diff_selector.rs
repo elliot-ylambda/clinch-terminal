@@ -43,7 +43,7 @@ impl DiffTarget {
 
 const BUTTON_LABEL_MAX_WIDTH: f32 = 240.;
 const MENU_OFFSET_Y: f32 = 4.;
-const BUTTON_CORNER_RADIUS: f32 = 4.;
+const BUTTON_CORNER_RADIUS: f32 = 6.;
 const BUTTON_VERTICAL_PADDING: f32 = 5.;
 const BUTTON_HORIZONTAL_PADDING: f32 = 8.;
 

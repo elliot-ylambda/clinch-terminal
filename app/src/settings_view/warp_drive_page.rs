@@ -1,6 +1,7 @@
 use warp_core::features::FeatureFlag;
 use warp_core::report_if_error;
 use warp_core::settings::ToggleableSetting as _;
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::elements::{
     Container, Element, Flex, MouseStateHandle, ParentElement, Shrinkable, Text,
 };
@@ -194,9 +195,7 @@ impl SettingsWidget for WarpDriveHeaderWidget {
                 .with_style(UiComponentStyles {
                     font_size: Some(14.),
                     font_weight: Some(Weight::Semibold),
-                    border_radius: Some(warpui::elements::CornerRadius::with_all(
-                        warpui::elements::Radius::Pixels(4.),
-                    )),
+                    border_radius: Some(warpui::elements::CornerRadius::with_all(RADIUS_SM)),
                     padding: Some(Coords {
                         top: 8.,
                         bottom: 8.,

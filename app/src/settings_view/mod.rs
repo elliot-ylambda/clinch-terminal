@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::str::FromStr;
+use warp_core::ui::tokens::RADIUS_SM;
 
 use about_page::AboutPageView;
 use ai_page::{AISettingsPageAction, AISettingsPageEvent, AISettingsPageView, AISubpage};
@@ -39,8 +40,7 @@ use warpui::elements::{
     Align, Border, ChildAnchor, ChildView, Clipped, ClippedScrollStateHandle, ClippedScrollable,
     ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, DispatchEventResult, Empty,
     EventHandler, Expanded, Fill, Flex, MainAxisSize, OffsetPositioning, ParentAnchor,
-    ParentElement, ParentOffsetBounds, Radius, SavePosition, ScrollbarWidth, Shrinkable, Stack,
-    Text,
+    ParentElement, ParentOffsetBounds, SavePosition, ScrollbarWidth, Shrinkable, Stack, Text,
 };
 use warpui::fonts::{Properties, Weight};
 use warpui::keymap::{ContextPredicate, EnabledPredicate, FixedBinding};
@@ -177,7 +177,7 @@ pub(super) fn render_beta_chip(appearance: &Appearance) -> Box<dyn Element> {
             .finish(),
     )
     .with_background(theme.surface_3())
-    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(3.)))
+    .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
     .with_horizontal_padding(4.)
     .with_vertical_padding(1.)
     .with_margin_left(8.)
@@ -200,7 +200,7 @@ pub(super) fn render_model_chips(
         background: None,
         border_color: Some(chip_border),
         border_width: Some(1.),
-        border_radius: Some(CornerRadius::with_all(Radius::Pixels(5.))),
+        border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
         font_family_id: Some(appearance.ui_font_family()),
         font_size: Some(appearance.ui_font_size()),
         font_color: Some(text_color.into_solid()),
@@ -2480,7 +2480,7 @@ impl SettingsView {
             .finish(),
         )
             .with_uniform_margin(16.)
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
         .with_background(internal_colors::fg_overlay_1(appearance.theme()))
         .finish()
     }

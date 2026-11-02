@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
+use warp_core::ui::tokens::{RADIUS_LG, RADIUS_MD, RADIUS_SM};
 
 use ::settings::{Setting, ToggleableSetting};
 #[cfg(feature = "local_fs")]
@@ -721,7 +722,7 @@ impl RemoteControlSetupWidget {
             } else {
                 Border::all(1.).with_border_fill(theme.outline())
             })
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(9.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_LG))
             .with_uniform_padding(16.)
             .with_margin_top(4.)
             .with_margin_bottom(12.)
@@ -775,7 +776,7 @@ impl RemoteControlSetupWidget {
         )
         .with_background(theme.surface_1())
         .with_border(Border::all(1.).with_border_fill(theme.ui_error_color()))
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .with_uniform_padding(10.)
         .with_margin_bottom(12.)
         .finish()
@@ -823,7 +824,7 @@ impl RemoteControlSetupWidget {
                     Container::new(Self::render_qr_matrix(&matrix))
                         .with_background(ColorU::white())
                         .with_uniform_padding(10.)
-                        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+                        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                         .finish(),
                 )
                 .with_child(
@@ -856,7 +857,7 @@ impl RemoteControlSetupWidget {
                 .finish(),
             )
             .with_background(theme.surface_1())
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(7.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .with_padding_top(8.)
             .with_padding_bottom(8.)
             .with_padding_left(14.)
@@ -960,7 +961,7 @@ impl RemoteControlSetupWidget {
                     } else {
                         theme.nonactive_ui_text_color().into()
                     })
-                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                    .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                     .finish(),
             )
             .with_width(8.)
@@ -1025,7 +1026,7 @@ impl RemoteControlSetupWidget {
                         .finish(),
                 )
                 .with_border(Border::all(1.).with_border_fill(theme.outline()))
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                 .with_uniform_padding(10.)
                 .with_margin_bottom(8.)
                 .finish(),

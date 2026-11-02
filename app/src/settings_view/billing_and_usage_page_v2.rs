@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use chrono::Local;
 use itertools::Itertools;
@@ -15,7 +16,7 @@ use warp_graphql::billing::AddonCreditsOption;
 use warpui::elements::{
     Align, Border, Clipped, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Empty,
     Expanded, Flex, FormattedTextElement, HighlightedHyperlink, MainAxisAlignment, MainAxisSize,
-    MouseStateHandle, ParentElement, Radius, Shrinkable, Text, Wrap,
+    MouseStateHandle, ParentElement, Shrinkable, Text, Wrap,
 };
 use warpui::fonts::{Properties, Weight};
 use warpui::prelude::ChildView;
@@ -1021,7 +1022,7 @@ impl BillingAndUsagePageV2View {
             Container::new(row_content)
                 .with_horizontal_background_gradient(gradient_start, gradient_end)
                 .with_border(Border::all(1.).with_border_color(theme.accent_overlay().into()))
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                 .with_margin_bottom(16.)
                 .with_uniform_padding(12.)
                 .finish(),
@@ -1283,7 +1284,7 @@ impl BillingAndUsagePageV2View {
 
         Container::new(card)
             .with_background_color(theme.surface_1().into_solid())
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .with_margin_bottom(16.)
             .with_uniform_padding(16.)
             .finish()
@@ -1325,7 +1326,7 @@ impl BillingAndUsagePageV2View {
 
         Container::new(card)
             .with_background_color(theme.surface_1().into_solid())
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .with_margin_bottom(16.)
             .with_uniform_padding(16.)
             .finish()
@@ -1348,7 +1349,7 @@ impl BillingAndUsagePageV2View {
                 .finish(),
         )
         .with_background_color(theme.surface_1().into_solid())
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .with_margin_bottom(16.)
         .finish()
     }
@@ -2168,7 +2169,7 @@ fn render_balance_card(
     let status_dot = ConstrainedBox::new(
         Container::new(Empty::new().finish())
             .with_background_color(dot_color)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .finish(),
     )
     .with_width(8.)
@@ -2236,7 +2237,7 @@ fn render_balance_card(
             .finish(),
     )
     .with_border(Border::all(1.).with_border_color(border_color))
-    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+    .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
     .with_horizontal_padding(16.)
     .with_vertical_padding(12.)
     .finish()

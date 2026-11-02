@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use pathfinder_geometry::rect::RectF as GeometryRect;
 use pathfinder_geometry::vector::{vec2f, Vector2F};
@@ -358,7 +359,7 @@ fn render_project_agent_hover_card(
                 Border::all(PROJECT_AGENT_HOVER_CARD_BORDER_WIDTH)
                     .with_border_fill(theme.outline()),
             )
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .with_padding(Padding::uniform(PROJECT_AGENT_HOVER_CARD_PADDING))
             .with_drop_shadow(DropShadow::default())
             .finish(),
@@ -1820,7 +1821,7 @@ impl ProjectWindow {
                         .with_height(14.)
                         .finish();
                         let button = Container::new(icon)
-                            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(3.)));
+                            .with_corner_radius(CornerRadius::with_all(RADIUS_SM));
                         if close_state.is_hovered() {
                             button.with_background(hover_background).finish()
                         } else {
@@ -1882,7 +1883,7 @@ impl ProjectWindow {
                 let tab_body = ConstrainedBox::new(
                     Container::new(contents.finish())
                         .with_background(background)
-                        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+                        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                         .with_border(
                             Border::all(PROJECT_TAB_BORDER_WIDTH).with_border_fill(border_fill),
                         )
@@ -1969,7 +1970,7 @@ impl ProjectWindow {
             .with_height(16.)
             .finish();
             let button = Container::new(icon)
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                 .with_uniform_padding(5.);
             if mouse_state.is_hovered() {
                 button.with_background(theme.surface_3()).finish()

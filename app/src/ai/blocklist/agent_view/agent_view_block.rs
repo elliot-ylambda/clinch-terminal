@@ -2,6 +2,7 @@ use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::Vector2F;
 use settings::Setting;
 use warp_core::ui::appearance::Appearance;
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_core::ui::Icon;
 use warpui::elements::{
     ConstrainedBox, Container, CrossAxisAlignment, Empty, Expanded, Flex, Hoverable, MainAxisSize,
@@ -10,7 +11,7 @@ use warpui::elements::{
 use warpui::fonts::Weight::Bold;
 use warpui::fonts::{Properties, Style};
 use warpui::platform::Cursor;
-use warpui::prelude::{Border, CornerRadius, Radius};
+use warpui::prelude::{Border, CornerRadius};
 use warpui::text_layout::ClipConfig;
 use warpui::{
     AppContext, Element, Entity, EntityId, EventContext, ModelHandle, SingletonEntity,
@@ -131,7 +132,7 @@ pub fn render_block_container(
             .with_horizontal_margin(16.)
             .with_margin_bottom(16.)
             .with_margin_top(8.)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)));
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM));
     } else {
         container = container
             .with_horizontal_padding(20.)
@@ -185,7 +186,7 @@ where
                 .with_width(20.)
                 .finish(),
         )
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(5.)));
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM));
 
         let container = if state.is_clicked() {
             container.with_background(blended_colors::fg_overlay_4(appearance.theme()))

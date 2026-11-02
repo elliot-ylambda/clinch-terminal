@@ -1,12 +1,13 @@
 use chrono::{DateTime, Utc};
 use cli_agent_usage::format::{fmt_pct, fmt_reset, fmt_tokens};
 use cli_agent_usage::{LimitWindow, Provider, Severity, UsageSnapshot, WindowTotals};
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 // Element + theme imports — mirror app/src/context_chips/display_chip.rs.
 use warp_core::ui::theme::{Fill, WarpTheme};
 use warp_core::ui::Icon;
 use warpui::elements::{
     Border, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Flex, Hoverable,
-    MouseStateHandle, ParentElement, Radius, Text,
+    MouseStateHandle, ParentElement, Text,
 };
 use warpui::platform::Cursor;
 use warpui::ui_components::components::UiComponent;
@@ -221,7 +222,7 @@ pub fn render_cli_agent_usage_panel(
             .with_horizontal_padding(PANEL_H_PADDING * scale)
             .with_background(bg)
             .with_border(Border::all(1.).with_border_fill(theme.accent()))
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .finish(),
     )
     .with_width(panel_width)
@@ -333,7 +334,7 @@ fn usage_link(
             .finish();
         Container::new(content)
             .with_vertical_padding(2.)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .finish()
     })
     .on_click(move |_ctx, app, _position| app.open_url(url))

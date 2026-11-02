@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::ops::{Add, AddAssign, SubAssign};
 use std::path::{Path, PathBuf};
+use warp_core::ui::tokens::RADIUS_SM;
 
 use anyhow::Result;
 use async_recursion::async_recursion;
@@ -9,7 +10,7 @@ use futures_lite::StreamExt;
 use pathfinder_color::ColorU;
 use warpui::elements::{
     Align, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Flex, Hoverable,
-    MouseStateHandle, ParentElement, Radius, Shrinkable,
+    MouseStateHandle, ParentElement, Shrinkable,
 };
 use warpui::platform::Cursor;
 use warpui::ui_components::components::{UiComponent, UiComponentStyles};
@@ -936,7 +937,7 @@ fn render_highlighted_pill(
             if state.is_hovered() || state.is_clicked() {
                 Container::new(inner)
                     .with_background(appearance.theme().surface_3())
-                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                    .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                     .finish()
             } else {
                 inner

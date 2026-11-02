@@ -6,13 +6,14 @@ use warp_core::send_telemetry_from_ctx;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::WarpTheme;
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_editor::content::buffer::InitialBufferState;
 use warp_editor::render::element::VerticalExpansionBehavior;
 use warp_editor::render::model::Decoration;
 use warpui::elements::{
     Border, ChildView, ClippedScrollStateHandle, ClippedScrollable, ConstrainedBox, Container,
     CornerRadius, CrossAxisAlignment, Flex, FormattedTextElement, HighlightedHyperlink, Hoverable,
-    MouseStateHandle, ParentElement, Radius, Rect, ScrollbarWidth,
+    MouseStateHandle, ParentElement, Rect, ScrollbarWidth,
 };
 use warpui::{AppContext, Element, SingletonEntity, ViewContext};
 
@@ -557,7 +558,7 @@ impl LocalCodeEditorView {
             .with_horizontal_padding(8.)
             .with_vertical_padding(6.)
             .with_background(theme.background())
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .with_border(Border::all(1.).with_border_fill(internal_colors::neutral_4(theme)))
             .finish();
 

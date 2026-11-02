@@ -1,11 +1,12 @@
 use warp_core::ui::builder::UiBuilder;
 use warp_core::ui::color::blend::Blend;
 use warp_core::ui::color::darken;
+use warp_core::ui::tokens::{RADIUS_LG, RADIUS_SM};
 use warpui::accessibility::{AccessibilityContent, WarpA11yRole};
 use warpui::color::ColorU;
 use warpui::elements::{
     ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Fill, Flex, Icon,
-    MouseStateHandle, ParentElement, Radius, Shrinkable,
+    MouseStateHandle, ParentElement, Shrinkable,
 };
 use warpui::fonts::Weight;
 use warpui::keymap::FixedBinding;
@@ -126,7 +127,7 @@ impl AuthOverrideWarningBody {
         ConstrainedBox::new(
             Container::new(Icon::new("bundled/svg/alert-triangle.svg", color).finish())
                 .with_background(appearance.theme().surface_1())
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(10.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_LG))
                 .with_horizontal_padding(11.)
                 .finish(),
         )
@@ -224,7 +225,7 @@ impl AuthOverrideWarningBody {
             background: Some(Fill::Solid(button_color)),
             border_width: Some(ACTION_BUTTON_BORDER_WIDTH),
             border_color: Some(Fill::Solid(ColorU::transparent_black())),
-            border_radius: Some(CornerRadius::with_all(Radius::Pixels(4.))),
+            border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
             padding: Some(Coords {
                 top: 0.,
                 bottom: 0.,
@@ -252,7 +253,7 @@ impl AuthOverrideWarningBody {
             font_family_id: Some(appearance.ui_font_family()),
             font_weight: Some(Weight::Bold),
             border_width: Some(2.),
-            border_radius: Some(CornerRadius::with_all(Radius::Pixels(4.))),
+            border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
             padding: Some(Coords {
                 top: 0.,
                 bottom: 0.,

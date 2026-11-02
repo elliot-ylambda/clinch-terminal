@@ -1123,7 +1123,7 @@ pub mod styles {
     use crate::appearance::Appearance;
     use crate::themes::theme::Fill;
 
-    pub const CORNER_RADIUS: f32 = 8.;
+    pub const CORNER_RADIUS: f32 = 10.;
     pub const VIEW_WIDTH: f32 = 700.;
     pub const VIEW_HEIGHT: f32 = 450.;
     pub const TOP_PADDING: f32 = CORNER_RADIUS;

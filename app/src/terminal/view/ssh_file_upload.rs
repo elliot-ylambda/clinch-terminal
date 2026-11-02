@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
+use warp_core::ui::tokens::RADIUS_SM;
 
 use itertools::Itertools;
 use markdown_parser::{
@@ -10,7 +11,7 @@ use warp_core::ui::appearance::Appearance;
 use warp_core::ui::color::blend::Blend as _;
 use warpui::elements::{
     Border, Container, CornerRadius, CrossAxisAlignment, Flex, FormattedTextElement,
-    HighlightedHyperlink, MainAxisSize, MouseStateHandle, ParentElement, Radius,
+    HighlightedHyperlink, MainAxisSize, MouseStateHandle, ParentElement,
 };
 use warpui::ui_components::button::ButtonVariant;
 use warpui::ui_components::components::UiComponent as _;
@@ -338,7 +339,7 @@ impl FileUpload {
             .with_background_color(background_color)
             .with_uniform_padding(4.)
             .with_uniform_margin(4.)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .finish()
     }
 
@@ -500,7 +501,7 @@ impl FileUpload {
             )
             .with_uniform_padding(4.)
             .with_uniform_margin(4.)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .finish()
     }
 }

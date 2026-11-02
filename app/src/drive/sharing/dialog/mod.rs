@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use email_address::EmailAddress;
 use inheritance::{InheritanceDetails, InheritanceState};
@@ -14,8 +15,8 @@ use warpui::elements::{
     Align, Border, ChildAnchor, ChildView, ConstrainedBox, Container, CornerRadius,
     CrossAxisAlignment, Dismiss, Empty, Fill, Flex, Highlight, MainAxisAlignment, MainAxisSize,
     MouseStateHandle, OffsetPositioning, ParentAnchor, ParentElement, PositionedElementAnchor,
-    PositionedElementOffsetBounds, Radius, SavePosition, ScrollStateHandle, Scrollable,
-    ScrollableElement, ScrollbarWidth, Shrinkable, Stack, UniformList, UniformListState,
+    PositionedElementOffsetBounds, SavePosition, ScrollStateHandle, Scrollable, ScrollableElement,
+    ScrollbarWidth, Shrinkable, Stack, UniformList, UniformListState,
 };
 use warpui::fonts::{Properties, Weight};
 use warpui::keymap::FixedBinding;
@@ -1437,7 +1438,7 @@ impl SharingDialog {
                 .finish(),
         )
         .with_border(Border::all(1.).with_border_color(style::form_border_color(appearance)))
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
         .with_margin_right(style::ACL_ITEM_PADDING / 2.)
         // Match the word block editor's left padding.
         .with_padding_right(8.)
@@ -2521,7 +2522,7 @@ impl SharingDialog {
             font_color: Some(button_foreground.into()),
             background: Some(button_background.into()),
             border_color: Some(style::form_border_color(appearance).into()),
-            border_radius: Some(CornerRadius::with_all(Radius::Pixels(4.))),
+            border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
             ..Default::default()
         })
         .with_clicked_styles(UiComponentStyles {
@@ -2583,7 +2584,7 @@ impl SharingDialog {
             width: Some(QR_ICON_BUTTON_SIZE),
             height: Some(QR_ICON_BUTTON_SIZE),
             font_color: Some(foreground),
-            border_radius: Some(CornerRadius::with_all(Radius::Pixels(4.))),
+            border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
             ..Default::default()
         };
         let icon_hover_styles = UiComponentStyles {
@@ -2619,7 +2620,7 @@ impl SharingDialog {
                 font_color: Some(style::acl_secondary_text_color(appearance)),
                 font_size: Some(12.),
                 background: Some(appearance.theme().surface_2().into()),
-                border_radius: Some(CornerRadius::with_all(Radius::Pixels(4.))),
+                border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
                 padding: Some(Coords::default().left(6.).right(6.).top(2.).bottom(2.)),
                 ..Default::default()
             })
@@ -2664,7 +2665,7 @@ impl SharingDialog {
             .map(|matrix| {
                 let card = Container::new(Align::new(self.render_qr_matrix(&matrix)).finish())
                     .with_background(ColorU::white())
-                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+                    .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                     .finish();
                 let action_row = Flex::row()
                     .with_main_axis_alignment(MainAxisAlignment::Center)
@@ -2742,7 +2743,7 @@ impl SharingDialog {
 
         let link = Container::new(Align::new(link_text).left().finish())
             .with_border(Border::all(1.).with_border_color(style::form_border_color(appearance)))
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .with_uniform_padding(8.)
             .finish();
 
@@ -2769,7 +2770,7 @@ impl SharingDialog {
                 font_color: Some(copy_button_foreground.into()),
                 background: Some(copy_button_background.into()),
                 border_color: Some(style::form_border_color(appearance).into()),
-                border_radius: Some(CornerRadius::with_all(Radius::Pixels(4.))),
+                border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
                 ..Default::default()
             })
             .with_clicked_styles(UiComponentStyles {
@@ -2884,7 +2885,7 @@ impl View for SharingDialog {
         };
 
         let dialog = Container::new(contents)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .with_border(Border::all(1.).with_border_color(theme.surface_3().into()))
             .with_background(style::dialog_background(appearance));
 

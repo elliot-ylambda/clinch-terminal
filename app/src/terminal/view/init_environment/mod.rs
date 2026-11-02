@@ -1,8 +1,9 @@
 pub mod mode_selector;
 
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::elements::{
     ChildView, Container, CornerRadius, CrossAxisAlignment, Flex, MouseStateHandle, ParentElement,
-    Radius, Text,
+    Text,
 };
 use warpui::{
     AppContext, Element, Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle,
@@ -133,7 +134,7 @@ impl InitEnvironmentBlock {
             .with_header(
                 HeaderConfig::new(EXPLANATION_TEXT, app)
                     .with_icon(yellow_stop_icon(appearance))
-                    .with_corner_radius_override(CornerRadius::with_top(Radius::Pixels(8.)))
+                    .with_corner_radius_override(CornerRadius::with_top(RADIUS_MD))
                     .with_soft_wrap_title(),
             )
             .with_background_color(theme.surface_1().into_solid())

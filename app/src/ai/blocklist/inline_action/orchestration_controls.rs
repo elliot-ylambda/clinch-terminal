@@ -7,6 +7,7 @@
 //! from field-change events to their own action enum.
 
 use std::collections::HashMap;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use ai::agent::action::RunAgentsExecutionMode;
 use ai::agent::orchestration_config::{OrchestrationConfig, OrchestrationExecutionMode};
@@ -66,7 +67,7 @@ pub const ORCHESTRATION_ENV_NONE_LABEL: &str = "Empty environment";
 pub const ORCHESTRATION_PICKER_HEIGHT: f32 = 36.;
 pub const ORCHESTRATION_PICKER_BORDER_WIDTH: f32 = 1.;
 pub const ORCHESTRATION_PICKER_FONT_SIZE: f32 = 14.;
-pub const ORCHESTRATION_PICKER_RADIUS: f32 = 4.;
+pub const ORCHESTRATION_PICKER_RADIUS: f32 = 6.;
 pub const ORCHESTRATION_PICKER_MAX_WIDTH: f32 = 205.;
 
 const DEFAULT_MODEL_LABEL: &str = "Default model";
@@ -1855,7 +1856,7 @@ pub fn render_mode_toggle<A: OrchestrationControlAction>(
         .with_padding_bottom(ORCHESTRATION_SEGMENTED_CONTROL_PADDING)
         .with_padding_left(ORCHESTRATION_SEGMENTED_CONTROL_PADDING)
         .with_padding_right(ORCHESTRATION_SEGMENTED_CONTROL_PADDING)
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .with_background(segment_outer_bg)
         .finish();
     let segmented_control =
@@ -1907,7 +1908,7 @@ fn render_segment_button<A: OrchestrationControlAction>(
         let centered = warpui::elements::Align::new(text).finish();
         let mut container = Container::new(centered)
             .with_vertical_padding(ORCHESTRATION_SEGMENT_VERTICAL_PADDING)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)));
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM));
         if is_active {
             container = container.with_background(segment_active_bg);
         }

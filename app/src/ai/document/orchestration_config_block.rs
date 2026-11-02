@@ -3,6 +3,7 @@
 //! toggle, Cloud/Local picker, and run-wide config dropdowns.
 
 use std::collections::HashMap;
+use warp_core::ui::tokens::{RADIUS_LG, RADIUS_SM};
 
 use ai::agent::action::RunAgentsExecutionMode;
 use ai::agent::orchestration_config::OrchestrationConfigStatus;
@@ -96,7 +97,7 @@ fn render_pill_toggle(is_on: bool, theme: &WarpTheme) -> Box<dyn Element> {
         .finish();
     ConstrainedBox::new(
         Container::new(switch_inner)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(9.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_LG))
             .with_background_color(track_bg)
             .finish(),
     )
@@ -752,7 +753,7 @@ impl View for OrchestrationConfigBlockView {
         // Outer container with accent styling per Figma
         let card = Container::new(column.finish())
             .with_uniform_padding(12.)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .with_background(warp_core::ui::theme::color::internal_colors::accent_overlay_1(theme))
             .with_border(warpui::elements::Border::all(1.).with_border_fill(theme.accent()))
             .finish();

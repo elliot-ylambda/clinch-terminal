@@ -2,9 +2,10 @@ use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::Vector2F;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::Fill;
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::elements::{
     ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Empty, Expanded, Flex, Hoverable,
-    MainAxisSize, MouseStateHandle, ParentElement, Radius, Shrinkable, Text,
+    MainAxisSize, MouseStateHandle, ParentElement, Shrinkable, Text,
 };
 use warpui::fonts::Properties;
 use warpui::fonts::Weight::Bold;
@@ -284,7 +285,7 @@ pub(crate) fn conversation_navigation_card_with_icon(
 
         Container::new(row)
             .with_background_color(background.into())
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .with_horizontal_padding(10.)
             .with_vertical_padding(8.)
             .finish()

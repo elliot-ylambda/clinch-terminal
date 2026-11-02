@@ -1,6 +1,7 @@
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::elements::{
     Border, ChildView, Clipped, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment,
-    DispatchEventResult, EventHandler, Flex, Icon, ParentElement, Radius, Shrinkable,
+    DispatchEventResult, EventHandler, Flex, Icon, ParentElement, Shrinkable,
 };
 use warpui::ui_components::components::{Coords, UiComponentStyles};
 use warpui::{Element, Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle};
@@ -55,7 +56,7 @@ impl View for SearchBar {
                     right: 10.,
                 }),
                 border_width: Some(1.),
-                border_radius: Some(CornerRadius::with_all(Radius::Pixels(3.))),
+                border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
                 background: Some(appearance.theme().background().into()),
                 border_color: Some(appearance.theme().foreground().with_opacity(20).into()),
                 font_color: Some(

@@ -1,10 +1,11 @@
 use pathfinder_color::ColorU;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::Fill;
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::elements::{
     ChildView, ClippedScrollStateHandle, ClippedScrollable, ConstrainedBox, Container,
     CornerRadius, CrossAxisAlignment, Dismiss, DropShadow, Flex, MainAxisAlignment, MainAxisSize,
-    ParentElement, Radius, ScrollbarWidth, Text,
+    ParentElement, ScrollbarWidth, Text,
 };
 use warpui::fonts::{FamilyId, Properties};
 use warpui::keymap::FixedBinding;
@@ -377,7 +378,7 @@ impl View for NodeVersionPopupView {
             ConstrainedBox::new(
                 Container::new(scrollable)
                     .with_background(styles.background)
-                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+                    .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                     .with_drop_shadow(DropShadow::default())
                     .finish(),
             )

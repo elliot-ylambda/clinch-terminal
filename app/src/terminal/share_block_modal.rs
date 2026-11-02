@@ -1,5 +1,6 @@
 use std::ops::RangeInclusive;
 use std::sync::Arc;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use anyhow::Result;
 use parking_lot::FairMutex;
@@ -13,7 +14,7 @@ use warpui::clipboard::ClipboardContent;
 use warpui::elements::{
     try_rect_with_z, Align, Border, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment,
     Dismiss, Element, Empty, Flex, MainAxisAlignment, MainAxisSize, MouseStateHandle,
-    ParentElement, Point, Radius, SavePosition, ScrollData, ScrollStateHandle, Scrollable,
+    ParentElement, Point, SavePosition, ScrollData, ScrollStateHandle, Scrollable,
     ScrollableElement, ScrollbarWidth, Shrinkable, Stack, Text,
 };
 use warpui::event::{DispatchedEvent, ModifiersState};
@@ -577,7 +578,7 @@ impl ShareBlockModal {
                 .finish(),
             )
             .with_background(appearance.theme().background())
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .with_border(Border::all(1.).with_border_fill(appearance.theme().outline()))
             .with_vertical_padding(12.)
             .with_horizontal_padding(16.)
@@ -598,7 +599,7 @@ impl ShareBlockModal {
                     .finish(),
             )
             .with_background(appearance.theme().background())
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .with_border(Border::all(1.).with_border_fill(appearance.theme().outline()))
             .with_vertical_padding(12.)
             .with_horizontal_padding(16.)
@@ -1136,7 +1137,7 @@ impl View for ShareBlockModal {
                         .with_background(appearance.theme().surface_2())
                         .with_uniform_padding(PADDING)
                         .with_uniform_margin(35.)
-                        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+                        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                         .with_border(Border::all(1.).with_border_fill(appearance.theme().outline()))
                         .finish(),
                     )
@@ -1256,7 +1257,7 @@ impl SingleBlock {
 
         ctx.scene
             .draw_rect_with_hit_recording(RectF::new(origin, size))
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .with_background(self.theme.background());
 
         let model = self.terminal_model.lock();

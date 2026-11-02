@@ -3,6 +3,7 @@ use lazy_static::lazy_static;
 use warp_core::features::FeatureFlag;
 use warp_core::ui::appearance::DEFAULT_COMMAND_PALETTE_FONT_SIZE;
 use warp_core::ui::builder::UiBuilder;
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::accessibility::{AccessibilityContent, WarpA11yRole};
 use warpui::clipboard::ClipboardContent;
 use warpui::color::ColorU;
@@ -48,7 +49,7 @@ const AUTH_MODAL_GAP: f32 = 16.;
 const AUTH_TOKEN_INPUT_PLACEHOLDER_TEXT: &str = "Auth Token";
 const AUTH_TOKEN_INPUT_PLACEHOLDER_TEXT_EXPERIMENTAL: &str = "Browser auth token";
 
-const AUTH_TOKEN_INPUT_BORDER_RADIUS: Radius = Radius::Pixels(4.);
+const AUTH_TOKEN_INPUT_BORDER_RADIUS: Radius = RADIUS_SM;
 
 lazy_static! {
     static ref BODY_TEXT_COLOR: ColorU = ColorU::new(157, 157, 157, 255);
@@ -432,7 +433,7 @@ impl AuthViewBody {
             background: Some(Fill::Solid(button_color)),
             border_width: Some(2.),
             border_color: Some(Fill::Solid(ColorU::transparent_black())),
-            border_radius: Some(CornerRadius::with_all(Radius::Pixels(4.))),
+            border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
             padding: Some(Coords {
                 top: 0.,
                 bottom: 0.,

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use std::time::Duration;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use chrono::Local;
 use pathfinder_geometry::vector::{vec2f, Vector2F};
@@ -9,8 +10,8 @@ use warpui::elements::{
     resizable_state_handle, Align, Border, ChildAnchor, ConstrainedBox, Container, CornerRadius,
     CrossAxisAlignment, DispatchEventResult, DragBarSide, Element, Empty, EventHandler, Fill, Flex,
     HyperlinkUrl, Icon, MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning,
-    ParentAnchor, ParentElement, PositionedElementAnchor, PositionedElementOffsetBounds, Radius,
-    Resizable, ResizableStateHandle, SavePosition, Shrinkable, Stack, Text,
+    ParentAnchor, ParentElement, PositionedElementAnchor, PositionedElementOffsetBounds, Resizable,
+    ResizableStateHandle, SavePosition, Shrinkable, Stack, Text,
 };
 use warpui::fonts::Properties;
 use warpui::keymap::{EditableBinding, FixedBinding};
@@ -804,7 +805,7 @@ impl AIAssistantPanelView {
                 left: 8.,
                 right: 8.,
             }),
-            border_radius: Some(CornerRadius::with_all(Radius::Pixels(4.))),
+            border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
             ..Default::default()
         };
 
@@ -878,7 +879,7 @@ impl AIAssistantPanelView {
             Container::new(ChildView::new(&self.input_suggestions_view).finish())
                 .with_uniform_margin(10.)
                 .with_background(appearance.theme().surface_2())
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                 .with_border(Border::all(1.0).with_border_fill(appearance.theme().outline()))
                 .finish(),
         )
@@ -1158,8 +1159,8 @@ impl View for AIAssistantPanelView {
             );
         }
 
-        let styled_panel = Container::new(stack.finish())
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)));
+        let styled_panel =
+            Container::new(stack.finish()).with_corner_radius(CornerRadius::with_all(RADIUS_MD));
 
         let clickable_panel =
             EventHandler::new(styled_panel.finish()).on_left_mouse_down(|ctx, _, _| {

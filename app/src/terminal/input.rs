@@ -36,6 +36,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+use warp_core::ui::tokens::RADIUS_SM;
 
 use ai::skills::SkillReference;
 use async_channel::Sender;
@@ -83,7 +84,7 @@ use warpui::elements::{
     resizable_state_handle, Align, AnchorPair, ChildAnchor, Clipped, ConstrainedBox, Container,
     CornerRadius, CrossAxisAlignment, DispatchEventResult, DropTargetData, Element, EventHandler,
     Flex, MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning, OffsetType,
-    ParentAnchor, ParentElement, PositionedElementOffsetBounds, PositioningAxis, Radius,
+    ParentAnchor, ParentElement, PositionedElementOffsetBounds, PositioningAxis,
     ResizableStateHandle, SavePosition, SelectionHandle, Text, Wrap, XAxisAnchor, YAxisAnchor,
 };
 pub use warpui::elements::{ParentElement as _, Stack};
@@ -15377,7 +15378,7 @@ impl Input {
                 )),
                 border_width: Some(1.),
                 border_color: Some(internal_colors::neutral_4(appearance.theme()).into()),
-                border_radius: Some(CornerRadius::with_all(Radius::Pixels(5.))),
+                border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
                 ..Default::default()
             },
         )

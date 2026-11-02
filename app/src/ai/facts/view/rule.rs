@@ -1,5 +1,6 @@
 use std::fmt::Debug;
 use std::path::PathBuf;
+use warp_core::ui::tokens::RADIUS_SM;
 
 use ai::project_context::model::{ProjectContextModel, ProjectContextModelEvent};
 use markdown_parser::weight::CustomWeight;
@@ -649,7 +650,7 @@ impl RuleView {
                 .finish(),
         )
         .with_background(appearance.theme().accent_overlay())
-        .with_corner_radius(CornerRadius::with_all(warpui::elements::Radius::Pixels(4.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
         .with_uniform_padding(style::BANNER_PADDING)
         .with_margin_bottom(style::ITEM_BOTTOM_MARGIN)
         .finish()
@@ -745,7 +746,7 @@ impl RuleView {
         Some(
             Container::new(row.finish())
                 .with_background(internal_colors::neutral_1(appearance.theme()))
-                .with_corner_radius(CornerRadius::with_all(warpui::elements::Radius::Pixels(4.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                 .with_border(
                     Border::all(1.)
                         .with_border_color(internal_colors::neutral_2(appearance.theme())),
@@ -826,7 +827,7 @@ impl RuleView {
 
             Container::new(row.finish())
                 .with_background(bg_color)
-                .with_corner_radius(CornerRadius::with_all(warpui::elements::Radius::Pixels(4.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                 .with_border(
                     Border::all(1.)
                         .with_border_color(internal_colors::neutral_2(appearance.theme())),

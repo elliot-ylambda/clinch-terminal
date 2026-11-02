@@ -146,7 +146,7 @@ const DETAIL_TEXT_MARGIN_LEFT: f32 = 12.;
 const DETAIL_BOX_PADDING_TOP_AND_LEFT: f32 = 12.;
 const DETAIL_BOX_PADDING_BOTTOM_AND_RIGHT: f32 = 8.;
 
-const WORKFLOW_CORNER_RADIUS: f32 = 10.;
+const WORKFLOW_CORNER_RADIUS: f32 = 14.;
 const COMMAND_MARGIN_TOP: f32 = 20.;
 
 // Padding for text_input
@@ -160,7 +160,7 @@ const SAVE_BUTTON_TEXT: &str = "Update";
 const CANCEL_BUTTON_TEXT: &str = "Cancel";
 const BUTTON_PADDING: f32 = 12.;
 const BUTTON_FONT_SIZE: f32 = 14.;
-const BUTTON_BORDER_RADIUS: f32 = 4.;
+const BUTTON_BORDER_RADIUS: f32 = 6.;
 const BUTTON_HEIGHT: f32 = 32.;
 
 const AI_ASSIST_BUTTON_SIZE: f32 = 92.;

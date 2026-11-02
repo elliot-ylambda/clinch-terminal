@@ -3,13 +3,13 @@ use markdown_parser::CodeBlockText;
 use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::vec2f;
 use warp_core::ui::builder::AnimatedButtonOptions;
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::clipboard::ClipboardContent;
 use warpui::elements::{
     Align, Border, ChildAnchor, ClippedScrollStateHandle, ClippedScrollable, ConstrainedBox,
     Container, CornerRadius, CrossAxisAlignment, DispatchEventResult, EventHandler, Fill, Flex,
     FormattedTextElement, HyperlinkUrl, Icon, MainAxisAlignment, MainAxisSize, MouseStateHandle,
-    ParentAnchor, ParentElement, Radius, SavePosition, ScrollbarWidth, Shrinkable, Stack, Text,
-    Wrap,
+    ParentAnchor, ParentElement, SavePosition, ScrollbarWidth, Shrinkable, Stack, Text, Wrap,
 };
 use warpui::keymap::Keystroke;
 use warpui::platform::Cursor;
@@ -683,7 +683,7 @@ impl Transcript {
                                     .with_border(
                                         Border::all(border_width).with_border_fill(border_fill),
                                     )
-                                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+                                    .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                                     .finish(),
                                     &code_block_position_id(code_block_index),
                                 )

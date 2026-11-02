@@ -3,6 +3,7 @@ use markdown_parser::{FormattedText, FormattedTextFragment, FormattedTextLine};
 use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::vec2f;
 use warp_core::ui::appearance::Appearance;
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::elements::{
     Border, ChildAnchor, ChildView, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment,
     DropShadow, Empty, Flex, FormattedTextElement, HighlightedHyperlink, Hoverable, HyperlinkLens,
@@ -722,7 +723,7 @@ impl BillingCycleUsageSectionView {
         Some(
             Container::new(row)
                 .with_background_color(theme.surface_1().into_solid())
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                 .with_uniform_padding(12.)
                 .finish(),
         )
@@ -787,7 +788,7 @@ fn render_aggregate_legend_tooltip(appearance: &Appearance) -> Box<dyn Element> 
     .finish();
     Container::new(text)
         .with_background_color(theme.background().into_solid())
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .with_border(Border::all(1.).with_border_color(theme.outline().into_solid()))
         .with_horizontal_padding(12.)
         .with_vertical_padding(6.)

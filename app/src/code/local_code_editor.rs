@@ -1,13 +1,14 @@
-/// This module contains a model that can be used for loading and saving text files
-/// and displaying them in a code editor.
-/// It also handles applying an optional diff to the file content that will be applied
-/// when the file is loaded.
 use std::{
     ops::Range,
     path::{Path, PathBuf},
     rc::Rc,
     time::Duration,
 };
+/// This module contains a model that can be used for loading and saving text files
+/// and displaying them in a code editor.
+/// It also handles applying an optional diff to the file content that will be applied
+/// when the file is loaded.
+use warp_core::ui::tokens::RADIUS_SM;
 
 use ai::diff_validation::DiffType;
 use futures::stream::AbortHandle;
@@ -1885,7 +1886,7 @@ impl LocalCodeEditorView {
                                 .with_background(background_color)
                                 .with_padding_top(4.)
                                 .with_padding_bottom(4.)
-                                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                                .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                                 .with_border(Border::all(1.5).with_border_fill(theme.surface_2()))
                                 .with_drop_shadow(DropShadow::new_with_standard_offset_and_spread(
                                     DROP_SHADOW_COLOR,

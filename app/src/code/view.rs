@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use warp_core::ui::tokens::RADIUS_MD;
 
 use lsp::LspManagerModel;
 use pathfinder_color::ColorU;
@@ -1474,7 +1475,7 @@ impl CodeView {
         )
         .with_vertical_padding(TAB_PADDING)
         .with_horizontal_padding(TAB_PADDING + TAB_HORIZONTAL_MARGIN)
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .with_background_color(appearance.theme().surface_1().with_opacity(70).into())
         .finish()
     }

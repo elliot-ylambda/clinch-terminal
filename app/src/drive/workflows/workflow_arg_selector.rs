@@ -37,7 +37,7 @@ use crate::workflows::workflow::ArgumentType;
 const ARGUMENT_DEFAULT_VALUE_PLACEHOLDER_TEXT: &str = "Default value (optional)";
 const ARGUMENT_EDITOR_FONT_SIZE: f32 = 14.;
 const DROPDOWN_PADDING: f32 = 8.;
-const DROPDOWN_BORDER_RADIUS: f32 = 6.;
+const DROPDOWN_BORDER_RADIUS: f32 = 10.;
 const EDIT_ICON_HEIGHT: f32 = 24.;
 const ENUM_MENU_HEIGHT: f32 = 100.;
 const MENU_ITEM_VERTICAL_PADDING: f32 = 4.;

@@ -15,12 +15,12 @@ use warp_core::ui::color::contrast::MinimumAllowedContrast;
 use warp_core::ui::color::ContrastingColor;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::Fill as ThemeFill;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warpui::elements::{
     Border, ChildAnchor, ChildView, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment,
     Dismiss, Empty, Expanded, Fill, Flex, FormattedTextElement, HighlightedHyperlink, Hoverable,
     HyperlinkLens, HyperlinkUrl, MainAxisAlignment, MainAxisSize, MouseStateHandle,
-    OffsetPositioning, ParentAnchor, ParentElement, ParentOffsetBounds, Radius, Shrinkable, Stack,
-    Text,
+    OffsetPositioning, ParentAnchor, ParentElement, ParentOffsetBounds, Shrinkable, Stack, Text,
 };
 use warpui::fonts::{Properties, Weight};
 use warpui::keymap::{ContextPredicate, Keystroke};
@@ -4406,7 +4406,7 @@ impl SettingsWidget for GlobalAIWidget {
                                 .with_style(UiComponentStyles {
                                     font_size: Some(14.),
                                     font_weight: Some(Weight::Semibold),
-                                    border_radius: Some(CornerRadius::with_all(Radius::Pixels(4.))),
+                                    border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
                                     padding: Some(Coords {
                                         top: 8.,
                                         bottom: 8.,
@@ -7233,7 +7233,7 @@ impl SettingsWidget for CLIAgentWidget {
                     .with_background(background)
                     .with_horizontal_padding(8.)
                     .with_vertical_padding(4.)
-                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                    .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                     .with_margin_bottom(4.)
                     .finish();
 
@@ -8035,7 +8035,7 @@ impl ApiKeysWidget {
                         .with_vertical_padding(4.)
                         .with_horizontal_padding(8.)
                         .with_border(Border::all(1.).with_border_fill(appearance.theme().outline()))
-                        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                         .finish(),
                     )
                     .with_max_width(CUSTOM_INFERENCE_INFO_TOOLTIP_MAX_WIDTH)
@@ -8115,7 +8115,7 @@ impl ApiKeysWidget {
                     .with_uniform_padding(12.)
                     .with_background(internal_colors::fg_overlay_1(theme))
                     .with_border(Border::all(1.).with_border_fill(chip_border))
-                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+                    .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                     .finish(),
             );
         }
@@ -8870,7 +8870,7 @@ impl AwsBedrockWidget {
             .with_uniform_padding(12.)
             .with_background(appearance.theme().surface_2())
             .with_border(Border::all(1.).with_border_fill(appearance.theme().outline()))
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .finish()
         }
 

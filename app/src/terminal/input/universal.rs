@@ -1,7 +1,8 @@
 use settings::Setting;
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::elements::{
     Border, ChildView, Container, CornerRadius, DropTarget, Element, Flex, Hoverable,
-    ParentElement, Radius, SavePosition, Stack,
+    ParentElement, SavePosition, Stack,
 };
 use warpui::{AppContext, SingletonEntity};
 
@@ -175,7 +176,7 @@ impl Input {
         .with_margin_left(6.)
         .with_margin_right(6.)
         .with_margin_top(margin_top)
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)));
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD));
 
         // Apply styling based on focus state
         if self.is_pane_focused(app) {

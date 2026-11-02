@@ -1,4 +1,5 @@
 use std::cell::Cell;
+use warp_core::ui::tokens::RADIUS_SM;
 
 use onboarding::components::feature_optout_dialog::{
     render_feature_optout_dialog, FeatureOptOutDialog,
@@ -166,7 +167,7 @@ enum LoginPurpose {
 // View
 // ---------------------------------------------------------------------------
 
-const AUTH_TOKEN_INPUT_BORDER_RADIUS: Radius = Radius::Pixels(4.);
+const AUTH_TOKEN_INPUT_BORDER_RADIUS: Radius = RADIUS_SM;
 
 pub struct LoginSlideView {
     /// Whether AI will be enabled once onboarding is applied. Used to hide the

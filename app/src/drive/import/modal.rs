@@ -25,7 +25,7 @@ use crate::workspaces::user_workspaces::UserWorkspaces;
 
 const CLOSE_BUTTON_SIZE: f32 = 24.;
 const HEADER_FONT_SIZE: f32 = 16.;
-const MODAL_CORNER_RADIUS: f32 = 8.;
+const MODAL_CORNER_RADIUS: f32 = 10.;
 pub const BODY_HEIGHT: f32 = 244.;
 
 #[derive(Debug)]

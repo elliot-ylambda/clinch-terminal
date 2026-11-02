@@ -1,10 +1,11 @@
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_editor::editor::NavigationKey;
 use warpui::elements::{
     Border, ChildView, Clipped, ClippedScrollStateHandle, ClippedScrollable, ConstrainedBox,
     Container, CornerRadius, CrossAxisAlignment, Flex, MainAxisAlignment, MainAxisSize,
-    MouseStateHandle, ParentElement, Radius, ScrollbarWidth,
+    MouseStateHandle, ParentElement, ScrollbarWidth,
 };
 use warpui::platform::Cursor;
 use warpui::ui_components::components::UiComponent;
@@ -294,7 +295,7 @@ impl RuleEditorView {
             .with_border(
                 Border::all(1.).with_border_color(internal_colors::neutral_4(appearance.theme())),
             )
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .with_margin_bottom(style::ITEM_BOTTOM_MARGIN)
             .with_horizontal_padding(style::EDITOR_HORIZONTAL_PADDING)
             .with_vertical_padding(style::EDITOR_VERTICAL_PADDING)
@@ -320,7 +321,7 @@ impl RuleEditorView {
             .with_border(
                 Border::all(1.).with_border_color(internal_colors::neutral_4(appearance.theme())),
             )
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .with_margin_bottom(style::ITEM_BOTTOM_MARGIN)
             .with_padding_left(style::EDITOR_HORIZONTAL_PADDING)
             .with_vertical_padding(style::EDITOR_VERTICAL_PADDING)

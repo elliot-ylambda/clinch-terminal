@@ -78,6 +78,7 @@ stage_syntax() {
     script/assemble-clinch-corresponding-source \
     script/build-clinch-remote-control-web \
     script/check_license_config_sync \
+    script/check-ui-literals \
     script/assemble-clinch-release-stage \
     script/configure-clinch-release-repository \
     script/dispatch-clinch-release \
@@ -98,6 +99,7 @@ stage_syntax() {
   /usr/bin/python3 -c \
     'compile(open("script/generate-clinch-remote-control-notices", encoding="utf-8").read(), "script/generate-clinch-remote-control-notices", "exec")'
   bash -n resources/update/clinch-update-helper
+  ./script/check-ui-literals
   bash -n tools/agent-resume/*.sh \
     tools/agent-resume/clinch-agent-resume \
     tools/agent-resume/warp-agent-resume

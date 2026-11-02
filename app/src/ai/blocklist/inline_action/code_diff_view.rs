@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use ai::diff_validation::{
     fuzzy_match_diffs, fuzzy_match_v4a_diffs, parse_line_numbers, DiffDelta, DiffType, ParsedDiff,
@@ -1266,7 +1267,7 @@ impl CodeDiffView {
                         .finish(),
                 )
                 .with_background(background)
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                 .with_uniform_padding(2.)
                 .finish()
             },
@@ -1418,7 +1419,7 @@ impl CodeDiffView {
         Container::new(stats.finish())
             .with_background(neutral_1(theme))
             .with_border(Border::all(1.).with_border_fill(neutral_4(theme)))
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .with_vertical_padding(4.)
             .with_horizontal_padding(8.)
             .with_horizontal_margin(8.)
@@ -1698,7 +1699,7 @@ impl CodeDiffView {
 
         // The border has a radius of 8px, so we need to shrink this by 1 to
         // have it actually match the curvature of the 1px border.
-        let radius = Radius::Pixels(7.);
+        let radius = RADIUS_MD;
         let corner_radius = if is_expanded {
             CornerRadius::with_top(radius)
         } else {
@@ -1918,8 +1919,7 @@ impl CodeDiffView {
                 .with_horizontal_padding(FILE_TAB_HORIZONTAL_PADDING);
 
                 if idx == 0 && self.display_mode().is_inline_banner() {
-                    container =
-                        container.with_corner_radius(CornerRadius::with_top(Radius::Pixels(8.)));
+                    container = container.with_corner_radius(CornerRadius::with_top(RADIUS_MD));
                 }
                 stack.add_child(container.finish());
 
@@ -1969,7 +1969,7 @@ impl CodeDiffView {
 
         if self.display_mode().is_inline_banner() {
             container
-                .with_corner_radius(CornerRadius::with_top(Radius::Pixels(8.)))
+                .with_corner_radius(CornerRadius::with_top(RADIUS_MD))
                 .with_border(
                     Border::new(1.)
                         .with_sides(true, true, false, true)
@@ -2003,7 +2003,7 @@ impl CodeDiffView {
 
             return match self.display_mode() {
                 DisplayMode::Embedded { .. } => placeholder
-                    .with_corner_radius(CornerRadius::with_bottom(Radius::Pixels(8.)))
+                    .with_corner_radius(CornerRadius::with_bottom(RADIUS_MD))
                     .finish(),
                 DisplayMode::InlineBanner { .. } => placeholder
                     .with_border(
@@ -2025,7 +2025,7 @@ impl CodeDiffView {
             DisplayMode::Embedded { max_height } => Container::new(
                 ConstrainedBox::new(
                     inner_editor
-                        .with_corner_radius(CornerRadius::with_bottom(Radius::Pixels(8.)))
+                        .with_corner_radius(CornerRadius::with_bottom(RADIUS_MD))
                         .finish(),
                 )
                 .with_max_height(*max_height)
@@ -2593,7 +2593,7 @@ impl CodeDiffView {
         );
 
         if self.is_inline_banner_expanded() {
-            container = container.with_corner_radius(CornerRadius::with_bottom(Radius::Pixels(8.)))
+            container = container.with_corner_radius(CornerRadius::with_bottom(RADIUS_MD))
         }
 
         SavePosition::new(container.finish(), &self.position_id_for_inline_speedbump()).finish()

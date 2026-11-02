@@ -42,10 +42,8 @@ impl Theme for Primary {
         }
     }
 
-    fn text_color(&self, background: Option<Fill>, appearance: &Appearance) -> ColorU {
-        let theme = appearance.theme();
-        let bg = background.unwrap_or_else(|| theme.accent()).into_solid();
-        theme.font_color(bg).into_solid()
+    fn text_color(&self, _background: Option<Fill>, appearance: &Appearance) -> ColorU {
+        appearance.tokens().text_on_accent
     }
 
     fn keyboard_shortcut_border(&self, text_color: ColorU, _: &Appearance) -> Option<ColorU> {
@@ -60,19 +58,15 @@ pub struct Secondary;
 
 impl Theme for Secondary {
     fn background(&self, button_state: super::State, appearance: &Appearance) -> Option<Fill> {
-        match button_state {
-            super::State::Default => None,
-            super::State::Hovered => Some(internal_colors::fg_overlay_2(appearance.theme())),
-            super::State::Pressed => Some(internal_colors::fg_overlay_3(appearance.theme())),
-        }
+        let tokens = appearance.tokens();
+        Some(Fill::Solid(match button_state {
+            super::State::Default => tokens.surface_field,
+            super::State::Hovered | super::State::Pressed => tokens.surface_raised,
+        }))
     }
 
     fn text_color(&self, _background: Option<Fill>, appearance: &Appearance) -> ColorU {
-        appearance.theme().foreground().into()
-    }
-
-    fn border(&self, appearance: &Appearance) -> Option<ColorU> {
-        Some(internal_colors::neutral_4(appearance.theme()))
+        appearance.tokens().text_1
     }
 
     fn keyboard_shortcut_background(&self, appearance: &Appearance) -> Option<ColorU> {
@@ -108,8 +102,8 @@ impl Theme for Naked {
     fn background(&self, button_state: super::State, appearance: &Appearance) -> Option<Fill> {
         match button_state {
             super::State::Default => None,
-            super::State::Hovered => Some(internal_colors::fg_overlay_2(appearance.theme())),
-            super::State::Pressed => Some(internal_colors::fg_overlay_3(appearance.theme())),
+            super::State::Hovered => Some(Fill::Solid(appearance.tokens().surface_hover)),
+            super::State::Pressed => Some(Fill::Solid(appearance.tokens().surface_raised)),
         }
     }
 

@@ -1,10 +1,11 @@
 use std::sync::Arc;
+use warp_core::ui::tokens::RADIUS_MD;
 
 use parking_lot::FairMutex;
 use warp_core::ui::appearance::Appearance;
 use warp_terminal::model::BlockId;
 use warpui::prelude::{Container, Empty, MouseStateHandle};
-use warpui::scene::{CornerRadius, Radius};
+use warpui::scene::CornerRadius;
 use warpui::{
     AppContext, Element, Entity, ModelHandle, SingletonEntity, TypedActionView, View, ViewContext,
 };
@@ -166,7 +167,7 @@ impl View for CloudModeSetupCommandBlock {
         });
 
         if self.is_expanded {
-            config = config.with_corner_radius_override(CornerRadius::with_top(Radius::Pixels(8.)))
+            config = config.with_corner_radius_override(CornerRadius::with_top(RADIUS_MD))
         }
 
         let mut container = Container::new(config.render(app));

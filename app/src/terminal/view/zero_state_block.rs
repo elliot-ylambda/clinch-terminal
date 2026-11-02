@@ -1,5 +1,6 @@
 use settings::Setting;
 use warp_core::report_if_error;
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_core::ui::Icon;
 use warpui::elements::{
     ChildAnchor, Container, CrossAxisAlignment, Flex, MainAxisSize, OffsetPositioning,
@@ -8,7 +9,7 @@ use warpui::elements::{
 use warpui::fonts::{Properties, Weight};
 use warpui::keymap::Keystroke;
 use warpui::prelude::{vec2f, ConstrainedBox, Cursor, Empty, Hoverable, MouseStateHandle};
-use warpui::scene::{Border, CornerRadius, Radius};
+use warpui::scene::{Border, CornerRadius};
 use warpui::ui_components::checkbox::Checkbox;
 use warpui::ui_components::components::{UiComponent, UiComponentStyles};
 use warpui::{
@@ -384,7 +385,7 @@ fn render_nld_checkbox(mouse_state: MouseStateHandle, app: &AppContext) -> Box<d
         width: Some(appearance.monospace_font_size() + 2.),
         padding: Some(Default::default()),
         margin: Some(Default::default()),
-        border_radius: Some(CornerRadius::with_all(Radius::Pixels(2.))),
+        border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
         ..Default::default()
     };
     let hovered_styles = styles.merge(UiComponentStyles {

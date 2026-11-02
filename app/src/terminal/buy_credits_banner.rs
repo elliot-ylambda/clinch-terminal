@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use warp_core::ui::tokens::RADIUS_MD;
 
 use enclose::enclose;
 use itertools::Itertools as _;
@@ -13,7 +14,7 @@ use warpui::elements::{
     Align, Border, ChildAnchor, ChildView, ConstrainedBox, Container, CornerRadius,
     CrossAxisAlignment, DropShadow, Expanded, Flex, FormattedTextElement, HighlightedHyperlink,
     Hoverable, Icon as WarpUiIcon, MainAxisAlignment, MainAxisSize, MouseStateHandle,
-    OffsetPositioning, ParentAnchor, ParentElement as _, ParentOffsetBounds, Radius, Shrinkable,
+    OffsetPositioning, ParentAnchor, ParentElement as _, ParentOffsetBounds, Shrinkable,
     SizeConstraintCondition, SizeConstraintSwitch, Stack, Text,
 };
 use warpui::fonts::Weight;
@@ -496,7 +497,7 @@ impl BuyCreditsBanner {
         content.add_child(close_button);
 
         Container::new(content.finish())
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .with_border(Border::all(1.).with_border_fill(theme.outline()))
             .with_background_color(theme.surface_1().into())
             .with_horizontal_padding(16.)
@@ -792,7 +793,7 @@ impl BuyCreditsBanner {
         let vertical_padding = if has_admin_permissions { 6. } else { 12. };
 
         Container::new(content)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .with_border(Border::all(1.).with_border_fill(theme.outline()))
             .with_background_color(theme.surface_1().into())
             .with_horizontal_padding(16.)

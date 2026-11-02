@@ -45,6 +45,7 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 #[cfg(target_os = "macos")]
 use std::time::{SystemTime, UNIX_EPOCH};
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use ::settings::{Setting, ToggleableSetting};
 use ai::index::full_source_code_embedding::manager::CodebaseIndexManager;
@@ -778,9 +779,8 @@ pub const DEFAULT_USER_DISPLAY_NAME: &str = "User";
 
 lazy_static! {
     static ref OPENING_WARP_DRIVE_ON_START_UP: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
-    static ref PANEL_CORNER_RADIUS: CornerRadius = CornerRadius::with_all(Radius::Pixels(8.));
-    static ref PANEL_HEADER_CORNER_RADIUS: CornerRadius =
-        CornerRadius::with_top(Radius::Pixels(8.));
+    static ref PANEL_CORNER_RADIUS: CornerRadius = CornerRadius::with_all(RADIUS_MD);
+    static ref PANEL_HEADER_CORNER_RADIUS: CornerRadius = CornerRadius::with_top(RADIUS_MD);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3175,8 +3175,8 @@ impl Workspace {
                 .with_height(16.)
                 .finish();
 
-                let mut button = Container::new(icon)
-                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)));
+                let mut button =
+                    Container::new(icon).with_corner_radius(CornerRadius::with_all(RADIUS_SM));
                 if hover_state.is_hovered() {
                     button =
                         button.with_background_color(PhenomenonStyle::modal_close_button_hover());
@@ -11681,7 +11681,7 @@ impl Workspace {
                         .with_padding_top(NEW_SESSION_SIDECAR_SEARCH_BOX_VERTICAL_PADDING)
                         .with_padding_bottom(NEW_SESSION_SIDECAR_SEARCH_BOX_VERTICAL_PADDING)
                         .with_border(Border::all(1.).with_border_fill(theme.surface_3()))
-                        .with_corner_radius(CornerRadius::with_top(Radius::Pixels(4.)))
+                        .with_corner_radius(CornerRadius::with_top(RADIUS_SM))
                         .finish(),
                 )
                 .with_height(NEW_SESSION_SIDECAR_SEARCH_BOX_HEIGHT)
@@ -11778,7 +11778,7 @@ impl Workspace {
                         .with_padding_bottom(NEW_SESSION_SIDECAR_FOOTER_VERTICAL_PADDING)
                         .with_background(bg)
                         .with_border(Border::top(1.).with_border_fill(border_fill))
-                        .with_corner_radius(CornerRadius::with_bottom(Radius::Pixels(5.)))
+                        .with_corner_radius(CornerRadius::with_bottom(RADIUS_SM))
                         .finish(),
                     )
                     .with_width(NEW_SESSION_SIDECAR_WIDTH)
@@ -21831,7 +21831,7 @@ impl Workspace {
                         .finish(),
                 )
                 .with_background(background_color)
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                 .with_uniform_padding(10.)
                 .with_border(Border::all(1.).with_border_color(border_color.into()))
                 .finish(),
@@ -22554,7 +22554,7 @@ impl Workspace {
                         } else {
                             internal_colors::fg_overlay_1(theme)
                         })
-                        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                         .with_padding_left(16.)
                         .with_padding_right(16.)
                         .with_padding_top(4.)
@@ -23584,7 +23584,7 @@ impl Workspace {
     }
 
     fn render_new_session_button(&self, ctx: &AppContext) -> Box<dyn Element> {
-        const CORNER_RADIUS: Radius = Radius::Pixels(4.);
+        const CORNER_RADIUS: Radius = RADIUS_SM;
         const BUTTON_HEIGHT: f32 = 24.;
         const SIDE_MENU_WIDTH: f32 = 16.;
         const BUTTON_WIDTH: f32 = 24. + SIDE_MENU_WIDTH;
@@ -23782,7 +23782,7 @@ impl Workspace {
         let button = Hoverable::new(self.mouse_states.avatar_icon.clone(), |state| {
             let mut stack = Stack::new();
             let mut container = Container::new(avatar.build().finish())
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                 .with_uniform_padding(2.);
 
             if state.is_mouse_over_element() {
@@ -23926,7 +23926,7 @@ impl Workspace {
             let dot = ConstrainedBox::new(
                 Container::new(Empty::new().finish())
                     .with_background_color(dot_color)
-                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(3.5)))
+                    .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                     .finish(),
             )
             .with_width(7.)
@@ -23990,7 +23990,7 @@ impl Workspace {
             font_weight: Some(Weight::Light),
             font_family_id: Some(appearance.ui_font_family()),
             border_color: None,
-            border_radius: Some(CornerRadius::with_all(Radius::Pixels(5.))),
+            border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
             border_width: Some(1.),
             width: Some(80.),
             height: Some(24.),
@@ -24031,7 +24031,7 @@ impl Workspace {
             font_weight: Some(Weight::Semibold),
             font_family_id: Some(appearance.ui_font_family()),
             border_color: Some(appearance.theme().active_ui_text_color().into()),
-            border_radius: Some(CornerRadius::with_all(Radius::Pixels(5.))),
+            border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
             border_width: Some(1.),
             width: Some(80.),
             height: Some(24.),
@@ -24745,7 +24745,7 @@ impl Workspace {
                                 .finish(),
                             )
                             .with_uniform_padding(2.)
-                            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)));
+                            .with_corner_radius(CornerRadius::with_all(RADIUS_SM));
                             if state.is_hovered() {
                                 container = container
                                     .with_background_color(coloru_with_opacity(text_color, 20));
@@ -24821,7 +24821,7 @@ impl Workspace {
             );
 
             let mut container = Container::new(row.finish())
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                 .with_horizontal_padding(8.);
             if matches!(variant, BannerButtonVariant::Outlined) {
                 container = container.with_border(Border::all(1.).with_border_color(text_color));

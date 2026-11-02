@@ -14,6 +14,7 @@
 //!
 
 use std::path::PathBuf;
+use warp_core::ui::tokens::RADIUS_MD;
 
 use enclose::enclose;
 use pathfinder_geometry::vector::Vector2F;
@@ -23,7 +24,7 @@ use warpui::elements::{
     resizable_state_handle, Border, ChildAnchor, ChildView, Clipped, ConstrainedBox, Container,
     CornerRadius, CrossAxisAlignment, Dismiss, DispatchEventResult, Element, EventHandler, Flex,
     Icon, MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning, ParentAnchor,
-    ParentElement, ParentOffsetBounds, Radius, Resizable, ResizableStateHandle, Shrinkable, Stack,
+    ParentElement, ParentOffsetBounds, Resizable, ResizableStateHandle, Shrinkable, Stack,
 };
 use warpui::geometry::vector::vec2f;
 use warpui::keymap::{Context, FixedBinding};
@@ -547,7 +548,7 @@ impl View for Voltron {
         )
         .with_margin_top(117.)
         .with_background(theme.surface_2())
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .with_border(Border::all(1.0).with_border_fill(theme.outline()));
 
         let resizable = Resizable::new(self.resizable_state_handle.clone(), container.finish())

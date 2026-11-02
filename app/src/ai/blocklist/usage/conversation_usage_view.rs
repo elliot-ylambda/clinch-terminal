@@ -1,5 +1,6 @@
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::vec2f;
@@ -892,12 +893,12 @@ impl ConversationUsageView {
 
         if let DisplayMode::Footer = self.display_mode {
             card_container = card_container
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                 .with_border(Border::all(1.0).with_border_fill(theme.outline()))
                 .with_uniform_margin(16.);
         } else {
             card_container =
-                card_container.with_corner_radius(CornerRadius::with_bottom(Radius::Pixels(6.)));
+                card_container.with_corner_radius(CornerRadius::with_bottom(RADIUS_MD));
         }
 
         let mut res = Flex::column()
@@ -1139,7 +1140,7 @@ fn render_context_window_other_tooltip(appearance: &Appearance) -> Box<dyn Eleme
     .finish();
     Container::new(text)
         .with_background_color(background)
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
         .with_border(Border::all(1.).with_border_color(theme.outline().into_solid()))
         .with_horizontal_padding(8.)
         .with_vertical_padding(5.)

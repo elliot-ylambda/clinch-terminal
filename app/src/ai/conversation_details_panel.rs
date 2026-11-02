@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
+use warp_core::ui::tokens::RADIUS_SM;
 
 use chrono::{DateTime, Duration, Local};
 use instant::Instant;
@@ -1194,7 +1195,7 @@ impl ConversationDetailsPanel {
             return Container::new(notice_row)
                 .with_uniform_padding(10.)
                 .with_background(coloru_with_opacity(blended_colors::neutral_2(theme), 70))
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                 .finish();
         }
 
@@ -1228,7 +1229,7 @@ impl ConversationDetailsPanel {
         Container::new(error_row)
             .with_uniform_padding(8.)
             .with_background(coloru_with_opacity(theme.ansi_fg_red(), 10))
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .finish()
     }
 
@@ -1278,7 +1279,7 @@ impl ConversationDetailsPanel {
         )
         .with_uniform_padding(4.)
         .with_background(coloru_with_opacity(color, 10))
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
         .finish();
 
         Some(

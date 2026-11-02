@@ -17,7 +17,7 @@ use crate::platform::Cursor;
 use crate::scene::{CornerRadius, Radius};
 use crate::{AppContext, Element, EventContext};
 
-const BORDER_RADIUS: f32 = 4.;
+const BORDER_RADIUS: f32 = 6.;
 const BUTTON_VERTICAL_PADDING: f32 = 2.;
 const BUTTON_MARGIN: f32 = 4.;
 
@@ -233,7 +233,7 @@ impl UiComponent for ToggleMenu {
                 .with_main_axis_size(MainAxisSize::Max)
                 .finish(),
         )
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
         .with_background(
             self.renderer
                 .default_styles

@@ -1,4 +1,5 @@
 use pathfinder_geometry::vector::vec2f;
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::color::ColorU;
 use warpui::elements::{
     Align, Border, ChildAnchor, ChildView, ConstrainedBox, Container, CornerRadius,
@@ -17,7 +18,7 @@ use crate::appearance::Appearance;
 use crate::themes::theme::Fill;
 use crate::ui_components::{blended_colors, icons};
 
-pub const MODAL_CORNER_RADIUS: Radius = Radius::Pixels(8.);
+pub const MODAL_CORNER_RADIUS: Radius = RADIUS_MD;
 pub const MODAL_WIDTH: f32 = 440.;
 pub const MODAL_HEADER_HEIGHT: f32 = 70.;
 pub const MODAL_PADDING: f32 = 28.;

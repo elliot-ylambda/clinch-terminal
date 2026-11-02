@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use fuzzy_match::match_indices_case_insensitive;
 use lazy_static::lazy_static;
@@ -105,7 +106,7 @@ const ENV_DROPDOWN_WIDTH: f32 = 190.;
 
 const CARD_ROW_SPACING: f32 = 8.;
 const CARD_CONTENT_PADDING: f32 = 12.;
-const CARD_BORDER_RADIUS: f32 = 4.;
+const CARD_BORDER_RADIUS: f32 = 6.;
 const CARD_MARGIN_BOTTOM: f32 = 8.;
 
 const BUTTON_SIZE: f32 = 20.;
@@ -1585,7 +1586,7 @@ impl AgentManagementView {
             .with_background(theme.surface_1())
             .with_border(Border::all(1.).with_border_fill(theme.surface_2()))
             .with_uniform_padding(12.)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .finish()
     }
 
@@ -1674,7 +1675,7 @@ impl AgentManagementView {
                     Hoverable::new(card_state.action_buttons_hover_state.clone(), |_| {
                         Container::new(ChildView::new(&card_state.action_buttons_view).finish())
                             .with_background(theme.surface_3())
-                            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+                            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                             .with_uniform_padding(4.)
                             .with_drop_shadow(DropShadow {
                                 color: ColorU::new(0, 0, 0, 77),
@@ -2088,7 +2089,7 @@ impl AgentManagementView {
                             .with_right(8.),
                     )
                     .with_border(Border::all(1.).with_border_fill(theme.outline()))
-                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                    .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                     .finish(),
             )
             .with_height(30.)

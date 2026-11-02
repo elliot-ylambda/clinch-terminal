@@ -5,6 +5,7 @@ use std::ops::{Deref, Range, RangeInclusive};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use enum_iterator::Sequence;
 use itertools::Itertools;
@@ -20,8 +21,7 @@ use warpui::elements::new_scrollable::{NewScrollableElement, ScrollableAxis};
 use warpui::elements::{
     Axis, Border, ChildAnchor, ClippedScrollStateHandle, ConstrainedBox, Container, CornerRadius,
     Hoverable, Icon, MouseStateHandle, OffsetPositioning, ParentAnchor, ParentElement,
-    ParentOffsetBounds, Point, Radius, SavePosition, ScrollData, ScrollableElement, Stack, Text,
-    ZIndex,
+    ParentOffsetBounds, Point, SavePosition, ScrollData, ScrollableElement, Stack, Text, ZIndex,
 };
 use warpui::event::{DispatchedEvent, KeyState, ModifiersState};
 use warpui::fonts::{FamilyId, Properties, Weight};
@@ -1134,11 +1134,11 @@ impl BlockListElement {
         if self.snackbar_header_state.show_snackbar {
             // Snackbar expanded. Show collapse button attached to bottom of snackbar.
             snackbar_toggle_icon = UIIcon::Icon::ChevronUp;
-            rounded_corners = CornerRadius::with_top(Radius::Pixels(8.));
+            rounded_corners = CornerRadius::with_top(RADIUS_MD);
         } else {
             // Snackbar collapsed. Show expand button attached to top of blocklist.
             snackbar_toggle_icon = UIIcon::Icon::ChevronDown;
-            rounded_corners = CornerRadius::with_bottom(Radius::Pixels(8.));
+            rounded_corners = CornerRadius::with_bottom(RADIUS_MD);
         };
         let icon = Container::new(
             ConstrainedBox::new(Icon::new(snackbar_toggle_icon.into(), icon_color).finish())
@@ -4201,7 +4201,7 @@ impl Element for BlockListElement {
                                     block_menu_rect_size,
                                 ))
                                 .with_background(self.warp_theme.surface_1())
-                                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)));
+                                .with_corner_radius(CornerRadius::with_all(RADIUS_SM));
                         } else if prompt_max_x > bookmark_button_origin.x()
                             || prompt_max_x > filter_button_origin.x()
                             || display_rprompt
@@ -4228,7 +4228,7 @@ impl Element for BlockListElement {
                                     background_rect_size,
                                 ))
                                 .with_background(self.warp_theme.surface_1())
-                                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)));
+                                .with_corner_radius(CornerRadius::with_all(RADIUS_SM));
                         }
                     }
 
@@ -4870,7 +4870,7 @@ where
     F: 'static + FnMut(&mut EventContext, &AppContext, Vector2F),
 {
     let mut button = Hoverable::new(mouse_state, |state| {
-        let mut container = icon.with_corner_radius(CornerRadius::with_all(Radius::Pixels(5.)));
+        let mut container = icon.with_corner_radius(CornerRadius::with_all(RADIUS_SM));
 
         container = if state.is_clicked() || state.is_hovered() {
             container.with_background(theme.surface_2())

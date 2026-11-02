@@ -3,6 +3,7 @@
 use markdown_parser::{FormattedText, FormattedTextFragment, FormattedTextLine};
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::AnsiColorIdentifier;
+use warp_core::ui::tokens::RADIUS_MD;
 use warp_core::ui::Icon;
 use warpui::elements::shimmering_text::ShimmeringTextStateHandle;
 use warpui::elements::{
@@ -11,7 +12,7 @@ use warpui::elements::{
     SelectableArea, SelectionHandle, Text,
 };
 use warpui::fonts::{Properties, Weight};
-use warpui::prelude::{CornerRadius, Radius};
+use warpui::prelude::CornerRadius;
 use warpui::text_layout::TextAlignment;
 use warpui::ui_components::button::ButtonVariant;
 use warpui::ui_components::components::UiComponent;
@@ -278,7 +279,7 @@ pub fn render_cloud_mode_error_screen(
     let error_container = Container::new(content)
         .with_background(error_background)
         .with_border(Border::all(1.).with_border_color(error_color.into()))
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .with_horizontal_padding(24.)
         .with_vertical_padding(16.)
         .finish();
@@ -368,7 +369,7 @@ pub fn render_cloud_mode_github_auth_required_screen(
     let auth_container = Container::new(content)
         .with_background(auth_background)
         .with_border(Border::all(1.).with_border_color(border_color))
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .with_horizontal_padding(24.)
         .with_vertical_padding(16.)
         .finish();
@@ -442,7 +443,7 @@ pub fn render_cloud_mode_cancelled_screen(appearance: &Appearance) -> Box<dyn El
     let cancelled_container = Container::new(content)
         .with_background(cancelled_background)
         .with_border(Border::all(1.).with_border_color(border_color))
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .with_horizontal_padding(24.)
         .with_vertical_padding(16.)
         .finish();

@@ -1,4 +1,5 @@
 use std::sync::{Arc, Mutex};
+use warp_core::ui::tokens::RADIUS_SM;
 
 use ::settings::{Setting, ToggleableSetting};
 use lazy_static::lazy_static;
@@ -341,7 +342,7 @@ impl AccountWidget {
         let button_styles = UiComponentStyles {
             font_size: Some(14.),
             font_weight: Some(Weight::Semibold),
-            border_radius: Some(CornerRadius::with_all(Radius::Pixels(4.))),
+            border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
             padding: Some(Coords {
                 top: 12.,
                 bottom: 12.,

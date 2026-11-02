@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use warp_core::ui::tokens::RADIUS_SM;
 
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::icons::Icon;
@@ -184,7 +185,7 @@ impl Key {
                 .finish(),
             )
             .with_padding(Padding::uniform(options.sizing.padding))
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(3.)));
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM));
             if let Some(border_fill) = options.border_fill {
                 container =
                     container.with_border(Border::all(border_width).with_border_fill(border_fill));

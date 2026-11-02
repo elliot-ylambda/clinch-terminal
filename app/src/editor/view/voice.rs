@@ -3,6 +3,7 @@ use voice_input::{StartListeningError, VoiceInput, VoiceSessionResult};
 use warp_core::send_telemetry_from_ctx;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::AnsiColorIdentifier;
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::elements::{Container, CornerRadius, Icon, Radius};
 use warpui::platform::Cursor;
 use warpui::r#async::SpawnedFutureHandle;
@@ -118,7 +119,7 @@ impl EditorView {
                 )
                 .with_background(Fill::Solid(appearance.theme().accent().into()))
                 .with_uniform_padding(4.)
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                 .finish(),
             )
         } else {

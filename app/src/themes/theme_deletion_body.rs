@@ -22,7 +22,7 @@ use crate::{send_telemetry_from_ctx, user_config};
 
 const BUTTON_PADDING: f32 = 12.;
 const BUTTON_FONT_SIZE: f32 = 14.;
-const BUTTON_BORDER_RADIUS: f32 = 4.;
+const BUTTON_BORDER_RADIUS: f32 = 6.;
 const BORDER_WIDTH: f32 = 1.;
 
 const MODAL_SUBHEADER: &str = "This will permanently delete the theme.";

@@ -1,7 +1,8 @@
 use pathfinder_geometry::vector::vec2f;
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::elements::{
     Align, Border, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Flex, Highlight,
-    ParentElement, Radius, Shrinkable, Wrap,
+    ParentElement, Shrinkable, Wrap,
 };
 use warpui::fonts::{Properties, Weight};
 use warpui::ui_components::components::{UiComponent, UiComponentStyles};
@@ -124,7 +125,7 @@ fn render_current_session_pill(
         .with_margin_left(10.)
         .with_margin_right(8.)
         .with_background_color(appearance.theme().background().into_solid())
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
         .finish();
 
     Shrinkable::new(

@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use indexmap::IndexMap;
 use pathfinder_color::ColorU;
@@ -659,7 +660,7 @@ impl CommentListView {
 
         let mut outdated_section = Container::new(outdated_column.finish())
             .with_border(Border::all(1.).with_border_fill(Fill::Solid(yellow_border)))
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .with_margin_bottom(8.);
         if !is_collapsed {
             outdated_section = outdated_section.with_padding_bottom(8.)
@@ -726,7 +727,7 @@ impl CommentListView {
                         .with_border(Border::bottom(1.).with_border_color(yellow_border));
                 }
 
-                let radius = Radius::Pixels(4.);
+                let radius = RADIUS_SM;
                 let header_corners = if is_collapsed {
                     CornerRadius::with_all(radius)
                 } else {
@@ -760,7 +761,7 @@ impl CommentListView {
             .with_background(neutral_3(theme))
             .with_vertical_padding(8.)
             .with_horizontal_padding(16.)
-            .with_corner_radius(CornerRadius::with_top(Radius::Pixels(8.)))
+            .with_corner_radius(CornerRadius::with_top(RADIUS_MD))
             .with_border(
                 Border::new(1.)
                     .with_sides(
@@ -844,7 +845,7 @@ impl CommentListView {
                         .finish(),
                 )
                 .with_margin_right(8.)
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)));
+                .with_corner_radius(CornerRadius::with_all(RADIUS_SM));
 
                 let container = if mouse_state.is_hovered() {
                     container.with_background(theme.surface_3())

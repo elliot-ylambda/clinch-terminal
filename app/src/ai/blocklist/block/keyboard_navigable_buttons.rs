@@ -1,8 +1,9 @@
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::elements::{
     ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Empty, Flex, MainAxisAlignment,
-    MainAxisSize, MouseStateHandle, ParentElement, Radius, Shrinkable, Text,
+    MainAxisSize, MouseStateHandle, ParentElement, Shrinkable, Text,
 };
 use warpui::keymap::FixedBinding;
 use warpui::ui_components::button::{Button, ButtonVariant};
@@ -200,7 +201,7 @@ fn build_rich_navigation_label(
         Container::new(enter_icon)
             .with_uniform_padding(ENTER_KEY_PADDING)
             .with_background(internal_colors::fg_overlay_1(theme))
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .finish()
     } else {
         // Invisible spacer matching the enter indicator dimensions.
@@ -237,7 +238,7 @@ pub fn rich_navigation_button<A: warpui::Action + Clone + 'static>(
 
             let base_style = UiComponentStyles {
                 font_size: Some(font_size),
-                border_radius: Some(CornerRadius::with_all(Radius::Pixels(4.))),
+                border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
                 ..UiComponentStyles::default()
             };
 

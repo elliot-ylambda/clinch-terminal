@@ -1,4 +1,5 @@
-use warpui::elements::{CornerRadius, Fill as UiFill, Radius};
+use warp_core::ui::tokens::RADIUS_SM;
+use warpui::elements::{CornerRadius, Fill as UiFill};
 use warpui::presenter::ChildView;
 use warpui::ui_components::components::UiComponentStyles;
 use warpui::ui_components::segmented_control::{
@@ -109,7 +110,7 @@ fn markdown_toggle_styles(app: &AppContext) -> UiComponentStyles {
     UiComponentStyles {
         font_family_id: Some(appearance.ui_font_family()),
         font_size: Some(appearance.ui_font_size()),
-        border_radius: Some(CornerRadius::with_all(Radius::Pixels(4.0))),
+        border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
         border_width: Some(1.0),
         border_color: Some(UiFill::Solid(theme.surface_3().into())),
         background: Some(UiFill::Solid(theme.background().into())),

@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::rc::Rc;
 use std::sync::Arc;
+use warp_core::ui::tokens::RADIUS_MD;
 
 use fuzzy_match::{match_indices_case_insensitive, FuzzyMatchResult};
 use instant::Instant;
@@ -121,8 +122,8 @@ const ENV_SIDE_CAR_ROW_GAP: f32 = 8.;
 const ENV_SIDE_CAR_ICON_LABEL_GAP: f32 = 4.;
 const ENV_SIDE_CAR_ICON_SIZE: f32 = 12.;
 const ENV_SIDE_CAR_COPY_BUTTON_SIZE: f32 = 16.;
-const ENV_SIDE_CAR_OUTER_RADIUS: f32 = 6.;
-const ENV_SIDE_CAR_INNER_RADIUS: f32 = 4.;
+const ENV_SIDE_CAR_OUTER_RADIUS: f32 = 10.;
+const ENV_SIDE_CAR_INNER_RADIUS: f32 = 6.;
 
 pub fn init(app: &mut AppContext) {
     use warpui::keymap::macros::*;
@@ -1348,7 +1349,7 @@ impl View for DisplayChipMenu {
         // Create vertical flex container for main content + search input + sticky fixed footer option
         let mut main_container = Flex::column();
 
-        let border_radius = Radius::Pixels(6.);
+        let border_radius = RADIUS_MD;
 
         match self.chip_menu_type {
             ChipMenuType::Environments => {

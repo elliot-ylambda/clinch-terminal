@@ -5,7 +5,6 @@ use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::vec2f;
 use uuid::Uuid;
 use warp_core::ui::builder::UiBuilder;
-use warp_core::ui::theme::color::internal_colors;
 use warpui::elements::{
     Border, ChildAnchor, ChildView, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment,
     DispatchEventResult, EventHandler, Flex, Hoverable, Icon, MainAxisAlignment, MainAxisSize,
@@ -26,7 +25,7 @@ use crate::appearance::Appearance;
 use crate::themes::theme::Fill;
 
 const TOAST_WIDTH: f32 = 464.;
-const TOAST_CORNER_RADIUS: f32 = 4.;
+const TOAST_CORNER_RADIUS: f32 = 6.;
 const TEXT_MARGIN: f32 = 16.;
 const VERTICAL_PADDING: f32 = 8.;
 const HORIZONTAL_PADDING: f32 = 12.;
@@ -406,7 +405,7 @@ impl<A: Action + Clone> DismissibleToast<A> {
                     .wrappable_text(self.main_text.clone(), true)
                     .with_style(UiComponentStyles {
                         font_size: Some(appearance.ui_font_size() * 1.2),
-                        font_color: Some(self.flavor.text_color(appearance)),
+                        font_color: Some(appearance.tokens().text_1),
                         ..Default::default()
                     })
                     .build()
@@ -423,11 +422,9 @@ impl<A: Action + Clone> DismissibleToast<A> {
         if let Some(link) = &self.link {
             right_aligned.add_child(
                 Container::new(
-                    ConstrainedBox::new(
-                        link.render(ui_builder, self.flavor.text_color(appearance)),
-                    )
-                    .with_max_width(TOAST_WIDTH / 3.)
-                    .finish(),
+                    ConstrainedBox::new(link.render(ui_builder, appearance.tokens().text_1))
+                        .with_max_width(TOAST_WIDTH / 3.)
+                        .finish(),
                 )
                 .with_margin_left(TEXT_MARGIN)
                 .finish(),
@@ -459,11 +456,14 @@ impl<A: Action + Clone> DismissibleToast<A> {
             let toast_container = Container::new(row.finish())
                 .with_vertical_padding(VERTICAL_PADDING)
                 .with_horizontal_padding(HORIZONTAL_PADDING)
-                .with_background(self.flavor.bg_color(appearance))
+                .with_background(Fill::Solid(appearance.tokens().surface_overlay))
                 .with_corner_radius(warpui::elements::CornerRadius::with_all(Radius::Pixels(
                     TOAST_CORNER_RADIUS,
                 )))
-                .with_border(Border::all(1.).with_border_fill(self.flavor.border_color(appearance)))
+                .with_border(
+                    Border::all(1.).with_border_fill(Fill::Solid(appearance.tokens().hairline)),
+                )
+                .with_drop_shadow(appearance.tokens().overlay_shadow())
                 .finish();
 
             let toast_element: Box<dyn Element> = if is_clickable {
@@ -501,7 +501,7 @@ impl<A: Action + Clone> DismissibleToast<A> {
     fn render_icon(&self, icon_size: f32, appearance: &Appearance) -> Option<Box<dyn Element>> {
         self.flavor.icon_path().map(|path| {
             Container::new(
-                ConstrainedBox::new(Icon::new(path, self.flavor.text_color(appearance)).finish())
+                ConstrainedBox::new(Icon::new(path, appearance.tokens().text_1).finish())
                     .with_max_height(icon_size)
                     .with_max_width(icon_size)
                     .finish(),
@@ -522,10 +522,10 @@ impl<A: Action + Clone> DismissibleToast<A> {
                 .close_button(CLOSE_BUTTON_SIZE, self.close_button_mouse_state.clone())
                 .with_style(UiComponentStyles {
                     font_color: Some(appearance.theme().foreground().into()),
-                    background: Some(ToastFlavor::Default.bg_color(appearance).into()),
+                    background: Some(Fill::Solid(appearance.tokens().surface_overlay).into()),
                     border_radius: Some(CornerRadius::with_all(Radius::Percentage(50.))),
                     border_width: Some(1.),
-                    border_color: Some(ToastFlavor::Default.border_color(appearance).into()),
+                    border_color: Some(Fill::Solid(appearance.tokens().hairline).into()),
                     padding: Some(Coords {
                         top: 2.,
                         bottom: 2.,
@@ -544,8 +544,8 @@ impl<A: Action + Clone> DismissibleToast<A> {
     }
 }
 
-/// Represents the type of toast. Controls color and icon in order to communicate success, error,
-/// etc.
+/// Represents the type of toast. Every flavor shares one toast style; the flavor shows only in the
+/// icon, to communicate success, error, etc.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ToastFlavor {
     Default,
@@ -559,32 +559,6 @@ impl ToastFlavor {
             Self::Default => None,
             Self::Success => Some(SUCCESS_ICON_PATH),
             Self::Error => Some(ERROR_ICON_PATH),
-        }
-    }
-
-    fn text_color(&self, appearance: &Appearance) -> ColorU {
-        let theme = appearance.theme();
-        match self {
-            ToastFlavor::Default => theme.main_text_color(theme.background()).into(),
-            _ => theme.background().into(),
-        }
-    }
-
-    fn bg_color(&self, appearance: &Appearance) -> Fill {
-        let theme = appearance.theme();
-        match self {
-            Self::Default => internal_colors::neutral_4(theme).into(),
-            Self::Success => theme.ansi_fg_green().into(),
-            Self::Error => theme.ansi_fg_red().into(),
-        }
-    }
-
-    fn border_color(&self, appearance: &Appearance) -> Fill {
-        let theme = appearance.theme();
-        match self {
-            ToastFlavor::Default => internal_colors::neutral_3(theme).into(),
-            ToastFlavor::Success => theme.ansi_bg_green().into(),
-            ToastFlavor::Error => theme.ansi_bg_red().into(),
         }
     }
 }

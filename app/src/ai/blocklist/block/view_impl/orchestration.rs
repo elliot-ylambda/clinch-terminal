@@ -2,9 +2,10 @@
 
 use markdown_parser::{FormattedText, FormattedTextFragment, FormattedTextLine};
 use pathfinder_color::ColorU;
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::elements::{
     ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Empty, Flex, FormattedTextElement,
-    Hoverable, MouseStateHandle, ParentElement, Radius, Shrinkable, Text,
+    Hoverable, MouseStateHandle, ParentElement, Shrinkable, Text,
 };
 use warpui::platform::Cursor;
 use warpui::{AppContext, Element, SingletonEntity};
@@ -471,7 +472,7 @@ pub(super) fn render_send_message(
                 )
                 .with_agent_output_item_spacing(app)
                 .with_background_color(blended_colors::neutral_2(theme))
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                 .finish();
             }
             SendMessageToAgentResult::Cancelled => {
@@ -488,7 +489,7 @@ pub(super) fn render_send_message(
                 )
                 .with_agent_output_item_spacing(app)
                 .with_background_color(blended_colors::neutral_2(theme))
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                 .finish();
             }
         };
@@ -549,7 +550,7 @@ pub(super) fn render_send_message(
         .finish()
         .with_agent_output_item_spacing(app)
         .with_background_color(blended_colors::neutral_2(theme))
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .finish()
 }
 
@@ -662,7 +663,7 @@ pub(super) fn render_start_agent(
             .finish()
             .with_agent_output_item_spacing(app)
             .with_background_color(blended_colors::neutral_2(theme))
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .finish();
     }
 
@@ -721,7 +722,7 @@ pub(super) fn render_start_agent(
         .finish()
         .with_agent_output_item_spacing(app)
         .with_background_color(blended_colors::neutral_2(theme))
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .finish()
 }
 

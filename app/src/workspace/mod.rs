@@ -41,6 +41,7 @@ pub use view::{
     PANEL_HEADER_HEIGHT, TAB_BAR_HEIGHT, TOTAL_TAB_BAR_HEIGHT, WORKSPACE_PADDING,
 };
 use warp_core::context_flag::ContextFlag;
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::accessibility::AccessibilityVerbosity;
 use warpui::elements::DropTargetData;
 use warpui::keymap::{BindingDescription, EditableBinding, FixedBinding};
@@ -59,7 +60,7 @@ use crate::{code, modal, notebooks, tab_configs};
 
 // Helper function to access panel header corner radius from other modules
 pub fn panel_header_corner_radius() -> warpui::elements::CornerRadius {
-    warpui::elements::CornerRadius::with_top(warpui::elements::Radius::Pixels(8.))
+    warpui::elements::CornerRadius::with_top(RADIUS_MD)
 }
 
 /// The hairline that separates the window's chrome surfaces from each other.

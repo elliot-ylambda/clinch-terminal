@@ -4,10 +4,10 @@ use pathfinder_geometry::rect::RectF;
 use pathfinder_geometry::vector::Vector2F;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::{Fill, WarpTheme};
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::elements::{
     Align, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Flex, FormattedTextElement,
-    HighlightedHyperlink, Icon, MouseStateHandle, ParentElement, Radius, Rect, Shrinkable, Stack,
-    Text,
+    HighlightedHyperlink, Icon, MouseStateHandle, ParentElement, Rect, Shrinkable, Stack, Text,
 };
 use warpui::fonts::{FamilyId, Properties, Weight};
 use warpui::ui_components::components::{UiComponent as _, UiComponentStyles};
@@ -119,7 +119,7 @@ pub fn build_command_row(
     row.add_child(Shrinkable::new(1., text).finish());
 
     Container::new(row.finish())
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .with_background_color(theme.background().into_solid())
         .with_vertical_padding(12.)
         .with_horizontal_padding(16.)

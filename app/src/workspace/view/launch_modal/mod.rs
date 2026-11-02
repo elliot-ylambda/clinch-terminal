@@ -3,6 +3,7 @@ pub mod cta_button;
 pub mod oz_launch;
 
 use std::collections::HashMap;
+use warp_core::ui::tokens::{RADIUS_LG, RADIUS_SM};
 
 use markdown_parser::{parse_markdown, FormattedText, FormattedTextLine};
 // Re-export slide types for convenience
@@ -15,7 +16,7 @@ use warpui::elements::{
     Align, Border, CacheOption, ChildAnchor, Clipped, ConstrainedBox, Container, CornerRadius,
     CrossAxisAlignment, DropShadow, Empty, Expanded, Flex, FormattedTextElement,
     HighlightedHyperlink, Hoverable, HyperlinkLens, Image, MainAxisAlignment, MainAxisSize,
-    MouseStateHandle, OffsetPositioning, ParentAnchor, ParentElement, ParentOffsetBounds, Radius,
+    MouseStateHandle, OffsetPositioning, ParentAnchor, ParentElement, ParentOffsetBounds,
     Shrinkable, SizeConstraintCondition, SizeConstraintSwitch, Stack,
 };
 use warpui::fonts::Weight;
@@ -302,7 +303,7 @@ impl<S: Slide> LaunchModal<S> {
             let mut container = Container::new(Align::new(label.finish()).left().finish())
                 .with_horizontal_padding(12.)
                 .with_vertical_padding(8.)
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                 .with_background(blended_colors::neutral_1(theme));
 
             if slide == self.slide {
@@ -457,7 +458,7 @@ impl<S: Slide> LaunchModal<S> {
                 Clipped::new(
                     ConstrainedBox::new(
                         Image::new(self.slide.image(), CacheOption::Original)
-                            .with_corner_radius(CornerRadius::with_top_right(Radius::Pixels(10.)))
+                            .with_corner_radius(CornerRadius::with_top_right(RADIUS_LG))
                             .cover()
                             .finish(),
                     )
@@ -477,7 +478,7 @@ impl<S: Slide> LaunchModal<S> {
                         .with_border(
                             Border::left(1.).with_border_color(blended_colors::neutral_4(theme)),
                         )
-                        .with_corner_radius(CornerRadius::with_bottom_right(Radius::Pixels(10.)))
+                        .with_corner_radius(CornerRadius::with_bottom_right(RADIUS_LG))
                         .finish(),
                 )
                 .finish(),
@@ -599,7 +600,7 @@ impl<S: Slide> View for LaunchModal<S> {
                 .finish(),
         )
         .with_background_color(blended_colors::neutral_1(theme))
-        .with_corner_radius(CornerRadius::with_left(Radius::Pixels(10.)))
+        .with_corner_radius(CornerRadius::with_left(RADIUS_LG))
         .with_uniform_padding(24.)
         .finish();
 
@@ -642,7 +643,7 @@ impl<S: Slide> View for LaunchModal<S> {
                 .with_min_height(MIN_MODAL_HEIGHT)
                 .finish(),
             )
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(10.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_LG))
             .with_border(Border::all(1.).with_border_fill(theme.outline()))
             .with_drop_shadow(DropShadow::default())
             .finish(),

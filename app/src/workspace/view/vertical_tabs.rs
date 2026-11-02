@@ -4,6 +4,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use warp_core::ui::tokens::RADIUS_SM;
 
 use languages::language_by_local_filename;
 use pathfinder_color::ColorU;
@@ -129,7 +130,7 @@ const PIN_INDICATOR_ICON_SIZE: f32 = 16.;
 const PIN_INDICATOR_CORNER_INSET: f32 = 6.;
 const GROUP_ACTION_BUTTON_PADDING: f32 = 2.;
 const GROUP_ACTION_BUTTON_GAP: f32 = 2.;
-const ROW_CORNER_RADIUS: f32 = 4.;
+const ROW_CORNER_RADIUS: f32 = 6.;
 /// Active-tab accent "spine": a short brand-accent bar pinned to the focused tab's left edge.
 /// This is the single place the brand accent appears in the rail — kept deliberately small.
 const ACTIVE_TAB_SPINE_WIDTH: f32 = 3.;
@@ -141,7 +142,7 @@ const TAB_GROUP_CONTENT_INSET: f32 = 4.;
 const BADGE_ICON_SIZE: f32 = 12.;
 const DETAIL_SIDECAR_DEFAULT_WIDTH: f32 = 320.;
 const DETAIL_SIDECAR_MIN_WIDTH: f32 = 240.;
-const DETAIL_SIDECAR_CORNER_RADIUS: f32 = 4.;
+const DETAIL_SIDECAR_CORNER_RADIUS: f32 = 6.;
 /// Fixed height of the metadata row (line 3 in expanded mode). Matches the passive badge height
 /// so the row doesn't resize when badges are toggled.
 const METADATA_ROW_HEIGHT: f32 = BADGE_ICON_SIZE + 2.;
@@ -1693,7 +1694,7 @@ const CONTROL_BAR_VERTICAL_PADDING: f32 = 4.;
 const CONTROL_BAR_SPACING: f32 = 4.;
 const SEARCH_ICON_SIZE: f32 = 12.;
 const SEARCH_BAR_HEIGHT: f32 = 24.;
-const CONTROL_BAR_BUTTON_RADIUS: Radius = Radius::Pixels(4.);
+const CONTROL_BAR_BUTTON_RADIUS: Radius = RADIUS_SM;
 const SPLIT_BUTTON_HEIGHT: f32 = SEARCH_BAR_HEIGHT;
 pub(super) const VERTICAL_TABS_ADD_TAB_POSITION_ID: &str = "vertical_tabs_add_tab_button";
 pub(super) const VERTICAL_TABS_SETTINGS_BUTTON_POSITION_ID: &str = "vertical_tabs_settings_button";
@@ -3966,7 +3967,7 @@ fn render_group_action_buttons(
                 .finish(),
         )
         .with_padding(Padding::uniform(GROUP_ACTION_BUTTON_PADDING))
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)));
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM));
         if is_menu_open || button_state.is_hovered() {
             container = container.with_background(internal_colors::fg_overlay_2(theme));
         }
@@ -3989,7 +3990,7 @@ fn render_group_action_buttons(
                 .finish(),
         )
         .with_padding(Padding::uniform(GROUP_ACTION_BUTTON_PADDING))
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)));
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM));
         if button_state.is_hovered() {
             container = container.with_background(internal_colors::fg_overlay_3(theme));
         }
@@ -4015,7 +4016,7 @@ fn render_group_action_buttons(
             .with_background(ThemeFill::Solid(internal_colors::neutral_3(theme)))
             .with_border(Border::all(1.).with_border_fill(ThemeFill::Solid(belt_border_color)))
             .with_padding(Padding::uniform(GROUP_ACTION_BUTTON_PADDING))
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .finish()
     })
     .with_defer_events_to_children()
@@ -4072,7 +4073,7 @@ fn render_tab_group_header_icon_button(
                 .finish(),
         )
         .with_padding(Padding::uniform(GROUP_ACTION_BUTTON_PADDING))
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)));
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM));
         if button_state.is_hovered() {
             container = container.with_background(hover_background);
         }
@@ -6933,7 +6934,7 @@ fn render_badge_container(content: Box<dyn Element>, background: ThemeFill) -> B
     Container::new(content)
         .with_padding(Padding::uniform(1.).with_left(4.).with_right(4.))
         .with_background(background)
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(3.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
         .finish()
 }
 
@@ -7121,7 +7122,7 @@ pub(super) fn render_settings_popup(
     state: &VerticalTabsPanelState,
     app: &AppContext,
 ) -> Box<dyn Element> {
-    const SETTINGS_POPUP_CORNER_RADIUS: f32 = 6.;
+    const SETTINGS_POPUP_CORNER_RADIUS: f32 = 10.;
     const SETTINGS_POPUP_MENU_ITEM_FONT_SIZE: f32 = 12.;
 
     let appearance = Appearance::as_ref(app);
@@ -7791,7 +7792,7 @@ fn render_popup_segment(
             .finish(),
         )
         .with_background(background)
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
         .with_vertical_padding(2.)
         .finish()
     })
@@ -7831,7 +7832,7 @@ fn render_popup_text_segment(
             .finish(),
         )
         .with_background(background)
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
         .with_vertical_padding(2.)
         .finish()
     })
@@ -8028,8 +8029,8 @@ fn render_detail_badge(
             .finish(),
     );
 
-    let mut badge = Container::new(content.finish())
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(3.)));
+    let mut badge =
+        Container::new(content.finish()).with_corner_radius(CornerRadius::with_all(RADIUS_SM));
     if let Some(background) = background {
         badge = badge
             .with_padding(Padding::uniform(2.).with_left(6.).with_right(6.))
@@ -8070,7 +8071,7 @@ fn render_detail_status_pill(
     )
     .with_padding(Padding::uniform(2.).with_left(4.).with_right(4.))
     .with_background(ThemeFill::Solid(coloru_with_opacity(color, 10)))
-    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(2.)))
+    .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
     .finish()
 }
 

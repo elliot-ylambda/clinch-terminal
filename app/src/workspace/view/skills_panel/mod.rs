@@ -2,6 +2,7 @@ mod catalog;
 mod grouping;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use warp_core::ui::tokens::RADIUS_SM;
 
 use catalog::{catalog_for_subtab, group_catalog_skills, CatalogGroup, CatalogSkill};
 pub(crate) use grouping::{group_skills_by_scope, SkillsSubtab};
@@ -12,7 +13,7 @@ use warpui::elements::new_scrollable::{NewScrollable, ScrollableAppearance, Sing
 use warpui::elements::{
     ChildView, ClippedScrollStateHandle, ConstrainedBox, Container, CornerRadius,
     CrossAxisAlignment, Element, Fill, Flex, Hoverable, MainAxisSize, MouseStateHandle,
-    ParentElement, Radius, ScrollbarWidth, Shrinkable, Text,
+    ParentElement, ScrollbarWidth, Shrinkable, Text,
 };
 use warpui::platform::Cursor;
 use warpui::text_layout::ClipConfig;
@@ -351,7 +352,7 @@ fn subtab_control_styles(app: &AppContext) -> UiComponentStyles {
     UiComponentStyles {
         font_family_id: Some(appearance.ui_font_family()),
         font_size: Some(appearance.ui_font_size()),
-        border_radius: Some(CornerRadius::with_all(Radius::Pixels(4.0))),
+        border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
         border_width: Some(1.0),
         border_color: Some(Fill::Solid(theme.surface_3().into())),
         background: Some(Fill::Solid(theme.background().into())),

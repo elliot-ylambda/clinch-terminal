@@ -5,6 +5,7 @@
 
 use markdown_parser::{FormattedText, FormattedTextFragment, FormattedTextLine};
 use warp_core::ui::theme::{AnsiColorIdentifier, Fill};
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::elements::new_scrollable::SingleAxisConfig;
 use warpui::elements::{
     Align, Border, ChildView, ClippedScrollStateHandle, ConstrainedBox, Container, CornerRadius,
@@ -251,7 +252,7 @@ impl FirstTimeCloudAgentSetupView {
         )
         .with_horizontal_padding(FORM_PADDING)
         .with_vertical_padding(12.)
-        .with_corner_radius(CornerRadius::with_top(Radius::Pixels(8.)))
+        .with_corner_radius(CornerRadius::with_top(RADIUS_MD))
         .with_background(blue_overlay)
         .finish()
     }
@@ -277,7 +278,7 @@ impl FirstTimeCloudAgentSetupView {
         );
 
         Container::new(card_content.finish())
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .with_background_color(card_bg)
             .with_border(Border::all(1.).with_border_color(card_bg))
             .finish()

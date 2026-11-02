@@ -1,6 +1,7 @@
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::elements::{
     Border, Container, CornerRadius, CrossAxisAlignment, Expanded, Flex, Hoverable,
-    MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement, Radius,
+    MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement,
 };
 use warpui::keymap::macros::*;
 use warpui::keymap::{FixedBinding, Keystroke};
@@ -214,7 +215,7 @@ impl<T: 'static> View for ToggleableItemsView<T> {
                 Container::new(row_inner)
                     .with_horizontal_padding(12.)
                     .with_vertical_padding(8.)
-                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                    .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                     .with_border(Border::all(1.).with_border_fill(row_border_color))
                     .finish()
             })
