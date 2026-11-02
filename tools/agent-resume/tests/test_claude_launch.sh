@@ -49,8 +49,9 @@ grep -q '^WARP_AGENT_RESUME_TEST_UNRELATED=preserved$' "$TMP/last_env" \
   || { echo "FAIL: claude wrapper stripped unrelated env"; exit 1; }
 
 # Run the pre-URL cases without a pane uuid so no cloud-URL registry lookup interferes
-# (this test may itself run inside a Clinch pane).
-unset WARP_TERMINAL_SESSION_UUID
+# (this test may itself run inside a Clinch pane, including a restored one, so restore flags
+# must not leak in either).
+unset WARP_TERMINAL_SESSION_UUID CLINCH_AGENT_RESTORE_EXACT CLINCH_AGENT_RESTORE_FRESH
 
 EHOME="$TMP/home"
 mkdir -p "$EHOME/.claude/projects/-tmp-repo"
@@ -65,6 +66,13 @@ HOME="$EHOME" clinch_agent_resume_resumable claude missing-1 && { echo "FAIL: mi
 rm -f "$TMP/last_args"
 HOME="$EHOME" clinch_agent_resume_launch claude good-1
 grep -q -- '--resume good-1' "$TMP/last_args" || { echo "FAIL: resumable session should resume"; exit 1; }
+
+# The restore flag guides this launch only; the restored agent and its shells must not inherit it.
+rm -f "$TMP/last_args"
+HOME="$EHOME" CLINCH_AGENT_RESTORE_EXACT=1 clinch_agent_resume_launch claude good-1
+grep -q -- '--resume good-1' "$TMP/last_args" || { echo "FAIL: exact restore should resume"; exit 1; }
+grep -q '^CLINCH_AGENT_RESTORE_EXACT=' "$TMP/last_env" \
+  && { echo "FAIL: restore flag leaked into the agent's environment"; exit 1; }
 
 # Legacy registry commands still work, but all status text comes from the Clinch launcher.
 rm -f "$TMP/last_args"
