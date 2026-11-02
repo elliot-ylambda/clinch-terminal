@@ -4,7 +4,7 @@ use warp_core::send_telemetry_from_ctx;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::AnsiColorIdentifier;
 use warp_core::ui::tokens::RADIUS_MD;
-use warpui::elements::{Container, CornerRadius, Icon, Radius};
+use warpui::elements::{Container, CornerRadius, Icon};
 use warpui::platform::Cursor;
 use warpui::r#async::SpawnedFutureHandle;
 use warpui::ui_components::button::ButtonTooltipPosition;

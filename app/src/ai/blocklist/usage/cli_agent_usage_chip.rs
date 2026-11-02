@@ -52,14 +52,10 @@ pub(super) fn span(
     color: Fill,
     appearance: &Appearance,
 ) -> Box<dyn Element> {
-    Text::new_inline(
-        text.into(),
-        appearance.monospace_font_family(),
-        appearance.monospace_font_size(),
-    )
-    .with_color(color.into())
-    .with_line_height_ratio(appearance.line_height_ratio())
-    .finish()
+    Text::new_inline(text.into(), appearance.ui_font_family(), 11.)
+        .with_color(color.into())
+        .with_line_height_ratio(appearance.line_height_ratio())
+        .finish()
 }
 
 /// The plan gauges' clickable affordance ("Turn on" / "Retry"): accent

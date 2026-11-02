@@ -129,8 +129,6 @@ pub(crate) enum IconWithStatusVariant {
         /// status is present the circle uses the same badge geometry as agent icons.
         status: Option<ConversationStatus>,
     },
-    /// A pre-built icon element on an overlay background.
-    NeutralElement { icon_element: Box<dyn Element> },
     /// An Oz agent icon on the theme background.
     OzAgent {
         status: Option<ConversationStatus>,
@@ -223,11 +221,6 @@ pub(crate) fn render_icon_with_status_with_badge_style(
                 )
             }
         }
-        IconWithStatusVariant::NeutralElement { icon_element } => render_neutral_circle(
-            icon_element,
-            internal_colors::fg_overlay_2(theme),
-            total_size,
-        ),
         IconWithStatusVariant::OzAgent { status, is_ambient } => {
             let circle_background = if is_ambient {
                 ThemeFill::Solid(OZ_AMBIENT_BACKGROUND_COLOR)

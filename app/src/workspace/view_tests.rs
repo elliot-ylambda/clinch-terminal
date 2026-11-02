@@ -612,9 +612,6 @@ pub(crate) fn initialize_app(app: &mut App) {
     app.add_singleton_model(|ctx| OrchestrationPillBarModel::new(Default::default(), ctx));
     app.add_singleton_model(|_| CLIAgentSessionsModel::new());
     app.add_singleton_model(crate::terminal::cli_agent_sessions::restore::AgentRestoreQueue::new);
-    app.add_singleton_model(
-        crate::terminal::cli_agent_sessions::attention_pulse::AgentAttentionPulse::new,
-    );
     // AutoContinueModel observes fresh usage snapshots as well as session
     // events, so both dependencies must be registered first. The test
     // constructor omits the keychain/HTTP producer thread.
@@ -1202,12 +1199,6 @@ fn remote_control_header_asks_for_a_pending_approval_first() {
 #[test]
 fn remote_control_header_uses_green_outline_with_muted_content() {
     let font_family_id = warpui::fonts::FamilyId(42);
-    let accent = ColorU {
-        r: 197,
-        g: 240,
-        b: 107,
-        a: 255,
-    };
     let muted_color = ColorU {
         r: 0x77,
         g: 0x77,
@@ -1215,16 +1206,14 @@ fn remote_control_header_uses_green_outline_with_muted_content() {
         a: 0xff,
     };
     let (default_styles, interactive_styles) =
-        remote_control_button_styles(font_family_id, muted_color, accent);
+        remote_control_button_styles(font_family_id, muted_color);
 
     assert_eq!(default_styles.font_family_id, Some(font_family_id));
     assert_eq!(interactive_styles.font_family_id, Some(font_family_id));
     assert_eq!(default_styles.font_color, Some(muted_color));
     assert_eq!(default_styles.font_size, Some(11.));
     assert_eq!(default_styles.width, None);
-    assert_eq!(default_styles.border_color, Some(accent.into()));
     assert_eq!(interactive_styles.font_color, Some(muted_color));
-    assert_eq!(interactive_styles.border_color, Some(accent.into()));
 }
 
 #[test]

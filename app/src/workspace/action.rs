@@ -404,7 +404,6 @@ pub enum WorkspaceAction {
     /// Toggles the vertical tabs panel. This happens as an explicit action from the user.
     ToggleVerticalTabsPanel,
     OpenVerticalTabsPanel,
-    ToggleVerticalTabsSettingsPopup,
     ToggleSidebarPopover(crate::workspace::view::vertical_tabs::SidebarPopover),
     RevealTabDetailCardAfterDelay,
     ToggleAutomaticWorktreeTabs,
@@ -1111,7 +1110,6 @@ impl WorkspaceAction {
             | ClosePanel
             | ToggleRightPanel
             | OpenCodeReviewPanel(..)
-            | ToggleVerticalTabsSettingsPopup
             | ToggleSidebarPopover(_)
             | RevealTabDetailCardAfterDelay
             | ToggleAutomaticWorktreeTabs

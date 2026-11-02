@@ -59,9 +59,9 @@ impl AgentIconFields {
                 status: status.clone(),
                 is_ambient: *is_ambient,
             }),
-            IconWithStatusVariant::Neutral { .. }
-            | IconWithStatusVariant::NeutralElement { .. }
-            | IconWithStatusVariant::CustomAvatar { .. } => None,
+            IconWithStatusVariant::Neutral { .. } | IconWithStatusVariant::CustomAvatar { .. } => {
+                None
+            }
         }
     }
 }

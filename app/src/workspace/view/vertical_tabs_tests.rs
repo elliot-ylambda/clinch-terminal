@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use pathfinder_geometry::rect::RectF;
 use pathfinder_geometry::vector::Vector2F;
 use warpui::elements::PositionedElementOffsetBounds;
@@ -8,23 +6,16 @@ use warpui::EntityId;
 use warp_core::ui::tokens::{StatusKind, Tokens};
 
 use super::{
-    coalesce_summary_branch_entries, code_detail_kind_label, detail_sidecar_width_and_bounds,
-    detail_target_for_hovered_row, drag_autoscroll_step, non_terminal_search_text_fragments,
-    pane_ids_for_display_granularity, pane_search_text_fragments, path_belongs_to_project,
-    preferred_agent_tab_titles, preferred_vertical_tab_title_override,
-    push_normalized_unique_summary_label, row_renames_pane, search_fragments_contain_query,
-    select_summary_pane_kind_icons, separate_title_indicator_kind,
-    should_keep_detail_sidecar_visible_for_mouse_position,
-    should_render_separate_activity_indicator, sort_summary_primary_labels_status_first,
-    status_blink_opacity, summary_overflow_count, summary_search_text_fragments,
-    tab_title_uses_header, terminal_command_status, terminal_kind_badge_label,
-    terminal_primary_line_data, terminal_pull_request_badge_label, terminal_search_text_fragments,
-    terminal_title_fallback_font, title_indicator_color, uses_outer_group_container,
-    visible_pane_ids_for_detail_target, vtab_diff_stats_text, AgentTabTextPreference,
-    SummaryPaneKind, SummaryPaneKindIcons, TerminalAgentText, TerminalPrimaryLineData,
-    TerminalPrimaryLineFont, TitleIndicatorKind, VerticalTabsDetailTarget,
-    VerticalTabsDetailTargetKind, VerticalTabsSummaryBranchEntry, VerticalTabsSummaryData,
-    VerticalTabsSummaryPrimaryLabel,
+    code_detail_kind_label, detail_sidecar_width_and_bounds, detail_target_for_hovered_row,
+    drag_autoscroll_step, non_terminal_search_text_fragments, pane_ids_for_display_granularity,
+    pane_search_text_fragments, path_belongs_to_project, preferred_agent_tab_titles,
+    preferred_vertical_tab_title_override, row_renames_pane, search_fragments_contain_query,
+    should_keep_detail_sidecar_visible_for_mouse_position, tab_title_uses_header,
+    terminal_command_status, terminal_kind_badge_label, terminal_primary_line_data,
+    terminal_pull_request_badge_label, terminal_search_text_fragments,
+    terminal_title_fallback_font, uses_outer_group_container, visible_pane_ids_for_detail_target,
+    vtab_diff_stats_text, AgentTabTextPreference, TerminalAgentText, TerminalPrimaryLineData,
+    TerminalPrimaryLineFont, VerticalTabsDetailTarget, VerticalTabsDetailTargetKind,
 };
 use crate::ai::agent::conversation::ConversationStatus;
 use crate::context_chips::display_chip::GitLineChanges;
@@ -35,13 +26,6 @@ use crate::terminal::view::TerminalViewState;
 use crate::terminal::CLIAgent;
 use crate::workspace::tab_settings::VerticalTabsDisplayGranularity;
 use crate::workspace::view::ProjectCliAgentActivity;
-
-fn label(text: &str) -> VerticalTabsSummaryPrimaryLabel {
-    VerticalTabsSummaryPrimaryLabel {
-        text: text.to_string(),
-        status: None,
-    }
-}
 
 #[test]
 fn bookmarked_session_paths_are_scoped_to_the_current_project() {
@@ -64,12 +48,6 @@ fn bookmarked_session_paths_are_scoped_to_the_current_project() {
 
 fn pane_id() -> PaneId {
     TerminalPaneId::dummy_terminal_pane_id().into()
-}
-
-fn code_summary_kind(title: &str) -> SummaryPaneKind {
-    SummaryPaneKind::Code {
-        title: title.to_string(),
-    }
 }
 
 #[test]
@@ -108,145 +86,6 @@ fn agent_activity_dots_match_project_tab_working_and_done_colors() {
         tokens.status(StatusKind::RateLimited)
     );
     assert_eq!(ProjectCliAgentActivity::Idle.color(&tokens), tokens.text_3);
-}
-
-/// Distance of a fill from the rail's background, summed over RGB. Direction-agnostic
-/// so the same assertions hold on light themes, where contrast runs the other way.
-#[test]
-fn agent_activity_dot_replaces_the_separate_unread_indicator() {
-    assert!(!should_render_separate_activity_indicator(
-        true,
-        Some(ProjectCliAgentActivity::Done)
-    ));
-    assert!(should_render_separate_activity_indicator(true, None));
-    assert!(!should_render_separate_activity_indicator(false, None));
-}
-
-#[test]
-fn ordinary_running_command_gets_muted_trailing_indicator() {
-    let theme = crate::themes::default_themes::dark_theme();
-
-    assert_eq!(
-        separate_title_indicator_kind(false, None, true),
-        Some(TitleIndicatorKind::RunningCommand)
-    );
-    assert_eq!(
-        title_indicator_color(TitleIndicatorKind::RunningCommand, &theme),
-        theme.disabled_text_color(theme.background()).into_solid()
-    );
-    assert_eq!(
-        separate_title_indicator_kind(true, None, true),
-        Some(TitleIndicatorKind::Unread)
-    );
-    assert_eq!(
-        title_indicator_color(TitleIndicatorKind::Unread, &theme),
-        Tokens::new(&theme).status(StatusKind::Done)
-    );
-}
-
-#[test]
-fn summary_pane_kind_icons_render_single_icon_for_homogeneous_tabs() {
-    assert_eq!(
-        select_summary_pane_kind_icons([
-            (EntityId::from_usize(10), SummaryPaneKind::Terminal),
-            (EntityId::from_usize(20), SummaryPaneKind::Terminal),
-        ]),
-        Some(SummaryPaneKindIcons::Single(SummaryPaneKind::Terminal))
-    );
-}
-
-#[test]
-fn summary_pane_kind_icons_pick_two_oldest_distinct_pane_kinds() {
-    assert_eq!(
-        select_summary_pane_kind_icons([
-            (EntityId::from_usize(30), SummaryPaneKind::Terminal),
-            (EntityId::from_usize(20), code_summary_kind("main.rs")),
-            (
-                EntityId::from_usize(40),
-                SummaryPaneKind::Notebook { is_plan: false },
-            ),
-            (EntityId::from_usize(10), SummaryPaneKind::Terminal),
-        ]),
-        Some(SummaryPaneKindIcons::Pair {
-            primary: SummaryPaneKind::Terminal,
-            secondary: code_summary_kind("main.rs"),
-        })
-    );
-}
-
-#[test]
-fn summary_pane_kind_icons_recompute_when_oldest_kind_is_removed() {
-    assert_eq!(
-        select_summary_pane_kind_icons([
-            (EntityId::from_usize(20), code_summary_kind("main.rs")),
-            (EntityId::from_usize(30), SummaryPaneKind::Terminal),
-        ]),
-        Some(SummaryPaneKindIcons::Pair {
-            primary: code_summary_kind("main.rs"),
-            secondary: SummaryPaneKind::Terminal,
-        })
-    );
-}
-
-#[test]
-fn summary_pane_kind_icons_distinguish_agent_terminals_from_plain_terminals() {
-    assert_eq!(
-        select_summary_pane_kind_icons([
-            (EntityId::from_usize(10), SummaryPaneKind::Terminal),
-            (
-                EntityId::from_usize(20),
-                SummaryPaneKind::CLIAgent {
-                    agent: CLIAgent::Claude,
-                    is_ambient: false,
-                },
-            ),
-            (
-                EntityId::from_usize(30),
-                SummaryPaneKind::OzAgent { is_ambient: false },
-            ),
-        ]),
-        Some(SummaryPaneKindIcons::Pair {
-            primary: SummaryPaneKind::Terminal,
-            secondary: SummaryPaneKind::CLIAgent {
-                agent: CLIAgent::Claude,
-                is_ambient: false,
-            },
-        })
-    );
-}
-
-#[test]
-fn summary_pane_kind_icons_distinguish_ambient_claude_from_local_claude() {
-    // A local Claude session and a cloud-mode Claude session should count as distinct kinds
-    // so they render with different icons (claude.svg vs claude_cloud.svg).
-    assert_eq!(
-        select_summary_pane_kind_icons([
-            (
-                EntityId::from_usize(10),
-                SummaryPaneKind::CLIAgent {
-                    agent: CLIAgent::Claude,
-                    is_ambient: false,
-                },
-            ),
-            (
-                EntityId::from_usize(20),
-                SummaryPaneKind::CLIAgent {
-                    agent: CLIAgent::Claude,
-                    is_ambient: true,
-                },
-            ),
-        ]),
-        Some(SummaryPaneKindIcons::Pair {
-            primary: SummaryPaneKind::CLIAgent {
-                agent: CLIAgent::Claude,
-                is_ambient: false,
-            },
-            secondary: SummaryPaneKind::CLIAgent {
-                agent: CLIAgent::Claude,
-                is_ambient: true,
-            },
-        })
-    );
 }
 
 #[test]
@@ -1020,268 +859,6 @@ fn collect_normalized_unique_summary_texts_preserves_first_seen_order() {
             "~/warp-terraform".to_string(),
         ]
     );
-}
-
-#[test]
-fn coalesce_summary_branch_entries_groups_by_repo_and_branch() {
-    let repo_a = PathBuf::from("/tmp/repo-a");
-    let repo_b = PathBuf::from("/tmp/repo-b");
-    let entries = vec![
-        VerticalTabsSummaryBranchEntry {
-            repo_path: repo_a.clone(),
-            branch_name: "main".to_string(),
-            diff_stats: None,
-            pull_request_label: None,
-        },
-        VerticalTabsSummaryBranchEntry {
-            repo_path: repo_a.clone(),
-            branch_name: "main".to_string(),
-            diff_stats: Some(GitLineChanges {
-                files_changed: 1,
-                lines_added: 2,
-                lines_removed: 3,
-            }),
-            pull_request_label: Some("#123".to_string()),
-        },
-        VerticalTabsSummaryBranchEntry {
-            repo_path: repo_b.clone(),
-            branch_name: "main".to_string(),
-            diff_stats: Some(GitLineChanges {
-                files_changed: 4,
-                lines_added: 5,
-                lines_removed: 6,
-            }),
-            pull_request_label: Some("#456".to_string()),
-        },
-    ];
-
-    assert_eq!(
-        coalesce_summary_branch_entries(entries),
-        vec![
-            VerticalTabsSummaryBranchEntry {
-                repo_path: repo_a,
-                branch_name: "main".to_string(),
-                diff_stats: Some(GitLineChanges {
-                    files_changed: 1,
-                    lines_added: 2,
-                    lines_removed: 3,
-                }),
-                pull_request_label: Some("#123".to_string()),
-            },
-            VerticalTabsSummaryBranchEntry {
-                repo_path: repo_b,
-                branch_name: "main".to_string(),
-                diff_stats: Some(GitLineChanges {
-                    files_changed: 4,
-                    lines_added: 5,
-                    lines_removed: 6,
-                }),
-                pull_request_label: Some("#456".to_string()),
-            },
-        ]
-    );
-}
-
-#[test]
-fn summary_overflow_count_caps_visible_region() {
-    assert_eq!(summary_overflow_count(5, 3), 2);
-    assert_eq!(summary_overflow_count(3, 3), 0);
-    assert_eq!(summary_overflow_count(2, 3), 0);
-}
-
-#[test]
-fn primary_labels_dedupe_preserves_first_seen_status() {
-    let mut values = Vec::new();
-    let mut seen = std::collections::HashMap::new();
-    push_normalized_unique_summary_label(&mut values, &mut seen, "  cargo   test  ", None);
-    push_normalized_unique_summary_label(
-        &mut values,
-        &mut seen,
-        "cargo test",
-        Some(ConversationStatus::InProgress),
-    );
-
-    assert_eq!(
-        values,
-        vec![VerticalTabsSummaryPrimaryLabel {
-            text: "cargo test".to_string(),
-            status: None,
-        }]
-    );
-}
-
-#[test]
-fn primary_labels_preserve_status_through_aggregation() {
-    let mut values = Vec::new();
-    let mut seen = std::collections::HashMap::new();
-    push_normalized_unique_summary_label(
-        &mut values,
-        &mut seen,
-        "Plan a refactor",
-        Some(ConversationStatus::InProgress),
-    );
-    push_normalized_unique_summary_label(
-        &mut values,
-        &mut seen,
-        "Investigate failure",
-        Some(ConversationStatus::Success),
-    );
-    push_normalized_unique_summary_label(&mut values, &mut seen, "cargo build", None);
-
-    assert_eq!(
-        values,
-        vec![
-            VerticalTabsSummaryPrimaryLabel {
-                text: "Plan a refactor".to_string(),
-                status: Some(ConversationStatus::InProgress),
-            },
-            VerticalTabsSummaryPrimaryLabel {
-                text: "Investigate failure".to_string(),
-                status: Some(ConversationStatus::Success),
-            },
-            VerticalTabsSummaryPrimaryLabel {
-                text: "cargo build".to_string(),
-                status: None,
-            },
-        ]
-    );
-}
-
-#[test]
-fn sort_summary_primary_labels_moves_status_first_and_preserves_order() {
-    let mut values = vec![
-        VerticalTabsSummaryPrimaryLabel {
-            text: "plain terminal".to_string(),
-            status: None,
-        },
-        VerticalTabsSummaryPrimaryLabel {
-            text: "first conversation".to_string(),
-            status: Some(ConversationStatus::InProgress),
-        },
-        VerticalTabsSummaryPrimaryLabel {
-            text: "code pane".to_string(),
-            status: None,
-        },
-        VerticalTabsSummaryPrimaryLabel {
-            text: "second conversation".to_string(),
-            status: Some(ConversationStatus::Success),
-        },
-        VerticalTabsSummaryPrimaryLabel {
-            text: "last terminal".to_string(),
-            status: None,
-        },
-    ];
-
-    sort_summary_primary_labels_status_first(&mut values);
-
-    assert_eq!(
-        values,
-        vec![
-            VerticalTabsSummaryPrimaryLabel {
-                text: "first conversation".to_string(),
-                status: Some(ConversationStatus::InProgress),
-            },
-            VerticalTabsSummaryPrimaryLabel {
-                text: "second conversation".to_string(),
-                status: Some(ConversationStatus::Success),
-            },
-            VerticalTabsSummaryPrimaryLabel {
-                text: "plain terminal".to_string(),
-                status: None,
-            },
-            VerticalTabsSummaryPrimaryLabel {
-                text: "code pane".to_string(),
-                status: None,
-            },
-            VerticalTabsSummaryPrimaryLabel {
-                text: "last terminal".to_string(),
-                status: None,
-            },
-        ]
-    );
-}
-
-#[test]
-fn summary_search_fragments_include_hidden_overflow_values() {
-    let summary = VerticalTabsSummaryData {
-        primary_labels: vec![
-            VerticalTabsSummaryPrimaryLabel {
-                text: "Claude".to_string(),
-                status: Some(ConversationStatus::InProgress),
-            },
-            label("Oz"),
-            label("cargo"),
-            label("code review"),
-            label("hidden work"),
-        ],
-        working_directories: vec!["~/warp-internal".to_string(), "~/warp-server".to_string()],
-        branch_entries: vec![
-            VerticalTabsSummaryBranchEntry {
-                repo_path: PathBuf::from("/tmp/repo-a"),
-                branch_name: "main".to_string(),
-                diff_stats: Some(GitLineChanges {
-                    files_changed: 1,
-                    lines_added: 2,
-                    lines_removed: 3,
-                }),
-                pull_request_label: Some("#123".to_string()),
-            },
-            VerticalTabsSummaryBranchEntry {
-                repo_path: PathBuf::from("/tmp/repo-b"),
-                branch_name: "feature/hidden".to_string(),
-                diff_stats: None,
-                pull_request_label: None,
-            },
-            VerticalTabsSummaryBranchEntry {
-                repo_path: PathBuf::from("/tmp/repo-c"),
-                branch_name: "cleanup".to_string(),
-                diff_stats: None,
-                pull_request_label: None,
-            },
-            VerticalTabsSummaryBranchEntry {
-                repo_path: PathBuf::from("/tmp/repo-d"),
-                branch_name: "hidden-branch".to_string(),
-                diff_stats: None,
-                pull_request_label: Some("#789".to_string()),
-            },
-        ],
-        has_unread_activity: false,
-        has_running_command: false,
-    };
-
-    let fragments = summary_search_text_fragments(&summary, Some("Custom tab"));
-
-    assert!(search_fragments_contain_query(&fragments, "custom tab"));
-    assert!(search_fragments_contain_query(&fragments, "claude"));
-    assert!(search_fragments_contain_query(&fragments, "hidden work"));
-    assert!(search_fragments_contain_query(&fragments, "hidden-branch"));
-    assert!(search_fragments_contain_query(&fragments, "#789"));
-    assert!(search_fragments_contain_query(&fragments, "+2"));
-    assert!(search_fragments_contain_query(&fragments, "-3"));
-}
-
-#[test]
-fn only_blocked_status_glyphs_blink() {
-    warpui::App::test((), |app| async move {
-        app.add_singleton_model(|_| {
-            crate::terminal::cli_agent_sessions::CLIAgentSessionsModel::new()
-        });
-        app.add_singleton_model(
-            crate::terminal::cli_agent_sessions::attention_pulse::AgentAttentionPulse::new,
-        );
-        app.read(|ctx| {
-            // With nothing blocked the clock rests lit, so every status draws at full opacity.
-            for status in [
-                ConversationStatus::InProgress,
-                ConversationStatus::Success,
-                ConversationStatus::Blocked {
-                    blocked_action: String::new(),
-                },
-            ] {
-                assert_eq!(status_blink_opacity(&status, ctx), 1.);
-            }
-        });
-    });
 }
 
 #[test]

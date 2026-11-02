@@ -1,4 +1,3 @@
-pub mod attention_pulse;
 pub mod auto_continue;
 #[cfg(not(target_family = "wasm"))]
 #[cfg_attr(not(feature = "local_tty"), allow(dead_code))]
@@ -728,14 +727,6 @@ impl CLIAgentSessionsModel {
             blocked_idle_title_seen: HashSet::new(),
             forks_awaiting_first_prompt: HashSet::new(),
         }
-    }
-
-    /// Whether any tracked session is waiting on the user to answer a question or approve an
-    /// action.
-    pub fn has_blocked_session(&self) -> bool {
-        self.sessions
-            .values()
-            .any(|session| matches!(session.status, CLIAgentSessionStatus::Blocked { .. }))
     }
 
     pub fn session(&self, terminal_view_id: EntityId) -> Option<&CLIAgentSession> {

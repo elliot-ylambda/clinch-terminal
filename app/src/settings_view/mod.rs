@@ -152,8 +152,6 @@ fn sidebar_width() -> f32 {
     }
 }
 
-/// Width of the borders for the header and the sidebar.
-
 const POSITION_ID: &str = "settings_pane";
 
 pub(super) fn editor_text_colors(appearance: &Appearance) -> TextColors {
@@ -401,6 +399,8 @@ impl SettingsSection {
                 | Self::AgentMCPServers
                 | Self::Knowledge
                 | Self::ThirdPartyCLIAgents
+                | Self::CloudEnvironments
+                | Self::OzCloudAPIKeys
         )
     }
 }
@@ -724,6 +724,7 @@ pub fn init_actions_from_parent_view<T: Action + Clone>(
 
     let context = id!("SettingsViewInTab") & !id!("IMEOpen");
     app.register_fixed_bindings([
+        FixedBinding::new("escape", SettingsAction::Close, context.clone()),
         FixedBinding::new("down", SettingsAction::Down, context.clone()),
         FixedBinding::new("up", SettingsAction::Up, context.clone()),
     ]);

@@ -29,7 +29,6 @@ use warpui::{
 use crate::appearance::Appearance;
 use crate::root_view::NewWorkspaceSource;
 use crate::server::server_api::ServerTime;
-use crate::terminal::cli_agent_sessions::attention_pulse::AgentAttentionPulse;
 use crate::ui_components::icons::Icon;
 use crate::util::bindings::{self, CustomAction};
 use crate::workspace::view::{
@@ -452,12 +451,6 @@ impl ProjectWindow {
         ctx: &mut ViewContext<Self>,
     ) -> Self {
         debug_assert!(!workspace_sources.is_empty());
-
-        // Horizontal project badges are rendered here, outside Workspace's view. Refresh
-        // this view too when the shared attention clock changes phase.
-        ctx.subscribe_to_model(&AgentAttentionPulse::handle(ctx), |_, _, _, ctx| {
-            ctx.notify();
-        });
 
         let projects = workspace_sources
             .into_iter()

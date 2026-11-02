@@ -9,7 +9,7 @@ use warpui::elements::{
 use warpui::fonts::{Properties, Weight};
 use warpui::keymap::Keystroke;
 use warpui::prelude::{vec2f, ConstrainedBox, Cursor, Empty, Hoverable, MouseStateHandle};
-use warpui::scene::{Border, CornerRadius};
+use warpui::scene::CornerRadius;
 use warpui::ui_components::checkbox::Checkbox;
 use warpui::ui_components::components::{UiComponent, UiComponentStyles};
 use warpui::{
@@ -314,11 +314,6 @@ impl View for TerminalViewZeroStateBlock {
                 Container::new(content.finish())
                     .with_horizontal_padding(*terminal::view::PADDING_LEFT)
                     .with_vertical_padding(styles::CONTAINER_VERTICAL_PADDING)
-                    .with_border(
-                        Border::new(1.)
-                            .with_sides(true, false, true, false)
-                            .with_border_fill(theme.outline()),
-                    )
                     .finish(),
             )
             .with_positioned_child(

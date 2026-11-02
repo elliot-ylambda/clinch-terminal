@@ -40,7 +40,7 @@ use warpui::elements::{
     Border, ChildAnchor, ChildView, Clipped, ConstrainedBox, Container, CornerRadius,
     CrossAxisAlignment, DispatchEventResult, Element, EventHandler, Expanded, Flex,
     MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning, ParentElement,
-    PositionedElementAnchor, PositionedElementOffsetBounds, Rect, Shrinkable, Stack, Text, Wrap,
+    PositionedElementAnchor, PositionedElementOffsetBounds, Shrinkable, Stack, Text, Wrap,
     WrapFill, WrapFillEntireRun, DEFAULT_UI_LINE_HEIGHT_RATIO,
 };
 use warpui::elements::{Dismiss, Hoverable, ParentAnchor, ParentOffsetBounds};
@@ -575,7 +575,7 @@ impl AgentInputFooter {
         });
 
         let update_plugin_button = ctx.add_typed_action_view(|_ctx| {
-            ActionButton::new("Update Warp plugin", InstallPluginButtonTheme)
+            ActionButton::new("Update Clinch plugin", InstallPluginButtonTheme)
                 .with_icon(Icon::Download)
                 .with_tooltip("A new version of the Warp plugin is available")
                 .with_size(cli_button_size)
@@ -1521,7 +1521,7 @@ impl AgentInputFooter {
             .cli_agent(ctx)
             .and_then(plugin_manager_for)
             .map(|m| m.install_success_message())
-            .unwrap_or("Warp plugin installed. Please restart the session to activate.");
+            .unwrap_or("Clinch plugin installed. Please restart the session to activate.");
         self.handle_plugin_operation(
             "Installing Warp plugin...",
             "Failed to install Warp plugin",
@@ -1538,7 +1538,7 @@ impl AgentInputFooter {
             .cli_agent(ctx)
             .and_then(plugin_manager_for)
             .map(|m| m.update_success_message())
-            .unwrap_or("Warp plugin updated. Please restart the session to activate.");
+            .unwrap_or("Clinch plugin updated. Please restart the session to activate.");
         self.handle_plugin_operation(
             "Updating Warp plugin...",
             "Failed to update Warp plugin",
@@ -2072,25 +2072,18 @@ impl AgentInputFooter {
     /// What the session is doing, in words, next to its glyph.
     fn render_cli_status_label(&self, app: &AppContext) -> Option<Box<dyn Element>> {
         let appearance = Appearance::as_ref(app);
-        let tokens = appearance.tokens();
         let session = CLIAgentSessionsModel::as_ref(app).session(self.terminal_view_id)?;
-        let agent = session.agent.display_name();
-        let (label, color) = if session.session_context.stop_reason.is_some() {
-            (
-                "Rate limited".to_string(),
-                tokens.status(StatusKind::RateLimited),
-            )
+        let (label, kind) = if session.session_context.stop_reason.is_some() {
+            ("Rate limited".to_string(), StatusKind::RateLimited)
         } else {
             match &session.status {
                 CLIAgentSessionStatus::Blocked { .. } => (
-                    format!("{agent} is asking a question"),
-                    tokens.status(StatusKind::NeedsYou),
+                    format!("{} is asking a question", session.agent.display_name()),
+                    StatusKind::NeedsYou,
                 ),
-                CLIAgentSessionStatus::Success => {
-                    ("Turn complete".to_string(), tokens.status(StatusKind::Done))
-                }
+                CLIAgentSessionStatus::Success => ("Turn complete".to_string(), StatusKind::Done),
                 CLIAgentSessionStatus::InProgress if session.is_actively_working() => {
-                    ("Working".to_string(), tokens.status(StatusKind::Working))
+                    ("Working".to_string(), StatusKind::Working)
                 }
                 CLIAgentSessionStatus::InProgress => return None,
             }
@@ -2098,7 +2091,7 @@ impl AgentInputFooter {
         Some(
             Container::new(
                 Text::new_inline(label, appearance.ui_font_family(), 12.)
-                    .with_color(color)
+                    .with_color(appearance.tokens().status(kind))
                     .finish(),
             )
             .with_padding_right(8.)
@@ -2141,15 +2134,14 @@ impl AgentInputFooter {
             return button;
         }
 
-        let mut column = Flex::column()
+        let column = Flex::column()
             .with_main_axis_size(MainAxisSize::Min)
             .with_cross_axis_alignment(CrossAxisAlignment::Start)
-            .with_spacing(4.);
-        for chip in overflow {
-            column.add_child(chip);
-        }
+            .with_spacing(4.)
+            .with_children(overflow)
+            .finish();
         let popover = Dismiss::new(
-            Container::new(column.finish())
+            Container::new(column)
                 .with_uniform_padding(8.)
                 .with_background(Fill::Solid(tokens.surface_overlay))
                 .with_corner_radius(corners_lg())
@@ -3732,7 +3724,7 @@ impl ActionButtonTheme for ActiveMicButtonTheme {
     }
 }
 
-/// Green-accented theme for the "Install Warp plugin" chip.
+/// Green-accented theme for the "Install Clinch plugin" chip.
 struct InstallPluginButtonTheme;
 
 impl ActionButtonTheme for InstallPluginButtonTheme {
@@ -3809,7 +3801,7 @@ async fn write_install_log(agent: CLIAgent, err: &PluginInstallError) -> Option<
     let log_path = env::temp_dir().join("warp-plugin-install.log");
     let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC");
     let contents = format!(
-        "Warp plugin installation — {agent:?}\n\
+        "Clinch plugin installation — {agent:?}\n\
          {now}\n\
          \n\
          {log}",

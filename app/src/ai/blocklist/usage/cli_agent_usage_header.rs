@@ -2,10 +2,10 @@ use chrono::{DateTime, Utc};
 use cli_agent_usage::format::{chip_halves, fmt_pct, fmt_reset, fmt_reset_short, fmt_tokens};
 use cli_agent_usage::{LimitWindow, Provider, Severity, UsageSnapshot, WindowTotals};
 use warp_core::ui::theme::Fill;
-use warp_core::ui::tokens::RADIUS_SM;
+use warp_core::ui::tokens::{corners_pill, RADIUS_SM};
 use warpui::elements::{
-    Container, CornerRadius, CrossAxisAlignment, Empty, Flex, Hoverable, MouseStateHandle,
-    ParentElement, SizeConstraintCondition, SizeConstraintSwitch,
+    ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Empty, Flex, Hoverable,
+    MouseStateHandle, ParentElement, Rect, SizeConstraintCondition, SizeConstraintSwitch, Stack,
 };
 use warpui::platform::Cursor;
 use warpui::Element;
@@ -26,6 +26,9 @@ const MEDIUM_MAX: f32 = 560.;
 /// Text pieces for one limit window: the percent (colored by the returned
 /// severity), an optional dimmed reset countdown, and the severity. A `None`
 /// window renders as `"—"` with `Normal` severity and no reset.
+const USAGE_METER_WIDTH: f32 = 28.;
+const USAGE_METER_HEIGHT: f32 = 4.;
+
 fn limit_texts(
     window: Option<LimitWindow>,
     now: DateTime<Utc>,
@@ -341,6 +344,32 @@ fn inline_row(
     row.finish()
 }
 
+/// A small horizontal meter beside a usage percentage.
+fn usage_meter(percent: f32, color: Fill, appearance: &Appearance) -> Box<dyn Element> {
+    let fraction = (percent / 100.).clamp(0., 1.);
+    let track = ConstrainedBox::new(
+        Rect::new()
+            .with_background(Fill::Solid(appearance.tokens().control_track))
+            .with_corner_radius(corners_pill())
+            .finish(),
+    )
+    .with_width(USAGE_METER_WIDTH)
+    .with_height(USAGE_METER_HEIGHT)
+    .finish();
+    let filled = ConstrainedBox::new(
+        Rect::new()
+            .with_background(color)
+            .with_corner_radius(corners_pill())
+            .finish(),
+    )
+    .with_width((USAGE_METER_WIDTH * fraction).max(USAGE_METER_HEIGHT))
+    .with_height(USAGE_METER_HEIGHT)
+    .finish();
+    Container::new(Stack::new().with_child(track).with_child(filled).finish())
+        .with_margin_right(5.)
+        .finish()
+}
+
 fn compact_provider_segment(
     kind: CliAgentUsageProvider,
     provider: &Provider,
@@ -352,8 +381,8 @@ fn compact_provider_segment(
     let neutral = theme.sub_text_color(bg);
     let main = theme.main_text_color(bg);
     let provider_label = match kind {
-        CliAgentUsageProvider::Claude => "cc ",
-        CliAgentUsageProvider::Codex => "cx ",
+        CliAgentUsageProvider::Claude => "Claude ",
+        CliAgentUsageProvider::Codex => "Codex ",
     };
     let mut row = Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center);
     row.add_child(span(provider_label, neutral, appearance));
@@ -375,15 +404,20 @@ fn compact_provider_segment(
                 if item_count > 0 {
                     row.add_child(span(" · ", neutral, appearance));
                 }
+                let percent = window.as_ref().map(|window| window.percent);
                 let (pct, _, severity) = limit_texts(window, render.now, false);
-                let (label, pct) = match metric {
-                    CliAgentUsageMetric::FiveHour => ("5h ", pct),
-                    CliAgentUsageMetric::Weekly => ("", format!("{pct}w")),
-                    CliAgentUsageMetric::Fable => ("fb ", format!("{pct}w")),
-                    _ => ("", pct),
+                let label = match metric {
+                    CliAgentUsageMetric::FiveHour => "5h ",
+                    CliAgentUsageMetric::Weekly => "wk ",
+                    CliAgentUsageMetric::Fable => "fb ",
+                    _ => "",
                 };
+                let color = severity_fill(severity, theme, bg);
                 row.add_child(span(label, neutral, appearance));
-                row.add_child(span(pct, severity_fill(severity, theme, bg), appearance));
+                if let Some(percent) = percent {
+                    row.add_child(usage_meter(percent as f32, color, appearance));
+                }
+                row.add_child(span(pct, color, appearance));
 
                 if metric != CliAgentUsageMetric::Fable
                     && render

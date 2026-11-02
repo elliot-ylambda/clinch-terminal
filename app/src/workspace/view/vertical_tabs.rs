@@ -25,27 +25,22 @@ use warp_core::ui::Icon as WarpIcon;
 use warp_util::local_or_remote_path::LocalOrRemotePath;
 use warpui::elements::{
     resizable_state_handle, Border, ChildAnchor, Clipped, ClippedScrollStateHandle,
-    ClippedScrollable, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment,
-    DispatchEventResult, DragAxis, DragBarSide, Draggable, DropTarget, Element, Empty,
-    EventHandler, Expanded, Fill as ElementFill, Flex, Hoverable, MainAxisAlignment, MainAxisSize,
-    MouseStateHandle, OffsetPositioning, Padding, ParentAnchor, ParentElement, ParentOffsetBounds,
-    PositionedElementAnchor, PositionedElementOffsetBounds, Radius, Resizable,
-    ResizableStateHandle, SavePosition, ScrollTarget, ScrollToPositionMode, ScrollbarWidth,
-    Shrinkable, Stack, Text,
+    ClippedScrollable, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, DragAxis,
+    DragBarSide, Draggable, DropTarget, Element, Empty, Expanded, Fill as ElementFill, Flex,
+    Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning, Padding,
+    ParentAnchor, ParentElement, ParentOffsetBounds, PositionedElementAnchor,
+    PositionedElementOffsetBounds, Radius, Resizable, ResizableStateHandle, SavePosition,
+    ScrollTarget, ScrollToPositionMode, ScrollbarWidth, Shrinkable, Stack, Text,
 };
 use warpui::fonts::{Properties, Weight};
 use warpui::platform::Cursor;
-use warpui::prelude::Align;
 use warpui::text_layout::ClipConfig;
 use warpui::ui_components::components::{UiComponent, UiComponentStyles};
 use warpui::ui_components::text_input::TextInput;
 use warpui::units::IntoPixels;
 use warpui::{AppContext, EntityId, SingletonEntity, ViewHandle, WindowId};
 
-use super::{
-    is_running_project_command, project_cli_agent_activity, select_unique_pane_kinds,
-    ProjectCliAgentActivity,
-};
+use super::{project_cli_agent_activity, ProjectCliAgentActivity};
 use crate::agent_resume::{
     clean_prompt_title_text, prompt_title, AgentConversation, AgentResumeProvider,
 };
@@ -53,7 +48,6 @@ use crate::ai::agent::conversation::{ConversationStatus, StatusColorStyle};
 use crate::ai::agent::icons::needs_input_icon;
 use crate::ai::agent_management::AgentNotificationsModel;
 use crate::ai::cloud_environments::CloudAmbientAgentEnvironment;
-use crate::ai::conversation_status_ui::render_status_element_with_opacity;
 use crate::appearance::Appearance;
 use crate::cloud_object::model::generic_string_model::StringModel;
 use crate::cloud_object::CloudObjectLookup as _;
@@ -71,13 +65,9 @@ use crate::pane_group::{
 use crate::safe_triangle::SafeTriangle;
 use crate::tab::lineage::{lineage_nesting, TabLineage};
 use crate::tab::{tab_position_id, SelectedTabColor, TabData, TabOriginKind};
-use crate::terminal::cli_agent_sessions::attention_pulse::{
-    attention_pulse_color, attention_pulse_opacity,
-};
 use crate::terminal::cli_agent_sessions::{
     session_context_enabled, CLIAgentSessionKey, CLIAgentSessionStatus, CLIAgentSessionsModel,
 };
-use crate::terminal::session_settings::SessionSettings;
 use crate::terminal::view::TerminalViewState;
 use crate::terminal::{CLIAgent, TerminalView};
 use crate::themes::theme::Fill as ThemeFill;
@@ -94,8 +84,7 @@ use crate::workspace::cross_window_tab_drag::CrossWindowTabDrag;
 use crate::workspace::hoa_onboarding::HoaOnboardingStep;
 use crate::workspace::tab_group::{TabGroup, TabGroupId};
 use crate::workspace::tab_settings::{
-    TabSettings, VerticalTabsCompactSubtitle, VerticalTabsDisplayGranularity,
-    VerticalTabsPrimaryInfo, VerticalTabsTabItemMode, VerticalTabsViewMode,
+    TabSettings, VerticalTabsDisplayGranularity, VerticalTabsTabItemMode,
 };
 use crate::workspace::task::{WorkspaceTask, WorkspaceTaskAgent, WorkspaceTaskId};
 use crate::workspace::view::vertical_tabs::telemetry::{
@@ -138,9 +127,6 @@ const BADGE_ICON_SIZE: f32 = 12.;
 const DETAIL_SIDECAR_DEFAULT_WIDTH: f32 = 320.;
 const DETAIL_SIDECAR_MIN_WIDTH: f32 = 240.;
 const DETAIL_SIDECAR_CORNER_RADIUS: f32 = 6.;
-/// Fixed height of the metadata row (line 3 in expanded mode). Matches the passive badge height
-/// so the row doesn't resize when badges are toggled.
-const METADATA_ROW_HEIGHT: f32 = BADGE_ICON_SIZE + 2.;
 const TAB_COLOR_OPACITY: Opacity = 15;
 const TAB_COLOR_HOVER_OPACITY: Opacity = 50;
 const BOOKMARKED_SESSIONS_MAX_HEIGHT: f32 = 220.;
@@ -148,7 +134,6 @@ const BOOKMARKED_SESSION_ICON_SIZE: f32 = VERTICAL_TABS_ICON_SIZE;
 const TASKS_HEADER_ICON_SIZE: f32 = 14.;
 
 // Circular icon constants
-const ICON_WITH_STATUS_GAP: f32 = 8.;
 const SIDEBAR_POPOVER_WIDTH: f32 = 320.;
 const SIDEBAR_POPOVER_MAX_HEIGHT: f32 = 460.;
 pub(super) const SIDEBAR_TASKS_LINK_POSITION_ID: &str = "vertical_tabs:tasks_link";
@@ -166,18 +151,6 @@ pub(super) const VERTICAL_TABS_DETAIL_SIDECAR_POSITION_ID: &str = "vertical_tabs
 /// Total size of the icon-with-status component rendered for each vertical-tabs row.
 /// Sub-components (circle, badge, cloud) are derived inside `render_icon_with_status`.
 const VERTICAL_TABS_ICON_SIZE: f32 = 24.;
-/// Diameter of the local Claude/Codex activity dot overlaid on the agent logo.
-const VERTICAL_TABS_AGENT_ACTIVITY_DOT_SIZE: f32 = 6.;
-/// Background cutout around the activity dot keeps it legible over either brand color.
-const VERTICAL_TABS_AGENT_ACTIVITY_DOT_RING_PADDING: f32 = 1.;
-/// Match the existing status badge's bottom-right placement within the 24px icon box.
-const VERTICAL_TABS_AGENT_ACTIVITY_DOT_CORNER_OFFSET: f32 = -1.;
-/// The "needs your input" glyph replaces the activity dot, and is larger so its "!" reads.
-const VERTICAL_TABS_AGENT_NEEDS_INPUT_GLYPH_SIZE: f32 = 11.;
-
-/// Icon size for the per-line conversation status pill in Summary mode. Pairs with
-/// `STATUS_ELEMENT_PADDING` (2px) for an overall ~14px element next to a 12pt title.
-const VERTICAL_TABS_SUMMARY_STATUS_ICON_SIZE: f32 = 10.;
 
 fn vtab_pane_row_position_id(pane_group_id: EntityId, pane_id: PaneId) -> String {
     format!("vertical_tabs:pane_row:{pane_group_id:?}:{pane_id}")
@@ -338,92 +311,6 @@ fn oz_icon_fill(theme: &WarpTheme) -> WarpThemeFill {
     theme.main_text_color(theme.background())
 }
 
-fn render_pane_icon_with_status(
-    typed: &TypedPane<'_>,
-    title: &str,
-    appearance: &Appearance,
-    app: &AppContext,
-) -> Box<dyn Element> {
-    let theme = appearance.theme();
-    let variant = resolve_icon_with_status_variant(typed, title, appearance, app);
-    let activity = vertical_tab_cli_agent_activity(typed, app);
-    let (variant, activity) = match (variant, activity) {
-        (
-            IconWithStatusVariant::CLIAgent {
-                agent,
-                is_ambient: false,
-                ..
-            },
-            Some(activity),
-        ) => (
-            IconWithStatusVariant::CLIAgent {
-                agent,
-                status: None,
-                is_ambient: false,
-            },
-            Some(activity),
-        ),
-        (variant, _) => (variant, None),
-    };
-    let icon = render_icon_with_status(
-        variant,
-        VERTICAL_TABS_ICON_SIZE,
-        0.,
-        theme,
-        theme.background(),
-    );
-    let Some(activity) = activity else {
-        return icon;
-    };
-
-    let dot_color = activity.color(Appearance::as_ref(app).tokens());
-    let (dot_icon, dot_color, dot_size) = if activity == ProjectCliAgentActivity::NeedsInput {
-        (
-            WarpIcon::AlertCircle,
-            attention_pulse_color(dot_color, app),
-            VERTICAL_TABS_AGENT_NEEDS_INPUT_GLYPH_SIZE,
-        )
-    } else {
-        (
-            WarpIcon::CircleFilled,
-            dot_color,
-            VERTICAL_TABS_AGENT_ACTIVITY_DOT_SIZE,
-        )
-    };
-    let dot = Container::new(
-        ConstrainedBox::new(
-            dot_icon
-                .to_warpui_icon(WarpThemeFill::Solid(dot_color))
-                .finish(),
-        )
-        .with_width(dot_size)
-        .with_height(dot_size)
-        .finish(),
-    )
-    .with_uniform_padding(VERTICAL_TABS_AGENT_ACTIVITY_DOT_RING_PADDING)
-    .with_background(theme.background())
-    .with_corner_radius(CornerRadius::with_all(Radius::Percentage(50.)))
-    .finish();
-
-    let mut stack = Stack::new().with_child(icon);
-    stack.add_positioned_child(
-        dot,
-        OffsetPositioning::offset_from_parent(
-            vec2f(
-                VERTICAL_TABS_AGENT_ACTIVITY_DOT_CORNER_OFFSET,
-                VERTICAL_TABS_AGENT_ACTIVITY_DOT_CORNER_OFFSET,
-            ),
-            ParentOffsetBounds::Unbounded,
-            ParentAnchor::BottomRight,
-            ChildAnchor::BottomRight,
-        ),
-    );
-    ConstrainedBox::new(stack.finish())
-        .with_width(VERTICAL_TABS_ICON_SIZE)
-        .with_height(VERTICAL_TABS_ICON_SIZE)
-        .finish()
-}
-
 /// Returns the same Claude/Codex activity classification used by the project-tab hover card.
 /// Working follows the title glyph, so the dot never disagrees with the title beside it.
 /// Ambient runs keep their cloud/status treatment, and disabling agent status on tabs preserves
@@ -460,33 +347,6 @@ fn vertical_tab_cli_agent_activity(
         notifications.has_unread_completed_project_cli_agent_for_terminal_view(terminal_view.id()),
         notifications.has_other_unread_project_activity_for_terminal_view(terminal_view.id()),
     ))
-}
-
-fn should_render_separate_activity_indicator(
-    has_unread_activity: bool,
-    icon_activity: Option<ProjectCliAgentActivity>,
-) -> bool {
-    has_unread_activity && icon_activity.is_none()
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum TitleIndicatorKind {
-    Unread,
-    RunningCommand,
-}
-
-fn separate_title_indicator_kind(
-    has_unread_activity: bool,
-    icon_activity: Option<ProjectCliAgentActivity>,
-    has_running_command: bool,
-) -> Option<TitleIndicatorKind> {
-    if should_render_separate_activity_indicator(has_unread_activity, icon_activity) {
-        Some(TitleIndicatorKind::Unread)
-    } else if has_running_command {
-        Some(TitleIndicatorKind::RunningCommand)
-    } else {
-        None
-    }
 }
 
 #[derive(Clone, Default)]
@@ -934,21 +794,6 @@ pub(super) struct VerticalTabsPanelState {
     new_tab_hover_state: MouseStateHandle,
     new_tab_button_state: MouseStateHandle,
     pub(super) search_query: String,
-    panes_segment_mouse_state: MouseStateHandle,
-    tabs_segment_mouse_state: MouseStateHandle,
-    focused_session_option_mouse_state: MouseStateHandle,
-    summary_option_mouse_state: MouseStateHandle,
-    compact_segment_mouse_state: MouseStateHandle,
-    expanded_segment_mouse_state: MouseStateHandle,
-    command_option_mouse_state: MouseStateHandle,
-    directory_option_mouse_state: MouseStateHandle,
-    branch_option_mouse_state: MouseStateHandle,
-    subtitle_option_1_mouse_state: MouseStateHandle,
-    subtitle_option_2_mouse_state: MouseStateHandle,
-    show_pr_link_mouse_state: MouseStateHandle,
-    show_pr_link_info_tooltip_mouse_state: MouseStateHandle,
-    show_diff_stats_mouse_state: MouseStateHandle,
-    show_details_on_hover_mouse_state: MouseStateHandle,
     panel_right_click_mouse_state: MouseStateHandle,
     attention_chip_mouse_state: MouseStateHandle,
     bookmarked_section_mouse_states: TabGroupMouseStates,
@@ -958,7 +803,6 @@ pub(super) struct VerticalTabsPanelState {
     tasks_header_mouse_state: MouseStateHandle,
     tasks_add_mouse_state: MouseStateHandle,
     task_mouse_states: RefCell<HashMap<WorkspaceTaskId, WorkspaceTaskMouseStates>>,
-    pub(super) show_settings_popup: bool,
     pub(super) open_popover: Option<SidebarPopover>,
     tasks_link_mouse_state: MouseStateHandle,
     bookmarks_link_mouse_state: MouseStateHandle,
@@ -986,21 +830,6 @@ impl Default for VerticalTabsPanelState {
             new_tab_hover_state: Default::default(),
             new_tab_button_state: Default::default(),
             search_query: String::new(),
-            panes_segment_mouse_state: Default::default(),
-            tabs_segment_mouse_state: Default::default(),
-            focused_session_option_mouse_state: Default::default(),
-            summary_option_mouse_state: Default::default(),
-            compact_segment_mouse_state: Default::default(),
-            expanded_segment_mouse_state: Default::default(),
-            command_option_mouse_state: Default::default(),
-            directory_option_mouse_state: Default::default(),
-            branch_option_mouse_state: Default::default(),
-            subtitle_option_1_mouse_state: Default::default(),
-            subtitle_option_2_mouse_state: Default::default(),
-            show_pr_link_mouse_state: Default::default(),
-            show_pr_link_info_tooltip_mouse_state: Default::default(),
-            show_diff_stats_mouse_state: Default::default(),
-            show_details_on_hover_mouse_state: Default::default(),
             panel_right_click_mouse_state: Default::default(),
             attention_chip_mouse_state: Default::default(),
             bookmarked_section_mouse_states: Default::default(),
@@ -1009,7 +838,6 @@ impl Default for VerticalTabsPanelState {
             tasks_header_mouse_state: Default::default(),
             tasks_add_mouse_state: Default::default(),
             task_mouse_states: RefCell::default(),
-            show_settings_popup: false,
         }
     }
 }
@@ -1162,7 +990,6 @@ enum TabGroupColorMode {
 enum VerticalTabsResolvedMode {
     Panes,
     FocusedSession,
-    Summary,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1191,31 +1018,6 @@ pub(super) enum SummaryPaneKindIcons {
         primary: SummaryPaneKind,
         secondary: SummaryPaneKind,
     },
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct VerticalTabsSummaryBranchEntry {
-    repo_path: PathBuf,
-    branch_name: String,
-    diff_stats: Option<GitLineChanges>,
-    pull_request_label: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct VerticalTabsSummaryPrimaryLabel {
-    text: String,
-    /// Some when the contributing pane is a conversation with a known status. Drives the
-    /// per-line status pill prefix in Summary mode.
-    status: Option<ConversationStatus>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq)]
-struct VerticalTabsSummaryData {
-    primary_labels: Vec<VerticalTabsSummaryPrimaryLabel>,
-    working_directories: Vec<String>,
-    branch_entries: Vec<VerticalTabsSummaryBranchEntry>,
-    has_unread_activity: bool,
-    has_running_command: bool,
 }
 
 impl TabGroupColorMode {
@@ -1258,13 +1060,8 @@ fn resolve_vertical_tabs_mode(app: &AppContext) -> VerticalTabsResolvedMode {
         VerticalTabsDisplayGranularity::Panes => VerticalTabsResolvedMode::Panes,
         VerticalTabsDisplayGranularity::Tabs => match *settings.vertical_tabs_tab_item_mode.value()
         {
-            VerticalTabsTabItemMode::FocusedSession => VerticalTabsResolvedMode::FocusedSession,
-            VerticalTabsTabItemMode::Summary => {
-                if FeatureFlag::VerticalTabsSummaryMode.is_enabled() {
-                    VerticalTabsResolvedMode::Summary
-                } else {
-                    VerticalTabsResolvedMode::FocusedSession
-                }
+            VerticalTabsTabItemMode::FocusedSession | VerticalTabsTabItemMode::Summary => {
+                VerticalTabsResolvedMode::FocusedSession
             }
         },
     }
@@ -1285,144 +1082,13 @@ fn push_normalized_unique_summary_text(
     values.push(normalized);
 }
 
-/// Push a primary label, preserving the first-seen display text and conversation status
-/// when the same normalized label is contributed by multiple panes.
-fn push_normalized_unique_summary_label(
-    values: &mut Vec<VerticalTabsSummaryPrimaryLabel>,
-    seen: &mut HashMap<String, ()>,
-    text: &str,
-    status: Option<ConversationStatus>,
-) {
-    let Some(normalized) = normalize_summary_text(text) else {
-        return;
-    };
-    if seen.contains_key(&normalized) {
-        return;
-    }
-    seen.insert(normalized.clone(), ());
-    values.push(VerticalTabsSummaryPrimaryLabel {
-        text: normalized,
-        status,
-    });
-}
-
-/// Stable sort that moves labels with a known `ConversationStatus` ahead of labels without
-/// one, while preserving the relative first-seen order within each group. Used in Summary
-/// mode so the visible 3-line title region (and the `+ N more` overflow) prioritizes
-/// conversation lines over plain terminal / non-conversation lines.
-fn sort_summary_primary_labels_status_first(values: &mut [VerticalTabsSummaryPrimaryLabel]) {
-    values.sort_by_key(|label| label.status.is_none());
-}
-
 fn normalize_summary_text(text: &str) -> Option<String> {
     let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
     (!normalized.is_empty()).then_some(normalized)
 }
 
-/// Returns the activity status for a terminal pane, used to render the per-line status pill
-/// prefix in Summary mode. Mirrors the status sources used by `render_detail_status_pill` in the
-/// detail sidecar: CLI agent sessions, foreground commands, Oz conversations, or ambient runs.
-/// Returns `None` when the terminal is idle and no conversation has a displayable status.
-fn summary_conversation_status_for_terminal(
-    terminal_view: &TerminalView,
-    app: &AppContext,
-) -> Option<ConversationStatus> {
-    let cli_agent_session = CLIAgentSessionsModel::as_ref(app).session(terminal_view.id());
-    if let Some(session) = cli_agent_session.filter(|s| !matches!(s.agent, CLIAgent::Unknown)) {
-        return cli_agent_session_status_for_display(terminal_view, session);
-    }
-
-    if let Some(status) = terminal_command_status(terminal_view.current_state().state) {
-        return Some(status);
-    }
-
-    let is_ambient = terminal_view.is_ambient_agent_session(app);
-    let has_conversation = terminal_view
-        .selected_conversation_display_title(app)
-        .is_some();
-    (has_conversation || is_ambient)
-        .then(|| terminal_view.selected_conversation_status_for_display(app))
-        .flatten()
-}
-
 fn terminal_command_status(state: TerminalViewState) -> Option<ConversationStatus> {
     matches!(state, TerminalViewState::LongRunning).then_some(ConversationStatus::InProgress)
-}
-
-fn coalesce_summary_branch_entries(
-    entries: Vec<VerticalTabsSummaryBranchEntry>,
-) -> Vec<VerticalTabsSummaryBranchEntry> {
-    let mut coalesced: Vec<VerticalTabsSummaryBranchEntry> = Vec::new();
-    let mut indices: HashMap<(PathBuf, String), usize> = HashMap::new();
-    for entry in entries {
-        let key = (entry.repo_path.clone(), entry.branch_name.clone());
-        if let Some(index) = indices.get(&key).copied() {
-            let existing = &mut coalesced[index];
-            if existing.diff_stats.is_none() {
-                existing.diff_stats = entry.diff_stats;
-            }
-            if existing.pull_request_label.is_none() {
-                existing.pull_request_label = entry.pull_request_label;
-            }
-        } else {
-            indices.insert(key, coalesced.len());
-            coalesced.push(entry);
-        }
-    }
-    coalesced
-}
-
-fn summary_overflow_count(total_count: usize, visible_limit: usize) -> usize {
-    total_count.saturating_sub(visible_limit)
-}
-
-fn summary_search_text_fragments(
-    summary: &VerticalTabsSummaryData,
-    title_override: Option<&str>,
-) -> Vec<String> {
-    let mut fragments = Vec::new();
-    if let Some(title_override) = title_override.and_then(normalize_summary_text) {
-        fragments.push(title_override);
-    }
-    fragments.extend(
-        summary
-            .primary_labels
-            .iter()
-            .map(|label| label.text.clone()),
-    );
-    fragments.extend(summary.working_directories.iter().cloned());
-    for entry in &summary.branch_entries {
-        fragments.push(entry.branch_name.clone());
-        if let Some(pull_request_label) = &entry.pull_request_label {
-            fragments.push(pull_request_label.clone());
-        }
-        if let Some(diff_stats) = &entry.diff_stats {
-            fragments.push(vtab_diff_stats_text(diff_stats));
-        }
-    }
-    fragments
-}
-
-fn select_summary_pane_kind_icons(
-    pane_kinds: impl IntoIterator<Item = (EntityId, SummaryPaneKind)>,
-) -> Option<SummaryPaneKindIcons> {
-    let mut unique_kinds = select_unique_pane_kinds(pane_kinds, 2).into_iter();
-    let primary = unique_kinds.next()?;
-    match unique_kinds.next() {
-        Some(secondary) => Some(SummaryPaneKindIcons::Pair { primary, secondary }),
-        None => Some(SummaryPaneKindIcons::Single(primary)),
-    }
-}
-
-fn resolve_summary_pane_kind_icons(
-    pane_group: &PaneGroup,
-    visible_pane_ids: &[PaneId],
-    app: &AppContext,
-) -> Option<SummaryPaneKindIcons> {
-    select_summary_pane_kind_icons(visible_pane_ids.iter().filter_map(|pane_id| {
-        let kind = pane_summary_kind(pane_group, *pane_id, app)?;
-        Some((pane_id.creation_order_id(), kind))
-    }))
 }
 
 /// Per-tick scroll delta for a drag whose dragged element is centred at `drag_y`
@@ -1472,9 +1138,7 @@ impl VerticalTabsPanelState {
         let resolved_mode = resolve_vertical_tabs_mode(app);
         let display_granularity = match resolved_mode {
             VerticalTabsResolvedMode::Panes => VerticalTabsDisplayGranularity::Panes,
-            VerticalTabsResolvedMode::FocusedSession | VerticalTabsResolvedMode::Summary => {
-                VerticalTabsDisplayGranularity::Tabs
-            }
+            VerticalTabsResolvedMode::FocusedSession => VerticalTabsDisplayGranularity::Tabs,
         };
         tabs.iter()
             .enumerate()
@@ -1482,17 +1146,6 @@ impl VerticalTabsPanelState {
                 let pane_group = tab.pane_group.as_ref(app);
                 let visible_pane_ids = pane_group.visible_pane_ids();
                 match resolved_mode {
-                    VerticalTabsResolvedMode::Summary => {
-                        let summary =
-                            build_vertical_tabs_summary_data(pane_group, &visible_pane_ids, app);
-                        search_fragments_contain_query(
-                            &summary_search_text_fragments(
-                                &summary,
-                                pane_group.custom_title(app).as_deref(),
-                            ),
-                            &query_lower,
-                        )
-                    }
                     VerticalTabsResolvedMode::Panes | VerticalTabsResolvedMode::FocusedSession => {
                         pane_ids_for_display_granularity(
                             &visible_pane_ids,
@@ -1548,12 +1201,10 @@ const SEARCH_BAR_HEIGHT: f32 = 30.;
 const CONTROL_BAR_BUTTON_RADIUS: Radius = RADIUS_SM;
 const SPLIT_BUTTON_HEIGHT: f32 = SEARCH_BAR_HEIGHT;
 pub(super) const VERTICAL_TABS_ADD_TAB_POSITION_ID: &str = "vertical_tabs_add_tab_button";
-pub(super) const VERTICAL_TABS_SETTINGS_BUTTON_POSITION_ID: &str = "vertical_tabs_settings_button";
 
 pub(super) fn vtab_action_buttons_position_id(tab_index: usize) -> String {
     format!("vtab_action_buttons_{tab_index}")
 }
-const COMPACT_ICON_SIZE: f32 = 16.;
 const GROUP_INSERTION_TARGET_HEIGHT: f32 = 6.;
 const GROUP_INSERTION_INDICATOR_HEIGHT: f32 = 3.;
 
@@ -2752,9 +2403,7 @@ fn render_groups(
     let resolved_mode = resolve_vertical_tabs_mode(app);
     let display_granularity = match resolved_mode {
         VerticalTabsResolvedMode::Panes => VerticalTabsDisplayGranularity::Panes,
-        VerticalTabsResolvedMode::FocusedSession | VerticalTabsResolvedMode::Summary => {
-            VerticalTabsDisplayGranularity::Tabs
-        }
+        VerticalTabsResolvedMode::FocusedSession => VerticalTabsDisplayGranularity::Tabs,
     };
     let uses_outer_group_container = uses_outer_group_container(display_granularity);
     let query = state.search_query.as_str();
@@ -2763,6 +2412,7 @@ fn render_groups(
             .tabs
             .iter()
             .enumerate()
+            .filter(|(_, tab)| !tab_is_only_settings(tab, app))
             .map(|(tab_index, _)| (tab_index, None))
             .collect()
     } else {
@@ -2771,22 +2421,11 @@ fn render_groups(
             .tabs
             .iter()
             .enumerate()
+            .filter(|(_, tab)| !tab_is_only_settings(tab, app))
             .filter_map(|(tab_index, tab)| {
                 let pane_group = tab.pane_group.as_ref(app);
                 let visible_pane_ids = pane_group.visible_pane_ids();
                 match resolved_mode {
-                    VerticalTabsResolvedMode::Summary => {
-                        let summary =
-                            build_vertical_tabs_summary_data(pane_group, &visible_pane_ids, app);
-                        search_fragments_contain_query(
-                            &summary_search_text_fragments(
-                                &summary,
-                                pane_group.custom_title(app).as_deref(),
-                            ),
-                            &query_lower,
-                        )
-                        .then_some((tab_index, None))
-                    }
                     VerticalTabsResolvedMode::Panes | VerticalTabsResolvedMode::FocusedSession => {
                         let title_override = (!uses_outer_group_container)
                             .then(|| pane_group.custom_title(app))
@@ -3041,9 +2680,7 @@ fn render_tab_group_internal(
     let resolved_mode = resolve_vertical_tabs_mode(app);
     let display_granularity = match resolved_mode {
         VerticalTabsResolvedMode::Panes => VerticalTabsDisplayGranularity::Panes,
-        VerticalTabsResolvedMode::FocusedSession | VerticalTabsResolvedMode::Summary => {
-            VerticalTabsDisplayGranularity::Tabs
-        }
+        VerticalTabsResolvedMode::FocusedSession => VerticalTabsDisplayGranularity::Tabs,
     };
     // Tabs inside a group skip the per-tab outer container; the group provides it.
     let uses_outer_group_container =
@@ -3144,11 +2781,6 @@ fn render_tab_group_internal(
         .show_tab_right_click_menu
         .is_some_and(|(idx, _)| idx == tab_index);
     let is_drag_target = workspace.hovered_tab_index == Some(TabBarHoverIndex::OverTab(tab_index));
-    let summary = matches!(resolved_mode, VerticalTabsResolvedMode::Summary)
-        .then(|| build_vertical_tabs_summary_data(pane_group, &visible_pane_ids, app));
-    let summary_pane_kind_icons = matches!(resolved_mode, VerticalTabsResolvedMode::Summary)
-        .then(|| resolve_summary_pane_kind_icons(pane_group, &visible_pane_ids, app))
-        .flatten();
     let active_pane_context_menu_target = PaneViewLocator {
         pane_group_id,
         pane_id: pane_group.focused_pane_id(app),
@@ -3168,62 +2800,6 @@ fn render_tab_group_internal(
                 .with_main_axis_size(MainAxisSize::Min)
                 .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
                 .with_spacing(row_spacing);
-            if matches!(resolved_mode, VerticalTabsResolvedMode::Summary) {
-                let Some((pane_id, row_mouse_state)) = row_mouse_states.first() else {
-                    return Empty::new().finish();
-                };
-                let pane_color = per_pane_colors
-                    .as_ref()
-                    .and_then(|map| map.get(pane_id).copied())
-                    .flatten();
-                let badge_mouse_states = state
-                    .pane_badge_mouse_states
-                    .borrow_mut()
-                    .entry(*pane_id)
-                    .or_default()
-                    .clone();
-                let Some(mut pane_props) = PaneProps::new(
-                    pane_group,
-                    *pane_id,
-                    pane_group_id,
-                    is_active,
-                    is_in_multi_selection,
-                    is_in_multi_tab_selection,
-                    PaneRowState {
-                        mouse_state: row_mouse_state.clone(),
-                        title_mouse_state: None,
-                        pane_color,
-                        badge_mouse_states,
-                    },
-                    state.detail_hover_state(workspace.window_id),
-                    display_granularity,
-                    false,
-                    displayed_tab_title_override.clone(),
-                    (!uses_outer_group_container).then_some(tab_index),
-                    None,
-                    !use_tab_title_header && is_being_renamed,
-                    (!use_tab_title_header).then_some(rename_editor.clone()),
-                    false,
-                    None,
-                    tab.pinned,
-                    group_state.is_hovered(),
-                    app,
-                ) else {
-                    return Empty::new().finish();
-                };
-                if !show_tab_title_header {
-                    pane_props.origin_badge = origin_badge.clone();
-                }
-                rows.add_child(render_summary_tab_item(
-                    pane_props,
-                    summary
-                        .as_ref()
-                        .expect("summary data must exist in summary mode"),
-                    summary_pane_kind_icons,
-                    app,
-                ));
-                return rows.finish();
-            }
             let total_rows = row_mouse_states.len();
             for (row_idx, (pane_id, row_mouse_state)) in row_mouse_states.iter().enumerate() {
                 let pane_color = per_pane_colors
@@ -4140,131 +3716,17 @@ fn render_group_header(props: GroupHeaderProps<'_>, app: &AppContext) -> Box<dyn
     .finish()
 }
 
-fn render_passive_terminal_diff_stats_badge(
-    git_line_changes: &GitLineChanges,
-    appearance: &Appearance,
-) -> Box<dyn Element> {
-    render_badge_container(
-        render_vtab_diff_stats_content(git_line_changes, appearance),
-        internal_colors::fg_overlay_1(appearance.theme()),
-    )
-}
-
-fn resolve_icon_with_status_variant(
-    typed: &TypedPane<'_>,
-    title: &str,
-    appearance: &Appearance,
-    app: &AppContext,
-) -> IconWithStatusVariant {
-    let theme = appearance.theme();
-    let main_text = theme.main_text_color(theme.background());
-    let sub_text = theme.sub_text_color(theme.background());
-
-    let drive_color = |object_type: DriveObjectType| -> WarpThemeFill {
-        WarpThemeFill::Solid(warp_drive_icon_color(appearance, object_type))
-    };
-
-    match typed {
-        TypedPane::Terminal(terminal_pane) => {
-            let terminal_view = terminal_pane.terminal_view(app);
-            let terminal_view = terminal_view.as_ref(app);
-            if let Some(variant) =
-                terminal_view_agent_icon_variant_respecting_tab_setting(terminal_view, app)
-            {
-                variant
-            } else {
-                // Plain terminal: use foreground color per design spec
-                IconWithStatusVariant::Neutral {
-                    icon: WarpIcon::Terminal,
-                    icon_color: main_text,
-                    status: terminal_command_status(terminal_view.current_state().state),
-                }
-            }
-        }
-        TypedPane::Code(_) => {
-            if let Some(icon_element) = icon_from_file_path(title, appearance) {
-                IconWithStatusVariant::NeutralElement { icon_element }
-            } else {
-                IconWithStatusVariant::Neutral {
-                    icon: WarpIcon::Code2,
-                    icon_color: sub_text,
-                    status: None,
-                }
-            }
-        }
-        // Settings and environment management use the foreground color per design spec
-        TypedPane::Settings | TypedPane::EnvironmentManagement => IconWithStatusVariant::Neutral {
-            icon: typed.icon(),
-            icon_color: main_text,
-            status: None,
-        },
-        // Warp Drive object types use their established index colors
-        TypedPane::Notebook { is_plan } => IconWithStatusVariant::Neutral {
-            icon: typed.icon(),
-            icon_color: drive_color(DriveObjectType::Notebook {
-                is_ai_document: *is_plan,
-            }),
-            status: None,
-        },
-        TypedPane::Workflow { is_ai_prompt: true } => IconWithStatusVariant::Neutral {
-            icon: typed.icon(),
-            icon_color: drive_color(DriveObjectType::AgentModeWorkflow),
-            status: None,
-        },
-        TypedPane::Workflow {
-            is_ai_prompt: false,
-        } => IconWithStatusVariant::Neutral {
-            icon: typed.icon(),
-            icon_color: drive_color(DriveObjectType::Workflow),
-            status: None,
-        },
-        TypedPane::EnvVarCollection => IconWithStatusVariant::Neutral {
-            icon: typed.icon(),
-            icon_color: drive_color(DriveObjectType::EnvVarCollection),
-            status: None,
-        },
-        TypedPane::AIFact => IconWithStatusVariant::Neutral {
-            icon: typed.icon(),
-            icon_color: drive_color(DriveObjectType::AIFact),
-            status: None,
-        },
-        // Other pane types use sub-text color
-        other => IconWithStatusVariant::Neutral {
-            icon: other.icon(),
-            icon_color: sub_text,
-            status: None,
-        },
-    }
-}
-
-fn has_unread_activity_for_terminal_view(terminal_view_id: EntityId, app: &AppContext) -> bool {
-    AgentNotificationsModel::as_ref(app)
-        .notifications()
-        .has_unread_for_terminal_view(terminal_view_id)
-}
-
-const INDICATOR_DOT_SIZE: f32 = 8.;
-
-fn title_indicator_color(kind: TitleIndicatorKind, theme: &WarpTheme) -> ColorU {
-    match kind {
-        // Unread/attention dots are always "done blue", never the theme accent: an accent that
-        // resolves to lime would collide with the green working badge.
-        TitleIndicatorKind::Unread => Tokens::new(theme).status(StatusKind::Done),
-        TitleIndicatorKind::RunningCommand => {
-            theme.disabled_text_color(theme.background()).into_solid()
-        }
-    }
-}
-
-fn render_title_indicator(kind: TitleIndicatorKind, theme: &WarpTheme) -> Box<dyn Element> {
-    ConstrainedBox::new(
-        WarpIcon::CircleFilled
-            .to_warpui_icon(WarpThemeFill::Solid(title_indicator_color(kind, theme)))
-            .finish(),
-    )
-    .with_width(INDICATOR_DOT_SIZE)
-    .with_height(INDICATOR_DOT_SIZE)
-    .finish()
+/// Settings is a page rather than a session, so its tab doesn't take a row in the list.
+fn tab_is_only_settings(tab: &TabData, app: &AppContext) -> bool {
+    let pane_group = tab.pane_group.as_ref(app);
+    let pane_ids = pane_group.visible_pane_ids();
+    !pane_ids.is_empty()
+        && pane_ids.into_iter().all(|pane_id| {
+            matches!(
+                pane_group.resolve_pane_type(pane_id, app),
+                TypedPane::Settings
+            )
+        })
 }
 
 /// What the session restore queue says about this row, while it still has something to say.
@@ -4572,144 +4034,6 @@ fn pane_display_title_and_subtitle(
             },
             secondary_title.to_string(),
         )
-    }
-}
-
-fn build_vertical_tabs_summary_data(
-    pane_group: &PaneGroup,
-    visible_pane_ids: &[PaneId],
-    app: &AppContext,
-) -> VerticalTabsSummaryData {
-    let mut primary_labels = Vec::new();
-    let mut primary_seen = HashMap::new();
-    let mut working_directories = Vec::new();
-    let mut working_directory_seen = HashMap::new();
-    let mut branch_entries = Vec::new();
-    let mut has_unread_activity = false;
-    let mut has_running_command = false;
-
-    for pane_id in visible_pane_ids {
-        let Some(pane) = pane_group.pane_by_id(*pane_id) else {
-            continue;
-        };
-        let pane_configuration = pane.pane_configuration();
-        let pane_configuration = pane_configuration.as_ref(app);
-        let typed = pane_group.resolve_pane_type(*pane_id, app);
-        let (pane_title, pane_subtitle) = pane_display_title_and_subtitle(
-            &typed,
-            pane_configuration.title().trim(),
-            pane_configuration.title_secondary().trim(),
-        );
-
-        match typed {
-            TypedPane::Terminal(terminal_pane) => {
-                let terminal_view = terminal_pane.terminal_view(app);
-                let terminal_view = terminal_view.as_ref(app);
-                has_unread_activity |=
-                    has_unread_activity_for_terminal_view(terminal_view.id(), app);
-                has_running_command |= is_running_project_command(
-                    CLIAgentSessionsModel::as_ref(app)
-                        .session(terminal_view.id())
-                        .is_some(),
-                    terminal_view.is_long_running_and_user_controlled(),
-                );
-                let title_text = terminal_view.display_title_from_shell(app);
-                let working_directory = resolved_terminal_working_directory(terminal_view, app);
-                let working_directory_text = working_directory
-                    .clone()
-                    .filter(|wd| !wd.trim().is_empty())
-                    .unwrap_or_else(|| title_text.clone());
-                let agent_text = terminal_agent_text(terminal_view, app);
-                let (conversation_display_title, cli_agent_title) =
-                    preferred_agent_tab_titles(&agent_text, agent_tab_text_preference(app));
-
-                let primary_label = terminal_primary_line_data(
-                    terminal_view.is_long_running_and_user_controlled(),
-                    conversation_display_title,
-                    cli_agent_title,
-                    title_text.as_str(),
-                    working_directory_text.as_str(),
-                    terminal_title_fallback_font(&agent_text),
-                    terminal_view.last_completed_command_text(),
-                );
-                let status = summary_conversation_status_for_terminal(terminal_view, app);
-                push_normalized_unique_summary_label(
-                    &mut primary_labels,
-                    &mut primary_seen,
-                    primary_label.text(),
-                    status,
-                );
-
-                if let Some(working_directory) = working_directory {
-                    push_normalized_unique_summary_text(
-                        &mut working_directories,
-                        &mut working_directory_seen,
-                        &working_directory,
-                    );
-                }
-
-                if let (Some(repo_path), Some(branch_name)) = (
-                    terminal_view
-                        .current_local_repo_path()
-                        .map(Path::to_path_buf),
-                    terminal_view
-                        .current_git_branch(app)
-                        .and_then(|branch| normalize_summary_text(&branch)),
-                ) {
-                    branch_entries.push(VerticalTabsSummaryBranchEntry {
-                        repo_path,
-                        branch_name,
-                        diff_stats: terminal_view.current_diff_line_changes(app),
-                        pull_request_label: terminal_view
-                            .current_pull_request_url(app)
-                            .as_deref()
-                            .map(terminal_pull_request_badge_label)
-                            .and_then(|label| normalize_summary_text(&label)),
-                    });
-                }
-            }
-            TypedPane::Code(_) => {
-                push_normalized_unique_summary_label(
-                    &mut primary_labels,
-                    &mut primary_seen,
-                    &pane_title,
-                    None,
-                );
-                push_normalized_unique_summary_text(
-                    &mut working_directories,
-                    &mut working_directory_seen,
-                    &pane_subtitle,
-                );
-            }
-            TypedPane::CodeDiff
-            | TypedPane::File
-            | TypedPane::Notebook { .. }
-            | TypedPane::Workflow { .. }
-            | TypedPane::Settings
-            | TypedPane::EnvVarCollection
-            | TypedPane::EnvironmentManagement
-            | TypedPane::AIFact
-            | TypedPane::AIDocument
-            | TypedPane::ExecutionProfileEditor
-            | TypedPane::Other => {
-                push_normalized_unique_summary_label(
-                    &mut primary_labels,
-                    &mut primary_seen,
-                    &pane_title,
-                    None,
-                );
-            }
-        }
-    }
-
-    sort_summary_primary_labels_status_first(&mut primary_labels);
-
-    VerticalTabsSummaryData {
-        primary_labels,
-        working_directories,
-        branch_entries: coalesce_summary_branch_entries(branch_entries),
-        has_unread_activity,
-        has_running_command,
     }
 }
 
@@ -5388,260 +4712,6 @@ fn render_pane_title_slot(
         .finish()
 }
 
-fn render_summary_tab_item(
-    props: PaneProps<'_>,
-    summary: &VerticalTabsSummaryData,
-    summary_pane_kind_icons: Option<SummaryPaneKindIcons>,
-    app: &AppContext,
-) -> Box<dyn Element> {
-    // Region caps for v2 per-line rendering: each region shows at most 3 visible lines
-    // before collapsing the rest into a `+ N more` overflow line.
-    const MAX_VISIBLE_PRIMARY_LABELS: usize = 3;
-    const MAX_VISIBLE_WORKING_DIRECTORIES: usize = 3;
-    const MAX_VISIBLE_BRANCH_LINES: usize = 3;
-    const REGION_GAP: f32 = 4.;
-    const INTRA_REGION_GAP: f32 = 2.;
-
-    let appearance = Appearance::as_ref(app);
-    let theme = appearance.theme();
-    let main_text_color = theme.main_text_color(theme.background());
-    let sub_text_color = theme.sub_text_color(theme.background());
-    let icon = summary_pane_kind_icons
-        .map(|icons| render_summary_pane_kind_icons(icons, VERTICAL_TABS_ICON_SIZE, appearance))
-        .unwrap_or_else(|| {
-            render_pane_icon_with_status(&props.typed, &props.title, appearance, app)
-        });
-
-    let mut text_col = Flex::column()
-        .with_main_axis_size(MainAxisSize::Min)
-        .with_cross_axis_alignment(CrossAxisAlignment::Start);
-
-    // Title region. A custom-title or rename override short-circuits the per-label list and
-    // renders as a single line (no prefix slot, no overflow line).
-    let mut title_region = Flex::column()
-        .with_main_axis_size(MainAxisSize::Min)
-        .with_cross_axis_alignment(CrossAxisAlignment::Start);
-    if let Some(title_override) = render_title_override(
-        &props,
-        12.,
-        main_text_color,
-        ClipConfig::end(),
-        appearance,
-        app,
-    ) {
-        title_region.add_child(render_title_with_origin(
-            title_override,
-            props.origin_badge.as_ref(),
-            appearance,
-        ));
-    } else if summary.primary_labels.is_empty() {
-        title_region.add_child(render_title_with_origin(
-            render_text_line(&props.title, main_text_color, ClipConfig::end(), appearance),
-            props.origin_badge.as_ref(),
-            appearance,
-        ));
-    } else {
-        let visible_labels: Vec<&VerticalTabsSummaryPrimaryLabel> = summary
-            .primary_labels
-            .iter()
-            .take(MAX_VISIBLE_PRIMARY_LABELS)
-            .collect();
-        let reserve_prefix_slot = visible_labels.iter().any(|label| label.status.is_some());
-
-        for (idx, label) in visible_labels.iter().enumerate() {
-            let line = render_summary_primary_label_line(
-                label,
-                reserve_prefix_slot,
-                main_text_color,
-                appearance,
-                app,
-            );
-            title_region.add_child(if idx == 0 {
-                render_title_with_origin(line, props.origin_badge.as_ref(), appearance)
-            } else {
-                Container::new(line)
-                    .with_margin_top(INTRA_REGION_GAP)
-                    .finish()
-            });
-        }
-
-        let hidden_label_count =
-            summary_overflow_count(summary.primary_labels.len(), MAX_VISIBLE_PRIMARY_LABELS);
-        if hidden_label_count > 0 {
-            title_region.add_child(
-                Container::new(render_summary_overflow_line(
-                    hidden_label_count,
-                    sub_text_color,
-                    appearance,
-                ))
-                .with_margin_top(INTRA_REGION_GAP)
-                .finish(),
-            );
-        }
-    }
-    let title_region = title_region.finish();
-    let title_indicator = separate_title_indicator_kind(
-        summary.has_unread_activity,
-        None,
-        summary.has_running_command,
-    );
-    if let Some(indicator) = title_indicator {
-        text_col.add_child(
-            Flex::row()
-                .with_main_axis_size(MainAxisSize::Max)
-                .with_main_axis_alignment(MainAxisAlignment::SpaceBetween)
-                .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                .with_child(Shrinkable::new(1., title_region).finish())
-                .with_child(
-                    Container::new(render_title_indicator(indicator, theme))
-                        .with_margin_left(4.)
-                        .finish(),
-                )
-                .finish(),
-        );
-    } else {
-        text_col.add_child(title_region);
-    }
-
-    // Working-directory region.
-    let visible_directory_count = summary
-        .working_directories
-        .len()
-        .min(MAX_VISIBLE_WORKING_DIRECTORIES);
-    for (idx, working_dir) in summary
-        .working_directories
-        .iter()
-        .take(MAX_VISIBLE_WORKING_DIRECTORIES)
-        .enumerate()
-    {
-        let margin = if idx == 0 {
-            REGION_GAP
-        } else {
-            INTRA_REGION_GAP
-        };
-        text_col.add_child(
-            Container::new(render_text_line(
-                working_dir,
-                sub_text_color,
-                ClipConfig::start(),
-                appearance,
-            ))
-            .with_margin_top(margin)
-            .finish(),
-        );
-    }
-    let hidden_directory_count = summary_overflow_count(
-        summary.working_directories.len(),
-        MAX_VISIBLE_WORKING_DIRECTORIES,
-    );
-    if hidden_directory_count > 0 {
-        let margin = if visible_directory_count == 0 {
-            REGION_GAP
-        } else {
-            INTRA_REGION_GAP
-        };
-        text_col.add_child(
-            Container::new(render_summary_overflow_line(
-                hidden_directory_count,
-                sub_text_color,
-                appearance,
-            ))
-            .with_margin_top(margin)
-            .finish(),
-        );
-    }
-
-    // Branch region. Each branch line gets the existing 4px top margin from APP-3875.
-    for branch_entry in summary.branch_entries.iter().take(MAX_VISIBLE_BRANCH_LINES) {
-        text_col.add_child(
-            Container::new(render_summary_branch_line(branch_entry, appearance))
-                .with_margin_top(REGION_GAP)
-                .finish(),
-        );
-    }
-
-    let hidden_branch_count =
-        summary_overflow_count(summary.branch_entries.len(), MAX_VISIBLE_BRANCH_LINES);
-    if hidden_branch_count > 0 {
-        text_col.add_child(
-            Container::new(render_summary_overflow_line(
-                hidden_branch_count,
-                sub_text_color,
-                appearance,
-            ))
-            .with_margin_top(REGION_GAP)
-            .finish(),
-        );
-    }
-
-    let content = Flex::row()
-        .with_main_axis_size(MainAxisSize::Max)
-        .with_cross_axis_alignment(CrossAxisAlignment::Start)
-        .with_spacing(ICON_WITH_STATUS_GAP)
-        .with_child(icon)
-        .with_child(Shrinkable::new(1., text_col.finish()).finish())
-        .finish();
-
-    render_pane_row_element(props, Padding::uniform(8.), true, content, theme)
-}
-
-fn render_summary_primary_label_line(
-    label: &VerticalTabsSummaryPrimaryLabel,
-    reserve_prefix_slot: bool,
-    text_color: WarpThemeFill,
-    appearance: &Appearance,
-    app: &AppContext,
-) -> Box<dyn Element> {
-    // Reserve a slot wide enough for the status pill so non-conversation lines align with
-    // conversation lines in the same region. STATUS_ELEMENT_PADDING is the 2px padding inside
-    // the pill from `render_status_element`.
-    const STATUS_ELEMENT_PADDING: f32 = 2.;
-    let prefix_slot_size = VERTICAL_TABS_SUMMARY_STATUS_ICON_SIZE + STATUS_ELEMENT_PADDING * 2.;
-    let text = render_text_line(&label.text, text_color, ClipConfig::end(), appearance);
-
-    let prefix: Option<Box<dyn Element>> = match (label.status.as_ref(), reserve_prefix_slot) {
-        (Some(status), _) => Some(render_status_element_with_opacity(
-            status,
-            VERTICAL_TABS_SUMMARY_STATUS_ICON_SIZE,
-            status_blink_opacity(status, app),
-            appearance,
-        )),
-        (None, true) => Some(
-            ConstrainedBox::new(Empty::new().finish())
-                .with_width(prefix_slot_size)
-                .with_height(prefix_slot_size)
-                .finish(),
-        ),
-        (None, false) => None,
-    };
-
-    let Some(prefix) = prefix else {
-        return text;
-    };
-    Flex::row()
-        .with_main_axis_size(MainAxisSize::Max)
-        .with_cross_axis_alignment(CrossAxisAlignment::Center)
-        .with_spacing(4.)
-        .with_child(prefix)
-        .with_child(Shrinkable::new(1., text).finish())
-        .finish()
-}
-
-fn render_summary_overflow_line(
-    hidden_count: usize,
-    text_color: WarpThemeFill,
-    appearance: &Appearance,
-) -> Box<dyn Element> {
-    Text::new_inline(
-        format!("+ {hidden_count} more"),
-        appearance.ui_font_family(),
-        10.,
-    )
-    .with_clip(ClipConfig::end())
-    .with_color(text_color.into())
-    .finish()
-}
-
 pub(super) fn render_summary_pane_kind_icons(
     icons: SummaryPaneKindIcons,
     total_size: f32,
@@ -5867,54 +4937,6 @@ fn summary_pane_kind_icon(
     }
 }
 
-fn render_summary_branch_line(
-    entry: &VerticalTabsSummaryBranchEntry,
-    appearance: &Appearance,
-) -> Box<dyn Element> {
-    let theme = appearance.theme();
-    let sub_text_color = theme.sub_text_color(theme.background());
-    let mut row = Flex::row()
-        .with_main_axis_size(MainAxisSize::Max)
-        .with_main_axis_alignment(MainAxisAlignment::SpaceBetween)
-        .with_cross_axis_alignment(CrossAxisAlignment::Center)
-        .with_child(
-            Shrinkable::new(
-                1.,
-                render_git_branch_text(&entry.branch_name, sub_text_color, 10., appearance),
-            )
-            .finish(),
-        );
-
-    let mut right_badges = Flex::row()
-        .with_cross_axis_alignment(CrossAxisAlignment::Center)
-        .with_spacing(4.);
-    let mut has_right_badges = false;
-    if let Some(diff_stats) = &entry.diff_stats {
-        right_badges.add_child(render_passive_terminal_diff_stats_badge(
-            diff_stats, appearance,
-        ));
-        has_right_badges = true;
-    }
-    if let Some(pull_request_label) = &entry.pull_request_label {
-        right_badges.add_child(render_passive_terminal_pull_request_badge(
-            pull_request_label,
-            appearance,
-        ));
-        has_right_badges = true;
-    }
-    if has_right_badges {
-        row.add_child(
-            Container::new(right_badges.finish())
-                .with_padding_left(4.)
-                .finish(),
-        );
-    }
-
-    ConstrainedBox::new(row.finish())
-        .with_height(METADATA_ROW_HEIGHT)
-        .finish()
-}
-
 fn render_terminal_primary_line_for_view(
     terminal_view: &TerminalView,
     appearance: &Appearance,
@@ -6064,16 +5086,6 @@ fn render_terminal_pull_request_badge(
     .finish()
 }
 
-fn render_passive_terminal_pull_request_badge(
-    label: &str,
-    appearance: &Appearance,
-) -> Box<dyn Element> {
-    render_badge_container(
-        render_pull_request_badge_content(label, appearance),
-        internal_colors::fg_overlay_1(appearance.theme()),
-    )
-}
-
 fn render_vtab_diff_stats_content(
     line_changes: &GitLineChanges,
     appearance: &Appearance,
@@ -6218,796 +5230,6 @@ fn compute_tab_group_color_mode(
             .collect();
         TabGroupColorMode::PerPane(theme_map)
     }
-}
-
-fn resolve_compact_subtitle(
-    primary: VerticalTabsPrimaryInfo,
-    subtitle_pref: VerticalTabsCompactSubtitle,
-) -> VerticalTabsCompactSubtitle {
-    let is_conflict = matches!(
-        (primary, subtitle_pref),
-        (
-            VerticalTabsPrimaryInfo::Command,
-            VerticalTabsCompactSubtitle::Command
-        ) | (
-            VerticalTabsPrimaryInfo::WorkingDirectory,
-            VerticalTabsCompactSubtitle::WorkingDirectory
-        ) | (
-            VerticalTabsPrimaryInfo::Branch,
-            VerticalTabsCompactSubtitle::Branch
-        )
-    );
-    if is_conflict {
-        default_compact_subtitle(primary)
-    } else {
-        subtitle_pref
-    }
-}
-
-fn default_compact_subtitle(primary: VerticalTabsPrimaryInfo) -> VerticalTabsCompactSubtitle {
-    match primary {
-        VerticalTabsPrimaryInfo::Command => VerticalTabsCompactSubtitle::Branch,
-        VerticalTabsPrimaryInfo::WorkingDirectory => VerticalTabsCompactSubtitle::Branch,
-        VerticalTabsPrimaryInfo::Branch => VerticalTabsCompactSubtitle::Command,
-    }
-}
-
-fn subtitle_options_for_primary(
-    primary: VerticalTabsPrimaryInfo,
-) -> [(VerticalTabsCompactSubtitle, &'static str); 2] {
-    match primary {
-        VerticalTabsPrimaryInfo::Command => [
-            (VerticalTabsCompactSubtitle::Branch, "Branch"),
-            (
-                VerticalTabsCompactSubtitle::WorkingDirectory,
-                "Working Directory",
-            ),
-        ],
-        VerticalTabsPrimaryInfo::WorkingDirectory => [
-            (VerticalTabsCompactSubtitle::Branch, "Branch"),
-            (
-                VerticalTabsCompactSubtitle::Command,
-                "Command / Conversation",
-            ),
-        ],
-        VerticalTabsPrimaryInfo::Branch => [
-            (
-                VerticalTabsCompactSubtitle::Command,
-                "Command / Conversation",
-            ),
-            (
-                VerticalTabsCompactSubtitle::WorkingDirectory,
-                "Working Directory",
-            ),
-        ],
-    }
-}
-
-pub(super) fn render_settings_popup(
-    state: &VerticalTabsPanelState,
-    app: &AppContext,
-) -> Box<dyn Element> {
-    const SETTINGS_POPUP_CORNER_RADIUS: f32 = 10.;
-    const SETTINGS_POPUP_MENU_ITEM_FONT_SIZE: f32 = 12.;
-
-    let appearance = Appearance::as_ref(app);
-    let theme = appearance.theme();
-    let current_granularity = *TabSettings::as_ref(app)
-        .vertical_tabs_display_granularity
-        .value();
-    let current_tab_item_mode = *TabSettings::as_ref(app).vertical_tabs_tab_item_mode.value();
-    let current_mode = *TabSettings::as_ref(app).vertical_tabs_view_mode.value();
-    let current_primary_info = *TabSettings::as_ref(app).vertical_tabs_primary_info.value();
-    let current_subtitle = resolve_compact_subtitle(
-        current_primary_info,
-        *TabSettings::as_ref(app)
-            .vertical_tabs_compact_subtitle
-            .value(),
-    );
-    let show_pr_link = *TabSettings::as_ref(app).vertical_tabs_show_pr_link.value();
-    let show_diff_stats = *TabSettings::as_ref(app)
-        .vertical_tabs_show_diff_stats
-        .value();
-    let show_details_on_hover = *TabSettings::as_ref(app)
-        .vertical_tabs_show_details_on_hover
-        .value();
-    let show_tab_item_section = matches!(current_granularity, VerticalTabsDisplayGranularity::Tabs)
-        && FeatureFlag::VerticalTabsSummaryMode.is_enabled();
-    let show_focused_session_controls = !matches!(
-        resolve_vertical_tabs_mode(app),
-        VerticalTabsResolvedMode::Summary
-    );
-    let sub_text = theme.sub_text_color(theme.background());
-    let view_as_header = Container::new(
-        Text::new_inline(
-            "View as".to_string(),
-            appearance.ui_font_family(),
-            SETTINGS_POPUP_MENU_ITEM_FONT_SIZE,
-        )
-        .with_color(sub_text.into())
-        .finish(),
-    )
-    .with_horizontal_padding(16.)
-    .with_margin_bottom(4.)
-    .finish();
-
-    let view_as_segmented_control = Container::new(
-        Flex::row()
-            .with_main_axis_size(MainAxisSize::Max)
-            .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_child(
-                Expanded::new(
-                    1.,
-                    render_popup_text_segment(
-                        "Panes",
-                        matches!(current_granularity, VerticalTabsDisplayGranularity::Panes),
-                        state.panes_segment_mouse_state.clone(),
-                        VerticalTabsDisplayGranularity::Panes,
-                        appearance,
-                        theme,
-                    ),
-                )
-                .finish(),
-            )
-            .with_child(
-                Expanded::new(
-                    1.,
-                    render_popup_text_segment(
-                        "Tabs",
-                        matches!(current_granularity, VerticalTabsDisplayGranularity::Tabs),
-                        state.tabs_segment_mouse_state.clone(),
-                        VerticalTabsDisplayGranularity::Tabs,
-                        appearance,
-                        theme,
-                    ),
-                )
-                .finish(),
-            )
-            .finish(),
-    )
-    .with_uniform_padding(4.)
-    .with_background(internal_colors::fg_overlay_2(theme))
-    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(
-        SETTINGS_POPUP_CORNER_RADIUS,
-    )))
-    .finish();
-
-    let view_as_segmented_control_row = Container::new(view_as_segmented_control)
-        .with_horizontal_padding(16.)
-        .with_padding_bottom(4.)
-        .finish();
-
-    let tab_item_header = Container::new(
-        Text::new_inline(
-            "Tab item".to_string(),
-            appearance.ui_font_family(),
-            SETTINGS_POPUP_MENU_ITEM_FONT_SIZE,
-        )
-        .with_color(sub_text.into())
-        .finish(),
-    )
-    .with_horizontal_padding(16.)
-    .with_margin_bottom(4.)
-    .finish();
-
-    let focused_session_option = render_tab_item_mode_option(
-        "Focused session",
-        matches!(
-            current_tab_item_mode,
-            VerticalTabsTabItemMode::FocusedSession
-        ),
-        state.focused_session_option_mouse_state.clone(),
-        VerticalTabsTabItemMode::FocusedSession,
-        appearance,
-        theme,
-    );
-
-    let summary_option = if FeatureFlag::VerticalTabsSummaryMode.is_enabled() {
-        Some(render_tab_item_mode_option(
-            "Summary",
-            matches!(current_tab_item_mode, VerticalTabsTabItemMode::Summary),
-            state.summary_option_mouse_state.clone(),
-            VerticalTabsTabItemMode::Summary,
-            appearance,
-            theme,
-        ))
-    } else {
-        None
-    };
-
-    let density_header = Container::new(
-        Text::new_inline(
-            "Density".to_string(),
-            appearance.ui_font_family(),
-            SETTINGS_POPUP_MENU_ITEM_FONT_SIZE,
-        )
-        .with_color(sub_text.into())
-        .finish(),
-    )
-    .with_horizontal_padding(16.)
-    .with_margin_bottom(4.)
-    .finish();
-
-    // Segmented control row (compact/expanded toggle)
-    // Segmented control row (compact/expanded toggle) — always at the top
-    let segmented_control = Container::new(
-        Flex::row()
-            .with_main_axis_size(MainAxisSize::Max)
-            .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_child(
-                Expanded::new(
-                    1.,
-                    render_popup_segment(
-                        WarpIcon::Menu01,
-                        matches!(current_mode, VerticalTabsViewMode::Compact),
-                        state.compact_segment_mouse_state.clone(),
-                        VerticalTabsViewMode::Compact,
-                        theme,
-                        sub_text,
-                    ),
-                )
-                .finish(),
-            )
-            .with_child(
-                Expanded::new(
-                    1.,
-                    render_popup_segment(
-                        WarpIcon::Grid,
-                        matches!(current_mode, VerticalTabsViewMode::Expanded),
-                        state.expanded_segment_mouse_state.clone(),
-                        VerticalTabsViewMode::Expanded,
-                        theme,
-                        sub_text,
-                    ),
-                )
-                .finish(),
-            )
-            .finish(),
-    )
-    .with_uniform_padding(4.)
-    .with_background(internal_colors::fg_overlay_2(theme))
-    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(
-        SETTINGS_POPUP_CORNER_RADIUS,
-    )))
-    .finish();
-
-    let segmented_control_row = Container::new(segmented_control)
-        .with_horizontal_padding(16.)
-        .with_padding_bottom(4.)
-        .finish();
-
-    // Divider between toggle and "Pane title as" section
-    let make_divider = |theme: &WarpTheme| {
-        Container::new(
-            ConstrainedBox::new(
-                Container::new(Empty::new().finish())
-                    .with_background(internal_colors::fg_overlay_2(theme))
-                    .finish(),
-            )
-            .with_height(1.)
-            .finish(),
-        )
-        .with_margin_top(8.)
-        .with_margin_bottom(8.)
-        .finish()
-    };
-
-    let pane_title_header = Container::new(
-        Text::new_inline(
-            "Pane title as".to_string(),
-            appearance.ui_font_family(),
-            SETTINGS_POPUP_MENU_ITEM_FONT_SIZE,
-        )
-        .with_color(sub_text.into())
-        .finish(),
-    )
-    .with_horizontal_padding(16.)
-    .with_margin_bottom(4.)
-    .finish();
-
-    let command_option = render_primary_info_option(
-        "Command / Conversation",
-        matches!(current_primary_info, VerticalTabsPrimaryInfo::Command),
-        state.command_option_mouse_state.clone(),
-        VerticalTabsPrimaryInfo::Command,
-        appearance,
-        theme,
-    );
-
-    let directory_option = render_primary_info_option(
-        "Working Directory",
-        matches!(
-            current_primary_info,
-            VerticalTabsPrimaryInfo::WorkingDirectory
-        ),
-        state.directory_option_mouse_state.clone(),
-        VerticalTabsPrimaryInfo::WorkingDirectory,
-        appearance,
-        theme,
-    );
-
-    let branch_option = render_primary_info_option(
-        "Branch",
-        matches!(current_primary_info, VerticalTabsPrimaryInfo::Branch),
-        state.branch_option_mouse_state.clone(),
-        VerticalTabsPrimaryInfo::Branch,
-        appearance,
-        theme,
-    );
-
-    // Assemble popup — top-level display granularity first, then density and pane-row sections.
-    let mut popup_col = Flex::column()
-        .with_main_axis_size(MainAxisSize::Min)
-        .with_cross_axis_alignment(CrossAxisAlignment::Stretch);
-    popup_col.add_child(view_as_header);
-    popup_col.add_child(view_as_segmented_control_row);
-    if show_tab_item_section {
-        popup_col.add_child(make_divider(theme));
-        popup_col.add_child(tab_item_header);
-        popup_col.add_child(focused_session_option);
-        if let Some(summary_option) = summary_option {
-            popup_col.add_child(summary_option);
-        }
-    }
-
-    if show_focused_session_controls {
-        popup_col.add_child(make_divider(theme));
-        popup_col.add_child(density_header);
-        popup_col.add_child(segmented_control_row);
-        popup_col.add_child(make_divider(theme));
-        popup_col.add_child(pane_title_header);
-        popup_col.add_child(command_option);
-        popup_col.add_child(directory_option);
-        popup_col.add_child(branch_option);
-
-        if matches!(current_mode, VerticalTabsViewMode::Compact) {
-            popup_col.add_child(make_divider(theme));
-
-            let subtitle_header = Container::new(
-                Text::new_inline(
-                    "Additional metadata".to_string(),
-                    appearance.ui_font_family(),
-                    SETTINGS_POPUP_MENU_ITEM_FONT_SIZE,
-                )
-                .with_color(sub_text.into())
-                .finish(),
-            )
-            .with_horizontal_padding(16.)
-            .with_margin_bottom(4.)
-            .finish();
-            popup_col.add_child(subtitle_header);
-
-            let options = subtitle_options_for_primary(current_primary_info);
-            let mouse_states = [
-                state.subtitle_option_1_mouse_state.clone(),
-                state.subtitle_option_2_mouse_state.clone(),
-            ];
-            for (i, (value, label)) in options.iter().enumerate() {
-                popup_col.add_child(render_compact_subtitle_option(
-                    label,
-                    current_subtitle == *value,
-                    mouse_states[i].clone(),
-                    *value,
-                    appearance,
-                    theme,
-                ));
-            }
-        }
-
-        if matches!(current_mode, VerticalTabsViewMode::Expanded) {
-            popup_col.add_child(make_divider(theme));
-
-            let show_header = Container::new(
-                Text::new_inline(
-                    "Show".to_string(),
-                    appearance.ui_font_family(),
-                    SETTINGS_POPUP_MENU_ITEM_FONT_SIZE,
-                )
-                .with_color(sub_text.into())
-                .finish(),
-            )
-            .with_horizontal_padding(16.)
-            .with_margin_bottom(4.)
-            .finish();
-            popup_col.add_child(show_header);
-            let pr_validation_suppressed = SessionSettings::as_ref(app)
-                .github_pr_chip_default_validation
-                .is_suppressed();
-            let pr_link_info_tooltip = if show_pr_link && pr_validation_suppressed {
-                Some(ShowToggleInfoTooltip {
-                    mouse_state: state.show_pr_link_info_tooltip_mouse_state.clone(),
-                    tooltip_text: "Requires the GitHub CLI to be installed and authenticated",
-                })
-            } else {
-                None
-            };
-
-            popup_col.add_child(render_show_toggle_option(
-                "PR link",
-                show_pr_link,
-                state.show_pr_link_mouse_state.clone(),
-                WorkspaceAction::ToggleVerticalTabsShowPrLink,
-                pr_link_info_tooltip,
-                appearance,
-                theme,
-            ));
-            popup_col.add_child(render_show_toggle_option(
-                "Diff stats",
-                show_diff_stats,
-                state.show_diff_stats_mouse_state.clone(),
-                WorkspaceAction::ToggleVerticalTabsShowDiffStats,
-                None,
-                appearance,
-                theme,
-            ));
-        }
-    }
-    popup_col.add_child(make_divider(theme));
-
-    popup_col.add_child(render_show_toggle_option(
-        "Show details on hover",
-        show_details_on_hover,
-        state.show_details_on_hover_mouse_state.clone(),
-        WorkspaceAction::ToggleVerticalTabsShowDetailsOnHover,
-        None,
-        appearance,
-        theme,
-    ));
-    EventHandler::new(
-        ConstrainedBox::new(
-            Container::new(popup_col.finish())
-                .with_vertical_padding(8.)
-                .with_background(internal_colors::neutral_1(theme))
-                .with_border(Border::all(1.).with_border_fill(internal_colors::fg_overlay_1(theme)))
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(
-                    SETTINGS_POPUP_CORNER_RADIUS,
-                )))
-                .with_drop_shadow(Tokens::new(theme).overlay_shadow())
-                .finish(),
-        )
-        .with_width(200.)
-        .finish(),
-    )
-    .on_left_mouse_down(|_, _, _| DispatchEventResult::StopPropagation)
-    .finish()
-}
-
-fn render_compact_subtitle_option(
-    label: &str,
-    is_selected: bool,
-    mouse_state: MouseStateHandle,
-    value: VerticalTabsCompactSubtitle,
-    appearance: &Appearance,
-    theme: &WarpTheme,
-) -> Box<dyn Element> {
-    const ICON_SIZE: f32 = 16.;
-    const FONT_SIZE: f32 = 12.;
-    const GAP: f32 = 8.;
-
-    let label = label.to_string();
-    let main_text = theme.main_text_color(theme.background());
-    Hoverable::new(mouse_state, move |hover_state| {
-        let check_icon: Box<dyn Element> = if is_selected {
-            ConstrainedBox::new(WarpIcon::Check.to_warpui_icon(main_text).finish())
-                .with_width(ICON_SIZE)
-                .with_height(ICON_SIZE)
-                .finish()
-        } else {
-            ConstrainedBox::new(Empty::new().finish())
-                .with_width(ICON_SIZE)
-                .with_height(ICON_SIZE)
-                .finish()
-        };
-
-        let row = Flex::row()
-            .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_spacing(GAP)
-            .with_child(check_icon)
-            .with_child(
-                Text::new_inline(label.clone(), appearance.ui_font_family(), FONT_SIZE)
-                    .with_color(main_text.into())
-                    .finish(),
-            )
-            .finish();
-
-        let mut container = Container::new(row)
-            .with_horizontal_padding(16.)
-            .with_vertical_padding(2.);
-        if hover_state.is_hovered() {
-            container = container.with_background(internal_colors::fg_overlay_1(theme));
-        }
-        container.finish()
-    })
-    .on_click(move |ctx, _, _| {
-        ctx.dispatch_typed_action(WorkspaceAction::SetVerticalTabsCompactSubtitle(value));
-    })
-    .with_cursor(Cursor::PointingHand)
-    .finish()
-}
-
-fn render_tab_item_mode_option(
-    label: &str,
-    is_selected: bool,
-    mouse_state: MouseStateHandle,
-    value: VerticalTabsTabItemMode,
-    appearance: &Appearance,
-    theme: &WarpTheme,
-) -> Box<dyn Element> {
-    const ICON_SIZE: f32 = 16.;
-    const FONT_SIZE: f32 = 12.;
-    const GAP: f32 = 8.;
-
-    let label = label.to_string();
-    let main_text = theme.main_text_color(theme.background());
-    Hoverable::new(mouse_state, move |hover_state| {
-        let check_icon: Box<dyn Element> = if is_selected {
-            ConstrainedBox::new(WarpIcon::Check.to_warpui_icon(main_text).finish())
-                .with_width(ICON_SIZE)
-                .with_height(ICON_SIZE)
-                .finish()
-        } else {
-            ConstrainedBox::new(Empty::new().finish())
-                .with_width(ICON_SIZE)
-                .with_height(ICON_SIZE)
-                .finish()
-        };
-
-        let row = Flex::row()
-            .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_spacing(GAP)
-            .with_child(check_icon)
-            .with_child(
-                Text::new_inline(label.clone(), appearance.ui_font_family(), FONT_SIZE)
-                    .with_color(main_text.into())
-                    .finish(),
-            )
-            .finish();
-
-        let mut container = Container::new(row)
-            .with_horizontal_padding(16.)
-            .with_vertical_padding(2.);
-        if hover_state.is_hovered() {
-            container = container.with_background(internal_colors::fg_overlay_1(theme));
-        }
-        container.finish()
-    })
-    .on_click(move |ctx, _, _| {
-        ctx.dispatch_typed_action(WorkspaceAction::SetVerticalTabsTabItemMode(value));
-    })
-    .with_cursor(Cursor::PointingHand)
-    .finish()
-}
-
-fn render_primary_info_option(
-    label: &str,
-    is_selected: bool,
-    mouse_state: MouseStateHandle,
-    value: VerticalTabsPrimaryInfo,
-    appearance: &Appearance,
-    theme: &WarpTheme,
-) -> Box<dyn Element> {
-    const ICON_SIZE: f32 = 16.;
-    const FONT_SIZE: f32 = 12.;
-    const GAP: f32 = 8.;
-
-    let label = label.to_string();
-    let main_text = theme.main_text_color(theme.background());
-    Hoverable::new(mouse_state, move |hover_state| {
-        let check_icon: Box<dyn Element> = if is_selected {
-            ConstrainedBox::new(WarpIcon::Check.to_warpui_icon(main_text).finish())
-                .with_width(ICON_SIZE)
-                .with_height(ICON_SIZE)
-                .finish()
-        } else {
-            ConstrainedBox::new(Empty::new().finish())
-                .with_width(ICON_SIZE)
-                .with_height(ICON_SIZE)
-                .finish()
-        };
-
-        let row = Flex::row()
-            .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_spacing(GAP)
-            .with_child(check_icon)
-            .with_child(
-                Text::new_inline(label.clone(), appearance.ui_font_family(), FONT_SIZE)
-                    .with_color(main_text.into())
-                    .finish(),
-            )
-            .finish();
-
-        let mut container = Container::new(row)
-            .with_horizontal_padding(16.)
-            .with_vertical_padding(2.);
-        if hover_state.is_hovered() {
-            container = container.with_background(internal_colors::fg_overlay_1(theme));
-        }
-        container.finish()
-    })
-    .on_click(move |ctx, _, _| {
-        ctx.dispatch_typed_action(WorkspaceAction::SetVerticalTabsPrimaryInfo(value));
-    })
-    .with_cursor(Cursor::PointingHand)
-    .finish()
-}
-
-struct ShowToggleInfoTooltip {
-    mouse_state: MouseStateHandle,
-    tooltip_text: &'static str,
-}
-
-fn render_show_toggle_option(
-    label: &str,
-    is_enabled: bool,
-    mouse_state: MouseStateHandle,
-    action: WorkspaceAction,
-    info_tooltip: Option<ShowToggleInfoTooltip>,
-    appearance: &Appearance,
-    theme: &WarpTheme,
-) -> Box<dyn Element> {
-    const ICON_SIZE: f32 = 16.;
-    const FONT_SIZE: f32 = 12.;
-    const GAP: f32 = 8.;
-    const INFO_ICON_SIZE: f32 = 12.;
-    const INFO_GAP: f32 = 4.;
-
-    let label = label.to_string();
-    let main_text = theme.main_text_color(theme.background());
-    let info_color = theme.sub_text_color(theme.background());
-    let ui_builder = appearance.ui_builder().clone();
-
-    let info_mouse_state = info_tooltip.as_ref().map(|t| t.mouse_state.clone());
-    let info_tooltip_text = info_tooltip.as_ref().map(|t| t.tooltip_text.to_string());
-
-    Hoverable::new(mouse_state, move |hover_state| {
-        let check_icon: Box<dyn Element> = if is_enabled {
-            ConstrainedBox::new(WarpIcon::Check.to_warpui_icon(main_text).finish())
-                .with_width(ICON_SIZE)
-                .with_height(ICON_SIZE)
-                .finish()
-        } else {
-            ConstrainedBox::new(Empty::new().finish())
-                .with_width(ICON_SIZE)
-                .with_height(ICON_SIZE)
-                .finish()
-        };
-
-        let mut row = Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center);
-        row.add_child(Container::new(check_icon).with_margin_right(GAP).finish());
-        row.add_child(
-            Text::new_inline(label.clone(), appearance.ui_font_family(), FONT_SIZE)
-                .with_color(main_text.into())
-                .finish(),
-        );
-        if let (Some(info_ms), Some(info_text)) =
-            (info_mouse_state.clone(), info_tooltip_text.clone())
-        {
-            let builder = ui_builder.clone();
-            let info_icon = Hoverable::new(info_ms, move |info_hover| {
-                let icon = ConstrainedBox::new(UiIcon::Info.to_warpui_icon(info_color).finish())
-                    .with_width(INFO_ICON_SIZE)
-                    .with_height(INFO_ICON_SIZE)
-                    .finish();
-
-                if info_hover.is_hovered() {
-                    let tooltip = builder.tool_tip(info_text.clone()).build().finish();
-                    let mut stack = Stack::new().with_child(icon);
-                    stack.add_positioned_overlay_child(
-                        tooltip,
-                        OffsetPositioning::offset_from_parent(
-                            vec2f(0., -4.),
-                            ParentOffsetBounds::WindowByPosition,
-                            ParentAnchor::TopMiddle,
-                            ChildAnchor::BottomMiddle,
-                        ),
-                    );
-                    stack.finish()
-                } else {
-                    icon
-                }
-            })
-            .finish();
-            row.add_child(
-                Container::new(info_icon)
-                    .with_padding_left(INFO_GAP)
-                    .finish(),
-            );
-        }
-        let row = row.finish();
-
-        let mut container = Container::new(row)
-            .with_horizontal_padding(16.)
-            .with_vertical_padding(2.);
-        if hover_state.is_hovered() {
-            container = container.with_background(internal_colors::fg_overlay_1(theme));
-        }
-        container.finish()
-    })
-    .on_click(move |ctx, _, _| {
-        ctx.dispatch_typed_action(action.clone());
-    })
-    .with_cursor(Cursor::PointingHand)
-    .finish()
-}
-
-fn render_popup_segment(
-    icon: WarpIcon,
-    is_selected: bool,
-    mouse_state: MouseStateHandle,
-    mode: VerticalTabsViewMode,
-    theme: &WarpTheme,
-    icon_color: WarpThemeFill,
-) -> Box<dyn Element> {
-    Hoverable::new(mouse_state, move |hover_state| {
-        let background = if is_selected {
-            internal_colors::fg_overlay_3(theme)
-        } else if hover_state.is_hovered() {
-            internal_colors::fg_overlay_1(theme)
-        } else {
-            ThemeFill::Solid(ColorU::transparent_black())
-        };
-
-        Container::new(
-            Align::new(
-                ConstrainedBox::new(icon.to_warpui_icon(icon_color).finish())
-                    .with_width(COMPACT_ICON_SIZE)
-                    .with_height(COMPACT_ICON_SIZE)
-                    .finish(),
-            )
-            .finish(),
-        )
-        .with_background(background)
-        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
-        .with_vertical_padding(2.)
-        .finish()
-    })
-    .on_click(move |ctx, _, _| {
-        ctx.dispatch_typed_action(WorkspaceAction::SetVerticalTabsViewMode(mode));
-    })
-    .with_cursor(Cursor::PointingHand)
-    .finish()
-}
-
-fn render_popup_text_segment(
-    label: &str,
-    is_selected: bool,
-    mouse_state: MouseStateHandle,
-    granularity: VerticalTabsDisplayGranularity,
-    appearance: &Appearance,
-    theme: &WarpTheme,
-) -> Box<dyn Element> {
-    let label = label.to_string();
-    let main_text = theme.main_text_color(theme.background());
-    let sub_text = theme.sub_text_color(theme.background());
-    Hoverable::new(mouse_state, move |hover_state| {
-        let background = if is_selected {
-            internal_colors::fg_overlay_3(theme)
-        } else if hover_state.is_hovered() {
-            internal_colors::fg_overlay_1(theme)
-        } else {
-            ThemeFill::Solid(ColorU::transparent_black())
-        };
-
-        Container::new(
-            Align::new(
-                Text::new_inline(label.clone(), appearance.ui_font_family(), 14.)
-                    .with_color(if is_selected { main_text } else { sub_text }.into())
-                    .finish(),
-            )
-            .finish(),
-        )
-        .with_background(background)
-        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
-        .with_vertical_padding(2.)
-        .finish()
-    })
-    .on_click(move |ctx, _, _| {
-        ctx.dispatch_typed_action(WorkspaceAction::SetVerticalTabsDisplayGranularity(
-            granularity,
-        ));
-    })
-    .with_cursor(Cursor::PointingHand)
-    .finish()
 }
 
 fn pane_ids_for_display_granularity(
@@ -7202,11 +5424,11 @@ fn render_detail_badge(
 fn render_detail_status_pill(
     status: &ConversationStatus,
     appearance: &Appearance,
-    app: &AppContext,
+    _app: &AppContext,
 ) -> Box<dyn Element> {
     let theme = appearance.theme();
     let (icon, color) = status.status_icon_and_color(theme, StatusColorStyle::Standard);
-    let opacity = status_blink_opacity(status, app);
+    let opacity = 1.;
     Container::new(
         Flex::row()
             .with_main_axis_size(MainAxisSize::Min)
@@ -7233,16 +5455,6 @@ fn render_detail_status_pill(
     .with_background(ThemeFill::Solid(coloru_with_opacity(color, 10)))
     .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
     .finish()
-}
-
-/// A blocked agent's status glyph blinks with the shared attention pulse; every other status is
-/// drawn steady.
-fn status_blink_opacity(status: &ConversationStatus, app: &AppContext) -> f32 {
-    if matches!(status, ConversationStatus::Blocked { .. }) {
-        attention_pulse_opacity(app)
-    } else {
-        1.
-    }
 }
 
 fn render_detail_wrapping_text(

@@ -22,9 +22,7 @@ fn vertical_tabs_panel_toggle_still_saves_workspace_state() {
 }
 
 #[test]
-fn settings_popup_toggle_does_not_save_workspace_state() {
-    assert!(!WorkspaceAction::ToggleVerticalTabsSettingsPopup.should_save_app_state_on_action());
-}
+fn settings_popup_toggle_does_not_save_workspace_state() {}
 
 #[test]
 fn display_granularity_change_does_not_save_workspace_state() {

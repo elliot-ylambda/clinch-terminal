@@ -190,8 +190,6 @@ fn requires_backend_excludes_local_only_sections() {
         SettingsSection::Code,
         SettingsSection::CodeIndexing,
         SettingsSection::EditorAndCodeReview,
-        SettingsSection::CloudEnvironments,
-        SettingsSection::OzCloudAPIKeys,
     ] {
         assert!(
             !section.requires_backend(),
@@ -278,14 +276,14 @@ fn arrow_nav_skips_backend_only_sections_when_backendless() {
     assert!(stops
         .iter()
         .all(|s| !matches!(s, NavStop::CollapsedUmbrella { nav_index: 1, .. })));
-    // The still-visible Code / Cloud platform umbrellas remain as stops,
-    // since none of their subpages require the backend.
+    // Code stays, since none of its subpages require the backend. Every Cloud platform subpage
+    // does, so that umbrella goes too.
     assert!(stops
         .iter()
         .any(|s| matches!(s, NavStop::CollapsedUmbrella { nav_index: 3, .. })));
     assert!(stops
         .iter()
-        .any(|s| matches!(s, NavStop::CollapsedUmbrella { nav_index: 4, .. })));
+        .all(|s| !matches!(s, NavStop::CollapsedUmbrella { nav_index: 4, .. })));
 }
 
 // ── MatchData behavior ──────────────────────────────────────────────────────

@@ -38,6 +38,7 @@ use crate::settings::{
 };
 use crate::terminal::session_settings::{NotificationsSettings, SessionSettings};
 use crate::ui_components::icons::Icon;
+use crate::workspace::tab_settings::TabSettings;
 
 const TAILSCALE_MAC_DOWNLOAD_URL: &str = "https://tailscale.com/download/mac";
 const TAILSCALE_IOS_DOWNLOAD_URL: &str = "https://tailscale.com/download/ios";
@@ -117,6 +118,7 @@ pub enum ClinchSettingsPageAction {
     ToggleComputerUsePermissionsHelp,
     SessionCapture,
     AgentStatusOnTabs,
+    ToggleTabDetailsCard,
     AutoCreateWorktreesForNewTabs,
     CliAgentPlanLimits,
     AutomaticUpdateCheck,
@@ -179,6 +181,7 @@ impl ClinchSettingsPageView {
         let agent_widgets: Vec<Box<dyn SettingsWidget<View = Self>>> = vec![
             Box::new(SessionCaptureWidget::default()),
             Box::new(AgentStatusBadgesWidget::default()),
+            Box::new(TabDetailsCardWidget::default()),
         ];
         let mut project_widgets: Vec<Box<dyn SettingsWidget<View = Self>>> = vec![];
         if ClinchSettings::as_ref(ctx)
@@ -350,6 +353,14 @@ impl TypedActionView for ClinchSettingsPageView {
                     });
                     ctx.notify();
                 }
+            }
+            ClinchSettingsPageAction::ToggleTabDetailsCard => {
+                TabSettings::handle(ctx).update(ctx, |settings, ctx| {
+                    report_if_error!(settings
+                        .vertical_tabs_show_details_on_hover
+                        .toggle_and_save_value(ctx));
+                });
+                ctx.notify();
             }
             ClinchSettingsPageAction::AgentStatusOnTabs => {
                 let current = SessionSettings::as_ref(ctx).notifications.value().clone();
@@ -1711,6 +1722,51 @@ impl SettingsWidget for AgentStatusBadgesWidget {
             Some(
                 "Show Claude Code and Codex status on terminal tabs when an agent is working, \
                  finished, or needs attention."
+                    .into(),
+            ),
+        )
+    }
+}
+
+#[derive(Default)]
+struct TabDetailsCardWidget {
+    switch_state: SwitchStateHandle,
+}
+
+impl SettingsWidget for TabDetailsCardWidget {
+    type View = ClinchSettingsPageView;
+
+    fn search_terms(&self) -> &str {
+        "clinch sidebar vertical tabs hover details card branch folder pull request prompt"
+    }
+
+    fn render(
+        &self,
+        _view: &Self::View,
+        appearance: &Appearance,
+        app: &AppContext,
+    ) -> Box<dyn Element> {
+        let enabled = *TabSettings::as_ref(app)
+            .vertical_tabs_show_details_on_hover
+            .value();
+        render_body_item::<ClinchSettingsPageAction>(
+            "Show tab details on hover".into(),
+            None,
+            LocalOnlyIconState::Hidden,
+            ToggleState::Enabled,
+            appearance,
+            appearance
+                .ui_builder()
+                .switch(self.switch_state.clone())
+                .check(enabled)
+                .build()
+                .on_click(|ctx, _, _| {
+                    ctx.dispatch_typed_action(ClinchSettingsPageAction::ToggleTabDetailsCard);
+                })
+                .finish(),
+            Some(
+                "Pausing on a tab in the sidebar shows its status, branch, folder, pull request \
+                 and last prompt."
                     .into(),
             ),
         )

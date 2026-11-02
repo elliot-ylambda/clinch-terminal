@@ -354,6 +354,10 @@ integration_tests! {
     // Native screenshots for comparing against the design prototype, run manually
     #[ignore = "Manual test: requires real display for frame capture"]
     test_redesign_screens,
+    #[ignore = "Manual test: requires real display for frame capture"]
+    test_redesign_screens_paper,
+    #[ignore = "Manual test: requires real display for frame capture"]
+    test_redesign_agent_screens,
 
     // Rich Input Ctrl+Enter submit toggle (issue #11588)
     test_rich_input_toggle_on_enter_inserts_newline_and_ctrl_enter_submits,

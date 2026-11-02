@@ -82,7 +82,7 @@ use warp_core::ui::color::coloru_with_opacity;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::phenomenon::PhenomenonStyle;
 use warp_core::ui::theme::Fill;
-use warp_core::ui::tokens::{StatusKind, Tokens, CARD_INSET};
+use warp_core::ui::tokens::{corners_md, corners_pill, corners_sm, StatusKind, Tokens, CARD_INSET};
 use warp_core::ui::Icon;
 use warp_core::user_preferences::GetUserPreferences as _;
 use warp_editor::editor::NavigationKey;
@@ -116,7 +116,7 @@ use warpui::platform::{
 #[cfg(feature = "local_tty")]
 use warpui::r#async::Timer;
 use warpui::text_layout::ClipConfig;
-use warpui::ui_components::button::{ButtonVariant, TextAndIcon, TextAndIconAlignment};
+use warpui::ui_components::button::ButtonVariant;
 use warpui::ui_components::components::{Coords, UiComponent, UiComponentStyles};
 use warpui::windowing::state::ApplicationStage;
 use warpui::windowing::{StateEvent, WindowManager};
@@ -128,10 +128,9 @@ use warpui::{
 use self::vertical_tabs::telemetry::{VerticalTabsDisplayOption, VerticalTabsTelemetryEvent};
 use self::vertical_tabs::{
     drag_autoscroll_step, htab_group_position_id, pane_summary_kind, render_detail_sidecar,
-    render_settings_popup, render_summary_pane_kind_icons, vtab_group_position_id, SummaryPaneKind,
-    SummaryPaneKindIcons, VerticalTabsPanelState, BOOKMARKED_SESSIONS_KEBAB_POSITION_ID,
+    render_summary_pane_kind_icons, vtab_group_position_id, SummaryPaneKind, SummaryPaneKindIcons,
+    VerticalTabsPanelState, BOOKMARKED_SESSIONS_KEBAB_POSITION_ID,
     BOOKMARKED_SESSIONS_SECTION_POSITION_ID, VERTICAL_TABS_SCROLL_VIEWPORT_POSITION_ID,
-    VERTICAL_TABS_SETTINGS_BUTTON_POSITION_ID,
 };
 #[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
 use super::action::AutoCloudHandoffTrigger;
@@ -403,7 +402,6 @@ use crate::terminal::available_shells::AvailableShell;
 #[cfg(target_os = "windows")]
 use crate::terminal::available_shells::AvailableShells;
 use crate::terminal::block_list_viewport::InputMode;
-use crate::terminal::cli_agent_sessions::attention_pulse::AgentAttentionPulse;
 #[cfg(not(target_family = "wasm"))]
 use crate::terminal::cli_agent_sessions::plugin_manager::{plugin_manager_for, PluginModalKind};
 #[cfg(feature = "local_tty")]
@@ -1533,17 +1531,14 @@ fn remote_control_header_presentation(
 fn remote_control_button_styles(
     font_family_id: FamilyId,
     muted_color: ColorU,
-    accent: ColorU,
 ) -> (UiComponentStyles, UiComponentStyles) {
     let default_styles = UiComponentStyles {
         font_family_id: Some(font_family_id),
         font_color: Some(muted_color),
         font_size: Some(REMOTE_CONTROL_BUTTON_FONT_SIZE),
         font_weight: Some(Weight::Semibold),
-        padding: Some(Coords::default().top(3.).bottom(3.).left(7.).right(7.)),
-        border_color: Some(accent.into()),
-        border_width: Some(1.),
-        border_radius: Some(CornerRadius::with_all(Radius::Percentage(50.))),
+        padding: Some(Coords::default().top(5.).bottom(5.).left(6.).right(6.)),
+        border_radius: Some(corners_sm()),
         background: Some(ColorU::transparent_black().into()),
         ..UiComponentStyles::default()
     };
@@ -3756,11 +3751,6 @@ impl Workspace {
             me.handle_cli_agent_sessions_event(event, ctx);
         });
         ctx.observe(&CLIAgentSessionsModel::handle(ctx), |_, _, ctx| {
-            ctx.notify();
-        });
-        // "Needs input" glyphs, tab outlines, and project pills blink with the shared clock,
-        // which only ticks while some agent is waiting on the user.
-        ctx.subscribe_to_model(&AgentAttentionPulse::handle(ctx), |_, _, _, ctx| {
             ctx.notify();
         });
         ctx.subscribe_to_model(
@@ -10548,9 +10538,7 @@ impl Workspace {
         ctx.notify();
     }
 
-    fn close_vertical_tabs_settings_popup(&mut self) {
-        self.vertical_tabs_panel.show_settings_popup = false;
-    }
+    fn close_vertical_tabs_settings_popup(&mut self) {}
 
     /// Sets the visibility state of the agent management view
     /// and updates the AgentConversationsModel to reflect the new state.
@@ -13313,9 +13301,9 @@ impl Workspace {
             IconWithStatusVariant::OzAgent { status, .. } => {
                 matches!(status, Some(ConversationStatus::Blocked { .. }))
             }
-            IconWithStatusVariant::Neutral { .. }
-            | IconWithStatusVariant::NeutralElement { .. }
-            | IconWithStatusVariant::CustomAvatar { .. } => false,
+            IconWithStatusVariant::Neutral { .. } | IconWithStatusVariant::CustomAvatar { .. } => {
+                false
+            }
         }
     }
 
@@ -23833,7 +23821,7 @@ impl Workspace {
                 icons::Icon::Lightbulb,
                 &self.mouse_states.resource_center_icon,
                 WorkspaceAction::ToggleResourceCenter,
-                "Warp Essentials".to_string(),
+                "Keyboard shortcuts".to_string(),
                 self.cached_keybindings[TOGGLE_RESOURCE_CENTER_KEYBINDING_NAME].clone(),
                 false,
                 false,
@@ -23900,11 +23888,8 @@ impl Workspace {
         let presentation = remote_control_header_presentation(None);
 
         let muted_color = theme.sub_text_color(theme.background()).into_solid();
-        let (default_styles, interactive_styles) = remote_control_button_styles(
-            appearance.ui_font_family(),
-            muted_color,
-            appearance.tokens().accent,
-        );
+        let (default_styles, interactive_styles) =
+            remote_control_button_styles(appearance.ui_font_family(), muted_color);
         let mut button = appearance.ui_builder().button_with_custom_styles(
             ButtonVariant::Text,
             self.mouse_states.remote_control_icon.clone(),
@@ -23914,49 +23899,41 @@ impl Workspace {
             None,
         );
 
-        if presentation.awaiting_approval || presentation.connected_device_name.is_some() {
-            let dot_color = if presentation.awaiting_approval {
-                theme.ansi_fg_yellow()
-            } else {
-                theme.ansi_fg_green()
-            };
-            let dot = ConstrainedBox::new(
-                Container::new(Empty::new().finish())
-                    .with_background_color(dot_color)
-                    .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
-                    .finish(),
-            )
-            .with_width(7.)
-            .with_height(7.)
-            .finish();
+        let tokens = appearance.tokens();
+        let icon_color = if presentation.awaiting_approval {
+            tokens.status(StatusKind::NeedsYou)
+        } else if presentation.connected_device_name.is_some() {
+            tokens.status(StatusKind::Working)
+        } else {
+            muted_color
+        };
+        let icon = ConstrainedBox::new(
+            icons::Icon::Phone01
+                .to_warpui_icon(Fill::Solid(icon_color))
+                .finish(),
+        )
+        .with_width(16.)
+        .with_height(16.)
+        .finish();
+        button = if presentation.awaiting_approval {
             let text = Text::new_inline(
                 presentation.label.clone(),
                 appearance.ui_font_family(),
                 REMOTE_CONTROL_BUTTON_FONT_SIZE,
             )
-            .with_color(muted_color)
-            .with_style(Properties::default().weight(Weight::Semibold))
+            .with_color(icon_color)
             .finish();
-            button = button.with_custom_label(
+            button.with_custom_label(
                 Flex::row()
                     .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                    .with_child(dot)
-                    .with_child(Container::new(text).with_margin_left(6.).finish())
+                    .with_spacing(6.)
+                    .with_child(icon)
+                    .with_child(text)
                     .finish(),
-            );
+            )
         } else {
-            button = button.with_text_and_icon_label(
-                TextAndIcon::new(
-                    TextAndIconAlignment::IconFirst,
-                    presentation.label.clone(),
-                    icons::Icon::Phone01.to_warpui_icon(Fill::Solid(muted_color)),
-                    MainAxisSize::Min,
-                    MainAxisAlignment::Center,
-                    vec2f(12., 12.),
-                )
-                .with_inner_padding(5.),
-            );
-        }
+            button.with_custom_label(icon)
+        };
 
         let tooltip_description = if presentation.awaiting_approval {
             Some("A phone scanned your pairing code — approve it in Settings".to_string())
@@ -24240,23 +24217,34 @@ impl Workspace {
             let pill = ConstrainedBox::new(
                 Container::new(
                     Flex::row()
+                        .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                        .with_spacing(6.)
+                        .with_child(
+                            ConstrainedBox::new(
+                                Container::new(Empty::new().finish())
+                                    .with_background_color(appearance.tokens().accent)
+                                    .with_corner_radius(corners_pill())
+                                    .finish(),
+                            )
+                            .with_width(6.)
+                            .with_height(6.)
+                            .finish(),
+                        )
                         .with_child(
                             Text::new_inline(
                                 pill_text,
                                 appearance.ui_font_family(),
                                 PILL_FONT_SIZE,
                             )
-                            .with_color(appearance.tokens().accent)
+                            .with_color(appearance.tokens().text_2)
                             .finish(),
                         )
                         .with_main_axis_size(MainAxisSize::Max)
                         .with_main_axis_alignment(MainAxisAlignment::Center)
                         .finish(),
                 )
-                .with_border(
-                    Border::all(1.).with_border_fill(Fill::Solid(appearance.tokens().accent)),
-                )
-                .with_corner_radius(CornerRadius::with_all(Radius::Percentage(50.)))
+                .with_background(Fill::Solid(appearance.tokens().surface_field))
+                .with_corner_radius(corners_md())
                 .with_uniform_margin(4.)
                 .with_uniform_padding(4.)
                 .with_margin_right(5.)
@@ -26904,13 +26892,6 @@ impl TypedActionView for Workspace {
                     ctx.notify();
                 }
             }
-            ToggleVerticalTabsSettingsPopup => {
-                if uses_vertical_tabs() && self.vertical_tabs_panel_open {
-                    self.vertical_tabs_panel.show_settings_popup =
-                        !self.vertical_tabs_panel.show_settings_popup;
-                    ctx.notify();
-                }
-            }
             RevealTabDetailCardAfterDelay => {
                 ctx.spawn(
                     Timer::after(vertical_tabs::DETAIL_CARD_DELAY),
@@ -28846,28 +28827,6 @@ impl View for Workspace {
                 .with_uniform_padding(WORKSPACE_PADDING)
                 .finish(),
         );
-
-        if !use_simplified_wasm_tab_bar
-            && uses_vertical_tabs()
-            && self.vertical_tabs_panel_open
-            && self.vertical_tabs_panel.show_settings_popup
-        {
-            stack.add_positioned_overlay_child(
-                Dismiss::new(render_settings_popup(&self.vertical_tabs_panel, app))
-                    .prevent_interaction_with_other_elements()
-                    .on_dismiss(|ctx, _| {
-                        ctx.dispatch_typed_action(WorkspaceAction::ToggleVerticalTabsSettingsPopup);
-                    })
-                    .finish(),
-                OffsetPositioning::offset_from_save_position_element(
-                    VERTICAL_TABS_SETTINGS_BUTTON_POSITION_ID,
-                    vec2f(0., 4.),
-                    PositionedElementOffsetBounds::WindowByPosition,
-                    PositionedElementAnchor::BottomLeft,
-                    ChildAnchor::TopLeft,
-                ),
-            );
-        }
 
         if !use_simplified_wasm_tab_bar && uses_vertical_tabs() && self.vertical_tabs_panel_open {
             if let Some(popover) = self.vertical_tabs_panel.open_popover {
