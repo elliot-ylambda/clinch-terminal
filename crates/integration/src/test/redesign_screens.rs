@@ -93,4 +93,10 @@ pub fn test_redesign_agent_screens() -> Builder {
                 .set_post_step_pause(std::time::Duration::from_secs(3)),
         )
         .with_step(shot("agent"))
+        .with_step(
+            TestStep::new("open More")
+                .with_click_on_saved_position("agent_footer:more")
+                .set_post_step_pause(std::time::Duration::from_millis(400)),
+        )
+        .with_step(shot("agent-more"))
 }

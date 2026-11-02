@@ -43,7 +43,10 @@ use warpui::elements::{
     PositionedElementAnchor, PositionedElementOffsetBounds, Shrinkable, Stack, Text, Wrap,
     WrapFill, WrapFillEntireRun, DEFAULT_UI_LINE_HEIGHT_RATIO,
 };
-use warpui::elements::{Dismiss, Hoverable, ParentAnchor, ParentOffsetBounds};
+use warpui::elements::{
+    Dismiss, Hoverable, ParentAnchor, ParentOffsetBounds, SavePosition, SizeConstraintCondition,
+    SizeConstraintSwitch,
+};
 use warpui::platform::Cursor;
 use warpui::r#async::{SpawnedFutureHandle, Timer};
 use warpui::{
@@ -138,7 +141,11 @@ const START_REMOTE_CONTROL_LOGIN_REQUIRED_TOOLTIP: &str = "Log in to use /remote
 
 const CLOUD_MODE_V2_FOOTER_GAP: f32 = 4.;
 /// Footer buttons shown before the rest move under More.
+pub const FOOTER_MORE_BUTTON_POSITION_ID: &str = "agent_footer:more";
 const MAX_FOOTER_CHIPS: usize = 6;
+const MAX_COMPACT_FOOTER_CHIPS: usize = 3;
+const FOOTER_COMPACT_WIDTH: f32 = 820.;
+const FOOTER_ICON_ONLY_WIDTH: f32 = 520.;
 
 /// Voice input state for the CLI agent footer. Unlike the editor-based voice
 /// flow (which goes through Input → EditorView), this state is self-contained
@@ -424,7 +431,7 @@ impl AgentInputFooter {
         });
 
         // CLI agent-specific buttons (only rendered when a CLI agent session is active).
-        let cli_button_size = ButtonSize::AgentInputButtonLarge;
+        let cli_button_size = ButtonSize::AgentInputButton;
         let file_explorer_button = ctx.add_typed_action_view(|ctx| {
             ActionButton::new("File explorer", AgentInputButtonTheme)
                 .with_icon(Icon::FileCopy)
@@ -451,7 +458,7 @@ impl AgentInputFooter {
                 })
         });
         let fork_button = ctx.add_typed_action_view(|_ctx| {
-            ActionButton::new("Fork in New Tab", AgentInputButtonTheme)
+            ActionButton::new("Fork", AgentInputButtonTheme)
                 .with_icon(Icon::GitBranch)
                 .with_tooltip("Fork this session into a new tab")
                 .with_size(cli_button_size)
@@ -461,7 +468,7 @@ impl AgentInputFooter {
                 })
         });
         let bookmark_conversation_button = ctx.add_typed_action_view(|_ctx| {
-            ActionButton::new("Bookmark Session", AgentInputButtonTheme)
+            ActionButton::new("Bookmark", AgentInputButtonTheme)
                 .with_icon(Icon::Bookmark)
                 .with_tooltip("Save this conversation in Bookmarked sessions")
                 .with_size(cli_button_size)
@@ -1648,7 +1655,7 @@ impl AgentInputFooter {
                 .as_deref()
                 .is_some_and(|path| !path.trim().is_empty());
 
-        let label = format!("Transfer to {}", target.display_name());
+        let label = "Transfer".to_string();
         let tooltip = if has_conversation_reference {
             format!(
                 "Continue this conversation in a new {} tab without closing {}",
@@ -1661,7 +1668,7 @@ impl AgentInputFooter {
         Some(
             ActionButton::new(label, AgentInputButtonTheme)
                 .with_icon(Icon::SwitchHorizontal01)
-                .with_size(ButtonSize::AgentInputButtonLarge)
+                .with_size(ButtonSize::AgentInputButton)
                 .with_tooltip(tooltip)
                 .with_tooltip_alignment(TooltipAlignment::Left)
                 .with_mouse_state_handle(self.transfer_agent_mouse_state.clone())
@@ -1813,7 +1820,7 @@ impl AgentInputFooter {
             (true, Some(fire_at), None, _) => {
                 let at = fire_at.with_timezone(&Local).format("%H:%M");
                 (
-                    "Auto-continue: on".to_string(),
+                    "Auto-continue on".to_string(),
                     format!(
                         "Will send \"{AUTO_CONTINUE_PROMPT}\" to this {agent_name} session at {at}, \
                          just after its rate limit resets. Click to cancel."
@@ -1821,42 +1828,42 @@ impl AgentInputFooter {
                 )
             }
             (true, None, None, _) if waiting_for_reset => (
-                "Auto-continue: waiting".to_string(),
+                "Auto-continue".to_string(),
                 format!(
                     "{agent_name} reported a usage-limit stop. Waiting for a reliable reset time; click to turn off."
                 ),
             ),
             (true, None, None, AutoContinueAvailability::WaitingForUsageData) => (
-                "Auto-continue: waiting".to_string(),
+                "Auto-continue".to_string(),
                 format!(
                     "Waiting for current {agent_name} plan-limit data before scheduling. Click to turn off."
                 ),
             ),
             (true, None, None, AutoContinueAvailability::Unsupported) => (
-                "Auto-continue: unavailable".to_string(),
+                "Auto-continue".to_string(),
                 "This session no longer meets the local plugin, identity, or sharing requirements. Click to turn off."
                     .to_string(),
             ),
             (true, None, None, AutoContinueAvailability::Ready) => (
-                "Auto-continue: on".to_string(),
+                "Auto-continue on".to_string(),
                 format!(
                     "If this {agent_name} session stops at its rate limit, \"{AUTO_CONTINUE_PROMPT}\" \
                      is sent once the limit resets. Click to turn off."
                 ),
             ),
             (false, _, _, AutoContinueAvailability::WaitingForUsageData) => (
-                "Auto-continue: waiting".to_string(),
+                "Auto-continue".to_string(),
                 format!(
                     "Waiting for current {agent_name} plan-limit data before auto-continue can be enabled."
                 ),
             ),
             (false, _, _, AutoContinueAvailability::Unsupported) => (
-                "Auto-continue: unavailable".to_string(),
+                "Auto-continue".to_string(),
                 "Auto-continue requires a supported local session with the current Clinch agent plugin."
                     .to_string(),
             ),
             (false, _, _, AutoContinueAvailability::Ready) => (
-                "Auto-continue: off".to_string(),
+                "Auto-continue".to_string(),
                 format!(
                     "Auto-send \"{AUTO_CONTINUE_PROMPT}\" when this {agent_name} session's rate \
                      limit resets. Click to turn on (this pane only)."
@@ -1866,7 +1873,7 @@ impl AgentInputFooter {
 
         ActionButton::new(label, AgentInputButtonTheme)
             .with_icon(Icon::Clock)
-            .with_size(ButtonSize::AgentInputButtonLarge)
+            .with_size(ButtonSize::AgentInputButton)
             .with_tooltip(tooltip)
             .with_tooltip_alignment(TooltipAlignment::Left)
             .with_mouse_state_handle(self.auto_continue_mouse_state.clone())
@@ -1877,7 +1884,25 @@ impl AgentInputFooter {
             .render(app)
     }
 
+    /// One row at every width: a narrower pane shows fewer buttons and moves the rest under More.
     fn render_cli_mode_footer(&self, app: &AppContext) -> Box<dyn Element> {
+        SizeConstraintSwitch::new(
+            self.render_cli_mode_footer_row(MAX_FOOTER_CHIPS, app),
+            vec![
+                (
+                    SizeConstraintCondition::WidthLessThan(FOOTER_ICON_ONLY_WIDTH),
+                    self.render_cli_mode_footer_row(0, app),
+                ),
+                (
+                    SizeConstraintCondition::WidthLessThan(FOOTER_COMPACT_WIDTH),
+                    self.render_cli_mode_footer_row(MAX_COMPACT_FOOTER_CHIPS, app),
+                ),
+            ],
+        )
+        .finish()
+    }
+
+    fn render_cli_mode_footer_row(&self, max_chips: usize, app: &AppContext) -> Box<dyn Element> {
         let appearance = Appearance::as_ref(app);
         let cli_icon_size = ButtonSize::AgentInputButtonLarge.icon_size(appearance, app);
 
@@ -1917,11 +1942,9 @@ impl AgentInputFooter {
             .chain(right_items)
             .collect::<Vec<_>>();
 
-        let mut left_buttons = Wrap::row()
+        let mut left_buttons = Flex::row()
             .with_main_axis_size(MainAxisSize::Min)
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_main_axis_alignment(MainAxisAlignment::Start)
-            .with_run_spacing(4.)
             .with_spacing(4.);
 
         // CLI agent brand icon is always rendered (not configurable).
@@ -1992,10 +2015,6 @@ impl AgentInputFooter {
         // the same eligibility predicate as the Command Palette and action handler.
         let auto_continue_availability =
             AutoContinueModel::availability(self.terminal_view_id, shared_status.is_viewer(), app);
-        if let Some(plugin_action) = plugin_action {
-            action_buttons.push(plugin_action);
-        }
-
         let quick_insert_buttons = configured_items
             .iter()
             .filter(|item| !item.is_cli_session_action())
@@ -2018,7 +2037,9 @@ impl AgentInputFooter {
             .into_iter()
             .chain(quick_insert_buttons)
             .collect::<Vec<_>>();
-        let overflow = chips.split_off(chips.len().min(MAX_FOOTER_CHIPS));
+        let mut overflow = chips.split_off(chips.len().min(max_chips));
+        // Plugin setup is a one-time chore, not something to look at all day.
+        overflow.extend(plugin_action);
         for chip in chips {
             left_buttons.add_child(chip);
         }
@@ -2051,13 +2072,12 @@ impl AgentInputFooter {
             right_buttons.add_child(ChildView::new(&self.quick_insert_edit_button).finish());
         }
 
-        let content = Wrap::row()
+        let content = Flex::row()
             .with_main_axis_size(MainAxisSize::Max)
             .with_main_axis_alignment(MainAxisAlignment::SpaceBetween)
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_child(WrapFillEntireRun::new(left_buttons.finish()).finish())
-            .with_child(WrapFill::new(0., right_buttons.finish()).finish())
-            .with_run_spacing(context_chips::spacing::UDI_ROW_RUN_SPACING)
+            .with_child(Shrinkable::new(1., left_buttons.finish()).finish())
+            .with_child(right_buttons.finish())
             .finish();
         let content = EventHandler::new(content)
             .on_right_mouse_down(|ctx, _, position| {
@@ -2130,6 +2150,7 @@ impl AgentInputFooter {
             ctx.dispatch_typed_action(AgentInputFooterAction::ToggleMoreMenu);
         })
         .finish();
+        let button = SavePosition::new(button, FOOTER_MORE_BUTTON_POSITION_ID).finish();
         if !is_open {
             return button;
         }
@@ -2565,7 +2586,7 @@ impl AgentInputFooter {
             can_bookmark && sessions.is_conversation_bookmarked(self.terminal_view_id);
         let (label, tooltip) = if !can_bookmark {
             (
-                "Bookmark Session",
+                "Bookmark",
                 "Send a message first so this conversation has a bookmarkable ID",
             )
         } else if is_bookmarked {
@@ -2574,10 +2595,7 @@ impl AgentInputFooter {
                 "Remove this conversation from Bookmarked sessions",
             )
         } else {
-            (
-                "Bookmark Session",
-                "Save this conversation in Bookmarked sessions",
-            )
+            ("Bookmark", "Save this conversation in Bookmarked sessions")
         };
         self.bookmark_conversation_button
             .update(ctx, |button, ctx| {
