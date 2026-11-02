@@ -238,7 +238,7 @@ impl ClinchSettingsPageView {
         }
 
         Self {
-            page: PageType::new_categorized(categories, Some("Clinch Settings")),
+            page: PageType::new_categorized(categories, Some("General")),
             local_only_icon_tooltip_states: RefCell::new(HashMap::new()),
             #[cfg(target_os = "macos")]
             session_capture_enabled: crate::agent_resume::capture_layer_enabled(),

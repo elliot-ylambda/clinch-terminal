@@ -1,9 +1,8 @@
 use warp_core::ui::color::contrast::MinimumAllowedContrast;
 use warp_core::ui::color::ContrastingColor;
-use warp_core::ui::theme::color::internal_colors;
 use warpui::elements::{
-    Border, Clipped, ConstrainedBox, Container, DispatchEventResult, DropTarget, Element,
-    EventHandler, Flex, Hoverable, ParentElement, SavePosition, Stack,
+    Clipped, ConstrainedBox, Container, DispatchEventResult, DropTarget, Element, EventHandler,
+    Flex, Hoverable, ParentElement, SavePosition, Stack,
 };
 use warpui::presenter::ChildView;
 use warpui::{AppContext, SingletonEntity as _, ViewContext};
@@ -91,9 +90,7 @@ impl Input {
             add_input_suggestions_overlays(self, &mut stack, appearance, menu_positioning, app);
         }
 
-        let mut input_container = Container::new(stack.finish()).with_border(
-            Border::top(1.0).with_border_fill(internal_colors::fg_overlay_2(appearance.theme())),
-        );
+        let mut input_container = Container::new(stack.finish());
 
         // When an alt screen CLI agent (e.g. OpenCode) is running, match
         // the rich input background to the alt screen so it blends in.

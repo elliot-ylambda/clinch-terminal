@@ -22,12 +22,12 @@ States panel for jumping to each state.
 
 1. Interface text uses Inter. The terminal defaults to JetBrains Mono for anyone who never chose a
    font. A font someone chose explicitly is kept.
-2. Corners come from one scale: 6px for chips, small buttons and menu items; 10px for tab rows,
-   fields, pills and buttons; 14px for panels, menus, dialogs and the terminal card. Dots and meters
+2. Corners come from one scale: 8px for chips, small buttons and menu items; 12px for tab rows,
+   fields, pills and buttons; 16px for panels, menus, dialogs and the terminal card. Dots and meters
    are fully round.
 3. Surfaces are separated by shade, never by outlines. The window frame, sidebar and title bar share
-   one chrome color. Terminal content sits in a rounded card inset 8px from the frame. Split panes
-   are separate cards with an 8px gap instead of a 1px divider.
+   one chrome color. Terminal content sits in a rounded card inset 10px from the frame. Split panes
+   are separate cards with a 10px gap instead of a 1px divider.
 4. One accent (lime in Ink) is used for the cursor, focus rings, primary buttons, on-switches and
    the update dot. Status uses its own colors: green working, amber needs you, blue done, red rate
    limited. "Needs you" is also a different shape (a filled "!"), so it never depends on color alone.

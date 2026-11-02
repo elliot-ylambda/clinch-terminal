@@ -403,6 +403,29 @@ pub fn get_terminal_background_fill(
     theme.background().with_opacity(terminal_opacity).into()
 }
 
+/// The window frame behind the sidebar, title bar and terminal cards. A theme that draws an image
+/// or gradient keeps its full-window overlay so the image still shows through.
+pub fn get_chrome_background_fill(window_id: WindowId, app: &AppContext) -> warpui::elements::Fill {
+    let tokens = Appearance::as_ref(app).tokens();
+    if tokens.surface_terminal.a == 0 {
+        return get_terminal_background_fill(window_id, app);
+    }
+    let opacity = get_terminal_background_opacity(window_id, app);
+    warp_core::ui::theme::Fill::Solid(tokens.surface_chrome)
+        .with_opacity(opacity)
+        .into()
+}
+
+/// What a terminal card paints. Nothing on image and gradient themes, whose full-window fill
+/// already sits behind the card.
+pub fn get_terminal_card_fill(
+    window_id: WindowId,
+    app: &AppContext,
+) -> Option<warpui::elements::Fill> {
+    (Appearance::as_ref(app).tokens().surface_terminal.a != 0)
+        .then(|| get_terminal_background_fill(window_id, app))
+}
+
 fn get_terminal_background_opacity(window_id: WindowId, app: &AppContext) -> u8 {
     let theme = Appearance::as_ref(app).theme();
     let background_opacity = WindowSettings::as_ref(app)

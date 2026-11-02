@@ -10,6 +10,7 @@ use settings::Setting;
 use warp_core::settings::SyncToCloud;
 use warp_core::ui::color::blend::Blend;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::{corners_md, corners_sm};
 use warpui::elements::new_scrollable::{
     ClippedAxisConfiguration, DualAxisConfig, SingleAxisConfig,
 };
@@ -49,7 +50,6 @@ use super::SettingsSection;
 use crate::appearance::Appearance;
 use crate::settings::CloudPreferencesSettings;
 use crate::themes::theme::Fill;
-use crate::ui_components::blended_colors;
 use crate::ui_components::icons::Icon;
 use crate::view_components::{Dropdown, DropdownItemAction, SubmittableTextInput};
 
@@ -179,7 +179,7 @@ impl SettingsPage {
             .ui_builder()
             .button(
                 if clicked {
-                    ButtonVariant::Accent
+                    ButtonVariant::Secondary
                 } else {
                     ButtonVariant::Text
                 },
@@ -190,7 +190,8 @@ impl SettingsPage {
                 UiComponentStyles::default()
                     .set_border_width(0.)
                     .set_margin(Coords::default().left(NAV_ITEM_LEFT_MARGIN))
-                    .set_padding(Coords::uniform(8.)),
+                    .set_padding(Coords::uniform(8.))
+                    .set_border_radius(corners_sm()),
             )
             .build()
     }
@@ -282,11 +283,11 @@ pub fn build_sub_header(
     text_name: impl Into<Cow<'static, str>>,
     color_override: Option<Fill>,
 ) -> Container {
-    let color = color_override.unwrap_or(appearance.theme().active_ui_text_color());
+    let color = color_override.unwrap_or(Fill::Solid(appearance.tokens().text_2));
     Container::new(
         Align::new(
             Text::new_inline(text_name, appearance.ui_font_family(), SUBHEADER_FONT_SIZE)
-                .with_style(Properties::default().weight(Weight::Bold))
+                .with_style(Properties::default().weight(Weight::Semibold))
                 .with_color(color.into())
                 .finish(),
         )
@@ -381,9 +382,9 @@ pub fn render_custom_size_header(
         .finish()
 }
 
-pub fn render_separator(appearance: &Appearance) -> Box<dyn Element> {
+/// Groups are separated by space. Surfaces carry the structure, not rules.
+pub fn render_separator(_appearance: &Appearance) -> Box<dyn Element> {
     Container::new(Empty::new().finish())
-        .with_border(Border::bottom(2.).with_border_fill(appearance.theme().outline()))
         .with_margin_bottom(HEADER_PADDING)
         .finish()
 }
@@ -818,26 +819,19 @@ pub fn build_toggle_element(
         .with_padding_right(TOGGLE_BUTTON_RIGHT_PADDING)
         .finish();
 
-    let mut header_row = Container::new(
+    column.add_child(
         Flex::row()
             .with_child(header)
             .with_child(toggle)
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
             .finish(),
     );
-    if description_text.is_none() {
-        header_row = header_row.with_padding_bottom(HEADER_PADDING);
-    }
-    column.add_child(header_row.finish());
     if let Some(description_text) = description_text {
         let description = appearance
             .ui_builder()
             .paragraph(description_text)
             .with_style(UiComponentStyles {
-                font_color: Some(blended_colors::text_sub(
-                    appearance.theme(),
-                    appearance.theme().surface_1(),
-                )),
+                font_color: Some(appearance.tokens().text_3),
                 font_size: Some(12.),
                 margin: Some(Coords {
                     top: 4.,
@@ -849,14 +843,16 @@ pub fn build_toggle_element(
             })
             .build()
             .finish();
-        column.add_child(
-            Container::new(description)
-                .with_margin_right(100.)
-                .with_padding_bottom(HEADER_PADDING)
-                .finish(),
-        );
+        column.add_child(Container::new(description).with_margin_right(72.).finish());
     }
-    column.finish()
+    // Each setting is a rounded row on the chrome shade, so a page reads as cards on the terminal.
+    Container::new(column.finish())
+        .with_background(Fill::Solid(appearance.tokens().surface_chrome))
+        .with_corner_radius(corners_md())
+        .with_horizontal_padding(14.)
+        .with_vertical_padding(12.)
+        .with_margin_bottom(6.)
+        .finish()
 }
 
 pub fn render_dropdown_item_label(

@@ -24,7 +24,7 @@ mod tab_grouping;
 #[cfg(test)]
 #[path = "view_tests.rs"]
 pub(crate) mod tests;
-mod vertical_tabs;
+pub(crate) mod vertical_tabs;
 #[cfg(target_family = "wasm")]
 mod wasm_view;
 
@@ -82,7 +82,7 @@ use warp_core::ui::color::coloru_with_opacity;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::phenomenon::PhenomenonStyle;
 use warp_core::ui::theme::Fill;
-use warp_core::ui::tokens::{StatusKind, Tokens};
+use warp_core::ui::tokens::{StatusKind, Tokens, CARD_INSET};
 use warp_core::ui::Icon;
 use warp_core::user_preferences::GetUserPreferences as _;
 use warp_editor::editor::NavigationKey;
@@ -580,7 +580,7 @@ const MAX_FONT_SIZE: f32 = 25.0;
 /// The increment for increasing/decreasing the font size.
 const FONT_SIZE_INCREMENT: f32 = 1.0;
 
-pub const TAB_BAR_HEIGHT: f32 = 34.;
+pub const TAB_BAR_HEIGHT: f32 = 44.;
 /// Height for all panel headers (tab bar, warp drive, resource center, theme chooser, etc.).
 /// This ensures consistent header heights across all UI panels.
 pub const PANEL_HEADER_HEIGHT: f32 = TAB_BAR_HEIGHT;
@@ -23518,8 +23518,9 @@ impl Workspace {
         .with_height(TAB_BAR_HEIGHT)
         .finish();
 
+        // Transparent, so the title bar keeps its height without drawing a line under itself.
         let tab_bar_border = Border::bottom(TAB_BAR_BORDER_HEIGHT)
-            .with_border_fill(super::chrome_divider_fill(appearance.theme()));
+            .with_border_fill(Fill::Solid(ColorU::transparent_black()));
 
         let tab_bar_element = Container::new(
             EventHandler::new(Clipped::new(self.render_tab_bar_hoverable(bar_contents)).finish())
@@ -23534,10 +23535,6 @@ impl Workspace {
                 .finish(),
         )
         .with_border(tab_bar_border)
-        // One fixed header color, shared with the terminal and the vertical tabs
-        // rail. The header used to carry a per-project tint, which meant the
-        // window's top edge changed hue every time you switched project tabs.
-        .with_background(appearance.theme().background())
         .finish();
 
         let dimming_color = appearance.theme().background().into();
@@ -24333,6 +24330,12 @@ impl Workspace {
             terminal_content
         };
 
+        // The frame around the cards. The sidebar supplies its own gap on the left when it is open.
+        let terminal_content = Container::new(terminal_content)
+            .with_margin_right(CARD_INSET)
+            .with_margin_bottom(CARD_INSET)
+            .finish();
+
         let vertical_tabs_active = uses_vertical_tabs();
         let pane_group = self.active_tab_pane_group().as_ref(app);
         let is_right_open = pane_group.right_panel_open;
@@ -24919,15 +24922,11 @@ impl Workspace {
         container.finish()
     }
 
-    fn render_panel_separator(app: &AppContext) -> Box<dyn Element> {
-        let appearance = Appearance::as_ref(app);
-        ConstrainedBox::new(
-            Rect::new()
-                .with_background_color(appearance.theme().outline().into_solid())
-                .finish(),
-        )
-        .with_width(1.0)
-        .finish()
+    /// Panels are separated by a gap of chrome, the same as split panes.
+    fn render_panel_separator(_app: &AppContext) -> Box<dyn Element> {
+        ConstrainedBox::new(Empty::new().finish())
+            .with_width(CARD_INSET)
+            .finish()
     }
 
     fn add_panel_with_separator(
@@ -26912,6 +26911,19 @@ impl TypedActionView for Workspace {
                     ctx.notify();
                 }
             }
+            RevealTabDetailCardAfterDelay => {
+                ctx.spawn(
+                    Timer::after(vertical_tabs::DETAIL_CARD_DELAY),
+                    |_, _, ctx| {
+                        ctx.notify();
+                    },
+                );
+            }
+            ToggleSidebarPopover(popover) => {
+                let panel = &mut self.vertical_tabs_panel;
+                panel.open_popover = (panel.open_popover != Some(*popover)).then_some(*popover);
+                ctx.notify();
+            }
             ToggleAutomaticWorktreeTabs => {
                 ClinchSettings::handle(ctx).update(ctx, |settings, ctx| {
                     report_if_error!(settings
@@ -28767,7 +28779,7 @@ impl View for Workspace {
             let panels_row = self.render_panels(app, Shrinkable::new(1.0, content).finish(), true);
             outer_column.add_child(Shrinkable::new(1.0, panels_row).finish());
             Container::new(outer_column.finish())
-                .with_background(util::get_terminal_background_fill(self.window_id, app))
+                .with_background(util::get_chrome_background_fill(self.window_id, app))
                 .finish()
         } else {
             let mut outer_column = Flex::column();
@@ -28778,7 +28790,7 @@ impl View for Workspace {
             let panels_row = self.render_panels(app, Shrinkable::new(1.0, content).finish(), false);
             outer_column.add_child(Shrinkable::new(1.0, panels_row).finish());
             Container::new(outer_column.finish())
-                .with_background(util::get_terminal_background_fill(self.window_id, app))
+                .with_background(util::get_chrome_background_fill(self.window_id, app))
                 .finish()
         };
         let mut stack = Stack::new();
@@ -28855,6 +28867,39 @@ impl View for Workspace {
                     ChildAnchor::TopLeft,
                 ),
             );
+        }
+
+        if !use_simplified_wasm_tab_bar && uses_vertical_tabs() && self.vertical_tabs_panel_open {
+            if let Some(popover) = self.vertical_tabs_panel.open_popover {
+                let anchor = match popover {
+                    vertical_tabs::SidebarPopover::Tasks => {
+                        vertical_tabs::SIDEBAR_TASKS_LINK_POSITION_ID
+                    }
+                    vertical_tabs::SidebarPopover::Bookmarks => {
+                        vertical_tabs::SIDEBAR_BOOKMARKS_LINK_POSITION_ID
+                    }
+                };
+                stack.add_positioned_overlay_child(
+                    Dismiss::new(vertical_tabs::render_sidebar_popover(
+                        popover,
+                        &self.vertical_tabs_panel,
+                        self,
+                        app,
+                    ))
+                    .prevent_interaction_with_other_elements()
+                    .on_dismiss(move |ctx, _| {
+                        ctx.dispatch_typed_action(WorkspaceAction::ToggleSidebarPopover(popover));
+                    })
+                    .finish(),
+                    OffsetPositioning::offset_from_save_position_element(
+                        anchor,
+                        vec2f(0., -6.),
+                        PositionedElementOffsetBounds::WindowByPosition,
+                        PositionedElementAnchor::TopLeft,
+                        ChildAnchor::BottomLeft,
+                    ),
+                );
+            }
         }
 
         // Claude Code + Codex usage detail panel. Rendered here at the workspace

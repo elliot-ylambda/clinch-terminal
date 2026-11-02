@@ -2408,7 +2408,7 @@ impl BlockListElement {
         cell_size: Vector2F,
         grid_origin: Vector2F,
         block: &Block,
-        is_selected_by_anyone: bool,
+        _is_selected_by_anyone: bool,
         bounds: RectF,
         warp_theme: &WarpTheme,
         block_borders_enabled: bool,
@@ -2440,13 +2440,11 @@ impl BlockListElement {
                 .with_background(agent_view_bg_fill(app));
         }
 
-        let mut did_render_ai_stripe = false;
         if !FeatureFlag::AgentView.is_enabled() {
             if let Some(ai_context_stripe_color) =
                 ai_render_context.context_color_for_block(block, warp_theme)
             {
                 draw_flag_pole(grid_origin, block_height, ai_context_stripe_color, ctx);
-                did_render_ai_stripe = true;
             }
         }
 
@@ -2457,15 +2455,6 @@ impl BlockListElement {
                     Vector2F::new(bounds.width(), block_height),
                 ))
                 .with_background(warp_theme.failed_block_color().with_opacity(10));
-
-            if !is_selected_by_anyone && !did_render_ai_stripe {
-                draw_flag_pole(
-                    grid_origin,
-                    block_height,
-                    warp_theme.failed_block_color(),
-                    ctx,
-                );
-            }
         }
 
         if let Some((is_hovered, header_rect)) =

@@ -283,7 +283,7 @@ impl WarpTheme {
     }
 
     pub fn block_selection_color(&self) -> Fill {
-        accent_overlay_2(self)
+        self.foreground().with_opacity(8)
     }
 
     pub fn block_selection_as_context_background_color(&self) -> Fill {

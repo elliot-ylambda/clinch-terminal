@@ -405,6 +405,8 @@ pub enum WorkspaceAction {
     ToggleVerticalTabsPanel,
     OpenVerticalTabsPanel,
     ToggleVerticalTabsSettingsPopup,
+    ToggleSidebarPopover(crate::workspace::view::vertical_tabs::SidebarPopover),
+    RevealTabDetailCardAfterDelay,
     ToggleAutomaticWorktreeTabs,
     SetVerticalTabsDisplayGranularity(VerticalTabsDisplayGranularity),
     SetVerticalTabsTabItemMode(VerticalTabsTabItemMode),
@@ -1110,6 +1112,8 @@ impl WorkspaceAction {
             | ToggleRightPanel
             | OpenCodeReviewPanel(..)
             | ToggleVerticalTabsSettingsPopup
+            | ToggleSidebarPopover(_)
+            | RevealTabDetailCardAfterDelay
             | ToggleAutomaticWorktreeTabs
             | SetVerticalTabsDisplayGranularity(_)
             | SetVerticalTabsTabItemMode(_)

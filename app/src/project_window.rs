@@ -7,6 +7,7 @@ use uuid::Uuid;
 use warp_core::ui::theme::Fill;
 use warp_core::ui::tokens::StatusKind;
 use warpui::accessibility::{AccessibilityContent, ActionAccessibilityContent, WarpA11yRole};
+use warpui::color::ColorU;
 use warpui::elements::{
     Align, Border, ChildAnchor, ClippedScrollStateHandle, ClippedScrollable, ConstrainedBox,
     Container, CornerRadius, CrossAxisAlignment, Draggable, DraggableState, DropShadow, Empty,
@@ -28,9 +29,7 @@ use warpui::{
 use crate::appearance::Appearance;
 use crate::root_view::NewWorkspaceSource;
 use crate::server::server_api::ServerTime;
-use crate::terminal::cli_agent_sessions::attention_pulse::{
-    attention_pulse_color, AgentAttentionPulse,
-};
+use crate::terminal::cli_agent_sessions::attention_pulse::AgentAttentionPulse;
 use crate::ui_components::icons::Icon;
 use crate::util::bindings::{self, CustomAction};
 use crate::workspace::view::{
@@ -158,7 +157,6 @@ const PROJECT_TAB_CLOSE_BUTTON_GAP: f32 = 6.;
 const PROJECT_TAB_MIN_WIDTH: f32 = 96.;
 const PROJECT_TAB_VERTICAL_PADDING: f32 = 6.;
 const PROJECT_TAB_BORDER_WIDTH: f32 = 1.;
-const PROJECT_AGENT_COUNT_BADGE_BORDER_WIDTH: f32 = 1.;
 const PROJECT_AGENT_HOVER_CARD_WIDTH: f32 = 320.;
 const PROJECT_AGENT_HOVER_CARD_PADDING: f32 = 10.;
 const PROJECT_AGENT_HOVER_CARD_BORDER_WIDTH: f32 = 1.;
@@ -1647,15 +1645,16 @@ impl ProjectWindow {
             }
             let workspace = project.workspace.as_ref(app);
             let title = workspace.project_display_name(app);
-            let has_other_unread = workspace.has_other_unread_project_activity(app);
+            let _has_other_unread = workspace.has_other_unread_project_activity(app);
             let agent_counts = workspace.project_cli_agent_counts(app);
             let agent_summaries = workspace.project_cli_agent_summaries(app);
             let needs_input_count = agent_summaries
                 .iter()
                 .filter(|summary| summary.activity == ProjectCliAgentActivity::NeedsInput)
                 .count();
-            let needs_input_color = (needs_input_count > 0)
-                .then(|| attention_pulse_color(tokens.status(StatusKind::NeedsYou), app));
+            let needs_input_color =
+                (needs_input_count > 0).then(|| tokens.status(StatusKind::NeedsYou));
+            let needs_input_tint = tokens.status_soft(StatusKind::NeedsYou);
             let tab_count = workspace.tab_count();
             let is_active = index == self.active_project_index;
             let is_dragging = project.draggable_state.is_dragging();
@@ -1678,40 +1677,14 @@ impl ProjectWindow {
             let close_mouse_state = project.close_mouse_state.clone();
             let font_family = appearance.ui_font_family();
             let font_size = appearance.ui_font_size();
-            let accent = theme.accent();
-            let outline = theme.outline();
-            let active_background = theme.surface_2();
-            let inactive_background = theme.background();
-            let hover_background = theme.surface_3();
-            let command_badge_color = theme.disabled_text_color(theme.background()).into_solid();
+            let active_background = Fill::Solid(tokens.surface_raised);
+            let inactive_background = Fill::Solid(ColorU::transparent_black());
+            let hover_background = Fill::Solid(tokens.surface_hover);
 
             let tab = Hoverable::new(project.mouse_state.clone(), move |mouse_state| {
                 let mut label = Flex::row()
                     .with_main_axis_size(MainAxisSize::Min)
                     .with_cross_axis_alignment(CrossAxisAlignment::Center);
-                // A blue completed count is the quantitative form of a completed-turn dot. Keep
-                // the plain dot for any other unread state, including mixed done + blocked cases.
-                // Both use the fixed done-blue rather than the theme accent: an accent that
-                // resolves to lime is indistinguishable from the green working badge.
-                if has_other_unread {
-                    label.add_child(
-                        Container::new(
-                            ConstrainedBox::new(
-                                Rect::new()
-                                    .with_background(Fill::Solid(tokens.status(StatusKind::Done)))
-                                    .with_corner_radius(CornerRadius::with_all(Radius::Percentage(
-                                        50.,
-                                    )))
-                                    .finish(),
-                            )
-                            .with_width(6.)
-                            .with_height(6.)
-                            .finish(),
-                        )
-                        .with_margin_right(6.)
-                        .finish(),
-                    );
-                }
                 // An agent waiting on the user outranks every other badge, and blinks so it is
                 // noticed even when the project is in the background.
                 if let Some(needs_input_color) = needs_input_color {
@@ -1726,74 +1699,8 @@ impl ProjectWindow {
                                 .with_color(needs_input_color)
                                 .finish(),
                         )
-                        .with_horizontal_padding(4.)
-                        .with_border(
-                            Border::all(PROJECT_AGENT_COUNT_BADGE_BORDER_WIDTH)
-                                .with_border_fill(Fill::Solid(needs_input_color)),
-                        )
-                        .with_corner_radius(CornerRadius::with_all(Radius::Percentage(50.)))
-                        .with_margin_right(6.)
-                        .finish(),
-                    );
-                }
-                if agent_counts.done > 0 {
-                    label.add_child(
-                        Container::new(
-                            Text::new_inline(
-                                agent_counts.done.to_string(),
-                                font_family,
-                                (font_size - 2.).max(8.),
-                            )
-                            .with_color(tokens.status(StatusKind::Done))
-                            .finish(),
-                        )
-                        .with_horizontal_padding(4.)
-                        .with_border(
-                            Border::all(PROJECT_AGENT_COUNT_BADGE_BORDER_WIDTH)
-                                .with_border_fill(Fill::Solid(tokens.status(StatusKind::Done))),
-                        )
-                        .with_corner_radius(CornerRadius::with_all(Radius::Percentage(50.)))
-                        .with_margin_right(6.)
-                        .finish(),
-                    );
-                }
-                if agent_counts.working > 0 {
-                    label.add_child(
-                        Container::new(
-                            Text::new_inline(
-                                agent_counts.working.to_string(),
-                                font_family,
-                                (font_size - 2.).max(8.),
-                            )
-                            .with_color(tokens.status(StatusKind::Working))
-                            .finish(),
-                        )
-                        .with_horizontal_padding(4.)
-                        .with_border(
-                            Border::all(PROJECT_AGENT_COUNT_BADGE_BORDER_WIDTH)
-                                .with_border_fill(Fill::Solid(tokens.status(StatusKind::Working))),
-                        )
-                        .with_corner_radius(CornerRadius::with_all(Radius::Percentage(50.)))
-                        .with_margin_right(6.)
-                        .finish(),
-                    );
-                }
-                if agent_counts.running_commands > 0 {
-                    label.add_child(
-                        Container::new(
-                            Text::new_inline(
-                                agent_counts.running_commands.to_string(),
-                                font_family,
-                                (font_size - 2.).max(8.),
-                            )
-                            .with_color(command_badge_color)
-                            .finish(),
-                        )
-                        .with_horizontal_padding(4.)
-                        .with_border(
-                            Border::all(PROJECT_AGENT_COUNT_BADGE_BORDER_WIDTH)
-                                .with_border_fill(Fill::Solid(command_badge_color)),
-                        )
+                        .with_horizontal_padding(5.)
+                        .with_background(Fill::Solid(needs_input_tint))
                         .with_corner_radius(CornerRadius::with_all(Radius::Percentage(50.)))
                         .with_margin_right(6.)
                         .finish(),
@@ -1873,19 +1780,13 @@ impl ProjectWindow {
                 } else {
                     inactive_background
                 };
-                let border_fill = if is_active {
-                    Fill::Solid(accent.into_solid())
-                } else if mouse_state.is_hovered() {
-                    outline
-                } else {
-                    inactive_background
-                };
                 let tab_body = ConstrainedBox::new(
                     Container::new(contents.finish())
                         .with_background(background)
                         .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                         .with_border(
-                            Border::all(PROJECT_TAB_BORDER_WIDTH).with_border_fill(border_fill),
+                            Border::all(PROJECT_TAB_BORDER_WIDTH)
+                                .with_border_fill(Fill::Solid(ColorU::transparent_black())),
                         )
                         .with_horizontal_padding(12.)
                         .with_vertical_padding(PROJECT_TAB_VERTICAL_PADDING)

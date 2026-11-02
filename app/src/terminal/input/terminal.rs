@@ -1,7 +1,8 @@
 use warp_core::settings::Setting;
+use warp_core::ui::theme::Fill;
+use warp_core::ui::tokens::corners_md;
 use warpui::elements::{
-    Border, Clipped, Container, DropTarget, Element, Flex, Hoverable, ParentElement, SavePosition,
-    Stack,
+    Clipped, Container, DropTarget, Element, Flex, Hoverable, ParentElement, SavePosition, Stack,
 };
 use warpui::presenter::ChildView;
 use warpui::{AppContext, SingletonEntity};
@@ -9,14 +10,13 @@ use warpui::{AppContext, SingletonEntity};
 use super::common::{
     add_command_xray_overlay, add_input_suggestions_overlays, add_voltron_overlay,
     add_workflow_info_overlay, should_show_terminal_input_message_bar,
-    wrap_input_with_terminal_padding_and_focus_handler,
+    wrap_input_with_terminal_padding_and_focus_handler, INPUT_FIELD_MARGIN,
 };
 use super::{Input, InputAction, InputDropTargetData};
 use crate::appearance::Appearance;
 use crate::context_chips::spacing;
 use crate::features::FeatureFlag;
 use crate::settings::{AppEditorSettings, InputModeSettings};
-use crate::terminal::block_list_settings::BlockListSettings;
 use crate::terminal::block_list_viewport::InputMode;
 use crate::terminal::settings::TerminalSettings;
 use crate::terminal::view::TerminalAction;
@@ -135,13 +135,20 @@ impl Input {
             );
         }
 
-        let drop_target = DropTarget::new(
+        let field = Container::new(
             SavePosition::new(stack.finish(), &self.status_free_input_save_position_id()).finish(),
+        )
+        .with_background(Fill::Solid(appearance.tokens().surface_field))
+        .with_corner_radius(corners_md())
+        .with_uniform_margin(INPUT_FIELD_MARGIN)
+        .finish();
+        let drop_target = DropTarget::new(
+            field,
             InputDropTargetData::new(self.weak_view_handle.clone()),
         )
         .finish();
 
-        let hoverable_input = Hoverable::new(self.hoverable_handle.clone(), |_| drop_target)
+        let input = Hoverable::new(self.hoverable_handle.clone(), |_| drop_target)
             .on_hover(|is_hovered, ctx, _app, _position| {
                 ctx.dispatch_typed_action(InputAction::SetUDIHovered(is_hovered));
             })
@@ -149,19 +156,6 @@ impl Input {
                 ctx.dispatch_typed_action(TerminalAction::MiddleClickOnInput)
             })
             .finish();
-
-        let show_block_dividers = *BlockListSettings::as_ref(app).show_block_dividers.value();
-
-        let input = if show_block_dividers {
-            Container::new(hoverable_input)
-                .with_border(
-                    Border::top(1.)
-                        .with_border_color(styles::default_border_color(appearance.theme())),
-                )
-                .finish()
-        } else {
-            hoverable_input
-        };
 
         let mut column = Flex::column();
         let is_slash_commands = self.suggestions_mode_model.as_ref(app).is_slash_commands();

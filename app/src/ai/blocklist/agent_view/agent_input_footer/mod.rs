@@ -35,6 +35,7 @@ use warp_core::ui::color::contrast::MinimumAllowedContrast;
 use warp_core::ui::color::ContrastingColor;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::{AnsiColorIdentifier, Fill};
+use warp_core::ui::tokens::{corners_lg, corners_md, StatusKind};
 use warpui::elements::{
     Border, ChildAnchor, ChildView, Clipped, ConstrainedBox, Container, CornerRadius,
     CrossAxisAlignment, DispatchEventResult, Element, EventHandler, Expanded, Flex,
@@ -42,6 +43,8 @@ use warpui::elements::{
     PositionedElementAnchor, PositionedElementOffsetBounds, Rect, Shrinkable, Stack, Text, Wrap,
     WrapFill, WrapFillEntireRun, DEFAULT_UI_LINE_HEIGHT_RATIO,
 };
+use warpui::elements::{Dismiss, Hoverable, ParentAnchor, ParentOffsetBounds};
+use warpui::platform::Cursor;
 use warpui::r#async::{SpawnedFutureHandle, Timer};
 use warpui::{
     AppContext, Entity, EntityId, ModelHandle, SingletonEntity, TypedActionView, View, ViewContext,
@@ -88,7 +91,7 @@ use crate::terminal::cli_agent_sessions::plugin_manager::{
     PluginInstallError, PluginModalKind,
 };
 use crate::terminal::cli_agent_sessions::{
-    CLIAgentInputState, CLIAgentSessionsModel, CLIAgentSessionsModelEvent,
+    CLIAgentInputState, CLIAgentSessionStatus, CLIAgentSessionsModel, CLIAgentSessionsModelEvent,
 };
 use crate::terminal::input::models::InlineModelSelectorTab;
 use crate::terminal::input::{HandoffComposeState, MenuPositioningProvider};
@@ -134,6 +137,8 @@ const START_REMOTE_CONTROL_TOOLTIP: &str = "Start remote control";
 const START_REMOTE_CONTROL_LOGIN_REQUIRED_TOOLTIP: &str = "Log in to use /remote-control";
 
 const CLOUD_MODE_V2_FOOTER_GAP: f32 = 4.;
+/// Footer buttons shown before the rest move under More.
+const MAX_FOOTER_CHIPS: usize = 6;
 
 /// Voice input state for the CLI agent footer. Unlike the editor-based voice
 /// flow (which goes through Input → EditorView), this state is self-contained
@@ -260,6 +265,8 @@ pub struct AgentInputFooter {
     /// `CustomInsert`, the button is built fresh in render (its label
     /// reflects live arm state), so the handle must persist here.
     auto_continue_mouse_state: MouseStateHandle,
+    more_menu_mouse_state: MouseStateHandle,
+    is_more_menu_open: bool,
     plugin_operation_in_progress: bool,
     /// When `true`, the install chip is allowed to render.
     /// Starts `false` and is set to `true` after a debounce timer fires,
@@ -980,6 +987,8 @@ impl AgentInputFooter {
             custom_insert_mouse_states: RefCell::new(HashMap::new()),
             transfer_agent_mouse_state: MouseStateHandle::default(),
             auto_continue_mouse_state: MouseStateHandle::default(),
+            more_menu_mouse_state: MouseStateHandle::default(),
+            is_more_menu_open: false,
             plugin_operation_in_progress: false,
             plugin_chip_ready: false,
             context_window_button,
@@ -1868,23 +1877,6 @@ impl AgentInputFooter {
             .render(app)
     }
 
-    fn render_cli_action_divider(&self, app: &AppContext) -> Box<dyn Element> {
-        let theme = Appearance::as_ref(app).theme();
-        Container::new(
-            ConstrainedBox::new(
-                Rect::new()
-                    .with_background(theme.outline().with_opacity(65))
-                    .finish(),
-            )
-            .with_width(1.)
-            .with_height(18.)
-            .finish(),
-        )
-        .with_margin_left(4.)
-        .with_margin_right(4.)
-        .finish()
-    }
-
     fn render_cli_mode_footer(&self, app: &AppContext) -> Box<dyn Element> {
         let appearance = Appearance::as_ref(app);
         let cli_icon_size = ButtonSize::AgentInputButtonLarge.icon_size(appearance, app);
@@ -2017,16 +2009,21 @@ impl AgentInputFooter {
             })
             .collect::<Vec<_>>();
 
-        let has_actions = !action_buttons.is_empty();
-        let has_quick_inserts = !quick_insert_buttons.is_empty();
-        for button in action_buttons {
-            left_buttons.add_child(button);
+        if let Some(status) = self.render_cli_status_label(app) {
+            left_buttons.add_child(status);
         }
-        if has_actions && has_quick_inserts {
-            left_buttons.add_child(self.render_cli_action_divider(app));
+        // The first few stay on the row. Everything else opens from More, so the footer never
+        // grows a second line of buttons.
+        let mut chips = action_buttons
+            .into_iter()
+            .chain(quick_insert_buttons)
+            .collect::<Vec<_>>();
+        let overflow = chips.split_off(chips.len().min(MAX_FOOTER_CHIPS));
+        for chip in chips {
+            left_buttons.add_child(chip);
         }
-        for button in quick_insert_buttons {
-            left_buttons.add_child(button);
+        if !overflow.is_empty() {
+            left_buttons.add_child(self.render_footer_more_button(overflow, app));
         }
 
         let mut right_buttons = Flex::row()
@@ -2070,6 +2067,111 @@ impl AgentInputFooter {
             .finish();
 
         Container::new(content).with_vertical_padding(8.).finish()
+    }
+
+    /// What the session is doing, in words, next to its glyph.
+    fn render_cli_status_label(&self, app: &AppContext) -> Option<Box<dyn Element>> {
+        let appearance = Appearance::as_ref(app);
+        let tokens = appearance.tokens();
+        let session = CLIAgentSessionsModel::as_ref(app).session(self.terminal_view_id)?;
+        let agent = session.agent.display_name();
+        let (label, color) = if session.session_context.stop_reason.is_some() {
+            (
+                "Rate limited".to_string(),
+                tokens.status(StatusKind::RateLimited),
+            )
+        } else {
+            match &session.status {
+                CLIAgentSessionStatus::Blocked { .. } => (
+                    format!("{agent} is asking a question"),
+                    tokens.status(StatusKind::NeedsYou),
+                ),
+                CLIAgentSessionStatus::Success => {
+                    ("Turn complete".to_string(), tokens.status(StatusKind::Done))
+                }
+                CLIAgentSessionStatus::InProgress if session.is_actively_working() => {
+                    ("Working".to_string(), tokens.status(StatusKind::Working))
+                }
+                CLIAgentSessionStatus::InProgress => return None,
+            }
+        };
+        Some(
+            Container::new(
+                Text::new_inline(label, appearance.ui_font_family(), 12.)
+                    .with_color(color)
+                    .finish(),
+            )
+            .with_padding_right(8.)
+            .finish(),
+        )
+    }
+
+    /// The chips that didn't fit, in a popover above a More button.
+    fn render_footer_more_button(
+        &self,
+        overflow: Vec<Box<dyn Element>>,
+        app: &AppContext,
+    ) -> Box<dyn Element> {
+        let appearance = Appearance::as_ref(app);
+        let tokens = *appearance.tokens();
+        let font_family = appearance.ui_font_family();
+        let is_open = self.is_more_menu_open;
+        let button = Hoverable::new(self.more_menu_mouse_state.clone(), move |state| {
+            Container::new(
+                Text::new_inline("More", font_family, 12.)
+                    .with_color(tokens.text_2)
+                    .finish(),
+            )
+            .with_horizontal_padding(10.)
+            .with_vertical_padding(5.)
+            .with_background(Fill::Solid(if state.is_hovered() || is_open {
+                tokens.surface_raised
+            } else {
+                tokens.surface_field
+            }))
+            .with_corner_radius(corners_md())
+            .finish()
+        })
+        .with_cursor(Cursor::PointingHand)
+        .on_click(|ctx, _, _| {
+            ctx.dispatch_typed_action(AgentInputFooterAction::ToggleMoreMenu);
+        })
+        .finish();
+        if !is_open {
+            return button;
+        }
+
+        let mut column = Flex::column()
+            .with_main_axis_size(MainAxisSize::Min)
+            .with_cross_axis_alignment(CrossAxisAlignment::Start)
+            .with_spacing(4.);
+        for chip in overflow {
+            column.add_child(chip);
+        }
+        let popover = Dismiss::new(
+            Container::new(column.finish())
+                .with_uniform_padding(8.)
+                .with_background(Fill::Solid(tokens.surface_overlay))
+                .with_corner_radius(corners_lg())
+                .with_border(Border::all(1.).with_border_color(tokens.hairline))
+                .with_drop_shadow(tokens.overlay_shadow())
+                .finish(),
+        )
+        .on_dismiss(|ctx, _| {
+            ctx.dispatch_typed_action(AgentInputFooterAction::ToggleMoreMenu);
+        })
+        .finish();
+        let mut stack = Stack::new().with_child(button);
+        stack.add_positioned_overlay_child(
+            popover,
+            OffsetPositioning::offset_from_parent(
+                vec2f(0., -6.),
+                ParentOffsetBounds::WindowByPosition,
+                ParentAnchor::TopLeft,
+                ChildAnchor::BottomLeft,
+            ),
+        );
+        stack.finish()
     }
 
     pub fn render_terminal_mode_footer(&self, app: &AppContext) -> Box<dyn Element> {
@@ -3033,6 +3135,7 @@ pub enum AgentInputFooterAction {
     /// subscriber decides whether to dispatch the immediate empty-prompt
     /// handoff or enter `&` compose mode based on the current input state.
     HandoffChipClicked,
+    ToggleMoreMenu,
     ShowContextMenu {
         position: Vector2F,
     },
@@ -3371,6 +3474,10 @@ impl TypedActionView for AgentInputFooter {
                     // compose mode otherwise (preserving any in-flight prompt).
                     ctx.emit(AgentInputFooterEvent::HandoffChipClicked);
                 }
+            }
+            AgentInputFooterAction::ToggleMoreMenu => {
+                self.is_more_menu_open = !self.is_more_menu_open;
+                ctx.notify();
             }
             AgentInputFooterAction::ShowContextMenu { position } => {
                 ctx.emit(AgentInputFooterEvent::ShowContextMenu {

@@ -1,9 +1,10 @@
 use pathfinder_geometry::vector::vec2f;
 use settings::Setting;
+use warp_core::ui::theme::Fill;
+use warp_core::ui::tokens::corners_md;
 use warpui::elements::{
-    Border, ChildAnchor, ChildView, Clipped, Container, DropTarget, Element, Empty, Flex,
-    Hoverable, OffsetPositioning, ParentAnchor, ParentElement, ParentOffsetBounds, SavePosition,
-    Stack,
+    ChildAnchor, ChildView, Clipped, Container, DropTarget, Element, Empty, Flex, Hoverable,
+    OffsetPositioning, ParentAnchor, ParentElement, ParentOffsetBounds, SavePosition, Stack,
 };
 use warpui::{AppContext, SingletonEntity};
 
@@ -13,12 +14,11 @@ use crate::appearance::Appearance;
 use crate::context_chips::spacing;
 use crate::features::FeatureFlag;
 use crate::settings::{AppEditorSettings, InputModeSettings};
-use crate::terminal::block_list_settings::BlockListSettings;
 use crate::terminal::block_list_viewport::InputMode;
 use crate::terminal::input::common::{
     add_command_xray_overlay, add_input_suggestions_overlays, add_vim_status_to_stack,
     add_voltron_overlay, add_workflow_info_overlay, should_show_terminal_input_message_bar,
-    wrap_input_with_terminal_padding_and_focus_handler,
+    wrap_input_with_terminal_padding_and_focus_handler, INPUT_FIELD_MARGIN,
 };
 use crate::terminal::input::{get_input_box_top_border_width, InputDropTargetData};
 use crate::terminal::settings::{SpacingMode, TerminalSettings};
@@ -239,31 +239,12 @@ impl Input {
 
         let input_mode = *InputModeSettings::as_ref(app).input_mode.value();
 
-        // When AgentView is enabled, match terminal-mode input behavior and only render the
-        // divider adjacent to the status/message line when block dividers are enabled.
-        let show_block_dividers = *BlockListSettings::as_ref(app).show_block_dividers.value();
-        let should_render_divider = !FeatureFlag::AgentView.is_enabled() || show_block_dividers;
-
-        let border = match input_mode {
-            InputMode::PinnedToBottom => Border::top(if should_render_divider {
-                get_input_box_top_border_width()
-            } else {
-                0.
-            })
-            .with_border_fill(theme.outline()),
-            InputMode::PinnedToTop => Border::bottom(if should_render_divider {
-                get_input_box_top_border_width()
-            } else {
-                0.
-            })
-            .with_border_fill(theme.outline()),
-            InputMode::Waterfall => Border::new(get_input_box_top_border_width())
-                .with_sides(true, false, true, false)
-                .with_border_fill(theme.outline()),
-        };
-
         let drop_target = DropTarget::new(
-            Container::new(stack.finish()).with_border(border).finish(),
+            Container::new(stack.finish())
+                .with_background(Fill::Solid(appearance.tokens().surface_field))
+                .with_corner_radius(corners_md())
+                .with_uniform_margin(INPUT_FIELD_MARGIN)
+                .finish(),
             InputDropTargetData::new(self.weak_view_handle.clone()),
         )
         .finish();

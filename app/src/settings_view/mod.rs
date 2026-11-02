@@ -37,7 +37,7 @@ use warp_core::ui::theme::color::internal_colors;
 use warp_editor::editor::NavigationKey;
 use warpify_page::{WarpifyPageAction, WarpifyPageView};
 use warpui::elements::{
-    Align, Border, ChildAnchor, ChildView, Clipped, ClippedScrollStateHandle, ClippedScrollable,
+    Align, ChildAnchor, ChildView, Clipped, ClippedScrollStateHandle, ClippedScrollable,
     ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, DispatchEventResult, Empty,
     EventHandler, Expanded, Fill, Flex, MainAxisSize, OffsetPositioning, ParentAnchor,
     ParentElement, ParentOffsetBounds, SavePosition, ScrollbarWidth, Shrinkable, Stack, Text,
@@ -153,7 +153,6 @@ fn sidebar_width() -> f32 {
 }
 
 /// Width of the borders for the header and the sidebar.
-const SECTION_BORDER_WIDTH: f32 = 1.;
 
 const POSITION_ID: &str = "settings_pane";
 
@@ -289,7 +288,9 @@ impl Display for SettingsSection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SettingsSection::BillingAndUsage => write!(f, "Billing and usage"),
-            SettingsSection::Clinch => write!(f, "Clinch"),
+            SettingsSection::Clinch => write!(f, "General"),
+            SettingsSection::Features => write!(f, "Terminal"),
+            SettingsSection::Warpify => write!(f, "Subshells and SSH"),
             SettingsSection::Keybindings => write!(f, "Keyboard shortcuts"),
             SettingsSection::SharedBlocks => write!(f, "Shared blocks"),
             SettingsSection::MCPServers => write!(f, "MCP Servers"),
@@ -411,20 +412,20 @@ impl FromStr for SettingsSection {
         match s {
             "About" => Ok(Self::About),
             "Account" => Ok(Self::Account),
-            "Clinch" | "Clinch Settings" => Ok(Self::Clinch),
+            "General" | "Clinch" | "Clinch Settings" => Ok(Self::Clinch),
             "AI" => Ok(Self::AI),
             "MCP Servers" => Ok(Self::MCPServers),
             "Billing and usage" => Ok(Self::BillingAndUsage),
             "Appearance" => Ok(Self::Appearance),
             "Code" => Ok(Self::Code),
-            "Features" => Ok(Self::Features),
+            "Terminal" | "Features" => Ok(Self::Features),
             "Keyboard shortcuts" => Ok(Self::Keybindings),
             "Privacy" => Ok(Self::Privacy),
             "Referrals" => Ok(Self::Referrals),
             "Local control" | "Scripting" => Ok(Self::Scripting),
             "Shared blocks" => Ok(Self::SharedBlocks),
             "Teams" => Ok(Self::Teams),
-            "Warpify" => Ok(Self::Warpify),
+            "Subshells and SSH" | "Warpify" => Ok(Self::Warpify),
             "WarpDrive" | "Warp Drive" => Ok(Self::WarpDrive),
             // This page was called "Oz" at one point, keep for backward compatibility.
             "Oz" | "Warp Agent" => Ok(Self::WarpAgent),
@@ -1111,12 +1112,6 @@ fn visible_section_or_fallback(section: SettingsSection, has_backend: bool) -> S
     }
 }
 
-/// Clinch Settings is a standalone, single-page surface. Every other section
-/// belongs to the inherited Warp settings surface.
-fn sections_share_settings_surface(current: SettingsSection, candidate: SettingsSection) -> bool {
-    (current == SettingsSection::Clinch) == (candidate == SettingsSection::Clinch)
-}
-
 macro_rules! update_page {
     ($handle:expr, $update:expr, $ctx:expr) => {
         match $handle {
@@ -1366,6 +1361,7 @@ impl SettingsView {
         // Build sidebar nav items. AI page is presented as an "Agents" umbrella
         // with subpages; the actual AI SettingsPage is hidden from direct sidebar listing.
         let mut nav_items = vec![
+            SettingsNavItem::Page(SettingsSection::Clinch),
             SettingsNavItem::Page(SettingsSection::Account),
             SettingsNavItem::Umbrella(SettingsUmbrella::new(
                 "Agents",
@@ -1502,10 +1498,8 @@ impl SettingsView {
             .iter()
             .zip(self.pages_filter.iter())
             .filter_map(move |(page, match_data)| {
-                (sections_share_settings_surface(self.current_settings_page, page.section)
-                    && self.should_render_page(page, app)
-                    && match_data.is_truthy())
-                .then_some((page, *match_data))
+                (self.should_render_page(page, app) && match_data.is_truthy())
+                    .then_some((page, *match_data))
             })
     }
 
@@ -2662,26 +2656,17 @@ impl View for SettingsView {
                     .with_child(footer)
                     .finish(),
             )
-            .with_border(Border::right(SECTION_BORDER_WIDTH).with_border_fill(theme.outline()))
             .finish(),
         )
         .with_width(sidebar_width())
         .finish();
 
-        let row = if self.current_settings_page == SettingsSection::Clinch {
-            Flex::row()
-                .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
-                .with_main_axis_size(MainAxisSize::Max)
-                .with_child(Shrinkable::new(1., page).finish())
-                .finish()
-        } else {
-            Flex::row()
-                .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
-                .with_main_axis_size(MainAxisSize::Max)
-                .with_child(Shrinkable::new(1., sidebar).finish())
-                .with_child(Shrinkable::new(1., page).finish())
-                .finish()
-        };
+        let row = Flex::row()
+            .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .with_main_axis_size(MainAxisSize::Max)
+            .with_child(Shrinkable::new(1., sidebar).finish())
+            .with_child(Shrinkable::new(1., page).finish())
+            .finish();
 
         let mut stack = Stack::new().with_child(
             EventHandler::new(
@@ -2910,12 +2895,7 @@ impl BackingView for SettingsView {
         _ctx: &view::HeaderRenderContext<'_>,
         _app: &AppContext,
     ) -> view::HeaderContent {
-        let title = if self.current_settings_page == SettingsSection::Clinch {
-            "Clinch Settings"
-        } else {
-            "Settings"
-        };
-        view::HeaderContent::simple(title)
+        view::HeaderContent::simple("Settings")
     }
 
     fn set_focus_handle(&mut self, focus_handle: PaneFocusHandle, _ctx: &mut ViewContext<Self>) {

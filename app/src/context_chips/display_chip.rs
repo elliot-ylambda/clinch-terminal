@@ -1570,16 +1570,13 @@ impl DisplayChip {
             }
 
             let mut chip_element = Container::new(content.finish())
-                .with_background(theme.surface_1())
-                .with_border(
-                    Border::all(CHIP_BORDER_WIDTH)
-                        .with_border_color(internal_colors::neutral_3(theme)),
-                )
+                .with_background(Fill::Solid(appearance.tokens().surface_raised))
                 .with_corner_radius(CornerRadius::with_all(Radius::Pixels(CHIP_CORNER_RADIUS)))
                 .with_vertical_padding(GIT_BRANCH_STATUS_CHIP_VERTICAL_PADDING)
                 .with_horizontal_padding(GIT_BRANCH_STATUS_CHIP_HORIZONTAL_PADDING);
             if state.is_hovered() {
-                chip_element = chip_element.with_background(theme.surface_2());
+                chip_element =
+                    chip_element.with_background(Fill::Solid(appearance.tokens().surface_hover));
             }
 
             let mut stack = Stack::new().with_child(chip_element.finish());
@@ -1612,7 +1609,7 @@ impl DisplayChip {
         }
 
         let appearance = Appearance::as_ref(app);
-        let theme = appearance.theme();
+        let _theme = appearance.theme();
         let udi_icon_size = udi_icon_size(appearance, app);
         let font_size = udi_font_size(appearance);
         let font_family = if self.is_in_agent_view {
@@ -1697,8 +1694,7 @@ impl DisplayChip {
             .finish();
 
         let button = Container::new(content)
-            .with_background(theme.surface_1())
-            .with_border(Border::all(1.0).with_border_color(internal_colors::neutral_3(theme)))
+            .with_background(Fill::Solid(appearance.tokens().surface_raised))
             .with_corner_radius(CornerRadius::with_all(Radius::Pixels(CHIP_CORNER_RADIUS)))
             .finish();
 
@@ -2302,14 +2298,13 @@ pub(crate) fn chip_container(
     border_override: Option<Border>,
     appearance: &Appearance,
 ) -> Container {
-    let theme = appearance.theme();
-    let border = border_override.unwrap_or(
-        Border::all(CHIP_BORDER_WIDTH).with_border_color(internal_colors::neutral_3(theme)),
-    );
+    let _theme = appearance.theme();
+    let border = border_override
+        .unwrap_or(Border::all(CHIP_BORDER_WIDTH).with_border_color(ColorU::transparent_black()));
     // Solid surface fill keeps the chip readable even when its parent isn't
     // `theme.background()` (for example, over an alt-screen CLI agent).
     Container::new(content)
-        .with_background(theme.surface_1())
+        .with_background(Fill::Solid(appearance.tokens().surface_raised))
         .with_border(border)
         .with_corner_radius(CornerRadius::with_all(Radius::Pixels(CHIP_CORNER_RADIUS)))
         .with_vertical_padding(spacing::UDI_CHIP_VERTICAL_PADDING)

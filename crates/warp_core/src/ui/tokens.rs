@@ -15,11 +15,11 @@ use super::color::contrast::contrast_ratio;
 use super::theme::{ColorScheme, Fill, WarpTheme};
 
 /// Chips, small buttons, menu items, section headers.
-pub const RADIUS_SM: Radius = Radius::Pixels(6.);
+pub const RADIUS_SM: Radius = Radius::Pixels(8.);
 /// Tab rows, fields, pills, buttons.
-pub const RADIUS_MD: Radius = Radius::Pixels(10.);
+pub const RADIUS_MD: Radius = Radius::Pixels(12.);
 /// Panels, menus, dialogs, the terminal card.
-pub const RADIUS_LG: Radius = Radius::Pixels(14.);
+pub const RADIUS_LG: Radius = Radius::Pixels(16.);
 /// Dots, meters, switch tracks.
 pub const RADIUS_PILL: Radius = Radius::Percentage(50.);
 
@@ -35,7 +35,7 @@ pub const SPACE_9: f32 = 24.;
 pub const SPACE_10: f32 = 32.;
 
 /// Inset between the window frame and the rounded terminal card, and the gap between split cards.
-pub const CARD_INSET: f32 = SPACE_4;
+pub const CARD_INSET: f32 = SPACE_5;
 /// Height of a one-line row in the vertical tab list.
 pub const ROW_HEIGHT: f32 = 32.;
 
@@ -135,19 +135,19 @@ struct SurfaceMix {
 }
 
 const DARK_MIX: SurfaceMix = SurfaceMix {
-    chrome: 0.025,
-    field: 0.065,
-    raised: 0.10,
-    hover: 0.065,
-    control_track: 0.15,
+    chrome: 0.08,
+    field: 0.12,
+    raised: 0.16,
+    hover: 0.12,
+    control_track: 0.22,
 };
 
 const LIGHT_MIX: SurfaceMix = SurfaceMix {
-    chrome: 0.055,
-    field: 0.105,
+    chrome: 0.075,
+    field: 0.125,
     raised: 0.,
-    hover: 0.094,
-    control_track: 0.19,
+    hover: 0.115,
+    control_track: 0.22,
 };
 
 /// Semantic colors derived from a theme. Cheap to copy; [`super::appearance::Appearance`] caches

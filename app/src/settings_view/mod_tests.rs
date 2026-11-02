@@ -251,28 +251,9 @@ fn visible_section_or_fallback_is_a_no_op_when_backend_available_or_local_only()
 }
 
 #[test]
-fn clinch_and_warp_settings_use_separate_surfaces() {
-    assert!(sections_share_settings_surface(
-        SettingsSection::Clinch,
-        SettingsSection::Clinch
-    ));
-    assert!(!sections_share_settings_surface(
-        SettingsSection::Clinch,
-        SettingsSection::Appearance
-    ));
-    assert!(!sections_share_settings_surface(
-        SettingsSection::Appearance,
-        SettingsSection::Clinch
-    ));
-    assert!(sections_share_settings_surface(
-        SettingsSection::Appearance,
-        SettingsSection::Features
-    ));
-}
-
-#[test]
 fn arrow_nav_skips_backend_only_sections_when_backendless() {
-    let nav_items = realistic_nav_items();
+    let mut nav_items = realistic_nav_items();
+    nav_items.push(SettingsNavItem::Page(SettingsSection::Clinch));
     // Mirrors the predicate `cycle_pages` combines with the search filter:
     // when backendless, only sections that don't require Warp's backend
     // remain reachable via arrow-key navigation.
@@ -288,8 +269,8 @@ fn arrow_nav_skips_backend_only_sections_when_backendless() {
     assert!(!stops
         .iter()
         .any(|s| matches!(s, NavStop::Section(SettingsSection::BillingAndUsage))));
-    // Clinch is a standalone page and is not part of the Warp sidebar order.
-    assert!(!stops
+    // General is the first page of the one Settings sidebar.
+    assert!(stops
         .iter()
         .any(|s| matches!(s, NavStop::Section(SettingsSection::Clinch))));
     // The entire Agents umbrella (nav_index 1) disappears, since every AI
@@ -334,7 +315,7 @@ fn match_data_countable_zero_is_not_truthy() {
 
 #[test]
 fn subpage_display_names_are_correct() {
-    assert_eq!(SettingsSection::Clinch.to_string(), "Clinch");
+    assert_eq!(SettingsSection::Clinch.to_string(), "General");
     assert_eq!(SettingsSection::Scripting.to_string(), "Local control");
     assert_eq!(SettingsSection::WarpAgent.to_string(), "Warp Agent");
     assert_eq!(SettingsSection::AgentProfiles.to_string(), "Profiles");

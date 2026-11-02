@@ -27,6 +27,9 @@ use crate::terminal::view::{TerminalAction, PADDING_LEFT};
 use crate::ui_components::icons::Icon;
 use crate::workspaces::user_workspaces::UserWorkspaces;
 
+/// Gap between the rounded input field and the edges of the terminal card.
+pub(super) const INPUT_FIELD_MARGIN: f32 = 8.;
+
 /// Whether the terminal input message bar should be shown.
 ///
 /// The message bar is hidden when AI is disabled, the user has turned it off in settings,

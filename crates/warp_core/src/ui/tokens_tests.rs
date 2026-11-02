@@ -25,11 +25,11 @@ fn hex(color: ColorU) -> u32 {
 fn ink_matches_the_prototype_scale() {
     let tokens = Tokens::new(&theme(0x0D0E11FF, 0xD3D6DDFF, 0xC5F06BFF));
     assert_eq!(hex(tokens.surface_terminal), 0x0D0E11);
-    assert_eq!(hex(tokens.surface_chrome), 0x121316);
-    assert_eq!(hex(tokens.surface_field), 0x1A1B1E);
-    assert_eq!(hex(tokens.surface_raised), 0x212225);
-    assert_eq!(hex(tokens.control_track), 0x2B2C30);
-    assert_eq!(hex(tokens.text_on_accent), 0x121316);
+    assert_eq!(hex(tokens.surface_chrome), 0x1D1E21);
+    assert_eq!(hex(tokens.surface_field), 0x252629);
+    assert_eq!(hex(tokens.surface_raised), 0x2D2E32);
+    assert_eq!(hex(tokens.control_track), 0x393A3E);
+    assert_eq!(hex(tokens.text_on_accent), 0x1D1E21);
     assert_eq!(hex(tokens.status(StatusKind::Working)), 0x5BD08A);
     assert_eq!(hex(tokens.status(StatusKind::NeedsYou)), 0xF2B04B);
     assert_eq!(hex(tokens.status(StatusKind::Done)), 0x6FA8FF);
@@ -40,8 +40,8 @@ fn ink_matches_the_prototype_scale() {
 fn paper_matches_the_prototype_scale() {
     let tokens = Tokens::new(&theme(0xFFFFFFFF, 0x2A2C31FF, 0x4F7D0FFF));
     assert_eq!(hex(tokens.surface_terminal), 0xFFFFFF);
-    assert_eq!(hex(tokens.surface_chrome), 0xF3F3F4);
-    assert_eq!(hex(tokens.surface_field), 0xE9E9E9);
+    assert_eq!(hex(tokens.surface_chrome), 0xEFEFF0);
+    assert_eq!(hex(tokens.surface_field), 0xE4E5E5);
     assert_eq!(hex(tokens.surface_raised), 0xFFFFFF);
     assert_eq!(hex(tokens.text_on_accent), 0xFFFFFF);
     assert_eq!(hex(tokens.status(StatusKind::NeedsYou)), 0xA8650A);
