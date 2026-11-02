@@ -3059,10 +3059,7 @@ fn cli_agent_history_trigger(history: &AgentPromptHistory, fallback: String) -> 
         .iter()
         .rev()
         .find_map(|prompt| {
-            let message = prompt.text.split_whitespace().collect::<Vec<_>>().join(" ");
-            if message.is_empty() {
-                return None;
-            }
+            let message = crate::agent_resume::clean_prompt_title_text(&prompt.text)?;
 
             Some(
                 crate::agent_resume::format_prompt_time_full(prompt.timestamp.as_deref())
@@ -3080,7 +3077,7 @@ fn cli_agent_history_prompts(history: &AgentPromptHistory) -> &[AgentPrompt] {
 }
 
 fn cli_agent_history_prompt_label(ordinal: usize, prompt: &AgentPrompt) -> String {
-    let message = prompt.text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let message = crate::agent_resume::clean_prompt_title_text(&prompt.text).unwrap_or_default();
     crate::agent_resume::format_prompt_time_full(prompt.timestamp.as_deref())
         .map(|timestamp| format!("{ordinal} · {timestamp} | {message}"))
         .unwrap_or_else(|| format!("{ordinal} | {message}"))
@@ -3089,7 +3086,9 @@ fn cli_agent_history_prompt_label(ordinal: usize, prompt: &AgentPrompt) -> Strin
 fn cli_agent_history_prompt_tooltip(prompt: &AgentPrompt) -> String {
     // History rows stay ellipsis-clipped to one line, while the tooltip soft-wraps
     // within the window and can therefore show the complete prompt.
-    prompt.text.trim().to_owned()
+    crate::agent_resume::strip_paste_wrappers(&prompt.text)
+        .trim()
+        .to_owned()
 }
 
 fn cli_agent_history_menu_item_fields(

@@ -71,13 +71,18 @@ pub struct AgentPromptHistory {
     pub inherited_prompts: usize,
 }
 
-/// Removes paste transport markup from display titles without changing stored prompt history.
-pub fn clean_prompt_title_text(text: &str) -> Option<String> {
+/// Removes Claude Code's `<pasted_content id=…>` transport markup, keeping the pasted text.
+pub fn strip_paste_wrappers(text: &str) -> std::borrow::Cow<'_, str> {
     static PASTE_WRAPPER: LazyLock<regex::Regex> = LazyLock::new(|| {
         regex::Regex::new(r"</?pasted_content(?:\s+[^<>]*?)?\s*>")
             .expect("valid pasted-content wrapper pattern")
     });
-    let unwrapped = PASTE_WRAPPER.replace_all(text, "");
+    PASTE_WRAPPER.replace_all(text, "")
+}
+
+/// Removes paste transport markup from display titles without changing stored prompt history.
+pub fn clean_prompt_title_text(text: &str) -> Option<String> {
+    let unwrapped = strip_paste_wrappers(text);
     let collapsed = unwrapped.split_whitespace().collect::<Vec<_>>().join(" ");
     (!collapsed.is_empty()).then_some(collapsed)
 }

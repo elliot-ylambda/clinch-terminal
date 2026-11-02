@@ -617,8 +617,10 @@ fn prompt_from_trusted_event(event: &CLIAgentEvent) -> Option<AgentPrompt> {
     if is_injected_task_notification(text) {
         return None;
     }
+    // Stamped with when it was sent, so history shows a time before the transcript catches up.
+    // The transcript's own copy replaces this one once it loads (they merge by text).
     Some(AgentPrompt {
-        timestamp: None,
+        timestamp: Some(chrono::Utc::now().to_rfc3339()),
         text: text.clone(),
     })
 }

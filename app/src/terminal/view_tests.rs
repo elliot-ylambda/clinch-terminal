@@ -176,6 +176,18 @@ fn cli_agent_history_prompts_include_first_and_stay_chronological() {
 }
 
 #[test]
+fn cli_agent_history_rows_hide_paste_markup() {
+    let prompt = AgentPrompt {
+        timestamp: None,
+        text: "<pasted_content id=\"0f52\">\n- first point\n</pasted_content id=\"0f52\"> and more"
+            .to_owned(),
+    };
+    let label = cli_agent_history_prompt_label(13, &prompt);
+    assert_eq!(label, "13 | - first point and more");
+    assert!(!cli_agent_history_prompt_tooltip(&prompt).contains("pasted_content"));
+}
+
+#[test]
 fn cli_agent_history_prompt_label_stays_on_one_line() {
     let prompt = AgentPrompt {
         timestamp: Some("2026-07-14T08:01:00Z".to_owned()),
@@ -520,7 +532,12 @@ fn cli_agent_history_header_updates_after_live_prompts_for_claude_and_codex() {
             terminal.read(&app, |view, ctx| {
                 view.cli_agent_message_history_dropdown
                     .read(ctx, |dropdown, ctx| {
-                        assert_eq!(dropdown.top_bar_text_for_test(ctx), latest_prompt);
+                        // A prompt sent live is stamped with its send time, shown before the text.
+                        let text = dropdown.top_bar_text_for_test(ctx);
+                        assert!(
+                            text.ends_with(&format!(" | {latest_prompt}")),
+                            "header should end with the prompt: {text}"
+                        );
                     });
             });
         }
