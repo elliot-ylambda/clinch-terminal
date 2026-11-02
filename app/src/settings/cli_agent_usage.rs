@@ -40,18 +40,36 @@ define_settings_group!(CliAgentUsageSettings, settings: [
         description: "Per-provider visibility overrides for statistics in the CLI-agent usage header.",
     }
 
-    // Exact provider session identities for which the user explicitly enabled
-    // rate-limit auto-continue. Entity IDs are intentionally not persisted:
-    // restored panes get new IDs, while Claude/Codex resume the same durable
-    // provider session ID. Values are enable timestamps for future pruning.
-    auto_continue_sessions: CliAgentAutoContinueSessions {
-        type: HashMap<String, i64>,
+    // When a Claude Code or Codex session stops at its usage limit, send
+    // "Continue" once the limit resets. On by default: the send is causal
+    // (only a provider-reported limit stop arms it), one-shot, and cancelled by
+    // any typing in the pane. Each pane's footer toggle overrides this for its
+    // own provider session (see `auto_continue_session_overrides`).
+    auto_continue_on_limit_reset: CliAgentAutoContinueOnLimitReset {
+        type: bool,
+        default: true,
+        supported_platforms: SupportedPlatforms::DESKTOP,
+        sync_to_cloud: SyncToCloud::Globally(RespectUserSyncSetting::Yes),
+        private: false,
+        toml_path: "ai.cli_agent_usage.auto_continue_on_limit_reset",
+        description: "Automatically send \"Continue\" to a Claude Code or Codex session \
+                      when its usage limit resets.",
+    }
+
+    // Per-session exceptions to `auto_continue_on_limit_reset`, set only by a
+    // pane's footer toggle. Keyed by durable provider session ("claude:<id>",
+    // "codex:<id>") rather than entity ID, so a restored pane keeps the choice.
+    // This replaces the old opt-in-only `auto_continue_sessions` map; its
+    // entries are not migrated because every one of them asked for the value
+    // that is now the default.
+    auto_continue_session_overrides: CliAgentAutoContinueSessionOverrides {
+        type: HashMap<String, bool>,
         default: HashMap::default(),
         supported_platforms: SupportedPlatforms::DESKTOP,
         sync_to_cloud: SyncToCloud::Never,
         private: true,
-        toml_path: "ai.cli_agent_usage.auto_continue_sessions",
-        description: "Machine-local CLI-agent sessions explicitly opted into rate-limit auto-continue.",
+        toml_path: "ai.cli_agent_usage.auto_continue_session_overrides",
+        description: "Machine-local per-session overrides of rate-limit auto-continue.",
     }
 
     // Scheduled fire timestamps for causally confirmed limit stops. Kept

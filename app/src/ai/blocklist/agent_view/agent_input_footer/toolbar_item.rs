@@ -404,14 +404,6 @@ impl AgentToolbarItemKind {
         matches!(self, Self::ContextChip(_))
     }
 
-    /// Session-management controls rendered in the leading CLI-footer action cluster.
-    pub fn is_cli_session_action(&self) -> bool {
-        matches!(
-            self,
-            Self::BookmarkConversation | Self::ForkSession | Self::TransferAgent
-        )
-    }
-
     pub fn context_chip_kind(&self) -> Option<&ContextChipKind> {
         match self {
             Self::ContextChip(kind) => Some(kind),

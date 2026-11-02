@@ -41,7 +41,7 @@ use warpui::elements::{
     Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning, ParentAnchor,
     ParentElement, ParentOffsetBounds, PositionedElementAnchor, PositionedElementOffsetBounds,
     SavePosition, Shrinkable, SizeConstraintCondition, SizeConstraintSwitch, Stack, Text, Wrap,
-    WrapFill, WrapFillEntireRun, DEFAULT_UI_LINE_HEIGHT_RATIO,
+    WrapFill, DEFAULT_UI_LINE_HEIGHT_RATIO,
 };
 use warpui::platform::Cursor;
 use warpui::r#async::{SpawnedFutureHandle, Timer};
@@ -65,6 +65,7 @@ use crate::ai::harness_availability::HarnessAvailabilityModel;
 use crate::ai::AIRequestUsageModel;
 use crate::appearance::Appearance;
 use crate::auth::{AuthManager, AuthStateProvider};
+use crate::chip_configurator::ListPresentation;
 use crate::completer::SessionContext;
 use crate::context_chips::display_chip::{DisplayChip, DisplayChipConfig, PromptChipShellCommand};
 use crate::context_chips::prompt_type::PromptType;
@@ -136,12 +137,36 @@ const START_REMOTE_CONTROL_TOOLTIP: &str = "Start remote control";
 const START_REMOTE_CONTROL_LOGIN_REQUIRED_TOOLTIP: &str = "Log in to use /remote-control";
 
 const CLOUD_MODE_V2_FOOTER_GAP: f32 = 4.;
-/// Footer buttons shown before the rest move under More.
 pub const FOOTER_MORE_BUTTON_POSITION_ID: &str = "agent_footer:more";
+/// Footer buttons shown before the rest move under More.
 const MAX_FOOTER_CHIPS: usize = 6;
 const MAX_COMPACT_FOOTER_CHIPS: usize = 3;
+/// The footer editor lists buttons in this order and marks where the row runs out.
+pub(crate) const FOOTER_LIST_PRESENTATION: ListPresentation = ListPresentation {
+    visible_count: MAX_FOOTER_CHIPS,
+    compact_visible_count: MAX_COMPACT_FOOTER_CHIPS,
+};
 const FOOTER_COMPACT_WIDTH: f32 = 900.;
 const FOOTER_ICON_ONLY_WIDTH: f32 = 520.;
+
+/// One footer row at every width: a narrower pane shows fewer buttons and moves the rest under
+/// More. `render_row` is given how many buttons may stay on the row.
+fn render_footer_row_for_width(render_row: impl Fn(usize) -> Box<dyn Element>) -> Box<dyn Element> {
+    SizeConstraintSwitch::new(
+        render_row(MAX_FOOTER_CHIPS),
+        vec![
+            (
+                SizeConstraintCondition::WidthLessThan(FOOTER_ICON_ONLY_WIDTH),
+                render_row(0),
+            ),
+            (
+                SizeConstraintCondition::WidthLessThan(FOOTER_COMPACT_WIDTH),
+                render_row(MAX_COMPACT_FOOTER_CHIPS),
+            ),
+        ],
+    )
+    .finish()
+}
 
 /// Voice input state for the CLI agent footer. Unlike the editor-based voice
 /// flow (which goes through Input → EditorView), this state is self-contained
@@ -1817,7 +1842,7 @@ impl AgentInputFooter {
             (true, Some(fire_at), None, _) => {
                 let at = fire_at.with_timezone(&Local).format("%H:%M");
                 (
-                    "Auto-continue on".to_string(),
+                    format!("Resumes {at}"),
                     format!(
                         "Will send \"{AUTO_CONTINUE_PROMPT}\" to this {agent_name} session at {at}, \
                          just after its rate limit resets. Click to cancel."
@@ -1828,12 +1853,6 @@ impl AgentInputFooter {
                 "Auto-continue".to_string(),
                 format!(
                     "{agent_name} reported a usage-limit stop. Waiting for a reliable reset time; click to turn off."
-                ),
-            ),
-            (true, None, None, AutoContinueAvailability::WaitingForUsageData) => (
-                "Auto-continue".to_string(),
-                format!(
-                    "Waiting for current {agent_name} plan-limit data before scheduling. Click to turn off."
                 ),
             ),
             (true, None, None, AutoContinueAvailability::Unsupported) => (
@@ -1848,22 +1867,16 @@ impl AgentInputFooter {
                      is sent once the limit resets. Click to turn off."
                 ),
             ),
-            (false, _, _, AutoContinueAvailability::WaitingForUsageData) => (
-                "Auto-continue".to_string(),
-                format!(
-                    "Waiting for current {agent_name} plan-limit data before auto-continue can be enabled."
-                ),
-            ),
             (false, _, _, AutoContinueAvailability::Unsupported) => (
                 "Auto-continue".to_string(),
                 "Auto-continue requires a supported local session with the current Clinch agent plugin."
                     .to_string(),
             ),
             (false, _, _, AutoContinueAvailability::Ready) => (
-                "Auto-continue".to_string(),
+                "Auto-continue off".to_string(),
                 format!(
                     "Auto-send \"{AUTO_CONTINUE_PROMPT}\" when this {agent_name} session's rate \
-                     limit resets. Click to turn on (this pane only)."
+                     limit resets. Click to turn on for this session."
                 ),
             ),
         };
@@ -1883,20 +1896,7 @@ impl AgentInputFooter {
 
     /// One row at every width: a narrower pane shows fewer buttons and moves the rest under More.
     fn render_cli_mode_footer(&self, app: &AppContext) -> Box<dyn Element> {
-        SizeConstraintSwitch::new(
-            self.render_cli_mode_footer_row(MAX_FOOTER_CHIPS, app),
-            vec![
-                (
-                    SizeConstraintCondition::WidthLessThan(FOOTER_ICON_ONLY_WIDTH),
-                    self.render_cli_mode_footer_row(0, app),
-                ),
-                (
-                    SizeConstraintCondition::WidthLessThan(FOOTER_COMPACT_WIDTH),
-                    self.render_cli_mode_footer_row(MAX_COMPACT_FOOTER_CHIPS, app),
-                ),
-            ],
-        )
-        .finish()
+        render_footer_row_for_width(|max_chips| self.render_cli_mode_footer_row(max_chips, app))
     }
 
     fn render_cli_mode_footer_row(&self, max_chips: usize, app: &AppContext) -> Box<dyn Element> {
@@ -1987,34 +1987,14 @@ impl AgentInputFooter {
                 .finish()
         });
 
-        // Product-owned session actions form a stable leading cluster even if an older saved
-        // footer layout listed them in a different order. User prompt buttons retain their saved
-        // order in the quick-insert cluster below.
-        let mut action_buttons = Vec::new();
-        for action in [
-            AgentToolbarItemKind::BookmarkConversation,
-            AgentToolbarItemKind::ForkSession,
-            AgentToolbarItemKind::TransferAgent,
-        ] {
-            if configured_items.iter().any(|item| item == &action) {
-                if let Some(element) = self.render_cli_toolbar_item(
-                    &action,
-                    &shared_status,
-                    is_conversation_transcript_context,
-                    app,
-                ) {
-                    action_buttons.push(element);
-                }
-            }
-        }
-
         // Auto Continue is a live per-pane action rather than a configurable prompt recipe. Use
         // the same eligibility predicate as the Command Palette and action handler.
         let auto_continue_availability =
             AutoContinueModel::availability(self.terminal_view_id, shared_status.is_viewer(), app);
-        let quick_insert_buttons = configured_items
+        // Buttons appear in the order the user arranged them in the editor, so the first few
+        // here are exactly the ones the editor shows above its More line.
+        let configured_buttons = configured_items
             .iter()
-            .filter(|item| !item.is_cli_session_action())
             .filter_map(|item| {
                 self.render_cli_toolbar_item(
                     item,
@@ -2046,8 +2026,7 @@ impl AgentInputFooter {
         // grows a second line of buttons.
         let mut chips = coordinator_prompts
             .into_iter()
-            .chain(action_buttons)
-            .chain(quick_insert_buttons)
+            .chain(configured_buttons)
             .collect::<Vec<_>>();
         let mut overflow = chips.split_off(chips.len().min(max_chips));
         // Plugin setup is a one-time chore, not something to look at all day.
@@ -2185,6 +2164,9 @@ impl AgentInputFooter {
         .on_dismiss(|ctx, _| {
             ctx.dispatch_typed_action(AgentInputFooterAction::ToggleMoreMenu);
         })
+        // A click outside only closes the menu. Otherwise a click on More itself would close it
+        // here and reopen it through the button underneath, so the menu could never be shut.
+        .prevent_interaction_with_other_elements()
         .finish();
         let mut stack = Stack::new().with_child(button);
         stack.add_positioned_overlay_child(
@@ -2199,52 +2181,13 @@ impl AgentInputFooter {
         stack.finish()
     }
 
+    /// The plain-terminal footer keeps to one row like the agent footer: a narrower pane shows
+    /// fewer buttons and the rest open from More.
     pub fn render_terminal_mode_footer(&self, app: &AppContext) -> Box<dyn Element> {
-        let session_settings = SessionSettings::as_ref(app);
-        let left_items = session_settings.terminal_footer_chip_selection.left_items();
-        let right_items = session_settings
-            .terminal_footer_chip_selection
-            .right_items();
-
-        let mut left_buttons = Wrap::row()
-            .with_main_axis_size(MainAxisSize::Min)
-            .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_main_axis_alignment(MainAxisAlignment::Start)
-            .with_run_spacing(4.)
-            .with_spacing(4.);
-
-        if FeatureFlag::CliAgentQuickInsertButtons.is_enabled()
-            && FeatureFlag::AgentToolbarEditor.is_enabled()
-        {
-            left_buttons.add_child(ChildView::new(&self.quick_insert_edit_button).finish());
-        }
-
-        for item in &left_items {
-            if let Some(element) = self.render_terminal_toolbar_item(item, app) {
-                left_buttons.add_child(element);
-            }
-        }
-
-        let mut right_buttons = Flex::row()
-            .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_main_axis_size(MainAxisSize::Min)
-            .with_spacing(4.);
-
-        for item in &right_items {
-            if let Some(element) = self.render_terminal_toolbar_item(item, app) {
-                right_buttons.add_child(element);
-            }
-        }
-
-        let content = Wrap::row()
-            .with_main_axis_size(MainAxisSize::Max)
-            .with_main_axis_alignment(MainAxisAlignment::SpaceBetween)
-            .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_child(WrapFillEntireRun::new(left_buttons.finish()).finish())
-            .with_child(WrapFill::new(0., right_buttons.finish()).finish())
-            .with_run_spacing(context_chips::spacing::UDI_ROW_RUN_SPACING)
-            .finish();
-        let content = EventHandler::new(content)
+        let row = render_footer_row_for_width(|max_chips| {
+            self.render_terminal_mode_footer_row(max_chips, app)
+        });
+        let content = EventHandler::new(row)
             .on_right_mouse_down(|ctx, _, position| {
                 ctx.dispatch_typed_action(AgentInputFooterAction::ShowContextMenu { position });
                 DispatchEventResult::StopPropagation
@@ -2252,6 +2195,41 @@ impl AgentInputFooter {
             .finish();
 
         Container::new(content).with_vertical_padding(8.).finish()
+    }
+
+    fn render_terminal_mode_footer_row(
+        &self,
+        max_chips: usize,
+        app: &AppContext,
+    ) -> Box<dyn Element> {
+        let selection = &SessionSettings::as_ref(app).terminal_footer_chip_selection;
+        let mut buttons = Flex::row()
+            .with_main_axis_size(MainAxisSize::Min)
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_spacing(4.);
+
+        if FeatureFlag::CliAgentQuickInsertButtons.is_enabled()
+            && FeatureFlag::AgentToolbarEditor.is_enabled()
+        {
+            buttons.add_child(ChildView::new(&self.quick_insert_edit_button).finish());
+        }
+
+        // One ordered list, as the editor shows it. Layouts saved before the editor merged its
+        // zones may still carry right-side items; they follow the left ones.
+        let mut chips = selection
+            .left_items()
+            .iter()
+            .chain(&selection.right_items())
+            .filter_map(|item| self.render_terminal_toolbar_item(item, app))
+            .collect::<Vec<_>>();
+        let overflow = chips.split_off(chips.len().min(max_chips));
+        for chip in chips {
+            buttons.add_child(chip);
+        }
+        if !overflow.is_empty() {
+            buttons.add_child(self.render_footer_more_button(overflow, app));
+        }
+        buttons.finish()
     }
 
     pub fn has_open_chip_menu(&self, app: &AppContext) -> bool {

@@ -38,6 +38,7 @@ use std::env;
 use std::fmt::Write;
 #[cfg(all(target_os = "macos", feature = "crash_reporting"))]
 use std::fs;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
 use std::process;
@@ -379,6 +380,10 @@ use crate::settings_view::pane_manager::SettingsPaneManager;
 use crate::settings_view::{flags, SettingsSection, SettingsView, SettingsViewEvent};
 #[cfg(all(target_os = "windows", feature = "local_tty"))]
 use crate::shell_indicator::ShellIndicatorType;
+use crate::tab::lineage::{
+    index_after_family, index_for_child, lineage_depths, lineage_step, preorder, subtree,
+    LineageStep, TabLineage,
+};
 use crate::tab::{
     tab_position_id, uses_vertical_tabs, NewSessionMenuItem, PaneNameMenuTarget, SelectedTabColor,
     TabBarState, TabComponent, TabData, TabOrigin, TabOriginKind, TabTelemetryAction,
@@ -4870,6 +4875,16 @@ impl Workspace {
                         }
                     });
 
+                // The saved active index points into the saved order.
+                let restored_active_id = self
+                    .tabs
+                    .get(active_tab_index)
+                    .map(|tab| tab.pane_group.id());
+                self.restore_lineage_preorder(ctx);
+                let active_tab_index = restored_active_id
+                    .and_then(|id| self.tabs.iter().position(|tab| tab.pane_group.id() == id))
+                    .unwrap_or(active_tab_index);
+
                 if self.tab_count() == 0 {
                     if self.should_trigger_get_started_onboarding(ctx) {
                         self.trigger_get_started_onboarding(ctx);
@@ -8205,14 +8220,19 @@ impl Workspace {
         // Our target index should always be after all existing pinned items.
         let target = self.clamp_to_unpinned_region(&self.tabs, natural_target);
 
-        self.tabs[tab_index].group_id = Some(group_id);
-        // Pin state is cleared when a new group with this tab is created.
-        self.tabs[tab_index].pinned = false;
+        // The tab's forks join the new group with it.
+        let run = subtree(&self.tab_lineage_depths(ctx), tab_index);
+        for tab in &mut self.tabs[run.clone()] {
+            tab.group_id = Some(group_id);
+            // Pin state is cleared when a new group with this tab is created.
+            tab.pinned = false;
+        }
 
-        self.move_tab_to_index(tab_index, target, ctx);
+        let to = index_without_run(target, &run);
+        self.move_tab_run(run, to, ctx);
 
-        // The move above may have shifted the tab; the new group has exactly
-        // one member, so its position is the new active index.
+        // The move above may have shifted the tab; it leads the new group (any
+        // forks follow it), so the group's first member is the new active index.
         let new_active = group_member_indices(&self.tabs, group_id)
             .next()
             .unwrap_or(tab_index);
@@ -8250,12 +8270,16 @@ impl Workspace {
         let previous_group_id = tab.group_id;
 
         let target_index = self.index_after_group(group_id).unwrap_or(self.tabs.len());
-        self.tabs[tab_index].group_id = Some(group_id);
-
-        // Moving a tab to a group, clear its pinned state.
-        self.tabs[tab_index].pinned = false;
+        // The tab's forks move into the group with it.
+        let run = subtree(&self.tab_lineage_depths(ctx), tab_index);
+        for tab in &mut self.tabs[run.clone()] {
+            tab.group_id = Some(group_id);
+            // Moving a tab to a group, clear its pinned state.
+            tab.pinned = false;
+        }
         self.expand_tab_group(group_id, ctx);
-        self.move_tab_to_index(tab_index, target_index, ctx);
+        let to = index_without_run(target_index, &run);
+        self.move_tab_run(run, to, ctx);
 
         if let Some(prev) = previous_group_id {
             self.prune_empty_tab_group(prev, ctx);
@@ -8288,10 +8312,15 @@ impl Workspace {
             .index_after_group(previous_group_id)
             .map(|t| self.clamp_to_unpinned_region(&self.tabs, t));
 
-        self.tabs[tab_index].group_id = None;
+        // The tab's forks leave the group with it.
+        let run = subtree(&self.tab_lineage_depths(ctx), tab_index);
+        for tab in &mut self.tabs[run.clone()] {
+            tab.group_id = None;
+        }
 
         if let Some(target) = target {
-            self.move_tab_to_index(tab_index, target, ctx);
+            // `target` is past the group, so past the run.
+            self.move_tab_run(run.clone(), target.saturating_sub(run.len()), ctx);
         }
 
         self.prune_empty_tab_group(previous_group_id, ctx);
@@ -8647,52 +8676,6 @@ impl Workspace {
         ctx.notify();
     }
 
-    /// Moves the tab at `from_index` so it ends up at `to_index`, sliding the
-    /// tabs in between over to fill the gap. This is a `Vec::remove` +
-    /// `Vec::insert` (not a `swap`), so it works for arbitrary distances, such
-    /// as hopping a tab over a whole group, not just adjacent slots. `to_index`
-    /// is an index into the current list and is exactly where the moved tab
-    /// ends up.
-    ///
-    /// `active_tab_index` stores a position, not a reference to a tab, so after
-    /// reordering we recompute it to keep the same tab visually active.
-    /// Removing `from` then inserting at `to` slides every tab strictly between
-    /// the two endpoints by one slot toward `from`; tabs outside that span keep
-    /// their index.
-    fn hop_tab_to_index(
-        &mut self,
-        from_index: usize,
-        to_index: usize,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        if from_index == to_index || from_index >= self.tabs.len() || to_index >= self.tabs.len() {
-            return;
-        }
-        let tab = self.tabs.remove(from_index);
-        self.tabs.insert(to_index, tab);
-
-        let old_active = self.active_tab_index;
-        self.active_tab_index = if old_active == from_index {
-            // The active tab is the one we just moved; it follows to `to_index`.
-            to_index
-        } else if from_index < to_index {
-            // Forward move: tabs in `(from_index, to_index]` slid left by one.
-            if old_active > from_index && old_active <= to_index {
-                old_active - 1
-            } else {
-                old_active
-            }
-        } else if old_active >= to_index && old_active < from_index {
-            // Backward move: tabs in `[to_index, from_index)` slid right by one.
-            old_active + 1
-        } else {
-            // Active tab is outside the affected span; its index is unchanged.
-            old_active
-        };
-
-        ctx.notify();
-    }
-
     pub fn toggle_tab_right_click_menu(
         &mut self,
         tab_index: usize,
@@ -8733,8 +8716,8 @@ impl Workspace {
                 return;
             }
         }
-        let can_move_left = self.can_move_tab(tab_index, TabMovement::Left);
-        let can_move_right = self.can_move_tab(tab_index, TabMovement::Right);
+        let can_move_left = self.can_move_tab(tab_index, TabMovement::Left, ctx);
+        let can_move_right = self.can_move_tab(tab_index, TabMovement::Right, ctx);
         let can_move_to_new_project = self.can_move_tab_to_new_project(ctx);
         let menu_items = {
             let tab = &self.tabs[tab_index];
@@ -9751,6 +9734,7 @@ impl Workspace {
             kind: TabOriginKind::Fork,
             parent_pane_uuid: source_pane_uuid,
             parent_title: pane_group.as_ref(ctx).display_title(ctx),
+            ancestors: self.ancestry_of(pane_group),
         };
         if let Some(pane_group) =
             self.launch_command_in_new_tab_placed(fork.command, cwd, None, None, Some(origin), ctx)
@@ -14525,7 +14509,11 @@ impl Workspace {
             NewTabPlacement::AfterAllTabs => active_group_id
                 .and_then(|gid| self.index_after_group(gid))
                 .unwrap_or_else(|| self.tab_count()),
-            NewTabPlacement::AfterCurrentTab => self.active_tab_index + 1,
+            // After the active tab's whole family, so a new tab never lands between a
+            // source and its forks.
+            NewTabPlacement::AfterCurrentTab => {
+                index_after_family(&self.tab_lineage_depths(ctx), self.active_tab_index)
+            }
         };
 
         // A standalone (ungrouped) new tab must not land inside the pinned
@@ -14556,21 +14544,91 @@ impl Workspace {
         );
     }
 
+    /// Fork/transfer depth of every tab, in `self.tabs` order.
+    pub(crate) fn tab_lineage_depths(&self, ctx: &AppContext) -> Vec<usize> {
+        lineage_depths(&self.tab_lineage(ctx))
+    }
+
+    fn tab_lineage(&self, ctx: &AppContext) -> Vec<TabLineage> {
+        self.tabs
+            .iter()
+            .map(|tab| TabLineage::for_tab(tab, ctx))
+            .collect()
+    }
+
+    /// `TabOrigin::ancestors` for a tab created from the tab holding `pane_group`.
+    fn ancestry_of(&self, pane_group: &ViewHandle<PaneGroup>) -> Vec<PaneUuid> {
+        TabOrigin::ancestry_from(
+            self.tabs
+                .iter()
+                .find(|tab| tab.pane_group.id() == pane_group.id())
+                .and_then(|tab| tab.origin.as_ref()),
+        )
+    }
+
+    /// Puts every restored family in pre-order, keeping the active tab active. Builds
+    /// before nested forks placed a fork of a fork after its source's later siblings.
+    fn restore_lineage_preorder(&mut self, ctx: &AppContext) {
+        let order = preorder(&self.tab_lineage(ctx));
+        if order.iter().copied().eq(0..order.len()) {
+            return;
+        }
+        let active_pane_group_id = self
+            .tabs
+            .get(self.active_tab_index)
+            .map(|tab| tab.pane_group.id());
+        let mut slots: Vec<Option<TabData>> = std::mem::take(&mut self.tabs)
+            .into_iter()
+            .map(Some)
+            .collect();
+        self.tabs = order
+            .into_iter()
+            .filter_map(|index| slots[index].take())
+            .collect();
+        if let Some(new_active) = active_pane_group_id
+            .and_then(|id| self.tabs.iter().position(|tab| tab.pane_group.id() == id))
+        {
+            self.active_tab_index = new_active;
+        }
+    }
+
+    /// Moves the contiguous `run` so it starts at `to`, an index into the list with `run`
+    /// removed. The active tab stays active. Families move through here as one unit.
+    fn move_tab_run(&mut self, run: Range<usize>, to: usize, ctx: &mut ViewContext<Self>) {
+        if run.is_empty() || run.end > self.tabs.len() {
+            return;
+        }
+        let to = to.min(self.tabs.len() - run.len());
+        if to == run.start {
+            return;
+        }
+        let active_pane_group_id = self
+            .tabs
+            .get(self.active_tab_index)
+            .map(|tab| tab.pane_group.id());
+        let moved: Vec<_> = self.tabs.drain(run).collect();
+        self.tabs.splice(to..to, moved);
+        if let Some(new_active) = active_pane_group_id
+            .and_then(|id| self.tabs.iter().position(|tab| tab.pane_group.id() == id))
+        {
+            self.active_tab_index = new_active;
+        }
+        ctx.notify();
+    }
+
     fn origin_tab_placement(
         &self,
         origin: &TabOrigin,
         ctx: &AppContext,
     ) -> Option<(usize, Option<TabGroupId>)> {
-        use crate::tab::lineage::{index_after_family, lineage_nesting, TabLineage};
-        let tabs: Vec<_> = self
-            .tabs
-            .iter()
-            .map(|tab| TabLineage::for_tab(tab, ctx))
-            .collect();
-        let parent_index = tabs
-            .iter()
-            .position(|tab| tab.pane_uuids.contains(&origin.parent_pane_uuid))?;
-        let index = index_after_family(&lineage_nesting(&tabs), parent_index);
+        let parent_index = self.tabs.iter().position(|tab| {
+            tab.pane_group
+                .as_ref(ctx)
+                .terminal_pane_uuids()
+                .contains(&origin.parent_pane_uuid)
+        })?;
+        // Directly under the source's own forks, so a fork of a fork nests a level deeper.
+        let index = index_for_child(&self.tab_lineage_depths(ctx), parent_index);
         let group_id = self.tabs[parent_index].group_id;
         // A child of a standalone pinned tab stays in the unpinned region. A
         // child joining a section inherits that section's existing position.
@@ -15892,91 +15950,65 @@ impl Workspace {
     /// split a group or cross the pinned/unpinned boundary. Used by the
     /// action handler to no-op blocked moves and by `move_tab_menu_items`
     /// to hide the entry.
-    pub(super) fn can_move_tab(&self, index: usize, direction: TabMovement) -> bool {
+    pub(super) fn can_move_tab(
+        &self,
+        index: usize,
+        direction: TabMovement,
+        ctx: &AppContext,
+    ) -> bool {
         let Some(tab) = self.tabs.get(index) else {
             return false;
         };
+        // A tab moves with its forks and steps over whole units, and a fork stays
+        // inside its source's subtree, so the neighbour that matters is the start
+        // of the unit it would trade places with.
+        let forward = matches!(direction, TabMovement::Right);
+        let Some(step) = lineage_step(&self.tab_lineage_depths(ctx), index, forward) else {
+            return false;
+        };
+        let neighbor = &self.tabs[step.neighbor.start];
+        // A grouped tab can only reorder within its own group; crossing the
+        // group boundary would split its contiguous run (first member moving
+        // left, etc.).
+        if tab.group_id.is_some() {
+            return tab.group_id == neighbor.group_id;
+        }
         let tab_pinned = self.is_tab_effectively_pinned(tab);
         match direction {
-            TabMovement::Left => {
-                if index == 0 {
-                    return false;
-                }
-                let neighbor = &self.tabs[index - 1];
-                // A grouped tab can only reorder within its own group;
-                // crossing the group boundary would split its contiguous
-                // run (first member moving left, etc.).
-                if tab.group_id.is_some() {
-                    return tab.group_id == neighbor.group_id;
-                }
-                // Unpinned tab can't move up into the pinned region.
-                tab_pinned || !self.is_tab_effectively_pinned(neighbor)
-            }
-            TabMovement::Right => {
-                if index + 1 >= self.tabs.len() {
-                    return false;
-                }
-                let neighbor = &self.tabs[index + 1];
-                if tab.group_id.is_some() {
-                    return tab.group_id == neighbor.group_id;
-                }
-                // Pinned tab can't move down into the unpinned region.
-                !tab_pinned || self.is_tab_effectively_pinned(neighbor)
-            }
+            // Unpinned tab can't move up into the pinned region.
+            TabMovement::Left => tab_pinned || !self.is_tab_effectively_pinned(neighbor),
+            // Pinned tab can't move down into the unpinned region.
+            TabMovement::Right => !tab_pinned || self.is_tab_effectively_pinned(neighbor),
         }
     }
 
-    /// Moves the tab at `index` one slot left/right, where a "slot" is either a
-    /// single tab or an entire adjacent group. If the neighbor in the move
-    /// direction belongs to a *different* group, the tab hops over that whole
-    /// group so it never lands inside the group's contiguous run. Moving past an
-    /// ungrouped tab, or reordering within the tab's own group, is an ordinary
-    /// one-slot move.
+    /// Moves the tab at `index`, with everything forked from it, one unit
+    /// left/right. A unit is a neighbouring family, a sibling subtree inside the
+    /// tab's own family, or an entire adjacent group: if the neighbour belongs to a
+    /// *different* group, the tab hops over that whole group so it never lands
+    /// inside the group's contiguous run.
     fn move_tab(&mut self, index: usize, direction: TabMovement, ctx: &mut ViewContext<Self>) {
-        if !self.can_move_tab(index, direction) {
+        if !self.can_move_tab(index, direction, ctx) {
             return;
         }
-        let tabs_len = self.tabs.len();
-        // The group the moved tab belongs to (if any), so we can distinguish
-        // "reorder within my own group" from "hop over a different group".
-        let moved_group_id = self.tabs.get(index).and_then(|tab| tab.group_id);
-        let target = match direction {
-            TabMovement::Left if index > 0 => {
-                let neighbor = index - 1;
-                match self.tabs[neighbor].group_id {
-                    // A different group sits to the left: target its first
-                    // member so the tab lands just before the whole group.
-                    Some(group_id) if Some(group_id) != moved_group_id => {
-                        group_member_index_range(&self.tabs, group_id)
-                            .map(|(first, _)| first)
-                            .unwrap_or(neighbor)
-                    }
-                    // Ungrouped neighbor, or a member of our own group: step one.
-                    Some(_) | None => neighbor,
-                }
-            }
-            TabMovement::Right if index < tabs_len - 1 => {
-                let neighbor = index + 1;
-                match self.tabs[neighbor].group_id {
-                    // A different group sits to the right: target its last
-                    // member; the remove+insert leaves the tab just past it.
-                    Some(group_id) if Some(group_id) != moved_group_id => {
-                        group_member_index_range(&self.tabs, group_id)
-                            .map(|(_, last)| last)
-                            .unwrap_or(neighbor)
-                    }
-                    // Ungrouped neighbor, or a member of our own group: step one.
-                    Some(_) | None => neighbor,
-                }
-            }
-            // Already at the start/end of the list: nothing to move past.
-            TabMovement::Left | TabMovement::Right => return,
+        let forward = matches!(direction, TabMovement::Right);
+        let Some(mut step) = lineage_step(&self.tab_lineage_depths(ctx), index, forward) else {
+            return;
         };
+        let moved_group_id = self.tabs[index].group_id;
+        if let Some((first, last)) = self.tabs[step.neighbor.start]
+            .group_id
+            .filter(|group_id| Some(*group_id) != moved_group_id)
+            .and_then(|group_id| group_member_index_range(&self.tabs, group_id))
+        {
+            step.neighbor = first..last + 1;
+        }
 
-        // `hop_tab_to_index` keeps the same tab active across the move, so we
-        // only capture whether the moved tab was the active one for telemetry.
+        // `move_tab_run` keeps the same tab active across the move, so we only
+        // capture whether the moved tab was the active one for telemetry.
         let moving_active_tab = index == self.active_tab_index;
-        self.hop_tab_to_index(index, target, ctx);
+        let to = step.destination();
+        self.move_tab_run(step.moving, to, ctx);
 
         if moving_active_tab {
             send_telemetry_from_ctx!(TelemetryEvent::MoveActiveTab { direction }, ctx);
@@ -18225,6 +18257,7 @@ impl Workspace {
                     kind: TabOriginKind::Transfer { from: *from },
                     parent_pane_uuid: source_pane_uuid.clone(),
                     parent_title: pane_group.as_ref(ctx).display_title(ctx),
+                    ancestors: self.ancestry_of(&pane_group),
                 };
                 self.transfer_cli_agent_session(command.clone(), cwd.clone(), origin, ctx);
             }
@@ -30335,6 +30368,13 @@ impl Workspace {
         // Never split a group: a drop that resolves to the middle of a group's
         // run is pushed past the group's last member instead.
         let index = self.clamp_past_group(index);
+        // Nor a family: a drop between a source and its forks lands after them.
+        let depths = self.tab_lineage_depths(ctx);
+        let index = if depths.get(index).is_some_and(|depth| *depth > 0) {
+            index_after_family(&depths, index)
+        } else {
+            index
+        };
         let mut tab_data = TabData::new(pane_group);
         tab_data.selected_color = color.map_or(SelectedTabColor::Unset, SelectedTabColor::Color);
         tab_data.draggable_state = draggable_state;
@@ -31145,30 +31185,25 @@ impl Workspace {
                     // Deliberately skip the group-reassignment logic used by
                     // the normal reorder path below: the placeholder is
                     // detached mid cross-window drag and shouldn't churn group
-                    // membership.
-                    let use_vertical_tabs = uses_vertical_tabs();
-                    let new_index = if use_vertical_tabs {
-                        self.calculate_updated_tab_index_vertical(current_index, position, ctx)
-                    } else {
-                        self.calculate_updated_tab_index(current_index, position, ctx)
+                    // membership. Its forks still move with it, as they do in
+                    // an in-window drag.
+                    let depths = self.tab_lineage_depths(ctx);
+                    let step = self.lineage_drag_step(
+                        current_index,
+                        &depths,
+                        position,
+                        uses_vertical_tabs(),
+                        ctx,
+                    );
+                    let new_index = match step {
+                        None => current_index,
+                        Some(step) => match self.apply_tab_drag_step(current_index, step, ctx) {
+                            Some(new_index) => new_index,
+                            // Do not allow the placeholder to cross the pinned/unpinned
+                            // boundary, matching the in-window reorder path.
+                            None => return,
+                        },
                     };
-                    if new_index != current_index {
-                        // Do not allow the placeholder to cross the pinned/unpinned
-                        // boundary, matching the constraint enforced by the normal
-                        // in-window reorder path.
-                        if self.is_tab_effectively_pinned(&self.tabs[current_index])
-                            != self.is_tab_effectively_pinned(&self.tabs[new_index])
-                        {
-                            return;
-                        }
-                        self.tabs.swap(new_index, current_index);
-                        if current_index == self.active_tab_index {
-                            self.set_active_tab_index(new_index, ctx);
-                        } else if new_index == self.active_tab_index {
-                            self.set_active_tab_index(current_index, ctx);
-                        }
-                        ctx.notify();
-                    }
                     CrossWindowTabDrag::handle(ctx).update(ctx, |drag, _| {
                         drag.set_source_placeholder_index(new_index);
                     });
@@ -31344,78 +31379,140 @@ impl Workspace {
                 let target_group_range =
                     hovered_group.and_then(|gid| group_member_index_range(&self.tabs, gid));
 
-                // Assign the tab to the group we're dragging over (or clear its
+                // Everything forked from the dragged tab changes section with it.
+                let run = subtree(&self.tab_lineage_depths(ctx), current_index);
+
+                // Assign the run to the group we're dragging over (or clear its
                 // group if none). This intentionally leaves the pin untouched:
                 // a pinned tab dragged into a pinned group keeps its pin for the
                 // duration of the drag and only loses it on drop (see the
                 // `DropTab` handler).
-                self.assign_tab_to_group(current_index, hovered_group, ctx);
+                for index in run.clone() {
+                    self.assign_tab_to_group(index, hovered_group, ctx);
+                }
 
-                // Hop into the target group's contiguous block so the group
-                // stays one rendered container. Vertical tab rendering only
-                // groups consecutive tabs, so leaving `current_index` outside
-                // the block would split the group across the panel.
+                // Land at the edge of the target group's contiguous block that the
+                // drag entered from, so the group stays one rendered container and
+                // no family already inside it is split. Vertical tab rendering only
+                // groups consecutive tabs.
                 if let Some((first, last)) = target_group_range {
-                    let insert_at = if current_index < first { first } else { last };
-                    if insert_at != current_index {
-                        self.hop_tab_to_index(current_index, insert_at, ctx);
-                    }
+                    let to = if run.start < first {
+                        first - run.len()
+                    } else {
+                        last + 1
+                    };
+                    self.move_tab_run(run, to, ctx);
                 } else if let Some(target) = unpinned_region_start {
-                    // Relocate the now-unpinned tab to the first unpinned slot
+                    // Relocate the now-unpinned run to the first unpinned slot
                     // so the pinned region stays contiguous.
-                    self.move_tab_to_index(current_index, target, ctx);
+                    self.move_tab_run(run.clone(), target.saturating_sub(run.len()), ctx);
                 }
                 return;
             }
         }
 
-        let new_index = if use_vertical_tabs {
-            self.calculate_updated_tab_index_vertical(current_index, position, ctx)
-        } else {
-            self.calculate_updated_tab_index(current_index, position, ctx)
+        // The dragged tab moves with everything forked from it and trades places
+        // with a whole neighbouring unit (a family, or a sibling subtree inside
+        // one), so a source never loses its forks. A fork stays inside its
+        // source's subtree; dragging it to another section, project or window is
+        // the deliberate way to take it out.
+        let depths = self.tab_lineage_depths(ctx);
+        if let Some(step) =
+            self.lineage_drag_step(current_index, &depths, position, use_vertical_tabs, ctx)
+        {
+            self.apply_tab_drag_step(current_index, step, ctx);
+        }
+    }
+
+    /// Applies one drag step for the tab at `current_index` and returns its new index,
+    /// or `None` when the step would cross the pinned boundary.
+    fn apply_tab_drag_step(
+        &mut self,
+        current_index: usize,
+        mut step: LineageStep,
+        ctx: &mut ViewContext<Self>,
+    ) -> Option<usize> {
+        // Do not allow a tab to trade places with a neighbour whose pinned state
+        // does not match. This prevents an unpinned tab from entering the pinned
+        // area (and vice versa). Dragging into a pinned tab group is already
+        // handled by grouping logic in `on_tab_drag`.
+        if self.is_tab_effectively_pinned(&self.tabs[current_index])
+            != self.is_tab_effectively_pinned(&self.tabs[step.neighbor.start])
+        {
+            return None;
+        }
+
+        // Prevent dropping into a collapsed group: if the neighbour is in a
+        // collapsed group the dragged tab doesn't belong to, hop past the whole
+        // block instead of landing inside it.
+        let dragged_group = self.tabs[current_index].group_id;
+        let neighbor_collapsed_group = self.tabs[step.neighbor.start].group_id.filter(|gid| {
+            Some(*gid) != dragged_group && self.tab_groups.get(gid).is_some_and(|g| g.collapsed)
+        });
+        if let Some((first, last)) = neighbor_collapsed_group
+            .and_then(|group_id| group_member_index_range(&self.tabs, group_id))
+        {
+            step.neighbor = first..last + 1;
+        }
+
+        let active_moves = step.moving.contains(&self.active_tab_index)
+            || step.neighbor.contains(&self.active_tab_index);
+        let to = step.destination();
+        self.move_tab_run(step.moving, to, ctx);
+        if active_moves {
+            self.set_active_tab_index(self.active_tab_index, ctx);
+        }
+        Some(to)
+    }
+
+    /// The step the dragged subtree at `index` should take, once the drag midpoint
+    /// crosses the midpoint of the neighbouring unit on the active axis. Comparing
+    /// against the whole unit (rather than its nearest card) keeps hops between units
+    /// of different sizes from oscillating. Single tabs keep the per-tab thresholds.
+    fn lineage_drag_step(
+        &self,
+        index: usize,
+        depths: &[usize],
+        drag_position: RectF,
+        is_vertical: bool,
+        ctx: &mut ViewContext<Self>,
+    ) -> Option<LineageStep> {
+        let axis_midpoint = |rect: RectF| {
+            if is_vertical {
+                rect.center().y()
+            } else {
+                rect.center().x()
+            }
         };
-
-        if new_index != current_index {
-            // Do not allow a tab to swap places with a neighbouring tab if the
-            // pinned states do not match. This prevents an unpinned tab from
-            // entering the pinned area (and vice versa). Dragging into a pinned tab
-            // group is already handled by grouping logic above.
-            if self.is_tab_effectively_pinned(&self.tabs[current_index])
-                != self.is_tab_effectively_pinned(&self.tabs[new_index])
-            {
-                return;
+        let drag_midpoint = axis_midpoint(drag_position);
+        for forward in [false, true] {
+            let Some(step) = lineage_step(depths, index, forward) else {
+                continue;
+            };
+            let crossed = if step.moving.len() == 1 && step.neighbor.len() == 1 {
+                let new_index = if is_vertical {
+                    self.calculate_updated_tab_index_vertical(index, drag_position, ctx)
+                } else {
+                    self.calculate_updated_tab_index(index, drag_position, ctx)
+                };
+                new_index == step.neighbor.start
+            } else {
+                let first = self.neighbor_drag_rect(step.neighbor.start, is_vertical, ctx);
+                let last = self.neighbor_drag_rect(step.neighbor.end - 1, is_vertical, ctx);
+                first.zip(last).is_some_and(|(first, last)| {
+                    let unit_midpoint = axis_midpoint(first.union_rect(last));
+                    if forward {
+                        drag_midpoint > unit_midpoint
+                    } else {
+                        drag_midpoint < unit_midpoint
+                    }
+                })
+            };
+            if crossed {
+                return Some(step);
             }
-
-            // Prevent dropping into a collapsed group: if the swap target is a
-            // collapsed-group member the dragged tab doesn't belong to, hop
-            // past the whole block instead of swapping into it.
-            let dragged_group = self.tabs[current_index].group_id;
-            let neighbor_collapsed_group = self
-                .tabs
-                .get(new_index)
-                .and_then(|t| t.group_id)
-                .filter(|gid| {
-                    Some(*gid) != dragged_group
-                        && self.tab_groups.get(gid).is_some_and(|g| g.collapsed)
-                });
-            if let Some(group_id) = neighbor_collapsed_group {
-                if let Some((first, last)) = group_member_index_range(&self.tabs, group_id) {
-                    let insert_at = if current_index < first { last } else { first };
-                    self.hop_tab_to_index(current_index, insert_at, ctx);
-                    return;
-                }
-            }
-
-            self.tabs.swap(new_index, current_index);
-
-            if current_index == self.active_tab_index {
-                self.set_active_tab_index(new_index, ctx);
-            } else if new_index == self.active_tab_index {
-                self.set_active_tab_index(current_index, ctx);
-            }
-
-            ctx.notify();
         }
+        None
     }
 
     /// Performs the source-workspace cleanup indicated by `DropResult`.
@@ -31888,6 +31985,17 @@ fn group_member_index_range(tabs: &[TabData], group_id: TabGroupId) -> Option<(u
     let first = members.next()?;
     let last = members.last().unwrap_or(first);
     Some((first, last))
+}
+
+/// `index`, a position in the list with `run` still in it, as the matching position once
+/// `run` is removed: the form `Workspace::move_tab_run` takes. A run before `index`
+/// shifts it back.
+fn index_without_run(index: usize, run: &Range<usize>) -> usize {
+    if index > run.start {
+        index.saturating_sub(run.len())
+    } else {
+        index
+    }
 }
 
 /// Returns `true` when `group_id` has exactly one member in `tabs`. Shared

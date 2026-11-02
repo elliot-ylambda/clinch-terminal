@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use pathfinder_geometry::vector::{vec2f, Vector2F};
 use settings::Setting as _;
 use warp::integration_testing::terminal::util::ExpectedExitStatus;
 use warp::integration_testing::terminal::{
@@ -10,7 +11,9 @@ use warp::integration_testing::view_getters::workspace_view;
 use warp::settings::{AutoCreateWorktreesForNewTabs, Theme};
 use warp::themes::theme::ThemeKind;
 use warp::workspace::WorkspaceAction;
+use warpui_core::event::{Event, ModifiersState};
 use warpui_core::integration::TestStep;
+use warpui_core::{App, WindowId};
 
 use crate::Builder;
 
@@ -122,4 +125,56 @@ pub fn test_redesign_agent_screens() -> Builder {
                 .set_post_step_pause(std::time::Duration::from_millis(400)),
         )
         .with_step(shot("agent-more"))
+        .with_step(
+            TestStep::new("close More")
+                .with_click_on_saved_position("agent_footer:more")
+                .set_post_step_pause(std::time::Duration::from_millis(400)),
+        )
+        .with_step(workspace_action(
+            "open footer editor",
+            WorkspaceAction::OpenCLIAgentToolbarEditor,
+        ))
+        .with_step(shot("footer-editor"))
+        // Drag "Continue" (row 5) to the top, then an available button into the footer list.
+        .with_step(drag("drag a row to the top", "chip_cfg_u_4", "chip_cfg_u_0", -10.))
+        .with_step(shot("footer-editor-reordered"))
+        .with_step(drag("drag an available button in", "chip_cfg_n_0", "chip_cfg_u_1", 0.))
+        .with_step(shot("footer-editor-added"))
+}
+
+fn saved_center(app: &mut App, window_id: WindowId, id: &str) -> Vector2F {
+    app.presenter(window_id)
+        .expect("presenter")
+        .borrow()
+        .position_cache()
+        .get_position(id)
+        .unwrap_or_else(|| panic!("{id} was not laid out"))
+        .center()
+}
+
+/// Presses on one saved element, moves in small steps to another (offset vertically by `dy`),
+/// and releases there, the way a hand drags.
+fn drag(name: &str, from: &'static str, to: &'static str, dy: f32) -> TestStep {
+    const STEPS: usize = 12;
+    let mut step = TestStep::new(name).with_event_fn(move |app, window_id| Event::LeftMouseDown {
+        position: saved_center(app, window_id, from),
+        modifiers: ModifiersState::default(),
+        click_count: 1,
+        is_first_mouse: false,
+    });
+    for i in 1..=STEPS {
+        step = step.with_event_fn(move |app, window_id| {
+            let start = saved_center(app, window_id, from);
+            let end = saved_center(app, window_id, to) + vec2f(0., dy);
+            Event::LeftMouseDragged {
+                position: start + (end - start) * (i as f32 / STEPS as f32),
+                modifiers: ModifiersState::default(),
+            }
+        });
+    }
+    step.with_event_fn(move |app, window_id| Event::LeftMouseUp {
+        position: saved_center(app, window_id, to) + vec2f(0., dy),
+        modifiers: ModifiersState::default(),
+    })
+    .set_post_step_pause(std::time::Duration::from_millis(500))
 }

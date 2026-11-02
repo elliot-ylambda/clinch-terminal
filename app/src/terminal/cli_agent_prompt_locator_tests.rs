@@ -242,3 +242,114 @@ fn skips_prompts_too_short_to_locate_rather_than_matching_noise() {
         );
     });
 }
+
+/// Claude Code records a pasted prompt as `<pasted_content id=…>…</pasted_content>`, but never
+/// paints that markup. A pattern built from it could never match.
+#[test]
+fn searches_for_pasted_text_without_its_transport_markup() {
+    let pattern = agent_prompt_search_pattern(
+        "<pasted_content id=\"9b33\">\nplease review the failing test\n</pasted_content>",
+    )
+    .unwrap();
+    assert_eq!(pattern, "\\bplease\\s*review\\s*the\\s*failing\\s*test\\b");
+}
+
+fn frame(rows: &[&str]) -> Vec<String> {
+    rows.iter().map(|row| (*row).to_owned()).collect()
+}
+
+/// Claude Code's fullscreen renderer paints a sent message as `❯ text` and its composer as
+/// `❯<no-break space>`. Only the first is a message that can be jumped to.
+#[test]
+fn frame_search_finds_a_sent_message_by_its_marker() {
+    App::test((), |mut _app| async move {
+        let mut model = TerminalModel::mock(None, None);
+        model.set_altscreen_active();
+        // The mock screen is 10 rows of 7 columns, so the rows are kept short.
+        model.process_bytes("❯ hi\r\nsay hi\r\n❯\u{a0}draft\r\n");
+
+        // Two characters can't be searched for in scrollback, but the marker places this one.
+        let search = agent_prompt_frame_search("hi").unwrap();
+        assert!(frame_shows_prompt(model.alt_screen(), &search));
+
+        // Text in the agent's reply is not a sent message.
+        let search = agent_prompt_frame_search("say hi").unwrap();
+        assert!(!frame_shows_prompt(model.alt_screen(), &search));
+    });
+}
+
+#[test]
+fn frame_search_ignores_a_draft_in_the_composer() {
+    App::test((), |mut _app| async move {
+        let mut model = TerminalModel::mock(None, None);
+        model.set_altscreen_active();
+        model.process_bytes("⏺ Done.\r\n❯\u{a0}please review the failing test\r\n");
+
+        let search = agent_prompt_frame_search("please review the failing test").unwrap();
+        assert!(!frame_shows_prompt(model.alt_screen(), &search));
+    });
+}
+
+#[test]
+fn frame_search_finds_a_codex_message() {
+    App::test((), |mut _app| async move {
+        let mut model = TerminalModel::mock(None, None);
+        model.set_altscreen_active();
+        model.process_bytes("› Tell me a short story.\r\nOnce upon a time...\r\n");
+
+        let search = agent_prompt_frame_search("Tell me a short story.").unwrap();
+        assert!(frame_shows_prompt(model.alt_screen(), &search));
+    });
+}
+
+#[test]
+fn frame_search_has_nothing_to_find_for_an_empty_prompt() {
+    assert!(agent_prompt_frame_search("  \n ").is_none());
+}
+
+#[test]
+fn transcript_shift_measures_a_scroll_toward_older_messages() {
+    let before = frame(&["c", "d", "e", "f", "", "", "", "composer"]);
+    // Two older rows came in at the top; everything else moved down two.
+    let after = frame(&["a", "b", "c", "d", "", "", "", "composer"]);
+
+    assert_eq!(
+        transcript_shift(&before, &after, SeekDirection::TowardOlder),
+        Some(2)
+    );
+}
+
+#[test]
+fn transcript_shift_measures_a_scroll_toward_newer_messages() {
+    let before = frame(&["a", "b", "c", "d", "", "", "", "composer"]);
+    let after = frame(&["c", "d", "e", "f", "", "", "", "composer"]);
+
+    assert_eq!(
+        transcript_shift(&before, &after, SeekDirection::TowardNewer),
+        Some(2)
+    );
+}
+
+/// At the oldest message the transcript stops moving, while a working agent's spinner below it
+/// keeps changing. That must still read as "did not move", or the seek never turns around.
+#[test]
+fn transcript_shift_reads_an_edge_through_a_changing_spinner() {
+    let before = frame(&["a", "b", "c", "d", "", "", "✻ Working 1s", "composer"]);
+    let after = frame(&["a", "b", "c", "d", "", "", "✻ Working 2s", "composer"]);
+
+    assert_eq!(
+        transcript_shift(&before, &after, SeekDirection::TowardOlder),
+        Some(0)
+    );
+}
+
+#[test]
+fn transcript_shift_declines_to_guess_when_frames_share_nothing() {
+    let before = frame(&["a", "b", "c", "d", "", "", "", "composer"]);
+    let after = frame(&["w", "x", "y", "z", "", "", "", "composer"]);
+
+    assert_eq!(
+        transcript_shift(&before, &after, SeekDirection::TowardOlder),
+        None
+    );
+}

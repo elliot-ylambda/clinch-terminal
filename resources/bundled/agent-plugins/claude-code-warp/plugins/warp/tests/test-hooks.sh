@@ -104,10 +104,13 @@ assert_json_field "transcript_path present" "$PAYLOAD" ".transcript_path" "/tmp/
 
 echo ""
 echo "--- Usage-limit stop classification ---"
+# Real Claude Code 2.1.305-2.1.310 limit messages (error: "rate_limit").
 assert_eq "Claude session limit" "usage_limit" \
-    "$(detect_stop_reason "You've hit your 5-hour limit")"
+    "$(detect_stop_reason "You've hit your session limit · resets 6:50pm (America/Los_Angeles)")"
 assert_eq "Claude weekly limit" "usage_limit" \
-    "$(detect_stop_reason "You've hit your weekly limit")"
+    "$(detect_stop_reason "You've hit your weekly limit · resets Oct 28 at 4pm (America/Los_Angeles)")"
+assert_eq "Claude spend limit with a window reset" "usage_limit" \
+    "$(detect_stop_reason "You've hit your monthly spend limit · raise it at https://claude.ai/settings/usage?from=cc_cli_limit_message · your weekly limit resets Oct 24 at 8am (America/Los_Angeles)")"
 assert_eq "ordinary completion has no reason" "" \
     "$(detect_stop_reason "Implemented the requested changes")"
 assert_eq "generic transient error has no reason" "" \

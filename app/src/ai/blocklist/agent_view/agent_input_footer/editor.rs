@@ -211,7 +211,12 @@ fn open_toolbar_items_from_settings<V: View>(
         | AgentToolbarEditorMode::Codex
         | AgentToolbarEditorMode::Terminal => {
             let current = current_left.into_iter().chain(current_right).collect();
-            chip_configurator.open_single_zone_with_items(current, available, appearance);
+            chip_configurator.open_list_with_items(
+                current,
+                available,
+                super::FOOTER_LIST_PRESENTATION,
+                appearance,
+            );
         }
     }
 }
@@ -246,9 +251,10 @@ fn open_toolbar_items_from_draft<V: View>(
         AgentToolbarEditorMode::CLIAgent
         | AgentToolbarEditorMode::ClaudeCode
         | AgentToolbarEditorMode::Codex
-        | AgentToolbarEditorMode::Terminal => chip_configurator.open_single_zone_with_items(
+        | AgentToolbarEditorMode::Terminal => chip_configurator.open_list_with_items(
             draft.left.iter().chain(&draft.right).cloned().collect(),
             available,
+            super::FOOTER_LIST_PRESENTATION,
             appearance,
         ),
     }
@@ -277,9 +283,10 @@ fn open_default_toolbar_items<V: View>(
         AgentToolbarEditorMode::CLIAgent
         | AgentToolbarEditorMode::ClaudeCode
         | AgentToolbarEditorMode::Codex
-        | AgentToolbarEditorMode::Terminal => chip_configurator.open_single_zone_with_items(
+        | AgentToolbarEditorMode::Terminal => chip_configurator.open_list_with_items(
             left.into_iter().chain(right).collect(),
             available,
+            super::FOOTER_LIST_PRESENTATION,
             appearance,
         ),
     }

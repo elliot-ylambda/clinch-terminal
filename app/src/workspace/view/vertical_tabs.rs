@@ -64,7 +64,7 @@ use crate::pane_group::{
     CodePane, NotebookPane, PaneGroup, PaneId, TabBarHoverIndex, TerminalPane, WorkflowPane,
 };
 use crate::safe_triangle::SafeTriangle;
-use crate::tab::lineage::{lineage_nesting, TabLineage};
+use crate::tab::lineage::MAX_VISIBLE_LINEAGE_DEPTH;
 use crate::tab::{tab_position_id, SelectedTabColor, TabData, TabOriginKind};
 use crate::terminal::cli_agent_sessions::restore::{AgentRestoreQueue, RestoreState};
 use crate::terminal::cli_agent_sessions::{
@@ -2428,14 +2428,23 @@ fn render_vertical_tabs_panel(
 }
 
 /// A passive gutter outside the tab card keeps its existing drag/click targets intact.
-/// A forked or transferred tab sits indented under its source.
-fn render_lineage_indent(content: Box<dyn Element>, is_nested: bool) -> Box<dyn Element> {
-    if !is_nested {
-        return content;
-    }
-    Container::new(content)
-        .with_padding_left(ROW_LINEAGE_INDENT)
-        .finish()
+/// A forked or transferred tab sits one level under its source, and a fork of a fork
+/// steps in again (up to `MAX_VISIBLE_LINEAGE_DEPTH`). Each level draws a hairline rail,
+/// so a source's forks read as one small group even inside a section.
+fn render_lineage_indent(
+    content: Box<dyn Element>,
+    depth: usize,
+    appearance: &Appearance,
+) -> Box<dyn Element> {
+    let rail = appearance.tokens().hairline;
+    let half = ROW_LINEAGE_INDENT / 2.;
+    (0..depth.min(MAX_VISIBLE_LINEAGE_DEPTH)).fold(content, |content, _| {
+        let railed = Container::new(content)
+            .with_padding_left(half - 1.)
+            .with_border(Border::left(1.).with_border_color(rail))
+            .finish();
+        Container::new(railed).with_padding_left(half).finish()
+    })
 }
 
 fn render_title_with_origin(
@@ -2644,11 +2653,8 @@ fn render_groups(
 
     // Consecutive tabs sharing a group_id collapse into a single group container.
     // TODO(johnturcoo) adopt horizontal tabs 'tab slot' pattern to remove this while loop.
-    let lineage: Vec<_> = visible_tabs
-        .iter()
-        .map(|(index, _)| TabLineage::for_tab(&workspace.tabs[*index], app))
-        .collect();
-    let nesting = lineage_nesting(&lineage);
+    // From the whole list, so a source hidden by search still counts as open.
+    let depths = workspace.tab_lineage_depths(app);
     let total_visible = visible_tabs.len();
     let mut i = 0;
     while i < total_visible {
@@ -2679,6 +2685,7 @@ fn render_groups(
                     workspace,
                     &group,
                     members,
+                    &depths,
                     last_member_after_index,
                     is_any_pane_dragging,
                     app,
@@ -2702,7 +2709,11 @@ fn render_groups(
                     false, // in_tab_group
                     app,
                 );
-                groups.add_child(render_lineage_indent(tab_element, nesting[i]));
+                groups.add_child(render_lineage_indent(
+                    tab_element,
+                    depths[tab_index],
+                    appearance,
+                ));
                 i += 1;
             }
         }
@@ -3582,11 +3593,13 @@ fn render_section_header(
 
 /// Renders a tab group: pane-like header followed by indented member rows. Background only paints
 /// on hover or when a member is active.
+#[allow(clippy::too_many_arguments)]
 fn render_grouped_tab_container(
     state: &VerticalTabsPanelState,
     workspace: &Workspace,
     group: &TabGroup,
     members: &[(usize, Option<Vec<PaneId>>)],
+    depths: &[usize],
     last_member_after_index: Option<usize>,
     is_any_pane_dragging: bool,
     app: &AppContext,
@@ -3601,11 +3614,6 @@ fn render_grouped_tab_container(
         .or_default()
         .clone();
 
-    let lineage: Vec<_> = members
-        .iter()
-        .map(|(index, _)| TabLineage::for_tab(&workspace.tabs[*index], app))
-        .collect();
-    let nesting = lineage_nesting(&lineage);
     let member_count = members.len();
     let group_id = group.id;
     let group = group.clone();
@@ -3702,7 +3710,11 @@ fn render_grouped_tab_container(
                     true,
                     app,
                 );
-                content.add_child(render_lineage_indent(tab_element, nesting[i]));
+                content.add_child(render_lineage_indent(
+                    tab_element,
+                    depths[*tab_index],
+                    appearance,
+                ));
             }
         }
 

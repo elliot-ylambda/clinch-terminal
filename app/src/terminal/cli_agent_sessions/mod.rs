@@ -111,6 +111,9 @@ pub struct CLIAgentSessionContext {
     pub has_deferred_completion_for_subagents: bool,
     /// The first prompt submitted in this forked conversation, before history has reloaded.
     pub fork_first_prompt: Option<String>,
+    /// When Clinch observed the current turn start. A rollout-recorded Codex
+    /// usage-limit stop only closes a turn that started before it.
+    pub turn_started_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// State of the rich input editor for composing a prompt to send to a CLI agent.
@@ -406,6 +409,7 @@ impl CLIAgentSession {
         let new_status = match &event.event {
             CLIAgentEventType::PromptSubmit => {
                 self.has_observed_turn_activity = true;
+                self.session_context.turn_started_at = Some(chrono::Utc::now());
                 self.session_context.has_deferred_completion_for_subagents = false;
                 // A turn opened by a harness-injected task notification still runs, but the
                 // session is still "about" the user's last typed prompt — keep it as the
@@ -735,6 +739,11 @@ impl CLIAgentSessionsModel {
         self.sessions.get(&terminal_view_id)
     }
 
+    /// Every pane currently tracking a CLI-agent session.
+    pub fn terminal_view_ids(&self) -> impl Iterator<Item = EntityId> + '_ {
+        self.sessions.keys().copied()
+    }
+
     /// Returns every open terminal currently tracking this durable provider session.
     ///
     /// Claude Code and Codex do not allow the same conversation to be resumed by a second
@@ -891,6 +900,7 @@ impl CLIAgentSessionsModel {
         session.status = CLIAgentSessionStatus::InProgress;
         session.session_context.response = None;
         session.session_context.stop_reason = None;
+        session.session_context.turn_started_at = Some(chrono::Utc::now());
         session.clear_permission_scoped_state();
 
         ctx.emit(CLIAgentSessionsModelEvent::StatusChanged {
@@ -899,6 +909,61 @@ impl CLIAgentSessionsModel {
             status: CLIAgentSessionStatus::InProgress,
             session_context: Box::new(session.session_context.clone()),
         });
+    }
+
+    /// Codex runs no hook when a turn ends at its usage limit (verified on
+    /// Codex 0.164-0.166: the rollout records `task_complete` with
+    /// `codex_error_info: "usage_limit_exceeded"` and no Stop hook follows).
+    /// `stops` maps a Codex thread id to that rollout-recorded stop time; close
+    /// the matching in-flight turn exactly as a provider-reported usage-limit
+    /// Stop would, so status, badges, and auto-continue all see it.
+    pub fn apply_codex_usage_limit_stops(
+        &mut self,
+        stops: &HashMap<String, chrono::DateTime<chrono::Utc>>,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        // The prompt-submit hook and the rollout are written by the same Codex
+        // process, but Clinch timestamps the hook on receipt.
+        const HOOK_RECEIPT_SKEW: chrono::Duration = chrono::Duration::seconds(2);
+        for (terminal_view_id, session) in &mut self.sessions {
+            if session.agent != CLIAgent::Codex
+                || session.is_remote()
+                || !session.received_rich_notification
+                || !matches!(session.status, CLIAgentSessionStatus::InProgress)
+                || !session.session_context.active_subagent_ids.is_empty()
+            {
+                continue;
+            }
+            let Some(stopped_at) = session
+                .session_context
+                .session_id
+                .as_deref()
+                .and_then(|id| stops.get(id.trim()))
+            else {
+                continue;
+            };
+            if session
+                .session_context
+                .turn_started_at
+                .is_none_or(|started| *stopped_at + HOOK_RECEIPT_SKEW < started)
+            {
+                continue;
+            }
+            session.status = CLIAgentSessionStatus::Success;
+            session.turn_interrupted_by_user = false;
+            session.session_context.stop_reason =
+                Some(CLIAgentStopReason::UsageLimit { stated_reset: None });
+            session
+                .session_context
+                .has_deferred_completion_for_subagents = false;
+            session.clear_permission_scoped_state();
+            ctx.emit(CLIAgentSessionsModelEvent::StatusChanged {
+                terminal_view_id: *terminal_view_id,
+                agent: session.agent,
+                status: CLIAgentSessionStatus::Success,
+                session_context: Box::new(session.session_context.clone()),
+            });
+        }
     }
 
     /// Marks the in-flight Claude Code or Codex turn as ended after the user typed an

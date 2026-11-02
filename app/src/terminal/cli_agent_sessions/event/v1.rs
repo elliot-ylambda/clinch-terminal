@@ -45,7 +45,13 @@ pub(super) fn parse(body: &str) -> Option<CLIAgentEvent> {
         .unwrap_or(CLIAgent::Unknown);
 
     let stop_reason = match raw.stop_reason.as_deref() {
-        Some("usage_limit") => Some(CLIAgentStopReason::UsageLimit),
+        Some("usage_limit") => Some(CLIAgentStopReason::usage_limit(
+            agent,
+            [
+                raw.response.as_deref().unwrap_or_default(),
+                raw.summary.as_deref().unwrap_or_default(),
+            ],
+        )),
         _ if matches!(
             event,
             CLIAgentEventType::Stop | CLIAgentEventType::StopFailure
