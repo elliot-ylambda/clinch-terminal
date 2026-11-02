@@ -130,6 +130,12 @@ pub struct TabSnapshot {
     pub pinned: bool,
     /// True for the project's coordinator session, which stays first in the pinned region.
     pub coordinator: bool,
+    /// The project's auto-coordinate switch, kept on its coordinator tab. `None` means the user
+    /// never switched it, so it follows `clinch.coordinator.auto.default_on`.
+    pub auto_coordinate: Option<bool>,
+    /// Whether `custom_title` was set by the coordinator. A name the user gives is never
+    /// replaced by an automatic one.
+    pub custom_title_auto: bool,
 }
 
 impl TabSnapshot {

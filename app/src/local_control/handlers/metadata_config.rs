@@ -35,11 +35,22 @@ pub(crate) fn tab_rename(
     action: &::local_control::Action,
     ctx: &mut ModelContext<LocalControlBridge>,
 ) -> Result<serde_json::Value, ControlError> {
-    let title = rename_title(action)?;
+    let RenameParams { title, auto } = rename_params(action)?;
     let entry = select_single_tab_entry(target, ActionKind::TabRename, ctx)?;
     let tab_id = entry.pane_group.id().to_string();
+    // An automatic name never replaces one the user chose, and never moves focus.
+    if auto && entry.pane_group.as_ref(ctx).has_user_title(ctx) {
+        return Err(ControlError::new(
+            ErrorCode::TargetStateConflict,
+            "the user named this tab, so an automatic name will not replace it",
+        ));
+    }
     entry.pane_group.update(ctx, |pane_group, ctx| {
-        pane_group.set_title(&title, ctx);
+        if auto {
+            pane_group.set_auto_title(&title, ctx);
+        } else {
+            pane_group.set_title(&title, ctx);
+        }
     });
     Ok(tab_mutation_result(
         instance_id,
@@ -105,7 +116,13 @@ pub(crate) fn pane_rename(
     action: &::local_control::Action,
     ctx: &mut ModelContext<LocalControlBridge>,
 ) -> Result<serde_json::Value, ControlError> {
-    let title = rename_title(action)?;
+    let RenameParams { title, auto } = rename_params(action)?;
+    if auto {
+        return Err(ControlError::new(
+            ErrorCode::InvalidParams,
+            "automatic names apply to tabs; use tab rename --auto",
+        ));
+    }
     let entry = select_single_pane_entry(target, ActionKind::PaneRename, ctx)?;
     set_pane_name(&entry, Some(title), ctx)?;
     Ok(pane_mutation_result(
@@ -209,15 +226,19 @@ pub(crate) fn setting_toggle(
     }))
 }
 
-fn rename_title(action: &::local_control::Action) -> Result<String, ControlError> {
-    let RenameParams { title } = action.params_as()?;
+/// The rename's params, with the title trimmed and checked to be non-empty.
+fn rename_params(action: &::local_control::Action) -> Result<RenameParams, ControlError> {
+    let RenameParams { title, auto } = action.params_as()?;
     if title.trim().is_empty() {
         Err(ControlError::new(
             ErrorCode::InvalidParams,
             format!("{} title cannot be empty", action.kind.as_str()),
         ))
     } else {
-        Ok(title.trim().to_owned())
+        Ok(RenameParams {
+            title: title.trim().to_owned(),
+            auto,
+        })
     }
 }
 

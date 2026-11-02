@@ -495,6 +495,7 @@ fn render_pane_row_element(
         container_is_hovered,
         origin_badge: _,
         is_coordinator: _,
+        auto_controls: _,
     } = props;
     let is_selected = is_active_tab && is_focused;
     let tokens = Tokens::new(theme);
@@ -674,6 +675,8 @@ fn render_pane_row_element(
 pub enum SidebarPopover {
     Tasks,
     Bookmarks,
+    /// The coordinator's auto-coordinate settings, opened from its row.
+    AutoCoordinate,
 }
 
 #[derive(Clone, Default)]
@@ -817,6 +820,7 @@ pub(super) struct VerticalTabsPanelState {
     tasks_link_mouse_state: MouseStateHandle,
     bookmarks_link_mouse_state: MouseStateHandle,
     new_section_mouse_state: MouseStateHandle,
+    auto_coordinate_ui: super::auto_coordinate::AutoCoordinateUiState,
 }
 
 impl Default for VerticalTabsPanelState {
@@ -830,6 +834,7 @@ impl Default for VerticalTabsPanelState {
             tasks_link_mouse_state: MouseStateHandle::default(),
             bookmarks_link_mouse_state: MouseStateHandle::default(),
             new_section_mouse_state: MouseStateHandle::default(),
+            auto_coordinate_ui: Default::default(),
             group_mouse_states: RefCell::default(),
             tab_group_mouse_states: RefCell::default(),
             pane_row_mouse_states: RefCell::default(),
@@ -929,6 +934,8 @@ struct PaneProps<'a> {
     origin_badge: Option<TabOriginBadge>,
     /// The project's coordinator tab, which gets its own mark and explanation.
     is_coordinator: bool,
+    /// The Auto controls, on the coordinator's first row.
+    auto_controls: Option<super::auto_coordinate::AutoPillProps>,
     pane_id: PaneId,
     pane_group_id: EntityId,
     is_active_tab: bool,
@@ -1661,6 +1668,11 @@ pub(super) fn render_sidebar_popover(
     let content = match popover {
         SidebarPopover::Tasks => render_workspace_tasks(state, workspace, app),
         SidebarPopover::Bookmarks => render_bookmarked_sessions(state, workspace, app),
+        SidebarPopover::AutoCoordinate => super::auto_coordinate::render_auto_coordinate_popover(
+            &state.auto_coordinate_ui,
+            workspace,
+            app,
+        ),
     };
     ConstrainedBox::new(
         Container::new(content)
@@ -2957,6 +2969,12 @@ fn render_tab_group_internal(
                     pane_props.origin_badge = origin_badge.clone();
                 }
                 pane_props.is_coordinator = tab.coordinator;
+                if tab.coordinator && row_idx == 0 {
+                    pane_props.auto_controls = Some(state.auto_coordinate_ui.pill_props(
+                        workspace.auto_coordinate_enabled(app),
+                        state.open_popover == Some(SidebarPopover::AutoCoordinate),
+                    ));
+                }
                 if stack_panes_flush {
                     pane_props.stack_position = PaneRowStackPosition::Flush {
                         is_first: row_idx == 0,
@@ -4042,8 +4060,20 @@ fn render_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn Element> {
             appearance,
             app,
         ))
-        .with_child(Shrinkable::new(1., text.finish()).finish())
+        // On the coordinator row the title takes the free space, which keeps its Auto controls at
+        // the right edge without truncating the title.
+        .with_child(if props.auto_controls.is_some() {
+            Expanded::new(1., text.finish()).finish()
+        } else {
+            Shrinkable::new(1., text.finish()).finish()
+        })
         .with_children(is_restoring(restore_state).then(|| render_restore_spinner(appearance)))
+        .with_children(
+            props
+                .auto_controls
+                .clone()
+                .map(|controls| super::auto_coordinate::render_auto_controls(controls, appearance)),
+        )
         .finish();
 
     render_pane_row_element(
@@ -4289,6 +4319,7 @@ impl<'a> PaneProps<'a> {
             container_is_hovered,
             origin_badge: None,
             is_coordinator: false,
+            auto_controls: None,
         })
     }
 

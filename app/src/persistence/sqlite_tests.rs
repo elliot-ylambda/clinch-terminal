@@ -323,6 +323,8 @@ fn test_terminal_window_snapshot(vertical_tabs_panel_open: bool) -> WindowSnapsh
             group_id: None,
             pinned: false,
             coordinator: false,
+            auto_coordinate: None,
+            custom_title_auto: false,
         }],
         active_tab_index: 0,
         bounds: None,
@@ -528,6 +530,8 @@ fn test_sqlite_round_trips_custom_vertical_tabs_title() {
                 group_id: None,
                 pinned: false,
                 coordinator: false,
+                auto_coordinate: None,
+                custom_title_auto: false,
             }],
             active_tab_index: 0,
             bounds: None,
@@ -611,6 +615,8 @@ fn test_sqlite_round_trips_code_pane_with_multiple_tabs() {
                 group_id: None,
                 pinned: false,
                 coordinator: false,
+                auto_coordinate: None,
+                custom_title_auto: false,
             }],
             active_tab_index: 0,
             bounds: None,
@@ -703,6 +709,8 @@ fn test_sqlite_round_trips_tab_groups() {
         group_id: Some(group_id),
         pinned: false,
         coordinator: false,
+        auto_coordinate: None,
+        custom_title_auto: false,
     };
     let tab_outside_group = TabSnapshot {
         origin: None,
@@ -734,6 +742,8 @@ fn test_sqlite_round_trips_tab_groups() {
         group_id: None,
         pinned: false,
         coordinator: false,
+        auto_coordinate: None,
+        custom_title_auto: false,
     };
 
     let app_state = AppState {
@@ -813,7 +823,7 @@ fn test_sqlite_round_trips_pinned_state() {
 
     let pinned_tab = TabSnapshot {
         origin: None,
-        custom_title: None,
+        custom_title: Some("Fix restore flag".to_string()),
         root: PaneNodeSnapshot::Leaf(LeafSnapshot {
             is_focused: true,
             custom_vertical_tabs_title: None,
@@ -841,6 +851,8 @@ fn test_sqlite_round_trips_pinned_state() {
         group_id: None,
         pinned: true,
         coordinator: true,
+        auto_coordinate: Some(true),
+        custom_title_auto: true,
     };
     let unpinned_tab = TabSnapshot {
         origin: None,
@@ -872,6 +884,8 @@ fn test_sqlite_round_trips_pinned_state() {
         group_id: Some(unpinned_group_id),
         pinned: false,
         coordinator: false,
+        auto_coordinate: None,
+        custom_title_auto: false,
     };
     let tab_in_pinned_group = TabSnapshot {
         origin: None,
@@ -903,6 +917,8 @@ fn test_sqlite_round_trips_pinned_state() {
         group_id: Some(pinned_group_id),
         pinned: false,
         coordinator: false,
+        auto_coordinate: None,
+        custom_title_auto: false,
     };
 
     let app_state = AppState {
@@ -966,6 +982,11 @@ fn test_sqlite_round_trips_pinned_state() {
     // The coordinator marker round-trips with it.
     assert!(restored_window.tabs[0].coordinator);
     assert!(!restored_window.tabs[1].coordinator);
+    // So do the project's auto-coordinate switch and whether the coordinator chose the name.
+    assert_eq!(restored_window.tabs[0].auto_coordinate, Some(true));
+    assert!(restored_window.tabs[0].custom_title_auto);
+    assert_eq!(restored_window.tabs[1].auto_coordinate, None);
+    assert!(!restored_window.tabs[1].custom_title_auto);
 
     // Both groups round-trip with their pinned state preserved. Group ids are
     // minted fresh on restore, so we look them up by name.

@@ -9,6 +9,9 @@ use warp::integration_testing::terminal::{
 use warp::integration_testing::view_getters::workspace_view;
 use warp::settings::{AutoCreateWorktreesForNewTabs, Theme};
 use warp::themes::theme::ThemeKind;
+use warp::workspace::view::auto_coordinate::{
+    AUTO_COORDINATE_PILL_POSITION_ID, AUTO_COORDINATE_SETTINGS_POSITION_ID,
+};
 use warp::workspace::WorkspaceAction;
 use warpui_core::integration::TestStep;
 
@@ -116,6 +119,23 @@ pub fn test_redesign_agent_screens() -> Builder {
                 .set_post_step_pause(std::time::Duration::from_secs(3)),
         )
         .with_step(shot("agent"))
+        .with_step(
+            TestStep::new("turn on auto-coordinate")
+                .with_click_on_saved_position(AUTO_COORDINATE_PILL_POSITION_ID)
+                .set_post_step_pause(std::time::Duration::from_millis(400)),
+        )
+        .with_step(shot("coordinator-auto-on"))
+        .with_step(
+            TestStep::new("open auto-coordinate settings")
+                .with_click_on_saved_position(AUTO_COORDINATE_SETTINGS_POSITION_ID)
+                .set_post_step_pause(std::time::Duration::from_millis(400)),
+        )
+        .with_step(shot("coordinator-auto-settings"))
+        .with_step(
+            TestStep::new("close auto-coordinate settings")
+                .with_click_on_saved_position(AUTO_COORDINATE_SETTINGS_POSITION_ID)
+                .set_post_step_pause(std::time::Duration::from_millis(400)),
+        )
         .with_step(
             TestStep::new("open More")
                 .with_click_on_saved_position("agent_footer:more")

@@ -65,6 +65,62 @@ define_settings_group!(ClinchSettings, settings: [
         private: false,
         toml_path: "clinch.coordinator.agent",
         description: "The agent that new coordinator sessions start: \"claude\" or \"codex\".",
+    },
+    // Auto-coordinate spends turns of the user's own Claude or Codex plan, so a coordinator acts
+    // on its own only once the user switches it on. Each project's switch overrides this default.
+    coordinator_auto_default_on: CoordinatorAutoDefaultOn {
+        type: bool,
+        default: false,
+        supported_platforms: SupportedPlatforms::DESKTOP,
+        sync_to_cloud: SyncToCloud::Never,
+        private: false,
+        toml_path: "clinch.coordinator.auto.default_on",
+        description: "Let coordinators act on their own in projects where you have not switched auto-coordinate on or off. Each wakeup uses a turn of your Claude or Codex plan.",
+    },
+    coordinator_auto_watch: CoordinatorAutoWatch {
+        type: bool,
+        default: true,
+        supported_platforms: SupportedPlatforms::DESKTOP,
+        sync_to_cloud: SyncToCloud::Never,
+        private: false,
+        toml_path: "clinch.coordinator.auto.watch",
+        description: "Auto-coordinate: report sessions that finish, get stuck, or need you.",
+    },
+    coordinator_auto_name_sessions: CoordinatorAutoNameSessions {
+        type: bool,
+        default: true,
+        supported_platforms: SupportedPlatforms::DESKTOP,
+        sync_to_cloud: SyncToCloud::Never,
+        private: false,
+        toml_path: "clinch.coordinator.auto.name_sessions",
+        description: "Auto-coordinate: give new sessions a short name after their first turn. Tabs you named are never renamed.",
+    },
+    coordinator_auto_spot_conflicts: CoordinatorAutoSpotConflicts {
+        type: bool,
+        default: true,
+        supported_platforms: SupportedPlatforms::DESKTOP,
+        sync_to_cloud: SyncToCloud::Never,
+        private: false,
+        toml_path: "clinch.coordinator.auto.spot_conflicts",
+        description: "Auto-coordinate: warn when two sessions change the same files or branch.",
+    },
+    coordinator_auto_line_up_shipping: CoordinatorAutoLineUpShipping {
+        type: bool,
+        default: true,
+        supported_platforms: SupportedPlatforms::DESKTOP,
+        sync_to_cloud: SyncToCloud::Never,
+        private: false,
+        toml_path: "clinch.coordinator.auto.line_up_shipping",
+        description: "Auto-coordinate: line up merges and releases one at a time, asking before each one.",
+    },
+    coordinator_auto_clean_up: CoordinatorAutoCleanUp {
+        type: bool,
+        default: true,
+        supported_platforms: SupportedPlatforms::DESKTOP,
+        sync_to_cloud: SyncToCloud::Never,
+        private: false,
+        toml_path: "clinch.coordinator.auto.clean_up",
+        description: "Auto-coordinate: offer to close sessions whose work has merged, asking first.",
     }
 ]);
 

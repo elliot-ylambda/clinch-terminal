@@ -23,7 +23,9 @@ pub(super) const COORDINATOR_TAB_TITLE: &str = "Coordinator";
 const COORDINATOR_INSTRUCTIONS: &str = "You are the Clinch coordinator for this project, a \
 session pinned first in its tab list. When the user asks about their other sessions, use the \
 clinch-coordinate skill to inspect, summarise and send instructions to the Claude Code and Codex \
-sessions open in Clinch. Do not edit files in this checkout unless the user asks you to.";
+sessions open in Clinch. Messages that start with [Clinch auto-coordinate] come from Clinch, not \
+the user: handle them as the skill's Auto-coordinate section describes. Do not edit files in \
+this checkout unless the user asks you to.";
 
 const RESTORE_EXACT_PREFIX: &str = "CLINCH_AGENT_RESTORE_EXACT=1 ";
 
@@ -253,12 +255,17 @@ impl Workspace {
             .and_then(|terminal| terminal.as_ref(ctx).canonical_session_pwd_if_local(ctx))
             .map(PathBuf::from);
         let old_pane_group = self.tabs[index].pane_group.id();
+        let auto_coordinate = self.tabs[index].auto_coordinate;
         // Clear the marker first: closing the old session here is not the user closing the
         // coordinator, so it must not turn the default off.
         self.tabs[index].coordinator = false;
         if !self.open_coordinator_tab(directory, provider, true, ctx) {
             self.tabs[index].coordinator = true;
             return;
+        }
+        // The project's Auto choice belongs to the project, not to the agent running it.
+        if let Some(new_index) = self.coordinator_tab_index() {
+            self.tabs[new_index].auto_coordinate = auto_coordinate;
         }
         if let Some(old_index) = self
             .tabs
@@ -374,8 +381,9 @@ pub(crate) fn is_coordinator_terminal(terminal_view_id: EntityId, app: &AppConte
         })
 }
 
-/// The footer prompts on a coordinator tab, in place of a session's usual buttons.
-pub(crate) const COORDINATOR_PROMPTS: [(&str, &str); 5] = [
+/// The footer prompts on a coordinator tab, in place of a session's usual buttons. Cleaning up
+/// is an auto-coordinate tactic, run from its settings with Run now.
+pub(crate) const COORDINATOR_PROMPTS: [(&str, &str); 4] = [
     (
         "What needs me?",
         "Which sessions in this project need me right now? For each, say what it's waiting on.",
@@ -389,10 +397,6 @@ pub(crate) const COORDINATOR_PROMPTS: [(&str, &str); 5] = [
         "Ready to ship",
         "Which sessions have finished work that's ready to review, merge, or deploy? Prep it, \
          and ask me before shipping anything.",
-    ),
-    (
-        "Clean up",
-        "Which tabs are finished and safe to close? List them and ask me before closing any.",
     ),
     (
         "Organize",

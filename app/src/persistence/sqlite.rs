@@ -1162,6 +1162,8 @@ fn save_app_state(conn: &mut SqliteConnection, app_state: &AppState) -> Result<(
                             .as_ref()
                             .and_then(|origin| serde_json::to_string(origin).ok()),
                         coordinator: tab.coordinator,
+                        auto_coordinate: tab.auto_coordinate,
+                        custom_title_auto: tab.custom_title_auto,
                     })
                     .collect();
 
@@ -2727,6 +2729,8 @@ fn read_sqlite_data(
                         group_id,
                         pinned: tab.pinned,
                         coordinator: tab.coordinator,
+                        auto_coordinate: tab.auto_coordinate,
+                        custom_title_auto: tab.custom_title_auto,
                     })
                 })
                 .collect();

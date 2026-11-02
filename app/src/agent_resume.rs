@@ -2038,7 +2038,7 @@ fn read_prompt_mirror(path: &Path) -> Option<PromptMirrorRead> {
         // Task notifications flow through the same prompt hook as typed messages, but they
         // are harness-injected turns, not user history. They also don't close the open turn,
         // so the retry-coalescing state below stays untouched.
-        if is_injected_task_notification(prompt) {
+        if is_injected_prompt(prompt) {
             continue;
         }
         // Claude can re-emit an unchanged retained input while the same turn is still in
@@ -2133,15 +2133,19 @@ fn is_generated_claude_user_message(record: &Value, text: &str) -> bool {
         || text.starts_with("This session is being continued from another machine.")
         || text.starts_with("<local-command-")
         || text.starts_with("<command-name>")
-        || is_injected_task_notification(text)
+        || is_injected_prompt(text)
 }
 
-/// True when a user-role turn is a harness-injected task notification (background command or
-/// subagent completion) rather than text the user typed. These reach every capture path —
-/// prompt-submit hook events, the on-disk prompt mirror, and native transcripts — and must
-/// never surface as message history.
-pub(crate) fn is_injected_task_notification(text: &str) -> bool {
-    text.trim_start().starts_with("<task-notification>")
+/// Starts every auto-coordinate wakeup Clinch types into a coordinator.
+pub(crate) const AUTO_COORDINATE_MARKER: &str = "[Clinch auto-coordinate]";
+
+/// True when a user-role turn was injected rather than typed: a harness task notification
+/// (background command or subagent completion) or a Clinch auto-coordinate wakeup. These reach
+/// every capture path — prompt-submit hook events, the on-disk prompt mirror, and native
+/// transcripts — and must never surface as message history or become a session's topic.
+pub(crate) fn is_injected_prompt(text: &str) -> bool {
+    let text = text.trim_start();
+    text.starts_with("<task-notification>") || text.starts_with(AUTO_COORDINATE_MARKER)
 }
 
 fn prompt_history_from_codex_transcript(path: &Path) -> AgentPromptHistory {

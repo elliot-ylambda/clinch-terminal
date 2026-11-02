@@ -8,7 +8,7 @@ use warpui::platform::WindowStyle;
 use warpui::App;
 
 use super::{create_tab, tab_create_launch, TerminalLaunch};
-use crate::local_control::handlers::metadata_config::{tab_color_set, tab_rename};
+use crate::local_control::handlers::metadata_config::{tab_color_set, tab_rename, tab_reset_name};
 use crate::local_control::LocalControlBridge;
 use crate::project_window::ProjectWindow;
 use crate::root_view::NewWorkspaceSource;
@@ -164,6 +164,7 @@ fn tab_create_uses_origin_terminal_project_unless_window_is_explicit() {
             ActionKind::TabRename,
             RenameParams {
                 title: "Origin project process".to_owned(),
+                auto: false,
             },
         )
         .expect("rename action serializes");
@@ -177,6 +178,42 @@ fn tab_create_uses_origin_terminal_project_unless_window_is_explicit() {
             .expect("exact created tab remains addressable while its project is inactive")
         });
         assert_eq!(rename_response["tab_id"], created_tab_id);
+
+        // Automatic names, from a coordinator, never replace one the user gave.
+        let auto_rename = |title: &str| {
+            Action::with_params(
+                ActionKind::TabRename,
+                RenameParams {
+                    title: title.to_owned(),
+                    auto: true,
+                },
+            )
+            .expect("auto rename action serializes")
+        };
+        let run_rename = |app: &mut warpui::App, action: &Action| {
+            bridge.update(app, |_, ctx| {
+                tab_rename(&Some(instance_id.clone()), &created_tab_target, action, ctx)
+            })
+        };
+        let refused = run_rename(&mut app, &auto_rename("Coordinator's name"))
+            .expect_err("an automatic name cannot replace the user's");
+        assert_eq!(refused.code, ErrorCode::TargetStateConflict);
+
+        bridge.update(&mut app, |_, ctx| {
+            tab_reset_name(&Some(instance_id.clone()), &created_tab_target, ctx)
+                .expect("reset clears the user's name")
+        });
+        run_rename(&mut app, &auto_rename("Coordinator's name"))
+            .expect("an unnamed tab takes an automatic name");
+        run_rename(&mut app, &auto_rename("A better name"))
+            .expect("an automatic name can replace another automatic name");
+        run_rename(&mut app, &rename).expect("the user can always rename");
+        assert_eq!(
+            run_rename(&mut app, &auto_rename("Too late"))
+                .expect_err("the user's new name is theirs")
+                .code,
+            ErrorCode::TargetStateConflict
+        );
 
         let color = Action::with_params(
             ActionKind::TabColorSet,

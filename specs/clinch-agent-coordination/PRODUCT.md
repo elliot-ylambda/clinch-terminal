@@ -71,45 +71,30 @@ Design: use the current Clinch styling; no separate Figma mock was supplied.
 
 ### Discoverability and the left sidebar
 
-7. A persistent **Coordinators** entry is available in the left sidebar across project switches.
-   Its empty state explains "Manage multiple Claude and Codex sessions from one conversation"
-   and offers **New coordinator**. The command palette exposes the same action. The entry opens
-   the coordinator list without requiring the user to find the project hosting its conversation.
+7. Each project keeps a **Coordinator** tab pinned first in its tab list. It is on by default,
+   closing it turns the default off, and right-click switches it between Claude and Codex. It is
+   an ordinary conversation in the project's primary checkout that the user can talk to like any
+   other session.
 
-8. Project and section menus offer **Coordinate this project** and **Coordinate this section**.
-   Eligible section headers also offer a labelled **Coordinate** action using existing styling.
-   These open the same creation flow with a preselected scope; the user can expand it to other
-   projects or All Clinch. The capability is discoverable without knowing a CLI command or skill.
+8. The Coordinator row carries an **Auto** switch and a settings button. Auto is off by default
+   for new installs (`clinch.coordinator.auto.default_on`). Each project's choice is saved with its
+   coordinator tab and overrides that default.
 
-9. Creation shows the selected scope and eligible session count, a Claude/Codex provider choice,
-   a name, an optional initial objective, and **Monitor** or **Coordinate** behavior. Monitor
-   summarizes and reports; Coordinate may send instructions within scope according to the
-   user's objective. Creation uses an installed provider and its existing authentication; an
-   unavailable provider has a clear setup path. The CLI does not install the provider itself.
+9. The settings popover shows the project's switch; what auto-coordinate is doing ("Watching 7
+   sessions · last run 2:41 PM", "Waiting for the coordinator to finish its turn", or "Waiting for
+   you to finish typing to the coordinator"); the tactics; and **Run now**. Tactic switches are
+   global defaults: watch and report, name new sessions, spot conflicts, line up shipping, and
+   clean up finished work. Lining up shipping and cleaning up always ask the user before a merge,
+   push, release, or closed tab.
 
-10. Starting creates a normal, visible agent conversation in the selected host project and
-    registers it as the coordinator. An existing conversation can also be attached by exact
-    identity. A coordinator's host project does not constrain what it can inspect or coordinate.
-    Starting twice for the same creation request does not create duplicate conversations.
+10. Turning Auto off stops wakeups at once and drops anything pending. It never interrupts a
+    running turn or closes a session, and every session stays usable on its own throughout.
 
-11. The coordinator list shows its name, provider, scope (for example "All Clinch" or
-    "3 projects · 8 sessions"), state, and last update. Its details show worker names, locations,
-    progress, pending messages, and issues needing the user. **Open conversation**, **Edit scope**,
-    **Pause/Resume**, and **Stop coordinating** are available. A coordinator badge also identifies
-    its normal session row. Sections may link to relevant coordinators without implying ownership
-    of the coordinator or forcing all its workers into that section.
+11. An automatic tab name never replaces one the user chose, and the user's next rename always
+    replaces an automatic one.
 
-12. Coordinator states distinguish starting, monitoring, working, waiting for workers, needs
-    attention, paused, unavailable, and stopped. Worker counts distinguish working, idle, turn
-    complete, needs attention, rate limited, and unknown. Labels/tooltips convey meaning without
-    relying on color. Controls are keyboard accessible, use existing menu/focus conventions,
-    and remain usable in a narrow sidebar and with collapsed sections.
-
-13. Pause stops automatic wakeups and new message dispatch for that coordinator. It does not
-    interrupt already-running work or retract a message already submitted. Stop ends coordination
-    and cancels pending messages while preserving every session. Closing a coordinator conversation
-    marks it unavailable; it does not silently nominate another session. Workers remain usable
-    independently throughout.
+The earlier plan's app-wide Coordinators list, scoped creation flow, pause/stop states, and
+section links were dropped (2026-11-02) in favor of the per-project Coordinator and its Auto switch.
 
 ### Reading sessions and interpreting progress
 
@@ -169,10 +154,13 @@ Design: use the current Clinch styling; no separate Figma mock was supplied.
 
 ### Sustained coordination and release work
 
-22. While Clinch is running, a registered coordinator can be notified of meaningful worker events
-    even when its conversation is idle. Events are batched, retained while the coordinator is busy,
-    and delivered when that exact coordinator can accept input. Its own activity does not wake
-    itself repeatedly. Routine output streaming does not generate a prompt per token or line.
+22. While Clinch is running and Auto is on, the project's coordinator is woken when another
+    session in the project finishes a turn or starts waiting on the user. Updates are batched for
+    five seconds and wakeups are at least two minutes apart. A wakeup is typed only when the
+    coordinator is idle with an empty composer; the user's typing holds it for a retry. The
+    coordinator's own turns never wake it. Wakeups start with `[Clinch auto-coordinate]`, name
+    the changed sessions and the tactics that are on, and are kept out of prompt history and tab
+    titles.
 
 23. The coordinator skill reads the workspace hierarchy and incremental session updates, directs
     work across providers, reviews actual code and external check results, and reports a concise
@@ -187,12 +175,11 @@ Design: use the current Clinch styling; no separate Figma mock was supplied.
     alone does not authorize a release, and an agent's "done" message does not prove it shipped.
     Clinch's coordination feature does not prevent independently issued shell commands elsewhere.
 
-25. Coordinator configuration, pending events, and message receipts survive application restarts.
-    After restart, sending resumes only when the saved scope and the exact coordinator/worker
-    conversations are unambiguously reattached and ready. Otherwise the UI shows unavailable or
-    needs attention with a reattach/resume action. Pending delivery-unknown messages require
-    reconciliation. Nothing monitors or dispatches while Clinch is closed or the computer sleeps;
-    after resuming, status and captured history are reconciled and gaps are reported.
+25. The Auto switch, tactic settings, and automatic-name ownership survive restarts. Pending
+    wakeups do not; the next session change wakes the coordinator again. A restored coordinator
+    that has not started yet is started by its first wakeup. Nothing monitors while Clinch is
+    closed or the computer sleeps. Queued `agent send` messages keep their own receipts and
+    restart rules, described under the CLI completion section below.
 
 ### Installation and compatibility
 

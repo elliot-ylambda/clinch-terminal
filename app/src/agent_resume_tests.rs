@@ -1777,3 +1777,17 @@ fn codex_fork_reads_prompts_inherited_through_its_parents() {
     assert_eq!(history.inherited_prompts, 0);
     assert_eq!(history.prompts.len(), 3);
 }
+
+#[test]
+fn auto_coordinate_wakeups_are_not_user_history() {
+    assert!(is_injected_prompt(
+        "[Clinch auto-coordinate] 1 update: \"Fix\" finished a turn. Tactics on: watch."
+    ));
+    assert!(is_injected_prompt(
+        "  <task-notification> <task-id>t1</task-id>"
+    ));
+    // Only a leading marker counts; a user quoting it is still the user.
+    assert!(!is_injected_prompt(
+        "Why does the [Clinch auto-coordinate] message show up?"
+    ));
+}

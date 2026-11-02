@@ -1,3 +1,4 @@
+pub mod auto_coordinate;
 pub(crate) mod auto_handoff_sleep_modal;
 mod build_plan_migration_modal;
 pub(crate) mod cloud_agent_capacity_modal;
@@ -1159,6 +1160,8 @@ pub struct Workspace {
     coordinator_bootstrap: coordinator::CoordinatorBootstrap,
     /// Whether this workspace may create a default coordinator on its own; off in unit tests.
     coordinator_auto_create: bool,
+    /// Batching and status for waking the coordinator when auto-coordinate is on.
+    auto_coordinate: auto_coordinate::AutoCoordinateState,
     pub(crate) hovered_tab_index: Option<TabBarHoverIndex>,
     tab_bar_hover_state: MouseStateHandle,
     /// The CLI-agent provider whose focused tab-bar usage panel is expanded.
@@ -4015,6 +4018,7 @@ impl Workspace {
             tab_mru_order: Vec::new(),
             coordinator_bootstrap: Default::default(),
             coordinator_auto_create: !cfg!(test),
+            auto_coordinate: Default::default(),
             hovered_tab_index: None,
             tab_bar_hover_state: Default::default(),
             cli_agent_usage_panel_provider: None,
@@ -4549,6 +4553,9 @@ impl Workspace {
     ) {
         let terminal_view_id = event.terminal_view_id();
         let belongs_to_workspace = self.workspace_contains_terminal_view(terminal_view_id, ctx);
+        if belongs_to_workspace {
+            self.note_session_for_auto_coordinate(event, ctx);
+        }
 
         // Provider hooks publish durable identity to the pane registry. Interactive pickers can
         // do that long after command detection emits `Started`, so keep reconciling for the
@@ -4845,9 +4852,15 @@ impl Workspace {
                         if FeatureFlag::PinnedTabs.is_enabled() {
                             self.tabs[tab_index].pinned = saved_tab.pinned;
                         }
+                        if saved_tab.custom_title_auto {
+                            self.tabs[tab_index]
+                                .pane_group
+                                .update(ctx, |pane_group, _| pane_group.mark_custom_title_auto());
+                        }
                         if saved_tab.coordinator {
                             self.tabs[tab_index].coordinator = true;
                             self.tabs[tab_index].pinned = true;
+                            self.tabs[tab_index].auto_coordinate = saved_tab.auto_coordinate;
                             self.prepare_restored_coordinator(tab_index, ctx);
                         }
                         // Drop the group reference if the group itself didn't restore.
@@ -12987,6 +13000,8 @@ impl Workspace {
                     pinned: FeatureFlag::PinnedTabs.is_enabled()
                         && self.tabs.get(tab_index).is_some_and(|tab| tab.pinned),
                     coordinator: self.tabs.get(tab_index).is_some_and(|tab| tab.coordinator),
+                    auto_coordinate: self.tabs.get(tab_index).and_then(|tab| tab.auto_coordinate),
+                    custom_title_auto: pane_group.custom_title_is_auto(),
                 }
             })
             .filter(|tab| {
@@ -26307,6 +26322,14 @@ impl TypedActionView for Workspace {
             PinTab(tab_index) => self.pin_tab(*tab_index, ctx),
             SwitchCoordinatorAgent(tab_index) => self.switch_coordinator_agent(*tab_index, ctx),
             OpenCoordinatorSession => self.open_coordinator_from_menu(ctx),
+            SetAutoCoordinate(enabled) => self.set_auto_coordinate(*enabled, ctx),
+            SetCoordinatorTactic { tactic, enabled } => {
+                self.set_coordinator_tactic(*tactic, *enabled, ctx)
+            }
+            RunCoordinatorNow => {
+                self.vertical_tabs_panel.open_popover = None;
+                self.run_coordinator_now(ctx);
+            }
             UnpinTab(tab_index) => self.unpin_tab(*tab_index, ctx),
             PinTabGroup(group_id) => self.pin_tab_group(*group_id, ctx),
             UnpinTabGroup(group_id) => self.unpin_tab_group(*group_id, ctx),
@@ -28965,6 +28988,24 @@ impl View for Workspace {
                     vertical_tabs::SidebarPopover::Bookmarks => {
                         vertical_tabs::SIDEBAR_BOOKMARKS_LINK_POSITION_ID
                     }
+                    vertical_tabs::SidebarPopover::AutoCoordinate => {
+                        auto_coordinate::AUTO_COORDINATE_CONTROLS_POSITION_ID
+                    }
+                };
+                // Foot links open their popover upward; the coordinator's Auto settings hang
+                // below its row at the top of the list.
+                let (offset, parent_anchor, child_anchor) = match popover {
+                    vertical_tabs::SidebarPopover::Tasks
+                    | vertical_tabs::SidebarPopover::Bookmarks => (
+                        vec2f(0., -6.),
+                        PositionedElementAnchor::TopLeft,
+                        ChildAnchor::BottomLeft,
+                    ),
+                    vertical_tabs::SidebarPopover::AutoCoordinate => (
+                        vec2f(0., 6.),
+                        PositionedElementAnchor::BottomLeft,
+                        ChildAnchor::TopLeft,
+                    ),
                 };
                 stack.add_positioned_overlay_child(
                     Dismiss::new(vertical_tabs::render_sidebar_popover(
@@ -28980,10 +29021,10 @@ impl View for Workspace {
                     .finish(),
                     OffsetPositioning::offset_from_save_position_element(
                         anchor,
-                        vec2f(0., -6.),
+                        offset,
                         PositionedElementOffsetBounds::WindowByPosition,
-                        PositionedElementAnchor::TopLeft,
-                        ChildAnchor::BottomLeft,
+                        parent_anchor,
+                        child_anchor,
                     ),
                 );
             }

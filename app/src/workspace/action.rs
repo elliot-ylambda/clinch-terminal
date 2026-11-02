@@ -254,6 +254,15 @@ pub enum WorkspaceAction {
     SwitchCoordinatorAgent(usize),
     /// Opens a coordinator session for this project and turns the default back on.
     OpenCoordinatorSession,
+    /// Turns this project's auto-coordinate on or off.
+    SetAutoCoordinate(bool),
+    /// Switches one auto-coordinate tactic, for every project.
+    SetCoordinatorTactic {
+        tactic: crate::workspace::view::auto_coordinate::Tactic,
+        enabled: bool,
+    },
+    /// Wakes the coordinator now with whatever has changed so far.
+    RunCoordinatorNow,
     /// Pins the entire tab group: sets the group as pinned
     /// and moves the group block to the end of the pinned region.
     PinTabGroup(TabGroupId),
@@ -994,6 +1003,7 @@ impl WorkspaceAction {
             | UnpinTab(_)
             | SwitchCoordinatorAgent(_)
             | OpenCoordinatorSession
+            | SetAutoCoordinate(_)
             | PinTabGroup(_)
             | UnpinTabGroup(_)
             | ToggleBookmarkedSessionsCollapsed
@@ -1237,7 +1247,9 @@ impl WorkspaceAction {
             | ShowCloudModeV2EnvironmentCreationModal
             | OpenCreateAuthSecretModal { .. }
             | OpenQuickInsertModal
-            | OpenNetworkLogPane => false,
+            | OpenNetworkLogPane
+            | SetCoordinatorTactic { .. }
+            | RunCoordinatorNow => false,
             #[cfg(debug_assertions)]
             ShowHoaOnboardingFlow => false,
             #[cfg(target_family = "wasm")]

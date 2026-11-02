@@ -22,7 +22,7 @@ use warpui::{Entity, EntityId, ModelContext, ModelHandle, SingletonEntity};
 use self::listener::CLIAgentSessionListener;
 use super::CLIAgent;
 use crate::agent_resume::{
-    bookmarked_conversations, is_injected_task_notification, prompt_mirror_version, prompt_title,
+    bookmarked_conversations, is_injected_prompt, prompt_mirror_version, prompt_title,
     read_prompt_history, AgentConversation, AgentPrompt, AgentPromptHistory, AgentResumeProvider,
     PromptMirrorVersion,
 };
@@ -599,7 +599,7 @@ fn injected_notification_query(event: &CLIAgentEvent) -> bool {
         .payload
         .query
         .as_deref()
-        .is_some_and(is_injected_task_notification)
+        .is_some_and(is_injected_prompt)
 }
 
 fn prompt_from_trusted_event(event: &CLIAgentEvent) -> Option<AgentPrompt> {
@@ -614,7 +614,7 @@ fn prompt_from_trusted_event(event: &CLIAgentEvent) -> Option<AgentPrompt> {
     }
     // Background-task completion turns arrive through the same prompt-submit hook as typed
     // messages; they are harness-injected, not user history.
-    if is_injected_task_notification(text) {
+    if is_injected_prompt(text) {
         return None;
     }
     // Stamped with when it was sent, so history shows a time before the transcript catches up.

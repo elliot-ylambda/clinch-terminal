@@ -486,7 +486,10 @@ pub(super) fn run_tab_command(
         TabCommand::Rename(args) => run_action_with_params(
             args.target,
             ActionKind::TabRename,
-            RenameParams { title: args.title },
+            RenameParams {
+                title: args.title,
+                auto: args.auto,
+            },
             output_format,
         ),
         TabCommand::ResetName(args) => run_action(args, ActionKind::TabResetName, output_format),
@@ -562,7 +565,10 @@ pub(super) fn run_pane_command(
         PaneCommand::Rename(args) => run_action_with_params(
             args.target,
             ActionKind::PaneRename,
-            RenameParams { title: args.title },
+            RenameParams {
+                title: args.title,
+                auto: false,
+            },
             output_format,
         ),
         PaneCommand::ResetName(args) => run_action(args, ActionKind::PaneResetName, output_format),

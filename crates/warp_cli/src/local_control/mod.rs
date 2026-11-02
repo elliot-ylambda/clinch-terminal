@@ -372,7 +372,7 @@ pub enum TabCommand {
     Close(TabCloseArgs),
 
     /// Rename a tab.
-    Rename(RenameArgs),
+    Rename(TabRenameArgs),
 
     /// Reset a tab name.
     ResetName(TargetArgs),
@@ -960,6 +960,19 @@ pub struct RenameArgs {
     pub target: TargetArgs,
 
     pub title: String,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct TabRenameArgs {
+    #[command(flatten)]
+    pub target: TargetArgs,
+
+    pub title: String,
+
+    /// Mark this as an automatic name, for coordinators. It is refused when the user named the
+    /// tab themselves, and the user's next rename replaces it.
+    #[arg(long)]
+    pub auto: bool,
 }
 
 #[derive(Debug, Clone, Args)]

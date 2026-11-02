@@ -188,6 +188,8 @@ pub struct TabData {
     pub origin_mouse_state: MouseStateHandle,
     /// True for the project's coordinator session: an agent tab pinned first in the list.
     pub coordinator: bool,
+    /// On the coordinator tab: whether it acts on its own. `None` follows the global default.
+    pub auto_coordinate: Option<bool>,
 }
 
 const TAB_COLOR_ICON_PATH: &str = "bundled/svg/ellipse.svg";
@@ -211,6 +213,7 @@ impl TabData {
             origin: None,
             origin_mouse_state: Default::default(),
             coordinator: false,
+            auto_coordinate: None,
         }
     }
 

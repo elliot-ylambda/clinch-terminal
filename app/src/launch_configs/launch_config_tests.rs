@@ -23,6 +23,8 @@ fn single_tab_snapshot(root: PaneNodeSnapshot) -> AppState {
                 group_id: None,
                 pinned: false,
                 coordinator: false,
+                auto_coordinate: None,
+                custom_title_auto: false,
             }],
             active_tab_index: 0,
             bounds: None,
@@ -284,6 +286,8 @@ fn test_config_with_active_tab_index() {
                 group_id: None,
                 pinned: false,
                 coordinator: false,
+                auto_coordinate: None,
+                custom_title_auto: false,
             };
             3
         ],
@@ -322,6 +326,8 @@ fn test_config_with_active_tab_index_and_filtered_tabs() {
                 group_id: None,
                 pinned: false,
                 coordinator: false,
+                auto_coordinate: None,
+                custom_title_auto: false,
             },
             TabSnapshot {
                 origin: None,
@@ -356,6 +362,8 @@ fn test_config_with_active_tab_index_and_filtered_tabs() {
                 group_id: None,
                 pinned: false,
                 coordinator: false,
+                auto_coordinate: None,
+                custom_title_auto: false,
             },
         ],
     );
@@ -402,6 +410,8 @@ fn test_config_with_active_tab_being_filtered() {
                 group_id: None,
                 pinned: false,
                 coordinator: false,
+                auto_coordinate: None,
+                custom_title_auto: false,
             },
             TabSnapshot {
                 origin: None,
@@ -427,6 +437,8 @@ fn test_config_with_active_tab_being_filtered() {
                 group_id: None,
                 pinned: false,
                 coordinator: false,
+                auto_coordinate: None,
+                custom_title_auto: false,
             },
         ],
     );
@@ -464,6 +476,8 @@ fn terminal_project_snapshot(cwd: &str) -> WindowSnapshot {
             group_id: None,
             pinned: false,
             coordinator: false,
+            auto_coordinate: None,
+            custom_title_auto: false,
         }],
         active_tab_index: 0,
         bounds: None,

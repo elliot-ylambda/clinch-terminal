@@ -162,6 +162,10 @@ pub struct QueryParams {
 #[serde(deny_unknown_fields)]
 pub struct RenameParams {
     pub title: String,
+    /// A name chosen by an agent rather than the user. It is refused when the user named the
+    /// tab, and the user's next rename replaces it. Tabs only.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub auto: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
