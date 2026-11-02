@@ -19,7 +19,7 @@ use warp_core::ui::icons::SPINNER_FRAMES;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::{AnsiColorIdentifier, Fill as WarpThemeFill, WarpTheme};
 use warp_core::ui::tokens::{
-    corners_lg, corners_md, corners_pill, corners_sm, StatusKind, Tokens, RADIUS_SM,
+    corners_lg, corners_md, corners_pill, corners_sm, StatusKind, Tokens, CARD_INSET, RADIUS_SM,
 };
 use warp_core::ui::Icon as WarpIcon;
 use warp_util::local_or_remote_path::LocalOrRemotePath;
@@ -816,6 +816,7 @@ pub(super) struct VerticalTabsPanelState {
     pub(super) open_popover: Option<SidebarPopover>,
     tasks_link_mouse_state: MouseStateHandle,
     bookmarks_link_mouse_state: MouseStateHandle,
+    new_section_mouse_state: MouseStateHandle,
 }
 
 impl Default for VerticalTabsPanelState {
@@ -828,6 +829,7 @@ impl Default for VerticalTabsPanelState {
             open_popover: None,
             tasks_link_mouse_state: MouseStateHandle::default(),
             bookmarks_link_mouse_state: MouseStateHandle::default(),
+            new_section_mouse_state: MouseStateHandle::default(),
             group_mouse_states: RefCell::default(),
             tab_group_mouse_states: RefCell::default(),
             pane_row_mouse_states: RefCell::default(),
@@ -1326,16 +1328,16 @@ fn add_vertical_tab_insertion_target_overlay(
 }
 
 /// Compact "N waiting" chip for the vertical-tabs control bar: the number of tabs whose agent
-/// is currently waiting on the user, per the same derivation as the yellow attention badge on
-/// tab rows (`Workspace::agent_attention_tab_indices`). Returns `None` when no agent is
-/// waiting so the control bar renders unchanged. Clicking dispatches
+/// is blocked on the user, the same tabs that carry the amber badge
+/// (`Workspace::agent_needs_input_tab_indices`). Returns `None` when no agent is waiting so the
+/// control bar renders unchanged. Clicking dispatches
 /// [`WorkspaceAction::FocusNextAgentAttention`], the same cycling action as its keybinding.
 fn render_agent_attention_chip(
     state: &VerticalTabsPanelState,
     workspace: &Workspace,
     app: &AppContext,
 ) -> Option<Box<dyn Element>> {
-    let waiting_count = workspace.agent_attention_tab_indices(app).len();
+    let waiting_count = workspace.agent_needs_input_tab_indices(app).len();
     if waiting_count == 0 {
         return None;
     }
@@ -1535,6 +1537,57 @@ fn render_foot_button(
     SavePosition::new(button, position_id).finish()
 }
 
+/// The square "+" at the end of the sidebar foot that makes a new section.
+fn render_new_section_button(
+    mouse_state: MouseStateHandle,
+    appearance: &Appearance,
+) -> Box<dyn Element> {
+    let tokens = *appearance.tokens();
+    let ui_builder = appearance.ui_builder().clone();
+    Hoverable::new(mouse_state, move |hover_state| {
+        let is_hovered = hover_state.is_hovered();
+        let background = if is_hovered {
+            tokens.surface_raised
+        } else {
+            tokens.surface_field
+        };
+        let button = Container::new(
+            ConstrainedBox::new(
+                WarpIcon::Plus
+                    .to_warpui_icon(WarpThemeFill::Solid(tokens.text_2))
+                    .finish(),
+            )
+            .with_width(15.)
+            .with_height(15.)
+            .finish(),
+        )
+        .with_uniform_padding(10.)
+        .with_background(ThemeFill::Solid(background))
+        .with_corner_radius(corners_md())
+        .finish();
+        if !is_hovered {
+            return button;
+        }
+        let mut stack = Stack::new().with_child(button);
+        stack.add_positioned_overlay_child(
+            ui_builder
+                .tool_tip("New section".to_owned())
+                .build()
+                .finish(),
+            OffsetPositioning::offset_from_parent(
+                vec2f(0., -6.),
+                ParentOffsetBounds::WindowByPosition,
+                ParentAnchor::TopMiddle,
+                ChildAnchor::BottomMiddle,
+            ),
+        );
+        stack.finish()
+    })
+    .with_cursor(Cursor::PointingHand)
+    .on_click(|ctx, _, _| ctx.dispatch_typed_action(WorkspaceAction::CreateNewTabGroup))
+    .finish()
+}
+
 fn render_sidebar_foot(
     state: &VerticalTabsPanelState,
     workspace: &Workspace,
@@ -1582,6 +1635,10 @@ fn render_sidebar_foot(
                 )
                 .finish(),
             )
+            .with_child(render_new_section_button(
+                state.new_section_mouse_state.clone(),
+                appearance,
+            ))
             .finish(),
     )
     .with_padding(
@@ -2354,6 +2411,9 @@ fn render_vertical_tabs_panel(
 
     Resizable::new(state.resizable_state.clone(), inner)
         .with_dragbar_side(drag_side)
+        // The panel ends a gap short of the terminal card, whose edge is the line people see and
+        // reach for. Push the handle across the gap so it sits on that edge.
+        .with_dragbar_offset(CARD_INSET + 0.5)
         .on_resize(|ctx, _| {
             ctx.notify();
         })

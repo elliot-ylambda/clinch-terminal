@@ -1,10 +1,9 @@
 //! Pure ordering logic for cycling focus through tabs whose agent is waiting on the user.
 //!
-//! The per-tab "needs attention" predicate lives on `Workspace`
-//! (`Workspace::tab_needs_agent_attention`), which reuses the agent-icon badge derivation so the
-//! cycling action, the "N waiting" header chip, and the yellow tab badges can never drift apart.
-//! This module owns only the order-of-cycling math, kept free of `AppContext` so it is directly
-//! unit-testable.
+//! What each tab's agent wants lives on `Workspace` (`Workspace::tab_agent_attention`), which
+//! reuses the agent-icon badge derivation so the "N waiting" chip, the amber tab badges and the
+//! cycling action can never drift apart. This module owns only the order-of-cycling math, kept
+//! free of `AppContext` so it is directly unit-testable.
 
 /// Indices (in stable tab order) of tabs flagged as needing attention.
 ///

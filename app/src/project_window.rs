@@ -4,7 +4,7 @@ use pathfinder_geometry::rect::RectF as GeometryRect;
 use pathfinder_geometry::vector::{vec2f, Vector2F};
 use uuid::Uuid;
 use warp_core::ui::theme::Fill;
-use warp_core::ui::tokens::{corners_lg, StatusKind, RADIUS_MD, RADIUS_SM};
+use warp_core::ui::tokens::{corners_lg, StatusKind, Tokens, RADIUS_MD, RADIUS_SM};
 use warpui::accessibility::{AccessibilityContent, ActionAccessibilityContent, WarpA11yRole};
 use warpui::color::ColorU;
 use warpui::elements::{
@@ -14,7 +14,7 @@ use warpui::elements::{
     ParentElement, ParentOffsetBounds, Radius, Rect, SavePosition, ScrollTarget,
     ScrollToPositionMode, ScrollbarWidth, Shrinkable, Stack, Text,
 };
-use warpui::fonts::{Properties, Weight};
+use warpui::fonts::{FamilyId, Properties, Weight};
 use warpui::keymap::{BindingDescription, EditableBinding};
 use warpui::platform::{Cursor, TerminationMode};
 use warpui::presenter::ChildView;
@@ -153,6 +153,8 @@ const PROJECT_TAB_CLOSE_BUTTON_GAP: f32 = 6.;
 // Preserve enough label space after the symmetric close-button reservation and
 // tab chrome so short directory names do not collapse into an empty clip.
 const PROJECT_TAB_MIN_WIDTH: f32 = 96.;
+/// Wide enough for a project name plus its status counts.
+const PROJECT_TAB_MAX_WIDTH: f32 = 260.;
 const PROJECT_TAB_VERTICAL_PADDING: f32 = 6.;
 const PROJECT_TAB_BORDER_WIDTH: f32 = 1.;
 const PROJECT_AGENT_HOVER_CARD_WIDTH: f32 = 320.;
@@ -1637,16 +1639,19 @@ impl ProjectWindow {
             }
             let workspace = project.workspace.as_ref(app);
             let title = workspace.project_display_name(app);
-            let _has_other_unread = workspace.has_other_unread_project_activity(app);
             let agent_counts = workspace.project_cli_agent_counts(app);
             let agent_summaries = workspace.project_cli_agent_summaries(app);
             let needs_input_count = agent_summaries
                 .iter()
                 .filter(|summary| summary.activity == ProjectCliAgentActivity::NeedsInput)
                 .count();
-            let needs_input_color =
-                (needs_input_count > 0).then(|| tokens.status(StatusKind::NeedsYou));
-            let needs_input_tint = tokens.status_soft(StatusKind::NeedsYou);
+            // Waiting on you, working, and finished-but-unread: the three reasons to switch here.
+            let status_counts = [
+                (StatusKind::NeedsYou, needs_input_count),
+                (StatusKind::Working, agent_counts.working),
+                (StatusKind::Done, agent_counts.done),
+            ];
+            let status_tokens = *tokens;
             let tab_count = workspace.tab_count();
             let is_active = index == self.active_project_index;
             let is_dragging = project.draggable_state.is_dragging();
@@ -1677,27 +1682,6 @@ impl ProjectWindow {
                 let mut label = Flex::row()
                     .with_main_axis_size(MainAxisSize::Min)
                     .with_cross_axis_alignment(CrossAxisAlignment::Center);
-                // An agent waiting on the user outranks every other badge, and blinks so it is
-                // noticed even when the project is in the background.
-                if let Some(needs_input_color) = needs_input_color {
-                    let badge_text = if needs_input_count == 1 {
-                        "!".to_string()
-                    } else {
-                        format!("!{needs_input_count}")
-                    };
-                    label.add_child(
-                        Container::new(
-                            Text::new_inline(badge_text, font_family, (font_size - 2.).max(8.))
-                                .with_color(needs_input_color)
-                                .finish(),
-                        )
-                        .with_horizontal_padding(5.)
-                        .with_background(Fill::Solid(needs_input_tint))
-                        .with_corner_radius(CornerRadius::with_all(Radius::Percentage(50.)))
-                        .with_margin_right(6.)
-                        .finish(),
-                    );
-                }
                 label.add_child(
                     Shrinkable::new(
                         1.,
@@ -1708,6 +1692,17 @@ impl ProjectWindow {
                     )
                     .finish(),
                 );
+                for (kind, count) in status_counts {
+                    if count > 0 {
+                        label.add_child(render_project_status_count(
+                            kind,
+                            count,
+                            &status_tokens,
+                            font_family,
+                            font_size,
+                        ));
+                    }
+                }
 
                 let close_button = (is_active || mouse_state.is_hovered()).then(|| {
                     Hoverable::new(close_mouse_state.clone(), move |close_state| {
@@ -1786,7 +1781,7 @@ impl ProjectWindow {
                         .finish(),
                 )
                 .with_min_width(PROJECT_TAB_MIN_WIDTH)
-                .with_max_width(180.)
+                .with_max_width(PROJECT_TAB_MAX_WIDTH)
                 .finish();
 
                 if mouse_state.is_hovered() && !is_dragging {
@@ -1917,6 +1912,57 @@ impl ProjectWindow {
 
 impl Entity for ProjectWindow {
     type Event = ();
+}
+
+/// One status count on a project pill: an amber "!" for sessions waiting on you, and a green or
+/// blue dot for agents working or finished. Shape as well as color tells them apart.
+fn render_project_status_count(
+    kind: StatusKind,
+    count: usize,
+    tokens: &Tokens,
+    font_family: FamilyId,
+    font_size: f32,
+) -> Box<dyn Element> {
+    let color = tokens.status(kind);
+    let mark: Box<dyn Element> = if kind == StatusKind::NeedsYou {
+        ConstrainedBox::new(
+            Icon::AlertCircle
+                .to_warpui_icon(Fill::Solid(color))
+                .finish(),
+        )
+        .with_width(11.)
+        .with_height(11.)
+        .finish()
+    } else {
+        ConstrainedBox::new(
+            Rect::new()
+                .with_background(Fill::Solid(color))
+                .with_corner_radius(CornerRadius::with_all(Radius::Percentage(50.)))
+                .finish(),
+        )
+        .with_width(6.)
+        .with_height(6.)
+        .finish()
+    };
+    Container::new(
+        Flex::row()
+            .with_main_axis_size(MainAxisSize::Min)
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_spacing(4.)
+            .with_child(mark)
+            .with_child(
+                Text::new_inline(count.to_string(), font_family, (font_size - 1.).max(8.))
+                    .with_color(color)
+                    .finish(),
+            )
+            .finish(),
+    )
+    .with_horizontal_padding(6.)
+    .with_vertical_padding(1.)
+    .with_background(Fill::Solid(tokens.status_soft(kind)))
+    .with_corner_radius(CornerRadius::with_all(Radius::Percentage(50.)))
+    .with_margin_left(6.)
+    .finish()
 }
 
 /// Project actions are added here rather than to `WorkspaceAction` so the two

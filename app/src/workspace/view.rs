@@ -187,7 +187,7 @@ use crate::ai::agent_management::notifications::view::{
 use crate::ai::agent_management::notifications::NotificationFilter;
 use crate::ai::agent_management::telemetry::AgentManagementTelemetryEvent;
 use crate::ai::agent_management::view::{AgentManagementView, AgentManagementViewEvent};
-use crate::ai::agent_management::{active_focused_terminal_id, AgentManagementEvent};
+use crate::ai::agent_management::AgentManagementEvent;
 use crate::ai::ambient_agents::telemetry::{CloudAgentTelemetryEvent, CloudModeEntryPoint};
 #[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
 use crate::ai::ambient_agents::telemetry::{HandoffEntryPoint, HandoffInjectionPath};
@@ -1391,6 +1391,13 @@ fn is_running_project_command(
     is_long_running_and_user_controlled: bool,
 ) -> bool {
     !has_cli_agent_session && is_long_running_and_user_controlled
+}
+
+/// Why a tab's agent wants the user.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TabAgentAttention {
+    NeedsInput,
+    UnreadFinished,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -13270,46 +13277,63 @@ impl Workspace {
         }
     }
 
-    /// Indices (in stable tab order) of tabs whose focused pane's agent is waiting on the user,
-    /// per the same attention-badge derivation the tab rows render. Shared by the cycling action
-    /// and the vertical-tabs "N waiting" chip so the two surfaces can't drift.
-    pub(crate) fn agent_attention_tab_indices(&self, ctx: &AppContext) -> Vec<usize> {
+    /// Tabs whose agent is blocked on a question or approval: the sidebar's amber count.
+    pub(crate) fn agent_needs_input_tab_indices(&self, ctx: &AppContext) -> Vec<usize> {
         agent_attention::attention_tab_indices(
-            self.tabs
-                .iter()
-                .map(|tab| Self::tab_needs_agent_attention(tab, ctx)),
+            self.tabs.iter().map(|tab| {
+                Self::tab_agent_attention(tab, ctx) == Some(TabAgentAttention::NeedsInput)
+            }),
         )
     }
 
-    /// Whether the tab's focused pane has an agent waiting on the user: one blocked on a question
-    /// or approval, or a CLI-agent turn that finished on a terminal the user is not viewing.
-    fn tab_needs_agent_attention(tab: &TabData, ctx: &AppContext) -> bool {
-        let Some(view) = tab.pane_group.as_ref(ctx).focused_session_view(ctx) else {
-            return false;
-        };
+    /// Where ⌘⌥A goes next: agents waiting on you first, then finished turns not yet looked at.
+    pub(crate) fn agent_attention_tab_indices(&self, ctx: &AppContext) -> Vec<usize> {
+        let attention = self
+            .tabs
+            .iter()
+            .map(|tab| Self::tab_agent_attention(tab, ctx))
+            .collect::<Vec<_>>();
+        let needs_input = agent_attention::attention_tab_indices(
+            attention
+                .iter()
+                .map(|kind| *kind == Some(TabAgentAttention::NeedsInput)),
+        );
+        if !needs_input.is_empty() {
+            return needs_input;
+        }
+        agent_attention::attention_tab_indices(attention.iter().map(Option::is_some))
+    }
+
+    /// What the tab's focused agent wants from the user, if anything. Neither answer depends on
+    /// which tab is active, so counts built from it hold steady while the user moves around.
+    fn tab_agent_attention(tab: &TabData, ctx: &AppContext) -> Option<TabAgentAttention> {
+        let view = tab.pane_group.as_ref(ctx).focused_session_view(ctx)?;
         let terminal_view = view.as_ref(ctx);
-        let Some(variant) = terminal_view_agent_icon_variant(terminal_view, ctx) else {
-            return false;
-        };
-        match variant {
+        match terminal_view_agent_icon_variant(terminal_view, ctx)? {
             IconWithStatusVariant::CLIAgent { status, .. } => match status {
-                Some(ConversationStatus::Blocked { .. }) => true,
-                Some(ConversationStatus::Success) => {
-                    active_focused_terminal_id(ctx) != Some(terminal_view.id())
+                Some(ConversationStatus::Blocked { .. }) => Some(TabAgentAttention::NeedsInput),
+                _ if AgentNotificationsModel::as_ref(ctx)
+                    .notifications()
+                    .has_unread_completed_project_cli_agent_for_terminal_view(
+                        terminal_view.id(),
+                    ) =>
+                {
+                    Some(TabAgentAttention::UnreadFinished)
                 }
-                _ => false,
+                _ => None,
             },
             IconWithStatusVariant::OzAgent { status, .. } => {
                 matches!(status, Some(ConversationStatus::Blocked { .. }))
+                    .then_some(TabAgentAttention::NeedsInput)
             }
             IconWithStatusVariant::Neutral { .. } | IconWithStatusVariant::CustomAvatar { .. } => {
-                false
+                None
             }
         }
     }
 
-    /// Moves focus to the next tab whose agent is waiting for input, starting after the active
-    /// tab and wrapping around. No-op when no agent is waiting.
+    /// Moves focus to the next tab whose agent wants the user (waiting first, then unread
+    /// finished turns), starting after the active tab and wrapping around. No-op when none do.
     pub fn focus_next_agent_attention(&mut self, ctx: &mut ViewContext<Self>) {
         let waiting = self.agent_attention_tab_indices(ctx);
         if let Some(index) =
