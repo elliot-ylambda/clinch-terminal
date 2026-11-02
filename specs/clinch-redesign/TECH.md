@@ -5,6 +5,44 @@ Implements [PRODUCT.md](./PRODUCT.md).
 - **Token source of truth until Phase 0 lands:** `web/design-prototype/src/tokens.css`.
 - **After Phase 0:** `crates/warp_core/src/ui/tokens.rs`.
 
+## Status
+
+What landed on branch `clinch-redesign`, and how it departs from the phases below. The scale itself
+moved after the first native build read as "still kinda looks the same": radii are 8/12/16, the
+frame sits at an 8% blend (not 2.5%), the card inset is 10px, and the title bar is 44px.
+
+**Landed**
+- Phase 0 in full, except that the rate-limited tab state reads `session_context.stop_reason`, which
+  was already on the session model.
+- Phase 1: tokens on `UiBuilder`, `ActionButton`, the component library, menus, toasts and both dialog
+  styles. `script/check-ui-literals` runs in the gate.
+- The radius codemod from Phase 7, moved up to Phase 1 because it is the sharp-edges fix itself.
+- Phase 2: frame, terminal and split cards, project pills, Remote Control icon, usage meters, Update pill.
+- Phase 3: one-line rows, restoring state, details card delay, section headers, foot links with
+  popovers. The options popup and the summary and compact modes are deleted, as is `attention_pulse`.
+- Phase 4: floating shell input, blocks without dividers or the failed bar, one-row agent footer.
+- Phase 6, partly: one sidebar with General first, card rows, Esc closes, Settings takes no sidebar row,
+  Cloud platform gated, plugin and subshell strings renamed.
+
+**Not landed**
+- Usage and Remote Control popovers with the new content; Remote Control and the usage panel keep
+  their existing click targets and panel layout.
+- The gear menu's PRODUCT §12 item list.
+- The "! N" button cycles to the next waiting session rather than filtering the list.
+- Sidebar settings beyond the details card: density, branch visibility, PR/diff badges.
+- Grouped sections in More, and icon-only chips in narrow panes (they show fewer chips instead).
+- One banner style, including the plugin chip as a one-time banner (it sits under More for now).
+- Phase 5: palette scope pills, Resource Center deletion.
+- Phase 6: theme grid and theme chooser deletion, footer-button editor in Settings, Remote Control
+  checklist, recorder states, AI-only row gating, the remaining Warp strings.
+- Phase 7: Roboto, the remaining `ColorU::new` allowlist, the prototype.
+- Merging the duplicate tooltip and dialog implementations. They draw the same now, so this is
+  only cleanup.
+
+**Checking native builds:** `test_redesign_screens`, `test_redesign_screens_paper` and
+`test_redesign_agent_screens` in `crates/integration` save PNGs from an isolated window and profile.
+The agent one uses a stand-in `claude`, so it shows the footer and glyph but no live hook states.
+
 ## What exists today
 
 - **Theme:** `WarpTheme` has 8 fields (`crates/warp_core/src/ui/theme/mod.rs:586`).

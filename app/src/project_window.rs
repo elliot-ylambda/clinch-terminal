@@ -5,14 +5,14 @@ use pathfinder_geometry::rect::RectF as GeometryRect;
 use pathfinder_geometry::vector::{vec2f, Vector2F};
 use uuid::Uuid;
 use warp_core::ui::theme::Fill;
-use warp_core::ui::tokens::StatusKind;
+use warp_core::ui::tokens::{corners_lg, StatusKind};
 use warpui::accessibility::{AccessibilityContent, ActionAccessibilityContent, WarpA11yRole};
 use warpui::color::ColorU;
 use warpui::elements::{
     Align, Border, ChildAnchor, ClippedScrollStateHandle, ClippedScrollable, ConstrainedBox,
-    Container, CornerRadius, CrossAxisAlignment, Draggable, DraggableState, DropShadow, Empty,
-    Flex, Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning, Padding,
-    ParentAnchor, ParentElement, ParentOffsetBounds, Radius, Rect, SavePosition, ScrollTarget,
+    Container, CornerRadius, CrossAxisAlignment, Draggable, DraggableState, Empty, Flex, Hoverable,
+    MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning, Padding, ParentAnchor,
+    ParentElement, ParentOffsetBounds, Radius, Rect, SavePosition, ScrollTarget,
     ScrollToPositionMode, ScrollbarWidth, Shrinkable, Stack, Text,
 };
 use warpui::fonts::{Properties, Weight};
@@ -204,7 +204,7 @@ fn render_project_agent_hover_card(
     appearance: &Appearance,
 ) -> Box<dyn Element> {
     let theme = appearance.theme();
-    let background = theme.tooltip_background();
+    let background = appearance.tokens().surface_overlay;
     let background_fill = Fill::Solid(background);
     let main_text_color = theme.main_text_color(background_fill).into_solid();
     let sub_text_color = theme.sub_text_color(background_fill).into_solid();
@@ -354,11 +354,11 @@ fn render_project_agent_hover_card(
             .with_background(background)
             .with_border(
                 Border::all(PROJECT_AGENT_HOVER_CARD_BORDER_WIDTH)
-                    .with_border_fill(theme.outline()),
+                    .with_border_fill(Fill::Solid(appearance.tokens().hairline)),
             )
-            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
+            .with_corner_radius(corners_lg())
             .with_padding(Padding::uniform(PROJECT_AGENT_HOVER_CARD_PADDING))
-            .with_drop_shadow(DropShadow::default())
+            .with_drop_shadow(appearance.tokens().overlay_shadow())
             .finish(),
     )
     .with_width(PROJECT_AGENT_HOVER_CARD_WIDTH)

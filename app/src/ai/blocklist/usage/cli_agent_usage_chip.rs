@@ -111,7 +111,7 @@ pub fn render_cli_agent_usage_panel(
         turn_on_mouse_state,
     } = mouse_states;
     let theme = appearance.theme();
-    let bg = theme.surface_2();
+    let bg = Fill::Solid(appearance.tokens().surface_overlay);
     let main = theme.main_text_color(bg);
     let sub = theme.sub_text_color(bg);
     let now = Utc::now();
@@ -217,7 +217,10 @@ pub fn render_cli_agent_usage_panel(
             .with_vertical_padding(12.)
             .with_horizontal_padding(PANEL_H_PADDING * scale)
             .with_background(bg)
-            .with_border(Border::all(1.).with_border_fill(theme.accent()))
+            .with_border(
+                Border::all(1.).with_border_fill(Fill::Solid(appearance.tokens().hairline)),
+            )
+            .with_drop_shadow(appearance.tokens().overlay_shadow())
             .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .finish(),
     )
