@@ -8,7 +8,7 @@ use warpui::{AppContext, SingletonEntity};
 
 use super::EnforceMinimumContrast as EnforceMinimumContrastEnum;
 
-pub const DEFAULT_MONOSPACE_FONT_NAME: &str = "Hack";
+pub const DEFAULT_MONOSPACE_FONT_NAME: &str = "JetBrains Mono";
 pub const DEFAULT_MONOSPACE_FONT_SIZE: f32 = 13.0;
 pub const DEFAULT_MONOSPACE_FONT_WEIGHT: Weight = Weight::Normal;
 

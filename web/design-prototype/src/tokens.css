@@ -1,0 +1,165 @@
+/*
+ * Soft Graphite design tokens.
+ *
+ * This file is the source of truth the Rust port mirrors (see specs/clinch-redesign/TECH.md).
+ * Components use only these variables: no literal colors, radii, or spacing elsewhere.
+ * Surfaces are separated by shade, never by outlines; the hairline exists only for the
+ * few places that need a divider inside one surface.
+ */
+
+:root,
+[data-theme="ink"] {
+  color-scheme: dark;
+
+  /* Surfaces, darkest to lightest. */
+  --surface-terminal: #0d0e11; /* terminal and editor content */
+  --surface-chrome: #121318; /* window frame, sidebar, title bar */
+  --surface-field: #1a1c22; /* inputs, chips, idle buttons */
+  --surface-raised: #22252d; /* selected row, active pill, menus */
+  --surface-hover: #1a1c22;
+  --surface-overlay: #22252d; /* popovers, menus, palette */
+  --surface-scrim: rgb(5 6 8 / 0.62);
+  --hairline: rgb(255 255 255 / 0.06);
+  --control-track: #2c2f38; /* off switches, sliders, meter tracks */
+
+  /* Text. All three pass 4.5:1 on chrome and terminal surfaces. */
+  --text-1: #e7e9ee;
+  --text-2: #a9aeba;
+  --text-3: #8a90a0;
+  --text-on-accent: #121318;
+
+  /* One accent, used for the cursor, focus, primary buttons, and the update dot. */
+  --accent: #c5f06b;
+  --accent-soft: rgb(197 240 107 / 0.12);
+  --focus-ring: #c5f06b;
+
+  /* Status. "Needs you" also changes shape (the ! glyph), never color alone. */
+  --status-working: #5bd08a;
+  --status-needs: #f2b04b;
+  --status-done: #6fa8ff;
+  --status-limit: #f08080;
+  --status-working-soft: rgb(91 208 138 / 0.14);
+  --status-needs-soft: rgb(242 176 75 / 0.14);
+  --status-done-soft: rgb(111 168 255 / 0.14);
+  --status-limit-soft: rgb(240 128 128 / 0.14);
+
+  /* Provider glyph tints when a row is idle. */
+  --provider-claude: #e8875f;
+  --provider-codex: #c9ced8;
+
+  /* Section colors a user can pick. */
+  --section-lime: #a8e05f;
+  --section-coral: #f08a7e;
+  --section-blue: #6fa8ff;
+  --section-amber: #e8c15a;
+  --section-violet: #b49cff;
+  --section-teal: #5ccfc4;
+  --section-pink: #f29bc8;
+  --section-gray: #8a90a0;
+
+  /* Terminal syntax roles used in agent transcripts. */
+  --term-text: #d3d6dd;
+  --term-dim: #7d8494;
+  --term-code: #b9a4ff;
+  --term-error: #f08080;
+  --term-ok: #5bd08a;
+
+  --shadow-overlay: 0 18px 48px rgb(0 0 0 / 0.45), 0 0 0 1px var(--hairline);
+  --shadow-drag: 0 12px 32px rgb(0 0 0 / 0.5), 0 0 0 1px var(--hairline);
+}
+
+[data-theme="paper"] {
+  color-scheme: light;
+
+  --surface-terminal: #ffffff;
+  --surface-chrome: #f3f3f1;
+  --surface-field: #e9e9e6;
+  --surface-raised: #ffffff;
+  --surface-hover: #ebebe8;
+  --surface-overlay: #ffffff;
+  --surface-scrim: rgb(20 20 18 / 0.28);
+  --hairline: rgb(0 0 0 / 0.08);
+  --control-track: #d6d6d2;
+
+  --text-1: #1b1c1f;
+  --text-2: #4f525a;
+  --text-3: #62666f; /* 4.7:1 on field, the lightest surface it sits on */
+  --text-on-accent: #ffffff;
+
+  --accent: #4f7d0f;
+  --accent-soft: rgb(79 125 15 / 0.12);
+  --focus-ring: #4f7d0f;
+
+  --status-working: #1d8a4d;
+  --status-needs: #a8650a;
+  --status-done: #2a64c9;
+  --status-limit: #c23b3b;
+  --status-working-soft: rgb(29 138 77 / 0.12);
+  --status-needs-soft: rgb(168 101 10 / 0.12);
+  --status-done-soft: rgb(42 100 201 / 0.12);
+  --status-limit-soft: rgb(194 59 59 / 0.12);
+
+  --provider-claude: #c2562c;
+  --provider-codex: #4f525a;
+
+  --section-lime: #5f9a14;
+  --section-coral: #d0543f;
+  --section-blue: #2a64c9;
+  --section-amber: #b07f0c;
+  --section-violet: #7a5cd6;
+  --section-teal: #1d8f86;
+  --section-pink: #c24d8a;
+  --section-gray: #6b6f78;
+
+  --term-text: #2a2c31;
+  --term-dim: #6b6f78;
+  --term-code: #6a49c9;
+  --term-error: #c23b3b;
+  --term-ok: #1d8a4d;
+
+  --shadow-overlay: 0 18px 48px rgb(0 0 0 / 0.14), 0 0 0 1px var(--hairline);
+  --shadow-drag: 0 12px 32px rgb(0 0 0 / 0.16), 0 0 0 1px var(--hairline);
+}
+
+:root {
+  /* Geometry: one radius scale. */
+  --radius-sm: 6px; /* chips, small buttons, menu items, section headers */
+  --radius-md: 10px; /* tab rows, fields, pills, buttons */
+  --radius-lg: 14px; /* panels, menus, dialogs, the terminal card */
+
+  /* Spacing: a 2px base, mostly multiples of 4. */
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 6px;
+  --space-4: 8px;
+  --space-5: 10px;
+  --space-6: 12px;
+  --space-7: 16px;
+  --space-8: 20px;
+  --space-9: 24px;
+  --space-10: 32px;
+
+  /* Sizes. */
+  --titlebar-height: 44px;
+  --sidebar-width: 300px;
+  --row-height: 32px;
+  --control-height: 30px;
+  --field-height: 32px;
+  --card-inset: 8px;
+
+  /* Type. */
+  --font-ui: "Inter Variable", "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-md: 13px;
+  --text-lg: 15px;
+  --text-xl: 20px;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --duration-fast: 120ms;
+  --duration: 180ms;
+}

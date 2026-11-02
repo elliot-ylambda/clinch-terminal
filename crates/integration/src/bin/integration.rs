@@ -475,6 +475,7 @@ fn register_tests() -> HashMap<&'static str, BoxedBuilderFn> {
 
     // Video recording test (manual only)
     register_test!(test_video_recording);
+    register_test!(test_redesign_screens);
 
     // Rich Input Ctrl+Enter submit toggle (issue #11588)
     // Full-stack wiring guard: toggle ON → Enter inserts newline, Ctrl+Enter submits.

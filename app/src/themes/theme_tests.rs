@@ -514,3 +514,59 @@ fn clinch_themes_are_registered_and_default() {
     assert_eq!(ThemeKind::ClinchInk.to_string(), "Clinch Ink");
     assert_eq!(ThemeKind::ClinchPaper.to_string(), "Clinch Paper");
 }
+
+#[test]
+fn every_bundled_theme_meets_the_token_contrast_floors() {
+    use warp_core::ui::color::contrast::contrast_ratio;
+    use warp_core::ui::tokens::{StatusKind, Tokens};
+
+    for (kind, theme) in &WarpThemeConfig::default().theme_map {
+        let tokens = Tokens::new(theme);
+        let background = theme.background().into_solid();
+        // The surface as the GPU composites it. `Blend` rounds its ratio up, which is not what
+        // ends up on screen.
+        let over = |top: ColorU| {
+            let alpha = top.a as f32 / 255.;
+            let channel = |bottom: u8, top: u8| {
+                (bottom as f32 * (1. - alpha) + top as f32 * alpha).round() as u8
+            };
+            ColorU::new(
+                channel(background.r, top.r),
+                channel(background.g, top.g),
+                channel(background.b, top.b),
+                0xFF,
+            )
+        };
+        let surfaces = [
+            ("terminal", background),
+            ("chrome", over(tokens.surface_chrome)),
+            ("field", over(tokens.surface_field)),
+            ("raised", over(tokens.surface_raised)),
+        ];
+        for (surface_name, surface) in surfaces {
+            for (tier, text) in [
+                ("text_1", tokens.text_1),
+                ("text_2", tokens.text_2),
+                ("text_3", tokens.text_3),
+            ] {
+                let ratio = contrast_ratio(text, surface);
+                assert!(
+                    ratio >= 4.5,
+                    "{kind}: {tier} on {surface_name} is only {ratio:.2}:1"
+                );
+            }
+        }
+        for kind_of_status in [
+            StatusKind::Working,
+            StatusKind::NeedsYou,
+            StatusKind::Done,
+            StatusKind::RateLimited,
+        ] {
+            let ratio = contrast_ratio(tokens.status(kind_of_status), surfaces[1].1);
+            assert!(
+                ratio >= 3.0,
+                "{kind}: {kind_of_status:?} on chrome is only {ratio:.2}:1"
+            );
+        }
+    }
+}

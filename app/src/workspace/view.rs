@@ -81,6 +81,7 @@ use warp_core::ui::color::coloru_with_opacity;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::phenomenon::PhenomenonStyle;
 use warp_core::ui::theme::Fill;
+use warp_core::ui::tokens::{StatusKind, Tokens};
 use warp_core::ui::Icon;
 use warp_core::user_preferences::GetUserPreferences as _;
 use warp_editor::editor::NavigationKey;
@@ -467,7 +468,7 @@ use crate::ui_components::color_dot::render_color_dot;
 use crate::ui_components::icon_with_status::IconWithStatusVariant;
 use crate::ui_components::red_notification_dot::RedNotificationDot;
 use crate::ui_components::window_focus_dimming::WindowFocusDimming;
-use crate::ui_components::{blended_colors, icons, CLINCH_LOGO_GREEN};
+use crate::ui_components::{blended_colors, icons};
 use crate::undo_close::UndoCloseStack;
 #[cfg(target_family = "wasm")]
 use crate::uri::browser_url_handler::{parse_current_url, update_browser_url};
@@ -1404,6 +1405,8 @@ pub(crate) struct ProjectCliAgentCounts {
 pub(crate) enum ProjectCliAgentActivity {
     /// The agent is blocked on a question, a tool approval, or a plan approval.
     NeedsInput,
+    /// The agent stopped at a plan limit and is waiting for it to reset.
+    RateLimited,
     /// The agent has an unread notification other than a completed turn.
     NeedsAttention,
     Done,
@@ -1415,6 +1418,7 @@ impl ProjectCliAgentActivity {
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::NeedsInput => "Needs input",
+            Self::RateLimited => "Rate limited",
             Self::NeedsAttention => "Needs attention",
             Self::Done => "Done",
             Self::Working => "Working",
@@ -1425,11 +1429,28 @@ impl ProjectCliAgentActivity {
     fn priority(self) -> u8 {
         match self {
             Self::NeedsInput => 0,
-            Self::NeedsAttention => 1,
-            Self::Done => 2,
-            Self::Working => 3,
-            Self::Idle => 4,
+            Self::RateLimited => 1,
+            Self::NeedsAttention => 2,
+            Self::Done => 3,
+            Self::Working => 4,
+            Self::Idle => 5,
         }
+    }
+
+    /// The status color family for this activity. Idle has none and draws as quiet text.
+    pub(crate) fn status_kind(self) -> Option<StatusKind> {
+        match self {
+            Self::NeedsInput => Some(StatusKind::NeedsYou),
+            Self::RateLimited => Some(StatusKind::RateLimited),
+            Self::NeedsAttention | Self::Done => Some(StatusKind::Done),
+            Self::Working => Some(StatusKind::Working),
+            Self::Idle => None,
+        }
+    }
+
+    pub(crate) fn color(self, tokens: &Tokens) -> ColorU {
+        self.status_kind()
+            .map_or(tokens.text_3, |kind| tokens.status(kind))
     }
 }
 
@@ -1443,6 +1464,7 @@ pub(crate) struct ProjectCliAgentSummary {
 fn project_cli_agent_activity(
     is_working: bool,
     is_blocked: bool,
+    is_rate_limited: bool,
     was_interrupted_by_user: bool,
     has_unread_completed: bool,
     has_other_unread: bool,
@@ -1451,6 +1473,8 @@ fn project_cli_agent_activity(
         ProjectCliAgentActivity::Working
     } else if is_blocked {
         ProjectCliAgentActivity::NeedsInput
+    } else if is_rate_limited {
+        ProjectCliAgentActivity::RateLimited
     } else if has_other_unread {
         ProjectCliAgentActivity::NeedsAttention
     } else if was_interrupted_by_user || has_unread_completed {
@@ -1509,6 +1533,7 @@ fn remote_control_header_presentation(
 fn remote_control_button_styles(
     font_family_id: FamilyId,
     muted_color: ColorU,
+    accent: ColorU,
 ) -> (UiComponentStyles, UiComponentStyles) {
     let default_styles = UiComponentStyles {
         font_family_id: Some(font_family_id),
@@ -1516,7 +1541,7 @@ fn remote_control_button_styles(
         font_size: Some(REMOTE_CONTROL_BUTTON_FONT_SIZE),
         font_weight: Some(Weight::Semibold),
         padding: Some(Coords::default().top(3.).bottom(3.).left(7.).right(7.)),
-        border_color: Some(CLINCH_LOGO_GREEN.into()),
+        border_color: Some(accent.into()),
         border_width: Some(1.),
         border_radius: Some(CornerRadius::with_all(Radius::Percentage(50.))),
         background: Some(ColorU::transparent_black().into()),
@@ -23454,6 +23479,7 @@ impl Workspace {
                 let activity = project_cli_agent_activity(
                     terminal_view.cli_agent_shows_working(session),
                     matches!(session.status, CLIAgentSessionStatus::Blocked { .. }),
+                    session.session_context.stop_reason.is_some(),
                     session.turn_interrupted_by_user,
                     has_unread_completed,
                     has_other_unread,
@@ -23877,8 +23903,11 @@ impl Workspace {
         let presentation = remote_control_header_presentation(None);
 
         let muted_color = theme.sub_text_color(theme.background()).into_solid();
-        let (default_styles, interactive_styles) =
-            remote_control_button_styles(appearance.ui_font_family(), muted_color);
+        let (default_styles, interactive_styles) = remote_control_button_styles(
+            appearance.ui_font_family(),
+            muted_color,
+            appearance.tokens().accent,
+        );
         let mut button = appearance.ui_builder().button_with_custom_styles(
             ButtonVariant::Text,
             self.mouse_states.remote_control_icon.clone(),
@@ -24220,14 +24249,16 @@ impl Workspace {
                                 appearance.ui_font_family(),
                                 PILL_FONT_SIZE,
                             )
-                            .with_color(CLINCH_LOGO_GREEN)
+                            .with_color(appearance.tokens().accent)
                             .finish(),
                         )
                         .with_main_axis_size(MainAxisSize::Max)
                         .with_main_axis_alignment(MainAxisAlignment::Center)
                         .finish(),
                 )
-                .with_border(Border::all(1.).with_border_fill(Fill::Solid(CLINCH_LOGO_GREEN)))
+                .with_border(
+                    Border::all(1.).with_border_fill(Fill::Solid(appearance.tokens().accent)),
+                )
                 .with_corner_radius(CornerRadius::with_all(Radius::Percentage(50.)))
                 .with_uniform_margin(4.)
                 .with_uniform_padding(4.)

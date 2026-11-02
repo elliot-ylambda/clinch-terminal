@@ -17,6 +17,7 @@ use warp_core::send_telemetry_from_ctx;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::WarpTheme;
+use warp_core::ui::tokens::{StatusKind, Tokens};
 use warp_multi_agent_api::response_event::stream_finished;
 use warp_multi_agent_api::response_event::stream_finished::TokenUsage;
 use warp_multi_agent_api::{self as api};
@@ -72,7 +73,6 @@ use crate::terminal::model::block::{
     AgentInteractionMetadata, AgentViewVisibility, BlockId, SerializedAIMetadata, SerializedBlock,
 };
 use crate::ui_components::icons::Icon;
-use crate::ui_components::CLINCH_ATTENTION_AMBER;
 use crate::workspaces::user_profiles::UserProfileWithUID;
 use crate::{BlocklistAIHistoryModel, GlobalResourceHandlesProvider};
 
@@ -4338,7 +4338,10 @@ impl ConversationStatus {
             ConversationStatus::Cancelled => (Icon::StopFilled, internal_colors::neutral_5(theme)),
             // "Needs your input": a fixed amber "!" so it never reads as a stop or blends into
             // a theme yellow near the working green.
-            ConversationStatus::Blocked { .. } => (Icon::AlertCircle, CLINCH_ATTENTION_AMBER),
+            ConversationStatus::Blocked { .. } => (
+                Icon::AlertCircle,
+                Tokens::new(theme).status(StatusKind::NeedsYou),
+            ),
             ConversationStatus::WaitingForEvents => (
                 Icon::ClockLoader,
                 match color_style {

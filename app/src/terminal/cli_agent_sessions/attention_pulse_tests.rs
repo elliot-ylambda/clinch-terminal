@@ -1,4 +1,5 @@
 use warp_core::channel::{Channel, ChannelConfig, ChannelState};
+use warp_core::ui::appearance::Appearance;
 use warp_core::AppId;
 use warpui::elements::Fill;
 use warpui::platform::WindowStyle;
@@ -9,7 +10,6 @@ use crate::root_view::{NewWorkspaceSource, RootView};
 use crate::terminal::cli_agent_sessions::tests::idle_test_session;
 use crate::terminal::cli_agent_sessions::{CLIAgentSessionStatus, CLIAgentSessionsModel};
 use crate::terminal::CLIAgent;
-use crate::ui_components::CLINCH_ATTENTION_AMBER;
 use crate::GlobalResourceHandles;
 
 fn set_status(app: &mut App, terminal: EntityId, status: CLIAgentSessionStatus) {
@@ -117,6 +117,11 @@ fn horizontal_project_badge_repaints_on_attention_pulse() {
         // the project view. The mock asset provider does not supply fonts for its text glyph.
         // A missing subscription leaves this border at full opacity after the pulse ticks.
         let badge_opacity = |app: &App| {
+            let amber = app.read(|ctx| {
+                Appearance::as_ref(ctx)
+                    .tokens()
+                    .status(warp_core::ui::tokens::StatusKind::NeedsYou)
+            });
             let presenter = app.presenter(window_id).unwrap();
             let presenter = presenter.borrow();
             let opacity = presenter
@@ -128,9 +133,7 @@ fn horizontal_project_badge_repaints_on_attention_pulse() {
                     let Fill::Solid(color) = rect.border.color else {
                         return None;
                     };
-                    (color.r == CLINCH_ATTENTION_AMBER.r
-                        && color.g == CLINCH_ATTENTION_AMBER.g
-                        && color.b == CLINCH_ATTENTION_AMBER.b)
+                    (color.r == amber.r && color.g == amber.g && color.b == amber.b)
                         .then_some(color.a)
                 })
                 .expect("horizontal project header should show an amber input badge");

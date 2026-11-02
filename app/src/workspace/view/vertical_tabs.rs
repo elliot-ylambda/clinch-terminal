@@ -17,6 +17,7 @@ use warp_core::ui::color::blend::Blend;
 use warp_core::ui::color::coloru_with_opacity;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::{AnsiColorIdentifier, Fill as WarpThemeFill, WarpTheme};
+use warp_core::ui::tokens::{StatusKind, Tokens};
 use warp_core::ui::Icon as WarpIcon;
 use warp_util::local_or_remote_path::LocalOrRemotePath;
 use warpui::elements::{
@@ -85,7 +86,6 @@ use crate::ui_components::agent_icon::{
 use crate::ui_components::buttons::{combo_inner_button, icon_button_with_color};
 use crate::ui_components::icon_with_status::{render_icon_with_status, IconWithStatusVariant};
 use crate::ui_components::icons::Icon as UiIcon;
-use crate::ui_components::{CLINCH_ATTENTION_AMBER, CLINCH_DONE_BLUE, CLINCH_LOGO_GREEN};
 use crate::util::bindings::keybinding_name_to_display_string;
 use crate::util::color::Opacity;
 use crate::workspace::action::{NewSessionMenuAnchor, WorkspaceAction};
@@ -378,7 +378,7 @@ fn render_pane_icon_with_status(
         return icon;
     };
 
-    let dot_color = vertical_tab_activity_dot_color(activity, theme);
+    let dot_color = activity.color(Appearance::as_ref(app).tokens());
     let (dot_icon, dot_color, dot_size) = if activity == ProjectCliAgentActivity::NeedsInput {
         (
             WarpIcon::AlertCircle,
@@ -426,15 +426,6 @@ fn render_pane_icon_with_status(
         .finish()
 }
 
-fn vertical_tab_activity_dot_color(activity: ProjectCliAgentActivity, theme: &WarpTheme) -> ColorU {
-    match activity {
-        ProjectCliAgentActivity::Working => CLINCH_LOGO_GREEN,
-        ProjectCliAgentActivity::NeedsInput => CLINCH_ATTENTION_AMBER,
-        ProjectCliAgentActivity::Done | ProjectCliAgentActivity::NeedsAttention => CLINCH_DONE_BLUE,
-        ProjectCliAgentActivity::Idle => theme.disabled_text_color(theme.background()).into_solid(),
-    }
-}
-
 /// Returns the same Claude/Codex activity classification used by the project-tab hover card.
 /// Working follows the title glyph, so the dot never disagrees with the title beside it.
 /// Ambient runs keep their cloud/status treatment, and disabling agent status on tabs preserves
@@ -466,6 +457,7 @@ fn vertical_tab_cli_agent_activity(
     Some(project_cli_agent_activity(
         terminal_view.cli_agent_shows_working(session),
         matches!(session.status, CLIAgentSessionStatus::Blocked { .. }),
+        session.session_context.stop_reason.is_some(),
         session.turn_interrupted_by_user,
         notifications.has_unread_completed_project_cli_agent_for_terminal_view(terminal_view.id()),
         notifications.has_other_unread_project_activity_for_terminal_view(terminal_view.id()),
@@ -489,8 +481,14 @@ fn needs_input_card_border(
     is_drag_target: bool,
     app: &AppContext,
 ) -> Option<ThemeFill> {
-    (has_agent_needing_input && !is_active && !is_drag_target)
-        .then(|| ThemeFill::Solid(attention_pulse_color(CLINCH_ATTENTION_AMBER, app)))
+    (has_agent_needing_input && !is_active && !is_drag_target).then(|| {
+        ThemeFill::Solid(attention_pulse_color(
+            Appearance::as_ref(app)
+                .tokens()
+                .status(StatusKind::NeedsYou),
+            app,
+        ))
+    })
 }
 
 /// A top-level tab card always has an outline. A tab nested in a group is framed by the group's
@@ -1969,9 +1967,9 @@ fn render_control_bar(
         .finish()
 }
 
-fn section_accent_border_fill() -> ThemeFill {
+fn section_accent_border_fill(tokens: &Tokens) -> ThemeFill {
     ThemeFill::Solid(coloru_with_opacity(
-        CLINCH_LOGO_GREEN,
+        tokens.accent,
         SECTION_ACCENT_BORDER_OPACITY,
     ))
 }
@@ -1984,14 +1982,15 @@ fn render_create_section_button(
     let theme = appearance.theme();
     let font_family = appearance.ui_font_family();
     let main_text = theme.main_text_color(theme.background());
-    let border_fill = section_accent_border_fill();
+    let accent = appearance.tokens().accent;
+    let border_fill = section_accent_border_fill(appearance.tokens());
 
     let button = Hoverable::new(
         state.create_section_mouse_state.clone(),
         move |mouse_state| {
             let icon = ConstrainedBox::new(
                 WarpIcon::Plus
-                    .to_warpui_icon(WarpThemeFill::Solid(CLINCH_LOGO_GREEN))
+                    .to_warpui_icon(WarpThemeFill::Solid(accent))
                     .finish(),
             )
             .with_width(14.)
@@ -2010,10 +2009,7 @@ fn render_create_section_button(
                 .with_child(label)
                 .finish();
             let background = if mouse_state.is_hovered() {
-                ThemeFill::Solid(coloru_with_opacity(
-                    CLINCH_LOGO_GREEN,
-                    SECTION_ACCENT_HOVER_OPACITY,
-                ))
+                ThemeFill::Solid(coloru_with_opacity(accent, SECTION_ACCENT_HOVER_OPACITY))
             } else {
                 ThemeFill::Solid(ColorU::transparent_black())
             };
@@ -2899,14 +2895,14 @@ fn render_workspace_tasks(
         .with_border(
             Border::new(1.)
                 .with_sides(true, false, false, false)
-                .with_border_fill(section_accent_border_fill()),
+                .with_border_fill(section_accent_border_fill(Appearance::as_ref(app).tokens())),
         )
         .finish();
 
     if resizable {
         Resizable::new(state.tasks_resizable_state.clone(), section)
             .with_dragbar_side(DragBarSide::Top)
-            .with_dragbar_color(section_accent_border_fill().into())
+            .with_dragbar_color(section_accent_border_fill(Appearance::as_ref(app).tokens()).into())
             .on_resize(|ctx, _| ctx.notify())
             .with_parent_bounds_callback(Box::new(|available_size| {
                 let max_height = available_size.y().max(0.);
@@ -4734,7 +4730,7 @@ fn title_indicator_color(kind: TitleIndicatorKind, theme: &WarpTheme) -> ColorU 
     match kind {
         // Unread/attention dots are always "done blue", never the theme accent: an accent that
         // resolves to lime would collide with the green working badge.
-        TitleIndicatorKind::Unread => CLINCH_DONE_BLUE,
+        TitleIndicatorKind::Unread => Tokens::new(theme).status(StatusKind::Done),
         TitleIndicatorKind::RunningCommand => {
             theme.disabled_text_color(theme.background()).into_solid()
         }
@@ -5832,7 +5828,7 @@ fn render_terminal_row_content(
     let first_line_element = if has_trailing {
         let mut trailing = Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center);
         if let Some(activity) = activity {
-            let color = vertical_tab_activity_dot_color(activity, theme);
+            let color = activity.color(appearance.tokens());
             let color = if activity == ProjectCliAgentActivity::NeedsInput {
                 attention_pulse_color(color, app)
             } else {

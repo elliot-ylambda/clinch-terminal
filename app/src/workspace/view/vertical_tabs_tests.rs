@@ -5,6 +5,8 @@ use pathfinder_geometry::vector::Vector2F;
 use warpui::elements::PositionedElementOffsetBounds;
 use warpui::{Element, EntityId};
 
+use warp_core::ui::tokens::{StatusKind, Tokens};
+
 use super::{
     automatic_worktree_toggle_tooltip, branch_label_display, coalesce_summary_branch_entries,
     code_detail_kind_label, compact_branch_subtitle_display, detail_sidecar_width_and_bounds,
@@ -19,8 +21,8 @@ use super::{
     tab_title_uses_header, terminal_command_status, terminal_kind_badge_label,
     terminal_primary_line_data, terminal_pull_request_badge_label, terminal_search_text_fragments,
     terminal_title_fallback_font, title_indicator_color, uses_outer_group_container,
-    vertical_tab_activity_dot_color, visible_pane_ids_for_detail_target, vtab_diff_stats_text,
-    AgentTabTextPreference, SummaryPaneKind, SummaryPaneKindIcons, TabCardState, TerminalAgentText,
+    visible_pane_ids_for_detail_target, vtab_diff_stats_text, AgentTabTextPreference,
+    SummaryPaneKind, SummaryPaneKindIcons, TabCardState, TerminalAgentText,
     TerminalPrimaryLineData, TerminalPrimaryLineFont, TitleIndicatorKind, VerticalTabsDetailTarget,
     VerticalTabsDetailTargetKind, VerticalTabsSummaryBranchEntry, VerticalTabsSummaryData,
     VerticalTabsSummaryPrimaryLabel, BOOKMARKED_SESSIONS_DEFAULT_COLOR,
@@ -32,10 +34,7 @@ use crate::pane_group::{PaneId, TerminalPaneId};
 use crate::safe_triangle::SafeTriangle;
 use crate::terminal::view::TerminalViewState;
 use crate::terminal::CLIAgent;
-use crate::ui_components::{
-    CLINCH_ATTENTION_AMBER, CLINCH_DONE_BLUE, CLINCH_LOGO_GREEN, CLINCH_SECTION_GREEN,
-};
-use crate::workspace::tab_group::{SectionColor, SECTION_COLOR_OPTIONS};
+use crate::workspace::tab_group::{SectionColor, CLINCH_SECTION_GREEN, SECTION_COLOR_OPTIONS};
 use crate::workspace::tab_settings::VerticalTabsDisplayGranularity;
 use crate::workspace::view::ProjectCliAgentActivity;
 
@@ -189,27 +188,29 @@ fn terminal_command_status_is_in_progress_only_while_command_is_running() {
 #[test]
 fn agent_activity_dots_match_project_tab_working_and_done_colors() {
     let theme = crate::themes::default_themes::dark_theme();
+    let tokens = Tokens::new(&theme);
 
     assert_eq!(
-        vertical_tab_activity_dot_color(ProjectCliAgentActivity::Working, &theme),
-        CLINCH_LOGO_GREEN
+        ProjectCliAgentActivity::Working.color(&tokens),
+        tokens.status(StatusKind::Working)
     );
     assert_eq!(
-        vertical_tab_activity_dot_color(ProjectCliAgentActivity::Done, &theme),
-        CLINCH_DONE_BLUE
+        ProjectCliAgentActivity::Done.color(&tokens),
+        tokens.status(StatusKind::Done)
     );
     assert_eq!(
-        vertical_tab_activity_dot_color(ProjectCliAgentActivity::NeedsAttention, &theme),
-        CLINCH_DONE_BLUE
+        ProjectCliAgentActivity::NeedsAttention.color(&tokens),
+        tokens.status(StatusKind::Done)
     );
     assert_eq!(
-        vertical_tab_activity_dot_color(ProjectCliAgentActivity::NeedsInput, &theme),
-        CLINCH_ATTENTION_AMBER
+        ProjectCliAgentActivity::NeedsInput.color(&tokens),
+        tokens.status(StatusKind::NeedsYou)
     );
     assert_eq!(
-        vertical_tab_activity_dot_color(ProjectCliAgentActivity::Idle, &theme),
-        theme.disabled_text_color(theme.background()).into_solid()
+        ProjectCliAgentActivity::RateLimited.color(&tokens),
+        tokens.status(StatusKind::RateLimited)
     );
+    assert_eq!(ProjectCliAgentActivity::Idle.color(&tokens), tokens.text_3);
 }
 
 /// Distance of a fill from the rail's background, summed over RGB. Direction-agnostic
@@ -298,7 +299,7 @@ fn ordinary_running_command_gets_muted_trailing_indicator() {
     );
     assert_eq!(
         title_indicator_color(TitleIndicatorKind::Unread, &theme),
-        CLINCH_DONE_BLUE
+        Tokens::new(&theme).status(StatusKind::Done)
     );
 }
 
@@ -1453,6 +1454,7 @@ fn summary_search_fragments_include_hidden_overflow_values() {
 #[test]
 fn needs_input_outline_pulses_only_on_background_cards() {
     warpui::App::test((), |app| async move {
+        app.add_singleton_model(|_| warp_core::ui::appearance::Appearance::mock());
         app.add_singleton_model(|_| {
             crate::terminal::cli_agent_sessions::CLIAgentSessionsModel::new()
         });

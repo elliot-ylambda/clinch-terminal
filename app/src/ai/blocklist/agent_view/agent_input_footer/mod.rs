@@ -108,7 +108,6 @@ use crate::terminal::view::TerminalAction;
 use crate::terminal::ShellLaunchData;
 use crate::terminal::{CLIAgent, TerminalModel};
 use crate::ui_components::icons::Icon;
-use crate::ui_components::CLINCH_LOGO_GREEN;
 use crate::view_components::action_button::{
     ActionButton, ActionButtonTheme, AdjoinedSide, ButtonSize, KeystrokeSource, NakedTheme,
     TooltipAlignment,
@@ -446,7 +445,6 @@ impl AgentInputFooter {
         let fork_button = ctx.add_typed_action_view(|_ctx| {
             ActionButton::new("Fork in New Tab", AgentInputButtonTheme)
                 .with_icon(Icon::GitBranch)
-                .with_icon_color(CLINCH_LOGO_GREEN)
                 .with_tooltip("Fork this session into a new tab")
                 .with_size(cli_button_size)
                 .with_tooltip_alignment(TooltipAlignment::Left)
@@ -457,7 +455,6 @@ impl AgentInputFooter {
         let bookmark_conversation_button = ctx.add_typed_action_view(|_ctx| {
             ActionButton::new("Bookmark Session", AgentInputButtonTheme)
                 .with_icon(Icon::Bookmark)
-                .with_icon_color(CLINCH_LOGO_GREEN)
                 .with_tooltip("Save this conversation in Bookmarked sessions")
                 .with_size(cli_button_size)
                 .with_tooltip_alignment(TooltipAlignment::Left)
@@ -1654,7 +1651,6 @@ impl AgentInputFooter {
         Some(
             ActionButton::new(label, AgentInputButtonTheme)
                 .with_icon(Icon::SwitchHorizontal01)
-                .with_icon_color(CLINCH_LOGO_GREEN)
                 .with_size(ButtonSize::AgentInputButtonLarge)
                 .with_tooltip(tooltip)
                 .with_tooltip_alignment(TooltipAlignment::Left)
@@ -1860,7 +1856,6 @@ impl AgentInputFooter {
 
         ActionButton::new(label, AgentInputButtonTheme)
             .with_icon(Icon::Clock)
-            .with_icon_color(CLINCH_LOGO_GREEN)
             .with_size(ButtonSize::AgentInputButtonLarge)
             .with_tooltip(tooltip)
             .with_tooltip_alignment(TooltipAlignment::Left)

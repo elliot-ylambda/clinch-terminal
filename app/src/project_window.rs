@@ -4,6 +4,7 @@ use pathfinder_geometry::rect::RectF as GeometryRect;
 use pathfinder_geometry::vector::{vec2f, Vector2F};
 use uuid::Uuid;
 use warp_core::ui::theme::Fill;
+use warp_core::ui::tokens::StatusKind;
 use warpui::accessibility::{AccessibilityContent, ActionAccessibilityContent, WarpA11yRole};
 use warpui::elements::{
     Align, Border, ChildAnchor, ClippedScrollStateHandle, ClippedScrollable, ConstrainedBox,
@@ -30,7 +31,6 @@ use crate::terminal::cli_agent_sessions::attention_pulse::{
     attention_pulse_color, AgentAttentionPulse,
 };
 use crate::ui_components::icons::Icon;
-use crate::ui_components::{CLINCH_ATTENTION_AMBER, CLINCH_DONE_BLUE, CLINCH_LOGO_GREEN};
 use crate::util::bindings::{self, CustomAction};
 use crate::workspace::view::{
     ProjectCliAgentActivity, ProjectCliAgentCounts, ProjectCliAgentSummary, TransferredTab,
@@ -210,7 +210,6 @@ fn render_project_agent_hover_card(
     let background_fill = Fill::Solid(background);
     let main_text_color = theme.main_text_color(background_fill).into_solid();
     let sub_text_color = theme.sub_text_color(background_fill).into_solid();
-    let disabled_text_color = theme.disabled_text_color(background_fill).into_solid();
     let font_family = appearance.ui_font_family();
 
     let header = Flex::column()
@@ -273,14 +272,7 @@ fn render_project_agent_hover_card(
                         .finish()
                 })
                 .unwrap_or_else(|| Empty::new().finish());
-            let activity_color = match summary.activity {
-                ProjectCliAgentActivity::Working => CLINCH_LOGO_GREEN,
-                ProjectCliAgentActivity::NeedsInput => CLINCH_ATTENTION_AMBER,
-                ProjectCliAgentActivity::Done | ProjectCliAgentActivity::NeedsAttention => {
-                    CLINCH_DONE_BLUE
-                }
-                ProjectCliAgentActivity::Idle => disabled_text_color,
-            };
+            let activity_color = summary.activity.color(appearance.tokens());
             let metadata = Flex::row()
                 .with_main_axis_size(MainAxisSize::Min)
                 .with_cross_axis_alignment(CrossAxisAlignment::Center)
@@ -1628,6 +1620,7 @@ impl ProjectWindow {
         app: &AppContext,
     ) -> Box<dyn Element> {
         let theme = appearance.theme();
+        let tokens = appearance.tokens();
         let mut tabs = Flex::row()
             .with_main_axis_size(MainAxisSize::Min)
             .with_cross_axis_alignment(CrossAxisAlignment::Center);
@@ -1660,8 +1653,8 @@ impl ProjectWindow {
                 .iter()
                 .filter(|summary| summary.activity == ProjectCliAgentActivity::NeedsInput)
                 .count();
-            let needs_input_color =
-                (needs_input_count > 0).then(|| attention_pulse_color(CLINCH_ATTENTION_AMBER, app));
+            let needs_input_color = (needs_input_count > 0)
+                .then(|| attention_pulse_color(tokens.status(StatusKind::NeedsYou), app));
             let tab_count = workspace.tab_count();
             let is_active = index == self.active_project_index;
             let is_dragging = project.draggable_state.is_dragging();
@@ -1704,7 +1697,7 @@ impl ProjectWindow {
                         Container::new(
                             ConstrainedBox::new(
                                 Rect::new()
-                                    .with_background(Fill::Solid(CLINCH_DONE_BLUE))
+                                    .with_background(Fill::Solid(tokens.status(StatusKind::Done)))
                                     .with_corner_radius(CornerRadius::with_all(Radius::Percentage(
                                         50.,
                                     )))
@@ -1750,13 +1743,13 @@ impl ProjectWindow {
                                 font_family,
                                 (font_size - 2.).max(8.),
                             )
-                            .with_color(CLINCH_DONE_BLUE)
+                            .with_color(tokens.status(StatusKind::Done))
                             .finish(),
                         )
                         .with_horizontal_padding(4.)
                         .with_border(
                             Border::all(PROJECT_AGENT_COUNT_BADGE_BORDER_WIDTH)
-                                .with_border_fill(Fill::Solid(CLINCH_DONE_BLUE)),
+                                .with_border_fill(Fill::Solid(tokens.status(StatusKind::Done))),
                         )
                         .with_corner_radius(CornerRadius::with_all(Radius::Percentage(50.)))
                         .with_margin_right(6.)
@@ -1771,13 +1764,13 @@ impl ProjectWindow {
                                 font_family,
                                 (font_size - 2.).max(8.),
                             )
-                            .with_color(CLINCH_LOGO_GREEN)
+                            .with_color(tokens.status(StatusKind::Working))
                             .finish(),
                         )
                         .with_horizontal_padding(4.)
                         .with_border(
                             Border::all(PROJECT_AGENT_COUNT_BADGE_BORDER_WIDTH)
-                                .with_border_fill(Fill::Solid(CLINCH_LOGO_GREEN)),
+                                .with_border_fill(Fill::Solid(tokens.status(StatusKind::Working))),
                         )
                         .with_corner_radius(CornerRadius::with_all(Radius::Percentage(50.)))
                         .with_margin_right(6.)

@@ -193,32 +193,44 @@ fn project_command_count_excludes_cli_agent_sessions_and_non_running_commands() 
 #[test]
 fn project_agent_activity_prioritizes_live_work_then_input_then_attention_then_done() {
     assert_eq!(
-        project_cli_agent_activity(true, false, true, true, true),
+        project_cli_agent_activity(true, false, false, true, true, true),
         ProjectCliAgentActivity::Working
     );
     assert_eq!(
-        project_cli_agent_activity(false, true, true, false, false),
+        project_cli_agent_activity(false, true, false, true, false, false),
         ProjectCliAgentActivity::NeedsInput
     );
     assert_eq!(
-        project_cli_agent_activity(false, true, false, true, true),
+        project_cli_agent_activity(false, true, false, false, true, true),
         ProjectCliAgentActivity::NeedsInput
     );
     assert_eq!(
-        project_cli_agent_activity(false, false, false, true, true),
+        project_cli_agent_activity(false, false, false, false, true, true),
         ProjectCliAgentActivity::NeedsAttention
     );
     assert_eq!(
-        project_cli_agent_activity(false, false, false, true, false),
+        project_cli_agent_activity(false, false, false, false, true, false),
         ProjectCliAgentActivity::Done
     );
     assert_eq!(
-        project_cli_agent_activity(false, false, true, false, false),
+        project_cli_agent_activity(false, false, false, true, false, false),
         ProjectCliAgentActivity::Done
     );
     assert_eq!(
-        project_cli_agent_activity(false, false, false, false, false),
+        project_cli_agent_activity(false, false, false, false, false, false),
         ProjectCliAgentActivity::Idle
+    );
+    assert_eq!(
+        project_cli_agent_activity(false, false, true, false, true, true),
+        ProjectCliAgentActivity::RateLimited
+    );
+    assert_eq!(
+        project_cli_agent_activity(false, true, true, false, false, false),
+        ProjectCliAgentActivity::NeedsInput
+    );
+    assert_eq!(
+        project_cli_agent_activity(true, false, true, false, false, false),
+        ProjectCliAgentActivity::Working
     );
 }
 
@@ -1190,6 +1202,12 @@ fn remote_control_header_asks_for_a_pending_approval_first() {
 #[test]
 fn remote_control_header_uses_green_outline_with_muted_content() {
     let font_family_id = warpui::fonts::FamilyId(42);
+    let accent = ColorU {
+        r: 197,
+        g: 240,
+        b: 107,
+        a: 255,
+    };
     let muted_color = ColorU {
         r: 0x77,
         g: 0x77,
@@ -1197,19 +1215,16 @@ fn remote_control_header_uses_green_outline_with_muted_content() {
         a: 0xff,
     };
     let (default_styles, interactive_styles) =
-        remote_control_button_styles(font_family_id, muted_color);
+        remote_control_button_styles(font_family_id, muted_color, accent);
 
     assert_eq!(default_styles.font_family_id, Some(font_family_id));
     assert_eq!(interactive_styles.font_family_id, Some(font_family_id));
     assert_eq!(default_styles.font_color, Some(muted_color));
     assert_eq!(default_styles.font_size, Some(11.));
     assert_eq!(default_styles.width, None);
-    assert_eq!(default_styles.border_color, Some(CLINCH_LOGO_GREEN.into()));
+    assert_eq!(default_styles.border_color, Some(accent.into()));
     assert_eq!(interactive_styles.font_color, Some(muted_color));
-    assert_eq!(
-        interactive_styles.border_color,
-        Some(CLINCH_LOGO_GREEN.into())
-    );
+    assert_eq!(interactive_styles.border_color, Some(accent.into()));
 }
 
 #[test]

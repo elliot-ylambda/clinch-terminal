@@ -92,7 +92,7 @@ pub fn relative_luminance(color: ColorU) -> f32 {
 
 /// More on calculating contrast ration here:
 /// https://medium.muz.li/the-science-of-color-contrast-an-expert-designers-guide-33e84c41d156
-fn contrast_ratio(color1: ColorU, color2: ColorU) -> f32 {
+pub fn contrast_ratio(color1: ColorU, color2: ColorU) -> f32 {
     let luminance1 = relative_luminance(color1) + LUMINANCE_OFFSET_FOR_CONTRAST_RATIO;
     let luminance2 = relative_luminance(color2) + LUMINANCE_OFFSET_FOR_CONTRAST_RATIO;
     // dividend here is supposed to be a lighter color than the divisor

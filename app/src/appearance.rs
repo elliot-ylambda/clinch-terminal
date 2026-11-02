@@ -19,7 +19,7 @@ pub use warp_core::ui::appearance::{Appearance, AppearanceEvent};
 
 use crate::settings::{
     active_theme_kind, FontSettings, FontSettingsChangedEvent, MonospaceFontSize, Settings,
-    ThemeSettings,
+    ThemeSettings, DEFAULT_MONOSPACE_FONT_NAME,
 };
 use crate::themes::theme::{ThemeKind, WarpTheme};
 use crate::ASSETS;
@@ -279,18 +279,39 @@ impl Entity for AppearanceManager {
 
 impl SingletonEntity for AppearanceManager {}
 
+/// Reads the given styles of a bundled font, from
+/// `bundled/fonts/{directory}/{file_prefix}-{style}.ttf`.
+fn bundled_font_files(
+    directory: &str,
+    file_prefix: &str,
+    styles: &[&str],
+) -> anyhow::Result<Vec<Vec<u8>>> {
+    styles
+        .iter()
+        .map(|style| {
+            ASSETS
+                .get(&format!(
+                    "bundled/fonts/{directory}/{file_prefix}-{style}.ttf"
+                ))
+                .map(|font| font.to_vec())
+        })
+        .collect()
+}
+
 fn load_default_monospace_font_family(ctx: &mut AppContext) -> anyhow::Result<FamilyId> {
     warpui::fonts::Cache::handle(ctx).update(ctx, |font_cache, _| {
-        let default_monospace_font_family = font_cache.load_family_from_bytes(
+        // Hack was the default before JetBrains Mono. It stays bundled for anyone who chose it.
+        font_cache.load_family_from_bytes(
             "Hack",
-            vec![
-                ASSETS.get("bundled/fonts/hack/Hack-Italic.ttf")?.to_vec(),
-                ASSETS.get("bundled/fonts/hack/Hack-Bold.ttf")?.to_vec(),
-                ASSETS.get("bundled/fonts/hack/Hack-Regular.ttf")?.to_vec(),
-                ASSETS
-                    .get("bundled/fonts/hack/Hack-BoldItalic.ttf")?
-                    .to_vec(),
-            ],
+            bundled_font_files("hack", "Hack", &["Italic", "Bold", "Regular", "BoldItalic"])?,
+        )?;
+        let default_monospace_font_family = font_cache.load_family_from_bytes(
+            DEFAULT_MONOSPACE_FONT_NAME,
+            bundled_font_files(
+                "jetbrains-mono",
+                "JetBrainsMono",
+                &["Regular", "Italic", "Medium", "Bold", "BoldItalic"],
+            )?,
         )?;
         let default_monospace_font =
             font_cache.select_font(default_monospace_font_family, Default::default());
@@ -308,26 +329,22 @@ fn load_default_monospace_font_family(ctx: &mut AppContext) -> anyhow::Result<Fa
 
 fn load_default_ui_font_family(ctx: &mut AppContext) -> anyhow::Result<FamilyId> {
     warpui::fonts::Cache::handle(ctx).update(ctx, |font_cache, _| {
-        let roboto = font_cache.load_family_from_bytes(
-            "Roboto",
-            vec![
-                ASSETS
-                    .get("bundled/fonts/roboto/Roboto-Italic.ttf")?
-                    .to_vec(),
-                ASSETS.get("bundled/fonts/roboto/Roboto-Bold.ttf")?.to_vec(),
-                ASSETS
-                    .get("bundled/fonts/roboto/Roboto-Regular.ttf")?
-                    .to_vec(),
-                ASSETS
-                    .get("bundled/fonts/roboto/Roboto-Medium.ttf")?
-                    .to_vec(),
-                ASSETS
-                    .get("bundled/fonts/roboto/RobotoFlex-Semibold.ttf")?
-                    .to_vec(),
-                ASSETS
-                    .get("bundled/fonts/roboto/Roboto-BoldItalic.ttf")?
-                    .to_vec(),
-            ],
+        let inter = font_cache.load_family_from_bytes(
+            "Inter",
+            bundled_font_files(
+                "inter",
+                "Inter",
+                &[
+                    "Regular",
+                    "Italic",
+                    "Medium",
+                    "MediumItalic",
+                    "SemiBold",
+                    "SemiBoldItalic",
+                    "Bold",
+                    "BoldItalic",
+                ],
+            )?,
         );
 
         // On Windows, default to use Segoe UI as the UI font. This font is recommended by
@@ -339,7 +356,7 @@ fn load_default_ui_font_family(ctx: &mut AppContext) -> anyhow::Result<FamilyId>
             return Ok(font_family_id);
         }
 
-        roboto
+        inter
     })
 }
 
