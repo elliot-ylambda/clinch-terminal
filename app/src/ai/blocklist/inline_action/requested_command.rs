@@ -3,13 +3,13 @@ use std::cmp::{Ordering, PartialEq};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
-use warp_core::ui::tokens::RADIUS_MD;
 
 use lazy_static::lazy_static;
 use parking_lot::FairMutex;
 use pathfinder_geometry::vector::vec2f;
 use settings::Setting as _;
 use warp_core::ui::appearance::Appearance;
+use warp_core::ui::tokens::RADIUS_MD;
 use warp_core::ui::Icon;
 use warp_editor::render::element::VerticalExpansionBehavior;
 use warpui::elements::{

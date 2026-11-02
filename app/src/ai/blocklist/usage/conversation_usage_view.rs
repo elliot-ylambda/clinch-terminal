@@ -1,11 +1,11 @@
 use std::cmp::Ordering;
 use std::collections::HashMap;
-use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::vec2f;
 use warp_core::features::FeatureFlag;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warp_core::ui::Icon;
 use warpui::elements::{
     Border, ChildAnchor, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, DropShadow,

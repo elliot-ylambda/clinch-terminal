@@ -1,7 +1,6 @@
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use warp_core::ui::tokens::RADIUS_SM;
 
 use markdown_parser::{FormattedText, FormattedTextFragment, FormattedTextLine};
 use settings::ToggleableSetting as _;
@@ -11,6 +10,7 @@ use warp_core::features::FeatureFlag;
 use warp_core::send_telemetry_from_ctx;
 use warp_core::ui::appearance::AppearanceEvent;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_core::ui::Icon;
 use warpui::elements::{
     Align, Border, ChildView, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment,

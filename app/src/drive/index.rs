@@ -1,7 +1,6 @@
 use std::any::Any;
 use std::collections::HashMap;
 use std::sync::Arc;
-use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use futures::Future;
 use itertools::Itertools;
@@ -11,6 +10,7 @@ use url::Url;
 use warp_core::context_flag::ContextFlag;
 use warp_core::settings::Setting;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warp_util::sync::Condition;
 use warpui::clipboard::ClipboardContent;
 use warpui::elements::{

@@ -1,11 +1,11 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
-use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::vec2f;
 use thousands::Separable;
 use warp_core::ui::appearance::Appearance;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warpui::elements::{
     Align, Border, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, DropShadow, Empty,
     Flex, MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement, Shrinkable, Text,

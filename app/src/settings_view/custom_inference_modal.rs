@@ -1,8 +1,8 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use warp_core::ui::tokens::RADIUS_SM;
 
 use ::ai::api_keys::CustomEndpoint;
 use url::Url;
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_editor::editor::NavigationKey;
 use warpui::elements::{
     Border, ChildView, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Empty,

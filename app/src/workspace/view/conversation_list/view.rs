@@ -1,11 +1,11 @@
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::sync::{Arc, Mutex};
-use warp_core::ui::tokens::RADIUS_SM;
 
 use pathfinder_geometry::vector::Vector2F;
 use warp_core::features::FeatureFlag;
 use warp_core::send_telemetry_from_ctx;
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_core::ui::Icon;
 use warp_editor::editor::NavigationKey;
 use warpui::elements::{

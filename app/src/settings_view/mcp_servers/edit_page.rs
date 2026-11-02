@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::path::Path;
 #[cfg(feature = "local_fs")]
 use std::sync::Arc;
-use warp_core::ui::tokens::RADIUS_SM;
 
 #[cfg(feature = "local_fs")]
 #[cfg(not(target_family = "wasm"))]
@@ -14,6 +13,7 @@ use uuid::Uuid;
 use warp_core::send_telemetry_from_ctx;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_editor::content::buffer::InitialBufferState;
 use warp_editor::render::element::VerticalExpansionBehavior;
 use warpui::elements::{

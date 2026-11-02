@@ -10,13 +10,13 @@
 //! for an example on how that transformation could be made.
 
 use std::borrow::Cow;
-use warp_core::ui::tokens::RADIUS_MD;
 
 use lazy_static::lazy_static;
 use markdown_parser::{FormattedText, FormattedTextFragment, FormattedTextLine};
 use pathfinder_color::ColorU;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::color::internal_colors::neutral_2;
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::elements::{
     Align, Border, Clipped, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Flex,
     FormattedTextElement, MainAxisAlignment, ParentElement, Shrinkable, Wrap, WrapFill,

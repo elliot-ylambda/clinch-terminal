@@ -1,9 +1,9 @@
 use std::collections::HashMap;
-use warp_core::ui::tokens::RADIUS_SM;
 
 use lazy_static::lazy_static;
 use warp_core::features::FeatureFlag;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::elements::{
     Container, CornerRadius, Flex, Hoverable, MouseStateHandle, ParentElement, Text, Wrap,
 };

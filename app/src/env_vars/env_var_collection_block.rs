@@ -1,13 +1,13 @@
 use std::borrow::Cow;
 use std::rc::Rc;
 use std::sync::Arc;
-use warp_core::ui::tokens::{RADIUS_LG, RADIUS_MD};
 
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use settings::Setting as _;
 use warp_core::features::FeatureFlag;
 use warp_core::semantic_selection::SemanticSelection;
+use warp_core::ui::tokens::{RADIUS_LG, RADIUS_MD};
 use warp_core::ui::Icon;
 use warpui::elements::{
     get_rich_content_position_id, Border, Clipped, Container, CornerRadius, CrossAxisAlignment,

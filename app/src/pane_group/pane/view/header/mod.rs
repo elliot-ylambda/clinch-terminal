@@ -1,11 +1,11 @@
 use std::fmt::Debug;
-use warp_core::ui::tokens::RADIUS_MD;
 
 use pathfinder_geometry::rect::RectF;
 use pathfinder_geometry::vector::{vec2f, Vector2F};
 use sharing::SharedPaneContent;
 use warp_core::features::FeatureFlag;
 use warp_core::settings::Setting;
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::elements::{
     AcceptedByDropTarget, Align, Border, ChildAnchor, Clipped, ConstrainedBox, Container,
     CornerRadius, CrossAxisAlignment, Dismiss, Draggable, DraggableState, Empty, Flex, Hoverable,

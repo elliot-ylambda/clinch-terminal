@@ -6,7 +6,6 @@ use std::cell::RefCell;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
-use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::vec2f;
@@ -18,6 +17,7 @@ use warp_core::ui::color::blend::Blend;
 use warp_core::ui::color::coloru_with_opacity;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::{Fill, WarpTheme};
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warpui::elements::new_scrollable::{NewScrollable, ScrollableAppearance, SingleAxisConfig};
 use warpui::elements::{
     Align, AnchorPair, ChildAnchor, ChildView, ClippedScrollStateHandle, ConstrainedBox, Container,

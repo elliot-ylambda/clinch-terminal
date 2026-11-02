@@ -4,7 +4,6 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
-use warp_core::ui::tokens::RADIUS_SM;
 
 use async_channel::Sender;
 use instant::Instant;
@@ -16,6 +15,7 @@ use warp_core::send_telemetry_from_ctx;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::{AnsiColorIdentifier, Fill as ThemeFill};
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_core::ui::Icon;
 use warp_editor::editor::NavigationKey;
 use warp_ripgrep::search::Submatch;

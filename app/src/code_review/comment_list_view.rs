@@ -1,5 +1,4 @@
 use std::borrow::Cow;
-use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use indexmap::IndexMap;
 use pathfinder_color::ColorU;
@@ -13,6 +12,7 @@ use warp_core::ui::theme::color::internal_colors::{
     text_sub,
 };
 use warp_core::ui::theme::Fill;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warp_editor::model::CoreEditorModel;
 use warpui::clipboard::ClipboardContent;
 use warpui::elements::new_scrollable::{NewScrollable, ScrollableAppearance, SingleAxisConfig};

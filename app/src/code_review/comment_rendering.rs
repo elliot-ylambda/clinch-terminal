@@ -4,12 +4,12 @@
 //! and the blocklist's imported comments rendering.
 
 use std::rc::Rc;
-use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use chrono::{Duration, Local};
 use pathfinder_color::ColorU;
 use warp_core::ui::theme::color::internal_colors::{neutral_1, neutral_2, text_sub};
 use warp_core::ui::theme::Fill;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warp_editor::content::buffer::InitialBufferState;
 use warp_editor::render::element::VerticalExpansionBehavior;
 use warpui::elements::new_scrollable::ScrollableAppearance;

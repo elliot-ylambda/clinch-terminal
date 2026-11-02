@@ -2,7 +2,6 @@ use std::borrow::Cow;
 use std::cmp::Reverse;
 use std::path::Path;
 use std::sync::Arc;
-use warp_core::ui::tokens::RADIUS_SM;
 
 use itertools::Itertools as _;
 use markdown_parser::{parse_markdown, FormattedText, FormattedTextFragment, FormattedTextLine};
@@ -10,6 +9,7 @@ use parking_lot::FairMutex;
 use settings::Setting;
 use warp_core::features::FeatureFlag;
 use warp_core::report_if_error;
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_core::ui::Icon;
 use warpui::elements::{
     Clipped, Container, CornerRadius, CrossAxisAlignment, Flex, FormattedTextElement,

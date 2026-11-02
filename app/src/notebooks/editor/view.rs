@@ -2,11 +2,11 @@ use std::collections::HashSet;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use warp_core::ui::tokens::RADIUS_SM;
 
 use markdown_parser::{parse_html, parse_markdown, FormattedText};
 use pathfinder_geometry::vector::vec2f;
 use string_offset::CharOffset;
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_editor::content::anchor::Anchor;
 use warp_editor::content::text::{BufferTextStyle, CodeBlockType, TextStyles};
 use warp_editor::content::version::BufferVersion;

@@ -1,10 +1,10 @@
 use std::sync::Arc;
-use warp_core::ui::tokens::RADIUS_SM;
 
 use pathfinder_geometry::vector::vec2f;
 use warp_core::features::FeatureFlag;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_core::ui::Icon;
 use warpui::elements::{
     Border, ChildAnchor, ChildView, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment,

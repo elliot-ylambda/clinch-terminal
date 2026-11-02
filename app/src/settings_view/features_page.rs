@@ -2,7 +2,6 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use warp_core::ui::tokens::RADIUS_SM;
 
 use ::settings::{Setting, ToggleableSetting};
 use lazy_static::lazy_static;
@@ -12,6 +11,7 @@ use warp_core::context_flag::ContextFlag;
 use warp_core::semantic_selection::{
     SemanticSelection, SemanticSelectionChangedEvent, SmartSelectEnabled,
 };
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::elements::{
     Align, Border, ChildView, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Dismiss,
     DispatchEventResult, Element, Empty, EventHandler, Fill, Flex, Hoverable, MainAxisAlignment,

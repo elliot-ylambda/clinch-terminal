@@ -5,7 +5,6 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use lsp::ReferenceLocation;
 use pathfinder_geometry::vector::Vector2F;
@@ -13,6 +12,7 @@ use string_offset::CharOffset;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::icons::Icon as WarpIcon;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warp_editor::content::buffer::InitialBufferState;
 use warp_editor::render::element::VerticalExpansionBehavior;
 use warp_files::FileModel;

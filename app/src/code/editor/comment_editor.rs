@@ -1,10 +1,10 @@
 use std::cell::RefCell;
-use warp_core::ui::tokens::RADIUS_MD;
 
 use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::Vector2F;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::Fill;
+use warp_core::ui::tokens::RADIUS_MD;
 use warp_editor::render::element::VerticalExpansionBehavior;
 use warpui::elements::{
     Border, ChildView, Clipped, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Flex,

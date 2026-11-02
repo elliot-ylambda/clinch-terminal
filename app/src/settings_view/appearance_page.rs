@@ -3,11 +3,11 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
-use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use ::settings::{Setting, SettingSection, ToggleableSetting};
 use enum_iterator::all;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warp_util::path::user_friendly_path;
 use warpui::elements::{
     Align, Border, ChildView, Clipped, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment,

@@ -4,7 +4,6 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
-use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use ai::project_context::model::ProjectContextModel;
 use indexmap::IndexMap;
@@ -20,6 +19,7 @@ use vec1::Vec1;
 use warp_core::channel::{Channel, ChannelState};
 use warp_core::features::FeatureFlag;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warp_core::{safe_error, safe_info, SessionId};
 use warp_editor::content::buffer::{AutoScrollBehavior, InitialBufferState, SelectionOffsets};
 use warp_editor::model::CoreEditorModel;

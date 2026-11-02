@@ -13,7 +13,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 #[cfg(not(target_family = "wasm"))]
 use std::time::Duration;
-use warp_core::ui::tokens::RADIUS_MD;
 
 use ai::document::{AIDocumentId, AIDocumentVersion};
 use chrono::{DateTime, Local};
@@ -35,17 +34,14 @@ use warp_core::ui::color::contrast::MinimumAllowedContrast;
 use warp_core::ui::color::ContrastingColor;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::{AnsiColorIdentifier, Fill};
-use warp_core::ui::tokens::{corners_lg, corners_md, StatusKind};
+use warp_core::ui::tokens::{corners_lg, corners_md, StatusKind, RADIUS_MD};
 use warpui::elements::{
     Border, ChildAnchor, ChildView, Clipped, ConstrainedBox, Container, CornerRadius,
-    CrossAxisAlignment, DispatchEventResult, Element, EventHandler, Expanded, Flex,
-    MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning, ParentElement,
-    PositionedElementAnchor, PositionedElementOffsetBounds, Shrinkable, Stack, Text, Wrap,
+    CrossAxisAlignment, Dismiss, DispatchEventResult, Element, EventHandler, Expanded, Flex,
+    Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning, ParentAnchor,
+    ParentElement, ParentOffsetBounds, PositionedElementAnchor, PositionedElementOffsetBounds,
+    SavePosition, Shrinkable, SizeConstraintCondition, SizeConstraintSwitch, Stack, Text, Wrap,
     WrapFill, WrapFillEntireRun, DEFAULT_UI_LINE_HEIGHT_RATIO,
-};
-use warpui::elements::{
-    Dismiss, Hoverable, ParentAnchor, ParentOffsetBounds, SavePosition, SizeConstraintCondition,
-    SizeConstraintSwitch,
 };
 use warpui::platform::Cursor;
 use warpui::r#async::{SpawnedFutureHandle, Timer};

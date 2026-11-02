@@ -3,7 +3,6 @@ use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
-use warp_core::ui::tokens::RADIUS_SM;
 
 use lazy_static::lazy_static;
 use markdown_parser::{FormattedText, FormattedTextFragment, FormattedTextLine};
@@ -16,6 +15,7 @@ use warp_core::report_error;
 use warp_core::semantic_selection::SemanticSelection;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_editor::content::buffer::InitialBufferState;
 use warp_editor::render::element::VerticalExpansionBehavior;
 use warpui::clipboard::ClipboardContent;

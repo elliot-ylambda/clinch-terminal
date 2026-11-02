@@ -7,10 +7,10 @@
 //! (setting upstream). On confirm, spawns `run_push`.
 
 use std::collections::HashMap;
-use warp_core::ui::tokens::RADIUS_MD;
 
 use warp_core::send_telemetry_from_ctx;
 use warp_core::ui::appearance::Appearance;
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::elements::{
     Border, ClippedScrollStateHandle, ClippedScrollable, ConstrainedBox, Container, CornerRadius,
     CrossAxisAlignment, Element, Flex, Hoverable, MainAxisAlignment, MainAxisSize,

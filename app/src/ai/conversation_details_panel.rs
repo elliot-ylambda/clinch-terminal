@@ -3,7 +3,6 @@
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
-use warp_core::ui::tokens::RADIUS_SM;
 
 use chrono::{DateTime, Duration, Local};
 use instant::Instant;
@@ -13,6 +12,7 @@ use warp_cli::agent::Harness;
 use warp_cli::skill::SkillSpec;
 use warp_core::channel::ChannelState;
 use warp_core::ui::color::coloru_with_opacity;
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::clipboard::ClipboardContent;
 use warpui::elements::new_scrollable::{NewScrollable, SingleAxisConfig};
 use warpui::elements::{

@@ -1,5 +1,4 @@
 use std::cell::Cell;
-use warp_core::ui::tokens::RADIUS_SM;
 
 use onboarding::components::feature_optout_dialog::{
     render_feature_optout_dialog, FeatureOptOutDialog,
@@ -12,6 +11,7 @@ use ui_components::{button, Component as _, Options as _};
 use warp_core::features::FeatureFlag;
 use warp_core::safe_error;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_core::ui::Icon;
 use warpui::actions::StandardAction;
 use warpui::clipboard::ClipboardContent;

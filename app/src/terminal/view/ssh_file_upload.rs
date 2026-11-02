@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::path::Path;
-use warp_core::ui::tokens::RADIUS_SM;
 
 use itertools::Itertools;
 use markdown_parser::{
@@ -9,6 +8,7 @@ use markdown_parser::{
 use warp_core::command::ExitCode;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::color::blend::Blend as _;
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::elements::{
     Border, Container, CornerRadius, CrossAxisAlignment, Flex, FormattedTextElement,
     HighlightedHyperlink, MainAxisSize, MouseStateHandle, ParentElement,

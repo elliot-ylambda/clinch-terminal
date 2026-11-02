@@ -2,7 +2,6 @@ mod gutter_button;
 use std::ops::Range;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use warp_core::ui::tokens::RADIUS_SM;
 
 pub use gutter_button::{AddAsContextButton, CommentButton, RevertHunkButton};
 use parking_lot::Mutex;
@@ -13,6 +12,7 @@ use warp_core::features::FeatureFlag;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::Fill;
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_editor::editor::EditorView;
 use warp_editor::render::element::lens_element::RichTextElementLens;
 use warp_editor::render::element::{RenderableBlock, RichTextElement, VerticalExpansionBehavior};

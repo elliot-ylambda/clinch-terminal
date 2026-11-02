@@ -1,7 +1,6 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use warp_core::ui::tokens::RADIUS_SM;
 
 use ai::index::full_source_code_embedding::manager::{
     CodebaseIndexFinishedStatus, CodebaseIndexManager, CodebaseIndexManagerEvent,
@@ -19,6 +18,7 @@ use warp_core::features::FeatureFlag;
 use warp_core::report_if_error;
 use warp_core::settings::ToggleableSetting as _;
 use warp_core::ui::theme::{AnsiColorIdentifier, Fill as ThemeFill};
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_util::path::user_friendly_path;
 #[cfg(not(target_family = "wasm"))]
 use warp_util::remote_path::RemotePath;

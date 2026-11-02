@@ -11,7 +11,6 @@ use std::path::Path;
 #[cfg(feature = "local_fs")]
 use std::path::PathBuf;
 use std::sync::Arc;
-use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use itertools::Itertools;
 use markdown_parser::{FormattedText, FormattedTextInline, TableAlignment};
@@ -22,6 +21,7 @@ use warp_core::features::FeatureFlag;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::color::blend::Blend;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warp_editor::content::edit::resolve_asset_source_relative_to_directory;
 use warp_editor::content::mermaid_diagram::mermaid_asset_source;
 use warp_util::path::to_relative_path;

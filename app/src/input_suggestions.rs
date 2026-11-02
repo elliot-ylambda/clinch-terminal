@@ -2,7 +2,6 @@ use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::ops::Range;
 use std::{cmp, vec};
-use warp_core::ui::tokens::RADIUS_MD;
 
 use async_channel::Sender;
 use chrono::{DateTime, Local};
@@ -15,6 +14,7 @@ use warp_completer::completer::{
 };
 use warp_core::features::FeatureFlag;
 use warp_core::ui::theme::AnsiColorIdentifier;
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::accessibility::{AccessibilityContent, WarpA11yRole};
 use warpui::elements::{
     Align, AnchorPair, Border, ChildAnchor, ConstrainedBox, Container, CornerRadius,

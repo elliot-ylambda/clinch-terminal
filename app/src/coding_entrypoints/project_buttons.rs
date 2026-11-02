@@ -1,5 +1,4 @@
 use std::borrow::Cow;
-use warp_core::ui::tokens::RADIUS_SM;
 
 use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::Vector2F;
@@ -7,6 +6,7 @@ use warp_core::features::FeatureFlag;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::color::blend::Blend as _;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_core::ui::Icon;
 use warpui::elements::{
     ChildAnchor, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, DropShadow, Expanded,

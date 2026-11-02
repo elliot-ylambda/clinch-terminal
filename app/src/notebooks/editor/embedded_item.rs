@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
-use warp_core::ui::tokens::RADIUS_MD;
 
 use itertools::Itertools;
 use markdown_parser::html_parser::WARP_EMBED_ATTRIBUTE_NAME;
@@ -10,6 +9,7 @@ use pathfinder_geometry::vector::{vec2f, Vector2F};
 use serde_yaml::Mapping;
 use string_offset::ByteOffset;
 use warp_core::ui::appearance::Appearance;
+use warp_core::ui::tokens::RADIUS_MD;
 use warp_editor::content::markdown::MarkdownStyle;
 use warp_editor::content::text::TextStylesWithMetadata;
 use warp_editor::editor::EmbeddedItemModel;

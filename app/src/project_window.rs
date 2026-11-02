@@ -1,11 +1,10 @@
 use std::sync::Arc;
-use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use pathfinder_geometry::rect::RectF as GeometryRect;
 use pathfinder_geometry::vector::{vec2f, Vector2F};
 use uuid::Uuid;
 use warp_core::ui::theme::Fill;
-use warp_core::ui::tokens::{corners_lg, StatusKind};
+use warp_core::ui::tokens::{corners_lg, StatusKind, RADIUS_MD, RADIUS_SM};
 use warpui::accessibility::{AccessibilityContent, ActionAccessibilityContent, WarpA11yRole};
 use warpui::color::ColorU;
 use warpui::elements::{

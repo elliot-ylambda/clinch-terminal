@@ -1,8 +1,8 @@
 use std::ops::Range;
 use std::sync::{Arc, RwLock};
-use warp_core::ui::tokens::RADIUS_MD;
 
 use warp_core::ui::appearance::Appearance;
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::elements::{
     Container, CornerRadius, CrossAxisAlignment, Element, Flex, FormattedTextElement,
     MainAxisAlignment, ParentElement, SelectableArea, SelectionHandle, Shrinkable,

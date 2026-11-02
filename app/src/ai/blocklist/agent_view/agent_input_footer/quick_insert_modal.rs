@@ -15,12 +15,12 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use ai::skills::SkillScope;
 use pathfinder_color::ColorU;
 use ui_components::{button, Component as _, Options as _};
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warp_util::local_or_remote_path::LocalOrRemotePath;
 use warpui::elements::new_scrollable::{NewScrollable, ScrollableAppearance, SingleAxisConfig};
 use warpui::elements::{

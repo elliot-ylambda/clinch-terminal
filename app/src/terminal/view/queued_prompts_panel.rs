@@ -7,13 +7,13 @@
 //! hover, drag) locally. Emits high-level events for immediate submission, deletion, and edit
 //! completion, which the host uses to submit or update the input editor.
 use std::collections::HashMap;
-use warp_core::ui::tokens::RADIUS_SM;
 
 use pathfinder_color::ColorU;
 use pathfinder_geometry::rect::RectF;
 use pathfinder_geometry::vector::vec2f;
 use warp_core::features::FeatureFlag;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::elements::new_scrollable::{NewScrollable, ScrollableAppearance, SingleAxisConfig};
 use warpui::elements::{
     Border, ChildAnchor, ChildView, Clipped, ClippedScrollStateHandle, ConstrainedBox, Container,

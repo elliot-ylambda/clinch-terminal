@@ -1,6 +1,5 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
-use warp_core::ui::tokens::{RADIUS_LG, RADIUS_MD, RADIUS_SM};
 
 use ::settings::{Setting, ToggleableSetting};
 #[cfg(feature = "local_fs")]
@@ -8,6 +7,7 @@ use chrono::{DateTime, Local, Utc};
 #[cfg(feature = "local_fs")]
 use clinch_companion_protocol::{DeviceId, DevicePlatform, PairingClaimId};
 use warp_core::channel::ChannelState;
+use warp_core::ui::tokens::{RADIUS_LG, RADIUS_MD, RADIUS_SM};
 #[cfg(feature = "local_fs")]
 use warpui::clipboard::ClipboardContent;
 use warpui::color::ColorU;

@@ -2,7 +2,6 @@ use std::borrow::Cow;
 use std::mem;
 use std::ops::Range;
 use std::sync::Arc;
-use warp_core::ui::tokens::RADIUS_SM;
 
 use async_channel::Sender;
 use itertools::Itertools;
@@ -17,6 +16,7 @@ use syntect::util::LinesWithEndings;
 use ui_components::lightbox::{LightboxImage, LightboxImageSource};
 use warp_completer::signatures::CommandRegistry;
 use warp_core::r#async::debounce;
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_editor::content::anchor::Anchor;
 use warp_editor::content::buffer::{Buffer, BufferEvent, EditOrigin};
 use warp_editor::content::mermaid_diagram::mermaid_asset_source;

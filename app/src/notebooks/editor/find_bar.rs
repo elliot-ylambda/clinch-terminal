@@ -1,10 +1,10 @@
 use std::fmt::Write;
 use std::time::Duration;
-use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use async_channel::Sender;
 use pathfinder_geometry::vector::vec2f;
 use warp_core::r#async::debounce;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warp_editor::render::model::{AutoScrollMode, Decoration};
 use warp_editor::search::{SearchEvent, Searcher};
 use warpui::accessibility::{AccessibilityContent, ActionAccessibilityContent, WarpA11yRole};

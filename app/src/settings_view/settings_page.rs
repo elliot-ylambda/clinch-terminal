@@ -1,7 +1,6 @@
 use core::fmt::{self, Display};
 use std::borrow::Cow;
 use std::collections::HashMap;
-use warp_core::ui::tokens::RADIUS_SM;
 
 use itertools::Itertools as _;
 use pathfinder_color::ColorU;
@@ -10,7 +9,7 @@ use settings::Setting;
 use warp_core::settings::SyncToCloud;
 use warp_core::ui::color::blend::Blend;
 use warp_core::ui::theme::color::internal_colors;
-use warp_core::ui::tokens::{corners_md, corners_sm};
+use warp_core::ui::tokens::{corners_md, corners_sm, RADIUS_SM};
 use warpui::elements::new_scrollable::{
     ClippedAxisConfiguration, DualAxisConfig, SingleAxisConfig,
 };

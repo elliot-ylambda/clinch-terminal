@@ -1,11 +1,11 @@
 use std::rc::Rc;
-use warp_core::ui::tokens::RADIUS_SM;
 
 use pathfinder_geometry::vector::vec2f;
 use serde::Serialize;
 use warp_core::channel::ChannelState;
 use warp_core::features::FeatureFlag;
 use warp_core::ui::theme::color::internal_colors::{neutral_2, neutral_3};
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::elements::{
     ChildAnchor, ChildView, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Empty,
     Fill, Flex, HighlightedHyperlink, Hoverable, Icon, MainAxisAlignment, MainAxisSize,

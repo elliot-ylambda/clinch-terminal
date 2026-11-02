@@ -1,6 +1,5 @@
 use std::ops::RangeInclusive;
 use std::sync::Arc;
-use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use anyhow::Result;
 use parking_lot::FairMutex;
@@ -9,6 +8,7 @@ use pathfinder_geometry::vector::{vec2f, Vector2F};
 use serde::Serialize;
 use warp_core::features::FeatureFlag;
 use warp_core::ui::theme::Fill;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warpui::browser::escape_html_attribute;
 use warpui::clipboard::ClipboardContent;
 use warpui::elements::{

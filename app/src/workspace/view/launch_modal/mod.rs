@@ -3,7 +3,6 @@ pub mod cta_button;
 pub mod oz_launch;
 
 use std::collections::HashMap;
-use warp_core::ui::tokens::{RADIUS_LG, RADIUS_SM};
 
 use markdown_parser::{parse_markdown, FormattedText, FormattedTextLine};
 // Re-export slide types for convenience
@@ -11,6 +10,7 @@ pub use oz_launch::OzLaunchSlide;
 use pathfinder_color::ColorU;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::Fill;
+use warp_core::ui::tokens::{RADIUS_LG, RADIUS_SM};
 use warpui::assets::asset_cache::AssetSource;
 use warpui::elements::{
     Align, Border, CacheOption, ChildAnchor, Clipped, ConstrainedBox, Container, CornerRadius,

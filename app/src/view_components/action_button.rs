@@ -1,6 +1,5 @@
 use std::borrow::Cow;
 use std::sync::Arc;
-use warp_core::ui::tokens::RADIUS_SM;
 
 use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::{vec2f, Vector2F};
@@ -9,7 +8,7 @@ use warp_core::ui::color::contrast::MinimumAllowedContrast;
 use warp_core::ui::color::{coloru_with_opacity, ContrastingColor};
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::{AnsiColorIdentifier, Fill};
-use warp_core::ui::tokens::StatusKind;
+use warp_core::ui::tokens::{StatusKind, RADIUS_SM};
 use warpui::elements::{
     Border, ChildAnchor, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Flex,
     Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning, Padding,

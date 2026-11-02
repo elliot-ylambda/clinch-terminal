@@ -1,7 +1,7 @@
 use std::path::PathBuf;
-use warp_core::ui::tokens::RADIUS_MD;
 
 use lsp::supported_servers::LSPServerType;
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::elements::{
     Border, ChildView, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Expanded, Flex,
     MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement, Shrinkable,

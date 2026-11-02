@@ -1,10 +1,10 @@
 use std::rc::Rc;
-use warp_core::ui::tokens::RADIUS_MD;
 
 use strum::IntoEnumIterator;
 use strum_macros::{EnumIter, IntoStaticStr};
 use warp_core::features::FeatureFlag;
 use warp_core::ui::appearance::Appearance;
+use warp_core::ui::tokens::RADIUS_MD;
 use warp_editor::editor::NavigationKey;
 use warpui::elements::{
     Border, ClippedScrollStateHandle, ClippedScrollable, ConstrainedBox, Container, CornerRadius,

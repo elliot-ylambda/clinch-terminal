@@ -1,6 +1,5 @@
 use std::ops::Deref;
 use std::sync::Arc;
-use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use lazy_static::lazy_static;
 use markdown_parser::{FormattedText, FormattedTextFragment, FormattedTextLine};
@@ -8,6 +7,7 @@ use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::Vector2F;
 use thiserror::Error;
 use validator::ValidateEmail;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warpui::clipboard::ClipboardContent;
 use warpui::elements::{
     Align, Border, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Element, Fill,

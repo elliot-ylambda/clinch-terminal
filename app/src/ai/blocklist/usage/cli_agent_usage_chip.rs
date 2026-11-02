@@ -1,9 +1,9 @@
 use chrono::{DateTime, Utc};
 use cli_agent_usage::format::{fmt_pct, fmt_reset, fmt_tokens};
 use cli_agent_usage::{LimitWindow, Provider, Severity, UsageSnapshot, WindowTotals};
-use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 // Element + theme imports — mirror app/src/context_chips/display_chip.rs.
 use warp_core::ui::theme::{Fill, WarpTheme};
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warp_core::ui::Icon;
 use warpui::elements::{
     Border, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Flex, Hoverable,

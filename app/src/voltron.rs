@@ -14,11 +14,11 @@
 //!
 
 use std::path::PathBuf;
-use warp_core::ui::tokens::RADIUS_MD;
 
 use enclose::enclose;
 use pathfinder_geometry::vector::Vector2F;
 use vec1::Vec1;
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::accessibility::AccessibilityContent;
 use warpui::elements::{
     resizable_state_handle, Border, ChildAnchor, ChildView, Clipped, ConstrainedBox, Container,

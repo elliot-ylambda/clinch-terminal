@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use warp_core::ui::tokens::RADIUS_MD;
 
 use lsp::supported_servers::LSPServerType;
 use lsp::{
@@ -15,6 +14,7 @@ use warp_core::send_telemetry_from_ctx;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::{AnsiColorIdentifier, Fill as ThemeFill, WarpTheme};
+use warp_core::ui::tokens::RADIUS_MD;
 use warp_core::ui::Icon;
 #[cfg(feature = "local_fs")]
 use warp_util::local_or_remote_path::LocalOrRemotePath;

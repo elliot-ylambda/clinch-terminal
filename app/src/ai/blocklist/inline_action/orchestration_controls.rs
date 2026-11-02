@@ -7,7 +7,6 @@
 //! from field-change events to their own action enum.
 
 use std::collections::HashMap;
-use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use ai::agent::action::RunAgentsExecutionMode;
 use ai::agent::orchestration_config::{OrchestrationConfig, OrchestrationExecutionMode};
@@ -16,6 +15,7 @@ use pathfinder_geometry::vector::{vec2f, Vector2F};
 use settings::Setting;
 use warp_cli::agent::Harness;
 use warp_core::ui::theme::Fill;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warpui::elements::{
     Border, ChildView, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Empty,
     Expanded, Flex, Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement,

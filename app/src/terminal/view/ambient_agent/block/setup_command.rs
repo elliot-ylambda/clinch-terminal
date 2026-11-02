@@ -1,8 +1,8 @@
 use std::sync::Arc;
-use warp_core::ui::tokens::RADIUS_MD;
 
 use parking_lot::FairMutex;
 use warp_core::ui::appearance::Appearance;
+use warp_core::ui::tokens::RADIUS_MD;
 use warp_terminal::model::BlockId;
 use warpui::prelude::{Container, Empty, MouseStateHandle};
 use warpui::scene::CornerRadius;

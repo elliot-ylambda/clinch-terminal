@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
-use warp_core::ui::tokens::RADIUS_SM;
 
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_editor::editor::NavigationKey;
 use warpui::elements::{
     Align, Border, ChildAnchor, ChildView, Clipped, ConstrainedBox, Container, CornerRadius,

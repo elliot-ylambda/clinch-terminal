@@ -1,8 +1,8 @@
 use std::borrow::Cow;
-use warp_core::ui::tokens::RADIUS_SM;
 
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui_core::keymap::Keystroke;
 use warpui_core::prelude::*;
 

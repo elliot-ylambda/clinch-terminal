@@ -2,7 +2,6 @@ use core::default::Default;
 use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::sync::Arc;
-use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use email_address::EmailAddress;
 use itertools::Itertools;
@@ -13,6 +12,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use warp_core::features::FeatureFlag;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warpui::clipboard::ClipboardContent;
 use warpui::elements::{
     Align, Border, ChildAnchor, ClippedScrollStateHandle, ConstrainedBox, Container, CornerRadius,

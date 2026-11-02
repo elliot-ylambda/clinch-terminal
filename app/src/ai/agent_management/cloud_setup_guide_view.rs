@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use warp_core::ui::tokens::RADIUS_MD;
 
 use serde::Serialize;
 use string_offset::CharCounter;
@@ -8,6 +7,7 @@ use warp_completer::util::parse_current_commands_and_tokens;
 use warp_completer::ParsedTokensSnapshot;
 use warp_core::report_error;
 use warp_core::ui::theme::{AnsiColorIdentifier, AnsiColors};
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::clipboard::ClipboardContent;
 use warpui::elements::new_scrollable::{ClippedAxisConfiguration, DualAxisConfig, NewScrollable};
 use warpui::elements::{

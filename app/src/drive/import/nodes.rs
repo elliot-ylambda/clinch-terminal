@@ -2,12 +2,12 @@ use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::ops::{Add, AddAssign, SubAssign};
 use std::path::{Path, PathBuf};
-use warp_core::ui::tokens::RADIUS_SM;
 
 use anyhow::Result;
 use async_recursion::async_recursion;
 use futures_lite::StreamExt;
 use pathfinder_color::ColorU;
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::elements::{
     Align, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Flex, Hoverable,
     MouseStateHandle, ParentElement, Shrinkable,

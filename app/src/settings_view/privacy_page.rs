@@ -3,7 +3,6 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 use std::time::Duration;
-use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use pathfinder_geometry::vector::vec2f;
 use regex::Regex;
@@ -12,6 +11,7 @@ use warp_core::context_flag::ContextFlag;
 use warp_core::features::FeatureFlag;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::WarpTheme;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warpui::elements::{
     Align, ChildAnchor, ChildView, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment,
     Empty, Expanded, Flex, Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle,

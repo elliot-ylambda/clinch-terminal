@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use warp_core::ui::tokens::RADIUS_MD;
 
 use enclose::enclose;
 use itertools::Itertools as _;
@@ -7,6 +6,7 @@ use markdown_parser::{FormattedText, FormattedTextFragment, FormattedTextLine};
 use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::vec2f;
 use warp_core::ui::appearance::Appearance;
+use warp_core::ui::tokens::RADIUS_MD;
 use warp_core::ui::Icon;
 use warp_graphql::billing::AddonCreditsOption;
 use warp_graphql::error::BudgetExceededError;

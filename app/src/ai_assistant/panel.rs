@@ -1,9 +1,9 @@
 use std::sync::Arc;
 use std::time::Duration;
-use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use chrono::Local;
 use pathfinder_geometry::vector::{vec2f, Vector2F};
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warp_editor::editor::NavigationKey;
 use warpui::clipboard::ClipboardContent;
 use warpui::elements::{

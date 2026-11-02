@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::vec2f;
@@ -11,6 +10,7 @@ use warp_core::context_flag::ContextFlag;
 use warp_core::ui::builder::UiBuilder;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::AnsiColors;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warpui::elements::{
     Align, Border, ChildAnchor, Clipped, ConstrainedBox, Container, CornerRadius,
     CrossAxisAlignment, DragAxis, Draggable, DraggableState, DropTarget, Element, Empty, Fill,

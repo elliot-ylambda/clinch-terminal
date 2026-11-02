@@ -4,10 +4,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use warp_core::ui::tokens::RADIUS_SM;
 
-use crate::ai::blocklist::usage::{cli_agent_model_label, CliAgentUsageModel};
-use crate::terminal::cli_agent_sessions::restore::AgentRestoreQueue;
 use instant::Instant;
 use languages::language_by_local_filename;
 use pathfinder_color::ColorU;
@@ -20,7 +17,7 @@ use warp_core::telemetry::TelemetryEvent as _;
 use warp_core::ui::color::coloru_with_opacity;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::{AnsiColorIdentifier, Fill as WarpThemeFill, WarpTheme};
-use warp_core::ui::tokens::{corners_lg, corners_pill, corners_sm, StatusKind, Tokens};
+use warp_core::ui::tokens::{corners_lg, corners_pill, corners_sm, StatusKind, Tokens, RADIUS_SM};
 use warp_core::ui::Icon as WarpIcon;
 use warp_util::local_or_remote_path::LocalOrRemotePath;
 use warpui::elements::{
@@ -47,6 +44,7 @@ use crate::agent_resume::{
 use crate::ai::agent::conversation::{ConversationStatus, StatusColorStyle};
 use crate::ai::agent::icons::needs_input_icon;
 use crate::ai::agent_management::AgentNotificationsModel;
+use crate::ai::blocklist::usage::{cli_agent_model_label, CliAgentUsageModel};
 use crate::ai::cloud_environments::CloudAmbientAgentEnvironment;
 use crate::appearance::Appearance;
 use crate::cloud_object::model::generic_string_model::StringModel;
@@ -65,6 +63,7 @@ use crate::pane_group::{
 use crate::safe_triangle::SafeTriangle;
 use crate::tab::lineage::{lineage_nesting, TabLineage};
 use crate::tab::{tab_position_id, SelectedTabColor, TabData, TabOriginKind};
+use crate::terminal::cli_agent_sessions::restore::AgentRestoreQueue;
 use crate::terminal::cli_agent_sessions::{
     session_context_enabled, CLIAgentSessionKey, CLIAgentSessionStatus, CLIAgentSessionsModel,
 };

@@ -1,5 +1,4 @@
 use std::sync::{Arc, Mutex};
-use warp_core::ui::tokens::RADIUS_SM;
 
 use ::settings::{Setting, ToggleableSetting};
 use lazy_static::lazy_static;
@@ -9,6 +8,7 @@ use warp_core::channel::ChannelState;
 use warp_core::context_flag::ContextFlag;
 use warp_core::features::FeatureFlag;
 use warp_core::ui::icons::Icon;
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::assets::asset_cache::AssetSource;
 use warpui::elements::{
     Align, Border, CacheOption, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment,

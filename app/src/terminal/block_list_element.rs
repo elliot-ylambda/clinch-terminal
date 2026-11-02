@@ -5,7 +5,6 @@ use std::ops::{Deref, Range, RangeInclusive};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
-use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use enum_iterator::Sequence;
 use itertools::Itertools;
@@ -16,6 +15,7 @@ use vec1::Vec1;
 use warp_core::semantic_selection::SemanticSelection;
 use warp_core::ui::builder::UiBuilder;
 use warp_core::ui::theme::AnsiColorIdentifier;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warp_util::user_input::UserInput;
 use warpui::elements::new_scrollable::{NewScrollableElement, ScrollableAxis};
 use warpui::elements::{

@@ -1,10 +1,10 @@
 use std::borrow::Cow;
 use std::rc::Rc;
-use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use pathfinder_color::ColorU;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warpui::elements::{
     Border, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, DispatchEventResult,
     EventHandler, Expanded, Flex, FormattedTextElement, Hoverable, MainAxisAlignment, MainAxisSize,

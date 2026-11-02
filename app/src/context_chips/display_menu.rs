@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::rc::Rc;
 use std::sync::Arc;
-use warp_core::ui::tokens::RADIUS_MD;
 
 use fuzzy_match::{match_indices_case_insensitive, FuzzyMatchResult};
 use instant::Instant;
@@ -12,6 +11,7 @@ use warp_core::ui::appearance::Appearance;
 use warp_core::ui::builder::MIN_FONT_SIZE;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::Fill;
+use warp_core::ui::tokens::RADIUS_MD;
 use warp_editor::editor::NavigationKey;
 use warpui::clipboard::ClipboardContent;
 use warpui::color::ColorU;

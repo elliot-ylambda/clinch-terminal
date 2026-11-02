@@ -1,5 +1,4 @@
 use std::borrow::Cow;
-use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use email_address::EmailAddress;
 use inheritance::{InheritanceDetails, InheritanceState};
@@ -9,6 +8,7 @@ use pathfinder_geometry::vector::vec2f;
 use session_sharing_protocol::common::{Guest, PendingGuest, SessionId, TeamAclData};
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::Fill as ThemeFill;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warp_editor::editor::NavigationKey;
 use warpui::clipboard::ClipboardContent;
 use warpui::elements::{

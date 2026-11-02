@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::str::FromStr;
-use warp_core::ui::tokens::RADIUS_SM;
 
 use about_page::AboutPageView;
 use ai_page::{AISettingsPageAction, AISettingsPageEvent, AISettingsPageView, AISubpage};
@@ -34,6 +33,7 @@ use warp_core::features::FeatureFlag;
 use warp_core::send_telemetry_from_ctx;
 use warp_core::settings::ToggleableSetting as _;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_editor::editor::NavigationKey;
 use warpify_page::{WarpifyPageAction, WarpifyPageView};
 use warpui::elements::{

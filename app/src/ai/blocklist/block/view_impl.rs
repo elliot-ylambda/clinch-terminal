@@ -30,7 +30,6 @@ pub mod query;
 mod todos;
 
 use std::collections::{HashMap, HashSet};
-use warp_core::ui::tokens::RADIUS_SM;
 
 use common::get_highlight_ranges_for_find_matches;
 use itertools::Itertools;
@@ -43,6 +42,7 @@ use warp_core::ui::color::contrast::{
 };
 use warp_core::ui::color::Rgb;
 use warp_core::ui::theme::{Fill, WarpTheme};
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::elements::{
     Align, Border, Clipped, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Empty,
     Expanded, Flex, FormattedTextElement, Highlight, HighlightedRange, Hoverable,

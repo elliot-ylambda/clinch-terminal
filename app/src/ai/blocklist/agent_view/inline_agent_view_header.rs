@@ -1,9 +1,9 @@
 use std::sync::Arc;
-use warp_core::ui::tokens::RADIUS_MD;
 
 use ai::agent::action::{AIAgentActionType, ShellCommandDelay};
 use parking_lot::FairMutex;
 use warp_core::ui::appearance::Appearance;
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::elements::CornerRadius;
 use warpui::{
     AppContext, Element, Entity, EntityId, ModelHandle, SingletonEntity, View, ViewContext,

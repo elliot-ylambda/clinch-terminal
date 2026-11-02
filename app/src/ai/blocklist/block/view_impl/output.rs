@@ -8,7 +8,6 @@ use std::collections::HashMap;
 use std::path::{Component, Path};
 use std::rc::Rc;
 use std::sync::Arc;
-use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use ai::agent::action::{
     RequestComputerUseRequest, SuggestPromptRequest, UploadArtifactRequest, UseComputerRequest,
@@ -23,6 +22,7 @@ use pathfinder_geometry::vector::vec2f;
 use ui_components::{button, Component as _, Options as _};
 use warp_core::channel::ChannelState;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warp_util::local_or_remote_path::LocalOrRemotePath;
 use warpui::elements::new_scrollable::SingleAxisConfig;
 use warpui::elements::{

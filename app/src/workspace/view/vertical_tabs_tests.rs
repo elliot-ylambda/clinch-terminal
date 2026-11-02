@@ -1,9 +1,8 @@
 use pathfinder_geometry::rect::RectF;
 use pathfinder_geometry::vector::Vector2F;
+use warp_core::ui::tokens::{StatusKind, Tokens};
 use warpui::elements::PositionedElementOffsetBounds;
 use warpui::EntityId;
-
-use warp_core::ui::tokens::{StatusKind, Tokens};
 
 use super::{
     code_detail_kind_label, detail_sidecar_width_and_bounds, detail_target_for_hovered_row,

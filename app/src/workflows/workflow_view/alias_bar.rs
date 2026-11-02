@@ -1,6 +1,5 @@
 use std::cmp::Ordering;
 use std::collections::HashMap;
-use warp_core::ui::tokens::RADIUS_SM;
 
 use anyhow::Error;
 use pathfinder_geometry::vector::vec2f;
@@ -8,6 +7,7 @@ use warp_core::features::FeatureFlag;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::color::internal_colors::neutral_4;
 use warp_core::ui::theme::Fill;
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::elements::{
     ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Dismiss, Flex, Hoverable,
     MainAxisAlignment, MainAxisSize, MouseState, MouseStateHandle, ParentElement,

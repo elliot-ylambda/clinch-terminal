@@ -5,7 +5,6 @@
 //! the view; only `RejectRequested` flows back to the parent.
 use std::collections::HashMap;
 use std::rc::Rc;
-use warp_core::ui::tokens::RADIUS_MD;
 
 use ai::agent::action::{RunAgentsAgentRunConfig, RunAgentsExecutionMode, RunAgentsRequest};
 use ai::agent::action_result::{RunAgentsAgentOutcomeKind, RunAgentsResult};
@@ -13,6 +12,7 @@ use ai::agent::orchestration_config::{OrchestrationConfig, OrchestrationConfigSt
 use ai::skills::SkillReference;
 use pathfinder_geometry::vector::vec2f;
 use warp_core::send_telemetry_from_ctx;
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::elements::{
     Border, ChildAnchor, ChildView, Container, CornerRadius, CrossAxisAlignment, Empty, Flex,
     MainAxisSize, OffsetPositioning, ParentAnchor, ParentElement, ParentOffsetBounds, Stack, Text,

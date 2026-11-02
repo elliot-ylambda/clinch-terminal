@@ -45,7 +45,6 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 #[cfg(target_os = "macos")]
 use std::time::{SystemTime, UNIX_EPOCH};
-use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use ::settings::{Setting, ToggleableSetting};
 use ai::index::full_source_code_embedding::manager::CodebaseIndexManager;
@@ -82,7 +81,9 @@ use warp_core::ui::color::coloru_with_opacity;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::phenomenon::PhenomenonStyle;
 use warp_core::ui::theme::Fill;
-use warp_core::ui::tokens::{corners_md, corners_pill, corners_sm, StatusKind, Tokens, CARD_INSET};
+use warp_core::ui::tokens::{
+    corners_md, corners_pill, corners_sm, StatusKind, Tokens, CARD_INSET, RADIUS_MD, RADIUS_SM,
+};
 use warp_core::ui::Icon;
 use warp_core::user_preferences::GetUserPreferences as _;
 use warp_editor::editor::NavigationKey;

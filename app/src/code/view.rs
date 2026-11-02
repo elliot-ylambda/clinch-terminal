@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use warp_core::ui::tokens::RADIUS_MD;
 
 use lsp::LspManagerModel;
 use pathfinder_color::ColorU;
@@ -10,6 +9,7 @@ use warp_core::channel::{Channel, ChannelState};
 use warp_core::features::FeatureFlag;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::icons::ICON_DIMENSIONS;
+use warp_core::ui::tokens::RADIUS_MD;
 use warp_editor::render::element::VerticalExpansionBehavior;
 use warp_util::path::LineAndColumnArg;
 #[cfg(feature = "local_fs")]

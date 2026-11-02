@@ -1,11 +1,11 @@
 #[cfg(not(target_family = "wasm"))]
 use std::collections::HashMap;
-use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use instant::{Duration, Instant};
 use log::debug;
 use url::Url;
 use warp_core::send_telemetry_from_ctx;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warp_editor::editor::NavigationKey;
 use warp_graphql::queries::user_github_info::UserGithubInfoResult;
 use warpui::elements::{

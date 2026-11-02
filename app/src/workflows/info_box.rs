@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 use std::ops::Range;
-use warp_core::ui::tokens::RADIUS_MD;
 
 use string_offset::CharOffset;
 use warp_core::features::FeatureFlag;
 use warp_core::settings::Setting;
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::color::ColorU;
 use warpui::elements::{
     self, Align, Border, Clipped, ClippedScrollStateHandle, ClippedScrollable, ConstrainedBox,

@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
-use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use fuzzy_match::match_indices_case_insensitive;
 use lazy_static::lazy_static;
@@ -13,6 +12,7 @@ use warp_core::features::FeatureFlag;
 use warp_core::ui::icons::Icon;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::Fill;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warpui::clipboard::ClipboardContent;
 use warpui::elements::new_scrollable::{
     NewScrollableElement, ScrollableAppearance, SingleAxisConfig,

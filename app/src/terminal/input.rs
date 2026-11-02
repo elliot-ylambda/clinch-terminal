@@ -36,7 +36,6 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use warp_core::ui::tokens::RADIUS_SM;
 
 use ai::skills::SkillReference;
 use async_channel::Sender;
@@ -73,6 +72,7 @@ use warp_core::context_flag::ContextFlag;
 use warp_core::r#async::debounce;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::AnsiColorIdentifier;
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_core::user_preferences::GetUserPreferences as _;
 use warp_editor::editor::NavigationKey;
 use warp_util::path::ShellFamily;

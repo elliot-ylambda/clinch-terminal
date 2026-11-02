@@ -2,13 +2,13 @@ use std::collections::HashSet;
 use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::Arc;
-use warp_core::ui::tokens::RADIUS_MD;
 
 use itertools::Itertools;
 use lazy_static::lazy_static;
 use pathfinder_geometry::vector::vec2f;
 use settings::Setting;
 use warp_core::send_telemetry_from_app_ctx;
+use warp_core::ui::tokens::RADIUS_MD;
 use warp_util::path::LineAndColumnArg;
 use warpui::elements::{
     Align, Border, ChildAnchor, ChildView, Clipped, ClippedScrollStateHandle, ClippedScrollable,

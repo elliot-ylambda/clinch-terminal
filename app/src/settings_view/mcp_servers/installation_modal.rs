@@ -1,9 +1,9 @@
 use std::collections::HashMap;
-use warp_core::ui::tokens::RADIUS_SM;
 
 use markdown_parser::parse_markdown;
 use warp_core::ui::external_product_icon::ExternalProductIcon;
 use warp_core::ui::icons::Icon;
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::elements::{
     Align, Border, ChildView, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Empty,
     Flex, FormattedTextElement, HighlightedHyperlink, Hoverable, MainAxisAlignment,

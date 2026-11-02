@@ -1,10 +1,10 @@
 use std::sync::Arc;
-use warp_core::ui::tokens::RADIUS_SM;
 
 use anyhow::Result;
 use chrono::{DateTime, FixedOffset, Local};
 use pathfinder_geometry::vector::vec2f;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::clipboard::ClipboardContent;
 use warpui::color::ColorU;
 use warpui::elements::{

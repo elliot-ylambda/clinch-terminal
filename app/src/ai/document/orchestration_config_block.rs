@@ -3,7 +3,6 @@
 //! toggle, Cloud/Local picker, and run-wide config dropdowns.
 
 use std::collections::HashMap;
-use warp_core::ui::tokens::{RADIUS_LG, RADIUS_SM};
 
 use ai::agent::action::RunAgentsExecutionMode;
 use ai::agent::orchestration_config::OrchestrationConfigStatus;
@@ -12,6 +11,7 @@ use pathfinder_geometry::vector::vec2f;
 use warp_cli::agent::Harness;
 use warp_core::send_telemetry_from_ctx;
 use warp_core::ui::theme::WarpTheme;
+use warp_core::ui::tokens::{RADIUS_LG, RADIUS_SM};
 use warpui::elements::{
     ChildAnchor, ChildView, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Empty,
     Flex, Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning,

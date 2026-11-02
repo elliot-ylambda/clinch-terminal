@@ -1,10 +1,10 @@
 use std::path::Path;
-use warp_core::ui::tokens::RADIUS_MD;
 
 use warp_core::paths::home_relative_path;
 use warp_core::send_telemetry_from_ctx;
 use warp_core::ui::icons::Icon;
 use warp_core::ui::theme::{AnsiColorIdentifier, Fill};
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::elements::{
     Border, ChildView, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Empty,
     Expanded, Flex, MainAxisSize, Padding, ParentElement, Shrinkable, Text,

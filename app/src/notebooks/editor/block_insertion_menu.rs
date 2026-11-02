@@ -1,7 +1,7 @@
 use std::sync::Arc;
-use warp_core::ui::tokens::RADIUS_MD;
 
 use serde::{Deserialize, Serialize};
+use warp_core::ui::tokens::RADIUS_MD;
 use warp_editor::content::text::BufferBlockItem;
 use warpui::elements::{
     AnchorPair, Border, Container, CornerRadius, MouseStateHandle, OffsetPositioning, OffsetType,

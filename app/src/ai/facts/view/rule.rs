@@ -1,12 +1,12 @@
 use std::fmt::Debug;
 use std::path::PathBuf;
-use warp_core::ui::tokens::RADIUS_SM;
 
 use ai::project_context::model::{ProjectContextModel, ProjectContextModelEvent};
 use markdown_parser::weight::CustomWeight;
 use markdown_parser::{FormattedText, FormattedTextFragment, FormattedTextLine};
 use warp_core::ui::appearance::{Appearance, AppearanceEvent};
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_util::local_or_remote_path::LocalOrRemotePath;
 use warpui::elements::{
     Align, Border, ChildView, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment,

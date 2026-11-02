@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
-use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 
 use ai::diff_validation::{
     fuzzy_match_diffs, fuzzy_match_v4a_diffs, parse_line_numbers, DiffDelta, DiffType, ParsedDiff,
@@ -23,6 +22,7 @@ use warp_core::ui::appearance::Appearance;
 use warp_core::ui::color::CLAUDE_ORANGE;
 use warp_core::ui::theme::color::internal_colors::{fg_overlay_6, neutral_1, neutral_4};
 use warp_core::ui::theme::Fill;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warp_core::HostId;
 use warp_editor::content::buffer::InitialBufferState;
 use warp_editor::render::element::VerticalExpansionBehavior;

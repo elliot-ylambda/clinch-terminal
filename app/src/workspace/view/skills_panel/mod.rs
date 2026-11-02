@@ -2,11 +2,11 @@ mod catalog;
 mod grouping;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use warp_core::ui::tokens::RADIUS_SM;
 
 use catalog::{catalog_for_subtab, group_catalog_skills, CatalogGroup, CatalogSkill};
 pub(crate) use grouping::{group_skills_by_scope, SkillsSubtab};
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_core::ui::Icon;
 use warp_util::local_or_remote_path::LocalOrRemotePath;
 use warpui::elements::new_scrollable::{NewScrollable, ScrollableAppearance, SingleAxisConfig};
