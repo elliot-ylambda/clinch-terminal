@@ -1356,6 +1356,7 @@ fn restore_prefers_newer_registry_command_over_sqlite_snapshot() {
             &dir,
             "aabb",
             Some("clinch_agent_resume_launch codex stale".to_string()),
+            None,
         )
         .as_deref(),
         Some("clinch_agent_resume_launch claude current")
@@ -1383,6 +1384,7 @@ fn journaled_remove_prevents_stale_sqlite_agent_resurrection() {
             &dir,
             "aabb",
             Some("clinch_agent_resume_launch claude old".to_string()),
+            None,
         ),
         None
     );
@@ -1407,6 +1409,7 @@ fn removal_tombstone_prevents_resurrection_when_journal_is_unavailable() {
             &dir,
             "aabb",
             Some("clinch_agent_resume_launch claude old".to_string()),
+            None,
         ),
         None
     );
@@ -1426,6 +1429,7 @@ fn persisted_command_survives_without_a_removal_tombstone() {
             &dir,
             "aabb",
             Some("warp_agent_resume_launch claude old".to_string()),
+            None,
         )
         .as_deref(),
         Some("clinch_agent_resume_launch claude old")
@@ -2012,5 +2016,132 @@ mod real_zsh {
                 zsh.output()
             );
         }
+    }
+}
+
+/// A registry where pane `aabb`'s session was removed at 12:00:00, the way an exit hook records it.
+fn registry_with_removal() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join(TOMBSTONES_DIR)).unwrap();
+    std::fs::write(
+        dir.path().join(TOMBSTONES_DIR).join("aabb"),
+        "2026-08-13T12:00:00Z\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("journal.jsonl"),
+        concat!(
+            "{\"ts\":\"2026-08-13T11:00:00Z\",\"op\":\"write\",\"pane\":\"aabb\",",
+            "\"command\":\"clinch_agent_resume_launch codex s1\",\"cwd\":\"/tmp\",\"bridge\":\"\"}\n",
+            "{\"ts\":\"2026-08-13T12:00:00Z\",\"op\":\"remove\",\"pane\":\"aabb\"}\n"
+        ),
+    )
+    .unwrap();
+    dir
+}
+
+fn at(time: &str) -> Option<DateTime<Utc>> {
+    Some(
+        DateTime::parse_from_rfc3339(time)
+            .unwrap()
+            .with_timezone(&Utc),
+    )
+}
+
+const SAVED_CODEX: &str = "clinch_agent_resume_launch codex s1";
+
+#[test]
+fn a_codex_session_removed_by_a_late_hook_during_an_update_is_still_restored() {
+    let dir = registry_with_removal();
+    assert_eq!(
+        resolve_on_restore_command_in(
+            dir.path(),
+            "aabb",
+            Some(SAVED_CODEX.to_owned()),
+            at("2026-08-13T12:00:20Z"),
+        )
+        .as_deref(),
+        Some(SAVED_CODEX)
+    );
+    // With only the journal to go on, as when a tombstone couldn't be read.
+    std::fs::remove_file(dir.path().join(TOMBSTONES_DIR).join("aabb")).unwrap();
+    assert_eq!(
+        resolve_on_restore_command_in(
+            dir.path(),
+            "aabb",
+            Some(SAVED_CODEX.to_owned()),
+            at("2026-08-13T12:00:20Z"),
+        )
+        .as_deref(),
+        Some(SAVED_CODEX)
+    );
+}
+
+#[test]
+fn a_session_the_user_exited_stays_gone() {
+    let dir = registry_with_removal();
+    let resolve = |persisted: Option<&str>, launch| {
+        resolve_on_restore_command_in(dir.path(), "aabb", persisted.map(str::to_owned), launch)
+    };
+    // An ordinary launch, not the updater's.
+    assert_eq!(resolve(Some(SAVED_CODEX), None), None);
+    // Removed long before the update.
+    assert_eq!(resolve(Some(SAVED_CODEX), at("2026-08-13T12:30:00Z")), None);
+    // Removed after this launch, so it says nothing about the quit before it.
+    assert_eq!(resolve(Some(SAVED_CODEX), at("2026-08-13T11:59:00Z")), None);
+    // Exited before quitting: the old app had no command left to save.
+    assert_eq!(resolve(None, at("2026-08-13T12:00:20Z")), None);
+}
+
+#[test]
+fn a_removal_without_a_readable_time_stays_a_removal() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join(TOMBSTONES_DIR)).unwrap();
+    std::fs::write(dir.path().join(TOMBSTONES_DIR).join("aabb"), "not a time\n").unwrap();
+    assert_eq!(
+        resolve_on_restore_command_in(
+            dir.path(),
+            "aabb",
+            Some(SAVED_CODEX.to_owned()),
+            at("2026-08-13T12:00:20Z"),
+        ),
+        None
+    );
+}
+
+#[test]
+fn an_unreadable_tombstone_stays_a_removal() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join(TOMBSTONES_DIR)).unwrap();
+    std::fs::write(dir.path().join(TOMBSTONES_DIR).join("aabb"), [0xff, 0xfe]).unwrap();
+    for launch in [None, at("2026-08-13T12:00:20Z")] {
+        assert_eq!(
+            resolve_on_restore_command_in(dir.path(), "aabb", Some(SAVED_CODEX.to_owned()), launch,),
+            None
+        );
+    }
+}
+
+#[test]
+fn a_saved_codex_session_restores_with_its_identity_like_a_claude_one() {
+    let dir = tempfile::tempdir().unwrap();
+    for (command, provider) in [
+        (
+            "clinch_agent_resume_launch codex 019a-id --model gpt-5",
+            AgentResumeProvider::Codex,
+        ),
+        (
+            "clinch_agent_resume_launch claude 2040-id --model opus",
+            AgentResumeProvider::Claude,
+        ),
+    ] {
+        let restored =
+            resolve_on_restore_command_in(dir.path(), "aabb", Some(command.to_owned()), None)
+                .unwrap();
+        assert_eq!(restored, command);
+        assert_eq!(
+            agent_session_seed_from_restore_command(&restored).map(|(provider, _)| provider),
+            Some(provider)
+        );
     }
 }

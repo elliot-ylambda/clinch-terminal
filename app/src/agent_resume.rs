@@ -1387,6 +1387,18 @@ pub fn read_on_restore_command(uuid: &[u8]) -> Option<String> {
     read_command_in(&dir, &hex::encode(uuid))
 }
 
+/// How long before an updater's launch a recorded removal can still be a shutdown hook running
+/// late, rather than the user exiting the agent.
+const LATE_REMOVAL_WINDOW_MINUTES: i64 = 10;
+
+/// When the updater launched this process, if it did. Fixed at the first call, which happens as
+/// windows restore at launch.
+fn updater_launch_time() -> Option<DateTime<Utc>> {
+    static LAUNCH: LazyLock<Option<DateTime<Utc>>> =
+        LazyLock::new(|| std::env::var_os("CLINCH_UPDATE_SUCCESS_MARKER").map(|_| Utc::now()));
+    *LAUNCH
+}
+
 /// Reconcile a persisted command with the mutable registry at launch. The registry may be
 /// newer than SQLite when an agent starts immediately before quit, while an explicit journaled
 /// remove means an older SQLite command must not resurrect an agent the user already exited.
@@ -1401,31 +1413,76 @@ pub fn resolve_on_restore_command(
         return persisted_command.map(normalize_restore_command);
     };
     let uuid_hex = hex::encode(uuid);
-    resolve_on_restore_command_in(&dir, &uuid_hex, persisted_command)
+    resolve_on_restore_command_in(&dir, &uuid_hex, persisted_command, updater_launch_time())
 }
 
 fn resolve_on_restore_command_in(
     dir: &Path,
     uuid_hex: &str,
     persisted_command: Option<String>,
+    updater_launch: Option<DateTime<Utc>>,
 ) -> Option<String> {
     if let Some(command) = read_command_in(dir, uuid_hex) {
         return Some(command);
     }
-    if dir.join(TOMBSTONES_DIR).join(uuid_hex).is_file() {
-        return None;
+    let persisted_command = persisted_command.map(normalize_restore_command);
+    if let Some(removed_at) = removal_record(dir, uuid_hex) {
+        if persisted_command.is_none()
+            || !removal_was_a_late_shutdown_hook(removed_at, updater_launch)
+        {
+            return None;
+        }
+        log::warn!(
+            "agent-resume: keeping pane {uuid_hex}'s saved session: its removal looks like a \
+             shutdown hook that ran during the update"
+        );
     }
-    if latest_journal_op_for_pane(dir, uuid_hex).as_deref() == Some("remove") {
-        return None;
-    }
-    persisted_command.map(normalize_restore_command)
+    persisted_command
 }
 
-fn latest_journal_op_for_pane(dir: &Path, uuid_hex: &str) -> Option<String> {
+/// Whether a recorded removal came from an agent's exit hook during the update that started this
+/// process, rather than from the user exiting the agent.
+///
+/// Update helpers from before v0.2026.09.17 delete the `.app-terminating` marker as soon as the old
+/// app has quit, so an agent that runs its exit hook after that looks like one the user exited.
+/// Codex does. The saved command says otherwise: the old app saved it while quitting, so the session
+/// was still there then. If the user had exited it first, there would be no command to save.
+fn removal_was_a_late_shutdown_hook(
+    removed_at: Option<DateTime<Utc>>,
+    updater_launch: Option<DateTime<Utc>>,
+) -> bool {
+    let (Some(removed_at), Some(launch)) = (removed_at, updater_launch) else {
+        return false;
+    };
+    removed_at <= launch
+        && launch - removed_at <= chrono::Duration::minutes(LATE_REMOVAL_WINDOW_MINUTES)
+}
+
+/// `Some` if this pane's session was recorded as removed, holding the removal time if readable.
+fn removal_record(dir: &Path, uuid_hex: &str) -> Option<Option<DateTime<Utc>>> {
+    let tombstone = dir.join(TOMBSTONES_DIR).join(uuid_hex);
+    if tombstone.is_file() {
+        return Some(
+            std::fs::read_to_string(tombstone)
+                .ok()
+                .and_then(|time| parse_record_time(time.trim())),
+        );
+    }
+    let record = latest_journal_record_for_pane(dir, uuid_hex)?;
+    (record.op == "remove").then(|| parse_record_time(&record.ts))
+}
+
+fn parse_record_time(time: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(time)
+        .ok()
+        .map(|time| time.with_timezone(&Utc))
+}
+
+fn latest_journal_record_for_pane(dir: &Path, uuid_hex: &str) -> Option<JournalRecord> {
     let contents = std::fs::read_to_string(dir.join("journal.jsonl")).ok()?;
     contents.lines().rev().find_map(|line| {
         let record = serde_json::from_str::<JournalRecord>(line).ok()?;
-        (record.pane.as_deref() == Some(uuid_hex)).then_some(record.op)
+        (record.pane.as_deref() == Some(uuid_hex)).then_some(record)
     })
 }
 
