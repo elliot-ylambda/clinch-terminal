@@ -171,7 +171,7 @@ fn abort_command_start_recovers_block_when_command_never_executes() {
         // reconciler must revert the phantom start so the pane accepts
         // commands again instead of reporting "command already running".
         harness.controller.update(&mut app, |controller, ctx| {
-            controller.abort_command_start_if_unexecuted(&block_id, ctx);
+            controller.abort_command_start_if_unexecuted(&block_id, false, ctx);
         });
 
         let terminal_model = harness.terminal_model.lock();
@@ -213,7 +213,7 @@ fn abort_command_start_is_noop_once_command_is_executing() {
         });
 
         harness.controller.update(&mut app, |controller, ctx| {
-            controller.abort_command_start_if_unexecuted(&block_id, ctx);
+            controller.abort_command_start_if_unexecuted(&block_id, false, ctx);
         });
 
         let terminal_model = harness.terminal_model.lock();
@@ -305,6 +305,84 @@ fn deferred_restore_command_cancel_removes_only_the_parked_restore_write() {
             assert_eq!(controller.pending_writes.len(), 1);
             assert!(matches!(controller.pending_writes.front(), Some(PtyWrite::Bytes { bytes }) if &bytes[..] == b"user draft"));
             assert!(!controller.cancel_pending_restore_command());
+        });
+    });
+}
+
+#[test]
+fn a_restore_command_the_shell_never_starts_is_kept_for_a_retry() {
+    App::test((), |mut app| async move {
+        let harness = build_pty_controller(&mut app);
+        harness
+            .line_editor_status
+            .update(&mut app, |status, ctx| status.set_active_for_test(ctx));
+        harness.controller.update(&mut app, |controller, ctx| {
+            controller.write_restore_command(
+                "clinch_agent_resume_launch claude abc",
+                ShellType::Zsh,
+                ctx,
+            );
+        });
+        let block_id = active_block_id(&harness.terminal_model);
+
+        harness.controller.update(&mut app, |controller, ctx| {
+            controller.abort_command_start_if_unexecuted(&block_id, true, ctx);
+            // The command as stored, so the retry's typed form is worked out afresh.
+            assert_eq!(
+                controller.stalled_restore_command,
+                Some((
+                    "clinch_agent_resume_launch claude abc".to_owned(),
+                    ShellType::Zsh
+                ))
+            );
+            assert!(controller.retry_stalled_restore_command(ctx));
+            assert!(controller.stalled_restore_command.is_none());
+            assert!(!controller.retry_stalled_restore_command(ctx));
+        });
+    });
+}
+
+#[test]
+fn a_restore_command_the_shell_started_has_nothing_to_retry() {
+    App::test((), |mut app| async move {
+        let harness = build_pty_controller(&mut app);
+        harness
+            .line_editor_status
+            .update(&mut app, |status, ctx| status.set_active_for_test(ctx));
+        harness.controller.update(&mut app, |controller, ctx| {
+            controller.write_restore_command(
+                "clinch_agent_resume_launch claude abc",
+                ShellType::Zsh,
+                ctx,
+            );
+        });
+        let block_id = active_block_id(&harness.terminal_model);
+        harness.terminal_model.lock().preexec(PreexecValue {
+            command: "nocorrect clinch_agent_resume_launch 'claude' 'abc'".to_owned(),
+            session_id: None,
+        });
+
+        harness.controller.update(&mut app, |controller, ctx| {
+            controller.abort_command_start_if_unexecuted(&block_id, true, ctx);
+            assert!(controller.stalled_restore_command.is_none());
+        });
+    });
+}
+
+#[test]
+fn an_ordinary_command_that_never_starts_is_not_retried() {
+    App::test((), |mut app| async move {
+        let harness = build_pty_controller(&mut app);
+        harness
+            .line_editor_status
+            .update(&mut app, |status, ctx| status.set_active_for_test(ctx));
+        harness.controller.update(&mut app, |controller, ctx| {
+            controller.write_command("ca", ShellType::Zsh, CommandExecutionSource::User, ctx);
+        });
+        let block_id = active_block_id(&harness.terminal_model);
+        harness.controller.update(&mut app, |controller, ctx| {
+            controller.abort_command_start_if_unexecuted(&block_id, false, ctx);
+            assert!(controller.stalled_restore_command.is_none());
         });
     });
 }

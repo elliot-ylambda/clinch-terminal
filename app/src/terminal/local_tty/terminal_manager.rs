@@ -1086,6 +1086,13 @@ impl TerminalManager {
         });
     }
 
+    /// Tries again a restore command the shell never started, if there was one.
+    pub fn retry_stalled_restore_command(&self, app_ctx: &mut AppContext) {
+        self.pty_controller.update(app_ctx, |controller, ctx| {
+            controller.retry_stalled_restore_command(ctx);
+        });
+    }
+
     pub fn cancel_pending_restore_command(&self, app_ctx: &mut AppContext) -> bool {
         self.pty_controller.update(app_ctx, |controller, _| {
             controller.cancel_pending_restore_command()

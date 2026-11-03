@@ -634,6 +634,9 @@ const COORDINATION_INPUT_SETTLE: Duration = Duration::from_secs(5);
 /// Starts a restored pane's agent; run once, the first time the pane is shown.
 type DeferredAgentStart = Box<dyn FnOnce(&mut AppContext)>;
 
+const AGENT_COMMAND_DID_NOT_START_MESSAGE: &str =
+    "The shell in this tab didn't start the agent. It may be waiting for input.";
+
 /// Width of the bookmark indicator
 const BOOKMARK_INDICATOR_WIDTH: f32 = 15.;
 /// Offset from the right for the bookmark preview
@@ -2696,6 +2699,8 @@ pub struct TerminalView {
     /// restored at launch. The app-wide restore queue admits two starts at a time.
     deferred_agent_start: Option<DeferredAgentStart>,
     background_agent_restore: bool,
+    /// The shell never started the restore or launch command typed into it.
+    agent_command_stalled: bool,
     /// When a deferred agent start was released; readiness reports `starting`
     /// until the agent takes over the terminal.
     deferred_agent_started_at: Option<Instant>,
@@ -4794,6 +4799,7 @@ impl TerminalView {
             coordination_send_pending: false,
             deferred_agent_start: None,
             background_agent_restore: false,
+            agent_command_stalled: false,
             deferred_agent_started_at: None,
             current_state: TerminalViewStateChange::default(),
             did_notify_long_running: false,
@@ -17464,6 +17470,26 @@ impl TerminalView {
         self.release_deferred_agent(ctx)
     }
 
+    /// The shell never started a restore or launch command typed into it. A restore is reported
+    /// by its queue, in the sidebar. Nothing else is watching a launched agent's tab, so say it.
+    pub(crate) fn agent_command_did_not_start(&mut self, ctx: &mut ViewContext<Self>) {
+        self.agent_command_stalled = true;
+        if !self.background_agent_restore {
+            ctx.emit(Event::ShowToast {
+                message: AGENT_COMMAND_DID_NOT_START_MESSAGE.to_owned(),
+                flavor: ToastFlavor::Error,
+            });
+        }
+    }
+
+    pub(crate) fn agent_command_stalled(&self) -> bool {
+        self.agent_command_stalled
+    }
+
+    pub(crate) fn clear_agent_command_stalled(&mut self) {
+        self.agent_command_stalled = false;
+    }
+
     pub(crate) fn agent_restore_has_user_input(&self) -> bool {
         self.coordination_user_input_epoch != 0
     }
@@ -17479,6 +17505,11 @@ impl TerminalView {
         self.deferred_agent_started_at = Some(Instant::now());
         start(ctx);
         true
+    }
+
+    #[cfg(test)]
+    pub(crate) fn mark_user_input_for_test(&mut self) {
+        self.coordination_user_input_epoch = 1;
     }
 
     #[cfg(test)]

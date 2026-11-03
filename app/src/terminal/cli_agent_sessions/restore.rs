@@ -1,6 +1,7 @@
 //! Restore saved conversations in their existing panes, independently of focus or rendering, and
 //! tell the ones a restart cut off mid-turn to carry on.
 use std::collections::{BTreeSet, HashSet};
+use std::rc::Rc;
 use std::time::Duration;
 
 use instant::Instant;
@@ -29,8 +30,10 @@ const CONTINUE_SETTLE: Duration = Duration::from_secs(3);
 /// How long to keep trying to continue a restored agent before flagging its tab instead.
 const CONTINUE_TIMEOUT: Duration = Duration::from_secs(3 * 60);
 const CONTINUE_FAILED_LABEL: &str = "Was running but couldn't continue — check this tab";
+const DID_NOT_START_LABEL: &str = "The shell didn't start this — it may be waiting for input";
 
 type CancelPendingCommand = Box<dyn FnOnce(&mut AppContext) -> bool>;
+type RetryStalledCommand = Rc<dyn Fn(&mut AppContext)>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RestoreState {
@@ -107,6 +110,9 @@ struct RestoreEntry {
     state: RestoreState,
     started_at: Option<Instant>,
     cancel_pending_command: Option<CancelPendingCommand>,
+    retry_stalled_command: RetryStalledCommand,
+    /// The user asked to try this one again, knowing what they typed in its tab.
+    retrying: bool,
     /// This pane was mid-turn when Clinch stopped, and hasn't been told to continue yet.
     continue_pending: bool,
     /// When the agent came back, which is when the wait to continue it starts.
@@ -196,6 +202,7 @@ impl AgentRestoreQueue {
         pane_uuid: Vec<u8>,
         key: CLIAgentSessionKey,
         cancel_pending_command: CancelPendingCommand,
+        retry_stalled_command: RetryStalledCommand,
         ctx: &mut ModelContext<Self>,
     ) {
         if self
@@ -223,6 +230,8 @@ impl AgentRestoreQueue {
             },
             started_at: None,
             cancel_pending_command: Some(cancel_pending_command),
+            retry_stalled_command,
+            retrying: false,
             continue_pending,
             restored_at: None,
         });
@@ -251,6 +260,42 @@ impl AgentRestoreQueue {
             .map(|entry| entry.terminal.id())
     }
 
+    /// How many restores are stuck because the shell never started their command.
+    pub(crate) fn stalled_count(&self) -> usize {
+        self.entries
+            .iter()
+            .filter(|entry| entry.state == RestoreState::Attention(DID_NOT_START_LABEL))
+            .count()
+    }
+
+    /// Tries again every restore whose shell never started its command, through the queue so they
+    /// still start a couple at a time.
+    pub(crate) fn retry_stalled(&mut self, ctx: &mut ModelContext<Self>) {
+        for entry in &mut self.entries {
+            if entry.state != RestoreState::Attention(DID_NOT_START_LABEL) {
+                continue;
+            }
+            let Some(terminal) = entry.terminal.upgrade(ctx) else {
+                continue;
+            };
+            let retry = entry.retry_stalled_command.clone();
+            terminal.update(ctx, |view, _| {
+                view.clear_agent_command_stalled();
+                view.defer_agent_start(Box::new(move |ctx| retry(ctx)));
+            });
+            entry.state = RestoreState::Queued;
+            entry.started_at = None;
+            entry.retrying = true;
+        }
+        self.completed_at = None;
+        self.notice_dismissed = false;
+        ctx.emit(());
+        if !self.ticking {
+            self.ticking = true;
+            self.schedule_tick(ctx);
+        }
+    }
+
     pub(crate) fn dismiss_notice(&mut self, ctx: &mut ModelContext<Self>) {
         self.notice_dismissed = true;
         ctx.emit(());
@@ -275,7 +320,15 @@ impl AgentRestoreQueue {
             .filter(|entry| matches!(entry.state, RestoreState::Attention(_)))
             .count();
         let total = self.entries.len() - count(RestoreState::Closed);
-        if queued + starting > 0 {
+        let stalled = self.stalled_count();
+        if queued + starting == 0 && stalled > 0 && stalled == attention {
+            Some(match stalled {
+                1 => "1 session didn't start: its shell may be waiting for input".to_owned(),
+                count => {
+                    format!("{count} sessions didn't start: their shells may be waiting for input")
+                }
+            })
+        } else if queued + starting > 0 {
             let mut text = format!("Restoring sessions: {restored} of {total} restored · {starting} starting · {queued} queued");
             if attention > 0 {
                 text.push_str(&format!(" · {attention} need attention"));
@@ -361,6 +414,10 @@ impl AgentRestoreQueue {
                 if terminal.as_ref(ctx).agent_restore_is_ready(ctx) {
                     entry.state = RestoreState::Restored;
                     entry.cancel_pending_command = None;
+                } else if terminal.as_ref(ctx).agent_command_stalled() {
+                    // Don't keep a start slot for the full timeout: every other session is waiting
+                    // behind this one, and this one isn't coming without help.
+                    entry.state = RestoreState::Attention(DID_NOT_START_LABEL);
                 } else if session.and_then(|session| session.session_key()).as_ref()
                     != Some(&entry.key)
                 {
@@ -413,7 +470,7 @@ impl AgentRestoreQueue {
             let Some(terminal) = entry.terminal.upgrade(ctx) else {
                 continue;
             };
-            if terminal.as_ref(ctx).agent_restore_has_user_input()
+            if (!entry.retrying && terminal.as_ref(ctx).agent_restore_has_user_input())
                 || CLIAgentSessionsModel::as_ref(ctx)
                     .session(terminal.id())
                     .and_then(|session| session.session_key())

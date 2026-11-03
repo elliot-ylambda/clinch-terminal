@@ -695,7 +695,12 @@ impl TerminalView {
             UseAgentToolbarEvent::LaunchTerminalCodex(args) => {
                 let prefix = AgentResumeProvider::Codex
                     .launch_command_prefix(self.active_session_is_local(ctx) == Some(true));
-                self.write_user_bytes_to_pty(format!("{prefix} {args}\n").into_bytes(), ctx);
+                let command = format!("{prefix} {args}");
+                let command = match self.active_session_shell_type(ctx) {
+                    Some(shell_type) => crate::agent_resume::command_to_type(&command, shell_type),
+                    None => command,
+                };
+                self.write_user_bytes_to_pty(format!("{command}\n").into_bytes(), ctx);
             }
             UseAgentToolbarEvent::InsertIntoRichInput(text) => {
                 self.input.update(ctx, |input, ctx| {

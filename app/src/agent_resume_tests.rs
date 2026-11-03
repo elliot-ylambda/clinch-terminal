@@ -1817,3 +1817,200 @@ fn auto_coordinate_wakeups_are_not_user_history() {
         "Why does the [Clinch auto-coordinate] message show up?"
     ));
 }
+
+#[test]
+fn zsh_gets_a_command_its_spelling_correction_leaves_alone() {
+    let typed = |command| command_to_type(command, ShellType::Zsh);
+    assert_eq!(
+        typed("CLINCH_AGENT_RESTORE_EXACT=1 clinch_agent_resume_launch claude abc-1 --dangerously-skip-permissions"),
+        "nocorrect CLINCH_AGENT_RESTORE_EXACT=1 clinch_agent_resume_launch 'claude' 'abc-1' '--dangerously-skip-permissions'"
+    );
+    assert_eq!(
+        typed("clinch_codex_launch resume"),
+        "nocorrect clinch_codex_launch 'resume'"
+    );
+    // An argument that is already quoted, like a coordinator's instructions, stays as it is.
+    assert_eq!(
+        typed("claude --append-system-prompt 'You are the coordinator.' --model opus"),
+        "nocorrect claude '--append-system-prompt' 'You are the coordinator.' '--model' 'opus'"
+    );
+}
+
+#[test]
+fn a_command_the_shell_has_to_interpret_only_gets_nocorrect() {
+    for command in [
+        "cd repo && claude",
+        "claude $FLAGS",
+        "claude ~/notes",
+        "claude 'unterminated",
+    ] {
+        assert_eq!(
+            command_to_type(command, ShellType::Zsh),
+            format!("nocorrect {command}")
+        );
+    }
+}
+
+#[test]
+fn shells_without_nocorrect_get_the_command_as_stored() {
+    let command = "CLINCH_AGENT_RESTORE_EXACT=1 clinch_agent_resume_launch claude abc";
+    for shell in [ShellType::Bash, ShellType::Fish, ShellType::PowerShell] {
+        assert_eq!(command_to_type(command, shell), command);
+    }
+}
+
+#[test]
+fn a_typed_command_still_identifies_its_session() {
+    for command in [
+        "clinch_agent_resume_launch codex abc-1 --model gpt-5",
+        "CLINCH_AGENT_RESTORE_EXACT=1 clinch_agent_resume_launch codex abc-1 --model gpt-5",
+        "nocorrect CLINCH_AGENT_RESTORE_EXACT=1 clinch_agent_resume_launch 'codex' 'abc-1' '--model' 'gpt-5'",
+    ] {
+        assert_eq!(
+            agent_session_seed_from_restore_command(command),
+            Some((AgentResumeProvider::Codex, "abc-1".to_owned())),
+            "{command}"
+        );
+    }
+    assert_eq!(without_typed_prefixes("A=1 B=2 claude x"), "claude x");
+    assert_eq!(without_typed_prefixes("claude a=1"), "claude a=1");
+}
+
+/// Types into a real interactive zsh on a real pseudo-terminal, the way a restored pane does.
+#[cfg(target_os = "macos")]
+mod real_zsh {
+    use std::io::{Read as _, Write as _};
+    use std::os::unix::fs::PermissionsExt as _;
+    use std::process::Stdio;
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    use command::blocking::Command;
+    use instant::Instant;
+
+    use super::super::command_to_type;
+    use crate::terminal::shell::ShellType;
+
+    const PROMPT_QUESTION: &str = "[nyae]";
+
+    struct Zsh {
+        child: std::process::Child,
+        output: Arc<Mutex<String>>,
+    }
+
+    impl Zsh {
+        fn start(directory: &std::path::Path) -> Self {
+            let mut child = Command::new("/usr/bin/script")
+                .args(["-q", "/dev/null", "/bin/zsh", "-f", "-i"])
+                .current_dir(directory)
+                .env("PATH", format!("{}/bin:/usr/bin:/bin", directory.display()))
+                .env("HOME", directory)
+                .env("TERM", "xterm")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("start zsh");
+            let mut stdout = child.stdout.take().expect("zsh output");
+            let output = Arc::new(Mutex::new(String::new()));
+            let collected = output.clone();
+            std::thread::spawn(move || {
+                let mut buffer = [0; 4096];
+                while let Ok(read) = stdout.read(&mut buffer) {
+                    if read == 0 {
+                        break;
+                    }
+                    collected
+                        .lock()
+                        .unwrap()
+                        .push_str(&String::from_utf8_lossy(&buffer[..read]));
+                }
+            });
+            let mut zsh = Self { child, output };
+            zsh.type_line("setopt correct_all; PROMPT='ready> '; PS2=''");
+            zsh.wait_for("ready> ");
+            zsh
+        }
+
+        fn write(&mut self, bytes: &[u8]) {
+            let stdin = self.child.stdin.as_mut().expect("zsh input");
+            stdin.write_all(bytes).unwrap();
+            stdin.flush().unwrap();
+        }
+
+        fn type_line(&mut self, line: &str) {
+            self.write(format!("{line}\n").as_bytes());
+        }
+
+        fn output(&self) -> String {
+            self.output.lock().unwrap().clone()
+        }
+
+        fn wait_for(&self, text: &str) {
+            let deadline = Instant::now() + Duration::from_secs(30);
+            while !self.output().contains(text) {
+                assert!(
+                    Instant::now() < deadline,
+                    "never saw {text:?} in zsh output:\n{}",
+                    self.output()
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+    }
+
+    impl Drop for Zsh {
+        fn drop(&mut self) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+
+    /// A project folder holding `.claude` and `.codex`, and a stand-in launcher that reports what
+    /// it was given.
+    fn project() -> tempfile::TempDir {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::create_dir(directory.path().join(".claude")).unwrap();
+        std::fs::create_dir(directory.path().join(".codex")).unwrap();
+        std::fs::create_dir(directory.path().join("bin")).unwrap();
+        let launcher = directory.path().join("bin/clinch_agent_resume_launch");
+        std::fs::write(
+            &launcher,
+            "#!/bin/sh\necho \"STARTED[$1][$2][$3][${CLINCH_AGENT_RESTORE_EXACT:-unset}]\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o755)).unwrap();
+        directory
+    }
+
+    #[test]
+    fn a_resume_command_starts_with_correct_all_on_beside_the_agents_own_folder() {
+        for agent in ["claude", "codex"] {
+            let directory = project();
+            let mut zsh = Zsh::start(directory.path());
+            let stored = format!(
+                "CLINCH_AGENT_RESTORE_EXACT=1 clinch_agent_resume_launch {agent} abc --flag"
+            );
+
+            // As stored, the shell stops and asks. This is the hang, and it shows this test can
+            // see it.
+            zsh.type_line(&stored);
+            zsh.wait_for(PROMPT_QUESTION);
+            assert!(!zsh.output().contains("STARTED["));
+
+            // Retry's Ctrl-C gets the shell back from the question, and the form Clinch types
+            // starts with no question at all.
+            zsh.write(&[0x03]);
+            std::thread::sleep(Duration::from_millis(300));
+            let questions_so_far = zsh.output().matches(PROMPT_QUESTION).count();
+            zsh.type_line(&command_to_type(&stored, ShellType::Zsh));
+            zsh.wait_for(&format!("STARTED[{agent}][abc][--flag][1]"));
+            assert_eq!(
+                zsh.output().matches(PROMPT_QUESTION).count(),
+                questions_so_far,
+                "{}",
+                zsh.output()
+            );
+        }
+    }
+}

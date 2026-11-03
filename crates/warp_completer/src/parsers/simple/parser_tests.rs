@@ -221,3 +221,22 @@ fn test_top_level_command() {
         );
     }
 }
+
+#[test]
+fn top_level_command_looks_past_nocorrect() {
+    use warp_util::path::EscapeChar;
+
+    use crate::parsers::simple::top_level_command;
+
+    for source in [
+        "nocorrect claude x",
+        "nocorrect FOO=1 claude x",
+        "FOO=1 claude x",
+    ] {
+        assert_eq!(
+            top_level_command(source, EscapeChar::Backslash).as_deref(),
+            Some("claude"),
+            "{source}"
+        );
+    }
+}

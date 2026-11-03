@@ -1782,6 +1782,7 @@ impl PaneGroup {
                             let terminal = pane_data.terminal_view(ctx);
                             let pane_uuid = pane_data.session_uuid();
                             let cancel_manager = manager_handle.downgrade();
+                            let retry_manager = manager_handle.downgrade();
                             crate::terminal::cli_agent_sessions::restore::AgentRestoreQueue::handle(ctx).update(ctx, |queue, ctx| {
                                 queue.enqueue(&terminal, pane_uuid, crate::terminal::cli_agent_sessions::CLIAgentSessionKey { provider, session_id }, Box::new(move |ctx| {
                                     if let Some(manager) = cancel_manager.upgrade(ctx) {
@@ -1791,6 +1792,14 @@ impl PaneGroup {
                                         });
                                     }
                                     false
+                                }), std::rc::Rc::new(move |ctx| {
+                                    if let Some(manager) = retry_manager.upgrade(ctx) {
+                                        manager.update(ctx, |manager, ctx| {
+                                            if let Some(manager) = manager.as_any().downcast_ref::<local_tty::TerminalManager>() {
+                                                manager.retry_stalled_restore_command(ctx);
+                                            }
+                                        });
+                                    }
                                 }), ctx);
                             });
                         }

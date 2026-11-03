@@ -14,6 +14,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use walkdir::WalkDir;
 
 use crate::channel::ChannelState;
+use crate::terminal::shell::ShellType;
 
 /// A CLI-agent provider whose sessions Clinch can restore and inspect locally.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1147,6 +1148,120 @@ pub(crate) fn normalize_restore_command(command: String) -> String {
     format!("{CLINCH_RESUME_LAUNCHER} {rest}")
 }
 
+/// A command line without zsh's `nocorrect`, which only turns off spelling correction. The command
+/// is what comes after it.
+pub(crate) fn without_nocorrect(command: &str) -> &str {
+    let command = command.trim_start();
+    command
+        .strip_prefix("nocorrect ")
+        .map_or(command, str::trim_start)
+}
+
+/// A command line without what Clinch adds around a stored command when it types one: zsh's
+/// `nocorrect` and leading `NAME=value` assignments.
+pub(crate) fn without_typed_prefixes(command: &str) -> &str {
+    let mut rest = without_nocorrect(command);
+    while let Some((word, after)) = rest.split_once(char::is_whitespace) {
+        if !is_shell_assignment(word) {
+            break;
+        }
+        rest = after.trim_start();
+    }
+    rest
+}
+
+fn is_shell_assignment(word: &str) -> bool {
+    word.split_once('=').is_some_and(|(name, _)| {
+        !name.is_empty()
+            && !name.starts_with(|c: char| c.is_ascii_digit())
+            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    })
+}
+
+/// The text to type into a shell to run one of Clinch's own commands, such as restoring or
+/// launching an agent.
+///
+/// zsh's `correct_all`, which oh-my-zsh's `ENABLE_CORRECTION` turns on, checks every unquoted word
+/// against the current directory. A repo with a `.claude` directory stops
+/// `clinch_agent_resume_launch claude <id>` at `correct 'claude' to '.claude' [nyae]?`, where it
+/// waits for a key nobody is looking to press. `nocorrect` turns that off for the whole line, and
+/// composes with a leading `NAME=value`. Its arguments are also quoted, so a line editor setting or
+/// a global alias can't touch them either.
+///
+/// bash and fish don't check arguments like this, and neither knows `nocorrect`.
+pub(crate) fn command_to_type(command: &str, shell_type: ShellType) -> String {
+    if shell_type != ShellType::Zsh {
+        return command.to_owned();
+    }
+    format!(
+        "nocorrect {}",
+        with_quoted_arguments(command).unwrap_or_else(|| command.to_owned())
+    )
+}
+
+/// Single-quotes the arguments of a simple command, or returns `None` if the command is anything
+/// else. Words that are already quoted stay as they are, and so does the whole command if a word
+/// could mean something to the shell, such as `&&` or `$HOME`.
+fn with_quoted_arguments(command: &str) -> Option<String> {
+    let words = shell_word_spans(command)?;
+    let plain = |word: &str| {
+        word.chars()
+            .all(|c| c.is_ascii_alphanumeric() || "_-./:=,@%+".contains(c))
+    };
+    let already_quoted = |word: &str| word.contains(['\'', '"']);
+    if !words.iter().all(|word| plain(word) || already_quoted(word)) {
+        return None;
+    }
+    let assignments = words.iter().take_while(|word| is_shell_assignment(word));
+    let program_index = assignments.count();
+    Some(
+        words
+            .iter()
+            .enumerate()
+            .map(|(index, word)| {
+                if index <= program_index || already_quoted(word) {
+                    (*word).to_owned()
+                } else {
+                    format!("'{word}'")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" "),
+    )
+}
+
+/// Splits a command line into its words, keeping their quotes. `None` if a quote never closes.
+fn shell_word_spans(command: &str) -> Option<Vec<&str>> {
+    let mut words = Vec::new();
+    let mut start = None;
+    let mut quote = None;
+    for (index, c) in command.char_indices() {
+        match quote {
+            Some(open) if c == open => quote = None,
+            Some(_) => {}
+            None if c == '\'' || c == '"' => {
+                quote = Some(c);
+                start.get_or_insert(index);
+            }
+            None if c.is_whitespace() => {
+                if let Some(word_start) = start.take() {
+                    words.push(&command[word_start..index]);
+                }
+            }
+            None => {
+                start.get_or_insert(index);
+            }
+        }
+    }
+    if quote.is_some() {
+        return None;
+    }
+    if let Some(word_start) = start {
+        words.push(&command[word_start..]);
+    }
+    Some(words)
+}
+
 /// A stored resume command (`clinch_agent_resume_launch <agent> <id> [flags…]`) split into
 /// its parts. The legacy Warp-prefixed form remains readable while saved registries migrate.
 /// `flags` carries a leading space when non-empty so it can be appended verbatim.
@@ -1157,13 +1272,13 @@ struct LaunchCommand<'a> {
 }
 
 fn parse_launch_command(command: &str) -> Option<LaunchCommand<'_>> {
-    let command = command.trim();
+    let command = without_typed_prefixes(command);
     let rest = command
         .strip_prefix("clinch_agent_resume_launch ")
         .or_else(|| command.strip_prefix("warp_agent_resume_launch "))?;
     let mut parts = rest.split_whitespace();
-    let agent = parts.next()?;
-    let id = parts.next()?;
+    let agent = parts.next()?.trim_matches('\'');
+    let id = parts.next()?.trim_matches('\'');
     let flags = parts.collect::<Vec<_>>().join(" ");
     let flags = if flags.is_empty() {
         String::new()

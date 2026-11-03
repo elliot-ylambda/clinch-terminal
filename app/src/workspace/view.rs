@@ -24098,6 +24098,7 @@ impl Workspace {
         &self,
         text: String,
         attention_terminal: Option<EntityId>,
+        can_retry: bool,
         appearance: &Appearance,
     ) -> Box<dyn Element> {
         let tokens = *appearance.tokens();
@@ -24183,11 +24184,36 @@ impl Workspace {
                 .finish(),
             None => strip.finish(),
         };
+        let retry = can_retry.then(|| {
+            Hoverable::new(
+                self.mouse_states.restore_notice_retry.clone(),
+                move |state| {
+                    Container::new(
+                        Text::new_inline("Retry", font_family, 12.)
+                            .with_color(tokens.text_1)
+                            .finish(),
+                    )
+                    .with_horizontal_padding(10.)
+                    .with_vertical_padding(5.)
+                    .with_background(Fill::Solid(if state.is_hovered() {
+                        tokens.surface_raised
+                    } else {
+                        tokens.surface_field
+                    }))
+                    .with_corner_radius(corners_md())
+                    .finish()
+                },
+            )
+            .with_cursor(Cursor::PointingHand)
+            .on_click(|ctx, _, _| ctx.dispatch_typed_action(WorkspaceAction::RetryStalledRestores))
+            .finish()
+        });
         Container::new(
             Flex::row()
                 .with_cross_axis_alignment(CrossAxisAlignment::Center)
                 .with_spacing(4.)
                 .with_child(Shrinkable::new(1., strip).finish())
+                .with_children(retry)
                 .with_child(dismiss)
                 .finish(),
         )
@@ -24225,6 +24251,7 @@ impl Workspace {
             let notice = self.render_restore_notice(
                 progress,
                 restore_queue.first_attention_terminal(app),
+                restore_queue.stalled_count() > 0,
                 appearance,
             );
             Flex::column()
@@ -27599,6 +27626,10 @@ impl TypedActionView for Workspace {
                 // Clear the stored width when hover ends
                 self.tab_fixed_width = None;
                 ctx.notify();
+            }
+            RetryStalledRestores => {
+                crate::terminal::cli_agent_sessions::restore::AgentRestoreQueue::handle(ctx)
+                    .update(ctx, |queue, ctx| queue.retry_stalled(ctx));
             }
             DismissRestoreNotice => {
                 crate::terminal::cli_agent_sessions::restore::AgentRestoreQueue::handle(ctx)

@@ -110,6 +110,9 @@ pub fn wire_up_pty_controller_with_view<T: EventLoopSender>(
             PtyControllerEvent::PtyDisconnected => view.update(ctx, |_, _| {
                 model.lock().exit(ExitReason::PtyDisconnected);
             }),
+            PtyControllerEvent::RestoreCommandDidNotStart => {
+                view.update(ctx, |view, ctx| view.agent_command_did_not_start(ctx));
+            }
         }
     });
 }

@@ -35,6 +35,10 @@ const COMMAND_ENTER: &[u8] = &[escape_sequences::C0::CR, escape_sequences::C0::L
 /// block start. Preexec normally arrives within milliseconds of the write;
 /// this is sized generously to accommodate slow remote shells.
 const COMMAND_PREEXEC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// How long a shell gets to come back to its prompt after a Ctrl-C, before a retried command is
+/// typed into it.
+const RESTORE_RETRY_SETTLE: std::time::Duration = std::time::Duration::from_millis(300);
 /// Used to let the shell know we are switching to the PS1 prompt via a bindkey \ep. This will
 /// restore the PS1 from the saved PS1 value (we had unset the PS1 for Warp prompt).
 const SWITCH_TO_PS1_ESCAPE_SEQUENCE: &[u8] = &[escape_sequences::C0::ESC, b'p'];
@@ -112,6 +116,10 @@ pub struct PtyController<T: EventLoopSender> {
     // session here instead; `start_deferred_restore_command` runs it.
     defer_on_restore_command: bool,
     restore_session_ready: Option<SessionId>,
+    /// The restore or launch command typed last, as stored, until its fate is known.
+    last_restore_command: Option<(String, ShellType)>,
+    /// A restore or launch command the shell never started, kept for a retry.
+    stalled_restore_command: Option<(String, ShellType)>,
 }
 
 impl<T: EventLoopSender> PtyController<T> {
@@ -241,6 +249,8 @@ impl<T: EventLoopSender> PtyController<T> {
             pending_on_restore_command: None,
             defer_on_restore_command: false,
             restore_session_ready: None,
+            last_restore_command: None,
+            stalled_restore_command: None,
         }
     }
 
@@ -610,16 +620,37 @@ impl<T: EventLoopSender> PtyController<T> {
         pending_bootstrap || cancelled_write
     }
 
+    /// Every restore and agent launch reaches the shell through here, in the form that's safe to
+    /// type into it.
     fn write_restore_command(
         &mut self,
         command: &str,
         shell_type: ShellType,
         ctx: &mut ModelContext<Self>,
     ) {
-        self.write_command(command, shell_type, CommandExecutionSource::User, ctx);
-        if let Some(PtyWrite::Command { is_restore, .. }) = self.pending_writes.back_mut() {
-            *is_restore = true;
-        }
+        self.last_restore_command = Some((command.to_owned(), shell_type));
+        self.write_command_as(
+            &crate::agent_resume::command_to_type(command, shell_type),
+            shell_type,
+            CommandExecutionSource::User,
+            true,
+            ctx,
+        );
+    }
+
+    /// Tries a restore command the shell never started again. Whatever was holding the shell gets
+    /// a Ctrl-C first: nothing is running, because the command never began, so all that can be
+    /// lost is a question the shell was asking.
+    pub fn retry_stalled_restore_command(&mut self, ctx: &mut ModelContext<Self>) -> bool {
+        let Some((command, shell_type)) = self.stalled_restore_command.take() else {
+            return false;
+        };
+        self.write_bytes(&[escape_sequences::C0::ETX][..], ctx);
+        let _ = ctx.spawn(
+            async { warpui::r#async::Timer::after(RESTORE_RETRY_SETTLE).await },
+            move |me, _, ctx| me.write_restore_command(&command, shell_type, ctx),
+        );
+        true
     }
 
     /// Converts the given `command` into a byte array and writes its corresponding bytes to the PTY.
@@ -637,6 +668,17 @@ impl<T: EventLoopSender> PtyController<T> {
         command: &str,
         shell_type: ShellType,
         source: CommandExecutionSource,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        self.write_command_as(command, shell_type, source, false, ctx);
+    }
+
+    fn write_command_as(
+        &mut self,
+        command: &str,
+        shell_type: ShellType,
+        source: CommandExecutionSource,
+        is_restore: bool,
         ctx: &mut ModelContext<Self>,
     ) {
         self.pending_writes.clear();
@@ -678,7 +720,7 @@ impl<T: EventLoopSender> PtyController<T> {
         // Send the write to the PTY event loop.
         let write = PtyWrite::Command {
             command: command.to_owned(),
-            is_restore: false,
+            is_restore,
             shell_type,
             in_band_command_id: None,
             before_write_fn: Some(before_write_fn),
@@ -698,18 +740,24 @@ impl<T: EventLoopSender> PtyController<T> {
     pub fn abort_command_start_if_unexecuted(
         &mut self,
         block_id: &BlockId,
-        _ctx: &mut ModelContext<Self>,
+        is_restore: bool,
+        ctx: &mut ModelContext<Self>,
     ) {
-        let mut model = self.terminal_model.lock();
-        if model
+        let aborted = self
+            .terminal_model
+            .lock()
             .block_list_mut()
-            .abort_active_block_start_if_unexecuted(block_id)
-        {
+            .abort_active_block_start_if_unexecuted(block_id);
+        if aborted {
             self.is_user_command_executing = false;
             log::warn!(
                 "Reverted the start of a command block whose command never began executing \
                  (no preexec received within {COMMAND_PREEXEC_TIMEOUT:?})"
             );
+            if is_restore {
+                self.stalled_restore_command = self.last_restore_command.take();
+                ctx.emit(PtyControllerEvent::RestoreCommandDidNotStart);
+            }
         }
     }
 
@@ -782,6 +830,13 @@ impl<T: EventLoopSender> PtyController<T> {
     /// If the write corresponds to a command, this also calls
     /// [`LineEditorStatus::did_execute_command()`].
     fn send_write_to_event_loop(&mut self, write: PtyWrite, ctx: &mut ModelContext<Self>) {
+        let is_restore_command = matches!(
+            write,
+            PtyWrite::Command {
+                is_restore: true,
+                ..
+            }
+        );
         let (bytes_to_write, is_for_command, is_for_in_band_command, on_write_fn) = match write {
             PtyWrite::Command {
                 command,
@@ -848,7 +903,9 @@ impl<T: EventLoopSender> PtyController<T> {
                 .clone();
             let _ = ctx.spawn(
                 async move { warpui::r#async::Timer::after(COMMAND_PREEXEC_TIMEOUT).await },
-                move |me, _, ctx| me.abort_command_start_if_unexecuted(&block_id, ctx),
+                move |me, _, ctx| {
+                    me.abort_command_start_if_unexecuted(&block_id, is_restore_command, ctx)
+                },
             );
         }
     }
@@ -892,6 +949,8 @@ impl<T: EventLoopSender> PtyController<T> {
 pub enum PtyControllerEvent {
     /// Emitted when the event loop thread has exited.
     PtyDisconnected,
+    /// A restore or launch command was typed, but the shell never started it.
+    RestoreCommandDidNotStart,
 }
 
 impl<T: EventLoopSender> Entity for PtyController<T> {
