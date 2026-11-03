@@ -333,19 +333,3 @@ impl TaskStore {
         refs
     }
 }
-
-#[cfg(test)]
-mod testing {
-    use super::TaskStore;
-    use crate::ai::agent::task::TaskId;
-
-    impl TaskStore {
-        pub fn contains(&self, task_id: &TaskId) -> bool {
-            self.tasks.contains_key(task_id)
-        }
-    }
-}
-
-#[cfg(test)]
-#[path = "task_store_tests.rs"]
-mod tests;

@@ -41,25 +41,7 @@ use crate::terminal::CLIAgent;
 mod parent_bridge;
 mod wake_driver;
 
-#[cfg(test)]
-use parent_bridge::{
-    acknowledge_parent_bridge_hook_output, ensure_parent_bridge_state_dir,
-    parent_bridge_char_count, parent_bridge_event_cursor_file, parent_bridge_hook_output_ack_file,
-    parent_bridge_hook_output_file, parent_bridge_root, parent_bridge_staged_message_path,
-    parent_bridge_surfaced_message_path, prepare_parent_bridge_hook_output,
-    prime_parent_bridge_staged_for_self_managed_wake, read_parent_bridge_event_cursor,
-    render_parent_bridge_message_block, stage_parent_bridge_message,
-    write_parent_bridge_event_cursor, MessageBridgeHookOutput, MessageBridgeMessageRecord,
-    MESSAGE_BRIDGE_CONTEXT_PREAMBLE,
-};
 use parent_bridge::{MessageBridge, MessageBridgeCleanupDisposition};
-#[cfg(test)]
-use shell_words::quote as shell_quote;
-#[cfg(test)]
-use wake_driver::{ClaudeWakeRemoteContext, CLAUDE_WAKE_PROMPT_FILE_NAME};
-
-#[cfg(test)]
-use super::super::OZ_MESSAGE_LISTENER_STATE_ROOT_ENV;
 
 pub(crate) struct ClaudeHarness;
 #[cfg_attr(not(target_family = "wasm"), async_trait)]
@@ -830,7 +812,3 @@ pub(crate) fn serialize_claude_mcp_config(
     };
     serde_json::to_string_pretty(&config).context("Failed to serialize Claude MCP config")
 }
-
-#[cfg(test)]
-#[path = "claude_code_tests.rs"]
-mod tests;

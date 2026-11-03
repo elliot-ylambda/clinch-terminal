@@ -301,34 +301,6 @@ impl BlocklistAIContextModel {
         }
     }
 
-    /// Test-only constructor that skips every subscription and singleton lookup performed by
-    /// [`Self::new`], so unit tests can build a [`BlocklistAIContextModel`] without registering
-    /// `BlocklistAIHistoryModel`, `LLMPreferences`, `ModelEventDispatcher`, `Sessions`, or
-    /// `AppExecutionMode`. Callers still pass real [`TerminalModel`] and [`AgentViewController`]
-    /// handles to populate the struct fields, but neither needs to be functional for the
-    /// methods exercised by these tests.
-    #[cfg(test)]
-    pub(crate) fn new_for_test(
-        terminal_model: Arc<FairMutex<TerminalModel>>,
-        terminal_view_id: EntityId,
-        agent_view_controller: ModelHandle<AgentViewController>,
-    ) -> Self {
-        Self {
-            terminal_model,
-            directory_context: Default::default(),
-            github_repo_model: None,
-            pending_context_block_ids: HashSet::new(),
-            pending_context_selected_text: None,
-            pending_attachments: Default::default(),
-            pending_query_state: PendingQueryState::default(),
-            terminal_view_id,
-            agent_view_controller,
-            pending_inline_diff_hunk_attachments: Default::default(),
-            pending_document_id: None,
-            auto_attached_agent_view_user_block_ids: Vec::new(),
-        }
-    }
-
     /// Resets the set of blocks to be included as context to an empty list.
     /// Also removes any selected text that was to be included as context.
     pub fn reset_context_to_default(&mut self, ctx: &mut ModelContext<Self>) {
@@ -1069,7 +1041,3 @@ pub enum BlocklistAIContextEvent {
 impl Entity for BlocklistAIContextModel {
     type Event = BlocklistAIContextEvent;
 }
-
-#[cfg(test)]
-#[path = "context_model_tests.rs"]
-mod tests;

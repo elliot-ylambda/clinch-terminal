@@ -83,10 +83,13 @@ fn terminal_editor_defaults_match_and_save_round_trip() {
                 custom_left.clone(),
                 defaults_right.clone(),
                 Vec::new(),
+                Some(4),
                 ctx,
             );
         });
         SessionSettings::handle(&app).read(&app, |settings, _| {
+            // The More line the user placed is saved with the layout.
+            assert_eq!(*settings.terminal_footer_visible_count, 4);
             assert_eq!(
                 settings.terminal_footer_chip_selection.value(),
                 &TerminalToolbarChipSelection::custom_from_effective_items(
@@ -102,6 +105,7 @@ fn terminal_editor_defaults_match_and_save_round_trip() {
                 defaults_left,
                 defaults_right,
                 Vec::new(),
+                None,
                 ctx,
             );
         });

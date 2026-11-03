@@ -1,8 +1,9 @@
 use settings::Setting as _;
 
 use super::{
-    CliAgentAutoContinueArmedSessions, CliAgentAutoContinueSessions,
-    CliAgentUsageHeaderMetricVisibility, ShowCliAgentPlanLimits,
+    CliAgentAutoContinueArmedSessions, CliAgentAutoContinueOnLimitReset,
+    CliAgentAutoContinueSessionOverrides, CliAgentUsageHeaderMetricVisibility,
+    ShowCliAgentPlanLimits,
 };
 
 /// The plan-limit gauges read Claude Code's OAuth token from the macOS
@@ -21,8 +22,11 @@ fn header_metric_visibility_defaults_to_sparse_overrides() {
     assert!(CliAgentUsageHeaderMetricVisibility::default_value().is_empty());
 }
 
+/// Auto-continue must work out of the box for both providers, independent of
+/// `show_plan_limits` (Claude states its reset in the limit message itself).
 #[test]
-fn auto_continue_sessions_default_to_no_opt_ins() {
-    assert!(CliAgentAutoContinueSessions::default_value().is_empty());
+fn auto_continue_defaults_on_with_no_per_session_overrides() {
+    assert!(CliAgentAutoContinueOnLimitReset::default_value());
+    assert!(CliAgentAutoContinueSessionOverrides::default_value().is_empty());
     assert!(CliAgentAutoContinueArmedSessions::default_value().is_empty());
 }

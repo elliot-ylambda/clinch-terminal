@@ -16,10 +16,9 @@ use instant::Instant;
 use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::vec2f;
 use settings::Setting as _;
-use warp_core::ui::builder::UiBuilder;
 use warp_core::ui::icons::Icon;
 use warp_core::ui::theme::Fill;
-use warp_core::ui::tokens::{corners_md, corners_pill, corners_sm, Tokens};
+use warp_core::ui::tokens::{corners_md, corners_pill, Tokens};
 use warpui::elements::{
     ChildAnchor, ConstrainedBox, Container, CrossAxisAlignment, Expanded, Flex, Hoverable,
     MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning, ParentAnchor,
@@ -609,29 +608,24 @@ impl Workspace {
     }
 }
 
-/// Where the coordinator row's Auto controls sit, so the settings popover can hang below them.
-pub(crate) const AUTO_COORDINATE_CONTROLS_POSITION_ID: &str = "vertical_tabs:auto_coordinate";
-/// The Auto pill and the settings button, for tests that click them.
-pub const AUTO_COORDINATE_PILL_POSITION_ID: &str = "vertical_tabs:auto_coordinate:pill";
-pub const AUTO_COORDINATE_SETTINGS_POSITION_ID: &str = "vertical_tabs:auto_coordinate:settings";
+/// The coordinator row's Auto pill. The settings popover hangs below it, and tests click it.
+pub const AUTO_COORDINATE_PILL_POSITION_ID: &str = "vertical_tabs:auto_coordinate";
 
-/// Hover and switch states for the Auto controls and their popover.
+/// Hover and switch states for the Auto pill and its popover.
 #[derive(Default)]
 pub(crate) struct AutoCoordinateUiState {
     pill: MouseStateHandle,
-    settings_button: MouseStateHandle,
     master_switch: SwitchStateHandle,
     tactic_switches: [SwitchStateHandle; Tactic::ALL.len()],
     run_now: MouseStateHandle,
 }
 
-/// What the coordinator row needs to draw its Auto controls.
+/// What the coordinator row needs to draw its Auto pill.
 #[derive(Clone)]
 pub(crate) struct AutoPillProps {
     pub(crate) enabled: bool,
     pub(crate) settings_open: bool,
     pill: MouseStateHandle,
-    settings_button: MouseStateHandle,
 }
 
 impl AutoCoordinateUiState {
@@ -640,53 +634,31 @@ impl AutoCoordinateUiState {
             enabled,
             settings_open,
             pill: self.pill.clone(),
-            settings_button: self.settings_button.clone(),
         }
     }
 }
 
-fn tooltip_above(
-    child: Box<dyn Element>,
-    text: &str,
-    show: bool,
-    ui_builder: &UiBuilder,
-) -> Box<dyn Element> {
-    if !show {
-        return child;
-    }
-    let mut stack = Stack::new().with_child(child);
-    stack.add_positioned_overlay_child(
-        ui_builder.tool_tip(text.to_owned()).build().finish(),
-        OffsetPositioning::offset_from_parent(
-            vec2f(0., -6.),
-            ParentOffsetBounds::WindowByPosition,
-            ParentAnchor::TopMiddle,
-            ChildAnchor::BottomMiddle,
-        ),
-    );
-    stack.finish()
-}
-
-/// The coordinator row's trailing controls: an Auto pill that switches auto-coordinate on and
-/// off, and a small button that opens its settings.
+/// The coordinator row's Auto pill. Its dot shows whether auto-coordinate is on; clicking it opens
+/// the settings popover, whose first switch turns it on or off. It is a status chip rather than a
+/// second toggle, because the row's own switch already turns the coordinator itself on and off.
 pub(crate) fn render_auto_controls(
     props: AutoPillProps,
     appearance: &Appearance,
 ) -> Box<dyn Element> {
     let tokens = *appearance.tokens();
     let font_family = appearance.ui_font_family();
+    let ui_builder = appearance.ui_builder().clone();
     let enabled = props.enabled;
-    let pill_tooltips = appearance.ui_builder().clone();
-    let settings_tooltips = pill_tooltips.clone();
+    let settings_open = props.settings_open;
 
     let pill = Hoverable::new(props.pill, move |state| {
         let hovered = state.is_hovered();
-        let (dot, text, background) = if enabled {
-            (tokens.accent, tokens.text_1, tokens.accent_soft)
-        } else if hovered {
-            (tokens.text_3, tokens.text_2, tokens.surface_hover)
-        } else {
-            (tokens.text_3, tokens.text_3, ColorU::transparent_black())
+        let active = hovered || settings_open;
+        let (dot, text, background) = match (enabled, active) {
+            (true, false) => (tokens.accent, tokens.text_1, tokens.accent_soft),
+            (true, true) => (tokens.accent, tokens.text_1, tokens.surface_hover),
+            (false, true) => (tokens.text_3, tokens.text_2, tokens.surface_hover),
+            (false, false) => (tokens.text_3, tokens.text_3, ColorU::transparent_black()),
         };
         let content = Flex::row()
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
@@ -715,50 +687,31 @@ pub(crate) fn render_auto_controls(
             .with_background(Fill::Solid(background))
             .with_corner_radius(corners_pill())
             .finish();
-        tooltip_above(
-            pill,
-            if enabled {
-                "Auto-coordinate is on. Click to turn it off."
-            } else {
-                "Let the coordinator act on its own. Click to turn on."
-            },
-            hovered,
-            &pill_tooltips,
-        )
-    })
-    .with_cursor(Cursor::PointingHand)
-    .on_click(move |ctx, _, _| {
-        ctx.dispatch_typed_action(WorkspaceAction::SetAutoCoordinate(!enabled));
-    })
-    .finish();
-
-    let settings_open = props.settings_open;
-    let settings = Hoverable::new(props.settings_button, move |state| {
-        let (icon_color, background) = if state.is_hovered() || settings_open {
-            (tokens.text_1, tokens.surface_hover)
-        } else {
-            (tokens.text_3, ColorU::transparent_black())
-        };
-        let button = Container::new(
-            ConstrainedBox::new(
-                Icon::Sliders
-                    .to_warpui_icon(Fill::Solid(icon_color))
-                    .finish(),
-            )
-            .with_width(13.)
-            .with_height(13.)
-            .finish(),
-        )
-        .with_uniform_padding(3.)
-        .with_background(Fill::Solid(background))
-        .with_corner_radius(corners_sm())
-        .finish();
-        tooltip_above(
-            button,
-            "Auto-coordinate settings",
-            state.is_hovered() && !settings_open,
-            &settings_tooltips,
-        )
+        // The tooltip points to the settings, so it stays hidden while they are open.
+        if !hovered || settings_open {
+            return pill;
+        }
+        let mut stack = Stack::new().with_child(pill);
+        stack.add_positioned_overlay_child(
+            ui_builder
+                .tool_tip(
+                    if enabled {
+                        "Auto-coordinate is on. Click for its settings."
+                    } else {
+                        "Auto-coordinate is off. Click to set it up."
+                    }
+                    .to_owned(),
+                )
+                .build()
+                .finish(),
+            OffsetPositioning::offset_from_parent(
+                vec2f(0., -6.),
+                ParentOffsetBounds::WindowByPosition,
+                ParentAnchor::TopMiddle,
+                ChildAnchor::BottomMiddle,
+            ),
+        );
+        stack.finish()
     })
     .with_cursor(Cursor::PointingHand)
     .on_click(|ctx, _, _| {
@@ -768,16 +721,7 @@ pub(crate) fn render_auto_controls(
     })
     .finish();
 
-    SavePosition::new(
-        Flex::row()
-            .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_spacing(2.)
-            .with_child(SavePosition::new(pill, AUTO_COORDINATE_PILL_POSITION_ID).finish())
-            .with_child(SavePosition::new(settings, AUTO_COORDINATE_SETTINGS_POSITION_ID).finish())
-            .finish(),
-        AUTO_COORDINATE_CONTROLS_POSITION_ID,
-    )
-    .finish()
+    SavePosition::new(pill, AUTO_COORDINATE_PILL_POSITION_ID).finish()
 }
 
 fn render_switch_row(

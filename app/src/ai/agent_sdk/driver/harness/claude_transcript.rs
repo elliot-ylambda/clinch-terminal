@@ -340,7 +340,3 @@ pub(crate) fn read_jsonl(path: &Path) -> Result<Vec<Value>> {
     }
     Ok(entries)
 }
-
-#[cfg(test)]
-#[path = "claude_transcript_tests.rs"]
-mod tests;

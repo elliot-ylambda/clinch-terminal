@@ -777,7 +777,3 @@ pub(crate) fn is_lrc_auto_queue_active(
         && active_block.is_agent_requested_command()
         && active_block.ai_conversation_id() == Some(conversation_id)
 }
-
-#[cfg(test)]
-#[path = "queued_query_tests.rs"]
-mod tests;

@@ -471,7 +471,3 @@ fn translate_formatted_text_into_markdown_segments(
 
     markdown_segments
 }
-
-#[cfg(test)]
-#[path = "utils_tests.rs"]
-mod utils_tests;

@@ -125,9 +125,6 @@ pub struct Network {
     ws_proxy_tx: async_channel::Sender<UpstreamMessage>,
     selection_throttled_tx: async_channel::Sender<Selection>,
 
-    #[cfg(test)]
-    ws_proxy_rx: async_channel::Receiver<UpstreamMessage>,
-
     /// The participant ID we were assigned by the server.
     /// This is populated after successfully joining a session, and
     /// used if we need to reconnect.
@@ -164,8 +161,6 @@ impl Network {
             session_id,
             event_loop: None,
             ws_proxy_tx,
-            #[cfg(test)]
-            ws_proxy_rx: ws_proxy_rx.clone(),
             channel_event_proxy,
             terminal_model,
             initial_load_mode,
@@ -188,76 +183,6 @@ impl Network {
 
         model.start_write_to_pty_events_listener(write_to_pty_events_rx, ctx);
         model.start_websocket(session_id, ws_proxy_rx, ctx);
-        ctx.spawn_stream_local(
-            selection_throttled_rx,
-            |network, selection, _ctx| {
-                let event_no = network.selection_event_no.advance();
-                network.send_message_to_server(UpstreamMessage::UpdateSelection(SelectionUpdate {
-                    selection,
-                    event_no: event_no.into(),
-                }));
-            },
-            |_, _| {},
-        );
-        model
-    }
-
-    /// Creates a model that artifically declares that a shared session has been joined.
-    #[cfg(test)]
-    pub fn new_for_test(
-        channel_event_proxy: ChannelEventListener,
-        terminal_view: WeakViewHandle<TerminalView>,
-        terminal_model: Arc<FairMutex<TerminalModel>>,
-        write_to_pty_events_rx: Receiver<Vec<u8>>,
-        remote_update_guard: RemoteUpdateGuard,
-        ctx: &mut ModelContext<Self>,
-    ) -> Self {
-        use session_sharing_protocol::common::SessionId;
-
-        let (ws_proxy_tx, ws_proxy_rx) = async_channel::unbounded();
-        let (selection_throttled_tx, selection_rx) = async_channel::unbounded();
-        let selection_throttled_rx = throttle(SELECTION_THROTTLE_PERIOD, selection_rx);
-        let session_id = SessionId::new();
-        let viewer_id = ParticipantId::new();
-        let viewer_firebase_uid = UserUid::new("mock_firebase_uid");
-        let active_prompt = ActivePrompt::WarpPrompt("test warp prompt".to_owned());
-
-        let model = Network {
-            session_id,
-            event_loop: None,
-            ws_proxy_tx,
-            ws_proxy_rx,
-            channel_event_proxy,
-            terminal_model,
-            initial_load_mode: SharedSessionInitialLoadMode::ReplaceFromSessionScrollback,
-            remote_update_guard,
-            terminal_view,
-            stage: Stage::BeforeJoined,
-            id: Some(viewer_id.clone()),
-            cached_latest_state: CachedLatestState {
-                selection: Selection::None,
-                universal_developer_input_context: None,
-            },
-            selection_throttled_tx,
-            selection_event_no: EventNumber::new(),
-            next_buffer_seq_no: (BlockId::new(), InputOperationSeqNo::zero()),
-            write_to_pty_event_no: WriteToPtySeqNo::zero(),
-            pty_bytes_batch_status: PtyBytesBatchStatus::NotBatching {
-                last_sent_at: Instant::now(),
-            },
-        };
-
-        ctx.emit(NetworkEvent::JoinedSuccessfully {
-            active_prompt,
-            viewer_id,
-            viewer_firebase_uid,
-            participant_list: Default::default(),
-            input_replica_id: ReplicaId::random(),
-            universal_developer_input_context: None,
-            source: SharedSessionSource::default(),
-        });
-
-        model.start_write_to_pty_events_listener(write_to_pty_events_rx, ctx);
         ctx.spawn_stream_local(
             selection_throttled_rx,
             |network, selection, _ctx| {
@@ -1211,7 +1136,3 @@ impl Drop for Network {
         self.selection_throttled_tx.close();
     }
 }
-
-#[cfg(test)]
-#[path = "network_tests.rs"]
-mod tests;

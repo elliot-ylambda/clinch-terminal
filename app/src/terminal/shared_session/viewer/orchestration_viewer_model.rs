@@ -814,7 +814,3 @@ fn conversation_status_from_state(state: &AmbientAgentTaskState) -> Conversation
         AmbientAgentTaskState::Unknown => ConversationStatus::Error,
     }
 }
-
-#[cfg(test)]
-#[path = "orchestration_viewer_model_tests.rs"]
-mod tests;

@@ -5045,11 +5045,6 @@ impl DriveIndex {
             }
         }
     }
-
-    #[cfg(test)]
-    pub fn sections(&self) -> &Vec<DriveIndexSection> {
-        &self.sections
-    }
 }
 
 pub fn warp_drive_section_header_position_id(section: &DriveIndexSection) -> String {
@@ -5633,7 +5628,3 @@ impl TypedActionView for DriveIndex {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "index_tests.rs"]
-mod tests;

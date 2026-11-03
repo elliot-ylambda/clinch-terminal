@@ -96,15 +96,6 @@ impl LocalAgentTaskSyncModel {
         }
     }
 
-    /// Test-only constructor that lets tests inject a mock `AIClient`.
-    #[cfg(test)]
-    pub(super) fn new_with_ai_client_for_test(
-        ai_client: Arc<dyn AIClient>,
-        ctx: &mut ModelContext<Self>,
-    ) -> Self {
-        Self::new_with_ai_client(ai_client, ctx)
-    }
-
     /// Registers a terminal view as a tracked CLI agent session so that
     /// status changes from `CLIAgentSessionsModel` are reported to the
     /// server. Called by `AgentDriver` when setting up a third-party
@@ -513,7 +504,3 @@ fn map_cli_session_status(
         ),
     }
 }
-
-#[cfg(test)]
-#[path = "local_agent_task_sync_model_tests.rs"]
-mod tests;

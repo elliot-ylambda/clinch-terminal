@@ -226,9 +226,10 @@ every tactic name to that section.
 
 ### 6. Sidebar
 
-The Coordinator row's first line ends with `render_auto_controls`: an Auto pill that toggles
-`WorkspaceAction::SetAutoCoordinate`, and a sliders button that opens
-`SidebarPopover::AutoCoordinate`. That popover is rendered at the workspace root like Tasks and
+The Coordinator row's first line ends with `render_auto_controls`, an Auto status pill that opens
+`SidebarPopover::AutoCoordinate`, followed by the coordinator's on/off switch
+(`SetCoordinatorOn`). The pill is a status chip rather than a second toggle so the row never shows
+two switches with different meanings. That popover is rendered at the workspace root like Tasks and
 Bookmarks, but anchored below the row. It holds the project switch, the status line, the tactic
 switches (`SetCoordinatorTactic`), and Run now (`RunCoordinatorNow`). On a coordinator tab, the
 footer's "Clean up" prompt was removed; the Clean up tactic and Run now cover it.

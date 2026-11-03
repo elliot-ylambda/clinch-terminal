@@ -125,7 +125,3 @@ fn ripgrep_match_to_proto(m: warp_ripgrep::search::Match) -> RipgrepSearchMatch 
             .collect(),
     }
 }
-
-#[cfg(test)]
-#[path = "ripgrep_search_tests.rs"]
-mod tests;

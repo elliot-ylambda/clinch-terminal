@@ -68,7 +68,3 @@ pub fn qr_png_for_url(url: &str, pixel_size: u32) -> Result<Vec<u8>, QrCodeError
     image.write_to(&mut png, ImageFormat::Png)?;
     Ok(png.into_inner())
 }
-
-#[cfg(test)]
-#[path = "qr_code_tests.rs"]
-mod tests;

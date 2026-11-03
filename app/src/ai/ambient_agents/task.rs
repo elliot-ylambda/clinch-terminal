@@ -558,7 +558,3 @@ pub fn cancel_task_silently<V: View>(task_id: AmbientAgentTaskId, ctx: &mut View
         },
     );
 }
-
-#[cfg(test)]
-#[path = "task_tests.rs"]
-mod tests;

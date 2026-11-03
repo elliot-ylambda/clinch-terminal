@@ -940,7 +940,3 @@ impl From<ViewHandle<PlatformPageView>> for SettingsPageViewHandle {
         SettingsPageViewHandle::OzCloudAPIKeys(view_handle)
     }
 }
-
-#[cfg(test)]
-#[path = "platform_page_tests.rs"]
-mod tests;

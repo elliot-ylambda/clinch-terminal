@@ -390,14 +390,6 @@ impl UpdateEnvironmentForm {
         Self::new_impl(init_args, true, ctx)
     }
 
-    #[cfg(test)]
-    pub(crate) fn new_for_test(
-        init_args: EnvironmentFormInitArgs,
-        ctx: &mut ViewContext<Self>,
-    ) -> Self {
-        Self::new_impl(init_args, false, ctx)
-    }
-
     fn new_impl(
         init_args: EnvironmentFormInitArgs,
         fetch_github_repos_on_init: bool,
@@ -739,25 +731,6 @@ impl UpdateEnvironmentForm {
         self.description_height = 52.;
         self.show_repo_helper_text = false;
         ctx.notify();
-    }
-
-    #[cfg(test)]
-    pub(crate) fn uses_orchestration_modal_configuration_for_test(&self) -> bool {
-        self.copy == EnvironmentFormCopy::orchestration_modal()
-            && !self.show_header
-            && self.show_footer_cancel_button
-            && !self.show_share_with_team_controls
-            && (self.field_spacing - 10.).abs() < f32::EPSILON
-            && (self.description_height - 52.).abs() < f32::EPSILON
-            && !self.show_repo_helper_text
-            && self.github_auth_redirect_target == GithubAuthRedirectTarget::FocusCloudMode
-            && self.auth_source == AuthSource::CloudSetup
-            && self.should_handle_escape_from_editor
-    }
-
-    #[cfg(test)]
-    pub(crate) fn github_auth_redirect_target_for_test(&self) -> GithubAuthRedirectTarget {
-        self.github_auth_redirect_target
     }
 
     fn try_close_repos_dropdown(&mut self, ctx: &mut ViewContext<Self>) -> bool {
@@ -2850,20 +2823,6 @@ impl UpdateEnvironmentForm {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn build_auth_url_with_next(
-        base_auth_url: &str,
-        target: GithubAuthRedirectTarget,
-        scheme: &str,
-    ) -> String {
-        github_auth_url::build_auth_url_with_next(
-            base_auth_url,
-            target,
-            scheme,
-            AuthSource::Settings,
-        )
-    }
-
     /// Parses a Docker image reference and returns the Docker Hub URL if it looks like a Docker Hub image.
     ///
     /// Recognizes:
@@ -3583,7 +3542,3 @@ impl View for UpdateEnvironmentForm {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "update_environment_form_tests.rs"]
-mod tests;

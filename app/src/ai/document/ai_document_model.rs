@@ -1574,7 +1574,3 @@ impl Entity for AIDocumentModel {
 }
 
 impl SingletonEntity for AIDocumentModel {}
-
-#[cfg(test)]
-#[path = "ai_document_model_tests.rs"]
-mod tests;

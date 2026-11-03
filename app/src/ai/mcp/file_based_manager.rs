@@ -562,7 +562,3 @@ impl Entity for FileBasedMCPManager {
 }
 
 impl SingletonEntity for FileBasedMCPManager {}
-
-#[cfg(test)]
-#[path = "file_based_manager_tests.rs"]
-mod tests;

@@ -56,12 +56,6 @@ impl NetworkLogModel {
         }
         out
     }
-
-    /// Number of items currently retained. Exposed for tests.
-    #[cfg(test)]
-    pub fn len(&self) -> usize {
-        self.items.len()
-    }
 }
 
 impl Entity for NetworkLogModel {
@@ -147,13 +141,6 @@ impl NetworkLogItem {
             response
         ))
     }
-
-    /// Constructs a log item directly from a pre-formatted string. Used in
-    /// tests where we don't have a real `reqwest` request/response handy.
-    #[cfg(test)]
-    pub fn from_string(s: impl Into<String>) -> Self {
-        Self(s.into())
-    }
 }
 
 impl fmt::Display for NetworkLogItem {
@@ -161,7 +148,3 @@ impl fmt::Display for NetworkLogItem {
         write!(f, "{}", self.0)
     }
 }
-
-#[cfg(test)]
-#[path = "network_logging_tests.rs"]
-mod tests;

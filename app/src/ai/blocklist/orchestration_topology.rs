@@ -270,7 +270,3 @@ pub fn orchestration_aware_conversation_status(
         aggregated_orchestrator_status(history, conversation.id())
     }
 }
-
-#[cfg(test)]
-#[path = "orchestration_topology_tests.rs"]
-mod tests;

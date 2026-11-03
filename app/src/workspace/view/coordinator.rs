@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use blocking::unblock;
 use settings::Setting;
+use warp_core::user_preferences::GetUserPreferences as _;
 use warpui::{AppContext, EntityId, SingletonEntity, ViewContext};
 
 use super::Workspace;
@@ -178,8 +179,24 @@ impl Workspace {
         activate: bool,
         ctx: &mut ViewContext<Self>,
     ) -> bool {
-        let Some(pane_group) = self.launch_command_in_new_tab_placed(
+        self.open_coordinator_tab_with_command(
+            directory,
             coordinator_launch_command(provider),
+            activate,
+            ctx,
+        )
+    }
+
+    /// Opens a coordinator that runs `command` at `directory` and pins it first.
+    fn open_coordinator_tab_with_command(
+        &mut self,
+        directory: Option<PathBuf>,
+        command: String,
+        activate: bool,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        let Some(pane_group) = self.launch_command_in_new_tab_placed(
+            command,
             directory.map(|directory| directory.to_string_lossy().into_owned()),
             Some(COORDINATOR_TAB_TITLE.to_owned()),
             Some((!activate, None)),
@@ -236,6 +253,82 @@ impl Workspace {
         if self.open_coordinator_tab(directory, configured_provider(ctx), true, ctx) {
             set_coordinator_enabled(true, ctx);
         }
+    }
+
+    /// The switch on the Coordinator row. Off closes this project's coordinator and stops new
+    /// projects from getting one; the sidebar keeps a dimmed row with the switch in its place. On
+    /// turns the default back on and reopens the coordinator, resuming the conversation it had.
+    pub(super) fn set_coordinator_on(&mut self, on: bool, ctx: &mut ViewContext<Self>) {
+        if !on {
+            if self.coordinator_tab_index().is_some() {
+                // Closing a project's last tab would close the project, so leave a terminal.
+                if self.tabs.len() == 1 {
+                    self.add_terminal_tab(true, ctx);
+                }
+                if let Some(index) = self.coordinator_tab_index() {
+                    // Closing it remembers the pane to resume and turns the default off.
+                    self.close_tab(index, true, false, ctx);
+                }
+            } else {
+                set_coordinator_enabled(false, ctx);
+            }
+            ctx.notify();
+            return;
+        }
+        set_coordinator_enabled(true, ctx);
+        if self.coordinator_tab_index().is_some() {
+            return;
+        }
+        let candidate = self.coordinator_candidate_directory(ctx);
+        let provider = configured_provider(ctx);
+        // Resolving the checkout runs git, so it happens off the UI thread, as does reading the
+        // closed coordinator's resume command.
+        ctx.spawn(
+            unblock(move || coordinator_directory(candidate.as_deref())),
+            move |me, directory, ctx| {
+                let pane = directory
+                    .as_deref()
+                    .and_then(|directory| closed_coordinator_pane(directory, ctx));
+                let Some(pane) = pane else {
+                    if me.coordinator_tab_index().is_none() {
+                        me.open_coordinator_tab(directory, provider, false, ctx);
+                    }
+                    return;
+                };
+                ctx.spawn(
+                    unblock(move || crate::agent_resume::read_on_restore_command(&pane)),
+                    move |me, command, ctx| {
+                        if me.coordinator_tab_index().is_some() {
+                            return;
+                        }
+                        let command = coordinator_restore_command(command.as_deref(), provider);
+                        me.open_coordinator_tab_with_command(directory, command, false, ctx);
+                    },
+                );
+            },
+        );
+    }
+
+    /// Remembers the coordinator at `index` as the one to resume when this project switches its
+    /// coordinator back on, keyed by the checkout it runs in so it survives a restart.
+    pub(super) fn remember_closed_coordinator(&self, index: usize, ctx: &mut ViewContext<Self>) {
+        let Some(terminal) = self
+            .tabs
+            .get(index)
+            .and_then(|tab| tab.pane_group.as_ref(ctx).active_session_view(ctx))
+        else {
+            return;
+        };
+        let Some(pane) = self.agent_session_uuid_for_terminal_view(terminal.id(), ctx) else {
+            return;
+        };
+        let Some(directory) = terminal.as_ref(ctx).canonical_session_pwd_if_local(ctx) else {
+            return;
+        };
+        let _ = ctx.private_user_preferences().write_value(
+            &closed_coordinator_key(&PathBuf::from(directory)),
+            hex::encode(pane),
+        );
     }
 
     /// Restarts the coordinator with the other agent in the same directory, and remembers it as
@@ -339,6 +432,21 @@ pub(super) fn with_coordinator_section(
         }
     }
     items
+}
+
+const CLOSED_COORDINATOR_PREFERENCE: &str = "ClosedCoordinatorPane";
+
+fn closed_coordinator_key(directory: &Path) -> String {
+    format!("{CLOSED_COORDINATOR_PREFERENCE}:{}", directory.display())
+}
+
+/// The pane of the coordinator this checkout last closed, if one was recorded.
+fn closed_coordinator_pane(directory: &Path, ctx: &AppContext) -> Option<Vec<u8>> {
+    ctx.private_user_preferences()
+        .read_value(&closed_coordinator_key(directory))
+        .ok()
+        .flatten()
+        .and_then(|pane| hex::decode(pane).ok())
 }
 
 /// Persists whether projects get a default coordinator.

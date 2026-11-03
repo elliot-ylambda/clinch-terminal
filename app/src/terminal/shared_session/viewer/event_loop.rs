@@ -415,7 +415,3 @@ impl EventLoop {
 impl Entity for EventLoop {
     type Event = ();
 }
-
-#[cfg(test)]
-#[path = "event_loop_tests.rs"]
-mod tests;

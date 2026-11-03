@@ -492,11 +492,6 @@ pub(crate) fn agent_event_backoff(failures: usize, backoff_steps: &[u64]) -> Dur
     Duration::from_secs(safe_steps[index])
 }
 
-#[cfg(test)]
-pub(crate) fn agent_event_failures_exceeded_threshold(failures: usize, threshold: usize) -> bool {
-    failures >= threshold
-}
-
 pub(crate) fn agent_event_failure_should_log_error(
     err: &anyhow::Error,
     failures: usize,

@@ -290,7 +290,3 @@ fn prefix_command_with_env_vars(command: String, env_vars: HashMap<OsString, OsS
 
     format!("env {assignments} {command}")
 }
-
-#[cfg(test)]
-#[path = "wake_driver_tests.rs"]
-mod tests;

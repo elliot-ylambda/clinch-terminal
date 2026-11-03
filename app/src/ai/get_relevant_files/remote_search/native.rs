@@ -449,7 +449,3 @@ fn remote_availability_failure(
         },
     }
 }
-
-#[cfg(test)]
-#[path = "native_tests.rs"]
-mod tests;

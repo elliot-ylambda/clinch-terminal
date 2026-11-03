@@ -1184,7 +1184,3 @@ const CONTEXT_WINDOW_SEGMENT_PERCENT_DECIMAL_PLACES: usize = 2;
 
 /// Maximum width of the context-window "Other" tooltip before wrapping.
 const CONTEXT_WINDOW_OTHER_TOOLTIP_MAX_WIDTH: f32 = 280.;
-
-#[cfg(test)]
-#[path = "conversation_usage_view_tests.rs"]
-mod tests;

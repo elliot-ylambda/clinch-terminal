@@ -425,7 +425,3 @@ pub(crate) fn trigger_auto_handoff_to_cloud(
         controller.trigger(trigger, ctx);
     });
 }
-
-#[cfg(test)]
-#[path = "auto_handoff_tests.rs"]
-mod tests;

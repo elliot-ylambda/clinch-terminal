@@ -76,9 +76,11 @@ Design: use the current Clinch styling; no separate Figma mock was supplied.
    an ordinary conversation in the project's primary checkout that the user can talk to like any
    other session.
 
-8. The Coordinator row carries an **Auto** switch and a settings button. Auto is off by default
-   for new installs (`clinch.coordinator.auto.default_on`). Each project's choice is saved with its
-   coordinator tab and overrides that default.
+8. The Coordinator row carries an **Auto** pill beside the coordinator's own on/off switch. The
+   pill's dot shows whether auto-coordinate is on, and clicking it opens the settings popover,
+   whose first switch turns it on or off. Auto is off by default for new installs
+   (`clinch.coordinator.auto.default_on`). Each project's choice is saved with its coordinator tab
+   and overrides that default.
 
 9. The settings popover shows the project's switch; what auto-coordinate is doing ("Watching 7
    sessions · last run 2:41 PM", "Waiting for the coordinator to finish its turn", or "Waiting for

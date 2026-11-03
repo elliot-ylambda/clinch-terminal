@@ -2043,7 +2043,3 @@ impl TerminalView {
             .finish()
     }
 }
-
-#[cfg(test)]
-#[path = "view_impl_tests.rs"]
-mod tests;

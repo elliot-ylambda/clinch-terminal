@@ -113,7 +113,6 @@ impl CodexSessionHandler {
             project: None,
             payload: CLIAgentEventPayload {
                 query: Some(body.to_owned()),
-                stop_reason: super::event::infer_stop_reason(CLIAgent::Codex, [body]),
                 ..Default::default()
             },
             source: CLIAgentEventSource::CodexOsc9Fallback,

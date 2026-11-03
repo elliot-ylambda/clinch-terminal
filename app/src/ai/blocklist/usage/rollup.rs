@@ -150,7 +150,3 @@ fn child_display_name(child: &AIConversation) -> String {
         .map(|n| n.to_string())
         .unwrap_or_else(|| "Agent".to_string())
 }
-
-#[cfg(test)]
-#[path = "rollup_tests.rs"]
-mod tests;

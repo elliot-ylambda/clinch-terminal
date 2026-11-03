@@ -11,13 +11,24 @@
 //! is present is wrong too — only *completed* blocks are persisted, truncated to
 //! `MAX_SERIALIZED_STYLIZED_OUTPUT_LINES`. Searching what is currently on screen is correct under
 //! both.
+//!
+//! An agent TUI that paints on the alt screen (Claude Code's fullscreen renderer, Codex) is a
+//! different case: it keeps the conversation in its own virtualized scrollback, so the grid only
+//! ever holds the frame on screen. [`agent_prompt_frame_search`] and [`transcript_shift`] support
+//! scrolling such a TUI until the prompt is painted.
 
 use itertools::Itertools;
 use regex::escape;
 
+use crate::agent_resume::strip_paste_wrappers;
+use crate::terminal::model::alt_screen::AltScreen;
 use crate::terminal::model::blocks::BlockList;
 use crate::terminal::model::find::{FindConfig, Match, RegexDFAs};
+use crate::terminal::model::grid::grid_handler::GridHandler;
+use crate::terminal::model::grid::{Dimensions, RespectDisplayedOutput};
+use crate::terminal::model::index::Point;
 use crate::terminal::model::terminal_model::BlockIndex;
+use crate::terminal::model::RespectObfuscatedSecrets;
 
 /// Tokens taken from the prompt's first line to build the search pattern.
 ///
@@ -35,6 +46,15 @@ const MAX_PATTERN_CHARS: usize = 64;
 /// history pins down *where* to look — see [`locate_agent_prompt_in_history`] — so this bound only
 /// governs an unconstrained search.
 const MIN_STANDALONE_PATTERN_CHARS: usize = 4;
+
+/// What agent TUIs paint in front of a message the user sent: Claude Code's `❯` and Codex's `›`,
+/// each followed by an ordinary space. Claude Code's composer uses the same `❯` followed by a
+/// no-break space, so requiring an ASCII space keeps a draft from passing for a sent message.
+const SENT_MESSAGE_MARKER: &str = "[❯›] +";
+
+/// Fewest identical non-blank rows two frames must share before [`transcript_shift`] trusts an
+/// offset. One row could match by coincidence (a repeated table border); two rarely do.
+const MIN_SHIFT_EVIDENCE_ROWS: usize = 2;
 
 /// Why a prompt could not be turned into a search.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,8 +79,13 @@ fn is_distinctive(prompt_text: &str) -> bool {
 }
 
 /// The leading tokens of the prompt's first non-empty line, bounded in count and length.
-fn pattern_tokens(prompt_text: &str) -> Option<Vec<&str>> {
-    let first_line = prompt_text.lines().find(|line| !line.trim().is_empty())?;
+///
+/// Claude Code records pasted text inside `<pasted_content id=…>` markup that is never painted,
+/// so the tokens come from the prompt with that markup removed. Built from the raw text, a pasted
+/// prompt's pattern would start with `<pasted_content` and could never match anything.
+fn pattern_tokens(prompt_text: &str) -> Option<Vec<String>> {
+    let painted_text = strip_paste_wrappers(prompt_text);
+    let first_line = painted_text.lines().find(|line| !line.trim().is_empty())?;
 
     let mut tokens = Vec::new();
     let mut chars_used = 0;
@@ -69,7 +94,7 @@ fn pattern_tokens(prompt_text: &str) -> Option<Vec<&str>> {
             break;
         }
         chars_used += token.chars().count();
-        tokens.push(token);
+        tokens.push(token.to_owned());
     }
     (!tokens.is_empty()).then_some(tokens)
 }
@@ -80,7 +105,7 @@ fn pattern_tokens(prompt_text: &str) -> Option<Vec<&str>> {
 /// themselves; this builds a pattern for anything with content.
 fn unbounded_search_pattern(prompt_text: &str) -> Result<String, UnsearchablePrompt> {
     let tokens = pattern_tokens(prompt_text).ok_or(UnsearchablePrompt::Empty)?;
-    let (first, last) = (tokens[0], tokens[tokens.len() - 1]);
+    let (first, last) = (&tokens[0], &tokens[tokens.len() - 1]);
 
     // `\s*`, not `\s+`. The grid search walks a wrap-transparent grapheme cursor, so a soft wrap
     // contributes *no* separator character between the last cell of one row and the first of the
@@ -273,6 +298,112 @@ pub fn locate_agent_prompt_in_history(
 fn resolve_distinctive(block_list: &BlockList, text: &str) -> Option<(BlockIndex, Match)> {
     let pattern = unbounded_search_pattern(text).ok()?;
     matches_in_reading_order(block_list, &pattern)?.pop()
+}
+
+/// Builds the regex that finds `prompt_text` as a sent message in an alt-screen frame.
+///
+/// Anchored on the sent-message marker, so even a prompt too short to search for alone ("hi") is
+/// located: the marker shows it is something the user sent, not a word in the agent's reply.
+pub fn agent_prompt_frame_pattern(prompt_text: &str) -> Result<String, UnsearchablePrompt> {
+    let body = unbounded_search_pattern(prompt_text)?;
+    Ok(format!("{SENT_MESSAGE_MARKER}{body}"))
+}
+
+/// The compiled [`agent_prompt_frame_pattern`], or `None` when the prompt has no text to find.
+pub fn agent_prompt_frame_search(prompt_text: &str) -> Option<RegexDFAs> {
+    let pattern = agent_prompt_frame_pattern(prompt_text).ok()?;
+    RegexDFAs::new_with_config(
+        &pattern,
+        FindConfig {
+            is_regex_enabled: true,
+            is_case_sensitive: true,
+        },
+    )
+    .inspect_err(|error| log::warn!("Could not build the message-jump frame search: {error}"))
+    .ok()
+}
+
+/// Whether the frame `alt_screen` is painting right now shows the message `search` was built for.
+///
+/// Only the visible rows count. An alt screen can retain history rows across resizes that are not
+/// painted, and a match there is not something the user can see.
+pub fn frame_shows_prompt(alt_screen: &AltScreen, search: &RegexDFAs) -> bool {
+    let first_visible_row = alt_screen.grid_handler().history_size();
+    alt_screen
+        .find(search)
+        .iter()
+        .any(|range| range.start().row >= first_visible_row)
+}
+
+/// The text of each visible row of `grid`, top to bottom.
+pub fn frame_rows(grid: &GridHandler) -> Vec<String> {
+    let first_visible_row = grid.history_size();
+    let last_column = grid.columns().saturating_sub(1);
+    (first_visible_row..first_visible_row + grid.visible_rows())
+        .map(|row| {
+            grid.bounds_to_string(
+                Point::new(row, 0),
+                Point::new(row, last_column),
+                false,
+                RespectObfuscatedSecrets::Yes,
+                true,
+                RespectDisplayedOutput::No,
+            )
+            .trim_end()
+            .to_owned()
+        })
+        .collect()
+}
+
+/// Which way a seek is scrolling an agent TUI's transcript.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SeekDirection {
+    /// Toward earlier messages: rows move down the frame.
+    TowardOlder,
+    /// Toward later messages: rows move up the frame.
+    TowardNewer,
+}
+
+/// Rows at the top of a frame compared by [`transcript_shift`].
+///
+/// The top half is transcript. The bottom holds the composer and status lines, which stay put
+/// while the transcript scrolls, and a working agent's spinner, which changes even when the
+/// transcript does not.
+pub fn shift_window(frame_rows: usize) -> usize {
+    (frame_rows / 2).max(1)
+}
+
+/// How many rows the transcript moved between two frames of the same agent TUI.
+///
+/// `Some(0)` means it did not move: the end being scrolled toward was reached, or the TUI has not
+/// repainted yet. `None` means the frames share too little to tell, because the step moved further
+/// than [`shift_window`] or the TUI redrew wholesale.
+///
+/// The offset with the most identical non-blank rows wins rather than one where every row matches,
+/// so a pinned header row or a redrawn row cannot hide a real shift. Ties go to the smaller offset.
+pub fn transcript_shift(
+    before: &[String],
+    after: &[String],
+    direction: SeekDirection,
+) -> Option<usize> {
+    let window = shift_window(before.len().min(after.len()));
+    let mut best: Option<(usize, usize)> = None;
+    for shift in 0..window {
+        let identical_rows = (0..window - shift)
+            .filter(|&row| {
+                let (old, new) = match direction {
+                    SeekDirection::TowardOlder => (&before[row], &after[row + shift]),
+                    SeekDirection::TowardNewer => (&before[row + shift], &after[row]),
+                };
+                !old.trim().is_empty() && old == new
+            })
+            .count();
+        if best.is_none_or(|(_, most)| identical_rows > most) {
+            best = Some((shift, identical_rows));
+        }
+    }
+    let (shift, identical_rows) = best?;
+    (identical_rows >= MIN_SHIFT_EVIDENCE_ROWS).then_some(shift)
 }
 
 #[cfg(test)]

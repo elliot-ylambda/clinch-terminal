@@ -11,6 +11,7 @@ pub mod codex;
 pub mod format;
 pub mod http;
 pub mod keychain;
+pub mod limit_message;
 pub mod pricing;
 pub mod snapshot_cache;
 
@@ -143,6 +144,12 @@ pub struct Provider {
     /// interaction. Plan gauges offer a silent Retry; local totals still work.
     #[serde(default, alias = "plan_needs_authorization")]
     pub plan_unavailable: bool,
+    /// Codex only: rollout thread id (a top-level session's id) -> when that
+    /// thread's latest turn ended at the provider usage limit. Codex runs no
+    /// hook for an error-terminated turn, so its rollout is the only causal
+    /// record. Cleared once a later turn starts in the same thread.
+    #[serde(default)]
+    pub usage_limit_stops: HashMap<String, DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

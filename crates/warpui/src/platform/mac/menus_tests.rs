@@ -43,6 +43,7 @@ const APPLY_CHANGES_ITERS: usize = 200_000;
 /// autorelease pool; the branch reclaims everything on drain, master keeps the
 /// retained key-equivalent strings alive.
 #[test]
+#[ignore = "memory repro; run with --ignored --nocapture in release mode"]
 fn make_menu_item_standard_action_memory_behavior() {
     unsafe {
         for _ in 0..MENU_ITEM_OUTER {
@@ -62,6 +63,7 @@ fn make_menu_item_standard_action_memory_behavior() {
 /// Note the deliberate absence of an outer `NSAutoreleasePool` — this is what
 /// makes the local-pool wrapper observable.
 #[test]
+#[ignore = "memory repro; run with --ignored --nocapture in release mode"]
 fn apply_changes_local_pool_memory_behavior() {
     unsafe {
         // Hold a single menu item for the entire loop so that the only growth

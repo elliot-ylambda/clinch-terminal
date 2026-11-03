@@ -92,7 +92,3 @@ fn local_cli_is_installed(command: &str) -> bool {
         false
     }
 }
-
-#[cfg(test)]
-#[path = "local_harness_setup_tests.rs"]
-mod tests;

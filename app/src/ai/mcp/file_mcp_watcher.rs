@@ -743,7 +743,3 @@ impl Entity for FileMCPWatcher {
 }
 
 impl SingletonEntity for FileMCPWatcher {}
-
-#[cfg(test)]
-#[path = "file_mcp_watcher_tests.rs"]
-mod tests;

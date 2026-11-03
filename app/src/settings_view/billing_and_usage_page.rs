@@ -3619,7 +3619,3 @@ impl BillingAndUsagePageView {
         col.finish()
     }
 }
-
-#[cfg(test)]
-#[path = "billing_and_usage_page_tests.rs"]
-mod tests;

@@ -64,7 +64,7 @@ use crate::pane_group::{
     CodePane, NotebookPane, PaneGroup, PaneId, TabBarHoverIndex, TerminalPane, WorkflowPane,
 };
 use crate::safe_triangle::SafeTriangle;
-use crate::tab::lineage::{lineage_nesting, TabLineage};
+use crate::tab::lineage::MAX_VISIBLE_LINEAGE_DEPTH;
 use crate::tab::{tab_position_id, SelectedTabColor, TabData, TabOriginKind};
 use crate::terminal::cli_agent_sessions::restore::{AgentRestoreQueue, RestoreState};
 use crate::terminal::cli_agent_sessions::{
@@ -496,6 +496,7 @@ fn render_pane_row_element(
         origin_badge: _,
         is_coordinator: _,
         auto_controls: _,
+        coordinator_switch: _,
     } = props;
     let is_selected = is_active_tab && is_focused;
     let tokens = Tokens::new(theme);
@@ -821,6 +822,7 @@ pub(super) struct VerticalTabsPanelState {
     bookmarks_link_mouse_state: MouseStateHandle,
     new_section_mouse_state: MouseStateHandle,
     auto_coordinate_ui: super::auto_coordinate::AutoCoordinateUiState,
+    coordinator_switch_state: MouseStateHandle,
 }
 
 impl Default for VerticalTabsPanelState {
@@ -835,6 +837,7 @@ impl Default for VerticalTabsPanelState {
             bookmarks_link_mouse_state: MouseStateHandle::default(),
             new_section_mouse_state: MouseStateHandle::default(),
             auto_coordinate_ui: Default::default(),
+            coordinator_switch_state: MouseStateHandle::default(),
             group_mouse_states: RefCell::default(),
             tab_group_mouse_states: RefCell::default(),
             pane_row_mouse_states: RefCell::default(),
@@ -934,8 +937,10 @@ struct PaneProps<'a> {
     origin_badge: Option<TabOriginBadge>,
     /// The project's coordinator tab, which gets its own mark and explanation.
     is_coordinator: bool,
-    /// The Auto controls, on the coordinator's first row.
+    /// The Auto pill, on the coordinator's first row.
     auto_controls: Option<super::auto_coordinate::AutoPillProps>,
+    /// The coordinator's on/off switch, on its first row.
+    coordinator_switch: Option<MouseStateHandle>,
     pane_id: PaneId,
     pane_group_id: EntityId,
     is_active_tab: bool,
@@ -2367,7 +2372,7 @@ fn render_vertical_tabs_panel(
     let scrollable_groups = SavePosition::new(
         ClippedScrollable::vertical(
             state.scroll_state.clone(),
-            render_groups(state, workspace, app),
+            render_groups_with_coordinator_switch(state, workspace, app),
             ScrollbarWidth::Custom(4.),
             theme.nonactive_ui_detail().into(),
             theme.active_ui_detail().into(),
@@ -2440,14 +2445,23 @@ fn render_vertical_tabs_panel(
 }
 
 /// A passive gutter outside the tab card keeps its existing drag/click targets intact.
-/// A forked or transferred tab sits indented under its source.
-fn render_lineage_indent(content: Box<dyn Element>, is_nested: bool) -> Box<dyn Element> {
-    if !is_nested {
-        return content;
-    }
-    Container::new(content)
-        .with_padding_left(ROW_LINEAGE_INDENT)
-        .finish()
+/// A forked or transferred tab sits one level under its source, and a fork of a fork
+/// steps in again (up to `MAX_VISIBLE_LINEAGE_DEPTH`). Each level draws a hairline rail,
+/// so a source's forks read as one small group even inside a section.
+fn render_lineage_indent(
+    content: Box<dyn Element>,
+    depth: usize,
+    appearance: &Appearance,
+) -> Box<dyn Element> {
+    let rail = appearance.tokens().hairline;
+    let half = ROW_LINEAGE_INDENT / 2.;
+    (0..depth.min(MAX_VISIBLE_LINEAGE_DEPTH)).fold(content, |content, _| {
+        let railed = Container::new(content)
+            .with_padding_left(half - 1.)
+            .with_border(Border::left(1.).with_border_color(rail))
+            .finish();
+        Container::new(railed).with_padding_left(half).finish()
+    })
 }
 
 fn render_title_with_origin(
@@ -2656,11 +2670,8 @@ fn render_groups(
 
     // Consecutive tabs sharing a group_id collapse into a single group container.
     // TODO(johnturcoo) adopt horizontal tabs 'tab slot' pattern to remove this while loop.
-    let lineage: Vec<_> = visible_tabs
-        .iter()
-        .map(|(index, _)| TabLineage::for_tab(&workspace.tabs[*index], app))
-        .collect();
-    let nesting = lineage_nesting(&lineage);
+    // From the whole list, so a source hidden by search still counts as open.
+    let depths = workspace.tab_lineage_depths(app);
     let total_visible = visible_tabs.len();
     let mut i = 0;
     while i < total_visible {
@@ -2691,6 +2702,7 @@ fn render_groups(
                     workspace,
                     &group,
                     members,
+                    &depths,
                     last_member_after_index,
                     is_any_pane_dragging,
                     app,
@@ -2714,7 +2726,11 @@ fn render_groups(
                     false, // in_tab_group
                     app,
                 );
-                groups.add_child(render_lineage_indent(tab_element, nesting[i]));
+                groups.add_child(render_lineage_indent(
+                    tab_element,
+                    depths[tab_index],
+                    appearance,
+                ));
                 i += 1;
             }
         }
@@ -2974,6 +2990,7 @@ fn render_tab_group_internal(
                         workspace.auto_coordinate_enabled(app),
                         state.open_popover == Some(SidebarPopover::AutoCoordinate),
                     ));
+                    pane_props.coordinator_switch = Some(state.coordinator_switch_state.clone());
                 }
                 if stack_panes_flush {
                     pane_props.stack_position = PaneRowStackPosition::Flush {
@@ -3600,11 +3617,13 @@ fn render_section_header(
 
 /// Renders a tab group: pane-like header followed by indented member rows. Background only paints
 /// on hover or when a member is active.
+#[allow(clippy::too_many_arguments)]
 fn render_grouped_tab_container(
     state: &VerticalTabsPanelState,
     workspace: &Workspace,
     group: &TabGroup,
     members: &[(usize, Option<Vec<PaneId>>)],
+    depths: &[usize],
     last_member_after_index: Option<usize>,
     is_any_pane_dragging: bool,
     app: &AppContext,
@@ -3619,11 +3638,6 @@ fn render_grouped_tab_container(
         .or_default()
         .clone();
 
-    let lineage: Vec<_> = members
-        .iter()
-        .map(|(index, _)| TabLineage::for_tab(&workspace.tabs[*index], app))
-        .collect();
-    let nesting = lineage_nesting(&lineage);
     let member_count = members.len();
     let group_id = group.id;
     let group = group.clone();
@@ -3720,7 +3734,11 @@ fn render_grouped_tab_container(
                     true,
                     app,
                 );
-                content.add_child(render_lineage_indent(tab_element, nesting[i]));
+                content.add_child(render_lineage_indent(
+                    tab_element,
+                    depths[*tab_index],
+                    appearance,
+                ));
             }
         }
 
@@ -4060,8 +4078,8 @@ fn render_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn Element> {
             appearance,
             app,
         ))
-        // On the coordinator row the title takes the free space, which keeps its Auto controls at
-        // the right edge without truncating the title.
+        // On the coordinator row the title takes the free space, which keeps its Auto pill and
+        // on/off switch at the right edge without truncating the title.
         .with_child(if props.auto_controls.is_some() {
             Expanded::new(1., text.finish()).finish()
         } else {
@@ -4073,6 +4091,12 @@ fn render_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn Element> {
                 .auto_controls
                 .clone()
                 .map(|controls| super::auto_coordinate::render_auto_controls(controls, appearance)),
+        )
+        .with_children(
+            props
+                .coordinator_switch
+                .clone()
+                .map(|mouse_state| render_coordinator_switch(true, mouse_state, appearance)),
         )
         .finish();
 
@@ -4320,6 +4344,7 @@ impl<'a> PaneProps<'a> {
             origin_badge: None,
             is_coordinator: false,
             auto_controls: None,
+            coordinator_switch: None,
         })
     }
 
@@ -5573,6 +5598,140 @@ struct DetailSidecarTextColors {
     main: WarpThemeFill,
     sub: WarpThemeFill,
     disabled: WarpThemeFill,
+}
+
+/// The tab list, led by a dimmed Coordinator row when the coordinator is switched off, so it can be
+/// switched back on from where it was.
+fn render_groups_with_coordinator_switch(
+    state: &VerticalTabsPanelState,
+    workspace: &Workspace,
+    app: &AppContext,
+) -> Box<dyn Element> {
+    let groups = render_groups(state, workspace, app);
+    if *crate::settings::ClinchSettings::as_ref(app).coordinator_enabled
+        || workspace.coordinator_tab_index().is_some()
+    {
+        return groups;
+    }
+    let appearance = Appearance::as_ref(app);
+    let tokens = appearance.tokens();
+    let off_row = Container::new(
+        Flex::row()
+            .with_main_axis_size(MainAxisSize::Max)
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_spacing(ROW_MARK_GAP)
+            .with_child(
+                Expanded::new(
+                    1.,
+                    Text::new_inline(
+                        "Coordinator is off".to_owned(),
+                        appearance.ui_font_family(),
+                        ROW_TITLE_SIZE,
+                    )
+                    .with_color(tokens.text_3)
+                    .finish(),
+                )
+                .finish(),
+            )
+            .with_child(render_coordinator_switch(
+                false,
+                state.coordinator_switch_state.clone(),
+                appearance,
+            ))
+            .finish(),
+    )
+    .with_padding(
+        Padding::uniform(ROW_VERTICAL_PADDING)
+            .with_left(ROW_HORIZONTAL_PADDING)
+            .with_right(ROW_HORIZONTAL_PADDING),
+    )
+    .finish();
+    Flex::column()
+        .with_main_axis_size(MainAxisSize::Min)
+        .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .with_child(off_row)
+        .with_child(groups)
+        .finish()
+}
+
+/// A compact on/off switch for the Coordinator row.
+fn render_coordinator_switch(
+    on: bool,
+    mouse_state: MouseStateHandle,
+    appearance: &Appearance,
+) -> Box<dyn Element> {
+    const TRACK_WIDTH: f32 = 26.;
+    const TRACK_HEIGHT: f32 = 14.;
+    const KNOB: f32 = 10.;
+    let tokens = *appearance.tokens();
+    let ui_builder = appearance.ui_builder().clone();
+    Hoverable::new(mouse_state, move |state| {
+        let knob = ConstrainedBox::new(
+            Container::new(Empty::new().finish())
+                .with_background(ThemeFill::Solid(if on {
+                    tokens.text_on_accent
+                } else {
+                    tokens.text_2
+                }))
+                .with_corner_radius(corners_pill())
+                .finish(),
+        )
+        .with_width(KNOB)
+        .with_height(KNOB)
+        .finish();
+        let track = ConstrainedBox::new(
+            Container::new(
+                Flex::row()
+                    .with_main_axis_size(MainAxisSize::Max)
+                    .with_main_axis_alignment(if on {
+                        MainAxisAlignment::End
+                    } else {
+                        MainAxisAlignment::Start
+                    })
+                    .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                    .with_child(knob)
+                    .finish(),
+            )
+            .with_uniform_padding((TRACK_HEIGHT - KNOB) / 2.)
+            .with_background(ThemeFill::Solid(if on {
+                tokens.accent
+            } else {
+                tokens.control_track
+            }))
+            .with_corner_radius(corners_pill())
+            .finish(),
+        )
+        .with_width(TRACK_WIDTH)
+        .with_height(TRACK_HEIGHT)
+        .finish();
+        if !state.is_hovered() {
+            return track;
+        }
+        let mut stack = Stack::new().with_child(track);
+        stack.add_positioned_overlay_child(
+            ui_builder
+                .tool_tip(
+                    if on {
+                        "Turn the coordinator off"
+                    } else {
+                        "Turn the coordinator on"
+                    }
+                    .to_owned(),
+                )
+                .build()
+                .finish(),
+            OffsetPositioning::offset_from_parent(
+                vec2f(0., -6.),
+                ParentOffsetBounds::WindowByPosition,
+                ParentAnchor::TopMiddle,
+                ChildAnchor::BottomMiddle,
+            ),
+        );
+        stack.finish()
+    })
+    .with_cursor(Cursor::PointingHand)
+    .on_click(move |ctx, _, _| ctx.dispatch_typed_action(WorkspaceAction::SetCoordinatorOn(!on)))
+    .finish()
 }
 
 /// What the coordinator tab is for, at the top of its details card.

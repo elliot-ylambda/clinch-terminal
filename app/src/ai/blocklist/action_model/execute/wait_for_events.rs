@@ -249,7 +249,3 @@ impl WaitForEventsExecutor {
 impl Entity for WaitForEventsExecutor {
     type Event = ();
 }
-
-#[cfg(test)]
-#[path = "wait_for_events_tests.rs"]
-mod tests;

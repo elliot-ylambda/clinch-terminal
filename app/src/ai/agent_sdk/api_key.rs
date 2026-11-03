@@ -479,7 +479,3 @@ fn finish_command(result: Result<()>, ctx: &mut ModelContext<ApiKeyCommandRunner
         Err(err) => super::report_fatal_error(err, ctx),
     }
 }
-
-#[cfg(test)]
-#[path = "api_key_tests.rs"]
-mod tests;

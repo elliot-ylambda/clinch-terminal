@@ -1,18 +1,24 @@
-//! Opt-in, per-pane "auto-continue when the CLI agent's rate limit resets".
+//! Per-pane "auto-continue when the CLI agent's rate limit resets", on by
+//! default (`CliAgentUsageSettings::auto_continue_on_limit_reset`) with a
+//! per-session footer override.
 //!
-//! When a pane's Claude Code or Codex session stops while its usage window is exhausted
-//! (see `PlanLimits::exhausted_until` in the `cli_agent_usage` crate), an
+//! When a pane's Claude Code or Codex session stops at its usage limit, an
 //! enabled pane arms exactly one "Continue" to be typed into that pane
-//! shortly after the reset time. The scheduling *decision* lives in the pure
-//! [`PaneAutoContinue`] state machine (clock injected, tested without real
-//! timers in `auto_continue_tests.rs`); the actual timer and PTY write live
-//! on the pane's `TerminalView` (`terminal/view/auto_continue.rs`), which
-//! subscribes to [`AutoContinueModelEvent::Armed`].
+//! shortly after the reset. The reset comes from the provider: Claude Code
+//! states it in the limit message itself, refined by plan-usage data when
+//! the user enabled it; Codex reports it in its rollout `rate_limits` (see
+//! `PlanLimits::exhausted_until` in the `cli_agent_usage` crate).
+//!
+//! The scheduling *decision* lives in the pure [`PaneAutoContinue`] state
+//! machine (clock injected, tested without real timers in
+//! `auto_continue_tests.rs`); the actual timer and PTY write live on the
+//! pane's `TerminalView` (`terminal/view/auto_continue.rs`), which subscribes
+//! to [`AutoContinueModelEvent::Armed`].
 //!
 //! Safety rules encoded here:
-//! - a provider session must be explicitly opted in; that exact durable
-//!   identity and any causal arm are persisted machine-locally so an app
-//!   restart cannot silently lose the timer;
+//! - a per-session footer choice overrides the global default for that exact
+//!   durable identity; the choice and any causal arm are persisted
+//!   machine-locally so an app restart cannot silently lose the timer;
 //! - at most ONE continue is sent per arm ([`PaneAutoContinue::prepare_due_fire`]
 //!   consumes the armed state only after final validation);
 //! - an unknown reset time never arms, and a reset time already in the past
@@ -24,12 +30,8 @@
 //!   eligible. The view re-validates identity, provider usage, and foreground
 //!   ownership before typing;
 //! - any user input into the pane, any new prompt/status activity, and any
-//!   session end or replacement cancels the pending continue.
-//!
-//! With `show_plan_limits` off, the usage poller never fetches Claude plan
-//! data, so Claude cannot arm (the footer toggle and Command Palette entries
-//! are hidden behind the same setting). Codex limits come from local rollout
-//! files and remain available independently of that Claude-only setting.
+//!   session end or replacement cancels the pending continue. Pointer reports
+//!   (wheel/clicks in a mouse-tracking TUI) are not input.
 
 use std::collections::HashMap;
 
@@ -63,7 +65,6 @@ const MAX_DELIVERY_ATTEMPTS: u8 = 3;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AutoContinueAvailability {
     Ready,
-    WaitingForUsageData,
     Unsupported,
 }
 
@@ -80,24 +81,19 @@ impl AutoContinueAvailability {
 /// Whether rate-limit auto-continue may be offered for this pane. Keep every
 /// entry point (footer, Command Palette, and the action handler) on this one
 /// predicate so hidden controls cannot still be invoked through another path.
+///
+/// Plan-usage data is deliberately not required: Claude Code states its reset
+/// in the limit message, and Codex writes its windows into the rollout at the
+/// moment it stops. Without a known reset a stop stays pending (visible in the
+/// footer) instead of arming.
 pub(crate) fn auto_continue_availability(
     session: &CLIAgentSession,
-    snapshot: &UsageSnapshot,
-    show_plan_limits: bool,
     is_shared_session_viewer: bool,
 ) -> AutoContinueAvailability {
     if is_shared_session_viewer || session.is_remote() || !supports_causal_limit_events(session) {
         return AutoContinueAvailability::Unsupported;
     }
-
     match session.agent {
-        CLIAgent::Claude if !show_plan_limits => AutoContinueAvailability::Unsupported,
-        CLIAgent::Claude if snapshot.claude.plan.is_none() => {
-            AutoContinueAvailability::WaitingForUsageData
-        }
-        CLIAgent::Codex if snapshot.codex.plan.is_none() => {
-            AutoContinueAvailability::WaitingForUsageData
-        }
         CLIAgent::Claude | CLIAgent::Codex => AutoContinueAvailability::Ready,
         _ => AutoContinueAvailability::Unsupported,
     }
@@ -159,6 +155,27 @@ fn reset_for_causal_limit_stop(snapshot: &UsageSnapshot, agent: CLIAgent) -> Opt
             .filter(|window| window.percent >= 99.0)
             .filter_map(|window| window.resets_at)
             .max(),
+    }
+}
+
+/// The reset to schedule for a causal limit stop: the later of what the
+/// provider stated in its limit message and what plan-usage data shows, since
+/// continuing before either has passed would hit the limit again.
+fn reset_for_limit_stop(
+    snapshot: &UsageSnapshot,
+    agent: CLIAgent,
+    stated_reset: Option<DateTime<Utc>>,
+) -> Option<DateTime<Utc>> {
+    [reset_for_causal_limit_stop(snapshot, agent), stated_reset]
+        .into_iter()
+        .flatten()
+        .max()
+}
+
+fn stated_reset(stop_reason: Option<CLIAgentStopReason>) -> Option<DateTime<Utc>> {
+    match stop_reason {
+        Some(CLIAgentStopReason::UsageLimit { stated_reset }) => stated_reset,
+        None => None,
     }
 }
 
@@ -370,8 +387,13 @@ impl PaneAutoContinue {
     }
 
     /// Final provider-state check performed only after the view validates the
-    /// live session and foreground process. Unknown usage data defers instead
-    /// of consuming the one-shot; a reset that moved later re-arms precisely.
+    /// live session and foreground process. A reset that moved later re-arms
+    /// precisely, and a window still exhausted without a reset time defers.
+    /// Missing plan data fires: the arm already came from a causal stop whose
+    /// known reset has passed, Codex drops a window from its data once it has
+    /// reset (and reports nothing new until the next request), and Claude plan
+    /// data is optional. A premature send just produces another limit stop,
+    /// which re-arms.
     pub fn prepare_due_fire(
         &mut self,
         generation: u64,
@@ -403,7 +425,12 @@ impl PaneAutoContinue {
                     DueFireDecision::Rearmed(rearmed)
                 }
             }
-            Some(ExhaustionStatus::ResetUnknown) | None => {
+            None => {
+                self.armed.take();
+                self.last_delivery_error = None;
+                DueFireDecision::Fire(current)
+            }
+            Some(ExhaustionStatus::ResetUnknown) => {
                 self.generation += 1;
                 let mut rearmed = current;
                 rearmed.fire_at = now + Duration::seconds(AUTO_CONTINUE_RETRY_SECS);
@@ -484,9 +511,9 @@ impl AutoContinueModelEvent {
     }
 }
 
-/// Singleton tracking each pane's auto-continue opt-in and armed state.
-/// Pane entries are ephemeral, while exact provider-session opt-ins and armed
-/// fire times are stored in private machine-local settings for restoration.
+/// Singleton tracking each pane's auto-continue enablement and armed state.
+/// Pane entries are ephemeral, while per-session overrides and armed fire
+/// times are stored in private machine-local settings for restoration.
 pub struct AutoContinueModel {
     panes: HashMap<EntityId, PaneAutoContinue>,
 }
@@ -505,25 +532,32 @@ impl AutoContinueModel {
                 me.on_sessions_event(event, ctx);
             },
         );
-        // A hard-stop notification can beat the comparatively slow usage
-        // poll. Retry stopped, opted-in panes whenever fresh usage arrives so
-        // an earlier 99%/missing snapshot cannot leave the toggle silently on
-        // but unarmed.
+        // Every usage scan (about every 5 s) carries Codex's rollout-recorded
+        // limit stops; Codex runs no hook for them, so close those turns here.
+        // A hard-stop notification can also beat the comparatively slow usage
+        // poll, so retry stopped, enabled panes whenever fresh usage arrives.
         ctx.subscribe_to_model(
             &CliAgentUsageModel::handle(ctx),
             |me, _handle, _event, ctx| {
+                let codex_stops = CliAgentUsageModel::as_ref(ctx)
+                    .latest()
+                    .codex
+                    .usage_limit_stops
+                    .clone();
+                if !codex_stops.is_empty() {
+                    CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                        sessions.apply_codex_usage_limit_stops(&codex_stops, ctx);
+                    });
+                }
                 me.retry_pending_usage_confirmations(ctx);
             },
         );
-        // This setting gates only Claude's remote plan data. Disabling it hides
-        // Claude's cancellation controls, so clear Claude opt-ins while leaving
-        // Codex panes alone (their limits come from local rollout files).
+        // Re-apply the global default whenever it (or a per-session override)
+        // changes. Idempotent: panes already in the effective state are left alone.
         ctx.subscribe_to_model(
             &CliAgentUsageSettings::handle(ctx),
             |me, _handle, _event, ctx| {
-                if !*CliAgentUsageSettings::as_ref(ctx).show_plan_limits {
-                    me.disable_agent(CLIAgent::Claude, ctx);
-                }
+                me.sync_all_panes_with_settings(ctx);
             },
         );
         Self {
@@ -577,46 +611,60 @@ impl AutoContinueModel {
         let Some(session) = CLIAgentSessionsModel::as_ref(ctx).session(terminal_view_id) else {
             return AutoContinueAvailability::Unsupported;
         };
-        auto_continue_availability(
-            session,
-            CliAgentUsageModel::as_ref(ctx).latest(),
-            *CliAgentUsageSettings::as_ref(ctx).show_plan_limits,
-            is_shared_session_viewer,
-        )
+        auto_continue_availability(session, is_shared_session_viewer)
     }
 
-    /// Flips the pane's opt-in. Turning it ON while the pane's supported session
-    /// is already stopped at an exhausted window arms immediately — the
-    /// common flow is the user flipping the toggle only after seeing the
-    /// limit message. Turning it OFF cancels any pending continue (one-click
-    /// disarm).
+    /// Whether `key`'s session should auto-continue: its footer override if
+    /// the user set one, otherwise the global default.
+    fn effective_enabled(key: Option<&str>, ctx: &AppContext) -> bool {
+        let settings = CliAgentUsageSettings::as_ref(ctx);
+        key.and_then(|key| settings.auto_continue_session_overrides.get(key).copied())
+            .unwrap_or(*settings.auto_continue_on_limit_reset)
+    }
+
+    /// The footer toggle: flips this pane and records the choice as a
+    /// per-session override. Turning it ON while the pane's supported session
+    /// is already stopped at its limit arms immediately. Turning it OFF
+    /// cancels any pending continue (one-click disarm).
     pub fn toggle(&mut self, terminal_view_id: EntityId, ctx: &mut ModelContext<Self>) {
+        let key = CLIAgentSessionsModel::as_ref(ctx)
+            .session(terminal_view_id)
+            .and_then(persistence_key);
         if self.is_enabled(terminal_view_id) {
             self.disable(terminal_view_id, ctx);
+            if let Some(key) = key {
+                Self::set_persisted_override(&key, false, ctx);
+            }
             return;
         }
 
         if !Self::availability(terminal_view_id, false, ctx).may_enable() {
             return;
         }
-        let key = CLIAgentSessionsModel::as_ref(ctx)
-            .session(terminal_view_id)
-            .and_then(persistence_key);
+        if let Some(key) = key.as_deref() {
+            Self::set_persisted_override(key, true, ctx);
+        }
+        self.enable(terminal_view_id, key, ctx);
+    }
+
+    fn enable(
+        &mut self,
+        terminal_view_id: EntityId,
+        key: Option<String>,
+        ctx: &mut ModelContext<Self>,
+    ) {
         let pane = self.panes.entry(terminal_view_id).or_default();
+        pane.set_persistence_key(key);
         if !pane.set_enabled(true) {
             return;
-        }
-        pane.set_persistence_key(key.clone());
-        if let Some(key) = key {
-            Self::set_persisted_opt_in(&key, true, ctx);
         }
         ctx.emit(AutoContinueModelEvent::Changed { terminal_view_id });
         self.try_arm_for_already_stopped_session(terminal_view_id, ctx);
     }
 
-    /// Turns this pane off if it was opted in, invalidating any scheduled
-    /// timer generation. Used by defensive runtime guards as well as UI
-    /// actions that become unavailable while pending.
+    /// Turns this pane off and invalidates any scheduled timer generation,
+    /// without recording a per-session override (callers that act for the
+    /// user record it themselves).
     pub fn disable(&mut self, terminal_view_id: EntityId, ctx: &mut ModelContext<Self>) {
         let persisted_key = self
             .panes
@@ -628,7 +676,6 @@ impl AutoContinueModel {
             .get_mut(&terminal_view_id)
             .is_some_and(|pane| pane.set_enabled(false));
         if let Some(key) = persisted_key {
-            Self::set_persisted_opt_in(&key, false, ctx);
             Self::set_persisted_arm(&key, None, ctx);
         }
         if changed {
@@ -636,22 +683,44 @@ impl AutoContinueModel {
         }
     }
 
-    fn set_persisted_opt_in(key: &str, enabled: bool, ctx: &mut ModelContext<Self>) {
+    /// Stores a footer choice only when it differs from the global default,
+    /// so following the default never pins a session to an old value.
+    fn set_persisted_override(key: &str, enabled: bool, ctx: &mut ModelContext<Self>) {
         CliAgentUsageSettings::handle(ctx).update(ctx, |settings, ctx| {
-            let mut sessions = settings.auto_continue_sessions.clone();
-            let changed = if enabled {
-                sessions
-                    .insert(key.to_owned(), Utc::now().timestamp())
-                    .is_none()
+            let mut overrides = settings.auto_continue_session_overrides.clone();
+            let changed = if enabled == *settings.auto_continue_on_limit_reset {
+                overrides.remove(key).is_some()
             } else {
-                sessions.remove(key).is_some()
+                overrides.insert(key.to_owned(), enabled) != Some(enabled)
             };
             if changed {
-                if let Err(error) = settings.auto_continue_sessions.set_value(sessions, ctx) {
-                    log::error!("failed to persist CLI-agent auto-continue opt-in: {error}");
+                if let Err(error) = settings
+                    .auto_continue_session_overrides
+                    .set_value(overrides, ctx)
+                {
+                    log::error!("failed to persist CLI-agent auto-continue choice: {error}");
                 }
             }
         });
+    }
+
+    /// Brings every tracked pane in line with the global default and its
+    /// per-session override.
+    fn sync_all_panes_with_settings(&mut self, ctx: &mut ModelContext<Self>) {
+        let view_ids: Vec<_> = CLIAgentSessionsModel::as_ref(ctx)
+            .terminal_view_ids()
+            .collect();
+        for view_id in view_ids {
+            let key = CLIAgentSessionsModel::as_ref(ctx)
+                .session(view_id)
+                .and_then(persistence_key);
+            let should_enable = Self::effective_enabled(key.as_deref(), ctx);
+            if should_enable && !self.is_enabled(view_id) {
+                self.restore_pane_state(view_id, ctx);
+            } else if !should_enable && self.is_enabled(view_id) {
+                self.disable(view_id, ctx);
+            }
+        }
     }
 
     fn set_persisted_arm(key: &str, fire_at: Option<DateTime<Utc>>, ctx: &mut ModelContext<Self>) {
@@ -675,11 +744,9 @@ impl AutoContinueModel {
         });
     }
 
-    fn restore_persisted_opt_in(
-        &mut self,
-        terminal_view_id: EntityId,
-        ctx: &mut ModelContext<Self>,
-    ) {
+    /// Enables a pane whose session should auto-continue (global default or
+    /// per-session override) and restores a persisted arm across app restarts.
+    fn restore_pane_state(&mut self, terminal_view_id: EntityId, ctx: &mut ModelContext<Self>) {
         let Some((key, agent, session_id)) = CLIAgentSessionsModel::as_ref(ctx)
             .session(terminal_view_id)
             .and_then(|session| {
@@ -695,9 +762,7 @@ impl AutoContinueModel {
         if matches!(
             Self::availability(terminal_view_id, false, ctx),
             AutoContinueAvailability::Unsupported
-        ) || !CliAgentUsageSettings::as_ref(ctx)
-            .auto_continue_sessions
-            .contains_key(&key)
+        ) || !Self::effective_enabled(Some(&key), ctx)
         {
             return;
         }
@@ -831,7 +896,9 @@ impl AutoContinueModel {
         ctx.emit(AutoContinueModelEvent::Changed { terminal_view_id });
     }
 
-    fn disarm(&mut self, terminal_view_id: EntityId, ctx: &mut ModelContext<Self>) {
+    /// Cancels this pane's pending continue while leaving it enabled for the
+    /// next limit stop. Runtime guards use this rather than `disable`.
+    pub fn disarm(&mut self, terminal_view_id: EntityId, ctx: &mut ModelContext<Self>) {
         let persisted_key = self
             .panes
             .get(&terminal_view_id)
@@ -846,25 +913,6 @@ impl AutoContinueModel {
                 Self::set_persisted_arm(&key, None, ctx);
             }
             ctx.emit(AutoContinueModelEvent::Changed { terminal_view_id });
-        }
-    }
-
-    fn disable_agent(&mut self, agent: CLIAgent, ctx: &mut ModelContext<Self>) {
-        let enabled_view_ids: Vec<_> = {
-            let sessions = CLIAgentSessionsModel::as_ref(ctx);
-            self.panes
-                .iter()
-                .filter_map(|(view_id, pane)| {
-                    (pane.is_enabled()
-                        && sessions
-                            .session(*view_id)
-                            .is_some_and(|session| session.agent == agent))
-                    .then_some(*view_id)
-                })
-                .collect()
-        };
-        for view_id in enabled_view_ids {
-            self.disable(view_id, ctx);
         }
     }
 
@@ -889,15 +937,8 @@ impl AutoContinueModel {
             })
             .collect();
         for (view_id, agent) in enabled_panes {
-            let availability = Self::availability(view_id, false, ctx);
-            if matches!(availability, AutoContinueAvailability::Unsupported) {
-                self.disable(view_id, ctx);
-                continue;
-            }
-            if !availability.may_enable() {
-                ctx.emit(AutoContinueModelEvent::Changed {
-                    terminal_view_id: view_id,
-                });
+            if !Self::availability(view_id, false, ctx).may_enable() {
+                self.disarm(view_id, ctx);
                 continue;
             }
             let exhaustion = match agent {
@@ -916,7 +957,7 @@ impl AutoContinueModel {
                 pane.reconcile_reset(exhausted_until, now)
             } else {
                 pane.retry_pending_usage_confirmation(
-                    reset_for_causal_limit_stop(CliAgentUsageModel::as_ref(ctx).latest(), agent),
+                    reset_for_limit_stop(CliAgentUsageModel::as_ref(ctx).latest(), agent, None),
                     now,
                 )
             };
@@ -960,30 +1001,42 @@ impl AutoContinueModel {
                 session.session_context.stop_reason,
             )
         };
-        if matches!(stop_reason, Some(CLIAgentStopReason::UsageLimit)) {
-            self.arm_if_exhausted(terminal_view_id, agent, stopped_session_id.as_deref(), ctx);
+        if matches!(stop_reason, Some(CLIAgentStopReason::UsageLimit { .. })) {
+            self.arm_if_exhausted(
+                terminal_view_id,
+                agent,
+                stopped_session_id.as_deref(),
+                stated_reset(stop_reason),
+                ctx,
+            );
         }
     }
 
-    /// Records the stopped session and arms immediately iff that provider's usage
-    /// window is already known to be exhausted. Otherwise a causal pending
-    /// confirmation lets a later, throttled usage refresh complete the arm.
+    /// Records the stopped session and arms immediately iff a reset is known
+    /// (stated by the provider or shown by its usage data). Otherwise a causal
+    /// pending confirmation lets a later usage refresh complete the arm.
     fn arm_if_exhausted(
         &mut self,
         terminal_view_id: EntityId,
         agent: CLIAgent,
         session_id: Option<&str>,
+        stated_reset: Option<DateTime<Utc>>,
         ctx: &mut ModelContext<Self>,
     ) {
-        if matches!(
-            Self::availability(terminal_view_id, false, ctx),
-            AutoContinueAvailability::Unsupported
-        ) {
-            self.disable(terminal_view_id, ctx);
+        if !Self::availability(terminal_view_id, false, ctx).may_enable() {
+            self.disarm(terminal_view_id, ctx);
             return;
         }
-        let exhausted_until =
-            reset_for_causal_limit_stop(CliAgentUsageModel::as_ref(ctx).latest(), agent);
+        // The pane may not have been evaluated yet (its first rich event can be
+        // the limit stop itself, e.g. right after a Clinch restart).
+        if !self.panes.contains_key(&terminal_view_id) {
+            self.restore_pane_state(terminal_view_id, ctx);
+        }
+        let exhausted_until = reset_for_limit_stop(
+            CliAgentUsageModel::as_ref(ctx).latest(),
+            agent,
+            stated_reset,
+        );
         let Some(pane) = self.panes.get_mut(&terminal_view_id) else {
             return;
         };
@@ -1022,13 +1075,14 @@ impl AutoContinueModel {
                     if matches!(*agent, CLIAgent::Claude | CLIAgent::Codex)
                         && matches!(
                             session_context.stop_reason,
-                            Some(CLIAgentStopReason::UsageLimit)
+                            Some(CLIAgentStopReason::UsageLimit { .. })
                         ) =>
                 {
                     self.arm_if_exhausted(
                         *terminal_view_id,
                         *agent,
                         session_context.session_id.as_deref(),
+                        stated_reset(session_context.stop_reason),
                         ctx,
                     );
                 }
@@ -1042,8 +1096,8 @@ impl AutoContinueModel {
                 }
             },
             // A view ID is ephemeral. Clear any previous pane state, then
-            // restore the explicit opt-in when this is the same durable
-            // provider session after an app or pane restore.
+            // apply the default/override and restore a persisted arm when this
+            // is the same durable provider session after an app or pane restore.
             CLIAgentSessionsModelEvent::Started {
                 terminal_view_id, ..
             } => {
@@ -1052,7 +1106,7 @@ impl AutoContinueModel {
                         terminal_view_id: *terminal_view_id,
                     });
                 }
-                self.restore_persisted_opt_in(*terminal_view_id, ctx);
+                self.restore_pane_state(*terminal_view_id, ctx);
             }
             CLIAgentSessionsModelEvent::Ended {
                 terminal_view_id, ..
@@ -1065,7 +1119,7 @@ impl AutoContinueModel {
             }
             CLIAgentSessionsModelEvent::SessionUpdated {
                 terminal_view_id, ..
-            } => self.restore_persisted_opt_in(*terminal_view_id, ctx),
+            } => self.restore_pane_state(*terminal_view_id, ctx),
             CLIAgentSessionsModelEvent::InputSessionChanged { .. } => {}
         }
     }

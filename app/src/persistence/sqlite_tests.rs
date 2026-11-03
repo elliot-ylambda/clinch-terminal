@@ -1023,6 +1023,7 @@ fn test_sqlite_round_trips_tab_origin() {
             kind: TabOriginKind::Fork,
             parent_pane_uuid: PaneUuid(vec![1]),
             parent_title: "Source conversation".into(),
+            ancestors: Vec::new(),
         }),
         Some(TabOrigin {
             kind: TabOriginKind::Transfer {
@@ -1030,6 +1031,7 @@ fn test_sqlite_round_trips_tab_origin() {
             },
             parent_pane_uuid: PaneUuid(vec![2]),
             parent_title: "Forked conversation".into(),
+            ancestors: vec![PaneUuid(vec![1])],
         }),
     ];
     let template = window.tabs[0].clone();
@@ -1064,6 +1066,23 @@ fn test_sqlite_round_trips_tab_origin() {
             .collect::<Vec<_>>(),
         origins
     );
+
+    // Origins saved before `ancestors` existed still restore, with no ancestors.
+    diesel::update(schema::tabs::table)
+        .set(schema::tabs::origin.eq(Some(
+            "{\"kind\":\"Fork\",\"parent_pane_uuid\":[1],\"parent_title\":\"Old\"}",
+        )))
+        .execute(&mut conn)
+        .unwrap();
+    let restored = read_sqlite_data(&mut conn, None).unwrap().app_state;
+    let tabs = &restored.windows[0].active_project().unwrap().tabs;
+    assert!(tabs.iter().all(|tab| tab.origin
+        == Some(TabOrigin {
+            kind: TabOriginKind::Fork,
+            parent_pane_uuid: PaneUuid(vec![1]),
+            parent_title: "Old".into(),
+            ancestors: Vec::new(),
+        })));
 
     // Future or malformed origin data must not discard the rest of a saved tab.
     diesel::update(schema::tabs::table)

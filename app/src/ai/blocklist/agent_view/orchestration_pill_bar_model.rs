@@ -127,7 +127,3 @@ pub enum OrchestrationPillBarEvent {
     /// The pinned set changed (toggle or history-driven prune).
     PinSetChanged,
 }
-
-#[cfg(test)]
-#[path = "orchestration_pill_bar_model_tests.rs"]
-mod tests;

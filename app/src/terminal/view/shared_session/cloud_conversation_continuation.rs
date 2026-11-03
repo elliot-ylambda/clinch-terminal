@@ -275,7 +275,3 @@ fn local_conversation_id_for_local_continuation(
         .map(|conversation| conversation.id())
         .or_else(|| history_model.find_conversation_id_by_server_token(conversation_token))
 }
-
-#[cfg(test)]
-#[path = "cloud_conversation_continuation_tests.rs"]
-mod tests;

@@ -32,8 +32,6 @@ impl Display for ServerExperiment {
             }
             Self::OzMultiHarnessControl => "OZ_MULTI_HARNESS_CONTROL",
             Self::OzMultiHarnessExperiment => "OZ_MULTI_HARNESS_EXPERIMENT",
-            #[cfg(test)]
-            Self::TestExperiment => "TEST_EXPERIMENT",
         };
         write!(f, "{str}")
     }

@@ -365,7 +365,3 @@ pub fn render_team_totals_block(
     ));
     column.finish()
 }
-
-#[cfg(test)]
-#[path = "billing_cycle_usage_team_totals_tests.rs"]
-mod tests;

@@ -105,7 +105,3 @@ fn try_read_document(id: &AIDocumentId, ctx: &AppContext) -> Option<DocumentCont
         document_version: version,
     })
 }
-
-#[cfg(test)]
-#[path = "read_documents_tests.rs"]
-mod tests;

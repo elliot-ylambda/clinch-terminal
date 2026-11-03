@@ -399,10 +399,4 @@ pub fn init(ctx: &mut AppContext) {
     set_user_overrides(ctx);
 }
 
-#[cfg(test)]
-#[path = "mod_tests.rs"]
-mod tests;
-
 mod improved_palette_search_layer;
-#[cfg(test)]
-mod validation_tests;

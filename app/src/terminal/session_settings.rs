@@ -1095,6 +1095,9 @@ mod toolbar_chip_selection_tests {
     }
 }
 
+/// Footer buttons shown on the row before the rest open from More, until the user picks.
+pub const DEFAULT_FOOTER_VISIBLE_COUNT: usize = 6;
+
 define_settings_group!(SessionSettings, settings: [
     working_directory_config: WorkingDirectoryConfig,
     startup_shell_override: StartupShellOverride {
@@ -1239,6 +1242,26 @@ define_settings_group!(SessionSettings, settings: [
         private: false,
         toml_path: "agents.third_party.codex_toolbar_chip_selection_setting",
         description: "Deprecated provider-specific Codex quick-action layout.",
+    },
+    // How many footer buttons sit on the row before the rest open from More, chosen in the
+    // footer editor. A narrow pane shows fewer: as many as fit.
+    coding_agent_footer_visible_count: CodingAgentFooterVisibleCount {
+        type: usize,
+        default: DEFAULT_FOOTER_VISIBLE_COUNT,
+        supported_platforms: SupportedPlatforms::ALL,
+        sync_to_cloud: SyncToCloud::Globally(RespectUserSyncSetting::Yes),
+        private: false,
+        toml_path: "agents.third_party.coding_agent_footer_visible_count",
+        description: "How many coding-agent footer buttons show before the rest move under More.",
+    },
+    terminal_footer_visible_count: TerminalFooterVisibleCount {
+        type: usize,
+        default: DEFAULT_FOOTER_VISIBLE_COUNT,
+        supported_platforms: SupportedPlatforms::ALL,
+        sync_to_cloud: SyncToCloud::Globally(RespectUserSyncSetting::Yes),
+        private: false,
+        toml_path: "terminal.footer_visible_count",
+        description: "How many terminal footer buttons show before the rest move under More.",
     },
     terminal_footer_chip_selection: TerminalToolbarChipSelectionSetting {
         type: TerminalToolbarChipSelection,

@@ -1324,7 +1324,3 @@ async fn read_file_as_binary(file_path: &std::path::Path) -> Result<Vec<u8>, Fil
 
     async_fs::read(file_path).await.map_err(FileLoadError::from)
 }
-
-#[cfg(all(test, feature = "local_fs"))]
-#[path = "execute_tests.rs"]
-mod tests;

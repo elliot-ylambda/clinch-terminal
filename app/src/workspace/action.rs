@@ -263,6 +263,8 @@ pub enum WorkspaceAction {
     },
     /// Wakes the coordinator now with whatever has changed so far.
     RunCoordinatorNow,
+    /// The switch on the Coordinator row: on opens this project's coordinator, off closes it.
+    SetCoordinatorOn(bool),
     /// Pins the entire tab group: sets the group as pinned
     /// and moves the group block to the end of the pinned region.
     PinTabGroup(TabGroupId),
@@ -1004,6 +1006,7 @@ impl WorkspaceAction {
             | SwitchCoordinatorAgent(_)
             | OpenCoordinatorSession
             | SetAutoCoordinate(_)
+            | SetCoordinatorOn(_)
             | PinTabGroup(_)
             | UnpinTabGroup(_)
             | ToggleBookmarkedSessionsCollapsed

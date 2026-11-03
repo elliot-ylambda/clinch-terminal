@@ -24,9 +24,11 @@ use crate::settings::{AISettings, InputSettings, TerminalSpacing};
     rename_all = "snake_case"
 )]
 pub enum Osc52ClipboardAccess {
-    #[default]
     #[schemars(description = "Deny all OSC 52 clipboard access.")]
     Deny,
+    /// The default, as in Ghostty and kitty: copying from a program (an agent's copy command,
+    /// tmux, an editor) just works, while reading the clipboard stays off.
+    #[default]
     #[schemars(description = "Allow terminal programs to write to the clipboard, but not read.")]
     WriteOnly,
     #[schemars(description = "Allow terminal programs to both read and write the clipboard.")]

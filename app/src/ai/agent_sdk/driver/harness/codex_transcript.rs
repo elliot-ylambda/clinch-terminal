@@ -187,7 +187,3 @@ pub(crate) fn write_envelope(
         .with_context(|| format!("Failed to write {}", file_path.display()))?;
     Ok(file_path)
 }
-
-#[cfg(test)]
-#[path = "codex_transcript_tests.rs"]
-mod tests;

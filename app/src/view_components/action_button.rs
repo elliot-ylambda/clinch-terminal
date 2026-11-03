@@ -8,7 +8,7 @@ use warp_core::ui::color::contrast::MinimumAllowedContrast;
 use warp_core::ui::color::{coloru_with_opacity, ContrastingColor};
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::{AnsiColorIdentifier, Fill};
-use warp_core::ui::tokens::{StatusKind, RADIUS_MD, RADIUS_SM};
+use warp_core::ui::tokens::{StatusKind, RADIUS_SM};
 use warpui::elements::{
     Border, ChildAnchor, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Flex,
     Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning, Padding,
@@ -875,9 +875,6 @@ impl View for ActionButton {
             let corner_radius = match self.adjoined_side {
                 Some(AdjoinedSide::Left) => CornerRadius::with_right(RADIUS_SM),
                 Some(AdjoinedSide::Right) => CornerRadius::with_left(RADIUS_SM),
-                None if self.size == ButtonSize::AgentInputButtonLarge => {
-                    CornerRadius::with_all(RADIUS_MD)
-                }
                 None => CornerRadius::with_all(RADIUS_SM),
             };
 
@@ -1341,6 +1338,12 @@ impl ActionButtonTheme for PrimaryRightBiasedTheme {
     }
 }
 
+/// The footer buttons' text size. Fixed rather than following the terminal font, so a large
+/// terminal font doesn't make the footer large too.
+pub(crate) const AGENT_FOOTER_BUTTON_FONT_SIZE: f32 = 13.;
+/// The footer buttons' horizontal padding, on each side.
+pub(crate) const AGENT_FOOTER_BUTTON_HORIZONTAL_PADDING: f32 = 10.;
+
 impl ButtonSize {
     pub fn icon_size(&self, appearance: &Appearance, app: &AppContext) -> f32 {
         match self {
@@ -1356,7 +1359,7 @@ impl ButtonSize {
                 DEFAULT_UI_LINE_HEIGHT_RATIO / 1.4,
             ),
             ButtonSize::AgentInputButtonLarge => app.font_cache().line_height(
-                appearance.monospace_font_size() + 2.0,
+                AGENT_FOOTER_BUTTON_FONT_SIZE + 2.0,
                 DEFAULT_UI_LINE_HEIGHT_RATIO / 1.4,
             ),
         }
@@ -1372,7 +1375,7 @@ impl ButtonSize {
             ButtonSize::UDIButton => appearance.monospace_font_size() - 1.0,
             ButtonSize::UDIPromptChip => appearance.monospace_font_size() - 1.0,
             ButtonSize::AgentInputButton => appearance.monospace_font_size() - 1.0,
-            ButtonSize::AgentInputButtonLarge => appearance.monospace_font_size(),
+            ButtonSize::AgentInputButtonLarge => AGENT_FOOTER_BUTTON_FONT_SIZE,
         }
     }
 
@@ -1518,8 +1521,8 @@ impl ButtonSize {
                 2. * vertical_padding + line_height
             }
             ButtonSize::AgentInputButtonLarge => {
-                // The agent footer's buttons: tall enough to hit comfortably all day.
-                let vertical_padding = 8.;
+                // The agent footer's buttons: comfortable to hit without crowding the pane.
+                let vertical_padding = 5.;
                 let line_height = app
                     .font_cache()
                     .line_height(self.font_size(appearance), appearance.line_height_ratio());
@@ -1555,7 +1558,7 @@ impl ButtonSize {
             ButtonSize::UDIPromptChip | ButtonSize::AgentInputButton => {
                 crate::context_chips::spacing::UDI_CHIP_HORIZONTAL_PADDING
             }
-            ButtonSize::AgentInputButtonLarge => 12.,
+            ButtonSize::AgentInputButtonLarge => AGENT_FOOTER_BUTTON_HORIZONTAL_PADDING,
         }
     }
 

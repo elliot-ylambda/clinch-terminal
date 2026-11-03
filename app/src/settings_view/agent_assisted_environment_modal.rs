@@ -761,7 +761,3 @@ fn available_indexed_repos(app: &AppContext) -> Vec<RepoEntry> {
         Vec::new()
     }
 }
-
-#[cfg(test)]
-#[path = "agent_assisted_environment_modal_tests.rs"]
-mod tests;

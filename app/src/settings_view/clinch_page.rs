@@ -33,8 +33,9 @@ use crate::features::FeatureFlag;
 use crate::remote_control::{RemoteControlService, RemoteControlStatus, RemoteControlViewState};
 use crate::report_if_error;
 use crate::settings::{
-    AutoCreateWorktreesForNewTabs, CliAgentUsageSettings, ClinchAutomaticUpdateCheck,
-    ClinchSettings, LocalControlMode, LocalControlSettings, ShowCliAgentPlanLimits,
+    AutoCreateWorktreesForNewTabs, CliAgentAutoContinueOnLimitReset, CliAgentUsageSettings,
+    ClinchAutomaticUpdateCheck, ClinchSettings, LocalControlMode, LocalControlSettings,
+    ShowCliAgentPlanLimits,
 };
 use crate::terminal::session_settings::{NotificationsSettings, SessionSettings};
 use crate::ui_components::icons::Icon;
@@ -121,6 +122,7 @@ pub enum ClinchSettingsPageAction {
     ToggleTabDetailsCard,
     AutoCreateWorktreesForNewTabs,
     CliAgentPlanLimits,
+    CliAgentAutoContinue,
     AutomaticUpdateCheck,
     #[cfg(feature = "local_fs")]
     RemoteControlToggle,
@@ -191,6 +193,12 @@ impl ClinchSettingsPageView {
             project_widgets.push(Box::new(AutoCreateWorktreesWidget::default()));
         }
         let mut usage_widgets: Vec<Box<dyn SettingsWidget<View = Self>>> = vec![];
+        if CliAgentUsageSettings::as_ref(ctx)
+            .auto_continue_on_limit_reset
+            .is_supported_on_current_platform()
+        {
+            usage_widgets.push(Box::new(CliAgentAutoContinueWidget::default()));
+        }
         if CliAgentUsageSettings::as_ref(ctx)
             .show_plan_limits
             .is_supported_on_current_platform()
@@ -384,6 +392,14 @@ impl TypedActionView for ClinchSettingsPageView {
             ClinchSettingsPageAction::CliAgentPlanLimits => {
                 CliAgentUsageSettings::handle(ctx).update(ctx, |settings, ctx| {
                     report_if_error!(settings.show_plan_limits.toggle_and_save_value(ctx));
+                });
+                ctx.notify();
+            }
+            ClinchSettingsPageAction::CliAgentAutoContinue => {
+                CliAgentUsageSettings::handle(ctx).update(ctx, |settings, ctx| {
+                    report_if_error!(settings
+                        .auto_continue_on_limit_reset
+                        .toggle_and_save_value(ctx));
                 });
                 ctx.notify();
             }
@@ -1918,6 +1934,55 @@ impl SettingsWidget for CliAgentPlanLimitsWidget {
                 "Show live rate-limit gauges in the tab-bar usage widget. When enabled, Clinch \
                  reads Claude Code's OAuth token from the macOS Keychain and queries Anthropic's \
                  usage endpoint. This is off by default."
+                    .into(),
+            ),
+        )
+    }
+}
+
+#[derive(Default)]
+struct CliAgentAutoContinueWidget {
+    switch_state: SwitchStateHandle,
+}
+
+impl SettingsWidget for CliAgentAutoContinueWidget {
+    type View = ClinchSettingsPageView;
+
+    fn search_terms(&self) -> &str {
+        "clinch claude code codex auto continue rate limit usage limit reset resume"
+    }
+
+    fn render(
+        &self,
+        view: &Self::View,
+        appearance: &Appearance,
+        app: &AppContext,
+    ) -> Box<dyn Element> {
+        let enabled = *CliAgentUsageSettings::as_ref(app).auto_continue_on_limit_reset;
+        render_body_item::<ClinchSettingsPageAction>(
+            "Continue agents when their usage limit resets".into(),
+            None,
+            LocalOnlyIconState::for_setting(
+                CliAgentAutoContinueOnLimitReset::storage_key(),
+                CliAgentAutoContinueOnLimitReset::sync_to_cloud(),
+                &mut view.local_only_icon_tooltip_states.borrow_mut(),
+                app,
+            ),
+            ToggleState::Enabled,
+            appearance,
+            appearance
+                .ui_builder()
+                .switch(self.switch_state.clone())
+                .check(enabled)
+                .build()
+                .on_click(|ctx, _, _| {
+                    ctx.dispatch_typed_action(ClinchSettingsPageAction::CliAgentAutoContinue);
+                })
+                .finish(),
+            Some(
+                "When a Claude Code or Codex session stops at its usage limit, send \"Continue\" \
+                 once the limit resets. Typing in the pane cancels it, and each session's footer \
+                 toggle overrides this setting."
                     .into(),
             ),
         )

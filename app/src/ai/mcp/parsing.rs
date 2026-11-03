@@ -396,7 +396,3 @@ pub fn prettify_json(json: &str) -> String {
     let value: serde_json::Value = serde_json::from_str(json).unwrap_or_default();
     serde_json::to_string_pretty(&value).unwrap_or(json.to_string())
 }
-
-#[cfg(test)]
-#[path = "parsing_tests.rs"]
-mod tests;

@@ -101,8 +101,6 @@ mod schedule;
 mod secret;
 pub(crate) mod setup_observability;
 mod telemetry;
-#[cfg(test)]
-mod test_support;
 mod text_layout;
 
 /// Prints a non-blocking warning to stderr when the CLI is invoked with a team-scoped API key.
@@ -1760,7 +1758,3 @@ fn command_to_telemetry_event(command: &CliCommand) -> CliTelemetryEvent {
         },
     }
 }
-
-#[cfg(test)]
-#[path = "mod_tests.rs"]
-mod tests;

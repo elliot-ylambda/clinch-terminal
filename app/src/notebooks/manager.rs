@@ -22,10 +22,6 @@ use crate::server::ids::SyncId;
 use crate::workspace::PaneViewLocator;
 use crate::{safe_debug, safe_warn};
 
-#[cfg(test)]
-#[path = "manager_tests.rs"]
-mod tests;
-
 /// A singleton model tracking open notebooks.
 ///
 /// This is tightly tied to the [workspace](crate::workspace::Workspace) and

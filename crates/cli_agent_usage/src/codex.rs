@@ -21,6 +21,13 @@ pub struct RollupFile {
     pub weekly_rate_limit: Option<TimedLimitWindow>,
     /// Session uuid from the `session_meta` line, when present.
     pub session_id: Option<String>,
+    /// This rollout's own thread id (`session_meta.payload.id`). A subagent
+    /// rollout reports its parent's id as `session_id`, so per-thread turn
+    /// state must be keyed by this instead.
+    pub thread_id: Option<String>,
+    /// When this thread's latest turn ended at the Codex usage limit. A later
+    /// `task_started` clears it.
+    pub usage_limit_stopped_at: Option<DateTime<Utc>>,
     /// Earliest valid record timestamp, used to order session generations.
     started_at: Option<DateTime<Utc>>,
     /// Plan identity from this session's latest canonical limit observation.
@@ -42,6 +49,8 @@ struct TimedPlanType {
 
 #[derive(Deserialize)]
 struct Line {
+    #[serde(default, rename = "type")]
+    kind: Option<String>,
     #[serde(default)]
     timestamp: Option<String>,
     #[serde(default)]
@@ -86,6 +95,26 @@ impl RateLimits {
         matches!(self.limit_id.as_deref(), None | Some("codex"))
     }
 }
+
+/// Codex reports a usage-limit stop only in the rollout, as
+/// `task_complete.error.codex_error_info == "usage_limit_exceeded"`; the
+/// human-readable message beside it varies (and uses a typographic
+/// apostrophe), so match the structured code.
+fn is_usage_limit_error(payload: &serde_json::Value) -> bool {
+    const USAGE_LIMIT: &str = "usage_limit_exceeded";
+    match payload
+        .get("error")
+        .and_then(|error| error.get("codex_error_info"))
+    {
+        Some(serde_json::Value::String(code)) => code == USAGE_LIMIT,
+        Some(serde_json::Value::Object(variant)) => variant.contains_key(USAGE_LIMIT),
+        _ => false,
+    }
+}
+
+/// Limit stops older than this cannot belong to a live usage window (the
+/// longest Codex window is one week).
+const USAGE_LIMIT_STOP_MAX_AGE: chrono::Duration = chrono::Duration::days(8);
 
 pub fn severity_from_percent(p: f64) -> Severity {
     if p < 75.0 {
@@ -243,8 +272,22 @@ pub fn parse_rollout_str(content: &str) -> RollupFile {
                 out.session_id = Some(sid.to_string());
             }
         }
+        if out.thread_id.is_none() && line.kind.as_deref() == Some("session_meta") {
+            out.thread_id = payload
+                .get("id")
+                .and_then(|v| v.as_str())
+                .map(str::to_owned);
+        }
 
-        if payload.get("type").and_then(|v| v.as_str()) != Some("token_count") {
+        let payload_type = payload.get("type").and_then(|v| v.as_str());
+        match payload_type {
+            Some("task_started") => out.usage_limit_stopped_at = None,
+            Some("task_complete") => {
+                out.usage_limit_stopped_at = ts.filter(|_| is_usage_limit_error(payload));
+            }
+            _ => {}
+        }
+        if payload_type != Some("token_count") {
             continue;
         }
         let Some(ts) = ts else {
@@ -399,6 +442,16 @@ pub fn scan(
             parsed.weekly_rate_limit.clone(),
             preferred_plan_type,
         );
+
+        if let (Some(thread_id), Some(stopped_at)) =
+            (parsed.thread_id.as_ref(), parsed.usage_limit_stopped_at)
+        {
+            if now - stopped_at <= USAGE_LIMIT_STOP_MAX_AGE {
+                provider
+                    .usage_limit_stops
+                    .insert(thread_id.clone(), stopped_at);
+            }
+        }
 
         // Index this rollout's latest model under its session id (from meta).
         if let Some(session_id) = parsed.session_id.clone() {
@@ -862,6 +915,99 @@ mod tests {
                 .map(String::as_str),
             Some("gpt-5.1-codex")
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // Trimmed from a real Codex 0.166.0 rollout (2026-10-30): the turn ends
+    // with no assistant message and only a structured usage-limit error.
+    const LIMIT_META: &str = r#"{"timestamp":"2026-10-30T00:15:34.000Z","type":"session_meta","payload":{"id":"01a18a29-73ec-7262-a0d6-c5d8272c31af","session_id":"01a18a29-73ec-7262-a0d6-c5d8272c31af","originator":"codex-tui","cli_version":"0.166.0"}}"#;
+    const LIMIT_STARTED: &str = r#"{"timestamp":"2026-10-30T00:15:35.212Z","type":"event_msg","payload":{"type":"task_started","turn_id":"01a18a29-74bc-7af3-9608-d96af1ebe6ea"}}"#;
+    const LIMIT_TOKEN_COUNT: &str = r#"{"timestamp":"2026-10-30T00:15:37.700Z","type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"limit_id":"codex","limit_name":null,"primary":{"used_percent":100.0,"window_minutes":10080,"resets_at":1793738582},"secondary":null,"plan_type":"prolite","rate_limit_reached_type":null}}}"#;
+    const LIMIT_COMPLETE: &str = r#"{"timestamp":"2026-10-30T00:15:37.791Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"01a18a29-74bc-7af3-9608-d96af1ebe6ea","last_agent_message":null,"error":{"message":"You’ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 4th, 2026 12:43 PM.","codex_error_info":"usage_limit_exceeded"}}}"#;
+
+    fn ts(value: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(value)
+            .unwrap()
+            .with_timezone(&Utc)
+    }
+
+    #[test]
+    fn records_a_usage_limit_turn_end_under_the_rollout_thread_id() {
+        let rollout = [LIMIT_META, LIMIT_STARTED, LIMIT_TOKEN_COUNT, LIMIT_COMPLETE].join("\n");
+        let parsed = parse_rollout_str(&rollout);
+        assert_eq!(
+            parsed.thread_id.as_deref(),
+            Some("01a18a29-73ec-7262-a0d6-c5d8272c31af")
+        );
+        assert_eq!(
+            parsed.usage_limit_stopped_at,
+            Some(ts("2026-10-30T00:15:37.791Z"))
+        );
+        // The weekly window that caused the stop is still reported.
+        let weekly = parsed.rate_limits.unwrap().weekly.unwrap();
+        assert_eq!(weekly.percent, 100.0);
+    }
+
+    #[test]
+    fn a_later_turn_clears_the_usage_limit_stop() {
+        let resumed = r#"{"timestamp":"2026-11-04T20:45:00.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"next"}}"#;
+        let rollout = [LIMIT_META, LIMIT_STARTED, LIMIT_COMPLETE, resumed].join("\n");
+        assert_eq!(parse_rollout_str(&rollout).usage_limit_stopped_at, None);
+
+        let ok = r#"{"timestamp":"2026-11-04T20:46:00.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"next","last_agent_message":"Done."}}"#;
+        let rollout = [LIMIT_META, LIMIT_STARTED, LIMIT_COMPLETE, resumed, ok].join("\n");
+        assert_eq!(parse_rollout_str(&rollout).usage_limit_stopped_at, None);
+    }
+
+    #[test]
+    fn subagent_rollouts_key_limit_stops_by_their_own_thread() {
+        // Real shape: a subagent's session_meta carries its parent's id as
+        // `session_id` and its own id as `id`.
+        let meta = r#"{"timestamp":"2026-10-28T05:20:00.000Z","type":"session_meta","payload":{"id":"01a17fa4-15d3-7e30-a9ab-8281cd518c15","session_id":"01a17fa0-2aff-7ba2-8fd9-6c86e9cab1e2","source":{"subagent":{"thread_spawn":{"parent_thread_id":"01a17fa0-2aff-7ba2-8fd9-6c86e9cab1e2","depth":1}}}}}"#;
+        let parsed = parse_rollout_str(&[meta, LIMIT_STARTED, LIMIT_COMPLETE].join("\n"));
+        assert_eq!(
+            parsed.thread_id.as_deref(),
+            Some("01a17fa4-15d3-7e30-a9ab-8281cd518c15")
+        );
+        assert_eq!(
+            parsed.session_id.as_deref(),
+            Some("01a17fa0-2aff-7ba2-8fd9-6c86e9cab1e2")
+        );
+    }
+
+    #[test]
+    fn other_turn_errors_are_not_usage_limit_stops() {
+        let failed = r#"{"timestamp":"2026-10-30T00:15:37.791Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"t","last_agent_message":null,"error":{"message":"stream disconnected","codex_error_info":{"http_connection_failed":{"http_status_code":502}}}}}"#;
+        let parsed = parse_rollout_str(&[LIMIT_META, LIMIT_STARTED, failed].join("\n"));
+        assert_eq!(parsed.usage_limit_stopped_at, None);
+    }
+
+    #[test]
+    fn scan_exposes_recent_usage_limit_stops_per_thread() {
+        let dir =
+            std::env::temp_dir().join(format!("cau_codex_limit_stop_scan_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let day = dir.join("2026/10/30");
+        std::fs::create_dir_all(&day).unwrap();
+        std::fs::write(
+            day.join("rollout-2026-10-30T00-15-34-01a18a29-73ec-7262-a0d6-c5d8272c31af.jsonl"),
+            [LIMIT_META, LIMIT_STARTED, LIMIT_TOKEN_COUNT, LIMIT_COMPLETE].join("\n"),
+        )
+        .unwrap();
+        let mut cache = crate::cache::ScanCache::new();
+        let mut models = std::collections::HashMap::new();
+
+        let provider = scan(&dir, &mut cache, ts("2026-10-31T00:00:00Z"), &mut models);
+        assert_eq!(
+            provider
+                .usage_limit_stops
+                .get("01a18a29-73ec-7262-a0d6-c5d8272c31af"),
+            Some(&ts("2026-10-30T00:15:37.791Z"))
+        );
+
+        // Weeks later the stale stop is no longer offered.
+        let provider = scan(&dir, &mut cache, ts("2026-11-30T00:00:00Z"), &mut models);
+        assert!(provider.usage_limit_stops.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

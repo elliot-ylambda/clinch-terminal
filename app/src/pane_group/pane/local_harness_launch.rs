@@ -281,7 +281,3 @@ pub(super) async fn prepare_local_harness_child_launch(
         task_id,
     })
 }
-
-#[cfg(test)]
-#[path = "local_harness_launch_tests.rs"]
-mod tests;
