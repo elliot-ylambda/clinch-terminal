@@ -32,6 +32,7 @@ pub(super) struct WorkspaceMouseStates {
     pub(super) remote_control_icon: MouseStateHandle,
     pub(super) restore_notice: MouseStateHandle,
     pub(super) restore_notice_dismiss: MouseStateHandle,
+    pub(super) restore_notice_retry: MouseStateHandle,
     pub(super) left_panel_icon: MouseStateHandle,
     pub(super) dismiss_banner_button: MouseStateHandle,
     pub(super) sign_in_button: MouseStateHandle,

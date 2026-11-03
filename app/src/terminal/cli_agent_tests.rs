@@ -339,6 +339,34 @@ fn test_detect_no_match() {
 }
 
 #[test]
+fn test_detect_sees_through_the_form_clinch_types() {
+    App::test((), |mut app| async move {
+        app.update(|ctx| {
+            for (command, agent) in [
+                (
+                    "nocorrect CLINCH_AGENT_RESTORE_EXACT=1 clinch_agent_resume_launch 'claude' 'abc' '--dangerously-skip-permissions'",
+                    CLIAgent::Claude,
+                ),
+                (
+                    "CLINCH_AGENT_RESTORE_EXACT=1 clinch_agent_resume_launch codex abc",
+                    CLIAgent::Codex,
+                ),
+                ("nocorrect clinch_agent_resume_launch 'codex' 'abc'", CLIAgent::Codex),
+                ("nocorrect claude --resume", CLIAgent::Claude),
+                ("nocorrect clinch_codex_launch 'resume'", CLIAgent::Codex),
+            ] {
+                assert_eq!(
+                    CLIAgent::detect(command, Some(EscapeChar::Backslash), None, ctx),
+                    Some(agent),
+                    "{command}"
+                );
+                assert_eq!(CLIAgent::detect(command, None, None, ctx), Some(agent), "{command}");
+            }
+        });
+    });
+}
+
+#[test]
 fn test_detect_agent_resume_launch_wrapper() {
     // Clinch's agent-resume replays `clinch_agent_resume_launch <agent> <id> [flags]` when a pane
     // is restored. Detection must see through the wrapper to the underlying agent, so a restored

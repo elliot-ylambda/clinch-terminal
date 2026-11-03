@@ -358,7 +358,7 @@ impl CLIAgent {
         aliases: Option<&HashMap<SmolStr, String>>,
         ctx: &AppContext,
     ) -> Option<CLIAgent> {
-        let trimmed = command.trim_start();
+        let trimmed = crate::agent_resume::without_nocorrect(command);
         let first_word = Self::extract_first_command(trimmed, escape_char)?;
 
         // Resolve the full command through aliases. If the first word matches an
@@ -405,21 +405,26 @@ impl CLIAgent {
         const CLINCH_WRAPPER: &str = "clinch_agent_resume_launch";
         const LEGACY_WARP_WRAPPER: &str = "warp_agent_resume_launch";
         const CLINCH_CODEX_WRAPPER: &str = "clinch_codex_launch";
-        let wrapper = match Self::extract_first_command(&command, escape_char).as_deref() {
+        let unprefixed = crate::agent_resume::without_typed_prefixes(&command);
+        let wrapper = match Self::extract_first_command(unprefixed, escape_char).as_deref() {
             Some(CLINCH_WRAPPER) => CLINCH_WRAPPER,
             Some(LEGACY_WARP_WRAPPER) => LEGACY_WARP_WRAPPER,
             Some(CLINCH_CODEX_WRAPPER) => {
-                return Cow::Owned(
-                    command
-                        .trim_start()
-                        .replacen(CLINCH_CODEX_WRAPPER, "codex", 1),
-                );
+                return Cow::Owned(unprefixed.replacen(CLINCH_CODEX_WRAPPER, "codex", 1));
             }
             _ => return command,
         };
-        // First word is exactly the wrapper; drop it and the remainder begins with the agent.
-        match command.trim_start().strip_prefix(wrapper) {
-            Some(rest) => Cow::Owned(rest.trim_start().to_string()),
+        // Drop the wrapper, and anything Clinch typed before it, so the remainder begins with the
+        // agent. Clinch quotes its arguments when it types them.
+        match unprefixed.strip_prefix(wrapper) {
+            Some(rest) => {
+                let rest = rest.trim_start();
+                let unquoted = rest
+                    .strip_prefix('\'')
+                    .and_then(|rest| rest.split_once('\''))
+                    .map(|(agent, args)| format!("{agent}{args}"));
+                Cow::Owned(unquoted.unwrap_or_else(|| rest.to_owned()))
+            }
             None => command,
         }
     }

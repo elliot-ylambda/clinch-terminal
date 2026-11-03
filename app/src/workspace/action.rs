@@ -598,6 +598,7 @@ pub enum WorkspaceAction {
     },
     /// Hide the session-restore notice until the next restore.
     DismissRestoreNotice,
+    RetryStalledRestores,
     /// Focus a specific pane by its locator (pane_group_id and pane_id).
     FocusPane(PaneViewLocator),
     /// Start a new AI conversation in a terminal view. This sets the pending query state
@@ -1207,6 +1208,7 @@ impl WorkspaceAction {
             | OpenMCPServerCollection
             | FocusTerminalViewInWorkspace { .. }
             | DismissRestoreNotice
+            | RetryStalledRestores
             | FocusPane(..)
             | ShiftSelectTabRange { .. }
             | ToggleTabMultiSelection { .. }

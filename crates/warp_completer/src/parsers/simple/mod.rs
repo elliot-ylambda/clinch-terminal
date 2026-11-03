@@ -45,6 +45,14 @@ pub fn top_level_command<S: AsRef<str>>(source: S, escape_char: EscapeChar) -> O
     let parser = Parser::new(Lexer::new(source.as_ref(), escape_char, false));
     let mut command = parser.parse().commands.into_iter().next()?;
     command.item.remove_leading_env_vars();
+    // zsh's `nocorrect` only turns off spelling correction. The command is what comes after it.
+    if matches!(
+        command.parts.first().map(|part| &part.item),
+        Some(Part::Literal(word)) if word == "nocorrect"
+    ) {
+        command.item.parts.remove(0);
+        command.item.remove_leading_env_vars();
+    }
 
     match command
         .parts

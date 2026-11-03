@@ -36,6 +36,7 @@ fn enqueue(
                 cancellations.set(cancellations.get() + 1);
                 true
             }),
+            Rc::new(|_| {}),
             ctx,
         );
     });
@@ -456,6 +457,84 @@ fn a_session_counts_as_mid_turn_while_working_or_waiting_on_its_user() {
                     );
                 }
             }
+        });
+    });
+}
+
+#[test]
+fn a_shell_that_never_starts_its_command_frees_the_slot_and_can_be_retried() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let starts = Rc::new(Cell::new(0));
+        let cancels = Rc::new(Cell::new(0));
+        let mut terminals = (0..3)
+            .map(|index| {
+                enqueue(
+                    &mut app,
+                    &format!("session-{index}"),
+                    starts.clone(),
+                    cancels.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let tick = |app: &mut App| {
+            AgentRestoreQueue::handle(app).update(app, |queue, ctx| queue.tick(ctx));
+        };
+        tick(&mut app);
+        assert_eq!(starts.get(), 2, "two sessions start at a time");
+
+        // The first shell is stuck: the third session must not wait out the 90 second timeout.
+        let stuck = terminals.remove(0);
+        stuck.update(&mut app, |view, ctx| view.agent_command_did_not_start(ctx));
+        tick(&mut app);
+        assert_eq!(starts.get(), 3, "the stuck session gave up its slot");
+        AgentRestoreQueue::handle(&app).read(&app, |queue, ctx| {
+            assert_eq!(queue.stalled_count(), 1);
+            assert_eq!(
+                queue.state(stuck.id()).and_then(RestoreState::label),
+                Some(DID_NOT_START_LABEL)
+            );
+            assert_eq!(queue.first_attention_terminal(ctx), Some(stuck.id()));
+        });
+
+        // Retry goes back through the queue. It applies even if the user typed in the tab, which
+        // they may well have while trying to answer the shell.
+        let retried = Rc::new(Cell::new(false));
+        stuck.update(&mut app, |view, _| view.mark_user_input_for_test());
+        AgentRestoreQueue::handle(&app).update(&mut app, |queue, ctx| {
+            let flag = retried.clone();
+            queue.entries[0].retry_stalled_command = Rc::new(move |_| flag.set(true));
+            queue.retry_stalled(ctx);
+            assert_eq!(queue.stalled_count(), 0);
+            assert_eq!(queue.state(stuck.id()), Some(RestoreState::Queued));
+        });
+        stuck.read(&app, |view, _| assert!(!view.agent_command_stalled()));
+        for terminal in &terminals {
+            report_ready(&mut app, terminal);
+        }
+        tick(&mut app);
+        assert!(retried.get(), "the retry ran once a slot was free");
+        AgentRestoreQueue::handle(&app).read(&app, |queue, _| {
+            assert_eq!(queue.state(stuck.id()), Some(RestoreState::Starting));
+        });
+    });
+}
+
+#[test]
+fn the_notice_says_a_shell_may_be_waiting_when_that_is_all_that_is_left() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let starts = Rc::new(Cell::new(0));
+        let cancels = Rc::new(Cell::new(0));
+        let terminal = enqueue(&mut app, "session", starts, cancels);
+        AgentRestoreQueue::handle(&app).update(&mut app, |queue, ctx| queue.tick(ctx));
+        terminal.update(&mut app, |view, ctx| view.agent_command_did_not_start(ctx));
+        AgentRestoreQueue::handle(&app).update(&mut app, |queue, ctx| {
+            queue.tick(ctx);
+            assert_eq!(
+                queue.progress_text().as_deref(),
+                Some("1 session didn't start: its shell may be waiting for input")
+            );
         });
     });
 }
