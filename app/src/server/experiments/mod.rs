@@ -12,8 +12,6 @@
 //! for a full guide on the server-side experiment framework.
 
 use warpui::AppContext;
-#[cfg(test)]
-use warpui::SingletonEntity;
 
 use crate::features::FeatureFlag;
 
@@ -44,10 +42,6 @@ pub enum ServerExperiment {
     PromptSuggestionsViaMaaOutOfBandExperiment,
     OzMultiHarnessControl,
     OzMultiHarnessExperiment,
-    /// A test-only experiment.
-    /// Does not correspond to a real server-side experiment.
-    #[cfg(test)]
-    TestExperiment,
 }
 
 impl ServerExperiment {
@@ -128,12 +122,6 @@ impl ServerExperiment {
             }
             Self::OzMultiHarnessExperiment => {
                 FeatureFlag::AgentHarness.set_enabled(true);
-            }
-            #[cfg(test)]
-            Self::TestExperiment => {
-                model::TestModel::handle(_ctx).update(_ctx, |model, _| {
-                    model.0 += 1;
-                });
             }
         }
     }

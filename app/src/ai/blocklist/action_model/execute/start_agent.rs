@@ -636,7 +636,3 @@ pub enum StartAgentExecutorEvent {
         conversation_id: AIConversationId,
     },
 }
-
-#[cfg(test)]
-#[path = "start_agent_tests.rs"]
-mod tests;

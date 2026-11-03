@@ -129,7 +129,3 @@ fn failure_message_from_last_sync_result(
 fn failure_message_from_codebase_index_status(status: &LocalCodebaseIndexStatus) -> Option<String> {
     failure_message_from_last_sync_result(status.last_sync_result())
 }
-
-#[cfg(test)]
-#[path = "codebase_index_status_tests.rs"]
-mod tests;

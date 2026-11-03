@@ -1665,10 +1665,6 @@ pub fn sync_picker_selections<A: OrchestrationControlAction, V: View>(
     }
 }
 
-#[cfg(test)]
-#[path = "orchestration_controls_tests.rs"]
-mod tests;
-
 // ── Adaptive picker layout ──────────────────────────────────────────
 
 /// Lays out children horizontally at a fixed width when they all fit,

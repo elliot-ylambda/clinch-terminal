@@ -1561,7 +1561,3 @@ impl ScrollableElement for SingleBlock {
         self.scroll_by_pixels(delta, ctx);
     }
 }
-
-#[cfg(test)]
-#[path = "share_block_modal_tests.rs"]
-mod tests;

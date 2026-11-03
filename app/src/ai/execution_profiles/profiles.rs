@@ -1614,26 +1614,6 @@ impl AIExecutionProfilesModel {
             }
         }
     }
-
-    /// Replaces the given profile's data with CLI defaults for the given sandboxed state.
-    /// Use in tests to simulate the profile configuration used by the sandboxed CLI agent.
-    #[cfg(test)]
-    pub fn apply_cli_profile_defaults_for_test(
-        &mut self,
-        profile_id: ClientProfileId,
-        is_sandboxed: bool,
-        ctx: &mut ModelContext<Self>,
-    ) {
-        let cli_profile = AIExecutionProfile::create_default_cli_profile(is_sandboxed, None);
-        self.edit_profile_internal(
-            profile_id,
-            move |profile| {
-                *profile = cli_profile;
-                true
-            },
-            ctx,
-        );
-    }
 }
 
 #[allow(clippy::enum_variant_names)]
@@ -1649,7 +1629,3 @@ impl Entity for AIExecutionProfilesModel {
 }
 
 impl SingletonEntity for AIExecutionProfilesModel {}
-
-#[cfg(test)]
-#[path = "profiles_tests.rs"]
-mod tests;

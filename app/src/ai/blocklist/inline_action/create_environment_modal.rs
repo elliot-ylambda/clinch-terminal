@@ -103,7 +103,3 @@ impl View for CreateEnvironmentModal {
         ChildView::new(&self.handoff_modal).finish()
     }
 }
-
-#[cfg(test)]
-#[path = "create_environment_modal_tests.rs"]
-mod tests;

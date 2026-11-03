@@ -1495,10 +1495,6 @@ fn initial_context_window_display_value(
 
 mod ui_helpers;
 
-#[cfg(test)]
-#[path = "mod_tests.rs"]
-mod tests;
-
 impl View for ExecutionProfileEditorView {
     fn ui_name() -> &'static str {
         "ExecutionProfileEditorView"

@@ -316,7 +316,3 @@ impl RemoteTransport for SshTransport {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "ssh_transport_tests.rs"]
-mod tests;

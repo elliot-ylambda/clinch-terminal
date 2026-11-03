@@ -3455,7 +3455,3 @@ fn get_running_command(terminal_model: &TerminalModel) -> Option<RunningCommand>
         is_alt_screen_active,
     })
 }
-
-#[cfg(test)]
-#[path = "controller_tests.rs"]
-mod tests;

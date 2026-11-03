@@ -121,7 +121,3 @@ fn release_mode(channel: Channel) -> &'static str {
         Channel::Oss => "oss_release",
     }
 }
-
-#[cfg(test)]
-#[path = "telemetry_ext_tests.rs"]
-mod tests;

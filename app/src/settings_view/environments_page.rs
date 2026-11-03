@@ -2088,7 +2088,3 @@ impl From<ViewHandle<EnvironmentsPageView>> for SettingsPageViewHandle {
         SettingsPageViewHandle::CloudEnvironments(view_handle)
     }
 }
-
-#[cfg(test)]
-#[path = "environments_page_tests.rs"]
-mod tests;

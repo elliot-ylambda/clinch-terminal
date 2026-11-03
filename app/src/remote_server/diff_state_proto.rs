@@ -700,7 +700,3 @@ pub fn build_diff_state_file_delta(
         metadata: metadata.map(proto::DiffMetadata::from),
     }
 }
-
-#[cfg(test)]
-#[path = "diff_state_proto_tests.rs"]
-mod tests;

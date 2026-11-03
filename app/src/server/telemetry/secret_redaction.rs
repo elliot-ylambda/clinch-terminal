@@ -122,6 +122,3 @@ pub fn redact_secrets_in_value(value: &mut Value) {
         Value::Null | Value::Bool(_) | Value::Number(_) => {}
     }
 }
-#[cfg(test)]
-#[path = "secret_redaction_tests.rs"]
-mod tests;

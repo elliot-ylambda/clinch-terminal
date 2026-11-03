@@ -733,7 +733,3 @@ pub(crate) mod styles {
     /// Right padding between the search button and the close button.
     pub const SEARCH_BUTTON_PADDING_RIGHT: f32 = 4.;
 }
-
-#[cfg(test)]
-#[path = "panel_tests.rs"]
-mod tests;

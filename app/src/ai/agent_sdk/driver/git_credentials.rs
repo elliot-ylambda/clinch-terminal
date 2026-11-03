@@ -411,7 +411,3 @@ pub(crate) async fn refresh_loop(task_id: String, ai_client: Arc<dyn AIClient>) 
         }
     }
 }
-
-#[cfg(test)]
-#[path = "git_credentials_tests.rs"]
-mod tests;

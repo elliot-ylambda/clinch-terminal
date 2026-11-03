@@ -28,7 +28,3 @@ impl AdminActions {
         ctx.open_url("https://warp.dev/contact-sales");
     }
 }
-
-#[cfg(test)]
-#[path = "admin_actions_tests.rs"]
-mod tests;

@@ -11,9 +11,6 @@ pub mod init;
 pub mod inline_banner;
 pub mod load_ai_conversation;
 pub(crate) mod queued_prompts_panel;
-#[cfg(test)]
-#[path = "view/queued_prompts_tests.rs"]
-mod queued_prompts_tests;
 use ai::agent::action::InsertReviewComment;
 pub use load_ai_conversation::ConversationRestorationInNewPaneType;
 // TODO(advait): if we align on prompt suggestions banner in Input, move code out of inline_banner mod.

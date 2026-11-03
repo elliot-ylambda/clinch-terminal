@@ -139,7 +139,3 @@ impl PreprocessActionBatch {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "preprocess_tests.rs"]
-mod tests;

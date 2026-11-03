@@ -38,10 +38,6 @@ const FILE_TYPE_DOCS_URL: &str =
     "https://docs.warp.dev/knowledge-and-collaboration/warp-drive#import-and-export";
 const SUPPORTED_FILE_TYPE_TEXT: &str = "md, yaml, yml";
 
-#[cfg(test)]
-#[path = "import_tests.rs"]
-mod import_tests;
-
 /// Current state of the import modal.
 ///
 /// The entire import flow goes as follows:

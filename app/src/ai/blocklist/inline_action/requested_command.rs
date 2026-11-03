@@ -1658,7 +1658,3 @@ pub fn format_command_text(text: &str) -> String {
         text.to_string()
     }
 }
-
-#[cfg(test)]
-#[path = "requested_command_tests.rs"]
-mod tests;

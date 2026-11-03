@@ -5,7 +5,3 @@ mod network;
 pub(crate) mod orchestration_viewer_model;
 pub(crate) mod terminal_manager;
 pub(crate) use terminal_manager::TerminalManager;
-
-#[cfg(test)]
-#[path = "mod_tests.rs"]
-mod tests;

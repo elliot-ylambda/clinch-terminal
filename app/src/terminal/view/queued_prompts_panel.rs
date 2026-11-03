@@ -676,36 +676,6 @@ impl QueuedPromptsPanelView {
     }
 }
 
-#[cfg(test)]
-impl QueuedPromptsPanelView {
-    /// Test accessor: whether the "send now" button for `query_id` is currently disabled.
-    pub(super) fn send_now_button_disabled_for_test(
-        &self,
-        query_id: QueuedQueryId,
-        ctx: &AppContext,
-    ) -> Option<bool> {
-        self.row_states
-            .get(&query_id)
-            .map(|state| state.send_now_button.as_ref(ctx).is_disabled())
-    }
-
-    /// Test accessor: whether the header currently shows the "⏎ to send" hint.
-    pub(super) fn enter_hint_shown_for_test(&self, ctx: &AppContext) -> bool {
-        self.should_show_enter_hint(ctx)
-    }
-
-    /// Test helper: replaces the inline edit editor buffer.
-    pub(super) fn set_edit_buffer_text_for_test(
-        &mut self,
-        text: &str,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        self.edit_editor.update(ctx, |editor, ctx| {
-            editor.set_buffer_text(text, ctx);
-        });
-    }
-}
-
 impl TypedActionView for QueuedPromptsPanelView {
     type Action = QueuedPromptsPanelAction;
 

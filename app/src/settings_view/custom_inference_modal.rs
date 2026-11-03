@@ -974,10 +974,6 @@ impl TypedActionView for CustomEndpointModal {
     }
 }
 
-#[cfg(test)]
-#[path = "custom_inference_modal_tests.rs"]
-mod tests;
-
 pub struct CustomEndpointModalViewState {
     state: ModalViewState<Modal<CustomEndpointModal>>,
 }

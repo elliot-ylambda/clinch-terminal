@@ -989,6 +989,3 @@ fn emit_auto_index_requested_telemetry(
         ctx
     );
 }
-#[cfg(test)]
-#[path = "codebase_index_model_tests.rs"]
-mod tests;

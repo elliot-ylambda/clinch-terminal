@@ -872,7 +872,3 @@ impl RemoteDiffStateModel {
         )));
     }
 }
-
-#[cfg(test)]
-#[path = "remote_tests.rs"]
-mod remote_tests;

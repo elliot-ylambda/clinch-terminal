@@ -3233,7 +3233,3 @@ pub const FORK_PREFIX: &str = "(Fork) ";
 
 /// The prefix used when saving a conversation before a rewind operation.
 pub const PRE_REWIND_PREFIX: &str = "(Pre-Rewind) ";
-
-#[cfg(test)]
-#[path = "history_model_tests.rs"]
-mod tests;

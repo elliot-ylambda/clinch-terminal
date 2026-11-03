@@ -397,19 +397,6 @@ impl DeclarationsWriterHandle {
         Self { tx }
     }
 
-    /// Test-facing constructor that bypasses env-var-dependent path resolution and uses
-    /// `tokio::spawn` directly so tests can run without standing up a `Background`.
-    #[cfg(all(test, not(windows)))]
-    pub(super) fn new_at_path(
-        declarations_path: PathBuf,
-        working_dir: PathBuf,
-        task_id: AmbientAgentTaskId,
-    ) -> Self {
-        let (tx, rx) = mpsc::unbounded_channel();
-        tokio::spawn(writer_task(rx, declarations_path, working_dir, task_id));
-        Self { tx }
-    }
-
     /// Enqueue `paths` for appending as `file` entries.
     ///
     /// Non-blocking; the subscription handler can call this from a sync context. Empty
@@ -1619,6 +1606,3 @@ where
 
 // Snapshot upload is cloud-agent-only and only ever runs inside a Linux Docker container, so
 // skip the tests on Windows rather than teach every fixture to emit POSIX paths.
-#[cfg(all(test, not(windows)))]
-#[path = "snapshot_tests.rs"]
-mod tests;

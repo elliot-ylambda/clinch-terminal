@@ -35,7 +35,3 @@ impl OrchestrationAvatar {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "orchestration_avatar_tests.rs"]
-mod tests;

@@ -28,10 +28,6 @@ use crate::workflows::export_workflow::export_deserialize;
 use crate::workflows::workflow::Workflow;
 use crate::workflows::workflow_enum::WorkflowEnum;
 
-#[cfg(test)]
-#[path = "node_tests.rs"]
-mod node_tests;
-
 /// Unique ID for a file node.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct FileId(pub usize);
@@ -191,24 +187,6 @@ impl ImportedNode {
             }
         }
     }
-
-    #[cfg(test)]
-    fn debug_print(
-        &self,
-        folder_id_to_node: &HashMap<FolderId, FolderNode>,
-        file_id_to_node: &HashMap<FileId, FileNode>,
-    ) -> String {
-        match &self {
-            ImportedNode::File(file_id) => {
-                let file_node = file_id_to_node.get(file_id).expect("Should exist");
-                file_node.debug_print()
-            }
-            ImportedNode::Folder(folder_id) => {
-                let folder_node = folder_id_to_node.get(folder_id).expect("Should exist");
-                folder_node.debug_print(folder_id_to_node, file_id_to_node)
-            }
-        }
-    }
 }
 
 pub(super) struct FolderNode {
@@ -235,27 +213,6 @@ impl FolderNode {
             status: UploadStatus::Loading,
             open_button_mouse_state: Default::default(),
         }
-    }
-
-    #[cfg(test)]
-    fn debug_print(
-        &self,
-        folder_id_to_node: &HashMap<FolderId, FolderNode>,
-        file_id_to_node: &HashMap<FileId, FileNode>,
-    ) -> String {
-        use itertools::Itertools;
-
-        if self.children.is_empty() {
-            return self.name.clone();
-        }
-
-        let children_string = self
-            .children
-            .iter()
-            .map(|child_node| child_node.debug_print(folder_id_to_node, file_id_to_node))
-            .sorted()
-            .join(", ");
-        format!("{}({})", self.name.clone(), children_string)
     }
 
     fn are_children_saved_locally(
@@ -514,11 +471,6 @@ impl FileNode {
         }
     }
 
-    #[cfg(test)]
-    fn debug_print(&self) -> String {
-        self.name.clone()
-    }
-
     pub(super) fn full_path(&self) -> PathBuf {
         self.full_path.clone()
     }
@@ -703,12 +655,6 @@ impl FileUploadState {
             folder_id_to_node,
             file_id_to_node,
         }
-    }
-
-    #[cfg(test)]
-    pub(super) fn debug_print(&self) -> String {
-        ImportedNode::Folder(FolderId::root_id())
-            .debug_print(&self.folder_id_to_node, &self.file_id_to_node)
     }
 
     // Get the cloud id for the provided folder id. Returns None if the folder

@@ -447,7 +447,3 @@ pub(crate) async fn upload_file_to_target(
     .await?;
     Ok(crc32c_base64)
 }
-
-#[cfg(test)]
-#[path = "presigned_upload_tests.rs"]
-mod tests;

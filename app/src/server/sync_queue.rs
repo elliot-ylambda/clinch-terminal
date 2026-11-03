@@ -1959,21 +1959,6 @@ impl SyncQueue {
             SyncId::ServerId(server_id) => Some(server_id),
         }
     }
-
-    #[cfg(test)]
-    pub fn queue(&self) -> &Vec<(QueueItemId, QueueItem)> {
-        &self.queue
-    }
-
-    #[cfg(test)]
-    fn queue_dependencies(&self) -> &HashMap<QueueItemId, HashSet<QueueDependency>> {
-        &self.queue_dependencies
-    }
-
-    #[cfg(test)]
-    pub fn spawned_futures(&self) -> &Vec<FutureId> {
-        &self.spawned_futures
-    }
 }
 
 impl Entity for SyncQueue {
@@ -1981,7 +1966,3 @@ impl Entity for SyncQueue {
 }
 
 impl SingletonEntity for SyncQueue {}
-
-#[cfg(test)]
-#[path = "sync_queue_tests.rs"]
-mod tests;

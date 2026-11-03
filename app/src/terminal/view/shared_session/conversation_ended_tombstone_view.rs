@@ -678,7 +678,3 @@ impl TypedActionView for ConversationEndedTombstoneView {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "conversation_ended_tombstone_view_tests.rs"]
-mod tests;

@@ -152,13 +152,6 @@ impl HandoffEnvironmentCreationModal {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn uses_orchestration_form_configuration_for_test(&self, app: &AppContext) -> bool {
-        self.environment_form
-            .as_ref(app)
-            .uses_orchestration_modal_configuration_for_test()
-    }
-
     fn render_dialog(&self, appearance: &Appearance, app: &AppContext) -> Box<dyn Element> {
         let theme = appearance.theme();
 

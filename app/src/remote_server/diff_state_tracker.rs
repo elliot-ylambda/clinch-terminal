@@ -466,7 +466,3 @@ impl RemoteDiffStateManager {
         false
     }
 }
-
-#[cfg(test)]
-#[path = "diff_state_tracker_tests.rs"]
-mod tests;

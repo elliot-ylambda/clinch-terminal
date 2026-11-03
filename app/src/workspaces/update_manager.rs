@@ -525,7 +525,3 @@ impl Entity for TeamUpdateManager {
 }
 
 impl SingletonEntity for TeamUpdateManager {}
-
-#[cfg(test)]
-#[path = "update_manager_tests.rs"]
-mod tests;

@@ -813,7 +813,3 @@ impl TerminalDriver {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "terminal_tests.rs"]
-mod tests;

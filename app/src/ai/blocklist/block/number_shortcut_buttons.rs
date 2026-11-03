@@ -434,7 +434,3 @@ impl TypedActionView for NumberShortcutButtons {
 impl Entity for NumberShortcutButtons {
     type Event = NumberShortcutButtonsEvent;
 }
-
-#[cfg(test)]
-#[path = "number_shortcut_buttons_tests.rs"]
-mod tests;

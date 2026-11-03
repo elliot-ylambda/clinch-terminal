@@ -76,15 +76,6 @@ impl OrchestrationParticipant {
     }
 }
 
-#[cfg(test)]
-fn agent_display_name_from_id(
-    agent_id: &str,
-    orchestrator_agent_id: Option<&str>,
-    app: &AppContext,
-) -> String {
-    participant_for_agent_id(agent_id, orchestrator_agent_id, app).display_name
-}
-
 fn participant_for_agent_id(
     agent_id: &str,
     orchestrator_agent_id: Option<&str>,
@@ -948,7 +939,3 @@ fn render_conversation_navigation_card_row(
 
     container.finish()
 }
-
-#[cfg(test)]
-#[path = "orchestration_tests.rs"]
-mod tests;

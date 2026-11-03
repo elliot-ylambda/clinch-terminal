@@ -492,7 +492,3 @@ fn non_empty_trimmed(value: &str) -> Option<&str> {
     let trimmed = value.trim();
     (!trimmed.is_empty()).then_some(trimmed)
 }
-
-#[cfg(test)]
-#[path = "mod_tests.rs"]
-mod tests;

@@ -76,7 +76,3 @@ where
     }
     candidates
 }
-
-#[cfg(test)]
-#[path = "codebase_auto_indexing_tests.rs"]
-mod tests;

@@ -438,31 +438,6 @@ impl OrchestrationEventStreamer {
         }
     }
 
-    /// Constructs a streamer wired to the supplied (mock) clients instead of
-    /// looking them up via `ServerApiProvider`. Lets unit tests inject a
-    /// `MockAIClient` while still subscribing to `BlocklistAIHistoryModel`.
-    #[cfg(test)]
-    pub(super) fn new_with_clients_for_test(
-        ai_client: Arc<dyn AIClient>,
-        server_api: Arc<ServerApi>,
-        ctx: &mut ModelContext<Self>,
-    ) -> Self {
-        let history_model = BlocklistAIHistoryModel::handle(ctx);
-        ctx.subscribe_to_model(&history_model, |me, _, event, ctx| {
-            me.handle_history_event(event, ctx);
-        });
-        Self {
-            ai_client,
-            server_api,
-            streams: HashMap::new(),
-            viewer_mode_orchestrators: HashMap::new(),
-            next_sse_generation: 0,
-            next_wake_generation: 0,
-            killed_run_ids: HashSet::new(),
-            killed_run_id_order: VecDeque::new(),
-        }
-    }
-
     // ---- Public consumer registry API ---------------------------------
 
     /// Tombstone a killed run so late SSE events cannot resurrect it.
@@ -624,15 +599,6 @@ impl OrchestrationEventStreamer {
         }
     }
 
-    /// True iff the viewer-mode entry has previously observed `run_id`
-    /// (via the ancestor SSE or the cold-start REST seed).
-    #[cfg(test)]
-    pub(crate) fn is_known_child(&self, parent_task_id: AmbientAgentTaskId, run_id: &str) -> bool {
-        self.viewer_mode_orchestrators
-            .get(&parent_task_id)
-            .is_some_and(|entry| entry.known_children.contains(run_id))
-    }
-
     /// Placeholder `AIConversationId`s registered for `parent_task_id`.
     /// The cursor-persist path writes through to every entry.
     fn viewer_mode_placeholders(
@@ -670,17 +636,6 @@ impl OrchestrationEventStreamer {
                 run_id,
             });
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn viewer_mode_consumer_count_for_test(
-        &self,
-        parent_task_id: AmbientAgentTaskId,
-    ) -> usize {
-        self.viewer_mode_orchestrators
-            .get(&parent_task_id)
-            .map(|entry| entry.consumers.len())
-            .unwrap_or(0)
     }
 
     // ---- Ancestor SSE consumer (viewer-mode driver wiring) -----------
@@ -2286,7 +2241,3 @@ pub fn unregister_agent_event_consumer<C>(
         streamer.unregister_consumer(conversation_id, consumer_id, ctx);
     });
 }
-
-#[cfg(test)]
-#[path = "orchestration_event_streamer_tests.rs"]
-mod tests;

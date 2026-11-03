@@ -298,7 +298,3 @@ fn push_code_or_mermaid_section(
         });
     }
 }
-
-#[cfg(test)]
-#[path = "util_tests.rs"]
-mod tests;

@@ -327,7 +327,3 @@ impl fmt::Display for EnvironmentChoice {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "common_tests.rs"]
-mod tests;

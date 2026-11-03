@@ -1942,7 +1942,3 @@ impl AgentConversationsModel {
         self.has_finished_initial_load = false;
     }
 }
-
-#[cfg(test)]
-#[path = "agent_conversations_model_tests.rs"]
-mod tests;

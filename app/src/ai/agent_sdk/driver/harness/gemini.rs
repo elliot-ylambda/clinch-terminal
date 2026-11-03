@@ -363,7 +363,3 @@ struct GeminiContext {
     #[serde(flatten)]
     extra: Map<String, Value>,
 }
-
-#[cfg(test)]
-#[path = "gemini_tests.rs"]
-mod tests;

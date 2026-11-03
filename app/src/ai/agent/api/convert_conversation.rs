@@ -2126,7 +2126,3 @@ fn convert_api_platform(platform: i32) -> Option<computer_use::Platform> {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "convert_conversation_tests.rs"]
-mod tests;

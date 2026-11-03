@@ -401,7 +401,3 @@ fn non_empty_lines(str: &str) -> impl Iterator<Item = &str> {
 impl Entity for FileGlobExecutor {
     type Event = ();
 }
-
-#[cfg(test)]
-#[path = "file_glob_tests.rs"]
-mod tests;

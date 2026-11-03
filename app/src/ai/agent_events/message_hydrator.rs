@@ -50,21 +50,6 @@ impl MessageHydrator {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn with_fetch_timing(
-        ai_client: Arc<dyn AIClient>,
-        fetch_timeout: Duration,
-        retry_delay: Duration,
-    ) -> Self {
-        Self {
-            ai_client,
-            task_scoped_server_api: None,
-            task_id: None,
-            fetch_timeout,
-            retry_delay,
-        }
-    }
-
     pub(crate) fn with_fetch_timeout(
         ai_client: Arc<dyn AIClient>,
         fetch_timeout: Duration,

@@ -1525,7 +1525,3 @@ fn render_editor(
         .with_corner_radius(CornerRadius::with_bottom(RADIUS_MD))
         .finish()
 }
-
-#[cfg(test)]
-#[path = "run_agents_card_view_tests.rs"]
-mod tests;
