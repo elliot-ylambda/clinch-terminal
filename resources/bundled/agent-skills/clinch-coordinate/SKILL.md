@@ -3,7 +3,7 @@ name: clinch-coordinate
 description: Coordinates Claude Code and Codex sessions across Clinch projects and sections using the local CLI. Use when the user wants one conversation to inspect other sessions, summarize progress, send delegated instructions, or organize reviews and deployments across sessions.
 ---
 
-<!-- managed-by: Clinch; version: 1.10.0 -->
+<!-- managed-by: Clinch; version: 1.11.0 -->
 
 # Clinch coordination
 
@@ -110,6 +110,11 @@ miss intermediate states and cannot replay events. `--follow` streams NDJSON;
 run persistent watches in a visible Clinch tab using `clinch-control`. Prefer
 bounded `--wait` calls while coordinating in your own conversation.
 
+A restored session reports nothing until its first hook fires, so its state is read from
+its title and input box, shown as `state_source: terminal_screen`. Such a session accepts
+sends once its input box is visible and empty. `unknown` means the screen shows neither,
+such as a dialog or picker: use `pane read` to see it.
+
 `turn_complete` means the provider finished a turn. It does not establish that
 tests passed, a PR merged, or a deployment succeeded. Unknown or unavailable
 status is not evidence that work is idle or finished. Read relevant transcripts
@@ -200,8 +205,8 @@ current state forbids it (the message names `unavailable_reason` and
 
 For explicit deferred delivery, add `--queue --sender COORDINATOR_UUID` and optionally
 `--expires-in SECONDS` (default 1800, maximum 86400). Keep one sender UUID for this
-coordinating conversation. Inspect first: queue admission allows ready or working
-agents, with the current revision; drafts, blocked/unknown/remote targets still fail.
+coordinating conversation. Inspect first: queue admission allows ready, working, or
+unknown agents, with the current revision; drafts and blocked/remote targets still fail.
 Messages are FIFO per target. Human input or a replaced foreground/session cancels
 pending work. Limits are ten pending per target and 100 per app instance. Another
 sender cannot take over a pending queue, and immediate sends cannot jump it.

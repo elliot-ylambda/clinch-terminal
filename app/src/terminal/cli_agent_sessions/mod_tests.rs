@@ -114,7 +114,9 @@ fn claude_stop_failure_carries_the_reset_stated_in_the_limit_message() {
         else {
             panic!("expected a usage-limit stop with a stated reset for {response}");
         };
-        assert!(reset > chrono::Utc::now());
+        // The parser's own tests pin the clock. Here the wall clock runs, and a time up to ten
+        // minutes past deliberately stays today, so these fixed times can be just behind it.
+        assert!(reset > chrono::Utc::now() - chrono::Duration::minutes(11));
     }
 
     // A spend limit states no reset; it is still causal but cannot schedule.
@@ -2252,4 +2254,22 @@ fn codex_rollout_usage_limit_stop_closes_the_in_flight_turn() {
             );
         });
     });
+}
+
+#[test]
+fn only_a_session_with_hooks_can_block_a_submission_on_its_turn() {
+    let mut session = idle_test_session(CLIAgent::Codex);
+    session.has_observed_turn_activity = true;
+    session.status = CLIAgentSessionStatus::InProgress;
+
+    // Our own earlier submission marked this turn started, and with no hooks nothing may clear it.
+    session.received_rich_notification = false;
+    assert!(session.is_actively_working());
+    assert!(!session.turn_blocks_submission());
+
+    session.received_rich_notification = true;
+    assert!(session.turn_blocks_submission());
+
+    session.status = CLIAgentSessionStatus::Success;
+    assert!(!session.turn_blocks_submission());
 }

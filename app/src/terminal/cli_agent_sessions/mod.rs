@@ -377,6 +377,13 @@ impl CLIAgentSession {
         self.has_observed_turn_activity && matches!(self.status, CLIAgentSessionStatus::InProgress)
     }
 
+    /// Whether a turn in progress should stop Clinch submitting a prompt. Only hooks can say so:
+    /// without them, nothing may ever clear a turn marked started by an earlier submission, and
+    /// readiness has already checked the screen.
+    pub(crate) fn turn_blocks_submission(&self) -> bool {
+        self.supports_rich_status() && self.is_actively_working()
+    }
+
     /// Clears state populated by `PermissionRequest`. Called whenever the
     /// session leaves the permission flow (the user replied, a new prompt
     /// is submitted, or the session ends successfully) so the permission

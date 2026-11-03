@@ -249,7 +249,9 @@ fn handle(
                 }
                 // Report a blocking state before the revision: a revision taken while the agent
                 // was blocked is current, so calling it stale hides the real reason.
-                if !(reason.is_none() || (target.queue && (reason == Some("working") || lazy))) {
+                // A session showing a dialog may come back to its prompt, so a queued message waits.
+                let can_wait = lazy || matches!(reason, Some("working" | "status_unavailable"));
+                if !(reason.is_none() || (target.queue && can_wait)) {
                     return Err(super::agents::agent_unavailable(
                         reason,
                         entry.terminal.as_ref(ctx).local_control_draft_source(ctx),
@@ -346,6 +348,7 @@ fn probe(
                     | LAZY_NOT_STARTED
                     | LAZY_STARTING
                     | "human_input_or_draft"
+                    | "status_unavailable"
                     | "submission_pending"
                     | "interactive_attention_required"
                     | "rate_limited"

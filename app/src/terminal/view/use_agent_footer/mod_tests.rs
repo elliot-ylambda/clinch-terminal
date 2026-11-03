@@ -1249,3 +1249,30 @@ fn native_composer_proves_restore_ready_without_rich_hooks_or_a_draft() {
         });
     });
 }
+
+#[test]
+fn a_session_without_hook_status_reads_its_state_from_the_screen() {
+    use ObservedAgentState::{Idle, Unknown, Working};
+    let draft = NativeComposer::Draft("half a thought".to_owned());
+    let cases = [
+        // A working title wins: both providers keep their input box visible during a turn.
+        (Some(true), Some(&NativeComposer::Empty), Working),
+        (Some(true), None, Working),
+        // At the prompt, whether the title says idle or says nothing.
+        (Some(false), Some(&NativeComposer::Empty), Idle),
+        (None, Some(&NativeComposer::Empty), Idle),
+        // Still at the prompt with text typed. Readiness refuses it as a draft.
+        (Some(false), Some(&draft), Idle),
+        // A hidden composer is never assumed empty, and no composer means a dialog or picker.
+        (Some(false), Some(&NativeComposer::Unreadable), Unknown),
+        (Some(false), None, Unknown),
+        (None, None, Unknown),
+    ];
+    for (title, composer, expected) in cases {
+        assert_eq!(
+            observed_agent_state_from(title, composer),
+            expected,
+            "title {title:?}, composer {composer:?}"
+        );
+    }
+}
