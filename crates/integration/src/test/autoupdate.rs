@@ -3,7 +3,6 @@ use warp::integration_testing::autoupdate::{
 };
 use warp::integration_testing::terminal::wait_until_bootstrapped_single_pane_for_tab;
 use warp::integration_testing::view_getters::workspace_view;
-use warp::integration_testing::workspace::press_native_modal_button;
 use warp::workspace::WorkspaceAction;
 use warpui_core::integration::TestStep;
 use warpui_core::{async_assert, TypedActionView as _};
@@ -15,7 +14,7 @@ pub fn test_clinch_update_requires_explicit_consent() -> Builder {
     new_builder()
         .with_step(wait_until_bootstrapped_single_pane_for_tab(0))
         .with_step(
-            TestStep::new("Open the authenticated Clinch update consent dialog")
+            TestStep::new("Open the update pop-up for an authenticated Clinch update")
                 .with_action(|app, window_id, _| {
                     app.update(set_clinch_update_available);
                     let workspace = workspace_view(app, window_id);
@@ -25,25 +24,32 @@ pub fn test_clinch_update_requires_explicit_consent() -> Builder {
                 })
                 .add_assertion(|app, window_id| {
                     let workspace = workspace_view(app, window_id);
-                    workspace.read(app, |workspace, ctx| {
+                    workspace.read(app, |workspace, _| {
                         async_assert!(
-                            workspace.is_native_quit_modal_open(ctx),
-                            "Clinch update consent dialog is not open"
+                            workspace.is_clinch_update_popup_open(),
+                            "The Clinch update pop-up is not open"
                         )
                     })
                 }),
         )
-        .with_step(press_native_modal_button(1))
         .with_step(
-            TestStep::new("Declining leaves the authenticated update available").add_assertion(
-                |app, _| {
+            TestStep::new("Later closes the pop-up and leaves the update available")
+                .with_action(|app, window_id, _| {
+                    let workspace = workspace_view(app, window_id);
+                    workspace.update(app, |workspace, ctx| {
+                        workspace.handle_action(&WorkspaceAction::CloseClinchUpdatePopup, ctx);
+                    });
+                })
+                .add_assertion(|app, window_id| {
+                    let workspace = workspace_view(app, window_id);
+                    let popup_open =
+                        workspace.read(app, |workspace, _| workspace.is_clinch_update_popup_open());
                     app.read(|ctx| {
                         async_assert!(
-                            clinch_update_is_available(ctx),
+                            !popup_open && clinch_update_is_available(ctx),
                             "Later unexpectedly downloaded or dismissed the update"
                         )
                     })
-                },
-            ),
+                }),
         )
 }

@@ -1,3 +1,3 @@
 #import <AppKit/AppKit.h>
 
-NSModalResponse configureAndRunModal(NSAlert* alert, NSApplication* app);
+void configureModal(NSAlert* alert, NSApplication* app);

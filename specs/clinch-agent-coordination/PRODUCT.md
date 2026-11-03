@@ -20,7 +20,7 @@ input revision, and sender UUID; only a working or ready agent may be queued. Hu
 pending messages; ten pending per target and 100 per app instance are allowed. Queued messages
 expire after 30 minutes by default (configurable up to one day). Receipts survive restart, but
 old queued messages are cancelled and interrupted dispatches become uncertain, never replayed.
-Each project now keeps a **Coordinator** tab pinned first in its tab list (on by default,
+Each project now keeps a **Coordinator** tab pinned first in its tab list, unless unpinned (on by default,
 setting `clinch.coordinator.enabled`). It runs Claude Code or Codex (`clinch.coordinator.agent`)
 in the project's primary checkout, never a linked worktree, falling back to the home directory,
 with coordinator instructions passed as a system prompt so creating one spends no turn. It
@@ -71,7 +71,8 @@ Design: use the current Clinch styling; no separate Figma mock was supplied.
 
 ### Discoverability and the left sidebar
 
-7. Each project keeps a **Coordinator** tab pinned first in its tab list. It is on by default,
+7. Each project keeps a **Coordinator** tab pinned first in its tab list, so new sections land below
+   it. The user can unpin it from its right-click menu, and that choice is saved. It is on by default,
    closing it turns the default off, and right-click switches it between Claude and Codex. It is
    an ordinary conversation in the project's primary checkout that the user can talk to like any
    other session.

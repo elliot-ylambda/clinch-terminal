@@ -102,3 +102,23 @@ fn project_selectors_require_advertised_support_before_any_transport_request() {
     instance.actions.push(ActionKind::ProjectInspect.metadata());
     assert!(validate_target_support(&instance, &request).is_ok());
 }
+
+#[cfg(unix)]
+#[test]
+fn a_broker_that_never_answers_reports_the_app_as_busy_instead_of_hanging() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("broker.sock");
+    // Accepts connections but never answers, like an app whose main thread is blocked.
+    let _listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+    let request = CredentialRequest::new(crate::protocol::ActionKind::AppPing);
+
+    let error = request_credential_over_socket_within(
+        &path,
+        &request,
+        std::time::Duration::from_millis(50),
+    )
+    .unwrap_err();
+
+    assert_eq!(error.code, ErrorCode::AppBusy);
+    assert!(error.message.contains("modal dialog"), "{}", error.message);
+}

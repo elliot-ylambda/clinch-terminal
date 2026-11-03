@@ -37,6 +37,10 @@ use crate::protocol::{
     RequestEnvelope, ResponseEnvelope,
 };
 
+/// A little longer than the app itself waits for its main thread, so its answer arrives first.
+#[cfg(unix)]
+const CREDENTIAL_RESPONSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
 /// Requests an action-scoped credential and sends one authenticated control request.
 #[cfg(not(target_family = "wasm"))]
 pub fn send_request(
@@ -59,6 +63,9 @@ pub fn send_request(
         .json(request)
         .send()
         .map_err(|err| {
+            if err.is_timeout() {
+                return ControlError::app_busy();
+            }
             ControlError::with_details(
                 ErrorCode::TransportUnavailable,
                 "failed to send local-control request",
@@ -143,6 +150,15 @@ fn request_credential_over_socket(
     path: &Path,
     request: &CredentialRequest,
 ) -> Result<String, ControlError> {
+    request_credential_over_socket_within(path, request, CREDENTIAL_RESPONSE_TIMEOUT)
+}
+
+#[cfg(unix)]
+fn request_credential_over_socket_within(
+    path: &Path,
+    request: &CredentialRequest,
+    timeout: std::time::Duration,
+) -> Result<String, ControlError> {
     let mut stream = UnixStream::connect(path).map_err(|err| {
         ControlError::with_details(
             ErrorCode::TransportUnavailable,
@@ -171,8 +187,21 @@ fn request_credential_over_socket(
             err.to_string(),
         )
     })?;
+    stream.set_read_timeout(Some(timeout)).map_err(|err| {
+        ControlError::with_details(
+            ErrorCode::TransportUnavailable,
+            "failed to set a local-control credential timeout",
+            err.to_string(),
+        )
+    })?;
     let mut response = String::new();
     stream.read_to_string(&mut response).map_err(|err| {
+        if matches!(
+            err.kind(),
+            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+        ) {
+            return ControlError::app_busy();
+        }
         ControlError::with_details(
             ErrorCode::TransportUnavailable,
             "failed to read local-control credential response",

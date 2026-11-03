@@ -22,16 +22,6 @@ fn clinch_update_scheduler_wakes_at_most_once_per_hour() {
 }
 
 #[test]
-fn clinch_release_notes_are_safe_for_native_dialogs() {
-    let notes = format!("hello\0world\n{}", "x".repeat(10_000));
-    let sanitized = sanitize_release_notes(&notes);
-
-    assert!(!sanitized.contains('\0'));
-    assert!(sanitized.contains('\n'));
-    assert_eq!(sanitized.chars().count(), 8_000);
-}
-
-#[test]
 fn clinch_discovery_state_keeps_an_actionable_update_visible() {
     let version = VersionInfo::new("v0.2099.01.02.0002".to_owned());
     assert!(AutoupdateStage::UpdateAvailable {
@@ -443,6 +433,168 @@ fn test_download_failure_allows_retry() {
             assert!(
                 matches!(result, UpdateReady::CanDownload { .. }),
                 "Should allow retry download after failure"
+            );
+        });
+    });
+}
+
+#[test]
+fn a_failed_clinch_download_keeps_the_update_available_and_says_why() {
+    let (stage, failure) = after_failed_download(
+        true,
+        RequestType::ManualCheck,
+        make_version_info("v2", false),
+        "id".to_owned(),
+    );
+    assert!(matches!(stage, AutoupdateStage::UpdateAvailable { .. }));
+    assert_eq!(failure, Some(ClinchUpdateFailure::Download));
+
+    // Other update channels fail the way they always did.
+    let (stage, failure) = after_failed_download(
+        false,
+        RequestType::Poll,
+        make_version_info("v2", false),
+        "id".to_owned(),
+    );
+    assert_eq!(stage, AutoupdateStage::NoUpdateAvailable);
+    assert_eq!(failure, None);
+}
+
+#[test]
+fn a_failed_background_check_leaves_a_known_update_in_place() {
+    App::test((), |mut app| async move {
+        app.add_singleton_model(|ctx| AppExecutionMode::new(ExecutionMode::App, false, ctx));
+        let autoupdate_state = initialize_app(&mut app);
+
+        app.update_model(&autoupdate_state, |autoupdate, ctx| {
+            let known = AutoupdateStage::UpdateAvailable {
+                new_version: make_version_info("v2", false),
+                update_id: "known".to_owned(),
+            };
+            autoupdate.stage = known.clone();
+            autoupdate.check_in_flight = true;
+            autoupdate.on_update_check_complete(
+                RequestType::Poll,
+                "check".to_owned(),
+                Err(anyhow!("offline")),
+                false,
+                ctx,
+            );
+            assert_eq!(autoupdate.stage, known);
+            assert!(!autoupdate.check_in_flight);
+
+            // Someone who asked hears about the failure.
+            autoupdate.on_update_check_complete(
+                RequestType::ManualCheck,
+                "check".to_owned(),
+                Err(anyhow!("offline")),
+                false,
+                ctx,
+            );
+            assert_eq!(autoupdate.stage, AutoupdateStage::UnableToCheckForUpdate);
+        });
+    });
+}
+
+#[test]
+fn a_check_that_finishes_during_an_install_leaves_the_install_alone() {
+    App::test((), |mut app| async move {
+        app.add_singleton_model(|ctx| AppExecutionMode::new(ExecutionMode::App, false, ctx));
+        let autoupdate_state = initialize_app(&mut app);
+
+        app.update_model(&autoupdate_state, |autoupdate, ctx| {
+            for installing in [
+                AutoupdateStage::DownloadingUpdate,
+                AutoupdateStage::Updating {
+                    new_version: make_version_info("v2", false),
+                    update_id: "ready".to_owned(),
+                },
+                AutoupdateStage::UpdatedPendingRestart {
+                    new_version: make_version_info("v2", false),
+                },
+            ] {
+                autoupdate.stage = installing.clone();
+                autoupdate.check_in_flight = true;
+                autoupdate.on_update_check_complete(
+                    RequestType::ManualCheck,
+                    "check".to_owned(),
+                    Err(anyhow!("offline")),
+                    false,
+                    ctx,
+                );
+                assert_eq!(autoupdate.stage, installing);
+                assert!(!autoupdate.should_start_update_check());
+            }
+        });
+    });
+}
+
+#[test]
+fn only_one_check_runs_even_when_it_leaves_the_stage_alone() {
+    App::test((), |mut app| async move {
+        app.add_singleton_model(|ctx| AppExecutionMode::new(ExecutionMode::App, false, ctx));
+        let autoupdate_state = initialize_app(&mut app);
+
+        app.update_model(&autoupdate_state, |autoupdate, _| {
+            autoupdate.stage = AutoupdateStage::UpdateAvailable {
+                new_version: make_version_info("v2", false),
+                update_id: "known".to_owned(),
+            };
+            assert!(autoupdate.should_start_update_check());
+            autoupdate.check_in_flight = true;
+            assert!(!autoupdate.should_start_update_check());
+        });
+    });
+}
+
+#[test]
+fn cancelling_a_download_offers_the_update_again() {
+    App::test((), |mut app| async move {
+        app.add_singleton_model(|ctx| AppExecutionMode::new(ExecutionMode::App, false, ctx));
+        let autoupdate_state = initialize_app(&mut app);
+
+        app.update_model(&autoupdate_state, |autoupdate, ctx| {
+            autoupdate.stage = AutoupdateStage::DownloadingUpdate;
+            autoupdate.install_after_download = true;
+            autoupdate.clinch_download_progress = Some(ClinchDownloadProgress::Downloading {
+                received: 1,
+                total: 2,
+            });
+            autoupdate.on_clinch_download_cancelled(
+                make_version_info("v2", false),
+                "id".to_owned(),
+                ctx,
+            );
+            assert!(matches!(
+                autoupdate.stage,
+                AutoupdateStage::UpdateAvailable { .. }
+            ));
+            assert_eq!(autoupdate.clinch_download_progress, None);
+            assert!(!autoupdate.install_after_download);
+        });
+    });
+}
+
+#[test]
+fn a_failed_install_goes_back_to_ready_and_says_why() {
+    App::test((), |mut app| async move {
+        app.add_singleton_model(|ctx| AppExecutionMode::new(ExecutionMode::App, false, ctx));
+        let autoupdate_state = initialize_app(&mut app);
+        app.add_singleton_model(|_| RelaunchModel::new());
+
+        app.update_model(&autoupdate_state, |autoupdate, ctx| {
+            autoupdate.stage = AutoupdateStage::Updating {
+                new_version: make_version_info("v2", false),
+                update_id: "ready".to_owned(),
+            };
+            autoupdate.clinch_install_failed(ctx);
+            assert!(matches!(
+                autoupdate.stage,
+                AutoupdateStage::UpdateReady { .. }
+            ));
+            assert_eq!(
+                autoupdate.clinch_failure,
+                Some(ClinchUpdateFailure::Install)
             );
         });
     });

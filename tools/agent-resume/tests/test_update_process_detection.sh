@@ -72,4 +72,44 @@ fi
 printf '%s\n' "$installer_out" | grep -q 'Clinch is currently running' \
   || { echo "FAIL: public installer did not report the running app"; exit 1; }
 
+# Asked on a terminal, it offers to quit the app, and says what to do if the app won't.
+cat > "$TMP/osascript" <<'SH'
+#!/bin/sh
+printf '%s\n' "$*" >> "$CLINCH_TEST_OSASCRIPT_LOG"
+[ -z "${CLINCH_TEST_QUIT_FLAG:-}" ] || touch "$CLINCH_TEST_QUIT_FLAG"
+SH
+chmod +x "$TMP/osascript"
+export CLINCH_TEST_OSASCRIPT_LOG="$TMP/osascript.log"
+run_installer() {
+  CLINCH_CURL_BIN=/usr/bin/false \
+    CLINCH_INSTALL_TTY="$1" CLINCH_OSASCRIPT_BIN="$TMP/osascript" CLINCH_QUIT_WAIT_ATTEMPTS=1 \
+    CLINCH_LSAPPINFO_BIN="$2" CLINCH_PS_BIN="$TMP/ps" sh "$ROOT/install.sh" 2>&1 || true
+}
+
+printf 'n\n' > "$TMP/answer-no"
+: > "$CLINCH_TEST_OSASCRIPT_LOG"
+installer_out="$(run_installer "$TMP/answer-no" "$TMP/lsappinfo")"
+printf '%s\n' "$installer_out" | grep -q 'Quit it now to install' \
+  || { echo "FAIL: installer did not offer to quit: $installer_out"; exit 1; }
+printf '%s\n' "$installer_out" | grep -q 'Clinch is currently running' \
+  || { echo "FAIL: declining did not stop the install: $installer_out"; exit 1; }
+[ ! -s "$CLINCH_TEST_OSASCRIPT_LOG" ] || { echo "FAIL: installer quit the app after a no"; exit 1; }
+
+printf 'y\n' > "$TMP/answer-yes"
+installer_out="$(run_installer "$TMP/answer-yes" "$TMP/lsappinfo")"
+grep -q 'sh.clinch.Clinch' "$CLINCH_TEST_OSASCRIPT_LOG" \
+  || { echo "FAIL: installer did not ask the app to quit"; exit 1; }
+printf '%s\n' "$installer_out" | grep -q 'A dialog may be open' \
+  || { echo "FAIL: a refused quit did not mention a dialog: $installer_out"; exit 1; }
+
+# Once the app has quit, the install carries on past the guard.
+cat > "$TMP/lsappinfo-quits" <<SH
+#!/bin/sh
+[ -e "$TMP/quit-flag" ] || "$TMP/lsappinfo" "\$@"
+SH
+chmod +x "$TMP/lsappinfo-quits"
+installer_out="$(CLINCH_TEST_QUIT_FLAG="$TMP/quit-flag" run_installer "$TMP/answer-yes" "$TMP/lsappinfo-quits")"
+printf '%s\n' "$installer_out" | grep -q 'A dialog may be open\|currently running' \
+  && { echo "FAIL: installer stopped after the app quit: $installer_out"; exit 1; }
+
 echo "PASS"

@@ -589,6 +589,33 @@ pub fn append_terminal_custom_button<V: View>(
     });
 }
 
+/// Saves a footer arranged by dragging its buttons. Buttons the user removed stay removed.
+pub fn save_footer_arrangement<V: View>(
+    mode: AgentToolbarEditorMode,
+    items: Vec<AgentToolbarItemKind>,
+    visible_count: usize,
+    ctx: &mut ViewContext<V>,
+) {
+    let settings = SessionSettings::as_ref(ctx);
+    let hidden_custom_inserts = if mode == AgentToolbarEditorMode::Terminal {
+        settings
+            .terminal_footer_chip_selection
+            .hidden_custom_inserts()
+    } else {
+        settings
+            .coding_agent_footer_chip_selection_value()
+            .hidden_custom_inserts()
+    };
+    save_toolbar_selection(
+        mode,
+        items,
+        Vec::new(),
+        hidden_custom_inserts,
+        Some(visible_count),
+        ctx,
+    );
+}
+
 fn save_toolbar_selection<V: View>(
     mode: AgentToolbarEditorMode,
     left: Vec<AgentToolbarItemKind>,

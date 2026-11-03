@@ -2429,8 +2429,18 @@ pub(crate) fn app_callbacks(
             }
 
             let summary = UnsavedStateSummary::for_app(ctx);
+            let should_warn = if autoupdate::is_restarting_for_agreed_clinch_update(ctx) {
+                summary.should_warn_before_agreed_update(ctx)
+            } else {
+                summary.should_display_warning(ctx)
+            };
             // Don't show dialog on integration test. Machine can't press buttons.
-            if !is_integration_test && summary.should_display_warning(ctx) {
+            if !is_integration_test && should_warn {
+                // Dialogs don't stop Quit any more, so it can arrive while one is up. It waits for
+                // that dialog's answer, rather than stacking a second one behind it.
+                if ctx.has_open_native_platform_modal() {
+                    return ApproveTerminateResult::Cancel;
+                }
                 let shown = summary
                     .dialog()
                     .on_confirm(|ctx| ctx.terminate_app(TerminationMode::ForceTerminate, None))

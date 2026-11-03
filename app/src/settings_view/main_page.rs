@@ -191,7 +191,7 @@ impl TypedActionView for MainSettingsPageView {
 
         match action {
             MainPageAction::Relaunch => {
-                if autoupdate::clinch_update_prompt(ctx).is_some() {
+                if autoupdate::has_clinch_update_to_offer(ctx) {
                     ctx.emit(MainSettingsPageEvent::ApplyUpdate);
                 } else {
                     autoupdate::initiate_relaunch_for_update(ctx);
@@ -894,7 +894,7 @@ impl VersionInfoWidget {
                             color: ansi_red,
                         }),
                         Some(CallToActionContent {
-                            text: "Review and install",
+                            text: "Install update",
                             action: MainPageAction::Relaunch,
                         }),
                     ),

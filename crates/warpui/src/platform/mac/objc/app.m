@@ -470,15 +470,86 @@ NSUInteger activeScreenId() {
     [delegate setForceTermination];
 }
 
+// The window a dialog should attach to: the frontmost one a person can see and use.
+- (NSWindow *)windowForSheet {
+    NSWindow *window = self.keyWindow ?: self.mainWindow;
+    if (window != nil && !window.isSheet && window.isVisible) {
+        return window;
+    }
+    for (NSWindow *candidate in self.orderedWindows) {
+        if (candidate.isVisible && !candidate.isSheet && !candidate.isMiniaturized &&
+            candidate.canBecomeKeyWindow) {
+            return candidate;
+        }
+    }
+    return nil;
+}
+
+// Keeps an alert on the screen however long its text is: text that wouldn't fit goes in a scrolling
+// view, so the buttons are always within reach.
+static void capAlertHeight(NSAlert *alert, NSScreen *screen) {
+    // Room for the alert's title, icon, buttons and suppression checkbox.
+    static const CGFloat kAlertChromeHeight = 280;
+    static const CGFloat kMaxTextHeight = 360;
+    static const CGFloat kTextWidth = 420;
+    static const CGFloat kMinTextHeight = 120;
+
+    NSString *text = alert.informativeText;
+    if (text.length == 0) {
+        return;
+    }
+    NSFont *font = [NSFont systemFontOfSize:NSFont.smallSystemFontSize];
+    NSRect textBounds = [text boundingRectWithSize:NSMakeSize(kTextWidth, CGFLOAT_MAX)
+                                           options:NSStringDrawingUsesLineFragmentOrigin
+                                        attributes:@{NSFontAttributeName : font}];
+    CGFloat available = (screen ?: NSScreen.mainScreen).visibleFrame.size.height - kAlertChromeHeight;
+    CGFloat maxHeight = MAX(kMinTextHeight, MIN(available, kMaxTextHeight));
+    if (textBounds.size.height <= maxHeight) {
+        return;
+    }
+
+    NSRect frame = NSMakeRect(0, 0, kTextWidth, maxHeight);
+    NSScrollView *scrollView = [[[NSScrollView alloc] initWithFrame:frame] autorelease];
+    scrollView.hasVerticalScroller = YES;
+    scrollView.borderType = NSBezelBorder;
+    NSTextView *textView = [[[NSTextView alloc] initWithFrame:frame] autorelease];
+    textView.editable = NO;
+    textView.selectable = YES;
+    textView.font = font;
+    textView.string = text;
+    textView.verticallyResizable = YES;
+    textView.autoresizingMask = NSViewWidthSizable;
+    textView.textContainer.widthTracksTextView = YES;
+    scrollView.documentView = textView;
+    alert.accessoryView = scrollView;
+    alert.informativeText = @"";
+}
+
 - (void)showModal:(NSAlert *)alert modalId:(NSUInteger)modalId {
     dispatch_async(dispatch_get_main_queue(), ^{
-      NSModalResponse response = configureAndRunModal(alert, self);
+      configureModal(alert, self);
+      NSWindow *window = [self windowForSheet];
+      capAlertHeight(alert, window.screen);
 
-      BOOL disable_modal = alert.suppressionButton.state == NSControlStateValueOn;
-      // Subtracting `NSAlertFirstButtonReturn` from `response` yields the 0-based index of the
-      // button that was actually clicked.
-      warp_app_process_modal_response(self, modalId, response - NSAlertFirstButtonReturn,
-                                      disable_modal);
+      void (^finish)(NSModalResponse) = ^(NSModalResponse response) {
+        BOOL disable_modal = alert.suppressionButton.state == NSControlStateValueOn;
+        // Subtracting `NSAlertFirstButtonReturn` from `response` yields the 0-based index of the
+        // button that was actually clicked.
+        warp_app_process_modal_response(self, modalId, response - NSAlertFirstButtonReturn,
+                                        disable_modal);
+      };
+      // A sheet leaves the app running: other windows, Quit, and everything queued for the main
+      // thread, such as answering the local control server, all keep working.
+      if (window != nil) {
+          [alert beginSheetModalForWindow:window completionHandler:finish];
+          return;
+      }
+      // With no window to attach to, it has to be a blocking dialog. Run it from the run loop
+      // rather than from this block: inside it, nothing else on the main queue could run.
+      CFRunLoopPerformBlock(CFRunLoopGetMain(), kCFRunLoopCommonModes, ^{
+        finish([alert runModal]);
+      });
+      CFRunLoopWakeUp(CFRunLoopGetMain());
     });
 }
 

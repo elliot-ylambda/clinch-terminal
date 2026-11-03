@@ -72,6 +72,7 @@ use std::fs::Permissions;
 use std::net::SocketAddr;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use ::local_control::auth::CredentialGrant;
@@ -92,6 +93,7 @@ use axum::{Json, Router};
 pub use bridge::LocalControlBridge;
 #[cfg(any(unix, test))]
 use chrono::Duration;
+use futures::future::{select, Either};
 use permissions::ensure_feature_enabled;
 #[cfg(any(unix, test))]
 use permissions::{ensure_action_allowed, ensure_protocol_version};
@@ -347,6 +349,44 @@ fn bind_credential_broker(
     Ok(listener)
 }
 
+/// How long a control call waits for the app's main thread before reporting the app as busy.
+const MAIN_THREAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Runs `work` on the app's main thread, without waiting forever for it to get there. A call that
+/// has given up is cancelled, so it can't take effect later, after its caller was told it failed.
+async fn on_main_thread<R: Send + 'static>(
+    spawner: &ModelSpawner<LocalControlBridge>,
+    work: impl FnOnce(&mut LocalControlBridge, &mut ModelContext<LocalControlBridge>) -> R
+        + Send
+        + 'static,
+) -> Result<R, ControlError> {
+    let abandoned = Arc::new(AtomicBool::new(false));
+    let run = spawner.spawn({
+        let abandoned = abandoned.clone();
+        move |bridge, ctx| (!abandoned.load(Ordering::SeqCst)).then(|| work(bridge, ctx))
+    });
+    await_main_thread(run, &abandoned, MAIN_THREAD_TIMEOUT).await
+}
+
+async fn await_main_thread<R, E>(
+    run: impl std::future::Future<Output = Result<Option<R>, E>> + Send,
+    abandoned: &AtomicBool,
+    timeout: std::time::Duration,
+) -> Result<R, ControlError> {
+    let deadline = Box::pin(warpui::r#async::Timer::after(timeout));
+    match select(Box::pin(run), deadline).await {
+        Either::Left((Ok(Some(result)), _)) => Ok(result),
+        Either::Left(_) => Err(ControlError::new(
+            ErrorCode::BridgeUnavailable,
+            "local-control app bridge is unavailable",
+        )),
+        Either::Right(_) => {
+            abandoned.store(true, Ordering::SeqCst);
+            Err(ControlError::app_busy())
+        }
+    }
+}
+
 #[cfg(unix)]
 /// Accepts same-user credential requests independently from the HTTP listener.
 async fn run_credential_broker(listener: tokio::net::UnixListener, state: ControlServerState) {
@@ -469,19 +509,11 @@ async fn issue_credential(
             ),
         ));
     }
-    state
-        .bridge_spawner
-        .spawn({
-            let action = request.action;
-            move |_, ctx| ensure_action_allowed(action, ctx)
-        })
-        .await
-        .map_err(|_| {
-            ControlError::new(
-                ErrorCode::BridgeUnavailable,
-                "local-control app bridge is unavailable",
-            )
-        })??;
+    let action = request.action;
+    on_main_thread(&state.bridge_spawner, move |_, ctx| {
+        ensure_action_allowed(action, ctx)
+    })
+    .await??;
     let auth_token = AuthToken::generate();
     let grant = CredentialGrant::new(
         state.instance_id.clone(),
@@ -581,10 +613,10 @@ async fn handle_control_request(
         }
     };
     let request_id = request.request_id;
-    let response = match state
-        .bridge_spawner
-        .spawn(move |bridge, ctx| bridge.handle_request(request, grant, ctx))
-        .await
+    let response = match on_main_thread(&state.bridge_spawner, move |bridge, ctx| {
+        bridge.handle_request(request, grant, ctx)
+    })
+    .await
     {
         Ok(bridge::BridgeReply::Immediate(response)) => response,
         Ok(bridge::BridgeReply::Delivery {
@@ -611,13 +643,7 @@ async fn handle_control_request(
                 ),
             }
         }
-        Err(_) => ResponseEnvelope::error(
-            request_id,
-            ControlError::new(
-                ErrorCode::BridgeUnavailable,
-                "local-control app bridge is unavailable",
-            ),
-        ),
+        Err(error) => ResponseEnvelope::error(request_id, error),
     };
     let status = match &response.response {
         ControlResponse::Ok { .. } => StatusCode::OK,

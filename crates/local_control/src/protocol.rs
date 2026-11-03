@@ -615,6 +615,15 @@ impl ControlError {
             details: Some(details.into()),
         }
     }
+
+    /// What a control call says when the running app doesn't answer in time.
+    pub fn app_busy() -> Self {
+        Self::new(
+            ErrorCode::AppBusy,
+            "app busy: Clinch didn't answer in time, and a modal dialog may be open. \
+             Check its window.",
+        )
+    }
 }
 
 /// Stable error code surfaced to CLI clients and automation.
@@ -636,6 +645,8 @@ pub enum ErrorCode {
     MissingTarget,
     TransportUnavailable,
     BridgeUnavailable,
+    /// The app's main thread didn't answer in time.
+    AppBusy,
     UnsupportedAction,
     NotAllowlisted,
     Internal,

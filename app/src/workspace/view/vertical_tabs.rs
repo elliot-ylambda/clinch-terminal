@@ -143,6 +143,11 @@ pub(super) const SIDEBAR_BOOKMARKS_LINK_POSITION_ID: &str = "vertical_tabs:bookm
 pub(super) const DETAIL_CARD_DELAY: std::time::Duration = std::time::Duration::from_millis(650);
 const ROW_MARK_SIZE: f32 = 16.;
 const COORDINATOR_TILE_OPACITY: Opacity = 28;
+/// How far the coordinator's tile reaches past its glyph on each side.
+const COORDINATOR_TILE_PADDING: f32 = 3.;
+const COORDINATOR_PIN_SIZE: f32 = 12.;
+/// Roughly how far the Auto pill and switch reach in from the coordinator row's right edge.
+const COORDINATOR_CONTROLS_WIDTH: f32 = 104.;
 /// A section's tint: strong enough to group its tabs, quiet enough to read titles on.
 const SECTION_TINT_OPACITY: Opacity = 14;
 const SECTION_BLOCK_PADDING: f32 = 4.;
@@ -494,14 +499,17 @@ fn render_pane_row_element(
         is_pinned,
         container_is_hovered,
         origin_badge: _,
-        is_coordinator: _,
+        is_coordinator,
         auto_controls: _,
-        coordinator_switch: _,
     } = props;
     let is_selected = is_active_tab && is_focused;
     let tokens = Tokens::new(theme);
     let tokens = &tokens;
-    let show_pin = FeatureFlag::PinnedTabs.is_enabled() && is_pinned && !container_is_hovered;
+    // The coordinator's row keeps its controls in that corner and shows its pin beside them.
+    let show_pin = FeatureFlag::PinnedTabs.is_enabled()
+        && is_pinned
+        && !container_is_hovered
+        && !is_coordinator;
     let mut row = Hoverable::new(mouse_state, move |state| {
         // Hovered or selected rows always fully round; otherwise derive the
         // resting radius from the row's stack position.
@@ -937,10 +945,8 @@ struct PaneProps<'a> {
     origin_badge: Option<TabOriginBadge>,
     /// The project's coordinator tab, which gets its own mark and explanation.
     is_coordinator: bool,
-    /// The Auto pill, on the coordinator's first row.
+    /// The Auto pill and switch, on the coordinator's first row.
     auto_controls: Option<super::auto_coordinate::AutoPillProps>,
-    /// The coordinator's on/off switch, on its first row.
-    coordinator_switch: Option<MouseStateHandle>,
     pane_id: PaneId,
     pane_group_id: EntityId,
     is_active_tab: bool,
@@ -2990,7 +2996,6 @@ fn render_tab_group_internal(
                         workspace.auto_coordinate_enabled(app),
                         state.open_popover == Some(SidebarPopover::AutoCoordinate),
                     ));
-                    pane_props.coordinator_switch = Some(state.coordinator_switch_state.clone());
                 }
                 if stack_panes_flush {
                     pane_props.stack_position = PaneRowStackPosition::Flush {
@@ -3124,7 +3129,10 @@ fn render_tab_group_internal(
         // `Stack`'s right edge sits that much further inside the panel than
         // it does in regular pane view. Push the buttons back out by the
         // same amount so they land at the same panel-relative offset.
-        let action_button_x_offset = if in_tab_group
+        let action_button_x_offset = if tab.coordinator {
+            // The coordinator keeps its own controls in that corner, and they stay reachable.
+            -(COORDINATOR_CONTROLS_WIDTH + 4.)
+        } else if in_tab_group
             && matches!(display_granularity, VerticalTabsDisplayGranularity::Panes)
         {
             GROUP_HORIZONTAL_PADDING + TAB_GROUP_CONTENT_INSET - 4.
@@ -3929,15 +3937,26 @@ fn render_row_mark(
     }
     // The coordinator watches every other tab, so it gets a tile of its own.
     Container::new(mark)
-        .with_uniform_padding(3.)
+        .with_uniform_padding(COORDINATOR_TILE_PADDING)
         .with_background(ThemeFill::Solid(coloru_with_opacity(
             appearance.tokens().accent,
             COORDINATOR_TILE_OPACITY,
         )))
         .with_corner_radius(corners_sm())
-        .with_margin_left(-3.)
-        .with_margin_right(-3.)
+        // Row content is clipped, so the tile can't hang out to the left. The row gives up that
+        // much padding instead (see `row_left_padding`), which keeps the glyph and the title
+        // lined up with every other row.
+        .with_margin_right(-COORDINATOR_TILE_PADDING)
         .finish()
+}
+
+/// A row's left padding. The coordinator's tile takes its share of the padding, so it isn't cut off.
+fn row_left_padding(is_coordinator: bool) -> f32 {
+    if is_coordinator {
+        ROW_HORIZONTAL_PADDING - COORDINATOR_TILE_PADDING
+    } else {
+        ROW_HORIZONTAL_PADDING
+    }
 }
 
 fn render_session_mark(
@@ -4087,23 +4106,34 @@ fn render_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn Element> {
         })
         .with_children(is_restoring(restore_state).then(|| render_restore_spinner(appearance)))
         .with_children(
+            (props.is_coordinator
+                && props.is_pinned
+                && !props.container_is_hovered
+                && FeatureFlag::PinnedTabs.is_enabled())
+            .then(|| {
+                ConstrainedBox::new(
+                    WarpIcon::PinFilledDiagonal
+                        .to_warpui_icon(WarpThemeFill::Solid(tokens.text_3))
+                        .finish(),
+                )
+                .with_width(COORDINATOR_PIN_SIZE)
+                .with_height(COORDINATOR_PIN_SIZE)
+                .finish()
+            }),
+        )
+        .with_children(
             props
                 .auto_controls
                 .clone()
                 .map(|controls| super::auto_coordinate::render_auto_controls(controls, appearance)),
         )
-        .with_children(
-            props
-                .coordinator_switch
-                .clone()
-                .map(|mouse_state| render_coordinator_switch(true, mouse_state, appearance)),
-        )
         .finish();
 
+    let left_padding = row_left_padding(props.is_coordinator);
     render_pane_row_element(
         props,
         Padding::uniform(ROW_VERTICAL_PADDING)
-            .with_left(ROW_HORIZONTAL_PADDING)
+            .with_left(left_padding)
             .with_right(ROW_HORIZONTAL_PADDING),
         true,
         content,
@@ -4344,7 +4374,6 @@ impl<'a> PaneProps<'a> {
             origin_badge: None,
             is_coordinator: false,
             auto_controls: None,
-            coordinator_switch: None,
         })
     }
 
@@ -5633,8 +5662,10 @@ fn render_groups_with_coordinator_switch(
                 )
                 .finish(),
             )
-            .with_child(render_coordinator_switch(
+            .with_child(render_row_switch(
                 false,
+                "Turn the coordinator on",
+                WorkspaceAction::SetCoordinatorOn(true),
                 state.coordinator_switch_state.clone(),
                 appearance,
             ))
@@ -5655,8 +5686,10 @@ fn render_groups_with_coordinator_switch(
 }
 
 /// A compact on/off switch for the Coordinator row.
-fn render_coordinator_switch(
+pub(super) fn render_row_switch(
     on: bool,
+    tooltip: &'static str,
+    action: WorkspaceAction,
     mouse_state: MouseStateHandle,
     appearance: &Appearance,
 ) -> Box<dyn Element> {
@@ -5709,17 +5742,7 @@ fn render_coordinator_switch(
         }
         let mut stack = Stack::new().with_child(track);
         stack.add_positioned_overlay_child(
-            ui_builder
-                .tool_tip(
-                    if on {
-                        "Turn the coordinator off"
-                    } else {
-                        "Turn the coordinator on"
-                    }
-                    .to_owned(),
-                )
-                .build()
-                .finish(),
+            ui_builder.tool_tip(tooltip.to_owned()).build().finish(),
             OffsetPositioning::offset_from_parent(
                 vec2f(0., -6.),
                 ParentOffsetBounds::WindowByPosition,
@@ -5730,7 +5753,7 @@ fn render_coordinator_switch(
         stack.finish()
     })
     .with_cursor(Cursor::PointingHand)
-    .on_click(move |ctx, _, _| ctx.dispatch_typed_action(WorkspaceAction::SetCoordinatorOn(!on)))
+    .on_click(move |ctx, _, _| ctx.dispatch_typed_action(action.clone()))
     .finish()
 }
 
@@ -6245,9 +6268,11 @@ pub(super) fn render_detail_sidecar(
     side: super::PanelPosition,
     app: &AppContext,
 ) -> Option<DetailSidecarOverlay> {
-    if !*TabSettings::as_ref(app)
-        .vertical_tabs_show_details_on_hover
-        .value()
+    // A sidebar popover hangs out over the same spot, and it's what the user just opened.
+    if state.open_popover.is_some()
+        || !*TabSettings::as_ref(app)
+            .vertical_tabs_show_details_on_hover
+            .value()
     {
         state.clear_detail_sidecar();
         return None;

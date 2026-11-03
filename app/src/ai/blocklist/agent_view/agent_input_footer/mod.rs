@@ -1,6 +1,7 @@
 pub(super) mod chips;
 pub mod editor;
 mod environment_selector;
+mod footer_drag;
 pub mod quick_insert_modal;
 pub mod toolbar_item;
 
@@ -17,8 +18,13 @@ use std::time::Duration;
 use ai::document::{AIDocumentId, AIDocumentVersion};
 use chrono::{DateTime, Local};
 use editor::AgentToolbarEditorMode;
+use footer_drag::{
+    apply_footer_drop, footer_drop_target, move_saved_entry, saved_order_indices, FooterDrop,
+    FooterMove,
+};
 use parking_lot::FairMutex;
 use pathfinder_color::ColorU;
+use pathfinder_geometry::rect::RectF;
 use pathfinder_geometry::vector::{vec2f, Vector2F};
 use settings::{Setting, ToggleableSetting};
 #[cfg(not(target_family = "wasm"))]
@@ -34,14 +40,14 @@ use warp_core::ui::color::contrast::MinimumAllowedContrast;
 use warp_core::ui::color::ContrastingColor;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::{AnsiColorIdentifier, Fill};
-use warp_core::ui::tokens::{corners_lg, corners_md, StatusKind, RADIUS_MD};
+use warp_core::ui::tokens::{corners_lg, corners_md, corners_pill, StatusKind, RADIUS_MD};
 use warpui::elements::{
     Border, ChildAnchor, ChildView, Clipped, ConstrainedBox, Container, CornerRadius,
-    CrossAxisAlignment, Dismiss, DispatchEventResult, Element, EventHandler, Expanded, Flex,
-    Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning, ParentAnchor,
-    ParentElement, ParentOffsetBounds, PositionedElementAnchor, PositionedElementOffsetBounds,
-    SavePosition, Shrinkable, SizeConstraintCondition, SizeConstraintSwitch, Stack, Text, Wrap,
-    WrapFill, DEFAULT_UI_LINE_HEIGHT_RATIO,
+    CrossAxisAlignment, Dismiss, DispatchEventResult, Draggable, DraggableState, Element,
+    EventHandler, Expanded, Flex, Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle,
+    OffsetPositioning, ParentAnchor, ParentElement, ParentOffsetBounds, PositionedElementAnchor,
+    PositionedElementOffsetBounds, Rect, SavePosition, Shrinkable, SizeConstraintCondition,
+    SizeConstraintSwitch, Stack, Text, Wrap, WrapFill, DEFAULT_UI_LINE_HEIGHT_RATIO,
 };
 use warpui::platform::Cursor;
 use warpui::r#async::{SpawnedFutureHandle, Timer};
@@ -227,6 +233,107 @@ fn terminal_footer_items(session_settings: &SessionSettings) -> Vec<AgentToolbar
     ordered_footer_items(session_settings.terminal_footer_chip_selection.value())
 }
 
+/// Which saved arrangement a footer's buttons come from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FooterKind {
+    /// Shared by every Claude Code, Codex and other agent session.
+    Agent,
+    /// The coordinator's own arrangement, because it also has prompts of its own.
+    Coordinator,
+    Terminal,
+}
+
+/// One button in a footer's ordered list.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum FooterEntry {
+    CoordinatorPrompt {
+        label: &'static str,
+        text: &'static str,
+    },
+    Item(AgentToolbarItemKind),
+}
+
+impl FooterEntry {
+    /// How the coordinator's saved order names this button.
+    fn saved_key(&self) -> String {
+        match self {
+            Self::CoordinatorPrompt { label, .. } => format!("prompt:{label}"),
+            Self::Item(item) => item.display_label().into_owned(),
+        }
+    }
+
+    fn estimated_width(&self) -> f32 {
+        match self {
+            Self::CoordinatorPrompt { label, .. } => estimated_footer_button_width(label, true),
+            Self::Item(item) => estimated_item_width(item),
+        }
+    }
+}
+
+/// A drag in progress on this footer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FooterDrag {
+    from: usize,
+    target: Option<FooterDrop>,
+}
+
+/// A thin line beside a button, showing where a dragged one would land. It sits over the row rather
+/// than in it, so the buttons don't shift under the mouse.
+fn with_footer_drop_marker(
+    button: Box<dyn Element>,
+    before: bool,
+    color: ColorU,
+) -> Box<dyn Element> {
+    const MARKER_WIDTH: f32 = 2.;
+    const MARKER_HEIGHT: f32 = 22.;
+    const MARKER_GAP: f32 = 1.;
+    let marker = ConstrainedBox::new(
+        Rect::new()
+            .with_background(Fill::Solid(color))
+            .with_corner_radius(corners_pill())
+            .finish(),
+    )
+    .with_width(MARKER_WIDTH)
+    .with_height(MARKER_HEIGHT)
+    .finish();
+    let (offset, parent_anchor, child_anchor) = if before {
+        (
+            -(MARKER_WIDTH + MARKER_GAP),
+            ParentAnchor::TopLeft,
+            ChildAnchor::TopLeft,
+        )
+    } else {
+        (
+            MARKER_WIDTH + MARKER_GAP,
+            ParentAnchor::TopRight,
+            ChildAnchor::TopRight,
+        )
+    };
+    let mut stack = Stack::new().with_child(button);
+    stack.add_positioned_overlay_child(
+        marker,
+        OffsetPositioning::offset_from_parent(
+            vec2f(offset, 0.),
+            ParentOffsetBounds::Unbounded,
+            parent_anchor,
+            child_anchor,
+        ),
+    );
+    stack.finish()
+}
+
+/// The saved position of a footer's button, at its index among the buttons drawn.
+fn footer_button_position_id(terminal_view_id: EntityId, index: usize) -> String {
+    format!("agent_footer:{terminal_view_id}:button:{index}")
+}
+
+fn footer_more_area_position_ids(terminal_view_id: EntityId) -> [String; 2] {
+    [
+        format!("agent_footer:{terminal_view_id}:more"),
+        format!("agent_footer:{terminal_view_id}:more_menu"),
+    ]
+}
+
 /// Voice input state for the CLI agent footer. Unlike the editor-based voice
 /// flow (which goes through Input → EditorView), this state is self-contained
 /// so that transcribed text can be written directly to the PTY.
@@ -354,6 +461,9 @@ pub struct AgentInputFooter {
     auto_continue_mouse_state: MouseStateHandle,
     more_menu_mouse_state: MouseStateHandle,
     is_more_menu_open: bool,
+    /// Kept between frames for each footer button, by what the button is.
+    footer_button_drag_states: RefCell<HashMap<String, DraggableState>>,
+    footer_drag: Option<FooterDrag>,
     plugin_operation_in_progress: bool,
     /// When `true`, the install chip is allowed to render.
     /// Starts `false` and is set to `true` after a debounce timer fires,
@@ -972,7 +1082,11 @@ impl AgentInputFooter {
                     me.update_display_chips(&prompt_for_session_settings, ctx);
                     ctx.notify();
                 }
-                SessionSettingsChangedEvent::TerminalToolbarChipSelectionSetting { .. } => {
+                SessionSettingsChangedEvent::TerminalToolbarChipSelectionSetting { .. }
+                | SessionSettingsChangedEvent::CodingAgentFooterVisibleCount { .. }
+                | SessionSettingsChangedEvent::TerminalFooterVisibleCount { .. }
+                | SessionSettingsChangedEvent::CoordinatorFooterOrder { .. }
+                | SessionSettingsChangedEvent::CoordinatorFooterVisibleCount { .. } => {
                     ctx.notify();
                 }
                 _ => {}
@@ -1076,6 +1190,8 @@ impl AgentInputFooter {
             auto_continue_mouse_state: MouseStateHandle::default(),
             more_menu_mouse_state: MouseStateHandle::default(),
             is_more_menu_open: false,
+            footer_button_drag_states: RefCell::new(HashMap::new()),
+            footer_drag: None,
             plugin_operation_in_progress: false,
             plugin_chip_ready: false,
             context_window_button,
@@ -1955,26 +2071,259 @@ impl AgentInputFooter {
 
     /// One row at every width: a narrower pane shows fewer buttons and moves the rest under More.
     fn render_cli_mode_footer(&self, app: &AppContext) -> Box<dyn Element> {
+        let kind = self.cli_footer_kind(app);
         let widths = self
-            .coordinator_prompts(app)
+            .footer_entries(kind, app)
             .iter()
-            .map(|(label, _)| estimated_footer_button_width(label, true))
-            .chain(
-                self.configured_cli_footer_items(app)
-                    .iter()
-                    // The same items `render_cli_toolbar_item` skips, so widths line up with
-                    // the buttons actually drawn.
-                    .filter(|item| item.available_in().is_available_for_cli())
-                    .map(estimated_item_width),
-            )
+            // The same items `render_cli_toolbar_item` skips, so widths line up with the buttons
+            // actually drawn.
+            .filter(|entry| match entry {
+                FooterEntry::CoordinatorPrompt { .. } => true,
+                FooterEntry::Item(item) => item.available_in().is_available_for_cli(),
+            })
+            .map(FooterEntry::estimated_width)
             .collect::<Vec<_>>();
-        let visible_count = *SessionSettings::as_ref(app).coding_agent_footer_visible_count;
         render_footer_row_for_width(
-            visible_count,
+            self.footer_visible_count(kind, app),
             &widths,
             CLI_FOOTER_RESERVED_WIDTH,
             |max_chips| self.render_cli_mode_footer_row(max_chips, app),
         )
+    }
+
+    fn cli_footer_kind(&self, app: &AppContext) -> FooterKind {
+        if self.coordinator_prompts(app).is_empty() {
+            FooterKind::Agent
+        } else {
+            FooterKind::Coordinator
+        }
+    }
+
+    /// A footer's buttons, in the order the user arranged them.
+    fn footer_entries(&self, kind: FooterKind, app: &AppContext) -> Vec<FooterEntry> {
+        let items = |items: Vec<AgentToolbarItemKind>| items.into_iter().map(FooterEntry::Item);
+        match kind {
+            FooterKind::Agent => items(self.configured_cli_footer_items(app)).collect(),
+            FooterKind::Terminal => {
+                items(terminal_footer_items(SessionSettings::as_ref(app))).collect()
+            }
+            FooterKind::Coordinator => {
+                let entries = self
+                    .coordinator_prompts(app)
+                    .iter()
+                    .map(|&(label, text)| FooterEntry::CoordinatorPrompt { label, text })
+                    .chain(items(self.configured_cli_footer_items(app)))
+                    .collect::<Vec<_>>();
+                let keys = entries
+                    .iter()
+                    .map(FooterEntry::saved_key)
+                    .collect::<Vec<_>>();
+                saved_order_indices(
+                    &keys,
+                    &SessionSettings::as_ref(app).coordinator_footer_order,
+                )
+                .into_iter()
+                .map(|index| entries[index].clone())
+                .collect()
+            }
+        }
+    }
+
+    /// How many of a footer's buttons sit on the row when the pane is wide enough.
+    fn footer_visible_count(&self, kind: FooterKind, app: &AppContext) -> usize {
+        let settings = SessionSettings::as_ref(app);
+        match kind {
+            FooterKind::Agent => *settings.coding_agent_footer_visible_count,
+            FooterKind::Coordinator => settings
+                .coordinator_footer_visible_count
+                .unwrap_or(*settings.coding_agent_footer_visible_count),
+            FooterKind::Terminal => *settings.terminal_footer_visible_count,
+        }
+    }
+
+    /// The indices of the footer entries this session draws, with their elements.
+    fn drawn_footer_entries(
+        &self,
+        kind: FooterKind,
+        entries: &[FooterEntry],
+        app: &AppContext,
+    ) -> Vec<(usize, Box<dyn Element>)> {
+        let cli_session = (kind != FooterKind::Terminal).then(|| {
+            let terminal_model = self.terminal_model.lock();
+            let shared_status = terminal_model.shared_session_status().clone();
+            let is_transcript =
+                is_conversation_transcript_context(self.terminal_view_id, &terminal_model, app);
+            (shared_status, is_transcript)
+        });
+        entries
+            .iter()
+            .enumerate()
+            .filter_map(|(index, entry)| {
+                let element = match (entry, &cli_session) {
+                    (FooterEntry::CoordinatorPrompt { label, text }, _) => {
+                        Some(self.render_custom_insert_button(label, text, true, "Send", None, app))
+                    }
+                    (FooterEntry::Item(item), Some((shared_status, is_transcript))) => {
+                        self.render_cli_toolbar_item(item, shared_status, *is_transcript, app)
+                    }
+                    (FooterEntry::Item(item), None) => self.render_terminal_toolbar_item(item, app),
+                };
+                element.map(|element| (index, element))
+            })
+            .collect()
+    }
+
+    /// Makes a footer's buttons draggable, and marks where a dragged one would land. `shown` is how
+    /// many of them are on the row; the rest open from More.
+    fn draggable_footer_buttons(
+        &self,
+        kind: FooterKind,
+        entries: &[FooterEntry],
+        drawn: Vec<(usize, Box<dyn Element>)>,
+        shown: usize,
+        app: &AppContext,
+    ) -> Vec<Box<dyn Element>> {
+        let target = self.footer_drag.and_then(|drag| {
+            let from = drag.from;
+            drag.target.filter(|target| {
+                !matches!(target, FooterDrop::Row(slot) if *slot == from || *slot == from + 1)
+            })
+        });
+        let accent = Appearance::as_ref(app).tokens().accent;
+        drawn
+            .into_iter()
+            .enumerate()
+            .map(|(from, (entry_index, element))| {
+                let state = self
+                    .footer_button_drag_states
+                    .borrow_mut()
+                    .entry(format!("{:?}", entries[entry_index]))
+                    .or_default()
+                    .clone();
+                let draggable = Draggable::new(state, element)
+                    .on_drag_start(move |ctx, _, _| {
+                        ctx.dispatch_typed_action(
+                            AgentInputFooterAction::FooterButtonDragStarted { from },
+                        );
+                    })
+                    .on_drag(move |ctx, _, rect, _| {
+                        ctx.dispatch_typed_action(AgentInputFooterAction::FooterButtonDragged {
+                            shown,
+                            button: rect,
+                        });
+                    })
+                    .on_drop(move |ctx, _, rect, _| {
+                        ctx.dispatch_typed_action(AgentInputFooterAction::FooterButtonDropped {
+                            kind,
+                            from,
+                            shown,
+                            button: rect,
+                        });
+                    })
+                    .finish();
+                let button = SavePosition::new(
+                    draggable,
+                    &footer_button_position_id(self.terminal_view_id, from),
+                )
+                .finish();
+                let marker = match target {
+                    Some(FooterDrop::Row(slot)) if slot == from => Some(true),
+                    Some(FooterDrop::Row(slot)) if slot == from + 1 && slot == shown => Some(false),
+                    _ => None,
+                };
+                match marker {
+                    Some(before) => with_footer_drop_marker(button, before, accent),
+                    None => button,
+                }
+            })
+            .collect()
+    }
+
+    /// Whether a footer's More should show. It stays while a button is being dragged, so there's
+    /// somewhere to drop one even if everything is on the row.
+    fn shows_footer_more(&self, overflow: &[Box<dyn Element>]) -> bool {
+        !overflow.is_empty() || self.footer_drag.is_some()
+    }
+
+    /// Where the dragged button would land right now.
+    fn footer_drop_target_for(
+        &self,
+        button: RectF,
+        shown: usize,
+        ctx: &ViewContext<Self>,
+    ) -> FooterDrop {
+        let window_id = ctx.window_id();
+        let row = (0..shown)
+            .filter_map(|index| {
+                ctx.element_position_by_id_at_last_frame(
+                    window_id,
+                    footer_button_position_id(self.terminal_view_id, index),
+                )
+            })
+            .collect::<Vec<_>>();
+        let more_areas = footer_more_area_position_ids(self.terminal_view_id)
+            .into_iter()
+            .filter_map(|id| ctx.element_position_by_id_at_last_frame(window_id, id))
+            .collect::<Vec<_>>();
+        footer_drop_target(button.center(), &row, &more_areas)
+    }
+
+    /// Applies a drop and saves the new arrangement.
+    fn drop_footer_button(
+        &mut self,
+        kind: FooterKind,
+        from: usize,
+        shown: usize,
+        drop: FooterDrop,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let mut entries = self.footer_entries(kind, ctx);
+        let drawn = self
+            .drawn_footer_entries(kind, &entries, ctx)
+            .into_iter()
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        let visible_count = self.footer_visible_count(kind, ctx);
+        let Some(FooterMove {
+            to,
+            visible_count: new_visible_count,
+        }) = apply_footer_drop(from, drop, shown, visible_count, drawn.len())
+        else {
+            return;
+        };
+        if !move_saved_entry(&mut entries, &drawn, from, to) {
+            return;
+        }
+        // With nothing left under More, its menu shouldn't reopen by itself when something returns.
+        if new_visible_count >= drawn.len() {
+            self.is_more_menu_open = false;
+        }
+        if kind == FooterKind::Coordinator {
+            let order = entries
+                .iter()
+                .map(FooterEntry::saved_key)
+                .collect::<Vec<_>>();
+            SessionSettings::handle(ctx).update(ctx, |settings, ctx| {
+                report_if_error!(settings.coordinator_footer_order.set_value(order, ctx));
+                report_if_error!(settings
+                    .coordinator_footer_visible_count
+                    .set_value(Some(new_visible_count), ctx));
+            });
+            return;
+        }
+        let items = entries
+            .into_iter()
+            .filter_map(|entry| match entry {
+                FooterEntry::Item(item) => Some(item),
+                FooterEntry::CoordinatorPrompt { .. } => None,
+            })
+            .collect();
+        let mode = if kind == FooterKind::Terminal {
+            AgentToolbarEditorMode::Terminal
+        } else {
+            AgentToolbarEditorMode::CLIAgent
+        };
+        editor::save_footer_arrangement(mode, items, new_visible_count, ctx);
     }
 
     /// The coding-agent footer's buttons, in the order the user arranged them.
@@ -2005,7 +2354,7 @@ impl AgentInputFooter {
         // the lock before calling into helpers like `should_use_manual_mode`
         // and `render_cli_toolbar_item`, which may re-lock the same model and
         // would deadlock since the lock is non-reentrant.
-        let (background_color, shared_status, is_conversation_transcript_context) = {
+        let (background_color, shared_status) = {
             let terminal_model = self.terminal_model.lock();
             let background_color = if terminal_model.is_alt_screen_active() {
                 terminal_model
@@ -2016,16 +2365,8 @@ impl AgentInputFooter {
                 appearance.theme().surface_1().into_solid()
             };
             let shared_status = terminal_model.shared_session_status().clone();
-            let is_conversation_transcript_context =
-                is_conversation_transcript_context(self.terminal_view_id, &terminal_model, app);
-            (
-                background_color,
-                shared_status,
-                is_conversation_transcript_context,
-            )
+            (background_color, shared_status)
         };
-
-        let configured_items = self.configured_cli_footer_items(app);
 
         let mut left_buttons = Flex::row()
             .with_main_axis_size(MainAxisSize::Min)
@@ -2079,44 +2420,25 @@ impl AgentInputFooter {
         // the same eligibility predicate as the Command Palette and action handler.
         let auto_continue_availability =
             AutoContinueModel::availability(self.terminal_view_id, shared_status.is_viewer(), app);
-        // Buttons appear in the order the user arranged them in the editor, so the first few
-        // here are exactly the ones the editor shows above its More line.
-        let configured_buttons = configured_items
-            .iter()
-            .filter_map(|item| {
-                self.render_cli_toolbar_item(
-                    item,
-                    &shared_status,
-                    is_conversation_transcript_context,
-                    app,
-                )
-            })
-            .collect::<Vec<_>>();
-
         if let Some(status) = self.render_cli_status_label(app) {
             left_buttons.add_child(status);
         }
-        // A coordinator tab leads with prompts for coordinating; its session buttons move under More.
-        let coordinator_prompts = self
-            .coordinator_prompts(app)
-            .iter()
-            .map(|(label, text)| {
-                self.render_custom_insert_button(label, text, true, "Send", None, app)
-            })
-            .collect::<Vec<_>>();
+        // Buttons appear in the order the user arranged them, by dragging them or in the editor.
+        // A coordinator tab leads with prompts for coordinating, until it's arranged otherwise.
+        let kind = self.cli_footer_kind(app);
+        let entries = self.footer_entries(kind, app);
+        let drawn = self.drawn_footer_entries(kind, &entries, app);
         // The first few stay on the row. Everything else opens from More, so the footer never
         // grows a second line of buttons.
-        let mut chips = coordinator_prompts
-            .into_iter()
-            .chain(configured_buttons)
-            .collect::<Vec<_>>();
-        let mut overflow = chips.split_off(chips.len().min(max_chips));
+        let shown = drawn.len().min(max_chips);
+        let mut chips = self.draggable_footer_buttons(kind, &entries, drawn, shown, app);
+        let mut overflow = chips.split_off(shown);
         // Plugin setup is a one-time chore, not something to look at all day.
         overflow.extend(plugin_action);
         for chip in chips {
             left_buttons.add_child(chip);
         }
-        if !overflow.is_empty() {
+        if self.shows_footer_more(&overflow) {
             left_buttons.add_child(self.render_footer_more_button(overflow, app));
         }
 
@@ -2202,6 +2524,11 @@ impl AgentInputFooter {
         let tokens = *appearance.tokens();
         let font_family = appearance.ui_font_family();
         let is_open = self.is_more_menu_open;
+        let is_drop_target = self
+            .footer_drag
+            .is_some_and(|drag| drag.target == Some(FooterDrop::More));
+        let [more_position_id, more_menu_position_id] =
+            footer_more_area_position_ids(self.terminal_view_id);
         let button = Hoverable::new(self.more_menu_mouse_state.clone(), move |state| {
             Container::new(
                 Text::new_inline("More", font_family, 12.)
@@ -2210,7 +2537,9 @@ impl AgentInputFooter {
             )
             .with_horizontal_padding(10.)
             .with_vertical_padding(5.)
-            .with_background(Fill::Solid(if state.is_hovered() || is_open {
+            .with_background(Fill::Solid(if is_drop_target {
+                tokens.accent_soft
+            } else if state.is_hovered() || is_open {
                 tokens.surface_raised
             } else {
                 tokens.surface_field
@@ -2224,7 +2553,8 @@ impl AgentInputFooter {
         })
         .finish();
         let button = SavePosition::new(button, FOOTER_MORE_BUTTON_POSITION_ID).finish();
-        if !is_open {
+        let button = SavePosition::new(button, &more_position_id).finish();
+        if !is_open || overflow.is_empty() {
             return button;
         }
 
@@ -2235,13 +2565,17 @@ impl AgentInputFooter {
             .with_children(overflow)
             .finish();
         let popover = Dismiss::new(
-            Container::new(column)
-                .with_uniform_padding(8.)
-                .with_background(Fill::Solid(tokens.surface_overlay))
-                .with_corner_radius(corners_lg())
-                .with_border(Border::all(1.).with_border_color(tokens.hairline))
-                .with_drop_shadow(tokens.overlay_shadow())
-                .finish(),
+            SavePosition::new(
+                Container::new(column)
+                    .with_uniform_padding(8.)
+                    .with_background(Fill::Solid(tokens.surface_overlay))
+                    .with_corner_radius(corners_lg())
+                    .with_border(Border::all(1.).with_border_color(tokens.hairline))
+                    .with_drop_shadow(tokens.overlay_shadow())
+                    .finish(),
+                &more_menu_position_id,
+            )
+            .finish(),
         )
         .on_dismiss(|ctx, _| {
             ctx.dispatch_typed_action(AgentInputFooterAction::ToggleMoreMenu);
@@ -2266,14 +2600,13 @@ impl AgentInputFooter {
     /// The plain-terminal footer keeps to one row like the agent footer: a narrower pane shows
     /// fewer buttons and the rest open from More.
     pub fn render_terminal_mode_footer(&self, app: &AppContext) -> Box<dyn Element> {
-        let session_settings = SessionSettings::as_ref(app);
-        let widths = terminal_footer_items(session_settings)
+        let widths = terminal_footer_items(SessionSettings::as_ref(app))
             .iter()
             .filter(|item| item.is_available_for_terminal())
             .map(estimated_item_width)
             .collect::<Vec<_>>();
         let row = render_footer_row_for_width(
-            *session_settings.terminal_footer_visible_count,
+            self.footer_visible_count(FooterKind::Terminal, app),
             &widths,
             TERMINAL_FOOTER_RESERVED_WIDTH,
             |max_chips| self.render_terminal_mode_footer_row(max_chips, app),
@@ -2304,15 +2637,16 @@ impl AgentInputFooter {
             buttons.add_child(ChildView::new(&self.quick_insert_edit_button).finish());
         }
 
-        let mut chips = terminal_footer_items(SessionSettings::as_ref(app))
-            .iter()
-            .filter_map(|item| self.render_terminal_toolbar_item(item, app))
-            .collect::<Vec<_>>();
-        let overflow = chips.split_off(chips.len().min(max_chips));
+        let entries = self.footer_entries(FooterKind::Terminal, app);
+        let drawn = self.drawn_footer_entries(FooterKind::Terminal, &entries, app);
+        let shown = drawn.len().min(max_chips);
+        let mut chips =
+            self.draggable_footer_buttons(FooterKind::Terminal, &entries, drawn, shown, app);
+        let overflow = chips.split_off(shown);
         for chip in chips {
             buttons.add_child(chip);
         }
-        if !overflow.is_empty() {
+        if self.shows_footer_more(&overflow) {
             buttons.add_child(self.render_footer_more_button(overflow, app));
         }
         buttons.finish()
@@ -3222,6 +3556,19 @@ pub enum AgentInputFooterAction {
     /// handoff or enter `&` compose mode based on the current input state.
     HandoffChipClicked,
     ToggleMoreMenu,
+    FooterButtonDragStarted {
+        from: usize,
+    },
+    FooterButtonDragged {
+        shown: usize,
+        button: RectF,
+    },
+    FooterButtonDropped {
+        kind: FooterKind,
+        from: usize,
+        shown: usize,
+        button: RectF,
+    },
     ShowContextMenu {
         position: Vector2F,
     },
@@ -3563,6 +3910,33 @@ impl TypedActionView for AgentInputFooter {
             }
             AgentInputFooterAction::ToggleMoreMenu => {
                 self.is_more_menu_open = !self.is_more_menu_open;
+                ctx.notify();
+            }
+            AgentInputFooterAction::FooterButtonDragStarted { from } => {
+                self.footer_drag = Some(FooterDrag {
+                    from: *from,
+                    target: None,
+                });
+                ctx.notify();
+            }
+            AgentInputFooterAction::FooterButtonDragged { shown, button } => {
+                let target = self.footer_drop_target_for(*button, *shown, ctx);
+                if let Some(drag) = &mut self.footer_drag {
+                    if drag.target != Some(target) {
+                        drag.target = Some(target);
+                        ctx.notify();
+                    }
+                }
+            }
+            AgentInputFooterAction::FooterButtonDropped {
+                kind,
+                from,
+                shown,
+                button,
+            } => {
+                let drop = self.footer_drop_target_for(*button, *shown, ctx);
+                self.footer_drag = None;
+                self.drop_footer_button(*kind, *from, *shown, drop, ctx);
                 ctx.notify();
             }
             AgentInputFooterAction::ShowContextMenu { position } => {

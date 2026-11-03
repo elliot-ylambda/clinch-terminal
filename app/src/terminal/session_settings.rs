@@ -1254,6 +1254,26 @@ define_settings_group!(SessionSettings, settings: [
         toml_path: "agents.third_party.coding_agent_footer_visible_count",
         description: "How many coding-agent footer buttons show before the rest move under More.",
     },
+    // The coordinator's footer also has its own prompts, so it arranges its buttons separately.
+    coordinator_footer_order: CoordinatorFooterOrder {
+        type: Vec<String>,
+        default: Vec::new(),
+        supported_platforms: SupportedPlatforms::ALL,
+        sync_to_cloud: SyncToCloud::Globally(RespectUserSyncSetting::Yes),
+        private: false,
+        toml_path: "agents.third_party.coordinator_footer_order",
+        description: "The order of the coordinator's footer buttons, once they've been dragged.",
+    },
+    coordinator_footer_visible_count: CoordinatorFooterVisibleCount {
+        type: Option<usize>,
+        default: None,
+        supported_platforms: SupportedPlatforms::ALL,
+        sync_to_cloud: SyncToCloud::Globally(RespectUserSyncSetting::Yes),
+        private: false,
+        toml_path: "agents.third_party.coordinator_footer_visible_count",
+        description: "How many coordinator footer buttons show before the rest move under More. \
+            Follows the coding-agent footer until set.",
+    },
     terminal_footer_visible_count: TerminalFooterVisibleCount {
         type: usize,
         default: DEFAULT_FOOTER_VISIBLE_COUNT,

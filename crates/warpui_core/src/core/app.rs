@@ -925,6 +925,11 @@ impl AppContext {
             .show_native_platform_modal(id, dialog);
     }
 
+    /// Whether a native platform modal is still waiting for its answer.
+    pub fn has_open_native_platform_modal(&self) -> bool {
+        !self.platform_modal_data_map.is_empty()
+    }
+
     /// When a native platform modal which was requested by an app/view context returns a response,
     /// this method handles dispatching the right handler for the button clicked. The response is
     /// encoded as a 0-based index into the list of buttons on the modal, and the callback will be

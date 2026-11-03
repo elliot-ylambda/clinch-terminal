@@ -1334,20 +1334,7 @@ fn test_manual_update_check_feedback_only_appears_in_initiating_workspace() {
 }
 
 #[test]
-fn test_clinch_install_progress_popup_is_visible() {
-    App::test((), |mut app| async move {
-        initialize_app(&mut app);
-        let workspace = mock_workspace(&mut app);
-
-        workspace.update(&mut app, |workspace, ctx| {
-            workspace.show_clinch_install_progress(ctx);
-            assert!(workspace.toast_stack.as_ref(ctx).has_toasts());
-        });
-    });
-}
-
-#[test]
-fn test_clinch_update_header_pill_stays_visible_during_install() {
+fn test_clinch_update_header_pill_just_says_update_at_every_stage() {
     let new_version = channel_versions::VersionInfo::new("v2".to_owned());
     assert_eq!(
         clinch_update_header_pill(&AutoupdateStage::UpdateAvailable {
@@ -1358,44 +1345,19 @@ fn test_clinch_update_header_pill_stays_visible_during_install() {
     );
     assert_eq!(
         clinch_update_header_pill(&AutoupdateStage::DownloadingUpdate),
-        Some((UPDATE_DOWNLOADING_TEXT, false))
+        Some((CLINCH_UPDATE_TEXT, false))
     );
     assert_eq!(
         clinch_update_header_pill(&AutoupdateStage::Updating {
             new_version,
             update_id: "update-id".to_owned(),
         }),
-        Some((UPDATE_INSTALLING_TEXT, false))
+        Some((CLINCH_UPDATE_TEXT, false))
     );
     assert_eq!(
         clinch_update_header_pill(&AutoupdateStage::NoUpdateAvailable),
         None
     );
-}
-
-#[test]
-fn test_clinch_update_header_rechecks_before_installing_a_discovered_release() {
-    let new_version = channel_versions::VersionInfo::new("v2".to_owned());
-    for stage in [
-        AutoupdateStage::UpdateAvailable {
-            new_version: new_version.clone(),
-            update_id: "available".to_owned(),
-        },
-        AutoupdateStage::UpdateReady {
-            new_version: new_version.clone(),
-            update_id: "downloaded".to_owned(),
-        },
-    ] {
-        assert!(matches!(
-            clinch_update_header_action(&stage),
-            WorkspaceAction::CheckForUpdate
-        ));
-    }
-
-    assert!(matches!(
-        clinch_update_header_action(&AutoupdateStage::UpdatedPendingRestart { new_version }),
-        WorkspaceAction::ApplyUpdate
-    ));
 }
 
 #[test]
@@ -6995,6 +6957,130 @@ fn test_pin_unpin_ungrouped_tab_moves_to_and_from_boundary() {
             let order: Vec<_> = workspace.tabs.iter().map(|t| t.pane_group.id()).collect();
             assert_eq!(order, vec![id2, id0, id1]);
             assert!(workspace.tabs.iter().all(|t| !t.pinned));
+        });
+    });
+}
+
+/// A workspace with a pinned coordinator first and one ordinary tab after it.
+fn pinned_coordinator_first(workspace: &mut Workspace, ctx: &mut ViewContext<Workspace>) {
+    workspace.add_terminal_tab(false, ctx);
+    workspace.tabs[1].coordinator = true;
+    workspace.tabs[1].pinned = true;
+    workspace.move_tab_to_index(1, 0, ctx);
+    assert!(workspace.tabs[0].coordinator);
+}
+
+#[test]
+fn new_sections_land_below_a_pinned_coordinator() {
+    let _pinned_guard = FeatureFlag::PinnedTabs.override_enabled(true);
+    let _grouped_tabs_guard = FeatureFlag::GroupedTabs.override_enabled(true);
+
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+        workspace.update(&mut app, |workspace, ctx| {
+            pinned_coordinator_first(workspace, ctx);
+
+            workspace.create_new_tab_group(ctx);
+            assert!(workspace.tabs[0].coordinator);
+            assert!(workspace.tabs[0].group_id.is_none());
+            assert!(workspace.tabs[1].group_id.is_some());
+
+            workspace.new_tab_group_from_tab(2, ctx);
+            assert!(workspace.tabs[0].coordinator);
+            assert!(workspace.tabs[0].group_id.is_none());
+        });
+    });
+}
+
+#[test]
+fn an_unpinned_coordinator_lets_new_sections_land_above_it_and_can_be_pinned_again() {
+    let _pinned_guard = FeatureFlag::PinnedTabs.override_enabled(true);
+    let _grouped_tabs_guard = FeatureFlag::GroupedTabs.override_enabled(true);
+
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+        workspace.update(&mut app, |workspace, ctx| {
+            pinned_coordinator_first(workspace, ctx);
+
+            workspace.handle_action(&WorkspaceAction::UnpinTab(0), ctx);
+            assert!(!workspace.tabs[0].pinned);
+            assert!(workspace.tabs[0].coordinator);
+
+            workspace.create_new_tab_group(ctx);
+            assert!(!workspace.tabs[0].coordinator);
+            assert!(workspace.tabs[1].coordinator);
+
+            workspace.handle_action(&WorkspaceAction::PinTab(1), ctx);
+            assert!(workspace.tabs[0].coordinator);
+            assert!(workspace.tabs[0].pinned);
+        });
+    });
+}
+
+#[test]
+fn the_coordinator_tab_menu_offers_unpin() {
+    let _pinned_guard = FeatureFlag::PinnedTabs.override_enabled(true);
+
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+        workspace.update(&mut app, |workspace, ctx| {
+            pinned_coordinator_first(workspace, ctx);
+            let labels = workspace.tabs[0]
+                .pin_menu_items(0)
+                .iter()
+                .filter_map(|item| match item {
+                    MenuItem::Item(fields) => Some(fields.label().to_owned()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(labels, ["Unpin tab"]);
+        });
+    });
+}
+
+#[test]
+fn a_restored_pinned_coordinator_goes_back_to_the_top_and_an_unpinned_one_stays_put() {
+    let _pinned_guard = FeatureFlag::PinnedTabs.override_enabled(true);
+    let _grouped_tabs_guard = FeatureFlag::GroupedTabs.override_enabled(true);
+
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.add_terminal_tab(false, ctx);
+            workspace.add_terminal_tab(false, ctx);
+            let group = TabGroup::new();
+            let group_id = group.id;
+            workspace.tab_groups.insert(group_id, group);
+            workspace.tabs[0].group_id = Some(group_id);
+            workspace.tabs[2].coordinator = true;
+
+            // Saved below a section, and unpinned on purpose: it stays there.
+            workspace.lead_with_pinned_coordinator(ctx);
+            assert!(workspace.tabs[2].coordinator);
+
+            // A pinned one, saved by a build whose pins didn't work, moves back up.
+            workspace.tabs[2].pinned = true;
+            workspace.tabs[2].group_id = Some(group_id);
+            workspace.lead_with_pinned_coordinator(ctx);
+            assert!(workspace.tabs[0].coordinator);
+            assert!(workspace.tabs[0].group_id.is_none());
+            assert_eq!(workspace.tabs[1].group_id, Some(group_id));
+
+            // A section the coordinator was alone in doesn't stay behind empty.
+            workspace.tabs[0].pinned = false;
+            workspace.move_tab_to_index(0, 3, ctx);
+            let lone_group = TabGroup::new();
+            let lone_group_id = lone_group.id;
+            workspace.tab_groups.insert(lone_group_id, lone_group);
+            workspace.tabs[2].pinned = true;
+            workspace.tabs[2].group_id = Some(lone_group_id);
+            workspace.lead_with_pinned_coordinator(ctx);
+            assert!(workspace.tabs[0].coordinator);
+            assert!(!workspace.tab_groups.contains_key(&lone_group_id));
         });
     });
 }

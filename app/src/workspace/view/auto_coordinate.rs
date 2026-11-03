@@ -615,6 +615,7 @@ pub const AUTO_COORDINATE_PILL_POSITION_ID: &str = "vertical_tabs:auto_coordinat
 #[derive(Default)]
 pub(crate) struct AutoCoordinateUiState {
     pill: MouseStateHandle,
+    switch: MouseStateHandle,
     master_switch: SwitchStateHandle,
     tactic_switches: [SwitchStateHandle; Tactic::ALL.len()],
     run_now: MouseStateHandle,
@@ -626,6 +627,7 @@ pub(crate) struct AutoPillProps {
     pub(crate) enabled: bool,
     pub(crate) settings_open: bool,
     pill: MouseStateHandle,
+    switch: MouseStateHandle,
 }
 
 impl AutoCoordinateUiState {
@@ -634,6 +636,7 @@ impl AutoCoordinateUiState {
             enabled,
             settings_open,
             pill: self.pill.clone(),
+            switch: self.switch.clone(),
         }
     }
 }
@@ -654,30 +657,24 @@ pub(crate) fn render_auto_controls(
     let pill = Hoverable::new(props.pill, move |state| {
         let hovered = state.is_hovered();
         let active = hovered || settings_open;
-        let (dot, text, background) = match (enabled, active) {
-            (true, false) => (tokens.accent, tokens.text_1, tokens.accent_soft),
-            (true, true) => (tokens.accent, tokens.text_1, tokens.surface_hover),
-            (false, true) => (tokens.text_3, tokens.text_2, tokens.surface_hover),
-            (false, false) => (tokens.text_3, tokens.text_3, ColorU::transparent_black()),
+        let (text, background) = if active {
+            (tokens.text_1, tokens.surface_hover)
+        } else {
+            (tokens.text_2, ColorU::transparent_black())
         };
         let content = Flex::row()
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_spacing(5.)
-            .with_child(
-                ConstrainedBox::new(
-                    Container::new(Rect::new().finish())
-                        .with_background(Fill::Solid(dot))
-                        .with_corner_radius(corners_pill())
-                        .finish(),
-                )
-                .with_width(6.)
-                .with_height(6.)
-                .finish(),
-            )
+            .with_spacing(3.)
             .with_child(
                 Text::new_inline("Auto".to_owned(), font_family, 11.)
                     .with_style(Properties::default().weight(Weight::Medium))
                     .with_color(text)
+                    .finish(),
+            )
+            .with_child(
+                ConstrainedBox::new(Icon::ChevronDown.to_warpui_icon(Fill::Solid(text)).finish())
+                    .with_width(10.)
+                    .with_height(10.)
                     .finish(),
             )
             .finish();
@@ -694,14 +691,7 @@ pub(crate) fn render_auto_controls(
         let mut stack = Stack::new().with_child(pill);
         stack.add_positioned_overlay_child(
             ui_builder
-                .tool_tip(
-                    if enabled {
-                        "Auto-coordinate is on. Click for its settings."
-                    } else {
-                        "Auto-coordinate is off. Click to set it up."
-                    }
-                    .to_owned(),
-                )
+                .tool_tip("Choose what auto-coordinate does".to_owned())
                 .build()
                 .finish(),
             OffsetPositioning::offset_from_parent(
@@ -721,7 +711,24 @@ pub(crate) fn render_auto_controls(
     })
     .finish();
 
-    SavePosition::new(pill, AUTO_COORDINATE_PILL_POSITION_ID).finish()
+    // One switch, and it means auto-coordinate: the same one as in the settings it sits beside. The
+    // coordinator tab itself is turned off from its right-click menu.
+    Flex::row()
+        .with_cross_axis_alignment(CrossAxisAlignment::Center)
+        .with_spacing(6.)
+        .with_child(SavePosition::new(pill, AUTO_COORDINATE_PILL_POSITION_ID).finish())
+        .with_child(super::vertical_tabs::render_row_switch(
+            enabled,
+            if enabled {
+                "Turn auto-coordinate off"
+            } else {
+                "Turn auto-coordinate on"
+            },
+            WorkspaceAction::SetAutoCoordinate(!enabled),
+            props.switch,
+            appearance,
+        ))
+        .finish()
 }
 
 fn render_switch_row(

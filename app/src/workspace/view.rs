@@ -25,6 +25,7 @@ mod tab_grouping;
 #[cfg(test)]
 #[path = "view_tests.rs"]
 pub(crate) mod tests;
+mod update_popup;
 pub(crate) mod vertical_tabs;
 #[cfg(target_family = "wasm")]
 mod wasm_view;
@@ -111,7 +112,7 @@ use warpui::elements::{
 use warpui::fonts::{FamilyId, Properties, Weight};
 use warpui::geometry::vector::{vec2f, Vector2F};
 use warpui::keymap::Context;
-use warpui::modals::{AlertDialogWithCallbacks, AppModalCallback, ModalButton};
+use warpui::modals::{AlertDialogWithCallbacks, AppModalCallback};
 use warpui::notification::{NotificationSendError, RequestPermissionsOutcome, UserNotification};
 use warpui::platform::{
     Cursor, FilePickerConfiguration, FullscreenState, SystemTheme, TerminationMode,
@@ -606,11 +607,6 @@ const PILL_FONT_SIZE: f32 = 12.;
 const REMOTE_CONTROL_BUTTON_FONT_SIZE: f32 = 11.;
 const UPDATE_AVAILABLE_TEXT: &str = "Update available";
 const CLINCH_UPDATE_TEXT: &str = "Update";
-const UPDATE_DOWNLOADING_TEXT: &str = "Downloading…";
-const UPDATE_INSTALLING_TEXT: &str = "Installing…";
-const CLINCH_INSTALL_PROGRESS_TOAST_ID: &str = "clinch_update_install_progress";
-const CLINCH_INSTALL_PROGRESS_MESSAGE: &str =
-    "Clinch is installing the update… It will close and reopen automatically.";
 
 const TAB_BAR_OVERFLOW_MENU_WIDTH: f32 = 300.;
 
@@ -631,45 +627,22 @@ fn manual_update_check_found_update(result: &Result<UpdateReady>) -> bool {
     )
 }
 
+/// Whether Clinch's header pill shows, and whether it can be clicked. It always just says Update:
+/// the pop-up is where everything else about an update appears.
 fn clinch_update_header_pill(stage: &AutoupdateStage) -> Option<(&'static str, bool)> {
     match stage {
-        AutoupdateStage::UpdateAvailable { .. }
-        | AutoupdateStage::UpdateReady { .. }
-        | AutoupdateStage::UpdatedPendingRestart { .. } => Some((CLINCH_UPDATE_TEXT, true)),
-        AutoupdateStage::DownloadingUpdate => Some((UPDATE_DOWNLOADING_TEXT, false)),
-        AutoupdateStage::Updating { .. } => Some((UPDATE_INSTALLING_TEXT, false)),
+        AutoupdateStage::UpdateAvailable { .. } | AutoupdateStage::UpdateReady { .. } => {
+            Some((CLINCH_UPDATE_TEXT, true))
+        }
+        // The pop-up is already showing the progress, in every window.
+        AutoupdateStage::DownloadingUpdate
+        | AutoupdateStage::Updating { .. }
+        | AutoupdateStage::UpdatedPendingRestart { .. } => Some((CLINCH_UPDATE_TEXT, false)),
         AutoupdateStage::NoUpdateAvailable
         | AutoupdateStage::CheckingForUpdate
         | AutoupdateStage::UnableToCheckForUpdate
         | AutoupdateStage::UnableToUpdateToNewVersion { .. }
         | AutoupdateStage::UnableToLaunchNewVersion { .. } => None,
-    }
-}
-
-/// What updating does to the sessions running right now, for the install dialog.
-fn running_sessions_update_note(ctx: &AppContext) -> String {
-    let count = crate::terminal::cli_agent_sessions::restore::mid_turn_panes(ctx).len();
-    let continues = *ClinchSettings::as_ref(ctx).continue_sessions_after_restart;
-    match (count, continues) {
-        (0, _) => String::new(),
-        (1, true) => " 1 running session will reopen and continue.".to_owned(),
-        (count, true) => format!(" {count} running sessions will reopen and continue."),
-        (1, false) => " 1 running session will stop and reopen.".to_owned(),
-        (count, false) => format!(" {count} running sessions will stop and reopen."),
-    }
-}
-
-/// What clicking Clinch's header pill does. The pill may have been populated by an earlier check
-/// before newer releases were published, so refresh the signed feed before using it: one click
-/// always targets the newest available Clinch release.
-fn clinch_update_header_action(stage: &AutoupdateStage) -> WorkspaceAction {
-    if matches!(
-        stage,
-        AutoupdateStage::UpdateAvailable { .. } | AutoupdateStage::UpdateReady { .. }
-    ) {
-        WorkspaceAction::CheckForUpdate
-    } else {
-        WorkspaceAction::ApplyUpdate
     }
 }
 
@@ -1268,6 +1241,10 @@ pub struct Workspace {
     autoupdate_unable_to_update_banner_dismissed: bool,
     autoupdate_unable_to_launch_new_version: bool,
     manual_update_check_pending: bool,
+    /// Whether this window asked for the update pop-up. Progress and failures of an update the
+    /// user agreed to show regardless.
+    clinch_update_popup_open: bool,
+    clinch_update_popup_states: update_popup::UpdatePopupMouseStates,
     reauth_banner_dismissed: bool,
     settings_file_error: Option<crate::settings::SettingsFileError>,
     settings_error_banner_dismissed: bool,
@@ -3729,15 +3706,13 @@ impl Workspace {
         ctx.observe(&tips_completed, Workspace::on_tips_model_changed);
 
         let autoupdate_handle = AutoupdateState::handle(ctx);
+        // The update pop-up follows every stage and every step of the download.
+        ctx.observe(&autoupdate_handle, |_, _, ctx| ctx.notify());
         ctx.subscribe_to_model(&autoupdate_handle, |view, _handle, evt, ctx| match evt {
             AutoupdateStateEvent::UpdateAvailable => ctx.notify(),
             AutoupdateStateEvent::InstallReady => {
-                // Refresh the progress pop-up when the verified download moves into the actual
-                // installation phase. Only the active window needs to show it; every workspace
-                // observes this singleton event and may attempt the idempotent relaunch below.
-                if ctx.windows().active_window() == Some(ctx.window_id()) {
-                    view.show_clinch_install_progress(ctx);
-                }
+                // Every workspace observes this singleton event and may attempt this idempotent
+                // relaunch.
                 autoupdate::initiate_relaunch_for_update(ctx);
             }
             AutoupdateStateEvent::CheckComplete {
@@ -3747,7 +3722,9 @@ impl Workspace {
                 view.manual_update_check_pending = false;
                 if manual_update_check_found_update(result) {
                     view.apply_update(ctx);
-                } else {
+                } else if !(view.clinch_update_popup_open && result.is_err()) {
+                    // A failed check stays in the pop-up, which offers to try again.
+                    view.clinch_update_popup_open = false;
                     let (message, flavor) = manual_update_check_feedback(result);
                     view.toast_stack.update(ctx, |toast_stack, ctx| {
                         toast_stack.add_ephemeral_toast(
@@ -4081,6 +4058,8 @@ impl Workspace {
             autoupdate_unable_to_update_banner_dismissed: false,
             autoupdate_unable_to_launch_new_version: false,
             manual_update_check_pending: false,
+            clinch_update_popup_open: false,
+            clinch_update_popup_states: Default::default(),
             reauth_banner_dismissed: false,
             settings_file_error,
             settings_error_banner_dismissed: false,
@@ -4851,7 +4830,6 @@ impl Workspace {
                         }
                         if saved_tab.coordinator {
                             self.tabs[tab_index].coordinator = true;
-                            self.tabs[tab_index].pinned = true;
                             self.tabs[tab_index].auto_coordinate = saved_tab.auto_coordinate;
                             self.prepare_restored_coordinator(tab_index, ctx);
                         }
@@ -4881,6 +4859,7 @@ impl Workspace {
                     .get(active_tab_index)
                     .map(|tab| tab.pane_group.id());
                 self.restore_lineage_preorder(ctx);
+                self.lead_with_pinned_coordinator(ctx);
                 let active_tab_index = restored_active_id
                     .and_then(|id| self.tabs.iter().position(|tab| tab.pane_group.id() == id))
                     .unwrap_or(active_tab_index);
@@ -16736,10 +16715,21 @@ impl Workspace {
     }
 
     fn manual_check_for_update(&mut self, ctx: &mut ViewContext<Self>) {
+        self.clinch_update_popup_open = ChannelState::uses_clinch_updater();
+        ctx.notify();
+        // The pop-up is already showing an install that's under way.
+        if autoupdate::get_update_state(ctx).is_installing() {
+            return;
+        }
         self.manual_update_check_pending = true;
         AutoupdateState::handle(ctx).update(ctx, |autoupdate_state, ctx| {
             autoupdate_state.manually_check_for_update(ctx);
         });
+    }
+
+    #[cfg(feature = "integration_tests")]
+    pub fn is_clinch_update_popup_open(&self) -> bool {
+        self.clinch_update_popup_open
     }
 
     pub fn is_theme_creator_modal_open(&self) -> bool {
@@ -20303,76 +20293,13 @@ impl Workspace {
     }
 
     fn apply_update(&mut self, ctx: &mut ViewContext<Self>) {
-        if let Some(prompt) = autoupdate::clinch_update_prompt(ctx) {
-            let information = format!(
-                "Clinch will update from {} to {}.{}\n\n{}\n\nRelease: {}",
-                prompt.current_version,
-                prompt.new_version,
-                running_sessions_update_note(ctx),
-                prompt.release_notes.trim(),
-                prompt.release_url
-            );
-            #[cfg(feature = "integration_tests")]
-            {
-                let workspace = ctx.handle();
-                let dialog = AlertDialogWithCallbacks::for_app(
-                    format!("Install Clinch {}?", prompt.new_version),
-                    information.clone(),
-                    vec![
-                        ModalButton::for_app("Download and Install", move |ctx| {
-                            if let Some(workspace) = workspace.upgrade(ctx) {
-                                workspace.update(ctx, |workspace, ctx| {
-                                    workspace.start_clinch_update(ctx);
-                                });
-                            }
-                        }),
-                        ModalButton::for_app("Later", |_| {}),
-                    ],
-                    |_| {},
-                );
-                self.show_native_modal(dialog, ctx);
-            }
-            #[cfg(not(feature = "integration_tests"))]
-            let dialog = AlertDialogWithCallbacks::for_view(
-                format!("Install Clinch {}?", prompt.new_version),
-                information,
-                vec![
-                    ModalButton::for_view(
-                        "Download and Install",
-                        |workspace: &mut Workspace, ctx| {
-                            workspace.start_clinch_update(ctx);
-                        },
-                    ),
-                    ModalButton::for_view("Later", |_, _| {}),
-                ],
-                |_, _| {},
-            );
-            #[cfg(not(feature = "integration_tests"))]
-            ctx.show_native_platform_modal(dialog);
-            self.close_tab_bar_overflow_menu(ctx);
-            return;
-        }
-        if let Ok(autoupdate::ReadyForRelaunch::Yes) = autoupdate::apply_update(self, ctx) {
+        if autoupdate::has_clinch_update_to_offer(ctx) {
+            self.clinch_update_popup_open = true;
+            ctx.notify();
+        } else if let Ok(autoupdate::ReadyForRelaunch::Yes) = autoupdate::apply_update(self, ctx) {
             autoupdate::initiate_relaunch_for_update(ctx);
         }
         self.close_tab_bar_overflow_menu(ctx);
-    }
-
-    fn start_clinch_update(&mut self, ctx: &mut ViewContext<Self>) {
-        match autoupdate::approve_clinch_update(ctx) {
-            Ok(()) => self.show_clinch_install_progress(ctx),
-            Err(error) => log::error!("Could not start Clinch update: {error:#}"),
-        }
-    }
-
-    fn show_clinch_install_progress(&mut self, ctx: &mut ViewContext<Self>) {
-        self.toast_stack.update(ctx, |toast_stack, ctx| {
-            toast_stack.add_ephemeral_toast(
-                DismissibleToast::default(CLINCH_INSTALL_PROGRESS_MESSAGE.to_owned())
-                    .with_object_id(CLINCH_INSTALL_PROGRESS_TOAST_ID.to_owned()),
-                ctx,
-            );
-        });
     }
 
     fn download_new_version(&mut self, ctx: &mut ViewContext<Self>) {
@@ -24000,7 +23927,11 @@ impl Workspace {
 
         let autoupdate_stage = autoupdate::get_update_state(app);
         let clinch_pill = if ChannelState::uses_clinch_updater() {
-            clinch_update_header_pill(&autoupdate_stage)
+            // A check started from the pill keeps the pill under the pop-up it opened.
+            clinch_update_header_pill(&autoupdate_stage).or_else(|| {
+                self.clinch_update_popup_open
+                    .then_some((CLINCH_UPDATE_TEXT, false))
+            })
         } else {
             None
         };
@@ -24022,10 +23953,9 @@ impl Workspace {
         });
         if let Some((pill_text, is_actionable)) = update_pill {
             let (pill_width, click_action) = if clinch_pill.is_some() {
-                (
-                    CLINCH_UPDATE_PILL_WIDTH,
-                    clinch_update_header_action(&autoupdate_stage),
-                )
+                // Always check first: the pill may have been populated before newer releases were
+                // published, and one click should offer the newest one.
+                (CLINCH_UPDATE_PILL_WIDTH, WorkspaceAction::CheckForUpdate)
             } else {
                 (
                     TAB_BAR_PILL_WIDTH,
@@ -26510,6 +26440,22 @@ impl TypedActionView for Workspace {
             ToggleErrorUnderlining => self.toggle_error_underlining(ctx),
             ToggleSyntaxHighlighting => self.toggle_syntax_highlighting(ctx),
             CheckForUpdate => self.manual_check_for_update(ctx),
+            StartClinchUpdate => {
+                if let Err(error) = autoupdate::start_clinch_update(ctx) {
+                    log::error!("Could not start Clinch update: {error:#}");
+                }
+            }
+            CancelClinchDownload => {
+                self.clinch_update_popup_open = false;
+                autoupdate::cancel_clinch_download(ctx);
+            }
+            CloseClinchUpdatePopup => {
+                self.clinch_update_popup_open = false;
+                // A check still running shouldn't bring the pop-up back when it finishes.
+                self.manual_update_check_pending = false;
+                autoupdate::dismiss_clinch_update_failure(ctx);
+                ctx.notify();
+            }
             SetA11yVerbosityLevel(verbosity) => self.set_a11y_verbosity(*verbosity, ctx),
             ToggleNotifications => self.toggle_notifications(ctx),
             ToggleTabColor { color, tab_index } => self.toggle_tab_color(*tab_index, *color, ctx),
@@ -28846,6 +28792,22 @@ impl View for Workspace {
                     ),
                 );
             }
+        }
+
+        if let Some(popup) = update_popup::render_clinch_update_popup(
+            self.clinch_update_popup_open,
+            &self.clinch_update_popup_states,
+            app,
+        ) {
+            stack.add_positioned_overlay_child(
+                popup,
+                OffsetPositioning::offset_from_parent(
+                    vec2f(-12., TAB_BAR_HEIGHT),
+                    ParentOffsetBounds::WindowByPosition,
+                    ParentAnchor::TopRight,
+                    ChildAnchor::TopRight,
+                ),
+            );
         }
 
         // Claude Code + Codex usage detail panel. Rendered here at the workspace

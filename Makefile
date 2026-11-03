@@ -68,40 +68,13 @@ PRUNE_DAYS ?= 7
 SKIP_DMG_APPLESCRIPT       ?= 1
 export SKIP_DMG_APPLESCRIPT
 
+# The signed update manifest's notes. Keep them to a few lines: builds before the update pop-up print
+# them in a native alert, which runs off the screen if they're long. The release page has the rest.
 define RELEASE_NOTES
-Clinch $(VERSION) is an unnotarized public preview for macOS 14 or later on $(if $(filter arm64,$(RELEASE_LAYOUT)),Apple Silicon,Intel and Apple Silicon).
-
-Install with `curl -fsSL https://clinch.sh/install | sh` — the authenticated install.sh asset
-verifies this exact release, stages Clinch in Applications, and opens it. Command-line downloads
-are not quarantined, so no Gatekeeper approval is needed. To install manually instead, download
-$(if $(filter native,$(RELEASE_LAYOUT)),Clinch.dmg on Apple Silicon or Clinch-x86_64.dmg on Intel,Clinch.dmg), authenticate
-Clinch.checksums.txt with Clinch.checksums.sshsig, compare the DMG SHA-256, and drag Clinch
-to Applications; then use System Settings > Privacy & Security >
-Open Anyway when macOS blocks the browser-downloaded first launch.
-
-Session restore is enabled by default, using managed local Claude Code and Codex hooks. You can
-turn session capture off or back on from Clinch Settings. This release checks signed update
-metadata at most daily and shows **Update Clinch** in the header; installation requires explicit
-consent. Builds older than the updater bridge `v0.2026.07.20.1643` need one final authenticated
-manual install. An app that is not user-writable also uses the manual installer instead of
-requesting administrator access. Agent completion alerts use standard macOS notifications and are
-never sent through Messages or AppleScript.
-
-Clinch releases use one stable signing certificate so macOS privacy permissions can survive updates.
-Upgrading from an older ad-hoc or Apple Development signed build may require a one-time permission
-repair. If computer use is denied even though Clinch is enabled, quit Clinch, remove its entry with
-the minus button from both Accessibility and Screen & System Audio Recording in System Settings >
-Privacy & Security, then add the current /Applications/Clinch.app with the plus button and enable
-both permissions. Reopen Clinch, resume your agent, and retry. Toggling the existing entries or
-restarting alone may leave the old signing identity in place.
-
-New installations only need these permissions when using computer use; ordinary terminal use does
-not require them. Setup and recovery instructions are available in Clinch Settings > Computer use.
+Clinch $(VERSION) for macOS 14 or later on $(if $(filter arm64,$(RELEASE_LAYOUT)),Apple Silicon,Intel and Apple Silicon).
 $(if $(filter native,$(RELEASE_LAYOUT)),Intel installations that predate native-archive selection need one authenticated manual install for this transition.)
-$(if $(filter arm64,$(RELEASE_LAYOUT)),This release supports Apple Silicon Macs only. Intel Macs should stay on $(LAST_INTEL_RELEASE) (the last Intel release); install it with `curl -fsSL https://clinch.sh/install | sh -s -- --version $(LAST_INTEL_RELEASE)`.)
-
-Complete Corresponding Source for this exact release, including locked Cargo dependencies, is
-attached to the same GitHub release as `Clinch.source.tar.gz`.
+$(if $(filter arm64,$(RELEASE_LAYOUT)),This release supports Apple Silicon Macs only. Intel Macs should stay on $(LAST_INTEL_RELEASE); install it with `curl -fsSL https://clinch.sh/install | sh -s -- --version $(LAST_INTEL_RELEASE)`.)
+See the release page for what's new.
 endef
 export RELEASE_NOTES
 

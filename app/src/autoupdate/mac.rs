@@ -133,7 +133,9 @@ where
                             // Reset app icon to previously selected app icon
                             AppearanceManager::as_ref(ctx).set_app_icon(ctx);
                         }
-                        if result.is_ok() || !uses_clinch_updater {
+                        // Clinch keeps its record until the app has actually quit: if the quit is
+                        // called off, the helper is cancelled and the same download can run again.
+                        if !uses_clinch_updater {
                             autoupdate_state.clear_downloaded_update(&update_id_clone, ctx);
                         }
                         callback(autoupdate_state, result, ctx);

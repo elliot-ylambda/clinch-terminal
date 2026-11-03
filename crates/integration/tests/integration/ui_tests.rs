@@ -358,6 +358,8 @@ integration_tests! {
     test_redesign_screens_paper,
     #[ignore = "Manual test: requires real display for frame capture"]
     test_redesign_agent_screens,
+    #[ignore = "Manual test: requires real display for frame capture"]
+    test_update_popup_and_footer_drag_screens,
 
     // Rich Input Ctrl+Enter submit toggle (issue #11588)
     test_rich_input_toggle_on_enter_inserts_newline_and_ctrl_enter_submits,
