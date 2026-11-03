@@ -13422,6 +13422,9 @@ impl Workspace {
             });
         }
 
+        if self.tabs[index].coordinator {
+            self.remember_closed_coordinator(index, ctx);
+        }
         let tab_data = self.tabs.remove(index);
         // Closing the coordinator keeps it closed: new projects and later launches stop
         // creating one until the user opens one again. Agent switches and tab moves
@@ -26340,6 +26343,7 @@ impl TypedActionView for Workspace {
             PinTab(tab_index) => self.pin_tab(*tab_index, ctx),
             SwitchCoordinatorAgent(tab_index) => self.switch_coordinator_agent(*tab_index, ctx),
             OpenCoordinatorSession => self.open_coordinator_from_menu(ctx),
+            SetCoordinatorOn(on) => self.set_coordinator_on(*on, ctx),
             UnpinTab(tab_index) => self.unpin_tab(*tab_index, ctx),
             PinTabGroup(group_id) => self.pin_tab_group(*group_id, ctx),
             UnpinTabGroup(group_id) => self.unpin_tab_group(*group_id, ctx),

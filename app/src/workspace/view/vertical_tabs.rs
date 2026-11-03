@@ -495,6 +495,7 @@ fn render_pane_row_element(
         container_is_hovered,
         origin_badge: _,
         is_coordinator: _,
+        coordinator_switch: _,
     } = props;
     let is_selected = is_active_tab && is_focused;
     let tokens = Tokens::new(theme);
@@ -817,6 +818,7 @@ pub(super) struct VerticalTabsPanelState {
     tasks_link_mouse_state: MouseStateHandle,
     bookmarks_link_mouse_state: MouseStateHandle,
     new_section_mouse_state: MouseStateHandle,
+    coordinator_switch_state: MouseStateHandle,
 }
 
 impl Default for VerticalTabsPanelState {
@@ -830,6 +832,7 @@ impl Default for VerticalTabsPanelState {
             tasks_link_mouse_state: MouseStateHandle::default(),
             bookmarks_link_mouse_state: MouseStateHandle::default(),
             new_section_mouse_state: MouseStateHandle::default(),
+            coordinator_switch_state: MouseStateHandle::default(),
             group_mouse_states: RefCell::default(),
             tab_group_mouse_states: RefCell::default(),
             pane_row_mouse_states: RefCell::default(),
@@ -929,6 +932,8 @@ struct PaneProps<'a> {
     origin_badge: Option<TabOriginBadge>,
     /// The project's coordinator tab, which gets its own mark and explanation.
     is_coordinator: bool,
+    /// The coordinator's on/off switch, on its first row.
+    coordinator_switch: Option<MouseStateHandle>,
     pane_id: PaneId,
     pane_group_id: EntityId,
     is_active_tab: bool,
@@ -2355,7 +2360,7 @@ fn render_vertical_tabs_panel(
     let scrollable_groups = SavePosition::new(
         ClippedScrollable::vertical(
             state.scroll_state.clone(),
-            render_groups(state, workspace, app),
+            render_groups_with_coordinator_switch(state, workspace, app),
             ScrollbarWidth::Custom(4.),
             theme.nonactive_ui_detail().into(),
             theme.active_ui_detail().into(),
@@ -2968,6 +2973,9 @@ fn render_tab_group_internal(
                     pane_props.origin_badge = origin_badge.clone();
                 }
                 pane_props.is_coordinator = tab.coordinator;
+                if tab.coordinator && row_idx == 0 {
+                    pane_props.coordinator_switch = Some(state.coordinator_switch_state.clone());
+                }
                 if stack_panes_flush {
                     pane_props.stack_position = PaneRowStackPosition::Flush {
                         is_first: row_idx == 0,
@@ -4056,6 +4064,19 @@ fn render_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn Element> {
         ))
         .with_child(Shrinkable::new(1., text.finish()).finish())
         .with_children(is_restoring(restore_state).then(|| render_restore_spinner(appearance)))
+        .with_children(
+            props
+                .coordinator_switch
+                .clone()
+                .into_iter()
+                .flat_map(|mouse_state| {
+                    // The switch sits at the row's right edge, past the title.
+                    [
+                        Expanded::new(1., Empty::new().finish()).finish(),
+                        render_coordinator_switch(true, mouse_state, appearance),
+                    ]
+                }),
+        )
         .finish();
 
     render_pane_row_element(
@@ -4301,6 +4322,7 @@ impl<'a> PaneProps<'a> {
             container_is_hovered,
             origin_badge: None,
             is_coordinator: false,
+            coordinator_switch: None,
         })
     }
 
@@ -5554,6 +5576,140 @@ struct DetailSidecarTextColors {
     main: WarpThemeFill,
     sub: WarpThemeFill,
     disabled: WarpThemeFill,
+}
+
+/// The tab list, led by a dimmed Coordinator row when the coordinator is switched off, so it can be
+/// switched back on from where it was.
+fn render_groups_with_coordinator_switch(
+    state: &VerticalTabsPanelState,
+    workspace: &Workspace,
+    app: &AppContext,
+) -> Box<dyn Element> {
+    let groups = render_groups(state, workspace, app);
+    if *crate::settings::ClinchSettings::as_ref(app).coordinator_enabled
+        || workspace.coordinator_tab_index().is_some()
+    {
+        return groups;
+    }
+    let appearance = Appearance::as_ref(app);
+    let tokens = appearance.tokens();
+    let off_row = Container::new(
+        Flex::row()
+            .with_main_axis_size(MainAxisSize::Max)
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_spacing(ROW_MARK_GAP)
+            .with_child(
+                Expanded::new(
+                    1.,
+                    Text::new_inline(
+                        "Coordinator is off".to_owned(),
+                        appearance.ui_font_family(),
+                        ROW_TITLE_SIZE,
+                    )
+                    .with_color(tokens.text_3)
+                    .finish(),
+                )
+                .finish(),
+            )
+            .with_child(render_coordinator_switch(
+                false,
+                state.coordinator_switch_state.clone(),
+                appearance,
+            ))
+            .finish(),
+    )
+    .with_padding(
+        Padding::uniform(ROW_VERTICAL_PADDING)
+            .with_left(ROW_HORIZONTAL_PADDING)
+            .with_right(ROW_HORIZONTAL_PADDING),
+    )
+    .finish();
+    Flex::column()
+        .with_main_axis_size(MainAxisSize::Min)
+        .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .with_child(off_row)
+        .with_child(groups)
+        .finish()
+}
+
+/// A compact on/off switch for the Coordinator row.
+fn render_coordinator_switch(
+    on: bool,
+    mouse_state: MouseStateHandle,
+    appearance: &Appearance,
+) -> Box<dyn Element> {
+    const TRACK_WIDTH: f32 = 26.;
+    const TRACK_HEIGHT: f32 = 14.;
+    const KNOB: f32 = 10.;
+    let tokens = *appearance.tokens();
+    let ui_builder = appearance.ui_builder().clone();
+    Hoverable::new(mouse_state, move |state| {
+        let knob = ConstrainedBox::new(
+            Container::new(Empty::new().finish())
+                .with_background(ThemeFill::Solid(if on {
+                    tokens.text_on_accent
+                } else {
+                    tokens.text_2
+                }))
+                .with_corner_radius(corners_pill())
+                .finish(),
+        )
+        .with_width(KNOB)
+        .with_height(KNOB)
+        .finish();
+        let track = ConstrainedBox::new(
+            Container::new(
+                Flex::row()
+                    .with_main_axis_size(MainAxisSize::Max)
+                    .with_main_axis_alignment(if on {
+                        MainAxisAlignment::End
+                    } else {
+                        MainAxisAlignment::Start
+                    })
+                    .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                    .with_child(knob)
+                    .finish(),
+            )
+            .with_uniform_padding((TRACK_HEIGHT - KNOB) / 2.)
+            .with_background(ThemeFill::Solid(if on {
+                tokens.accent
+            } else {
+                tokens.control_track
+            }))
+            .with_corner_radius(corners_pill())
+            .finish(),
+        )
+        .with_width(TRACK_WIDTH)
+        .with_height(TRACK_HEIGHT)
+        .finish();
+        if !state.is_hovered() {
+            return track;
+        }
+        let mut stack = Stack::new().with_child(track);
+        stack.add_positioned_overlay_child(
+            ui_builder
+                .tool_tip(
+                    if on {
+                        "Turn the coordinator off"
+                    } else {
+                        "Turn the coordinator on"
+                    }
+                    .to_owned(),
+                )
+                .build()
+                .finish(),
+            OffsetPositioning::offset_from_parent(
+                vec2f(0., -6.),
+                ParentOffsetBounds::WindowByPosition,
+                ParentAnchor::TopMiddle,
+                ChildAnchor::BottomMiddle,
+            ),
+        );
+        stack.finish()
+    })
+    .with_cursor(Cursor::PointingHand)
+    .on_click(move |ctx, _, _| ctx.dispatch_typed_action(WorkspaceAction::SetCoordinatorOn(!on)))
+    .finish()
 }
 
 /// What the coordinator tab is for, at the top of its details card.

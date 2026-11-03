@@ -299,3 +299,27 @@ fn copy_only_remains_available_during_cli_voice_input() {
         assert_eq!(*observed.borrow(), vec![false, false, false, true]);
     });
 }
+
+#[test]
+fn footer_shows_as_many_buttons_as_fit_up_to_the_chosen_count() {
+    let widths = [100., 80., 120., 90.];
+    // Each threshold is the row width the next button needs, on top of the reserved space.
+    assert_eq!(
+        super::footer_fit_thresholds(&widths, 3, 300.),
+        vec![400., 480., 600.]
+    );
+    // The chosen count caps it even when there is room for more.
+    assert_eq!(super::footer_fit_thresholds(&widths, 1, 300.), vec![400.]);
+    // A count past the end simply shows every button that fits.
+    assert_eq!(super::footer_fit_thresholds(&widths, 10, 0.).len(), 4);
+    assert!(super::footer_fit_thresholds(&[], 6, 300.).is_empty());
+}
+
+#[test]
+fn longer_labels_and_icons_make_wider_buttons() {
+    let short = super::estimated_footer_button_width("Status", false);
+    let long = super::estimated_footer_button_width("Review w/ Claude Code Fable", false);
+    let with_icon = super::estimated_footer_button_width("Status", true);
+    assert!(long > short);
+    assert!(with_icon > short);
+}

@@ -55,11 +55,10 @@ const LIST_SCROLLBAR_GUTTER: f32 = 10.;
 
 /// How a single zone reads when it is shown as an ordered list, one item per row. Order decides
 /// what shows: the first `visible_count` items sit on the footer and the rest open from More.
+/// The user moves that line with the − and + on it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ListPresentation {
     pub visible_count: usize,
-    /// The same, when the pane is narrow.
-    pub compact_visible_count: usize,
 }
 
 /// Where a dragged row lands in a list: after every other row whose middle is above the pointer.
@@ -412,12 +411,28 @@ pub struct CurrentDraggingState {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ChipConfiguratorAction {
-    StartDraggingChip { location: ChipLocation },
-    DragChip { current_position: RectF },
-    DropChip { position: RectF },
-    RemoveFromUsed { location: ChipLocation },
-    AddFromUnused { index: usize },
-    ToggleAutoSend { location: ChipLocation },
+    StartDraggingChip {
+        location: ChipLocation,
+    },
+    DragChip {
+        current_position: RectF,
+    },
+    DropChip {
+        position: RectF,
+    },
+    RemoveFromUsed {
+        location: ChipLocation,
+    },
+    AddFromUnused {
+        index: usize,
+    },
+    ToggleAutoSend {
+        location: ChipLocation,
+    },
+    /// Moves a list's More line down one row (`more`) or up one row.
+    ChangeVisibleCount {
+        more: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -677,6 +692,24 @@ impl ChipConfigurator {
                     return false;
                 };
                 self.replace_item_kind_at(*location, replacement, Appearance::as_ref(ctx))
+            }
+            ChipConfiguratorAction::ChangeVisibleCount { more } => {
+                let used = self.used_chips.len();
+                let Some(list) = self.list_presentation.as_mut() else {
+                    return false;
+                };
+                // A count past the end means "all of them"; step from what is actually shown.
+                let shown = list.visible_count.min(used);
+                let next = if *more {
+                    shown + 1
+                } else {
+                    shown.saturating_sub(1)
+                };
+                if next > used || next == list.visible_count {
+                    return false;
+                }
+                list.visible_count = next;
+                true
             }
         }
     }
@@ -1232,7 +1265,7 @@ impl ChipConfigurator {
             .with_child(render_list_caption("On the footer", font_family, &tokens));
         for (index, item) in self.used_chips.iter().enumerate() {
             if index == presentation.visible_count {
-                footer.add_child(render_more_line(font_family, &tokens));
+                footer.add_child(self.render_more_line(presentation, wrap_chip_action, appearance));
             }
             let location = ChipLocation::Used { index };
             footer.add_child(self.render_draggable_chip(
@@ -1255,6 +1288,8 @@ impl ChipConfigurator {
                 font_family,
                 &tokens,
             ));
+        } else if presentation.visible_count >= self.used_chips.len() {
+            footer.add_child(self.render_more_line(presentation, wrap_chip_action, appearance));
         }
 
         let mut available = Flex::column()
@@ -1312,6 +1347,87 @@ impl ChipConfigurator {
             .finish(),
         )
         .with_max_height(LIST_MAX_HEIGHT)
+        .finish()
+    }
+
+    /// Where the footer ends: rows above the line sit on the footer, rows below open from More.
+    /// The − and + move the line, which is how the user decides how many show.
+    fn render_more_line<A: Action + Clone + 'static>(
+        &self,
+        presentation: ListPresentation,
+        wrap_chip_action: fn(ChipConfiguratorAction) -> A,
+        appearance: &Appearance,
+    ) -> Box<dyn Element> {
+        let tokens = *appearance.tokens();
+        let font_family = appearance.ui_font_family();
+        let total = self.used_chips.len();
+        let shown = presentation.visible_count.min(total);
+        let label = if shown >= total {
+            format!("All {total} on the footer")
+        } else {
+            format!("{shown} on the footer \u{b7} the rest in More")
+        };
+        let rule = || {
+            Expanded::new(
+                1.,
+                ConstrainedBox::new(Rect::new().with_background_color(tokens.hairline).finish())
+                    .with_height(1.)
+                    .finish(),
+            )
+            .finish()
+        };
+        let step = |more: bool, enabled: bool| {
+            let icon = if more {
+                icons::Icon::Plus
+            } else {
+                icons::Icon::Minus
+            };
+            let action = wrap_chip_action(ChipConfiguratorAction::ChangeVisibleCount { more });
+            let mouse_state = self.interaction_mouse_state(
+                ChipLocation::Used { index: 0 },
+                if more { "show_more" } else { "show_fewer" },
+            );
+            let mut button = Hoverable::new(mouse_state, move |state| {
+                let color = if !enabled {
+                    tokens.text_3
+                } else if state.is_hovered() {
+                    tokens.text_1
+                } else {
+                    tokens.text_2
+                };
+                Container::new(render_list_icon(icon, color))
+                    .with_uniform_padding(3.)
+                    .with_background(Fill::Solid(if enabled && state.is_hovered() {
+                        tokens.surface_hover
+                    } else {
+                        tokens.surface_field
+                    }))
+                    .with_corner_radius(corners_sm())
+                    .finish()
+            });
+            if enabled {
+                button = button
+                    .with_cursor(Cursor::PointingHand)
+                    .on_click(move |ctx, _, _| ctx.dispatch_typed_action(action.clone()));
+            }
+            button.finish()
+        };
+        Container::new(
+            Flex::row()
+                .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                .with_spacing(8.)
+                .with_child(rule())
+                .with_child(step(false, shown > 0))
+                .with_child(
+                    Text::new_inline(label, font_family, LIST_CAPTION_FONT_SIZE)
+                        .with_color(tokens.text_2)
+                        .finish(),
+                )
+                .with_child(step(true, shown < total))
+                .with_child(rule())
+                .finish(),
+        )
+        .with_vertical_padding(4.)
         .finish()
     }
 
@@ -1609,34 +1725,6 @@ fn render_list_hint(text: &str, font_family: FamilyId, tokens: &Tokens) -> Box<d
             .finish(),
     )
     .with_vertical_padding(8.)
-    .finish()
-}
-
-/// The point past which buttons no longer fit on the footer and open from More instead.
-fn render_more_line(font_family: FamilyId, tokens: &Tokens) -> Box<dyn Element> {
-    let rule = || {
-        Expanded::new(
-            1.,
-            ConstrainedBox::new(Rect::new().with_background_color(tokens.hairline).finish())
-                .with_height(1.)
-                .finish(),
-        )
-        .finish()
-    };
-    Container::new(
-        Flex::row()
-            .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_spacing(8.)
-            .with_child(rule())
-            .with_child(
-                Text::new_inline("In More".to_owned(), font_family, LIST_CAPTION_FONT_SIZE)
-                    .with_color(tokens.text_3)
-                    .finish(),
-            )
-            .with_child(rule())
-            .finish(),
-    )
-    .with_vertical_padding(4.)
     .finish()
 }
 

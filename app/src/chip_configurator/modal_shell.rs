@@ -384,11 +384,9 @@ fn render_list_sections<A: Action + Clone + Copy + 'static>(
     appearance: &Appearance,
 ) -> Box<dyn Element> {
     let tokens = appearance.tokens();
-    let explanation = format!(
-        "Drag to reorder. The first {} show on the footer ({} when the pane is narrow); the rest \
-         open from More.",
-        presentation.visible_count, presentation.compact_visible_count
-    );
+    let explanation = "Drag to reorder. Rows above the line sit on the footer and the rest open \
+                       from More; use \u{2212} and + to move it. A narrow pane shows as many as fit."
+        .to_owned();
     let header_row = Flex::row()
         .with_cross_axis_alignment(CrossAxisAlignment::Center)
         .with_main_axis_size(MainAxisSize::Max)

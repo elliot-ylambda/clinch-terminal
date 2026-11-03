@@ -140,6 +140,21 @@ pub fn test_redesign_agent_screens() -> Builder {
         .with_step(shot("footer-editor-reordered"))
         .with_step(drag("drag an available button in", "chip_cfg_n_0", "chip_cfg_u_1", 0.))
         .with_step(shot("footer-editor-added"))
+        .with_step(press("close the editor", &["escape"]))
+        .with_step(workspace_action(
+            "switch the coordinator off",
+            WorkspaceAction::SetCoordinatorOn(false),
+        ))
+        .with_step(shot("coordinator-off"))
+        .with_step(workspace_action(
+            "switch the coordinator back on",
+            WorkspaceAction::SetCoordinatorOn(true),
+        ))
+        .with_step(
+            TestStep::new("let the coordinator start again")
+                .set_post_step_pause(std::time::Duration::from_secs(2)),
+        )
+        .with_step(shot("coordinator-on"))
 }
 
 fn saved_center(app: &mut App, window_id: WindowId, id: &str) -> Vector2F {

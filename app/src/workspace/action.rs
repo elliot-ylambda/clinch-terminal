@@ -254,6 +254,8 @@ pub enum WorkspaceAction {
     SwitchCoordinatorAgent(usize),
     /// Opens a coordinator session for this project and turns the default back on.
     OpenCoordinatorSession,
+    /// The switch on the Coordinator row: on opens this project's coordinator, off closes it.
+    SetCoordinatorOn(bool),
     /// Pins the entire tab group: sets the group as pinned
     /// and moves the group block to the end of the pinned region.
     PinTabGroup(TabGroupId),
@@ -994,6 +996,7 @@ impl WorkspaceAction {
             | UnpinTab(_)
             | SwitchCoordinatorAgent(_)
             | OpenCoordinatorSession
+            | SetCoordinatorOn(_)
             | PinTabGroup(_)
             | UnpinTabGroup(_)
             | ToggleBookmarkedSessionsCollapsed
