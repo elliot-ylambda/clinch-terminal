@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use url::Url;
 
+use super::ClinchDownloadProgress;
 use crate::channel::ChannelState;
 
 const MANIFEST_ASSET: &str = "Clinch.update.json";
@@ -756,12 +757,35 @@ async fn validate_staged_bundle(path: &Path, manifest: &Manifest) -> Result<()> 
     Ok(())
 }
 
+/// Passes on download progress only when the whole percent changes: the pop-up can't show finer
+/// steps, and an archive arrives in thousands of chunks.
+#[derive(Default)]
+pub(super) struct ProgressThrottle {
+    last_percent: Option<u64>,
+}
+
+impl ProgressThrottle {
+    pub(super) fn next(&mut self, received: u64, total: u64) -> Option<ClinchDownloadProgress> {
+        let percent = received.saturating_mul(100) / total.max(1);
+        (self.last_percent != Some(percent)).then(|| {
+            self.last_percent = Some(percent);
+            ClinchDownloadProgress::Downloading { received, total }
+        })
+    }
+}
+
 pub async fn download_and_stage(
     release: &VerifiedRelease,
     update_id: &str,
     client: &http_client::Client,
+    on_progress: impl Fn(ClinchDownloadProgress) + Send,
 ) -> Result<PathBuf> {
     let archive = &release.selected_archive;
+    let mut throttle = ProgressThrottle::default();
+    on_progress(ClinchDownloadProgress::Downloading {
+        received: 0,
+        total: archive.size,
+    });
     let directory = update_dir(update_id);
     if directory.exists() {
         async_fs::remove_dir_all(&directory).await?;
@@ -791,7 +815,11 @@ pub async fn download_and_stage(
         );
         digest.update(&chunk);
         output.write_all(&chunk).await?;
+        if let Some(progress) = throttle.next(size, archive.size) {
+            on_progress(progress);
+        }
     }
+    on_progress(ClinchDownloadProgress::Verifying);
     output.flush().await?;
     output.sync_data().await?;
     ensure!(
@@ -818,10 +846,6 @@ pub async fn download_and_stage(
     let staged = extracted.join("Clinch.app");
     validate_staged_bundle(&staged, &release.manifest).await?;
     Ok(staged)
-}
-
-pub fn release_notes(release: &VerifiedRelease) -> &str {
-    &release.manifest.release_notes
 }
 
 pub fn release_url(release: &VerifiedRelease) -> &str {

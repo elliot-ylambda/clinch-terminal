@@ -186,7 +186,8 @@ pub struct TabData {
     /// How this tab was created; retained even when its parent is closed or moved.
     pub origin: Option<TabOrigin>,
     pub origin_mouse_state: MouseStateHandle,
-    /// True for the project's coordinator session: an agent tab pinned first in the list.
+    /// True for the project's coordinator session: an agent tab that starts pinned first in the
+    /// list and can be unpinned like any other tab.
     pub coordinator: bool,
     /// On the coordinator tab: whether it acts on its own. `None` follows the global default.
     pub auto_coordinate: Option<bool>,
@@ -689,9 +690,8 @@ impl TabData {
     }
 
     /// Pin/unpin entry for the per-tab right-click menu.
-    fn pin_menu_items(&self, index: usize) -> Vec<MenuItem<WorkspaceAction>> {
-        // The coordinator always stays pinned first.
-        if !FeatureFlag::PinnedTabs.is_enabled() || self.coordinator {
+    pub(crate) fn pin_menu_items(&self, index: usize) -> Vec<MenuItem<WorkspaceAction>> {
+        if !FeatureFlag::PinnedTabs.is_enabled() {
             return vec![];
         }
 

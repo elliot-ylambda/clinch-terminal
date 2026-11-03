@@ -447,3 +447,33 @@ fn disabling_scripting_invalidates_existing_grant_and_prevents_new_grants() {
         assert_eq!(err.code, ErrorCode::LocalControlDisabled);
     });
 }
+
+#[test]
+fn a_call_the_main_thread_never_reaches_reports_busy_and_is_cancelled() {
+    let abandoned = std::sync::atomic::AtomicBool::new(false);
+
+    let error = futures::executor::block_on(super::await_main_thread(
+        std::future::pending::<Result<Option<()>, ()>>(),
+        &abandoned,
+        std::time::Duration::from_millis(10),
+    ))
+    .unwrap_err();
+
+    assert_eq!(error.code, ErrorCode::AppBusy);
+    assert!(error.message.contains("modal dialog"), "{}", error.message);
+    assert!(abandoned.load(std::sync::atomic::Ordering::SeqCst));
+}
+
+#[test]
+fn a_call_the_main_thread_answers_returns_its_result() {
+    let abandoned = std::sync::atomic::AtomicBool::new(false);
+
+    let result = futures::executor::block_on(super::await_main_thread(
+        std::future::ready(Ok::<_, ()>(Some(7))),
+        &abandoned,
+        std::time::Duration::from_secs(1),
+    ));
+
+    assert_eq!(result.unwrap(), 7);
+    assert!(!abandoned.load(std::sync::atomic::Ordering::SeqCst));
+}

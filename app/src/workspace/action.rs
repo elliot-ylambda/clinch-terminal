@@ -359,6 +359,10 @@ pub enum WorkspaceAction {
     ToggleErrorUnderlining,
     ToggleSyntaxHighlighting,
     CheckForUpdate,
+    /// The update pop-up's main button: install the update it is offering.
+    StartClinchUpdate,
+    CancelClinchDownload,
+    CloseClinchUpdatePopup,
     ExportAllWarpDriveObjects,
     SetA11yVerbosityLevel(AccessibilityVerbosity),
     ToggleNotifications,
@@ -1096,6 +1100,9 @@ impl WorkspaceAction {
             | ToggleTabBarOverflowMenu
             | FocusTaskInput
             | CheckForUpdate
+            | StartClinchUpdate
+            | CancelClinchDownload
+            | CloseClinchUpdatePopup
             | SetA11yVerbosityLevel(_)
             | ToggleNotifications
             | DispatchToSettingsTab { .. }

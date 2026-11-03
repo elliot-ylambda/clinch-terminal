@@ -110,6 +110,33 @@ app_is_running() {
         | /usr/bin/grep -q '/[C]linch\.app/Contents/MacOS/'
 }
 
+# Offers to quit a running Clinch, since replacing it needs it closed. Without a terminal to ask on,
+# or if the answer is no, it stays running and the install stops.
+quit_running_app() {
+    install_tty=${CLINCH_INSTALL_TTY:-/dev/tty}
+    quit_answer=
+    if (: <"$install_tty") 2>/dev/null; then
+        printf '%s is running. Quit it now to install? Your tabs reopen when it restarts. [y/N] ' \
+            "$APP_NAME" >&2
+        IFS= read -r quit_answer <"$install_tty" || quit_answer=
+    fi
+    case "$quit_answer" in
+        y | Y | yes | Yes | YES) ;;
+        *) fail "$APP_NAME is currently running. Quit it, then run the installer again." ;;
+    esac
+    "${CLINCH_OSASCRIPT_BIN:-/usr/bin/osascript}" \
+        -e 'with timeout of 15 seconds' \
+        -e "tell application id \"$EXPECTED_BUNDLE_ID\" to quit" \
+        -e 'end timeout' >/dev/null 2>&1 || true
+    quit_attempts=0
+    while app_is_running; do
+        [ "$quit_attempts" -lt "${CLINCH_QUIT_WAIT_ATTEMPTS:-40}" ] \
+            || fail "$APP_NAME didn't quit. A dialog may be open in it: close the dialog, then run the installer again."
+        /bin/sleep 0.5
+        quit_attempts=$((quit_attempts + 1))
+    done
+}
+
 read_latest_tag() {
     latest_json=$1
     /usr/bin/osascript -l JavaScript - "$latest_json" <<'JXA'
@@ -299,7 +326,7 @@ case "$detected_architecture" in
 esac
 [ -x /usr/bin/ssh-keygen ] || fail "macOS ssh-keygen is required to authenticate this release."
 if app_is_running; then
-    fail "$APP_NAME is currently running. Quit it, then run the installer again."
+    quit_running_app
 fi
 
 TMP_DIR="$(/usr/bin/mktemp -d -t clinch-install)"

@@ -275,6 +275,13 @@ impl<'a> UnsavedStateSummary<'a> {
                 || self.unsaved_code_changes)
     }
 
+    /// The warning when quitting for an update the user just agreed to. The update pop-up already
+    /// said which running work stops and which continues; this is only for what it didn't cover.
+    pub fn should_warn_before_agreed_update(&self, ctx: &AppContext) -> bool {
+        *GeneralSettings::as_ref(ctx).show_warning_before_quitting
+            && (self.shared_sessions > 0 || self.unsaved_code_changes)
+    }
+
     pub fn running_sessions(&self) -> RunningSessionSummary<'_> {
         RunningSessionSummary::new(&self.terminal_sessions)
     }

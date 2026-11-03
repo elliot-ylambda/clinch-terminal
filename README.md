@@ -343,10 +343,12 @@ access to an entry that trusts an older build.
 ## Updates and removal
 
 Updater-enabled builds check automatically and show **Update** in the header. You can also choose
-**Clinch → Check for Updates…**. Clinch authenticates the release and presents its version and
-notes; **Download and Install** then verifies the archive, saves restorable state, quits,
-atomically replaces the app, relaunches, and rolls back if the new app does not start. Sessions
-that were running reopen and continue; see [Session restore](#session-restore-is-enabled-by-default).
+**Clinch → Check for Updates…**. Either way, Clinch authenticates the release and a small pop-up
+asks before anything is installed. **Update** then shows a progress bar while it downloads and
+verifies the archive, saves restorable state, quits, atomically replaces the app, reopens, and
+rolls back if the new app does not start. Sessions that were running reopen and continue; see
+[Session restore](#session-restore-is-enabled-by-default). The pop-up also says which other running
+commands will stop.
 
 The updater never requests administrator privileges. The public installer places Clinch in a
 user-writable `/Applications` or `~/Applications` location; unusual non-writable installations

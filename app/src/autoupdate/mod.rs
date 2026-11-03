@@ -20,7 +20,7 @@ use rand::Rng as _;
 use warp_core::execution_mode::AppExecutionMode;
 use warpui::accessibility::{AccessibilityContent, WarpA11yRole};
 use warpui::platform::TerminationMode;
-use warpui::r#async::Timer;
+use warpui::r#async::{SpawnedFutureHandle, Timer};
 use warpui::windowing::state::ApplicationStage;
 use warpui::windowing::{self, WindowManager};
 use warpui::{AppContext, Entity, ModelContext, SingletonEntity, ViewContext};
@@ -46,6 +46,26 @@ const NO_UPDATE_CHECK_ENV_VAR: &str = "CLINCH_NO_UPDATE_CHECK";
 pub struct DownloadedUpdate {
     pub version: VersionInfo,
     pub update_id: String,
+}
+
+/// How far a Clinch download has got, for the update pop-up.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClinchDownloadProgress {
+    Downloading {
+        received: u64,
+        total: u64,
+    },
+    /// Every byte has arrived, and the archive is being checked and unpacked.
+    Verifying,
+}
+
+/// Why a Clinch update the user agreed to didn't finish. Shown until they retry or close it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClinchUpdateFailure {
+    Download,
+    Install,
+    /// Clinch can't replace itself where it's installed, so it has to be updated by hand.
+    NotWritable,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
@@ -98,6 +118,24 @@ impl AutoupdateStage {
         )
     }
 
+    /// An update the user can install now, downloaded or not.
+    fn has_known_clinch_update(&self) -> bool {
+        matches!(
+            self,
+            AutoupdateStage::UpdateAvailable { .. } | AutoupdateStage::UpdateReady { .. }
+        )
+    }
+
+    /// An agreed update is being downloaded or installed.
+    pub fn is_installing(&self) -> bool {
+        matches!(
+            self,
+            AutoupdateStage::DownloadingUpdate
+                | AutoupdateStage::Updating { .. }
+                | AutoupdateStage::UpdatedPendingRestart { .. }
+        )
+    }
+
     /// Returns the new version's VersionInfo, if available in the current autoupdate stage.
     pub fn available_new_version(&self) -> Option<&VersionInfo> {
         match self {
@@ -124,8 +162,15 @@ pub struct AutoupdateState {
     #[cfg(target_os = "macos")]
     available_clinch_release: Option<clinch::VerifiedRelease>,
     #[cfg(feature = "integration_tests")]
-    test_clinch_prompt: Option<ClinchUpdatePrompt>,
+    test_clinch_release_url: Option<String>,
     install_after_download: bool,
+    clinch_download_progress: Option<ClinchDownloadProgress>,
+    clinch_failure: Option<ClinchUpdateFailure>,
+    /// The running download, so the update pop-up can cancel it.
+    download_handle: Option<SpawnedFutureHandle>,
+    /// An automatic check leaves a known update's stage alone while it runs, so the stage alone
+    /// can't say whether a check is in flight.
+    check_in_flight: bool,
     /// Holds requests for update checks that are awaiting to be executed. We need this because we
     /// prevent update checks from starting if there is another already in-flight. The different
     /// RequestTypes have different behavior and side-effects, so it's important not to skip any
@@ -148,8 +193,12 @@ impl AutoupdateState {
             #[cfg(target_os = "macos")]
             available_clinch_release: None,
             #[cfg(feature = "integration_tests")]
-            test_clinch_prompt: None,
+            test_clinch_release_url: None,
             install_after_download: false,
+            clinch_download_progress: None,
+            clinch_failure: None,
+            download_handle: None,
+            check_in_flight: false,
             request_queue: VecDeque::new(),
             polling_started: false,
         }
@@ -275,6 +324,7 @@ impl AutoupdateState {
 
     /// User-initiated check for updates.
     pub fn manually_check_for_update(&mut self, ctx: &mut ModelContext<Self>) {
+        self.clinch_failure = None;
         self.enqueue_request(RequestType::ManualCheck, ctx);
     }
 
@@ -303,12 +353,55 @@ impl AutoupdateState {
     }
 
     fn should_start_update_check(&self) -> bool {
-        !matches!(
-            self.stage,
-            AutoupdateStage::CheckingForUpdate
-                | AutoupdateStage::DownloadingUpdate
-                | AutoupdateStage::UpdatedPendingRestart { .. }
-        )
+        !self.check_in_flight
+            && self.stage != AutoupdateStage::CheckingForUpdate
+            && !self.stage.is_installing()
+    }
+
+    #[cfg(target_os = "macos")]
+    fn clinch_download_progress_changed(
+        &mut self,
+        progress: ClinchDownloadProgress,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        if self.stage == AutoupdateStage::DownloadingUpdate {
+            self.clinch_download_progress = Some(progress);
+            ctx.notify();
+        }
+    }
+
+    /// Stops the running download, unless it has already reached the archive checks.
+    fn cancel_clinch_download(&mut self) {
+        if self.clinch_download_progress != Some(ClinchDownloadProgress::Verifying) {
+            if let Some(handle) = &self.download_handle {
+                handle.abort();
+            }
+        }
+    }
+
+    fn on_clinch_download_cancelled(
+        &mut self,
+        new_version: VersionInfo,
+        update_id: String,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        self.download_handle = None;
+        self.clinch_download_progress = None;
+        self.install_after_download = false;
+        self.stage = AutoupdateStage::UpdateAvailable {
+            new_version,
+            update_id,
+        };
+        #[cfg(target_os = "macos")]
+        {
+            let keep = self.downloaded_update.as_ref().map(|d| d.update_id.clone());
+            ctx.spawn(
+                async move { mac::cleanup_all_except(keep.as_deref()).await },
+                |_, _, _| {},
+            );
+        }
+        ctx.notify();
+        self.try_execute_request(ctx);
     }
 
     /// Trigger the update check to /client_version/daily, but only go through with sending the
@@ -347,8 +440,13 @@ impl AutoupdateState {
             return;
         }
 
-        self.stage = AutoupdateStage::CheckingForUpdate;
-        ctx.notify();
+        // An automatic check runs behind an update the user can already see: the Update button
+        // doesn't blink, and an install they agree to meanwhile isn't refused.
+        if request_type == RequestType::ManualCheck || !self.stage.has_known_clinch_update() {
+            self.stage = AutoupdateStage::CheckingForUpdate;
+            ctx.notify();
+        }
+        self.check_in_flight = true;
 
         let server_api = self.server_api.clone();
         ctx.spawn(
@@ -479,6 +577,7 @@ impl AutoupdateState {
         is_daily: bool,
         ctx: &mut ModelContext<AutoupdateState>,
     ) {
+        self.check_in_flight = false;
         let successful_automatic_check = should_record_daily_success(
             request_type,
             is_daily,
@@ -494,8 +593,9 @@ impl AutoupdateState {
             clinch::record_successful_check(chrono::Utc::now());
         }
 
-        // If one update was already applied, we cannot apply another.
-        if matches!(self.stage, AutoupdateStage::UpdatedPendingRestart { .. }) {
+        // An install under way wins: the user agreed to it, and if one update was already applied
+        // we cannot apply another. The install's completion runs anything queued behind this.
+        if self.stage.is_installing() {
             return;
         }
 
@@ -567,12 +667,13 @@ impl AutoupdateState {
             Err(ref e) => {
                 // We commonly get errors as the autoupdate code runs when a laptop wakes up
                 // briefly while asleep, but the network call to check for updates gets cancelled
-                // when returning to sleep. So we fail silently and wait for the next update poll.
-                self.stage = if request_type == RequestType::ManualCheck {
-                    AutoupdateStage::UnableToCheckForUpdate
-                } else {
-                    AutoupdateStage::NoUpdateAvailable
-                };
+                // when returning to sleep. So we fail silently and wait for the next update poll,
+                // and an update we already know about stays available.
+                if request_type == RequestType::ManualCheck {
+                    self.stage = AutoupdateStage::UnableToCheckForUpdate;
+                } else if !self.stage.has_known_clinch_update() {
+                    self.stage = AutoupdateStage::NoUpdateAvailable;
+                }
                 log::warn!("Error checking for update {e:#}");
             }
         };
@@ -588,6 +689,8 @@ impl AutoupdateState {
         ctx: &mut ModelContext<AutoupdateState>,
     ) {
         self.stage = AutoupdateStage::DownloadingUpdate;
+        self.clinch_failure = None;
+        self.clinch_download_progress = None;
         ctx.notify();
 
         // We're downloading `new_version` as update `update_id`.
@@ -600,7 +703,17 @@ impl AutoupdateState {
             self.downloaded_update.as_ref().map(|d| d.update_id.clone());
         #[cfg(target_os = "macos")]
         let clinch_release = self.available_clinch_release.clone();
-        let _ = ctx.spawn(
+        #[cfg(target_os = "macos")]
+        let on_clinch_progress = {
+            let (sender, receiver) = async_channel::unbounded();
+            let _ =
+                ctx.spawn_stream_local(receiver, Self::clinch_download_progress_changed, |_, _| {});
+            move |progress| {
+                let _ = sender.try_send(progress);
+            }
+        };
+        let (cancelled_version, cancelled_update_id) = (new_version.clone(), update_id.clone());
+        self.download_handle = Some(ctx.spawn_abortable(
             download_update(
                 new_version.clone(),
                 update_id.clone(),
@@ -608,6 +721,8 @@ impl AutoupdateState {
                 self.server_api.clone(),
                 #[cfg(target_os = "macos")]
                 clinch_release,
+                #[cfg(target_os = "macos")]
+                on_clinch_progress,
             ),
             move |autoupdate_state, download_ready, ctx| {
                 autoupdate_state.on_download_update_complete(
@@ -618,7 +733,14 @@ impl AutoupdateState {
                     ctx,
                 )
             },
-        );
+            move |autoupdate_state, ctx| {
+                autoupdate_state.on_clinch_download_cancelled(
+                    cancelled_version,
+                    cancelled_update_id,
+                    ctx,
+                )
+            },
+        ));
     }
 
     fn on_download_update_complete(
@@ -629,6 +751,8 @@ impl AutoupdateState {
         download_ready: Result<DownloadReady>,
         ctx: &mut ModelContext<AutoupdateState>,
     ) {
+        self.download_handle = None;
+        self.clinch_download_progress = None;
         let was_update_available = match download_ready {
             Ok(DownloadReady::Yes) => {
                 self.clear_old_autoupdate_dirs(&update_id, ctx);
@@ -657,6 +781,9 @@ impl AutoupdateState {
                 self.install_after_download = false;
                 send_telemetry_from_ctx!(TelemetryEvent::UnableToAutoUpdateToNewVersion, ctx);
                 self.stage = AutoupdateStage::UnableToUpdateToNewVersion { new_version };
+                if ChannelState::uses_clinch_updater() {
+                    self.clinch_failure = Some(ClinchUpdateFailure::NotWritable);
+                }
                 Ok(UpdateReady::No)
             }
             Ok(DownloadReady::No) => {
@@ -671,11 +798,12 @@ impl AutoupdateState {
                 // We commonly get errors as the autoupdate code runs when a laptop wakes up
                 // briefly while asleep, but the network call to download gets cancelled when
                 // returning to sleep. So we fail silently and wait for the next update poll.
-                self.stage = if request_type == RequestType::ManualCheck {
-                    AutoupdateStage::UnableToCheckForUpdate
-                } else {
-                    AutoupdateStage::NoUpdateAvailable
-                };
+                (self.stage, self.clinch_failure) = after_failed_download(
+                    ChannelState::uses_clinch_updater(),
+                    request_type,
+                    new_version,
+                    update_id,
+                );
                 Err(e)
             }
         };
@@ -781,6 +909,7 @@ impl AutoupdateState {
     }
 
     fn clinch_install_failed(&mut self, ctx: &mut ModelContext<Self>) {
+        self.clinch_failure = Some(ClinchUpdateFailure::Install);
         self.set_unable_to_launch_state(
             |new_version, update_id| AutoupdateStage::UpdateReady {
                 new_version,
@@ -792,6 +921,29 @@ impl AutoupdateState {
             me.relaunch_status = RelaunchStatus::None;
             ctx.notify();
         });
+    }
+}
+
+/// Where a failed download leaves things. Clinch only downloads an update the user agreed to, from
+/// the pop-up that reports the failure, and the update stays available so they can try again.
+fn after_failed_download(
+    uses_clinch_updater: bool,
+    request_type: RequestType,
+    new_version: VersionInfo,
+    update_id: String,
+) -> (AutoupdateStage, Option<ClinchUpdateFailure>) {
+    if uses_clinch_updater {
+        (
+            AutoupdateStage::UpdateAvailable {
+                new_version,
+                update_id,
+            },
+            Some(ClinchUpdateFailure::Download),
+        )
+    } else if request_type == RequestType::ManualCheck {
+        (AutoupdateStage::UnableToCheckForUpdate, None)
+    } else {
+        (AutoupdateStage::NoUpdateAvailable, None)
     }
 }
 
@@ -954,46 +1106,28 @@ pub fn get_update_state(app: &AppContext) -> AutoupdateStage {
     AutoupdateState::as_ref(app).stage.clone()
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ClinchUpdatePrompt {
-    pub current_version: String,
-    pub new_version: String,
-    pub release_notes: String,
-    pub release_url: String,
-}
-
-fn sanitize_release_notes(notes: &str) -> String {
-    notes
-        .chars()
-        .filter(|character| !character.is_control() || matches!(character, '\n' | '\r' | '\t'))
-        .take(8_000)
-        .collect()
-}
-
-pub fn clinch_update_prompt(app: &AppContext) -> Option<ClinchUpdatePrompt> {
+/// Whether there's a Clinch update for the pop-up to offer, downloaded or not. Every way of starting
+/// an update checks this, so they all ask in the same place.
+pub fn has_clinch_update_to_offer(app: &AppContext) -> bool {
     #[cfg(feature = "integration_tests")]
-    if let Some(prompt) = AutoupdateState::as_ref(app).test_clinch_prompt.clone() {
-        return Some(prompt);
-    }
-    if !ChannelState::uses_clinch_updater() {
-        return None;
+    if AutoupdateState::as_ref(app)
+        .test_clinch_release_url
+        .is_some()
+    {
+        return true;
     }
     #[cfg(target_os = "macos")]
     {
         let state = AutoupdateState::as_ref(app);
-        let AutoupdateStage::UpdateAvailable { new_version, .. } = &state.stage else {
-            return None;
-        };
-        let release = state.available_clinch_release.as_ref()?;
-        Some(ClinchUpdatePrompt {
-            current_version: ChannelState::app_version().unwrap_or("unknown").to_owned(),
-            new_version: new_version.version.clone(),
-            release_notes: sanitize_release_notes(clinch::release_notes(release)),
-            release_url: clinch::release_url(release).to_owned(),
-        })
+        ChannelState::uses_clinch_updater()
+            && state.stage.has_known_clinch_update()
+            && state.available_clinch_release.is_some()
     }
     #[cfg(not(target_os = "macos"))]
-    None
+    {
+        let _ = app;
+        false
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -1009,20 +1143,31 @@ fn clinch_manual_release_url(app: &AppContext) -> Option<String> {
 
 #[cfg(feature = "integration_tests")]
 pub(crate) fn set_clinch_update_available_for_integration(app: &mut AppContext) {
-    let new_version = VersionInfo::new("v0.2099.01.02.0304".to_owned());
     AutoupdateState::handle(app).update(app, |state, ctx| {
         state.stage = AutoupdateStage::UpdateAvailable {
-            new_version: new_version.clone(),
+            new_version: VersionInfo::new("v0.2099.01.02.0304".to_owned()),
             update_id: "integration-update".to_owned(),
         };
-        state.test_clinch_prompt = Some(ClinchUpdatePrompt {
-            current_version: "v0.2099.01.01.0000".to_owned(),
-            new_version: new_version.version,
-            release_notes: "Authenticated integration-test release notes.".to_owned(),
-            release_url:
-                "https://github.com/elliot-ylambda/clinch-terminal/releases/tag/v0.2099.01.02.0304"
-                    .to_owned(),
-        });
+        state.test_clinch_release_url = Some(
+            "https://github.com/elliot-ylambda/clinch-terminal/releases/tag/v0.2099.01.02.0304"
+                .to_owned(),
+        );
+        ctx.notify();
+    });
+}
+
+/// Puts the update pop-up on one of its steps, for screenshots.
+#[cfg(feature = "integration_tests")]
+pub(crate) fn set_clinch_update_step_for_integration(
+    stage: AutoupdateStage,
+    progress: Option<ClinchDownloadProgress>,
+    failure: Option<ClinchUpdateFailure>,
+    app: &mut AppContext,
+) {
+    AutoupdateState::handle(app).update(app, |state, ctx| {
+        state.stage = stage;
+        state.clinch_download_progress = progress;
+        state.clinch_failure = failure;
         ctx.notify();
     });
 }
@@ -1035,8 +1180,59 @@ pub(crate) fn clinch_update_is_available_for_integration(app: &AppContext) -> bo
     )
 }
 
-pub fn approve_clinch_update(app: &mut AppContext) -> Result<()> {
+/// Starts the update the user agreed to in the pop-up: downloads it if that hasn't happened yet,
+/// then quits and reopens Clinch.
+pub fn start_clinch_update(app: &mut AppContext) -> Result<()> {
+    if matches!(get_update_state(app), AutoupdateStage::UpdateReady { .. }) {
+        dismiss_clinch_update_failure(app);
+        initiate_relaunch_for_update(app);
+        return Ok(());
+    }
     AutoupdateState::handle(app).update(app, |state, ctx| state.approve_clinch_update(ctx))
+}
+
+pub fn cancel_clinch_download(app: &mut AppContext) {
+    AutoupdateState::handle(app).update(app, |state, _| state.cancel_clinch_download());
+}
+
+pub fn dismiss_clinch_update_failure(app: &mut AppContext) {
+    AutoupdateState::handle(app).update(app, |state, ctx| {
+        state.clinch_failure = None;
+        ctx.notify();
+    });
+}
+
+pub fn clinch_download_progress(app: &AppContext) -> Option<ClinchDownloadProgress> {
+    AutoupdateState::as_ref(app).clinch_download_progress
+}
+
+pub fn clinch_update_failure(app: &AppContext) -> Option<ClinchUpdateFailure> {
+    AutoupdateState::as_ref(app).clinch_failure
+}
+
+/// Whether Clinch is quitting to finish an update the user agreed to in the pop-up, which already
+/// told them what restarting does to their running work.
+pub fn is_restarting_for_agreed_clinch_update(app: &AppContext) -> bool {
+    ChannelState::uses_clinch_updater()
+        && RelaunchModel::as_ref(app).relaunch_status == RelaunchStatus::Requested
+        && AutoupdateState::as_ref(app).stage.is_installing()
+}
+
+/// The release page for the update Clinch knows about, in any stage.
+pub fn clinch_release_page_url(app: &AppContext) -> Option<String> {
+    #[cfg(feature = "integration_tests")]
+    if let Some(url) = &AutoupdateState::as_ref(app).test_clinch_release_url {
+        return Some(url.clone());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        clinch_manual_release_url(app)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        None
+    }
 }
 
 pub fn acknowledge_clinch_update_startup() {
@@ -1137,6 +1333,7 @@ async fn download_update(
     last_successful_update_id: Option<String>,
     server_api: Arc<ServerApi>,
     #[cfg(target_os = "macos")] clinch_release: Option<clinch::VerifiedRelease>,
+    #[cfg(target_os = "macos")] on_clinch_progress: impl Fn(ClinchDownloadProgress) + Send,
 ) -> Result<DownloadReady> {
     if ChannelState::app_version().is_none() {
         log::info!("No tag set, not performing autoupdate.");
@@ -1147,9 +1344,14 @@ async fn download_update(
         if #[cfg(target_os = "macos")] {
             if let Some(release) = clinch_release {
                 let result = if mac::clinch_install_is_writable().await? {
-                    clinch::download_and_stage(&release, &update_id, server_api.http_client())
-                        .await
-                        .map(|_| DownloadReady::Yes)
+                    clinch::download_and_stage(
+                        &release,
+                        &update_id,
+                        server_api.http_client(),
+                        on_clinch_progress,
+                    )
+                    .await
+                    .map(|_| DownloadReady::Yes)
                 } else {
                     Ok(DownloadReady::NeedsAuthorization)
                 };
@@ -1183,28 +1385,19 @@ async fn download_update(
 ///   manager, and do not relaunch until that's complete. This returns [`ReadyForRelaunch::No`].
 pub fn apply_update(
     _initiating_workspace: &mut Workspace,
-    ctx: &mut ViewContext<Workspace>,
+    _ctx: &mut ViewContext<Workspace>,
 ) -> Result<ReadyForRelaunch> {
-    if ChannelState::uses_clinch_updater()
-        && matches!(
-            get_update_state(ctx),
-            AutoupdateStage::UpdateAvailable { .. }
-        )
-    {
-        approve_clinch_update(ctx)?;
-        return Ok(ReadyForRelaunch::No);
-    }
     cfg_if::cfg_if! {
         if #[cfg(any(target_os = "macos", windows))] {
             // macOS applies the update during the download step. Windows does it during
             // `spawn_child_if_necessary`. In either case, simply continue relaunching the app.
             Ok(ReadyForRelaunch::Yes)
         } else if #[cfg(target_os = "linux")] {
-            let AutoupdateStage::UpdateReady { update_id, .. } = &AutoupdateState::handle(ctx).as_ref(ctx).stage else {
+            let AutoupdateStage::UpdateReady { update_id, .. } = &AutoupdateState::handle(_ctx).as_ref(_ctx).stage else {
                 anyhow::bail!("Trying to apply an update without AutoupdateState being UpdateReady!");
             };
             let update_id = update_id.clone();
-            linux::apply_update(_initiating_workspace, &update_id, ctx)
+            linux::apply_update(_initiating_workspace, &update_id, _ctx)
         } else {
             anyhow::bail!("Not implemented")
         }

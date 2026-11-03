@@ -430,3 +430,26 @@ fn records_round_trip_through_serialization() {
 
     assert_eq!(record, restored);
 }
+
+#[test]
+fn download_progress_only_reports_when_the_whole_percent_changes() {
+    let mut throttle = ProgressThrottle::default();
+    let total = 1_000;
+    assert!(throttle.next(0, total).is_some());
+    assert!(throttle.next(5, total).is_none());
+    assert_eq!(
+        throttle.next(10, total),
+        Some(ClinchDownloadProgress::Downloading {
+            received: 10,
+            total
+        })
+    );
+    assert!(throttle.next(15, total).is_none());
+    assert!(throttle.next(total, total).is_some());
+}
+
+#[test]
+fn download_progress_survives_an_archive_with_no_reported_size() {
+    let mut throttle = ProgressThrottle::default();
+    assert!(throttle.next(10, 0).is_some());
+}

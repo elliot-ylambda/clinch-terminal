@@ -1,7 +1,7 @@
-//! The project coordinator: a Claude Code or Codex session pinned first in each project's tab
-//! list. It starts in the project's primary checkout (never a linked worktree), falling back to
-//! the home directory, and carries coordinator instructions as a system prompt so creating one
-//! never spends a turn.
+//! The project coordinator: a Claude Code or Codex session that starts pinned first in each
+//! project's tab list. It starts in the project's primary checkout (never a linked worktree),
+//! falling back to the home directory, and carries coordinator instructions as a system prompt so
+//! creating one never spends a turn.
 
 use std::path::{Path, PathBuf};
 
@@ -108,6 +108,23 @@ fn configured_provider(ctx: &AppContext) -> AgentResumeProvider {
 impl Workspace {
     pub(super) fn coordinator_tab_index(&self) -> Option<usize> {
         self.tabs.iter().position(|tab| tab.coordinator)
+    }
+
+    /// Puts a pinned coordinator back at the top of a restored list. Builds without working pins
+    /// let sections and tabs end up above it, and new sections are placed below the leading pins.
+    pub(super) fn lead_with_pinned_coordinator(&mut self, ctx: &mut ViewContext<Self>) {
+        let Some(index) = self
+            .coordinator_tab_index()
+            .filter(|index| self.tabs[*index].pinned && *index > 0)
+        else {
+            return;
+        };
+        let mut coordinator = self.tabs.remove(index);
+        let previous_group = coordinator.group_id.take();
+        self.tabs.insert(0, coordinator);
+        if let Some(group_id) = previous_group {
+            self.prune_empty_tab_group(group_id, ctx);
+        }
     }
 
     /// Whether this workspace may create a coordinator on its own. Unit tests opt in through
@@ -393,9 +410,14 @@ impl Workspace {
                 AgentResumeProvider::Claude => "Switch coordinator to Codex",
                 AgentResumeProvider::Codex => "Switch coordinator to Claude",
             };
-            return vec![MenuItemFields::new(label)
-                .with_on_select_action(WorkspaceAction::SwitchCoordinatorAgent(index))
-                .into_item()];
+            return vec![
+                MenuItemFields::new(label)
+                    .with_on_select_action(WorkspaceAction::SwitchCoordinatorAgent(index))
+                    .into_item(),
+                MenuItemFields::new("Turn coordinator off")
+                    .with_on_select_action(WorkspaceAction::SetCoordinatorOn(false))
+                    .into_item(),
+            ];
         }
         if self.coordinator_tab_index().is_none() {
             return vec![MenuItemFields::new("New coordinator session")

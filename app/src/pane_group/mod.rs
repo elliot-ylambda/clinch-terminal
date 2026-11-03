@@ -2401,6 +2401,21 @@ impl PaneGroup {
             .collect()
     }
 
+    /// Running commands a restart would end for good. Agent sessions aren't among them, because
+    /// they reopen.
+    pub(crate) fn running_commands_outside_agents(&self, ctx: &AppContext) -> usize {
+        self.panes_of::<TerminalPane>()
+            .filter(|pane| !self.is_pane_hidden_for_close(pane.id()))
+            .filter(|pane| {
+                let terminal_view = pane.terminal_view(ctx);
+                terminal_view.as_ref(ctx).is_long_running()
+                    && CLIAgentSessionsModel::as_ref(ctx)
+                        .session(terminal_view.id())
+                        .is_none()
+            })
+            .count()
+    }
+
     /// Resolves the agent-resume "fork" launch (command + cwd) for the pane that owns
     /// `terminal_view_id`, if that pane currently has a forkable Claude/Codex session.
     ///

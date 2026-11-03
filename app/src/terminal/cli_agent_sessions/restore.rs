@@ -103,6 +103,16 @@ pub(crate) fn mid_turn_panes(ctx: &AppContext) -> BTreeSet<Vec<u8>> {
     panes
 }
 
+/// Running commands that a restart right now would end for good, across every window and project.
+pub(crate) fn running_commands_outside_agents(ctx: &AppContext) -> usize {
+    WorkspaceRegistry::as_ref(ctx)
+        .all_workspaces(ctx)
+        .into_iter()
+        .flat_map(|(_, workspace)| workspace.as_ref(ctx).tab_views().collect::<Vec<_>>())
+        .map(|group| group.as_ref(ctx).running_commands_outside_agents(ctx))
+        .sum()
+}
+
 struct RestoreEntry {
     terminal: WeakViewHandle<TerminalView>,
     pane_uuid: Vec<u8>,
