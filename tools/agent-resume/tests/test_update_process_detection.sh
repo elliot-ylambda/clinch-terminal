@@ -64,8 +64,10 @@ grep -q -- '-KILL 4242' "$TMP/kill-args" \
 
 # The public curl installer uses the same LaunchServices guard. It must refuse before any
 # download or replacement even when a path-only process scan sees nothing.
-if installer_out="$(CLINCH_LSAPPINFO_BIN="$TMP/lsappinfo" CLINCH_PS_BIN="$TMP/ps" \
-    sh "$ROOT/install.sh" 2>&1)"; then
+# With no terminal to ask on. This test can itself run on a terminal, where the installer would
+# otherwise wait for an answer.
+if installer_out="$(CLINCH_INSTALL_TTY="$TMP/no-terminal" CLINCH_LSAPPINFO_BIN="$TMP/lsappinfo" \
+    CLINCH_PS_BIN="$TMP/ps" sh "$ROOT/install.sh" 2>&1)"; then
   echo "FAIL: public installer accepted a LaunchServices-owned app"
   exit 1
 fi
