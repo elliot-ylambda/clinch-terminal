@@ -1,7 +1,7 @@
 //! Reads the per-pane agent-resume registry written by the claude wrapper / codex hooks,
 //! plus the append-only journal and prompt mirror they maintain.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::{BufRead, Read};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
@@ -555,6 +555,10 @@ fn registry_dir() -> Option<PathBuf> {
 const ACTIVE_PANES_FILE: &str = "active-panes";
 const APP_TERMINATING_FILE: &str = ".app-terminating";
 const CONVERSATION_BOOKMARKS_FILE: &str = "conversation-bookmarks.json";
+const INTERRUPTED_TURNS_FILE: &str = "interrupted-turns.json";
+/// A list older than this is ignored. Clinch must not revive a turn, and possibly its deploy, days
+/// after it stopped.
+const INTERRUPTED_TURNS_MAX_AGE_HOURS: i64 = 24;
 const TOOLBELT_LEARNING_FILE: &str = "toolbelt-learning.json";
 const TOOLBELT_RESOLUTIONS_FILE: &str = "toolbelt-learning-resolutions.json";
 const MAX_TOOLBELT_LEARNING_BYTES: u64 = 4 * 1024 * 1024;
@@ -997,6 +1001,66 @@ fn write_active_pane_manifest_in(dir: &Path, uuids: &[Vec<u8>]) -> std::io::Resu
         format!("{}\n", pane_ids.join("\n"))
     };
     write_private_atomic(dir, ACTIVE_PANES_FILE, contents.as_bytes())
+}
+
+/// The panes whose agents were mid-turn when Clinch last stopped.
+#[derive(Debug, Deserialize, Serialize)]
+struct InterruptedTurnsFile {
+    written_at: DateTime<Utc>,
+    panes: Vec<String>,
+}
+
+/// Records which panes a restart right now would cut off mid-turn. Written while Clinch runs as well
+/// as at quit, so a crash or forced quit still has a recent list.
+pub(crate) fn write_interrupted_turns(panes: &BTreeSet<Vec<u8>>) {
+    if !runtime_enabled() {
+        return;
+    }
+    let Some(dir) = registry_dir() else { return };
+    if let Err(err) = write_interrupted_turns_in(&dir, panes, Utc::now()) {
+        log::warn!("could not record interrupted agent turns: {err}");
+    }
+}
+
+fn write_interrupted_turns_in(
+    dir: &Path,
+    panes: &BTreeSet<Vec<u8>>,
+    now: DateTime<Utc>,
+) -> std::io::Result<()> {
+    let file = InterruptedTurnsFile {
+        written_at: now,
+        panes: panes.iter().map(hex::encode).collect(),
+    };
+    write_private_atomic(dir, INTERRUPTED_TURNS_FILE, &serde_json::to_vec(&file)?)
+}
+
+/// The panes recorded by the previous run, unless that record has gone stale.
+pub(crate) fn read_interrupted_turns() -> HashSet<Vec<u8>> {
+    if !runtime_enabled() {
+        return HashSet::new();
+    }
+    registry_dir()
+        .map(|dir| read_interrupted_turns_in(&dir, Utc::now()))
+        .unwrap_or_default()
+}
+
+fn read_interrupted_turns_in(dir: &Path, now: DateTime<Utc>) -> HashSet<Vec<u8>> {
+    let Some(file) = std::fs::read(dir.join(INTERRUPTED_TURNS_FILE))
+        .ok()
+        .and_then(|contents| serde_json::from_slice::<InterruptedTurnsFile>(&contents).ok())
+    else {
+        return HashSet::new();
+    };
+    let age = now.signed_duration_since(file.written_at);
+    if age < chrono::Duration::zero()
+        || age > chrono::Duration::hours(INTERRUPTED_TURNS_MAX_AGE_HOURS)
+    {
+        return HashSet::new();
+    }
+    file.panes
+        .iter()
+        .filter_map(|pane| hex::decode(pane).ok())
+        .collect()
 }
 
 fn write_private_atomic(dir: &Path, name: &str, contents: &[u8]) -> std::io::Result<()> {
@@ -2139,13 +2203,19 @@ fn is_generated_claude_user_message(record: &Value, text: &str) -> bool {
 /// Starts every auto-coordinate wakeup Clinch types into a coordinator.
 pub(crate) const AUTO_COORDINATE_MARKER: &str = "[Clinch auto-coordinate]";
 
+/// Starts the prompt Clinch types into a session that a restart cut off mid-turn.
+pub(crate) const RESTART_CONTINUE_MARKER: &str = "[Clinch restart]";
+
 /// True when a user-role turn was injected rather than typed: a harness task notification
-/// (background command or subagent completion) or a Clinch auto-coordinate wakeup. These reach
-/// every capture path — prompt-submit hook events, the on-disk prompt mirror, and native
-/// transcripts — and must never surface as message history or become a session's topic.
+/// (background command or subagent completion), a Clinch auto-coordinate wakeup, or a Clinch
+/// continue after a restart. These reach every capture path — prompt-submit hook events, the
+/// on-disk prompt mirror, and native transcripts — and must never surface as message history or
+/// become a session's topic.
 pub(crate) fn is_injected_prompt(text: &str) -> bool {
     let text = text.trim_start();
-    text.starts_with("<task-notification>") || text.starts_with(AUTO_COORDINATE_MARKER)
+    text.starts_with("<task-notification>")
+        || text.starts_with(AUTO_COORDINATE_MARKER)
+        || text.starts_with(RESTART_CONTINUE_MARKER)
 }
 
 fn prompt_history_from_codex_transcript(path: &Path) -> AgentPromptHistory {

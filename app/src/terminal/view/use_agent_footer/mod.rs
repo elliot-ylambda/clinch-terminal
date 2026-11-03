@@ -1451,6 +1451,41 @@ impl TerminalView {
         }
     }
 
+    /// Whether a restart right now would cut this pane's agent off mid-turn: working, or waiting on
+    /// a permission prompt or question that only exists inside the running process.
+    pub(crate) fn agent_is_mid_turn(&self, ctx: &AppContext) -> bool {
+        let Some(session) = CLIAgentSessionsModel::as_ref(ctx).session(self.view_id) else {
+            return false;
+        };
+        if !matches!(session.agent, CLIAgent::Claude | CLIAgent::Codex) || session.is_remote() {
+            return false;
+        }
+        if matches!(
+            session.status,
+            crate::terminal::cli_agent_sessions::CLIAgentSessionStatus::Blocked { .. }
+        ) {
+            return true;
+        }
+        if session.supports_rich_status() {
+            self.cli_agent_shows_working(session)
+        } else {
+            self.observed_agent_state(session) == ObservedAgentState::Working
+        }
+    }
+
+    /// Whether this pane's agent shows an input box with nothing in it. A picker or a dialog at
+    /// startup, which a typed prompt would answer by accident, doesn't count.
+    pub(crate) fn agent_composer_is_empty(&self, ctx: &AppContext) -> bool {
+        CLIAgentSessionsModel::as_ref(ctx)
+            .session(self.view_id)
+            .is_some_and(|session| {
+                matches!(
+                    self.native_composer(session.agent),
+                    Some(NativeComposer::Empty)
+                )
+            })
+    }
+
     fn native_composer(&self, agent: CLIAgent) -> Option<NativeComposer> {
         let model = self.model.lock();
         let grid = if model.is_alt_screen_active() {

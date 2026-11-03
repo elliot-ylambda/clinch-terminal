@@ -6,8 +6,10 @@ use serde::{Deserialize, Serialize};
 
 pub mod cache;
 pub mod claude;
+pub mod claude_account;
 pub mod claude_plan_cache;
 pub mod codex;
+pub mod codex_live;
 pub mod format;
 pub mod http;
 pub mod keychain;
@@ -89,6 +91,20 @@ pub enum PlanFetchOutcome {
     Unavailable,
 }
 
+/// Drops the windows whose period has ended, and the plan once none are left.
+pub(crate) fn retain_current_windows(
+    mut plan: PlanLimits,
+    now: DateTime<Utc>,
+) -> Option<PlanLimits> {
+    let current = |window: Option<LimitWindow>| {
+        window.filter(|window| window.resets_at.is_none_or(|reset| reset > now))
+    };
+    plan.session = current(plan.session);
+    plan.weekly = current(plan.weekly);
+    plan.fable_weekly = current(plan.fable_weekly);
+    (plan.session.is_some() || plan.weekly.is_some() || plan.fable_weekly.is_some()).then_some(plan)
+}
+
 /// A usage window counts as exhausted only at (or above) full utilization.
 /// Near-limit states (severity `Warning`/`Critical`) intentionally do NOT
 /// qualify: exhaustion drives the chip's reset countdown and the
@@ -140,6 +156,10 @@ pub struct Provider {
     pub week: WindowTotals,
     pub month: WindowTotals,
     pub plan: Option<PlanLimits>,
+    /// Codex only: when `plan` was last observed in a rollout log or a live read. Which of the two
+    /// is newer decides which one to show.
+    #[serde(default)]
+    pub plan_observed_at: Option<DateTime<Utc>>,
     /// Claude only: the existing provider login is unavailable without user
     /// interaction. Plan gauges offer a silent Retry; local totals still work.
     #[serde(default, alias = "plan_needs_authorization")]
@@ -150,6 +170,20 @@ pub struct Provider {
     /// record. Cleared once a later turn starts in the same thread.
     #[serde(default)]
     pub usage_limit_stops: HashMap<String, DateTime<Utc>>,
+}
+
+impl Provider {
+    /// Shows a live read of the plan unless a rollout log has reported something newer since.
+    pub fn apply_live_plan(&mut self, live: Option<codex_live::LivePlan>) {
+        let Some(live) = live else { return };
+        if self
+            .plan_observed_at
+            .is_none_or(|observed_at| live.fetched_at >= observed_at)
+        {
+            self.plan = Some(live.plan);
+            self.plan_observed_at = Some(live.fetched_at);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -227,7 +261,10 @@ use std::path::PathBuf;
 use crate::cache::ScanCache;
 
 pub struct Paths {
+    pub home: PathBuf,
     pub claude_projects: PathBuf,
+    /// Claude Code's config file, which names the signed-in account.
+    pub claude_config_file: PathBuf,
     pub codex_sessions: PathBuf,
     pub os_account: String,
     /// Where the last emitted snapshot is cached across launches (see
@@ -253,11 +290,19 @@ impl Paths {
         claude_root: PathBuf,
         codex_root: PathBuf,
     ) -> Self {
+        // Beside the default config directory, and inside a custom one.
+        let claude_config_file = if claude_root == home.join(".claude") {
+            home.join(".claude.json")
+        } else {
+            claude_root.join(".claude.json")
+        };
         Paths {
             claude_projects: claude_root.join("projects"),
+            claude_config_file,
             codex_sessions: codex_root.join("sessions"),
             os_account,
             snapshot_cache: home.join(".warp/cli-agent-usage-snapshot.json"),
+            home,
         }
     }
 }
@@ -426,6 +471,49 @@ mod tests {
     }
 
     #[test]
+    fn a_live_plan_wins_unless_a_rollout_reported_something_newer() {
+        let at = |seconds: i64| DateTime::from_timestamp(1_800_000_000 + seconds, 0).unwrap();
+        let plan = |percent: f64| PlanLimits {
+            weekly: Some(LimitWindow {
+                percent,
+                resets_at: None,
+                severity: Severity::Normal,
+            }),
+            ..Default::default()
+        };
+        let live = codex_live::LivePlan {
+            plan: plan(0.0),
+            fetched_at: at(100),
+        };
+
+        // Bought a reset: the logs still say 100% from before it.
+        let mut provider = Provider {
+            plan: Some(plan(100.0)),
+            plan_observed_at: Some(at(50)),
+            ..Default::default()
+        };
+        provider.apply_live_plan(Some(live));
+        assert_eq!(provider.plan, Some(plan(0.0)));
+        assert_eq!(provider.plan_observed_at, Some(at(100)));
+
+        // A turn ran since the live read.
+        let mut provider = Provider {
+            plan: Some(plan(5.0)),
+            plan_observed_at: Some(at(200)),
+            ..Default::default()
+        };
+        provider.apply_live_plan(Some(live));
+        assert_eq!(provider.plan, Some(plan(5.0)));
+
+        // No logs at all, and no live read.
+        let mut provider = Provider::default();
+        provider.apply_live_plan(None);
+        assert_eq!(provider.plan, None);
+        provider.apply_live_plan(Some(live));
+        assert_eq!(provider.plan, Some(plan(0.0)));
+    }
+
+    #[test]
     fn severity_default_is_normal() {
         assert_eq!(Severity::default(), Severity::Normal);
     }
@@ -553,6 +641,24 @@ mod tests {
             paths.snapshot_cache,
             PathBuf::from("/Users/tester/.warp/cli-agent-usage-snapshot.json")
         );
+        assert_eq!(
+            paths.claude_config_file,
+            PathBuf::from("/Volumes/config/claude/.claude.json")
+        );
+    }
+
+    #[test]
+    fn claude_config_file_sits_beside_the_default_config_directory() {
+        let paths = Paths::from_roots(
+            "/Users/tester".into(),
+            "tester".to_owned(),
+            "/Users/tester/.claude".into(),
+            "/Users/tester/.codex".into(),
+        );
+        assert_eq!(
+            paths.claude_config_file,
+            PathBuf::from("/Users/tester/.claude.json")
+        );
     }
 
     #[test]
@@ -570,6 +676,8 @@ mod tests {
             }
         }
         let paths = Paths {
+            home: "/no/such/home".into(),
+            claude_config_file: "/no/such/.claude.json".into(),
             claude_projects: "/no/such/claude".into(),
             codex_sessions: "/no/such/codex".into(),
             os_account: "nobody".into(),
@@ -606,6 +714,8 @@ mod tests {
         let blob = r#"{"claudeAiOauth":{"accessToken":"tok","expiresAt":99999999999999}}"#;
         let usage = r#"{"limits":[{"group":"session","percent":78,"severity":"warning","resets_at":"2026-07-01T02:30:00+00:00","is_active":true},{"group":"weekly","percent":43,"severity":"normal","resets_at":"2026-07-04T15:00:00+00:00","is_active":false}]}"#;
         let paths = Paths {
+            home: "/no/such/home".into(),
+            claude_config_file: "/no/such/.claude.json".into(),
             claude_projects: "/no/such/claude".into(),
             codex_sessions: "/no/such/codex".into(),
             os_account: "u".into(),
@@ -730,6 +840,8 @@ mod tests {
     #[test]
     fn scan_local_is_fail_soft_and_leaves_claude_plan_none() {
         let paths = Paths {
+            home: "/no/such/home".into(),
+            claude_config_file: "/no/such/.claude.json".into(),
             claude_projects: "/no/such/claude".into(),
             codex_sessions: "/no/such/codex".into(),
             os_account: "nobody".into(),
@@ -771,6 +883,8 @@ mod tests {
             }
         }
         let paths = Paths {
+            home: "/no/such/home".into(),
+            claude_config_file: "/no/such/.claude.json".into(),
             claude_projects: "/x".into(),
             codex_sessions: "/x".into(),
             os_account: "me".into(),

@@ -1003,73 +1003,6 @@ fn coding_agent_quick_insert_save_updates_one_shared_toolbar() {
 }
 
 #[test]
-fn user_menu_uses_clinch_branding() {
-    App::test((), |mut app| async move {
-        initialize_app(&mut app);
-        let workspace = mock_workspace(&mut app);
-
-        workspace.read(&app, |workspace, ctx| {
-            let items = workspace.user_menu_items(ctx);
-            let labels = items
-                .iter()
-                .filter_map(|item| match item {
-                    MenuItem::Item(fields) => Some(fields.label()),
-                    _ => None,
-                })
-                .collect::<Vec<_>>();
-
-            assert!(
-                labels.iter().all(|label| !label.contains("Warp")),
-                "user menu should not contain Warp-branded items: {labels:?}"
-            );
-
-            let assert_item =
-                |expected_label: &str, action_matches: fn(&WorkspaceAction) -> bool| {
-                    let fields = items.iter().find_map(|item| match item {
-                        MenuItem::Item(fields) if fields.label() == expected_label => Some(fields),
-                        _ => None,
-                    });
-                    assert!(
-                        fields
-                            .and_then(MenuItemFields::on_select_action)
-                            .is_some_and(action_matches),
-                        "missing or incorrectly wired menu item: {expected_label}"
-                    );
-                };
-
-            assert_item("What's new in Clinch", |action| {
-                matches!(action, WorkspaceAction::ViewLatestChangelog)
-            });
-            assert_item("Clinch settings", |action| {
-                matches!(action, WorkspaceAction::ShowSettings)
-            });
-            assert_item("Terminal settings", |action| {
-                matches!(
-                    action,
-                    WorkspaceAction::ShowSettingsPage(SettingsSection::Appearance)
-                )
-            });
-            assert_item("Keyboard shortcuts", |action| {
-                matches!(action, WorkspaceAction::ToggleKeybindingsPage)
-            });
-            assert_item("Clinch documentation", |action| {
-                matches!(action, WorkspaceAction::ViewUserDocs)
-            });
-            assert_item("Report an issue", |action| {
-                matches!(action, WorkspaceAction::SendFeedback)
-            });
-            assert_item("Clinch on GitHub", |action| {
-                matches!(action, WorkspaceAction::JoinSlack)
-            });
-            #[cfg(not(target_family = "wasm"))]
-            assert_item("View Clinch logs", |action| {
-                matches!(action, WorkspaceAction::ViewLogs)
-            });
-        });
-    });
-}
-
-#[test]
 fn clinch_settings_keeps_native_settings_actions_dispatchable() {
     App::test((), |mut app| async move {
         initialize_app(&mut app);
@@ -1454,20 +1387,13 @@ fn test_clinch_update_header_rechecks_before_installing_a_discovered_release() {
         },
     ] {
         assert!(matches!(
-            update_header_install_action(true, &stage),
+            clinch_update_header_action(&stage),
             WorkspaceAction::CheckForUpdate
-        ));
-        assert!(matches!(
-            update_header_install_action(false, &stage),
-            WorkspaceAction::ApplyUpdate
         ));
     }
 
     assert!(matches!(
-        update_header_install_action(
-            true,
-            &AutoupdateStage::UpdatedPendingRestart { new_version }
-        ),
+        clinch_update_header_action(&AutoupdateStage::UpdatedPendingRestart { new_version }),
         WorkspaceAction::ApplyUpdate
     ));
 }
@@ -2984,6 +2910,7 @@ fn new_tab_below_lands_after_source_family_in_its_section() {
                     .as_ref(ctx)
                     .terminal_pane_uuids()[0]
                     .clone(),
+                ancestors: Vec::new(),
                 parent_title: "Source".into(),
             };
             workspace.launch_command_in_new_tab("true".into(), None, Some(origin), ctx);

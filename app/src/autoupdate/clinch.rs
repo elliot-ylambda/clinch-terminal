@@ -35,10 +35,10 @@ const EMBEDDED_PUBLIC_KEY: &str =
     include_str!("../../../resources/update/clinch-update-public-key.json");
 
 /// How long a successful automatic check suppresses the next one.
-const AUTOMATIC_CHECK_INTERVAL_SECS: i64 = 24 * 60 * 60;
+const AUTOMATIC_CHECK_INTERVAL_SECS: i64 = 60 * 60;
 /// How long an automatic attempt suppresses the next one. This keeps every background path,
-/// including crashes and persistent failures, to at most one GitHub request per day.
-const AUTOMATIC_ATTEMPT_BACKOFF_SECS: i64 = 24 * 60 * 60;
+/// including crashes and persistent failures, to at most one GitHub check per hour.
+const AUTOMATIC_ATTEMPT_BACKOFF_SECS: i64 = 60 * 60;
 
 fn last_check_path() -> PathBuf {
     warp_core::paths::state_dir().join("last-update-check")
@@ -48,7 +48,7 @@ fn last_check_path() -> PathBuf {
 ///
 /// Both fields are instants rather than calendar dates, so the cadence is timezone-independent
 /// and does not depend on when the local day happens to roll over. `retry_after` is written before
-/// every automatic request; that preserves the daily ceiling even if the app exits before the
+/// every automatic request; that preserves the hourly ceiling even if the app exits before the
 /// request finishes.
 #[derive(Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
 pub(super) struct UpdateCheckRecord {
@@ -60,7 +60,7 @@ pub(super) struct UpdateCheckRecord {
 
 impl UpdateCheckRecord {
     /// Reads a stored record, tolerating both unreadable content and the legacy `YYYY-MM-DD`
-    /// format written when the cadence was daily. Anything unrecognized means "no check
+    /// format written by older versions. Anything unrecognized means "no check
     /// recorded", which errs toward checking rather than silently never checking again.
     pub(super) fn parse(raw: &str) -> Self {
         let raw = raw.trim();
@@ -81,9 +81,11 @@ impl UpdateCheckRecord {
     }
 
     pub(super) fn automatic_check_due(&self, now: DateTime<Utc>) -> bool {
+        // A deadline further ahead than one attempt can set came from an older, slower cadence.
+        let longest_backoff = chrono::Duration::seconds(AUTOMATIC_ATTEMPT_BACKOFF_SECS);
         if self
             .retry_after
-            .is_some_and(|retry_after| now < retry_after)
+            .is_some_and(|retry_after| now < retry_after && retry_after - now <= longest_backoff)
         {
             return false;
         }
@@ -137,7 +139,7 @@ pub(super) fn record_successful_check(now: DateTime<Utc>) {
 }
 
 /// Records an automatic attempt before it starts. Returning `false` prevents the request when the
-/// cadence record cannot be persisted, preserving the daily ceiling across app restarts.
+/// cadence record cannot be persisted, preserving the hourly ceiling across app restarts.
 pub(super) fn record_automatic_check_attempt(now: DateTime<Utc>) -> bool {
     let mut record = read_record();
     record.record_attempt(now);

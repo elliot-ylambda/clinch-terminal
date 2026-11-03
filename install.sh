@@ -441,7 +441,7 @@ say "This public preview is signed with Clinch's own certificate and not notariz
 say "The installer did not remove quarantine data or change Gatekeeper settings."
 say "Command-line downloads are not quarantined, so no Gatekeeper approval is needed."
 say "Session restore is enabled on first launch; you can turn capture off in Clinch Settings."
-say "Clinch checks signed update metadata at most daily and shows Update Clinch in the header."
+say "Clinch checks signed update metadata at most hourly and shows Update in the header."
 say "Choose Clinch → Check for Updates… to check now; Clinch installs only after you approve it."
 say "If this app location is not user-writable, Clinch opens the authenticated manual update path."
 say "This install bootstraps automatic discovery for builds older than v0.2026.07.20.1643."

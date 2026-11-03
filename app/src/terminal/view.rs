@@ -17481,6 +17481,11 @@ impl TerminalView {
         true
     }
 
+    #[cfg(test)]
+    pub(crate) fn end_deferred_agent_start_grace_for_test(&mut self) {
+        self.deferred_agent_started_at = None;
+    }
+
     /// True while a just-released deferred agent is still booting.
     pub(crate) fn deferred_agent_is_starting(&self) -> bool {
         self.deferred_agent_started_at

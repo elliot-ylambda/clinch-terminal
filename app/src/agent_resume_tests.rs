@@ -1779,6 +1779,32 @@ fn codex_fork_reads_prompts_inherited_through_its_parents() {
 }
 
 #[test]
+fn interrupted_turns_round_trip_and_expire() {
+    let dir = tempfile::tempdir().unwrap();
+    let now = Utc::now();
+    assert!(read_interrupted_turns_in(dir.path(), now).is_empty());
+
+    let panes = BTreeSet::from([vec![0xab, 0xcd], vec![0x01]]);
+    write_interrupted_turns_in(dir.path(), &panes, now).unwrap();
+    let read = read_interrupted_turns_in(dir.path(), now + chrono::Duration::hours(23));
+    assert_eq!(read, panes.iter().cloned().collect::<HashSet<_>>());
+
+    // Days later, or from a clock that has since moved backwards, the list means nothing.
+    assert!(read_interrupted_turns_in(dir.path(), now + chrono::Duration::hours(25)).is_empty());
+    assert!(read_interrupted_turns_in(dir.path(), now - chrono::Duration::hours(1)).is_empty());
+
+    // An empty write replaces the old list.
+    write_interrupted_turns_in(dir.path(), &BTreeSet::new(), now).unwrap();
+    assert!(read_interrupted_turns_in(dir.path(), now).is_empty());
+}
+
+#[test]
+fn restart_continue_prompts_stay_out_of_history() {
+    assert!(is_injected_prompt("[Clinch restart] Continue."));
+    assert!(!is_injected_prompt("Clinch restart notes"));
+}
+
+#[test]
 fn auto_coordinate_wakeups_are_not_user_history() {
     assert!(is_injected_prompt(
         "[Clinch auto-coordinate] 1 update: \"Fix\" finished a turn. Tactics on: watch."

@@ -3,11 +3,15 @@
 //! runs on ONE dedicated `std::thread` — never the gpui background executor, which
 //! is Tokio-backed and would make `reqwest::blocking` panic.
 
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
+use cli_agent_usage::claude_account::ClaudeAccountWatcher;
+use cli_agent_usage::claude_plan_cache::RefreshPolicy;
+use cli_agent_usage::codex_live::{find_codex_binary, read_limits, LiveCodexLimits};
 use cli_agent_usage::http::{FetchUsage, ReqwestUsage};
 use cli_agent_usage::keychain::{
     acquire_claude_token, should_read_keychain, ClaudeToken, MacKeychain, TokenAcquisition,
@@ -31,6 +35,15 @@ pub enum CliAgentUsageModelEvent {
     Updated,
 }
 
+/// One-shot signals that the user is looking at the numbers, so the numbers should be current.
+#[derive(Default)]
+struct LookingFlags {
+    /// Clinch came to the front, or the usage panel opened.
+    any: AtomicBool,
+    /// The usage panel opened. Claude's endpoint is rate-limited, so only this shortens its wait.
+    panel: AtomicBool,
+}
+
 struct ProducerUpdate {
     snapshot: UsageSnapshot,
     refresh_attempt_finished: bool,
@@ -41,6 +54,7 @@ pub struct CliAgentUsageModel {
     last_updated_at: Option<DateTime<Utc>>,
     /// One-shot flag for a Turn on / Retry click. Requests a silent refresh.
     refresh: Arc<AtomicBool>,
+    looking: Arc<LookingFlags>,
     /// Wakes the producer out of its idle wait so an explicit gesture does not
     /// sit behind the normal file-poll interval.
     producer_thread: Option<std::thread::Thread>,
@@ -68,14 +82,16 @@ impl CliAgentUsageModel {
             *CliAgentUsageSettings::as_ref(ctx).show_plan_limits,
         ));
         let refresh = Arc::new(AtomicBool::new(false));
+        let looking = Arc::new(LookingFlags::default());
 
         let producer_thread = if let Some(paths) = Paths::detect() {
             // Dedicated OS thread => guaranteed no Tokio runtime context.
             let enabled = enabled.clone();
             let refresh = refresh.clone();
+            let looking = looking.clone();
             std::thread::Builder::new()
                 .name("cli-agent-usage".to_string())
-                .spawn(move || producer_loop(paths, tx, enabled, refresh))
+                .spawn(move || producer_loop(paths, tx, enabled, refresh, looking))
                 .ok()
                 .map(|handle| handle.thread().clone())
         } else {
@@ -112,8 +128,21 @@ impl CliAgentUsageModel {
             latest: UsageSnapshot::default(),
             last_updated_at: None,
             refresh,
+            looking,
             producer_thread,
             refresh_pending: false,
+        }
+    }
+
+    /// The user is looking at Clinch, or at the usage panel when `panel_opened`, so bring the
+    /// numbers up to date now rather than on the next background check.
+    pub fn refresh_for_viewer(&self, panel_opened: bool) {
+        self.looking.any.store(true, Ordering::Relaxed);
+        if panel_opened {
+            self.looking.panel.store(true, Ordering::Relaxed);
+        }
+        if let Some(thread) = &self.producer_thread {
+            thread.unpark();
         }
     }
 
@@ -144,6 +173,7 @@ impl CliAgentUsageModel {
             latest: UsageSnapshot::default(),
             last_updated_at: None,
             refresh: Arc::new(AtomicBool::new(false)),
+            looking: Arc::default(),
             producer_thread: None,
             refresh_pending: false,
         }
@@ -204,15 +234,26 @@ impl CliAgentUsageModel {
     }
 }
 
+/// One bounded, silent Keychain read. `None` covers every way of not getting a token.
+fn read_claude_token(keychain: &MacKeychain, os_account: &str) -> Option<ClaudeToken> {
+    match acquire_claude_token(keychain, os_account) {
+        TokenAcquisition::Token(token) => Some(token),
+        TokenAcquisition::ItemMissing
+        | TokenAcquisition::RetryLater
+        | TokenAcquisition::Unavailable => None,
+    }
+}
+
 /// Runs on the dedicated thread. Local scans run every `FILE_POLL`; the shared
 /// Claude plan cache independently throttles endpoint requests by wall-clock
 /// time, retaining the last good `PlanLimits` across transient failures and
 /// coordinating Stable/Dev processes. Exits when the receiver is dropped.
 ///
-/// The Claude OAuth token is cached in `cached_token`: the Keychain is read
-/// only when we lack a usable token, not on every endpoint tick. When
+/// The Claude OAuth token is re-read from the Keychain before each real request
+/// to the endpoint, because logging in to another account replaces it while the
+/// old token keeps working. Between requests the plan cache answers. When
 /// `enabled` is false the Keychain is never read at all and the plan gauges
-/// clear.
+/// clear, and `codex app-server` is never started.
 ///
 /// Every credential read is non-interactive and bounded. Retry clicks bypass
 /// the normal cadence but cannot display a system credential dialog.
@@ -221,6 +262,7 @@ fn producer_loop(
     tx: async_channel::Sender<ProducerUpdate>,
     enabled: Arc<AtomicBool>,
     refresh: Arc<AtomicBool>,
+    looking: Arc<LookingFlags>,
 ) {
     let mut caches = Caches::new();
     let keychain = MacKeychain;
@@ -230,6 +272,10 @@ fn producer_loop(
     // Non-sticky: background ticks retry on the normal backoff, so a repaired
     // or unlocked Keychain recovers without forcing the user to retry.
     let mut plan_unavailable = false;
+    let mut claude_account = ClaudeAccountWatcher::new(paths.claude_config_file.clone());
+    let mut last_account: Option<String> = None;
+    let codex_binary = find_codex_binary(&paths.home, std::env::var_os("PATH").as_deref());
+    let mut live_codex = LiveCodexLimits::default();
 
     // Stale-while-revalidate: the widget hides until a snapshot has data, and
     // the first cold scan of the transcript dirs can take tens of seconds, so
@@ -261,6 +307,9 @@ fn producer_loop(
         let previous_unavailable = plan_unavailable;
         let mut refresh_attempt_finished = false;
         let mut refreshed_token = false;
+        let mut codex_live_attempted = false;
+        let user_looking = looking.any.swap(false, Ordering::Relaxed);
+        let panel_opened = looking.panel.swap(false, Ordering::Relaxed);
 
         if !enabled_now {
             // Gauge disabled: never touch the Keychain. Drop any cached token and
@@ -270,7 +319,16 @@ fn producer_loop(
             last_read_ms = None;
             last_plan = None;
             plan_unavailable = false;
+            live_codex.clear();
         } else {
+            let account = claude_account.current().map(str::to_owned);
+            if account != last_account {
+                // Forces the Keychain read below onto this tick. The plan cache is keyed by
+                // account, so the old account's limits are gone as well.
+                cached_token = None;
+                last_read_ms = None;
+            }
+
             // Token acquisition happens OUTSIDE the shared fetch throttle so an
             // Retry click acts on the next tick instead of waiting out the
             // 5-minute fetch cadence. The gesture is consumed only while
@@ -284,22 +342,9 @@ fn producer_loop(
                 REREAD_BACKOFF_MS,
             );
             if gesture || read_due {
-                let acquisition = acquire_claude_token(&keychain, &paths.os_account);
-                refreshed_token = gesture && matches!(&acquisition, TokenAcquisition::Token(_));
-                match acquisition {
-                    TokenAcquisition::Token(token) => {
-                        cached_token = Some(token);
-                        plan_unavailable = false;
-                    }
-                    TokenAcquisition::ItemMissing | TokenAcquisition::RetryLater => {
-                        cached_token = None;
-                        plan_unavailable = true;
-                    }
-                    TokenAcquisition::Unavailable => {
-                        cached_token = None;
-                        plan_unavailable = true;
-                    }
-                }
+                cached_token = read_claude_token(&keychain, &paths.os_account);
+                plan_unavailable = cached_token.is_none();
+                refreshed_token = gesture && cached_token.is_some();
                 last_read_ms = Some(now_ms);
                 refresh_attempt_finished = gesture;
             }
@@ -311,75 +356,44 @@ fn producer_loop(
                 None
             } else {
                 let fetch_plan = || {
-                    let mut outcome = cached_token
+                    cached_token = read_claude_token(&keychain, &paths.os_account);
+                    plan_unavailable = cached_token.is_none();
+                    last_read_ms = Some(now_ms);
+                    cached_token
                         .as_ref()
                         .map(|token| {
                             fetch_plan_for_token_outcome(&fetch as &dyn FetchUsage, token, now_ms)
                         })
-                        .unwrap_or(PlanFetchOutcome::Unavailable);
-
-                    // Claude Code may rotate a still-nominally-valid token. A 401
-                    // is the one signal that our cached copy is no longer usable;
-                    // boundedly re-read the Keychain and retry only when the token
-                    // actually changed. The same silent, bounded read is used.
-                    if matches!(outcome, PlanFetchOutcome::Unauthorized)
-                        && last_read_ms
-                            .map(|last| now_ms.saturating_sub(last) >= REREAD_BACKOFF_MS)
-                            .unwrap_or(true)
-                    {
-                        let refreshed = match acquire_claude_token(&keychain, &paths.os_account) {
-                            TokenAcquisition::Token(token) => {
-                                plan_unavailable = false;
-                                Some(token)
-                            }
-                            TokenAcquisition::ItemMissing | TokenAcquisition::RetryLater => {
-                                plan_unavailable = true;
-                                None
-                            }
-                            TokenAcquisition::Unavailable => {
-                                plan_unavailable = true;
-                                None
-                            }
-                        };
-                        let changed = match (&cached_token, &refreshed) {
-                            (Some(old), Some(new)) => old.access_token != new.access_token,
-                            (None, Some(_)) => true,
-                            _ => false,
-                        };
-                        cached_token = refreshed;
-                        last_read_ms = Some(now_ms);
-                        if changed {
-                            outcome = cached_token
-                                .as_ref()
-                                .map(|token| {
-                                    fetch_plan_for_token_outcome(
-                                        &fetch as &dyn FetchUsage,
-                                        token,
-                                        now_ms,
-                                    )
-                                })
-                                .unwrap_or(PlanFetchOutcome::Unavailable);
-                        }
-                    }
-                    outcome
+                        .unwrap_or(PlanFetchOutcome::Unavailable)
                 };
-                let refreshed_plan = if refreshed_token {
-                    claude_plan_cache::refresh_shared_after_retry(
-                        &paths.snapshot_cache,
-                        now,
-                        fetch_plan,
-                    )
-                } else {
-                    claude_plan_cache::refresh_shared(&paths.snapshot_cache, now, fetch_plan)
-                };
+                let refreshed_plan = claude_plan_cache::refresh_shared(
+                    &paths.snapshot_cache,
+                    now,
+                    RefreshPolicy {
+                        account: account.as_deref(),
+                        retry_empty: refreshed_token,
+                        user_looking: panel_opened,
+                    },
+                    fetch_plan,
+                );
                 if plan_unavailable {
-                    // A 401-triggered refresh can discover unavailable credentials.
+                    // The read before a request can discover unavailable credentials.
                     // Clear stale gauges while retaining the local usage totals.
                     None
                 } else {
                     refreshed_plan
                 }
             };
+            last_account = account;
+
+            if let Some(binary) = codex_binary.as_deref() {
+                // Skip machines that have never used Codex, even with a stray binary around.
+                let codex_in_use = paths.codex_sessions.parent().is_some_and(Path::is_dir);
+                if codex_in_use && live_codex.is_due(now, user_looking) {
+                    live_codex.record_attempt(read_limits(binary, &paths.home), now);
+                    codex_live_attempted = true;
+                }
+            }
         }
 
         // Plan refreshes (and availability changes) should not sit behind a
@@ -389,10 +403,12 @@ fn producer_loop(
         if last_plan != previous_plan
             || plan_unavailable != previous_unavailable
             || refresh_attempt_finished
+            || codex_live_attempted
         {
             let mut preview = last_stored.clone().unwrap_or_default();
             preview.claude.plan = last_plan;
             preview.claude.plan_unavailable = plan_unavailable;
+            preview.codex.apply_live_plan(live_codex.current(now));
             if block_on(tx.send(ProducerUpdate {
                 snapshot: preview,
                 refresh_attempt_finished,
@@ -406,6 +422,7 @@ fn producer_loop(
         let mut snap = scan_local(&paths, &mut caches, now);
         snap.claude.plan = last_plan;
         snap.claude.plan_unavailable = plan_unavailable;
+        snap.codex.apply_live_plan(live_codex.current(now));
         if last_stored.as_ref() != Some(&snap) {
             snapshot_cache::store(&paths.snapshot_cache, &snap, now);
             last_stored = Some(snap.clone());

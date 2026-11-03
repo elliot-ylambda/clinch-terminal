@@ -247,10 +247,10 @@ impl AutoupdateState {
         self.try_execute_request(ctx);
     }
 
-    // Warp keeps its existing ten-minute scheduler. Clinch wakes its scheduler at most once per
-    // day; its persisted cadence record can suppress the actual GitHub request for even longer.
+    // Warp keeps its existing ten-minute scheduler. Clinch wakes its scheduler once an hour; its
+    // persisted cadence record can suppress the actual GitHub request for longer.
     const AUTOUPDATE_POLL: Duration = Duration::from_secs(10 * 60);
-    const CLINCH_AUTOUPDATE_POLL: Duration = Duration::from_secs(24 * 60 * 60);
+    const CLINCH_AUTOUPDATE_POLL: Duration = Duration::from_secs(60 * 60);
 
     fn autoupdate_poll_interval(uses_clinch_updater: bool) -> Duration {
         if uses_clinch_updater {

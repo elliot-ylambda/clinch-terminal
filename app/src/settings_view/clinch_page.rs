@@ -34,8 +34,8 @@ use crate::remote_control::{RemoteControlService, RemoteControlStatus, RemoteCon
 use crate::report_if_error;
 use crate::settings::{
     AutoCreateWorktreesForNewTabs, CliAgentAutoContinueOnLimitReset, CliAgentUsageSettings,
-    ClinchAutomaticUpdateCheck, ClinchSettings, LocalControlMode, LocalControlSettings,
-    ShowCliAgentPlanLimits,
+    ClinchAutomaticUpdateCheck, ClinchContinueSessionsAfterRestart, ClinchSettings,
+    LocalControlMode, LocalControlSettings, ShowCliAgentPlanLimits,
 };
 use crate::terminal::session_settings::{NotificationsSettings, SessionSettings};
 use crate::ui_components::icons::Icon;
@@ -123,6 +123,7 @@ pub enum ClinchSettingsPageAction {
     AutoCreateWorktreesForNewTabs,
     CliAgentPlanLimits,
     CliAgentAutoContinue,
+    ContinueSessionsAfterRestart,
     AutomaticUpdateCheck,
     #[cfg(feature = "local_fs")]
     RemoteControlToggle,
@@ -198,6 +199,12 @@ impl ClinchSettingsPageView {
             .is_supported_on_current_platform()
         {
             usage_widgets.push(Box::new(CliAgentAutoContinueWidget::default()));
+        }
+        if ClinchSettings::as_ref(ctx)
+            .continue_sessions_after_restart
+            .is_supported_on_current_platform()
+        {
+            usage_widgets.push(Box::new(ContinueSessionsAfterRestartWidget::default()));
         }
         if CliAgentUsageSettings::as_ref(ctx)
             .show_plan_limits
@@ -399,6 +406,14 @@ impl TypedActionView for ClinchSettingsPageView {
                 CliAgentUsageSettings::handle(ctx).update(ctx, |settings, ctx| {
                     report_if_error!(settings
                         .auto_continue_on_limit_reset
+                        .toggle_and_save_value(ctx));
+                });
+                ctx.notify();
+            }
+            ClinchSettingsPageAction::ContinueSessionsAfterRestart => {
+                ClinchSettings::handle(ctx).update(ctx, |settings, ctx| {
+                    report_if_error!(settings
+                        .continue_sessions_after_restart
                         .toggle_and_save_value(ctx));
                 });
                 ctx.notify();
@@ -1848,7 +1863,7 @@ impl SettingsWidget for AutomaticUpdateCheckWidget {
     type View = ClinchSettingsPageView;
 
     fn search_terms(&self) -> &str {
-        "clinch update updates automatic check daily github network privacy offline telemetry \
+        "clinch update updates automatic check hourly github network privacy offline telemetry \
          disable"
     }
 
@@ -1880,7 +1895,7 @@ impl SettingsWidget for AutomaticUpdateCheckWidget {
                 })
                 .finish(),
             Some(
-                "Ask GitHub at most once a day whether a signed Clinch update exists. Nothing is \
+                "Ask GitHub at most once an hour whether a signed Clinch update exists. Nothing is \
                  downloaded until you approve it, and no unique identifier or usage data is sent. Turn \
                  this off and Clinch makes no automatic network requests at all — you can still \
                  check on demand from Clinch → Check for Updates…. Setting \
@@ -1933,7 +1948,59 @@ impl SettingsWidget for CliAgentPlanLimitsWidget {
             Some(
                 "Show live rate-limit gauges in the tab-bar usage widget. When enabled, Clinch \
                  reads Claude Code's OAuth token from the macOS Keychain and queries Anthropic's \
-                 usage endpoint. This is off by default."
+                 usage endpoint, and asks your installed Codex for its limits. This is off by \
+                 default."
+                    .into(),
+            ),
+        )
+    }
+}
+
+#[derive(Default)]
+struct ContinueSessionsAfterRestartWidget {
+    switch_state: SwitchStateHandle,
+}
+
+impl SettingsWidget for ContinueSessionsAfterRestartWidget {
+    type View = ClinchSettingsPageView;
+
+    fn search_terms(&self) -> &str {
+        "clinch claude code codex continue running sessions restart update quit resume restore"
+    }
+
+    fn render(
+        &self,
+        view: &Self::View,
+        appearance: &Appearance,
+        app: &AppContext,
+    ) -> Box<dyn Element> {
+        let enabled = *ClinchSettings::as_ref(app).continue_sessions_after_restart;
+        render_body_item::<ClinchSettingsPageAction>(
+            "Continue running sessions after a restart".into(),
+            None,
+            LocalOnlyIconState::for_setting(
+                ClinchContinueSessionsAfterRestart::storage_key(),
+                ClinchContinueSessionsAfterRestart::sync_to_cloud(),
+                &mut view.local_only_icon_tooltip_states.borrow_mut(),
+                app,
+            ),
+            ToggleState::Enabled,
+            appearance,
+            appearance
+                .ui_builder()
+                .switch(self.switch_state.clone())
+                .check(enabled)
+                .build()
+                .on_click(|ctx, _, _| {
+                    ctx.dispatch_typed_action(
+                        ClinchSettingsPageAction::ContinueSessionsAfterRestart,
+                    );
+                })
+                .finish(),
+            Some(
+                "When Clinch restarts or updates, Claude Code and Codex sessions that were \
+                 mid-turn are told to continue, and to check before repeating anything with \
+                 outside effects. Typing in the pane first cancels it."
                     .into(),
             ),
         )

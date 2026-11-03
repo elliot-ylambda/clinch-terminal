@@ -49,6 +49,8 @@ fn repeated_provider_scans_release_deleted_sources_without_losing_session_totals
     std::fs::write(&claude_path, r#"{"type":"assistant","timestamp":"2026-01-01T12:00:00Z","requestId":"request","message":{"id":"message","model":"claude-haiku","usage":{"output_tokens":5}}}"#).unwrap();
     std::fs::write(&codex_path, r#"{"timestamp":"2026-01-01T12:00:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":0,"output_tokens":7}}}}"#).unwrap();
     let paths = Paths {
+        home: "/no/such/home".into(),
+        claude_config_file: "/no/such/.claude.json".into(),
         claude_projects: claude_root,
         codex_sessions: codex_root,
         os_account: String::new(),

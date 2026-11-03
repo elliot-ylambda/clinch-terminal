@@ -22,7 +22,7 @@ define_settings_group!(ClinchSettings, settings: [
         toml_path: "clinch.agent_conversation_finder.scope",
         description: "The default project scope for the agent conversation finder.",
     },
-    // Gates Clinch's automatic daily check against its signed GitHub release feed. On by
+    // Gates Clinch's automatic hourly check against its signed GitHub release feed. On by
     // default so security fixes reach users who never open Settings. Turning it off leaves the
     // app making no automatic network requests at all; Clinch → Check for Updates… still works,
     // and CLINCH_NO_UPDATE_CHECK overrides this setting for headless or managed machines.
@@ -35,7 +35,18 @@ define_settings_group!(ClinchSettings, settings: [
         sync_to_cloud: SyncToCloud::Never,
         private: false,
         toml_path: "clinch.updates.automatic_check",
-        description: "Check GitHub at most once a day for a signed Clinch update. When off, Clinch makes no automatic network requests; you can still check on demand from Clinch → Check for Updates…",
+        description: "Check GitHub at most once an hour for a signed Clinch update. When off, Clinch makes no automatic network requests; you can still check on demand from Clinch → Check for Updates…",
+    },
+    // Decides whether a session cut off mid-turn by a restart is told to carry on. Clinch always
+    // reopens the conversation; this is only about the turn in progress.
+    continue_sessions_after_restart: ClinchContinueSessionsAfterRestart {
+        type: bool,
+        default: true,
+        supported_platforms: SupportedPlatforms::DESKTOP,
+        sync_to_cloud: SyncToCloud::Never,
+        private: false,
+        toml_path: "clinch.sessions.continue_after_restart",
+        description: "After Clinch restarts or updates, tell Claude Code and Codex sessions that were mid-turn to continue where they left off.",
     },
     agent_conversation_finder_agent: AgentConversationFinderAgent {
         type: String,

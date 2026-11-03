@@ -1042,10 +1042,26 @@ fn feedback_menu_item() -> MenuItem {
     ))
 }
 
+fn workspace_action_menu_item(name: &str, action: WorkspaceAction) -> MenuItem {
+    MenuItem::Custom(CustomMenuItem::new(
+        name,
+        workspace_action_dispatcher(action),
+        no_updates,
+        None,
+    ))
+}
+
 fn make_new_help_menu() -> Menu {
     Menu::new(
         "Help",
         vec![
+            workspace_action_menu_item(
+                "What's New in Clinch",
+                WorkspaceAction::ViewLatestChangelog,
+            ),
+            workspace_action_menu_item("Clinch Documentation", WorkspaceAction::ViewUserDocs),
+            workspace_action_menu_item("View Logs", WorkspaceAction::ViewLogs),
+            MenuItem::Separator,
             feedback_menu_item(),
             link_menu_item("Clinch on GitHub...", links::COMMUNITY_URL.into()),
             link_menu_item("GitHub Issues...", links::GITHUB_ISSUES_URL.into()),

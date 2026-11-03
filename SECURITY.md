@@ -100,12 +100,12 @@ entitlements are rejected by release verification.
 ## Privacy posture
 
 The stable Clinch channel has no Warp backend, telemetry destination, or crash-reporting
-destination. Its updater makes a quiet, at-most-daily GitHub check for signed release metadata;
+destination. Its updater makes a quiet, at-most-hourly GitHub check for signed release metadata;
 automatic checks do not download an archive. That check is the only request Clinch issues on its
 own, and it can be disabled entirely with `clinch.updates.automatic_check` or the
 `CLINCH_NO_UPDATE_CHECK` environment variable, leaving on-demand checks from the Clinch menu as
 the only path to the network. Every automatic check is recorded before it starts, so failures,
-cancellations, and restarts cannot exceed the daily ceiling. The request carries only a static
+cancellations, and restarts cannot exceed the hourly ceiling. The request carries only a static
 updater user agent and no unique Clinch identifier, app version, OS version, or usage data,
 although GitHub necessarily observes normal HTTPS transport metadata such as source IP and request
 time. Unavailable telemetry overrides stored defaults and experiment or enterprise flags. The

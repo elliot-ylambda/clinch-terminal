@@ -52,8 +52,8 @@ alongside Warp without inheriting Warp's settings.
   answer the sessions already running on your Mac from Safari on your phone, over your own
   Tailscale network. Off until you turn it on.
 - **Stay local-first.** No telemetry, no analytics, no crash reporting, no account. Clinch
-  collects nothing about you or your work, and the only thing it reaches for on its own is a
-  once-daily-at-most update check against this repository—which you can turn off. See
+  collects nothing about you or your work, and the only thing it reaches for on its own is an
+  hourly-at-most update check against this repository—which you can turn off. See
   [Privacy and network behavior](#privacy-and-network-behavior)—including how to verify it
   yourself.
 
@@ -148,6 +148,13 @@ Missing CLIs and provider policy failures do not block launch and are retried la
 Conversation recovery is best-effort. Clinch starts a new provider process with a resume command;
 it does not preserve a live process through quit, crash, or reboot. Provider retention, invalid or
 deleted transcripts, changed CLIs, and abrupt power loss can prevent an exact restore.
+
+A session that was mid-turn when Clinch stopped, working or waiting on a permission prompt or a
+question, comes back first and is told to continue where it left off and to check before repeating
+anything with outside effects. Anything still running in that session's process, such as a command
+or a background subagent, ended with it. Clinch skips the prompt if you typed in the pane first, and
+ignores a record more than 24 hours old. Turn this off with **Settings → Clinch → Continue running
+sessions after a restart**.
 
 More implementation detail is in
 [tools/agent-resume/README.md](tools/agent-resume/README.md).
@@ -250,9 +257,9 @@ privileged update authorizer.
 
 | Activity | Runs when | Destination |
 | --- | --- | --- |
-| Update check | Automatically, at most once a day — **and you can turn it off** | `api.github.com`, this repository's releases |
+| Update check | Automatically, at most once an hour — **and you can turn it off** | `api.github.com`, this repository's releases |
 | Update download | Only after you approve the update | GitHub release assets |
-| Claude plan-limit gauges | **Off by default**; only if you enable them in Settings | `api.anthropic.com` |
+| Plan-limit gauges | **Off by default**; only if you enable them in Settings | `api.anthropic.com` for Claude. For Codex, your installed `codex app-server` asks its own service using your Codex login |
 | [Remote Control](#remote-control-beta) | **Off by default**; only while you have it enabled | Your own tailnet, phone to Mac — no Clinch relay |
 | Language servers, MCP servers, remote assets | Only when you start them | Wherever you point them |
 | Claude Code, Codex, SSH, package tooling | Only when you run them | Their own services |
@@ -262,7 +269,7 @@ attaches no unique identifier, machine fingerprint, installed version, operating
 or usage data to them, and it downloads no app archive until you approve the update. GitHub
 necessarily sees ordinary transport metadata such as the requesting IP address and time. Clinch
 records an automatic check before sending it, so successes, failures, cancellations, and app
-restarts are all capped at one check per 24 hours.
+restarts are all capped at one check per hour.
 
 **To make Clinch issue no automatic network requests at all**, turn off **Settings → Clinch →
 Updates → Check for updates automatically**. Checking on demand from **Clinch → Check for
@@ -303,7 +310,7 @@ lsof -nP -i -a -p "$(ps -Ao pid,comm | awk '/Clinch.app\/Contents\/MacOS\/stable
 
 Expected results: the two `grep` commands match nothing, `ls` reports that no `Frameworks`
 directory exists, `codesign` prints an empty `<dict/>`, and `lsof` shows no sockets most of the
-time—only GitHub connections around a daily update check. Nothing should ever resolve to a Warp
+time—only GitHub connections around an hourly update check. Nothing should ever resolve to a Warp
 service or an analytics host.
 
 These invariants are also locked by tests in
@@ -335,10 +342,11 @@ access to an entry that trusts an older build.
 
 ## Updates and removal
 
-Updater-enabled builds check automatically and show **Update Clinch** in the header. You can
-also choose **Clinch → Check for Updates…**. Clinch authenticates the release and presents its
-version and notes; **Download and Install** then verifies the archive, saves restorable state,
-quits, atomically replaces the app, relaunches, and rolls back if the new app does not start.
+Updater-enabled builds check automatically and show **Update** in the header. You can also choose
+**Clinch → Check for Updates…**. Clinch authenticates the release and presents its version and
+notes; **Download and Install** then verifies the archive, saves restorable state, quits,
+atomically replaces the app, relaunches, and rolls back if the new app does not start. Sessions
+that were running reopen and continue; see [Session restore](#session-restore-is-enabled-by-default).
 
 The updater never requests administrator privileges. The public installer places Clinch in a
 user-writable `/Applications` or `~/Applications` location; unusual non-writable installations
@@ -409,7 +417,7 @@ After a version-and-commit-specific publication confirmation,
 it pushes the signed tag, creates or refreshes a private draft release, downloads the uploaded
 assets into a fresh directory, verifies them again, and publishes the draft. The command does not
 require or record a manual QA attestation. A running installation discovers the release on its
-next at-most-daily check; choose **Clinch → Check for Updates…** to refresh immediately without
+next at-most-hourly check; choose **Clinch → Check for Updates…** to refresh immediately without
 resetting the automatic privacy cadence. Advanced users can override `VERSION`.
 
 Release publication runs no GitHub Actions job. Immediately before publication, the local command

@@ -1,4 +1,4 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use warpui::App;
@@ -27,6 +27,7 @@ fn enqueue(
     AgentRestoreQueue::handle(app).update(app, |queue, ctx| {
         queue.enqueue(
             &terminal,
+            id.as_bytes().to_vec(),
             CLIAgentSessionKey {
                 provider: AgentResumeProvider::Claude,
                 session_id: id.into(),
@@ -213,5 +214,248 @@ fn background_restore_exit_is_visible_and_does_not_stall_other_panes() {
             queue.read(&app, |queue, _| queue.state(panes[0].id())),
             Some(RestoreState::Attention(_))
         ));
+    });
+}
+
+#[test]
+fn continuing_waits_until_the_agent_can_take_a_prompt_and_stops_if_someone_else_took_over() {
+    let settled = CONTINUE_SETTLE;
+    let early = Duration::from_secs(1);
+
+    assert_eq!(continue_step(None, true, false, early), ContinueStep::Wait);
+    assert_eq!(
+        continue_step(None, true, false, settled),
+        ContinueStep::Send
+    );
+    // A picker or dialog is on screen rather than an input box.
+    assert_eq!(
+        continue_step(None, false, false, settled),
+        ContinueStep::Wait
+    );
+    assert_eq!(
+        continue_step(Some("starting"), true, false, settled),
+        ContinueStep::Wait
+    );
+
+    // The user typed first, or left a draft: their input always wins.
+    assert_eq!(
+        continue_step(None, true, true, settled),
+        ContinueStep::Finished
+    );
+    assert_eq!(
+        continue_step(Some("human_input_or_draft"), false, false, early),
+        ContinueStep::Finished
+    );
+
+    // A spinner may only be the agent loading, until it has run past the timeout.
+    assert_eq!(
+        continue_step(Some("working"), false, false, settled),
+        ContinueStep::Wait
+    );
+    assert_eq!(
+        continue_step(Some("working"), false, false, CONTINUE_TIMEOUT),
+        ContinueStep::Finished
+    );
+
+    // Never able to take a prompt: flag the tab instead of retrying forever.
+    assert_eq!(
+        continue_step(Some("agent_not_writable"), false, false, CONTINUE_TIMEOUT),
+        ContinueStep::GiveUp
+    );
+    assert_eq!(
+        continue_step(None, false, false, CONTINUE_TIMEOUT),
+        ContinueStep::GiveUp
+    );
+}
+
+#[test]
+fn the_continue_prompt_stays_out_of_history() {
+    assert!(crate::agent_resume::is_injected_prompt(
+        &restart_continue_prompt()
+    ));
+}
+
+#[test]
+fn panes_that_were_running_start_first_and_keep_their_continue_until_it_is_sent() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        AgentRestoreQueue::handle(&app).update(&mut app, |queue, _| {
+            queue.unclaimed_interrupted_panes = HashSet::from([b"running".to_vec()]);
+        });
+        let starts = Rc::new(Cell::new(0));
+        let cancellations = Rc::new(Cell::new(0));
+        for id in ["idle-1", "idle-2", "running"] {
+            enqueue(&mut app, id, starts.clone(), cancellations.clone());
+        }
+        AgentRestoreQueue::handle(&app).update(&mut app, |queue, ctx| queue.tick(ctx));
+        AgentRestoreQueue::handle(&app).read(&app, |queue, ctx| {
+            let state = |id: &str| {
+                queue
+                    .entries
+                    .iter()
+                    .find(|entry| entry.key.session_id == id)
+                    .map(|entry| entry.state)
+                    .unwrap()
+            };
+            assert_eq!(state("running"), RestoreState::Starting);
+            assert_eq!(state("idle-1"), RestoreState::Starting);
+            assert_eq!(state("idle-2"), RestoreState::Queued);
+            let _ = ctx;
+        });
+        // A second restart before the continue went out must not lose it.
+        AgentRestoreQueue::handle(&app).update(&mut app, |queue, ctx| {
+            queue.record_interrupted_turns(false, ctx);
+            assert!(queue.unclaimed_interrupted_panes.is_empty());
+            assert!(queue
+                .last_recorded_panes
+                .as_ref()
+                .unwrap()
+                .contains(b"running".as_slice()));
+        });
+    });
+}
+
+/// The whole path for a session without hook status, the state every restored session starts in:
+/// it comes back, shows an empty input box, and gets exactly one continue.
+#[test]
+fn a_restored_session_that_was_running_gets_one_continue_once_its_input_box_shows() {
+    use crate::terminal::{CLIAgent, SizeInfo, SizeUpdate, SizeUpdateReason};
+
+    for agent in [CLIAgent::Claude, CLIAgent::Codex] {
+        App::test((), |mut app| async move {
+            initialize_app_for_terminal_view(&mut app);
+            app.update(crate::remote_control::register);
+            let queue = AgentRestoreQueue::handle(&app);
+            queue.update(&mut app, |queue, _| {
+                queue.unclaimed_interrupted_panes = HashSet::from([b"running".to_vec()]);
+            });
+            let starts = Rc::new(Cell::new(0));
+            let terminal = enqueue(&mut app, "running", starts.clone(), Rc::default());
+            let writes = Rc::new(RefCell::new(Vec::<u8>::new()));
+            let captured = writes.clone();
+            app.update(|ctx| {
+                ctx.subscribe_to_view(&terminal, move |_, event, _| {
+                    if let crate::terminal::view::Event::WriteBytesToPty { bytes } = event {
+                        captured.borrow_mut().extend_from_slice(bytes);
+                    }
+                })
+            });
+            terminal.update(&mut app, |view, ctx| {
+                CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                    let mut session = sessions.session(view.id()).unwrap().clone();
+                    session.agent = agent;
+                    sessions.set_session(view.id(), session, ctx);
+                });
+            });
+            queue.update(&mut app, |queue, ctx| {
+                if agent == CLIAgent::Codex {
+                    queue.entries[0].key.provider = AgentResumeProvider::Codex;
+                }
+                queue.tick(ctx);
+            });
+            assert_eq!(starts.get(), 1, "the agent starts");
+
+            terminal.update(&mut app, |view, _| {
+                view.end_deferred_agent_start_grace_for_test();
+                let mut model = view.model.lock();
+                model.simulate_long_running_block("agent", "");
+                let last_size = *model.block_list().size();
+                let new_size = SizeInfo::new_without_font_metrics(24, 120);
+                model.resize(SizeUpdate {
+                    update_reason: SizeUpdateReason::Refresh,
+                    last_size,
+                    new_size,
+                    new_gap_height: None,
+                    natural_rows: new_size.rows(),
+                    natural_cols: new_size.columns(),
+                });
+                model.enter_alt_screen(true);
+                let frame = if agent == CLIAgent::Claude {
+                    let rule = "─".repeat(120);
+                    format!(
+                        "\x1b[0m\x1b[2J\x1b[?25h\x1b[3;1H{rule}\x1b[4;1H❯ \x1b[2mAsk Claude\x1b[0m\x1b[5;1H{rule}\x1b[4;3H"
+                    )
+                } else {
+                    "\x1b[0m\x1b[2J\x1b[?25h\x1b[48;2;30;30;30m\x1b[3;1H\x1b[2K\x1b[4;1H\x1b[2K\x1b[5;1H\x1b[2K\x1b[4;1H\x1b[1m›\x1b[22m \x1b[2mAsk Codex\x1b[0m\x1b[6;1HReady\x1b[4;3H"
+                        .to_owned()
+                };
+                model.process_bytes(frame.as_str());
+            });
+
+            // Back, but not settled yet: nothing is typed.
+            let pending = |app: &App| {
+                AgentRestoreQueue::handle(app).read(app, |queue, _| {
+                    (queue.entries[0].state, queue.entries[0].continue_pending)
+                })
+            };
+            queue.update(&mut app, |queue, ctx| queue.tick(ctx));
+            assert_eq!(pending(&app), (RestoreState::Restored, true));
+            assert!(writes.borrow().is_empty());
+            terminal.read(&app, |view, ctx| {
+                assert_eq!(view.local_control_agent_readiness(ctx).1, None);
+                assert!(view.agent_composer_is_empty(ctx));
+            });
+
+            // Settled: the prompt goes out once and the pane leaves the record for the next restart.
+            queue.update(&mut app, |queue, ctx| {
+                queue.entries[0].restored_at =
+                    Some(Instant::now().checked_sub(CONTINUE_SETTLE).unwrap());
+                queue.tick(ctx);
+            });
+            assert_eq!(pending(&app), (RestoreState::Restored, false));
+            let typed = String::from_utf8_lossy(&writes.borrow()).into_owned();
+            assert_eq!(
+                typed.matches(RESTART_CONTINUE_MARKER).count(),
+                1,
+                "{typed:?}"
+            );
+            queue.update(&mut app, |queue, ctx| queue.tick(ctx));
+            let typed = String::from_utf8_lossy(&writes.borrow()).into_owned();
+            assert_eq!(
+                typed.matches(RESTART_CONTINUE_MARKER).count(),
+                1,
+                "sent only once"
+            );
+            queue.update(&mut app, |queue, ctx| {
+                queue.record_interrupted_turns(false, ctx);
+                assert!(queue.last_recorded_panes.as_ref().unwrap().is_empty());
+            });
+        });
+    }
+}
+
+#[test]
+fn a_session_counts_as_mid_turn_while_working_or_waiting_on_its_user() {
+    use crate::terminal::cli_agent_sessions::CLIAgentSessionStatus;
+    use crate::terminal::CLIAgent;
+
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let terminal = add_window_with_terminal(&mut app, None);
+        terminal.update(&mut app, |view, ctx| {
+            assert!(!view.agent_is_mid_turn(ctx), "no agent in the pane");
+            let cases = [
+                (CLIAgentSessionStatus::InProgress, true, true),
+                // A fresh session starts out in progress before anything has happened.
+                (CLIAgentSessionStatus::InProgress, false, false),
+                (CLIAgentSessionStatus::Blocked { message: None }, true, true),
+                (CLIAgentSessionStatus::Success, true, false),
+            ];
+            for agent in [CLIAgent::Claude, CLIAgent::Codex] {
+                for (status, observed, expected) in cases.clone() {
+                    CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                        let mut session = super::super::tests::idle_test_session(agent);
+                        session.status = status.clone();
+                        session.has_observed_turn_activity = observed;
+                        sessions.set_session(view.id(), session, ctx);
+                    });
+                    assert_eq!(
+                        view.agent_is_mid_turn(ctx),
+                        expected,
+                        "{agent:?} {status:?} observed {observed}"
+                    );
+                }
+            }
+        });
     });
 }

@@ -1907,7 +1907,11 @@ pub(crate) fn initialize_app(
     });
     ctx.add_singleton_model(move |_| RestoredAgentConversations::new(multi_agent_conversations));
     ctx.add_singleton_model(|_| CLIAgentSessionsModel::new());
-    ctx.add_singleton_model(crate::terminal::cli_agent_sessions::restore::AgentRestoreQueue::new);
+    let agent_restore_queue = ctx
+        .add_singleton_model(crate::terminal::cli_agent_sessions::restore::AgentRestoreQueue::new);
+    agent_restore_queue.update(ctx, |queue, ctx| {
+        queue.start_tracking_interrupted_turns(ctx)
+    });
 
     // Must come after CLIAgentSessionsModel and CliAgentUsageModel: it observes
     // both session events and late usage snapshots to arm/cancel per-pane
@@ -2226,6 +2230,7 @@ pub(crate) fn app_callbacks(
                 .update(ctx, move |me, ctx| me.reachability_changed(reachable, ctx));
         })),
         on_become_active: Some(Box::new(move |ctx| {
+            crate::ai::blocklist::usage::CliAgentUsageModel::as_ref(ctx).refresh_for_viewer(false);
             let auth_state = AuthStateProvider::as_ref(ctx).get();
             ctx.record_app_focus(
                 auth_state.user_id().map(|uid| uid.as_string()),
@@ -2290,6 +2295,8 @@ pub(crate) fn app_callbacks(
             // Freeze the newest pane/agent ownership before the writer's FIFO termination
             // event. The marker keeps SessionEnd hooks from deleting those registry entries
             // while PTYs are torn down later in shutdown.
+            crate::terminal::cli_agent_sessions::restore::AgentRestoreQueue::handle(ctx)
+                .update(ctx, |queue, ctx| queue.record_interrupted_turns(true, ctx));
             agent_resume::mark_app_terminating(
                 &app_state::get_app_state(ctx).terminal_pane_uuids(),
             );

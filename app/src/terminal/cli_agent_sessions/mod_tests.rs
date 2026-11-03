@@ -1942,6 +1942,83 @@ fn session_context_is_clinch_only() {
     assert!(!session_context_enabled_for("dev.warp.Warp-Stable"));
 }
 
+/// A running session whose title goes idle for good finishes its turn even though its Stop or
+/// SubagentStop event never arrived, and it keeps running while its title spins again.
+#[test]
+fn a_running_session_with_an_idle_title_settles_when_no_stop_event_arrives() {
+    App::test((), |mut app| async move {
+        let sessions = app.add_model(|_| CLIAgentSessionsModel::new());
+        let terminal = EntityId::new();
+        sessions.update(&mut app, |model, ctx| {
+            let mut session = idle_test_session(CLIAgent::Claude);
+            session.has_observed_turn_activity = true;
+            session
+                .session_context
+                .active_subagent_ids
+                .insert("lost".to_owned());
+            session
+                .session_context
+                .has_deferred_completion_for_subagents = true;
+            model.set_session(terminal, session, ctx);
+            model.update_from_terminal_title(terminal, "◐ Fix the build", ctx);
+            model.update_from_terminal_title(terminal, "✳ Fix the build", ctx);
+        });
+        let since = |app: &App| {
+            sessions.read(app, |model, _| {
+                model.idle_title_since.get(&terminal).copied()
+            })
+        };
+
+        // Spinning again cancels the pending settle, even once its timer fires.
+        let first = since(&app).expect("an idle title starts the wait");
+        sessions.update(&mut app, |model, ctx| {
+            model.update_from_terminal_title(terminal, "◓ Fix the build", ctx);
+            model.settle_idle_title(terminal, first, ctx);
+        });
+        assert!(sessions.read(&app, |model, _| {
+            model.session(terminal).unwrap().is_actively_working()
+        }));
+
+        sessions.update(&mut app, |model, ctx| {
+            model.update_from_terminal_title(terminal, "✳ Fix the build", ctx);
+        });
+        let second = since(&app).expect("going idle again restarts the wait");
+        sessions.update(&mut app, |model, ctx| {
+            model.settle_idle_title(terminal, second, ctx);
+        });
+        sessions.read(&app, |model, _| {
+            let session = model.session(terminal).unwrap();
+            assert!(matches!(session.status, CLIAgentSessionStatus::Success));
+            assert!(session.session_context.active_subagent_ids.is_empty());
+            assert!(
+                !session
+                    .session_context
+                    .has_deferred_completion_for_subagents
+            );
+        });
+    });
+}
+
+/// Codex can run with a title that shows no spinner. Until one has appeared, an idle-looking title
+/// says nothing about its turn, so it must never end one.
+#[test]
+fn a_title_that_never_showed_a_spinner_does_not_settle_a_turn() {
+    App::test((), |mut app| async move {
+        let sessions = app.add_model(|_| CLIAgentSessionsModel::new());
+        let terminal = EntityId::new();
+        sessions.update(&mut app, |model, ctx| {
+            let mut session = idle_test_session(CLIAgent::Codex);
+            session.has_observed_turn_activity = true;
+            model.set_session(terminal, session, ctx);
+            model.update_from_terminal_title(terminal, "Fix the build", ctx);
+        });
+        sessions.read(&app, |model, _| {
+            assert!(model.idle_title_since.is_empty());
+            assert!(model.session(terminal).unwrap().is_actively_working());
+        });
+    });
+}
+
 /// Neither agent reports answering a permission prompt, so the needs-input state ends when the
 /// agent's title goes from its idle glyph back to its working spinner.
 #[test]
