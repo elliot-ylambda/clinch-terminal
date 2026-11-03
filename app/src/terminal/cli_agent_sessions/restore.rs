@@ -1,4 +1,6 @@
-//! Restore saved conversations in their existing panes, independently of focus or rendering.
+//! Restore saved conversations in their existing panes, independently of focus or rendering, and
+//! tell the ones a restart cut off mid-turn to carry on.
+use std::collections::{BTreeSet, HashSet};
 use std::time::Duration;
 
 use instant::Instant;
@@ -8,13 +10,25 @@ use warpui::{
 };
 
 use super::{CLIAgentSessionKey, CLIAgentSessionsModel};
+use crate::agent_resume::{
+    read_interrupted_turns, write_interrupted_turns, RESTART_CONTINUE_MARKER,
+};
+use crate::settings::ClinchSettings;
 use crate::terminal::view::TerminalView;
+use crate::workspace::WorkspaceRegistry;
 
 const CONCURRENT_STARTS: usize = 2;
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 const START_TIMEOUT: Duration = Duration::from_secs(90);
 /// How often a tab flagged for attention is rechecked once nothing else is restoring.
 const ATTENTION_POLL_INTERVAL: Duration = Duration::from_secs(2);
+/// How often the panes a restart would cut off are recorded, for a crash or forced quit.
+const RECORD_INTERVAL: Duration = Duration::from_secs(10);
+/// How long a restored agent gets to settle before anything is typed into it.
+const CONTINUE_SETTLE: Duration = Duration::from_secs(3);
+/// How long to keep trying to continue a restored agent before flagging its tab instead.
+const CONTINUE_TIMEOUT: Duration = Duration::from_secs(3 * 60);
+const CONTINUE_FAILED_LABEL: &str = "Was running but couldn't continue — check this tab";
 
 type CancelPendingCommand = Box<dyn FnOnce(&mut AppContext) -> bool>;
 
@@ -38,12 +52,65 @@ impl RestoreState {
     }
 }
 
+/// What to do about a restored agent that a restart cut off mid-turn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ContinueStep {
+    Wait,
+    Send,
+    /// Nothing more to do: someone else took over.
+    Finished,
+    GiveUp,
+}
+
+fn continue_step(
+    unavailable: Option<&str>,
+    composer_is_empty: bool,
+    user_typed: bool,
+    elapsed: Duration,
+) -> ContinueStep {
+    let timed_out = elapsed >= CONTINUE_TIMEOUT;
+    match unavailable {
+        _ if user_typed => ContinueStep::Finished,
+        Some("human_input_or_draft") => ContinueStep::Finished,
+        // A spinner at startup can be just the agent loading, so give it time to settle. A turn
+        // still running after all that is the agent carrying on by itself.
+        Some("working") if timed_out => ContinueStep::Finished,
+        None if composer_is_empty && elapsed >= CONTINUE_SETTLE => ContinueStep::Send,
+        _ if timed_out => ContinueStep::GiveUp,
+        _ => ContinueStep::Wait,
+    }
+}
+
+fn restart_continue_prompt() -> String {
+    format!(
+        "{RESTART_CONTINUE_MARKER} Clinch restarted while this session was mid-turn, so its last \
+         turn was cut off. Continue where you left off. Before repeating anything with outside \
+         effects, such as a deploy, a push, or a message, check whether it already happened."
+    )
+}
+
+/// Every pane a restart right now would cut off, across every window and project.
+pub(crate) fn mid_turn_panes(ctx: &AppContext) -> BTreeSet<Vec<u8>> {
+    let mut panes = BTreeSet::new();
+    for (_, workspace) in WorkspaceRegistry::as_ref(ctx).all_workspaces(ctx) {
+        for group in workspace.as_ref(ctx).tab_views() {
+            panes.extend(group.as_ref(ctx).mid_turn_pane_uuids(ctx));
+        }
+    }
+    panes
+}
+
 struct RestoreEntry {
     terminal: WeakViewHandle<TerminalView>,
+    pane_uuid: Vec<u8>,
     key: CLIAgentSessionKey,
     state: RestoreState,
     started_at: Option<Instant>,
     cancel_pending_command: Option<CancelPendingCommand>,
+    /// This pane was mid-turn when Clinch stopped, and hasn't been told to continue yet.
+    continue_pending: bool,
+    /// When the agent came back, which is when the wait to continue it starts.
+    restored_at: Option<Instant>,
 }
 
 #[derive(Default)]
@@ -53,6 +120,9 @@ pub(crate) struct AgentRestoreQueue {
     completed_at: Option<Instant>,
     /// The user closed the notice. Restoring shows it again.
     notice_dismissed: bool,
+    /// Panes the previous run recorded as mid-turn that no restored tab has claimed yet.
+    unclaimed_interrupted_panes: HashSet<Vec<u8>>,
+    last_recorded_panes: Option<BTreeSet<Vec<u8>>>,
 }
 
 impl Entity for AgentRestoreQueue {
@@ -82,9 +152,48 @@ impl AgentRestoreQueue {
         Self::default()
     }
 
+    /// Picks up what the previous run recorded and starts recording for the next one. Call once,
+    /// before any window restores.
+    pub(crate) fn start_tracking_interrupted_turns(&mut self, ctx: &mut ModelContext<Self>) {
+        if *ClinchSettings::as_ref(ctx).continue_sessions_after_restart {
+            self.unclaimed_interrupted_panes = read_interrupted_turns();
+        }
+        self.schedule_recording(ctx);
+    }
+
+    fn schedule_recording(&self, ctx: &mut ModelContext<Self>) {
+        ctx.spawn(
+            async { Timer::after(RECORD_INTERVAL).await },
+            |queue, _, ctx| {
+                queue.record_interrupted_turns(false, ctx);
+                queue.schedule_recording(ctx);
+            },
+        );
+    }
+
+    /// Saves the panes a restart right now would cut off, including restored ones still waiting
+    /// for their continue, so a second restart can't lose them. `quitting` always writes, which
+    /// dates the record from the quit rather than from when the list last changed.
+    pub(crate) fn record_interrupted_turns(&mut self, quitting: bool, ctx: &AppContext) {
+        // Windows restore synchronously at launch, so nothing can claim these by now.
+        self.unclaimed_interrupted_panes.clear();
+        let mut panes = mid_turn_panes(ctx);
+        panes.extend(
+            self.entries
+                .iter()
+                .filter(|entry| entry.continue_pending)
+                .map(|entry| entry.pane_uuid.clone()),
+        );
+        if quitting || self.last_recorded_panes.as_ref() != Some(&panes) {
+            write_interrupted_turns(&panes);
+            self.last_recorded_panes = Some(panes);
+        }
+    }
+
     pub(crate) fn enqueue(
         &mut self,
         terminal: &ViewHandle<TerminalView>,
+        pane_uuid: Vec<u8>,
         key: CLIAgentSessionKey,
         cancel_pending_command: CancelPendingCommand,
         ctx: &mut ModelContext<Self>,
@@ -102,8 +211,10 @@ impl AgentRestoreQueue {
             .iter()
             .any(|entry| entry.key == key && entry.terminal.upgrade(ctx).is_some());
         terminal.update(ctx, |view, _| view.manage_agent_restore_in_background());
+        let continue_pending = self.unclaimed_interrupted_panes.remove(&pane_uuid);
         self.entries.push(RestoreEntry {
             terminal: terminal.downgrade(),
+            pane_uuid,
             key,
             state: if duplicate {
                 RestoreState::Attention("Already restoring in another tab")
@@ -112,6 +223,8 @@ impl AgentRestoreQueue {
             },
             started_at: None,
             cancel_pending_command: Some(cancel_pending_command),
+            continue_pending,
+            restored_at: None,
         });
         self.completed_at = None;
         self.notice_dismissed = false;
@@ -188,19 +301,56 @@ impl AgentRestoreQueue {
         );
     }
 
+    /// Tells a restored agent to carry on once it can safely take a prompt.
+    fn continue_turn(
+        entry: &mut RestoreEntry,
+        terminal: &ViewHandle<TerminalView>,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        let restored_at = *entry.restored_at.get_or_insert_with(Instant::now);
+        let view = terminal.as_ref(ctx);
+        let (revision, unavailable) = view.local_control_agent_readiness(ctx);
+        match continue_step(
+            unavailable,
+            view.agent_composer_is_empty(ctx),
+            view.agent_restore_has_user_input(),
+            restored_at.elapsed(),
+        ) {
+            ContinueStep::Wait => {}
+            ContinueStep::Send => {
+                entry.continue_pending = !terminal.update(ctx, |view, ctx| {
+                    view.local_control_send_agent_text(
+                        restart_continue_prompt(),
+                        &revision,
+                        |_| {},
+                        ctx,
+                    )
+                });
+            }
+            ContinueStep::Finished => entry.continue_pending = false,
+            ContinueStep::GiveUp => {
+                entry.continue_pending = false;
+                entry.state = RestoreState::Attention(CONTINUE_FAILED_LABEL);
+            }
+        }
+    }
+
     fn tick(&mut self, ctx: &mut ModelContext<Self>) {
         let mut changed = false;
         for entry in &mut self.entries {
             let before = entry.state;
             let Some(terminal) = entry.terminal.upgrade(ctx) else {
                 entry.state = RestoreState::Closed;
+                entry.continue_pending = false;
                 changed |= before != entry.state;
                 continue;
             };
             // A flagged tab whose agent is up and waiting for input is fine, even when it came
             // back under a new session id (a teleported or forked resume) or took longer than the
-            // start timeout. There is nothing left for the user to check.
+            // start timeout. There is nothing left for the user to check. A failed continue stays
+            // flagged, because an agent that's up says nothing about the turn it never resumed.
             if matches!(entry.state, RestoreState::Attention(_))
+                && entry.state != RestoreState::Attention(CONTINUE_FAILED_LABEL)
                 && terminal.as_ref(ctx).agent_restore_is_ready(ctx)
             {
                 entry.state = RestoreState::Restored;
@@ -237,6 +387,9 @@ impl AgentRestoreQueue {
                     }
                 }
             }
+            if entry.state == RestoreState::Restored && entry.continue_pending {
+                Self::continue_turn(entry, &terminal, ctx);
+            }
             changed |= before != entry.state;
         }
 
@@ -246,7 +399,11 @@ impl AgentRestoreQueue {
                 .filter(|entry| entry.state == RestoreState::Starting)
                 .count(),
         );
-        for entry in &mut self.entries {
+        // Whatever was running comes back first. A stable sort keeps tab order within each group.
+        let mut start_order: Vec<usize> = (0..self.entries.len()).collect();
+        start_order.sort_by_key(|&index| !self.entries[index].continue_pending);
+        for index in start_order {
+            let entry = &mut self.entries[index];
             if available == 0 {
                 break;
             }
@@ -279,10 +436,10 @@ impl AgentRestoreQueue {
         if changed {
             ctx.emit(());
         }
-        self.ticking = self
-            .entries
-            .iter()
-            .any(|entry| matches!(entry.state, RestoreState::Queued | RestoreState::Starting));
+        self.ticking = self.entries.iter().any(|entry| {
+            matches!(entry.state, RestoreState::Queued | RestoreState::Starting)
+                || (entry.state == RestoreState::Restored && entry.continue_pending)
+        });
         if !self.ticking && self.completed_at.is_none() {
             self.completed_at = Some(Instant::now());
         }

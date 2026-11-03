@@ -160,6 +160,9 @@ Introduce a shared delivery service above the provider-aware PTY submission stra
 raw terminal input. Admission and final submission validate conversation ID, pane incarnation,
 foreground agent, writable prompt state, observed input epoch, scope membership, sender ownership,
 and local-control mode. Unknown prompt readiness returns a reason or waits when explicitly queued.
+Until a session's first hook fires (a restored agent reports nothing until then), its state comes
+from its title glyph and the provider's own composer: a working title means working, and a visible
+composer means idle and writable once provably empty. Only a screen showing neither is unknown.
 Human keyboard/draft activity preempts automated dispatch; remote writer ownership participates in
 the same conflict check while preserving its existing desktop-preemption semantics.
 

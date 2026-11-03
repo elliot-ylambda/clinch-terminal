@@ -14,6 +14,7 @@ use crate::agent_resume::AgentResumeProvider;
 use crate::pane_group::{PaneGroup, PaneId};
 use crate::root_view::RootView;
 use crate::terminal::cli_agent_sessions::{CLIAgentSessionStatus, CLIAgentSessionsModel};
+use crate::terminal::view::use_agent_footer::ObservedAgentState;
 use crate::terminal::{CLIAgent, TerminalView};
 use crate::workspace::Workspace;
 
@@ -241,20 +242,31 @@ pub(super) fn snapshot(
                                     provider_name,
                                     conversation_id
                                 ]));
-                                let state = if !session.supports_rich_status() {
-                                    "unknown"
-                                } else if session.session_context.stop_reason.is_some() {
-                                    "rate_limited"
-                                } else {
-                                    match session.status {
-                                        CLIAgentSessionStatus::Blocked { .. } => "needs_attention",
-                                        CLIAgentSessionStatus::Success => "turn_complete",
-                                        CLIAgentSessionStatus::InProgress
-                                            if session.is_actively_working() =>
-                                        {
-                                            "working"
+                                let (state, state_source) = if session.supports_rich_status() {
+                                    let state = if session.session_context.stop_reason.is_some() {
+                                        "rate_limited"
+                                    } else {
+                                        match session.status {
+                                            CLIAgentSessionStatus::Blocked { .. } => {
+                                                "needs_attention"
+                                            }
+                                            _ if terminal_ref.cli_agent_shows_working(session) => {
+                                                "working"
+                                            }
+                                            CLIAgentSessionStatus::Success => "turn_complete",
+                                            CLIAgentSessionStatus::InProgress => "idle",
                                         }
-                                        CLIAgentSessionStatus::InProgress => "idle",
+                                    };
+                                    (state, "provider_notifications")
+                                } else {
+                                    match terminal_ref.observed_agent_state(session) {
+                                        ObservedAgentState::Working => {
+                                            ("working", "terminal_screen")
+                                        }
+                                        ObservedAgentState::Idle => ("idle", "terminal_screen"),
+                                        ObservedAgentState::Unknown => {
+                                            ("unknown", "command_detection")
+                                        }
                                     }
                                 };
                                 let (revision, unavailable) =
@@ -264,7 +276,7 @@ pub(super) fn snapshot(
                                     "window_id": window_id.to_string(), "project_id": project_id, "project_name": project_name,
                                     "section_id": section_id, "section_name": section.as_ref().and_then(|(_, section)| section.name.clone()),
                                     "tab_id": tab_id, "title": tab_title, "pane_id": pane_id_string, "cwd": pane["cwd"],
-                                    "state": state, "state_source": if session.supports_rich_status() { "provider_notifications" } else { "command_detection" },
+                                    "state": state, "state_source": state_source,
                                     "input_revision": revision, "ready": unavailable.is_none(), "unavailable_reason": unavailable,
                                     "draft_source": terminal_ref.local_control_draft_source(ctx),
                                     "latest_prompt": session.latest_user_prompt_for_chrome(), "latest_response_preview": session.session_context.response,

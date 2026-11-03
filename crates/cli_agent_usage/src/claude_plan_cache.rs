@@ -11,19 +11,15 @@ use std::path::{Path, PathBuf};
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::{PlanFetchOutcome, PlanLimits};
+use crate::{retain_current_windows, PlanFetchOutcome, PlanLimits};
 
 const VERSION: u32 = 1;
 
 /// Minimum cadence for fresh requests to Claude's usage endpoint. Consumers
 /// that wait for a post-stop usage confirmation must allow at least this long.
 pub const MIN_ATTEMPT_INTERVAL_SECS: i64 = 5 * 60;
-
-/// Anthropic's usage endpoint is rate-limited. This is a wall-clock throttle,
-/// independent of how long transcript scans take.
-fn min_attempt_interval() -> Duration {
-    Duration::seconds(MIN_ATTEMPT_INTERVAL_SECS)
-}
+/// The floor when the user just opened the usage panel.
+const LOOKING_MIN_ATTEMPT_INTERVAL_SECS: i64 = 60;
 
 /// Plan percentages move much faster than local token totals. Keep a recent
 /// result across transient failures, but hide it after an hour rather than
@@ -32,7 +28,7 @@ fn max_plan_age() -> Duration {
     Duration::hours(1)
 }
 
-#[derive(Clone, Copy, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 struct CacheFile {
     version: u32,
     attempted_at: DateTime<Utc>,
@@ -40,6 +36,9 @@ struct CacheFile {
     retry_at: Option<DateTime<Utc>>,
     fetched_at: Option<DateTime<Utc>>,
     plan: Option<PlanLimits>,
+    /// The account this describes. Another account's limits and rate limiting don't apply.
+    #[serde(default)]
+    account: Option<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -50,14 +49,17 @@ struct CachedPlan {
     plan: Option<PlanLimits>,
 }
 
-fn retain_current_windows(mut plan: PlanLimits, now: DateTime<Utc>) -> Option<PlanLimits> {
-    let current = |window: Option<crate::LimitWindow>| {
-        window.filter(|window| window.resets_at.is_none_or(|reset| reset > now))
-    };
-    plan.session = current(plan.session);
-    plan.weekly = current(plan.weekly);
-    plan.fable_weekly = current(plan.fable_weekly);
-    (plan.session.is_some() || plan.weekly.is_some() || plan.fable_weekly.is_some()).then_some(plan)
+/// What this refresh knows beyond the clock.
+#[derive(Clone, Copy, Default)]
+pub struct RefreshPolicy<'a> {
+    /// The signed-in account, when known. A cache entry from a different account is ignored.
+    pub account: Option<&'a str>,
+    /// An explicit Retry just got a token. A prior token-less or unauthorized attempt may have left
+    /// an empty entry inside the normal throttle; retry now in that one case, so clicking Retry
+    /// doesn't appear to do nothing.
+    pub retry_empty: bool,
+    /// The user just opened the usage panel, so a shorter throttle applies.
+    pub user_looking: bool,
 }
 
 fn cache_paths(snapshot_cache: &Path) -> Option<(PathBuf, PathBuf)> {
@@ -68,9 +70,12 @@ fn cache_paths(snapshot_cache: &Path) -> Option<(PathBuf, PathBuf)> {
     ))
 }
 
-fn load(path: &Path, now: DateTime<Utc>) -> Option<CachedPlan> {
+fn load(path: &Path, now: DateTime<Utc>, account: Option<&str>) -> Option<CachedPlan> {
     let file = serde_json::from_str::<CacheFile>(&fs::read_to_string(path).ok()?).ok()?;
-    if file.version != VERSION || file.attempted_at > now {
+    if file.version != VERSION
+        || file.attempted_at > now
+        || account.is_some_and(|account| file.account.as_deref() != Some(account))
+    {
         return None;
     }
 
@@ -91,13 +96,14 @@ fn load(path: &Path, now: DateTime<Utc>) -> Option<CachedPlan> {
     })
 }
 
-fn store(path: &Path, cached: CachedPlan) {
+fn store(path: &Path, cached: CachedPlan, account: Option<&str>) {
     let file = CacheFile {
         version: VERSION,
         attempted_at: cached.attempted_at,
         retry_at: cached.retry_at,
         fetched_at: cached.fetched_at,
         plan: cached.plan,
+        account: account.map(str::to_owned),
     };
     let Ok(contents) = serde_json::to_string(&file) else {
         return;
@@ -180,8 +186,9 @@ impl Drop for CacheLock {
     }
 }
 
-/// Return a shared recent plan, fetching at most once per five minutes across
-/// every Clinch process using this snapshot-cache directory.
+/// Return a shared recent plan, fetching at most once per five minutes, or per
+/// minute when the user just opened the usage panel, across every Clinch
+/// process using this snapshot-cache directory.
 ///
 /// `fetch` runs while the interprocess lock is held, so a second process waits
 /// for the first request and then consumes its result instead of making a
@@ -190,42 +197,24 @@ impl Drop for CacheLock {
 pub fn refresh_shared(
     snapshot_cache: &Path,
     now: DateTime<Utc>,
-    fetch: impl FnOnce() -> PlanFetchOutcome,
-) -> Option<PlanLimits> {
-    refresh_shared_inner(snapshot_cache, now, false, fetch)
-}
-
-/// Refresh after an explicit retry successfully acquired a
-/// token. A prior token-less/unauthorized attempt may have left an empty cache
-/// entry inside the normal five-minute throttle; in that one case, retry now
-/// so clicking Retry does not appear to do nothing. Server Retry-After and
-/// a still-usable cached plan remain authoritative.
-pub fn refresh_shared_after_retry(
-    snapshot_cache: &Path,
-    now: DateTime<Utc>,
-    fetch: impl FnOnce() -> PlanFetchOutcome,
-) -> Option<PlanLimits> {
-    refresh_shared_inner(snapshot_cache, now, true, fetch)
-}
-
-fn refresh_shared_inner(
-    snapshot_cache: &Path,
-    now: DateTime<Utc>,
-    retry_empty_after_refresh: bool,
+    policy: RefreshPolicy<'_>,
     fetch: impl FnOnce() -> PlanFetchOutcome,
 ) -> Option<PlanLimits> {
     let (cache_path, lock_path) = cache_paths(snapshot_cache)?;
     let Some(_lock) = CacheLock::acquire(&lock_path) else {
-        return load(&cache_path, now).and_then(|cached| cached.plan);
+        return load(&cache_path, now, policy.account).and_then(|cached| cached.plan);
     };
 
-    let previous = load(&cache_path, now);
+    let previous = load(&cache_path, now, policy.account);
+    let min_interval = Duration::seconds(if policy.user_looking {
+        LOOKING_MIN_ATTEMPT_INTERVAL_SECS
+    } else {
+        MIN_ATTEMPT_INTERVAL_SECS
+    });
     if previous.is_some_and(|cached| {
         cached.retry_at.is_some_and(|retry_at| retry_at > now)
-            || (now.signed_duration_since(cached.attempted_at) < min_attempt_interval()
-                && !(retry_empty_after_refresh
-                    && cached.retry_at.is_none()
-                    && cached.plan.is_none()))
+            || (now.signed_duration_since(cached.attempted_at) < min_interval
+                && !(policy.retry_empty && cached.retry_at.is_none() && cached.plan.is_none()))
     }) {
         return previous.and_then(|cached| cached.plan);
     }
@@ -253,7 +242,7 @@ fn refresh_shared_inner(
             plan: previous.and_then(|cached| cached.plan),
         },
     };
-    store(&cache_path, cached);
+    store(&cache_path, cached, policy.account);
     cached.plan
 }
 

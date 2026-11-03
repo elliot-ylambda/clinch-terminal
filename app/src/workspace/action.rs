@@ -144,6 +144,13 @@ pub enum WorkspaceAction {
     /// physical window. No-ops when the current project has only one tab or
     /// the window does not support project tabs.
     MoveTabToNewProject(usize),
+    /// Opens a plain terminal tab directly below the tab at `index` (after any
+    /// tabs forked or transferred from it), in its section and in `cwd` when
+    /// that is still a local directory.
+    NewTabBelow {
+        index: usize,
+        cwd: Option<String>,
+    },
     RenameTab(usize),
     ResetTabName(usize),
     RenamePane(PaneViewLocator),
@@ -363,7 +370,6 @@ pub enum WorkspaceAction {
     SelectTabConfig(TabConfig),
     DispatchToSettingsTab(SettingsTabAction),
     ToggleResourceCenter,
-    ToggleUserMenu,
     ToggleAIAssistant,
     ClickedAIAssistantIcon,
     ToggleKeybindingsPage,
@@ -967,6 +973,7 @@ impl WorkspaceAction {
             | MoveTabRight(_)
             | MoveTabToNewWindow(_)
             | MoveTabToNewProject(_)
+            | NewTabBelow { .. }
             | DropTab { .. }
             | DropGroup
             | RenameTab(_)
@@ -1092,7 +1099,6 @@ impl WorkspaceAction {
             | ToggleNotifications
             | DispatchToSettingsTab { .. }
             | ToggleResourceCenter
-            | ToggleUserMenu
             | ClickedAIAssistantIcon
             | ToggleAIAssistant
             | OpenCloudAgentSetupGuide

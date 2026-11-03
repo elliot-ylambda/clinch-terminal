@@ -9,6 +9,8 @@ publish = false
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
+command = { workspace = true }
+instant = { workspace = true }
 jiff = { workspace = true }
 regex = { workspace = true }
 walkdir = { workspace = true }
@@ -18,7 +20,5 @@ reqwest = { workspace = true }
 libc = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-command = { workspace = true }
 core-foundation-sys = "0.8.7"
-instant = { workspace = true }
 security-framework-sys = "2.0.0"

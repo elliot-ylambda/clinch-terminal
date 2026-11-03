@@ -479,6 +479,11 @@ pub fn scan(
             };
         }
     }
+    let observed_at = [&latest_session_limit, &latest_weekly_limit]
+        .into_iter()
+        .flatten()
+        .map(|limit| limit.updated_at)
+        .max();
     let session = current_window(latest_session_limit, now);
     let weekly = current_window(latest_weekly_limit, now);
     if session.is_some() || weekly.is_some() {
@@ -487,6 +492,7 @@ pub fn scan(
             weekly,
             fable_weekly: None,
         });
+        provider.plan_observed_at = observed_at;
     }
     provider
 }

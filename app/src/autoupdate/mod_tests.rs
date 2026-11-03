@@ -10,10 +10,10 @@ use crate::server::server_api::ServerApiProvider;
 use crate::server::telemetry::context_provider::AppTelemetryContextProvider;
 
 #[test]
-fn clinch_update_scheduler_wakes_at_most_once_per_day() {
+fn clinch_update_scheduler_wakes_at_most_once_per_hour() {
     assert_eq!(
         AutoupdateState::autoupdate_poll_interval(true),
-        std::time::Duration::from_secs(24 * 60 * 60)
+        std::time::Duration::from_secs(60 * 60)
     );
     assert_eq!(
         AutoupdateState::autoupdate_poll_interval(false),

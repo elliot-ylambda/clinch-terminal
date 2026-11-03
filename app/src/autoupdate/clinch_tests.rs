@@ -351,12 +351,12 @@ fn a_record_with_no_history_is_due_for_an_automatic_check() {
 }
 
 #[test]
-fn a_successful_check_suppresses_automatic_checks_for_one_day() {
+fn a_successful_check_suppresses_automatic_checks_for_one_hour() {
     let mut record = UpdateCheckRecord::default();
     record.record_success(instant("2026-07-27T12:00:00Z"));
 
-    assert!(!record.automatic_check_due(instant("2026-07-28T11:59:59Z")));
-    assert!(record.automatic_check_due(instant("2026-07-28T12:00:00Z")));
+    assert!(!record.automatic_check_due(instant("2026-07-27T12:59:59Z")));
+    assert!(record.automatic_check_due(instant("2026-07-27T13:00:00Z")));
 }
 
 #[test]
@@ -367,8 +367,8 @@ fn an_automatic_attempt_backs_off_before_its_result_is_known() {
     // Recording before the request starts prevents a crash, cancellation, or failure from
     // firing another automatic request on the next launch or window focus.
     assert!(!record.automatic_check_due(instant("2026-07-27T12:00:01Z")));
-    assert!(!record.automatic_check_due(instant("2026-07-28T11:59:59Z")));
-    assert!(record.automatic_check_due(instant("2026-07-28T12:00:00Z")));
+    assert!(!record.automatic_check_due(instant("2026-07-27T12:59:59Z")));
+    assert!(record.automatic_check_due(instant("2026-07-27T13:00:00Z")));
 }
 
 #[test]
@@ -377,26 +377,37 @@ fn an_attempt_backoff_applies_even_after_the_success_window_elapses() {
     record.record_success(instant("2026-07-01T12:00:00Z"));
     record.record_attempt(instant("2026-07-27T12:00:00Z"));
 
-    assert!(!record.automatic_check_due(instant("2026-07-28T11:59:59Z")));
-    assert!(record.automatic_check_due(instant("2026-07-28T12:00:00Z")));
+    assert!(!record.automatic_check_due(instant("2026-07-27T12:59:59Z")));
+    assert!(record.automatic_check_due(instant("2026-07-27T13:00:00Z")));
 }
 
 #[test]
 fn a_successful_check_clears_a_pending_attempt_backoff() {
     let mut record = UpdateCheckRecord::default();
     record.record_attempt(instant("2026-07-27T12:00:00Z"));
-    record.record_success(instant("2026-07-27T13:00:00Z"));
+    record.record_success(instant("2026-07-27T12:30:00Z"));
 
-    assert!(!record.automatic_check_due(instant("2026-07-27T14:00:00Z")));
-    assert!(record.automatic_check_due(instant("2026-07-28T13:00:00Z")));
+    assert!(!record.automatic_check_due(instant("2026-07-27T13:00:00Z")));
+    assert!(record.automatic_check_due(instant("2026-07-27T13:30:00Z")));
+}
+
+/// Versions with a daily cadence wrote a backoff up to a day ahead, which must not hold off the
+/// hourly check for the first day after updating.
+#[test]
+fn a_backoff_further_ahead_than_the_current_one_is_ignored() {
+    let record = UpdateCheckRecord::parse(
+        r#"{"last_success":"2026-07-27T10:00:00Z","retry_after":"2026-07-28T11:00:00Z"}"#,
+    );
+
+    assert!(record.automatic_check_due(instant("2026-07-27T11:00:00Z")));
 }
 
 #[test]
 fn legacy_date_only_records_are_read_as_a_successful_check() {
     let record = UpdateCheckRecord::parse("2026-07-27\n");
 
-    assert!(!record.automatic_check_due(instant("2026-07-27T23:59:59Z")));
-    assert!(record.automatic_check_due(instant("2026-07-28T00:00:00Z")));
+    assert!(!record.automatic_check_due(instant("2026-07-27T00:59:59Z")));
+    assert!(record.automatic_check_due(instant("2026-07-27T01:00:00Z")));
 }
 
 #[test]

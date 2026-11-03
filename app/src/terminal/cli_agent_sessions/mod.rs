@@ -16,6 +16,7 @@ use std::time::Duration;
 
 use blocking::unblock;
 use event::{CLIAgentEvent, CLIAgentEventSource, CLIAgentEventType, CLIAgentStopReason};
+use instant::Instant;
 use warpui::r#async::Timer;
 use warpui::{Entity, EntityId, ModelContext, ModelHandle, SingletonEntity};
 
@@ -377,6 +378,13 @@ impl CLIAgentSession {
         self.has_observed_turn_activity && matches!(self.status, CLIAgentSessionStatus::InProgress)
     }
 
+    /// Whether a turn in progress should stop Clinch submitting a prompt. Only hooks can say so:
+    /// without them, nothing may ever clear a turn marked started by an earlier submission, and
+    /// readiness has already checked the screen.
+    pub(crate) fn turn_blocks_submission(&self) -> bool {
+        self.supports_rich_status() && self.is_actively_working()
+    }
+
     /// Clears state populated by `PermissionRequest`. Called whenever the
     /// session leaves the permission flow (the user replied, a new prompt
     /// is submitted, or the session ends successfully) so the permission
@@ -713,9 +721,18 @@ pub struct CLIAgentSessionsModel {
     /// Blocked sessions whose agent title has shown its idle glyph since they blocked; see
     /// `update_from_terminal_title`.
     blocked_idle_title_seen: HashSet<EntityId>,
+    /// Sessions whose title has shown a working spinner, which proves their title reports status.
+    /// Codex can be configured not to, and then an idle-looking title says nothing about its turn.
+    title_reports_status: HashSet<EntityId>,
+    /// When each running session's title went idle; see `settle_idle_title`.
+    idle_title_since: HashMap<EntityId, Instant>,
     /// Panes running a forked conversation that have not submitted a prompt of their own yet.
     forks_awaiting_first_prompt: HashSet<EntityId>,
 }
+
+/// How long an agent's title may show idle before a turn with no Stop event counts as finished.
+/// Long enough that a background subagent can usually finish and wake its parent first.
+const IDLE_TITLE_SETTLE: Duration = Duration::from_secs(5 * 60);
 
 impl Entity for CLIAgentSessionsModel {
     type Event = CLIAgentSessionsModelEvent;
@@ -731,6 +748,8 @@ impl CLIAgentSessionsModel {
             bookmarked_conversations: bookmarked_conversations(),
             plugin_auto_failures: HashSet::new(),
             blocked_idle_title_seen: HashSet::new(),
+            title_reports_status: HashSet::new(),
+            idle_title_since: HashMap::new(),
             forks_awaiting_first_prompt: HashSet::new(),
         }
     }
@@ -1006,6 +1025,45 @@ impl CLIAgentSessionsModel {
         });
     }
 
+    fn forget_title_observations(&mut self, terminal_view_id: EntityId) {
+        self.blocked_idle_title_seen.remove(&terminal_view_id);
+        self.title_reports_status.remove(&terminal_view_id);
+        self.idle_title_since.remove(&terminal_view_id);
+    }
+
+    /// Finishes a turn whose agent has sat idle since `since`. A Stop or SubagentStop event can go
+    /// missing, typically from a background subagent that never reports back, and nothing else would
+    /// ever end the turn: the session would show as working, and refuse sends, until it was closed.
+    fn settle_idle_title(
+        &mut self,
+        terminal_view_id: EntityId,
+        since: Instant,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        if self.idle_title_since.get(&terminal_view_id) != Some(&since) {
+            return;
+        }
+        self.idle_title_since.remove(&terminal_view_id);
+        let Some(session) = self.sessions.get_mut(&terminal_view_id) else {
+            return;
+        };
+        if !session.is_actively_working() {
+            return;
+        }
+        session.session_context.active_subagent_ids.clear();
+        session
+            .session_context
+            .has_deferred_completion_for_subagents = false;
+        session.clear_permission_scoped_state();
+        session.status = CLIAgentSessionStatus::Success;
+        ctx.emit(CLIAgentSessionsModelEvent::StatusChanged {
+            terminal_view_id,
+            agent: session.agent,
+            status: CLIAgentSessionStatus::Success,
+            session_context: Box::new(session.session_context.clone()),
+        });
+    }
+
     /// Ends the needs-input state once the user has answered. Neither Claude Code nor Codex fires a
     /// hook when a permission prompt or question is answered, so a session would otherwise stay
     /// blocked until its next tool or turn event, which for an approved long-running command can
@@ -1013,6 +1071,8 @@ impl CLIAgentSessionsModel {
     /// again once they resume, so a spinner after an idle title means the user answered. The idle
     /// title must come first: a spinner frame rendered just before the prompt appeared can arrive
     /// after the blocking event and must not clear it.
+    ///
+    /// Also starts the wait in `settle_idle_title` when a working session's title goes idle.
     pub fn update_from_terminal_title(
         &mut self,
         terminal_view_id: EntityId,
@@ -1022,11 +1082,32 @@ impl CLIAgentSessionsModel {
         let Some(session) = self.sessions.get_mut(&terminal_view_id) else {
             return;
         };
+        let title_shows_working =
+            title_glyph::title_shows_working(session.agent, raw_terminal_title);
+        match title_shows_working {
+            Some(true) => {
+                self.title_reports_status.insert(terminal_view_id);
+                self.idle_title_since.remove(&terminal_view_id);
+            }
+            Some(false)
+                if session.is_actively_working()
+                    && self.title_reports_status.contains(&terminal_view_id)
+                    && !self.idle_title_since.contains_key(&terminal_view_id) =>
+            {
+                let since = Instant::now();
+                self.idle_title_since.insert(terminal_view_id, since);
+                ctx.spawn(
+                    async { Timer::after(IDLE_TITLE_SETTLE).await },
+                    move |model, _, ctx| model.settle_idle_title(terminal_view_id, since, ctx),
+                );
+            }
+            Some(false) | None => {}
+        }
         if !matches!(session.status, CLIAgentSessionStatus::Blocked { .. }) {
             self.blocked_idle_title_seen.remove(&terminal_view_id);
             return;
         }
-        match title_glyph::title_shows_working(session.agent, raw_terminal_title) {
+        match title_shows_working {
             Some(false) => {
                 self.blocked_idle_title_seen.insert(terminal_view_id);
             }
@@ -1445,7 +1526,7 @@ impl CLIAgentSessionsModel {
         remove_conversation_bookmark: bool,
         ctx: &mut ModelContext<Self>,
     ) {
-        self.blocked_idle_title_seen.remove(&terminal_view_id);
+        self.forget_title_observations(terminal_view_id);
         self.forks_awaiting_first_prompt.remove(&terminal_view_id);
         self.prompt_history_poll_tokens.remove(&terminal_view_id);
         if let Some(session) = self.sessions.remove(&terminal_view_id) {
@@ -1508,6 +1589,8 @@ impl CLIAgentSessionsModel {
             live_prompt = None;
         }
         if let Some(new_status) = session.apply_event(event) {
+            // The provider reported something newer than any idle title seen so far.
+            self.idle_title_since.remove(&terminal_view_id);
             if matches!(new_status, CLIAgentSessionStatus::Blocked { .. }) {
                 // A new wait starts over: only a title seen after this event can clear it.
                 self.blocked_idle_title_seen.remove(&terminal_view_id);
@@ -1617,7 +1700,7 @@ impl CLIAgentSessionsModel {
         // Close any open rich input before replacing, so subscribers can
         // restore input config before the session ends.
         self.prompt_history_poll_tokens.remove(&terminal_view_id);
-        self.blocked_idle_title_seen.remove(&terminal_view_id);
+        self.forget_title_observations(terminal_view_id);
         self.close_input(terminal_view_id, false, ctx);
         if let Some(old) = self.sessions.insert(terminal_view_id, session) {
             ctx.emit(CLIAgentSessionsModelEvent::Ended {

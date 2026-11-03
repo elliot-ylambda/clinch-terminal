@@ -468,11 +468,9 @@ use crate::themes::theme_creator_modal::{ThemeCreatorModal, ThemeCreatorModalEve
 use crate::themes::theme_deletion_modal::{ThemeDeletionModal, ThemeDeletionModalEvent};
 use crate::tips::{TipsEvent, TipsView};
 use crate::ui_components::agent_icon::terminal_view_agent_icon_variant;
-use crate::ui_components::avatar::{Avatar, AvatarContent, StatusElementTypes};
 use crate::ui_components::buttons::{combo_inner_button, icon_button_with_color};
 use crate::ui_components::color_dot::render_color_dot;
 use crate::ui_components::icon_with_status::IconWithStatusVariant;
-use crate::ui_components::red_notification_dot::RedNotificationDot;
 use crate::ui_components::window_focus_dimming::WindowFocusDimming;
 use crate::ui_components::{blended_colors, icons};
 use crate::undo_close::UndoCloseStack;
@@ -602,11 +600,12 @@ pub const TOTAL_TAB_BAR_HEIGHT: f32 = TAB_BAR_HEIGHT + TAB_BAR_BORDER_HEIGHT;
 const TAB_BAR_ICON_PADDING: f32 = 4.;
 
 const TAB_BAR_PILL_WIDTH: f32 = 120.;
+const CLINCH_UPDATE_PILL_WIDTH: f32 = 72.;
 const PILL_FONT_SIZE: f32 = 12.;
 #[cfg(not(target_family = "wasm"))]
 const REMOTE_CONTROL_BUTTON_FONT_SIZE: f32 = 11.;
 const UPDATE_AVAILABLE_TEXT: &str = "Update available";
-const CLINCH_UPDATE_TEXT: &str = "Update Clinch";
+const CLINCH_UPDATE_TEXT: &str = "Update";
 const UPDATE_DOWNLOADING_TEXT: &str = "Downloading…";
 const UPDATE_INSTALLING_TEXT: &str = "Installing…";
 const CLINCH_INSTALL_PROGRESS_TOAST_ID: &str = "clinch_update_install_progress";
@@ -647,16 +646,27 @@ fn clinch_update_header_pill(stage: &AutoupdateStage) -> Option<(&'static str, b
     }
 }
 
-fn update_header_install_action(
-    uses_clinch_updater: bool,
-    stage: &AutoupdateStage,
-) -> WorkspaceAction {
-    if uses_clinch_updater
-        && matches!(
-            stage,
-            AutoupdateStage::UpdateAvailable { .. } | AutoupdateStage::UpdateReady { .. }
-        )
-    {
+/// What updating does to the sessions running right now, for the install dialog.
+fn running_sessions_update_note(ctx: &AppContext) -> String {
+    let count = crate::terminal::cli_agent_sessions::restore::mid_turn_panes(ctx).len();
+    let continues = *ClinchSettings::as_ref(ctx).continue_sessions_after_restart;
+    match (count, continues) {
+        (0, _) => String::new(),
+        (1, true) => " 1 running session will reopen and continue.".to_owned(),
+        (count, true) => format!(" {count} running sessions will reopen and continue."),
+        (1, false) => " 1 running session will stop and reopen.".to_owned(),
+        (count, false) => format!(" {count} running sessions will stop and reopen."),
+    }
+}
+
+/// What clicking Clinch's header pill does. The pill may have been populated by an earlier check
+/// before newer releases were published, so refresh the signed feed before using it: one click
+/// always targets the newest available Clinch release.
+fn clinch_update_header_action(stage: &AutoupdateStage) -> WorkspaceAction {
+    if matches!(
+        stage,
+        AutoupdateStage::UpdateAvailable { .. } | AutoupdateStage::UpdateReady { .. }
+    ) {
         WorkspaceAction::CheckForUpdate
     } else {
         WorkspaceAction::ApplyUpdate
@@ -710,10 +720,8 @@ const NEW_SESSION_SIDECAR_FOOTER_HORIZONTAL_PADDING: f32 = 16.;
 const NEW_SESSION_SIDECAR_FOOTER_VERTICAL_PADDING: f32 = 8.;
 const SESSION_CONFIG_TAB_CONFIG_CHIP_TEXT: &str = "Access your tab configs here.";
 const SESSION_CONFIG_TAB_CONFIG_CHIP_WIDTH: f32 = 206.;
-const SHOW_SETTINGS_KEYBINDING_NAME: &str = "workspace:show_settings";
 pub const TOGGLE_COMMAND_PALETTE_KEYBINDING_NAME: &str = "workspace:toggle_command_palette";
 
-const USER_AVATAR_BUTTON_POSITION_ID: &str = "workspace:user_avatar_button";
 const NOTIFICATIONS_MAILBOX_POSITION_ID: &str = "workspace:notifications_mailbox";
 pub(crate) const JUMP_TO_LATEST_TOAST_BINDING_NAME: &str = "workspace:jump_to_latest_toast";
 pub(crate) const FOCUS_NEXT_AGENT_ATTENTION_BINDING_NAME: &str =
@@ -747,11 +755,9 @@ pub(crate) const LEFT_PANEL_AGENT_CONVERSATIONS_BINDING_NAME: &str =
     "workspace:left_panel_agent_conversations";
 pub(crate) const LEFT_PANEL_SKILLS_BINDING_NAME: &str = "workspace:left_panel_skills";
 
-const KEYBINDINGS_TO_CACHE: [&str; 4] = [
+const KEYBINDINGS_TO_CACHE: [&str; 2] = [
     ASK_AI_ASSISTANT_KEYBINDING_NAME,
     TOGGLE_RESOURCE_CENTER_KEYBINDING_NAME,
-    SHOW_SETTINGS_KEYBINDING_NAME,
-    TOGGLE_COMMAND_PALETTE_KEYBINDING_NAME,
 ];
 
 const WORKFLOW_AND_ENV_VAR_SPLIT_RATIO: f32 = 0.56;
@@ -778,9 +784,6 @@ const MAX_WINDOW_TITLE_LENGTH: usize = 80;
 #[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
 const AUTO_CLOUD_HANDOFF_PROMPT: &str =
     "Continue this local Warp Agent task in the cloud from the current conversation state.";
-
-/// The default display name used for the user if they have no associated display name.
-pub const DEFAULT_USER_DISPLAY_NAME: &str = "User";
 
 lazy_static! {
     static ref OPENING_WARP_DRIVE_ON_START_UP: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
@@ -1307,9 +1310,7 @@ pub struct Workspace {
     /// render method, so look them up when the view is constructed and cache them here. Note that they
     /// need to be kept in sync as the keybindings change.
     cached_keybindings: HashMap<String, Option<String>>,
-    is_user_menu_open: bool,
     tab_bar_pinned_by_popup: bool,
-    user_menu: ViewHandle<Menu<WorkspaceAction>>,
     native_modal: ViewHandle<NativeModal>,
     shared_objects_creation_denied_modal: ViewHandle<SharedObjectsCreationDeniedModal>,
     shown_staging_banner_count: u32,
@@ -3923,18 +3924,6 @@ impl Workspace {
         Self::subscribe_to_settings_errors(ctx);
         Self::subscribe_to_shared_session_manager(ctx);
 
-        let user_menu = ctx.add_typed_action_view(|_| {
-            Menu::new()
-                .with_drop_shadow()
-                .prevent_interaction_with_other_elements()
-        });
-        ctx.subscribe_to_view(&user_menu, |me, _, event, ctx| {
-            if let MenuEvent::Close { .. } = event {
-                me.is_user_menu_open = false;
-                ctx.notify();
-            }
-        });
-
         let native_modal = Self::build_native_modal_view(ctx);
 
         let shared_objects_creation_denied_modal =
@@ -4119,9 +4108,7 @@ impl Workspace {
             header_toolbar_editor_modal: Self::build_header_toolbar_editor_modal(ctx),
             header_toolbar_context_menu: Self::build_header_toolbar_context_menu(ctx),
             show_header_toolbar_context_menu: None,
-            is_user_menu_open: false,
             tab_bar_pinned_by_popup: false,
-            user_menu,
             native_modal,
             shared_objects_creation_denied_modal,
             file_upload_sessions: Default::default(),
@@ -8848,8 +8835,8 @@ impl Workspace {
         );
     }
 
-    /// The tab bar overflow menu is the context menu that appears when
-    /// a user clicks "Update Clinch" in the top right of the tab bar.
+    /// The tab bar overflow menu is the context menu that appears when a user clicks "Update
+    /// available" in the top right of the tab bar. Clinch's own "Update" pill skips it.
     pub fn toggle_tab_bar_overflow_menu(&mut self, ctx: &mut ViewContext<Self>) {
         if self.show_tab_bar_overflow_menu {
             self.close_tab_bar_overflow_menu(ctx);
@@ -8864,29 +8851,14 @@ impl Workspace {
                         .with_disabled(true)
                         .into_item(),
                 );
-                let update_state = autoupdate::get_update_state(ctx);
-                match &update_state {
+                match autoupdate::get_update_state(ctx) {
                     AutoupdateStage::UpdateAvailable { new_version, .. }
                     | AutoupdateStage::UpdateReady { new_version, .. }
-                    | AutoupdateStage::UpdatedPendingRestart { new_version } => {
-                        let action = update_header_install_action(
-                            ChannelState::uses_clinch_updater(),
-                            &update_state,
-                        );
-                        let label = if matches!(&action, WorkspaceAction::CheckForUpdate) {
-                            // The persistent pill may have been populated by a daily check before
-                            // newer releases were published. Refresh the signed feed before using
-                            // it so one click always targets the newest available Clinch release.
-                            "Check for latest and install".to_owned()
-                        } else {
-                            format!("Install update ({})", new_version.version)
-                        };
-                        menu_items.push(
-                            MenuItemFields::new(label)
-                                .with_on_select_action(action)
-                                .into_item(),
-                        );
-                    }
+                    | AutoupdateStage::UpdatedPendingRestart { new_version } => menu_items.push(
+                        MenuItemFields::new(format!("Install update ({})", new_version.version))
+                            .with_on_select_action(WorkspaceAction::ApplyUpdate)
+                            .into_item(),
+                    ),
                     AutoupdateStage::Updating { new_version, .. } => menu_items.push(
                         MenuItemFields::new(format!("Updating to ({})", new_version.version))
                             .with_disabled(true)
@@ -10925,153 +10897,6 @@ impl Workspace {
         ctx.notify();
     }
 
-    fn user_menu_items(&self, app: &AppContext) -> Vec<MenuItem<WorkspaceAction>> {
-        let mut items = Vec::new();
-        // Clinch (skip_login): no signed-in identity, so omit the username header.
-        if !cfg!(feature = "skip_login") && !self.auth_state.is_anonymous_or_logged_out() {
-            let name = self.auth_state.username_for_display().unwrap_or_default();
-            items.push(MenuItemFields::new(name).with_disabled(true).into_item())
-        }
-
-        let appearance = Appearance::as_ref(app);
-
-        // Render the subtle autoupdate UI if autoupdate is ready and there is no incoming prominent update version.
-        if FeatureFlag::Autoupdate.is_enabled()
-            && FeatureFlag::AutoupdateUIRevamp.is_enabled()
-            && ChannelState::show_autoupdate_menu_items()
-        {
-            match autoupdate::get_update_state(app) {
-                AutoupdateStage::UpdateAvailable { new_version, .. }
-                | AutoupdateStage::UpdateReady { new_version, .. }
-                | AutoupdateStage::UpdatedPendingRestart { new_version }
-                    if !is_incoming_version_past_current(
-                        new_version.last_prominent_update.as_deref(),
-                    ) =>
-                {
-                    items.push(
-                        MenuItemFields::new("Update and relaunch Clinch")
-                            .with_on_select_action(WorkspaceAction::ApplyUpdate)
-                            .with_override_text_color(appearance.theme().ansi_fg_red())
-                            .into_item(),
-                    )
-                }
-                AutoupdateStage::Updating { new_version, .. }
-                    if !is_incoming_version_past_current(
-                        new_version.last_prominent_update.as_deref(),
-                    ) =>
-                {
-                    items.push(
-                        MenuItemFields::new(format!("Updating to ({})", new_version.version))
-                            .with_disabled(true)
-                            .into_item(),
-                    )
-                }
-                AutoupdateStage::UnableToUpdateToNewVersion { new_version }
-                    if !is_incoming_version_past_current(
-                        new_version.last_prominent_update.as_deref(),
-                    ) =>
-                {
-                    items.push(
-                        MenuItemFields::new("Update Clinch manually")
-                            .with_on_select_action(WorkspaceAction::DownloadNewVersion)
-                            .with_override_text_color(appearance.theme().ansi_fg_red())
-                            .into_item(),
-                    )
-                }
-                _ => {}
-            }
-        }
-
-        items.extend([
-            MenuItemFields::new("What's new in Clinch")
-                .with_on_select_action(WorkspaceAction::ViewLatestChangelog)
-                .into_item(),
-            MenuItemFields::new("Clinch settings")
-                .with_on_select_action(WorkspaceAction::ShowSettings)
-                .into_item(),
-            MenuItemFields::new("Terminal settings")
-                .with_on_select_action(WorkspaceAction::ShowSettingsPage(
-                    SettingsSection::Appearance,
-                ))
-                .into_item(),
-            MenuItemFields::new("Keyboard shortcuts")
-                .with_on_select_action(WorkspaceAction::ToggleKeybindingsPage)
-                .into_item(),
-            MenuItem::Separator,
-            MenuItemFields::new("Clinch documentation")
-                .with_on_select_action(WorkspaceAction::ViewUserDocs)
-                .into_item(),
-            MenuItemFields::new("Report an issue")
-                .with_on_select_action(WorkspaceAction::SendFeedback)
-                .into_item(),
-        ]);
-
-        #[cfg(not(target_family = "wasm"))]
-        items.push(
-            MenuItemFields::new("View Clinch logs")
-                .with_on_select_action(WorkspaceAction::ViewLogs)
-                .into_item(),
-        );
-
-        items.push(
-            MenuItemFields::new("Clinch on GitHub")
-                .with_on_select_action(WorkspaceAction::JoinSlack)
-                .into_item(),
-        );
-
-        // Clinch (skip_login and backendless builds) has no accounts: omit the entire
-        // user/billing section — Sign up / Upgrade / Invite a friend / Log out — and its
-        // leading separator.
-        if !cfg!(feature = "skip_login") && ChannelState::has_backend() {
-            items.push(MenuItem::Separator);
-
-            if self.auth_state.is_anonymous_or_logged_out() {
-                items.push(
-                    MenuItemFields::new("Sign up")
-                        .with_on_select_action(WorkspaceAction::SignupAnonymousUser)
-                        .into_item(),
-                );
-            }
-
-            // Check if the user is on any paid plan to determine whether to show "Billing and Usage" or "Upgrade"
-            let is_on_paid_plan = UserWorkspaces::as_ref(app)
-                .current_workspace()
-                .map(|workspace| workspace.billing_metadata.is_user_on_paid_plan())
-                .unwrap_or(false);
-
-            if is_on_paid_plan {
-                items.push(
-                    MenuItemFields::new("Billing and usage")
-                        .with_on_select_action(WorkspaceAction::ShowSettingsPage(
-                            SettingsSection::BillingAndUsage,
-                        ))
-                        .into_item(),
-                );
-            } else {
-                items.push(
-                    MenuItemFields::new("Upgrade")
-                        .with_on_select_action(WorkspaceAction::ShowUpgrade)
-                        .into_item(),
-                );
-            }
-
-            items.push(
-                MenuItemFields::new("Invite a friend")
-                    .with_on_select_action(WorkspaceAction::ShowReferralSettingsPage)
-                    .into_item(),
-            );
-
-            if !self.auth_state.is_anonymous_or_logged_out() {
-                items.push(
-                    MenuItemFields::new("Log out")
-                        .with_on_select_action(WorkspaceAction::LogOut)
-                        .into_item(),
-                );
-            }
-        }
-        items
-    }
-
     fn selected_new_session_sidecar_selection(
         &self,
         ctx: &AppContext,
@@ -11094,18 +10919,6 @@ impl Workspace {
                 self.open_worktree_in_repo(repo_path, ctx);
             }
         }
-    }
-
-    fn toggle_user_menu(&mut self, ctx: &mut ViewContext<Self>) {
-        self.is_user_menu_open = !self.is_user_menu_open;
-        if self.is_user_menu_open {
-            let items = self.user_menu_items(ctx);
-            self.user_menu.update(ctx, |menu, ctx| {
-                menu.set_items(items, ctx);
-            });
-        }
-        ctx.focus(&self.user_menu);
-        ctx.notify();
     }
 
     pub fn toggle_keybindings_page(&mut self, ctx: &mut ViewContext<Self>) {
@@ -14645,7 +14458,16 @@ impl Workspace {
                 .terminal_pane_uuids()
                 .contains(&origin.parent_pane_uuid)
         })?;
-        // Directly under the source's own forks, so a fork of a fork nests a level deeper.
+        Some(self.placement_after_family(parent_index, ctx))
+    }
+
+    /// Where a tab placed directly under `parent_index` goes: after the parent's own
+    /// forks and transfers, in the parent's section, so a fork of a fork nests a level deeper.
+    fn placement_after_family(
+        &self,
+        parent_index: usize,
+        ctx: &AppContext,
+    ) -> (usize, Option<TabGroupId>) {
         let index = index_for_child(&self.tab_lineage_depths(ctx), parent_index);
         let group_id = self.tabs[parent_index].group_id;
         // A child of a standalone pinned tab stays in the unpinned region. A
@@ -14655,7 +14477,47 @@ impl Workspace {
         } else {
             index
         };
-        Some((index, group_id))
+        (index, group_id)
+    }
+
+    /// Opens a plain terminal directly below the tab at `index`, in `cwd` when
+    /// it is still a local directory and the default new-tab directory otherwise.
+    fn new_tab_below(&mut self, index: usize, cwd: Option<String>, ctx: &mut ViewContext<Self>) {
+        if index >= self.tabs.len() {
+            return;
+        }
+        let (target_index, group_id) = self.placement_after_family(index, ctx);
+        let initial_directory = cwd
+            .map(PathBuf::from)
+            .filter(|path| path.is_dir())
+            .or_else(|| {
+                self.get_new_tab_startup_directory(
+                    NewSessionSource::Tab,
+                    Some(ctx.window_id()),
+                    None,
+                    ctx,
+                )
+            });
+        self.add_tab_with_pane_layout(
+            PanesLayout::SingleTerminal(Box::new(NewTerminalOptions {
+                initial_directory,
+                ..Default::default()
+            })),
+            Arc::new(HashMap::new()),
+            None,
+            ctx,
+        );
+        // The new tab is active; it may have landed before `target_index`.
+        let new_index = self.active_tab_index;
+        let target_index = target_index + usize::from(new_index <= target_index);
+        if let Some(tab) = self.tabs.get_mut(new_index) {
+            tab.group_id = group_id;
+        }
+        self.move_tab_to_index(new_index, target_index, ctx);
+        if let Some(group_id) = group_id {
+            self.expand_tab_group(group_id, ctx);
+        }
+        ctx.notify();
     }
 
     fn add_tab_with_pane_layout_placed(
@@ -16072,7 +15934,6 @@ impl Workspace {
             || (self.show_tab_right_click_menu.is_some() && !is_vertical_tabs_active)
             || (self.show_new_session_dropdown_menu.is_some() && !is_vertical_tabs_active)
             || (!FeatureFlag::AgentMode.is_enabled() && self.should_show_ai_assistant_warm_welcome)
-            || self.is_user_menu_open
             || self.tab_bar_pinned_by_popup;
 
         // Check if any panes are being dragged (potentially into a new tab).
@@ -20444,9 +20305,10 @@ impl Workspace {
     fn apply_update(&mut self, ctx: &mut ViewContext<Self>) {
         if let Some(prompt) = autoupdate::clinch_update_prompt(ctx) {
             let information = format!(
-                "Clinch will update from {} to {}.\n\n{}\n\nRelease: {}",
+                "Clinch will update from {} to {}.{}\n\n{}\n\nRelease: {}",
                 prompt.current_version,
                 prompt.new_version,
+                running_sessions_update_note(ctx),
                 prompt.release_notes.trim(),
                 prompt.release_url
             );
@@ -23272,8 +23134,7 @@ impl Workspace {
             }
         }
 
-        let avatar_in_tab_bar = FeatureFlag::AvatarInTabBar.is_enabled();
-        if !avatar_in_tab_bar {
+        if !FeatureFlag::AvatarInTabBar.is_enabled() {
             let resource_center_closed = !self.current_workspace_state.is_resource_center_open;
             if resource_center_closed && ContextFlag::WarpEssentials.is_enabled() {
                 target.add_child(
@@ -23288,20 +23149,6 @@ impl Workspace {
         if should_show_remote_control_button(ChannelState::has_backend()) {
             target.add_child(
                 Container::new(self.render_remote_control_button(appearance, ctx))
-                    .with_margin_left(TAB_BAR_PADDING_LEFT)
-                    .finish(),
-            );
-        }
-
-        if avatar_in_tab_bar {
-            target.add_child(
-                Container::new(self.render_avatar_button(appearance, ctx))
-                    .with_margin_left(TAB_BAR_PADDING_LEFT)
-                    .finish(),
-            );
-        } else {
-            target.add_child(
-                Container::new(self.render_settings_button(appearance))
                     .with_margin_left(TAB_BAR_PADDING_LEFT)
                     .finish(),
             );
@@ -23785,105 +23632,6 @@ impl Workspace {
         .finish()
     }
 
-    fn render_avatar_button(&self, appearance: &Appearance, ctx: &AppContext) -> Box<dyn Element> {
-        // Clinch (skip_login) has no real user account, so present the avatar button as
-        // a neutral menu affordance — the existing logged-out gear-icon, no-tooltip
-        // path — instead of a signed-in identity (the user's "T" initial).
-        let is_anonymous =
-            cfg!(feature = "skip_login") || self.auth_state.is_anonymous_or_logged_out();
-        let display_name = self
-            .auth_state
-            .username_for_display()
-            .unwrap_or(DEFAULT_USER_DISPLAY_NAME.to_owned());
-
-        let avatar_content = if is_anonymous {
-            AvatarContent::Icon(icons::Icon::Gear)
-        } else {
-            self.auth_state
-                .user_photo_url()
-                .map(|url| AvatarContent::Image {
-                    url,
-                    display_name: display_name.clone(),
-                })
-                .unwrap_or(AvatarContent::DisplayName(display_name.clone()))
-        };
-
-        let mut avatar = Avatar::new(
-            avatar_content,
-            UiComponentStyles {
-                width: Some(20.),
-                height: Some(20.),
-                border_radius: Some(CornerRadius::with_all(Radius::Percentage(50.))),
-                font_family_id: Some(appearance.ui_font_family()),
-                font_weight: Some(Weight::Bold),
-                background: Some(appearance.theme().accent().into()),
-                font_size: Some(12.),
-                font_color: Some(ColorU::black()),
-                ..Default::default()
-            },
-        );
-
-        // Keep a durable notification visible as soon as authenticated metadata is available.
-        let autoupdate_stage = autoupdate::get_update_state(ctx);
-        if FeatureFlag::AutoupdateUIRevamp.is_enabled()
-            && autoupdate_stage.has_actionable_update()
-            && autoupdate_stage
-                .available_new_version()
-                .map(|version| {
-                    !is_incoming_version_past_current(version.last_prominent_update.as_deref())
-                })
-                .unwrap_or(false)
-        {
-            avatar = avatar.with_status_element(
-                StatusElementTypes::Circle,
-                RedNotificationDot::default_styles(appearance),
-            );
-        }
-
-        let button = Hoverable::new(self.mouse_states.avatar_icon.clone(), |state| {
-            let mut stack = Stack::new();
-            let mut container = Container::new(avatar.build().finish())
-                .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
-                .with_uniform_padding(2.);
-
-            if state.is_mouse_over_element() {
-                if !state.is_clicked() {
-                    container = container.with_background(appearance.theme().surface_2());
-                }
-                // On hover, show tooltip of user's display name (if it exists)
-                if !self.is_user_menu_open && !is_anonymous {
-                    stack.add_positioned_overlay_child(
-                        appearance
-                            .ui_builder()
-                            .tool_tip(display_name.clone())
-                            .with_style(UiComponentStyles {
-                                background: Some(appearance.theme().tooltip_background().into()),
-                                font_color: Some(appearance.theme().background().into_solid()),
-                                ..Default::default()
-                            })
-                            .build()
-                            .finish(),
-                        OffsetPositioning::offset_from_parent(
-                            vec2f(0., 4.),
-                            ParentOffsetBounds::WindowByPosition,
-                            ParentAnchor::BottomMiddle,
-                            ChildAnchor::TopMiddle,
-                        ),
-                    );
-                }
-            }
-            stack.add_child(container.finish());
-            stack.finish()
-        })
-        .on_click(move |ctx, _, _| {
-            ctx.dispatch_typed_action(WorkspaceAction::ToggleUserMenu);
-        })
-        .with_cursor(Cursor::PointingHand)
-        .finish();
-
-        SavePosition::new(Align::new(button).finish(), USER_AVATAR_BUTTON_POSITION_ID).finish()
-    }
-
     fn render_resource_center_button(
         &self,
         appearance: &Appearance,
@@ -23930,23 +23678,6 @@ impl Workspace {
         }
 
         Align::new(button).finish()
-    }
-
-    fn render_settings_button(&self, appearance: &Appearance) -> Box<dyn Element> {
-        Align::new(
-            self.render_tab_bar_icon_button(
-                appearance,
-                icons::Icon::Gear,
-                &self.mouse_states.settings_icon,
-                WorkspaceAction::ShowSettings,
-                "Clinch settings".to_string(),
-                self.cached_keybindings[SHOW_SETTINGS_KEYBINDING_NAME].clone(),
-                false,
-                false,
-            )
-            .finish(),
-        )
-        .finish()
     }
 
     #[cfg(not(target_family = "wasm"))]
@@ -24290,6 +24021,17 @@ impl Workspace {
             .then_some((UPDATE_AVAILABLE_TEXT, true))
         });
         if let Some((pill_text, is_actionable)) = update_pill {
+            let (pill_width, click_action) = if clinch_pill.is_some() {
+                (
+                    CLINCH_UPDATE_PILL_WIDTH,
+                    clinch_update_header_action(&autoupdate_stage),
+                )
+            } else {
+                (
+                    TAB_BAR_PILL_WIDTH,
+                    WorkspaceAction::ToggleTabBarOverflowMenu,
+                )
+            };
             let pill = ConstrainedBox::new(
                 Container::new(
                     Flex::row()
@@ -24326,7 +24068,7 @@ impl Workspace {
                 .with_margin_right(5.)
                 .finish(),
             )
-            .with_width(TAB_BAR_PILL_WIDTH)
+            .with_width(pill_width)
             .finish();
 
             let button = if self.show_tab_bar_overflow_menu || !is_actionable {
@@ -24337,7 +24079,7 @@ impl Workspace {
                 // where the menu tries to dismiss itself onclick and the menu gets reshown on mouseup
                 Hoverable::new(self.mouse_states.overflow_button.clone(), |_state| pill)
                     .on_click(move |ctx, _, _| {
-                        ctx.dispatch_typed_action(WorkspaceAction::ToggleTabBarOverflowMenu);
+                        ctx.dispatch_typed_action(click_action.clone());
                     })
                     .with_reset_cursor_after_click()
                     .with_cursor(Cursor::PointingHand)
@@ -26278,6 +26020,7 @@ impl TypedActionView for Workspace {
             MoveTabToNewProject(index) => {
                 self.move_tab_to_new_project(*index, None, ctx);
             }
+            NewTabBelow { index, cwd } => self.new_tab_below(*index, cwd.clone(), ctx),
             RenameTab(index) => self.rename_tab(*index, ctx),
             ResetTabName(index) => self.clear_tab_name(*index, ctx),
             RenamePane(locator) => self.rename_pane(*locator, ctx),
@@ -26772,7 +26515,6 @@ impl TypedActionView for Workspace {
             ToggleDebugNetworkStatus => self.toggle_debug_network_status(ctx),
             ToggleShowMemoryStats => self.toggle_show_memory_stats(ctx),
             ToggleResourceCenter => self.toggle_resource_center(ctx),
-            ToggleUserMenu => self.toggle_user_menu(ctx),
             ToggleKeybindingsPage => self.toggle_keybindings_page(ctx),
             ShowCommandSearch(CommandSearchOptions {
                 filter,
@@ -27623,6 +27365,9 @@ impl TypedActionView for Workspace {
             ToggleCliAgentUsagePanel(provider) => {
                 self.cli_agent_usage_panel_provider =
                     provider.toggle_panel(self.cli_agent_usage_panel_provider);
+                if self.cli_agent_usage_panel_provider.is_some() {
+                    CliAgentUsageModel::as_ref(ctx).refresh_for_viewer(true);
+                }
                 ctx.notify();
             }
             CloseCliAgentUsagePanel => {
@@ -30019,19 +29764,6 @@ impl View for Workspace {
                     ParentOffsetBounds::WindowByPosition,
                     ParentAnchor::Center,
                     ChildAnchor::Center,
-                ),
-            );
-        }
-
-        if FeatureFlag::AvatarInTabBar.is_enabled() && self.is_user_menu_open {
-            stack.add_positioned_overlay_child(
-                ChildView::new(&self.user_menu).finish(),
-                OffsetPositioning::offset_from_save_position_element(
-                    USER_AVATAR_BUTTON_POSITION_ID,
-                    Vector2F::zero(),
-                    PositionedElementOffsetBounds::WindowByPosition,
-                    PositionedElementAnchor::BottomRight,
-                    ChildAnchor::TopRight,
                 ),
             );
         }

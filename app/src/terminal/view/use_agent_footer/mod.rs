@@ -14,10 +14,11 @@ use crate::ai::blocklist::agent_view::agent_input_footer::{
     AgentInputFooter, AgentInputFooterAction, AgentInputFooterEvent,
 };
 use crate::terminal::cli_agent_sessions::auto_continue::AutoContinueModel;
+use crate::terminal::cli_agent_sessions::title_glyph::title_shows_working;
 #[cfg(feature = "local_tty")]
 use crate::terminal::cli_agent_sessions::CLIAgentSessionContext;
 use crate::terminal::cli_agent_sessions::{
-    provider_for_agent, CLIAgentInputEntrypoint, CLIAgentSessionsModel,
+    provider_for_agent, CLIAgentInputEntrypoint, CLIAgentSession, CLIAgentSessionsModel,
 };
 use crate::terminal::shared_session::{
     SharedSessionActionSource, SharedSessionScrollbackType, SharedSessionSource,
@@ -119,6 +120,30 @@ const CLAUDE_STASH_PROMPT_FALLBACK_BYTE: u8 = C0::XOFF;
 const CLAUDE_COMPOSER_PROMPT: char = '❯';
 const CLAUDE_COMPOSER_RULE: char = '─';
 const CODEX_COMPOSER_PROMPT: char = '›';
+
+/// A session's state read from its title and screen, for when no hook has reported one. A restored
+/// agent reports nothing until its first hook fires, yet it is plainly at its prompt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ObservedAgentState {
+    Working,
+    Idle,
+    /// Neither a working title nor a readable composer: a dialog, a picker, or a layout this
+    /// reader does not recognize.
+    Unknown,
+}
+
+fn observed_agent_state_from(
+    title_shows_working: Option<bool>,
+    composer: Option<&NativeComposer>,
+) -> ObservedAgentState {
+    if title_shows_working == Some(true) {
+        return ObservedAgentState::Working;
+    }
+    match composer {
+        Some(NativeComposer::Empty | NativeComposer::Draft(_)) => ObservedAgentState::Idle,
+        Some(NativeComposer::Unreadable) | None => ObservedAgentState::Unknown,
+    }
+}
 
 /// What a provider TUI's native composer shows.
 #[derive(Debug, PartialEq)]
@@ -1426,6 +1451,67 @@ impl TerminalView {
         }
     }
 
+    /// Whether a restart right now would cut this pane's agent off mid-turn: working, or waiting on
+    /// a permission prompt or question that only exists inside the running process.
+    pub(crate) fn agent_is_mid_turn(&self, ctx: &AppContext) -> bool {
+        let Some(session) = CLIAgentSessionsModel::as_ref(ctx).session(self.view_id) else {
+            return false;
+        };
+        if !matches!(session.agent, CLIAgent::Claude | CLIAgent::Codex) || session.is_remote() {
+            return false;
+        }
+        if matches!(
+            session.status,
+            crate::terminal::cli_agent_sessions::CLIAgentSessionStatus::Blocked { .. }
+        ) {
+            return true;
+        }
+        if session.supports_rich_status() {
+            self.cli_agent_shows_working(session)
+        } else {
+            self.observed_agent_state(session) == ObservedAgentState::Working
+        }
+    }
+
+    /// Whether this pane's agent shows an input box with nothing in it. A picker or a dialog at
+    /// startup, which a typed prompt would answer by accident, doesn't count.
+    pub(crate) fn agent_composer_is_empty(&self, ctx: &AppContext) -> bool {
+        CLIAgentSessionsModel::as_ref(ctx)
+            .session(self.view_id)
+            .is_some_and(|session| {
+                matches!(
+                    self.native_composer(session.agent),
+                    Some(NativeComposer::Empty)
+                )
+            })
+    }
+
+    fn native_composer(&self, agent: CLIAgent) -> Option<NativeComposer> {
+        let model = self.model.lock();
+        let grid = if model.is_alt_screen_active() {
+            model.alt_screen().grid_handler()
+        } else {
+            model
+                .block_list()
+                .active_block()
+                .output_grid()
+                .grid_handler()
+        };
+        match agent {
+            CLIAgent::Claude => claude_native_composer(grid),
+            CLIAgent::Codex => codex_native_composer(grid),
+            _ => None,
+        }
+    }
+
+    /// The session's state as its title and screen show it. Used until a hook reports one.
+    pub(crate) fn observed_agent_state(&self, session: &CLIAgentSession) -> ObservedAgentState {
+        observed_agent_state_from(
+            title_shows_working(session.agent, &self.terminal_title_from_shell()),
+            self.native_composer(session.agent).as_ref(),
+        )
+    }
+
     /// Names the unsent input that makes readiness report `human_input_or_draft`, if any.
     ///
     /// Unacknowledged keystrokes block until they settle and the provider's own composer is
@@ -1437,23 +1523,7 @@ impl TerminalView {
         {
             return Some("rich_input");
         }
-        let composer = {
-            let model = self.model.lock();
-            let grid = if model.is_alt_screen_active() {
-                model.alt_screen().grid_handler()
-            } else {
-                model
-                    .block_list()
-                    .active_block()
-                    .output_grid()
-                    .grid_handler()
-            };
-            match session.agent {
-                CLIAgent::Claude => claude_native_composer(grid),
-                CLIAgent::Codex => codex_native_composer(grid),
-                _ => None,
-            }
-        };
+        let composer = self.native_composer(session.agent);
         if matches!(composer, Some(NativeComposer::Draft(_))) {
             return Some("native_composer");
         }
@@ -1483,6 +1553,16 @@ impl TerminalView {
             return (String::new(), Some("no_agent"));
         };
         let draft_source = self.local_control_draft_source(ctx);
+        // These read the model, so they come before the lock below.
+        let observed =
+            (!session.supports_rich_status()).then(|| self.observed_agent_state(session));
+        // With hooks, the same check as the sidebar's working dot, so a session it shows as running
+        // never takes a send. Without hooks only the screen counts: no Stop event will ever clear a
+        // turn marked started by our own submission.
+        let shows_working = match observed {
+            Some(observed) => observed == ObservedAgentState::Working,
+            None => self.cli_agent_shows_working(session),
+        };
         let model = self.model.lock();
         let block = model.block_list().active_block();
         let reason = if self.deferred_agent_start.is_some() {
@@ -1501,7 +1581,7 @@ impl TerminalView {
             Some("remote_session")
         } else if session.session_key().is_none() {
             Some("unknown_conversation")
-        } else if !session.supports_rich_status() {
+        } else if observed == Some(ObservedAgentState::Unknown) {
             Some("status_unavailable")
         } else if self.coordination_send_pending {
             Some("submission_pending")
@@ -1516,7 +1596,7 @@ impl TerminalView {
             Some("rate_limited")
         } else if draft_source.is_some() {
             Some("human_input_or_draft")
-        } else if session.is_actively_working() {
+        } else if shows_working {
             Some("working")
         } else {
             None
@@ -1613,7 +1693,7 @@ impl TerminalView {
                     session.agent == agent
                         && session.session_key() == identity
                         && !session.is_remote()
-                        && !session.is_actively_working()
+                        && !session.turn_blocks_submission()
                         && !matches!(session.status, crate::terminal::cli_agent_sessions::CLIAgentSessionStatus::Blocked { .. })
                         && session.session_context.stop_reason.is_none()
                         && session.draft_text.as_ref().is_none_or(String::is_empty)

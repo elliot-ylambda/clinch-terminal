@@ -1780,9 +1780,10 @@ impl PaneGroup {
                         });
                         if let Some((provider, session_id)) = agent_session_seed {
                             let terminal = pane_data.terminal_view(ctx);
+                            let pane_uuid = pane_data.session_uuid();
                             let cancel_manager = manager_handle.downgrade();
                             crate::terminal::cli_agent_sessions::restore::AgentRestoreQueue::handle(ctx).update(ctx, |queue, ctx| {
-                                queue.enqueue(&terminal, crate::terminal::cli_agent_sessions::CLIAgentSessionKey { provider, session_id }, Box::new(move |ctx| {
+                                queue.enqueue(&terminal, pane_uuid, crate::terminal::cli_agent_sessions::CLIAgentSessionKey { provider, session_id }, Box::new(move |ctx| {
                                     if let Some(manager) = cancel_manager.upgrade(ctx) {
                                         return manager.update(ctx, |manager, ctx| {
                                             manager.as_any().downcast_ref::<local_tty::TerminalManager>()
@@ -2379,6 +2380,15 @@ impl PaneGroup {
         self.panes_of::<TerminalPane>()
             .filter(|pane| !self.is_pane_hidden_for_close(pane.id()))
             .map(|pane| PaneUuid(pane.session_uuid()))
+            .collect()
+    }
+
+    /// The panes a restart right now would cut off mid-turn, by the id they restore under.
+    pub(crate) fn mid_turn_pane_uuids(&self, ctx: &AppContext) -> Vec<Vec<u8>> {
+        self.panes_of::<TerminalPane>()
+            .filter(|pane| !self.is_pane_hidden_for_close(pane.id()))
+            .filter(|pane| pane.terminal_view(ctx).as_ref(ctx).agent_is_mid_turn(ctx))
+            .map(|pane| pane.session_uuid())
             .collect()
     }
 
