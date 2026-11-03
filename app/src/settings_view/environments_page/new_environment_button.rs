@@ -1,7 +1,8 @@
 use warp_core::ui::appearance::Appearance;
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::elements::{
     Border, Container, CornerRadius, DispatchEventResult, EventHandler, Flex, MainAxisAlignment,
-    MouseStateHandle, ParentElement as _, Radius, Text,
+    MouseStateHandle, ParentElement as _, Text,
 };
 use warpui::fonts::{Properties, Weight};
 use warpui::platform::Cursor;
@@ -108,7 +109,7 @@ impl View for NewEnvironmentButtonView {
                 let mut container = Container::new(row.finish())
                     .with_horizontal_padding(12.)
                     .with_vertical_padding(6.)
-                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                    .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                     .with_border(Border::all(1.).with_border_fill(theme.surface_3()));
 
                 if let Some(bg) = background {

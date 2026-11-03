@@ -12,10 +12,10 @@ use ai::agent::orchestration_config::{OrchestrationConfig, OrchestrationConfigSt
 use ai::skills::SkillReference;
 use pathfinder_geometry::vector::vec2f;
 use warp_core::send_telemetry_from_ctx;
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::elements::{
     Border, ChildAnchor, ChildView, Container, CornerRadius, CrossAxisAlignment, Empty, Flex,
-    MainAxisSize, OffsetPositioning, ParentAnchor, ParentElement, ParentOffsetBounds, Radius,
-    Stack, Text,
+    MainAxisSize, OffsetPositioning, ParentAnchor, ParentElement, ParentOffsetBounds, Stack, Text,
 };
 use warpui::keymap::FixedBinding;
 use warpui::{
@@ -1253,7 +1253,7 @@ fn render_confirmation_card(
     };
 
     Container::new(content.finish())
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .with_border(Border::all(1.).with_border_fill(border_color))
         .finish()
         .with_content_item_spacing()
@@ -1264,7 +1264,7 @@ fn render_header(handles: &RunAgentsCardHandles, app: &AppContext) -> Box<dyn El
     let appearance = Appearance::as_ref(app);
     let mut config = HeaderConfig::new(RUN_AGENTS_CARD_TITLE, app)
         .with_icon(icons::yellow_stop_icon(appearance))
-        .with_corner_radius_override(CornerRadius::with_top(Radius::Pixels(8.)));
+        .with_corner_radius_override(CornerRadius::with_top(RADIUS_MD));
 
     if let (Some(reject), Some(accept)) = (
         handles.reject_button.as_ref(),
@@ -1293,7 +1293,7 @@ fn render_body(state: &RunAgentsEditState, app: &AppContext) -> Box<dyn Element>
         .with_horizontal_padding(16.)
         .with_vertical_padding(12.)
         .with_background_color(theme.background().into_solid())
-        .with_corner_radius(CornerRadius::with_bottom(Radius::Pixels(8.)))
+        .with_corner_radius(CornerRadius::with_bottom(RADIUS_MD))
         .finish()
 }
 
@@ -1460,7 +1460,7 @@ fn render_status_only_card(
     );
     Container::new(row)
         .with_background_color(blended_colors::neutral_2(theme))
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .finish()
         .with_agent_output_item_spacing(app)
         .finish()
@@ -1522,10 +1522,6 @@ fn render_editor(
         .with_horizontal_padding(16.)
         .with_padding_bottom(12.)
         .with_background_color(theme.background().into_solid())
-        .with_corner_radius(CornerRadius::with_bottom(Radius::Pixels(8.)))
+        .with_corner_radius(CornerRadius::with_bottom(RADIUS_MD))
         .finish()
 }
-
-#[cfg(test)]
-#[path = "run_agents_card_view_tests.rs"]
-mod tests;

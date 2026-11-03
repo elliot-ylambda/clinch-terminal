@@ -4,14 +4,15 @@ use anyhow::Result;
 use chrono::{DateTime, FixedOffset, Local};
 use pathfinder_geometry::vector::vec2f;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::clipboard::ClipboardContent;
 use warpui::color::ColorU;
 use warpui::elements::{
     Align, ChildAnchor, ChildView, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment,
     Dismiss, Expanded, Fill, Flex, Hoverable, Icon, MouseStateHandle, OffsetPositioning,
     ParentAnchor, ParentElement, ParentOffsetBounds, PositionedElementAnchor,
-    PositionedElementOffsetBounds, Radius, SavePosition, ScrollStateHandle, Scrollable,
-    ScrollableElement, ScrollbarWidth, Shrinkable, Stack, UniformList, UniformListState,
+    PositionedElementOffsetBounds, SavePosition, ScrollStateHandle, Scrollable, ScrollableElement,
+    ScrollbarWidth, Shrinkable, Stack, UniformList, UniformListState,
 };
 use warpui::fonts::Weight;
 use warpui::ui_components::button::ButtonVariant;
@@ -114,7 +115,7 @@ impl UserOwnedBlock {
                     .finish(),
                 )
                 .with_uniform_padding(4.)
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(5.)));
+                .with_corner_radius(CornerRadius::with_all(RADIUS_SM));
 
                 let container = if state.is_clicked() || state.is_hovered() {
                     container.with_background(appearance.theme().surface_2())
@@ -734,7 +735,7 @@ impl ShowBlocksWidget {
             )
             .with_background(appearance.theme().surface_2())
             .with_uniform_padding(20.)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .finish(),
         )
         .with_height(220.)

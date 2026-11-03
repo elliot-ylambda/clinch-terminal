@@ -1,6 +1,7 @@
 use pathfinder_geometry::vector::vec2f;
 use warp_core::ui::color::coloru_with_opacity;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_util::path::user_friendly_path;
 use warpui::elements::{
     AnchorPair, ChildAnchor, ChildView, ConstrainedBox, Container, CornerRadius,
@@ -127,7 +128,7 @@ pub fn render_static_item(props: StaticItemProps<'_>, app: &AppContext) -> Box<d
     )
     .with_uniform_padding(STATUS_ELEMENT_PADDING)
     .with_background(coloru_with_opacity(icon_color.into(), 10))
-    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+    .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
     .finish();
 
     let title_text = Text::new_inline(

@@ -15,13 +15,13 @@ use vec1::Vec1;
 use warp_core::semantic_selection::SemanticSelection;
 use warp_core::ui::builder::UiBuilder;
 use warp_core::ui::theme::AnsiColorIdentifier;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warp_util::user_input::UserInput;
 use warpui::elements::new_scrollable::{NewScrollableElement, ScrollableAxis};
 use warpui::elements::{
     Axis, Border, ChildAnchor, ClippedScrollStateHandle, ConstrainedBox, Container, CornerRadius,
     Hoverable, Icon, MouseStateHandle, OffsetPositioning, ParentAnchor, ParentElement,
-    ParentOffsetBounds, Point, Radius, SavePosition, ScrollData, ScrollableElement, Stack, Text,
-    ZIndex,
+    ParentOffsetBounds, Point, SavePosition, ScrollData, ScrollableElement, Stack, Text, ZIndex,
 };
 use warpui::event::{DispatchedEvent, KeyState, ModifiersState};
 use warpui::fonts::{FamilyId, Properties, Weight};
@@ -1134,11 +1134,11 @@ impl BlockListElement {
         if self.snackbar_header_state.show_snackbar {
             // Snackbar expanded. Show collapse button attached to bottom of snackbar.
             snackbar_toggle_icon = UIIcon::Icon::ChevronUp;
-            rounded_corners = CornerRadius::with_top(Radius::Pixels(8.));
+            rounded_corners = CornerRadius::with_top(RADIUS_MD);
         } else {
             // Snackbar collapsed. Show expand button attached to top of blocklist.
             snackbar_toggle_icon = UIIcon::Icon::ChevronDown;
-            rounded_corners = CornerRadius::with_bottom(Radius::Pixels(8.));
+            rounded_corners = CornerRadius::with_bottom(RADIUS_MD);
         };
         let icon = Container::new(
             ConstrainedBox::new(Icon::new(snackbar_toggle_icon.into(), icon_color).finish())
@@ -2408,7 +2408,7 @@ impl BlockListElement {
         cell_size: Vector2F,
         grid_origin: Vector2F,
         block: &Block,
-        is_selected_by_anyone: bool,
+        _is_selected_by_anyone: bool,
         bounds: RectF,
         warp_theme: &WarpTheme,
         block_borders_enabled: bool,
@@ -2440,13 +2440,11 @@ impl BlockListElement {
                 .with_background(agent_view_bg_fill(app));
         }
 
-        let mut did_render_ai_stripe = false;
         if !FeatureFlag::AgentView.is_enabled() {
             if let Some(ai_context_stripe_color) =
                 ai_render_context.context_color_for_block(block, warp_theme)
             {
                 draw_flag_pole(grid_origin, block_height, ai_context_stripe_color, ctx);
-                did_render_ai_stripe = true;
             }
         }
 
@@ -2457,15 +2455,6 @@ impl BlockListElement {
                     Vector2F::new(bounds.width(), block_height),
                 ))
                 .with_background(warp_theme.failed_block_color().with_opacity(10));
-
-            if !is_selected_by_anyone && !did_render_ai_stripe {
-                draw_flag_pole(
-                    grid_origin,
-                    block_height,
-                    warp_theme.failed_block_color(),
-                    ctx,
-                );
-            }
         }
 
         if let Some((is_hovered, header_rect)) =
@@ -4201,7 +4190,7 @@ impl Element for BlockListElement {
                                     block_menu_rect_size,
                                 ))
                                 .with_background(self.warp_theme.surface_1())
-                                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)));
+                                .with_corner_radius(CornerRadius::with_all(RADIUS_SM));
                         } else if prompt_max_x > bookmark_button_origin.x()
                             || prompt_max_x > filter_button_origin.x()
                             || display_rprompt
@@ -4228,7 +4217,7 @@ impl Element for BlockListElement {
                                     background_rect_size,
                                 ))
                                 .with_background(self.warp_theme.surface_1())
-                                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)));
+                                .with_corner_radius(CornerRadius::with_all(RADIUS_SM));
                         }
                     }
 
@@ -4870,7 +4859,7 @@ where
     F: 'static + FnMut(&mut EventContext, &AppContext, Vector2F),
 {
     let mut button = Hoverable::new(mouse_state, |state| {
-        let mut container = icon.with_corner_radius(CornerRadius::with_all(Radius::Pixels(5.)));
+        let mut container = icon.with_corner_radius(CornerRadius::with_all(RADIUS_SM));
 
         container = if state.is_clicked() || state.is_hovered() {
             container.with_background(theme.surface_2())

@@ -16,6 +16,7 @@ use syntect::util::LinesWithEndings;
 use ui_components::lightbox::{LightboxImage, LightboxImageSource};
 use warp_completer::signatures::CommandRegistry;
 use warp_core::r#async::debounce;
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_editor::content::anchor::Anchor;
 use warp_editor::content::buffer::{Buffer, BufferEvent, EditOrigin};
 use warp_editor::content::mermaid_diagram::mermaid_asset_source;
@@ -28,7 +29,7 @@ use warp_editor::editor::RunnableCommandModel;
 use warp_util::user_input::UserInput;
 use warpui::elements::{
     Align, Border, Container, CornerRadius, CrossAxisAlignment, Empty, Flex, MainAxisAlignment,
-    MouseStateHandle, ParentElement, Radius, Shrinkable, Text,
+    MouseStateHandle, ParentElement, Shrinkable, Text,
 };
 use warpui::fonts::Properties;
 use warpui::platform::Cursor;
@@ -728,7 +729,7 @@ impl RunnableCommandModel for NotebookCommand {
                 .with_margin_left(8.)
                 .with_background(appearance.theme().background())
                 .with_border(Border::all(1.).with_border_fill(appearance.theme().surface_3()))
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                 .finish(),
             );
 

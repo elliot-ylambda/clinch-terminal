@@ -10,7 +10,14 @@ use warp_core::ui::theme::{AnsiColorIdentifier, AnsiColors};
 use warpui::elements::DraggableState;
 
 use crate::tab::SelectedTabColor;
-use crate::ui_components::CLINCH_SECTION_GREEN;
+
+/// The Clinch lime mixed 60/40 with white, for the branded section color.
+pub(crate) const CLINCH_SECTION_GREEN: ColorU = ColorU {
+    r: 0xD9,
+    g: 0xFF,
+    b: 0x66,
+    a: 0xFF,
+};
 
 /// Colors available to sidebar sections. The six standard choices mirror the tab-color picker;
 /// Clinch Green is a branded section-only option.

@@ -10,11 +10,11 @@
 use pathfinder_color::ColorU;
 use warp_core::ui::color::coloru_with_opacity;
 use warp_core::ui::theme::Fill;
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::elements::{
     Border, Clipped, ClippedScrollStateHandle, ClippedScrollable, ConstrainedBox, Container,
     CornerRadius, CrossAxisAlignment, Element, Empty, Expanded, Flex, Highlight, Hoverable,
-    MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement, Radius, ScrollbarWidth, Text,
-    Wrap,
+    MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement, ScrollbarWidth, Text, Wrap,
 };
 use warpui::fonts::{FamilyId, Properties, Weight};
 use warpui::platform::Cursor;
@@ -137,7 +137,7 @@ pub fn render_open_settings_file_button(
         // is resized narrower than the row's natural content width.
         let mut container = Container::new(Clipped::new(row).finish())
             .with_border(Border::all(1.).with_border_color(border_color))
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)));
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM));
         if state.is_hovered() {
             container = container.with_background_color(coloru_with_opacity(text_color, 10));
         }
@@ -276,7 +276,7 @@ pub fn render_settings_error_alert(
 
     Container::new(alert_body)
         .with_background_color(bg_color)
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
         .with_uniform_padding(12.)
         .finish()
 }
@@ -353,7 +353,7 @@ fn render_alert_action_button(
         );
 
         let mut container = Container::new(row.finish())
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .with_horizontal_padding(ALERT_BUTTON_HORIZONTAL_PADDING);
         if bordered {
             container = container.with_border(Border::all(1.).with_border_color(text_color));

@@ -9,6 +9,7 @@ use warp_core::channel::{Channel, ChannelState};
 use warp_core::features::FeatureFlag;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::icons::ICON_DIMENSIONS;
+use warp_core::ui::tokens::RADIUS_MD;
 use warp_editor::render::element::VerticalExpansionBehavior;
 use warp_util::path::LineAndColumnArg;
 #[cfg(feature = "local_fs")]
@@ -1474,7 +1475,7 @@ impl CodeView {
         )
         .with_vertical_padding(TAB_PADDING)
         .with_horizontal_padding(TAB_PADDING + TAB_HORIZONTAL_MARGIN)
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .with_background_color(appearance.theme().surface_1().with_opacity(70).into())
         .finish()
     }

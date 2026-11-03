@@ -32,10 +32,10 @@ use crate::ui_components::icons::Icon;
 pub const FIND_BAR_WIDTH: f32 = 500.;
 const ICON_PADDING: f32 = 4.;
 const HORIZONTAL_ICON_SPACING: f32 = 4.;
-const ICON_CONTAINER_CORNER_RADIUS: f32 = 4.;
+const ICON_CONTAINER_CORNER_RADIUS: f32 = 6.;
 pub const FIND_BAR_PADDING: f32 = 4.;
 const FIND_EDITOR_PADDING: f32 = 6.;
-pub const FIND_EDITOR_BORDER_RADIUS: f32 = 6.;
+pub const FIND_EDITOR_BORDER_RADIUS: f32 = 10.;
 pub(crate) const FIND_EDITOR_BORDER_WIDTH: f32 = 1.;
 const FIND_EDITOR_FONT_SIZE: f32 = 12.;
 

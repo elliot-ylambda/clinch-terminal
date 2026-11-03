@@ -7,16 +7,16 @@ use pathfinder_color::ColorU;
 use pathfinder_geometry::rect::RectF;
 use pathfinder_geometry::vector::{vec2f, Vector2F};
 use warp_core::ui::color::blend::Blend;
+use warp_core::ui::tokens::{corners_sm, RADIUS_SM};
 use warpui::accessibility::{AccessibilityContent, ActionAccessibilityContent, WarpA11yRole};
 use warpui::assets::asset_cache::AssetSource;
 use warpui::elements::{
     Align, Border, CacheOption, ChildAnchor, ClippedScrollStateHandle, ClippedScrollable,
     ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Dismiss, DispatchEventResult,
-    DropShadow, Element, EventHandler, Flex, Hoverable, Icon, Image, MainAxisAlignment,
-    MainAxisSize, MouseInBehavior, MouseStateHandle, OffsetPositioning, ParentAnchor,
-    ParentElement, ParentOffsetBounds, PositionedElementAnchor, PositionedElementOffsetBounds,
-    Radius, Rect, SavePosition, ScrollTarget, ScrollToPositionMode, ScrollbarWidth, Shrinkable,
-    Stack, Text,
+    Element, EventHandler, Flex, Hoverable, Icon, Image, MainAxisAlignment, MainAxisSize,
+    MouseInBehavior, MouseStateHandle, OffsetPositioning, ParentAnchor, ParentElement,
+    ParentOffsetBounds, PositionedElementAnchor, PositionedElementOffsetBounds, Rect, SavePosition,
+    ScrollTarget, ScrollToPositionMode, ScrollbarWidth, Shrinkable, Stack, Text,
 };
 use warpui::fonts::{FamilyId, Properties};
 use warpui::keymap::FixedBinding;
@@ -37,19 +37,15 @@ use crate::util::time_format::format_approx_duration_from_now_sentence_case;
 pub const CHEVRON_RIGHT_ALIGN_SVG_PATH: &str = "bundled/svg/chevron-right-align.svg";
 
 const SUBMENU_OVERLAP: f32 = 8.;
-const MENU_VERTICAL_PADDING: f32 = 9.;
+const MENU_VERTICAL_PADDING: f32 = 6.;
+const MENU_ITEM_INSET: f32 = 6.;
+
 pub const MENU_ITEM_VERTICAL_PADDING: f32 = 5.;
-pub const MENU_ITEM_HORIZONTAL_PADDING: f32 = 14.;
+pub const MENU_ITEM_HORIZONTAL_PADDING: f32 = 10.;
 pub const SEPARATOR_VERTICAL_MARGIN: f32 = 4.;
 const MINIMUM_MENU_ITEM_FONT_SIZE: f32 = 5.;
 const PADDING_TO_ICON_SIZE_MULTIPLIER: f32 = 3.;
 const MENU_ITEM_LEFT_PADDING_MULTIPLIER: f32 = 1.5;
-const DROP_SHADOW_COLOR: ColorU = ColorU {
-    r: 0,
-    g: 0,
-    b: 0,
-    a: 48,
-};
 const SECONDARY_TEXT_RATIO: f32 = 0.9;
 
 #[derive(Clone, Debug)]
@@ -1209,8 +1205,10 @@ impl<A: Action + Clone> MenuItemFields<A> {
         let mut ret = Hoverable::new(self.mouse_state.clone(), |state| {
             let is_hovered = state.is_hovered() && !safe_zone_suppresses_hover;
             let is_hovered_or_selected = is_hovered || is_selected;
+            // Hover is a shade, never the accent: the accent is saved for what is on or primary.
+            let surface_hover = Fill::Solid(appearance.tokens().surface_hover);
             let default_hover_background = if self.highlight_on_hover {
-                theme.accent_button_color()
+                surface_hover
             } else {
                 theme.dark_overlay()
             };
@@ -1221,12 +1219,11 @@ impl<A: Action + Clone> MenuItemFields<A> {
                 if is_hovered_or_selected && !self.disabled && !self.no_interaction_on_hover {
                     Some(hover_background)
                 } else if submenu_being_shown_for_item {
-                    // Preserve prior behavior: the submenu-open state always uses the
-                    // accent color (or the explicit override), regardless of
-                    // `highlight_on_hover`.
+                    // The submenu-open state always uses the hover surface (or the explicit
+                    // override), regardless of `highlight_on_hover`.
                     Some(
                         self.override_hover_background_color
-                            .unwrap_or_else(|| theme.accent_button_color()),
+                            .unwrap_or(surface_hover),
                     )
                 } else {
                     None
@@ -1350,11 +1347,17 @@ impl<A: Action + Clone> MenuItemFields<A> {
             .with_padding_left(left_padding)
             .with_padding_right(horizontal_padding);
 
-            let container_element = if let Some(background_color) = background_color {
-                container.with_background(background_color).finish()
+            // Hover and selection are inset pills, not edge-to-edge bars.
+            let container = if let Some(background_color) = background_color {
+                container
+                    .with_background(background_color)
+                    .with_corner_radius(corners_sm())
             } else {
-                container.finish()
+                container
             };
+            let container_element = Container::new(container.finish())
+                .with_horizontal_margin(MENU_ITEM_INSET)
+                .finish();
 
             // Render tooltip if present and hovered
             if let Some(tooltip_text) = &self.tooltip {
@@ -1727,7 +1730,7 @@ impl<A: Action + Clone> MenuItem<A> {
     }
 }
 
-pub const DEFAULT_WIDTH: f32 = 186.;
+pub const DEFAULT_WIDTH: f32 = 208.;
 const DEFAULT_HEIGHT: f32 = 140.;
 
 #[derive(Copy, Clone, Debug)]
@@ -2754,7 +2757,8 @@ impl<A: Action + Clone> SubMenu<A> {
         let selected_row_index = self.selected_row_index;
         let selected_item_index = self.selected_item_index;
 
-        let background_color = appearance.theme().surface_2();
+        let tokens = appearance.tokens();
+        let background_color = Fill::Solid(tokens.surface_overlay);
         let submenus = self.render_submenus(
             submenu_width,
             background_color,
@@ -2781,9 +2785,9 @@ impl<A: Action + Clone> SubMenu<A> {
             .enumerate()
             .for_each(|(depth, submenu)| {
                 let corner_radius = if flatten_bottom_corners && depth == 0 {
-                    CornerRadius::with_top(Radius::Pixels(5.))
+                    CornerRadius::with_top(RADIUS_SM)
                 } else {
-                    CornerRadius::with_all(Radius::Pixels(5.))
+                    corners_sm()
                 };
 
                 // At depth 0, place pinned header/footer inside the styled container
@@ -2827,15 +2831,15 @@ impl<A: Action + Clone> SubMenu<A> {
                     (submenu, MENU_VERTICAL_PADDING, MENU_VERTICAL_PADDING)
                 };
 
-                let mut container = Container::new(content)
+                let container = Container::new(content)
                     .with_padding_top(top_padding)
                     .with_padding_bottom(bottom_padding)
                     .with_background(background_color)
-                    .with_corner_radius(corner_radius);
-
-                if let Some(border) = border {
-                    container = container.with_border(border);
-                }
+                    .with_corner_radius(corner_radius)
+                    .with_border(
+                        border
+                            .unwrap_or_else(|| Border::all(1.).with_border_color(tokens.hairline)),
+                    );
 
                 let mut menu = Container::new(
                     ConstrainedBox::new(container.finish())
@@ -2844,9 +2848,7 @@ impl<A: Action + Clone> SubMenu<A> {
                 );
 
                 if with_drop_shadow {
-                    menu = menu.with_drop_shadow(DropShadow::new_with_standard_offset_and_spread(
-                        DROP_SHADOW_COLOR,
-                    ));
+                    menu = menu.with_drop_shadow(tokens.overlay_shadow());
                 }
 
                 if depth == 0 {

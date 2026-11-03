@@ -112,3 +112,8 @@ __pycache__/
 /web/remote-control/.yarn/cache/
 /web/remote-control/.yarn/install-state.gz
 /web/remote-control/.yarn/unplugged/
+/web/design-prototype/node_modules/
+/web/design-prototype/dist/
+/web/design-prototype/tsconfig.tsbuildinfo
+/web/design-prototype/.yarn/cache/
+/web/design-prototype/.yarn/install-state.gz

@@ -263,6 +263,8 @@ pub(super) fn restore(
             group_id: section,
             pinned: tab.pinned,
             coordinator: false,
+            auto_coordinate: None,
+            custom_title_auto: false,
         });
     }
     if tab_groups

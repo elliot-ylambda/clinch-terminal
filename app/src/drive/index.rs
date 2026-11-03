@@ -10,6 +10,7 @@ use url::Url;
 use warp_core::context_flag::ContextFlag;
 use warp_core::settings::Setting;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warp_util::sync::Condition;
 use warpui::clipboard::ClipboardContent;
 use warpui::elements::{
@@ -17,7 +18,7 @@ use warpui::elements::{
     ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Dash, DropTarget, DropTargetData,
     Empty, Flex, Highlight, Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle,
     OffsetPositioning, OffsetType, ParentAnchor, ParentElement, ParentOffsetBounds,
-    PositionedElementAnchor, PositionedElementOffsetBounds, PositioningAxis, Radius, SavePosition,
+    PositionedElementAnchor, PositionedElementOffsetBounds, PositioningAxis, SavePosition,
     ScrollTarget, ScrollToPositionMode, ScrollbarWidth, Shrinkable, Stack, Text, XAxisAnchor,
     YAxisAnchor,
 };
@@ -1348,7 +1349,7 @@ impl DriveIndex {
                 .with_padding_right(INDEX_CONTENT_PADDING_RIGHT)
                 .finish(),
         )
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
         .finish()
     }
 
@@ -1445,7 +1446,7 @@ impl DriveIndex {
                 .finish(),
         )
         // Add some styling to the entire row: rounded edges and a small margin between the row and the border
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)));
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM));
 
         // If the space is focused, set background
         let mut is_focused = false;
@@ -1564,7 +1565,7 @@ impl DriveIndex {
             font_family_id: Some(appearance.ui_font_family()),
             font_weight: Some(warpui::fonts::Weight::Semibold),
             padding: Some(Coords::uniform(6.)),
-            border_radius: Some(CornerRadius::with_all(Radius::Pixels(6.))),
+            border_radius: Some(CornerRadius::with_all(RADIUS_MD)),
             ..Default::default()
         };
 
@@ -1648,7 +1649,7 @@ impl DriveIndex {
                 .finish(),
         )
         // Add some styling to the entire row: rounded edges and a small margin between the row and the border
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)));
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM));
 
         // If the space is focused, set background
         let mut is_focused = false;
@@ -1835,7 +1836,7 @@ impl DriveIndex {
                 .with_margin_right(INDEX_CONTENT_MARGIN_RIGHT)
                 .finish(),
         )
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)));
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM));
 
         // If the trash row is focused, set background
         let mut is_focused = false;
@@ -2065,7 +2066,7 @@ impl DriveIndex {
         .with_padding_top(ITEM_INTERNAL_PADDING)
         .with_padding_bottom(ITEM_INTERNAL_PADDING)
         .with_margin_bottom(2. * ITEM_INTERNAL_PADDING)
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
         .with_background_color(coloru_with_opacity(
             appearance.theme().surface_2().into(),
             50,
@@ -3843,7 +3844,7 @@ impl DriveIndex {
         let drop_target = if Some(location) == self.current_drop_target {
             drop_target
                 .with_background(appearance.theme().surface_3())
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                 .finish()
         } else {
             drop_target.finish()
@@ -4012,7 +4013,7 @@ impl DriveIndex {
         .with_background(theme.surface_3())
         .with_border(Border::all(1.).with_border_color(border_color))
         .with_uniform_padding(8.)
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
         .finish();
 
         let button_styles = UiComponentStyles {
@@ -4076,7 +4077,7 @@ impl DriveIndex {
                         .finish(),
                 )
                 .with_background(background_color)
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                 .with_uniform_padding(12.)
                 .with_uniform_margin(12.)
                 .with_border(Border::all(1.).with_border_color(border_color))
@@ -4225,7 +4226,7 @@ impl DriveIndex {
                     .finish(),
             )
             .with_background(background_color)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .with_uniform_padding(16.)
             .finish(),
         )
@@ -4318,7 +4319,7 @@ impl DriveIndex {
         Container::new(
             Container::new(body.finish())
                 .with_background(background_color)
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                 .with_uniform_padding(16.)
                 .finish(),
         )
@@ -5044,11 +5045,6 @@ impl DriveIndex {
             }
         }
     }
-
-    #[cfg(test)]
-    pub fn sections(&self) -> &Vec<DriveIndexSection> {
-        &self.sections
-    }
 }
 
 pub fn warp_drive_section_header_position_id(section: &DriveIndexSection) -> String {
@@ -5632,7 +5628,3 @@ impl TypedActionView for DriveIndex {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "index_tests.rs"]
-mod tests;

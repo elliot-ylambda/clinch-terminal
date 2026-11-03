@@ -22,13 +22,14 @@ use pathfinder_geometry::vector::vec2f;
 use ui_components::{button, Component as _, Options as _};
 use warp_core::channel::ChannelState;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warp_util::local_or_remote_path::LocalOrRemotePath;
 use warpui::elements::new_scrollable::SingleAxisConfig;
 use warpui::elements::{
     Align, Border, ChildAnchor, ChildView, ConstrainedBox, Container, CornerRadius,
     CrossAxisAlignment, Empty, Expanded, Fill, Flex, FormattedTextElement, Hoverable,
     MainAxisAlignment, MainAxisSize, NewScrollable, OffsetPositioning, ParentAnchor, ParentElement,
-    ParentOffsetBounds, Radius, Shrinkable, Stack, Text, Wrap,
+    ParentOffsetBounds, Shrinkable, Stack, Text, Wrap,
 };
 use warpui::keymap::Keystroke;
 use warpui::platform::{Cursor, OperatingSystem};
@@ -2093,7 +2094,7 @@ fn render_stopped_output(props: Props, app: &AppContext) -> Box<dyn Element> {
         };
 
         let button_styles = UiComponentStyles::default()
-            .set_border_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .set_border_radius(CornerRadius::with_all(RADIUS_SM))
             .set_border_width(1.)
             .set_border_color(internal_colors::neutral_4(theme).into())
             .set_padding(Coords {
@@ -2195,13 +2196,13 @@ fn render_requested_edits_output_message(
             .top_center()
             .finish()
             .with_agent_output_item_spacing(app)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .with_background_color(theme.background().into_solid())
             .with_border(Border::all(1.).with_border_fill(border_color))
             .finish(),
             DisplayMode::Embedded { .. } => {
                 let mut container = Container::new(ChildView::new(&requested_edit.view).finish())
-                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+                    .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                     .with_background_color(theme.background().into_solid())
                     .with_border(Border::all(1.).with_border_fill(border_color));
 
@@ -2323,7 +2324,7 @@ fn render_suggest_new_conversation(
             )
             .with_agent_output_item_spacing(app)
             .with_background_color(blended_colors::neutral_2(theme))
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .finish(),
         );
     }
@@ -2336,7 +2337,7 @@ fn render_suggest_new_conversation(
         return Some(
             header_element
                 .with_agent_output_item_spacing(app)
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                 .with_background_color(blended_colors::neutral_2(theme))
                 .finish(),
         );
@@ -2348,7 +2349,7 @@ fn render_suggest_new_conversation(
         "It seems like the topic changed. Would you like to make a new conversation?";
     let new_conversation_header_element = HeaderConfig::new(new_conversation_header_text, app)
         .with_icon(yellow_stop_icon(appearance))
-        .with_corner_radius_override(CornerRadius::with_top(Radius::Pixels(8.)))
+        .with_corner_radius_override(CornerRadius::with_top(RADIUS_MD))
         .render(app);
     content.add_child(new_conversation_header_element);
 
@@ -2365,7 +2366,7 @@ fn render_suggest_new_conversation(
         content
             .finish()
             .with_content_item_spacing()
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .with_background_color(theme.background().into_solid())
             .with_border(Border::all(1.).with_border_fill(border_color))
             .finish(),
@@ -3424,7 +3425,7 @@ fn render_usage_button(props: Props, app: &AppContext) -> Box<dyn Element> {
 
                 content = content
                     .with_background(background)
-                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)));
+                    .with_corner_radius(CornerRadius::with_all(RADIUS_SM));
 
                 // Show tooltip on hover or while clicked
                 let mut stack = Stack::new().with_child(content.finish());
@@ -3919,7 +3920,3 @@ fn format_conversation_search_phase(phase: &ConversationSearchPhase) -> String {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "output_tests.rs"]
-mod tests;

@@ -6,12 +6,3 @@
 //! without a path change.
 
 pub(crate) use crate::server::retry_strategies::with_bounded_retry;
-// Re-export for tests only; the canonical definitions live in retry_strategies.
-#[cfg(test)]
-pub(crate) use crate::server::retry_strategies::{
-    is_transient_graphql_or_http_error, is_transient_http_error, MAX_ATTEMPTS,
-};
-
-#[cfg(test)]
-#[path = "retry_tests.rs"]
-mod tests;

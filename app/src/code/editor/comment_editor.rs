@@ -4,10 +4,11 @@ use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::Vector2F;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::Fill;
+use warp_core::ui::tokens::RADIUS_MD;
 use warp_editor::render::element::VerticalExpansionBehavior;
 use warpui::elements::{
     Border, ChildView, Clipped, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Flex,
-    MainAxisAlignment, MainAxisSize, ParentElement, Radius, Shrinkable, Text,
+    MainAxisAlignment, MainAxisSize, ParentElement, Shrinkable, Text,
 };
 use warpui::keymap::Keystroke;
 use warpui::text_layout::ClipConfig;
@@ -435,7 +436,7 @@ impl View for CommentEditor {
             .with_max_width(DEFAULT_COMMENT_MAX_WIDTH)
             .finish(),
         )
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .with_background_color(background)
         .with_border(Border::all(1.).with_border_fill(border_color))
         .finish()

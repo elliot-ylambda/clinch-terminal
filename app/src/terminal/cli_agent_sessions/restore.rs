@@ -13,6 +13,8 @@ use crate::terminal::view::TerminalView;
 const CONCURRENT_STARTS: usize = 2;
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 const START_TIMEOUT: Duration = Duration::from_secs(90);
+/// How often a tab flagged for attention is rechecked once nothing else is restoring.
+const ATTENTION_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 type CancelPendingCommand = Box<dyn FnOnce(&mut AppContext) -> bool>;
 
@@ -49,6 +51,8 @@ pub(crate) struct AgentRestoreQueue {
     entries: Vec<RestoreEntry>,
     ticking: bool,
     completed_at: Option<Instant>,
+    /// The user closed the notice. Restoring shows it again.
+    notice_dismissed: bool,
 }
 
 impl Entity for AgentRestoreQueue {
@@ -110,6 +114,7 @@ impl AgentRestoreQueue {
             cancel_pending_command: Some(cancel_pending_command),
         });
         self.completed_at = None;
+        self.notice_dismissed = false;
         ctx.emit(());
         if !self.ticking {
             self.ticking = true;
@@ -124,7 +129,24 @@ impl AgentRestoreQueue {
             .map(|entry| entry.state)
     }
 
+    /// The first open tab whose restore needs the user, for the notice to jump to.
+    pub(crate) fn first_attention_terminal(&self, ctx: &AppContext) -> Option<EntityId> {
+        self.entries
+            .iter()
+            .filter(|entry| matches!(entry.state, RestoreState::Attention(_)))
+            .find(|entry| entry.terminal.upgrade(ctx).is_some())
+            .map(|entry| entry.terminal.id())
+    }
+
+    pub(crate) fn dismiss_notice(&mut self, ctx: &mut ModelContext<Self>) {
+        self.notice_dismissed = true;
+        ctx.emit(());
+    }
+
     pub(crate) fn progress_text(&self) -> Option<String> {
+        if self.notice_dismissed {
+            return None;
+        }
         let count = |state| {
             self.entries
                 .iter()
@@ -175,12 +197,10 @@ impl AgentRestoreQueue {
                 changed |= before != entry.state;
                 continue;
             };
+            // A flagged tab whose agent is up and waiting for input is fine, even when it came
+            // back under a new session id (a teleported or forked resume) or took longer than the
+            // start timeout. There is nothing left for the user to check.
             if matches!(entry.state, RestoreState::Attention(_))
-                && CLIAgentSessionsModel::as_ref(ctx)
-                    .session(terminal.id())
-                    .and_then(|session| session.session_key())
-                    .as_ref()
-                    == Some(&entry.key)
                 && terminal.as_ref(ctx).agent_restore_is_ready(ctx)
             {
                 entry.state = RestoreState::Restored;
@@ -188,11 +208,13 @@ impl AgentRestoreQueue {
             }
             if entry.state == RestoreState::Starting {
                 let session = CLIAgentSessionsModel::as_ref(ctx).session(terminal.id());
-                if session.and_then(|session| session.session_key()).as_ref() != Some(&entry.key) {
-                    entry.state = RestoreState::Attention("Restore stopped — check this tab");
-                } else if terminal.as_ref(ctx).agent_restore_is_ready(ctx) {
+                if terminal.as_ref(ctx).agent_restore_is_ready(ctx) {
                     entry.state = RestoreState::Restored;
                     entry.cancel_pending_command = None;
+                } else if session.and_then(|session| session.session_key()).as_ref()
+                    != Some(&entry.key)
+                {
+                    entry.state = RestoreState::Attention("Restore stopped — check this tab");
                 } else if terminal.as_ref(ctx).agent_restore_has_user_input()
                     && entry
                         .cancel_pending_command
@@ -279,6 +301,18 @@ impl AgentRestoreQueue {
         }
         if self.ticking {
             self.schedule_tick(ctx);
+        } else if self
+            .entries
+            .iter()
+            .any(|entry| matches!(entry.state, RestoreState::Attention(_)))
+        {
+            // Keep rechecking flagged tabs. An idle or hookless agent sends no events that would
+            // otherwise wake the queue, and the notice would stay up after the tab recovered.
+            self.ticking = true;
+            ctx.spawn(
+                async { Timer::after(ATTENTION_POLL_INTERVAL).await },
+                |queue, _, ctx| queue.tick(ctx),
+            );
         }
     }
 }

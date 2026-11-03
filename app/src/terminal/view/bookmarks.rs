@@ -1,6 +1,5 @@
-use warpui::elements::{
-    Border, ConstrainedBox, Container, CornerRadius, Flex, ParentElement, Radius,
-};
+use warp_core::ui::tokens::RADIUS_MD;
+use warpui::elements::{Border, ConstrainedBox, Container, CornerRadius, Flex, ParentElement};
 use warpui::fonts::Weight;
 use warpui::ui_components::components::{UiComponent, UiComponentStyles};
 use warpui::Element;
@@ -115,7 +114,7 @@ pub(super) fn render_floating_block_snapshot(
         .finish(),
     )
     .with_background(theme.surface_1())
-    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+    .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
     .with_border(Border::all(1.).with_border_fill(theme.outline()))
     .finish()
 }

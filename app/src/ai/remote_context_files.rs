@@ -102,7 +102,3 @@ fn pair_remote_text_file_contents(
         })
         .collect()
 }
-
-#[cfg(test)]
-#[path = "remote_context_files_tests.rs"]
-mod tests;

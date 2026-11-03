@@ -72,6 +72,7 @@ use warp_core::context_flag::ContextFlag;
 use warp_core::r#async::debounce;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::AnsiColorIdentifier;
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_core::user_preferences::GetUserPreferences as _;
 use warp_editor::editor::NavigationKey;
 use warp_util::path::ShellFamily;
@@ -83,7 +84,7 @@ use warpui::elements::{
     resizable_state_handle, Align, AnchorPair, ChildAnchor, Clipped, ConstrainedBox, Container,
     CornerRadius, CrossAxisAlignment, DispatchEventResult, DropTargetData, Element, EventHandler,
     Flex, MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning, OffsetType,
-    ParentAnchor, ParentElement, PositionedElementOffsetBounds, PositioningAxis, Radius,
+    ParentAnchor, ParentElement, PositionedElementOffsetBounds, PositioningAxis,
     ResizableStateHandle, SavePosition, SelectionHandle, Text, Wrap, XAxisAnchor, YAxisAnchor,
 };
 pub use warpui::elements::{ParentElement as _, Stack};
@@ -15377,7 +15378,7 @@ impl Input {
                 )),
                 border_width: Some(1.),
                 border_color: Some(internal_colors::neutral_4(appearance.theme()).into()),
-                border_radius: Some(CornerRadius::with_all(Radius::Pixels(5.))),
+                border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
                 ..Default::default()
             },
         )

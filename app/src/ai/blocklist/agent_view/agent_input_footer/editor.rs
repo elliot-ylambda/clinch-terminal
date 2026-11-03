@@ -13,11 +13,12 @@ use super::toolbar_item::AgentToolbarItemKind;
 use crate::chip_configurator::{
     render_chip_editor_modal, render_chip_editor_sections, ChipConfigurator,
     ChipConfiguratorAction, ChipConfiguratorLayout, ChipEditorModalConfig, ChipEditorMouseHandles,
-    ChipEditorSectionsConfig, ChipEditorTab,
+    ChipEditorSectionsConfig, ChipEditorTab, ListPresentation,
 };
 use crate::terminal::session_settings::{
     AgentToolbarChipSelection, CLIAgentToolbarChipSelection, SessionSettings,
     SessionSettingsChangedEvent, TerminalToolbarChipSelection, ToolbarChipSelection,
+    DEFAULT_FOOTER_VISIBLE_COUNT,
 };
 use crate::{report_if_error, Appearance};
 
@@ -56,6 +57,8 @@ struct ToolbarEditorDraft {
     left: Vec<AgentToolbarItemKind>,
     right: Vec<AgentToolbarItemKind>,
     hidden_custom_inserts: Vec<AgentToolbarItemKind>,
+    /// Where the More line sits; `None` for layouts that are not a footer list.
+    visible_count: Option<usize>,
 }
 
 pub struct AgentToolbarInlineEditor {
@@ -211,7 +214,10 @@ fn open_toolbar_items_from_settings<V: View>(
         | AgentToolbarEditorMode::Codex
         | AgentToolbarEditorMode::Terminal => {
             let current = current_left.into_iter().chain(current_right).collect();
-            chip_configurator.open_single_zone_with_items(current, available, appearance);
+            let presentation = ListPresentation {
+                visible_count: saved_visible_count(mode, SessionSettings::as_ref(ctx)),
+            };
+            chip_configurator.open_list_with_items(current, available, presentation, appearance);
         }
     }
 }
@@ -246,9 +252,12 @@ fn open_toolbar_items_from_draft<V: View>(
         AgentToolbarEditorMode::CLIAgent
         | AgentToolbarEditorMode::ClaudeCode
         | AgentToolbarEditorMode::Codex
-        | AgentToolbarEditorMode::Terminal => chip_configurator.open_single_zone_with_items(
+        | AgentToolbarEditorMode::Terminal => chip_configurator.open_list_with_items(
             draft.left.iter().chain(&draft.right).cloned().collect(),
             available,
+            ListPresentation {
+                visible_count: draft.visible_count.unwrap_or(DEFAULT_FOOTER_VISIBLE_COUNT),
+            },
             appearance,
         ),
     }
@@ -277,9 +286,12 @@ fn open_default_toolbar_items<V: View>(
         AgentToolbarEditorMode::CLIAgent
         | AgentToolbarEditorMode::ClaudeCode
         | AgentToolbarEditorMode::Codex
-        | AgentToolbarEditorMode::Terminal => chip_configurator.open_single_zone_with_items(
+        | AgentToolbarEditorMode::Terminal => chip_configurator.open_list_with_items(
             left.into_iter().chain(right).collect(),
             available,
+            ListPresentation {
+                visible_count: DEFAULT_FOOTER_VISIBLE_COUNT,
+            },
             appearance,
         ),
     }
@@ -292,6 +304,19 @@ fn is_toolbar_editor_at_defaults(
     let (left, right) = selected_toolbar_items(mode, chip_configurator);
     toolbar_items_match_defaults(mode, &left, &right)
         && hidden_custom_inserts_from_configurator(mode, chip_configurator).is_empty()
+        && visible_count_from_configurator(chip_configurator)
+            .is_none_or(|count| count == DEFAULT_FOOTER_VISIBLE_COUNT)
+}
+
+/// How many buttons the user chose to keep on this footer's row.
+fn saved_visible_count(mode: AgentToolbarEditorMode, settings: &SessionSettings) -> usize {
+    match mode {
+        AgentToolbarEditorMode::Terminal => *settings.terminal_footer_visible_count,
+        AgentToolbarEditorMode::AgentView
+        | AgentToolbarEditorMode::CLIAgent
+        | AgentToolbarEditorMode::ClaudeCode
+        | AgentToolbarEditorMode::Codex => *settings.coding_agent_footer_visible_count,
+    }
 }
 
 fn toolbar_items_match_defaults(
@@ -315,6 +340,13 @@ fn hidden_custom_inserts_from_configurator(
                 && !item.is_shipped_quick_insert_for_mode(mode)
         })
         .collect()
+}
+
+/// Where the editor's More line sits; `None` for layouts that are not a footer list.
+fn visible_count_from_configurator(chip_configurator: &ChipConfigurator) -> Option<usize> {
+    chip_configurator
+        .list_presentation()
+        .map(|list| list.visible_count)
 }
 
 fn available_section_label(mode: AgentToolbarEditorMode) -> &'static str {
@@ -349,10 +381,12 @@ impl AgentToolbarInlineEditor {
                     SessionSettingsChangedEvent::CodingAgentToolbarChipSelectionSetting { .. }
                         | SessionSettingsChangedEvent::CLIAgentToolbarChipSelectionSetting { .. }
                         | SessionSettingsChangedEvent::ClaudeCodeToolbarChipSelectionSetting { .. }
-                        | SessionSettingsChangedEvent::CodexToolbarChipSelectionSetting { .. },
+                        | SessionSettingsChangedEvent::CodexToolbarChipSelectionSetting { .. }
+                        | SessionSettingsChangedEvent::CodingAgentFooterVisibleCount { .. },
                 ) | (
                     AgentToolbarEditorMode::Terminal,
-                    SessionSettingsChangedEvent::TerminalToolbarChipSelectionSetting { .. },
+                    SessionSettingsChangedEvent::TerminalToolbarChipSelectionSetting { .. }
+                        | SessionSettingsChangedEvent::TerminalFooterVisibleCount { .. },
                 )
             );
 
@@ -373,7 +407,15 @@ impl AgentToolbarInlineEditor {
         let (left, right) = selected_toolbar_items(self.mode, &self.chip_configurator);
         let hidden_custom_inserts =
             hidden_custom_inserts_from_configurator(self.mode, &self.chip_configurator);
-        save_toolbar_selection(self.mode, left, right, hidden_custom_inserts, ctx);
+        let visible_count = visible_count_from_configurator(&self.chip_configurator);
+        save_toolbar_selection(
+            self.mode,
+            left,
+            right,
+            hidden_custom_inserts,
+            visible_count,
+            ctx,
+        );
     }
 
     fn is_at_defaults(&self) -> bool {
@@ -552,8 +594,26 @@ fn save_toolbar_selection<V: View>(
     left: Vec<AgentToolbarItemKind>,
     right: Vec<AgentToolbarItemKind>,
     hidden_custom_inserts: Vec<AgentToolbarItemKind>,
+    visible_count: Option<usize>,
     ctx: &mut ViewContext<V>,
 ) {
+    if let Some(visible_count) = visible_count {
+        SessionSettings::handle(ctx).update(ctx, |settings, ctx| match mode {
+            AgentToolbarEditorMode::Terminal => {
+                report_if_error!(settings
+                    .terminal_footer_visible_count
+                    .set_value(visible_count, ctx));
+            }
+            AgentToolbarEditorMode::AgentView
+            | AgentToolbarEditorMode::CLIAgent
+            | AgentToolbarEditorMode::ClaudeCode
+            | AgentToolbarEditorMode::Codex => {
+                report_if_error!(settings
+                    .coding_agent_footer_visible_count
+                    .set_value(visible_count, ctx));
+            }
+        });
+    }
     let is_default =
         hidden_custom_inserts.is_empty() && toolbar_items_match_defaults(mode, &left, &right);
     match mode {
@@ -639,6 +699,7 @@ impl AgentToolbarEditorModal {
                 self.mode,
                 &self.chip_configurator,
             ),
+            visible_count: visible_count_from_configurator(&self.chip_configurator),
         }
     }
 
@@ -682,6 +743,7 @@ impl AgentToolbarEditorModal {
                 draft.left,
                 draft.right,
                 draft.hidden_custom_inserts,
+                draft.visible_count,
                 ctx,
             );
         }

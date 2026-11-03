@@ -151,7 +151,7 @@ impl OnboardingPromptBlock {
         const PROMPT_WIDTH: f32 = 442.;
         const PROMPT_HEIGHT: f32 = 136.;
         const PROMPT_BORDER_WIDTH: f32 = 1.;
-        const PROMPT_BORDER_RADIUS: f32 = 8.;
+        const PROMPT_BORDER_RADIUS: f32 = 10.;
         const PROMPT_MARGIN_RIGHT: f32 = 32.;
         const PROMPT_MARGIN_TOP: f32 = 31.;
         const PROMPT_PADDING: f32 = 16.;
@@ -245,7 +245,7 @@ impl OnboardingPromptBlock {
         const PS1_PADDING_VERTICAL: f32 = 12.;
         const PS1_PADDING_HORIZONTAL: f32 = 8.;
         const PS1_MARGIN_TOP: f32 = 8.;
-        const CORNER_RADIUS_PIXELS: f32 = 4.;
+        const CORNER_RADIUS_PIXELS: f32 = 6.;
         const CORRECTION_OPACITY: u8 = 60;
 
         let current_theme = appearance.theme();
@@ -327,7 +327,7 @@ impl OnboardingPromptBlock {
         const HEADER_TEXT: &str = "Warp prompt";
         const HEADER_MARGIN_LEFT: f32 = 4.;
         const SECTION_MARGIN_TOP: f32 = 8.;
-        const OUTER_CORNER_RADIUS: f32 = 4.;
+        const OUTER_CORNER_RADIUS: f32 = 6.;
         const PROMPT_VERTICAL_PADDING: f32 = 12.;
         const PROMPT_HORIZONTAL_PADDING: f32 = 8.;
 

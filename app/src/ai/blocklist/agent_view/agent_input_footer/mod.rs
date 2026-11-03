@@ -34,13 +34,16 @@ use warp_core::ui::color::contrast::MinimumAllowedContrast;
 use warp_core::ui::color::ContrastingColor;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::{AnsiColorIdentifier, Fill};
+use warp_core::ui::tokens::{corners_lg, corners_md, StatusKind, RADIUS_MD};
 use warpui::elements::{
     Border, ChildAnchor, ChildView, Clipped, ConstrainedBox, Container, CornerRadius,
-    CrossAxisAlignment, DispatchEventResult, Element, EventHandler, Expanded, Flex,
-    MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning, ParentElement,
-    PositionedElementAnchor, PositionedElementOffsetBounds, Radius, Rect, Shrinkable, Stack, Text,
-    Wrap, WrapFill, WrapFillEntireRun, DEFAULT_UI_LINE_HEIGHT_RATIO,
+    CrossAxisAlignment, Dismiss, DispatchEventResult, Element, EventHandler, Expanded, Flex,
+    Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning, ParentAnchor,
+    ParentElement, ParentOffsetBounds, PositionedElementAnchor, PositionedElementOffsetBounds,
+    SavePosition, Shrinkable, SizeConstraintCondition, SizeConstraintSwitch, Stack, Text, Wrap,
+    WrapFill, DEFAULT_UI_LINE_HEIGHT_RATIO,
 };
+use warpui::platform::Cursor;
 use warpui::r#async::{SpawnedFutureHandle, Timer};
 use warpui::{
     AppContext, Entity, EntityId, ModelHandle, SingletonEntity, TypedActionView, View, ViewContext,
@@ -87,7 +90,7 @@ use crate::terminal::cli_agent_sessions::plugin_manager::{
     PluginInstallError, PluginModalKind,
 };
 use crate::terminal::cli_agent_sessions::{
-    CLIAgentInputState, CLIAgentSessionsModel, CLIAgentSessionsModelEvent,
+    CLIAgentInputState, CLIAgentSessionStatus, CLIAgentSessionsModel, CLIAgentSessionsModelEvent,
 };
 use crate::terminal::input::models::InlineModelSelectorTab;
 use crate::terminal::input::{HandoffComposeState, MenuPositioningProvider};
@@ -108,7 +111,6 @@ use crate::terminal::view::TerminalAction;
 use crate::terminal::ShellLaunchData;
 use crate::terminal::{CLIAgent, TerminalModel};
 use crate::ui_components::icons::Icon;
-use crate::ui_components::CLINCH_LOGO_GREEN;
 use crate::view_components::action_button::{
     ActionButton, ActionButtonTheme, AdjoinedSide, ButtonSize, KeystrokeSource, NakedTheme,
     TooltipAlignment,
@@ -134,6 +136,96 @@ const START_REMOTE_CONTROL_TOOLTIP: &str = "Start remote control";
 const START_REMOTE_CONTROL_LOGIN_REQUIRED_TOOLTIP: &str = "Log in to use /remote-control";
 
 const CLOUD_MODE_V2_FOOTER_GAP: f32 = 4.;
+pub const FOOTER_MORE_BUTTON_POSITION_ID: &str = "agent_footer:more";
+/// Everything on a footer row besides the buttons: agent icon, status, More and the right-hand
+/// controls. Generous on purpose, so an estimate never lets the row overflow.
+const CLI_FOOTER_RESERVED_WIDTH: f32 = 260.;
+const TERMINAL_FOOTER_RESERVED_WIDTH: f32 = 100.;
+
+/// A footer button's width, estimated from its label. Nothing is measured before layout, and an
+/// estimate is enough to decide how many buttons fit.
+fn estimated_footer_button_width(label: &str, has_icon: bool) -> f32 {
+    use crate::view_components::action_button::{
+        AGENT_FOOTER_BUTTON_FONT_SIZE, AGENT_FOOTER_BUTTON_HORIZONTAL_PADDING,
+    };
+    const ICON_AND_GAP: f32 = 14. + 5.;
+    // The footer font's average character is a little over half its size (measured: 6.8px
+    // at 13px).
+    const CHARACTER: f32 = AGENT_FOOTER_BUTTON_FONT_SIZE * 0.523;
+    const SPACING: f32 = 4.;
+    2. * AGENT_FOOTER_BUTTON_HORIZONTAL_PADDING
+        + if has_icon { ICON_AND_GAP } else { 0. }
+        + label.chars().count() as f32 * CHARACTER
+        + SPACING
+}
+
+/// The label a footer button shows: the session actions use shorter names than the editor does.
+fn footer_button_label(item: &AgentToolbarItemKind) -> std::borrow::Cow<'static, str> {
+    match item {
+        AgentToolbarItemKind::BookmarkConversation => "Bookmark".into(),
+        AgentToolbarItemKind::ForkSession => "Fork".into(),
+        AgentToolbarItemKind::TransferAgent => "Transfer".into(),
+        item => item.display_label(),
+    }
+}
+
+/// A configured footer button's estimated width, from the label and icon it shows.
+fn estimated_item_width(item: &AgentToolbarItemKind) -> f32 {
+    estimated_footer_button_width(&footer_button_label(item), item.icon().is_some())
+}
+
+/// The row widths below which the footer shows 0, 1, 2, ... buttons: the reserved space plus
+/// every button up to and including the next one.
+fn footer_fit_thresholds(widths: &[f32], visible_count: usize, reserved: f32) -> Vec<f32> {
+    widths[..visible_count.min(widths.len())]
+        .iter()
+        .scan(reserved, |needed, width| {
+            *needed += width;
+            Some(*needed)
+        })
+        .collect()
+}
+
+/// Shows up to `visible_count` buttons, fewer when the pane is too narrow for them; the rest open
+/// from More. `widths` are the buttons' estimated widths, in order.
+fn render_footer_row_for_width(
+    visible_count: usize,
+    widths: &[f32],
+    reserved: f32,
+    render_row: impl Fn(usize) -> Box<dyn Element>,
+) -> Box<dyn Element> {
+    let thresholds = footer_fit_thresholds(widths, visible_count, reserved);
+    let fits = thresholds.len();
+    SizeConstraintSwitch::new(
+        render_row(fits),
+        thresholds
+            .into_iter()
+            .enumerate()
+            .map(|(shown, width)| {
+                (
+                    SizeConstraintCondition::WidthLessThan(width),
+                    render_row(shown),
+                )
+            })
+            .collect::<Vec<_>>(),
+    )
+    .finish()
+}
+
+/// A footer's buttons as one ordered list, as the editor shows them. Layouts saved before the
+/// editor merged its zones may still carry right-side items; they follow the left ones.
+fn ordered_footer_items(selection: &impl ToolbarChipSelection) -> Vec<AgentToolbarItemKind> {
+    selection
+        .left_items()
+        .into_iter()
+        .chain(selection.right_items())
+        .collect()
+}
+
+/// The plain-terminal footer's buttons, in the order the user arranged them.
+fn terminal_footer_items(session_settings: &SessionSettings) -> Vec<AgentToolbarItemKind> {
+    ordered_footer_items(session_settings.terminal_footer_chip_selection.value())
+}
 
 /// Voice input state for the CLI agent footer. Unlike the editor-based voice
 /// flow (which goes through Input → EditorView), this state is self-contained
@@ -260,6 +352,8 @@ pub struct AgentInputFooter {
     /// `CustomInsert`, the button is built fresh in render (its label
     /// reflects live arm state), so the handle must persist here.
     auto_continue_mouse_state: MouseStateHandle,
+    more_menu_mouse_state: MouseStateHandle,
+    is_more_menu_open: bool,
     plugin_operation_in_progress: bool,
     /// When `true`, the install chip is allowed to render.
     /// Starts `false` and is set to `true` after a debounce timer fires,
@@ -444,9 +538,8 @@ impl AgentInputFooter {
                 })
         });
         let fork_button = ctx.add_typed_action_view(|_ctx| {
-            ActionButton::new("Fork in New Tab", AgentInputButtonTheme)
+            ActionButton::new("Fork", AgentInputButtonTheme)
                 .with_icon(Icon::GitBranch)
-                .with_icon_color(CLINCH_LOGO_GREEN)
                 .with_tooltip("Fork this session into a new tab")
                 .with_size(cli_button_size)
                 .with_tooltip_alignment(TooltipAlignment::Left)
@@ -455,9 +548,8 @@ impl AgentInputFooter {
                 })
         });
         let bookmark_conversation_button = ctx.add_typed_action_view(|_ctx| {
-            ActionButton::new("Bookmark Session", AgentInputButtonTheme)
+            ActionButton::new("Bookmark", AgentInputButtonTheme)
                 .with_icon(Icon::Bookmark)
-                .with_icon_color(CLINCH_LOGO_GREEN)
                 .with_tooltip("Save this conversation in Bookmarked sessions")
                 .with_size(cli_button_size)
                 .with_tooltip_alignment(TooltipAlignment::Left)
@@ -570,7 +662,7 @@ impl AgentInputFooter {
         });
 
         let update_plugin_button = ctx.add_typed_action_view(|_ctx| {
-            ActionButton::new("Update Warp plugin", InstallPluginButtonTheme)
+            ActionButton::new("Update Clinch plugin", InstallPluginButtonTheme)
                 .with_icon(Icon::Download)
                 .with_tooltip("A new version of the Warp plugin is available")
                 .with_size(cli_button_size)
@@ -982,6 +1074,8 @@ impl AgentInputFooter {
             custom_insert_mouse_states: RefCell::new(HashMap::new()),
             transfer_agent_mouse_state: MouseStateHandle::default(),
             auto_continue_mouse_state: MouseStateHandle::default(),
+            more_menu_mouse_state: MouseStateHandle::default(),
+            is_more_menu_open: false,
             plugin_operation_in_progress: false,
             plugin_chip_ready: false,
             context_window_button,
@@ -1514,7 +1608,7 @@ impl AgentInputFooter {
             .cli_agent(ctx)
             .and_then(plugin_manager_for)
             .map(|m| m.install_success_message())
-            .unwrap_or("Warp plugin installed. Please restart the session to activate.");
+            .unwrap_or("Clinch plugin installed. Please restart the session to activate.");
         self.handle_plugin_operation(
             "Installing Warp plugin...",
             "Failed to install Warp plugin",
@@ -1531,7 +1625,7 @@ impl AgentInputFooter {
             .cli_agent(ctx)
             .and_then(plugin_manager_for)
             .map(|m| m.update_success_message())
-            .unwrap_or("Warp plugin updated. Please restart the session to activate.");
+            .unwrap_or("Clinch plugin updated. Please restart the session to activate.");
         self.handle_plugin_operation(
             "Updating Warp plugin...",
             "Failed to update Warp plugin",
@@ -1581,6 +1675,7 @@ impl AgentInputFooter {
             } else {
                 Icon::TextInput
             })
+            .with_icon_color(Appearance::as_ref(app).tokens().accent)
             .with_size(ButtonSize::AgentInputButtonLarge)
             .with_tooltip(format!("{tooltip_verb}: {text}"))
             .with_tooltip_alignment(TooltipAlignment::Left)
@@ -1641,7 +1736,7 @@ impl AgentInputFooter {
                 .as_deref()
                 .is_some_and(|path| !path.trim().is_empty());
 
-        let label = format!("Transfer to {}", target.display_name());
+        let label = "Transfer".to_string();
         let tooltip = if has_conversation_reference {
             format!(
                 "Continue this conversation in a new {} tab without closing {}",
@@ -1654,7 +1749,6 @@ impl AgentInputFooter {
         Some(
             ActionButton::new(label, AgentInputButtonTheme)
                 .with_icon(Icon::SwitchHorizontal01)
-                .with_icon_color(CLINCH_LOGO_GREEN)
                 .with_size(ButtonSize::AgentInputButtonLarge)
                 .with_tooltip(tooltip)
                 .with_tooltip_alignment(TooltipAlignment::Left)
@@ -1807,7 +1901,7 @@ impl AgentInputFooter {
             (true, Some(fire_at), None, _) => {
                 let at = fire_at.with_timezone(&Local).format("%H:%M");
                 (
-                    "Auto-continue: on".to_string(),
+                    format!("Resumes {at}"),
                     format!(
                         "Will send \"{AUTO_CONTINUE_PROMPT}\" to this {agent_name} session at {at}, \
                          just after its rate limit resets. Click to cancel."
@@ -1815,52 +1909,39 @@ impl AgentInputFooter {
                 )
             }
             (true, None, None, _) if waiting_for_reset => (
-                "Auto-continue: waiting".to_string(),
+                "Auto-continue".to_string(),
                 format!(
                     "{agent_name} reported a usage-limit stop. Waiting for a reliable reset time; click to turn off."
                 ),
             ),
-            (true, None, None, AutoContinueAvailability::WaitingForUsageData) => (
-                "Auto-continue: waiting".to_string(),
-                format!(
-                    "Waiting for current {agent_name} plan-limit data before scheduling. Click to turn off."
-                ),
-            ),
             (true, None, None, AutoContinueAvailability::Unsupported) => (
-                "Auto-continue: unavailable".to_string(),
+                "Auto-continue".to_string(),
                 "This session no longer meets the local plugin, identity, or sharing requirements. Click to turn off."
                     .to_string(),
             ),
             (true, None, None, AutoContinueAvailability::Ready) => (
-                "Auto-continue: on".to_string(),
+                "Auto-continue on".to_string(),
                 format!(
                     "If this {agent_name} session stops at its rate limit, \"{AUTO_CONTINUE_PROMPT}\" \
                      is sent once the limit resets. Click to turn off."
                 ),
             ),
-            (false, _, _, AutoContinueAvailability::WaitingForUsageData) => (
-                "Auto-continue: waiting".to_string(),
-                format!(
-                    "Waiting for current {agent_name} plan-limit data before auto-continue can be enabled."
-                ),
-            ),
             (false, _, _, AutoContinueAvailability::Unsupported) => (
-                "Auto-continue: unavailable".to_string(),
+                "Auto-continue".to_string(),
                 "Auto-continue requires a supported local session with the current Clinch agent plugin."
                     .to_string(),
             ),
             (false, _, _, AutoContinueAvailability::Ready) => (
-                "Auto-continue: off".to_string(),
+                "Auto-continue off".to_string(),
                 format!(
                     "Auto-send \"{AUTO_CONTINUE_PROMPT}\" when this {agent_name} session's rate \
-                     limit resets. Click to turn on (this pane only)."
+                     limit resets. Click to turn on for this session."
                 ),
             ),
         };
 
         ActionButton::new(label, AgentInputButtonTheme)
             .with_icon(Icon::Clock)
-            .with_icon_color(CLINCH_LOGO_GREEN)
             .with_size(ButtonSize::AgentInputButtonLarge)
             .with_tooltip(tooltip)
             .with_tooltip_alignment(TooltipAlignment::Left)
@@ -1872,24 +1953,51 @@ impl AgentInputFooter {
             .render(app)
     }
 
-    fn render_cli_action_divider(&self, app: &AppContext) -> Box<dyn Element> {
-        let theme = Appearance::as_ref(app).theme();
-        Container::new(
-            ConstrainedBox::new(
-                Rect::new()
-                    .with_background(theme.outline().with_opacity(65))
-                    .finish(),
+    /// One row at every width: a narrower pane shows fewer buttons and moves the rest under More.
+    fn render_cli_mode_footer(&self, app: &AppContext) -> Box<dyn Element> {
+        let widths = self
+            .coordinator_prompts(app)
+            .iter()
+            .map(|(label, _)| estimated_footer_button_width(label, true))
+            .chain(
+                self.configured_cli_footer_items(app)
+                    .iter()
+                    // The same items `render_cli_toolbar_item` skips, so widths line up with
+                    // the buttons actually drawn.
+                    .filter(|item| item.available_in().is_available_for_cli())
+                    .map(estimated_item_width),
             )
-            .with_width(1.)
-            .with_height(18.)
-            .finish(),
+            .collect::<Vec<_>>();
+        let visible_count = *SessionSettings::as_ref(app).coding_agent_footer_visible_count;
+        render_footer_row_for_width(
+            visible_count,
+            &widths,
+            CLI_FOOTER_RESERVED_WIDTH,
+            |max_chips| self.render_cli_mode_footer_row(max_chips, app),
         )
-        .with_margin_left(4.)
-        .with_margin_right(4.)
-        .finish()
     }
 
-    fn render_cli_mode_footer(&self, app: &AppContext) -> Box<dyn Element> {
+    /// The coding-agent footer's buttons, in the order the user arranged them.
+    fn configured_cli_footer_items(&self, app: &AppContext) -> Vec<AgentToolbarItemKind> {
+        let session_settings = SessionSettings::as_ref(app);
+        let selection = self
+            .cli_agent(app)
+            .map(|agent| session_settings.footer_chip_selection_for_cli_agent(agent))
+            .unwrap_or_else(|| session_settings.coding_agent_footer_chip_selection_value());
+        ordered_footer_items(selection)
+    }
+
+    /// A coordinator tab leads with prompts for coordinating; other sessions have none.
+    fn coordinator_prompts(&self, app: &AppContext) -> &'static [(&'static str, &'static str)] {
+        if crate::workspace::view::coordinator::is_coordinator_terminal(self.terminal_view_id, app)
+        {
+            &crate::workspace::view::coordinator::COORDINATOR_PROMPTS
+        } else {
+            &[]
+        }
+    }
+
+    fn render_cli_mode_footer_row(&self, max_chips: usize, app: &AppContext) -> Box<dyn Element> {
         let appearance = Appearance::as_ref(app);
         let cli_icon_size = ButtonSize::AgentInputButtonLarge.icon_size(appearance, app);
 
@@ -1917,23 +2025,11 @@ impl AgentInputFooter {
             )
         };
 
-        let session_settings = SessionSettings::as_ref(app);
-        let selection = self
-            .cli_agent(app)
-            .map(|agent| session_settings.footer_chip_selection_for_cli_agent(agent))
-            .unwrap_or_else(|| session_settings.coding_agent_footer_chip_selection_value());
-        let left_items = selection.left_items();
-        let right_items = selection.right_items();
-        let configured_items = left_items
-            .into_iter()
-            .chain(right_items)
-            .collect::<Vec<_>>();
+        let configured_items = self.configured_cli_footer_items(app);
 
-        let mut left_buttons = Wrap::row()
+        let mut left_buttons = Flex::row()
             .with_main_axis_size(MainAxisSize::Min)
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_main_axis_alignment(MainAxisAlignment::Start)
-            .with_run_spacing(4.)
             .with_spacing(4.);
 
         // CLI agent brand icon is always rendered (not configurable).
@@ -1979,38 +2075,14 @@ impl AgentInputFooter {
                 .finish()
         });
 
-        // Product-owned session actions form a stable leading cluster even if an older saved
-        // footer layout listed them in a different order. User prompt buttons retain their saved
-        // order in the quick-insert cluster below.
-        let mut action_buttons = Vec::new();
-        for action in [
-            AgentToolbarItemKind::BookmarkConversation,
-            AgentToolbarItemKind::ForkSession,
-            AgentToolbarItemKind::TransferAgent,
-        ] {
-            if configured_items.iter().any(|item| item == &action) {
-                if let Some(element) = self.render_cli_toolbar_item(
-                    &action,
-                    &shared_status,
-                    is_conversation_transcript_context,
-                    app,
-                ) {
-                    action_buttons.push(element);
-                }
-            }
-        }
-
         // Auto Continue is a live per-pane action rather than a configurable prompt recipe. Use
         // the same eligibility predicate as the Command Palette and action handler.
         let auto_continue_availability =
             AutoContinueModel::availability(self.terminal_view_id, shared_status.is_viewer(), app);
-        if let Some(plugin_action) = plugin_action {
-            action_buttons.push(plugin_action);
-        }
-
-        let quick_insert_buttons = configured_items
+        // Buttons appear in the order the user arranged them in the editor, so the first few
+        // here are exactly the ones the editor shows above its More line.
+        let configured_buttons = configured_items
             .iter()
-            .filter(|item| !item.is_cli_session_action())
             .filter_map(|item| {
                 self.render_cli_toolbar_item(
                     item,
@@ -2021,16 +2093,31 @@ impl AgentInputFooter {
             })
             .collect::<Vec<_>>();
 
-        let has_actions = !action_buttons.is_empty();
-        let has_quick_inserts = !quick_insert_buttons.is_empty();
-        for button in action_buttons {
-            left_buttons.add_child(button);
+        if let Some(status) = self.render_cli_status_label(app) {
+            left_buttons.add_child(status);
         }
-        if has_actions && has_quick_inserts {
-            left_buttons.add_child(self.render_cli_action_divider(app));
+        // A coordinator tab leads with prompts for coordinating; its session buttons move under More.
+        let coordinator_prompts = self
+            .coordinator_prompts(app)
+            .iter()
+            .map(|(label, text)| {
+                self.render_custom_insert_button(label, text, true, "Send", None, app)
+            })
+            .collect::<Vec<_>>();
+        // The first few stay on the row. Everything else opens from More, so the footer never
+        // grows a second line of buttons.
+        let mut chips = coordinator_prompts
+            .into_iter()
+            .chain(configured_buttons)
+            .collect::<Vec<_>>();
+        let mut overflow = chips.split_off(chips.len().min(max_chips));
+        // Plugin setup is a one-time chore, not something to look at all day.
+        overflow.extend(plugin_action);
+        for chip in chips {
+            left_buttons.add_child(chip);
         }
-        for button in quick_insert_buttons {
-            left_buttons.add_child(button);
+        if !overflow.is_empty() {
+            left_buttons.add_child(self.render_footer_more_button(overflow, app));
         }
 
         let mut right_buttons = Flex::row()
@@ -2058,13 +2145,12 @@ impl AgentInputFooter {
             right_buttons.add_child(ChildView::new(&self.quick_insert_edit_button).finish());
         }
 
-        let content = Wrap::row()
+        let content = Flex::row()
             .with_main_axis_size(MainAxisSize::Max)
             .with_main_axis_alignment(MainAxisAlignment::SpaceBetween)
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_child(WrapFillEntireRun::new(left_buttons.finish()).finish())
-            .with_child(WrapFill::new(0., right_buttons.finish()).finish())
-            .with_run_spacing(context_chips::spacing::UDI_ROW_RUN_SPACING)
+            .with_child(Shrinkable::new(1., left_buttons.finish()).finish())
+            .with_child(right_buttons.finish())
             .finish();
         let content = EventHandler::new(content)
             .on_right_mouse_down(|ctx, _, position| {
@@ -2076,52 +2162,123 @@ impl AgentInputFooter {
         Container::new(content).with_vertical_padding(8.).finish()
     }
 
+    /// What the session is doing, in words, next to its glyph.
+    fn render_cli_status_label(&self, app: &AppContext) -> Option<Box<dyn Element>> {
+        let appearance = Appearance::as_ref(app);
+        let session = CLIAgentSessionsModel::as_ref(app).session(self.terminal_view_id)?;
+        let (label, kind) = if session.session_context.stop_reason.is_some() {
+            ("Rate limited".to_string(), StatusKind::RateLimited)
+        } else {
+            match &session.status {
+                CLIAgentSessionStatus::Blocked { .. } => (
+                    format!("{} is asking a question", session.agent.display_name()),
+                    StatusKind::NeedsYou,
+                ),
+                CLIAgentSessionStatus::Success => ("Turn complete".to_string(), StatusKind::Done),
+                CLIAgentSessionStatus::InProgress if session.is_actively_working() => {
+                    ("Working".to_string(), StatusKind::Working)
+                }
+                CLIAgentSessionStatus::InProgress => return None,
+            }
+        };
+        Some(
+            Container::new(
+                Text::new_inline(label, appearance.ui_font_family(), 12.)
+                    .with_color(appearance.tokens().status(kind))
+                    .finish(),
+            )
+            .with_padding_right(8.)
+            .finish(),
+        )
+    }
+
+    /// The chips that didn't fit, in a popover above a More button.
+    fn render_footer_more_button(
+        &self,
+        overflow: Vec<Box<dyn Element>>,
+        app: &AppContext,
+    ) -> Box<dyn Element> {
+        let appearance = Appearance::as_ref(app);
+        let tokens = *appearance.tokens();
+        let font_family = appearance.ui_font_family();
+        let is_open = self.is_more_menu_open;
+        let button = Hoverable::new(self.more_menu_mouse_state.clone(), move |state| {
+            Container::new(
+                Text::new_inline("More", font_family, 12.)
+                    .with_color(tokens.text_2)
+                    .finish(),
+            )
+            .with_horizontal_padding(10.)
+            .with_vertical_padding(5.)
+            .with_background(Fill::Solid(if state.is_hovered() || is_open {
+                tokens.surface_raised
+            } else {
+                tokens.surface_field
+            }))
+            .with_corner_radius(corners_md())
+            .finish()
+        })
+        .with_cursor(Cursor::PointingHand)
+        .on_click(|ctx, _, _| {
+            ctx.dispatch_typed_action(AgentInputFooterAction::ToggleMoreMenu);
+        })
+        .finish();
+        let button = SavePosition::new(button, FOOTER_MORE_BUTTON_POSITION_ID).finish();
+        if !is_open {
+            return button;
+        }
+
+        let column = Flex::column()
+            .with_main_axis_size(MainAxisSize::Min)
+            .with_cross_axis_alignment(CrossAxisAlignment::Start)
+            .with_spacing(4.)
+            .with_children(overflow)
+            .finish();
+        let popover = Dismiss::new(
+            Container::new(column)
+                .with_uniform_padding(8.)
+                .with_background(Fill::Solid(tokens.surface_overlay))
+                .with_corner_radius(corners_lg())
+                .with_border(Border::all(1.).with_border_color(tokens.hairline))
+                .with_drop_shadow(tokens.overlay_shadow())
+                .finish(),
+        )
+        .on_dismiss(|ctx, _| {
+            ctx.dispatch_typed_action(AgentInputFooterAction::ToggleMoreMenu);
+        })
+        // A click outside only closes the menu. Otherwise a click on More itself would close it
+        // here and reopen it through the button underneath, so the menu could never be shut.
+        .prevent_interaction_with_other_elements()
+        .finish();
+        let mut stack = Stack::new().with_child(button);
+        stack.add_positioned_overlay_child(
+            popover,
+            OffsetPositioning::offset_from_parent(
+                vec2f(0., -6.),
+                ParentOffsetBounds::WindowByPosition,
+                ParentAnchor::TopLeft,
+                ChildAnchor::BottomLeft,
+            ),
+        );
+        stack.finish()
+    }
+
+    /// The plain-terminal footer keeps to one row like the agent footer: a narrower pane shows
+    /// fewer buttons and the rest open from More.
     pub fn render_terminal_mode_footer(&self, app: &AppContext) -> Box<dyn Element> {
         let session_settings = SessionSettings::as_ref(app);
-        let left_items = session_settings.terminal_footer_chip_selection.left_items();
-        let right_items = session_settings
-            .terminal_footer_chip_selection
-            .right_items();
-
-        let mut left_buttons = Wrap::row()
-            .with_main_axis_size(MainAxisSize::Min)
-            .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_main_axis_alignment(MainAxisAlignment::Start)
-            .with_run_spacing(4.)
-            .with_spacing(4.);
-
-        if FeatureFlag::CliAgentQuickInsertButtons.is_enabled()
-            && FeatureFlag::AgentToolbarEditor.is_enabled()
-        {
-            left_buttons.add_child(ChildView::new(&self.quick_insert_edit_button).finish());
-        }
-
-        for item in &left_items {
-            if let Some(element) = self.render_terminal_toolbar_item(item, app) {
-                left_buttons.add_child(element);
-            }
-        }
-
-        let mut right_buttons = Flex::row()
-            .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_main_axis_size(MainAxisSize::Min)
-            .with_spacing(4.);
-
-        for item in &right_items {
-            if let Some(element) = self.render_terminal_toolbar_item(item, app) {
-                right_buttons.add_child(element);
-            }
-        }
-
-        let content = Wrap::row()
-            .with_main_axis_size(MainAxisSize::Max)
-            .with_main_axis_alignment(MainAxisAlignment::SpaceBetween)
-            .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_child(WrapFillEntireRun::new(left_buttons.finish()).finish())
-            .with_child(WrapFill::new(0., right_buttons.finish()).finish())
-            .with_run_spacing(context_chips::spacing::UDI_ROW_RUN_SPACING)
-            .finish();
-        let content = EventHandler::new(content)
+        let widths = terminal_footer_items(session_settings)
+            .iter()
+            .filter(|item| item.is_available_for_terminal())
+            .map(estimated_item_width)
+            .collect::<Vec<_>>();
+        let row = render_footer_row_for_width(
+            *session_settings.terminal_footer_visible_count,
+            &widths,
+            TERMINAL_FOOTER_RESERVED_WIDTH,
+            |max_chips| self.render_terminal_mode_footer_row(max_chips, app),
+        );
+        let content = EventHandler::new(row)
             .on_right_mouse_down(|ctx, _, position| {
                 ctx.dispatch_typed_action(AgentInputFooterAction::ShowContextMenu { position });
                 DispatchEventResult::StopPropagation
@@ -2129,6 +2286,36 @@ impl AgentInputFooter {
             .finish();
 
         Container::new(content).with_vertical_padding(8.).finish()
+    }
+
+    fn render_terminal_mode_footer_row(
+        &self,
+        max_chips: usize,
+        app: &AppContext,
+    ) -> Box<dyn Element> {
+        let mut buttons = Flex::row()
+            .with_main_axis_size(MainAxisSize::Min)
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_spacing(4.);
+
+        if FeatureFlag::CliAgentQuickInsertButtons.is_enabled()
+            && FeatureFlag::AgentToolbarEditor.is_enabled()
+        {
+            buttons.add_child(ChildView::new(&self.quick_insert_edit_button).finish());
+        }
+
+        let mut chips = terminal_footer_items(SessionSettings::as_ref(app))
+            .iter()
+            .filter_map(|item| self.render_terminal_toolbar_item(item, app))
+            .collect::<Vec<_>>();
+        let overflow = chips.split_off(chips.len().min(max_chips));
+        for chip in chips {
+            buttons.add_child(chip);
+        }
+        if !overflow.is_empty() {
+            buttons.add_child(self.render_footer_more_button(overflow, app));
+        }
+        buttons.finish()
     }
 
     pub fn has_open_chip_menu(&self, app: &AppContext) -> bool {
@@ -2475,7 +2662,7 @@ impl AgentInputFooter {
             can_bookmark && sessions.is_conversation_bookmarked(self.terminal_view_id);
         let (label, tooltip) = if !can_bookmark {
             (
-                "Bookmark Session",
+                "Bookmark",
                 "Send a message first so this conversation has a bookmarkable ID",
             )
         } else if is_bookmarked {
@@ -2484,10 +2671,7 @@ impl AgentInputFooter {
                 "Remove this conversation from Bookmarked sessions",
             )
         } else {
-            (
-                "Bookmark Session",
-                "Save this conversation in Bookmarked sessions",
-            )
+            ("Bookmark", "Save this conversation in Bookmarked sessions")
         };
         self.bookmark_conversation_button
             .update(ctx, |button, ctx| {
@@ -2943,7 +3127,7 @@ fn render_ftu_callout(
         .with_horizontal_padding(16.)
         .with_background(background)
         .with_border(Border::all(1.).with_border_fill(theme.accent()))
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .finish(),
     )
     .with_width(348.)
@@ -3037,6 +3221,7 @@ pub enum AgentInputFooterAction {
     /// subscriber decides whether to dispatch the immediate empty-prompt
     /// handoff or enter `&` compose mode based on the current input state.
     HandoffChipClicked,
+    ToggleMoreMenu,
     ShowContextMenu {
         position: Vector2F,
     },
@@ -3376,6 +3561,10 @@ impl TypedActionView for AgentInputFooter {
                     ctx.emit(AgentInputFooterEvent::HandoffChipClicked);
                 }
             }
+            AgentInputFooterAction::ToggleMoreMenu => {
+                self.is_more_menu_open = !self.is_more_menu_open;
+                ctx.notify();
+            }
             AgentInputFooterAction::ShowContextMenu { position } => {
                 ctx.emit(AgentInputFooterEvent::ShowContextMenu {
                     position: *position,
@@ -3460,12 +3649,12 @@ impl ActionButtonTheme for AgentInputButtonTheme {
     fn background(&self, hovered: bool, appearance: &Appearance) -> Option<Fill> {
         // Solid surface fills keep the button readable even when its parent
         // isn't `theme.background()` (for example, over an alt-screen CLI agent).
-        let theme = appearance.theme();
-        Some(if hovered {
-            theme.surface_2()
+        let tokens = appearance.tokens();
+        Some(Fill::Solid(if hovered {
+            tokens.surface_raised
         } else {
-            theme.surface_1()
-        })
+            tokens.surface_field
+        }))
     }
 
     fn text_color(
@@ -3485,8 +3674,9 @@ impl ActionButtonTheme for AgentInputButtonTheme {
         appearance.theme().sub_text_color(effective_bg).into_solid()
     }
 
-    fn border(&self, appearance: &Appearance) -> Option<ColorU> {
-        Some(internal_colors::neutral_3(appearance.theme()))
+    // Transparent rather than absent, so chips keep the size they had with an outline.
+    fn border(&self, _appearance: &Appearance) -> Option<ColorU> {
+        Some(ColorU::transparent_black())
     }
 
     fn should_opt_out_of_contrast_adjustment(&self) -> bool {
@@ -3522,8 +3712,8 @@ impl ActionButtonTheme for QuickInsertButtonTheme {
         AgentInputButtonTheme.text_color(hovered, background, appearance)
     }
 
-    fn border(&self, appearance: &Appearance) -> Option<ColorU> {
-        Some(appearance.theme().outline().into_solid())
+    fn border(&self, _appearance: &Appearance) -> Option<ColorU> {
+        Some(ColorU::transparent_black())
     }
 
     fn should_opt_out_of_contrast_adjustment(&self) -> bool {
@@ -3628,7 +3818,7 @@ impl ActionButtonTheme for ActiveMicButtonTheme {
     }
 }
 
-/// Green-accented theme for the "Install Warp plugin" chip.
+/// Green-accented theme for the "Install Clinch plugin" chip.
 struct InstallPluginButtonTheme;
 
 impl ActionButtonTheme for InstallPluginButtonTheme {
@@ -3705,7 +3895,7 @@ async fn write_install_log(agent: CLIAgent, err: &PluginInstallError) -> Option<
     let log_path = env::temp_dir().join("warp-plugin-install.log");
     let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC");
     let contents = format!(
-        "Warp plugin installation — {agent:?}\n\
+        "Clinch plugin installation — {agent:?}\n\
          {now}\n\
          \n\
          {log}",

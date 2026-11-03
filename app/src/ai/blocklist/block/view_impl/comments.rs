@@ -1,9 +1,10 @@
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_core::ui::Icon;
 use warpui::elements::{
     Axis, Border, ChildView, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Empty,
-    Expanded, Flex, Hoverable, MouseState, ParentElement, Radius, Text, Wrap, WrapFillEntireRun,
+    Expanded, Flex, Hoverable, MouseState, ParentElement, Text, Wrap, WrapFillEntireRun,
 };
 use warpui::{AppContext, Element, SingletonEntity};
 
@@ -97,7 +98,7 @@ fn render_comment_chip_internal(
     Container::new(flex_column)
         .with_background(background_color)
         .with_uniform_padding(8.)
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
         .with_border(
             Border::all(1.).with_border_fill(internal_colors::neutral_2(appearance.theme())),
         )
@@ -180,7 +181,7 @@ fn comment_icon(is_addressed: bool, appearance: &Appearance) -> Box<dyn Element>
         .with_background(internal_colors::fg_overlay_1(appearance.theme()))
         .with_vertical_padding(1.)
         .with_horizontal_padding(2.)
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(2.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
         .finish()
 }
 

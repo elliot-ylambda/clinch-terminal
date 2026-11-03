@@ -970,6 +970,9 @@ pub struct PaneGroup {
 
     /// Tab-level custom title set via the rename-tab flow.
     custom_title: Option<String>,
+    /// Whether `custom_title` came from the coordinator. The user's own names are never replaced
+    /// by automatic ones.
+    custom_title_auto: bool,
 }
 
 /// Origin metadata for a split-off child agent tab; used to re-adopt the
@@ -3292,6 +3295,7 @@ impl PaneGroup {
             transitively_shared_child_panes: HashMap::new(),
             child_agent_origin: None,
             custom_title: None,
+            custom_title_auto: false,
         };
 
         // Notify any restored panes that they belong to this pane group.
@@ -5312,10 +5316,41 @@ impl PaneGroup {
 
     pub(crate) fn set_title_without_focus(&mut self, title: &str) {
         self.custom_title = Some(title.to_string()).filter(|t| !t.is_empty());
+        self.custom_title_auto = false;
+    }
+
+    /// A name chosen by the coordinator. It never moves focus, since the coordinator names tabs
+    /// in the background while the user works elsewhere.
+    pub(crate) fn set_auto_title(&mut self, title: &str, ctx: &mut ViewContext<Self>) {
+        self.set_title_without_focus(title);
+        self.mark_custom_title_auto();
+        ctx.notify();
+    }
+
+    /// Marks the current title, if any, as one the coordinator chose.
+    pub(crate) fn mark_custom_title_auto(&mut self) {
+        self.custom_title_auto = self.custom_title.is_some();
+    }
+
+    pub(crate) fn custom_title_is_auto(&self) -> bool {
+        self.custom_title_auto
+    }
+
+    /// Whether the user named this tab, or any of its rows, themselves.
+    pub(crate) fn has_user_title(&self, ctx: &AppContext) -> bool {
+        (self.custom_title.is_some() && !self.custom_title_auto)
+            || self.pane_contents.values().any(|pane| {
+                pane.as_pane()
+                    .pane_configuration()
+                    .as_ref(ctx)
+                    .custom_vertical_tabs_title()
+                    .is_some()
+            })
     }
 
     pub fn clear_title(&mut self, ctx: &mut ViewContext<Self>) {
         self.custom_title = None;
+        self.custom_title_auto = false;
 
         // refocus on the focused pane
         if let Some(pane) = self.focused_pane_content(ctx) {

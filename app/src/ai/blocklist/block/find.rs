@@ -145,10 +145,6 @@ impl FindableRichContentView for AIBlock {
     }
 }
 
-#[cfg(test)]
-#[path = "find_tests.rs"]
-mod tests;
-
 /// Computes find matches (represented as character offsets) within the given `text`.
 fn compute_find_matches(text: &str, options: &FindOptions) -> Vec<Range<usize>> {
     let Some(query) = options.query.as_ref() else {

@@ -149,11 +149,12 @@ pub fn render<A: Action + Clone>(
 }
 
 mod styles {
-    use warpui::elements::{CornerRadius, Radius};
+    use warp_core::ui::tokens::RADIUS_SM;
+    use warpui::elements::CornerRadius;
 
     pub const NOTIFICATION_CONTAINER_PADDING: f32 = 8.;
     pub const NOTIFICATION_CONTAINER_CORNER_RADIUS: CornerRadius =
-        CornerRadius::with_all(Radius::Pixels(4.));
+        CornerRadius::with_all(RADIUS_SM);
     pub const NOTIFICATION_BORDER_WIDTH: f32 = 1.;
 
     pub const NOTIFICATION_CLOSE_BUTTON_SIZE: f32 = 24.;

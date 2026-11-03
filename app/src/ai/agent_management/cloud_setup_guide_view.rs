@@ -7,6 +7,7 @@ use warp_completer::util::parse_current_commands_and_tokens;
 use warp_completer::ParsedTokensSnapshot;
 use warp_core::report_error;
 use warp_core::ui::theme::{AnsiColorIdentifier, AnsiColors};
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::clipboard::ClipboardContent;
 use warpui::elements::new_scrollable::{ClippedAxisConfiguration, DualAxisConfig, NewScrollable};
 use warpui::elements::{
@@ -237,7 +238,7 @@ impl CloudSetupGuideView {
         )
         .with_background(theme.surface_overlay_1())
         .with_border(Border::all(1.).with_border_fill(border_color))
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .with_horizontal_padding(16.)
         .with_vertical_padding(12.)
         .finish()

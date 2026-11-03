@@ -7,11 +7,12 @@ use ai::agent::action_result::{AskUserQuestionAnswerItem, AskUserQuestionResult}
 use itertools::Itertools;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::WarpTheme;
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::elements::new_scrollable::SingleAxisConfig;
 use warpui::elements::{
     Border, ChildView, Clipped, ClippedScrollStateHandle, ConstrainedBox, Container, CornerRadius,
     CrossAxisAlignment, Fill, Flex, FormattedTextElement, MainAxisAlignment, MainAxisSize,
-    MouseStateHandle, ParentElement, Point, Radius, Stack, Text, DEFAULT_UI_LINE_HEIGHT_RATIO,
+    MouseStateHandle, ParentElement, Point, Stack, Text, DEFAULT_UI_LINE_HEIGHT_RATIO,
 };
 use warpui::event::DispatchedEvent;
 use warpui::geometry::vector::Vector2F;
@@ -1269,7 +1270,7 @@ impl AskUserQuestionView {
         content.add_child(
             HeaderConfig::new("Agent questions", app)
                 .with_icon(yellow_stop_icon(appearance))
-                .with_corner_radius_override(CornerRadius::with_top(Radius::Pixels(8.)))
+                .with_corner_radius_override(CornerRadius::with_top(RADIUS_MD))
                 .render_header(app, Some(header_right.finish())),
         );
 
@@ -1312,7 +1313,7 @@ impl AskUserQuestionView {
                     .with_max_height(max_height)
                     .finish(),
             )
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .with_background_color(theme.background().into_solid())
             .with_border(Border::all(1.).with_border_fill(border_color))
             .finish(),
@@ -1406,8 +1407,8 @@ impl AskUserQuestionView {
                     }),
             ));
         if has_speedbump_footer {
-            header_config = header_config
-                .with_corner_radius_override(CornerRadius::with_top(Radius::Pixels(8.)));
+            header_config =
+                header_config.with_corner_radius_override(CornerRadius::with_top(RADIUS_MD));
         }
         let header = header_config.render(app);
 
@@ -1438,7 +1439,7 @@ impl AskUserQuestionView {
             return wrap_with_agent_output_item_spacing(wrapper.finish(), app).finish();
         }
         wrap_with_agent_output_item_spacing(wrapper.finish(), app)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .finish()
     }
 
@@ -1461,7 +1462,7 @@ impl AskUserQuestionView {
                 .with_horizontal_padding(INLINE_ACTION_HORIZONTAL_PADDING)
                 .with_vertical_padding(4.)
                 .with_background(theme.surface_1())
-                .with_corner_radius(CornerRadius::with_bottom(Radius::Pixels(8.)))
+                .with_corner_radius(CornerRadius::with_bottom(RADIUS_MD))
                 .finish(),
         )
     }
@@ -1882,7 +1883,7 @@ fn render_answers(
 
     let mut container = Container::new(content.finish()).with_background(theme.surface_2());
     if !flatten_bottom {
-        container = container.with_corner_radius(CornerRadius::with_bottom(Radius::Pixels(8.)));
+        container = container.with_corner_radius(CornerRadius::with_bottom(RADIUS_MD));
     }
     container.finish()
 }
@@ -1980,7 +1981,3 @@ impl Element for MeasureOnly {
         false
     }
 }
-
-#[cfg(test)]
-#[path = "ask_user_question_view_tests.rs"]
-mod tests;

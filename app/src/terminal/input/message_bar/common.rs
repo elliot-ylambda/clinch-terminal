@@ -535,7 +535,7 @@ pub mod styles {
     }
 
     pub const VERTICAL_PADDING: f32 = 8.;
-    pub const CHIP_CORNER_RADIUS: f32 = 2.;
+    pub const CHIP_CORNER_RADIUS: f32 = 6.;
     pub const CHIP_BORDER_WIDTH: f32 = 1.;
     pub const CHIP_VERTICAL_PADDING: f32 = 2.;
     pub const CHIP_HORIZONTAL_PADDING: f32 = 4.;

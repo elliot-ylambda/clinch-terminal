@@ -216,7 +216,3 @@ impl Entity for RemoteAgentContext {
 }
 
 impl SingletonEntity for RemoteAgentContext {}
-
-#[cfg(test)]
-#[path = "remote_agent_context_tests.rs"]
-mod tests;

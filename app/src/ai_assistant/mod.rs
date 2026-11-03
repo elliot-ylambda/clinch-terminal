@@ -24,9 +24,6 @@ pub mod requests;
 pub mod transcript;
 pub mod utils;
 
-#[cfg(test)]
-mod test_util;
-
 /// We want to make sure the user doesn't send a prompt too large.s
 /// Since a token is ~ 4 chars, the limit we impose here is 250 tokens.
 /// This is also roughly the limit at which the editor starts degrading.

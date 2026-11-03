@@ -1,9 +1,10 @@
 use pathfinder_color::ColorU;
 use warp_core::ui::theme::phenomenon::PhenomenonStyle;
 use warp_core::ui::theme::Fill;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warpui::elements::{
     Border, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Flex, MainAxisSize,
-    MouseStateHandle, ParentElement, Radius, Stack,
+    MouseStateHandle, ParentElement, Stack,
 };
 use warpui::ui_components::checkbox::Checkbox;
 use warpui::ui_components::components::UiComponentStyles;
@@ -97,7 +98,7 @@ pub fn render_callout_bubble(
         Container::new(content)
             .with_background(background)
             .with_border(Border::all(1.).with_border_fill(Fill::Solid(border_color)))
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .finish(),
     )
     .with_width(config.width)
@@ -209,7 +210,7 @@ pub fn callout_checkbox(
     let background_color = phenomenon_background_color();
     let disabled_color = phenomenon_subtle_border_color();
     let checkbox_size = size.or(Some(12.));
-    let corner_radius = CornerRadius::with_all(Radius::Pixels(2.));
+    let corner_radius = CornerRadius::with_all(RADIUS_SM);
 
     Checkbox::new(
         mouse_state,

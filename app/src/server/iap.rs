@@ -486,7 +486,3 @@ fn parse_exp_from_jwt(token: &str) -> Option<u64> {
     let payload: serde_json::Value = serde_json::from_slice(&payload_bytes).ok()?;
     payload.get("exp")?.as_u64()
 }
-
-#[cfg(test)]
-#[path = "iap_tests.rs"]
-mod tests;

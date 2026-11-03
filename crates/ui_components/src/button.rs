@@ -6,6 +6,7 @@ pub use themes::Theme;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::color::ContrastingColor as _;
 use warp_core::ui::color::contrast::MinimumAllowedContrast;
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui_core::elements::{MouseState, MouseStateHandle};
 use warpui_core::prelude::*;
 
@@ -104,8 +105,8 @@ impl crate::Component for Button {
                 );
             }
 
-            let mut button = Container::new(row.finish())
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)));
+            let mut button =
+                Container::new(row.finish()).with_corner_radius(CornerRadius::with_all(RADIUS_SM));
             if let Some(background) = background {
                 button = button.with_background(background);
             }

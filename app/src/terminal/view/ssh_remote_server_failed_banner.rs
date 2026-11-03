@@ -4,9 +4,10 @@
 use remote_server::transport::UserFacingError;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::AnsiColorIdentifier;
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::elements::{
     ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Flex, Hoverable,
-    MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement, Radius, Shrinkable, Text,
+    MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement, Shrinkable, Text,
 };
 use warpui::platform::Cursor;
 use warpui::{AppContext, Element, Entity, SingletonEntity, TypedActionView, View, ViewContext};
@@ -117,7 +118,7 @@ impl View for SshRemoteServerFailedBanner {
 
             let error_box = Container::new(error_text)
                 .with_background(error_bg)
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                 .with_uniform_padding(12.)
                 .finish();
 

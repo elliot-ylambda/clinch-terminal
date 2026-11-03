@@ -30,7 +30,7 @@ use crate::ui_components::icons::Icon;
 
 const MENU_WIDTH: f32 = 280.;
 const MENU_MAX_LIST_HEIGHT: f32 = 200.;
-const MENU_CORNER_RADIUS: f32 = 6.;
+const MENU_CORNER_RADIUS: f32 = 10.;
 const ROW_HORIZONTAL_PADDING: f32 = 14.;
 const ROW_VERTICAL_PADDING: f32 = 5.;
 const LIST_BOTTOM_PADDING: f32 = 9.;

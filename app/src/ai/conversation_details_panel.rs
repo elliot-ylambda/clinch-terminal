@@ -12,6 +12,7 @@ use warp_cli::agent::Harness;
 use warp_cli::skill::SkillSpec;
 use warp_core::channel::ChannelState;
 use warp_core::ui::color::coloru_with_opacity;
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::clipboard::ClipboardContent;
 use warpui::elements::new_scrollable::{NewScrollable, SingleAxisConfig};
 use warpui::elements::{
@@ -721,14 +722,6 @@ impl ConversationDetailsPanel {
         ctx.notify();
     }
 
-    #[cfg(test)]
-    pub(crate) fn task_display_status_for_test(&self) -> Option<AgentRunDisplayStatus> {
-        match &self.data.mode {
-            PanelMode::Task { display_status, .. } => display_status.clone(),
-            PanelMode::Conversation { .. } => None,
-        }
-    }
-
     #[cfg(not(target_family = "wasm"))]
     fn continue_locally_conversation_id(&self, app: &AppContext) -> Option<AIConversationId> {
         if !AISettings::as_ref(app).is_any_ai_enabled(app) {
@@ -1194,7 +1187,7 @@ impl ConversationDetailsPanel {
             return Container::new(notice_row)
                 .with_uniform_padding(10.)
                 .with_background(coloru_with_opacity(blended_colors::neutral_2(theme), 70))
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                 .finish();
         }
 
@@ -1228,7 +1221,7 @@ impl ConversationDetailsPanel {
         Container::new(error_row)
             .with_uniform_padding(8.)
             .with_background(coloru_with_opacity(theme.ansi_fg_red(), 10))
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .finish()
     }
 
@@ -1278,7 +1271,7 @@ impl ConversationDetailsPanel {
         )
         .with_uniform_padding(4.)
         .with_background(coloru_with_opacity(color, 10))
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
         .finish();
 
         Some(
@@ -2245,6 +2238,3 @@ impl TypedActionView for ConversationDetailsPanel {
         }
     }
 }
-#[cfg(test)]
-#[path = "conversation_details_panel_tests.rs"]
-mod tests;

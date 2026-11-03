@@ -1,11 +1,12 @@
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warpui::elements::new_scrollable::{ScrollableAppearance, SingleAxisConfig};
 use warpui::elements::{
     Border, ChildView, ClippedScrollStateHandle, ConstrainedBox, Container, CornerRadius,
     CrossAxisAlignment, Dismiss, DispatchEventResult, Element, Empty, EventHandler,
     Fill as ElementFill, Flex, Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle,
-    NewScrollable, Padding, ParentElement, Radius, SavePosition, ScrollTarget,
-    ScrollToPositionMode, ScrollbarWidth, Shrinkable,
+    NewScrollable, Padding, ParentElement, SavePosition, ScrollTarget, ScrollToPositionMode,
+    ScrollbarWidth, Shrinkable,
 };
 use warpui::fonts::Weight;
 use warpui::keymap::macros::id;
@@ -381,7 +382,7 @@ impl View for NotificationMailboxView {
             .with_padding(Padding::default().with_top(4.))
             .with_background(appearance.theme().surface_2())
             .with_border(Border::all(1.).with_border_color(appearance.theme().outline().into()))
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)));
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD));
 
         // Wrap the popup in an EventHandler that consumes clicks on empty space
         // so they don't fall through to the Dismiss layer.
@@ -498,7 +499,7 @@ impl NotificationMailboxView {
                             .finish(),
                     )
                     .with_padding(Padding::default().with_vertical(4.).with_horizontal(8.))
-                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)));
+                    .with_corner_radius(CornerRadius::with_all(RADIUS_SM));
 
                     if let Some(bg) = bg {
                         container = container.with_background_color(bg);

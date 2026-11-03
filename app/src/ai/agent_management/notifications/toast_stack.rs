@@ -3,6 +3,7 @@ use std::time::Duration;
 use pathfinder_geometry::vector::vec2f;
 use warp_core::ui::color::blend::Blend;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warpui::elements::{
     Border, ChildAnchor, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment,
     DispatchEventResult, Element, EventHandler, Flex, Hoverable, MouseStateHandle,
@@ -406,7 +407,7 @@ fn render_toast(
                 .with_padding(Padding::uniform(12.))
                 .with_background(bg)
                 .with_border(Border::all(1.).with_border_color(theme.outline().into()))
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)));
+                .with_corner_radius(CornerRadius::with_all(RADIUS_MD));
 
             let sized = ConstrainedBox::new(container.finish())
                 .with_width(420.)
@@ -476,7 +477,7 @@ fn render_keybinding_hint(keystroke: Keystroke, appearance: &Appearance) -> Box<
         font_color: Some(theme.sub_text_color(theme.surface_2()).into()),
         font_size: Some(12.),
         background: Some(internal_colors::fg_overlay_3(theme).into()),
-        border_radius: Some(CornerRadius::with_all(Radius::Pixels(3.0))),
+        border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
         padding: Some(Coords {
             top: 1.0,
             bottom: 1.0,

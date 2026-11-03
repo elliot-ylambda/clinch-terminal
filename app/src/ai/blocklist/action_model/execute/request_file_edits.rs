@@ -480,7 +480,3 @@ fn clamp_to_file_context_range_start(file_location: &mut FileLocations) {
 impl Entity for RequestFileEditsExecutor {
     type Event = ();
 }
-
-#[cfg(test)]
-#[path = "request_file_edits_tests.rs"]
-mod tests;

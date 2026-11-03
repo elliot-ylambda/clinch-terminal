@@ -5,13 +5,14 @@ use std::sync::{Arc, Mutex};
 use pathfinder_geometry::vector::Vector2F;
 use warp_core::features::FeatureFlag;
 use warp_core::send_telemetry_from_ctx;
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_core::ui::Icon;
 use warp_editor::editor::NavigationKey;
 use warpui::elements::{
     Border, ChildAnchor, ChildView, Clipped, ConstrainedBox, Container, CornerRadius,
     CrossAxisAlignment, Element, Fill, Flex, FormattedTextElement, Hoverable, MainAxisAlignment,
     MainAxisSize, MouseStateHandle, OffsetPositioning, Padding, ParentAnchor, ParentElement,
-    ParentOffsetBounds, Radius, SavePosition, ScrollStateHandle, Scrollable, ScrollableElement,
+    ParentOffsetBounds, SavePosition, ScrollStateHandle, Scrollable, ScrollableElement,
     ScrollbarWidth, Shrinkable, Stack, Text, UniformList, UniformListState,
 };
 use warpui::fonts::{Properties, Weight};
@@ -837,7 +838,7 @@ fn render_zero_state(
             let mut container = Container::new(button_content)
                 .with_padding(Padding::uniform(0.).with_left(8.).with_right(8.))
                 .with_border(Border::all(1.).with_border_fill(theme.surface_3()))
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)));
+                .with_corner_radius(CornerRadius::with_all(RADIUS_SM));
             if mouse_state.is_hovered() {
                 container = container.with_background(theme.surface_3());
             }
@@ -882,7 +883,7 @@ fn render_search_box(query_editor: &ViewHandle<EditorView>, app: &AppContext) ->
     let search_container = Container::new(search_row)
         .with_padding(Padding::uniform(6.).with_left(12.).with_right(12.))
         .with_border(Border::all(1.).with_border_fill(theme.surface_3()))
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
         .finish();
 
     Container::new(search_container)

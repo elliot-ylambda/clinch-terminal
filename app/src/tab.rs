@@ -10,6 +10,7 @@ use warp_core::context_flag::ContextFlag;
 use warp_core::ui::builder::UiBuilder;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::AnsiColors;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warpui::elements::{
     Align, Border, ChildAnchor, Clipped, ConstrainedBox, Container, CornerRadius,
     CrossAxisAlignment, DragAxis, Draggable, DraggableState, DropTarget, Element, Empty, Fill,
@@ -187,6 +188,8 @@ pub struct TabData {
     pub origin_mouse_state: MouseStateHandle,
     /// True for the project's coordinator session: an agent tab pinned first in the list.
     pub coordinator: bool,
+    /// On the coordinator tab: whether it acts on its own. `None` follows the global default.
+    pub auto_coordinate: Option<bool>,
 }
 
 const TAB_COLOR_ICON_PATH: &str = "bundled/svg/ellipse.svg";
@@ -210,6 +213,7 @@ impl TabData {
             origin: None,
             origin_mouse_state: Default::default(),
             coordinator: false,
+            auto_coordinate: None,
         }
     }
 
@@ -1480,7 +1484,7 @@ impl<'a> TabComponent<'a> {
 
             let default_styles = UiComponentStyles {
                 background: Some(default_background),
-                border_radius: Some(CornerRadius::with_all(Radius::Pixels(2.0))),
+                border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
                 ..UiComponentStyles::default()
             };
 
@@ -1940,7 +1944,7 @@ impl<'a> TabComponent<'a> {
         if self.grouped_member {
             let highlight = Container::new(stack)
                 .with_background(background_color)
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.0)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                 .finish();
             return Container::new(highlight)
                 .with_vertical_padding(3.)
@@ -1961,7 +1965,7 @@ impl<'a> TabComponent<'a> {
             );
         } else {
             tab = tab
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.0)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                 .with_border(Border::all(1.).with_border_fill(border_fill));
         }
 
@@ -2131,7 +2135,7 @@ impl UiComponent for TabComponent<'_> {
 
                     let tooltip = Container::new(tooltip_content)
                         .with_background(appearance.theme().tooltip_background())
-                        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                         .with_padding(Padding::uniform(6.))
                         .finish();
 

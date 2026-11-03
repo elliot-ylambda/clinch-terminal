@@ -3,13 +3,14 @@ use fuzzy_match::{match_indices_case_insensitive, FuzzyMatchResult};
 use ordered_float::OrderedFloat;
 use warp_core::ui::icons::Icon;
 use warp_core::ui::theme::Fill;
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_util::local_or_remote_path::LocalOrRemotePath;
 use warpui::elements::{
     ConstrainedBox, Container, CrossAxisAlignment, Flex, Highlight, ParentElement, Shrinkable, Text,
 };
 use warpui::fonts::{Properties, Weight};
 use warpui::keymap::Keystroke;
-use warpui::scene::{CornerRadius, Radius};
+use warpui::scene::CornerRadius;
 use warpui::text_layout::ClipConfig;
 use warpui::{
     AppContext, Element, Entity, EntityId, ModelContext, ModelHandle, SingletonEntity as _,
@@ -359,7 +360,7 @@ impl SearchItem for SkillSearchItem {
                 .with_horizontal_padding(6.0)
                 .with_vertical_padding(2.0)
                 .with_background(theme.surface_overlay_1())
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.0)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                 .with_margin_left(8.0)
                 .finish();
 

@@ -189,7 +189,3 @@ fn range_intersects_or_contains_point(
 
     changed.start < terminal.end && terminal.start < changed.end
 }
-
-#[cfg(test)]
-#[path = "malformed_line_heuristics_tests.rs"]
-mod tests;

@@ -1,11 +1,12 @@
 use pathfinder_geometry::rect::RectF;
 use pathfinder_geometry::vector::Vector2F;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warpui::elements::{
     AcceptedByDropTarget, Border, ChildAnchor, ConstrainedBox, Container, CornerRadius,
     CrossAxisAlignment, Draggable, DraggableState, DropShadow, Empty, Flex, Hoverable,
     MainAxisSize, MouseStateHandle, OffsetPositioning, ParentAnchor, ParentElement,
-    ParentOffsetBounds, Radius, SavePosition, Shrinkable, SizeConstraintCondition,
-    SizeConstraintSwitch, Stack,
+    ParentOffsetBounds, SavePosition, Shrinkable, SizeConstraintCondition, SizeConstraintSwitch,
+    Stack,
 };
 use warpui::fonts::Weight;
 use warpui::platform::Cursor;
@@ -323,7 +324,7 @@ impl<'a> WarpDriveRow<'a> {
             SizeConstraintSwitch::new(
                 ConstrainedBox::new(
                     Container::new(full_hover_preview.finish())
-                        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+                        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                         .with_background(appearance.theme().surface_2())
                         .with_border(
                             Border::all(1.).with_border_fill(appearance.theme().surface_3()),
@@ -395,7 +396,7 @@ impl<'a> WarpDriveRow<'a> {
             // Conditionally add the rounded bottom
             Some(if with_rounded_bottom {
                 container
-                    .with_corner_radius(CornerRadius::with_bottom(Radius::Pixels(8.)))
+                    .with_corner_radius(CornerRadius::with_bottom(RADIUS_MD))
                     .finish()
             } else {
                 container.finish()
@@ -541,7 +542,7 @@ impl<'a> WarpDriveRow<'a> {
                         .with_padding_bottom(8.)
                         .with_padding_left(16.)
                         .with_padding_right(16.)
-                        .with_corner_radius(CornerRadius::with_bottom(Radius::Pixels(8.)))
+                        .with_corner_radius(CornerRadius::with_bottom(RADIUS_MD))
                         .finish(),
                 )
             } else {
@@ -796,7 +797,7 @@ impl UiComponent for WarpDriveRow<'_> {
                         .finish(),
                 )
                 .with_margin_bottom(ITEM_MARGIN_BOTTOM)
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)));
+                .with_corner_radius(CornerRadius::with_all(RADIUS_SM));
 
                 match container_background_fill {
                     Some(background_fill) => {

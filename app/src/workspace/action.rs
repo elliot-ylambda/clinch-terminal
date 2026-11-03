@@ -254,6 +254,17 @@ pub enum WorkspaceAction {
     SwitchCoordinatorAgent(usize),
     /// Opens a coordinator session for this project and turns the default back on.
     OpenCoordinatorSession,
+    /// Turns this project's auto-coordinate on or off.
+    SetAutoCoordinate(bool),
+    /// Switches one auto-coordinate tactic, for every project.
+    SetCoordinatorTactic {
+        tactic: crate::workspace::view::auto_coordinate::Tactic,
+        enabled: bool,
+    },
+    /// Wakes the coordinator now with whatever has changed so far.
+    RunCoordinatorNow,
+    /// The switch on the Coordinator row: on opens this project's coordinator, off closes it.
+    SetCoordinatorOn(bool),
     /// Pins the entire tab group: sets the group as pinned
     /// and moves the group block to the end of the pinned region.
     PinTabGroup(TabGroupId),
@@ -404,7 +415,8 @@ pub enum WorkspaceAction {
     /// Toggles the vertical tabs panel. This happens as an explicit action from the user.
     ToggleVerticalTabsPanel,
     OpenVerticalTabsPanel,
-    ToggleVerticalTabsSettingsPopup,
+    ToggleSidebarPopover(crate::workspace::view::vertical_tabs::SidebarPopover),
+    RevealTabDetailCardAfterDelay,
     ToggleAutomaticWorktreeTabs,
     SetVerticalTabsDisplayGranularity(VerticalTabsDisplayGranularity),
     SetVerticalTabsTabItemMode(VerticalTabsTabItemMode),
@@ -578,6 +590,8 @@ pub enum WorkspaceAction {
     FocusTerminalViewInWorkspace {
         terminal_view_id: EntityId,
     },
+    /// Hide the session-restore notice until the next restore.
+    DismissRestoreNotice,
     /// Focus a specific pane by its locator (pane_group_id and pane_id).
     FocusPane(PaneViewLocator),
     /// Start a new AI conversation in a terminal view. This sets the pending query state
@@ -991,6 +1005,8 @@ impl WorkspaceAction {
             | UnpinTab(_)
             | SwitchCoordinatorAgent(_)
             | OpenCoordinatorSession
+            | SetAutoCoordinate(_)
+            | SetCoordinatorOn(_)
             | PinTabGroup(_)
             | UnpinTabGroup(_)
             | ToggleBookmarkedSessionsCollapsed
@@ -1109,7 +1125,8 @@ impl WorkspaceAction {
             | ClosePanel
             | ToggleRightPanel
             | OpenCodeReviewPanel(..)
-            | ToggleVerticalTabsSettingsPopup
+            | ToggleSidebarPopover(_)
+            | RevealTabDetailCardAfterDelay
             | ToggleAutomaticWorktreeTabs
             | SetVerticalTabsDisplayGranularity(_)
             | SetVerticalTabsTabItemMode(_)
@@ -1183,6 +1200,7 @@ impl WorkspaceAction {
             | OpenAIFactCollection
             | OpenMCPServerCollection
             | FocusTerminalViewInWorkspace { .. }
+            | DismissRestoreNotice
             | FocusPane(..)
             | ShiftSelectTabRange { .. }
             | ToggleTabMultiSelection { .. }
@@ -1232,7 +1250,9 @@ impl WorkspaceAction {
             | ShowCloudModeV2EnvironmentCreationModal
             | OpenCreateAuthSecretModal { .. }
             | OpenQuickInsertModal
-            | OpenNetworkLogPane => false,
+            | OpenNetworkLogPane
+            | SetCoordinatorTactic { .. }
+            | RunCoordinatorNow => false,
             #[cfg(debug_assertions)]
             ShowHoaOnboardingFlow => false,
             #[cfg(target_family = "wasm")]

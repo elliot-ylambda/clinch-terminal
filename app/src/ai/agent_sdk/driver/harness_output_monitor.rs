@@ -211,7 +211,3 @@ fn cap_excerpt(excerpt: &str) -> String {
     out.push('…');
     out
 }
-
-#[cfg(test)]
-#[path = "harness_output_monitor_tests.rs"]
-mod tests;

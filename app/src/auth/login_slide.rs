@@ -11,6 +11,7 @@ use ui_components::{button, Component as _, Options as _};
 use warp_core::features::FeatureFlag;
 use warp_core::safe_error;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_core::ui::Icon;
 use warpui::actions::StandardAction;
 use warpui::clipboard::ClipboardContent;
@@ -166,7 +167,7 @@ enum LoginPurpose {
 // View
 // ---------------------------------------------------------------------------
 
-const AUTH_TOKEN_INPUT_BORDER_RADIUS: Radius = Radius::Pixels(4.);
+const AUTH_TOKEN_INPUT_BORDER_RADIUS: Radius = RADIUS_SM;
 
 pub struct LoginSlideView {
     /// Whether AI will be enabled once onboarding is applied. Used to hide the

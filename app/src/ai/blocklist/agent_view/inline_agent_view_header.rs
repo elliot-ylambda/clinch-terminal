@@ -3,7 +3,8 @@ use std::sync::Arc;
 use ai::agent::action::{AIAgentActionType, ShellCommandDelay};
 use parking_lot::FairMutex;
 use warp_core::ui::appearance::Appearance;
-use warpui::elements::{CornerRadius, Radius};
+use warp_core::ui::tokens::RADIUS_MD;
+use warpui::elements::CornerRadius;
 use warpui::{
     AppContext, Element, Entity, EntityId, ModelHandle, SingletonEntity, View, ViewContext,
 };
@@ -129,7 +130,7 @@ impl View for InlineAgentViewHeader {
             };
             return HeaderConfig::new(message, app)
                 .with_icon(icon)
-                .with_corner_radius_override(CornerRadius::with_top(Radius::Pixels(8.)))
+                .with_corner_radius_override(CornerRadius::with_top(RADIUS_MD))
                 .with_markdown()
                 .render(app);
         }
@@ -169,7 +170,7 @@ impl View for InlineAgentViewHeader {
 
         HeaderConfig::new(message, app)
             .with_icon(icon)
-            .with_corner_radius_override(CornerRadius::with_top(Radius::Pixels(8.)))
+            .with_corner_radius_override(CornerRadius::with_top(RADIUS_MD))
             .render(app)
     }
 }

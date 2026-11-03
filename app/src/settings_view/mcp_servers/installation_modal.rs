@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use markdown_parser::parse_markdown;
 use warp_core::ui::external_product_icon::ExternalProductIcon;
 use warp_core::ui::icons::Icon;
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::elements::{
     Align, Border, ChildView, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Empty,
     Flex, FormattedTextElement, HighlightedHyperlink, Hoverable, MainAxisAlignment,
@@ -280,7 +281,7 @@ impl InstallationModalBody {
                         .with_height(16.)
                         .finish(),
                     )
-                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                    .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                     .with_padding(Padding::uniform(2.));
                     if state.is_hovered() {
                         icon = icon.with_background(appearance.theme().surface_2());
@@ -309,7 +310,7 @@ impl InstallationModalBody {
             .finish(),
         )
         .with_background_color(theme.surface_2().into())
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
         .with_padding(Padding::uniform(4.))
         .finish();
 

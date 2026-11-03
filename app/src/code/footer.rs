@@ -14,6 +14,7 @@ use warp_core::send_telemetry_from_ctx;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::{AnsiColorIdentifier, Fill as ThemeFill, WarpTheme};
+use warp_core::ui::tokens::RADIUS_MD;
 use warp_core::ui::Icon;
 #[cfg(feature = "local_fs")]
 use warp_util::local_or_remote_path::LocalOrRemotePath;
@@ -930,7 +931,7 @@ impl CodeFooterView {
                 Container::new(col.finish())
                     .with_vertical_padding(8.)
                     .with_background(background)
-                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+                    .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                     .with_border(
                         Border::all(1.)
                             .with_border_color(internal_colors::neutral_4(appearance.theme())),
@@ -1783,7 +1784,7 @@ impl View for CodeFooterView {
         if self.show_border {
             container = container
                 .with_border(Border::top(2.0).with_border_fill(internal_colors::neutral_2(theme)))
-                .with_corner_radius(CornerRadius::with_bottom(Radius::Pixels(8.)));
+                .with_corner_radius(CornerRadius::with_bottom(RADIUS_MD));
         }
 
         container.finish()

@@ -29,7 +29,7 @@ const MENU_MAX_HEIGHT: f32 = 168.;
 
 const MENU_VERTICAL_PADDING: f32 = 4.;
 
-const MENU_CORNER_RADIUS: f32 = 6.;
+const MENU_CORNER_RADIUS: f32 = 10.;
 
 const DROP_SHADOW_COLOR: ColorU = ColorU {
     r: 0,

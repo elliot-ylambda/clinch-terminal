@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
 use ordered_float::OrderedFloat;
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::elements::{
     Border, Clipped, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Flex, Highlight,
-    MainAxisAlignment, MainAxisSize, ParentElement, Radius, Shrinkable, Text,
+    MainAxisAlignment, MainAxisSize, ParentElement, Shrinkable, Text,
 };
 use warpui::fonts::{Properties, Weight};
 use warpui::ui_components::components::{UiComponent, UiComponentStyles};
@@ -91,7 +92,7 @@ impl WorkflowSearchItem {
                 .finish(),
         )
         .with_background_color(theme.surface_2().into_solid())
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
         .with_border(Border::all(1.).with_border_fill(theme.split_pane_border_color()))
         .with_uniform_padding(4.)
         .finish()

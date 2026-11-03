@@ -8,6 +8,7 @@ use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::vec2f;
 #[cfg(feature = "local_fs")]
 use warp_core::ui::theme::WarpTheme;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warpui::elements::{
     Border, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, DispatchEventResult,
     EventHandler, Fill, Flex, Icon, MainAxisAlignment, MainAxisSize, MouseStateHandle,
@@ -33,7 +34,7 @@ use crate::{
 
 const BUTTON_PADDING: f32 = 12.;
 const BUTTON_FONT_SIZE: f32 = 14.;
-const BUTTON_BORDER_RADIUS: f32 = 4.;
+const BUTTON_BORDER_RADIUS: f32 = 6.;
 const BORDER_WIDTH: f32 = 1.;
 
 const MODAL_SUBHEADER: &str =
@@ -462,7 +463,7 @@ impl View for ThemeCreatorBody {
                             .set_font_family_id(appearance.header_font_family())
                             .set_font_size(14.)
                             .set_background(Fill::None)
-                            .set_border_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                            .set_border_radius(CornerRadius::with_all(RADIUS_SM))
                             .set_padding(Coords::uniform(20.).top(10.).bottom(10.))
                             .set_border_width(2.),
                     )
@@ -490,9 +491,9 @@ impl View for ThemeCreatorBody {
             {
                 // Add corner radius if the rect is the first or last one
                 let corner_radius = if bg_color_index == 0 {
-                    CornerRadius::with_left(Radius::Pixels(8.))
+                    CornerRadius::with_left(RADIUS_MD)
                 } else if bg_color_index == 4 {
-                    CornerRadius::with_right(Radius::Pixels(8.))
+                    CornerRadius::with_right(RADIUS_MD)
                 } else {
                     CornerRadius::with_all(Radius::Pixels(0.))
                 };

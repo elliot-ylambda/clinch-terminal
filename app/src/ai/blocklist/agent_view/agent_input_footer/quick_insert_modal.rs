@@ -20,6 +20,7 @@ use ai::skills::SkillScope;
 use pathfinder_color::ColorU;
 use ui_components::{button, Component as _, Options as _};
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warp_util::local_or_remote_path::LocalOrRemotePath;
 use warpui::elements::new_scrollable::{NewScrollable, ScrollableAppearance, SingleAxisConfig};
 use warpui::elements::{
@@ -49,7 +50,7 @@ use crate::ui_components::icons::Icon;
 use crate::workspace::view::skills_panel::group_skills_by_scope;
 
 const MODAL_WIDTH: f32 = 520.;
-const INPUT_BORDER_RADIUS: Radius = Radius::Pixels(4.);
+const INPUT_BORDER_RADIUS: Radius = RADIUS_SM;
 const PICK_LIST_MAX_HEIGHT: f32 = 220.;
 /// The auto-derived label is trimmed to this many characters.
 const MAX_LABEL_LEN: usize = 24;
@@ -685,7 +686,7 @@ impl View for QuickInsertModal {
             Container::new(dialog)
                 .with_background(dialog_surface)
                 .with_border(Border::all(1.).with_border_color(border_color))
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                 .finish(),
         )
         .with_width(MODAL_WIDTH)

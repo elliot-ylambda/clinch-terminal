@@ -3,7 +3,8 @@ use std::sync::Arc;
 
 use warp_core::ui::Icon;
 use warp_core::ui::appearance::Appearance;
-use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::theme::Fill;
+use warp_core::ui::tokens::RADIUS_LG;
 use warpui_core::elements::{
     Border, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Dismiss, Element, Flex,
     ParentElement, Radius, Shrinkable,
@@ -15,7 +16,7 @@ use warpui_core::{AppContext, EventContext};
 
 use crate::{Component, Options as _, Renderable, button};
 
-const CORNER_RADIUS: Radius = Radius::Pixels(8.);
+const CORNER_RADIUS: Radius = RADIUS_LG;
 const BORDER_WIDTH: f32 = 1.;
 
 /// Base unit of dialog padding. The dialog component applies this to the header, but consumers are responsible
@@ -79,12 +80,12 @@ impl Component for Dialog {
     type Params<'a> = Params<'a>;
 
     fn render<'a>(&self, appearance: &Appearance, params: Self::Params<'a>) -> Box<dyn Element> {
-        let theme = appearance.theme();
         let options = params.options;
 
-        let background = theme.surface_1();
-        let text_color = theme.main_text_color(background).into_solid();
-        let border_color = internal_colors::neutral_4(theme);
+        let tokens = appearance.tokens();
+        let background = Fill::Solid(tokens.surface_overlay);
+        let text_color = tokens.text_1;
+        let border_color = tokens.hairline;
 
         let mut header_row = Flex::row()
             .with_main_axis_alignment(MainAxisAlignment::SpaceBetween)
@@ -147,6 +148,7 @@ impl Component for Dialog {
             .with_background(background)
             .with_corner_radius(CornerRadius::with_all(CORNER_RADIUS))
             .with_border(Border::all(BORDER_WIDTH).with_border_color(border_color))
+            .with_drop_shadow(tokens.overlay_shadow())
             .finish();
 
         let sized_container = if let Some(width) = options.width {

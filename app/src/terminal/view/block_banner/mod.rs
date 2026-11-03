@@ -8,10 +8,11 @@
 
 mod warpify;
 
+use warp_core::ui::tokens::RADIUS_MD;
 pub use warpify::*;
 use warpui::elements::{
     ConstrainedBox, Container, CornerRadius, Hoverable, MouseState, MouseStateHandle,
-    ParentElement, Radius, Stack,
+    ParentElement, Stack,
 };
 use warpui::Element;
 
@@ -52,7 +53,7 @@ fn render_block_banner(
                             .with_vertical_padding(BANNER_V_PADDING)
                             .with_horizontal_padding(BANNER_H_PADDING)
                             .with_background_color(theme.block_banner_background().into_solid())
-                            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+                            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                             .finish(),
                     )
                     .with_max_height(CONSTRAINED_BANNER_HEIGHT)

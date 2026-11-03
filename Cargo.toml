@@ -187,6 +187,8 @@ jaq-json = { version = "2.0", features = ["serde"] }
 # with its default features enabled, which re-enables all those parsers transitively.
 # The long-term fix is https://github.com/01mf02/jaq/issues/431.
 jaq-all = { version = "0.1", default-features = false }
+# Already in the graph via jaq-std; used directly for IANA zones in provider limit messages.
+jiff = "0.2.24"
 jsonschema = { version = "0.45", default-features = false }
 lasso = { version = "0.7.3", features = ["multi-threaded"] }
 lazy_static = "1.4.0"

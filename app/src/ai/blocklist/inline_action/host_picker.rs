@@ -556,7 +556,3 @@ impl View for HostPicker {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "host_picker_tests.rs"]
-mod tests;

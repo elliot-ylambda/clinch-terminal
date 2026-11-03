@@ -6,9 +6,10 @@ use warp_core::ui::appearance::Appearance;
 use warp_core::ui::icons::Icon;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::Fill;
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::elements::{
     ConstrainedBox, Container, CornerRadius, FormattedTextElement, Highlight, HighlightedHyperlink,
-    MouseStateHandle, Radius, Text,
+    MouseStateHandle, Text,
 };
 use warpui::fonts::{Properties, Style, Weight};
 use warpui::keymap::Keystroke;
@@ -448,7 +449,7 @@ impl SearchItem for ModelSearchItem {
             .with_padding_left(4.)
             .with_padding_right(4.)
             .with_background(theme.green_overlay_1())
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .with_margin_left(6.)
             .finish();
             row = row.with_child(chip);

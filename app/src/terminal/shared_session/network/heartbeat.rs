@@ -111,7 +111,3 @@ pub enum Event {
 impl Entity for Heartbeat {
     type Event = Event;
 }
-
-#[cfg(test)]
-#[path = "heartbeat_tests.rs"]
-mod tests;

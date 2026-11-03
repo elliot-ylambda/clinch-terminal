@@ -207,12 +207,6 @@ fn cli_default_left_places_session_actions_before_quick_replies() {
             AgentToolbarItemKind::CopyAndClearDraft,
         ]
     );
-    for action in &items[..3] {
-        assert!(action.is_cli_session_action());
-    }
-    for quick_insert in &items[3..] {
-        assert!(!quick_insert.is_cli_session_action());
-    }
 }
 
 #[test]

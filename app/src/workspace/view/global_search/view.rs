@@ -15,6 +15,7 @@ use warp_core::send_telemetry_from_ctx;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::{AnsiColorIdentifier, Fill as ThemeFill};
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_core::ui::Icon;
 use warp_editor::editor::NavigationKey;
 use warp_ripgrep::search::Submatch;
@@ -57,7 +58,7 @@ use crate::workspace::view::global_search::model::GlobalSearch;
 use crate::workspace::view::global_search::{GlobalSearchMatch, SearchConfig};
 use crate::TelemetryEvent;
 
-const BORDER_RADIUS: f32 = 6.;
+const BORDER_RADIUS: f32 = 10.;
 const BORDER_WIDTH: f32 = 1.;
 const DO_NOT_TRUNCATE_CHAR_COUNT: usize = 40;
 const DO_TRUNCATE_END_CHAR_COUNT: usize = 200;
@@ -1223,7 +1224,7 @@ impl GlobalSearchView {
                 .with_horizontal_padding(4.)
                 .with_vertical_padding(1.)
                 .with_background_color(theme.terminal_colors().normal.yellow.into())
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                 .finish();
 
             let icon_from_file_path = icon_from_file_path(&file_path.display_path(), appearance)
@@ -1270,7 +1271,7 @@ impl GlobalSearchView {
             if let Some(background_fill) = list_highlight_state.background_color(appearance) {
                 let corner_radius = list_highlight_state
                     .corner_radius()
-                    .unwrap_or_else(|| CornerRadius::with_all(Radius::Pixels(4.)));
+                    .unwrap_or_else(|| CornerRadius::with_all(RADIUS_SM));
                 row_with_padding = row_with_padding
                     .with_background(background_fill)
                     .with_corner_radius(corner_radius);
@@ -1377,7 +1378,7 @@ impl GlobalSearchView {
             if let Some(background_fill) = list_highlight_state.background_color(appearance) {
                 let corner_radius = list_highlight_state
                     .corner_radius()
-                    .unwrap_or_else(|| CornerRadius::with_all(Radius::Pixels(4.)));
+                    .unwrap_or_else(|| CornerRadius::with_all(RADIUS_SM));
                 row = row
                     .with_background(background_fill)
                     .with_corner_radius(corner_radius);
@@ -1996,7 +1997,7 @@ impl GlobalSearchView {
                 .with_horizontal_padding(4.)
                 .with_vertical_padding(1.)
                 .with_background_color(theme.terminal_colors().normal.yellow.into())
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                 .finish();
 
             let left_row = Flex::row()
@@ -2020,7 +2021,7 @@ impl GlobalSearchView {
             if let Some(background_fill) = list_highlight_state.background_color(appearance) {
                 let corner_radius = list_highlight_state
                     .corner_radius()
-                    .unwrap_or_else(|| CornerRadius::with_all(Radius::Pixels(4.)));
+                    .unwrap_or_else(|| CornerRadius::with_all(RADIUS_SM));
                 row_with_padding = row_with_padding
                     .with_background(background_fill)
                     .with_corner_radius(corner_radius);

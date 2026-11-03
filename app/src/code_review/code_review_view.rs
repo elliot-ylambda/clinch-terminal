@@ -19,6 +19,7 @@ use vec1::Vec1;
 use warp_core::channel::{Channel, ChannelState};
 use warp_core::features::FeatureFlag;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warp_core::{safe_error, safe_info, SessionId};
 use warp_editor::content::buffer::{AutoScrollBehavior, InitialBufferState, SelectionOffsets};
 use warp_editor::model::CoreEditorModel;
@@ -39,7 +40,7 @@ use warpui::elements::{
     DispatchEventResult, DragBarSide, Element, Empty, EventHandler, Flex, Hoverable, List,
     ListState, MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning, ParentAnchor,
     ParentElement, ParentOffsetBounds, Percentage, PositionedElementAnchor,
-    PositionedElementOffsetBounds, Radius, Rect, Resizable, ResizableStateHandle, SavePosition,
+    PositionedElementOffsetBounds, Rect, Resizable, ResizableStateHandle, SavePosition,
     ScrollOffset, ScrollStateHandle, ScrollbarWidth, Shrinkable, Stack, Text,
     DEFAULT_UI_LINE_HEIGHT_RATIO,
 };
@@ -3773,7 +3774,7 @@ impl CodeReviewView {
         });
 
         let lines = Flex::column().with_children(lines).finish();
-        let corner_radius = Radius::Pixels(8.);
+        let corner_radius = RADIUS_MD;
 
         Container::new(
             Flex::column()
@@ -4159,7 +4160,7 @@ impl CodeReviewView {
             1.,
             Container::new(Clipped::new(main_row.finish()).finish())
                 .with_border(Border::new(1.0).with_border_fill(theme.outline()))
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                 .with_uniform_padding(16.)
                 .with_margin_bottom(16.)
                 .finish(),
@@ -4566,7 +4567,7 @@ impl CodeReviewView {
                     let mut container = Container::new(Shrinkable::new(1., file_row).finish())
                         .with_vertical_padding(5.)
                         .with_horizontal_padding(8.)
-                        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)));
+                        .with_corner_radius(CornerRadius::with_all(RADIUS_SM));
 
                     if mouse_state.is_hovered() {
                         container = container.with_background(warp_core::ui::theme::Fill::Solid(
@@ -4857,7 +4858,7 @@ impl CodeReviewView {
         }
 
         Container::new(Shrinkable::new(1., content.finish()).finish())
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .with_margin_bottom(EDITOR_GAP)
             .finish()
     }
@@ -5026,9 +5027,9 @@ impl CodeReviewView {
 
         let outer_bg = theme.background();
         let inner_corner_radius = if file.is_expanded {
-            CornerRadius::with_top(Radius::Pixels(8.))
+            CornerRadius::with_top(RADIUS_MD)
         } else {
-            CornerRadius::with_all(Radius::Pixels(8.))
+            CornerRadius::with_all(RADIUS_MD)
         };
 
         let inner_header = Hoverable::new(file.header_mouse_state.clone(), |mouse_state| {
@@ -5143,7 +5144,7 @@ impl CodeReviewView {
         }
         Container::new(row.finish())
             .with_background(appearance.theme().background())
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(2.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .with_horizontal_padding(8.)
             .with_vertical_padding(4.)
             .with_border(
@@ -5164,7 +5165,7 @@ impl CodeReviewView {
                 .with_child(Shrinkable::new(1., content).finish())
                 .finish(),
         )
-        .with_corner_radius(CornerRadius::with_bottom(Radius::Pixels(8.)))
+        .with_corner_radius(CornerRadius::with_bottom(RADIUS_MD))
         .with_background(theme.background())
         .with_vertical_padding(8.)
         .with_horizontal_padding(16.)
@@ -5235,7 +5236,7 @@ impl CodeReviewView {
         } else if let Some(editor_state) = file.editor_state.as_ref() {
             Hoverable::new(editor_state.editor_mouse_state.clone(), |_| {
                 Container::new(ChildView::new(&editor_state.editor).finish())
-                    .with_corner_radius(CornerRadius::with_bottom(Radius::Pixels(8.)))
+                    .with_corner_radius(CornerRadius::with_bottom(RADIUS_MD))
                     .with_background(theme.background())
                     .with_border(
                         Border::new(1.)

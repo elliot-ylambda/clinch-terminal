@@ -1,10 +1,11 @@
 use pathfinder_geometry::vector::vec2f;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::color::blend::Blend as _;
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_core::ui::{self};
 use warpui::elements::{
     Align, ChildView, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Flex, Icon,
-    MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement as _, Radius,
+    MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement as _,
 };
 use warpui::keymap::EditableBinding;
 use warpui::platform::Cursor;
@@ -264,7 +265,7 @@ impl GetStartedView {
                         ..Default::default()
                     })
                     .with_hovered_styles(UiComponentStyles {
-                        border_radius: Some(CornerRadius::with_all(Radius::Pixels(4.))),
+                        border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
                         background: Some(
                             theme.background().blend(&theme.surface_overlay_1()).into(),
                         ),

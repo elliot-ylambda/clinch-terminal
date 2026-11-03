@@ -1,6 +1,7 @@
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::elements::{
-    Border, ChildView, Container, CornerRadius, Dismiss, Empty, Flex, ParentElement, Radius, Text,
+    Border, ChildView, Container, CornerRadius, Dismiss, Empty, Flex, ParentElement, Text,
 };
 use warpui::fonts::{Properties, Weight};
 use warpui::ui_components::components::UiComponent;
@@ -126,7 +127,7 @@ impl View for RemoveCustomEndpointConfirmationDialog {
         .with_uniform_padding(12.)
         .with_background(internal_colors::fg_overlay_1(theme))
         .with_border(Border::all(1.).with_border_fill(chip_border))
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .finish();
 
         let dialog = Dialog::new(

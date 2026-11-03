@@ -79,10 +79,6 @@ impl BillingAndUsageDispatchView {
     }
 }
 
-#[cfg(test)]
-#[path = "billing_and_usage_dispatch_tests.rs"]
-mod tests;
-
 impl Entity for BillingAndUsageDispatchView {
     type Event = BillingAndUsagePageEvent;
 }

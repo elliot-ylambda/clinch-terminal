@@ -4,11 +4,12 @@ use strum::IntoEnumIterator;
 use strum_macros::{EnumIter, IntoStaticStr};
 use warp_core::features::FeatureFlag;
 use warp_core::ui::appearance::Appearance;
+use warp_core::ui::tokens::RADIUS_MD;
 use warp_editor::editor::NavigationKey;
 use warpui::elements::{
     Border, ClippedScrollStateHandle, ClippedScrollable, ConstrainedBox, Container, CornerRadius,
     CrossAxisAlignment, Empty, Fill, Flex, MainAxisAlignment, MainAxisSize, MouseStateHandle,
-    ParentElement, Radius, ScrollbarWidth, Shrinkable,
+    ParentElement, ScrollbarWidth, Shrinkable,
 };
 use warpui::ui_components::button::ButtonVariant;
 use warpui::ui_components::components::{UiComponent, UiComponentStyles};
@@ -947,7 +948,7 @@ impl View for EnumCreationDialog {
                         )
                         .finish(),
                 )
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                 .with_border(Border::all(2.).with_border_fill(appearance.theme().surface_2()))
                 .with_background(appearance.theme().surface_1())
                 .finish(),

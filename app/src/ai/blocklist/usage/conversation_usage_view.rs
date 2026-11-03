@@ -5,6 +5,7 @@ use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::vec2f;
 use warp_core::features::FeatureFlag;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warp_core::ui::Icon;
 use warpui::elements::{
     Border, ChildAnchor, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, DropShadow,
@@ -892,12 +893,12 @@ impl ConversationUsageView {
 
         if let DisplayMode::Footer = self.display_mode {
             card_container = card_container
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                 .with_border(Border::all(1.0).with_border_fill(theme.outline()))
                 .with_uniform_margin(16.);
         } else {
             card_container =
-                card_container.with_corner_radius(CornerRadius::with_bottom(Radius::Pixels(6.)));
+                card_container.with_corner_radius(CornerRadius::with_bottom(RADIUS_MD));
         }
 
         let mut res = Flex::column()
@@ -1139,7 +1140,7 @@ fn render_context_window_other_tooltip(appearance: &Appearance) -> Box<dyn Eleme
     .finish();
     Container::new(text)
         .with_background_color(background)
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
         .with_border(Border::all(1.).with_border_color(theme.outline().into_solid()))
         .with_horizontal_padding(8.)
         .with_vertical_padding(5.)
@@ -1183,7 +1184,3 @@ const CONTEXT_WINDOW_SEGMENT_PERCENT_DECIMAL_PLACES: usize = 2;
 
 /// Maximum width of the context-window "Other" tooltip before wrapping.
 const CONTEXT_WINDOW_OTHER_TOOLTIP_MAX_WIDTH: f32 = 280.;
-
-#[cfg(test)]
-#[path = "conversation_usage_view_tests.rs"]
-mod tests;

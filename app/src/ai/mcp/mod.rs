@@ -303,8 +303,6 @@ fn find_server_map(
 #[cfg(not(target_family = "wasm"))]
 pub trait MCPServerExt {
     fn from_user_json(json: &str) -> serde_json::Result<Vec<MCPServer>>;
-    #[cfg(test)]
-    fn to_user_json(&self) -> String;
     fn to_parsed_templatable_mcp_server_result(&self) -> ParsedTemplatableMCPServerResult;
     fn fill_environment_variables(&mut self, conn: &mut SqliteConnection);
 }
@@ -352,34 +350,6 @@ impl MCPServerExt for MCPServer {
                 }
             })
             .collect())
-    }
-
-    /// Includes the environment variable values, should only be shown to users,
-    /// not sent to our servers.
-    #[cfg(test)]
-    fn to_user_json(&self) -> String {
-        let transport_type = match &self.transport_type {
-            TransportType::CLIServer(cli_server) => JSONTransportType::CLIServer {
-                command: cli_server.command.clone(),
-                args: cli_server.args.clone(),
-                env: items_to_hashmap(&cli_server.static_env_vars),
-                working_directory: cli_server.cwd_parameter.to_owned(),
-            },
-            TransportType::ServerSentEvents(sse_server) => JSONTransportType::SSEServer {
-                url: sse_server.url.to_owned(),
-                headers: items_to_hashmap(&sse_server.headers),
-            },
-        };
-        serde_json::to_string_pretty(
-            &std::iter::once((self.name.to_owned(), JSONMCPServer { transport_type }))
-                .collect::<HashMap<_, _>>(),
-        )
-        // serde_json::to_string_pretty should never fail on our JSONMCPServer type, but better to
-        // not crash the app if it does.
-        .unwrap_or_else(|err| {
-            log::error!("Could not serialize MCP server to user json: {err:?}");
-            Default::default()
-        })
     }
 
     fn to_parsed_templatable_mcp_server_result(&self) -> ParsedTemplatableMCPServerResult {
@@ -568,7 +538,3 @@ pub fn mcp_provider_from_file_path(file_path: &Path) -> Option<MCPProvider> {
     }
     best.map(|(p, _)| p)
 }
-
-#[cfg(test)]
-#[path = "mod_tests.rs"]
-mod tests;

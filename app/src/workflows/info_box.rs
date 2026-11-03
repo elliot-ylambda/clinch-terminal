@@ -4,12 +4,13 @@ use std::ops::Range;
 use string_offset::CharOffset;
 use warp_core::features::FeatureFlag;
 use warp_core::settings::Setting;
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::color::ColorU;
 use warpui::elements::{
     self, Align, Border, Clipped, ClippedScrollStateHandle, ClippedScrollable, ConstrainedBox,
     Container, CornerRadius, CrossAxisAlignment, DropShadow, Flex, Highlight, Icon,
-    MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement, Radius, Rect, Shrinkable,
-    Stack, Text,
+    MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement, Rect, Shrinkable, Stack,
+    Text,
 };
 use warpui::fonts::{Properties, Weight};
 use warpui::geometry::vector::Vector2F;
@@ -1109,9 +1110,9 @@ impl View for WorkflowsMoreInfoView {
                     .with_border(Border::all(1.).with_border_fill(appearance.theme().surface_2()))
                     .with_background(appearance.theme().surface_2())
                     .with_corner_radius(match input_mode {
-                        InputMode::PinnedToBottom => CornerRadius::with_top(Radius::Pixels(6.)),
+                        InputMode::PinnedToBottom => CornerRadius::with_top(RADIUS_MD),
                         InputMode::PinnedToTop | InputMode::Waterfall => {
-                            CornerRadius::with_bottom(Radius::Pixels(6.))
+                            CornerRadius::with_bottom(RADIUS_MD)
                         }
                     })
                     .finish(),

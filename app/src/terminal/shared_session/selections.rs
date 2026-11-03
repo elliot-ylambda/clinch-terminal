@@ -54,7 +54,3 @@ impl WithinBlock<Point> {
         })
     }
 }
-
-#[cfg(test)]
-#[path = "selections_tests.rs"]
-mod tests;

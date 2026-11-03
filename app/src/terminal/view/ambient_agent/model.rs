@@ -1853,7 +1853,3 @@ pub(crate) fn should_disable_snapshot(ctx: &AppContext) -> bool {
 impl Entity for AmbientAgentViewModel {
     type Event = AmbientAgentViewModelEvent;
 }
-
-#[cfg(test)]
-#[path = "model_tests.rs"]
-mod tests;

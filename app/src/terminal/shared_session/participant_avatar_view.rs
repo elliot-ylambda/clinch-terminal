@@ -3,11 +3,12 @@ use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::vec2f;
 use session_sharing_protocol::common::{ParticipantId, ParticipantInfo, Role};
 use session_sharing_protocol::sharer::RoleUpdateReason;
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::accessibility::AccessibilityContent;
 use warpui::elements::{
     Border, ChildAnchor, ChildView, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment,
     Fill, Flex, Hoverable, MainAxisAlignment, MouseStateHandle, OffsetPositioning, ParentAnchor,
-    ParentElement, ParentOffsetBounds, Radius, Stack,
+    ParentElement, ParentOffsetBounds, Stack,
 };
 use warpui::platform::Cursor;
 use warpui::r#async::{SpawnedFutureHandle, Timer};
@@ -534,7 +535,7 @@ pub fn render_revoke_all_button(
                 appearance.theme().surface_2().into()
             };
             button = button
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                 .with_background_color(background_color)
                 .with_border(
                     Border::all(1.).with_border_color(appearance.theme().surface_3().into()),

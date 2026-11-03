@@ -15,7 +15,7 @@ use crate::ai::llms::LLMSpec;
 use crate::appearance::Appearance;
 use crate::terminal::input::inline_menu::styles as inline_styles;
 
-const CORNER_RADIUS: f32 = 4.0;
+const CORNER_RADIUS: f32 = 6.;
 const ROW_SPACING: f32 = 12.0;
 
 pub const MODEL_SPECS_TITLE: &str = "Model Specs";

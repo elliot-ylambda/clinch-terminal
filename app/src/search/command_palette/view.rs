@@ -8,13 +8,13 @@ use lazy_static::lazy_static;
 use pathfinder_geometry::vector::vec2f;
 use settings::Setting;
 use warp_core::send_telemetry_from_app_ctx;
+use warp_core::ui::tokens::RADIUS_MD;
 use warp_util::path::LineAndColumnArg;
 use warpui::elements::{
     Align, Border, ChildAnchor, ChildView, Clipped, ClippedScrollStateHandle, ClippedScrollable,
     ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Dismiss, DispatchEventResult,
     Empty, EventHandler, Fill, Flex, MainAxisAlignment, OffsetPositioning, ParentElement,
-    PositionedElementAnchor, PositionedElementOffsetBounds, Radius, SavePosition, Shrinkable,
-    Stack, Text,
+    PositionedElementAnchor, PositionedElementOffsetBounds, SavePosition, Shrinkable, Stack, Text,
 };
 use warpui::event::KeyState;
 use warpui::keymap::BindingId;
@@ -99,7 +99,7 @@ fn agent_conversation_filter_styles(app: &AppContext) -> UiComponentStyles {
     UiComponentStyles {
         font_family_id: Some(appearance.ui_font_family()),
         font_size: Some(appearance.ui_font_size() + 1.0),
-        border_radius: Some(CornerRadius::with_all(Radius::Pixels(6.0))),
+        border_radius: Some(CornerRadius::with_all(RADIUS_MD)),
         border_width: Some(1.0),
         border_color: Some(Fill::Solid(theme.outline().into())),
         background: Some(Fill::Solid(theme.surface_1().into())),
@@ -270,7 +270,7 @@ impl warpui::View for View {
                 Dismiss::new(
                     Container::new(palette_stack.finish())
                         .with_background(theme.surface_2())
-                        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+                        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                         .with_border(Border::all(1.0).with_border_fill(theme.outline()))
                         .with_margin_top(117.)
                         .with_padding_bottom(10.)

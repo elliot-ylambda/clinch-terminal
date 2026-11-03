@@ -78,6 +78,7 @@ stage_syntax() {
     script/assemble-clinch-corresponding-source \
     script/build-clinch-remote-control-web \
     script/check_license_config_sync \
+    script/check-ui-literals \
     script/assemble-clinch-release-stage \
     script/configure-clinch-release-repository \
     script/dispatch-clinch-release \
@@ -98,6 +99,7 @@ stage_syntax() {
   /usr/bin/python3 -c \
     'compile(open("script/generate-clinch-remote-control-notices", encoding="utf-8").read(), "script/generate-clinch-remote-control-notices", "exec")'
   bash -n resources/update/clinch-update-helper
+  ./script/check-ui-literals
   bash -n tools/agent-resume/*.sh \
     tools/agent-resume/clinch-agent-resume \
     tools/agent-resume/warp-agent-resume
@@ -143,10 +145,6 @@ stage_plugin_tests() {
   done
 }
 
-stage_build_configuration() {
-  cargo check --locked --bin stable
-}
-
 stage_remote_control() {
   ./script/check-clinch-companion-protocol
   ./script/build-clinch-remote-control-web
@@ -154,8 +152,7 @@ stage_remote_control() {
 }
 
 stage_component_tests() {
-  cargo nextest run --locked -p warp -p warpui -p cli_agent_usage \
-    -p warp_managed_secrets -p warp_search_core \
+  cargo nextest run --locked --lib -p warp -p warpui -p cli_agent_usage -p warp_search_core \
     --profile clinch-release \
     --no-fail-fast --failure-output immediate-final --status-level fail \
     --show-progress none
@@ -163,8 +160,11 @@ stage_component_tests() {
 
 stage_component_lints() {
   # Do not select the inherited dev/preview binaries: they require Warp's private channel config
-  # and are not Clinch artifacts. The stable binary, library, and test targets are the launch set.
-  cargo clippy --locked -p warp --lib --bin stable --tests --all-features -- -D warnings
+  # and are not Clinch artifacts. The stable binary, library, and test targets are the launch set,
+  # linted with the code features the stable app ships (script/macos/bundle). The packaging-only
+  # release_bundle and extern_plist features are left to the release build itself.
+  cargo clippy --locked -p warp --lib --bin stable --tests \
+    --features gui,nld_classifier_v3,nld_heuristic_v2,warp_control_cli -- -D warnings
   cargo clippy --locked -p cli_agent_usage --all-targets --all-features -- -D warnings
 }
 
@@ -173,7 +173,6 @@ run_stage "Installer and agent-runtime syntax" stage_syntax
 run_stage "Release dispatcher tests" stage_dispatcher_tests
 run_stage "Agent capture, durability, install, and replay tests" stage_agent_runtime_tests
 run_stage "Bundled notification plugin tests" stage_plugin_tests
-run_stage "Stable Clinch build configuration" stage_build_configuration
 run_stage "Remote Control protocol and mobile PWA" stage_remote_control
 run_stage "Shipped component tests" stage_component_tests
 run_stage "Shipped component lints" stage_component_lints

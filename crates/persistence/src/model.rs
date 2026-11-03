@@ -367,6 +367,10 @@ pub struct Tab {
     pub pinned: bool,
     pub origin: Option<String>,
     pub coordinator: bool,
+    /// The project's auto-coordinate switch, on its coordinator tab. `None` follows the default.
+    pub auto_coordinate: Option<bool>,
+    /// Whether `custom_title` came from the coordinator rather than the user.
+    pub custom_title_auto: bool,
 }
 
 #[derive(Insertable)]
@@ -379,6 +383,10 @@ pub struct NewTab {
     pub pinned: bool,
     pub origin: Option<String>,
     pub coordinator: bool,
+    /// The project's auto-coordinate switch, on its coordinator tab. `None` follows the default.
+    pub auto_coordinate: Option<bool>,
+    /// Whether `custom_title` came from the coordinator rather than the user.
+    pub custom_title_auto: bool,
 }
 
 /// Persisted form of a tab group. `name` is optional — untitled groups omit

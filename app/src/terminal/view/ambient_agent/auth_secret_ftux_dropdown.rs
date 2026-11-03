@@ -37,7 +37,7 @@ const SELECT_GAP: f32 = 6.;
 
 const SELECT_ICON_SIZE: f32 = 16.;
 
-const SELECT_CORNER_RADIUS: f32 = 4.;
+const SELECT_CORNER_RADIUS: f32 = 6.;
 
 const MENU_HORIZONTAL_PADDING: f32 = 16.;
 

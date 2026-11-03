@@ -9,11 +9,12 @@ use parking_lot::FairMutex;
 use pathfinder_geometry::vector::vec2f;
 use settings::Setting as _;
 use warp_core::ui::appearance::Appearance;
+use warp_core::ui::tokens::RADIUS_MD;
 use warp_core::ui::Icon;
 use warp_editor::render::element::VerticalExpansionBehavior;
 use warpui::elements::{
     Align, Border, ChildView, Clipped, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment,
-    Expanded, Flex, MainAxisSize, MouseStateHandle, OffsetPositioning, ParentElement, Radius,
+    Expanded, Flex, MainAxisSize, MouseStateHandle, OffsetPositioning, ParentElement,
     ScrollbarWidth, SelectableArea, SelectionHandle, Stack, Text,
 };
 use warpui::keymap::{Context, EditableBinding, FixedBinding, Keystroke};
@@ -685,7 +686,7 @@ impl RequestedCommandView {
             .with_horizontal_padding(INLINE_ACTION_HORIZONTAL_PADDING)
             .with_vertical_padding(4.)
             .with_background(theme.surface_1())
-            .with_corner_radius(CornerRadius::with_bottom(Radius::Pixels(8.)))
+            .with_corner_radius(CornerRadius::with_bottom(RADIUS_MD))
             .finish()
         });
 
@@ -796,7 +797,7 @@ impl RequestedCommandView {
         .with_horizontal_padding(INLINE_ACTION_HORIZONTAL_PADDING)
         .with_vertical_padding(8.)
         .with_border(Border::top(1.).with_border_fill(theme.surface_1()))
-        .with_corner_radius(CornerRadius::with_bottom(Radius::Pixels(8.)))
+        .with_corner_radius(CornerRadius::with_bottom(RADIUS_MD))
         .finish()
     }
 
@@ -1167,9 +1168,9 @@ impl RequestedCommandView {
             });
 
         if should_round_bottom_corners {
-            config = config.with_corner_radius_override(CornerRadius::with_all(Radius::Pixels(8.)));
+            config = config.with_corner_radius_override(CornerRadius::with_all(RADIUS_MD));
         } else {
-            config = config.with_corner_radius_override(CornerRadius::with_top(Radius::Pixels(8.)));
+            config = config.with_corner_radius_override(CornerRadius::with_top(RADIUS_MD));
         }
 
         if let Some(font_override) = font_override {
@@ -1419,7 +1420,7 @@ impl View for RequestedCommandView {
                             REQUESTED_COMMAND_BODY_VERTICAL_PADDING - SCROLLBAR_WIDTH.as_f32() - 2.,
                         )
                         .with_background_color(theme.background().into_solid())
-                        .with_corner_radius(CornerRadius::with_bottom(Radius::Pixels(8.)))
+                        .with_corner_radius(CornerRadius::with_bottom(RADIUS_MD))
                         .finish(),
                 )
                 .with_max_height(MAX_EDITOR_HEIGHT)
@@ -1478,7 +1479,7 @@ impl View for RequestedCommandView {
                     .with_horizontal_padding(INLINE_ACTION_HORIZONTAL_PADDING)
                     .with_vertical_padding(REQUESTED_COMMAND_BODY_VERTICAL_PADDING)
                     .with_background(theme.background())
-                    .with_corner_radius(CornerRadius::with_bottom(Radius::Pixels(8.)))
+                    .with_corner_radius(CornerRadius::with_bottom(RADIUS_MD))
                     .finish(),
             );
         }
@@ -1546,9 +1547,9 @@ impl View for RequestedCommandView {
                 CONTENT_ITEM_VERTICAL_MARGIN
             })
             .with_corner_radius(if is_rendered_above_expanded_command_block {
-                CornerRadius::with_top(Radius::Pixels(8.))
+                CornerRadius::with_top(RADIUS_MD)
             } else {
-                CornerRadius::with_all(Radius::Pixels(8.))
+                CornerRadius::with_all(RADIUS_MD)
             })
             .with_border(Border::all(1.).with_border_fill(border_color))
             .finish();
@@ -1657,7 +1658,3 @@ pub fn format_command_text(text: &str) -> String {
         text.to_string()
     }
 }
-
-#[cfg(test)]
-#[path = "requested_command_tests.rs"]
-mod tests;

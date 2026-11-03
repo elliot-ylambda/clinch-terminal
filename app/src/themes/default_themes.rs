@@ -343,15 +343,14 @@ pub fn light_theme() -> WarpTheme {
 
 /// Clinch bundled themes.
 ///
-/// The accent (and block cursor) carry the Clinch brand green. On Ink it is the raw logo lime
-/// `#BFFF00`; on Paper it steps to a slightly olive `#A6E000` so text drawn on accent-filled
-/// surfaces stays legible against a light background. The 4th argument is the cursor `Fill`.
+/// The accent (and block cursor) carry the Clinch brand green: a soft lime on Ink, and a deep olive
+/// on Paper so it reads as text and takes white text on top. The 4th argument is the cursor `Fill`.
 pub(super) fn clinch_ink() -> WarpTheme {
     WarpTheme::new(
-        Fill::Solid(ColorU::from_u32(0x0C0D10FF)),
-        ColorU::from_u32(0xCDD1D8FF),
-        Fill::Solid(ColorU::from_u32(0xBFFF00FF)),
-        Some(Fill::Solid(ColorU::from_u32(0xBFFF00FF))),
+        Fill::Solid(ColorU::from_u32(0x0D0E11FF)),
+        ColorU::from_u32(0xD3D6DDFF),
+        Fill::Solid(ColorU::from_u32(0xC5F06BFF)),
+        Some(Fill::Solid(ColorU::from_u32(0xC5F06BFF))),
         Some(Details::Darker),
         clinch_ink_colors(),
         None,
@@ -361,10 +360,10 @@ pub(super) fn clinch_ink() -> WarpTheme {
 
 pub(super) fn clinch_paper() -> WarpTheme {
     WarpTheme::new(
-        Fill::Solid(ColorU::from_u32(0xF5F7FAFF)),
-        ColorU::from_u32(0x1C2733FF),
-        Fill::Solid(ColorU::from_u32(0xA6E000FF)),
-        Some(Fill::Solid(ColorU::from_u32(0xA6E000FF))),
+        Fill::Solid(ColorU::from_u32(0xFFFFFFFF)),
+        ColorU::from_u32(0x2A2C31FF),
+        Fill::Solid(ColorU::from_u32(0x4F7D0FFF)),
+        Some(Fill::Solid(ColorU::from_u32(0x4F7D0FFF))),
         Some(Details::Lighter),
         clinch_paper_colors(),
         None,

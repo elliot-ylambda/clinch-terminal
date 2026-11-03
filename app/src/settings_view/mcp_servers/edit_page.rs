@@ -13,12 +13,13 @@ use uuid::Uuid;
 use warp_core::send_telemetry_from_ctx;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_editor::content::buffer::InitialBufferState;
 use warp_editor::render::element::VerticalExpansionBehavior;
 use warpui::elements::{
     Border, ChildAnchor, ChildView, Container, CornerRadius, CrossAxisAlignment, Flex,
     MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning, ParentAnchor,
-    ParentElement, ParentOffsetBounds, Radius, Shrinkable, Stack, Text,
+    ParentElement, ParentOffsetBounds, Shrinkable, Stack, Text,
 };
 use warpui::platform::Cursor;
 use warpui::ui_components::components::UiComponent;
@@ -499,7 +500,7 @@ impl MCPServersEditPageView {
                 .finish(),
         )
         .with_border(Border::all(1.).with_border_color(border_color))
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
         .finish()
     }
 

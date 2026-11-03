@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use instant::Instant;
 use languages::language_by_local_filename;
 use pathfinder_color::ColorU;
 use pathfinder_geometry::rect::RectF;
@@ -13,35 +14,33 @@ use repo_metadata::repositories::DetectedRepositories;
 use settings::Setting as _;
 use warp_core::context_flag::ContextFlag;
 use warp_core::telemetry::TelemetryEvent as _;
-use warp_core::ui::color::blend::Blend;
 use warp_core::ui::color::coloru_with_opacity;
+use warp_core::ui::icons::SPINNER_FRAMES;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::{AnsiColorIdentifier, Fill as WarpThemeFill, WarpTheme};
+use warp_core::ui::tokens::{
+    corners_lg, corners_md, corners_pill, corners_sm, StatusKind, Tokens, CARD_INSET, RADIUS_SM,
+};
 use warp_core::ui::Icon as WarpIcon;
 use warp_util::local_or_remote_path::LocalOrRemotePath;
 use warpui::elements::{
     resizable_state_handle, Border, ChildAnchor, Clipped, ClippedScrollStateHandle,
-    ClippedScrollable, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment,
-    DispatchEventResult, DragAxis, DragBarSide, Draggable, DropShadow, DropTarget, Element, Empty,
-    EventHandler, Expanded, Fill as ElementFill, Flex, Hoverable, MainAxisAlignment, MainAxisSize,
-    MouseStateHandle, OffsetPositioning, Padding, ParentAnchor, ParentElement, ParentOffsetBounds,
-    PositionedElementAnchor, PositionedElementOffsetBounds, Radius, Resizable,
-    ResizableStateHandle, SavePosition, ScrollTarget, ScrollToPositionMode, ScrollbarWidth,
-    Shrinkable, Stack, Text,
+    ClippedScrollable, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, DragAxis,
+    DragBarSide, Draggable, DropTarget, Element, Empty, Expanded, Fill as ElementFill, Flex,
+    Hoverable, LiveElement, MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning,
+    Padding, ParentAnchor, ParentElement, ParentOffsetBounds, PositionedElementAnchor,
+    PositionedElementOffsetBounds, Radius, Resizable, ResizableStateHandle, SavePosition,
+    ScrollTarget, ScrollToPositionMode, ScrollbarWidth, Shrinkable, Stack, Text,
 };
 use warpui::fonts::{Properties, Weight};
 use warpui::platform::Cursor;
-use warpui::prelude::Align;
 use warpui::text_layout::ClipConfig;
 use warpui::ui_components::components::{UiComponent, UiComponentStyles};
 use warpui::ui_components::text_input::TextInput;
 use warpui::units::IntoPixels;
 use warpui::{AppContext, EntityId, SingletonEntity, ViewHandle, WindowId};
 
-use super::{
-    is_running_project_command, project_cli_agent_activity, render_group_member_icon_collage,
-    select_unique_pane_kinds, ProjectCliAgentActivity,
-};
+use super::{project_cli_agent_activity, ProjectCliAgentActivity};
 use crate::agent_resume::{
     clean_prompt_title_text, prompt_title, AgentConversation, AgentResumeProvider,
 };
@@ -50,7 +49,6 @@ use crate::ai::agent::icons::needs_input_icon;
 use crate::ai::agent_management::AgentNotificationsModel;
 use crate::ai::blocklist::usage::{cli_agent_model_label, CliAgentUsageModel};
 use crate::ai::cloud_environments::CloudAmbientAgentEnvironment;
-use crate::ai::conversation_status_ui::render_status_element_with_opacity;
 use crate::appearance::Appearance;
 use crate::cloud_object::model::generic_string_model::StringModel;
 use crate::cloud_object::CloudObjectLookup as _;
@@ -66,16 +64,12 @@ use crate::pane_group::{
     CodePane, NotebookPane, PaneGroup, PaneId, TabBarHoverIndex, TerminalPane, WorkflowPane,
 };
 use crate::safe_triangle::SafeTriangle;
-use crate::settings::ClinchSettings;
-use crate::tab::lineage::{lineage_nesting, TabLineage};
+use crate::tab::lineage::MAX_VISIBLE_LINEAGE_DEPTH;
 use crate::tab::{tab_position_id, SelectedTabColor, TabData, TabOriginKind};
-use crate::terminal::cli_agent_sessions::attention_pulse::{
-    attention_pulse_color, attention_pulse_opacity,
-};
+use crate::terminal::cli_agent_sessions::restore::{AgentRestoreQueue, RestoreState};
 use crate::terminal::cli_agent_sessions::{
     session_context_enabled, CLIAgentSessionKey, CLIAgentSessionStatus, CLIAgentSessionsModel,
 };
-use crate::terminal::session_settings::SessionSettings;
 use crate::terminal::view::TerminalViewState;
 use crate::terminal::{CLIAgent, TerminalView};
 use crate::themes::theme::Fill as ThemeFill;
@@ -85,16 +79,14 @@ use crate::ui_components::agent_icon::{
 use crate::ui_components::buttons::{combo_inner_button, icon_button_with_color};
 use crate::ui_components::icon_with_status::{render_icon_with_status, IconWithStatusVariant};
 use crate::ui_components::icons::Icon as UiIcon;
-use crate::ui_components::{CLINCH_ATTENTION_AMBER, CLINCH_DONE_BLUE, CLINCH_LOGO_GREEN};
 use crate::util::bindings::keybinding_name_to_display_string;
 use crate::util::color::Opacity;
 use crate::workspace::action::{NewSessionMenuAnchor, WorkspaceAction};
 use crate::workspace::cross_window_tab_drag::CrossWindowTabDrag;
 use crate::workspace::hoa_onboarding::HoaOnboardingStep;
-use crate::workspace::tab_group::{SectionColor, TabGroup, TabGroupId};
+use crate::workspace::tab_group::{TabGroup, TabGroupId};
 use crate::workspace::tab_settings::{
-    TabSettings, VerticalTabsCompactSubtitle, VerticalTabsDisplayGranularity,
-    VerticalTabsPrimaryInfo, VerticalTabsTabItemMode, VerticalTabsViewMode,
+    TabSettings, VerticalTabsDisplayGranularity, VerticalTabsTabItemMode,
 };
 use crate::workspace::task::{WorkspaceTask, WorkspaceTaskAgent, WorkspaceTaskId};
 use crate::workspace::view::vertical_tabs::telemetry::{
@@ -106,80 +98,68 @@ use crate::workspace::{
 };
 use crate::{send_telemetry_from_app_ctx, FeatureFlag};
 
-const PANEL_WIDTH: f32 = 248.;
+const PANEL_WIDTH: f32 = 272.;
 const MIN_PANEL_WIDTH: f32 = 200.;
 const MAX_PANEL_WIDTH_RATIO: f32 = 0.5;
 const DETAIL_SIDECAR_SECTION_PADDING: f32 = 12.;
 const DETAIL_SIDECAR_SECTION_GAP: f32 = 4.;
 const GROUP_HEADER_VERTICAL_PADDING: f32 = 4.;
-const GROUP_HORIZONTAL_PADDING: f32 = 8.;
+const GROUP_HORIZONTAL_PADDING: f32 = 10.;
 const GROUP_BODY_BOTTOM_PADDING: f32 = 8.;
 const GROUP_ITEM_SPACING: f32 = 4.;
 /// Gap between tab cards in the rail.
-const TAB_CARD_GAP: f32 = 4.;
+const TAB_CARD_GAP: f32 = 1.;
 /// Inset from the panel's edges to a tab card's outline. Matches the control bar's
 /// horizontal padding so the search row and the cards below it share one left edge.
 const TAB_CARD_INSET: f32 = GROUP_HORIZONTAL_PADDING;
 /// Margin between a tab card's outline and the rows inside it. Rows bring their own
 /// padding, so this only has to keep a row's rounded highlight off the outline.
-const TAB_CARD_BODY_PADDING: f32 = 2.;
 const GROUP_ACTION_BUTTON_ICON_SIZE: f32 = 12.;
 const TAB_GROUP_HEADER_ACTION_ICON_SIZE: f32 = 14.;
 const PIN_INDICATOR_ICON_SIZE: f32 = 16.;
 const PIN_INDICATOR_CORNER_INSET: f32 = 6.;
 const GROUP_ACTION_BUTTON_PADDING: f32 = 2.;
 const GROUP_ACTION_BUTTON_GAP: f32 = 2.;
-const ROW_CORNER_RADIUS: f32 = 4.;
+const ROW_CORNER_RADIUS: f32 = 6.;
 /// Active-tab accent "spine": a short brand-accent bar pinned to the focused tab's left edge.
 /// This is the single place the brand accent appears in the rail — kept deliberately small.
-const ACTIVE_TAB_SPINE_WIDTH: f32 = 3.;
-const ACTIVE_TAB_SPINE_HEIGHT: f32 = 16.;
-const ACTIVE_TAB_SPINE_LEFT_INSET: f32 = 1.;
 const TAB_GROUP_MEMBER_INDENT: f32 = 12.;
-const TAB_GROUP_ICON_SIZE: f32 = 16.;
 const TAB_GROUP_CONTENT_INSET: f32 = 4.;
 const BADGE_ICON_SIZE: f32 = 12.;
 const DETAIL_SIDECAR_DEFAULT_WIDTH: f32 = 320.;
 const DETAIL_SIDECAR_MIN_WIDTH: f32 = 240.;
-const DETAIL_SIDECAR_CORNER_RADIUS: f32 = 4.;
-/// Fixed height of the metadata row (line 3 in expanded mode). Matches the passive badge height
-/// so the row doesn't resize when badges are toggled.
-const METADATA_ROW_HEIGHT: f32 = BADGE_ICON_SIZE + 2.;
+const DETAIL_SIDECAR_CORNER_RADIUS: f32 = 6.;
 const TAB_COLOR_OPACITY: Opacity = 15;
 const TAB_COLOR_HOVER_OPACITY: Opacity = 50;
 const BOOKMARKED_SESSIONS_MAX_HEIGHT: f32 = 220.;
 const BOOKMARKED_SESSION_ICON_SIZE: f32 = VERTICAL_TABS_ICON_SIZE;
-const BOOKMARKED_SESSIONS_DEFAULT_COLOR: SectionColor = SectionColor::ClinchGreen;
-const TASKS_DEFAULT_HEIGHT: f32 = 292.;
-const TASKS_MIN_HEIGHT: f32 = 120.;
-const TASKS_RESIZE_HANDLE_HEIGHT: f32 = 6.;
 const TASKS_HEADER_ICON_SIZE: f32 = 14.;
-const SECTION_ACCENT_BORDER_OPACITY: Opacity = 55;
-const SECTION_ACCENT_HOVER_OPACITY: Opacity = 10;
-const SECTION_TINT_BACKGROUND_OPACITY: Opacity = 10;
-const SECTION_TINT_BACKGROUND_ACTIVE_OPACITY: Opacity = 18;
-const SECTION_TINT_BORDER_OPACITY: Opacity = 45;
-const SECTION_TINT_BORDER_ACTIVE_OPACITY: Opacity = 70;
 
 // Circular icon constants
-const ICON_WITH_STATUS_GAP: f32 = 8.;
+const SIDEBAR_POPOVER_WIDTH: f32 = 320.;
+const SIDEBAR_POPOVER_MAX_HEIGHT: f32 = 460.;
+pub(super) const SIDEBAR_TASKS_LINK_POSITION_ID: &str = "vertical_tabs:tasks_link";
+pub(super) const SIDEBAR_BOOKMARKS_LINK_POSITION_ID: &str = "vertical_tabs:bookmarks_link";
+pub(super) const DETAIL_CARD_DELAY: std::time::Duration = std::time::Duration::from_millis(650);
+const ROW_MARK_SIZE: f32 = 16.;
+const COORDINATOR_TILE_OPACITY: Opacity = 28;
+/// A section's tint: strong enough to group its tabs, quiet enough to read titles on.
+const SECTION_TINT_OPACITY: Opacity = 14;
+const SECTION_BLOCK_PADDING: f32 = 4.;
+const SECTION_BLOCK_GAP: f32 = 8.;
+const ROW_SPINNER_SIZE: f32 = 14.;
+const SPINNER_FRAME_INTERVAL: std::time::Duration = std::time::Duration::from_millis(90);
+const ROW_LINEAGE_INDENT: f32 = 14.;
+const ROW_MARK_GAP: f32 = 10.;
+const ROW_TITLE_SIZE: f32 = 13.;
+/// 32px tall with one 13px line.
+const ROW_VERTICAL_PADDING: f32 = 7.;
+const ROW_HORIZONTAL_PADDING: f32 = 10.;
 pub(super) const VERTICAL_TABS_DETAIL_SIDECAR_POSITION_ID: &str = "vertical_tabs:detail_sidecar";
 
 /// Total size of the icon-with-status component rendered for each vertical-tabs row.
 /// Sub-components (circle, badge, cloud) are derived inside `render_icon_with_status`.
 const VERTICAL_TABS_ICON_SIZE: f32 = 24.;
-/// Diameter of the local Claude/Codex activity dot overlaid on the agent logo.
-const VERTICAL_TABS_AGENT_ACTIVITY_DOT_SIZE: f32 = 6.;
-/// Background cutout around the activity dot keeps it legible over either brand color.
-const VERTICAL_TABS_AGENT_ACTIVITY_DOT_RING_PADDING: f32 = 1.;
-/// Match the existing status badge's bottom-right placement within the 24px icon box.
-const VERTICAL_TABS_AGENT_ACTIVITY_DOT_CORNER_OFFSET: f32 = -1.;
-/// The "needs your input" glyph replaces the activity dot, and is larger so its "!" reads.
-const VERTICAL_TABS_AGENT_NEEDS_INPUT_GLYPH_SIZE: f32 = 11.;
-
-/// Icon size for the per-line conversation status pill in Summary mode. Pairs with
-/// `STATUS_ELEMENT_PADDING` (2px) for an overall ~14px element next to a 12pt title.
-const VERTICAL_TABS_SUMMARY_STATUS_ICON_SIZE: f32 = 10.;
 
 fn vtab_pane_row_position_id(pane_group_id: EntityId, pane_id: PaneId) -> String {
     format!("vertical_tabs:pane_row:{pane_group_id:?}:{pane_id}")
@@ -340,101 +320,6 @@ fn oz_icon_fill(theme: &WarpTheme) -> WarpThemeFill {
     theme.main_text_color(theme.background())
 }
 
-fn render_pane_icon_with_status(
-    typed: &TypedPane<'_>,
-    title: &str,
-    appearance: &Appearance,
-    app: &AppContext,
-) -> Box<dyn Element> {
-    let theme = appearance.theme();
-    let variant = resolve_icon_with_status_variant(typed, title, appearance, app);
-    let activity = vertical_tab_cli_agent_activity(typed, app);
-    let (variant, activity) = match (variant, activity) {
-        (
-            IconWithStatusVariant::CLIAgent {
-                agent,
-                is_ambient: false,
-                ..
-            },
-            Some(activity),
-        ) => (
-            IconWithStatusVariant::CLIAgent {
-                agent,
-                status: None,
-                is_ambient: false,
-            },
-            Some(activity),
-        ),
-        (variant, _) => (variant, None),
-    };
-    let icon = render_icon_with_status(
-        variant,
-        VERTICAL_TABS_ICON_SIZE,
-        0.,
-        theme,
-        theme.background(),
-    );
-    let Some(activity) = activity else {
-        return icon;
-    };
-
-    let dot_color = vertical_tab_activity_dot_color(activity, theme);
-    let (dot_icon, dot_color, dot_size) = if activity == ProjectCliAgentActivity::NeedsInput {
-        (
-            WarpIcon::AlertCircle,
-            attention_pulse_color(dot_color, app),
-            VERTICAL_TABS_AGENT_NEEDS_INPUT_GLYPH_SIZE,
-        )
-    } else {
-        (
-            WarpIcon::CircleFilled,
-            dot_color,
-            VERTICAL_TABS_AGENT_ACTIVITY_DOT_SIZE,
-        )
-    };
-    let dot = Container::new(
-        ConstrainedBox::new(
-            dot_icon
-                .to_warpui_icon(WarpThemeFill::Solid(dot_color))
-                .finish(),
-        )
-        .with_width(dot_size)
-        .with_height(dot_size)
-        .finish(),
-    )
-    .with_uniform_padding(VERTICAL_TABS_AGENT_ACTIVITY_DOT_RING_PADDING)
-    .with_background(theme.background())
-    .with_corner_radius(CornerRadius::with_all(Radius::Percentage(50.)))
-    .finish();
-
-    let mut stack = Stack::new().with_child(icon);
-    stack.add_positioned_child(
-        dot,
-        OffsetPositioning::offset_from_parent(
-            vec2f(
-                VERTICAL_TABS_AGENT_ACTIVITY_DOT_CORNER_OFFSET,
-                VERTICAL_TABS_AGENT_ACTIVITY_DOT_CORNER_OFFSET,
-            ),
-            ParentOffsetBounds::Unbounded,
-            ParentAnchor::BottomRight,
-            ChildAnchor::BottomRight,
-        ),
-    );
-    ConstrainedBox::new(stack.finish())
-        .with_width(VERTICAL_TABS_ICON_SIZE)
-        .with_height(VERTICAL_TABS_ICON_SIZE)
-        .finish()
-}
-
-fn vertical_tab_activity_dot_color(activity: ProjectCliAgentActivity, theme: &WarpTheme) -> ColorU {
-    match activity {
-        ProjectCliAgentActivity::Working => CLINCH_LOGO_GREEN,
-        ProjectCliAgentActivity::NeedsInput => CLINCH_ATTENTION_AMBER,
-        ProjectCliAgentActivity::Done | ProjectCliAgentActivity::NeedsAttention => CLINCH_DONE_BLUE,
-        ProjectCliAgentActivity::Idle => theme.disabled_text_color(theme.background()).into_solid(),
-    }
-}
-
 /// Returns the same Claude/Codex activity classification used by the project-tab hover card.
 /// Working follows the title glyph, so the dot never disagrees with the title beside it.
 /// Ambient runs keep their cloud/status treatment, and disabling agent status on tabs preserves
@@ -466,79 +351,11 @@ fn vertical_tab_cli_agent_activity(
     Some(project_cli_agent_activity(
         terminal_view.cli_agent_shows_working(session),
         matches!(session.status, CLIAgentSessionStatus::Blocked { .. }),
+        session.session_context.stop_reason.is_some(),
         session.turn_interrupted_by_user,
         notifications.has_unread_completed_project_cli_agent_for_terminal_view(terminal_view.id()),
         notifications.has_other_unread_project_activity_for_terminal_view(terminal_view.id()),
     ))
-}
-
-/// Whether any visible pane in the tab hosts a Claude/Codex agent waiting on the user.
-fn tab_has_agent_needing_input(tab: &TabData, app: &AppContext) -> bool {
-    let pane_group = tab.pane_group.as_ref(app);
-    pane_group.visible_pane_ids().into_iter().any(|pane_id| {
-        vertical_tab_cli_agent_activity(&pane_group.resolve_pane_type(pane_id, app), app)
-            == Some(ProjectCliAgentActivity::NeedsInput)
-    })
-}
-
-/// Outline for a card that holds an agent waiting on the user, pulsing with the shared attention
-/// clock. `None` for the active card (the user is already there) and while a drag targets it.
-fn needs_input_card_border(
-    has_agent_needing_input: bool,
-    is_active: bool,
-    is_drag_target: bool,
-    app: &AppContext,
-) -> Option<ThemeFill> {
-    (has_agent_needing_input && !is_active && !is_drag_target)
-        .then(|| ThemeFill::Solid(attention_pulse_color(CLINCH_ATTENTION_AMBER, app)))
-}
-
-/// A top-level tab card always has an outline. A tab nested in a group is framed by the group's
-/// card, so it stays outline-free to avoid two frames a few pixels apart, except while its agent
-/// waits on the user: then the tab itself pulses rather than its whole group.
-fn tab_card_border(
-    in_tab_group: bool,
-    needs_input_border: Option<ThemeFill>,
-    idle_border: impl FnOnce() -> ThemeFill,
-) -> Option<ThemeFill> {
-    if in_tab_group {
-        needs_input_border
-    } else {
-        Some(needs_input_border.unwrap_or_else(idle_border))
-    }
-}
-
-/// Whether a group card pulses for a member waiting on the user. Visible members pulse their own
-/// outline, so the group does only while it is collapsed and hides them.
-fn section_needs_input_pulse(collapsed: bool, hidden_member_needs_input: bool) -> bool {
-    collapsed && hidden_member_needs_input
-}
-
-fn should_render_separate_activity_indicator(
-    has_unread_activity: bool,
-    icon_activity: Option<ProjectCliAgentActivity>,
-) -> bool {
-    has_unread_activity && icon_activity.is_none()
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum TitleIndicatorKind {
-    Unread,
-    RunningCommand,
-}
-
-fn separate_title_indicator_kind(
-    has_unread_activity: bool,
-    icon_activity: Option<ProjectCliAgentActivity>,
-    has_running_command: bool,
-) -> Option<TitleIndicatorKind> {
-    if should_render_separate_activity_indicator(has_unread_activity, icon_activity) {
-        Some(TitleIndicatorKind::Unread)
-    } else if has_running_command {
-        Some(TitleIndicatorKind::RunningCommand)
-    } else {
-        None
-    }
 }
 
 #[derive(Clone, Default)]
@@ -555,7 +372,6 @@ struct PaneGroupStateHandles {
 struct TabGroupMouseStates {
     container: MouseStateHandle,
     header: MouseStateHandle,
-    chevron: MouseStateHandle,
     add: MouseStateHandle,
     kebab: MouseStateHandle,
     close: MouseStateHandle,
@@ -614,7 +430,7 @@ fn pane_row_background(
     is_in_multi_selection: bool,
     is_hovered: bool,
     is_being_dragged: bool,
-    theme: &WarpTheme,
+    tokens: &Tokens,
 ) -> Option<ThemeFill> {
     if let Some(color) = pane_color {
         let opacity = if is_selected || is_hovered || is_in_multi_selection {
@@ -624,92 +440,13 @@ fn pane_row_background(
         };
         Some(color.with_opacity(opacity))
     } else if is_selected {
-        Some(internal_colors::fg_overlay_2(theme))
-    } else if is_in_multi_selection && is_hovered {
-        // Hovering a multi-selected row steps one shade darker so the hover
-        // stays visually distinguishable from the in-selection highlight.
-        Some(internal_colors::fg_overlay_2(theme))
-    } else if is_in_multi_selection || is_being_dragged || is_hovered {
-        Some(internal_colors::fg_overlay_1(theme))
+        Some(ThemeFill::Solid(tokens.surface_raised))
+    } else if is_in_multi_selection {
+        Some(ThemeFill::Solid(tokens.accent_soft))
+    } else if is_being_dragged || is_hovered {
+        Some(ThemeFill::Solid(tokens.surface_hover))
     } else {
         None
-    }
-}
-
-/// Visual state of a tab card in the rail.
-///
-/// Cards are delineated by an outline rather than by hairline separators, so the
-/// outline is what carries state: it brightens from resting to hovered to active.
-/// The fill only reinforces it, which keeps the rail readable when the panel and
-/// the terminal share the same background color.
-#[derive(Clone, Copy)]
-enum TabCardState {
-    Resting,
-    Hovered,
-    Active,
-    DropTarget,
-}
-
-impl TabCardState {
-    fn resolve(is_drop_target: bool, is_active: bool, is_hovered: bool) -> Self {
-        if is_drop_target {
-            Self::DropTarget
-        } else if is_active {
-            Self::Active
-        } else if is_hovered {
-            Self::Hovered
-        } else {
-            Self::Resting
-        }
-    }
-
-    /// Outline color. `neutral_*` tokens are pre-blended into the background, so an
-    /// outline lands on the same value whether or not the card underneath is filled.
-    /// The steps are wide apart on purpose: on a near-black rail, adjacent 5% steps
-    /// are indistinguishable, which is what made the old hairlines read as grain.
-    fn border(self, theme: &WarpTheme) -> ThemeFill {
-        match self {
-            Self::DropTarget => ThemeFill::Solid(theme.accent().into()),
-            Self::Active => ThemeFill::Solid(internal_colors::neutral_5(theme)),
-            Self::Hovered => ThemeFill::Solid(internal_colors::neutral_4(theme)),
-            Self::Resting => ThemeFill::Solid(internal_colors::neutral_3(theme)),
-        }
-    }
-
-    fn background(self, theme: &WarpTheme) -> ThemeFill {
-        match self {
-            // Two overlay steps: matches the gray the active tab had back when the
-            // whole panel was tinted, now that the panel itself is plain background.
-            Self::DropTarget | Self::Active => internal_colors::fg_overlay_2(theme),
-            Self::Hovered => internal_colors::fg_overlay_1(theme),
-            Self::Resting => ThemeFill::Solid(ColorU::transparent_black()),
-        }
-    }
-}
-
-fn section_card_colors(
-    card_state: TabCardState,
-    tint: Option<ColorU>,
-    theme: &WarpTheme,
-) -> (ThemeFill, ThemeFill) {
-    if let Some(color) = tint {
-        let is_emphasized = matches!(card_state, TabCardState::Active | TabCardState::Hovered);
-        let background_opacity = if is_emphasized {
-            SECTION_TINT_BACKGROUND_ACTIVE_OPACITY
-        } else {
-            SECTION_TINT_BACKGROUND_OPACITY
-        };
-        let border_opacity = if is_emphasized {
-            SECTION_TINT_BORDER_ACTIVE_OPACITY
-        } else {
-            SECTION_TINT_BORDER_OPACITY
-        };
-        (
-            ThemeFill::Solid(coloru_with_opacity(color, background_opacity)),
-            ThemeFill::Solid(coloru_with_opacity(color, border_opacity)),
-        )
-    } else {
-        (card_state.background(theme), card_state.border(theme))
     }
 }
 
@@ -757,8 +494,13 @@ fn render_pane_row_element(
         is_pinned,
         container_is_hovered,
         origin_badge: _,
+        is_coordinator: _,
+        auto_controls: _,
+        coordinator_switch: _,
     } = props;
     let is_selected = is_active_tab && is_focused;
+    let tokens = Tokens::new(theme);
+    let tokens = &tokens;
     let show_pin = FeatureFlag::PinnedTabs.is_enabled() && is_pinned && !container_is_hovered;
     let mut row = Hoverable::new(mouse_state, move |state| {
         // Hovered or selected rows always fully round; otherwise derive the
@@ -778,46 +520,15 @@ fn render_pane_row_element(
             is_in_multi_selection,
             state.is_hovered(),
             is_being_dragged,
-            theme,
+            tokens,
         ) {
             container = container.with_background(background);
         }
 
-        // No outline here: the tab card around this row already draws one, and a
-        // second frame a few pixels inside it reads as noise. A selected row is
-        // carried by its fill and by the accent spine added below.
         let pane: Box<dyn Element> = container.finish();
 
-        // Overlays that live outside the row's content clip: the active-tab accent
-        // "spine" on the left edge and the pin indicator at the top-right corner.
-        // Only wrap in a Stack when at least one overlay is present.
-        if is_selected || show_pin {
+        if show_pin {
             let mut stack = Stack::new().with_child(pane);
-            if is_selected {
-                // A short accent bar marking the focused tab — the single place the
-                // brand accent shows up in the rail. Drawn as an overlay so it never
-                // shifts the row content and paints above the row's clip and border.
-                let spine = ConstrainedBox::new(
-                    Container::new(Empty::new().finish())
-                        .with_background(ThemeFill::Solid(theme.accent().into()))
-                        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(
-                            ACTIVE_TAB_SPINE_WIDTH / 2.,
-                        )))
-                        .finish(),
-                )
-                .with_width(ACTIVE_TAB_SPINE_WIDTH)
-                .with_height(ACTIVE_TAB_SPINE_HEIGHT)
-                .finish();
-                stack.add_positioned_overlay_child(
-                    spine,
-                    OffsetPositioning::offset_from_parent(
-                        vec2f(ACTIVE_TAB_SPINE_LEFT_INSET, 0.),
-                        ParentOffsetBounds::ParentByPosition,
-                        ParentAnchor::MiddleLeft,
-                        ChildAnchor::MiddleLeft,
-                    ),
-                );
-            }
             if show_pin {
                 let pin_icon = ConstrainedBox::new(
                     WarpIcon::PinFilledDiagonal
@@ -890,6 +601,11 @@ fn render_pane_row_element(
         let mut changed = false;
         if is_hovered {
             if !suppress_hover && overlay_state.active_target != detail_target {
+                // Moving between rows while a card is up swaps it right away.
+                if overlay_state.active_target.is_none() {
+                    overlay_state.target_set_at = Some(Instant::now());
+                    ctx.dispatch_typed_action(WorkspaceAction::RevealTabDetailCardAfterDelay);
+                }
                 overlay_state.active_target = detail_target;
                 if detail_target.is_none() {
                     overlay_state.safe_triangle.set_target_rect(None);
@@ -955,6 +671,15 @@ fn render_pane_row_element(
     SavePosition::new(row.finish(), &row_position_id).finish()
 }
 
+/// What a sidebar foot link opens.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SidebarPopover {
+    Tasks,
+    Bookmarks,
+    /// The coordinator's auto-coordinate settings, opened from its row.
+    AutoCoordinate,
+}
+
 #[derive(Clone, Default)]
 struct PaneRowBadgeMouseStates {
     diff_stats: MouseStateHandle,
@@ -996,6 +721,9 @@ enum VerticalTabsDetailTargetKind {
 
 struct VerticalTabsDetailOverlayState {
     active_target: Option<VerticalTabsDetailTarget>,
+    /// When `active_target` last changed. The card waits [`DETAIL_CARD_DELAY`] from here, so moving
+    /// the mouse down the list doesn't flash one card per row.
+    target_set_at: Option<Instant>,
     safe_triangle: SafeTriangle,
 }
 
@@ -1003,6 +731,7 @@ impl Default for VerticalTabsDetailOverlayState {
     fn default() -> Self {
         Self {
             active_target: None,
+            target_set_at: None,
             safe_triangle: SafeTriangle::new(),
         }
     }
@@ -1065,7 +794,6 @@ pub(super) struct VerticalTabsPanelState {
     scroll_state: ClippedScrollStateHandle,
     bookmarked_session_scroll_state: ClippedScrollStateHandle,
     task_scroll_state: ClippedScrollStateHandle,
-    tasks_resizable_state: ResizableStateHandle,
     resizable_state: ResizableStateHandle,
     group_mouse_states: RefCell<HashMap<EntityId, PaneGroupStateHandles>>,
     /// Hover states per tab group, keyed by `TabGroupId`.
@@ -1077,28 +805,9 @@ pub(super) struct VerticalTabsPanelState {
     detail_scroll_state: ClippedScrollStateHandle,
     detail_sidecar_mouse_state: MouseStateHandle,
     detail_overlay_state: Arc<Mutex<VerticalTabsDetailOverlayState>>,
-    create_section_mouse_state: MouseStateHandle,
     new_tab_hover_state: MouseStateHandle,
     new_tab_button_state: MouseStateHandle,
-    worktree_toggle_hover_state: MouseStateHandle,
-    worktree_toggle_button_state: MouseStateHandle,
     pub(super) search_query: String,
-    settings_button_mouse_state: MouseStateHandle,
-    panes_segment_mouse_state: MouseStateHandle,
-    tabs_segment_mouse_state: MouseStateHandle,
-    focused_session_option_mouse_state: MouseStateHandle,
-    summary_option_mouse_state: MouseStateHandle,
-    compact_segment_mouse_state: MouseStateHandle,
-    expanded_segment_mouse_state: MouseStateHandle,
-    command_option_mouse_state: MouseStateHandle,
-    directory_option_mouse_state: MouseStateHandle,
-    branch_option_mouse_state: MouseStateHandle,
-    subtitle_option_1_mouse_state: MouseStateHandle,
-    subtitle_option_2_mouse_state: MouseStateHandle,
-    show_pr_link_mouse_state: MouseStateHandle,
-    show_pr_link_info_tooltip_mouse_state: MouseStateHandle,
-    show_diff_stats_mouse_state: MouseStateHandle,
-    show_details_on_hover_mouse_state: MouseStateHandle,
     panel_right_click_mouse_state: MouseStateHandle,
     attention_chip_mouse_state: MouseStateHandle,
     bookmarked_section_mouse_states: TabGroupMouseStates,
@@ -1108,7 +817,12 @@ pub(super) struct VerticalTabsPanelState {
     tasks_header_mouse_state: MouseStateHandle,
     tasks_add_mouse_state: MouseStateHandle,
     task_mouse_states: RefCell<HashMap<WorkspaceTaskId, WorkspaceTaskMouseStates>>,
-    pub(super) show_settings_popup: bool,
+    pub(super) open_popover: Option<SidebarPopover>,
+    tasks_link_mouse_state: MouseStateHandle,
+    bookmarks_link_mouse_state: MouseStateHandle,
+    new_section_mouse_state: MouseStateHandle,
+    auto_coordinate_ui: super::auto_coordinate::AutoCoordinateUiState,
+    coordinator_switch_state: MouseStateHandle,
 }
 
 impl Default for VerticalTabsPanelState {
@@ -1117,8 +831,13 @@ impl Default for VerticalTabsPanelState {
             scroll_state: ClippedScrollStateHandle::default(),
             bookmarked_session_scroll_state: ClippedScrollStateHandle::default(),
             task_scroll_state: ClippedScrollStateHandle::default(),
-            tasks_resizable_state: resizable_state_handle(TASKS_DEFAULT_HEIGHT),
             resizable_state: resizable_state_handle(PANEL_WIDTH),
+            open_popover: None,
+            tasks_link_mouse_state: MouseStateHandle::default(),
+            bookmarks_link_mouse_state: MouseStateHandle::default(),
+            new_section_mouse_state: MouseStateHandle::default(),
+            auto_coordinate_ui: Default::default(),
+            coordinator_switch_state: MouseStateHandle::default(),
             group_mouse_states: RefCell::default(),
             tab_group_mouse_states: RefCell::default(),
             pane_row_mouse_states: RefCell::default(),
@@ -1128,28 +847,9 @@ impl Default for VerticalTabsPanelState {
             detail_scroll_state: ClippedScrollStateHandle::default(),
             detail_sidecar_mouse_state: Default::default(),
             detail_overlay_state: Arc::new(Mutex::new(VerticalTabsDetailOverlayState::default())),
-            create_section_mouse_state: Default::default(),
             new_tab_hover_state: Default::default(),
             new_tab_button_state: Default::default(),
-            worktree_toggle_hover_state: Default::default(),
-            worktree_toggle_button_state: Default::default(),
             search_query: String::new(),
-            settings_button_mouse_state: Default::default(),
-            panes_segment_mouse_state: Default::default(),
-            tabs_segment_mouse_state: Default::default(),
-            focused_session_option_mouse_state: Default::default(),
-            summary_option_mouse_state: Default::default(),
-            compact_segment_mouse_state: Default::default(),
-            expanded_segment_mouse_state: Default::default(),
-            command_option_mouse_state: Default::default(),
-            directory_option_mouse_state: Default::default(),
-            branch_option_mouse_state: Default::default(),
-            subtitle_option_1_mouse_state: Default::default(),
-            subtitle_option_2_mouse_state: Default::default(),
-            show_pr_link_mouse_state: Default::default(),
-            show_pr_link_info_tooltip_mouse_state: Default::default(),
-            show_diff_stats_mouse_state: Default::default(),
-            show_details_on_hover_mouse_state: Default::default(),
             panel_right_click_mouse_state: Default::default(),
             attention_chip_mouse_state: Default::default(),
             bookmarked_section_mouse_states: Default::default(),
@@ -1158,7 +858,6 @@ impl Default for VerticalTabsPanelState {
             tasks_header_mouse_state: Default::default(),
             tasks_add_mouse_state: Default::default(),
             task_mouse_states: RefCell::default(),
-            show_settings_popup: false,
         }
     }
 }
@@ -1236,6 +935,12 @@ struct TabOriginBadge {
 
 struct PaneProps<'a> {
     origin_badge: Option<TabOriginBadge>,
+    /// The project's coordinator tab, which gets its own mark and explanation.
+    is_coordinator: bool,
+    /// The Auto pill, on the coordinator's first row.
+    auto_controls: Option<super::auto_coordinate::AutoPillProps>,
+    /// The coordinator's on/off switch, on its first row.
+    coordinator_switch: Option<MouseStateHandle>,
     pane_id: PaneId,
     pane_group_id: EntityId,
     is_active_tab: bool,
@@ -1311,7 +1016,6 @@ enum TabGroupColorMode {
 enum VerticalTabsResolvedMode {
     Panes,
     FocusedSession,
-    Summary,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1340,31 +1044,6 @@ pub(super) enum SummaryPaneKindIcons {
         primary: SummaryPaneKind,
         secondary: SummaryPaneKind,
     },
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct VerticalTabsSummaryBranchEntry {
-    repo_path: PathBuf,
-    branch_name: String,
-    diff_stats: Option<GitLineChanges>,
-    pull_request_label: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct VerticalTabsSummaryPrimaryLabel {
-    text: String,
-    /// Some when the contributing pane is a conversation with a known status. Drives the
-    /// per-line status pill prefix in Summary mode.
-    status: Option<ConversationStatus>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq)]
-struct VerticalTabsSummaryData {
-    primary_labels: Vec<VerticalTabsSummaryPrimaryLabel>,
-    working_directories: Vec<String>,
-    branch_entries: Vec<VerticalTabsSummaryBranchEntry>,
-    has_unread_activity: bool,
-    has_running_command: bool,
 }
 
 impl TabGroupColorMode {
@@ -1407,13 +1086,8 @@ fn resolve_vertical_tabs_mode(app: &AppContext) -> VerticalTabsResolvedMode {
         VerticalTabsDisplayGranularity::Panes => VerticalTabsResolvedMode::Panes,
         VerticalTabsDisplayGranularity::Tabs => match *settings.vertical_tabs_tab_item_mode.value()
         {
-            VerticalTabsTabItemMode::FocusedSession => VerticalTabsResolvedMode::FocusedSession,
-            VerticalTabsTabItemMode::Summary => {
-                if FeatureFlag::VerticalTabsSummaryMode.is_enabled() {
-                    VerticalTabsResolvedMode::Summary
-                } else {
-                    VerticalTabsResolvedMode::FocusedSession
-                }
+            VerticalTabsTabItemMode::FocusedSession | VerticalTabsTabItemMode::Summary => {
+                VerticalTabsResolvedMode::FocusedSession
             }
         },
     }
@@ -1434,144 +1108,13 @@ fn push_normalized_unique_summary_text(
     values.push(normalized);
 }
 
-/// Push a primary label, preserving the first-seen display text and conversation status
-/// when the same normalized label is contributed by multiple panes.
-fn push_normalized_unique_summary_label(
-    values: &mut Vec<VerticalTabsSummaryPrimaryLabel>,
-    seen: &mut HashMap<String, ()>,
-    text: &str,
-    status: Option<ConversationStatus>,
-) {
-    let Some(normalized) = normalize_summary_text(text) else {
-        return;
-    };
-    if seen.contains_key(&normalized) {
-        return;
-    }
-    seen.insert(normalized.clone(), ());
-    values.push(VerticalTabsSummaryPrimaryLabel {
-        text: normalized,
-        status,
-    });
-}
-
-/// Stable sort that moves labels with a known `ConversationStatus` ahead of labels without
-/// one, while preserving the relative first-seen order within each group. Used in Summary
-/// mode so the visible 3-line title region (and the `+ N more` overflow) prioritizes
-/// conversation lines over plain terminal / non-conversation lines.
-fn sort_summary_primary_labels_status_first(values: &mut [VerticalTabsSummaryPrimaryLabel]) {
-    values.sort_by_key(|label| label.status.is_none());
-}
-
 fn normalize_summary_text(text: &str) -> Option<String> {
     let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
     (!normalized.is_empty()).then_some(normalized)
 }
 
-/// Returns the activity status for a terminal pane, used to render the per-line status pill
-/// prefix in Summary mode. Mirrors the status sources used by `render_detail_status_pill` in the
-/// detail sidecar: CLI agent sessions, foreground commands, Oz conversations, or ambient runs.
-/// Returns `None` when the terminal is idle and no conversation has a displayable status.
-fn summary_conversation_status_for_terminal(
-    terminal_view: &TerminalView,
-    app: &AppContext,
-) -> Option<ConversationStatus> {
-    let cli_agent_session = CLIAgentSessionsModel::as_ref(app).session(terminal_view.id());
-    if let Some(session) = cli_agent_session.filter(|s| !matches!(s.agent, CLIAgent::Unknown)) {
-        return cli_agent_session_status_for_display(terminal_view, session);
-    }
-
-    if let Some(status) = terminal_command_status(terminal_view.current_state().state) {
-        return Some(status);
-    }
-
-    let is_ambient = terminal_view.is_ambient_agent_session(app);
-    let has_conversation = terminal_view
-        .selected_conversation_display_title(app)
-        .is_some();
-    (has_conversation || is_ambient)
-        .then(|| terminal_view.selected_conversation_status_for_display(app))
-        .flatten()
-}
-
 fn terminal_command_status(state: TerminalViewState) -> Option<ConversationStatus> {
     matches!(state, TerminalViewState::LongRunning).then_some(ConversationStatus::InProgress)
-}
-
-fn coalesce_summary_branch_entries(
-    entries: Vec<VerticalTabsSummaryBranchEntry>,
-) -> Vec<VerticalTabsSummaryBranchEntry> {
-    let mut coalesced: Vec<VerticalTabsSummaryBranchEntry> = Vec::new();
-    let mut indices: HashMap<(PathBuf, String), usize> = HashMap::new();
-    for entry in entries {
-        let key = (entry.repo_path.clone(), entry.branch_name.clone());
-        if let Some(index) = indices.get(&key).copied() {
-            let existing = &mut coalesced[index];
-            if existing.diff_stats.is_none() {
-                existing.diff_stats = entry.diff_stats;
-            }
-            if existing.pull_request_label.is_none() {
-                existing.pull_request_label = entry.pull_request_label;
-            }
-        } else {
-            indices.insert(key, coalesced.len());
-            coalesced.push(entry);
-        }
-    }
-    coalesced
-}
-
-fn summary_overflow_count(total_count: usize, visible_limit: usize) -> usize {
-    total_count.saturating_sub(visible_limit)
-}
-
-fn summary_search_text_fragments(
-    summary: &VerticalTabsSummaryData,
-    title_override: Option<&str>,
-) -> Vec<String> {
-    let mut fragments = Vec::new();
-    if let Some(title_override) = title_override.and_then(normalize_summary_text) {
-        fragments.push(title_override);
-    }
-    fragments.extend(
-        summary
-            .primary_labels
-            .iter()
-            .map(|label| label.text.clone()),
-    );
-    fragments.extend(summary.working_directories.iter().cloned());
-    for entry in &summary.branch_entries {
-        fragments.push(entry.branch_name.clone());
-        if let Some(pull_request_label) = &entry.pull_request_label {
-            fragments.push(pull_request_label.clone());
-        }
-        if let Some(diff_stats) = &entry.diff_stats {
-            fragments.push(vtab_diff_stats_text(diff_stats));
-        }
-    }
-    fragments
-}
-
-fn select_summary_pane_kind_icons(
-    pane_kinds: impl IntoIterator<Item = (EntityId, SummaryPaneKind)>,
-) -> Option<SummaryPaneKindIcons> {
-    let mut unique_kinds = select_unique_pane_kinds(pane_kinds, 2).into_iter();
-    let primary = unique_kinds.next()?;
-    match unique_kinds.next() {
-        Some(secondary) => Some(SummaryPaneKindIcons::Pair { primary, secondary }),
-        None => Some(SummaryPaneKindIcons::Single(primary)),
-    }
-}
-
-fn resolve_summary_pane_kind_icons(
-    pane_group: &PaneGroup,
-    visible_pane_ids: &[PaneId],
-    app: &AppContext,
-) -> Option<SummaryPaneKindIcons> {
-    select_summary_pane_kind_icons(visible_pane_ids.iter().filter_map(|pane_id| {
-        let kind = pane_summary_kind(pane_group, *pane_id, app)?;
-        Some((pane_id.creation_order_id(), kind))
-    }))
 }
 
 /// Per-tick scroll delta for a drag whose dragged element is centred at `drag_y`
@@ -1621,9 +1164,7 @@ impl VerticalTabsPanelState {
         let resolved_mode = resolve_vertical_tabs_mode(app);
         let display_granularity = match resolved_mode {
             VerticalTabsResolvedMode::Panes => VerticalTabsDisplayGranularity::Panes,
-            VerticalTabsResolvedMode::FocusedSession | VerticalTabsResolvedMode::Summary => {
-                VerticalTabsDisplayGranularity::Tabs
-            }
+            VerticalTabsResolvedMode::FocusedSession => VerticalTabsDisplayGranularity::Tabs,
         };
         tabs.iter()
             .enumerate()
@@ -1631,17 +1172,6 @@ impl VerticalTabsPanelState {
                 let pane_group = tab.pane_group.as_ref(app);
                 let visible_pane_ids = pane_group.visible_pane_ids();
                 match resolved_mode {
-                    VerticalTabsResolvedMode::Summary => {
-                        let summary =
-                            build_vertical_tabs_summary_data(pane_group, &visible_pane_ids, app);
-                        search_fragments_contain_query(
-                            &summary_search_text_fragments(
-                                &summary,
-                                pane_group.custom_title(app).as_deref(),
-                            ),
-                            &query_lower,
-                        )
-                    }
                     VerticalTabsResolvedMode::Panes | VerticalTabsResolvedMode::FocusedSession => {
                         pane_ids_for_display_granularity(
                             &visible_pane_ids,
@@ -1691,19 +1221,16 @@ impl VerticalTabsPanelState {
     }
 }
 
-const CONTROL_BAR_VERTICAL_PADDING: f32 = 4.;
 const CONTROL_BAR_SPACING: f32 = 4.;
-const SEARCH_ICON_SIZE: f32 = 12.;
-const SEARCH_BAR_HEIGHT: f32 = 24.;
-const CONTROL_BAR_BUTTON_RADIUS: Radius = Radius::Pixels(4.);
+const SEARCH_ICON_SIZE: f32 = 14.;
+const SEARCH_BAR_HEIGHT: f32 = 30.;
+const CONTROL_BAR_BUTTON_RADIUS: Radius = RADIUS_SM;
 const SPLIT_BUTTON_HEIGHT: f32 = SEARCH_BAR_HEIGHT;
 pub(super) const VERTICAL_TABS_ADD_TAB_POSITION_ID: &str = "vertical_tabs_add_tab_button";
-pub(super) const VERTICAL_TABS_SETTINGS_BUTTON_POSITION_ID: &str = "vertical_tabs_settings_button";
 
 pub(super) fn vtab_action_buttons_position_id(tab_index: usize) -> String {
     format!("vtab_action_buttons_{tab_index}")
 }
-const COMPACT_ICON_SIZE: f32 = 16.;
 const GROUP_INSERTION_TARGET_HEIGHT: f32 = 6.;
 const GROUP_INSERTION_INDICATOR_HEIGHT: f32 = 3.;
 
@@ -1719,8 +1246,7 @@ fn any_workspace_pane_being_dragged(workspace: &Workspace, app: &AppContext) -> 
 /// height as a real tab row — the floating chip at the cursor carries all
 /// visual content.
 fn render_ghost_vertical_tab_slot(workspace: &Workspace, app: &AppContext) -> Box<dyn Element> {
-    let appearance = Appearance::as_ref(app);
-    let theme = appearance.theme();
+    let tokens = Appearance::as_ref(app).tokens();
     // Match the height of a real tab group row from the last rendered frame.
     // Falls back to 40px if no frame data is available yet.
     let height = workspace
@@ -1731,11 +1257,10 @@ fn render_ghost_vertical_tab_slot(workspace: &Workspace, app: &AppContext) -> Bo
         })
         .map(|rect| rect.height())
         .unwrap_or(40.);
-    // Shaped like the card that will land here: same outline, same radius.
+    // Shaped like the row that will land here.
     ConstrainedBox::new(
         Container::new(Empty::new().finish())
-            .with_background(TabCardState::Hovered.background(theme))
-            .with_border(Border::all(1.).with_border_fill(TabCardState::Resting.border(theme)))
+            .with_background(ThemeFill::Solid(tokens.accent_soft))
             .with_corner_radius(CornerRadius::with_all(Radius::Pixels(ROW_CORNER_RADIUS)))
             .finish(),
     )
@@ -1815,23 +1340,23 @@ fn add_vertical_tab_insertion_target_overlay(
 }
 
 /// Compact "N waiting" chip for the vertical-tabs control bar: the number of tabs whose agent
-/// is currently waiting on the user, per the same derivation as the yellow attention badge on
-/// tab rows (`Workspace::agent_attention_tab_indices`). Returns `None` when no agent is
-/// waiting so the control bar renders unchanged. Clicking dispatches
+/// is blocked on the user, the same tabs that carry the amber badge
+/// (`Workspace::agent_needs_input_tab_indices`). Returns `None` when no agent is waiting so the
+/// control bar renders unchanged. Clicking dispatches
 /// [`WorkspaceAction::FocusNextAgentAttention`], the same cycling action as its keybinding.
 fn render_agent_attention_chip(
     state: &VerticalTabsPanelState,
     workspace: &Workspace,
     app: &AppContext,
 ) -> Option<Box<dyn Element>> {
-    let waiting_count = workspace.agent_attention_tab_indices(app).len();
+    let waiting_count = workspace.agent_needs_input_tab_indices(app).len();
     if waiting_count == 0 {
         return None;
     }
 
     let appearance = Appearance::as_ref(app);
-    let theme = appearance.theme();
-    let sub_text = theme.sub_text_color(theme.background());
+    let tokens = appearance.tokens();
+    let amber = ThemeFill::Solid(tokens.status(StatusKind::NeedsYou));
     let ui_builder = appearance.ui_builder().clone();
     let cycle_keybinding =
         keybinding_name_to_display_string(super::FOCUS_NEXT_AGENT_ATTENTION_BINDING_NAME, app);
@@ -1845,17 +1370,17 @@ fn render_agent_attention_chip(
                     .with_height(SEARCH_ICON_SIZE)
                     .finish();
                 let label = render_text_line(
-                    &format!("{waiting_count} waiting"),
-                    sub_text,
+                    &waiting_count.to_string(),
+                    amber,
                     ClipConfig::ellipsis(),
                     appearance,
                 );
 
-                let background = if hover_state.is_hovered() {
-                    internal_colors::fg_overlay_2(theme)
+                let background = ThemeFill::Solid(if hover_state.is_hovered() {
+                    coloru_with_opacity(tokens.status(StatusKind::NeedsYou), 25)
                 } else {
-                    ThemeFill::Solid(ColorU::transparent_black())
-                };
+                    tokens.status_soft(StatusKind::NeedsYou)
+                });
                 let chip = Container::new(
                     Flex::row()
                         .with_cross_axis_alignment(CrossAxisAlignment::Center)
@@ -1864,7 +1389,7 @@ fn render_agent_attention_chip(
                         .with_child(label)
                         .finish(),
                 )
-                .with_padding(Padding::uniform(2.).with_left(4.).with_right(4.))
+                .with_padding(Padding::uniform(7.).with_left(8.).with_right(8.))
                 .with_background(background)
                 .with_corner_radius(CornerRadius::with_all(CONTROL_BAR_BUTTON_RADIUS))
                 .finish();
@@ -1933,16 +1458,21 @@ fn render_control_bar(
     .build()
     .finish();
 
-    let search_bar = Flex::row()
-        .with_main_axis_size(MainAxisSize::Max)
-        .with_cross_axis_alignment(CrossAxisAlignment::Center)
-        .with_spacing(6.)
-        .with_child(search_icon)
-        .with_child(Shrinkable::new(1., text_input).finish())
-        .finish();
+    let search_bar = Container::new(
+        Flex::row()
+            .with_main_axis_size(MainAxisSize::Max)
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_spacing(8.)
+            .with_child(search_icon)
+            .with_child(Shrinkable::new(1., text_input).finish())
+            .finish(),
+    )
+    .with_horizontal_padding(10.)
+    .with_vertical_padding(7.)
+    .with_background(ThemeFill::Solid(appearance.tokens().surface_field))
+    .with_corner_radius(CornerRadius::with_all(CONTROL_BAR_BUTTON_RADIUS))
+    .finish();
 
-    let settings_button = render_settings_button(state, appearance);
-    let worktree_toggle = render_automatic_worktree_toggle(state, appearance, app);
     let new_tab_button = render_new_tab_button(state, workspace, appearance, app);
 
     let mut control_row = Flex::row()
@@ -1955,89 +1485,212 @@ fn render_control_bar(
         control_row = control_row.with_child(attention_chip);
     }
 
-    control_row = control_row.with_child(settings_button);
-    if let Some(worktree_toggle) = worktree_toggle {
-        control_row = control_row.with_child(worktree_toggle);
-    }
-
     Container::new(control_row.with_child(new_tab_button).finish())
         .with_padding(
-            Padding::uniform(CONTROL_BAR_VERTICAL_PADDING)
-                .with_left(GROUP_HORIZONTAL_PADDING)
-                .with_right(GROUP_HORIZONTAL_PADDING),
+            Padding::uniform(0.)
+                .with_top(2.)
+                .with_bottom(10.)
+                .with_left(GROUP_HORIZONTAL_PADDING),
         )
         .finish()
 }
 
-fn section_accent_border_fill() -> ThemeFill {
-    ThemeFill::Solid(coloru_with_opacity(
-        CLINCH_LOGO_GREEN,
-        SECTION_ACCENT_BORDER_OPACITY,
-    ))
+/// A button at the foot of the sidebar that opens its popover.
+fn render_foot_button(
+    icon: WarpIcon,
+    label: String,
+    popover: SidebarPopover,
+    is_open: bool,
+    mouse_state: MouseStateHandle,
+    position_id: &'static str,
+    appearance: &Appearance,
+) -> Box<dyn Element> {
+    let tokens = *appearance.tokens();
+    let font_family = appearance.ui_font_family();
+    let button = Hoverable::new(mouse_state, move |hover_state| {
+        let content = Flex::row()
+            .with_main_axis_size(MainAxisSize::Max)
+            .with_main_axis_alignment(MainAxisAlignment::Center)
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_spacing(7.)
+            .with_child(
+                ConstrainedBox::new(
+                    icon.to_warpui_icon(WarpThemeFill::Solid(tokens.text_2))
+                        .finish(),
+                )
+                .with_width(15.)
+                .with_height(15.)
+                .finish(),
+            )
+            .with_child(
+                Text::new_inline(label.clone(), font_family, 13.)
+                    .with_style(Properties::default().weight(Weight::Medium))
+                    .with_color(tokens.text_1)
+                    .finish(),
+            )
+            .finish();
+        let background = if is_open || hover_state.is_hovered() {
+            tokens.surface_raised
+        } else {
+            tokens.surface_field
+        };
+        Container::new(content)
+            .with_vertical_padding(8.)
+            .with_horizontal_padding(10.)
+            .with_background(ThemeFill::Solid(background))
+            .with_corner_radius(corners_md())
+            .finish()
+    })
+    .with_cursor(Cursor::PointingHand)
+    .on_click(move |ctx, _, _| {
+        ctx.dispatch_typed_action(WorkspaceAction::ToggleSidebarPopover(popover));
+    })
+    .finish();
+    SavePosition::new(button, position_id).finish()
 }
 
-fn render_create_section_button(
+/// The square "+" at the end of the sidebar foot that makes a new section.
+fn render_new_section_button(
+    mouse_state: MouseStateHandle,
+    appearance: &Appearance,
+) -> Box<dyn Element> {
+    let tokens = *appearance.tokens();
+    let ui_builder = appearance.ui_builder().clone();
+    Hoverable::new(mouse_state, move |hover_state| {
+        let is_hovered = hover_state.is_hovered();
+        let background = if is_hovered {
+            tokens.surface_raised
+        } else {
+            tokens.surface_field
+        };
+        let button = Container::new(
+            ConstrainedBox::new(
+                WarpIcon::Plus
+                    .to_warpui_icon(WarpThemeFill::Solid(tokens.text_2))
+                    .finish(),
+            )
+            .with_width(15.)
+            .with_height(15.)
+            .finish(),
+        )
+        .with_uniform_padding(10.)
+        .with_background(ThemeFill::Solid(background))
+        .with_corner_radius(corners_md())
+        .finish();
+        if !is_hovered {
+            return button;
+        }
+        let mut stack = Stack::new().with_child(button);
+        stack.add_positioned_overlay_child(
+            ui_builder
+                .tool_tip("New section".to_owned())
+                .build()
+                .finish(),
+            OffsetPositioning::offset_from_parent(
+                vec2f(0., -6.),
+                ParentOffsetBounds::WindowByPosition,
+                ParentAnchor::TopMiddle,
+                ChildAnchor::BottomMiddle,
+            ),
+        );
+        stack.finish()
+    })
+    .with_cursor(Cursor::PointingHand)
+    .on_click(|ctx, _, _| ctx.dispatch_typed_action(WorkspaceAction::CreateNewTabGroup))
+    .finish()
+}
+
+fn render_sidebar_foot(
     state: &VerticalTabsPanelState,
+    workspace: &Workspace,
     app: &AppContext,
 ) -> Box<dyn Element> {
     let appearance = Appearance::as_ref(app);
-    let theme = appearance.theme();
-    let font_family = appearance.ui_font_family();
-    let main_text = theme.main_text_color(theme.background());
-    let border_fill = section_accent_border_fill();
-
-    let button = Hoverable::new(
-        state.create_section_mouse_state.clone(),
-        move |mouse_state| {
-            let icon = ConstrainedBox::new(
-                WarpIcon::Plus
-                    .to_warpui_icon(WarpThemeFill::Solid(CLINCH_LOGO_GREEN))
-                    .finish(),
+    let task_count = workspace.tasks.len();
+    let tasks_label = if task_count == 0 {
+        "Tasks".to_string()
+    } else {
+        format!("Tasks · {task_count}")
+    };
+    Container::new(
+        Flex::row()
+            .with_main_axis_size(MainAxisSize::Max)
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_spacing(6.)
+            .with_child(
+                Expanded::new(
+                    1.,
+                    render_foot_button(
+                        WarpIcon::Check,
+                        tasks_label,
+                        SidebarPopover::Tasks,
+                        state.open_popover == Some(SidebarPopover::Tasks),
+                        state.tasks_link_mouse_state.clone(),
+                        SIDEBAR_TASKS_LINK_POSITION_ID,
+                        appearance,
+                    ),
+                )
+                .finish(),
             )
-            .with_width(14.)
-            .with_height(14.)
-            .finish();
-            let label = Text::new_inline("Create new section", font_family, 12.)
-                .with_style(Properties::default().weight(Weight::Semibold))
-                .with_color(main_text.into())
-                .finish();
-            let content = Flex::row()
-                .with_main_axis_size(MainAxisSize::Max)
-                .with_main_axis_alignment(MainAxisAlignment::Center)
-                .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                .with_spacing(6.)
-                .with_child(icon)
-                .with_child(label)
-                .finish();
-            let background = if mouse_state.is_hovered() {
-                ThemeFill::Solid(coloru_with_opacity(
-                    CLINCH_LOGO_GREEN,
-                    SECTION_ACCENT_HOVER_OPACITY,
-                ))
-            } else {
-                ThemeFill::Solid(ColorU::transparent_black())
-            };
-
-            Container::new(content)
-                .with_padding(Padding::uniform(7.))
-                .with_background(background)
-                .with_border(Border::all(1.).with_border_fill(border_fill))
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(ROW_CORNER_RADIUS)))
-                .finish()
-        },
+            .with_child(
+                Expanded::new(
+                    1.,
+                    render_foot_button(
+                        WarpIcon::Bookmark,
+                        "Bookmarks".to_string(),
+                        SidebarPopover::Bookmarks,
+                        state.open_popover == Some(SidebarPopover::Bookmarks),
+                        state.bookmarks_link_mouse_state.clone(),
+                        SIDEBAR_BOOKMARKS_LINK_POSITION_ID,
+                        appearance,
+                    ),
+                )
+                .finish(),
+            )
+            .with_child(render_new_section_button(
+                state.new_section_mouse_state.clone(),
+                appearance,
+            ))
+            .finish(),
     )
-    .with_cursor(Cursor::PointingHand)
-    .on_click(|ctx, _, _| {
-        ctx.dispatch_typed_action(WorkspaceAction::CreateNewTabGroup);
-    })
-    .finish();
+    .with_padding(
+        Padding::uniform(8.)
+            .with_left(GROUP_HORIZONTAL_PADDING)
+            .with_right(0.)
+            .with_bottom(10.),
+    )
+    .finish()
+}
 
-    Container::new(button)
-        .with_margin_left(GROUP_HORIZONTAL_PADDING)
-        .with_margin_right(GROUP_HORIZONTAL_PADDING)
-        .with_margin_top(GROUP_HORIZONTAL_PADDING)
-        .with_margin_bottom(GROUP_HORIZONTAL_PADDING)
-        .finish()
+/// The popover a foot link opens, rendered at the workspace root so it can cover the terminal.
+pub(super) fn render_sidebar_popover(
+    popover: SidebarPopover,
+    state: &VerticalTabsPanelState,
+    workspace: &Workspace,
+    app: &AppContext,
+) -> Box<dyn Element> {
+    let tokens = Appearance::as_ref(app).tokens();
+    let content = match popover {
+        SidebarPopover::Tasks => render_workspace_tasks(state, workspace, app),
+        SidebarPopover::Bookmarks => render_bookmarked_sessions(state, workspace, app),
+        SidebarPopover::AutoCoordinate => super::auto_coordinate::render_auto_coordinate_popover(
+            &state.auto_coordinate_ui,
+            workspace,
+            app,
+        ),
+    };
+    ConstrainedBox::new(
+        Container::new(content)
+            .with_uniform_padding(6.)
+            .with_background(ThemeFill::Solid(tokens.surface_overlay))
+            .with_corner_radius(corners_lg())
+            .with_border(Border::all(1.).with_border_color(tokens.hairline))
+            .with_drop_shadow(tokens.overlay_shadow())
+            .finish(),
+    )
+    .with_width(SIDEBAR_POPOVER_WIDTH)
+    .with_max_height(SIDEBAR_POPOVER_MAX_HEIGHT)
+    .finish()
 }
 
 fn render_detail_kind_badge_icon(
@@ -2090,166 +1743,6 @@ fn render_detail_kind_badge_icon(
             typed.icon().to_warpui_icon(fill).finish()
         }
     }
-}
-
-fn render_settings_button(
-    state: &VerticalTabsPanelState,
-    appearance: &Appearance,
-) -> Box<dyn Element> {
-    let theme = appearance.theme();
-    let sub_text = theme.sub_text_color(theme.background());
-    let main_text = theme.main_text_color(theme.background());
-    let is_popup_open = state.show_settings_popup;
-    let ui_builder = appearance.ui_builder().clone();
-
-    let button = Hoverable::new(
-        state.settings_button_mouse_state.clone(),
-        move |hover_state| {
-            let icon = ConstrainedBox::new(
-                WarpIcon::Settings
-                    .to_warpui_icon(if is_popup_open { main_text } else { sub_text })
-                    .finish(),
-            )
-            .with_width(16.)
-            .with_height(16.)
-            .finish();
-
-            let background = if is_popup_open {
-                internal_colors::fg_overlay_3(theme)
-            } else if hover_state.is_hovered() {
-                internal_colors::fg_overlay_2(theme)
-            } else {
-                ThemeFill::Solid(ColorU::transparent_black())
-            };
-
-            let button_container = Container::new(icon)
-                .with_padding(Padding::uniform(2.))
-                .with_background(background)
-                .with_corner_radius(CornerRadius::with_all(CONTROL_BAR_BUTTON_RADIUS))
-                .finish();
-
-            if hover_state.is_hovered() && !is_popup_open {
-                let tooltip = ui_builder
-                    .tool_tip("View options".to_string())
-                    .build()
-                    .finish();
-                let mut stack = Stack::new().with_child(button_container);
-                stack.add_positioned_overlay_child(
-                    tooltip,
-                    OffsetPositioning::offset_from_parent(
-                        vec2f(0., 4.),
-                        ParentOffsetBounds::WindowByPosition,
-                        ParentAnchor::BottomMiddle,
-                        ChildAnchor::TopMiddle,
-                    ),
-                );
-                stack.finish()
-            } else {
-                button_container
-            }
-        },
-    )
-    .on_click(|ctx, _, _| {
-        ctx.dispatch_typed_action(WorkspaceAction::ToggleVerticalTabsSettingsPopup);
-    })
-    .with_cursor(Cursor::PointingHand)
-    .finish();
-
-    SavePosition::new(button, VERTICAL_TABS_SETTINGS_BUTTON_POSITION_ID).finish()
-}
-
-fn automatic_worktree_toggle_tooltip(enabled: bool) -> (&'static str, &'static str) {
-    (
-        if enabled {
-            "Automatic worktree tabs: On"
-        } else {
-            "Automatic worktree tabs: Off"
-        },
-        "Applies to all projects",
-    )
-}
-
-fn render_automatic_worktree_toggle(
-    state: &VerticalTabsPanelState,
-    appearance: &Appearance,
-    app: &AppContext,
-) -> Option<Box<dyn Element>> {
-    let setting = &ClinchSettings::as_ref(app).auto_create_worktrees_for_new_tabs;
-    if !setting.is_supported_on_current_platform() {
-        return None;
-    }
-
-    let enabled = **setting;
-    let theme = appearance.theme();
-    let sub_text = theme.sub_text_color(theme.background());
-    let active_color = theme.accent();
-    let ui_builder = appearance.ui_builder().clone();
-    let (tooltip_label, tooltip_sublabel) = automatic_worktree_toggle_tooltip(enabled);
-
-    Some(
-        Hoverable::new(
-            state.worktree_toggle_hover_state.clone(),
-            move |hover_state| {
-                let toggle_button = icon_button_with_color(
-                    appearance,
-                    UiIcon::Dataflow02,
-                    enabled,
-                    state.worktree_toggle_button_state.clone(),
-                    if enabled { active_color } else { sub_text },
-                )
-                .with_style(
-                    UiComponentStyles::default()
-                        .set_border_radius(CornerRadius::with_all(CONTROL_BAR_BUTTON_RADIUS)),
-                )
-                .with_active_styles(
-                    UiComponentStyles::default()
-                        .set_background(internal_colors::fg_overlay_3(theme).into()),
-                )
-                .build()
-                .on_click(|ctx, _, _| {
-                    ctx.dispatch_typed_action(WorkspaceAction::ToggleAutomaticWorktreeTabs);
-                })
-                .finish();
-
-                let contents = if hover_state.is_hovered() {
-                    let tooltip = ui_builder
-                        .tool_tip_with_sublabel(
-                            tooltip_label.to_string(),
-                            tooltip_sublabel.to_string(),
-                        )
-                        .build()
-                        .finish();
-                    let mut stack = Stack::new().with_child(toggle_button);
-                    stack.add_positioned_overlay_child(
-                        tooltip,
-                        OffsetPositioning::offset_from_parent(
-                            vec2f(0., 4.),
-                            ParentOffsetBounds::WindowByPosition,
-                            ParentAnchor::BottomMiddle,
-                            ChildAnchor::TopMiddle,
-                        ),
-                    );
-                    stack.finish()
-                } else {
-                    toggle_button
-                };
-
-                let mut container = Container::new(
-                    ConstrainedBox::new(contents)
-                        .with_height(SPLIT_BUTTON_HEIGHT)
-                        .finish(),
-                )
-                .with_corner_radius(CornerRadius::with_all(CONTROL_BAR_BUTTON_RADIUS));
-                if enabled {
-                    container = container.with_background(internal_colors::fg_overlay_3(theme));
-                } else if hover_state.is_hovered() {
-                    container = container.with_background(internal_colors::neutral_1(theme));
-                }
-                container.finish()
-            },
-        )
-        .finish(),
-    )
 }
 
 fn render_new_tab_button(
@@ -2538,10 +2031,7 @@ fn render_bookmarked_sessions(
 ) -> Box<dyn Element> {
     let appearance = Appearance::as_ref(app);
     let theme = appearance.theme();
-    let section_tint = workspace
-        .bookmarked_sessions_color
-        .resolve(Some(BOOKMARKED_SESSIONS_DEFAULT_COLOR))
-        .map(|color| color.to_color(&theme.terminal_colors().normal));
+    let tokens = appearance.tokens();
     let project_root = workspace.active_header_project_dir(app);
     let bookmarked = CLIAgentSessionsModel::as_ref(app)
         .bookmarked_conversations()
@@ -2553,21 +2043,6 @@ fn render_bookmarked_sessions(
         })
         .collect::<Vec<_>>();
     let count = bookmarked.len();
-
-    let mut collapsed_member_kinds = Vec::new();
-    for agent in bookmarked.iter().filter_map(|conversation| {
-        bookmarked_session_agent(conversation).map(|agent| SummaryPaneKind::CLIAgent {
-            agent,
-            is_ambient: false,
-        })
-    }) {
-        if !collapsed_member_kinds.contains(&agent) {
-            collapsed_member_kinds.push(agent);
-            if collapsed_member_kinds.len() == 4 {
-                break;
-            }
-        }
-    }
 
     let mouse_states = state.bookmarked_section_mouse_states.clone();
     let is_collapsed = workspace.bookmarked_sessions_collapsed;
@@ -2600,7 +2075,8 @@ fn render_bookmarked_sessions(
                 false,
                 false,
                 None,
-                is_collapsed.then_some(collapsed_member_kinds.as_slice()),
+                None,
+                None,
                 app,
             ));
 
@@ -2646,18 +2122,13 @@ fn render_bookmarked_sessions(
         } else if !is_collapsed {
             padding = padding.with_bottom(TAB_GROUP_CONTENT_INSET);
         }
-        let card_state = TabCardState::resolve(
-            state.bookmarked_section_is_drop_target,
-            false,
-            hover_state.is_hovered(),
-        );
-        let (card_background, card_border) = section_card_colors(card_state, section_tint, theme);
-        Container::new(content.finish())
+        let mut container = Container::new(content.finish())
             .with_padding(padding)
-            .with_background(card_background)
-            .with_border(Border::all(1.).with_border_fill(card_border))
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(ROW_CORNER_RADIUS)))
-            .finish()
+            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(ROW_CORNER_RADIUS)));
+        if state.bookmarked_section_is_drop_target {
+            container = container.with_background(ThemeFill::Solid(tokens.accent_soft));
+        }
+        container.finish()
     })
     .with_defer_events_to_children()
     .finish();
@@ -2766,7 +2237,6 @@ fn render_workspace_tasks(
     let theme = appearance.theme();
     let sub_text = theme.sub_text_color(theme.background());
     let task_count = workspace.tasks.len();
-    let resizable = !workspace.tasks_collapsed && task_count > 0;
 
     let chevron = if workspace.tasks_collapsed {
         WarpIcon::ChevronRight
@@ -2831,14 +2301,6 @@ fn render_workspace_tasks(
     let mut section = Flex::column()
         .with_main_axis_size(MainAxisSize::Min)
         .with_cross_axis_alignment(CrossAxisAlignment::Stretch);
-    if resizable {
-        // Keep the drag target separate from the clickable collapse/expand header.
-        section.add_child(
-            ConstrainedBox::new(Empty::new().finish())
-                .with_height(TASKS_RESIZE_HANDLE_HEIGHT)
-                .finish(),
-        );
-    }
     section.add_child(header);
 
     if !workspace.tasks_collapsed {
@@ -2895,27 +2357,7 @@ fn render_workspace_tasks(
         .borrow_mut()
         .retain(|task_id, _| active_task_ids.contains(task_id));
 
-    let section = Container::new(section.finish())
-        .with_border(
-            Border::new(1.)
-                .with_sides(true, false, false, false)
-                .with_border_fill(section_accent_border_fill()),
-        )
-        .finish();
-
-    if resizable {
-        Resizable::new(state.tasks_resizable_state.clone(), section)
-            .with_dragbar_side(DragBarSide::Top)
-            .with_dragbar_color(section_accent_border_fill().into())
-            .on_resize(|ctx, _| ctx.notify())
-            .with_parent_bounds_callback(Box::new(|available_size| {
-                let max_height = available_size.y().max(0.);
-                (TASKS_MIN_HEIGHT.min(max_height), max_height)
-            }))
-            .finish()
-    } else {
-        section
-    }
+    section.finish()
 }
 
 fn render_vertical_tabs_panel(
@@ -2930,7 +2372,7 @@ fn render_vertical_tabs_panel(
     let scrollable_groups = SavePosition::new(
         ClippedScrollable::vertical(
             state.scroll_state.clone(),
-            render_groups(state, workspace, app),
+            render_groups_with_coordinator_switch(state, workspace, app),
             ScrollbarWidth::Custom(4.),
             theme.nonactive_ui_detail().into(),
             theme.active_ui_detail().into(),
@@ -2942,16 +2384,11 @@ fn render_vertical_tabs_panel(
     )
     .finish();
 
-    // Lay out Tasks before the flexible tab list so a short task section gives its unused
-    // space back to tabs. Reserve at least a quarter of the remaining height for tabs;
-    // the control bar, bookmarks, and footer are measured before either flexible child.
     let panel_content = Flex::column()
         .with_reverse_orientation()
         .with_main_axis_size(MainAxisSize::Max)
         .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
-        .with_child(render_create_section_button(state, app))
-        .with_child(Shrinkable::new(3., render_workspace_tasks(state, workspace, app)).finish())
-        .with_child(render_bookmarked_sessions(state, workspace, app))
+        .with_child(render_sidebar_foot(state, workspace, app))
         .with_child(Expanded::new(1., scrollable_groups).finish())
         .with_child(render_control_bar(
             state,
@@ -2971,24 +2408,10 @@ fn render_vertical_tabs_panel(
         super::PanelPosition::Left => DragBarSide::Right,
         super::PanelPosition::Right => DragBarSide::Left,
     };
-    // The rail shares the terminal's background so the window reads as one surface;
-    // a single hairline on the terminal-facing edge is what separates them. It also
-    // gives the resize drag bar something visible to grab.
-    let (divider_on_left, divider_on_right) = match side {
-        super::PanelPosition::Left => (false, true),
-        super::PanelPosition::Right => (true, false),
-    };
     // Wrap the panel in a `Hoverable` so right-clicking the empty area of the
     // vertical tabs panel opens the tab configs dropdown.
     let inner = Hoverable::new(state.panel_right_click_mouse_state.clone(), move |_| {
-        Container::new(panel_with_popup)
-            .with_background(theme.background())
-            .with_border(
-                Border::new(1.)
-                    .with_sides(false, divider_on_left, false, divider_on_right)
-                    .with_border_fill(crate::workspace::chrome_divider_fill(theme)),
-            )
-            .finish()
+        Container::new(panel_with_popup).finish()
     })
     .on_right_click(|ctx, _, position| {
         if FeatureFlag::GroupedTabs.is_enabled() {
@@ -3005,6 +2428,9 @@ fn render_vertical_tabs_panel(
 
     Resizable::new(state.resizable_state.clone(), inner)
         .with_dragbar_side(drag_side)
+        // The panel ends a gap short of the terminal card, whose edge is the line people see and
+        // reach for. Push the handle across the gap so it sits on that edge.
+        .with_dragbar_offset(CARD_INSET + 0.5)
         .on_resize(|ctx, _| {
             ctx.notify();
         })
@@ -3019,53 +2445,23 @@ fn render_vertical_tabs_panel(
 }
 
 /// A passive gutter outside the tab card keeps its existing drag/click targets intact.
-fn render_lineage_connector(
+/// A forked or transferred tab sits one level under its source, and a fork of a fork
+/// steps in again (up to `MAX_VISIBLE_LINEAGE_DEPTH`). Each level draws a hairline rail,
+/// so a source's forks read as one small group even inside a section.
+fn render_lineage_indent(
     content: Box<dyn Element>,
-    nested: bool,
-    theme: &WarpTheme,
+    depth: usize,
+    appearance: &Appearance,
 ) -> Box<dyn Element> {
-    if !nested {
-        return content;
-    }
-    let divider = crate::workspace::chrome_divider_fill(theme);
-    let upper = Container::new(Empty::new().finish())
-        .with_border(Border::left(1.).with_border_fill(divider))
-        .finish();
-    let tick = ConstrainedBox::new(
-        Container::new(Empty::new().finish())
-            .with_background(divider)
-            .finish(),
-    )
-    .with_height(1.)
-    .finish();
-    let gutter = Flex::column()
-        .with_main_axis_size(MainAxisSize::Max)
-        .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
-        .with_child(Expanded::new(1., upper).finish())
-        .with_child(tick)
-        .with_child(Expanded::new(1., Empty::new().finish()).finish())
-        .finish();
-    // Measure the card first. Sidebar columns give rows unbounded height, so
-    // the expanding gutter must be laid out against the measured card bounds.
-    let mut stack =
-        Stack::new().with_child(Container::new(content).with_padding_left(14.).finish());
-    stack.add_positioned_child(
-        ConstrainedBox::new(
-            Container::new(gutter)
-                .with_padding_left(4.)
-                .with_padding_right(3.)
-                .finish(),
-        )
-        .with_width(14.)
-        .finish(),
-        OffsetPositioning::offset_from_parent(
-            vec2f(0., 0.),
-            ParentOffsetBounds::ParentBySize,
-            ParentAnchor::TopLeft,
-            ChildAnchor::TopLeft,
-        ),
-    );
-    stack.finish()
+    let rail = appearance.tokens().hairline;
+    let half = ROW_LINEAGE_INDENT / 2.;
+    (0..depth.min(MAX_VISIBLE_LINEAGE_DEPTH)).fold(content, |content, _| {
+        let railed = Container::new(content)
+            .with_padding_left(half - 1.)
+            .with_border(Border::left(1.).with_border_color(rail))
+            .finish();
+        Container::new(railed).with_padding_left(half).finish()
+    })
 }
 
 fn render_title_with_origin(
@@ -3138,9 +2534,7 @@ fn render_groups(
     let resolved_mode = resolve_vertical_tabs_mode(app);
     let display_granularity = match resolved_mode {
         VerticalTabsResolvedMode::Panes => VerticalTabsDisplayGranularity::Panes,
-        VerticalTabsResolvedMode::FocusedSession | VerticalTabsResolvedMode::Summary => {
-            VerticalTabsDisplayGranularity::Tabs
-        }
+        VerticalTabsResolvedMode::FocusedSession => VerticalTabsDisplayGranularity::Tabs,
     };
     let uses_outer_group_container = uses_outer_group_container(display_granularity);
     let query = state.search_query.as_str();
@@ -3149,6 +2543,7 @@ fn render_groups(
             .tabs
             .iter()
             .enumerate()
+            .filter(|(_, tab)| !tab_is_only_settings(tab, app))
             .map(|(tab_index, _)| (tab_index, None))
             .collect()
     } else {
@@ -3157,22 +2552,11 @@ fn render_groups(
             .tabs
             .iter()
             .enumerate()
+            .filter(|(_, tab)| !tab_is_only_settings(tab, app))
             .filter_map(|(tab_index, tab)| {
                 let pane_group = tab.pane_group.as_ref(app);
                 let visible_pane_ids = pane_group.visible_pane_ids();
                 match resolved_mode {
-                    VerticalTabsResolvedMode::Summary => {
-                        let summary =
-                            build_vertical_tabs_summary_data(pane_group, &visible_pane_ids, app);
-                        search_fragments_contain_query(
-                            &summary_search_text_fragments(
-                                &summary,
-                                pane_group.custom_title(app).as_deref(),
-                            ),
-                            &query_lower,
-                        )
-                        .then_some((tab_index, None))
-                    }
                     VerticalTabsResolvedMode::Panes | VerticalTabsResolvedMode::FocusedSession => {
                         let title_override = (!uses_outer_group_container)
                             .then(|| pane_group.custom_title(app))
@@ -3286,11 +2670,8 @@ fn render_groups(
 
     // Consecutive tabs sharing a group_id collapse into a single group container.
     // TODO(johnturcoo) adopt horizontal tabs 'tab slot' pattern to remove this while loop.
-    let lineage: Vec<_> = visible_tabs
-        .iter()
-        .map(|(index, _)| TabLineage::for_tab(&workspace.tabs[*index], app))
-        .collect();
-    let nesting = lineage_nesting(&lineage);
+    // From the whole list, so a source hidden by search still counts as open.
+    let depths = workspace.tab_lineage_depths(app);
     let total_visible = visible_tabs.len();
     let mut i = 0;
     while i < total_visible {
@@ -3321,6 +2702,7 @@ fn render_groups(
                     workspace,
                     &group,
                     members,
+                    &depths,
                     last_member_after_index,
                     is_any_pane_dragging,
                     app,
@@ -3344,7 +2726,11 @@ fn render_groups(
                     false, // in_tab_group
                     app,
                 );
-                groups.add_child(render_lineage_connector(tab_element, nesting[i], theme));
+                groups.add_child(render_lineage_indent(
+                    tab_element,
+                    depths[tab_index],
+                    appearance,
+                ));
                 i += 1;
             }
         }
@@ -3374,7 +2760,11 @@ fn render_groups(
         .retain(|id, _| all_pane_ids.contains(id));
 
     Container::new(groups.finish())
-        .with_padding(Padding::uniform(TAB_CARD_INSET).with_top(0.))
+        .with_padding(
+            Padding::uniform(0.)
+                .with_left(TAB_CARD_INSET)
+                .with_bottom(TAB_CARD_INSET),
+        )
         .finish()
 }
 
@@ -3415,6 +2805,7 @@ fn render_tab_group_internal(
     app: &AppContext,
 ) -> Box<dyn Element> {
     let appearance = Appearance::as_ref(app);
+    let tokens = appearance.tokens();
     let theme = appearance.theme();
     let pane_group = tab.pane_group.as_ref(app);
     let pane_group_id = tab.pane_group.id();
@@ -3422,9 +2813,7 @@ fn render_tab_group_internal(
     let resolved_mode = resolve_vertical_tabs_mode(app);
     let display_granularity = match resolved_mode {
         VerticalTabsResolvedMode::Panes => VerticalTabsDisplayGranularity::Panes,
-        VerticalTabsResolvedMode::FocusedSession | VerticalTabsResolvedMode::Summary => {
-            VerticalTabsDisplayGranularity::Tabs
-        }
+        VerticalTabsResolvedMode::FocusedSession => VerticalTabsDisplayGranularity::Tabs,
     };
     // Tabs inside a group skip the per-tab outer container; the group provides it.
     let uses_outer_group_container =
@@ -3525,17 +2914,6 @@ fn render_tab_group_internal(
         .show_tab_right_click_menu
         .is_some_and(|(idx, _)| idx == tab_index);
     let is_drag_target = workspace.hovered_tab_index == Some(TabBarHoverIndex::OverTab(tab_index));
-    let summary = matches!(resolved_mode, VerticalTabsResolvedMode::Summary)
-        .then(|| build_vertical_tabs_summary_data(pane_group, &visible_pane_ids, app));
-    let summary_pane_kind_icons = matches!(resolved_mode, VerticalTabsResolvedMode::Summary)
-        .then(|| resolve_summary_pane_kind_icons(pane_group, &visible_pane_ids, app))
-        .flatten();
-    let needs_input_border = needs_input_card_border(
-        tab_has_agent_needing_input(tab, app),
-        is_active,
-        is_drag_target,
-        app,
-    );
     let active_pane_context_menu_target = PaneViewLocator {
         pane_group_id,
         pane_id: pane_group.focused_pane_id(app),
@@ -3555,62 +2933,6 @@ fn render_tab_group_internal(
                 .with_main_axis_size(MainAxisSize::Min)
                 .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
                 .with_spacing(row_spacing);
-            if matches!(resolved_mode, VerticalTabsResolvedMode::Summary) {
-                let Some((pane_id, row_mouse_state)) = row_mouse_states.first() else {
-                    return Empty::new().finish();
-                };
-                let pane_color = per_pane_colors
-                    .as_ref()
-                    .and_then(|map| map.get(pane_id).copied())
-                    .flatten();
-                let badge_mouse_states = state
-                    .pane_badge_mouse_states
-                    .borrow_mut()
-                    .entry(*pane_id)
-                    .or_default()
-                    .clone();
-                let Some(mut pane_props) = PaneProps::new(
-                    pane_group,
-                    *pane_id,
-                    pane_group_id,
-                    is_active,
-                    is_in_multi_selection,
-                    is_in_multi_tab_selection,
-                    PaneRowState {
-                        mouse_state: row_mouse_state.clone(),
-                        title_mouse_state: None,
-                        pane_color,
-                        badge_mouse_states,
-                    },
-                    state.detail_hover_state(workspace.window_id),
-                    display_granularity,
-                    false,
-                    displayed_tab_title_override.clone(),
-                    (!uses_outer_group_container).then_some(tab_index),
-                    None,
-                    !use_tab_title_header && is_being_renamed,
-                    (!use_tab_title_header).then_some(rename_editor.clone()),
-                    false,
-                    None,
-                    tab.pinned,
-                    group_state.is_hovered(),
-                    app,
-                ) else {
-                    return Empty::new().finish();
-                };
-                if !show_tab_title_header {
-                    pane_props.origin_badge = origin_badge.clone();
-                }
-                rows.add_child(render_summary_tab_item(
-                    pane_props,
-                    summary
-                        .as_ref()
-                        .expect("summary data must exist in summary mode"),
-                    summary_pane_kind_icons,
-                    app,
-                ));
-                return rows.finish();
-            }
             let total_rows = row_mouse_states.len();
             for (row_idx, (pane_id, row_mouse_state)) in row_mouse_states.iter().enumerate() {
                 let pane_color = per_pane_colors
@@ -3662,18 +2984,21 @@ fn render_tab_group_internal(
                 if !show_tab_title_header && row_idx == 0 {
                     pane_props.origin_badge = origin_badge.clone();
                 }
+                pane_props.is_coordinator = tab.coordinator;
+                if tab.coordinator && row_idx == 0 {
+                    pane_props.auto_controls = Some(state.auto_coordinate_ui.pill_props(
+                        workspace.auto_coordinate_enabled(app),
+                        state.open_popover == Some(SidebarPopover::AutoCoordinate),
+                    ));
+                    pane_props.coordinator_switch = Some(state.coordinator_switch_state.clone());
+                }
                 if stack_panes_flush {
                     pane_props.stack_position = PaneRowStackPosition::Flush {
                         is_first: row_idx == 0,
                         is_last: row_idx + 1 == total_rows,
                     };
                 }
-                let view_mode = *TabSettings::as_ref(app).vertical_tabs_view_mode.value();
-                let row = match view_mode {
-                    VerticalTabsViewMode::Compact => render_compact_pane_row(pane_props, app),
-                    VerticalTabsViewMode::Expanded => render_pane_row(pane_props, app),
-                };
-                rows.add_child(row);
+                rows.add_child(render_pane_row(pane_props, app));
             }
             rows.finish()
         };
@@ -3696,29 +3021,11 @@ fn render_tab_group_internal(
                 ));
             }
 
-            // The rows carry their own padding, so the card only needs enough of a
-            // margin to keep a row's rounded highlight off the card's outline.
-            let mut body_padding = Padding::uniform(0.)
-                .with_left(TAB_CARD_BODY_PADDING)
-                .with_right(TAB_CARD_BODY_PADDING)
-                .with_bottom(TAB_CARD_BODY_PADDING);
-            if !show_tab_title_header {
-                body_padding = body_padding.with_top(TAB_CARD_BODY_PADDING);
-            }
-            group.add_child(
-                Container::new(build_rows())
-                    .with_padding(body_padding)
-                    .finish(),
-            );
-            let card_state =
-                TabCardState::resolve(is_drag_target, is_active, group_state.is_hovered());
+            group.add_child(build_rows());
             let mut container = Container::new(group.finish())
-                .with_background(card_state.background(theme))
                 .with_corner_radius(CornerRadius::with_all(Radius::Pixels(ROW_CORNER_RADIUS)));
-            if let Some(border) = tab_card_border(in_tab_group, needs_input_border, || {
-                card_state.border(theme)
-            }) {
-                container = container.with_border(Border::all(1.).with_border_fill(border));
+            if is_drag_target {
+                container = container.with_background(ThemeFill::Solid(tokens.accent_soft));
             }
             container.finish()
         } else {
@@ -3726,12 +3033,6 @@ fn render_tab_group_internal(
             // hover/active state for the whole group, so suppress the
             // per-tab background here and let each row show its own
             // selected/hovered state.
-            let allow_per_tab_highlight = !in_tab_group || FeatureFlag::GroupedTabs.is_enabled();
-            let card_state = TabCardState::resolve(
-                is_drag_target,
-                allow_per_tab_highlight && is_active,
-                allow_per_tab_highlight && group_state.is_hovered(),
-            );
             // Top band reserved for the per-tab action buttons.
             const GROUPED_TAB_ACTION_BUTTON_BAND: f32 = 4.;
             let needs_action_button_band = in_tab_group
@@ -3763,12 +3064,9 @@ fn render_tab_group_internal(
                 rows
             };
             let mut container = Container::new(tab_content)
-                .with_background(card_state.background(theme))
                 .with_corner_radius(CornerRadius::with_all(Radius::Pixels(ROW_CORNER_RADIUS)));
-            if let Some(border) = tab_card_border(in_tab_group, needs_input_border, || {
-                card_state.border(theme)
-            }) {
-                container = container.with_border(Border::all(1.).with_border_fill(border));
+            if is_drag_target {
+                container = container.with_background(ThemeFill::Solid(tokens.accent_soft));
             }
             if needs_action_button_band {
                 container = container.with_margin_top(action_button_band);
@@ -3970,7 +3268,7 @@ fn render_group_action_buttons(
                 .finish(),
         )
         .with_padding(Padding::uniform(GROUP_ACTION_BUTTON_PADDING))
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)));
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM));
         if is_menu_open || button_state.is_hovered() {
             container = container.with_background(internal_colors::fg_overlay_2(theme));
         }
@@ -3993,7 +3291,7 @@ fn render_group_action_buttons(
                 .finish(),
         )
         .with_padding(Padding::uniform(GROUP_ACTION_BUTTON_PADDING))
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)));
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM));
         if button_state.is_hovered() {
             container = container.with_background(internal_colors::fg_overlay_3(theme));
         }
@@ -4019,7 +3317,7 @@ fn render_group_action_buttons(
             .with_background(ThemeFill::Solid(internal_colors::neutral_3(theme)))
             .with_border(Border::all(1.).with_border_fill(ThemeFill::Solid(belt_border_color)))
             .with_padding(Padding::uniform(GROUP_ACTION_BUTTON_PADDING))
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .finish()
     })
     .with_defer_events_to_children()
@@ -4076,7 +3374,7 @@ fn render_tab_group_header_icon_button(
                 .finish(),
         )
         .with_padding(Padding::uniform(GROUP_ACTION_BUTTON_PADDING))
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)));
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM));
         if button_state.is_hovered() {
             container = container.with_background(hover_background);
         }
@@ -4097,14 +3395,13 @@ enum SectionHeaderKind<'a> {
     BookmarkedSessions,
 }
 
-/// Renders the shared header row for user-created and built-in sections: leading icon (chevron
-/// when expanded, member icon collage when collapsed), title + session count, and the native
-/// section actions where applicable. This keeps the pre-created Bookmarked sessions section on
-/// exactly the same chrome path as sections the user creates.
+/// Renders the shared header row for user-created and built-in sections: optional color dot,
+/// title + session count, and the native section actions where applicable. This keeps the
+/// pre-created Bookmarked sessions section on exactly the same chrome path as sections the user
+/// creates.
 ///
-/// `collapsed_member_kinds` is the deduped list of pane kinds used to build the
-/// icon collage shown in place of the chevron when the group is collapsed.
-/// Pass `None` when the group is expanded; the chevron is rendered instead.
+/// While collapsed, a non-zero `collapsed_needs_count` replaces the session count with the number
+/// of sessions that need you.
 #[allow(clippy::too_many_arguments)]
 fn render_section_header(
     kind: SectionHeaderKind<'_>,
@@ -4115,13 +3412,13 @@ fn render_section_header(
     show_action_buttons: bool,
     is_being_renamed: bool,
     rename_editor: Option<&ViewHandle<EditorView>>,
-    collapsed_member_kinds: Option<&[SummaryPaneKind]>,
+    section_color: Option<ColorU>,
+    collapsed_needs_count: Option<usize>,
     app: &AppContext,
 ) -> Box<dyn Element> {
     let appearance = Appearance::as_ref(app);
     let theme = appearance.theme();
     let font_family = appearance.ui_font_family();
-    let main_text_color = theme.main_text_color(theme.background());
     let sub_text_color = theme.sub_text_color(theme.background());
     let (group_id, title_text, toggle_action, group_pinned) = match kind {
         SectionHeaderKind::TabGroup(group) => (
@@ -4141,60 +3438,38 @@ fn render_section_header(
         ),
     };
 
-    // Collapsed groups show the icon collage (same component as horizontal tab
-    // groups) in place of the chevron, sized to VERTICAL_TABS_ICON_SIZE so
-    // the 2-icon variant matches the tab Summary Pair layout exactly.
-    let tab_group_icon = if is_collapsed {
-        let kinds = collapsed_member_kinds.unwrap_or(&[]);
-        render_group_member_icon_collage(kinds, VERTICAL_TABS_ICON_SIZE, appearance)
-    } else {
-        let chevron_button = render_tab_group_header_icon_button(
-            WarpIcon::ChevronDown,
-            TAB_GROUP_ICON_SIZE,
-            main_text_color,
-            internal_colors::fg_overlay_2(theme),
-            mouse_states.chevron.clone(),
-            Some(toggle_action.clone()),
-        );
-        // Center the chevron in a `VERTICAL_TABS_ICON_SIZE` slot so the
-        // title aligns with member rows.
-        Flex::row()
-            .with_main_axis_size(MainAxisSize::Max)
-            .with_main_axis_alignment(MainAxisAlignment::Center)
-            .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_child(chevron_button)
-            .finish()
-    };
-    let tab_group_icon = ConstrainedBox::new(tab_group_icon)
-        .with_width(VERTICAL_TABS_ICON_SIZE)
-        .with_height(VERTICAL_TABS_ICON_SIZE)
-        .finish();
-
+    let tokens = appearance.tokens();
+    let section_dot = section_color.map(|color| {
+        ConstrainedBox::new(
+            Container::new(Empty::new().finish())
+                .with_background(ThemeFill::Solid(color))
+                .with_corner_radius(corners_pill())
+                .finish(),
+        )
+        .with_width(8.)
+        .with_height(8.)
+        .finish()
+    });
     let title_element: Box<dyn Element> =
         if let Some(editor) = rename_editor.filter(|_| is_being_renamed) {
             render_inline_tab_rename_editor(editor, appearance, app)
         } else {
             Text::new_inline(title_text, font_family, 12.)
+                .with_style(Properties::default().weight(Weight::Medium))
                 .with_clip(ClipConfig::ellipsis())
-                .with_color(main_text_color.into())
+                .with_color(tokens.text_2)
                 .finish()
         };
-    let subtitle_text = if member_count == 1 {
-        "1 session".to_string()
-    } else {
-        format!("{member_count} sessions")
+    let count_element = match collapsed_needs_count {
+        Some(count) if is_collapsed && count > 0 => {
+            Text::new_inline(format!("! {count}"), font_family, 11.)
+                .with_color(tokens.status(StatusKind::NeedsYou))
+                .finish()
+        }
+        _ => Text::new_inline(member_count.to_string(), font_family, 11.)
+            .with_color(tokens.text_3)
+            .finish(),
     };
-    let subtitle = Text::new_inline(subtitle_text, font_family, 10.)
-        .with_clip(ClipConfig::ellipsis())
-        .with_color(sub_text_color.into())
-        .finish();
-    let text_column: Box<dyn Element> = Flex::column()
-        .with_main_axis_size(MainAxisSize::Min)
-        .with_cross_axis_alignment(CrossAxisAlignment::Start)
-        .with_spacing(1.)
-        .with_child(title_element)
-        .with_child(subtitle)
-        .finish();
 
     let action_buttons =
         if show_action_buttons && matches!(kind, SectionHeaderKind::BookmarkedSessions) {
@@ -4266,9 +3541,10 @@ fn render_section_header(
                 Flex::row()
                     .with_main_axis_size(MainAxisSize::Max)
                     .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                    .with_spacing(ICON_WITH_STATUS_GAP)
-                    .with_child(tab_group_icon)
-                    .with_child(Shrinkable::new(1., text_column).finish())
+                    .with_spacing(8.)
+                    .with_children(section_dot)
+                    .with_child(Shrinkable::new(1., title_element).finish())
+                    .with_child(count_element)
                     .finish(),
             )
             .finish(),
@@ -4277,17 +3553,11 @@ fn render_section_header(
         .finish();
 
     let mut hoverable = Hoverable::new(mouse_states.header.clone(), move |state| {
-        let border_fill = if is_header_selected {
-            internal_colors::fg_overlay_3(theme)
-        } else {
-            WarpThemeFill::Solid(ColorU::transparent_black())
-        };
         let mut container = Container::new(row)
-            .with_padding(Padding::uniform(GROUP_HORIZONTAL_PADDING))
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(ROW_CORNER_RADIUS)))
-            .with_border(Border::all(1.).with_border_fill(border_fill));
+            .with_padding(Padding::uniform(6.).with_left(8.).with_right(6.))
+            .with_corner_radius(corners_sm());
         if is_header_selected || state.is_hovered() {
-            container = container.with_background(internal_colors::fg_overlay_2(theme));
+            container = container.with_background(ThemeFill::Solid(tokens.surface_hover));
         }
         let header = container.finish();
 
@@ -4347,11 +3617,13 @@ fn render_section_header(
 
 /// Renders a tab group: pane-like header followed by indented member rows. Background only paints
 /// on hover or when a member is active.
+#[allow(clippy::too_many_arguments)]
 fn render_grouped_tab_container(
     state: &VerticalTabsPanelState,
     workspace: &Workspace,
     group: &TabGroup,
     members: &[(usize, Option<Vec<PaneId>>)],
+    depths: &[usize],
     last_member_after_index: Option<usize>,
     is_any_pane_dragging: bool,
     app: &AppContext,
@@ -4366,43 +3638,41 @@ fn render_grouped_tab_container(
         .or_default()
         .clone();
 
-    let lineage: Vec<_> = members
-        .iter()
-        .map(|(index, _)| TabLineage::for_tab(&workspace.tabs[*index], app))
-        .collect();
-    let nesting = lineage_nesting(&lineage);
     let member_count = members.len();
     let group_id = group.id;
     let group = group.clone();
-    let group_tint = group
-        .color
-        .resolve(None)
-        .map(|color| color.to_color(&theme.terminal_colors().normal));
     let any_member_active = members
         .iter()
         .any(|(tab_index, _)| *tab_index == workspace.active_tab_index);
-    let needs_input_border = needs_input_card_border(
-        section_needs_input_pulse(
-            group.collapsed,
-            members.iter().any(|(tab_index, _)| {
-                *tab_index != workspace.active_tab_index
-                    && workspace
-                        .tabs
-                        .get(*tab_index)
-                        .is_some_and(|tab| tab_has_agent_needing_input(tab, app))
-            }),
-        ),
-        false,
-        false,
-        app,
-    );
     let is_collapsed = group.collapsed;
+    let section_color = group
+        .color
+        .resolve(None)
+        .map(|color| color.to_color(&theme.terminal_colors().normal));
+    let section_fill = section_color.map_or(appearance.tokens().surface_field, |color| {
+        coloru_with_opacity(color, SECTION_TINT_OPACITY)
+    });
+    // Only a collapsed section has to report what is hiding inside it.
+    let collapsed_needs_count = if is_collapsed {
+        members
+            .iter()
+            .flat_map(|(tab_index, _)| {
+                let pane_group = workspace.tabs[*tab_index].pane_group.as_ref(app);
+                pane_group
+                    .visible_pane_ids()
+                    .into_iter()
+                    .map(move |pane_id| pane_group.resolve_pane_type(pane_id, app))
+            })
+            .filter(|typed| {
+                vertical_tab_cli_agent_activity(typed, app)
+                    == Some(ProjectCliAgentActivity::NeedsInput)
+            })
+            .count()
+    } else {
+        0
+    };
 
     let resolved_mode = resolve_vertical_tabs_mode(app);
-    let needs_outer_horizontal_padding = uses_outer_group_container(match resolved_mode {
-        VerticalTabsResolvedMode::Panes => VerticalTabsDisplayGranularity::Panes,
-        _ => VerticalTabsDisplayGranularity::Tabs,
-    });
 
     // GroupedTabs: zero inter-tab gap in Panes mode (each tab already has
     // its own wrapper). Other modes keep the standard card gap.
@@ -4425,10 +3695,6 @@ fn render_grouped_tab_container(
             .current_workspace_state
             .is_tab_group_being_renamed(group.id);
         let rename_editor = is_being_renamed.then(|| workspace.tab_group_rename_editor.clone());
-        // Compute member kinds only when collapsed — the collage is only
-        // rendered then, so this skips the per-tab pane walk when expanded.
-        let collapsed_member_kinds =
-            is_collapsed.then(|| workspace.compute_group_member_kinds(group.id, app));
         content.add_child(render_section_header(
             SectionHeaderKind::TabGroup(&group),
             member_count,
@@ -4438,7 +3704,8 @@ fn render_grouped_tab_container(
             hover_state.is_hovered(),
             is_being_renamed,
             rename_editor.as_ref(),
-            collapsed_member_kinds.as_deref(),
+            section_color,
+            Some(collapsed_needs_count),
             app,
         ));
 
@@ -4467,38 +3734,20 @@ fn render_grouped_tab_container(
                     true,
                     app,
                 );
-                content.add_child(
-                    Container::new(render_lineage_connector(tab_element, nesting[i], theme))
-                        .with_padding(
-                            Padding::uniform(0.)
-                                .with_left(TAB_GROUP_MEMBER_INDENT)
-                                .with_right(TAB_GROUP_CONTENT_INSET),
-                        )
-                        .finish(),
-                );
+                content.add_child(render_lineage_indent(
+                    tab_element,
+                    depths[*tab_index],
+                    appearance,
+                ));
             }
         }
 
-        // A group is one card holding several tabs, so it takes the same outline
-        // treatment as a standalone tab card.
-        let card_state = TabCardState::resolve(false, any_member_active, hover_state.is_hovered());
-        let (card_background, card_border) = section_card_colors(card_state, group_tint, theme);
-        let card_border = needs_input_border.unwrap_or(card_border);
-
-        // Pane view: uniform `GROUP_HORIZONTAL_PADDING` matches ungrouped-tab body padding.
-        // Tab view: only apply bottom padding when expanded so a collapsed group has no trailing band.
-        let mut padding = Padding::uniform(0.);
-        if needs_outer_horizontal_padding {
-            padding = Padding::uniform(GROUP_HORIZONTAL_PADDING);
-        } else if !is_collapsed {
-            padding = padding.with_bottom(TAB_GROUP_CONTENT_INSET);
-        }
-
+        // The whole section is one tinted block, so what belongs to it reads at a glance.
         Container::new(content.finish())
-            .with_padding(padding)
-            .with_background(card_background)
-            .with_border(Border::all(1.).with_border_fill(card_border))
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(ROW_CORNER_RADIUS)))
+            .with_uniform_padding(SECTION_BLOCK_PADDING)
+            .with_background(ThemeFill::Solid(section_fill))
+            .with_corner_radius(corners_lg())
+            .with_margin_top(SECTION_BLOCK_GAP)
             .finish()
     })
     // Right-click on group chrome (not member rows) opens the group menu.
@@ -4617,267 +3866,249 @@ fn render_group_header(props: GroupHeaderProps<'_>, app: &AppContext) -> Box<dyn
     .finish()
 }
 
-fn render_passive_terminal_diff_stats_badge(
-    git_line_changes: &GitLineChanges,
-    appearance: &Appearance,
-) -> Box<dyn Element> {
-    render_badge_container(
-        render_vtab_diff_stats_content(git_line_changes, appearance),
-        internal_colors::fg_overlay_1(appearance.theme()),
-    )
+/// Settings is a page rather than a session, so its tab doesn't take a row in the list.
+fn tab_is_only_settings(tab: &TabData, app: &AppContext) -> bool {
+    let pane_group = tab.pane_group.as_ref(app);
+    let pane_ids = pane_group.visible_pane_ids();
+    !pane_ids.is_empty()
+        && pane_ids.into_iter().all(|pane_id| {
+            matches!(
+                pane_group.resolve_pane_type(pane_id, app),
+                TypedPane::Settings
+            )
+        })
 }
 
-fn resolve_icon_with_status_variant(
-    typed: &TypedPane<'_>,
-    title: &str,
-    appearance: &Appearance,
-    app: &AppContext,
-) -> IconWithStatusVariant {
-    let theme = appearance.theme();
-    let main_text = theme.main_text_color(theme.background());
-    let sub_text = theme.sub_text_color(theme.background());
-
-    let drive_color = |object_type: DriveObjectType| -> WarpThemeFill {
-        WarpThemeFill::Solid(warp_drive_icon_color(appearance, object_type))
-    };
-
-    match typed {
-        TypedPane::Terminal(terminal_pane) => {
-            let terminal_view = terminal_pane.terminal_view(app);
-            let terminal_view = terminal_view.as_ref(app);
-            if let Some(variant) =
-                terminal_view_agent_icon_variant_respecting_tab_setting(terminal_view, app)
-            {
-                variant
-            } else {
-                // Plain terminal: use foreground color per design spec
-                IconWithStatusVariant::Neutral {
-                    icon: WarpIcon::Terminal,
-                    icon_color: main_text,
-                    status: terminal_command_status(terminal_view.current_state().state),
-                }
-            }
-        }
-        TypedPane::Code(_) => {
-            if let Some(icon_element) = icon_from_file_path(title, appearance) {
-                IconWithStatusVariant::NeutralElement { icon_element }
-            } else {
-                IconWithStatusVariant::Neutral {
-                    icon: WarpIcon::Code2,
-                    icon_color: sub_text,
-                    status: None,
-                }
-            }
-        }
-        // Settings and environment management use the foreground color per design spec
-        TypedPane::Settings | TypedPane::EnvironmentManagement => IconWithStatusVariant::Neutral {
-            icon: typed.icon(),
-            icon_color: main_text,
-            status: None,
-        },
-        // Warp Drive object types use their established index colors
-        TypedPane::Notebook { is_plan } => IconWithStatusVariant::Neutral {
-            icon: typed.icon(),
-            icon_color: drive_color(DriveObjectType::Notebook {
-                is_ai_document: *is_plan,
-            }),
-            status: None,
-        },
-        TypedPane::Workflow { is_ai_prompt: true } => IconWithStatusVariant::Neutral {
-            icon: typed.icon(),
-            icon_color: drive_color(DriveObjectType::AgentModeWorkflow),
-            status: None,
-        },
-        TypedPane::Workflow {
-            is_ai_prompt: false,
-        } => IconWithStatusVariant::Neutral {
-            icon: typed.icon(),
-            icon_color: drive_color(DriveObjectType::Workflow),
-            status: None,
-        },
-        TypedPane::EnvVarCollection => IconWithStatusVariant::Neutral {
-            icon: typed.icon(),
-            icon_color: drive_color(DriveObjectType::EnvVarCollection),
-            status: None,
-        },
-        TypedPane::AIFact => IconWithStatusVariant::Neutral {
-            icon: typed.icon(),
-            icon_color: drive_color(DriveObjectType::AIFact),
-            status: None,
-        },
-        // Other pane types use sub-text color
-        other => IconWithStatusVariant::Neutral {
-            icon: other.icon(),
-            icon_color: sub_text,
-            status: None,
-        },
-    }
-}
-
-fn has_unread_activity(typed: &TypedPane<'_>, app: &AppContext) -> bool {
-    let TypedPane::Terminal(terminal_pane) = typed else {
-        return false;
-    };
-    let terminal_view = terminal_pane.terminal_view(app);
-    has_unread_activity_for_terminal_view(terminal_view.as_ref(app).id(), app)
-}
-
-fn has_unread_activity_for_terminal_view(terminal_view_id: EntityId, app: &AppContext) -> bool {
-    AgentNotificationsModel::as_ref(app)
-        .notifications()
-        .has_unread_for_terminal_view(terminal_view_id)
-}
-
-const INDICATOR_DOT_SIZE: f32 = 8.;
-
-fn title_indicator_color(kind: TitleIndicatorKind, theme: &WarpTheme) -> ColorU {
-    match kind {
-        // Unread/attention dots are always "done blue", never the theme accent: an accent that
-        // resolves to lime would collide with the green working badge.
-        TitleIndicatorKind::Unread => CLINCH_DONE_BLUE,
-        TitleIndicatorKind::RunningCommand => {
-            theme.disabled_text_color(theme.background()).into_solid()
-        }
-    }
-}
-
-fn render_title_indicator(kind: TitleIndicatorKind, theme: &WarpTheme) -> Box<dyn Element> {
-    ConstrainedBox::new(
-        WarpIcon::CircleFilled
-            .to_warpui_icon(WarpThemeFill::Solid(title_indicator_color(kind, theme)))
-            .finish(),
-    )
-    .with_width(INDICATOR_DOT_SIZE)
-    .with_height(INDICATOR_DOT_SIZE)
-    .finish()
-}
-
-fn terminal_title_indicator_kind(
-    typed: &TypedPane<'_>,
-    app: &AppContext,
-) -> Option<TitleIndicatorKind> {
+/// Where this row's session is in the restore queue, while it still has something to say.
+fn terminal_restore_state(typed: &TypedPane<'_>, app: &AppContext) -> Option<RestoreState> {
     let TypedPane::Terminal(terminal_pane) = typed else {
         return None;
     };
-    let terminal_view = terminal_pane.terminal_view(app);
-    let terminal_view = terminal_view.as_ref(app);
-    let has_cli_agent_session = CLIAgentSessionsModel::as_ref(app)
-        .session(terminal_view.id())
-        .is_some();
-
-    separate_title_indicator_kind(
-        has_unread_activity_for_terminal_view(terminal_view.id(), app),
-        vertical_tab_cli_agent_activity(typed, app),
-        is_running_project_command(
-            has_cli_agent_session,
-            terminal_view.is_long_running_and_user_controlled(),
-        ),
-    )
+    AgentRestoreQueue::as_ref(app)
+        .state(terminal_pane.terminal_view(app).id())
+        .filter(|state| state.label().is_some())
 }
 
-/// The model chip label for a terminal tab running a CLI agent, or `None`.
-fn tab_agent_model_label(app: &AppContext, view_id: EntityId) -> Option<String> {
-    let sessions = CLIAgentSessionsModel::as_ref(app);
-    let session = sessions.session(view_id)?;
-    let snapshot = CliAgentUsageModel::as_ref(app).latest();
-    cli_agent_model_label(
-        snapshot,
-        session.agent,
-        session.session_context.session_id.as_deref(),
-    )
+fn is_restoring(state: Option<RestoreState>) -> bool {
+    matches!(state, Some(RestoreState::Queued | RestoreState::Starting))
 }
 
+/// A ring that turns while a session restores. Each repaint picks the frame for the current time.
+fn render_restore_spinner(appearance: &Appearance) -> Box<dyn Element> {
+    let frame = (std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        / SPINNER_FRAME_INTERVAL.as_millis()) as usize
+        % SPINNER_FRAMES.len();
+    LiveElement::new(
+        ConstrainedBox::new(
+            SPINNER_FRAMES[frame]
+                .to_warpui_icon(WarpThemeFill::Solid(appearance.tokens().text_3))
+                .finish(),
+        )
+        .with_width(ROW_SPINNER_SIZE)
+        .with_height(ROW_SPINNER_SIZE)
+        .finish(),
+        SPINNER_FRAME_INTERVAL,
+    )
+    .finish()
+}
+
+/// The glyph at the start of a row: who the session is, tinted by what it is doing. A session that
+/// needs you swaps to a filled "!" so it differs in shape, not only color.
+fn render_row_mark(
+    typed: &TypedPane<'_>,
+    is_coordinator: bool,
+    appearance: &Appearance,
+    app: &AppContext,
+) -> Box<dyn Element> {
+    let mark = render_session_mark(typed, appearance, app);
+    if !is_coordinator {
+        return mark;
+    }
+    // The coordinator watches every other tab, so it gets a tile of its own.
+    Container::new(mark)
+        .with_uniform_padding(3.)
+        .with_background(ThemeFill::Solid(coloru_with_opacity(
+            appearance.tokens().accent,
+            COORDINATOR_TILE_OPACITY,
+        )))
+        .with_corner_radius(corners_sm())
+        .with_margin_left(-3.)
+        .with_margin_right(-3.)
+        .finish()
+}
+
+fn render_session_mark(
+    typed: &TypedPane<'_>,
+    appearance: &Appearance,
+    app: &AppContext,
+) -> Box<dyn Element> {
+    let tokens = appearance.tokens();
+    let sized_mark = |icon: WarpIcon, color: ColorU| {
+        ConstrainedBox::new(icon.to_warpui_icon(WarpThemeFill::Solid(color)).finish())
+            .with_width(ROW_MARK_SIZE)
+            .with_height(ROW_MARK_SIZE)
+            .finish()
+    };
+    let restore_state = terminal_restore_state(typed, app);
+    if is_restoring(restore_state) {
+        return sized_mark(WarpIcon::Restoring, tokens.text_3);
+    }
+    if matches!(restore_state, Some(RestoreState::Attention(_))) {
+        return sized_mark(WarpIcon::AlertCircle, tokens.status(StatusKind::NeedsYou));
+    }
+    let activity = vertical_tab_cli_agent_activity(typed, app);
+    let color = activity.map_or(tokens.text_3, |activity| activity.color(tokens));
+    let agent_icon = match typed {
+        TypedPane::Terminal(terminal_pane) => {
+            terminal_view_agent_icon_variant_respecting_tab_setting(
+                terminal_pane.terminal_view(app).as_ref(app),
+                app,
+            )
+            .and_then(|variant| match variant {
+                IconWithStatusVariant::CLIAgent { agent, .. } => agent.icon(),
+                _ => None,
+            })
+        }
+        _ => None,
+    };
+    let icon = if activity == Some(ProjectCliAgentActivity::NeedsInput) {
+        WarpIcon::AlertCircle
+    } else if let Some(icon) = agent_icon {
+        icon
+    } else {
+        match typed {
+            TypedPane::Terminal(_) => WarpIcon::Terminal,
+            TypedPane::Settings => WarpIcon::Gear,
+            TypedPane::Code(_) | TypedPane::CodeDiff => WarpIcon::Code2,
+            TypedPane::Notebook { .. } | TypedPane::AIDocument => WarpIcon::Notebook,
+            TypedPane::Workflow { .. } => WarpIcon::Workflow,
+            _ => WarpIcon::File,
+        }
+    };
+    sized_mark(icon, color)
+}
+
+/// One line per tab. The selected tab adds a second line with its branch or folder; everything else
+/// lives on the hover card.
 fn render_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn Element> {
-    let effective_subtitle = props.subtitle.clone();
     let appearance = Appearance::as_ref(app);
     let theme = appearance.theme();
+    let tokens = appearance.tokens();
     let font_family = appearance.ui_font_family();
-
-    let icon = render_pane_icon_with_status(&props.typed, &props.title, appearance, app);
-
-    // Top-align the icon when there are multiple lines of content so it sits next to
-    // the first line; center it for single-line rows (Settings, Notebook with no subtitle, etc.).
-    let icon_alignment =
-        if matches!(props.typed, TypedPane::Terminal(_)) || !effective_subtitle.is_empty() {
-            CrossAxisAlignment::Start
-        } else {
-            CrossAxisAlignment::Center
-        };
-
-    let text_content = if let TypedPane::Terminal(terminal_pane) = &props.typed {
-        render_terminal_row_content(
-            &props,
-            terminal_pane.terminal_view(app).as_ref(app),
-            appearance,
-            app,
-        )
+    let is_selected = props.is_active_tab && props.is_focused;
+    let is_quiet = !is_selected
+        && vertical_tab_cli_agent_activity(&props.typed, app)
+            .is_none_or(|activity| activity == ProjectCliAgentActivity::Idle);
+    let restore_state = terminal_restore_state(&props.typed, app);
+    let restore_label = restore_state.and_then(|state| state.label());
+    let title_color = WarpThemeFill::Solid(if is_restoring(restore_state) {
+        tokens.text_3
+    } else if is_quiet {
+        tokens.text_2
     } else {
-        let has_indicator =
-            props.typed.badge(app).is_some() || has_unread_activity(&props.typed, app);
-        let mut title_row = Flex::row()
-            .with_main_axis_size(MainAxisSize::Max)
-            .with_main_axis_alignment(MainAxisAlignment::SpaceBetween)
-            .with_cross_axis_alignment(CrossAxisAlignment::Center);
-        title_row.add_child(
-            Shrinkable::new(
-                1.,
-                render_pane_title_slot(
-                    &props,
-                    || {
-                        Text::new_inline(props.displayed_title().to_string(), font_family, 12.)
-                            .with_clip(ClipConfig::ellipsis())
-                            .with_color(theme.main_text_color(theme.background()).into())
-                            .finish()
-                    },
-                    12.,
-                    theme.main_text_color(theme.background()),
-                    ClipConfig::ellipsis(),
-                    appearance,
-                    app,
-                ),
+        tokens.text_1
+    });
+
+    let title = render_pane_title_slot(
+        &props,
+        || match &props.typed {
+            TypedPane::Terminal(terminal_pane) => render_terminal_primary_line_for_view(
+                terminal_pane.terminal_view(app).as_ref(app),
+                appearance,
+                title_color,
+                app,
+            ),
+            _ => Text::new_inline(
+                props.displayed_title().to_string(),
+                font_family,
+                ROW_TITLE_SIZE,
             )
+            .with_clip(ClipConfig::ellipsis())
+            .with_color(title_color.into())
+            .finish(),
+        },
+        ROW_TITLE_SIZE,
+        title_color,
+        ClipConfig::ellipsis(),
+        appearance,
+        app,
+    );
+
+    let selected_line = is_selected
+        .then(|| match &props.typed {
+            TypedPane::Terminal(terminal_pane) => {
+                let terminal_view = terminal_pane.terminal_view(app).as_ref(app);
+                terminal_view
+                    .current_git_branch(app)
+                    .or_else(|| resolved_terminal_working_directory(terminal_view, app))
+            }
+            _ => (!props.subtitle.is_empty()).then(|| props.subtitle.clone()),
+        })
+        .flatten();
+
+    let second_line = restore_label.map(str::to_owned).or(selected_line);
+
+    let mut text = Flex::column()
+        .with_main_axis_size(MainAxisSize::Min)
+        .with_cross_axis_alignment(CrossAxisAlignment::Start)
+        .with_child(title);
+    if let Some(second_line) = second_line {
+        text.add_child(
+            Container::new(
+                Text::new_inline(second_line, font_family, 11.)
+                    .with_clip(ClipConfig::start())
+                    .with_color(tokens.text_3)
+                    .finish(),
+            )
+            .with_margin_top(1.)
             .finish(),
         );
-        if has_indicator {
-            title_row.add_child(
-                Container::new(render_title_indicator(TitleIndicatorKind::Unread, theme))
-                    .with_margin_left(4.)
-                    .finish(),
-            );
-        }
-
-        let mut content_col = Flex::column()
-            .with_main_axis_size(MainAxisSize::Min)
-            .with_cross_axis_alignment(CrossAxisAlignment::Start)
-            .with_spacing(2.)
-            .with_child(title_row.finish());
-
-        if !effective_subtitle.is_empty() {
-            let subtitle_clip = if matches!(props.typed, TypedPane::Code(_)) {
-                ClipConfig::start()
-            } else {
-                ClipConfig::ellipsis()
-            };
-            content_col.add_child(
-                Text::new_inline(effective_subtitle, font_family, 12.)
-                    .with_clip(subtitle_clip)
-                    .with_color(theme.sub_text_color(theme.background()).into())
-                    .finish(),
-            );
-        }
-
-        content_col.finish()
-    };
+    }
 
     let content = Flex::row()
         .with_main_axis_size(MainAxisSize::Max)
-        .with_cross_axis_alignment(icon_alignment)
-        .with_spacing(ICON_WITH_STATUS_GAP)
-        .with_child(icon)
-        .with_child(Shrinkable::new(1., text_content).finish())
+        .with_cross_axis_alignment(CrossAxisAlignment::Center)
+        .with_spacing(ROW_MARK_GAP)
+        .with_child(render_row_mark(
+            &props.typed,
+            props.is_coordinator,
+            appearance,
+            app,
+        ))
+        // On the coordinator row the title takes the free space, which keeps its Auto pill and
+        // on/off switch at the right edge without truncating the title.
+        .with_child(if props.auto_controls.is_some() {
+            Expanded::new(1., text.finish()).finish()
+        } else {
+            Shrinkable::new(1., text.finish()).finish()
+        })
+        .with_children(is_restoring(restore_state).then(|| render_restore_spinner(appearance)))
+        .with_children(
+            props
+                .auto_controls
+                .clone()
+                .map(|controls| super::auto_coordinate::render_auto_controls(controls, appearance)),
+        )
+        .with_children(
+            props
+                .coordinator_switch
+                .clone()
+                .map(|mouse_state| render_coordinator_switch(true, mouse_state, appearance)),
+        )
         .finish();
 
-    render_pane_row_element(props, Padding::uniform(8.), true, content, theme)
+    render_pane_row_element(
+        props,
+        Padding::uniform(ROW_VERTICAL_PADDING)
+            .with_left(ROW_HORIZONTAL_PADDING)
+            .with_right(ROW_HORIZONTAL_PADDING),
+        true,
+        content,
+        theme,
+    )
 }
 
 enum TypedPane<'a> {
@@ -5034,144 +4265,6 @@ fn pane_display_title_and_subtitle(
     }
 }
 
-fn build_vertical_tabs_summary_data(
-    pane_group: &PaneGroup,
-    visible_pane_ids: &[PaneId],
-    app: &AppContext,
-) -> VerticalTabsSummaryData {
-    let mut primary_labels = Vec::new();
-    let mut primary_seen = HashMap::new();
-    let mut working_directories = Vec::new();
-    let mut working_directory_seen = HashMap::new();
-    let mut branch_entries = Vec::new();
-    let mut has_unread_activity = false;
-    let mut has_running_command = false;
-
-    for pane_id in visible_pane_ids {
-        let Some(pane) = pane_group.pane_by_id(*pane_id) else {
-            continue;
-        };
-        let pane_configuration = pane.pane_configuration();
-        let pane_configuration = pane_configuration.as_ref(app);
-        let typed = pane_group.resolve_pane_type(*pane_id, app);
-        let (pane_title, pane_subtitle) = pane_display_title_and_subtitle(
-            &typed,
-            pane_configuration.title().trim(),
-            pane_configuration.title_secondary().trim(),
-        );
-
-        match typed {
-            TypedPane::Terminal(terminal_pane) => {
-                let terminal_view = terminal_pane.terminal_view(app);
-                let terminal_view = terminal_view.as_ref(app);
-                has_unread_activity |=
-                    has_unread_activity_for_terminal_view(terminal_view.id(), app);
-                has_running_command |= is_running_project_command(
-                    CLIAgentSessionsModel::as_ref(app)
-                        .session(terminal_view.id())
-                        .is_some(),
-                    terminal_view.is_long_running_and_user_controlled(),
-                );
-                let title_text = terminal_view.display_title_from_shell(app);
-                let working_directory = resolved_terminal_working_directory(terminal_view, app);
-                let working_directory_text = working_directory
-                    .clone()
-                    .filter(|wd| !wd.trim().is_empty())
-                    .unwrap_or_else(|| title_text.clone());
-                let agent_text = terminal_agent_text(terminal_view, app);
-                let (conversation_display_title, cli_agent_title) =
-                    preferred_agent_tab_titles(&agent_text, agent_tab_text_preference(app));
-
-                let primary_label = terminal_primary_line_data(
-                    terminal_view.is_long_running_and_user_controlled(),
-                    conversation_display_title,
-                    cli_agent_title,
-                    title_text.as_str(),
-                    working_directory_text.as_str(),
-                    terminal_title_fallback_font(&agent_text),
-                    terminal_view.last_completed_command_text(),
-                );
-                let status = summary_conversation_status_for_terminal(terminal_view, app);
-                push_normalized_unique_summary_label(
-                    &mut primary_labels,
-                    &mut primary_seen,
-                    primary_label.text(),
-                    status,
-                );
-
-                if let Some(working_directory) = working_directory {
-                    push_normalized_unique_summary_text(
-                        &mut working_directories,
-                        &mut working_directory_seen,
-                        &working_directory,
-                    );
-                }
-
-                if let (Some(repo_path), Some(branch_name)) = (
-                    terminal_view
-                        .current_local_repo_path()
-                        .map(Path::to_path_buf),
-                    terminal_view
-                        .current_git_branch(app)
-                        .and_then(|branch| normalize_summary_text(&branch)),
-                ) {
-                    branch_entries.push(VerticalTabsSummaryBranchEntry {
-                        repo_path,
-                        branch_name,
-                        diff_stats: terminal_view.current_diff_line_changes(app),
-                        pull_request_label: terminal_view
-                            .current_pull_request_url(app)
-                            .as_deref()
-                            .map(terminal_pull_request_badge_label)
-                            .and_then(|label| normalize_summary_text(&label)),
-                    });
-                }
-            }
-            TypedPane::Code(_) => {
-                push_normalized_unique_summary_label(
-                    &mut primary_labels,
-                    &mut primary_seen,
-                    &pane_title,
-                    None,
-                );
-                push_normalized_unique_summary_text(
-                    &mut working_directories,
-                    &mut working_directory_seen,
-                    &pane_subtitle,
-                );
-            }
-            TypedPane::CodeDiff
-            | TypedPane::File
-            | TypedPane::Notebook { .. }
-            | TypedPane::Workflow { .. }
-            | TypedPane::Settings
-            | TypedPane::EnvVarCollection
-            | TypedPane::EnvironmentManagement
-            | TypedPane::AIFact
-            | TypedPane::AIDocument
-            | TypedPane::ExecutionProfileEditor
-            | TypedPane::Other => {
-                push_normalized_unique_summary_label(
-                    &mut primary_labels,
-                    &mut primary_seen,
-                    &pane_title,
-                    None,
-                );
-            }
-        }
-    }
-
-    sort_summary_primary_labels_status_first(&mut primary_labels);
-
-    VerticalTabsSummaryData {
-        primary_labels,
-        working_directories,
-        branch_entries: coalesce_summary_branch_entries(branch_entries),
-        has_unread_activity,
-        has_running_command,
-    }
-}
-
 impl<'a> PaneProps<'a> {
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -5249,6 +4342,9 @@ impl<'a> PaneProps<'a> {
             is_pinned,
             container_is_hovered,
             origin_badge: None,
+            is_coordinator: false,
+            auto_controls: None,
+            coordinator_switch: None,
         })
     }
 
@@ -5718,231 +4814,6 @@ fn cloud_agent_working_directory_and_env(
     }
 }
 
-fn render_terminal_row_content(
-    props: &PaneProps<'_>,
-    terminal_view: &TerminalView,
-    appearance: &Appearance,
-    app: &AppContext,
-) -> Box<dyn Element> {
-    let theme = appearance.theme();
-    let main_text_color = theme.main_text_color(theme.background());
-    let sub_text_color = theme.sub_text_color(theme.background());
-    let primary_info = *TabSettings::as_ref(app).vertical_tabs_primary_info.value();
-
-    let title_text = terminal_view.display_title_from_shell(app);
-    let working_directory = resolved_terminal_working_directory(terminal_view, app)
-        .unwrap_or_else(|| title_text.clone());
-
-    let git_branch = terminal_view.current_git_branch(app);
-
-    // Line 1 and line 2 depend on the "Pane title as" setting.
-    // Line 3 (metadata) shows context data on the left + badges on the right.
-    //
-    // | Setting          | Line 1 (title)       | Line 2 (description)   | Line 3 left          |
-    // |------------------|----------------------|------------------------|----------------------|
-    // | Command          | command/conversation | working directory       | git branch           |
-    // | WorkingDirectory | working directory    | command/conversation    | git branch           |
-    // | Branch           | git branch           | command/conversation    | working directory    |
-    let (first_line, second_line, metadata_left) = match primary_info {
-        VerticalTabsPrimaryInfo::Command => (
-            render_pane_title_slot(
-                props,
-                || {
-                    render_terminal_primary_line_for_view(
-                        terminal_view,
-                        appearance,
-                        main_text_color,
-                        app,
-                    )
-                },
-                12.,
-                main_text_color,
-                ClipConfig::ellipsis(),
-                appearance,
-                app,
-            ),
-            render_text_line(
-                &working_directory,
-                sub_text_color,
-                ClipConfig::start(),
-                appearance,
-            ),
-            MetadataLeftContent::GitBranch(git_branch),
-        ),
-        VerticalTabsPrimaryInfo::WorkingDirectory => (
-            render_pane_title_slot(
-                props,
-                || {
-                    render_text_line(
-                        &working_directory,
-                        main_text_color,
-                        ClipConfig::start(),
-                        appearance,
-                    )
-                },
-                12.,
-                main_text_color,
-                ClipConfig::ellipsis(),
-                appearance,
-                app,
-            ),
-            render_terminal_primary_line_for_view(terminal_view, appearance, sub_text_color, app),
-            MetadataLeftContent::GitBranch(git_branch),
-        ),
-        VerticalTabsPrimaryInfo::Branch => {
-            let (branch_text, show_branch_icon) =
-                branch_label_display(git_branch.as_deref(), working_directory.as_str());
-            (
-                render_pane_title_slot(
-                    props,
-                    || {
-                        if show_branch_icon {
-                            render_git_branch_text(&branch_text, main_text_color, 12., appearance)
-                        } else {
-                            render_text_line(
-                                &branch_text,
-                                main_text_color,
-                                ClipConfig::start(),
-                                appearance,
-                            )
-                        }
-                    },
-                    12.,
-                    main_text_color,
-                    ClipConfig::ellipsis(),
-                    appearance,
-                    app,
-                ),
-                render_terminal_primary_line_for_view(
-                    terminal_view,
-                    appearance,
-                    sub_text_color,
-                    app,
-                ),
-                MetadataLeftContent::WorkingDirectory(working_directory),
-            )
-        }
-    };
-
-    let model_label = tab_agent_model_label(app, terminal_view.id());
-    let title_indicator = terminal_title_indicator_kind(&props.typed, app);
-    let activity = vertical_tab_cli_agent_activity(&props.typed, app);
-
-    let has_trailing = model_label.is_some() || title_indicator.is_some() || activity.is_some();
-    let first_line_element = if has_trailing {
-        let mut trailing = Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center);
-        if let Some(activity) = activity {
-            let color = vertical_tab_activity_dot_color(activity, theme);
-            let color = if activity == ProjectCliAgentActivity::NeedsInput {
-                attention_pulse_color(color, app)
-            } else {
-                color
-            };
-            trailing.add_child(
-                Container::new(
-                    Text::new_inline(activity.label(), appearance.ui_font_family(), 11.)
-                        .with_color(color)
-                        .finish(),
-                )
-                .with_margin_left(6.)
-                .finish(),
-            );
-        }
-        if let Some(label) = model_label {
-            trailing.add_child(
-                Container::new(
-                    ConstrainedBox::new(
-                        Text::new_inline(label, appearance.ui_font_family(), 11.)
-                            .with_clip(ClipConfig::ellipsis())
-                            .with_color(sub_text_color.into())
-                            .finish(),
-                    )
-                    .with_max_width(96.)
-                    .finish(),
-                )
-                .with_margin_left(6.)
-                .finish(),
-            );
-        }
-        if let Some(indicator) = title_indicator {
-            trailing.add_child(
-                Container::new(render_title_indicator(indicator, theme))
-                    .with_margin_left(4.)
-                    .finish(),
-            );
-        }
-        Flex::row()
-            .with_main_axis_size(MainAxisSize::Max)
-            .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_main_axis_alignment(MainAxisAlignment::SpaceBetween)
-            .with_child(Shrinkable::new(1., first_line).finish())
-            .with_child(trailing.finish())
-            .finish()
-    } else {
-        first_line
-    };
-
-    let mut content = Flex::column()
-        .with_main_axis_size(MainAxisSize::Min)
-        .with_cross_axis_alignment(CrossAxisAlignment::Start);
-    content.add_child(first_line_element);
-    let second_line = if let Some(label) =
-        crate::terminal::cli_agent_sessions::restore::AgentRestoreQueue::as_ref(app)
-            .state(terminal_view.id())
-            .and_then(|state| state.label())
-    {
-        render_text_line(label, main_text_color, ClipConfig::ellipsis(), appearance)
-    } else {
-        second_line
-    };
-    content.add_child(Container::new(second_line).with_margin_top(2.).finish());
-    content.add_child(
-        Container::new(render_terminal_metadata_line(
-            terminal_view,
-            props.pane_group_id,
-            props.pane_id,
-            metadata_left,
-            chip_entrypoint_for_granularity(props.display_granularity),
-            &props.badge_mouse_states,
-            appearance,
-            app,
-        ))
-        .with_margin_top(2.)
-        .finish(),
-    );
-    content.finish()
-}
-
-fn chip_entrypoint_for_granularity(
-    granularity: VerticalTabsDisplayGranularity,
-) -> VerticalTabsChipEntrypoint {
-    match granularity {
-        VerticalTabsDisplayGranularity::Panes => VerticalTabsChipEntrypoint::Pane,
-        VerticalTabsDisplayGranularity::Tabs => VerticalTabsChipEntrypoint::Tab,
-    }
-}
-
-fn branch_label_display(git_branch: Option<&str>, fallback: &str) -> (String, bool) {
-    match git_branch.filter(|branch| !branch.trim().is_empty()) {
-        Some(branch) => (branch.to_string(), true),
-        None => (fallback.to_string(), false),
-    }
-}
-
-fn compact_branch_subtitle_display(
-    git_branch: Option<&str>,
-    working_directory: Option<&str>,
-) -> Option<(String, bool)> {
-    git_branch
-        .filter(|branch| !branch.trim().is_empty())
-        .map(|branch| (branch.to_string(), true))
-        .or_else(|| {
-            working_directory
-                .filter(|wd| !wd.trim().is_empty())
-                .map(|wd| (wd.to_string(), false))
-        })
-}
-
 fn render_git_branch_text(
     branch: &str,
     text_color: WarpThemeFill,
@@ -5969,11 +4840,6 @@ fn render_git_branch_text(
             .finish(),
         )
         .finish()
-}
-
-enum MetadataLeftContent {
-    GitBranch(Option<String>),
-    WorkingDirectory(String),
 }
 
 fn render_text_line(
@@ -6075,260 +4941,6 @@ fn render_pane_title_slot(
         })
         .with_cursor(Cursor::PointingHand)
         .finish()
-}
-
-fn render_summary_tab_item(
-    props: PaneProps<'_>,
-    summary: &VerticalTabsSummaryData,
-    summary_pane_kind_icons: Option<SummaryPaneKindIcons>,
-    app: &AppContext,
-) -> Box<dyn Element> {
-    // Region caps for v2 per-line rendering: each region shows at most 3 visible lines
-    // before collapsing the rest into a `+ N more` overflow line.
-    const MAX_VISIBLE_PRIMARY_LABELS: usize = 3;
-    const MAX_VISIBLE_WORKING_DIRECTORIES: usize = 3;
-    const MAX_VISIBLE_BRANCH_LINES: usize = 3;
-    const REGION_GAP: f32 = 4.;
-    const INTRA_REGION_GAP: f32 = 2.;
-
-    let appearance = Appearance::as_ref(app);
-    let theme = appearance.theme();
-    let main_text_color = theme.main_text_color(theme.background());
-    let sub_text_color = theme.sub_text_color(theme.background());
-    let icon = summary_pane_kind_icons
-        .map(|icons| render_summary_pane_kind_icons(icons, VERTICAL_TABS_ICON_SIZE, appearance))
-        .unwrap_or_else(|| {
-            render_pane_icon_with_status(&props.typed, &props.title, appearance, app)
-        });
-
-    let mut text_col = Flex::column()
-        .with_main_axis_size(MainAxisSize::Min)
-        .with_cross_axis_alignment(CrossAxisAlignment::Start);
-
-    // Title region. A custom-title or rename override short-circuits the per-label list and
-    // renders as a single line (no prefix slot, no overflow line).
-    let mut title_region = Flex::column()
-        .with_main_axis_size(MainAxisSize::Min)
-        .with_cross_axis_alignment(CrossAxisAlignment::Start);
-    if let Some(title_override) = render_title_override(
-        &props,
-        12.,
-        main_text_color,
-        ClipConfig::end(),
-        appearance,
-        app,
-    ) {
-        title_region.add_child(render_title_with_origin(
-            title_override,
-            props.origin_badge.as_ref(),
-            appearance,
-        ));
-    } else if summary.primary_labels.is_empty() {
-        title_region.add_child(render_title_with_origin(
-            render_text_line(&props.title, main_text_color, ClipConfig::end(), appearance),
-            props.origin_badge.as_ref(),
-            appearance,
-        ));
-    } else {
-        let visible_labels: Vec<&VerticalTabsSummaryPrimaryLabel> = summary
-            .primary_labels
-            .iter()
-            .take(MAX_VISIBLE_PRIMARY_LABELS)
-            .collect();
-        let reserve_prefix_slot = visible_labels.iter().any(|label| label.status.is_some());
-
-        for (idx, label) in visible_labels.iter().enumerate() {
-            let line = render_summary_primary_label_line(
-                label,
-                reserve_prefix_slot,
-                main_text_color,
-                appearance,
-                app,
-            );
-            title_region.add_child(if idx == 0 {
-                render_title_with_origin(line, props.origin_badge.as_ref(), appearance)
-            } else {
-                Container::new(line)
-                    .with_margin_top(INTRA_REGION_GAP)
-                    .finish()
-            });
-        }
-
-        let hidden_label_count =
-            summary_overflow_count(summary.primary_labels.len(), MAX_VISIBLE_PRIMARY_LABELS);
-        if hidden_label_count > 0 {
-            title_region.add_child(
-                Container::new(render_summary_overflow_line(
-                    hidden_label_count,
-                    sub_text_color,
-                    appearance,
-                ))
-                .with_margin_top(INTRA_REGION_GAP)
-                .finish(),
-            );
-        }
-    }
-    let title_region = title_region.finish();
-    let title_indicator = separate_title_indicator_kind(
-        summary.has_unread_activity,
-        None,
-        summary.has_running_command,
-    );
-    if let Some(indicator) = title_indicator {
-        text_col.add_child(
-            Flex::row()
-                .with_main_axis_size(MainAxisSize::Max)
-                .with_main_axis_alignment(MainAxisAlignment::SpaceBetween)
-                .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                .with_child(Shrinkable::new(1., title_region).finish())
-                .with_child(
-                    Container::new(render_title_indicator(indicator, theme))
-                        .with_margin_left(4.)
-                        .finish(),
-                )
-                .finish(),
-        );
-    } else {
-        text_col.add_child(title_region);
-    }
-
-    // Working-directory region.
-    let visible_directory_count = summary
-        .working_directories
-        .len()
-        .min(MAX_VISIBLE_WORKING_DIRECTORIES);
-    for (idx, working_dir) in summary
-        .working_directories
-        .iter()
-        .take(MAX_VISIBLE_WORKING_DIRECTORIES)
-        .enumerate()
-    {
-        let margin = if idx == 0 {
-            REGION_GAP
-        } else {
-            INTRA_REGION_GAP
-        };
-        text_col.add_child(
-            Container::new(render_text_line(
-                working_dir,
-                sub_text_color,
-                ClipConfig::start(),
-                appearance,
-            ))
-            .with_margin_top(margin)
-            .finish(),
-        );
-    }
-    let hidden_directory_count = summary_overflow_count(
-        summary.working_directories.len(),
-        MAX_VISIBLE_WORKING_DIRECTORIES,
-    );
-    if hidden_directory_count > 0 {
-        let margin = if visible_directory_count == 0 {
-            REGION_GAP
-        } else {
-            INTRA_REGION_GAP
-        };
-        text_col.add_child(
-            Container::new(render_summary_overflow_line(
-                hidden_directory_count,
-                sub_text_color,
-                appearance,
-            ))
-            .with_margin_top(margin)
-            .finish(),
-        );
-    }
-
-    // Branch region. Each branch line gets the existing 4px top margin from APP-3875.
-    for branch_entry in summary.branch_entries.iter().take(MAX_VISIBLE_BRANCH_LINES) {
-        text_col.add_child(
-            Container::new(render_summary_branch_line(branch_entry, appearance))
-                .with_margin_top(REGION_GAP)
-                .finish(),
-        );
-    }
-
-    let hidden_branch_count =
-        summary_overflow_count(summary.branch_entries.len(), MAX_VISIBLE_BRANCH_LINES);
-    if hidden_branch_count > 0 {
-        text_col.add_child(
-            Container::new(render_summary_overflow_line(
-                hidden_branch_count,
-                sub_text_color,
-                appearance,
-            ))
-            .with_margin_top(REGION_GAP)
-            .finish(),
-        );
-    }
-
-    let content = Flex::row()
-        .with_main_axis_size(MainAxisSize::Max)
-        .with_cross_axis_alignment(CrossAxisAlignment::Start)
-        .with_spacing(ICON_WITH_STATUS_GAP)
-        .with_child(icon)
-        .with_child(Shrinkable::new(1., text_col.finish()).finish())
-        .finish();
-
-    render_pane_row_element(props, Padding::uniform(8.), true, content, theme)
-}
-
-fn render_summary_primary_label_line(
-    label: &VerticalTabsSummaryPrimaryLabel,
-    reserve_prefix_slot: bool,
-    text_color: WarpThemeFill,
-    appearance: &Appearance,
-    app: &AppContext,
-) -> Box<dyn Element> {
-    // Reserve a slot wide enough for the status pill so non-conversation lines align with
-    // conversation lines in the same region. STATUS_ELEMENT_PADDING is the 2px padding inside
-    // the pill from `render_status_element`.
-    const STATUS_ELEMENT_PADDING: f32 = 2.;
-    let prefix_slot_size = VERTICAL_TABS_SUMMARY_STATUS_ICON_SIZE + STATUS_ELEMENT_PADDING * 2.;
-    let text = render_text_line(&label.text, text_color, ClipConfig::end(), appearance);
-
-    let prefix: Option<Box<dyn Element>> = match (label.status.as_ref(), reserve_prefix_slot) {
-        (Some(status), _) => Some(render_status_element_with_opacity(
-            status,
-            VERTICAL_TABS_SUMMARY_STATUS_ICON_SIZE,
-            status_blink_opacity(status, app),
-            appearance,
-        )),
-        (None, true) => Some(
-            ConstrainedBox::new(Empty::new().finish())
-                .with_width(prefix_slot_size)
-                .with_height(prefix_slot_size)
-                .finish(),
-        ),
-        (None, false) => None,
-    };
-
-    let Some(prefix) = prefix else {
-        return text;
-    };
-    Flex::row()
-        .with_main_axis_size(MainAxisSize::Max)
-        .with_cross_axis_alignment(CrossAxisAlignment::Center)
-        .with_spacing(4.)
-        .with_child(prefix)
-        .with_child(Shrinkable::new(1., text).finish())
-        .finish()
-}
-
-fn render_summary_overflow_line(
-    hidden_count: usize,
-    text_color: WarpThemeFill,
-    appearance: &Appearance,
-) -> Box<dyn Element> {
-    Text::new_inline(
-        format!("+ {hidden_count} more"),
-        appearance.ui_font_family(),
-        10.,
-    )
-    .with_clip(ClipConfig::end())
-    .with_color(text_color.into())
-    .finish()
 }
 
 pub(super) fn render_summary_pane_kind_icons(
@@ -6556,54 +5168,6 @@ fn summary_pane_kind_icon(
     }
 }
 
-fn render_summary_branch_line(
-    entry: &VerticalTabsSummaryBranchEntry,
-    appearance: &Appearance,
-) -> Box<dyn Element> {
-    let theme = appearance.theme();
-    let sub_text_color = theme.sub_text_color(theme.background());
-    let mut row = Flex::row()
-        .with_main_axis_size(MainAxisSize::Max)
-        .with_main_axis_alignment(MainAxisAlignment::SpaceBetween)
-        .with_cross_axis_alignment(CrossAxisAlignment::Center)
-        .with_child(
-            Shrinkable::new(
-                1.,
-                render_git_branch_text(&entry.branch_name, sub_text_color, 10., appearance),
-            )
-            .finish(),
-        );
-
-    let mut right_badges = Flex::row()
-        .with_cross_axis_alignment(CrossAxisAlignment::Center)
-        .with_spacing(4.);
-    let mut has_right_badges = false;
-    if let Some(diff_stats) = &entry.diff_stats {
-        right_badges.add_child(render_passive_terminal_diff_stats_badge(
-            diff_stats, appearance,
-        ));
-        has_right_badges = true;
-    }
-    if let Some(pull_request_label) = &entry.pull_request_label {
-        right_badges.add_child(render_passive_terminal_pull_request_badge(
-            pull_request_label,
-            appearance,
-        ));
-        has_right_badges = true;
-    }
-    if has_right_badges {
-        row.add_child(
-            Container::new(right_badges.finish())
-                .with_padding_left(4.)
-                .finish(),
-        );
-    }
-
-    ConstrainedBox::new(row.finish())
-        .with_height(METADATA_ROW_HEIGHT)
-        .finish()
-}
-
 fn render_terminal_primary_line_for_view(
     terminal_view: &TerminalView,
     appearance: &Appearance,
@@ -6673,140 +5237,19 @@ fn render_terminal_primary_line(
     };
     match primary_line {
         TerminalPrimaryLineData::StatusText { text, .. } => {
-            Text::new_inline(text, appearance.ui_font_family(), 12.)
+            Text::new_inline(text, appearance.ui_font_family(), ROW_TITLE_SIZE)
                 .with_clip(ClipConfig::ellipsis())
                 .with_color(text_color.into())
                 .finish()
         }
-        TerminalPrimaryLineData::Text { text, font } => {
-            let font_family = match font {
-                TerminalPrimaryLineFont::Ui => appearance.ui_font_family(),
-                TerminalPrimaryLineFont::Monospace => appearance.monospace_font_family(),
-            };
-            let title_el = Text::new_inline(text, font_family, 12.)
+        TerminalPrimaryLineData::Text { text, .. } => {
+            let title_el = Text::new_inline(text, appearance.ui_font_family(), ROW_TITLE_SIZE)
                 .with_clip(ClipConfig::ellipsis())
                 .with_color(text_color.into())
                 .finish();
             wrap_with_error_indicator(title_el)
         }
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn render_terminal_metadata_line(
-    terminal_view: &TerminalView,
-    pane_group_id: EntityId,
-    pane_id: PaneId,
-    left_content: MetadataLeftContent,
-    row_entrypoint: VerticalTabsChipEntrypoint,
-    badge_mouse_states: &PaneRowBadgeMouseStates,
-    appearance: &Appearance,
-    app: &AppContext,
-) -> Box<dyn Element> {
-    let theme = appearance.theme();
-    let sub_text_color = theme.sub_text_color(theme.background());
-
-    let mut meta = Flex::row()
-        .with_main_axis_size(MainAxisSize::Max)
-        .with_main_axis_alignment(MainAxisAlignment::SpaceBetween)
-        .with_cross_axis_alignment(CrossAxisAlignment::Center);
-
-    // Left: Shrinkable so it clips before reaching the right-side badges.
-    let left_element: Box<dyn Element> = match left_content {
-        MetadataLeftContent::GitBranch(Some(branch)) if !branch.trim().is_empty() => {
-            Shrinkable::new(
-                1.,
-                render_git_branch_text(&branch, sub_text_color, 10., appearance),
-            )
-            .finish()
-        }
-        MetadataLeftContent::WorkingDirectory(wd) if !wd.trim().is_empty() => Shrinkable::new(
-            1.,
-            Text::new_inline(wd, appearance.ui_font_family(), 10.)
-                .with_clip(ClipConfig::start())
-                .with_color(sub_text_color.into())
-                .finish(),
-        )
-        .finish(),
-        _ => Empty::new().finish(),
-    };
-    meta.add_child(left_element);
-
-    // Right: wrap badges in a container with left padding equal to the inter-chip gap (4px).
-    // SpaceBetween treats this padding as part of the right element's natural width, so when the
-    // panel is narrow and the Shrinkable text has fully collapsed, there is still a guaranteed
-    // 4px gap between the text and the first chip — matching the spacing between chips.
-    if let Some(right_badges) = render_terminal_right_badges(
-        terminal_view,
-        pane_group_id,
-        pane_id,
-        row_entrypoint,
-        badge_mouse_states,
-        appearance,
-        app,
-    ) {
-        meta.add_child(Container::new(right_badges).with_padding_left(4.).finish());
-    }
-
-    // Constrain to a fixed height so toggling badges on/off doesn't change the row height.
-    ConstrainedBox::new(meta.finish())
-        .with_height(METADATA_ROW_HEIGHT)
-        .finish()
-}
-
-fn render_terminal_right_badges(
-    terminal_view: &TerminalView,
-    pane_group_id: EntityId,
-    pane_id: PaneId,
-    entrypoint: VerticalTabsChipEntrypoint,
-    badge_mouse_states: &PaneRowBadgeMouseStates,
-    appearance: &Appearance,
-    app: &AppContext,
-) -> Option<Box<dyn Element>> {
-    let show_diff_stats = *TabSettings::as_ref(app)
-        .vertical_tabs_show_diff_stats
-        .value();
-    let show_pr_link = *TabSettings::as_ref(app).vertical_tabs_show_pr_link.value();
-
-    let mut right_badges = Flex::row()
-        .with_cross_axis_alignment(CrossAxisAlignment::Center)
-        .with_spacing(4.);
-    let mut has_badges = false;
-
-    if terminal_view.is_linked_git_worktree(app) {
-        right_badges.add_child(render_passive_worktree_badge(appearance));
-        has_badges = true;
-    }
-
-    if show_diff_stats {
-        if let Some(git_line_changes) = terminal_view.current_diff_line_changes(app) {
-            right_badges.add_child(render_terminal_diff_stats_badge(
-                &git_line_changes,
-                pane_group_id,
-                pane_id,
-                entrypoint,
-                badge_mouse_states.diff_stats.clone(),
-                appearance,
-            ));
-            has_badges = true;
-        }
-    }
-
-    if show_pr_link {
-        if let Some(pull_request_url) = terminal_view.current_pull_request_url(app) {
-            let label = terminal_pull_request_badge_label(&pull_request_url);
-            right_badges.add_child(render_terminal_pull_request_badge(
-                label,
-                pull_request_url,
-                entrypoint,
-                badge_mouse_states.pull_request.clone(),
-                appearance,
-            ));
-            has_badges = true;
-        }
-    }
-
-    has_badges.then(|| right_badges.finish())
 }
 
 fn render_terminal_diff_stats_badge(
@@ -6874,33 +5317,6 @@ fn render_terminal_pull_request_badge(
     .finish()
 }
 
-fn render_passive_terminal_pull_request_badge(
-    label: &str,
-    appearance: &Appearance,
-) -> Box<dyn Element> {
-    render_badge_container(
-        render_pull_request_badge_content(label, appearance),
-        internal_colors::fg_overlay_1(appearance.theme()),
-    )
-}
-
-fn render_compact_non_terminal_title(
-    title: &str,
-    typed: &TypedPane<'_>,
-    appearance: &Appearance,
-) -> Box<dyn Element> {
-    let theme = appearance.theme();
-    let clip_config = if matches!(typed, TypedPane::Code(_)) {
-        ClipConfig::start()
-    } else {
-        ClipConfig::ellipsis()
-    };
-    Text::new_inline(title.to_string(), appearance.ui_font_family(), 12.)
-        .with_clip(clip_config)
-        .with_color(theme.main_text_color(theme.background()).into())
-        .finish()
-}
-
 fn render_vtab_diff_stats_content(
     line_changes: &GitLineChanges,
     appearance: &Appearance,
@@ -6937,19 +5353,8 @@ fn render_badge_container(content: Box<dyn Element>, background: ThemeFill) -> B
     Container::new(content)
         .with_padding(Padding::uniform(1.).with_left(4.).with_right(4.))
         .with_background(background)
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(3.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
         .finish()
-}
-
-fn render_passive_worktree_badge(appearance: &Appearance) -> Box<dyn Element> {
-    let theme = appearance.theme();
-    let sub_text_color = theme.sub_text_color(theme.background());
-    let content = ConstrainedBox::new(UiIcon::Dataflow02.to_warpui_icon(sub_text_color).finish())
-        .with_width(BADGE_ICON_SIZE)
-        .with_height(BADGE_ICON_SIZE)
-        .finish();
-
-    render_badge_container(content, internal_colors::fg_overlay_1(theme))
 }
 
 fn render_pull_request_badge_content(label: &str, appearance: &Appearance) -> Box<dyn Element> {
@@ -7056,796 +5461,6 @@ fn compute_tab_group_color_mode(
             .collect();
         TabGroupColorMode::PerPane(theme_map)
     }
-}
-
-fn resolve_compact_subtitle(
-    primary: VerticalTabsPrimaryInfo,
-    subtitle_pref: VerticalTabsCompactSubtitle,
-) -> VerticalTabsCompactSubtitle {
-    let is_conflict = matches!(
-        (primary, subtitle_pref),
-        (
-            VerticalTabsPrimaryInfo::Command,
-            VerticalTabsCompactSubtitle::Command
-        ) | (
-            VerticalTabsPrimaryInfo::WorkingDirectory,
-            VerticalTabsCompactSubtitle::WorkingDirectory
-        ) | (
-            VerticalTabsPrimaryInfo::Branch,
-            VerticalTabsCompactSubtitle::Branch
-        )
-    );
-    if is_conflict {
-        default_compact_subtitle(primary)
-    } else {
-        subtitle_pref
-    }
-}
-
-fn default_compact_subtitle(primary: VerticalTabsPrimaryInfo) -> VerticalTabsCompactSubtitle {
-    match primary {
-        VerticalTabsPrimaryInfo::Command => VerticalTabsCompactSubtitle::Branch,
-        VerticalTabsPrimaryInfo::WorkingDirectory => VerticalTabsCompactSubtitle::Branch,
-        VerticalTabsPrimaryInfo::Branch => VerticalTabsCompactSubtitle::Command,
-    }
-}
-
-fn subtitle_options_for_primary(
-    primary: VerticalTabsPrimaryInfo,
-) -> [(VerticalTabsCompactSubtitle, &'static str); 2] {
-    match primary {
-        VerticalTabsPrimaryInfo::Command => [
-            (VerticalTabsCompactSubtitle::Branch, "Branch"),
-            (
-                VerticalTabsCompactSubtitle::WorkingDirectory,
-                "Working Directory",
-            ),
-        ],
-        VerticalTabsPrimaryInfo::WorkingDirectory => [
-            (VerticalTabsCompactSubtitle::Branch, "Branch"),
-            (
-                VerticalTabsCompactSubtitle::Command,
-                "Command / Conversation",
-            ),
-        ],
-        VerticalTabsPrimaryInfo::Branch => [
-            (
-                VerticalTabsCompactSubtitle::Command,
-                "Command / Conversation",
-            ),
-            (
-                VerticalTabsCompactSubtitle::WorkingDirectory,
-                "Working Directory",
-            ),
-        ],
-    }
-}
-
-pub(super) fn render_settings_popup(
-    state: &VerticalTabsPanelState,
-    app: &AppContext,
-) -> Box<dyn Element> {
-    const SETTINGS_POPUP_CORNER_RADIUS: f32 = 6.;
-    const SETTINGS_POPUP_MENU_ITEM_FONT_SIZE: f32 = 12.;
-
-    let appearance = Appearance::as_ref(app);
-    let theme = appearance.theme();
-    let current_granularity = *TabSettings::as_ref(app)
-        .vertical_tabs_display_granularity
-        .value();
-    let current_tab_item_mode = *TabSettings::as_ref(app).vertical_tabs_tab_item_mode.value();
-    let current_mode = *TabSettings::as_ref(app).vertical_tabs_view_mode.value();
-    let current_primary_info = *TabSettings::as_ref(app).vertical_tabs_primary_info.value();
-    let current_subtitle = resolve_compact_subtitle(
-        current_primary_info,
-        *TabSettings::as_ref(app)
-            .vertical_tabs_compact_subtitle
-            .value(),
-    );
-    let show_pr_link = *TabSettings::as_ref(app).vertical_tabs_show_pr_link.value();
-    let show_diff_stats = *TabSettings::as_ref(app)
-        .vertical_tabs_show_diff_stats
-        .value();
-    let show_details_on_hover = *TabSettings::as_ref(app)
-        .vertical_tabs_show_details_on_hover
-        .value();
-    let show_tab_item_section = matches!(current_granularity, VerticalTabsDisplayGranularity::Tabs)
-        && FeatureFlag::VerticalTabsSummaryMode.is_enabled();
-    let show_focused_session_controls = !matches!(
-        resolve_vertical_tabs_mode(app),
-        VerticalTabsResolvedMode::Summary
-    );
-    let sub_text = theme.sub_text_color(theme.background());
-    let view_as_header = Container::new(
-        Text::new_inline(
-            "View as".to_string(),
-            appearance.ui_font_family(),
-            SETTINGS_POPUP_MENU_ITEM_FONT_SIZE,
-        )
-        .with_color(sub_text.into())
-        .finish(),
-    )
-    .with_horizontal_padding(16.)
-    .with_margin_bottom(4.)
-    .finish();
-
-    let view_as_segmented_control = Container::new(
-        Flex::row()
-            .with_main_axis_size(MainAxisSize::Max)
-            .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_child(
-                Expanded::new(
-                    1.,
-                    render_popup_text_segment(
-                        "Panes",
-                        matches!(current_granularity, VerticalTabsDisplayGranularity::Panes),
-                        state.panes_segment_mouse_state.clone(),
-                        VerticalTabsDisplayGranularity::Panes,
-                        appearance,
-                        theme,
-                    ),
-                )
-                .finish(),
-            )
-            .with_child(
-                Expanded::new(
-                    1.,
-                    render_popup_text_segment(
-                        "Tabs",
-                        matches!(current_granularity, VerticalTabsDisplayGranularity::Tabs),
-                        state.tabs_segment_mouse_state.clone(),
-                        VerticalTabsDisplayGranularity::Tabs,
-                        appearance,
-                        theme,
-                    ),
-                )
-                .finish(),
-            )
-            .finish(),
-    )
-    .with_uniform_padding(4.)
-    .with_background(internal_colors::fg_overlay_2(theme))
-    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(
-        SETTINGS_POPUP_CORNER_RADIUS,
-    )))
-    .finish();
-
-    let view_as_segmented_control_row = Container::new(view_as_segmented_control)
-        .with_horizontal_padding(16.)
-        .with_padding_bottom(4.)
-        .finish();
-
-    let tab_item_header = Container::new(
-        Text::new_inline(
-            "Tab item".to_string(),
-            appearance.ui_font_family(),
-            SETTINGS_POPUP_MENU_ITEM_FONT_SIZE,
-        )
-        .with_color(sub_text.into())
-        .finish(),
-    )
-    .with_horizontal_padding(16.)
-    .with_margin_bottom(4.)
-    .finish();
-
-    let focused_session_option = render_tab_item_mode_option(
-        "Focused session",
-        matches!(
-            current_tab_item_mode,
-            VerticalTabsTabItemMode::FocusedSession
-        ),
-        state.focused_session_option_mouse_state.clone(),
-        VerticalTabsTabItemMode::FocusedSession,
-        appearance,
-        theme,
-    );
-
-    let summary_option = if FeatureFlag::VerticalTabsSummaryMode.is_enabled() {
-        Some(render_tab_item_mode_option(
-            "Summary",
-            matches!(current_tab_item_mode, VerticalTabsTabItemMode::Summary),
-            state.summary_option_mouse_state.clone(),
-            VerticalTabsTabItemMode::Summary,
-            appearance,
-            theme,
-        ))
-    } else {
-        None
-    };
-
-    let density_header = Container::new(
-        Text::new_inline(
-            "Density".to_string(),
-            appearance.ui_font_family(),
-            SETTINGS_POPUP_MENU_ITEM_FONT_SIZE,
-        )
-        .with_color(sub_text.into())
-        .finish(),
-    )
-    .with_horizontal_padding(16.)
-    .with_margin_bottom(4.)
-    .finish();
-
-    // Segmented control row (compact/expanded toggle)
-    // Segmented control row (compact/expanded toggle) — always at the top
-    let segmented_control = Container::new(
-        Flex::row()
-            .with_main_axis_size(MainAxisSize::Max)
-            .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_child(
-                Expanded::new(
-                    1.,
-                    render_popup_segment(
-                        WarpIcon::Menu01,
-                        matches!(current_mode, VerticalTabsViewMode::Compact),
-                        state.compact_segment_mouse_state.clone(),
-                        VerticalTabsViewMode::Compact,
-                        theme,
-                        sub_text,
-                    ),
-                )
-                .finish(),
-            )
-            .with_child(
-                Expanded::new(
-                    1.,
-                    render_popup_segment(
-                        WarpIcon::Grid,
-                        matches!(current_mode, VerticalTabsViewMode::Expanded),
-                        state.expanded_segment_mouse_state.clone(),
-                        VerticalTabsViewMode::Expanded,
-                        theme,
-                        sub_text,
-                    ),
-                )
-                .finish(),
-            )
-            .finish(),
-    )
-    .with_uniform_padding(4.)
-    .with_background(internal_colors::fg_overlay_2(theme))
-    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(
-        SETTINGS_POPUP_CORNER_RADIUS,
-    )))
-    .finish();
-
-    let segmented_control_row = Container::new(segmented_control)
-        .with_horizontal_padding(16.)
-        .with_padding_bottom(4.)
-        .finish();
-
-    // Divider between toggle and "Pane title as" section
-    let make_divider = |theme: &WarpTheme| {
-        Container::new(
-            ConstrainedBox::new(
-                Container::new(Empty::new().finish())
-                    .with_background(internal_colors::fg_overlay_2(theme))
-                    .finish(),
-            )
-            .with_height(1.)
-            .finish(),
-        )
-        .with_margin_top(8.)
-        .with_margin_bottom(8.)
-        .finish()
-    };
-
-    let pane_title_header = Container::new(
-        Text::new_inline(
-            "Pane title as".to_string(),
-            appearance.ui_font_family(),
-            SETTINGS_POPUP_MENU_ITEM_FONT_SIZE,
-        )
-        .with_color(sub_text.into())
-        .finish(),
-    )
-    .with_horizontal_padding(16.)
-    .with_margin_bottom(4.)
-    .finish();
-
-    let command_option = render_primary_info_option(
-        "Command / Conversation",
-        matches!(current_primary_info, VerticalTabsPrimaryInfo::Command),
-        state.command_option_mouse_state.clone(),
-        VerticalTabsPrimaryInfo::Command,
-        appearance,
-        theme,
-    );
-
-    let directory_option = render_primary_info_option(
-        "Working Directory",
-        matches!(
-            current_primary_info,
-            VerticalTabsPrimaryInfo::WorkingDirectory
-        ),
-        state.directory_option_mouse_state.clone(),
-        VerticalTabsPrimaryInfo::WorkingDirectory,
-        appearance,
-        theme,
-    );
-
-    let branch_option = render_primary_info_option(
-        "Branch",
-        matches!(current_primary_info, VerticalTabsPrimaryInfo::Branch),
-        state.branch_option_mouse_state.clone(),
-        VerticalTabsPrimaryInfo::Branch,
-        appearance,
-        theme,
-    );
-
-    // Assemble popup — top-level display granularity first, then density and pane-row sections.
-    let mut popup_col = Flex::column()
-        .with_main_axis_size(MainAxisSize::Min)
-        .with_cross_axis_alignment(CrossAxisAlignment::Stretch);
-    popup_col.add_child(view_as_header);
-    popup_col.add_child(view_as_segmented_control_row);
-    if show_tab_item_section {
-        popup_col.add_child(make_divider(theme));
-        popup_col.add_child(tab_item_header);
-        popup_col.add_child(focused_session_option);
-        if let Some(summary_option) = summary_option {
-            popup_col.add_child(summary_option);
-        }
-    }
-
-    if show_focused_session_controls {
-        popup_col.add_child(make_divider(theme));
-        popup_col.add_child(density_header);
-        popup_col.add_child(segmented_control_row);
-        popup_col.add_child(make_divider(theme));
-        popup_col.add_child(pane_title_header);
-        popup_col.add_child(command_option);
-        popup_col.add_child(directory_option);
-        popup_col.add_child(branch_option);
-
-        if matches!(current_mode, VerticalTabsViewMode::Compact) {
-            popup_col.add_child(make_divider(theme));
-
-            let subtitle_header = Container::new(
-                Text::new_inline(
-                    "Additional metadata".to_string(),
-                    appearance.ui_font_family(),
-                    SETTINGS_POPUP_MENU_ITEM_FONT_SIZE,
-                )
-                .with_color(sub_text.into())
-                .finish(),
-            )
-            .with_horizontal_padding(16.)
-            .with_margin_bottom(4.)
-            .finish();
-            popup_col.add_child(subtitle_header);
-
-            let options = subtitle_options_for_primary(current_primary_info);
-            let mouse_states = [
-                state.subtitle_option_1_mouse_state.clone(),
-                state.subtitle_option_2_mouse_state.clone(),
-            ];
-            for (i, (value, label)) in options.iter().enumerate() {
-                popup_col.add_child(render_compact_subtitle_option(
-                    label,
-                    current_subtitle == *value,
-                    mouse_states[i].clone(),
-                    *value,
-                    appearance,
-                    theme,
-                ));
-            }
-        }
-
-        if matches!(current_mode, VerticalTabsViewMode::Expanded) {
-            popup_col.add_child(make_divider(theme));
-
-            let show_header = Container::new(
-                Text::new_inline(
-                    "Show".to_string(),
-                    appearance.ui_font_family(),
-                    SETTINGS_POPUP_MENU_ITEM_FONT_SIZE,
-                )
-                .with_color(sub_text.into())
-                .finish(),
-            )
-            .with_horizontal_padding(16.)
-            .with_margin_bottom(4.)
-            .finish();
-            popup_col.add_child(show_header);
-            let pr_validation_suppressed = SessionSettings::as_ref(app)
-                .github_pr_chip_default_validation
-                .is_suppressed();
-            let pr_link_info_tooltip = if show_pr_link && pr_validation_suppressed {
-                Some(ShowToggleInfoTooltip {
-                    mouse_state: state.show_pr_link_info_tooltip_mouse_state.clone(),
-                    tooltip_text: "Requires the GitHub CLI to be installed and authenticated",
-                })
-            } else {
-                None
-            };
-
-            popup_col.add_child(render_show_toggle_option(
-                "PR link",
-                show_pr_link,
-                state.show_pr_link_mouse_state.clone(),
-                WorkspaceAction::ToggleVerticalTabsShowPrLink,
-                pr_link_info_tooltip,
-                appearance,
-                theme,
-            ));
-            popup_col.add_child(render_show_toggle_option(
-                "Diff stats",
-                show_diff_stats,
-                state.show_diff_stats_mouse_state.clone(),
-                WorkspaceAction::ToggleVerticalTabsShowDiffStats,
-                None,
-                appearance,
-                theme,
-            ));
-        }
-    }
-    popup_col.add_child(make_divider(theme));
-
-    popup_col.add_child(render_show_toggle_option(
-        "Show details on hover",
-        show_details_on_hover,
-        state.show_details_on_hover_mouse_state.clone(),
-        WorkspaceAction::ToggleVerticalTabsShowDetailsOnHover,
-        None,
-        appearance,
-        theme,
-    ));
-    EventHandler::new(
-        ConstrainedBox::new(
-            Container::new(popup_col.finish())
-                .with_vertical_padding(8.)
-                .with_background(internal_colors::neutral_1(theme))
-                .with_border(Border::all(1.).with_border_fill(internal_colors::fg_overlay_1(theme)))
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(
-                    SETTINGS_POPUP_CORNER_RADIUS,
-                )))
-                .with_drop_shadow(DropShadow::default())
-                .finish(),
-        )
-        .with_width(200.)
-        .finish(),
-    )
-    .on_left_mouse_down(|_, _, _| DispatchEventResult::StopPropagation)
-    .finish()
-}
-
-fn render_compact_subtitle_option(
-    label: &str,
-    is_selected: bool,
-    mouse_state: MouseStateHandle,
-    value: VerticalTabsCompactSubtitle,
-    appearance: &Appearance,
-    theme: &WarpTheme,
-) -> Box<dyn Element> {
-    const ICON_SIZE: f32 = 16.;
-    const FONT_SIZE: f32 = 12.;
-    const GAP: f32 = 8.;
-
-    let label = label.to_string();
-    let main_text = theme.main_text_color(theme.background());
-    Hoverable::new(mouse_state, move |hover_state| {
-        let check_icon: Box<dyn Element> = if is_selected {
-            ConstrainedBox::new(WarpIcon::Check.to_warpui_icon(main_text).finish())
-                .with_width(ICON_SIZE)
-                .with_height(ICON_SIZE)
-                .finish()
-        } else {
-            ConstrainedBox::new(Empty::new().finish())
-                .with_width(ICON_SIZE)
-                .with_height(ICON_SIZE)
-                .finish()
-        };
-
-        let row = Flex::row()
-            .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_spacing(GAP)
-            .with_child(check_icon)
-            .with_child(
-                Text::new_inline(label.clone(), appearance.ui_font_family(), FONT_SIZE)
-                    .with_color(main_text.into())
-                    .finish(),
-            )
-            .finish();
-
-        let mut container = Container::new(row)
-            .with_horizontal_padding(16.)
-            .with_vertical_padding(2.);
-        if hover_state.is_hovered() {
-            container = container.with_background(internal_colors::fg_overlay_1(theme));
-        }
-        container.finish()
-    })
-    .on_click(move |ctx, _, _| {
-        ctx.dispatch_typed_action(WorkspaceAction::SetVerticalTabsCompactSubtitle(value));
-    })
-    .with_cursor(Cursor::PointingHand)
-    .finish()
-}
-
-fn render_tab_item_mode_option(
-    label: &str,
-    is_selected: bool,
-    mouse_state: MouseStateHandle,
-    value: VerticalTabsTabItemMode,
-    appearance: &Appearance,
-    theme: &WarpTheme,
-) -> Box<dyn Element> {
-    const ICON_SIZE: f32 = 16.;
-    const FONT_SIZE: f32 = 12.;
-    const GAP: f32 = 8.;
-
-    let label = label.to_string();
-    let main_text = theme.main_text_color(theme.background());
-    Hoverable::new(mouse_state, move |hover_state| {
-        let check_icon: Box<dyn Element> = if is_selected {
-            ConstrainedBox::new(WarpIcon::Check.to_warpui_icon(main_text).finish())
-                .with_width(ICON_SIZE)
-                .with_height(ICON_SIZE)
-                .finish()
-        } else {
-            ConstrainedBox::new(Empty::new().finish())
-                .with_width(ICON_SIZE)
-                .with_height(ICON_SIZE)
-                .finish()
-        };
-
-        let row = Flex::row()
-            .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_spacing(GAP)
-            .with_child(check_icon)
-            .with_child(
-                Text::new_inline(label.clone(), appearance.ui_font_family(), FONT_SIZE)
-                    .with_color(main_text.into())
-                    .finish(),
-            )
-            .finish();
-
-        let mut container = Container::new(row)
-            .with_horizontal_padding(16.)
-            .with_vertical_padding(2.);
-        if hover_state.is_hovered() {
-            container = container.with_background(internal_colors::fg_overlay_1(theme));
-        }
-        container.finish()
-    })
-    .on_click(move |ctx, _, _| {
-        ctx.dispatch_typed_action(WorkspaceAction::SetVerticalTabsTabItemMode(value));
-    })
-    .with_cursor(Cursor::PointingHand)
-    .finish()
-}
-
-fn render_primary_info_option(
-    label: &str,
-    is_selected: bool,
-    mouse_state: MouseStateHandle,
-    value: VerticalTabsPrimaryInfo,
-    appearance: &Appearance,
-    theme: &WarpTheme,
-) -> Box<dyn Element> {
-    const ICON_SIZE: f32 = 16.;
-    const FONT_SIZE: f32 = 12.;
-    const GAP: f32 = 8.;
-
-    let label = label.to_string();
-    let main_text = theme.main_text_color(theme.background());
-    Hoverable::new(mouse_state, move |hover_state| {
-        let check_icon: Box<dyn Element> = if is_selected {
-            ConstrainedBox::new(WarpIcon::Check.to_warpui_icon(main_text).finish())
-                .with_width(ICON_SIZE)
-                .with_height(ICON_SIZE)
-                .finish()
-        } else {
-            ConstrainedBox::new(Empty::new().finish())
-                .with_width(ICON_SIZE)
-                .with_height(ICON_SIZE)
-                .finish()
-        };
-
-        let row = Flex::row()
-            .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_spacing(GAP)
-            .with_child(check_icon)
-            .with_child(
-                Text::new_inline(label.clone(), appearance.ui_font_family(), FONT_SIZE)
-                    .with_color(main_text.into())
-                    .finish(),
-            )
-            .finish();
-
-        let mut container = Container::new(row)
-            .with_horizontal_padding(16.)
-            .with_vertical_padding(2.);
-        if hover_state.is_hovered() {
-            container = container.with_background(internal_colors::fg_overlay_1(theme));
-        }
-        container.finish()
-    })
-    .on_click(move |ctx, _, _| {
-        ctx.dispatch_typed_action(WorkspaceAction::SetVerticalTabsPrimaryInfo(value));
-    })
-    .with_cursor(Cursor::PointingHand)
-    .finish()
-}
-
-struct ShowToggleInfoTooltip {
-    mouse_state: MouseStateHandle,
-    tooltip_text: &'static str,
-}
-
-fn render_show_toggle_option(
-    label: &str,
-    is_enabled: bool,
-    mouse_state: MouseStateHandle,
-    action: WorkspaceAction,
-    info_tooltip: Option<ShowToggleInfoTooltip>,
-    appearance: &Appearance,
-    theme: &WarpTheme,
-) -> Box<dyn Element> {
-    const ICON_SIZE: f32 = 16.;
-    const FONT_SIZE: f32 = 12.;
-    const GAP: f32 = 8.;
-    const INFO_ICON_SIZE: f32 = 12.;
-    const INFO_GAP: f32 = 4.;
-
-    let label = label.to_string();
-    let main_text = theme.main_text_color(theme.background());
-    let info_color = theme.sub_text_color(theme.background());
-    let ui_builder = appearance.ui_builder().clone();
-
-    let info_mouse_state = info_tooltip.as_ref().map(|t| t.mouse_state.clone());
-    let info_tooltip_text = info_tooltip.as_ref().map(|t| t.tooltip_text.to_string());
-
-    Hoverable::new(mouse_state, move |hover_state| {
-        let check_icon: Box<dyn Element> = if is_enabled {
-            ConstrainedBox::new(WarpIcon::Check.to_warpui_icon(main_text).finish())
-                .with_width(ICON_SIZE)
-                .with_height(ICON_SIZE)
-                .finish()
-        } else {
-            ConstrainedBox::new(Empty::new().finish())
-                .with_width(ICON_SIZE)
-                .with_height(ICON_SIZE)
-                .finish()
-        };
-
-        let mut row = Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center);
-        row.add_child(Container::new(check_icon).with_margin_right(GAP).finish());
-        row.add_child(
-            Text::new_inline(label.clone(), appearance.ui_font_family(), FONT_SIZE)
-                .with_color(main_text.into())
-                .finish(),
-        );
-        if let (Some(info_ms), Some(info_text)) =
-            (info_mouse_state.clone(), info_tooltip_text.clone())
-        {
-            let builder = ui_builder.clone();
-            let info_icon = Hoverable::new(info_ms, move |info_hover| {
-                let icon = ConstrainedBox::new(UiIcon::Info.to_warpui_icon(info_color).finish())
-                    .with_width(INFO_ICON_SIZE)
-                    .with_height(INFO_ICON_SIZE)
-                    .finish();
-
-                if info_hover.is_hovered() {
-                    let tooltip = builder.tool_tip(info_text.clone()).build().finish();
-                    let mut stack = Stack::new().with_child(icon);
-                    stack.add_positioned_overlay_child(
-                        tooltip,
-                        OffsetPositioning::offset_from_parent(
-                            vec2f(0., -4.),
-                            ParentOffsetBounds::WindowByPosition,
-                            ParentAnchor::TopMiddle,
-                            ChildAnchor::BottomMiddle,
-                        ),
-                    );
-                    stack.finish()
-                } else {
-                    icon
-                }
-            })
-            .finish();
-            row.add_child(
-                Container::new(info_icon)
-                    .with_padding_left(INFO_GAP)
-                    .finish(),
-            );
-        }
-        let row = row.finish();
-
-        let mut container = Container::new(row)
-            .with_horizontal_padding(16.)
-            .with_vertical_padding(2.);
-        if hover_state.is_hovered() {
-            container = container.with_background(internal_colors::fg_overlay_1(theme));
-        }
-        container.finish()
-    })
-    .on_click(move |ctx, _, _| {
-        ctx.dispatch_typed_action(action.clone());
-    })
-    .with_cursor(Cursor::PointingHand)
-    .finish()
-}
-
-fn render_popup_segment(
-    icon: WarpIcon,
-    is_selected: bool,
-    mouse_state: MouseStateHandle,
-    mode: VerticalTabsViewMode,
-    theme: &WarpTheme,
-    icon_color: WarpThemeFill,
-) -> Box<dyn Element> {
-    Hoverable::new(mouse_state, move |hover_state| {
-        let background = if is_selected {
-            internal_colors::fg_overlay_3(theme)
-        } else if hover_state.is_hovered() {
-            internal_colors::fg_overlay_1(theme)
-        } else {
-            ThemeFill::Solid(ColorU::transparent_black())
-        };
-
-        Container::new(
-            Align::new(
-                ConstrainedBox::new(icon.to_warpui_icon(icon_color).finish())
-                    .with_width(COMPACT_ICON_SIZE)
-                    .with_height(COMPACT_ICON_SIZE)
-                    .finish(),
-            )
-            .finish(),
-        )
-        .with_background(background)
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
-        .with_vertical_padding(2.)
-        .finish()
-    })
-    .on_click(move |ctx, _, _| {
-        ctx.dispatch_typed_action(WorkspaceAction::SetVerticalTabsViewMode(mode));
-    })
-    .with_cursor(Cursor::PointingHand)
-    .finish()
-}
-
-fn render_popup_text_segment(
-    label: &str,
-    is_selected: bool,
-    mouse_state: MouseStateHandle,
-    granularity: VerticalTabsDisplayGranularity,
-    appearance: &Appearance,
-    theme: &WarpTheme,
-) -> Box<dyn Element> {
-    let label = label.to_string();
-    let main_text = theme.main_text_color(theme.background());
-    let sub_text = theme.sub_text_color(theme.background());
-    Hoverable::new(mouse_state, move |hover_state| {
-        let background = if is_selected {
-            internal_colors::fg_overlay_3(theme)
-        } else if hover_state.is_hovered() {
-            internal_colors::fg_overlay_1(theme)
-        } else {
-            ThemeFill::Solid(ColorU::transparent_black())
-        };
-
-        Container::new(
-            Align::new(
-                Text::new_inline(label.clone(), appearance.ui_font_family(), 14.)
-                    .with_color(if is_selected { main_text } else { sub_text }.into())
-                    .finish(),
-            )
-            .finish(),
-        )
-        .with_background(background)
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
-        .with_vertical_padding(2.)
-        .finish()
-    })
-    .on_click(move |ctx, _, _| {
-        ctx.dispatch_typed_action(WorkspaceAction::SetVerticalTabsDisplayGranularity(
-            granularity,
-        ));
-    })
-    .with_cursor(Cursor::PointingHand)
-    .finish()
 }
 
 fn pane_ids_for_display_granularity(
@@ -7985,17 +5600,180 @@ struct DetailSidecarTextColors {
     disabled: WarpThemeFill,
 }
 
+/// The tab list, led by a dimmed Coordinator row when the coordinator is switched off, so it can be
+/// switched back on from where it was.
+fn render_groups_with_coordinator_switch(
+    state: &VerticalTabsPanelState,
+    workspace: &Workspace,
+    app: &AppContext,
+) -> Box<dyn Element> {
+    let groups = render_groups(state, workspace, app);
+    if *crate::settings::ClinchSettings::as_ref(app).coordinator_enabled
+        || workspace.coordinator_tab_index().is_some()
+    {
+        return groups;
+    }
+    let appearance = Appearance::as_ref(app);
+    let tokens = appearance.tokens();
+    let off_row = Container::new(
+        Flex::row()
+            .with_main_axis_size(MainAxisSize::Max)
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_spacing(ROW_MARK_GAP)
+            .with_child(
+                Expanded::new(
+                    1.,
+                    Text::new_inline(
+                        "Coordinator is off".to_owned(),
+                        appearance.ui_font_family(),
+                        ROW_TITLE_SIZE,
+                    )
+                    .with_color(tokens.text_3)
+                    .finish(),
+                )
+                .finish(),
+            )
+            .with_child(render_coordinator_switch(
+                false,
+                state.coordinator_switch_state.clone(),
+                appearance,
+            ))
+            .finish(),
+    )
+    .with_padding(
+        Padding::uniform(ROW_VERTICAL_PADDING)
+            .with_left(ROW_HORIZONTAL_PADDING)
+            .with_right(ROW_HORIZONTAL_PADDING),
+    )
+    .finish();
+    Flex::column()
+        .with_main_axis_size(MainAxisSize::Min)
+        .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .with_child(off_row)
+        .with_child(groups)
+        .finish()
+}
+
+/// A compact on/off switch for the Coordinator row.
+fn render_coordinator_switch(
+    on: bool,
+    mouse_state: MouseStateHandle,
+    appearance: &Appearance,
+) -> Box<dyn Element> {
+    const TRACK_WIDTH: f32 = 26.;
+    const TRACK_HEIGHT: f32 = 14.;
+    const KNOB: f32 = 10.;
+    let tokens = *appearance.tokens();
+    let ui_builder = appearance.ui_builder().clone();
+    Hoverable::new(mouse_state, move |state| {
+        let knob = ConstrainedBox::new(
+            Container::new(Empty::new().finish())
+                .with_background(ThemeFill::Solid(if on {
+                    tokens.text_on_accent
+                } else {
+                    tokens.text_2
+                }))
+                .with_corner_radius(corners_pill())
+                .finish(),
+        )
+        .with_width(KNOB)
+        .with_height(KNOB)
+        .finish();
+        let track = ConstrainedBox::new(
+            Container::new(
+                Flex::row()
+                    .with_main_axis_size(MainAxisSize::Max)
+                    .with_main_axis_alignment(if on {
+                        MainAxisAlignment::End
+                    } else {
+                        MainAxisAlignment::Start
+                    })
+                    .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                    .with_child(knob)
+                    .finish(),
+            )
+            .with_uniform_padding((TRACK_HEIGHT - KNOB) / 2.)
+            .with_background(ThemeFill::Solid(if on {
+                tokens.accent
+            } else {
+                tokens.control_track
+            }))
+            .with_corner_radius(corners_pill())
+            .finish(),
+        )
+        .with_width(TRACK_WIDTH)
+        .with_height(TRACK_HEIGHT)
+        .finish();
+        if !state.is_hovered() {
+            return track;
+        }
+        let mut stack = Stack::new().with_child(track);
+        stack.add_positioned_overlay_child(
+            ui_builder
+                .tool_tip(
+                    if on {
+                        "Turn the coordinator off"
+                    } else {
+                        "Turn the coordinator on"
+                    }
+                    .to_owned(),
+                )
+                .build()
+                .finish(),
+            OffsetPositioning::offset_from_parent(
+                vec2f(0., -6.),
+                ParentOffsetBounds::WindowByPosition,
+                ParentAnchor::TopMiddle,
+                ChildAnchor::BottomMiddle,
+            ),
+        );
+        stack.finish()
+    })
+    .with_cursor(Cursor::PointingHand)
+    .on_click(move |ctx, _, _| ctx.dispatch_typed_action(WorkspaceAction::SetCoordinatorOn(!on)))
+    .finish()
+}
+
+/// What the coordinator tab is for, at the top of its details card.
+fn render_coordinator_explanation(appearance: &Appearance) -> Box<dyn Element> {
+    let tokens = appearance.tokens();
+    let font_family = appearance.ui_font_family();
+    Container::new(
+        Flex::column()
+            .with_cross_axis_alignment(CrossAxisAlignment::Start)
+            .with_spacing(4.)
+            .with_child(
+                Text::new_inline("Project coordinator", font_family, 13.)
+                    .with_style(Properties::default().weight(Weight::Semibold))
+                    .with_color(tokens.text_1)
+                    .finish(),
+            )
+            .with_child(
+                Text::new(COORDINATOR_EXPLANATION, font_family, 12.)
+                    .soft_wrap(true)
+                    .with_color(tokens.text_2)
+                    .finish(),
+            )
+            .finish(),
+    )
+    .with_uniform_padding(DETAIL_SIDECAR_SECTION_PADDING)
+    .with_background(ThemeFill::Solid(tokens.accent_soft))
+    .with_corner_radius(corners_md())
+    .with_margin_bottom(4.)
+    .finish()
+}
+
+const COORDINATOR_EXPLANATION: &str =
+    "One agent that keeps an eye on every tab in this project. Ask it \
+    what needs you, for a status of everything, or to prep finished work for review and deploy. It \
+    reads other sessions and can message them, and it asks before it closes or ships anything.";
+
 fn detail_sidecar_background(theme: &WarpTheme) -> ColorU {
-    theme
-        .background()
-        .blend(&internal_colors::fg_overlay_2(theme))
-        .into_solid()
+    Tokens::new(theme).surface_overlay
 }
 
 fn detail_sidecar_border_fill(theme: &WarpTheme) -> ThemeFill {
-    theme
-        .background()
-        .blend(&internal_colors::fg_overlay_4(theme))
+    ThemeFill::Solid(Tokens::new(theme).hairline)
 }
 
 fn detail_sidecar_text_colors(theme: &WarpTheme) -> DetailSidecarTextColors {
@@ -8032,8 +5810,8 @@ fn render_detail_badge(
             .finish(),
     );
 
-    let mut badge = Container::new(content.finish())
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(3.)));
+    let mut badge =
+        Container::new(content.finish()).with_corner_radius(CornerRadius::with_all(RADIUS_SM));
     if let Some(background) = background {
         badge = badge
             .with_padding(Padding::uniform(2.).with_left(6.).with_right(6.))
@@ -8045,11 +5823,11 @@ fn render_detail_badge(
 fn render_detail_status_pill(
     status: &ConversationStatus,
     appearance: &Appearance,
-    app: &AppContext,
+    _app: &AppContext,
 ) -> Box<dyn Element> {
     let theme = appearance.theme();
     let (icon, color) = status.status_icon_and_color(theme, StatusColorStyle::Standard);
-    let opacity = status_blink_opacity(status, app);
+    let opacity = 1.;
     Container::new(
         Flex::row()
             .with_main_axis_size(MainAxisSize::Min)
@@ -8074,18 +5852,8 @@ fn render_detail_status_pill(
     )
     .with_padding(Padding::uniform(2.).with_left(4.).with_right(4.))
     .with_background(ThemeFill::Solid(coloru_with_opacity(color, 10)))
-    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(2.)))
+    .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
     .finish()
-}
-
-/// A blocked agent's status glyph blinks with the shared attention pulse; every other status is
-/// drawn steady.
-fn status_blink_opacity(status: &ConversationStatus, app: &AppContext) -> f32 {
-    if matches!(status, ConversationStatus::Blocked { .. }) {
-        attention_pulse_opacity(app)
-    } else {
-        1.
-    }
 }
 
 fn render_detail_wrapping_text(
@@ -8168,6 +5936,15 @@ fn detail_pane_props<'a>(
     )
 }
 
+fn tab_agent_model_label(app: &AppContext, view_id: EntityId) -> Option<String> {
+    let session = CLIAgentSessionsModel::as_ref(app).session(view_id)?;
+    cli_agent_model_label(
+        CliAgentUsageModel::as_ref(app).latest(),
+        session.agent,
+        session.session_context.session_id.as_deref(),
+    )
+}
+
 fn render_terminal_detail_section(
     props: &PaneProps<'_>,
     terminal_view: &TerminalView,
@@ -8212,6 +5989,15 @@ fn render_terminal_detail_section(
 
     if let Some(status) = status.as_ref() {
         section.add_child(render_detail_status_pill(status, appearance, app));
+    }
+    if let Some(model) = tab_agent_model_label(app, terminal_view.id()) {
+        section.add_child(render_detail_wrapping_text(
+            model,
+            12.,
+            text_colors.sub,
+            None,
+            appearance,
+        ));
     }
     if let Some(working_directory) = working_directory.filter(|wd| !wd.trim().is_empty()) {
         section.add_child(render_detail_wrapping_text(
@@ -8470,6 +6256,11 @@ pub(super) fn render_detail_sidecar(
         .detail_overlay_state
         .lock()
         .ok()
+        .filter(|overlay_state| {
+            overlay_state
+                .target_set_at
+                .is_none_or(|set_at| set_at.elapsed() >= DETAIL_CARD_DELAY)
+        })
         .and_then(|overlay_state| overlay_state.active_target)?;
     let Some(tab) = workspace
         .tabs
@@ -8521,6 +6312,9 @@ pub(super) fn render_detail_sidecar(
     let window_id = workspace.window_id;
 
     let mut sections = Flex::column().with_cross_axis_alignment(CrossAxisAlignment::Stretch);
+    if tab.coordinator {
+        sections.add_child(render_coordinator_explanation(appearance));
+    }
     for (index, pane_id) in pane_ids.iter().enumerate() {
         let Some(props) = detail_pane_props(
             state,
@@ -8570,7 +6364,7 @@ pub(super) fn render_detail_sidecar(
                 .with_corner_radius(CornerRadius::with_all(Radius::Pixels(
                     DETAIL_SIDECAR_CORNER_RADIUS,
                 )))
-                .with_drop_shadow(DropShadow::default())
+                .with_drop_shadow(Tokens::new(theme).overlay_shadow())
                 .finish(),
             VERTICAL_TABS_DETAIL_SIDECAR_POSITION_ID,
         )
@@ -8612,222 +6406,6 @@ pub(super) fn render_detail_sidecar(
         child_anchor,
         sidecar: ConstrainedBox::new(sidecar).with_width(width).finish(),
     })
-}
-
-fn render_compact_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn Element> {
-    let effective_subtitle = props.subtitle.clone();
-    let appearance = Appearance::as_ref(app);
-    let theme = appearance.theme();
-    let main_text_color = theme.main_text_color(theme.background());
-    let sub_text_color = theme.sub_text_color(theme.background());
-    let font_family = appearance.ui_font_family();
-    let has_badge_indicator = props.typed.badge(app).is_some();
-    let title_indicator = terminal_title_indicator_kind(&props.typed, app);
-    let has_indicator = has_badge_indicator || title_indicator.is_some();
-    let is_linked_worktree = match &props.typed {
-        TypedPane::Terminal(terminal_pane) => terminal_pane
-            .terminal_view(app)
-            .as_ref(app)
-            .is_linked_git_worktree(app),
-        _ => false,
-    };
-
-    let icon = render_pane_icon_with_status(&props.typed, &props.title, appearance, app);
-
-    let primary_info = *TabSettings::as_ref(app).vertical_tabs_primary_info.value();
-    let compact_subtitle = resolve_compact_subtitle(
-        primary_info,
-        *TabSettings::as_ref(app)
-            .vertical_tabs_compact_subtitle
-            .value(),
-    );
-
-    // Build title (line 1) based on "Pane title as" and subtitle (line 2) based on
-    // "Additional metadata" setting.
-    let (title_element, subtitle_element): (Box<dyn Element>, Option<Box<dyn Element>>) =
-        if let TypedPane::Terminal(terminal_pane) = &props.typed {
-            let terminal_view = terminal_pane.terminal_view(app).as_ref(app);
-            let terminal_title = terminal_view.display_title_from_shell(app);
-            let git_branch = terminal_view.current_git_branch(app);
-            let working_directory = resolved_terminal_working_directory(terminal_view, app);
-            let working_directory_text = working_directory
-                .clone()
-                .unwrap_or_else(|| terminal_title.clone());
-            let branch_display =
-                branch_label_display(git_branch.as_deref(), working_directory_text.as_str());
-
-            // Title based on "Pane title as"
-            let title: Box<dyn Element> = render_pane_title_slot(
-                &props,
-                || match primary_info {
-                    VerticalTabsPrimaryInfo::Command => render_terminal_primary_line_for_view(
-                        terminal_view,
-                        appearance,
-                        main_text_color,
-                        app,
-                    ),
-                    VerticalTabsPrimaryInfo::WorkingDirectory => {
-                        Text::new_inline(working_directory_text.clone(), font_family, 12.)
-                            .with_clip(ClipConfig::start())
-                            .with_color(main_text_color.into())
-                            .finish()
-                    }
-                    VerticalTabsPrimaryInfo::Branch => match branch_display {
-                        (branch_text, true) => {
-                            render_git_branch_text(&branch_text, main_text_color, 12., appearance)
-                        }
-                        (fallback_text, false) => Text::new_inline(fallback_text, font_family, 12.)
-                            .with_clip(ClipConfig::start())
-                            .with_color(main_text_color.into())
-                            .finish(),
-                    },
-                },
-                12.,
-                main_text_color,
-                ClipConfig::ellipsis(),
-                appearance,
-                app,
-            );
-
-            // Subtitle based on "Additional metadata"
-            let subtitle: Option<Box<dyn Element>> = match compact_subtitle {
-                VerticalTabsCompactSubtitle::Branch => compact_branch_subtitle_display(
-                    git_branch.as_deref(),
-                    working_directory.as_deref(),
-                )
-                .map(|(text, show_branch_icon)| {
-                    if show_branch_icon {
-                        render_git_branch_text(&text, sub_text_color, 10., appearance)
-                    } else {
-                        Text::new_inline(text, font_family, 10.)
-                            .with_clip(ClipConfig::start())
-                            .with_color(sub_text_color.into())
-                            .finish()
-                    }
-                }),
-                VerticalTabsCompactSubtitle::WorkingDirectory => working_directory.map(|wd| {
-                    Text::new_inline(wd, font_family, 10.)
-                        .with_clip(ClipConfig::start())
-                        .with_color(sub_text_color.into())
-                        .finish()
-                }),
-                VerticalTabsCompactSubtitle::Command => {
-                    let agent_text = terminal_agent_text(terminal_view, app);
-                    let (conv_title, cli_title) =
-                        preferred_agent_tab_titles(&agent_text, agent_tab_text_preference(app));
-                    let line_data = terminal_primary_line_data(
-                        terminal_view.is_long_running_and_user_controlled(),
-                        conv_title,
-                        cli_title,
-                        terminal_title.as_str(),
-                        working_directory_text.as_str(),
-                        terminal_title_fallback_font(&agent_text),
-                        terminal_view.last_completed_command_text(),
-                    );
-                    Some(
-                        Text::new_inline(line_data.text().to_string(), font_family, 10.)
-                            .with_clip(ClipConfig::ellipsis())
-                            .with_color(sub_text_color.into())
-                            .finish(),
-                    )
-                }
-            };
-
-            (title, subtitle)
-        } else {
-            let title = render_pane_title_slot(
-                &props,
-                || {
-                    render_compact_non_terminal_title(
-                        props.displayed_title(),
-                        &props.typed,
-                        appearance,
-                    )
-                },
-                12.,
-                main_text_color,
-                if matches!(props.typed, TypedPane::Code(_)) {
-                    ClipConfig::start()
-                } else {
-                    ClipConfig::ellipsis()
-                },
-                appearance,
-                app,
-            );
-            let subtitle = if effective_subtitle.is_empty() {
-                None
-            } else {
-                let subtitle_clip = if matches!(props.typed, TypedPane::Code(_)) {
-                    ClipConfig::start()
-                } else {
-                    ClipConfig::ellipsis()
-                };
-                Some(
-                    Text::new_inline(effective_subtitle, font_family, 10.)
-                        .with_clip(subtitle_clip)
-                        .with_color(sub_text_color.into())
-                        .finish(),
-                )
-            };
-            (title, subtitle)
-        };
-
-    // Keep the worktree chip separate from the single-priority status indicator.
-    let title_row = if has_indicator || is_linked_worktree {
-        let mut trailing = Flex::row()
-            .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_spacing(4.);
-        if is_linked_worktree {
-            trailing.add_child(render_passive_worktree_badge(appearance));
-        }
-        if has_badge_indicator {
-            trailing.add_child(render_title_indicator(TitleIndicatorKind::Unread, theme));
-        } else if let Some(indicator) = title_indicator {
-            trailing.add_child(render_title_indicator(indicator, theme));
-        }
-
-        Flex::row()
-            .with_main_axis_size(MainAxisSize::Max)
-            .with_main_axis_alignment(MainAxisAlignment::SpaceBetween)
-            .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_child(Shrinkable::new(1., title_element).finish())
-            .with_child(
-                Container::new(trailing.finish())
-                    .with_margin_left(4.)
-                    .finish(),
-            )
-            .finish()
-    } else {
-        title_element
-    };
-
-    // Assemble text column: title + optional subtitle
-    // Top-align the icon when there are two lines of content; center for single-line rows.
-    let icon_alignment = if subtitle_element.is_some() {
-        CrossAxisAlignment::Start
-    } else {
-        CrossAxisAlignment::Center
-    };
-
-    let mut text_col = Flex::column()
-        .with_main_axis_size(MainAxisSize::Min)
-        .with_cross_axis_alignment(CrossAxisAlignment::Start)
-        .with_spacing(1.);
-    text_col.add_child(title_row);
-
-    if let Some(subtitle) = subtitle_element {
-        text_col.add_child(subtitle);
-    }
-
-    let content = Flex::row()
-        .with_main_axis_size(MainAxisSize::Max)
-        .with_cross_axis_alignment(icon_alignment)
-        .with_spacing(ICON_WITH_STATUS_GAP)
-        .with_child(icon)
-        .with_child(Shrinkable::new(1., text_col.finish()).finish())
-        .finish();
-
-    render_pane_row_element(props, Padding::uniform(8.), true, content, theme)
 }
 
 impl Workspace {

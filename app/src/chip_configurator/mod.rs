@@ -12,16 +12,21 @@ pub(crate) use modal_shell::{
     render_chip_editor_modal, render_chip_editor_sections, ChipEditorModalConfig,
     ChipEditorMouseHandles, ChipEditorSectionsConfig, ChipEditorTab,
 };
+use pathfinder_color::ColorU;
 use pathfinder_geometry::rect::RectF;
 use pathfinder_geometry::vector::vec2f;
 use warp_core::ui::theme::Fill;
+use warp_core::ui::tokens::{corners_sm, Tokens};
 use warpui::elements::{
-    Border, ConstrainedBox, Container, CrossAxisAlignment, Dash, DispatchEventResult, Draggable,
-    DraggableState, Element, Empty, EventHandler, Flex, Hoverable, MouseStateHandle,
-    OffsetPositioning, ParentElement, ParentOffsetBounds, SavePosition, Stack, Text, Wrap,
+    Border, ChildAnchor, ClippedScrollStateHandle, ClippedScrollable, ConstrainedBox, Container,
+    CrossAxisAlignment, Dash, DispatchEventResult, Draggable, DraggableState, Element, Empty,
+    EventHandler, Expanded, Flex, Hoverable, MainAxisSize, MouseStateHandle, OffsetPositioning,
+    ParentAnchor, ParentElement, ParentOffsetBounds, Rect, SavePosition, ScrollbarWidth, Stack,
+    Text, Wrap,
 };
-use warpui::fonts::Properties;
+use warpui::fonts::{FamilyId, Properties};
 use warpui::platform::Cursor;
+use warpui::text_layout::ClipConfig;
 use warpui::ui_components::button::ButtonVariant;
 use warpui::ui_components::components::{Coords, UiComponent, UiComponentStyles};
 use warpui::{Action, SingletonEntity, View, ViewContext};
@@ -37,6 +42,39 @@ const USED_CHIPS_POSITION_ID: &str = "chip_cfg_used";
 const LEFT_CHIPS_POSITION_ID: &str = "chip_cfg_left";
 const RIGHT_CHIPS_POSITION_ID: &str = "chip_cfg_right";
 const UNUSED_CHIPS_POSITION_ID: &str = "chip_cfg_unused";
+
+const LIST_ROW_HEIGHT: f32 = 30.;
+const LIST_ROW_GAP: f32 = 4.;
+const LIST_FONT_SIZE: f32 = 13.;
+const LIST_CAPTION_FONT_SIZE: f32 = 12.;
+const LIST_ICON_SIZE: f32 = 14.;
+/// Past this the lists scroll, so the dialog still fits a short window.
+const LIST_MAX_HEIGHT: f32 = 470.;
+/// Room on the right so the scrollbar never sits on top of a row's buttons.
+const LIST_SCROLLBAR_GUTTER: f32 = 10.;
+
+/// How a single zone reads when it is shown as an ordered list, one item per row. Order decides
+/// what shows: the first `visible_count` items sit on the footer and the rest open from More.
+/// The user moves that line with the − and + on it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ListPresentation {
+    pub visible_count: usize,
+}
+
+/// Where a dragged row lands in a list: after every other row whose middle is above the pointer.
+/// `dragged_slot` is the row's own slot when it is moving within this list. Rows share one
+/// height, so slots stay put while items move through them, and the answer cannot flip-flop.
+fn list_insertion_index(
+    slot_middles: &[f32],
+    dragged_slot: Option<usize>,
+    pointer_y: f32,
+) -> usize {
+    slot_middles
+        .iter()
+        .enumerate()
+        .filter(|(slot, middle)| Some(*slot) != dragged_slot && **middle < pointer_y)
+        .count()
+}
 
 /// An item that can be placed in the configurator — either a context chip or
 /// an interactive control button.
@@ -90,6 +128,23 @@ impl ConfigurableItem {
         match self {
             Self::ContextChip(_) => false,
             Self::Control(r) => r.left_pinned,
+        }
+    }
+
+    fn display_label(&self) -> String {
+        match self {
+            Self::ContextChip(_) => self
+                .item_kind()
+                .map(|kind| kind.display_label().into_owned())
+                .unwrap_or_default(),
+            Self::Control(r) => r.display_label().into_owned(),
+        }
+    }
+
+    fn display_icon(&self) -> Option<icons::Icon> {
+        match self {
+            Self::ContextChip(_) => None,
+            Self::Control(r) => r.display_icon(),
         }
     }
 
@@ -356,12 +411,28 @@ pub struct CurrentDraggingState {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ChipConfiguratorAction {
-    StartDraggingChip { location: ChipLocation },
-    DragChip { current_position: RectF },
-    DropChip { position: RectF },
-    RemoveFromUsed { location: ChipLocation },
-    AddFromUnused { index: usize },
-    ToggleAutoSend { location: ChipLocation },
+    StartDraggingChip {
+        location: ChipLocation,
+    },
+    DragChip {
+        current_position: RectF,
+    },
+    DropChip {
+        position: RectF,
+    },
+    RemoveFromUsed {
+        location: ChipLocation,
+    },
+    AddFromUnused {
+        index: usize,
+    },
+    ToggleAutoSend {
+        location: ChipLocation,
+    },
+    /// Moves a list's More line down one row (`more`) or up one row.
+    ChangeVisibleCount {
+        more: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -379,6 +450,8 @@ pub struct ChipConfigurator {
     pub unused_chips: Vec<ConfigurableItem>,
     pub current_dragging_state: Option<CurrentDraggingState>,
     interaction_mouse_states: RefCell<HashMap<String, MouseStateHandle>>,
+    list_presentation: Option<ListPresentation>,
+    list_scroll_state: ClippedScrollStateHandle,
 }
 
 impl ChipConfigurator {
@@ -391,7 +464,13 @@ impl ChipConfigurator {
             unused_chips: vec![],
             current_dragging_state: None,
             interaction_mouse_states: RefCell::new(HashMap::new()),
+            list_presentation: None,
+            list_scroll_state: Default::default(),
         }
+    }
+
+    pub fn list_presentation(&self) -> Option<ListPresentation> {
+        self.list_presentation
     }
 
     pub fn layout(&self) -> ChipConfiguratorLayout {
@@ -405,6 +484,7 @@ impl ChipConfigurator {
         unused_chips: Vec<ContextChipRenderer>,
     ) {
         self.layout = ChipConfiguratorLayout::SingleZone;
+        self.list_presentation = None;
         self.reset();
         self.used_chips = used_chips
             .into_iter()
@@ -416,6 +496,18 @@ impl ChipConfigurator {
             .collect();
     }
 
+    /// Initialize a `SingleZone` layout shown as an ordered list beside the available items.
+    pub fn open_list_with_items(
+        &mut self,
+        used_items: Vec<AgentToolbarItemKind>,
+        available: Vec<AgentToolbarItemKind>,
+        presentation: ListPresentation,
+        appearance: &Appearance,
+    ) {
+        self.open_single_zone_with_items(used_items, available, appearance);
+        self.list_presentation = Some(presentation);
+    }
+
     /// Initialize for `SingleZone` layout with toolbar items.
     pub fn open_single_zone_with_items(
         &mut self,
@@ -424,6 +516,7 @@ impl ChipConfigurator {
         appearance: &Appearance,
     ) {
         self.layout = ChipConfiguratorLayout::SingleZone;
+        self.list_presentation = None;
         self.reset();
         self.used_chips = used_items
             .iter()
@@ -450,6 +543,7 @@ impl ChipConfigurator {
         appearance: &Appearance,
     ) {
         self.layout = ChipConfiguratorLayout::LeftRightZones;
+        self.list_presentation = None;
         self.reset();
         self.left_chips = left_items
             .iter()
@@ -598,6 +692,24 @@ impl ChipConfigurator {
                     return false;
                 };
                 self.replace_item_kind_at(*location, replacement, Appearance::as_ref(ctx))
+            }
+            ChipConfiguratorAction::ChangeVisibleCount { more } => {
+                let used = self.used_chips.len();
+                let Some(list) = self.list_presentation.as_mut() else {
+                    return false;
+                };
+                // A count past the end means "all of them"; step from what is actually shown.
+                let shown = list.visible_count.min(used);
+                let next = if *more {
+                    shown + 1
+                } else {
+                    shown.saturating_sub(1)
+                };
+                if next > used || next == list.visible_count {
+                    return false;
+                }
+                list.visible_count = next;
+                true
             }
         }
     }
@@ -837,6 +949,10 @@ impl ChipConfigurator {
             Some(state) => state.current_location,
             None => return,
         };
+        if self.list_presentation.is_some() {
+            self.handle_list_row_dragged(location, dragged_position, ctx);
+            return;
+        }
 
         // Scan the current zone first so that within-zone reordering always
         // takes priority over cross-zone moves. Without this, a chip near
@@ -912,6 +1028,57 @@ impl ChipConfigurator {
             if let Some(state) = self.current_dragging_state.as_mut() {
                 state.current_location = new_location;
             }
+        }
+    }
+
+    /// The column under the pointer decides the list; the rows' middles decide the place in it.
+    fn handle_list_row_dragged<V: View>(
+        &mut self,
+        location: ChipLocation,
+        dragged_position: RectF,
+        ctx: &mut ViewContext<V>,
+    ) {
+        let pointer = dragged_position.center();
+        let column_holds_pointer = |id: &str| {
+            ctx.element_position_by_id(id)
+                .is_some_and(|rect| rect.min_x() <= pointer.x() && pointer.x() <= rect.max_x())
+        };
+        let to_location: fn(usize) -> ChipLocation = if column_holds_pointer(USED_CHIPS_POSITION_ID)
+        {
+            |index| ChipLocation::Used { index }
+        } else if column_holds_pointer(UNUSED_CHIPS_POSITION_ID) {
+            |index| ChipLocation::Unused { index }
+        } else {
+            return;
+        };
+        let target_list = to_location(0);
+        let Some(slot_middles) = (0..self.chips_for_location(target_list).len())
+            .map(|slot| {
+                ctx.element_position_by_id(Self::chip_save_position_id(to_location(slot)))
+                    .map(|rect| rect.center().y())
+            })
+            .collect::<Option<Vec<_>>>()
+        else {
+            // A row that was just added has not been laid out yet; the next move catches up.
+            return;
+        };
+        let dragged_slot = location
+            .in_same_area_as(&target_list)
+            .then(|| location.index());
+        let new_location = to_location(list_insertion_index(
+            &slot_middles,
+            dragged_slot,
+            pointer.y(),
+        ));
+        if new_location == location
+            || (matches!(new_location, ChipLocation::Unused { .. })
+                && !self.is_chip_at_location_removable(location))
+        {
+            return;
+        }
+        self.remove_and_insert_chip_at_location(location, new_location);
+        if let Some(state) = self.current_dragging_state.as_mut() {
+            state.current_location = new_location;
         }
     }
 
@@ -1013,7 +1180,6 @@ impl ChipConfigurator {
     fn render_item_with_controls<A: Action + Clone + 'static>(
         &self,
         location: ChipLocation,
-        item: &ConfigurableItem,
         rendered_chip: Box<dyn Element>,
         is_used: bool,
         wrap_chip_action: fn(ChipConfiguratorAction) -> A,
@@ -1023,24 +1189,6 @@ impl ChipConfigurator {
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
             .with_child(rendered_chip)
             .with_spacing(4.);
-
-        if let Some(auto_send) = is_used
-            .then(|| item.item_kind())
-            .flatten()
-            .and_then(|item| item.auto_send_behavior())
-        {
-            row.add_child(self.render_auxiliary_button(
-                if auto_send {
-                    "Auto-send: On".to_owned()
-                } else {
-                    "Auto-send: Off".to_owned()
-                },
-                location,
-                "auto_send",
-                wrap_chip_action(ChipConfiguratorAction::ToggleAutoSend { location }),
-                appearance,
-            ));
-        }
 
         if !is_used {
             row.add_child(self.render_auxiliary_button(
@@ -1088,7 +1236,6 @@ impl ChipConfigurator {
                 );
                 Container::new(self.render_item_with_controls(
                     location,
-                    item,
                     draggable,
                     is_used,
                     wrap_chip_action,
@@ -1099,6 +1246,312 @@ impl ChipConfigurator {
             }))
             .with_run_spacing(8.)
             .finish()
+    }
+
+    /// The footer's buttons in order beside the ones that can be added. A line marks where the
+    /// footer runs out of room and the rest open from More.
+    pub fn render_list_columns<A: Action + Clone + 'static>(
+        &self,
+        presentation: ListPresentation,
+        on_click_action: A,
+        wrap_chip_action: fn(ChipConfiguratorAction) -> A,
+        appearance: &Appearance,
+    ) -> Box<dyn Element> {
+        let tokens = *appearance.tokens();
+        let font_family = appearance.ui_font_family();
+
+        let mut footer = Flex::column()
+            .with_spacing(LIST_ROW_GAP)
+            .with_child(render_list_caption("On the footer", font_family, &tokens));
+        for (index, item) in self.used_chips.iter().enumerate() {
+            if index == presentation.visible_count {
+                footer.add_child(self.render_more_line(presentation, wrap_chip_action, appearance));
+            }
+            let location = ChipLocation::Used { index };
+            footer.add_child(self.render_draggable_chip(
+                location,
+                self.render_list_row(
+                    location,
+                    item,
+                    index >= presentation.visible_count,
+                    wrap_chip_action,
+                    appearance,
+                ),
+                item,
+                on_click_action.clone(),
+                wrap_chip_action,
+            ));
+        }
+        if self.used_chips.is_empty() {
+            footer.add_child(render_list_hint(
+                "Drag buttons here, or press + beside one.",
+                font_family,
+                &tokens,
+            ));
+        } else if presentation.visible_count >= self.used_chips.len() {
+            footer.add_child(self.render_more_line(presentation, wrap_chip_action, appearance));
+        }
+
+        let mut available = Flex::column()
+            .with_spacing(LIST_ROW_GAP)
+            .with_child(render_list_caption("Available", font_family, &tokens));
+        for (index, item) in self.unused_chips.iter().enumerate() {
+            let location = ChipLocation::Unused { index };
+            available.add_child(self.render_draggable_chip(
+                location,
+                self.render_list_row(location, item, false, wrap_chip_action, appearance),
+                item,
+                on_click_action.clone(),
+                wrap_chip_action,
+            ));
+        }
+        if self.unused_chips.is_empty() {
+            available.add_child(render_list_hint(
+                "Everything is on the footer.",
+                font_family,
+                &tokens,
+            ));
+        }
+
+        let columns = Flex::row()
+            .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .with_main_axis_size(MainAxisSize::Max)
+            .with_spacing(16.)
+            .with_child(
+                Expanded::new(
+                    3.,
+                    SavePosition::new(footer.finish(), USED_CHIPS_POSITION_ID).finish(),
+                )
+                .finish(),
+            )
+            .with_child(
+                Expanded::new(
+                    2.,
+                    SavePosition::new(available.finish(), UNUSED_CHIPS_POSITION_ID).finish(),
+                )
+                .finish(),
+            )
+            .finish();
+
+        ConstrainedBox::new(
+            ClippedScrollable::vertical(
+                self.list_scroll_state.clone(),
+                Container::new(columns)
+                    .with_padding_right(LIST_SCROLLBAR_GUTTER)
+                    .finish(),
+                ScrollbarWidth::Auto,
+                warpui::elements::Fill::Solid(tokens.control_track),
+                warpui::elements::Fill::Solid(tokens.text_3),
+                warpui::elements::Fill::None,
+            )
+            .finish(),
+        )
+        .with_max_height(LIST_MAX_HEIGHT)
+        .finish()
+    }
+
+    /// Where the footer ends: rows above the line sit on the footer, rows below open from More.
+    /// The − and + move the line, which is how the user decides how many show.
+    fn render_more_line<A: Action + Clone + 'static>(
+        &self,
+        presentation: ListPresentation,
+        wrap_chip_action: fn(ChipConfiguratorAction) -> A,
+        appearance: &Appearance,
+    ) -> Box<dyn Element> {
+        let tokens = *appearance.tokens();
+        let font_family = appearance.ui_font_family();
+        let total = self.used_chips.len();
+        let shown = presentation.visible_count.min(total);
+        let label = if shown >= total {
+            format!("All {total} on the footer")
+        } else {
+            format!("{shown} on the footer \u{b7} the rest in More")
+        };
+        let rule = || {
+            Expanded::new(
+                1.,
+                ConstrainedBox::new(Rect::new().with_background_color(tokens.hairline).finish())
+                    .with_height(1.)
+                    .finish(),
+            )
+            .finish()
+        };
+        let step = |more: bool, enabled: bool| {
+            let icon = if more {
+                icons::Icon::Plus
+            } else {
+                icons::Icon::Minus
+            };
+            let action = wrap_chip_action(ChipConfiguratorAction::ChangeVisibleCount { more });
+            let mouse_state = self.interaction_mouse_state(
+                ChipLocation::Used { index: 0 },
+                if more { "show_more" } else { "show_fewer" },
+            );
+            let mut button = Hoverable::new(mouse_state, move |state| {
+                let color = if !enabled {
+                    tokens.text_3
+                } else if state.is_hovered() {
+                    tokens.text_1
+                } else {
+                    tokens.text_2
+                };
+                Container::new(render_list_icon(icon, color))
+                    .with_uniform_padding(3.)
+                    .with_background(Fill::Solid(if enabled && state.is_hovered() {
+                        tokens.surface_hover
+                    } else {
+                        tokens.surface_field
+                    }))
+                    .with_corner_radius(corners_sm())
+                    .finish()
+            });
+            if enabled {
+                button = button
+                    .with_cursor(Cursor::PointingHand)
+                    .on_click(move |ctx, _, _| ctx.dispatch_typed_action(action.clone()));
+            }
+            button.finish()
+        };
+        Container::new(
+            Flex::row()
+                .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                .with_spacing(8.)
+                .with_child(rule())
+                .with_child(step(false, shown > 0))
+                .with_child(
+                    Text::new_inline(label, font_family, LIST_CAPTION_FONT_SIZE)
+                        .with_color(tokens.text_2)
+                        .finish(),
+                )
+                .with_child(step(true, shown < total))
+                .with_child(rule())
+                .finish(),
+        )
+        .with_vertical_padding(4.)
+        .finish()
+    }
+
+    /// One button per row: grip, icon and label, then whatever applies to it. A footer row can
+    /// switch between sending and only inserting, and be removed; an available row can be added.
+    fn render_list_row<A: Action + Clone + 'static>(
+        &self,
+        location: ChipLocation,
+        item: &ConfigurableItem,
+        in_more_menu: bool,
+        wrap_chip_action: fn(ChipConfiguratorAction) -> A,
+        appearance: &Appearance,
+    ) -> Box<dyn Element> {
+        let tokens = *appearance.tokens();
+        let font_family = appearance.ui_font_family();
+        let ui_builder = appearance.ui_builder().clone();
+        let is_used = matches!(location, ChipLocation::Used { .. });
+        let label = item.display_label();
+        let icon = item.display_icon();
+        let auto_send = is_used
+            .then(|| item.item_kind())
+            .flatten()
+            .and_then(|kind| kind.auto_send_behavior());
+        let removable = is_used && item.is_removable();
+        let is_dragging = self.current_dragging_state.is_some();
+        let send_state = self.interaction_mouse_state(location, "auto_send");
+        let trailing_state = self.interaction_mouse_state(location, "trailing");
+        let toggle_action = wrap_chip_action(ChipConfiguratorAction::ToggleAutoSend { location });
+        let trailing_action = if is_used {
+            wrap_chip_action(ChipConfiguratorAction::RemoveFromUsed { location })
+        } else {
+            wrap_chip_action(ChipConfiguratorAction::AddFromUnused {
+                index: location.index(),
+            })
+        };
+
+        Hoverable::new(
+            self.interaction_mouse_state(location, "row"),
+            move |row_state| {
+                let hovered = row_state.is_hovered() && !is_dragging;
+                let label_color = if in_more_menu {
+                    tokens.text_2
+                } else {
+                    tokens.text_1
+                };
+                let mut row = Flex::row()
+                    .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                    .with_spacing(8.)
+                    .with_child(render_list_icon(
+                        icons::Icon::DragIndicatorVertical,
+                        tokens.text_3,
+                    ));
+                if let Some(icon) = icon {
+                    row.add_child(render_list_icon(icon, tokens.text_2));
+                }
+                row.add_child(
+                    Expanded::new(
+                        1.,
+                        Text::new_inline(label.clone(), font_family, LIST_FONT_SIZE)
+                            .with_color(label_color)
+                            .with_clip(ClipConfig::ellipsis())
+                            .finish(),
+                    )
+                    .finish(),
+                );
+                if let Some(auto_send) = auto_send {
+                    row.add_child(render_send_toggle(
+                        auto_send,
+                        send_state.clone(),
+                        toggle_action.clone(),
+                        &tokens,
+                        font_family,
+                        &ui_builder,
+                    ));
+                }
+                if !is_used || removable {
+                    let icon = if is_used {
+                        icons::Icon::X
+                    } else {
+                        icons::Icon::Plus
+                    };
+                    let action = trailing_action.clone();
+                    row.add_child(
+                        Hoverable::new(trailing_state.clone(), move |state| {
+                            let hovered = state.is_hovered();
+                            Container::new(render_list_icon(
+                                icon,
+                                if hovered {
+                                    tokens.text_1
+                                } else {
+                                    tokens.text_3
+                                },
+                            ))
+                            .with_uniform_padding(4.)
+                            .with_background(Fill::Solid(if hovered {
+                                tokens.surface_hover
+                            } else {
+                                ColorU::transparent_black()
+                            }))
+                            .with_corner_radius(corners_sm())
+                            .finish()
+                        })
+                        .with_cursor(Cursor::PointingHand)
+                        .on_click(move |ctx, _, _| ctx.dispatch_typed_action(action.clone()))
+                        .finish(),
+                    );
+                }
+                Container::new(
+                    ConstrainedBox::new(row.finish())
+                        .with_height(LIST_ROW_HEIGHT)
+                        .finish(),
+                )
+                .with_horizontal_padding(8.)
+                .with_background(Fill::Solid(if hovered {
+                    tokens.surface_raised
+                } else {
+                    tokens.surface_field
+                }))
+                .with_corner_radius(corners_sm())
+                .finish()
+            },
+        )
+        .with_cursor(Cursor::OpenHand)
+        .finish()
     }
 
     pub fn render_unused_chips_bank<A: Action + Clone + 'static>(
@@ -1161,7 +1614,6 @@ impl ChipConfigurator {
                     );
                     Container::new(self.render_item_with_controls(
                         location,
-                        item,
                         draggable,
                         true,
                         wrap_chip_action,
@@ -1246,5 +1698,147 @@ impl ChipConfigurator {
             wrap_chip_action,
             appearance,
         )
+    }
+}
+
+fn render_list_icon(icon: icons::Icon, color: ColorU) -> Box<dyn Element> {
+    ConstrainedBox::new(icon.to_warpui_icon(Fill::Solid(color)).finish())
+        .with_width(LIST_ICON_SIZE)
+        .with_height(LIST_ICON_SIZE)
+        .finish()
+}
+
+fn render_list_caption(label: &str, font_family: FamilyId, tokens: &Tokens) -> Box<dyn Element> {
+    Container::new(
+        Text::new_inline(label.to_owned(), font_family, LIST_CAPTION_FONT_SIZE)
+            .with_color(tokens.text_3)
+            .finish(),
+    )
+    .with_margin_bottom(2.)
+    .finish()
+}
+
+fn render_list_hint(text: &str, font_family: FamilyId, tokens: &Tokens) -> Box<dyn Element> {
+    Container::new(
+        Text::new(text.to_owned(), font_family, LIST_CAPTION_FONT_SIZE)
+            .with_color(tokens.text_3)
+            .finish(),
+    )
+    .with_vertical_padding(8.)
+    .finish()
+}
+
+/// Whether a prompt button sends right away or only fills the composer. Quiet until hovered:
+/// most buttons send, so the switch is there when wanted rather than shouting on every row.
+fn render_send_toggle<A: Action + Clone + 'static>(
+    auto_send: bool,
+    mouse_state: MouseStateHandle,
+    action: A,
+    tokens: &Tokens,
+    font_family: FamilyId,
+    ui_builder: &warp_core::ui::builder::UiBuilder,
+) -> Box<dyn Element> {
+    let tokens = *tokens;
+    let ui_builder = ui_builder.clone();
+    Hoverable::new(mouse_state, move |state| {
+        let hovered = state.is_hovered();
+        let color = if hovered {
+            tokens.text_1
+        } else {
+            tokens.text_3
+        };
+        let mut content = Flex::row()
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_spacing(4.);
+        if auto_send {
+            content.add_child(
+                ConstrainedBox::new(
+                    icons::Icon::CornerDownLeft
+                        .to_warpui_icon(Fill::Solid(color))
+                        .finish(),
+                )
+                .with_width(12.)
+                .with_height(12.)
+                .finish(),
+            );
+        }
+        content.add_child(
+            Text::new_inline(
+                if auto_send { "Sends" } else { "Inserts" }.to_owned(),
+                font_family,
+                LIST_CAPTION_FONT_SIZE,
+            )
+            .with_color(color)
+            .finish(),
+        );
+        let toggle = Container::new(content.finish())
+            .with_horizontal_padding(6.)
+            .with_vertical_padding(3.)
+            .with_background(Fill::Solid(if hovered {
+                tokens.surface_hover
+            } else {
+                ColorU::transparent_black()
+            }))
+            .with_corner_radius(corners_sm())
+            .finish();
+        if !hovered {
+            return toggle;
+        }
+        let mut stack = Stack::new().with_child(toggle);
+        stack.add_positioned_overlay_child(
+            ui_builder
+                .tool_tip(
+                    if auto_send {
+                        "Sends the prompt right away. Click to only insert it."
+                    } else {
+                        "Puts the prompt in the composer without sending. Click to send right away."
+                    }
+                    .to_owned(),
+                )
+                .build()
+                .finish(),
+            OffsetPositioning::offset_from_parent(
+                vec2f(0., -6.),
+                ParentOffsetBounds::WindowByPosition,
+                ParentAnchor::TopMiddle,
+                ChildAnchor::BottomMiddle,
+            ),
+        );
+        stack.finish()
+    })
+    .with_cursor(Cursor::PointingHand)
+    .on_click(move |ctx, _, _| ctx.dispatch_typed_action(action.clone()))
+    .finish()
+}
+
+#[cfg(test)]
+mod list_tests {
+    use super::list_insertion_index;
+
+    const SLOTS: [f32; 4] = [15., 49., 83., 117.];
+
+    #[test]
+    fn moving_down_lands_after_the_rows_passed() {
+        assert_eq!(list_insertion_index(&SLOTS, Some(0), 60.), 1);
+        assert_eq!(list_insertion_index(&SLOTS, Some(0), 130.), 3);
+    }
+
+    #[test]
+    fn moving_up_lands_before_the_rows_passed() {
+        assert_eq!(list_insertion_index(&SLOTS, Some(3), 40.), 1);
+        assert_eq!(list_insertion_index(&SLOTS, Some(3), 0.), 0);
+    }
+
+    #[test]
+    fn staying_inside_its_own_slot_keeps_the_place() {
+        assert_eq!(list_insertion_index(&SLOTS, Some(2), 83.), 2);
+        assert_eq!(list_insertion_index(&SLOTS, Some(2), 70.), 2);
+    }
+
+    #[test]
+    fn arriving_from_the_other_list_inserts_between_rows() {
+        assert_eq!(list_insertion_index(&SLOTS, None, 60.), 2);
+        assert_eq!(list_insertion_index(&SLOTS, None, 200.), 4);
+        assert_eq!(list_insertion_index(&[], None, 10.), 0);
     }
 }

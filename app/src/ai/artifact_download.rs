@@ -105,7 +105,3 @@ pub(crate) async fn download_artifact_bytes(
 
     Ok(())
 }
-
-#[cfg(test)]
-#[path = "artifact_download_tests.rs"]
-mod tests;

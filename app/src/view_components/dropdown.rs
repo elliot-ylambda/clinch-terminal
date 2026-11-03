@@ -130,8 +130,6 @@ pub struct Dropdown<A: DropdownItemAction = ()> {
     /// variants (e.g. orchestrate confirmation card pickers per Figma
     /// 4340:117057).
     background: Option<Fill>,
-    /// Optional override for the top-bar border fill. See `background`.
-    border_color: Option<Fill>,
     /// Optional override for the top-bar border width.
     border_width: Option<f32>,
     /// Optional override for the top-bar corner radius.
@@ -315,7 +313,6 @@ where
             font_size: None,
             padding: None,
             background: None,
-            border_color: None,
             border_width: None,
             border_radius: None,
             vertical_margin: DROPDOWN_PADDING,
@@ -337,11 +334,6 @@ where
 
     pub fn set_background(&mut self, background: Fill, ctx: &mut ViewContext<Self>) {
         self.background = Some(background);
-        ctx.notify();
-    }
-
-    pub fn set_border_color(&mut self, border_color: Fill, ctx: &mut ViewContext<Self>) {
-        self.border_color = Some(border_color);
         ctx.notify();
     }
 
@@ -690,7 +682,6 @@ where
                 font_size: self.font_size,
                 padding: self.padding,
                 background: self.background,
-                border_color: self.border_color,
                 border_width: self.border_width,
                 border_radius: self.border_radius,
                 ..Default::default()

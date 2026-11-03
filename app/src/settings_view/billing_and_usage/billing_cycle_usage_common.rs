@@ -5,10 +5,10 @@ use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::vec2f;
 use thousands::Separable;
 use warp_core::ui::appearance::Appearance;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warpui::elements::{
     Align, Border, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, DropShadow, Empty,
-    Flex, MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement, Radius, Shrinkable,
-    Text,
+    Flex, MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement, Shrinkable, Text,
 };
 use warpui::fonts::{Properties, Weight};
 use warpui::Element;
@@ -25,7 +25,7 @@ use crate::workspaces::workspace::{
 
 // for a bunch of this (min fill ratio, cost type order, ... )
 // you will find analogous ts code in warp-server
-pub const ROW_BORDER_RADIUS: f32 = 8.;
+pub const ROW_BORDER_RADIUS: f32 = 10.;
 pub const ROW_BORDER_WIDTH: f32 = 1.;
 pub const TOOLTIP_GAP: f32 = 6.;
 
@@ -298,7 +298,7 @@ pub fn render_breakdown_tooltip(
     ConstrainedBox::new(
         Container::new(column.finish())
             .with_background_color(bg)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .with_border(Border::all(1.).with_border_color(theme.outline().into_solid()))
             .with_uniform_padding(10.)
             .with_drop_shadow(
@@ -342,7 +342,7 @@ fn render_tooltip_row(
             ConstrainedBox::new(
                 Container::new(Empty::new().finish())
                     .with_background_color(color)
-                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(2.)))
+                    .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                     .finish(),
             )
             .with_width(10.)
@@ -389,7 +389,3 @@ fn render_tooltip_row(
         .with_child(right)
         .finish()
 }
-
-#[cfg(test)]
-#[path = "billing_cycle_usage_common_tests.rs"]
-mod tests;

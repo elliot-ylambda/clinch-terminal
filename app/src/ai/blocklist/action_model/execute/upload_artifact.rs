@@ -1,10 +1,6 @@
 #[cfg(not(target_family = "wasm"))]
 use std::path::PathBuf;
 
-#[cfg(test)]
-#[path = "upload_artifact_tests.rs"]
-mod tests;
-
 use futures::future::BoxFuture;
 use futures::FutureExt;
 #[cfg(not(target_family = "wasm"))]

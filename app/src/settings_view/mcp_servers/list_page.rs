@@ -10,11 +10,12 @@ use warp_core::features::FeatureFlag;
 use warp_core::send_telemetry_from_ctx;
 use warp_core::ui::appearance::AppearanceEvent;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_core::ui::Icon;
 use warpui::elements::{
     Align, Border, ChildView, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment,
     Expanded, Fill, Flex, FormattedTextElement, HighlightedHyperlink, MainAxisAlignment,
-    MainAxisSize, ParentElement, Radius, Text,
+    MainAxisSize, ParentElement, Text,
 };
 use warpui::ui_components::components::{Coords, UiComponent, UiComponentStyles};
 use warpui::ui_components::switch::SwitchStateHandle;
@@ -166,7 +167,7 @@ impl MCPServersListPageView {
                 let search_bar_styles = UiComponentStyles {
                     background: Some(internal_colors::neutral_2(appearance.theme()).into()),
                     border_color: Some(internal_colors::neutral_4(appearance.theme()).into()),
-                    border_radius: Some(CornerRadius::with_all(Radius::Pixels(4.))),
+                    border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
                     padding: Some(Coords {
                         top: 8.,
                         bottom: 8.,

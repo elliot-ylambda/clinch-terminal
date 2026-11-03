@@ -3,6 +3,7 @@ use uuid::Uuid;
 use warp_core::ui::external_product_icon::ExternalProductIcon;
 use warp_core::ui::icons::Icon;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warpui::elements::{
     Align, Border, ChildView, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Empty,
     Flex, Hoverable, MainAxisAlignment, MouseStateHandle, Padding, ParentElement, Radius,
@@ -176,7 +177,7 @@ impl UpdateModalBody {
                         .with_height(16.)
                         .finish(),
                     )
-                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                    .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                     .with_padding(Padding::uniform(2.));
                     if state.is_hovered() {
                         icon = icon.with_background(appearance.theme().surface_2());
@@ -203,7 +204,7 @@ impl UpdateModalBody {
             .finish(),
         )
         .with_background_color(theme.surface_2().into())
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
         .with_padding(Padding::uniform(4.))
         .finish();
 
@@ -325,7 +326,7 @@ impl UpdateModalBody {
             .with_uniform_padding(12.)
             .with_background(background_color)
             .with_border(Border::all(1.).with_border_color(border_color))
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .finish();
 
         Hoverable::new(self.option_mouse_states[index].clone(), |_| {

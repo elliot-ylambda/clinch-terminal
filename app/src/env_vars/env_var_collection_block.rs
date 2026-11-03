@@ -7,11 +7,12 @@ use parking_lot::RwLock;
 use settings::Setting as _;
 use warp_core::features::FeatureFlag;
 use warp_core::semantic_selection::SemanticSelection;
+use warp_core::ui::tokens::{RADIUS_LG, RADIUS_MD};
 use warp_core::ui::Icon;
 use warpui::elements::{
     get_rich_content_position_id, Border, Clipped, Container, CornerRadius, CrossAxisAlignment,
-    Flex, FormattedTextElement, MouseStateHandle, ParentElement, Radius, SavePosition,
-    SelectableArea, SelectionHandle,
+    Flex, FormattedTextElement, MouseStateHandle, ParentElement, SavePosition, SelectableArea,
+    SelectionHandle,
 };
 use warpui::keymap::{FixedBinding, Keystroke};
 use warpui::{
@@ -360,7 +361,7 @@ impl View for EnvVarCollectionBlock {
             .with_horizontal_padding(INLINE_ACTION_HORIZONTAL_PADDING)
             .with_vertical_padding(ENV_VAR_COLLECTION_BODY_VERTICAL_PADDING)
             .with_background(theme.background())
-            .with_corner_radius(CornerRadius::with_bottom(Radius::Pixels(8.)))
+            .with_corner_radius(CornerRadius::with_bottom(RADIUS_MD))
             .finish();
 
             let semantic_selection = SemanticSelection::as_ref(app);
@@ -422,9 +423,9 @@ impl View for EnvVarCollectionBlock {
             })
             // Rounded corners will make the header feel disconnected from its expanded details.
             .with_corner_radius(if should_expand_downward {
-                CornerRadius::with_top(Radius::Pixels(9.))
+                CornerRadius::with_top(RADIUS_LG)
             } else {
-                CornerRadius::with_all(Radius::Pixels(9.))
+                CornerRadius::with_all(RADIUS_LG)
             })
             .with_border(Border::all(1.).with_border_fill(border_color))
             .finish();

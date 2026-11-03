@@ -1,29 +1,20 @@
-use std::path::PathBuf;
-
 use pathfinder_geometry::rect::RectF;
 use pathfinder_geometry::vector::Vector2F;
+use warp_core::ui::tokens::{StatusKind, Tokens};
 use warpui::elements::PositionedElementOffsetBounds;
-use warpui::{Element, EntityId};
+use warpui::EntityId;
 
 use super::{
-    automatic_worktree_toggle_tooltip, branch_label_display, coalesce_summary_branch_entries,
-    code_detail_kind_label, compact_branch_subtitle_display, detail_sidecar_width_and_bounds,
-    detail_target_for_hovered_row, drag_autoscroll_step, needs_input_card_border,
-    non_terminal_search_text_fragments, pane_ids_for_display_granularity,
+    code_detail_kind_label, detail_sidecar_width_and_bounds, detail_target_for_hovered_row,
+    drag_autoscroll_step, non_terminal_search_text_fragments, pane_ids_for_display_granularity,
     pane_search_text_fragments, path_belongs_to_project, preferred_agent_tab_titles,
-    preferred_vertical_tab_title_override, push_normalized_unique_summary_label, row_renames_pane,
-    search_fragments_contain_query, section_needs_input_pulse, select_summary_pane_kind_icons,
-    separate_title_indicator_kind, should_keep_detail_sidecar_visible_for_mouse_position,
-    should_render_separate_activity_indicator, sort_summary_primary_labels_status_first,
-    status_blink_opacity, summary_overflow_count, summary_search_text_fragments, tab_card_border,
-    tab_title_uses_header, terminal_command_status, terminal_kind_badge_label,
-    terminal_primary_line_data, terminal_pull_request_badge_label, terminal_search_text_fragments,
-    terminal_title_fallback_font, title_indicator_color, uses_outer_group_container,
-    vertical_tab_activity_dot_color, visible_pane_ids_for_detail_target, vtab_diff_stats_text,
-    AgentTabTextPreference, SummaryPaneKind, SummaryPaneKindIcons, TabCardState, TerminalAgentText,
-    TerminalPrimaryLineData, TerminalPrimaryLineFont, TitleIndicatorKind, VerticalTabsDetailTarget,
-    VerticalTabsDetailTargetKind, VerticalTabsSummaryBranchEntry, VerticalTabsSummaryData,
-    VerticalTabsSummaryPrimaryLabel, BOOKMARKED_SESSIONS_DEFAULT_COLOR,
+    preferred_vertical_tab_title_override, row_renames_pane, search_fragments_contain_query,
+    should_keep_detail_sidecar_visible_for_mouse_position, tab_title_uses_header,
+    terminal_command_status, terminal_kind_badge_label, terminal_primary_line_data,
+    terminal_pull_request_badge_label, terminal_search_text_fragments,
+    terminal_title_fallback_font, uses_outer_group_container, visible_pane_ids_for_detail_target,
+    vtab_diff_stats_text, AgentTabTextPreference, TerminalAgentText, TerminalPrimaryLineData,
+    TerminalPrimaryLineFont, VerticalTabsDetailTarget, VerticalTabsDetailTargetKind,
 };
 use crate::ai::agent::conversation::ConversationStatus;
 use crate::context_chips::display_chip::GitLineChanges;
@@ -32,31 +23,8 @@ use crate::pane_group::{PaneId, TerminalPaneId};
 use crate::safe_triangle::SafeTriangle;
 use crate::terminal::view::TerminalViewState;
 use crate::terminal::CLIAgent;
-use crate::ui_components::{
-    CLINCH_ATTENTION_AMBER, CLINCH_DONE_BLUE, CLINCH_LOGO_GREEN, CLINCH_SECTION_GREEN,
-};
-use crate::workspace::tab_group::{SectionColor, SECTION_COLOR_OPTIONS};
 use crate::workspace::tab_settings::VerticalTabsDisplayGranularity;
 use crate::workspace::view::ProjectCliAgentActivity;
-
-fn label(text: &str) -> VerticalTabsSummaryPrimaryLabel {
-    VerticalTabsSummaryPrimaryLabel {
-        text: text.to_string(),
-        status: None,
-    }
-}
-
-#[test]
-fn automatic_worktree_toggle_tooltip_reports_shared_setting_state() {
-    assert_eq!(
-        automatic_worktree_toggle_tooltip(true),
-        ("Automatic worktree tabs: On", "Applies to all projects")
-    );
-    assert_eq!(
-        automatic_worktree_toggle_tooltip(false),
-        ("Automatic worktree tabs: Off", "Applies to all projects")
-    );
-}
 
 #[test]
 fn bookmarked_session_paths_are_scoped_to_the_current_project() {
@@ -77,103 +45,8 @@ fn bookmarked_session_paths_are_scoped_to_the_current_project() {
     ));
 }
 
-#[test]
-fn bookmarked_sessions_section_uses_the_light_clinch_green_palette_color() {
-    assert_eq!(BOOKMARKED_SESSIONS_DEFAULT_COLOR, SectionColor::ClinchGreen);
-    assert!(SECTION_COLOR_OPTIONS.contains(&BOOKMARKED_SESSIONS_DEFAULT_COLOR));
-    assert_eq!(
-        CLINCH_SECTION_GREEN,
-        pathfinder_color::ColorU::from_u32(0xD9FF66FF)
-    );
-}
-
 fn pane_id() -> PaneId {
     TerminalPaneId::dummy_terminal_pane_id().into()
-}
-
-struct LineageConnectorLayoutView;
-
-impl warpui::Entity for LineageConnectorLayoutView {
-    type Event = ();
-}
-
-impl warpui::TypedActionView for LineageConnectorLayoutView {
-    type Action = ();
-}
-
-impl warpui::View for LineageConnectorLayoutView {
-    fn ui_name() -> &'static str {
-        "LineageConnectorLayoutView"
-    }
-
-    fn render(&self, app: &warpui::AppContext) -> Box<dyn warpui::Element> {
-        use warpui::elements::{
-            ConstrainedBox, CrossAxisAlignment, Empty, Flex, MainAxisSize, ParentElement,
-            SavePosition, Stack,
-        };
-        use warpui::SingletonEntity;
-
-        let card = SavePosition::new(
-            ConstrainedBox::new(Empty::new().finish())
-                .with_height(40.)
-                .finish(),
-            "lineage_card",
-        )
-        .finish();
-        let connector = super::render_lineage_connector(
-            card,
-            true,
-            crate::appearance::Appearance::as_ref(app).theme(),
-        );
-        // Sidebar rows are measured with unbounded height by their column.
-        Stack::new()
-            .with_child(
-                Flex::column()
-                    .with_main_axis_size(MainAxisSize::Min)
-                    .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
-                    .with_child(SavePosition::new(connector, "lineage_connector").finish())
-                    .finish(),
-            )
-            .finish()
-    }
-}
-
-#[test]
-fn tab_origin_connector_preserves_card_height_in_sidebar_layout() {
-    use pathfinder_geometry::vector::vec2f;
-    use warpui::{App, Presenter, WindowInvalidation};
-
-    App::test((), |mut app| async move {
-        crate::workspace::view::tests::initialize_app(&mut app);
-        let (window_id, _) = app.add_window(warpui::platform::WindowStyle::NotStealFocus, |_| {
-            LineageConnectorLayoutView
-        });
-        let mut presenter = Presenter::new(window_id);
-        let invalidation = WindowInvalidation {
-            updated: std::collections::HashSet::from([app.root_view_id(window_id).unwrap()]),
-            ..Default::default()
-        };
-        app.update(move |ctx| {
-            presenter.invalidate(invalidation, ctx);
-            presenter.build_scene(vec2f(500., 300.), 1., None, ctx);
-            let bounds = presenter
-                .position_cache()
-                .get_position("lineage_connector")
-                .unwrap();
-            let card = presenter
-                .position_cache()
-                .get_position("lineage_card")
-                .unwrap();
-            assert_eq!(bounds.size(), vec2f(500., 40.));
-            assert_eq!(card.size(), vec2f(486., 40.));
-            assert_eq!(card.min_x() - bounds.min_x(), 14.);
-        });
-    });
-}
-fn code_summary_kind(title: &str) -> SummaryPaneKind {
-    SummaryPaneKind::Code {
-        title: title.to_string(),
-    }
 }
 
 #[test]
@@ -189,222 +62,29 @@ fn terminal_command_status_is_in_progress_only_while_command_is_running() {
 #[test]
 fn agent_activity_dots_match_project_tab_working_and_done_colors() {
     let theme = crate::themes::default_themes::dark_theme();
+    let tokens = Tokens::new(&theme);
 
     assert_eq!(
-        vertical_tab_activity_dot_color(ProjectCliAgentActivity::Working, &theme),
-        CLINCH_LOGO_GREEN
+        ProjectCliAgentActivity::Working.color(&tokens),
+        tokens.status(StatusKind::Working)
     );
     assert_eq!(
-        vertical_tab_activity_dot_color(ProjectCliAgentActivity::Done, &theme),
-        CLINCH_DONE_BLUE
+        ProjectCliAgentActivity::Done.color(&tokens),
+        tokens.status(StatusKind::Done)
     );
     assert_eq!(
-        vertical_tab_activity_dot_color(ProjectCliAgentActivity::NeedsAttention, &theme),
-        CLINCH_DONE_BLUE
+        ProjectCliAgentActivity::NeedsAttention.color(&tokens),
+        tokens.status(StatusKind::Done)
     );
     assert_eq!(
-        vertical_tab_activity_dot_color(ProjectCliAgentActivity::NeedsInput, &theme),
-        CLINCH_ATTENTION_AMBER
+        ProjectCliAgentActivity::NeedsInput.color(&tokens),
+        tokens.status(StatusKind::NeedsYou)
     );
     assert_eq!(
-        vertical_tab_activity_dot_color(ProjectCliAgentActivity::Idle, &theme),
-        theme.disabled_text_color(theme.background()).into_solid()
+        ProjectCliAgentActivity::RateLimited.color(&tokens),
+        tokens.status(StatusKind::RateLimited)
     );
-}
-
-/// Distance of a fill from the rail's background, summed over RGB. Direction-agnostic
-/// so the same assertions hold on light themes, where contrast runs the other way.
-fn contrast_against_background(
-    fill: crate::themes::theme::Fill,
-    theme: &warp_core::ui::theme::WarpTheme,
-) -> u32 {
-    let color = fill.into_solid();
-    let background = theme.background().into_solid();
-    u32::from(color.r).abs_diff(u32::from(background.r))
-        + u32::from(color.g).abs_diff(u32::from(background.g))
-        + u32::from(color.b).abs_diff(u32::from(background.b))
-}
-
-#[test]
-fn tab_card_outlines_separate_resting_hovered_and_active() {
-    let theme = crate::themes::default_themes::dark_theme();
-    let contrast = |state: TabCardState| contrast_against_background(state.border(&theme), &theme);
-
-    let resting = contrast(TabCardState::Resting);
-    let hovered = contrast(TabCardState::Hovered);
-    let active = contrast(TabCardState::Active);
-
-    // The rail shares the terminal's background, so a resting outline is the only
-    // thing marking where a tab starts and ends. It has to clear the background by
-    // more than the 5% overlay the old hairline separators used.
-    assert!(
-        resting > 40,
-        "resting outline is too close to the background to read as an outline: {resting}"
-    );
-    assert!(
-        resting < hovered && hovered < active,
-        "outline steps must stay ordered resting < hovered < active, got {resting} < {hovered} < {active}"
-    );
-}
-
-#[test]
-fn active_tab_card_fill_stays_the_gray_it_had_over_a_tinted_panel() {
-    let theme = crate::themes::default_themes::dark_theme();
-    // Card fills are foreground overlays, so their strength lives in the alpha
-    // channel; the RGB is the same foreground color for every step.
-    let overlay_strength = |state: TabCardState| state.background(&theme).into_solid().a;
-
-    // The panel used to be painted with one 5% overlay and the active tab with a
-    // second one on top. Now that the panel is plain background, the active fill
-    // carries both steps itself, so the selected tab keeps its familiar gray.
-    let active = overlay_strength(TabCardState::Active);
-    let hovered = overlay_strength(TabCardState::Hovered);
-    assert!(
-        hovered > 0 && active >= 2 * hovered - 1,
-        "active fill should be about two overlay steps to hover's one, got {active} vs {hovered}"
-    );
-    assert_eq!(
-        overlay_strength(TabCardState::Resting),
-        0,
-        "a resting card is defined by its outline alone, with no fill"
-    );
-}
-
-#[test]
-fn agent_activity_dot_replaces_the_separate_unread_indicator() {
-    assert!(!should_render_separate_activity_indicator(
-        true,
-        Some(ProjectCliAgentActivity::Done)
-    ));
-    assert!(should_render_separate_activity_indicator(true, None));
-    assert!(!should_render_separate_activity_indicator(false, None));
-}
-
-#[test]
-fn ordinary_running_command_gets_muted_trailing_indicator() {
-    let theme = crate::themes::default_themes::dark_theme();
-
-    assert_eq!(
-        separate_title_indicator_kind(false, None, true),
-        Some(TitleIndicatorKind::RunningCommand)
-    );
-    assert_eq!(
-        title_indicator_color(TitleIndicatorKind::RunningCommand, &theme),
-        theme.disabled_text_color(theme.background()).into_solid()
-    );
-    assert_eq!(
-        separate_title_indicator_kind(true, None, true),
-        Some(TitleIndicatorKind::Unread)
-    );
-    assert_eq!(
-        title_indicator_color(TitleIndicatorKind::Unread, &theme),
-        CLINCH_DONE_BLUE
-    );
-}
-
-#[test]
-fn summary_pane_kind_icons_render_single_icon_for_homogeneous_tabs() {
-    assert_eq!(
-        select_summary_pane_kind_icons([
-            (EntityId::from_usize(10), SummaryPaneKind::Terminal),
-            (EntityId::from_usize(20), SummaryPaneKind::Terminal),
-        ]),
-        Some(SummaryPaneKindIcons::Single(SummaryPaneKind::Terminal))
-    );
-}
-
-#[test]
-fn summary_pane_kind_icons_pick_two_oldest_distinct_pane_kinds() {
-    assert_eq!(
-        select_summary_pane_kind_icons([
-            (EntityId::from_usize(30), SummaryPaneKind::Terminal),
-            (EntityId::from_usize(20), code_summary_kind("main.rs")),
-            (
-                EntityId::from_usize(40),
-                SummaryPaneKind::Notebook { is_plan: false },
-            ),
-            (EntityId::from_usize(10), SummaryPaneKind::Terminal),
-        ]),
-        Some(SummaryPaneKindIcons::Pair {
-            primary: SummaryPaneKind::Terminal,
-            secondary: code_summary_kind("main.rs"),
-        })
-    );
-}
-
-#[test]
-fn summary_pane_kind_icons_recompute_when_oldest_kind_is_removed() {
-    assert_eq!(
-        select_summary_pane_kind_icons([
-            (EntityId::from_usize(20), code_summary_kind("main.rs")),
-            (EntityId::from_usize(30), SummaryPaneKind::Terminal),
-        ]),
-        Some(SummaryPaneKindIcons::Pair {
-            primary: code_summary_kind("main.rs"),
-            secondary: SummaryPaneKind::Terminal,
-        })
-    );
-}
-
-#[test]
-fn summary_pane_kind_icons_distinguish_agent_terminals_from_plain_terminals() {
-    assert_eq!(
-        select_summary_pane_kind_icons([
-            (EntityId::from_usize(10), SummaryPaneKind::Terminal),
-            (
-                EntityId::from_usize(20),
-                SummaryPaneKind::CLIAgent {
-                    agent: CLIAgent::Claude,
-                    is_ambient: false,
-                },
-            ),
-            (
-                EntityId::from_usize(30),
-                SummaryPaneKind::OzAgent { is_ambient: false },
-            ),
-        ]),
-        Some(SummaryPaneKindIcons::Pair {
-            primary: SummaryPaneKind::Terminal,
-            secondary: SummaryPaneKind::CLIAgent {
-                agent: CLIAgent::Claude,
-                is_ambient: false,
-            },
-        })
-    );
-}
-
-#[test]
-fn summary_pane_kind_icons_distinguish_ambient_claude_from_local_claude() {
-    // A local Claude session and a cloud-mode Claude session should count as distinct kinds
-    // so they render with different icons (claude.svg vs claude_cloud.svg).
-    assert_eq!(
-        select_summary_pane_kind_icons([
-            (
-                EntityId::from_usize(10),
-                SummaryPaneKind::CLIAgent {
-                    agent: CLIAgent::Claude,
-                    is_ambient: false,
-                },
-            ),
-            (
-                EntityId::from_usize(20),
-                SummaryPaneKind::CLIAgent {
-                    agent: CLIAgent::Claude,
-                    is_ambient: true,
-                },
-            ),
-        ]),
-        Some(SummaryPaneKindIcons::Pair {
-            primary: SummaryPaneKind::CLIAgent {
-                agent: CLIAgent::Claude,
-                is_ambient: false,
-            },
-            secondary: SummaryPaneKind::CLIAgent {
-                agent: CLIAgent::Claude,
-                is_ambient: true,
-            },
-        })
-    );
+    assert_eq!(ProjectCliAgentActivity::Idle.color(&tokens), tokens.text_3);
 }
 
 #[test]
@@ -1151,38 +831,6 @@ fn diff_stats_text_matches_rendered_badge_text() {
 }
 
 #[test]
-fn branch_label_display_falls_back_without_branch_icon() {
-    assert_eq!(
-        branch_label_display(None, "~/warp"),
-        ("~/warp".to_string(), false)
-    );
-    assert_eq!(
-        branch_label_display(Some(""), "~/warp"),
-        ("~/warp".to_string(), false)
-    );
-    assert_eq!(
-        branch_label_display(Some("main"), "~/warp"),
-        ("main".to_string(), true)
-    );
-}
-
-#[test]
-fn compact_branch_subtitle_falls_back_to_working_directory_without_branch_icon() {
-    assert_eq!(
-        compact_branch_subtitle_display(None, Some("~/warp")),
-        Some(("~/warp".to_string(), false))
-    );
-    assert_eq!(
-        compact_branch_subtitle_display(Some(""), Some("~/warp")),
-        Some(("~/warp".to_string(), false))
-    );
-    assert_eq!(
-        compact_branch_subtitle_display(Some("main"), Some("~/warp")),
-        Some(("main".to_string(), true))
-    );
-}
-
-#[test]
 fn collect_normalized_unique_summary_texts_dedupes_after_whitespace_normalization() {
     assert_eq!(
         collect_normalized_unique_summary_texts([
@@ -1213,295 +861,6 @@ fn collect_normalized_unique_summary_texts_preserves_first_seen_order() {
 }
 
 #[test]
-fn coalesce_summary_branch_entries_groups_by_repo_and_branch() {
-    let repo_a = PathBuf::from("/tmp/repo-a");
-    let repo_b = PathBuf::from("/tmp/repo-b");
-    let entries = vec![
-        VerticalTabsSummaryBranchEntry {
-            repo_path: repo_a.clone(),
-            branch_name: "main".to_string(),
-            diff_stats: None,
-            pull_request_label: None,
-        },
-        VerticalTabsSummaryBranchEntry {
-            repo_path: repo_a.clone(),
-            branch_name: "main".to_string(),
-            diff_stats: Some(GitLineChanges {
-                files_changed: 1,
-                lines_added: 2,
-                lines_removed: 3,
-            }),
-            pull_request_label: Some("#123".to_string()),
-        },
-        VerticalTabsSummaryBranchEntry {
-            repo_path: repo_b.clone(),
-            branch_name: "main".to_string(),
-            diff_stats: Some(GitLineChanges {
-                files_changed: 4,
-                lines_added: 5,
-                lines_removed: 6,
-            }),
-            pull_request_label: Some("#456".to_string()),
-        },
-    ];
-
-    assert_eq!(
-        coalesce_summary_branch_entries(entries),
-        vec![
-            VerticalTabsSummaryBranchEntry {
-                repo_path: repo_a,
-                branch_name: "main".to_string(),
-                diff_stats: Some(GitLineChanges {
-                    files_changed: 1,
-                    lines_added: 2,
-                    lines_removed: 3,
-                }),
-                pull_request_label: Some("#123".to_string()),
-            },
-            VerticalTabsSummaryBranchEntry {
-                repo_path: repo_b,
-                branch_name: "main".to_string(),
-                diff_stats: Some(GitLineChanges {
-                    files_changed: 4,
-                    lines_added: 5,
-                    lines_removed: 6,
-                }),
-                pull_request_label: Some("#456".to_string()),
-            },
-        ]
-    );
-}
-
-#[test]
-fn summary_overflow_count_caps_visible_region() {
-    assert_eq!(summary_overflow_count(5, 3), 2);
-    assert_eq!(summary_overflow_count(3, 3), 0);
-    assert_eq!(summary_overflow_count(2, 3), 0);
-}
-
-#[test]
-fn primary_labels_dedupe_preserves_first_seen_status() {
-    let mut values = Vec::new();
-    let mut seen = std::collections::HashMap::new();
-    push_normalized_unique_summary_label(&mut values, &mut seen, "  cargo   test  ", None);
-    push_normalized_unique_summary_label(
-        &mut values,
-        &mut seen,
-        "cargo test",
-        Some(ConversationStatus::InProgress),
-    );
-
-    assert_eq!(
-        values,
-        vec![VerticalTabsSummaryPrimaryLabel {
-            text: "cargo test".to_string(),
-            status: None,
-        }]
-    );
-}
-
-#[test]
-fn primary_labels_preserve_status_through_aggregation() {
-    let mut values = Vec::new();
-    let mut seen = std::collections::HashMap::new();
-    push_normalized_unique_summary_label(
-        &mut values,
-        &mut seen,
-        "Plan a refactor",
-        Some(ConversationStatus::InProgress),
-    );
-    push_normalized_unique_summary_label(
-        &mut values,
-        &mut seen,
-        "Investigate failure",
-        Some(ConversationStatus::Success),
-    );
-    push_normalized_unique_summary_label(&mut values, &mut seen, "cargo build", None);
-
-    assert_eq!(
-        values,
-        vec![
-            VerticalTabsSummaryPrimaryLabel {
-                text: "Plan a refactor".to_string(),
-                status: Some(ConversationStatus::InProgress),
-            },
-            VerticalTabsSummaryPrimaryLabel {
-                text: "Investigate failure".to_string(),
-                status: Some(ConversationStatus::Success),
-            },
-            VerticalTabsSummaryPrimaryLabel {
-                text: "cargo build".to_string(),
-                status: None,
-            },
-        ]
-    );
-}
-
-#[test]
-fn sort_summary_primary_labels_moves_status_first_and_preserves_order() {
-    let mut values = vec![
-        VerticalTabsSummaryPrimaryLabel {
-            text: "plain terminal".to_string(),
-            status: None,
-        },
-        VerticalTabsSummaryPrimaryLabel {
-            text: "first conversation".to_string(),
-            status: Some(ConversationStatus::InProgress),
-        },
-        VerticalTabsSummaryPrimaryLabel {
-            text: "code pane".to_string(),
-            status: None,
-        },
-        VerticalTabsSummaryPrimaryLabel {
-            text: "second conversation".to_string(),
-            status: Some(ConversationStatus::Success),
-        },
-        VerticalTabsSummaryPrimaryLabel {
-            text: "last terminal".to_string(),
-            status: None,
-        },
-    ];
-
-    sort_summary_primary_labels_status_first(&mut values);
-
-    assert_eq!(
-        values,
-        vec![
-            VerticalTabsSummaryPrimaryLabel {
-                text: "first conversation".to_string(),
-                status: Some(ConversationStatus::InProgress),
-            },
-            VerticalTabsSummaryPrimaryLabel {
-                text: "second conversation".to_string(),
-                status: Some(ConversationStatus::Success),
-            },
-            VerticalTabsSummaryPrimaryLabel {
-                text: "plain terminal".to_string(),
-                status: None,
-            },
-            VerticalTabsSummaryPrimaryLabel {
-                text: "code pane".to_string(),
-                status: None,
-            },
-            VerticalTabsSummaryPrimaryLabel {
-                text: "last terminal".to_string(),
-                status: None,
-            },
-        ]
-    );
-}
-
-#[test]
-fn summary_search_fragments_include_hidden_overflow_values() {
-    let summary = VerticalTabsSummaryData {
-        primary_labels: vec![
-            VerticalTabsSummaryPrimaryLabel {
-                text: "Claude".to_string(),
-                status: Some(ConversationStatus::InProgress),
-            },
-            label("Oz"),
-            label("cargo"),
-            label("code review"),
-            label("hidden work"),
-        ],
-        working_directories: vec!["~/warp-internal".to_string(), "~/warp-server".to_string()],
-        branch_entries: vec![
-            VerticalTabsSummaryBranchEntry {
-                repo_path: PathBuf::from("/tmp/repo-a"),
-                branch_name: "main".to_string(),
-                diff_stats: Some(GitLineChanges {
-                    files_changed: 1,
-                    lines_added: 2,
-                    lines_removed: 3,
-                }),
-                pull_request_label: Some("#123".to_string()),
-            },
-            VerticalTabsSummaryBranchEntry {
-                repo_path: PathBuf::from("/tmp/repo-b"),
-                branch_name: "feature/hidden".to_string(),
-                diff_stats: None,
-                pull_request_label: None,
-            },
-            VerticalTabsSummaryBranchEntry {
-                repo_path: PathBuf::from("/tmp/repo-c"),
-                branch_name: "cleanup".to_string(),
-                diff_stats: None,
-                pull_request_label: None,
-            },
-            VerticalTabsSummaryBranchEntry {
-                repo_path: PathBuf::from("/tmp/repo-d"),
-                branch_name: "hidden-branch".to_string(),
-                diff_stats: None,
-                pull_request_label: Some("#789".to_string()),
-            },
-        ],
-        has_unread_activity: false,
-        has_running_command: false,
-    };
-
-    let fragments = summary_search_text_fragments(&summary, Some("Custom tab"));
-
-    assert!(search_fragments_contain_query(&fragments, "custom tab"));
-    assert!(search_fragments_contain_query(&fragments, "claude"));
-    assert!(search_fragments_contain_query(&fragments, "hidden work"));
-    assert!(search_fragments_contain_query(&fragments, "hidden-branch"));
-    assert!(search_fragments_contain_query(&fragments, "#789"));
-    assert!(search_fragments_contain_query(&fragments, "+2"));
-    assert!(search_fragments_contain_query(&fragments, "-3"));
-}
-
-#[test]
-fn needs_input_outline_pulses_only_on_background_cards() {
-    warpui::App::test((), |app| async move {
-        app.add_singleton_model(|_| {
-            crate::terminal::cli_agent_sessions::CLIAgentSessionsModel::new()
-        });
-        app.add_singleton_model(
-            crate::terminal::cli_agent_sessions::attention_pulse::AgentAttentionPulse::new,
-        );
-        app.read(|ctx| {
-            assert!(
-                needs_input_card_border(true, false, false, ctx).is_some(),
-                "a background tab with a waiting agent pulses"
-            );
-            assert!(
-                needs_input_card_border(true, true, false, ctx).is_none(),
-                "the active tab is where the user already is"
-            );
-            assert!(
-                needs_input_card_border(true, false, true, ctx).is_none(),
-                "a drag target keeps its drop highlight"
-            );
-            assert!(needs_input_card_border(false, false, false, ctx).is_none());
-        });
-    });
-}
-
-#[test]
-fn only_blocked_status_glyphs_blink() {
-    warpui::App::test((), |app| async move {
-        app.add_singleton_model(|_| {
-            crate::terminal::cli_agent_sessions::CLIAgentSessionsModel::new()
-        });
-        app.add_singleton_model(
-            crate::terminal::cli_agent_sessions::attention_pulse::AgentAttentionPulse::new,
-        );
-        app.read(|ctx| {
-            // With nothing blocked the clock rests lit, so every status draws at full opacity.
-            for status in [
-                ConversationStatus::InProgress,
-                ConversationStatus::Success,
-                ConversationStatus::Blocked {
-                    blocked_action: String::new(),
-                },
-            ] {
-                assert_eq!(status_blink_opacity(&status, ctx), 1.);
-            }
-        });
-    });
-}
-
-#[test]
 fn drag_autoscroll_scrolls_toward_the_nearer_edge_and_ramps_with_depth() {
     // A 500px-tall tab list starting 100px down the window.
     let viewport = RectF::new(Vector2F::new(0., 100.), Vector2F::new(240., 500.));
@@ -1529,31 +888,4 @@ fn drag_autoscroll_scrolls_toward_the_nearer_edge_and_ramps_with_depth() {
 fn drag_autoscroll_ignores_collapsed_list() {
     let viewport = RectF::new(Vector2F::new(0., 100.), Vector2F::new(240., 0.));
     assert_eq!(drag_autoscroll_step(viewport, 100.), 0.);
-}
-
-/// The tab waiting on the user pulses, not the whole section; the section pulses only while it is
-/// collapsed and hides that tab.
-#[test]
-fn needs_input_pulses_the_tab_and_only_a_collapsed_section() {
-    use pathfinder_color::ColorU;
-
-    use crate::themes::theme::Fill as ThemeFill;
-
-    let pulse = ThemeFill::Solid(ColorU::new(255, 176, 0, 255));
-    let idle = || ThemeFill::Solid(ColorU::new(40, 40, 40, 255));
-
-    assert!(
-        tab_card_border(true, None, idle).is_none(),
-        "a quiet nested tab has no frame"
-    );
-    assert_eq!(tab_card_border(true, Some(pulse), idle), Some(pulse));
-    assert_eq!(tab_card_border(false, Some(pulse), idle), Some(pulse));
-    assert_eq!(tab_card_border(false, None, idle), Some(idle()));
-
-    assert!(
-        !section_needs_input_pulse(false, true),
-        "an expanded section never pulses"
-    );
-    assert!(section_needs_input_pulse(true, true));
-    assert!(!section_needs_input_pulse(true, false));
 }

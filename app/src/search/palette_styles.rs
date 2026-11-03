@@ -1,5 +1,6 @@
 use warp_core::ui::appearance::Appearance;
-use warpui::elements::{Border, CornerRadius, DropShadow, Radius, ScrollbarWidth};
+use warp_core::ui::tokens::RADIUS_SM;
+use warpui::elements::{Border, CornerRadius, DropShadow, ScrollbarWidth};
 
 use crate::search::result_renderer::QueryResultRendererStyles;
 
@@ -45,7 +46,7 @@ lazy_static::lazy_static! {
                 RESULT_PADDING_VERTICAL + MULTILINE_RESULT_EXTRA_VERTICAL_PADDING,
             // Figma "Palette Menu Item" applies an outer gutter so the highlight doesn't look full-bleed.
             result_outer_horizontal_padding_fn: |appearance| 4.0 * appearance.monospace_ui_scalar(),
-            item_highlight_corner_radius: CornerRadius::with_all(Radius::Pixels(4.)),
+            item_highlight_corner_radius: CornerRadius::with_all(RADIUS_SM),
             ..Default::default()
         };
 

@@ -7,9 +7,10 @@ use warp_core::features::FeatureFlag;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::color::internal_colors::neutral_4;
 use warp_core::ui::theme::Fill;
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::elements::{
     ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Dismiss, Flex, Hoverable,
-    MainAxisAlignment, MainAxisSize, MouseState, MouseStateHandle, ParentElement, Radius,
+    MainAxisAlignment, MainAxisSize, MouseState, MouseStateHandle, ParentElement,
 };
 use warpui::ui_components::button::{ButtonVariant, TextAndIcon, TextAndIconAlignment};
 use warpui::ui_components::components::{Coords, UiComponent, UiComponentStyles};
@@ -628,7 +629,7 @@ fn build_alias_pill<F: FnOnce(&MouseState, Fill) -> Box<dyn Element>>(
                 .with_vertical_padding(ALIAS_PILL_VERTICAL_PADDING)
                 .with_horizontal_padding(ALIAS_PILL_HORIZONTAL_PADDING)
                 .with_vertical_margin(ALIAS_PILL_VERTICAL_MARGIN)
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                 .with_background(background)
                 .finish(),
         )

@@ -9,13 +9,14 @@ use chrono::{Duration, Local};
 use pathfinder_color::ColorU;
 use warp_core::ui::theme::color::internal_colors::{neutral_1, neutral_2, text_sub};
 use warp_core::ui::theme::Fill;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warp_editor::content::buffer::InitialBufferState;
 use warp_editor::render::element::VerticalExpansionBehavior;
 use warpui::elements::new_scrollable::ScrollableAppearance;
 use warpui::elements::{
     Border, ChildView, Container, CornerRadius, CrossAxisAlignment, Flex, Hoverable,
-    MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement, Radius, ScrollbarWidth,
-    Shrinkable, Text,
+    MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement, ScrollbarWidth, Shrinkable,
+    Text,
 };
 use warpui::platform::Cursor;
 use warpui::text_layout::ClipConfig;
@@ -46,7 +47,7 @@ fn comment_card_container(
     theme: &warp_core::ui::theme::WarpTheme,
 ) -> Box<dyn Element> {
     Container::new(content)
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .with_background(Fill::Solid(neutral_1(theme)))
         .with_border(Border::all(1.).with_border_fill(theme.outline()))
         .finish()
@@ -67,7 +68,7 @@ fn render_collapsed_comment_card(
         title,
         is_outdated,
         header_trailing_element,
-        CornerRadius::with_all(Radius::Pixels(8.)),
+        CornerRadius::with_all(RADIUS_MD),
         on_header_click,
         appearance,
     );
@@ -120,7 +121,7 @@ fn render_comment_file_path_header(
         .with_horizontal_padding(8.)
         .with_vertical_padding(4.)
         .with_border(Border::all(1.).with_border_fill(Fill::Solid(yellow_border)))
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(2.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
         .with_background(Fill::Solid(neutral_2(theme)))
         .finish();
 
@@ -217,7 +218,7 @@ fn render_comment_text_section(
 
     Container::new(column)
         .with_background(background)
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .with_uniform_padding(8.)
         .finish()
 }
@@ -407,7 +408,7 @@ impl CommentViewCard {
             &self.title,
             self.source.outdated,
             header_trailing_element,
-            CornerRadius::with_top(Radius::Pixels(8.)),
+            CornerRadius::with_top(RADIUS_MD),
             on_header_click,
             appearance,
         ));

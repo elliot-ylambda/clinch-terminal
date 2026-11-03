@@ -22,6 +22,11 @@ use crate::terminal::cli_agent_sessions::auto_continue::{
 };
 use crate::terminal::cli_agent_sessions::{CLIAgentSessionStatus, CLIAgentSessionsModel};
 
+/// Longest single wait before re-checking the wall clock. `Timer` runs on the
+/// monotonic uptime clock, which stops while the Mac sleeps, so one long wait
+/// armed before a lid-closed night would fire hours after the reset.
+const MAX_AUTO_CONTINUE_TIMER_CHUNK: std::time::Duration = std::time::Duration::from_secs(60);
+
 impl TerminalView {
     pub(super) fn register_subscriptions_for_auto_continue(&mut self, ctx: &mut ViewContext<Self>) {
         let view_id = self.view_id;
@@ -85,10 +90,22 @@ impl TerminalView {
         // Negative (already due) clamps to zero. The timer is spawned on the
         // view, so closing the pane drops it; a disarm/re-arm is handled by
         // the generation check at fire time rather than by cancelling here.
-        let delay = (fire_at - Utc::now()).to_std().unwrap_or_default();
-        ctx.spawn(Timer::after(delay), move |me, _, ctx| {
-            me.fire_auto_continue_if_still_armed(generation, ctx);
-        });
+        let remaining = (fire_at - Utc::now()).to_std().unwrap_or_default();
+        ctx.spawn(
+            Timer::after(remaining.min(MAX_AUTO_CONTINUE_TIMER_CHUNK)),
+            move |me, _, ctx| {
+                if Utc::now() < fire_at {
+                    let still_armed = AutoContinueModel::as_ref(ctx)
+                        .armed_for_generation(me.view_id, generation)
+                        .is_some();
+                    if still_armed {
+                        me.schedule_auto_continue_timer(fire_at, generation, ctx);
+                    }
+                    return;
+                }
+                me.fire_auto_continue_if_still_armed(generation, ctx);
+            },
+        );
     }
 
     fn fire_auto_continue_if_still_armed(&mut self, generation: u64, ctx: &mut ViewContext<Self>) {
@@ -99,7 +116,7 @@ impl TerminalView {
         let is_shared_session_viewer = self.model.lock().shared_session_status().is_viewer();
         let availability = AutoContinueModel::availability(view_id, is_shared_session_viewer, ctx);
         if matches!(availability, AutoContinueAvailability::Unsupported) {
-            AutoContinueModel::handle(ctx).update(ctx, |model, ctx| model.disable(view_id, ctx));
+            AutoContinueModel::handle(ctx).update(ctx, |model, ctx| model.disarm(view_id, ctx));
             return;
         }
 
@@ -125,7 +142,7 @@ impl TerminalView {
                         == expected.session_id.as_deref()
             });
         if !session_matches {
-            AutoContinueModel::handle(ctx).update(ctx, |model, ctx| model.disable(view_id, ctx));
+            AutoContinueModel::handle(ctx).update(ctx, |model, ctx| model.disarm(view_id, ctx));
             return;
         }
 

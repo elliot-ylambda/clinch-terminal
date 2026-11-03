@@ -1,7 +1,8 @@
 use warp_core::ui::appearance::Appearance;
+use warp_core::ui::tokens::RADIUS_MD;
 use warp_editor::editor::NavigationKey;
 use warpui::elements::{
-    Border, ConstrainedBox, Container, CornerRadius, Flex, MouseStateHandle, ParentElement, Radius,
+    Border, ConstrainedBox, Container, CornerRadius, Flex, MouseStateHandle, ParentElement,
     Shrinkable,
 };
 use warpui::ui_components::button::ButtonVariant;
@@ -336,7 +337,7 @@ impl View for EnvVarCommandDialog {
                         )
                         .finish(),
                 )
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                 .with_uniform_padding(CONTAINER_PADDING)
                 .with_border(Border::all(2.).with_border_fill(appearance.theme().surface_2()))
                 .with_background(appearance.theme().surface_1())

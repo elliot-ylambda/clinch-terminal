@@ -11,6 +11,7 @@ use warp_core::context_flag::ContextFlag;
 use warp_core::semantic_selection::{
     SemanticSelection, SemanticSelectionChangedEvent, SmartSelectEnabled,
 };
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::elements::{
     Align, Border, ChildView, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Dismiss,
     DispatchEventResult, Element, Empty, EventHandler, Fill, Flex, Hoverable, MainAxisAlignment,
@@ -3813,7 +3814,7 @@ impl FeaturesPageView {
                 .with_padding_right(10.)
                 .with_padding_top(10.)
                 .with_margin_right(4.)
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)));
+                .with_corner_radius(CornerRadius::with_all(RADIUS_SM));
 
             if let Some(background) = background {
                 container.with_background(background).finish()

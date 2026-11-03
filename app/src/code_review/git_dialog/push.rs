@@ -10,10 +10,11 @@ use std::collections::HashMap;
 
 use warp_core::send_telemetry_from_ctx;
 use warp_core::ui::appearance::Appearance;
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::elements::{
     Border, ClippedScrollStateHandle, ClippedScrollable, ConstrainedBox, Container, CornerRadius,
     CrossAxisAlignment, Element, Flex, Hoverable, MainAxisAlignment, MainAxisSize,
-    MouseStateHandle, ParentElement, Radius, ScrollbarWidth, Text,
+    MouseStateHandle, ParentElement, ScrollbarWidth, Text,
 };
 use warpui::platform::Cursor;
 use warpui::ViewContext;
@@ -304,7 +305,7 @@ fn render_commits_section(state: &PushState, appearance: &Appearance) -> Box<dyn
         }
 
         let bordered_commit = Container::new(commit_col.finish())
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .with_border(Border::all(1.).with_border_fill(theme.surface_3()))
             .finish();
 

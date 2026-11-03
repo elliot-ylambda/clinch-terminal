@@ -1,6 +1,7 @@
 use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::vec2f;
 use warp_core::ui::theme::Fill;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warpui::assets::asset_cache::AssetSource;
 use warpui::elements::{
     Align, CacheOption, ChildAnchor, ChildView, Clipped, ConstrainedBox, Container, CornerRadius,
@@ -214,7 +215,7 @@ impl OrchestrationLaunchModal {
                     },
                     CacheOption::Original,
                 )
-                .with_corner_radius(CornerRadius::with_top(Radius::Pixels(8.)))
+                .with_corner_radius(CornerRadius::with_top(RADIUS_MD))
                 .cover()
                 .top_aligned()
                 .finish(),
@@ -298,7 +299,7 @@ impl OrchestrationLaunchModal {
         )
         .with_horizontal_padding(6.)
         .with_vertical_padding(2.)
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
         .with_background(modal_overlay_1(appearance))
         .finish()
     }
@@ -386,7 +387,7 @@ impl OrchestrationLaunchModal {
         .with_horizontal_padding(32.)
         .with_vertical_padding(32.)
         .with_background(modal_background(appearance))
-        .with_corner_radius(CornerRadius::with_bottom(Radius::Pixels(8.)))
+        .with_corner_radius(CornerRadius::with_bottom(RADIUS_MD))
         .finish()
     }
 }
@@ -417,7 +418,7 @@ impl View for OrchestrationLaunchModal {
                     .finish(),
             )
             .with_background(modal_background(appearance))
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .finish(),
         )
         .with_width(MODAL_WIDTH)

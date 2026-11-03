@@ -5,6 +5,7 @@ use warp_core::ui::external_product_icon::ExternalProductIcon;
 use warp_core::ui::icons::{Icon, ICON_DIMENSIONS};
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::AnsiColorIdentifier;
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::accessibility::ActionAccessibilityContent;
 use warpui::elements::{
     Border, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Expanded, Fill, Flex,
@@ -459,7 +460,7 @@ impl ServerCardView {
                             internal_colors::neutral_4(appearance.theme()),
                         )),
                         background: Some(internal_colors::neutral_4(appearance.theme()).into()),
-                        border_radius: Some(CornerRadius::with_all(Radius::Pixels(5.))),
+                        border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
                         ..Default::default()
                     },
                 )
@@ -562,7 +563,7 @@ impl ServerCardView {
 
         Container::new(inner)
             .with_background(appearance.theme().surface_3())
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(3.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .with_horizontal_padding(3.)
             .with_vertical_padding(1.)
             .finish()

@@ -1,5 +1,6 @@
 mod v1;
 
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
 use crate::terminal::CLIAgent;
@@ -43,7 +44,32 @@ pub enum CLIAgentEventSource {
 /// same account.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CLIAgentStopReason {
-    UsageLimit,
+    UsageLimit {
+        /// The reset the provider stated in its own limit message (Claude
+        /// Code: "resets 6:50pm (America/Los_Angeles)"). Lets auto-continue
+        /// schedule without plan-usage data.
+        stated_reset: Option<DateTime<Utc>>,
+    },
+}
+
+impl CLIAgentStopReason {
+    /// A usage-limit stop whose reset is parsed from the provider's message.
+    pub(crate) fn usage_limit(
+        agent: CLIAgent,
+        texts: impl IntoIterator<Item = impl AsRef<str>>,
+    ) -> Self {
+        let now = Utc::now();
+        let stated_reset = match agent {
+            CLIAgent::Claude => texts
+                .into_iter()
+                .filter_map(|text| {
+                    cli_agent_usage::limit_message::claude_limit_reset(text.as_ref(), now)
+                })
+                .max(),
+            _ => None,
+        };
+        Self::UsageLimit { stated_reset }
+    }
 }
 
 /// Event-specific fields that vary by event type.
@@ -62,31 +88,31 @@ pub struct CLIAgentEventPayload {
     pub stop_reason: Option<CLIAgentStopReason>,
 }
 
-/// Best-effort classifier for legacy notifications that cannot carry the
-/// structured `stop_reason` field. Keep the phrases provider-specific and
-/// require an explicit quota/limit assertion; generic error text is not
-/// causal enough for an automatic PTY write.
+/// Best-effort classifier for legacy Claude notifications that cannot carry
+/// the structured `stop_reason` field. Require an explicit limit assertion;
+/// generic error text is not causal enough for an automatic PTY write.
+///
+/// Codex is deliberately absent: Codex runs no hook when a turn ends at its
+/// usage limit (the rollout's `task_complete` error is the only record, read
+/// by `cli_agent_usage::codex`), so no Codex notification ever carries this text.
 pub(crate) fn infer_stop_reason(
     agent: CLIAgent,
     texts: impl IntoIterator<Item = impl AsRef<str>>,
 ) -> Option<CLIAgentStopReason> {
-    let usage_limit = texts.into_iter().any(|text| {
-        let text = text.as_ref().to_ascii_lowercase();
-        match agent {
-            CLIAgent::Claude => {
-                (text.contains("you've hit your") && text.contains("limit"))
-                    || text.contains("usage limit reached")
-                    || text.contains("rate limit reached")
-            }
-            CLIAgent::Codex => {
-                text.contains("you've hit your usage limit")
-                    || text.contains("usage limit reached")
-                    || text.contains("quota exceeded")
-            }
-            _ => false,
-        }
+    if agent != CLIAgent::Claude {
+        return None;
+    }
+    let texts: Vec<String> = texts
+        .into_iter()
+        .map(|text| text.as_ref().to_owned())
+        .collect();
+    let usage_limit = texts.iter().any(|text| {
+        let text = text.to_ascii_lowercase();
+        (text.contains("you've hit your") && text.contains("limit"))
+            || text.contains("usage limit reached")
+            || text.contains("rate limit reached")
     });
-    usage_limit.then_some(CLIAgentStopReason::UsageLimit)
+    usage_limit.then(|| CLIAgentStopReason::usage_limit(agent, &texts))
 }
 
 /// A parsed event from a CLI agent plugin.

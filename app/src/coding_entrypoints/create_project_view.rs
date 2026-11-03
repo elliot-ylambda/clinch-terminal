@@ -1,8 +1,9 @@
 use warp_core::send_telemetry_from_ctx;
 use warp_core::ui::icons::Icon;
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::elements::{
     ChildView, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Expanded, Fill, Flex,
-    Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement as _, Radius, Text,
+    Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement as _, Text,
 };
 use warpui::fonts::{Properties, Weight};
 use warpui::platform::Cursor;
@@ -152,7 +153,7 @@ impl CreateProjectView {
         Hoverable::new(mouse_state, move |state| {
             Container::new(row.finish())
                 .with_vertical_padding(SUGGESTION_ITEM_PADDING)
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                 .with_background(if state.is_hovered() {
                     theme.surface_overlay_1().into()
                 } else {

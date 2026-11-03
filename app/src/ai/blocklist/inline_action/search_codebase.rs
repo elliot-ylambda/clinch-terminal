@@ -2,9 +2,10 @@ use std::ops::Range;
 use std::sync::{Arc, RwLock};
 
 use warp_core::ui::appearance::Appearance;
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::elements::{
     Container, CornerRadius, CrossAxisAlignment, Element, Flex, FormattedTextElement,
-    MainAxisAlignment, ParentElement, Radius, SelectableArea, SelectionHandle, Shrinkable,
+    MainAxisAlignment, ParentElement, SelectableArea, SelectionHandle, Shrinkable,
 };
 use warpui::ui_components::components::UiComponentStyles;
 use warpui::{
@@ -312,7 +313,7 @@ impl SearchCodebaseView {
         self.create_header_container(
             header_row.finish(),
             header_background,
-            CornerRadius::with_all(Radius::Pixels(8.)),
+            CornerRadius::with_all(RADIUS_MD),
             app,
         )
     }

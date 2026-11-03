@@ -1,6 +1,7 @@
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::elements::{
     Align, Border, ChildView, Clipped, Container, CornerRadius, CrossAxisAlignment, Expanded, Flex,
-    MouseStateHandle, Padding, ParentElement, Radius, Text,
+    MouseStateHandle, Padding, ParentElement, Text,
 };
 use warpui::ui_components::button::ButtonVariant;
 use warpui::ui_components::components::{Coords, UiComponent, UiComponentStyles};
@@ -248,7 +249,7 @@ impl View for SpendingLimitModal {
         let input_container = Container::new(input_row)
             .with_padding(Padding::uniform(8.).with_left(16.).with_right(16.))
             .with_border(Border::all(1.).with_border_fill(border_color))
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .finish();
 
         let button_style = UiComponentStyles {

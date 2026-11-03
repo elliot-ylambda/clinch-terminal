@@ -1,10 +1,11 @@
 use pathfinder_geometry::vector::vec2f;
 use warp_core::ui::appearance::Appearance;
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_editor::editor::NavigationKey;
 use warpui::elements::{
     Align, Border, ChildAnchor, ChildView, ClippedScrollStateHandle, ClippedScrollable,
     ConstrainedBox, Container, CornerRadius, Flex, OffsetPositioning, ParentElement,
-    PositionedElementAnchor, PositionedElementOffsetBounds, Radius, ScrollbarWidth,
+    PositionedElementAnchor, PositionedElementOffsetBounds, ScrollbarWidth,
 };
 use warpui::fonts::Weight;
 use warpui::keymap::FixedBinding;
@@ -556,7 +557,7 @@ impl SuggestedRuleView {
         let editor_bg = blended_colors::neutral_4(appearance.theme());
         let editor_border =
             Border::all(1.).with_border_fill(blended_colors::neutral_2(appearance.theme()));
-        let editor_corner_radius = CornerRadius::with_all(Radius::Pixels(4.));
+        let editor_corner_radius = CornerRadius::with_all(RADIUS_SM);
         let editor_horizontal_padding = 16.;
         let editor_vertical_padding = 12.;
         let editor_margin = 16.;

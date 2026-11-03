@@ -17,14 +17,16 @@ use warpui::ui_components::button::ButtonVariant;
 use warpui::ui_components::components::{Coords, UiComponent, UiComponentStyles};
 use warpui::{Action, Element};
 
-use super::{ChipConfigurator, ChipConfiguratorAction, ChipConfiguratorLayout};
+use super::{ChipConfigurator, ChipConfiguratorAction, ChipConfiguratorLayout, ListPresentation};
 use crate::Appearance;
 
 const MODAL_WIDTH: f32 = 700.;
+/// Lists sit side by side, so they need room for a label, a send switch and a remove button.
+const LIST_MODAL_WIDTH: f32 = 780.;
 const BORDER_WIDTH: f32 = 1.;
 const MODAL_TITLE_FONT_SIZE: f32 = 16.;
 const MODAL_UNIFORM_PADDING: f32 = 24.;
-const CORNER_RADIUS_PIXELS: f32 = 8.;
+const CORNER_RADIUS_PIXELS: f32 = 10.;
 const PRIMARY_BUTTON_HEIGHT: f32 = 40.;
 const SECTION_UNIFORM_PADDING: f32 = 16.;
 const MARGIN_BETWEEN_MODAL_SECTIONS: f32 = 16.;
@@ -122,7 +124,11 @@ pub fn render_chip_editor_modal<A: Action + Clone + Copy + 'static>(
 
     let modal = Container::new(
         ConstrainedBox::new(column)
-            .with_max_width(MODAL_WIDTH)
+            .with_max_width(if chip_configurator.list_presentation().is_some() {
+                LIST_MODAL_WIDTH
+            } else {
+                MODAL_WIDTH
+            })
             .finish(),
     )
     .with_corner_radius(CornerRadius::with_all(Radius::Pixels(CORNER_RADIUS_PIXELS)))
@@ -271,6 +277,9 @@ pub fn render_chip_editor_sections<A: Action + Clone + Copy + 'static>(
     config: ChipEditorSectionsConfig<A>,
     appearance: &Appearance,
 ) -> Box<dyn Element> {
+    if let Some(presentation) = chip_configurator.list_presentation() {
+        return render_list_sections(chip_configurator, presentation, config, appearance);
+    }
     let header_row = Flex::row()
         .with_child(render_section_label(
             config.available_section_label,
@@ -358,6 +367,60 @@ pub fn render_chip_editor_sections<A: Action + Clone + Copy + 'static>(
             .with_child(header_row)
             .with_child(Container::new(unused_chips).with_margin_top(10.).finish())
             .with_child(Container::new(drop_zones).with_margin_top(10.).finish())
+            .finish(),
+    )
+    .with_uniform_padding(SECTION_UNIFORM_PADDING)
+    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(CORNER_RADIUS_PIXELS)))
+    .with_background(appearance.theme().surface_2())
+    .finish()
+}
+
+/// A footer's buttons as an ordered list: how it works and Restore default on top, then the
+/// footer list beside the buttons that can be added.
+fn render_list_sections<A: Action + Clone + Copy + 'static>(
+    chip_configurator: &ChipConfigurator,
+    presentation: ListPresentation,
+    config: ChipEditorSectionsConfig<A>,
+    appearance: &Appearance,
+) -> Box<dyn Element> {
+    let tokens = appearance.tokens();
+    let explanation = "Drag to reorder. Rows above the line sit on the footer and the rest open \
+                       from More; use \u{2212} and + to move it. A narrow pane shows as many as fit."
+        .to_owned();
+    let header_row = Flex::row()
+        .with_cross_axis_alignment(CrossAxisAlignment::Center)
+        .with_main_axis_size(MainAxisSize::Max)
+        .with_spacing(16.)
+        .with_child(
+            Expanded::new(
+                1.,
+                Text::new(explanation, appearance.ui_font_family(), 13.)
+                    .with_color(tokens.text_2)
+                    .finish(),
+            )
+            .finish(),
+        )
+        .with_child(render_restore_default_button(
+            config.is_at_defaults,
+            config.reset_action,
+            &config.mouse_handles.restore_default,
+            appearance,
+        ))
+        .finish();
+
+    Container::new(
+        Flex::column()
+            .with_child(header_row)
+            .with_child(
+                Container::new(chip_configurator.render_list_columns(
+                    presentation,
+                    config.activate_action,
+                    config.chip_action_wrapper,
+                    appearance,
+                ))
+                .with_margin_top(14.)
+                .finish(),
+            )
             .finish(),
     )
     .with_uniform_padding(SECTION_UNIFORM_PADDING)

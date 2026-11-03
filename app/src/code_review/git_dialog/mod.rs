@@ -13,11 +13,12 @@ use pathfinder_geometry::vector::vec2f;
 use warp_core::features::FeatureFlag;
 use warp_core::send_telemetry_from_ctx;
 use warp_core::ui::appearance::Appearance;
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::elements::{
     Align, Border, ChildAnchor, ChildView, ClippedScrollStateHandle, ClippedScrollable,
     ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Element, Flex, Hoverable,
     Icon as IconElement, MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning,
-    ParentAnchor, ParentElement, ParentOffsetBounds, Radius, ScrollbarWidth, Stack, Text,
+    ParentAnchor, ParentElement, ParentOffsetBounds, ScrollbarWidth, Stack, Text,
 };
 use warpui::keymap::{self, FixedBinding};
 use warpui::platform::Cursor;
@@ -366,7 +367,7 @@ fn render_file_changes_box(
     }
 
     Container::new(content.finish())
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .with_border(Border::all(1.).with_border_fill(theme.surface_3()))
         .finish()
 }
@@ -803,7 +804,7 @@ impl GitDialog {
         )
         .with_uniform_padding(8.)
         .with_background(surface2)
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .finish();
 
         let dialog = Dialog::new(

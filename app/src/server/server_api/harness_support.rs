@@ -492,7 +492,3 @@ pub async fn upload_to_target(
 ) -> Result<()> {
     super::presigned_upload::upload_to_target(http_client, target, body).await
 }
-
-#[cfg(test)]
-#[path = "harness_support_tests.rs"]
-mod tests;

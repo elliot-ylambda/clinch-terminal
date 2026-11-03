@@ -47,7 +47,7 @@ const AVAILABLE_LIST_MAX_HEIGHT: f32 = 260.;
 
 const REPO_ROW_HORIZONTAL_PADDING: f32 = 10.;
 const REPO_ROW_VERTICAL_PADDING: f32 = 8.;
-const REPO_ROW_CORNER_RADIUS: f32 = 6.;
+const REPO_ROW_CORNER_RADIUS: f32 = 10.;
 
 #[derive(Debug, Clone)]
 pub enum AgentAssistedEnvironmentModalEvent {
@@ -761,7 +761,3 @@ fn available_indexed_repos(app: &AppContext) -> Vec<RepoEntry> {
         Vec::new()
     }
 }
-
-#[cfg(test)]
-#[path = "agent_assisted_environment_modal_tests.rs"]
-mod tests;

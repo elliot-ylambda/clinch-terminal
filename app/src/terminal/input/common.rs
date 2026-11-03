@@ -4,6 +4,7 @@ use pathfinder_geometry::vector::vec2f;
 use vim::vim::{VimMode, VimState};
 use warp_completer::completer::Description;
 use warp_core::features::FeatureFlag;
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::elements::{
     AnchorPair, Border, ChildAnchor, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment,
     DispatchEventResult, Element, EventHandler, Flex, OffsetPositioning, OffsetType, ParentAnchor,
@@ -25,6 +26,9 @@ use crate::terminal::model::TerminalModel;
 use crate::terminal::view::{TerminalAction, PADDING_LEFT};
 use crate::ui_components::icons::Icon;
 use crate::workspaces::user_workspaces::UserWorkspaces;
+
+/// Gap between the rounded input field and the edges of the terminal card.
+pub(super) const INPUT_FIELD_MARGIN: f32 = 8.;
 
 /// Whether the terminal input message bar should be shown.
 ///
@@ -460,7 +464,7 @@ fn render_command_token_description(
             .with_uniform_padding(TOKEN_DESCRIPTION_PADDING)
             .with_margin_bottom(TOKEN_DESCRIPTION_MARGIN)
             .with_border(Border::all(1.).with_border_fill(theme.split_pane_border_color()))
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .with_background_color(theme.surface_2().into_solid())
             .finish(),
     )

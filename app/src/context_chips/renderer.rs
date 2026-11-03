@@ -19,7 +19,7 @@ use crate::appearance::Appearance;
 use crate::ui_components::icons;
 
 /// Styling consts.
-const CORNER_RADIUS_PIXELS: f32 = 4.;
+const CORNER_RADIUS_PIXELS: f32 = 6.;
 const ICON_MARGIN_RIGHT: f32 = 6.;
 const LABEL_MARGIN_BOTTOM: f32 = 6.;
 

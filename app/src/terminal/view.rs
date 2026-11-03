@@ -11,9 +11,6 @@ pub mod init;
 pub mod inline_banner;
 pub mod load_ai_conversation;
 pub(crate) mod queued_prompts_panel;
-#[cfg(test)]
-#[path = "view/queued_prompts_tests.rs"]
-mod queued_prompts_tests;
 use ai::agent::action::InsertReviewComment;
 pub use load_ai_conversation::ConversationRestorationInNewPaneType;
 // TODO(advait): if we align on prompt suggestions banner in Input, move code out of inline_banner mod.
@@ -135,7 +132,6 @@ use warp_core::command::ExitCode;
 use warp_core::context_flag::ContextFlag;
 use warp_core::r#async::debounce;
 use warp_core::semantic_selection::SemanticSelection;
-use warp_core::user_preferences::GetUserPreferences as _;
 use warp_util::local_or_remote_path::LocalOrRemotePath;
 #[cfg(feature = "local_fs")]
 use warp_util::path::LineAndColumnArg;
@@ -372,6 +368,7 @@ use crate::settings_view::mcp_servers_page::MCPServersSettingsPage;
 use crate::settings_view::{flags, SettingsSection};
 use crate::shell_indicator::ShellIndicatorType;
 use crate::terminal::alt_screen::alt_screen_element::AltScreenElement;
+use crate::terminal::alt_screen::should_intercept_scroll;
 use crate::terminal::alt_screen_reporting::{AltScreenReporting, AltScreenReportingChangedEvent};
 use crate::terminal::block_filter::{
     filter_button_position_id, BlockFilterEditor, BlockFilterEditorEvent, BlockFilterQuery,
@@ -386,7 +383,9 @@ use crate::terminal::block_list_viewport::{
     ScrollState, ViewportState,
 };
 use crate::terminal::bootstrap::init_subshell_command;
-use crate::terminal::cli_agent_prompt_locator::{self, PromptLookupFailure, UnsearchablePrompt};
+use crate::terminal::cli_agent_prompt_locator::{
+    self, PromptLookupFailure, SeekDirection, UnsearchablePrompt,
+};
 use crate::terminal::cli_agent_sessions::auto_continue::AutoContinueModel;
 use crate::terminal::cli_agent_sessions::event::{
     parse_event, CLIAgentEvent, CLIAgentEventPayload, CLIAgentEventSource, CLIAgentEventType,
@@ -441,7 +440,7 @@ use crate::terminal::model::escape_sequences::{self, EscCodes, ToEscapeSequence,
 use crate::terminal::model::grid::grid_handler::{FragmentBoundary, GridHandler, TermMode};
 use crate::terminal::model::grid::{Dimensions, RespectDisplayedOutput};
 use crate::terminal::model::index::{Point, Side};
-use crate::terminal::model::mouse::MouseState;
+use crate::terminal::model::mouse::{MouseAction, MouseButton, MouseState};
 use crate::terminal::model::selection::{SelectAction, SelectionDirection};
 use crate::terminal::model::session::active_session::{ActiveSession, ActiveSessionEvent};
 use crate::terminal::model::session::{
@@ -532,7 +531,7 @@ use crate::util::openable_file_type::{is_markdown_file, resolve_file_target, Fil
 use crate::util::repo_detection::{detect_possible_git_repo, RepoDetectionSessionType};
 use crate::util::truncation::truncate_from_end;
 use crate::view_components::action_button::{ActionButton, ButtonSize, KeystrokeSource};
-use crate::view_components::dropdown::{Dropdown, DropdownAction, DropdownEvent};
+use crate::view_components::dropdown::{Dropdown, DropdownAction, DropdownEvent, DropdownStyle};
 use crate::view_components::find::{Event as FindEvent, Find, FindDirection, FindWithinBlockState};
 use crate::view_components::{DismissibleToast, ToastFlavor};
 use crate::workflows::workflow::Workflow;
@@ -684,17 +683,6 @@ pub const NOTIFICATIONS_TROUBLESHOOT_URL: &str =
     "https://docs.warp.dev/terminal/more-features/notifications#troubleshooting-notifications";
 
 const DEBOUNCE_PERIOD: Duration = Duration::from_millis(40);
-
-/// Key used in user preferences to persist the "don't show again" choice for the OSC 52
-/// clipboard blocked banner.
-const OSC52_CLIPBOARD_BANNER_SUPPRESSED_KEY: &str = "Osc52ClipboardBannerSuppressed";
-
-/// Which type of OSC 52 clipboard operation was blocked.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-enum Osc52ClipboardBlockedType {
-    Read,
-    Write,
-}
 
 /// Delay between receiving preexec hook for a command we want to auto-warpify
 /// and triggering the warpification (subshell bootstrapping).
@@ -2558,6 +2546,8 @@ pub struct TerminalView {
 
     /// Anchored, keyboard-accessible chronological history for the agent context header.
     cli_agent_message_history_dropdown: ViewHandle<Dropdown<()>>,
+    /// The jump to a history message in progress in an alt-screen agent TUI, if any.
+    agent_prompt_seek: Option<AgentPromptSeek>,
 
     /// None iff there is no context menu open currently.
     context_menu_state: Option<ContextMenuState>,
@@ -2653,13 +2643,6 @@ pub struct TerminalView {
     /// or Emacs-style bindings for `ctrl-a` and `ctrl-e`.
     emacs_bindings_banner: ViewHandle<Banner<TerminalAction>>,
     is_emacs_bindings_banner_open: bool,
-
-    /// Banner shown when an OSC 52 clipboard operation is blocked by the user's setting.
-    osc52_clipboard_blocked_banner: ViewHandle<Banner<TerminalAction>>,
-    /// Which type of clipboard operation was blocked (if the banner is visible).
-    osc52_clipboard_blocked_type: Option<Osc52ClipboardBlockedType>,
-    /// Whether the user has permanently dismissed the clipboard blocked banner.
-    osc52_clipboard_banner_suppressed: bool,
 
     pane_configuration: ModelHandle<PaneConfiguration>,
     focus_handle: Option<PaneFocusHandle>,
@@ -3037,11 +3020,6 @@ enum BlockMetadataUpdateSource {
 /// 12 + 3 = 15px: the tallest line that still clears the 30px trigger bar
 /// (`CLI_AGENT_HISTORY_TOP_BAR_HEIGHT`) after its 4px vertical padding.
 const CLI_AGENT_HISTORY_FONT_SIZE_INCREASE: f32 = 3.;
-/// Opacity of the history box's outline, as a percentage of the theme
-/// foreground. The stock `theme.outline()` is 10; this is deliberately far
-/// brighter because the box no longer sits between two accent rules, so its
-/// outline is the only thing marking it out from the pane header.
-const CLI_AGENT_HISTORY_OUTLINE_OPACITY: u8 = 45;
 const CLI_AGENT_HISTORY_TOP_BAR_HEIGHT: f32 = 30.;
 const CLI_AGENT_HISTORY_TOP_BAR_VERTICAL_PADDING: f32 = 4.;
 const CLI_AGENT_HISTORY_TOP_BAR_HORIZONTAL_PADDING: f32 = 10.;
@@ -3052,6 +3030,38 @@ const CLI_AGENT_HISTORY_TOOLTIP_MAX_WIDTH: f32 = 640.;
 /// Rows left above a message jumped to from the history dropdown, so it reads as the top of a
 /// section rather than being flush against the pane header.
 const CLI_AGENT_HISTORY_JUMP_BUFFER_LINES: Lines = Lines::new(2.0);
+/// How long a jump waits after scrolling an alt-screen agent TUI before reading its new frame.
+const AGENT_PROMPT_SEEK_READ_DELAY: Duration = Duration::from_millis(30);
+/// Reads in a row with an unmoved transcript before a seek decides it has reached an end. A busy
+/// TUI can take a few reads to repaint, and an unrepainted frame looks exactly like an edge.
+const AGENT_PROMPT_SEEK_STILL_READS: u8 = 4;
+/// Most wheel reports sent in one scroll step.
+const AGENT_PROMPT_SEEK_MAX_WHEEL_REPORTS: u32 = 16;
+/// Scroll steps after which a seek gives up, so a TUI that never stops changing cannot keep one
+/// running.
+const AGENT_PROMPT_SEEK_MAX_STEPS: usize = 2_000;
+
+/// A jump to a history message in an agent TUI painting on the alt screen.
+///
+/// The TUI keeps the conversation in its own scrollback, so there is no grid position to jump to.
+/// Instead Clinch scrolls the TUI with the wheel reports the user's own mouse would send, reads
+/// each repainted frame, and stops once the message is on screen. Each step is sized from how far
+/// the last one moved the transcript, so no part of it scrolls past unread. If the oldest end is
+/// reached first, the seek turns around, in case the user had already scrolled above the message.
+struct AgentPromptSeek {
+    search: crate::terminal::model::find::RegexDFAs,
+    direction: SeekDirection,
+    /// Whether the seek has reached the oldest end and turned around.
+    turned: bool,
+    /// Wheel reports sent per step.
+    wheel_reports: u32,
+    /// The frame as it was when the last step was sent. `None` until the first step.
+    frame_before_step: Option<Vec<String>>,
+    /// Reads in a row in which the transcript did not move.
+    still_reads: u8,
+    steps: usize,
+    next_read: Option<SpawnedFutureHandle>,
+}
 
 fn cli_agent_history_trigger(history: &AgentPromptHistory, fallback: String) -> String {
     history
@@ -3059,10 +3069,7 @@ fn cli_agent_history_trigger(history: &AgentPromptHistory, fallback: String) -> 
         .iter()
         .rev()
         .find_map(|prompt| {
-            let message = prompt.text.split_whitespace().collect::<Vec<_>>().join(" ");
-            if message.is_empty() {
-                return None;
-            }
+            let message = crate::agent_resume::clean_prompt_title_text(&prompt.text)?;
 
             Some(
                 crate::agent_resume::format_prompt_time_full(prompt.timestamp.as_deref())
@@ -3080,7 +3087,7 @@ fn cli_agent_history_prompts(history: &AgentPromptHistory) -> &[AgentPrompt] {
 }
 
 fn cli_agent_history_prompt_label(ordinal: usize, prompt: &AgentPrompt) -> String {
-    let message = prompt.text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let message = crate::agent_resume::clean_prompt_title_text(&prompt.text).unwrap_or_default();
     crate::agent_resume::format_prompt_time_full(prompt.timestamp.as_deref())
         .map(|timestamp| format!("{ordinal} · {timestamp} | {message}"))
         .unwrap_or_else(|| format!("{ordinal} | {message}"))
@@ -3089,7 +3096,9 @@ fn cli_agent_history_prompt_label(ordinal: usize, prompt: &AgentPrompt) -> Strin
 fn cli_agent_history_prompt_tooltip(prompt: &AgentPrompt) -> String {
     // History rows stay ellipsis-clipped to one line, while the tooltip soft-wraps
     // within the window and can therefore show the complete prompt.
-    prompt.text.trim().to_owned()
+    crate::agent_resume::strip_paste_wrappers(&prompt.text)
+        .trim()
+        .to_owned()
 }
 
 fn cli_agent_history_menu_item_fields(
@@ -4324,17 +4333,13 @@ impl TerminalView {
             // text is always painted, mirroring `render_pane_header_title_text`.
             dropdown.set_font_color(header_text_color.into(), ctx);
             dropdown.set_font_size(header_font_size, ctx);
-            // Brighter than the stock `theme.outline()` (foreground @ 10%): with no
-            // rules above or below it, this outline is the only thing separating the
-            // history box from the pane header, so it carries that weight alone.
-            dropdown.set_border_color(
-                Appearance::as_ref(ctx)
-                    .theme()
-                    .foreground()
-                    .with_opacity(CLI_AGENT_HISTORY_OUTLINE_OPACITY)
-                    .into(),
-                ctx,
-            );
+            // A filled gray control on the card, the same surface as the footer buttons, so it
+            // reads as part of Clinch you can click rather than as text in the conversation.
+            let tokens = *Appearance::as_ref(ctx).tokens();
+            dropdown.set_style(DropdownStyle::ActionButtonSecondary, ctx);
+            dropdown.set_background(Fill::Solid(tokens.surface_raised), ctx);
+            dropdown.set_border_width(0., ctx);
+            dropdown.set_border_radius(warp_core::ui::tokens::corners_md(), ctx);
             dropdown
         });
         ctx.subscribe_to_view(&cli_agent_message_history_dropdown, |me, _, event, ctx| {
@@ -4444,44 +4449,6 @@ impl TerminalView {
                 me.handle_emacs_bindings_banner_clicked(event, ctx);
             });
         }
-
-        let osc52_clipboard_blocked_banner = ctx.add_typed_action_view(|_| {
-            Banner::<TerminalAction>::new_with_buttons(
-                BannerTextContent::plain_text(
-                    "A terminal program tried to access your clipboard. This is disabled by default for security reasons.",
-                ),
-                vec![
-                    BannerTextButton::new(
-                        "Allow".to_string(),
-                        Rc::new(|event_ctx, _ctx, _position| {
-                            event_ctx.dispatch_typed_action(BannerAction::<TerminalAction>::Action(
-                                TerminalAction::Osc52AllowBlockedClipboardOperation,
-                            ));
-                        }),
-                    ),
-                    BannerTextButton::new(
-                        "Don't show again".to_string(),
-                        Rc::new(|event_ctx, _ctx, _position| {
-                            event_ctx.dispatch_typed_action(
-                                BannerAction::<TerminalAction>::Dismiss(DismissalType::Permanent),
-                            );
-                        }),
-                    ),
-                ],
-                true,
-            )
-            .with_icon(icons::Icon::AlertTriangle)
-        });
-        ctx.subscribe_to_view(&osc52_clipboard_blocked_banner, |me, _, event, ctx| {
-            me.handle_osc52_clipboard_banner_event(event, ctx);
-        });
-
-        let osc52_clipboard_banner_suppressed = ctx
-            .private_user_preferences()
-            .read_value(OSC52_CLIPBOARD_BANNER_SUPPRESSED_KEY)
-            .ok()
-            .flatten()
-            .is_some_and(|v| v == "true");
 
         let windowing_state_handle = WindowManager::handle(ctx);
         ctx.subscribe_to_model(&windowing_state_handle, |me, _handle, evt, ctx| match evt {
@@ -4772,6 +4739,7 @@ impl TerminalView {
             context_menu_state: None,
             context_menu,
             cli_agent_message_history_dropdown,
+            agent_prompt_seek: None,
             hovered_secret: None,
             open_secret_tool_tip: None,
             hovered_block_index: None,
@@ -4804,9 +4772,6 @@ impl TerminalView {
             is_emacs_bindings_banner_open: false,
             control_master_error_banner,
             control_master_error_banner_state: Default::default(),
-            osc52_clipboard_blocked_banner,
-            osc52_clipboard_blocked_type: None,
-            osc52_clipboard_banner_suppressed,
             pane_configuration,
             focus_handle: None,
             sessions,
@@ -9727,10 +9692,33 @@ impl TerminalView {
         self.write_user_bytes_to_pty_inner(data.into(), false, ctx);
     }
 
+    /// Writes a mouse report for a mouse-tracking TUI (Claude Code's
+    /// fullscreen TUI enables `?1000h`/`?1006h`). Wheel scrolls and clicks
+    /// are navigation, not a takeover, so they keep a pending rate-limit
+    /// auto-continue armed and are never treated as a turn interrupt.
+    fn write_mouse_report_to_pty<B: Into<Cow<'static, [u8]>>>(
+        &mut self,
+        data: B,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        ctx.emit(Event::DesktopInput);
+        self.write_user_bytes_to_pty_with_options(data.into(), false, false, ctx);
+    }
+
     fn write_user_bytes_to_pty_inner(
         &mut self,
         bytes: Cow<'static, [u8]>,
         track_cli_agent_interrupt: bool,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        self.write_user_bytes_to_pty_with_options(bytes, track_cli_agent_interrupt, true, ctx);
+    }
+
+    fn write_user_bytes_to_pty_with_options(
+        &mut self,
+        bytes: Cow<'static, [u8]>,
+        track_cli_agent_interrupt: bool,
+        cancels_auto_continue: bool,
         ctx: &mut ViewContext<Self>,
     ) {
         {
@@ -9748,6 +9736,9 @@ impl TerminalView {
             }
         }
 
+        // The user has taken over the pane, so a jump still scrolling the agent TUI stops too.
+        self.cancel_agent_prompt_seek();
+
         // Any user-initiated write into the pane cancels a pending rate-limit
         // auto-continue (the user has taken over). The auto-continue's own
         // send also lands here, but only after its armed state was consumed,
@@ -9755,7 +9746,9 @@ impl TerminalView {
         self.coordination_user_input_epoch = self.coordination_user_input_epoch.wrapping_add(1);
         self.coordination_input_epoch = self.coordination_input_epoch.wrapping_add(1);
         self.coordination_unacked_input_at = Some(Instant::now());
-        self.cancel_auto_continue_on_user_input(ctx);
+        if cancels_auto_continue {
+            self.cancel_auto_continue_on_user_input(ctx);
+        }
 
         // Neither Claude Code nor Codex fires a hook for an aborted turn, so the interrupt
         // keystroke itself is the only signal that the in-flight turn ended.
@@ -12072,10 +12065,11 @@ impl TerminalView {
                     ctx.clipboard()
                         .write(ClipboardContent::plain_text(contents.to_owned()));
                 } else {
+                    // Settings > Features is the one place this is decided; a banner on every
+                    // copy attempt only nagged.
                     log::info!(
                         "OSC 52 clipboard write blocked by terminal.osc52_clipboard_access setting"
                     );
-                    self.show_osc52_clipboard_blocked_banner(Osc52ClipboardBlockedType::Write, ctx);
                 }
             }
             ModelEvent::ClipboardLoad(_, format) => {
@@ -12093,7 +12087,6 @@ impl TerminalView {
                     log::info!(
                         "OSC 52 clipboard read blocked by terminal.osc52_clipboard_access setting"
                     );
-                    self.show_osc52_clipboard_blocked_banner(Osc52ClipboardBlockedType::Read, ctx);
                 }
             }
             ModelEvent::CursorBlinkingChange(_) => {}
@@ -14069,15 +14062,8 @@ impl TerminalView {
     /// have been dropped by scrollback eviction, session-restore truncation, `/clear`, or
     /// compaction. Those cases are reported rather than silently ignored.
     fn jump_to_agent_prompt(&mut self, index: usize, ctx: &mut ViewContext<Self>) {
-        // Agent TUIs painting on the alt screen have no blocklist scrollback to jump to, and the
-        // grid holds only the current frame.
-        if self.model.lock().is_alt_screen_active() {
-            self.show_agent_prompt_jump_toast(
-                "Can't jump to a message while a full-screen app is running",
-                ctx,
-            );
-            return;
-        }
+        // A new pick replaces any jump still under way.
+        self.cancel_agent_prompt_seek();
 
         // The whole history, not just the clicked prompt: a message too generic to find on its own
         // ("hi") is still pinned down by where its neighbours landed.
@@ -14095,6 +14081,29 @@ impl TerminalView {
         else {
             return;
         };
+
+        // Claude Code's fullscreen renderer (`/tui fullscreen`) and Codex paint on the alt screen
+        // and keep the conversation in their own scrollback, so the grid holds only the current
+        // frame. The message is reached by scrolling the TUI itself, which works only when it
+        // takes wheel reports: the same test that decides where the user's own wheel goes.
+        let alt_screen_takes_wheel_reports = {
+            let model = self.model.lock();
+            model
+                .is_alt_screen_active()
+                .then(|| !should_intercept_scroll(&model, ctx))
+        };
+        if let Some(takes_wheel_reports) = alt_screen_takes_wheel_reports {
+            if takes_wheel_reports {
+                self.start_agent_prompt_seek(&prompt_texts[index], ctx);
+            } else {
+                self.show_agent_prompt_jump_toast(
+                    "Can't jump to a message while a full-screen app is running",
+                    ctx,
+                );
+            }
+            return;
+        }
+
         let prompt_texts = prompt_texts.iter().map(String::as_str).collect_vec();
 
         // Scans the blocklist under the model lock, as the find bar's own runs do. Bounded by the
@@ -14143,6 +14152,148 @@ impl TerminalView {
             message: message.to_owned(),
             flavor: ToastFlavor::Default,
         });
+    }
+
+    /// Starts scrolling an alt-screen agent TUI toward `prompt_text`. See [`AgentPromptSeek`].
+    fn start_agent_prompt_seek(&mut self, prompt_text: &str, ctx: &mut ViewContext<Self>) {
+        let Some(search) = cli_agent_prompt_locator::agent_prompt_frame_search(prompt_text) else {
+            return;
+        };
+        self.agent_prompt_seek = Some(AgentPromptSeek {
+            search,
+            direction: SeekDirection::TowardOlder,
+            turned: false,
+            // The TUI's lines per report are unknown until the first step is measured.
+            wheel_reports: 1,
+            frame_before_step: None,
+            still_reads: 0,
+            steps: 0,
+            next_read: None,
+        });
+        // The first read checks the frame already on screen, before any scrolling.
+        self.step_agent_prompt_seek(ctx);
+    }
+
+    fn cancel_agent_prompt_seek(&mut self) {
+        if let Some(next_read) = self
+            .agent_prompt_seek
+            .take()
+            .and_then(|seek| seek.next_read)
+        {
+            next_read.abort();
+        }
+    }
+
+    /// Reads the TUI's current frame and, unless the message is on it, scrolls one step further.
+    fn step_agent_prompt_seek(&mut self, ctx: &mut ViewContext<Self>) {
+        let Some(mut seek) = self.agent_prompt_seek.take() else {
+            return;
+        };
+        seek.next_read = None;
+
+        let read = {
+            let model = self.model.lock();
+            if model.is_alt_screen_active() && !should_intercept_scroll(&model, ctx) {
+                let alt_screen = model.alt_screen();
+                let grid = alt_screen.grid_handler();
+                Some((
+                    cli_agent_prompt_locator::frame_shows_prompt(alt_screen, &seek.search),
+                    cli_agent_prompt_locator::frame_rows(grid),
+                    // Over the transcript, in the top left of the frame: a TUI with more than one
+                    // scrollable region scrolls the one under the pointer.
+                    Point::new(grid.visible_rows() / 3, grid.columns() / 4),
+                ))
+            } else {
+                None
+            }
+        };
+        // The TUI left the alt screen or stopped taking wheel reports (it exited, or switched to
+        // its classic renderer), so there is nothing left to scroll.
+        let Some((shows_prompt, frame, pointer)) = read else {
+            return;
+        };
+        if shows_prompt {
+            return;
+        }
+
+        if let Some(before) = seek.frame_before_step.as_deref() {
+            match cli_agent_prompt_locator::transcript_shift(before, &frame, seek.direction) {
+                Some(0) => {
+                    seek.still_reads += 1;
+                    if seek.still_reads < AGENT_PROMPT_SEEK_STILL_READS {
+                        // Wait rather than send more: a TUI that has not caught up would apply
+                        // every queued report at once and jump past rows unread.
+                        self.schedule_agent_prompt_seek_read(seek, ctx);
+                        return;
+                    }
+                    // The transcript stopped moving, so this end of it has been reached.
+                    if seek.turned {
+                        self.show_agent_prompt_jump_toast(
+                            "That message isn't in this conversation's scrollback",
+                            ctx,
+                        );
+                        return;
+                    }
+                    seek.turned = true;
+                    seek.direction = SeekDirection::TowardNewer;
+                }
+                Some(rows) => {
+                    // Aim each step at two thirds of what can be measured, so the next step can
+                    // be measured too and never scrolls a row past unread.
+                    let rows_per_report = (rows as u32 / seek.wheel_reports).max(1);
+                    let window = cli_agent_prompt_locator::shift_window(frame.len()) as u32;
+                    let target_rows = (window * 2 / 3).max(1);
+                    seek.wheel_reports = (target_rows / rows_per_report)
+                        .clamp(1, AGENT_PROMPT_SEEK_MAX_WHEEL_REPORTS);
+                }
+                None => {
+                    // Moved further than can be measured, so rows may have gone by unread. Step
+                    // slowly from here; a message skipped on the way up is found on the way back.
+                    seek.wheel_reports = 1;
+                }
+            }
+            seek.still_reads = 0;
+        }
+
+        seek.steps += 1;
+        if seek.steps > AGENT_PROMPT_SEEK_MAX_STEPS {
+            self.show_agent_prompt_jump_toast("Couldn't find that message in time", ctx);
+            return;
+        }
+
+        let lines = seek.wheel_reports as i32;
+        let delta = match seek.direction {
+            SeekDirection::TowardOlder => lines,
+            SeekDirection::TowardNewer => -lines,
+        };
+        let wheel = MouseState::new(
+            MouseButton::Wheel,
+            MouseAction::Scrolled { delta },
+            ModifiersState::default(),
+        )
+        .set_point(pointer);
+        let Some(wheel_reports) = wheel.to_escape_sequence(self.model.lock().deref()) else {
+            return;
+        };
+        // Straight to the PTY rather than through `write_user_bytes_to_pty`. This is not the user
+        // typing: it must not count as unacknowledged input for coordination, cancel a pending
+        // auto-continue, or cancel this seek.
+        self.write_to_pty(wheel_reports, ctx);
+        seek.frame_before_step = Some(frame);
+        self.schedule_agent_prompt_seek_read(seek, ctx);
+    }
+
+    fn schedule_agent_prompt_seek_read(
+        &mut self,
+        mut seek: AgentPromptSeek,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        seek.next_read = Some(ctx.spawn_abortable(
+            Timer::after(AGENT_PROMPT_SEEK_READ_DELAY),
+            |me, _, ctx| me.step_agent_prompt_seek(ctx),
+            |_, _| (),
+        ));
+        self.agent_prompt_seek = Some(seek);
     }
 
     /// Handles the initialization of a session within this terminal pane.
@@ -18985,7 +19136,7 @@ impl TerminalView {
         let escape_sequences = mouse_state
             .to_escape_sequence(self.model.lock().deref())
             .unwrap();
-        self.write_user_bytes_to_pty(escape_sequences, ctx);
+        self.write_mouse_report_to_pty(escape_sequences, ctx);
     }
 
     fn alt_select(&mut self, arg: &SelectAction<Point>, ctx: &mut ViewContext<Self>) {
@@ -23222,63 +23373,6 @@ impl TerminalView {
         }
     }
 
-    fn show_osc52_clipboard_blocked_banner(
-        &mut self,
-        blocked_type: Osc52ClipboardBlockedType,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        if self.osc52_clipboard_banner_suppressed {
-            return;
-        }
-        // Dedup: if already showing the same type, do not re-show.
-        if self.osc52_clipboard_blocked_type == Some(blocked_type) {
-            return;
-        }
-        let text = match blocked_type {
-            Osc52ClipboardBlockedType::Write => {
-                "A terminal program tried to write to your clipboard. This is disabled by default for security reasons, to protect against malicious software."
-            }
-            Osc52ClipboardBlockedType::Read => {
-                "A terminal program tried to read your clipboard. This is disabled by default for security reasons, to protect against malicious software."
-            }
-        };
-        let button_label = match blocked_type {
-            Osc52ClipboardBlockedType::Write => "Allow clipboard writes",
-            Osc52ClipboardBlockedType::Read => "Allow clipboard reads and writes",
-        };
-        self.osc52_clipboard_blocked_banner
-            .update(ctx, |banner, ctx| {
-                banner.set_content(BannerTextContent::plain_text(text), ctx);
-                banner.set_action_button_label(0, button_label, ctx);
-            });
-        self.osc52_clipboard_blocked_type = Some(blocked_type);
-        ctx.notify();
-    }
-
-    fn handle_osc52_clipboard_banner_event(
-        &mut self,
-        event: &BannerEvent<TerminalAction>,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        match event {
-            BannerEvent::Dismiss(DismissalType::Temporary) => {
-                self.osc52_clipboard_blocked_type = None;
-                ctx.notify();
-            }
-            BannerEvent::Dismiss(DismissalType::Permanent) => {
-                self.osc52_clipboard_blocked_type = None;
-                self.osc52_clipboard_banner_suppressed = true;
-                let _ = ctx
-                    .private_user_preferences()
-                    .write_value(OSC52_CLIPBOARD_BANNER_SUPPRESSED_KEY, "true".to_owned());
-                ctx.notify();
-            }
-            BannerEvent::Action(terminal_action) => {
-                self.handle_action(terminal_action, ctx);
-            }
-        }
-    }
-
     fn handle_incompatible_configuration_banner_event(
         &mut self,
         event: &BannerEvent<TerminalAction>,
@@ -27389,8 +27483,7 @@ impl TypedActionView for TerminalView {
             | CycleNextOrchestrationChildAgent
             | ToggleCLIAgentRichInput
             | ToggleSessionRecording
-            | ToggleAutoContinueOnLimitReset
-            | Osc52AllowBlockedClipboardOperation => Empty,
+            | ToggleAutoContinueOnLimitReset => Empty,
         }
     }
 
@@ -28572,22 +28665,6 @@ impl TypedActionView for TerminalView {
                     self.open_cli_agent_rich_input(CLIAgentInputEntrypoint::CtrlG, ctx);
                 }
             }
-            Osc52AllowBlockedClipboardOperation => {
-                use crate::terminal::settings::Osc52ClipboardAccess;
-                if let Some(blocked_type) = self.osc52_clipboard_blocked_type {
-                    let new_value = match blocked_type {
-                        Osc52ClipboardBlockedType::Write => Osc52ClipboardAccess::WriteOnly,
-                        Osc52ClipboardBlockedType::Read => Osc52ClipboardAccess::ReadWrite,
-                    };
-                    TerminalSettings::handle(ctx).update(ctx, |terminal_settings, ctx| {
-                        let _ = terminal_settings
-                            .osc52_clipboard_access
-                            .set_value(new_value, ctx);
-                    });
-                    self.osc52_clipboard_blocked_type = None;
-                    ctx.notify();
-                }
-            }
         }
     }
 }
@@ -28972,8 +29049,6 @@ impl View for TerminalView {
                 stack.add_child(ChildView::new(&self.incompatible_configuration_banner).finish());
             } else if self.is_emacs_bindings_banner_open {
                 stack.add_child(ChildView::new(&self.emacs_bindings_banner).finish());
-            } else if self.osc52_clipboard_blocked_type.is_some() {
-                stack.add_child(ChildView::new(&self.osc52_clipboard_blocked_banner).finish());
             }
         }
 

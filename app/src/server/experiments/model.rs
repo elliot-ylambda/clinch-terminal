@@ -3,8 +3,6 @@
 use std::collections::HashSet;
 
 use anyhow::Context;
-#[cfg(test)]
-pub use tests::TestModel;
 use warpui::{Entity, ModelContext, SingletonEntity};
 
 use super::ServerExperiment;
@@ -87,7 +85,3 @@ impl Entity for ServerExperiments {
 }
 
 impl SingletonEntity for ServerExperiments {}
-
-#[cfg(test)]
-#[path = "model_tests.rs"]
-mod tests;

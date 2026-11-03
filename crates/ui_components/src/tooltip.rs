@@ -2,6 +2,7 @@ use std::borrow::Cow;
 
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui_core::keymap::Keystroke;
 use warpui_core::prelude::*;
 
@@ -51,7 +52,7 @@ impl Component for Tooltip {
             .with_child(
                 Text::new(params.label, font_family, font_size)
                     .soft_wrap(false)
-                    .with_color(appearance.theme().background().into_solid())
+                    .with_color(appearance.tokens().text_1)
                     .finish(),
             );
 
@@ -75,11 +76,11 @@ impl Component for Tooltip {
         }
 
         Container::new(content.finish())
-            .with_horizontal_padding(7.)
-            .with_vertical_padding(3.)
-            .with_background(appearance.theme().tooltip_background())
-            .with_border(Border::all(1.).with_border_fill(appearance.theme().surface_2()))
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_horizontal_padding(8.)
+            .with_vertical_padding(5.)
+            .with_background(appearance.tokens().surface_overlay)
+            .with_border(Border::all(1.).with_border_color(appearance.tokens().hairline))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .finish()
     }
 }

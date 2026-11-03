@@ -5,10 +5,11 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::elements::{
     Border, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Flex,
     FormattedTextElement, Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle,
-    ParentElement, Radius, Text, Wrap,
+    ParentElement, Text, Wrap,
 };
 use warpui::keymap::Keystroke;
 use warpui::platform::Cursor;
@@ -530,7 +531,7 @@ impl OnboardingAgenticSuggestionsBlock {
                             is_disabled,
                         ))
                         .with_background(background_color)
-                        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)));
+                        .with_corner_radius(CornerRadius::with_all(RADIUS_SM));
 
                     if is_disabled {
                         button_content = button_content

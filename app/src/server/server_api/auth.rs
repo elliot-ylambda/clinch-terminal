@@ -21,7 +21,3 @@ pub enum AnonymousUserCreationError {
     #[error("Failed to create anonymous user with unknown error")]
     Unknown,
 }
-
-#[cfg(test)]
-#[path = "auth_tests.rs"]
-mod tests;

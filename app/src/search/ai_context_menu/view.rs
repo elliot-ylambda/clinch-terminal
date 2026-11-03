@@ -59,7 +59,7 @@ use crate::settings::InputSettings;
 #[cfg(not(target_family = "wasm"))]
 use crate::workspace::ActiveSession;
 
-const CORNER_RADIUS: f32 = 8.0;
+const CORNER_RADIUS: f32 = 10.;
 const DEFAULT_PALETTE_WIDTH: f32 = 320.0;
 const MAX_DISPLAYED_RESULT_COUNT: usize = 8;
 const PALETTE_HEIGHT: f32 = 423.0;

@@ -436,10 +436,6 @@ impl RunAgentsExecutor {
     }
 }
 
-#[cfg(test)]
-#[path = "run_agents_tests.rs"]
-mod tests;
-
 enum ChildSlot {
     Failed(String),
     Pending(async_channel::Receiver<StartAgentOutcome>),

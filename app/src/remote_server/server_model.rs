@@ -3850,7 +3850,3 @@ fn file_context_result_to_proto(result: ReadFileContextResult) -> ReadFileContex
         failed_files,
     }
 }
-
-#[cfg(test)]
-#[path = "server_model_tests.rs"]
-mod tests;

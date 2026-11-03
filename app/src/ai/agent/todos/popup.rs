@@ -1,10 +1,11 @@
 use pathfinder_color::ColorU;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::Fill;
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::elements::{
     Border, ClippedScrollStateHandle, ClippedScrollable, ConstrainedBox, Container, CornerRadius,
     CrossAxisAlignment, Dismiss, DropShadow, Empty, Expanded, Flex, MainAxisSize, ParentElement,
-    Radius, SavePosition, ScrollTarget, ScrollToPositionMode, ScrollbarWidth, Shrinkable, Text,
+    SavePosition, ScrollTarget, ScrollToPositionMode, ScrollbarWidth, Shrinkable, Text,
 };
 use warpui::fonts::{FamilyId, Properties, Weight};
 use warpui::keymap::FixedBinding;
@@ -282,7 +283,7 @@ impl View for AgentTodosPopupView {
             ConstrainedBox::new(
                 Container::new(panel_col.finish())
                     .with_background(background)
-                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+                    .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                     .with_border(Border::all(1.).with_border_fill(theme.outline()))
                     .with_drop_shadow(DropShadow::default())
                     .finish(),

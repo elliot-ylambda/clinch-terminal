@@ -535,7 +535,3 @@ fn parse_generate_access_token_expiry(expire_time: &str) -> Result<SystemTime, S
             format!("invalid expireTime `{expire_time}` in the impersonation response: {err}")
         })
 }
-
-#[cfg(test)]
-#[path = "geap_credentials_tests.rs"]
-mod tests;

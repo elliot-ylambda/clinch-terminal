@@ -5,11 +5,12 @@ use pathfinder_geometry::vector::vec2f;
 use serde::{Deserialize, Serialize};
 use warp_core::paths::home_relative_path;
 use warp_core::ui::theme::Fill;
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::accessibility::{AccessibilityContent, WarpA11yRole};
 use warpui::elements::{
     Align, Border, ChildAnchor, ChildView, Clipped, ConstrainedBox, Container, CornerRadius,
     Element, Empty, Flex, FormattedTextElement, MouseStateHandle, OffsetPositioning, ParentAnchor,
-    ParentElement, ParentOffsetBounds, Radius, SavePosition, Shrinkable, Stack, Text,
+    ParentElement, ParentOffsetBounds, SavePosition, Shrinkable, Stack, Text,
 };
 use warpui::keymap::FixedBinding;
 use warpui::ui_components::button::{Button, ButtonVariant};
@@ -467,7 +468,7 @@ impl LaunchConfigSaveModal {
             .finish();
 
         Container::new(header)
-            .with_corner_radius(CornerRadius::with_top(Radius::Pixels(8.)))
+            .with_corner_radius(CornerRadius::with_top(RADIUS_MD))
             .with_padding_left(SIDE_PADDING)
             .with_padding_right(SIDE_PADDING)
             .with_padding_top(SIDE_PADDING)
@@ -607,7 +608,7 @@ impl LaunchConfigSaveModal {
                 )
                 .finish(),
             )
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .with_border(Border::all(1.).with_border_fill(appearance.theme().outline()))
             .with_uniform_margin(35.)
             .with_background(appearance.theme().surface_2())

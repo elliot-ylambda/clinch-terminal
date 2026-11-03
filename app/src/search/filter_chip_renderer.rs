@@ -1,7 +1,8 @@
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::elements::{
     ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Flex, Hoverable, Icon,
-    MouseStateHandle, ParentElement, Radius, Text,
+    MouseStateHandle, ParentElement, Text,
 };
 use warpui::platform::Cursor;
 use warpui::{Element, EventContext};
@@ -100,7 +101,7 @@ impl FilterChipRenderer for QueryFilter {
                 } else {
                     internal_colors::neutral_3(theme).into()
                 })
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                 .finish()
         })
         .with_cursor(Cursor::PointingHand)

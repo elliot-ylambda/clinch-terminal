@@ -42,11 +42,12 @@ use warp_core::ui::color::contrast::{
 };
 use warp_core::ui::color::Rgb;
 use warp_core::ui::theme::{Fill, WarpTheme};
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::elements::{
     Align, Border, Clipped, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Empty,
     Expanded, Flex, FormattedTextElement, Highlight, HighlightedRange, Hoverable,
-    MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement, Radius, SavePosition,
-    SelectableArea, Text,
+    MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement, SavePosition, SelectableArea,
+    Text,
 };
 use warpui::fonts::Properties;
 use warpui::platform::Cursor;
@@ -707,7 +708,7 @@ pub fn render_citation(
 
     let chip = Container::new(row.finish())
         .with_uniform_padding(padding)
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
         .with_background(blended_colors::neutral_3(theme))
         .finish();
     let citation_clone = citation.clone();

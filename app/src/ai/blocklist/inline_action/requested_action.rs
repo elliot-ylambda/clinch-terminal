@@ -16,9 +16,10 @@ use markdown_parser::{FormattedText, FormattedTextFragment, FormattedTextLine};
 use pathfinder_color::ColorU;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::color::internal_colors::neutral_2;
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::elements::{
     Align, Border, Clipped, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Flex,
-    FormattedTextElement, MainAxisAlignment, ParentElement, Radius, Shrinkable, Wrap, WrapFill,
+    FormattedTextElement, MainAxisAlignment, ParentElement, Shrinkable, Wrap, WrapFill,
 };
 use warpui::fonts::FamilyId;
 use warpui::keymap::Keystroke;
@@ -193,13 +194,13 @@ impl RenderableAction {
                     .with_horizontal_padding(INLINE_ACTION_HORIZONTAL_PADDING)
                     .with_vertical_padding(4.)
                     .with_background(theme.surface_1())
-                    .with_corner_radius(CornerRadius::with_bottom(Radius::Pixels(8.)))
+                    .with_corner_radius(CornerRadius::with_bottom(RADIUS_MD))
                     .finish(),
             );
         }
 
         let container = Container::new(content.finish())
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .with_background_color(self.background_color)
             .with_border(
                 Border::all(1.).with_border_fill(if self.should_highlight_border {

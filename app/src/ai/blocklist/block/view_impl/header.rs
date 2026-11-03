@@ -1,10 +1,11 @@
 //! Renders the AI block "header", which includes a version of the AI "prompt" as it was rendered
 //! when the query was submitted.
 use warp_core::features::FeatureFlag;
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_util::path::user_friendly_path;
 use warpui::elements::{
     ChildView, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Flex, Hoverable,
-    Icon as ElementIcon, MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement, Radius,
+    Icon as ElementIcon, MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement,
     SavePosition, Text,
 };
 use warpui::platform::Cursor;
@@ -181,7 +182,7 @@ fn render_attached_context_chip(
                     .finish(),
             )
             .with_background(theme.surface_3())
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .with_vertical_overdraw(2.)
             .with_horizontal_padding(8.)
             .with_vertical_padding(4.)

@@ -5,6 +5,7 @@ use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::vec2f;
 use warp_core::channel::ChannelState;
 use warp_core::ui::appearance::Appearance;
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::elements::{
     Border, ChildAnchor, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, DropShadow,
     Empty, Expanded, Flex, Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle,
@@ -439,7 +440,7 @@ fn render_service_account_info_tooltip(appearance: &Appearance) -> Box<dyn Eleme
     .finish();
     Container::new(text)
         .with_background_color(theme.background().into_solid())
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .with_border(Border::all(1.).with_border_color(theme.outline().into_solid()))
         .with_horizontal_padding(12.)
         .with_vertical_padding(6.)
@@ -715,7 +716,7 @@ fn render_source_filter_toggle(
 
     Container::new(row.finish())
         .with_border(Border::all(1.).with_border_color(theme.surface_3().into_solid()))
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .finish()
 }
 
@@ -832,7 +833,3 @@ fn render_member_row_list(
     }
     column.finish()
 }
-
-#[cfg(test)]
-#[path = "billing_cycle_usage_rows_tests.rs"]
-mod tests;

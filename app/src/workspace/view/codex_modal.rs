@@ -3,11 +3,12 @@ use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::vec2f;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::Fill;
+use warp_core::ui::tokens::RADIUS_LG;
 use warpui::elements::{
     Align, Border, CacheOption, ChildAnchor, ConstrainedBox, Container, CornerRadius,
     CrossAxisAlignment, DropShadow, Flex, FormattedTextElement, Image, MainAxisAlignment,
     MainAxisSize, MouseStateHandle, OffsetPositioning, ParentAnchor, ParentElement,
-    ParentOffsetBounds, Radius, Stack, Text,
+    ParentOffsetBounds, Stack, Text,
 };
 use warpui::fonts::Weight;
 use warpui::keymap::FixedBinding;
@@ -97,7 +98,7 @@ impl CodexModal {
         .with_vertical_padding(4.)
         .with_horizontal_padding(10.)
         .with_background(Fill::Solid(magenta).with_opacity(15))
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(12.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_LG))
         .finish()
     }
 
@@ -169,7 +170,7 @@ impl CodexModal {
                 .finish(),
         )
         .with_background_color(blended_colors::neutral_1(theme))
-        .with_corner_radius(CornerRadius::with_left(Radius::Pixels(10.)))
+        .with_corner_radius(CornerRadius::with_left(RADIUS_LG))
         .with_uniform_padding(24.)
         .finish()
     }
@@ -180,7 +181,7 @@ impl CodexModal {
                 bundled_or_fetched_asset!("png/codex_integration.png"),
                 CacheOption::BySize,
             )
-            .with_corner_radius(CornerRadius::with_right(Radius::Pixels(10.)))
+            .with_corner_radius(CornerRadius::with_right(RADIUS_LG))
             .finish(),
         )
         .with_width(RIGHT_PANEL_WIDTH)
@@ -229,7 +230,7 @@ impl View for CodexModal {
                 .with_height(MODAL_HEIGHT)
                 .finish(),
             )
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(10.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_LG))
             .with_border(Border::all(1.).with_border_fill(theme.outline()))
             .with_drop_shadow(DropShadow::default())
             .finish(),

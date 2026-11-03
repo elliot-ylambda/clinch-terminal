@@ -1,10 +1,11 @@
 use std::marker::PhantomData;
 
 use pathfinder_geometry::vector::vec2f;
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::elements::{
     Border, ChildAnchor, ConstrainedBox, CornerRadius, CrossAxisAlignment, Flex,
     Icon as WarpUiIcon, MainAxisAlignment, MouseStateHandle, OffsetPositioning, ParentElement,
-    PositionedElementAnchor, PositionedElementOffsetBounds, Radius, SavePosition, Stack,
+    PositionedElementAnchor, PositionedElementOffsetBounds, SavePosition, Stack,
 };
 use warpui::presenter::ChildView;
 use warpui::ui_components::button::ButtonVariant;
@@ -150,7 +151,7 @@ impl<A: DropdownItemAction> CompactDropdown<A> {
             .set_clicked_styles(None)
             .with_style(UiComponentStyles {
                 padding: Some(Coords::uniform(4.)),
-                border_radius: Some(CornerRadius::with_all(Radius::Pixels(4.))),
+                border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
                 ..Default::default()
             })
             .with_hovered_styles(UiComponentStyles {

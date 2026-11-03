@@ -3,6 +3,7 @@ use warpui_core::{Entity, ModelContext, SingletonEntity};
 
 use super::builder::UiBuilder;
 use super::theme::WarpTheme;
+use super::tokens::Tokens;
 
 /// The standard font size to use for headers (e.g.: in dialogs).
 const HEADER_FONT_SIZE: f32 = 18.;
@@ -17,6 +18,7 @@ pub const DEFAULT_COMMAND_PALETTE_FONT_SIZE: f32 = 14.0;
 /// settings related to themes and fonts.
 pub struct Appearance {
     theme: WarpTheme,
+    tokens: Tokens,
     monospace_font_family: FamilyId,
     monospace_font_size: f32,
     monospace_font_weight: Weight,
@@ -80,6 +82,7 @@ impl Appearance {
         password_font_family: FamilyId,
     ) -> Self {
         Self {
+            tokens: Tokens::new(&theme),
             theme: theme.clone(),
             monospace_font_family,
             monospace_font_size,
@@ -118,6 +121,7 @@ impl Appearance {
         let ui_font_family = FamilyId(1);
 
         Self {
+            tokens: Tokens::new(&mock_theme),
             theme: mock_theme.clone(),
             monospace_font_family: FamilyId(0),
             monospace_font_size: 13.,
@@ -137,6 +141,7 @@ impl Appearance {
     }
 
     pub fn set_theme(&mut self, new_theme: WarpTheme, ctx: &mut ModelContext<Self>) {
+        self.tokens = Tokens::new(&new_theme);
         self.theme = new_theme;
         self.ui_builder = UiBuilder::new(
             self.theme.clone(),
@@ -275,6 +280,10 @@ impl Appearance {
 
     pub fn theme(&self) -> &WarpTheme {
         &self.theme
+    }
+
+    pub fn tokens(&self) -> &Tokens {
+        &self.tokens
     }
 
     pub fn monospace_font_family(&self) -> FamilyId {

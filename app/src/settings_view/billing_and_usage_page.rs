@@ -12,12 +12,13 @@ use thousands::Separable;
 use warp_core::features::FeatureFlag;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::Fill;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warp_graphql::billing::AddonCreditsOption;
 use warpui::elements::{
     Align, Border, ChildAnchor, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Empty,
     Flex, FormattedTextElement, HighlightedHyperlink, Hoverable, HyperlinkUrl, MainAxisAlignment,
     MainAxisSize, MouseStateHandle, OffsetPositioning, ParentAnchor, ParentElement,
-    ParentOffsetBounds, Radius, Shrinkable, Text, Wrap,
+    ParentOffsetBounds, Shrinkable, Text, Wrap,
 };
 use warpui::fonts::{Properties, Weight};
 use warpui::platform::Cursor;
@@ -119,7 +120,7 @@ pub fn create_discount_badge(discount: u32, appearance: &Appearance) -> Box<dyn 
             .with_color(theme.main_text_color(bg_color).into())
             .finish(),
     )
-    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+    .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
     .with_background(bg_color)
     .with_uniform_padding(4.)
     .finish()
@@ -1243,7 +1244,7 @@ impl BillingAndUsagePageView {
         let card = Container::new(row_content)
             .with_horizontal_background_gradient(gradient_start, gradient_end)
             .with_border(Border::all(1.).with_border_color(theme.accent_overlay().into()))
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .with_margin_bottom(16.)
             .with_uniform_padding(12.)
             .finish();
@@ -1753,7 +1754,7 @@ impl BillingAndUsagePageView {
                 .finish();
             return Container::new(card_content)
                 .with_background_color(theme.surface_1().into_solid())
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                 .with_margin_bottom(16.)
                 .with_uniform_padding(16.)
                 .finish();
@@ -2065,7 +2066,7 @@ impl BillingAndUsagePageView {
                 .finish();
             Container::new(card_upper)
                 .with_background_color(theme.surface_1().into_solid())
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                 .with_margin_bottom(16.)
                 .finish()
         } else {
@@ -2124,7 +2125,7 @@ impl BillingAndUsagePageView {
 
             Container::new(card_content)
                 .with_background_color(theme.surface_1().into_solid())
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                 .with_margin_bottom(16.)
                 .finish()
         }
@@ -2740,7 +2741,7 @@ impl BillingAndUsagePageView {
 
         let card_container = Container::new(card_content)
             .with_background_color(theme.surface_1().into_solid())
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .with_uniform_padding(16.)
             .with_margin_bottom(16.)
             .finish();
@@ -3325,7 +3326,7 @@ impl BillingAndUsagePageView {
         let button_styles = UiComponentStyles {
             font_size: Some(14.),
             font_weight: Some(Weight::Semibold),
-            border_radius: Some(CornerRadius::with_all(Radius::Pixels(4.))),
+            border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
             padding: Some(Coords {
                 top: 12.,
                 bottom: 12.,
@@ -3618,7 +3619,3 @@ impl BillingAndUsagePageView {
         col.finish()
     }
 }
-
-#[cfg(test)]
-#[path = "billing_and_usage_page_tests.rs"]
-mod tests;

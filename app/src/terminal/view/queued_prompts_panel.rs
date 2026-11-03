@@ -13,12 +13,13 @@ use pathfinder_geometry::rect::RectF;
 use pathfinder_geometry::vector::vec2f;
 use warp_core::features::FeatureFlag;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::elements::new_scrollable::{NewScrollable, ScrollableAppearance, SingleAxisConfig};
 use warpui::elements::{
     Border, ChildAnchor, ChildView, Clipped, ClippedScrollStateHandle, ConstrainedBox, Container,
     CornerRadius, CrossAxisAlignment, DragAxis, Draggable, DraggableState, Empty, Expanded, Fill,
     Flex, Hoverable, MinSize, MouseStateHandle, OffsetPositioning, ParentAnchor, ParentElement,
-    ParentOffsetBounds, Radius, SavePosition, ScrollbarWidth, Shrinkable, Stack, Text,
+    ParentOffsetBounds, SavePosition, ScrollbarWidth, Shrinkable, Stack, Text,
     DEFAULT_UI_LINE_HEIGHT_RATIO,
 };
 use warpui::fonts::{Properties, Style, Weight};
@@ -675,36 +676,6 @@ impl QueuedPromptsPanelView {
     }
 }
 
-#[cfg(test)]
-impl QueuedPromptsPanelView {
-    /// Test accessor: whether the "send now" button for `query_id` is currently disabled.
-    pub(super) fn send_now_button_disabled_for_test(
-        &self,
-        query_id: QueuedQueryId,
-        ctx: &AppContext,
-    ) -> Option<bool> {
-        self.row_states
-            .get(&query_id)
-            .map(|state| state.send_now_button.as_ref(ctx).is_disabled())
-    }
-
-    /// Test accessor: whether the header currently shows the "⏎ to send" hint.
-    pub(super) fn enter_hint_shown_for_test(&self, ctx: &AppContext) -> bool {
-        self.should_show_enter_hint(ctx)
-    }
-
-    /// Test helper: replaces the inline edit editor buffer.
-    pub(super) fn set_edit_buffer_text_for_test(
-        &mut self,
-        text: &str,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        self.edit_editor.update(ctx, |editor, ctx| {
-            editor.set_buffer_text(text, ctx);
-        });
-    }
-}
-
 impl TypedActionView for QueuedPromptsPanelView {
     type Action = QueuedPromptsPanelAction;
 
@@ -1142,7 +1113,7 @@ fn render_row(props: RenderRowProps<'_>, app: &AppContext) -> Box<dyn Element> {
             ConstrainedBox::new(
                 Container::new(editor_viewport)
                     .with_border(Border::all(1.).with_border_fill(theme.outline()))
-                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                    .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                     .with_horizontal_padding(4.)
                     .finish(),
             )
@@ -1286,7 +1257,7 @@ fn render_row(props: RenderRowProps<'_>, app: &AppContext) -> Box<dyn Element> {
         let mut container = Container::new(row_content)
             .with_horizontal_padding(8.)
             .with_vertical_padding(4.)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)));
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM));
         if is_being_dragged || state.is_hovered() {
             container = container.with_background(theme.surface_overlay_1());
         }

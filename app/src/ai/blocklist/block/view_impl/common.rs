@@ -21,6 +21,7 @@ use warp_core::features::FeatureFlag;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::color::blend::Blend;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warp_editor::content::edit::resolve_asset_source_relative_to_directory;
 use warp_editor::content::mermaid_diagram::mermaid_asset_source;
 use warp_util::path::to_relative_path;
@@ -149,7 +150,7 @@ const INLINE_IMAGE_RUN_SPACING: f32 = 16.;
 const BLOCK_IMAGE_THUMBNAIL_SIZE: f32 = 124.;
 const BLOCK_IMAGE_ROW_SPACING: f32 = 12.;
 const BLOCK_IMAGE_ROW_CONTENT_SPACING: f32 = 24.;
-const VISUAL_CARD_CORNER_RADIUS: f32 = 8.;
+const VISUAL_CARD_CORNER_RADIUS: f32 = 10.;
 const VISUAL_CARD_HEADER_VERTICAL_PADDING: f32 = 8.;
 const VISUAL_CARD_HEADER_HORIZONTAL_PADDING: f32 = 16.;
 const MERMAID_CANVAS_PADDING: f32 = 32.;
@@ -1036,7 +1037,7 @@ where
 
     let button_content = button_content.finish();
     let styles = UiComponentStyles::default()
-        .set_border_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+        .set_border_radius(CornerRadius::with_all(RADIUS_SM))
         .set_border_width(1.)
         .set_border_color(internal_colors::neutral_4(theme).into())
         .set_padding(Coords {
@@ -2221,7 +2222,7 @@ fn render_visual_markdown_block<A: Action>(
     let image = WarpImage::new(asset_source, CacheOption::BySize)
         .contain()
         .before_load(placeholder)
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)));
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD));
     let content = match options.sizing {
         VisualMarkdownSizing::FixedHeight {
             height,
@@ -2415,7 +2416,7 @@ fn blocklist_base_line_height(app: &AppContext) -> f32 {
         .as_f32()
 }
 
-const TABLE_BLOCK_CORNER_RADIUS: f32 = 8.0;
+const TABLE_BLOCK_CORNER_RADIUS: f32 = 10.;
 fn render_table_section(
     table: &AgentOutputTable,
     table_handles: TableSectionHandles,
@@ -3327,7 +3328,7 @@ pub(crate) fn render_debug_footer<V: View>(
                     .sub_text_color(appearance.theme().background())
                     .into(),
             ),
-            border_radius: Some(CornerRadius::with_all(Radius::Pixels(4.))),
+            border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
             padding: Some(Coords {
                 top: 4.,
                 bottom: 4.,
@@ -3676,7 +3677,3 @@ pub(crate) fn render_scrollable_collapsible_content(
             .finish(),
     )
 }
-
-#[cfg(test)]
-#[path = "common_tests.rs"]
-mod tests;

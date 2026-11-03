@@ -1,3 +1,5 @@
+use warp_core::ui::theme::Fill;
+use warp_core::ui::tokens::RADIUS_LG;
 use warpui::elements::{
     Border, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Dismiss, Element, Flex,
     MainAxisAlignment, MainAxisSize, ParentElement, Shrinkable, Text,
@@ -5,7 +7,6 @@ use warpui::elements::{
 use warpui::fonts::{Properties, Weight};
 use warpui::ui_components::components::{UiComponent, UiComponentStyles};
 
-use super::blended_colors;
 use crate::appearance::Appearance;
 
 const DIALOG_PADDING: f32 = 20.;
@@ -30,16 +31,17 @@ pub struct Dialog {
 }
 
 pub fn dialog_styles(appearance: &Appearance) -> UiComponentStyles {
-    let theme = appearance.theme();
-    let background = theme.surface_1();
+    let _theme = appearance.theme();
+    let tokens = appearance.tokens();
+    let background = Fill::Solid(tokens.surface_overlay);
     UiComponentStyles {
         font_family_id: Some(appearance.header_font_family()),
         font_size: Some(16.),
-        font_color: Some(blended_colors::text_main(theme, background)),
+        font_color: Some(tokens.text_1),
         font_weight: Some(warpui::fonts::Weight::Bold),
         background: Some(background.into()),
-        border_color: Some(theme.surface_3().into()),
-        border_radius: Some(CornerRadius::with_all(warpui::elements::Radius::Pixels(8.))),
+        border_color: Some(Fill::Solid(tokens.hairline).into()),
+        border_radius: Some(CornerRadius::with_all(RADIUS_LG)),
         border_width: Some(1.),
         ..Default::default()
     }

@@ -4,11 +4,12 @@ use std::rc::Rc;
 use pathfinder_color::ColorU;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warpui::elements::{
     Border, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, DispatchEventResult,
     EventHandler, Expanded, Flex, FormattedTextElement, Hoverable, MainAxisAlignment, MainAxisSize,
-    MouseStateHandle, ParentElement, Radius, Shrinkable, SizeConstraintCondition,
-    SizeConstraintSwitch, Text,
+    MouseStateHandle, ParentElement, Shrinkable, SizeConstraintCondition, SizeConstraintSwitch,
+    Text,
 };
 use warpui::fonts::FamilyId;
 use warpui::platform::Cursor;
@@ -269,7 +270,7 @@ impl HeaderConfig {
                 .with_vertical_padding(4.)
                 .with_margin_right(8.)
                 .with_border(Border::all(1.0).with_border_fill(theme.outline()))
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(2.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                 .with_background(theme.surface_1())
                 .finish(),
             );
@@ -300,9 +301,9 @@ impl HeaderConfig {
                 if let Some(corner_radius_override) = self.corner_radius_override {
                     corner_radius_override
                 } else if looks_expanded_downwards {
-                    CornerRadius::with_top(Radius::Pixels(8.))
+                    CornerRadius::with_top(RADIUS_MD)
                 } else {
-                    CornerRadius::with_all(Radius::Pixels(8.))
+                    CornerRadius::with_all(RADIUS_MD)
                 },
             )
             .finish();

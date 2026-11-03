@@ -193,32 +193,44 @@ fn project_command_count_excludes_cli_agent_sessions_and_non_running_commands() 
 #[test]
 fn project_agent_activity_prioritizes_live_work_then_input_then_attention_then_done() {
     assert_eq!(
-        project_cli_agent_activity(true, false, true, true, true),
+        project_cli_agent_activity(true, false, false, true, true, true),
         ProjectCliAgentActivity::Working
     );
     assert_eq!(
-        project_cli_agent_activity(false, true, true, false, false),
+        project_cli_agent_activity(false, true, false, true, false, false),
         ProjectCliAgentActivity::NeedsInput
     );
     assert_eq!(
-        project_cli_agent_activity(false, true, false, true, true),
+        project_cli_agent_activity(false, true, false, false, true, true),
         ProjectCliAgentActivity::NeedsInput
     );
     assert_eq!(
-        project_cli_agent_activity(false, false, false, true, true),
+        project_cli_agent_activity(false, false, false, false, true, true),
         ProjectCliAgentActivity::NeedsAttention
     );
     assert_eq!(
-        project_cli_agent_activity(false, false, false, true, false),
+        project_cli_agent_activity(false, false, false, false, true, false),
         ProjectCliAgentActivity::Done
     );
     assert_eq!(
-        project_cli_agent_activity(false, false, true, false, false),
+        project_cli_agent_activity(false, false, false, true, false, false),
         ProjectCliAgentActivity::Done
     );
     assert_eq!(
-        project_cli_agent_activity(false, false, false, false, false),
+        project_cli_agent_activity(false, false, false, false, false, false),
         ProjectCliAgentActivity::Idle
+    );
+    assert_eq!(
+        project_cli_agent_activity(false, false, true, false, true, true),
+        ProjectCliAgentActivity::RateLimited
+    );
+    assert_eq!(
+        project_cli_agent_activity(false, true, true, false, false, false),
+        ProjectCliAgentActivity::NeedsInput
+    );
+    assert_eq!(
+        project_cli_agent_activity(true, false, true, false, false, false),
+        ProjectCliAgentActivity::Working
     );
 }
 
@@ -600,9 +612,6 @@ pub(crate) fn initialize_app(app: &mut App) {
     app.add_singleton_model(|ctx| OrchestrationPillBarModel::new(Default::default(), ctx));
     app.add_singleton_model(|_| CLIAgentSessionsModel::new());
     app.add_singleton_model(crate::terminal::cli_agent_sessions::restore::AgentRestoreQueue::new);
-    app.add_singleton_model(
-        crate::terminal::cli_agent_sessions::attention_pulse::AgentAttentionPulse::new,
-    );
     // AutoContinueModel observes fresh usage snapshots as well as session
     // events, so both dependencies must be registered first. The test
     // constructor omits the keychain/HTTP producer thread.
@@ -1204,12 +1213,7 @@ fn remote_control_header_uses_green_outline_with_muted_content() {
     assert_eq!(default_styles.font_color, Some(muted_color));
     assert_eq!(default_styles.font_size, Some(11.));
     assert_eq!(default_styles.width, None);
-    assert_eq!(default_styles.border_color, Some(CLINCH_LOGO_GREEN.into()));
     assert_eq!(interactive_styles.font_color, Some(muted_color));
-    assert_eq!(
-        interactive_styles.border_color,
-        Some(CLINCH_LOGO_GREEN.into())
-    );
 }
 
 #[test]
@@ -2632,6 +2636,7 @@ fn tab_origin_launch_joins_source_family_and_section() {
                     .terminal_pane_uuids()[0]
                     .clone(),
                 parent_title: "Source".into(),
+                ancestors: Vec::new(),
             };
             workspace.add_terminal_tab(false, ctx);
             let unrelated_id = workspace.active_tab_pane_group().id();
@@ -2671,6 +2676,7 @@ fn tab_origin_survives_workspace_snapshot_restore() {
                     .terminal_pane_uuids()[0]
                     .clone(),
                 parent_title: "Original conversation".into(),
+                ancestors: Vec::new(),
             };
             workspace.launch_command_in_new_tab("true".into(), None, Some(origin.clone()), ctx);
             (workspace.snapshot(ctx.window_id(), false, ctx), origin)
@@ -2679,15 +2685,7 @@ fn tab_origin_survives_workspace_snapshot_restore() {
         let restored = restored_workspace(&mut app, snapshot);
         restored.read(&app, |workspace, ctx| {
             assert_eq!(workspace.tabs[1].origin.as_ref(), Some(&origin));
-            let lineage: Vec<_> = workspace
-                .tabs
-                .iter()
-                .map(|tab| crate::tab::lineage::TabLineage::for_tab(tab, ctx))
-                .collect();
-            assert_eq!(
-                crate::tab::lineage::lineage_nesting(&lineage),
-                [false, true]
-            );
+            assert_eq!(workspace.tab_lineage_depths(ctx), [0, 1]);
         });
     });
 }
@@ -2710,19 +2708,252 @@ fn tab_origin_child_of_pinned_source_is_unpinned() {
                     .terminal_pane_uuids()[0]
                     .clone(),
                 parent_title: "Pinned source".into(),
+                ancestors: Vec::new(),
             };
             workspace.launch_command_in_new_tab("true".into(), None, Some(origin), ctx);
             assert_eq!(workspace.active_tab_index(), 2);
             assert!(!workspace.tabs[2].pinned);
-            let lineage: Vec<_> = workspace
+            assert_eq!(workspace.tab_lineage_depths(ctx), [0, 0, 0]);
+        });
+    });
+}
+
+/// A fork of the tab at `index`, recording ancestry the way `fork_cli_agent_session` does.
+fn fork_of(workspace: &Workspace, index: usize, ctx: &AppContext) -> crate::tab::TabOrigin {
+    crate::tab::TabOrigin {
+        kind: crate::tab::TabOriginKind::Fork,
+        parent_pane_uuid: workspace.tabs[index]
+            .pane_group
+            .as_ref(ctx)
+            .terminal_pane_uuids()[0]
+            .clone(),
+        parent_title: "Source".into(),
+        ancestors: crate::tab::TabOrigin::ancestry_from(workspace.tabs[index].origin.as_ref()),
+    }
+}
+
+fn first_pane_uuids(workspace: &Workspace, ctx: &AppContext) -> Vec<PaneUuid> {
+    workspace
+        .tabs
+        .iter()
+        .map(|tab| tab.pane_group.as_ref(ctx).terminal_pane_uuids()[0].clone())
+        .collect()
+}
+
+fn tab_ids(workspace: &Workspace) -> Vec<EntityId> {
+    workspace
+        .tabs
+        .iter()
+        .map(|tab| tab.pane_group.id())
+        .collect()
+}
+
+fn append_new_tabs(app: &mut App) {
+    TabSettings::handle(app).update(app, |settings, ctx| {
+        settings
+            .new_tab_placement
+            .set_value(NewTabPlacement::AfterAllTabs, ctx)
+            .unwrap();
+    });
+}
+
+#[test]
+fn fork_of_a_fork_lands_under_its_own_source() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+        workspace.update(&mut app, |workspace, ctx| {
+            let source = fork_of(workspace, 0, ctx);
+            workspace.launch_command_in_new_tab("true".into(), None, Some(source.clone()), ctx);
+            workspace.launch_command_in_new_tab("true".into(), None, Some(source), ctx);
+            // Forking the first fork nests under it, ahead of its later sibling.
+            let first_fork = fork_of(workspace, 1, ctx);
+            workspace.launch_command_in_new_tab("true".into(), None, Some(first_fork.clone()), ctx);
+            assert_eq!(workspace.active_tab_index(), 2);
+            assert_eq!(workspace.tabs[2].origin.as_ref(), Some(&first_fork));
+            assert_eq!(workspace.tab_lineage_depths(ctx), [0, 1, 2, 1]);
+        });
+    });
+}
+
+#[test]
+fn moving_a_source_carries_its_forks_and_forks_stay_inside_it() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        append_new_tabs(&mut app);
+        let workspace = mock_workspace(&mut app);
+        workspace.update(&mut app, |workspace, ctx| {
+            let source = fork_of(workspace, 0, ctx);
+            workspace.launch_command_in_new_tab("true".into(), None, Some(source), ctx);
+            let child = fork_of(workspace, 1, ctx);
+            workspace.launch_command_in_new_tab("true".into(), None, Some(child), ctx);
+            workspace.add_terminal_tab(false, ctx);
+            let ids = tab_ids(workspace);
+            assert_eq!(workspace.tab_lineage_depths(ctx), [0, 1, 2, 0]);
+
+            // A fork cannot be moved above its source or out past the family.
+            assert!(!workspace.can_move_tab(1, TabMovement::Left, ctx));
+            assert!(!workspace.can_move_tab(1, TabMovement::Right, ctx));
+            assert!(!workspace.can_move_tab(2, TabMovement::Right, ctx));
+
+            // The source moves with its whole subtree.
+            workspace.handle_action(&WorkspaceAction::MoveTabRight(0), ctx);
+            assert_eq!(tab_ids(workspace), [ids[3], ids[0], ids[1], ids[2]]);
+            assert_eq!(workspace.tab_lineage_depths(ctx), [0, 0, 1, 2]);
+
+            // An unrelated tab hops the whole family instead of landing inside it.
+            workspace.handle_action(&WorkspaceAction::MoveTabRight(0), ctx);
+            assert_eq!(tab_ids(workspace), ids);
+            assert_eq!(workspace.tab_lineage_depths(ctx), [0, 1, 2, 0]);
+        });
+    });
+}
+
+#[test]
+fn new_tab_after_the_current_tab_lands_after_its_forks() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        TabSettings::handle(&app).update(&mut app, |settings, ctx| {
+            settings
+                .new_tab_placement
+                .set_value(NewTabPlacement::AfterCurrentTab, ctx)
+                .unwrap();
+        });
+        let workspace = mock_workspace(&mut app);
+        workspace.update(&mut app, |workspace, ctx| {
+            let source = fork_of(workspace, 0, ctx);
+            workspace.launch_command_in_new_tab("true".into(), None, Some(source), ctx);
+            workspace.set_active_tab_index(0, ctx);
+            workspace.add_terminal_tab(false, ctx);
+            assert_eq!(workspace.active_tab_index(), 2);
+            assert_eq!(workspace.tab_lineage_depths(ctx), [0, 1, 0]);
+        });
+    });
+}
+
+#[test]
+fn moving_a_source_into_and_out_of_a_section_takes_its_forks() {
+    let _grouped_tabs_guard = FeatureFlag::GroupedTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        append_new_tabs(&mut app);
+        let workspace = mock_workspace(&mut app);
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.add_terminal_tab(false, ctx);
+            let source = fork_of(workspace, 1, ctx);
+            workspace.launch_command_in_new_tab("true".into(), None, Some(source), ctx);
+            let group_id = workspace.create_tab_group_from_tab(0, None, ctx).unwrap();
+
+            workspace.move_tab_to_group(1, group_id, ctx);
+            assert!(workspace
                 .tabs
                 .iter()
-                .map(|tab| crate::tab::lineage::TabLineage::for_tab(tab, ctx))
-                .collect();
+                .all(|tab| tab.group_id == Some(group_id)));
+            assert_eq!(workspace.tab_lineage_depths(ctx), [0, 0, 1]);
+
+            workspace.remove_tab_from_group(1, ctx);
+            assert_eq!(workspace.tabs[0].group_id, Some(group_id));
+            assert_eq!(workspace.tabs[1].group_id, None);
+            assert_eq!(workspace.tabs[2].group_id, None);
+            assert_eq!(workspace.tab_lineage_depths(ctx), [0, 0, 1]);
+        });
+    });
+}
+
+#[test]
+fn closing_a_fork_moves_its_forks_up_and_keeps_its_siblings() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+        workspace.update(&mut app, |workspace, ctx| {
+            let source = fork_of(workspace, 0, ctx);
+            workspace.launch_command_in_new_tab("true".into(), None, Some(source.clone()), ctx);
+            workspace.launch_command_in_new_tab("true".into(), None, Some(source), ctx);
+            let grandchild = fork_of(workspace, 1, ctx);
+            workspace.launch_command_in_new_tab("true".into(), None, Some(grandchild), ctx);
+            assert_eq!(workspace.tab_lineage_depths(ctx), [0, 1, 2, 1]);
+            workspace.remove_tab_without_undo(1, ctx);
+            assert_eq!(workspace.tab_lineage_depths(ctx), [0, 1, 1]);
+        });
+    });
+}
+
+#[test]
+fn restore_puts_a_legacy_fork_of_a_fork_under_its_own_source() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+        let (snapshot, saved) = workspace.update(&mut app, |workspace, ctx| {
+            let source = fork_of(workspace, 0, ctx);
+            workspace.launch_command_in_new_tab("true".into(), None, Some(source.clone()), ctx);
+            workspace.launch_command_in_new_tab("true".into(), None, Some(source), ctx);
+            let grandchild = fork_of(workspace, 1, ctx);
+            workspace.launch_command_in_new_tab("true".into(), None, Some(grandchild), ctx);
+            // The order older builds saved: the fork of a fork after its source's sibling.
+            workspace.tabs.swap(2, 3);
+            (
+                workspace.snapshot(ctx.window_id(), false, ctx),
+                first_pane_uuids(workspace, ctx),
+            )
+        });
+        let restored = restored_workspace(&mut app, snapshot);
+        restored.read(&app, |workspace, ctx| {
             assert_eq!(
-                crate::tab::lineage::lineage_nesting(&lineage),
-                [false, false, false]
+                first_pane_uuids(workspace, ctx),
+                [
+                    saved[0].clone(),
+                    saved[1].clone(),
+                    saved[3].clone(),
+                    saved[2].clone()
+                ]
             );
+            assert_eq!(workspace.tab_lineage_depths(ctx), [0, 1, 2, 1]);
+        });
+    });
+}
+
+#[test]
+fn dragging_a_source_past_a_tab_carries_its_forks() {
+    let _vertical_tabs_guard = FeatureFlag::VerticalTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        append_new_tabs(&mut app);
+        let workspace = mock_workspace(&mut app);
+        let (window_id, ids) = workspace.update(&mut app, |workspace, ctx| {
+            workspace.vertical_tabs_panel_open = true;
+            let source = fork_of(workspace, 0, ctx);
+            workspace.launch_command_in_new_tab("true".into(), None, Some(source), ctx);
+            workspace.add_terminal_tab(false, ctx);
+            (ctx.window_id(), tab_ids(workspace))
+        });
+        let mut presenter = warpui::Presenter::new(window_id);
+        app.update(|ctx| {
+            presenter.invalidate(
+                warpui::WindowInvalidation {
+                    updated: std::collections::HashSet::from([workspace.id()]),
+                    ..Default::default()
+                },
+                ctx,
+            );
+            presenter.build_scene(vec2f(1200., 800.), 1., None, ctx);
+        });
+        workspace.update(&mut app, |workspace, ctx| {
+            let unrelated = ctx
+                .element_position_by_id(tab_position_id(2))
+                .expect("the unrelated tab must be laid out");
+            // Past the unrelated tab's midpoint on the active axis.
+            let past = if uses_vertical_tabs() {
+                vec2f(0., unrelated.height() * 0.75)
+            } else {
+                vec2f(unrelated.width() * 0.75, 0.)
+            };
+            let drag = RectF::new(unrelated.origin() + past, vec2f(40., 16.));
+            workspace.tabs[0]
+                .draggable_state
+                .set_dragging(drag.center(), vec2f(-20., -8.));
+            workspace.on_tab_drag(0, drag, ctx);
+            assert_eq!(tab_ids(workspace), [ids[2], ids[0], ids[1]]);
+            assert_eq!(workspace.tab_lineage_depths(ctx), [0, 0, 1]);
         });
     });
 }
@@ -7123,6 +7354,7 @@ fn forked_tab_is_named_by_its_first_prompt_and_can_be_renamed() {
                         kind: TabOriginKind::Fork,
                         parent_pane_uuid,
                         parent_title: "Parent".to_owned(),
+                        ancestors: Vec::new(),
                     }),
                     ctx,
                 )

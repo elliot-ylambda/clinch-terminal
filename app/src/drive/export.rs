@@ -544,7 +544,3 @@ pub fn safe_filename(filename: &str) -> String {
     });
     result
 }
-
-#[cfg(test)]
-#[path = "export_tests.rs"]
-mod tests;

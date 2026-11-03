@@ -1,10 +1,10 @@
 use instant::Instant;
 use markdown_parser::{FormattedText, FormattedTextFragment, FormattedTextLine};
 use warp_core::features::FeatureFlag;
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::elements::{
     Border, CacheOption, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Element,
     Flex, FormattedTextElement, HighlightedHyperlink, Icon, Image, MouseStateHandle, ParentElement,
-    Radius,
 };
 use warpui::fonts::Weight;
 use warpui::ui_components::components::{UiComponent, UiComponentStyles};
@@ -263,7 +263,7 @@ fn render_special_changelog_header(
             Border::all(1.0)
                 .with_border_fill::<Fill>(appearance.theme().terminal_colors().normal.red.into()),
         )
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .finish(),
     )
     .with_margin_top(12.)

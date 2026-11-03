@@ -7,6 +7,7 @@ use chrono::{DateTime, Local, Utc};
 #[cfg(feature = "local_fs")]
 use clinch_companion_protocol::{DeviceId, DevicePlatform, PairingClaimId};
 use warp_core::channel::ChannelState;
+use warp_core::ui::tokens::{RADIUS_LG, RADIUS_MD, RADIUS_SM};
 #[cfg(feature = "local_fs")]
 use warpui::clipboard::ClipboardContent;
 use warpui::color::ColorU;
@@ -32,11 +33,13 @@ use crate::features::FeatureFlag;
 use crate::remote_control::{RemoteControlService, RemoteControlStatus, RemoteControlViewState};
 use crate::report_if_error;
 use crate::settings::{
-    AutoCreateWorktreesForNewTabs, CliAgentUsageSettings, ClinchAutomaticUpdateCheck,
-    ClinchSettings, LocalControlMode, LocalControlSettings, ShowCliAgentPlanLimits,
+    AutoCreateWorktreesForNewTabs, CliAgentAutoContinueOnLimitReset, CliAgentUsageSettings,
+    ClinchAutomaticUpdateCheck, ClinchSettings, LocalControlMode, LocalControlSettings,
+    ShowCliAgentPlanLimits,
 };
 use crate::terminal::session_settings::{NotificationsSettings, SessionSettings};
 use crate::ui_components::icons::Icon;
+use crate::workspace::tab_settings::TabSettings;
 
 const TAILSCALE_MAC_DOWNLOAD_URL: &str = "https://tailscale.com/download/mac";
 const TAILSCALE_IOS_DOWNLOAD_URL: &str = "https://tailscale.com/download/ios";
@@ -116,8 +119,10 @@ pub enum ClinchSettingsPageAction {
     ToggleComputerUsePermissionsHelp,
     SessionCapture,
     AgentStatusOnTabs,
+    ToggleTabDetailsCard,
     AutoCreateWorktreesForNewTabs,
     CliAgentPlanLimits,
+    CliAgentAutoContinue,
     AutomaticUpdateCheck,
     #[cfg(feature = "local_fs")]
     RemoteControlToggle,
@@ -178,6 +183,7 @@ impl ClinchSettingsPageView {
         let agent_widgets: Vec<Box<dyn SettingsWidget<View = Self>>> = vec![
             Box::new(SessionCaptureWidget::default()),
             Box::new(AgentStatusBadgesWidget::default()),
+            Box::new(TabDetailsCardWidget::default()),
         ];
         let mut project_widgets: Vec<Box<dyn SettingsWidget<View = Self>>> = vec![];
         if ClinchSettings::as_ref(ctx)
@@ -187,6 +193,12 @@ impl ClinchSettingsPageView {
             project_widgets.push(Box::new(AutoCreateWorktreesWidget::default()));
         }
         let mut usage_widgets: Vec<Box<dyn SettingsWidget<View = Self>>> = vec![];
+        if CliAgentUsageSettings::as_ref(ctx)
+            .auto_continue_on_limit_reset
+            .is_supported_on_current_platform()
+        {
+            usage_widgets.push(Box::new(CliAgentAutoContinueWidget::default()));
+        }
         if CliAgentUsageSettings::as_ref(ctx)
             .show_plan_limits
             .is_supported_on_current_platform()
@@ -237,7 +249,7 @@ impl ClinchSettingsPageView {
         }
 
         Self {
-            page: PageType::new_categorized(categories, Some("Clinch Settings")),
+            page: PageType::new_categorized(categories, Some("General")),
             local_only_icon_tooltip_states: RefCell::new(HashMap::new()),
             #[cfg(target_os = "macos")]
             session_capture_enabled: crate::agent_resume::capture_layer_enabled(),
@@ -350,6 +362,14 @@ impl TypedActionView for ClinchSettingsPageView {
                     ctx.notify();
                 }
             }
+            ClinchSettingsPageAction::ToggleTabDetailsCard => {
+                TabSettings::handle(ctx).update(ctx, |settings, ctx| {
+                    report_if_error!(settings
+                        .vertical_tabs_show_details_on_hover
+                        .toggle_and_save_value(ctx));
+                });
+                ctx.notify();
+            }
             ClinchSettingsPageAction::AgentStatusOnTabs => {
                 let current = SessionSettings::as_ref(ctx).notifications.value().clone();
                 let next = NotificationsSettings {
@@ -372,6 +392,14 @@ impl TypedActionView for ClinchSettingsPageView {
             ClinchSettingsPageAction::CliAgentPlanLimits => {
                 CliAgentUsageSettings::handle(ctx).update(ctx, |settings, ctx| {
                     report_if_error!(settings.show_plan_limits.toggle_and_save_value(ctx));
+                });
+                ctx.notify();
+            }
+            ClinchSettingsPageAction::CliAgentAutoContinue => {
+                CliAgentUsageSettings::handle(ctx).update(ctx, |settings, ctx| {
+                    report_if_error!(settings
+                        .auto_continue_on_limit_reset
+                        .toggle_and_save_value(ctx));
                 });
                 ctx.notify();
             }
@@ -721,7 +749,7 @@ impl RemoteControlSetupWidget {
             } else {
                 Border::all(1.).with_border_fill(theme.outline())
             })
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(9.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_LG))
             .with_uniform_padding(16.)
             .with_margin_top(4.)
             .with_margin_bottom(12.)
@@ -775,7 +803,7 @@ impl RemoteControlSetupWidget {
         )
         .with_background(theme.surface_1())
         .with_border(Border::all(1.).with_border_fill(theme.ui_error_color()))
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .with_uniform_padding(10.)
         .with_margin_bottom(12.)
         .finish()
@@ -823,7 +851,7 @@ impl RemoteControlSetupWidget {
                     Container::new(Self::render_qr_matrix(&matrix))
                         .with_background(ColorU::white())
                         .with_uniform_padding(10.)
-                        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+                        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                         .finish(),
                 )
                 .with_child(
@@ -856,7 +884,7 @@ impl RemoteControlSetupWidget {
                 .finish(),
             )
             .with_background(theme.surface_1())
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(7.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .with_padding_top(8.)
             .with_padding_bottom(8.)
             .with_padding_left(14.)
@@ -960,7 +988,7 @@ impl RemoteControlSetupWidget {
                     } else {
                         theme.nonactive_ui_text_color().into()
                     })
-                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                    .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                     .finish(),
             )
             .with_width(8.)
@@ -1025,7 +1053,7 @@ impl RemoteControlSetupWidget {
                         .finish(),
                 )
                 .with_border(Border::all(1.).with_border_fill(theme.outline()))
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                 .with_uniform_padding(10.)
                 .with_margin_bottom(8.)
                 .finish(),
@@ -1717,6 +1745,51 @@ impl SettingsWidget for AgentStatusBadgesWidget {
 }
 
 #[derive(Default)]
+struct TabDetailsCardWidget {
+    switch_state: SwitchStateHandle,
+}
+
+impl SettingsWidget for TabDetailsCardWidget {
+    type View = ClinchSettingsPageView;
+
+    fn search_terms(&self) -> &str {
+        "clinch sidebar vertical tabs hover details card branch folder pull request prompt"
+    }
+
+    fn render(
+        &self,
+        _view: &Self::View,
+        appearance: &Appearance,
+        app: &AppContext,
+    ) -> Box<dyn Element> {
+        let enabled = *TabSettings::as_ref(app)
+            .vertical_tabs_show_details_on_hover
+            .value();
+        render_body_item::<ClinchSettingsPageAction>(
+            "Show tab details on hover".into(),
+            None,
+            LocalOnlyIconState::Hidden,
+            ToggleState::Enabled,
+            appearance,
+            appearance
+                .ui_builder()
+                .switch(self.switch_state.clone())
+                .check(enabled)
+                .build()
+                .on_click(|ctx, _, _| {
+                    ctx.dispatch_typed_action(ClinchSettingsPageAction::ToggleTabDetailsCard);
+                })
+                .finish(),
+            Some(
+                "Pausing on a tab in the sidebar shows its status, branch, folder, pull request \
+                 and last prompt."
+                    .into(),
+            ),
+        )
+    }
+}
+
+#[derive(Default)]
 struct AutoCreateWorktreesWidget {
     switch_state: SwitchStateHandle,
 }
@@ -1861,6 +1934,55 @@ impl SettingsWidget for CliAgentPlanLimitsWidget {
                 "Show live rate-limit gauges in the tab-bar usage widget. When enabled, Clinch \
                  reads Claude Code's OAuth token from the macOS Keychain and queries Anthropic's \
                  usage endpoint. This is off by default."
+                    .into(),
+            ),
+        )
+    }
+}
+
+#[derive(Default)]
+struct CliAgentAutoContinueWidget {
+    switch_state: SwitchStateHandle,
+}
+
+impl SettingsWidget for CliAgentAutoContinueWidget {
+    type View = ClinchSettingsPageView;
+
+    fn search_terms(&self) -> &str {
+        "clinch claude code codex auto continue rate limit usage limit reset resume"
+    }
+
+    fn render(
+        &self,
+        view: &Self::View,
+        appearance: &Appearance,
+        app: &AppContext,
+    ) -> Box<dyn Element> {
+        let enabled = *CliAgentUsageSettings::as_ref(app).auto_continue_on_limit_reset;
+        render_body_item::<ClinchSettingsPageAction>(
+            "Continue agents when their usage limit resets".into(),
+            None,
+            LocalOnlyIconState::for_setting(
+                CliAgentAutoContinueOnLimitReset::storage_key(),
+                CliAgentAutoContinueOnLimitReset::sync_to_cloud(),
+                &mut view.local_only_icon_tooltip_states.borrow_mut(),
+                app,
+            ),
+            ToggleState::Enabled,
+            appearance,
+            appearance
+                .ui_builder()
+                .switch(self.switch_state.clone())
+                .check(enabled)
+                .build()
+                .on_click(|ctx, _, _| {
+                    ctx.dispatch_typed_action(ClinchSettingsPageAction::CliAgentAutoContinue);
+                })
+                .finish(),
+            Some(
+                "When a Claude Code or Codex session stops at its usage limit, send \"Continue\" \
+                 once the limit resets. Typing in the pane cancels it, and each session's footer \
+                 toggle overrides this setting."
                     .into(),
             ),
         )

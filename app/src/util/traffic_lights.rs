@@ -337,7 +337,7 @@ impl TrafficLightData {
         let mut maximize_button_icon = ConstrainedBox::new(
             Rect::new()
                 .with_border(Border::all(1.).with_border_color(fg_color))
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(2.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                 .finish(),
         )
         .with_width(10.)
@@ -364,7 +364,7 @@ impl TrafficLightData {
                                 .with_sides(true, false, false, true)
                                 .with_border_color(fg_color),
                         )
-                        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(2.)))
+                        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                         .finish(),
                 )
                 .with_width(10.)

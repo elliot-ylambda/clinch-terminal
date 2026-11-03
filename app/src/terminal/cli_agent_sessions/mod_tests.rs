@@ -91,37 +91,62 @@ fn parses_structured_usage_limit_stop_reason() {
     let event = parse_event(Some("warp://cli-agent"), body).unwrap();
     assert_eq!(
         event.payload.stop_reason,
-        Some(CLIAgentStopReason::UsageLimit)
+        Some(CLIAgentStopReason::UsageLimit { stated_reset: None })
     );
 }
 
+/// Real payloads: the bundled Claude plugin's StopFailure hook body as logged
+/// by Clinch (Claude Code 2.1.305-2.1.310, `error: "rate_limit"`).
 #[test]
-fn parses_claude_stop_failure_as_a_terminal_usage_limit_event() {
-    let body = r#"{"v":1,"agent":"claude","event":"stop_failure","session_id":"abc","stop_reason":"usage_limit","response":"API Error: Rate limit reached"}"#;
+fn claude_stop_failure_carries_the_reset_stated_in_the_limit_message() {
+    for response in [
+        "You've hit your session limit · resets 6:50pm (America/Los_Angeles)",
+        "You've hit your weekly limit · resets Oct 28 at 4pm (America/Los_Angeles)",
+    ] {
+        let body = format!(
+            r#"{{"v":1,"agent":"claude","event":"stop_failure","session_id":"abc","stop_reason":"usage_limit","response":"{response}","summary":""}}"#
+        );
+        let event = parse_event(Some("warp://cli-agent"), &body).unwrap();
+        assert_eq!(event.event, CLIAgentEventType::StopFailure);
+        let Some(CLIAgentStopReason::UsageLimit {
+            stated_reset: Some(reset),
+        }) = event.payload.stop_reason
+        else {
+            panic!("expected a usage-limit stop with a stated reset for {response}");
+        };
+        assert!(reset > chrono::Utc::now());
+    }
+
+    // A spend limit states no reset; it is still causal but cannot schedule.
+    let body = r#"{"v":1,"agent":"claude","event":"stop_failure","session_id":"abc","stop_reason":"usage_limit","response":"You've hit your monthly spend limit · raise it at claude.ai/settings/usage"}"#;
     let event = parse_event(Some("warp://cli-agent"), body).unwrap();
-    assert_eq!(event.event, CLIAgentEventType::StopFailure);
     assert_eq!(
         event.payload.stop_reason,
-        Some(CLIAgentStopReason::UsageLimit)
+        Some(CLIAgentStopReason::UsageLimit { stated_reset: None })
     );
 }
 
 #[test]
-fn infers_only_provider_specific_hard_limit_messages_for_legacy_stops() {
-    for (agent, response) in [
-        ("claude", "You've hit your weekly limit"),
-        (
-            "codex",
-            "Quota exceeded. Check your plan and billing details.",
-        ),
-    ] {
-        let body = format!(r#"{{"v":1,"agent":"{agent}","event":"stop","response":"{response}"}}"#);
-        let event = parse_event(Some("warp://cli-agent"), &body).unwrap();
-        assert_eq!(
-            event.payload.stop_reason,
-            Some(CLIAgentStopReason::UsageLimit)
-        );
-    }
+fn infers_only_claude_hard_limit_messages_for_legacy_stops() {
+    let body =
+        r#"{"v":1,"agent":"claude","event":"stop","response":"You've hit your weekly limit"}"#;
+    let event = parse_event(Some("warp://cli-agent"), body).unwrap();
+    assert_eq!(
+        event.payload.stop_reason,
+        Some(CLIAgentStopReason::UsageLimit { stated_reset: None })
+    );
+
+    // Codex reports limits only in its rollout (see
+    // `codex_rollout_usage_limit_stop_closes_the_in_flight_turn`).
+    let codex =
+        r#"{"v":1,"agent":"codex","event":"stop","response":"You\u2019ve hit your usage limit."}"#;
+    assert_eq!(
+        parse_event(Some("warp://cli-agent"), codex)
+            .unwrap()
+            .payload
+            .stop_reason,
+        None
+    );
 
     let normal = parse_event(
         Some("warp://cli-agent"),
@@ -2183,4 +2208,48 @@ fn fork_title_comes_from_its_first_own_prompt() {
         session.title_for_tab(false, Some("Agent title")).as_deref(),
         Some("Agent title")
     );
+}
+
+/// Codex 0.164-0.166 runs no hook when a turn ends at the usage limit; the
+/// rollout's `task_complete` error (surfaced by the usage scan) is the signal.
+#[test]
+fn codex_rollout_usage_limit_stop_closes_the_in_flight_turn() {
+    App::test((), |mut app| async move {
+        let sessions = app.add_singleton_model(|_| CLIAgentSessionsModel::new());
+        let terminal_view_id = EntityId::new();
+        let thread_id = "01a18a29-73ec-7262-a0d6-c5d8272c31af";
+        let mut session = idle_test_session(CLIAgent::Codex);
+        session.session_context.session_id = Some(thread_id.to_owned());
+        session.session_context.turn_started_at =
+            Some(chrono::Utc::now() - chrono::Duration::seconds(5));
+        sessions.update(&mut app, |model, ctx| {
+            model.set_session(terminal_view_id, session, ctx);
+        });
+
+        // A stop recorded before this turn started belongs to an earlier turn.
+        let stale = std::collections::HashMap::from([(
+            thread_id.to_owned(),
+            chrono::Utc::now() - chrono::Duration::minutes(10),
+        )]);
+        sessions.update(&mut app, |model, ctx| {
+            model.apply_codex_usage_limit_stops(&stale, ctx);
+        });
+        sessions.read(&app, |model, _| {
+            let session = model.session(terminal_view_id).unwrap();
+            assert!(matches!(session.status, CLIAgentSessionStatus::InProgress));
+        });
+
+        let current = std::collections::HashMap::from([(thread_id.to_owned(), chrono::Utc::now())]);
+        sessions.update(&mut app, |model, ctx| {
+            model.apply_codex_usage_limit_stops(&current, ctx);
+        });
+        sessions.read(&app, |model, _| {
+            let session = model.session(terminal_view_id).unwrap();
+            assert!(matches!(session.status, CLIAgentSessionStatus::Success));
+            assert_eq!(
+                session.session_context.stop_reason,
+                Some(CLIAgentStopReason::UsageLimit { stated_reset: None })
+            );
+        });
+    });
 }

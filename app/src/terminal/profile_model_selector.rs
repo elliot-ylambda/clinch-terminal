@@ -68,7 +68,7 @@ const MENU_WIDTH: f32 = 280.;
 const NEW_MODEL_CHOICES_POPUP_DELAY: Duration = Duration::from_millis(500);
 const BLURRED_OPACITY: Opacity = 50;
 const SEPARATOR_WIDTH: f32 = 1.0;
-const CORNER_RADIUS: f32 = 4.0;
+const CORNER_RADIUS: f32 = 6.;
 const BORDER_WIDTH: f32 = 1.0;
 /// Inner rounded corners are 1px smaller than the outer border radius
 const INNER_CORNER_RADIUS: f32 = CORNER_RADIUS - BORDER_WIDTH;

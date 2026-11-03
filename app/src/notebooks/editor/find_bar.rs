@@ -4,13 +4,14 @@ use std::time::Duration;
 use async_channel::Sender;
 use pathfinder_geometry::vector::vec2f;
 use warp_core::r#async::debounce;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warp_editor::render::model::{AutoScrollMode, Decoration};
 use warp_editor::search::{SearchEvent, Searcher};
 use warpui::accessibility::{AccessibilityContent, ActionAccessibilityContent, WarpA11yRole};
 use warpui::elements::{
     Border, ChildAnchor, Clipped, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment,
     Empty, Flex, MouseStateHandle, OffsetPositioning, ParentElement, PositionedElementAnchor,
-    PositionedElementOffsetBounds, Radius, Rect, Shrinkable, Stack,
+    PositionedElementOffsetBounds, Rect, Shrinkable, Stack,
 };
 use warpui::platform::Cursor;
 use warpui::presenter::ChildView;
@@ -328,7 +329,7 @@ impl FindBar {
         UiComponentStyles {
             width: Some(size),
             height: Some(size),
-            border_radius: Some(CornerRadius::with_all(Radius::Pixels(4.))),
+            border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
             border_width: Some(1.),
             padding: Some(Coords::uniform(7.)),
             font_size: Some(appearance.ui_font_size()),
@@ -444,7 +445,7 @@ impl View for FindBar {
         )
         .with_padding_right(14.)
         .with_background(theme.surface_2())
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .with_border(Border::all(1.).with_border_fill(theme.outline()))
         .finish();
 

@@ -35,7 +35,7 @@ define_settings_group!(BlockListSettings, settings: [
    }
    show_block_dividers: ShowBlockDividers {
        type: bool,
-       default: true,
+       default: false,
        supported_platforms: SupportedPlatforms::ALL,
        sync_to_cloud: SyncToCloud::Globally(RespectUserSyncSetting::Yes),
        private: false,

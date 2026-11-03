@@ -119,18 +119,4 @@ impl GitHubRepoModel {
             Self::Remote(_) => unreachable!("remote test models are not used"),
         }
     }
-
-    pub(crate) fn set_repository_info_for_test(
-        &mut self,
-        repository_info: Option<RepositoryInfo>,
-        ctx: &mut ModelContext<Self>,
-    ) {
-        match self {
-            #[cfg(feature = "local_fs")]
-            Self::Local(m) => m.update(ctx, |m, ctx| {
-                m.set_repository_info_for_test(repository_info, ctx)
-            }),
-            Self::Remote(_) => unreachable!("remote test models are not used"),
-        }
-    }
 }

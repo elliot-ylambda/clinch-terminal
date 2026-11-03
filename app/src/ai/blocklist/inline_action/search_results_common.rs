@@ -1,7 +1,8 @@
 use warp_core::ui::appearance::Appearance;
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::elements::{
     ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Element, Flex, MainAxisAlignment,
-    MainAxisSize, MouseStateHandle, ParentElement, Radius, Shrinkable, Text,
+    MainAxisSize, MouseStateHandle, ParentElement, Shrinkable, Text,
 };
 use warpui::platform::Cursor;
 use warpui::{AppContext, EventContext, SingletonEntity};
@@ -89,9 +90,9 @@ pub fn render_search_results_header(
         .with_vertical_padding(INLINE_ACTION_HEADER_VERTICAL_PADDING)
         .with_background(header_background)
         .with_corner_radius(if is_expanded {
-            CornerRadius::with_top(Radius::Pixels(8.))
+            CornerRadius::with_top(RADIUS_MD)
         } else {
-            CornerRadius::with_all(Radius::Pixels(8.))
+            CornerRadius::with_all(RADIUS_MD)
         })
         .finish();
 
@@ -109,7 +110,7 @@ pub fn render_results_body_container(body: Box<dyn Element>, app: &AppContext) -
         .with_background(appearance.theme().surface_1())
         .with_horizontal_padding(INLINE_ACTION_HORIZONTAL_PADDING)
         .with_vertical_padding(INLINE_ACTION_HEADER_VERTICAL_PADDING)
-        .with_corner_radius(CornerRadius::with_bottom(Radius::Pixels(8.)))
+        .with_corner_radius(CornerRadius::with_bottom(RADIUS_MD))
         .finish()
 }
 
@@ -149,7 +150,7 @@ pub fn render_loading_header(
         .with_horizontal_padding(INLINE_ACTION_HORIZONTAL_PADDING)
         .with_vertical_padding(INLINE_ACTION_HEADER_VERTICAL_PADDING)
         .with_background(header_background)
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .finish()
 }
 

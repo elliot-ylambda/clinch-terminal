@@ -6,11 +6,12 @@ use warp_core::features::FeatureFlag;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::color::blend::Blend as _;
 use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_core::ui::Icon;
 use warpui::elements::{
     ChildAnchor, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, DropShadow, Expanded,
     Flex, Hoverable, MouseStateHandle, OffsetPositioning, ParentAnchor, ParentElement as _,
-    ParentOffsetBounds, Radius, Stack,
+    ParentOffsetBounds, Stack,
 };
 use warpui::fonts::Weight;
 use warpui::keymap::EditableBinding;
@@ -128,7 +129,7 @@ impl ProjectButtons {
                         .finish(),
                 )
                 .with_border(theme.outline().into_solid())
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                 .with_drop_shadow(
                     DropShadow::new_with_standard_offset_and_spread(ColorU::new(255, 143, 253, 15))
                         .with_offset(Vector2F::zero()),

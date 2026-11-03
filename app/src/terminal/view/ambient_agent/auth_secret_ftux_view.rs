@@ -51,7 +51,7 @@ const BUTTON_PADDING: f32 = 8.;
 
 const FIELD_EDITOR_PADDING: f32 = 8.;
 
-const CORNER_RADIUS: f32 = 4.;
+const CORNER_RADIUS: f32 = 6.;
 
 const FIELD_EDITOR_MIN_HEIGHT: f32 = 32.;
 

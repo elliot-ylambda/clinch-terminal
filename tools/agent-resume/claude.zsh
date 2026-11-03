@@ -278,6 +278,11 @@ clinch_agent_resume_bridge_id() {
 clinch_agent_resume_launch() {
   local agent="$1" id="$2"
   shift 2
+  # The restore flags arrive as a prefix on this call. Read them once and keep them out of the
+  # agent's environment: otherwise every shell the restored agent opens inherits them, and a
+  # restore started from inside that agent would wrongly refuse to start fresh.
+  local restore_exact="${CLINCH_AGENT_RESTORE_EXACT:-}" restore_fresh="${CLINCH_AGENT_RESTORE_FRESH:-}"
+  unset CLINCH_AGENT_RESTORE_EXACT CLINCH_AGENT_RESTORE_FRESH
   local bridge=""
   [[ "$agent" == claude ]] && bridge="$(clinch_agent_resume_bridge_id)"
   if clinch_agent_resume_resumable "$agent" "$id"; then
@@ -297,14 +302,14 @@ clinch_agent_resume_launch() {
     fi
     echo "clinch: teleport failed -- falling back (cloud copy: https://claude.ai/code/$bridge)." >&2
   fi
-  if [[ "${CLINCH_AGENT_RESTORE_EXACT:-}" == 1 ]]; then
+  if [[ "$restore_exact" == 1 ]]; then
     print -u2 -- "clinch: saved $agent conversation $id is unavailable; restoration stopped without substituting another session."
     return 1
   fi
   # A coordinator restores with CLINCH_AGENT_RESTORE_FRESH: it lives in a project's primary
   # checkout, where adopting the newest session would take over another tab's conversation.
   local adopt=""
-  if [[ -z "$bridge" && "${CLINCH_AGENT_RESTORE_FRESH:-}" != 1 ]]; then
+  if [[ -z "$bridge" && "$restore_fresh" != 1 ]]; then
     adopt="$(clinch_agent_resume_fallback_id "$agent" "$PWD")" || adopt=""
   fi
   if [[ -n "$adopt" ]]; then

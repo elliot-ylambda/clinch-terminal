@@ -7,6 +7,7 @@ use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::Vector2F;
 use thiserror::Error;
 use validator::ValidateEmail;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warpui::clipboard::ClipboardContent;
 use warpui::elements::{
     Align, Border, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Element, Fill,
@@ -43,7 +44,7 @@ const INVITE_FIELD_LABEL_BOTTOM_MARGIN: f32 = 8.;
 
 const LINK_BOTTOM_MARGIN: f32 = 12.;
 const LINK_TEXT_PADDING: f32 = 10.;
-const LINK_CORNER_RADIUS: Radius = Radius::Pixels(4.);
+const LINK_CORNER_RADIUS: Radius = RADIUS_SM;
 const LINK_ERROR_TEXT: &str = "Failed to load referral code.";
 
 const BUTTON_WIDTH: f32 = 98.;
@@ -66,7 +67,7 @@ const REWARD_SECTION_VERTICAL_SPACING: f32 = 24.;
 const REFERRAL_ICON_BOX_VERTICAL_SPACING: f32 = 8.;
 const REWARD_ICON_BOX_HEIGHT: f32 = 60.;
 const REWARD_ICON_BOX_WIDTH: f32 = 80.;
-const REWARD_ICON_BORDER_CORNER_RADIUS: Radius = Radius::Pixels(8.);
+const REWARD_ICON_BORDER_CORNER_RADIUS: Radius = RADIUS_MD;
 const REWARD_ICON_BOX_DESCRIPTION_HORIZONTAL_SPACING: f32 = 12.;
 const REWARD_ICON_BOX_BORDER_WIDTH: f32 = 1.;
 
@@ -634,7 +635,7 @@ impl ReferralsWidget {
         let button_styles = UiComponentStyles {
             font_size: Some(14.),
             font_weight: Some(Weight::Semibold),
-            border_radius: Some(CornerRadius::with_all(Radius::Pixels(4.))),
+            border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
             padding: Some(Coords {
                 top: 12.,
                 bottom: 12.,

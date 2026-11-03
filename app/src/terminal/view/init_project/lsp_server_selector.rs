@@ -1,9 +1,10 @@
 use std::path::PathBuf;
 
 use lsp::supported_servers::LSPServerType;
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::elements::{
     Border, ChildView, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Expanded, Flex,
-    MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement, Radius, Shrinkable,
+    MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement, Shrinkable,
 };
 use warpui::keymap::Keystroke;
 use warpui::ui_components::button::ButtonVariant;
@@ -249,7 +250,7 @@ pub fn render_lsp_selector_block(
         .with_padding_right(INLINE_ACTION_HORIZONTAL_PADDING)
         .with_vertical_padding(12.)
         .with_background(header_background)
-        .with_corner_radius(CornerRadius::with_top(Radius::Pixels(8.)))
+        .with_corner_radius(CornerRadius::with_top(RADIUS_MD))
         .finish();
 
     step_content.add_child(header_container);
@@ -260,7 +261,7 @@ pub fn render_lsp_selector_block(
     step_content.add_child(checkboxes_container);
 
     Container::new(step_content.finish())
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .with_border(Border::all(1.).with_border_fill(appearance.theme().surface_2()))
         .with_background(appearance.theme().surface_1())
         .finish()

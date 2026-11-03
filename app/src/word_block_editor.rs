@@ -1,8 +1,9 @@
 use pathfinder_color::ColorU;
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_editor::editor::NavigationKey;
 use warpui::elements::{
     ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Flex, MainAxisAlignment,
-    MainAxisSize, MouseStateHandle, ParentElement, Radius, Wrap, WrapFill,
+    MainAxisSize, MouseStateHandle, ParentElement, Wrap, WrapFill,
 };
 use warpui::fonts::FamilyId;
 use warpui::ui_components::components::{UiComponent, UiComponentStyles};
@@ -386,7 +387,7 @@ impl View for WordBlockEditorView {
                 .with_padding_right(4.)
                 .with_horizontal_margin(3.)
                 .with_background(background_color)
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(3.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                 .finish()
         });
 
@@ -403,7 +404,7 @@ impl View for WordBlockEditorView {
                 .build()
                 .finish(),
         )
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(3.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
         .finish();
 
         if self.list_of_words.is_empty() {

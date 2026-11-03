@@ -33,7 +33,7 @@ use crate::BlocklistAIHistoryModel;
 
 pub(super) const CLOUD_MODE_V2_MAX_WIDTH: f32 = 720.;
 
-const CLOUD_MODE_V2_INPUT_RADIUS: f32 = 8.;
+const CLOUD_MODE_V2_INPUT_RADIUS: f32 = 10.;
 
 const CLOUD_MODE_V2_TOP_ROW_GAP: f32 = 10.;
 

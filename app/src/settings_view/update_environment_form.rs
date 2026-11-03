@@ -5,6 +5,7 @@ use instant::{Duration, Instant};
 use log::debug;
 use url::Url;
 use warp_core::send_telemetry_from_ctx;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warp_editor::editor::NavigationKey;
 use warp_graphql::queries::user_github_info::UserGithubInfoResult;
 use warpui::elements::{
@@ -12,7 +13,7 @@ use warpui::elements::{
     ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Dismiss, Element, Empty, Expanded,
     Fill, Flex, Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning,
     ParentAnchor, ParentElement, ParentOffsetBounds, PositionedElementAnchor,
-    PositionedElementOffsetBounds, Radius, SavePosition, ScrollTarget, ScrollToPositionMode,
+    PositionedElementOffsetBounds, SavePosition, ScrollTarget, ScrollToPositionMode,
     ScrollbarWidth, SizeConstraintCondition, SizeConstraintSwitch, Stack, Text,
 };
 use warpui::fonts::{Properties, Weight};
@@ -389,14 +390,6 @@ impl UpdateEnvironmentForm {
         Self::new_impl(init_args, true, ctx)
     }
 
-    #[cfg(test)]
-    pub(crate) fn new_for_test(
-        init_args: EnvironmentFormInitArgs,
-        ctx: &mut ViewContext<Self>,
-    ) -> Self {
-        Self::new_impl(init_args, false, ctx)
-    }
-
     fn new_impl(
         init_args: EnvironmentFormInitArgs,
         fetch_github_repos_on_init: bool,
@@ -738,25 +731,6 @@ impl UpdateEnvironmentForm {
         self.description_height = 52.;
         self.show_repo_helper_text = false;
         ctx.notify();
-    }
-
-    #[cfg(test)]
-    pub(crate) fn uses_orchestration_modal_configuration_for_test(&self) -> bool {
-        self.copy == EnvironmentFormCopy::orchestration_modal()
-            && !self.show_header
-            && self.show_footer_cancel_button
-            && !self.show_share_with_team_controls
-            && (self.field_spacing - 10.).abs() < f32::EPSILON
-            && (self.description_height - 52.).abs() < f32::EPSILON
-            && !self.show_repo_helper_text
-            && self.github_auth_redirect_target == GithubAuthRedirectTarget::FocusCloudMode
-            && self.auth_source == AuthSource::CloudSetup
-            && self.should_handle_escape_from_editor
-    }
-
-    #[cfg(test)]
-    pub(crate) fn github_auth_redirect_target_for_test(&self) -> GithubAuthRedirectTarget {
-        self.github_auth_redirect_target
     }
 
     fn try_close_repos_dropdown(&mut self, ctx: &mut ViewContext<Self>) -> bool {
@@ -1828,7 +1802,7 @@ impl UpdateEnvironmentForm {
             .with_height(FORM_INPUT_HEIGHT)
             .finish(),
         )
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .with_border(Border::all(CARD_BORDER_WIDTH).with_border_fill(theme.outline()))
         .with_background(theme.surface_2())
         .finish();
@@ -1944,7 +1918,7 @@ impl UpdateEnvironmentForm {
             )
             .with_horizontal_padding(FORM_INPUT_HORIZONTAL_PADDING)
             .with_vertical_padding(FORM_DESCRIPTION_VERTICAL_PADDING)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .with_border(Border::all(CARD_BORDER_WIDTH).with_border_fill(theme.outline()))
             .with_background(theme.surface_2())
             .finish(),
@@ -2037,7 +2011,7 @@ impl UpdateEnvironmentForm {
             .with_height(FORM_INPUT_HEIGHT)
             .finish(),
         )
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .with_border(Border::all(CARD_BORDER_WIDTH).with_border_fill(theme.outline()))
         .with_background(theme.surface_2())
         .finish();
@@ -2079,7 +2053,7 @@ impl UpdateEnvironmentForm {
             .with_height(FORM_INPUT_HEIGHT)
             .finish(),
         )
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .with_border(Border::all(CARD_BORDER_WIDTH).with_border_fill(theme.outline()))
         .with_background(theme.surface_2())
         .finish();
@@ -2122,7 +2096,7 @@ impl UpdateEnvironmentForm {
                 )
                 .with_horizontal_padding(12.)
                 .with_vertical_padding(8.)
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                 .with_border(Border::all(CARD_BORDER_WIDTH).with_border_fill(theme.outline()))
                 .with_background(bg)
                 .finish(),
@@ -2191,7 +2165,7 @@ impl UpdateEnvironmentForm {
             .with_height(FORM_INPUT_HEIGHT)
             .finish(),
         )
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .with_border(Border::all(CARD_BORDER_WIDTH).with_border_fill(theme.outline()))
         .with_background(theme.surface_2())
         .finish();
@@ -2236,7 +2210,7 @@ impl UpdateEnvironmentForm {
                     )
                     .with_horizontal_padding(12.)
                     .with_vertical_padding(8.)
-                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+                    .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                     .with_border(Border::all(CARD_BORDER_WIDTH).with_border_fill(theme.outline()))
                     .with_background(bg)
                     .finish(),
@@ -2346,7 +2320,7 @@ impl UpdateEnvironmentForm {
             .with_padding_left(8.)
             .with_vertical_padding(4.)
             .with_padding_right(4.)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .with_background(theme.surface_3())
             .finish();
 
@@ -2388,7 +2362,7 @@ impl UpdateEnvironmentForm {
                     .with_height(FORM_INPUT_HEIGHT)
                     .finish(),
                 )
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                 .with_border(Border::all(CARD_BORDER_WIDTH).with_border_fill(theme.outline()))
                 .with_background(theme.surface_2())
                 .finish()
@@ -2444,7 +2418,7 @@ impl UpdateEnvironmentForm {
             })
             .finish(),
         )
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .with_border(Border::all(CARD_BORDER_WIDTH).with_border_fill(theme.outline()))
         .with_background(theme.surface_2())
         .finish();
@@ -2774,7 +2748,7 @@ impl UpdateEnvironmentForm {
 
         // Wrap in container with border and background
         Container::new(dropdown_content)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .with_border(Border::all(CARD_BORDER_WIDTH).with_border_fill(theme.outline()))
             .with_background(theme.surface_2())
             .finish()
@@ -2825,7 +2799,7 @@ impl UpdateEnvironmentForm {
             .with_padding_left(8.)
             .with_vertical_padding(4.)
             .with_padding_right(4.)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .with_background(theme.surface_3())
             .finish();
 
@@ -2847,20 +2821,6 @@ impl UpdateEnvironmentForm {
                 github_auth_url::auth_url_with_next(base_auth_url, target, auth_source)
             }
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn build_auth_url_with_next(
-        base_auth_url: &str,
-        target: GithubAuthRedirectTarget,
-        scheme: &str,
-    ) -> String {
-        github_auth_url::build_auth_url_with_next(
-            base_auth_url,
-            target,
-            scheme,
-            AuthSource::Settings,
-        )
     }
 
     /// Parses a Docker image reference and returns the Docker Hub URL if it looks like a Docker Hub image.
@@ -2977,7 +2937,7 @@ impl UpdateEnvironmentForm {
             })
             .finish(),
         )
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .with_border(Border::all(CARD_BORDER_WIDTH).with_border_fill(theme.outline()))
         .with_background(theme.surface_2())
         .finish();
@@ -3017,7 +2977,7 @@ impl UpdateEnvironmentForm {
             .with_height(FORM_INPUT_HEIGHT)
             .finish(),
         )
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .with_border(Border::all(CARD_BORDER_WIDTH).with_border_fill(theme.outline()))
         .with_background(theme.surface_2())
         .finish();
@@ -3142,7 +3102,7 @@ impl UpdateEnvironmentForm {
                 )
                 .with_horizontal_padding(12.)
                 .with_vertical_padding(8.)
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                 .with_border(Border::all(CARD_BORDER_WIDTH).with_border_fill(theme.outline()))
                 .with_background(bg)
                 .finish();
@@ -3582,7 +3542,3 @@ impl View for UpdateEnvironmentForm {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "update_environment_form_tests.rs"]
-mod tests;

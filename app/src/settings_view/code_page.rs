@@ -18,6 +18,7 @@ use warp_core::features::FeatureFlag;
 use warp_core::report_if_error;
 use warp_core::settings::ToggleableSetting as _;
 use warp_core::ui::theme::{AnsiColorIdentifier, Fill as ThemeFill};
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_util::path::user_friendly_path;
 #[cfg(not(target_family = "wasm"))]
 use warp_util::remote_path::RemotePath;
@@ -1623,7 +1624,7 @@ impl CodePageWidget {
         Container::new(workspace_content)
             .with_uniform_padding(MAIN_SECTION_MARGIN)
             .with_background(theme.surface_1())
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .with_margin_bottom(MAIN_SECTION_MARGIN)
             .finish()
     }
@@ -2184,7 +2185,7 @@ impl CodePageWidget {
         Container::new(row.finish())
             .with_uniform_padding(12.)
             .with_background(theme.surface_2())
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .finish()
     }
 
@@ -2376,7 +2377,7 @@ impl CodePageWidget {
         Container::new(row.finish())
             .with_uniform_padding(12.)
             .with_background(theme.surface_2())
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .finish()
     }
 

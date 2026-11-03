@@ -7,7 +7,7 @@ use cli_agent_usage::ExhaustionStatus;
 #[cfg(target_os = "macos")]
 use cli_agent_usage::{LimitWindow, PlanLimits, Provider, Severity, UsageSnapshot};
 #[cfg(target_os = "macos")]
-use settings::ToggleableSetting as _;
+use settings::{Setting as _, ToggleableSetting as _};
 #[cfg(target_os = "macos")]
 use warpui::{App, EntityId, SingletonEntity};
 
@@ -187,9 +187,13 @@ fn later_provider_reset_rearms_and_invalidates_the_old_timer() {
 }
 
 #[test]
-fn due_fire_waits_when_usage_data_is_unknown_and_fires_after_reset_clears() {
+fn due_fire_waits_while_the_window_is_exhausted_without_a_reset_time() {
     let (mut pane, first) = armed_pane();
-    let rearmed = match pane.prepare_due_fire(first.generation, None, first.fire_at) {
+    let rearmed = match pane.prepare_due_fire(
+        first.generation,
+        Some(ExhaustionStatus::ResetUnknown),
+        first.fire_at,
+    ) {
         DueFireDecision::Rearmed(armed) => armed,
         other => panic!("expected a deferred fire, got {other:?}"),
     };
@@ -202,6 +206,18 @@ fn due_fire_waits_when_usage_data_is_unknown_and_fires_after_reset_clears() {
             rearmed.fire_at,
         ),
         DueFireDecision::Fire(rearmed)
+    );
+}
+
+/// Codex drops a window from its usage data once the window's reset passes
+/// and reports nothing new until the next request, which only the continue
+/// itself can make. Deferring on missing data deadlocked every Codex arm.
+#[test]
+fn due_fire_sends_when_plan_data_is_gone_after_the_armed_reset() {
+    let (mut pane, armed) = armed_pane();
+    assert_eq!(
+        pane.prepare_due_fire(armed.generation, None, armed.fire_at),
+        DueFireDecision::Fire(armed)
     );
 }
 
@@ -349,17 +365,17 @@ fn disabling_disarms_and_blocks_pending_fires() {
 }
 
 #[cfg(target_os = "macos")]
-fn set_plan_limits_enabled(app: &mut App, enabled: bool) {
-    let current =
-        CliAgentUsageSettings::handle(app).read(app, |settings, _| *settings.show_plan_limits);
+fn set_auto_continue_default(app: &mut App, enabled: bool) {
+    let current = CliAgentUsageSettings::handle(app)
+        .read(app, |settings, _| *settings.auto_continue_on_limit_reset);
     if current == enabled {
         return;
     }
     CliAgentUsageSettings::handle(app).update(app, |settings, ctx| {
         settings
-            .show_plan_limits
+            .auto_continue_on_limit_reset
             .toggle_and_save_value(ctx)
-            .expect("plan-limit test setting should toggle");
+            .expect("auto-continue test setting should toggle");
     });
 }
 
@@ -370,6 +386,7 @@ fn test_session(agent: CLIAgent) -> CLIAgentSession {
         status: CLIAgentSessionStatus::InProgress,
         session_context: CLIAgentSessionContext {
             session_id: Some("sess-1".to_owned()),
+            turn_started_at: Some(Utc::now() - Duration::minutes(1)),
             ..Default::default()
         },
         input_state: CLIAgentInputState::Closed,
@@ -395,6 +412,7 @@ fn test_session(agent: CLIAgent) -> CLIAgentSession {
     }
 }
 
+/// A provider-reported Claude limit stop with no stated reset.
 #[cfg(target_os = "macos")]
 fn stop_event(agent: CLIAgent) -> CLIAgentEvent {
     CLIAgentEvent {
@@ -406,7 +424,31 @@ fn stop_event(agent: CLIAgent) -> CLIAgentEvent {
         cwd: None,
         project: None,
         payload: CLIAgentEventPayload {
-            stop_reason: Some(CLIAgentStopReason::UsageLimit),
+            stop_reason: Some(CLIAgentStopReason::UsageLimit { stated_reset: None }),
+            ..Default::default()
+        },
+    }
+}
+
+/// The exact StopFailure body the bundled Claude plugin sends, with a real
+/// Claude Code 2.1.305 limit message whose reset is `stated_reset`.
+#[cfg(target_os = "macos")]
+fn claude_stop_failure_event(stated_reset: DateTime<Utc>) -> CLIAgentEvent {
+    CLIAgentEvent {
+        source: CLIAgentEventSource::RichPlugin,
+        v: 1,
+        agent: CLIAgent::Claude,
+        event: CLIAgentEventType::StopFailure,
+        session_id: Some("sess-1".to_owned()),
+        cwd: None,
+        project: None,
+        payload: CLIAgentEventPayload {
+            response: Some(
+                "You've hit your session limit · resets 6:50pm (America/Los_Angeles)".to_owned(),
+            ),
+            stop_reason: Some(CLIAgentStopReason::UsageLimit {
+                stated_reset: Some(stated_reset),
+            }),
             ..Default::default()
         },
     }
@@ -458,42 +500,43 @@ fn exhausted_snapshot(agent: CLIAgent, reset_at: DateTime<Utc>) -> UsageSnapshot
     plan_snapshot(agent, 100.0, reset_at)
 }
 
+/// What the usage scan produces right after a real Codex limit stop: the
+/// rollout's 100% weekly window and its `usage_limit_exceeded` turn end.
+#[cfg(target_os = "macos")]
+fn codex_limit_snapshot(reset_at: DateTime<Utc>, stopped_at: DateTime<Utc>) -> UsageSnapshot {
+    let mut snapshot = exhausted_snapshot(CLIAgent::Codex, reset_at);
+    snapshot
+        .codex
+        .usage_limit_stops
+        .insert("sess-1".to_owned(), stopped_at);
+    snapshot
+}
+
 #[test]
 #[cfg(target_os = "macos")]
-fn availability_requires_local_current_plugin_identity_and_plan_data() {
-    let reset = Utc::now() + Duration::hours(1);
-    for (agent, show_plan_limits) in [(CLIAgent::Claude, true), (CLIAgent::Codex, false)] {
+fn availability_requires_a_local_session_on_the_current_plugin_but_not_plan_data() {
+    for agent in [CLIAgent::Claude, CLIAgent::Codex] {
         let session = test_session(agent);
-        let snapshot = plan_snapshot(agent, 50.0, reset);
         assert_eq!(
-            auto_continue_availability(&session, &snapshot, show_plan_limits, false),
+            auto_continue_availability(&session, false),
             AutoContinueAvailability::Ready
         );
         assert_eq!(
-            auto_continue_availability(
-                &session,
-                &UsageSnapshot::default(),
-                show_plan_limits,
-                false,
-            ),
-            AutoContinueAvailability::WaitingForUsageData
-        );
-        assert_eq!(
-            auto_continue_availability(&session, &snapshot, show_plan_limits, true),
+            auto_continue_availability(&session, true),
             AutoContinueAvailability::Unsupported
         );
 
         let mut remote = session.clone();
         remote.remote_host = Some("host".to_owned());
         assert_eq!(
-            auto_continue_availability(&remote, &snapshot, show_plan_limits, false),
+            auto_continue_availability(&remote, false),
             AutoContinueAvailability::Unsupported
         );
 
         let mut outdated = session;
         outdated.plugin_version = Some("0.0.1".to_owned());
         assert_eq!(
-            auto_continue_availability(&outdated, &snapshot, show_plan_limits, false),
+            auto_continue_availability(&outdated, false),
             AutoContinueAvailability::Unsupported
         );
     }
@@ -512,10 +555,63 @@ fn causal_stop_can_use_a_known_reset_from_a_rounded_near_full_snapshot() {
 
 #[test]
 #[cfg(target_os = "macos")]
-fn late_usage_snapshot_arms_an_enabled_stopped_session() {
+fn sessions_are_enabled_by_default() {
     App::test((), |mut app| async move {
         initialize_settings_for_tests(&mut app);
-        set_plan_limits_enabled(&mut app, true);
+        app.add_singleton_model(|_| CliAgentUsageModel::new_for_test());
+        let sessions = app.add_singleton_model(|_| CLIAgentSessionsModel::new());
+        let auto_continue = app.add_singleton_model(AutoContinueModel::new);
+        let claude = EntityId::new();
+        let codex = EntityId::new();
+
+        sessions.update(&mut app, |model, ctx| {
+            model.set_session(claude, test_session(CLIAgent::Claude), ctx);
+            model.set_session(codex, test_session(CLIAgent::Codex), ctx);
+        });
+        auto_continue.read(&app, |model, _| {
+            assert!(model.is_enabled(claude));
+            assert!(model.is_enabled(codex));
+        });
+    });
+}
+
+/// Fresh installs keep `show_plan_limits` off (no Keychain, no network), so
+/// Claude must schedule from the reset its own limit message states.
+#[test]
+#[cfg(target_os = "macos")]
+fn claude_arms_from_the_stated_reset_without_plan_data() {
+    App::test((), |mut app| async move {
+        initialize_settings_for_tests(&mut app);
+        app.add_singleton_model(|_| CliAgentUsageModel::new_for_test());
+        let sessions = app.add_singleton_model(|_| CLIAgentSessionsModel::new());
+        let auto_continue = app.add_singleton_model(AutoContinueModel::new);
+        let terminal_view_id = EntityId::new();
+        assert!(!CliAgentUsageSettings::handle(&app)
+            .read(&app, |settings, _| *settings.show_plan_limits));
+
+        sessions.update(&mut app, |model, ctx| {
+            model.set_session(terminal_view_id, test_session(CLIAgent::Claude), ctx);
+        });
+        let reset_at = Utc::now() + Duration::hours(2);
+        sessions.update(&mut app, |model, ctx| {
+            model.update_from_event(terminal_view_id, &claude_stop_failure_event(reset_at), ctx);
+        });
+
+        auto_continue.read(&app, |model, _| {
+            assert!(model.is_armed(terminal_view_id));
+            assert_eq!(
+                model.armed_fire_at(terminal_view_id),
+                Some(reset_at + Duration::seconds(AUTO_CONTINUE_RESET_SLACK_SECS))
+            );
+        });
+    });
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn late_usage_snapshot_arms_a_stopped_session_without_a_stated_reset() {
+    App::test((), |mut app| async move {
+        initialize_settings_for_tests(&mut app);
         let usage = app.add_singleton_model(|_| CliAgentUsageModel::new_for_test());
         let sessions = app.add_singleton_model(|_| CLIAgentSessionsModel::new());
         let auto_continue = app.add_singleton_model(AutoContinueModel::new);
@@ -529,16 +625,12 @@ fn late_usage_snapshot_arms_an_enabled_stopped_session() {
         });
         sessions.update(&mut app, |model, ctx| {
             model.set_session(terminal_view_id, test_session(CLIAgent::Claude), ctx);
-        });
-        auto_continue.update(&mut app, |model, ctx| {
-            model.toggle(terminal_view_id, ctx);
-        });
-        sessions.update(&mut app, |model, ctx| {
             model.update_from_event(terminal_view_id, &stop_event(CLIAgent::Claude), ctx);
         });
         auto_continue.read(&app, |model, _| {
             assert!(model.is_enabled(terminal_view_id));
             assert!(!model.is_armed(terminal_view_id));
+            assert!(model.is_waiting_for_reset(terminal_view_id));
         });
 
         let reset_at = Utc::now() + Duration::hours(1);
@@ -561,7 +653,6 @@ fn late_usage_snapshot_arms_an_enabled_stopped_session() {
 fn normal_success_does_not_arm_even_when_the_account_is_exhausted() {
     App::test((), |mut app| async move {
         initialize_settings_for_tests(&mut app);
-        set_plan_limits_enabled(&mut app, true);
         let usage = app.add_singleton_model(|_| CliAgentUsageModel::new_for_test());
         let sessions = app.add_singleton_model(|_| CLIAgentSessionsModel::new());
         let auto_continue = app.add_singleton_model(AutoContinueModel::new);
@@ -573,13 +664,10 @@ fn normal_success_does_not_arm_even_when_the_account_is_exhausted() {
                 ctx,
             );
         });
-        sessions.update(&mut app, |model, ctx| {
-            model.set_session(terminal_view_id, test_session(CLIAgent::Claude), ctx);
-        });
-        auto_continue.update(&mut app, |model, ctx| model.toggle(terminal_view_id, ctx));
         let mut ordinary_stop = stop_event(CLIAgent::Claude);
         ordinary_stop.payload.stop_reason = None;
         sessions.update(&mut app, |model, ctx| {
+            model.set_session(terminal_view_id, test_session(CLIAgent::Claude), ctx);
             model.update_from_event(terminal_view_id, &ordinary_stop, ctx);
         });
 
@@ -592,40 +680,22 @@ fn normal_success_does_not_arm_even_when_the_account_is_exhausted() {
 
 #[test]
 #[cfg(target_os = "macos")]
-fn explicit_session_opt_in_restores_and_explicit_off_removes_it() {
+fn arm_survives_restore_and_footer_off_persists_for_that_session() {
     App::test((), |mut app| async move {
         initialize_settings_for_tests(&mut app);
-        set_plan_limits_enabled(&mut app, true);
-        let usage = app.add_singleton_model(|_| CliAgentUsageModel::new_for_test());
+        app.add_singleton_model(|_| CliAgentUsageModel::new_for_test());
         let sessions = app.add_singleton_model(|_| CLIAgentSessionsModel::new());
         let auto_continue = app.add_singleton_model(AutoContinueModel::new);
         let terminal_view_id = EntityId::new();
         let key = "claude:sess-1";
 
-        usage.update(&mut app, |model, ctx| {
-            model.update_snapshot_for_test(
-                plan_snapshot(CLIAgent::Claude, 50.0, Utc::now() + Duration::hours(1)),
-                ctx,
-            );
-        });
         sessions.update(&mut app, |model, ctx| {
             model.set_session(terminal_view_id, test_session(CLIAgent::Claude), ctx);
-        });
-        auto_continue.update(&mut app, |model, ctx| model.toggle(terminal_view_id, ctx));
-        assert!(
-            CliAgentUsageSettings::handle(&app).read(&app, |settings, _| settings
-                .auto_continue_sessions
-                .contains_key(key))
-        );
-
-        usage.update(&mut app, |model, ctx| {
-            model.update_snapshot_for_test(
-                exhausted_snapshot(CLIAgent::Claude, Utc::now() + Duration::hours(1)),
+            model.update_from_event(
+                terminal_view_id,
+                &claude_stop_failure_event(Utc::now() + Duration::hours(1)),
                 ctx,
             );
-        });
-        sessions.update(&mut app, |model, ctx| {
-            model.update_from_event(terminal_view_id, &stop_event(CLIAgent::Claude), ctx);
         });
         assert!(
             CliAgentUsageSettings::handle(&app).read(&app, |settings, _| settings
@@ -633,6 +703,7 @@ fn explicit_session_opt_in_restores_and_explicit_off_removes_it() {
                 .contains_key(key))
         );
 
+        // An app restart gives the restored pane a new session entry.
         sessions.update(&mut app, |model, ctx| {
             model.remove_session(terminal_view_id, ctx);
             model.set_session(terminal_view_id, test_session(CLIAgent::Claude), ctx);
@@ -643,87 +714,91 @@ fn explicit_session_opt_in_restores_and_explicit_off_removes_it() {
         });
 
         auto_continue.update(&mut app, |model, ctx| model.toggle(terminal_view_id, ctx));
-        assert!(
-            !CliAgentUsageSettings::handle(&app).read(&app, |settings, _| settings
-                .auto_continue_sessions
-                .contains_key(key))
-        );
-        assert!(
-            !CliAgentUsageSettings::handle(&app).read(&app, |settings, _| settings
-                .auto_continue_armed_sessions
-                .contains_key(key))
-        );
-    });
-}
-
-#[test]
-#[cfg(target_os = "macos")]
-fn disabling_plan_limits_cancels_and_disables_an_armed_pane() {
-    App::test((), |mut app| async move {
-        initialize_settings_for_tests(&mut app);
-        set_plan_limits_enabled(&mut app, true);
-        let usage = app.add_singleton_model(|_| CliAgentUsageModel::new_for_test());
-        let sessions = app.add_singleton_model(|_| CLIAgentSessionsModel::new());
-        let auto_continue = app.add_singleton_model(AutoContinueModel::new);
-        let terminal_view_id = EntityId::new();
-
-        usage.update(&mut app, |model, ctx| {
-            model.update_snapshot_for_test(
-                exhausted_snapshot(CLIAgent::Claude, Utc::now() + Duration::hours(1)),
-                ctx,
+        CliAgentUsageSettings::handle(&app).read(&app, |settings, _| {
+            assert_eq!(
+                settings.auto_continue_session_overrides.get(key),
+                Some(&false)
             );
+            assert!(!settings.auto_continue_armed_sessions.contains_key(key));
         });
+
         sessions.update(&mut app, |model, ctx| {
+            model.remove_session(terminal_view_id, ctx);
             model.set_session(terminal_view_id, test_session(CLIAgent::Claude), ctx);
         });
-        auto_continue.update(&mut app, |model, ctx| {
-            model.toggle(terminal_view_id, ctx);
-        });
-        sessions.update(&mut app, |model, ctx| {
-            model.update_from_event(terminal_view_id, &stop_event(CLIAgent::Claude), ctx);
-        });
         auto_continue.read(&app, |model, _| {
-            assert!(model.is_armed(terminal_view_id));
-        });
-
-        set_plan_limits_enabled(&mut app, false);
-
-        auto_continue.update(&mut app, |model, _ctx| {
             assert!(!model.is_enabled(terminal_view_id));
-            assert!(!model.is_armed(terminal_view_id));
-            assert!(model.armed_for_generation(terminal_view_id, 1).is_none());
         });
+
+        // Turning it back on matches the default, so no override is kept.
+        auto_continue.update(&mut app, |model, ctx| model.toggle(terminal_view_id, ctx));
+        assert!(
+            CliAgentUsageSettings::handle(&app).read(&app, |settings, _| settings
+                .auto_continue_session_overrides
+                .is_empty())
+        );
     });
 }
 
 #[test]
 #[cfg(target_os = "macos")]
-fn codex_arms_from_codex_usage_even_when_claude_plan_limits_are_disabled() {
+fn global_default_off_disables_panes_and_footer_can_opt_one_back_in() {
     App::test((), |mut app| async move {
         initialize_settings_for_tests(&mut app);
-        set_plan_limits_enabled(&mut app, false);
-        let usage = app.add_singleton_model(|_| CliAgentUsageModel::new_for_test());
+        app.add_singleton_model(|_| CliAgentUsageModel::new_for_test());
         let sessions = app.add_singleton_model(|_| CLIAgentSessionsModel::new());
         let auto_continue = app.add_singleton_model(AutoContinueModel::new);
         let terminal_view_id = EntityId::new();
 
-        usage.update(&mut app, |model, ctx| {
-            model.update_snapshot_for_test(
-                plan_snapshot(CLIAgent::Codex, 98.0, Utc::now() + Duration::hours(2)),
-                ctx,
-            );
-        });
         sessions.update(&mut app, |model, ctx| {
             model.set_session(terminal_view_id, test_session(CLIAgent::Codex), ctx);
         });
-        auto_continue.update(&mut app, |model, ctx| {
-            model.toggle(terminal_view_id, ctx);
-        });
-        sessions.update(&mut app, |model, ctx| {
-            model.update_from_event(terminal_view_id, &stop_event(CLIAgent::Codex), ctx);
+        set_auto_continue_default(&mut app, false);
+        auto_continue.read(&app, |model, _| {
+            assert!(!model.is_enabled(terminal_view_id));
         });
 
-        // An exhausted Claude window must not cross-arm a Codex pane.
+        auto_continue.update(&mut app, |model, ctx| model.toggle(terminal_view_id, ctx));
+        auto_continue.read(&app, |model, _| {
+            assert!(model.is_enabled(terminal_view_id));
+        });
+        assert_eq!(
+            CliAgentUsageSettings::handle(&app).read(&app, |settings, _| settings
+                .auto_continue_session_overrides
+                .get("codex:sess-1")
+                .copied()),
+            Some(true)
+        );
+
+        set_auto_continue_default(&mut app, true);
+        CliAgentUsageSettings::handle(&app).update(&mut app, |settings, ctx| {
+            settings
+                .auto_continue_session_overrides
+                .set_value(Default::default(), ctx)
+                .expect("clear overrides");
+        });
+        auto_continue.read(&app, |model, _| {
+            assert!(model.is_enabled(terminal_view_id));
+        });
+    });
+}
+
+/// End to end with real Codex behaviour: no hook fires at the limit; the
+/// usage scan reports the rollout's limit stop and 100% weekly window.
+#[test]
+#[cfg(target_os = "macos")]
+fn codex_arms_from_its_rollout_limit_stop() {
+    App::test((), |mut app| async move {
+        initialize_settings_for_tests(&mut app);
+        let usage = app.add_singleton_model(|_| CliAgentUsageModel::new_for_test());
+        let sessions = app.add_singleton_model(|_| CLIAgentSessionsModel::new());
+        let auto_continue = app.add_singleton_model(AutoContinueModel::new);
+        let terminal_view_id = EntityId::new();
+
+        sessions.update(&mut app, |model, ctx| {
+            model.set_session(terminal_view_id, test_session(CLIAgent::Codex), ctx);
+        });
+        // A Claude exhaustion must not cross-arm a Codex pane.
         usage.update(&mut app, |model, ctx| {
             model.update_snapshot_for_test(
                 exhausted_snapshot(CLIAgent::Claude, Utc::now() + Duration::hours(1)),
@@ -735,9 +810,14 @@ fn codex_arms_from_codex_usage_even_when_claude_plan_limits_are_disabled() {
             assert!(!model.is_armed(terminal_view_id));
         });
 
-        let reset_at = Utc::now() + Duration::hours(2);
+        let reset_at = Utc::now() + Duration::hours(30);
         usage.update(&mut app, |model, ctx| {
-            model.update_snapshot_for_test(exhausted_snapshot(CLIAgent::Codex, reset_at), ctx);
+            model.update_snapshot_for_test(codex_limit_snapshot(reset_at, Utc::now()), ctx);
+        });
+
+        sessions.read(&app, |model, _| {
+            let session = model.session(terminal_view_id).unwrap();
+            assert!(matches!(session.status, CLIAgentSessionStatus::Success));
         });
         auto_continue.read(&app, |model, _| {
             assert!(model.is_armed(terminal_view_id));
@@ -754,7 +834,6 @@ fn codex_arms_from_codex_usage_even_when_claude_plan_limits_are_disabled() {
 fn codex_osc9_fallback_without_identity_is_not_offerable() {
     App::test((), |mut app| async move {
         initialize_settings_for_tests(&mut app);
-        set_plan_limits_enabled(&mut app, false);
         let usage = app.add_singleton_model(|_| CliAgentUsageModel::new_for_test());
         let sessions = app.add_singleton_model(|_| CLIAgentSessionsModel::new());
         let auto_continue = app.add_singleton_model(AutoContinueModel::new);
@@ -780,45 +859,6 @@ fn codex_osc9_fallback_without_identity_is_not_offerable() {
         auto_continue.read(&app, |model, _| {
             assert!(!model.is_enabled(terminal_view_id));
             assert!(!model.is_armed(terminal_view_id));
-        });
-    });
-}
-
-#[test]
-#[cfg(target_os = "macos")]
-fn disabling_claude_plan_limits_does_not_cancel_an_armed_codex_pane() {
-    App::test((), |mut app| async move {
-        initialize_settings_for_tests(&mut app);
-        set_plan_limits_enabled(&mut app, true);
-        let usage = app.add_singleton_model(|_| CliAgentUsageModel::new_for_test());
-        let sessions = app.add_singleton_model(|_| CLIAgentSessionsModel::new());
-        let auto_continue = app.add_singleton_model(AutoContinueModel::new);
-        let terminal_view_id = EntityId::new();
-
-        usage.update(&mut app, |model, ctx| {
-            model.update_snapshot_for_test(
-                exhausted_snapshot(CLIAgent::Codex, Utc::now() + Duration::hours(1)),
-                ctx,
-            );
-        });
-        sessions.update(&mut app, |model, ctx| {
-            model.set_session(terminal_view_id, test_session(CLIAgent::Codex), ctx);
-        });
-        auto_continue.update(&mut app, |model, ctx| {
-            model.toggle(terminal_view_id, ctx);
-        });
-        sessions.update(&mut app, |model, ctx| {
-            model.update_from_event(terminal_view_id, &stop_event(CLIAgent::Codex), ctx);
-        });
-        auto_continue.read(&app, |model, _| {
-            assert!(model.is_armed(terminal_view_id));
-        });
-
-        set_plan_limits_enabled(&mut app, false);
-
-        auto_continue.read(&app, |model, _| {
-            assert!(model.is_enabled(terminal_view_id));
-            assert!(model.is_armed(terminal_view_id));
         });
     });
 }

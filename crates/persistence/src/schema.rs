@@ -375,6 +375,8 @@ diesel::table! {
         pinned -> Bool,
         origin -> Nullable<Text>,
         coordinator -> Bool,
+        auto_coordinate -> Nullable<Bool>,
+        custom_title_auto -> Bool,
     }
 }
 

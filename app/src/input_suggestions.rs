@@ -14,13 +14,14 @@ use warp_completer::completer::{
 };
 use warp_core::features::FeatureFlag;
 use warp_core::ui::theme::AnsiColorIdentifier;
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::accessibility::{AccessibilityContent, WarpA11yRole};
 use warpui::elements::{
     Align, AnchorPair, Border, ChildAnchor, ConstrainedBox, Container, CornerRadius,
     CrossAxisAlignment, DispatchEventResult, DropShadow, Element, Empty, EventHandler, Expanded,
     Flex, Highlight, Hoverable, Icon, MouseStateHandle, OffsetPositioning, OffsetType,
     ParentAnchor, ParentElement, ParentOffsetBounds, PositionedElementOffsetBounds,
-    PositioningAxis, Radius, SavePosition, ScrollStateHandle, Scrollable, ScrollableElement,
+    PositioningAxis, SavePosition, ScrollStateHandle, Scrollable, ScrollableElement,
     ScrollbarWidth, Shrinkable, SizeConstraintCondition, SizeConstraintSwitch, Stack, Text,
     UniformList, UniformListState, XAxisAnchor, YAxisAnchor,
 };
@@ -975,7 +976,7 @@ impl InputSuggestions {
                             .with_uniform_padding(DETAILS_PANEL_PADDING)
                             .with_background(theme.surface_2())
                             .with_border(Border::all(1.0).with_border_fill(theme.outline()))
-                            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+                            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                             .with_margin_right(DETAILS_PANEL_MARGIN)
                             .with_drop_shadow(DropShadow::default())
                             .finish(),

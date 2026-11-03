@@ -4,10 +4,11 @@ use std::sync::Arc;
 use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::vec2f;
 use warp_core::ui::theme::{Fill, WarpTheme};
+use warp_core::ui::tokens::RADIUS_SM;
 use warpui::elements::{
     Border, ChildAnchor, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Expanded,
     Flex, Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning,
-    ParentAnchor, ParentElement, ParentOffsetBounds, Radius, Stack, Text,
+    ParentAnchor, ParentElement, ParentOffsetBounds, Stack, Text,
 };
 use warpui::fonts::{Properties, Weight};
 use warpui::geometry::vector::Vector2F;
@@ -154,7 +155,7 @@ where
         let mut pill = Container::new(pill_content)
             .with_horizontal_padding(12.)
             .with_vertical_padding(8.)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .with_border(Border::all(1.).with_border_color(border_color));
 
         if let Some(bg) = background {
@@ -264,7 +265,7 @@ where
 
         Container::new(ConstrainedBox::new(content_row).with_height(30.).finish())
             .with_horizontal_padding(12.)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .with_border(Border::all(1.).with_border_color(border_color))
             .finish()
     })
@@ -365,7 +366,7 @@ where
                 )
                 .with_horizontal_padding(14.)
                 .with_vertical_padding(6.)
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                 .with_border(Border::all(1.).with_border_fill(theme.outline()))
                 .with_background_color(theme.tooltip_background())
                 .finish();
@@ -498,7 +499,7 @@ where
                 )
                 .with_horizontal_padding(14.)
                 .with_vertical_padding(6.)
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                 .with_border(Border::all(1.).with_border_fill(theme.outline()))
                 .with_background_color(theme.tooltip_background())
                 .finish();

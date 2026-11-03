@@ -1,11 +1,12 @@
 //! A reusable warning callout component with optional action button.
 use markdown_parser::{FormattedText, FormattedTextInline, FormattedTextLine};
 use warp_core::ui::color::blend::Blend;
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::color::ColorU;
 use warpui::elements::{
     Border, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Element, Expanded, Flex,
     FormattedTextElement, Hoverable, HyperlinkLens, MainAxisSize, MouseStateHandle, ParentElement,
-    Radius, Text,
+    Text,
 };
 use warpui::platform::Cursor;
 use warpui::EventContext;
@@ -207,7 +208,7 @@ pub fn render_warning_box(config: WarningBoxConfig, appearance: &Appearance) -> 
             )
             .with_horizontal_padding(12.)
             .with_vertical_padding(8.)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .with_border(Border::all(1.).with_border_fill(theme.outline()))
             .with_background(bg)
             .finish()
@@ -242,7 +243,7 @@ pub fn render_warning_box(config: WarningBoxConfig, appearance: &Appearance) -> 
         Container::new(row.finish())
             .with_margin_top(config.margin_top)
             .with_uniform_padding(12.)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .with_border(Border::all(1.).with_border_fill(theme.outline()))
             .with_background(background)
             .finish(),

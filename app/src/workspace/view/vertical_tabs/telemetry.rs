@@ -65,12 +65,6 @@ impl VerticalTabsDisplayOption {
 /// was rendered when the user clicked it.
 #[derive(Clone, Copy, Debug)]
 pub enum VerticalTabsChipEntrypoint {
-    /// The chip was rendered on a row representing a single pane
-    /// (display granularity: Panes).
-    Pane,
-    /// The chip was rendered on a row representing a tab group
-    /// (display granularity: Tabs).
-    Tab,
     /// The chip was rendered inside the detail sidecar that appears on row hover.
     DetailsSidecar,
 }
@@ -78,8 +72,6 @@ pub enum VerticalTabsChipEntrypoint {
 impl VerticalTabsChipEntrypoint {
     fn serialized(&self) -> &'static str {
         match self {
-            Self::Pane => "pane",
-            Self::Tab => "tab",
             Self::DetailsSidecar => "details_sidecar",
         }
     }

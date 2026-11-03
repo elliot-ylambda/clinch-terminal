@@ -12,6 +12,7 @@ use warp_core::features::FeatureFlag;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::Fill;
+use warp_core::ui::tokens::RADIUS_SM;
 use warp_editor::editor::EditorView;
 use warp_editor::render::element::lens_element::RichTextElementLens;
 use warp_editor::render::element::{RenderableBlock, RichTextElement, VerticalExpansionBehavior};
@@ -22,7 +23,7 @@ use warpui::elements::new_scrollable::{NewScrollableElement, ScrollableAxis};
 use warpui::elements::{
     Align, Axis, Border, ChildAnchor, ConstrainedBox, Container, CornerRadius, Empty, F32Ext, Flex,
     Hoverable, MainAxisSize, MouseStateHandle, OffsetPositioning, ParentAnchor, ParentElement,
-    ParentOffsetBounds, Point, Radius, ScrollData, Stack, Text, ZIndex,
+    ParentOffsetBounds, Point, ScrollData, Stack, Text, ZIndex,
 };
 use warpui::event::DispatchedEvent;
 use warpui::fonts::FamilyId;
@@ -1000,7 +1001,7 @@ impl<V: EditorView> EditorWrapper<V> {
                 .finish(),
             )
             .with_uniform_padding(2.)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .with_background(button_background);
 
             let container = if let Some(border) = border {

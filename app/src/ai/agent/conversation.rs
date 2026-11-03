@@ -17,6 +17,7 @@ use warp_core::send_telemetry_from_ctx;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::WarpTheme;
+use warp_core::ui::tokens::{StatusKind, Tokens};
 use warp_multi_agent_api::response_event::stream_finished;
 use warp_multi_agent_api::response_event::stream_finished::TokenUsage;
 use warp_multi_agent_api::{self as api};
@@ -72,7 +73,6 @@ use crate::terminal::model::block::{
     AgentInteractionMetadata, AgentViewVisibility, BlockId, SerializedAIMetadata, SerializedBlock,
 };
 use crate::ui_components::icons::Icon;
-use crate::ui_components::CLINCH_ATTENTION_AMBER;
 use crate::workspaces::user_profiles::UserProfileWithUID;
 use crate::{BlocklistAIHistoryModel, GlobalResourceHandlesProvider};
 
@@ -697,41 +697,6 @@ impl AIConversation {
         self.conversation_usage_metadata.platform_credits_spent
     }
 
-    /// Test-only helper that sets the conversation's credit total directly.
-    /// Used by unit tests that exercise downstream credit-aware logic
-    /// (e.g. the orchestration credit rollup) without having to wire up a
-    /// full `StreamFinished` event.
-    #[cfg(test)]
-    pub(crate) fn set_credits_spent_for_test(&mut self, credits: f32) {
-        self.conversation_usage_metadata.credits_spent = credits;
-        self.conversation_usage_metadata.platform_credits_spent = 0.0;
-    }
-
-    /// Test-only helper that simulates the root-task upgrade performed by the
-    /// `Action::CreateTask` branch of `apply_client_action` when the server
-    /// confirms the root for a newly started conversation. Replaces the
-    /// in-memory `Optimistic(Root)` root with a server-backed `Task` carrying
-    /// `server_task`'s id.
-    ///
-    /// Unlike the production `Action::CreateTask` path, this helper does NOT
-    /// update `added_exchanges_by_response`; it is only safe to call when no
-    /// in-flight response stream references the optimistic root.
-    #[cfg(test)]
-    pub(crate) fn upgrade_optimistic_root_to_server_task_for_test(
-        &mut self,
-        server_task: api::Task,
-    ) {
-        let root_task_id = self.task_store.root_task_id().clone();
-        let root_task = self
-            .task_store
-            .remove(&root_task_id)
-            .expect("root task should exist for upgrade-in-place test helper");
-        let server_root = root_task
-            .into_server_created_task(server_task, None, None, None, &SkillPathOrigin::Unavailable)
-            .expect("upgrading optimistic root to a server-backed task should succeed");
-        self.task_store.set_root_task(server_root);
-    }
-
     // Credits spent over the last block, where the block comprises
     // all agent outputs since the most recent user input.
     pub fn credits_spent_for_last_block(&self) -> Option<f32> {
@@ -878,20 +843,6 @@ impl AIConversation {
 
     pub fn status(&self) -> &ConversationStatus {
         &self.status
-    }
-
-    /// Test-only setter for driving status-dependent logic directly.
-    #[cfg(test)]
-    pub(crate) fn set_status_for_test(&mut self, status: ConversationStatus) {
-        self.status = status;
-    }
-
-    /// Test-only helper: appends an exchange to the root task so status-derivation
-    /// logic (e.g. `map_conversation_status`) can be exercised end-to-end.
-    #[cfg(test)]
-    pub(crate) fn append_root_exchange_for_test(&mut self, exchange: AIAgentExchange) {
-        self.task_store
-            .modify_root_task(|root_task| root_task.append_exchange(exchange));
     }
 
     pub fn status_error_message(&self) -> Option<&str> {
@@ -4338,7 +4289,10 @@ impl ConversationStatus {
             ConversationStatus::Cancelled => (Icon::StopFilled, internal_colors::neutral_5(theme)),
             // "Needs your input": a fixed amber "!" so it never reads as a stop or blends into
             // a theme yellow near the working green.
-            ConversationStatus::Blocked { .. } => (Icon::AlertCircle, CLINCH_ATTENTION_AMBER),
+            ConversationStatus::Blocked { .. } => (
+                Icon::AlertCircle,
+                Tokens::new(theme).status(StatusKind::NeedsYou),
+            ),
             ConversationStatus::WaitingForEvents => (
                 Icon::ClockLoader,
                 match color_style {
@@ -4384,7 +4338,3 @@ impl ConversationStatus {
         matches!(self, ConversationStatus::Error)
     }
 }
-
-#[cfg(test)]
-#[path = "conversation_tests.rs"]
-mod tests;

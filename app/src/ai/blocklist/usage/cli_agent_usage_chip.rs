@@ -3,10 +3,11 @@ use cli_agent_usage::format::{fmt_pct, fmt_reset, fmt_tokens};
 use cli_agent_usage::{LimitWindow, Provider, Severity, UsageSnapshot, WindowTotals};
 // Element + theme imports — mirror app/src/context_chips/display_chip.rs.
 use warp_core::ui::theme::{Fill, WarpTheme};
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warp_core::ui::Icon;
 use warpui::elements::{
     Border, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Flex, Hoverable,
-    MouseStateHandle, ParentElement, Radius, Text,
+    MouseStateHandle, ParentElement, Text,
 };
 use warpui::platform::Cursor;
 use warpui::ui_components::components::UiComponent;
@@ -51,14 +52,10 @@ pub(super) fn span(
     color: Fill,
     appearance: &Appearance,
 ) -> Box<dyn Element> {
-    Text::new_inline(
-        text.into(),
-        appearance.monospace_font_family(),
-        appearance.monospace_font_size(),
-    )
-    .with_color(color.into())
-    .with_line_height_ratio(appearance.line_height_ratio())
-    .finish()
+    Text::new_inline(text.into(), appearance.ui_font_family(), 11.)
+        .with_color(color.into())
+        .with_line_height_ratio(appearance.line_height_ratio())
+        .finish()
 }
 
 /// The plan gauges' clickable affordance ("Turn on" / "Retry"): accent
@@ -114,7 +111,7 @@ pub fn render_cli_agent_usage_panel(
         turn_on_mouse_state,
     } = mouse_states;
     let theme = appearance.theme();
-    let bg = theme.surface_2();
+    let bg = Fill::Solid(appearance.tokens().surface_overlay);
     let main = theme.main_text_color(bg);
     let sub = theme.sub_text_color(bg);
     let now = Utc::now();
@@ -220,8 +217,11 @@ pub fn render_cli_agent_usage_panel(
             .with_vertical_padding(12.)
             .with_horizontal_padding(PANEL_H_PADDING * scale)
             .with_background(bg)
-            .with_border(Border::all(1.).with_border_fill(theme.accent()))
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+            .with_border(
+                Border::all(1.).with_border_fill(Fill::Solid(appearance.tokens().hairline)),
+            )
+            .with_drop_shadow(appearance.tokens().overlay_shadow())
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .finish(),
     )
     .with_width(panel_width)
@@ -333,7 +333,7 @@ fn usage_link(
             .finish();
         Container::new(content)
             .with_vertical_padding(2.)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .finish()
     })
     .on_click(move |_ctx, app, _position| app.open_url(url))

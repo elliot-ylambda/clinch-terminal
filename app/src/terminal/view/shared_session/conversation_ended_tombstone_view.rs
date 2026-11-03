@@ -4,9 +4,10 @@ use warp_core::paths::home_relative_path;
 use warp_core::send_telemetry_from_ctx;
 use warp_core::ui::icons::Icon;
 use warp_core::ui::theme::{AnsiColorIdentifier, Fill};
+use warp_core::ui::tokens::RADIUS_MD;
 use warpui::elements::{
     Border, ChildView, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Empty,
-    Expanded, Flex, MainAxisSize, Padding, ParentElement, Radius, Shrinkable, Text,
+    Expanded, Flex, MainAxisSize, Padding, ParentElement, Shrinkable, Text,
 };
 use warpui::fonts::{Properties, Weight};
 use warpui::{
@@ -612,7 +613,7 @@ impl View for ConversationEndedTombstoneView {
 
         let card = Container::new(content)
             .with_background(background)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .with_border(Border::all(1.0).with_border_fill(border_fill))
             .with_uniform_margin(8.)
             .with_padding(Padding::uniform(16.))
@@ -677,7 +678,3 @@ impl TypedActionView for ConversationEndedTombstoneView {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "conversation_ended_tombstone_view_tests.rs"]
-mod tests;

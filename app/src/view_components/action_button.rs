@@ -8,10 +8,11 @@ use warp_core::ui::color::contrast::MinimumAllowedContrast;
 use warp_core::ui::color::{coloru_with_opacity, ContrastingColor};
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::{AnsiColorIdentifier, Fill};
+use warp_core::ui::tokens::{StatusKind, RADIUS_SM};
 use warpui::elements::{
     Border, ChildAnchor, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Flex,
     Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning, Padding,
-    ParentAnchor, ParentElement as _, ParentOffsetBounds, Radius, Stack, Text,
+    ParentAnchor, ParentElement as _, ParentOffsetBounds, Stack, Text,
     DEFAULT_UI_LINE_HEIGHT_RATIO,
 };
 use warpui::fonts::{Properties, Weight};
@@ -571,7 +572,7 @@ impl ActionButton {
                         .finish(),
                     )
                     .with_padding(padding)
-                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(3.)))
+                    .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                     .with_background_color(
                         appearance.theme().terminal_colors().bright.magenta.into(),
                     )
@@ -872,9 +873,9 @@ impl View for ActionButton {
             }
 
             let corner_radius = match self.adjoined_side {
-                Some(AdjoinedSide::Left) => CornerRadius::with_right(Radius::Pixels(4.)),
-                Some(AdjoinedSide::Right) => CornerRadius::with_left(Radius::Pixels(4.)),
-                None => CornerRadius::with_all(Radius::Pixels(4.)),
+                Some(AdjoinedSide::Left) => CornerRadius::with_right(RADIUS_SM),
+                Some(AdjoinedSide::Right) => CornerRadius::with_left(RADIUS_SM),
+                None => CornerRadius::with_all(RADIUS_SM),
             };
 
             let border = if let Some(adjoined_side_border) = theme.adjoined_side_border(appearance)
@@ -1021,12 +1022,13 @@ pub struct DangerPrimaryTheme;
 
 impl ActionButtonTheme for DangerPrimaryTheme {
     fn background(&self, hovered: bool, appearance: &Appearance) -> Option<Fill> {
-        let red_color = appearance.theme().ansi_fg_red();
-        if hovered {
-            Some(Fill::Solid(ColorU::new(255, 130, 114, 255)))
+        let tokens = appearance.tokens();
+        let red = tokens.status(StatusKind::RateLimited);
+        Some(Fill::Solid(if hovered {
+            coloru_with_opacity(red, 85)
         } else {
-            Some(Fill::Solid(red_color))
-        }
+            red
+        }))
     }
 
     fn text_color(
@@ -1098,7 +1100,7 @@ pub struct DisabledTheme;
 
 impl ActionButtonTheme for DisabledTheme {
     fn background(&self, _hovered: bool, appearance: &Appearance) -> Option<Fill> {
-        Some(internal_colors::neutral_4(appearance.theme()).into())
+        Some(Fill::Solid(appearance.tokens().surface_field))
     }
 
     fn text_color(
@@ -1123,7 +1125,7 @@ pub struct NakedTheme;
 impl ActionButtonTheme for NakedTheme {
     fn background(&self, hovered: bool, appearance: &Appearance) -> Option<Fill> {
         if hovered {
-            Some(internal_colors::fg_overlay_2(appearance.theme()))
+            Some(Fill::Solid(appearance.tokens().surface_hover))
         } else {
             None
         }
@@ -1135,7 +1137,7 @@ impl ActionButtonTheme for NakedTheme {
         _background: Option<Fill>,
         appearance: &Appearance,
     ) -> ColorU {
-        appearance.theme().foreground().into_solid()
+        appearance.tokens().text_1
     }
 }
 
@@ -1154,10 +1156,7 @@ impl ActionButtonTheme for PaneHeaderTheme {
         _background: Option<Fill>,
         appearance: &Appearance,
     ) -> ColorU {
-        appearance
-            .theme()
-            .sub_text_color(appearance.theme().background())
-            .into_solid()
+        appearance.tokens().text_2
     }
 }
 
@@ -1200,11 +1199,12 @@ pub struct SecondaryTheme;
 
 impl ActionButtonTheme for SecondaryTheme {
     fn background(&self, hovered: bool, appearance: &Appearance) -> Option<Fill> {
-        if hovered {
-            Some(internal_colors::fg_overlay_2(appearance.theme()))
+        let tokens = appearance.tokens();
+        Some(Fill::Solid(if hovered {
+            tokens.surface_raised
         } else {
-            None
-        }
+            tokens.surface_field
+        }))
     }
 
     fn text_color(
@@ -1213,11 +1213,12 @@ impl ActionButtonTheme for SecondaryTheme {
         _background: Option<Fill>,
         appearance: &Appearance,
     ) -> ColorU {
-        appearance.theme().foreground().into()
+        appearance.tokens().text_1
     }
 
-    fn border(&self, appearance: &Appearance) -> Option<ColorU> {
-        Some(internal_colors::neutral_4(appearance.theme()))
+    // Transparent rather than absent, so a button keeps its size against outlined neighbors.
+    fn border(&self, _appearance: &Appearance) -> Option<ColorU> {
+        Some(ColorU::transparent_black())
     }
 
     fn keyboard_shortcut_background(&self, appearance: &Appearance) -> Option<ColorU> {
@@ -1243,8 +1244,8 @@ impl ActionButtonTheme for DisabledSecondaryTheme {
         DisabledTheme.text_color(hovered, background, appearance)
     }
 
-    fn border(&self, appearance: &Appearance) -> Option<ColorU> {
-        Some(internal_colors::neutral_4(appearance.theme()))
+    fn border(&self, _appearance: &Appearance) -> Option<ColorU> {
+        Some(ColorU::transparent_black())
     }
 
     fn keyboard_shortcut_background(&self, appearance: &Appearance) -> Option<ColorU> {
@@ -1268,15 +1269,11 @@ impl ActionButtonTheme for PrimaryTheme {
 
     fn text_color(
         &self,
-        hovered: bool,
-        background: Option<Fill>,
+        _hovered: bool,
+        _background: Option<Fill>,
         appearance: &Appearance,
     ) -> ColorU {
-        let theme = appearance.theme();
-        let effective_background = background
-            .or_else(|| self.background(hovered, appearance))
-            .unwrap_or(theme.background());
-        theme.font_color(effective_background).into_solid()
+        appearance.tokens().text_on_accent
     }
 
     fn adjoined_side_border(&self, _appearance: &Appearance) -> Option<ColorU> {
@@ -1341,6 +1338,12 @@ impl ActionButtonTheme for PrimaryRightBiasedTheme {
     }
 }
 
+/// The footer buttons' text size. Fixed rather than following the terminal font, so a large
+/// terminal font doesn't make the footer large too.
+pub(crate) const AGENT_FOOTER_BUTTON_FONT_SIZE: f32 = 13.;
+/// The footer buttons' horizontal padding, on each side.
+pub(crate) const AGENT_FOOTER_BUTTON_HORIZONTAL_PADDING: f32 = 10.;
+
 impl ButtonSize {
     pub fn icon_size(&self, appearance: &Appearance, app: &AppContext) -> f32 {
         match self {
@@ -1356,7 +1359,7 @@ impl ButtonSize {
                 DEFAULT_UI_LINE_HEIGHT_RATIO / 1.4,
             ),
             ButtonSize::AgentInputButtonLarge => app.font_cache().line_height(
-                appearance.monospace_font_size() + 2.0,
+                AGENT_FOOTER_BUTTON_FONT_SIZE + 2.0,
                 DEFAULT_UI_LINE_HEIGHT_RATIO / 1.4,
             ),
         }
@@ -1372,7 +1375,7 @@ impl ButtonSize {
             ButtonSize::UDIButton => appearance.monospace_font_size() - 1.0,
             ButtonSize::UDIPromptChip => appearance.monospace_font_size() - 1.0,
             ButtonSize::AgentInputButton => appearance.monospace_font_size() - 1.0,
-            ButtonSize::AgentInputButtonLarge => appearance.monospace_font_size(),
+            ButtonSize::AgentInputButtonLarge => AGENT_FOOTER_BUTTON_FONT_SIZE,
         }
     }
 
@@ -1386,7 +1389,7 @@ impl ButtonSize {
             ButtonSize::UDIButton => Properties::default(),
             ButtonSize::UDIPromptChip => Properties::default().weight(Weight::Semibold),
             ButtonSize::AgentInputButton => Properties::default(),
-            ButtonSize::AgentInputButtonLarge => Properties::default(),
+            ButtonSize::AgentInputButtonLarge => Properties::default().weight(Weight::Medium),
         }
     }
 
@@ -1518,9 +1521,8 @@ impl ButtonSize {
                 2. * vertical_padding + line_height
             }
             ButtonSize::AgentInputButtonLarge => {
-                // Larger vertical padding than AgentInputButton for a more
-                // prominent footer bar.
-                let vertical_padding = 6.;
+                // The agent footer's buttons: comfortable to hit without crowding the pane.
+                let vertical_padding = 5.;
                 let line_height = app
                     .font_cache()
                     .line_height(self.font_size(appearance), appearance.line_height_ratio());
@@ -1556,7 +1558,7 @@ impl ButtonSize {
             ButtonSize::UDIPromptChip | ButtonSize::AgentInputButton => {
                 crate::context_chips::spacing::UDI_CHIP_HORIZONTAL_PADDING
             }
-            ButtonSize::AgentInputButtonLarge => 9.,
+            ButtonSize::AgentInputButtonLarge => AGENT_FOOTER_BUTTON_HORIZONTAL_PADDING,
         }
     }
 

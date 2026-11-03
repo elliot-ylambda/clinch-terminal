@@ -1,9 +1,10 @@
+pub mod auto_coordinate;
 pub(crate) mod auto_handoff_sleep_modal;
 mod build_plan_migration_modal;
 pub(crate) mod cloud_agent_capacity_modal;
 pub(crate) mod codex_modal;
 pub mod conversation_list;
-mod coordinator;
+pub(crate) mod coordinator;
 #[cfg(enable_crash_recovery)]
 mod crash_recovery;
 pub(crate) mod free_ai_removal_modal;
@@ -24,7 +25,7 @@ mod tab_grouping;
 #[cfg(test)]
 #[path = "view_tests.rs"]
 pub(crate) mod tests;
-mod vertical_tabs;
+pub(crate) mod vertical_tabs;
 #[cfg(target_family = "wasm")]
 mod wasm_view;
 
@@ -38,6 +39,7 @@ use std::env;
 use std::fmt::Write;
 #[cfg(all(target_os = "macos", feature = "crash_reporting"))]
 use std::fs;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
 use std::process;
@@ -81,6 +83,9 @@ use warp_core::ui::color::coloru_with_opacity;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::phenomenon::PhenomenonStyle;
 use warp_core::ui::theme::Fill;
+use warp_core::ui::tokens::{
+    corners_md, corners_pill, corners_sm, StatusKind, Tokens, CARD_INSET, RADIUS_MD, RADIUS_SM,
+};
 use warp_core::ui::Icon;
 use warp_core::user_preferences::GetUserPreferences as _;
 use warp_editor::editor::NavigationKey;
@@ -114,7 +119,7 @@ use warpui::platform::{
 #[cfg(feature = "local_tty")]
 use warpui::r#async::Timer;
 use warpui::text_layout::ClipConfig;
-use warpui::ui_components::button::{ButtonVariant, TextAndIcon, TextAndIconAlignment};
+use warpui::ui_components::button::ButtonVariant;
 use warpui::ui_components::components::{Coords, UiComponent, UiComponentStyles};
 use warpui::windowing::state::ApplicationStage;
 use warpui::windowing::{StateEvent, WindowManager};
@@ -126,10 +131,9 @@ use warpui::{
 use self::vertical_tabs::telemetry::{VerticalTabsDisplayOption, VerticalTabsTelemetryEvent};
 use self::vertical_tabs::{
     drag_autoscroll_step, htab_group_position_id, pane_summary_kind, render_detail_sidecar,
-    render_settings_popup, render_summary_pane_kind_icons, vtab_group_position_id, SummaryPaneKind,
-    SummaryPaneKindIcons, VerticalTabsPanelState, BOOKMARKED_SESSIONS_KEBAB_POSITION_ID,
+    render_summary_pane_kind_icons, vtab_group_position_id, SummaryPaneKind, SummaryPaneKindIcons,
+    VerticalTabsPanelState, BOOKMARKED_SESSIONS_KEBAB_POSITION_ID,
     BOOKMARKED_SESSIONS_SECTION_POSITION_ID, VERTICAL_TABS_SCROLL_VIEWPORT_POSITION_ID,
-    VERTICAL_TABS_SETTINGS_BUTTON_POSITION_ID,
 };
 #[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
 use super::action::AutoCloudHandoffTrigger;
@@ -185,7 +189,7 @@ use crate::ai::agent_management::notifications::view::{
 use crate::ai::agent_management::notifications::NotificationFilter;
 use crate::ai::agent_management::telemetry::AgentManagementTelemetryEvent;
 use crate::ai::agent_management::view::{AgentManagementView, AgentManagementViewEvent};
-use crate::ai::agent_management::{active_focused_terminal_id, AgentManagementEvent};
+use crate::ai::agent_management::AgentManagementEvent;
 use crate::ai::ambient_agents::telemetry::{CloudAgentTelemetryEvent, CloudModeEntryPoint};
 #[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
 use crate::ai::ambient_agents::telemetry::{HandoffEntryPoint, HandoffInjectionPath};
@@ -377,6 +381,10 @@ use crate::settings_view::pane_manager::SettingsPaneManager;
 use crate::settings_view::{flags, SettingsSection, SettingsView, SettingsViewEvent};
 #[cfg(all(target_os = "windows", feature = "local_tty"))]
 use crate::shell_indicator::ShellIndicatorType;
+use crate::tab::lineage::{
+    index_after_family, index_for_child, lineage_depths, lineage_step, preorder, subtree,
+    LineageStep, TabLineage,
+};
 use crate::tab::{
     tab_position_id, uses_vertical_tabs, NewSessionMenuItem, PaneNameMenuTarget, SelectedTabColor,
     TabBarState, TabComponent, TabData, TabOrigin, TabOriginKind, TabTelemetryAction,
@@ -401,7 +409,6 @@ use crate::terminal::available_shells::AvailableShell;
 #[cfg(target_os = "windows")]
 use crate::terminal::available_shells::AvailableShells;
 use crate::terminal::block_list_viewport::InputMode;
-use crate::terminal::cli_agent_sessions::attention_pulse::AgentAttentionPulse;
 #[cfg(not(target_family = "wasm"))]
 use crate::terminal::cli_agent_sessions::plugin_manager::{plugin_manager_for, PluginModalKind};
 #[cfg(feature = "local_tty")]
@@ -467,7 +474,7 @@ use crate::ui_components::color_dot::render_color_dot;
 use crate::ui_components::icon_with_status::IconWithStatusVariant;
 use crate::ui_components::red_notification_dot::RedNotificationDot;
 use crate::ui_components::window_focus_dimming::WindowFocusDimming;
-use crate::ui_components::{blended_colors, icons, CLINCH_LOGO_GREEN};
+use crate::ui_components::{blended_colors, icons};
 use crate::undo_close::UndoCloseStack;
 #[cfg(target_family = "wasm")]
 use crate::uri::browser_url_handler::{parse_current_url, update_browser_url};
@@ -578,7 +585,7 @@ const MAX_FONT_SIZE: f32 = 25.0;
 /// The increment for increasing/decreasing the font size.
 const FONT_SIZE_INCREMENT: f32 = 1.0;
 
-pub const TAB_BAR_HEIGHT: f32 = 34.;
+pub const TAB_BAR_HEIGHT: f32 = 44.;
 /// Height for all panel headers (tab bar, warp drive, resource center, theme chooser, etc.).
 /// This ensures consistent header heights across all UI panels.
 pub const PANEL_HEADER_HEIGHT: f32 = TAB_BAR_HEIGHT;
@@ -777,9 +784,8 @@ pub const DEFAULT_USER_DISPLAY_NAME: &str = "User";
 
 lazy_static! {
     static ref OPENING_WARP_DRIVE_ON_START_UP: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
-    static ref PANEL_CORNER_RADIUS: CornerRadius = CornerRadius::with_all(Radius::Pixels(8.));
-    static ref PANEL_HEADER_CORNER_RADIUS: CornerRadius =
-        CornerRadius::with_top(Radius::Pixels(8.));
+    static ref PANEL_CORNER_RADIUS: CornerRadius = CornerRadius::with_all(RADIUS_MD);
+    static ref PANEL_HEADER_CORNER_RADIUS: CornerRadius = CornerRadius::with_top(RADIUS_MD);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1159,6 +1165,8 @@ pub struct Workspace {
     coordinator_bootstrap: coordinator::CoordinatorBootstrap,
     /// Whether this workspace may create a default coordinator on its own; off in unit tests.
     coordinator_auto_create: bool,
+    /// Batching and status for waking the coordinator when auto-coordinate is on.
+    auto_coordinate: auto_coordinate::AutoCoordinateState,
     pub(crate) hovered_tab_index: Option<TabBarHoverIndex>,
     tab_bar_hover_state: MouseStateHandle,
     /// The CLI-agent provider whose focused tab-bar usage panel is expanded.
@@ -1393,6 +1401,13 @@ fn is_running_project_command(
     !has_cli_agent_session && is_long_running_and_user_controlled
 }
 
+/// Why a tab's agent wants the user.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TabAgentAttention {
+    NeedsInput,
+    UnreadFinished,
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct ProjectCliAgentCounts {
     pub(crate) working: usize,
@@ -1404,6 +1419,8 @@ pub(crate) struct ProjectCliAgentCounts {
 pub(crate) enum ProjectCliAgentActivity {
     /// The agent is blocked on a question, a tool approval, or a plan approval.
     NeedsInput,
+    /// The agent stopped at a plan limit and is waiting for it to reset.
+    RateLimited,
     /// The agent has an unread notification other than a completed turn.
     NeedsAttention,
     Done,
@@ -1415,6 +1432,7 @@ impl ProjectCliAgentActivity {
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::NeedsInput => "Needs input",
+            Self::RateLimited => "Rate limited",
             Self::NeedsAttention => "Needs attention",
             Self::Done => "Done",
             Self::Working => "Working",
@@ -1425,11 +1443,28 @@ impl ProjectCliAgentActivity {
     fn priority(self) -> u8 {
         match self {
             Self::NeedsInput => 0,
-            Self::NeedsAttention => 1,
-            Self::Done => 2,
-            Self::Working => 3,
-            Self::Idle => 4,
+            Self::RateLimited => 1,
+            Self::NeedsAttention => 2,
+            Self::Done => 3,
+            Self::Working => 4,
+            Self::Idle => 5,
         }
+    }
+
+    /// The status color family for this activity. Idle has none and draws as quiet text.
+    pub(crate) fn status_kind(self) -> Option<StatusKind> {
+        match self {
+            Self::NeedsInput => Some(StatusKind::NeedsYou),
+            Self::RateLimited => Some(StatusKind::RateLimited),
+            Self::NeedsAttention | Self::Done => Some(StatusKind::Done),
+            Self::Working => Some(StatusKind::Working),
+            Self::Idle => None,
+        }
+    }
+
+    pub(crate) fn color(self, tokens: &Tokens) -> ColorU {
+        self.status_kind()
+            .map_or(tokens.text_3, |kind| tokens.status(kind))
     }
 }
 
@@ -1443,6 +1478,7 @@ pub(crate) struct ProjectCliAgentSummary {
 fn project_cli_agent_activity(
     is_working: bool,
     is_blocked: bool,
+    is_rate_limited: bool,
     was_interrupted_by_user: bool,
     has_unread_completed: bool,
     has_other_unread: bool,
@@ -1451,6 +1487,8 @@ fn project_cli_agent_activity(
         ProjectCliAgentActivity::Working
     } else if is_blocked {
         ProjectCliAgentActivity::NeedsInput
+    } else if is_rate_limited {
+        ProjectCliAgentActivity::RateLimited
     } else if has_other_unread {
         ProjectCliAgentActivity::NeedsAttention
     } else if was_interrupted_by_user || has_unread_completed {
@@ -1515,10 +1553,8 @@ fn remote_control_button_styles(
         font_color: Some(muted_color),
         font_size: Some(REMOTE_CONTROL_BUTTON_FONT_SIZE),
         font_weight: Some(Weight::Semibold),
-        padding: Some(Coords::default().top(3.).bottom(3.).left(7.).right(7.)),
-        border_color: Some(CLINCH_LOGO_GREEN.into()),
-        border_width: Some(1.),
-        border_radius: Some(CornerRadius::with_all(Radius::Percentage(50.))),
+        padding: Some(Coords::default().top(5.).bottom(5.).left(6.).right(6.)),
+        border_radius: Some(corners_sm()),
         background: Some(ColorU::transparent_black().into()),
         ..UiComponentStyles::default()
     };
@@ -3150,8 +3186,8 @@ impl Workspace {
                 .with_height(16.)
                 .finish();
 
-                let mut button = Container::new(icon)
-                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)));
+                let mut button =
+                    Container::new(icon).with_corner_radius(CornerRadius::with_all(RADIUS_SM));
                 if hover_state.is_hovered() {
                     button =
                         button.with_background_color(PhenomenonStyle::modal_close_button_hover());
@@ -3733,11 +3769,6 @@ impl Workspace {
         ctx.observe(&CLIAgentSessionsModel::handle(ctx), |_, _, ctx| {
             ctx.notify();
         });
-        // "Needs input" glyphs, tab outlines, and project pills blink with the shared clock,
-        // which only ticks while some agent is waiting on the user.
-        ctx.subscribe_to_model(&AgentAttentionPulse::handle(ctx), |_, _, _, ctx| {
-            ctx.notify();
-        });
         ctx.subscribe_to_model(
             &crate::terminal::cli_agent_sessions::restore::AgentRestoreQueue::handle(ctx),
             |_, _, _, ctx| {
@@ -3992,6 +4023,7 @@ impl Workspace {
             tab_mru_order: Vec::new(),
             coordinator_bootstrap: Default::default(),
             coordinator_auto_create: !cfg!(test),
+            auto_coordinate: Default::default(),
             hovered_tab_index: None,
             tab_bar_hover_state: Default::default(),
             cli_agent_usage_panel_provider: None,
@@ -4526,6 +4558,9 @@ impl Workspace {
     ) {
         let terminal_view_id = event.terminal_view_id();
         let belongs_to_workspace = self.workspace_contains_terminal_view(terminal_view_id, ctx);
+        if belongs_to_workspace {
+            self.note_session_for_auto_coordinate(event, ctx);
+        }
 
         // Provider hooks publish durable identity to the pane registry. Interactive pickers can
         // do that long after command detection emits `Started`, so keep reconciling for the
@@ -4822,9 +4857,15 @@ impl Workspace {
                         if FeatureFlag::PinnedTabs.is_enabled() {
                             self.tabs[tab_index].pinned = saved_tab.pinned;
                         }
+                        if saved_tab.custom_title_auto {
+                            self.tabs[tab_index]
+                                .pane_group
+                                .update(ctx, |pane_group, _| pane_group.mark_custom_title_auto());
+                        }
                         if saved_tab.coordinator {
                             self.tabs[tab_index].coordinator = true;
                             self.tabs[tab_index].pinned = true;
+                            self.tabs[tab_index].auto_coordinate = saved_tab.auto_coordinate;
                             self.prepare_restored_coordinator(tab_index, ctx);
                         }
                         // Drop the group reference if the group itself didn't restore.
@@ -4846,6 +4887,16 @@ impl Workspace {
                             );
                         }
                     });
+
+                // The saved active index points into the saved order.
+                let restored_active_id = self
+                    .tabs
+                    .get(active_tab_index)
+                    .map(|tab| tab.pane_group.id());
+                self.restore_lineage_preorder(ctx);
+                let active_tab_index = restored_active_id
+                    .and_then(|id| self.tabs.iter().position(|tab| tab.pane_group.id() == id))
+                    .unwrap_or(active_tab_index);
 
                 if self.tab_count() == 0 {
                     if self.should_trigger_get_started_onboarding(ctx) {
@@ -8182,14 +8233,19 @@ impl Workspace {
         // Our target index should always be after all existing pinned items.
         let target = self.clamp_to_unpinned_region(&self.tabs, natural_target);
 
-        self.tabs[tab_index].group_id = Some(group_id);
-        // Pin state is cleared when a new group with this tab is created.
-        self.tabs[tab_index].pinned = false;
+        // The tab's forks join the new group with it.
+        let run = subtree(&self.tab_lineage_depths(ctx), tab_index);
+        for tab in &mut self.tabs[run.clone()] {
+            tab.group_id = Some(group_id);
+            // Pin state is cleared when a new group with this tab is created.
+            tab.pinned = false;
+        }
 
-        self.move_tab_to_index(tab_index, target, ctx);
+        let to = index_without_run(target, &run);
+        self.move_tab_run(run, to, ctx);
 
-        // The move above may have shifted the tab; the new group has exactly
-        // one member, so its position is the new active index.
+        // The move above may have shifted the tab; it leads the new group (any
+        // forks follow it), so the group's first member is the new active index.
         let new_active = group_member_indices(&self.tabs, group_id)
             .next()
             .unwrap_or(tab_index);
@@ -8227,12 +8283,16 @@ impl Workspace {
         let previous_group_id = tab.group_id;
 
         let target_index = self.index_after_group(group_id).unwrap_or(self.tabs.len());
-        self.tabs[tab_index].group_id = Some(group_id);
-
-        // Moving a tab to a group, clear its pinned state.
-        self.tabs[tab_index].pinned = false;
+        // The tab's forks move into the group with it.
+        let run = subtree(&self.tab_lineage_depths(ctx), tab_index);
+        for tab in &mut self.tabs[run.clone()] {
+            tab.group_id = Some(group_id);
+            // Moving a tab to a group, clear its pinned state.
+            tab.pinned = false;
+        }
         self.expand_tab_group(group_id, ctx);
-        self.move_tab_to_index(tab_index, target_index, ctx);
+        let to = index_without_run(target_index, &run);
+        self.move_tab_run(run, to, ctx);
 
         if let Some(prev) = previous_group_id {
             self.prune_empty_tab_group(prev, ctx);
@@ -8265,10 +8325,15 @@ impl Workspace {
             .index_after_group(previous_group_id)
             .map(|t| self.clamp_to_unpinned_region(&self.tabs, t));
 
-        self.tabs[tab_index].group_id = None;
+        // The tab's forks leave the group with it.
+        let run = subtree(&self.tab_lineage_depths(ctx), tab_index);
+        for tab in &mut self.tabs[run.clone()] {
+            tab.group_id = None;
+        }
 
         if let Some(target) = target {
-            self.move_tab_to_index(tab_index, target, ctx);
+            // `target` is past the group, so past the run.
+            self.move_tab_run(run.clone(), target.saturating_sub(run.len()), ctx);
         }
 
         self.prune_empty_tab_group(previous_group_id, ctx);
@@ -8624,52 +8689,6 @@ impl Workspace {
         ctx.notify();
     }
 
-    /// Moves the tab at `from_index` so it ends up at `to_index`, sliding the
-    /// tabs in between over to fill the gap. This is a `Vec::remove` +
-    /// `Vec::insert` (not a `swap`), so it works for arbitrary distances, such
-    /// as hopping a tab over a whole group, not just adjacent slots. `to_index`
-    /// is an index into the current list and is exactly where the moved tab
-    /// ends up.
-    ///
-    /// `active_tab_index` stores a position, not a reference to a tab, so after
-    /// reordering we recompute it to keep the same tab visually active.
-    /// Removing `from` then inserting at `to` slides every tab strictly between
-    /// the two endpoints by one slot toward `from`; tabs outside that span keep
-    /// their index.
-    fn hop_tab_to_index(
-        &mut self,
-        from_index: usize,
-        to_index: usize,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        if from_index == to_index || from_index >= self.tabs.len() || to_index >= self.tabs.len() {
-            return;
-        }
-        let tab = self.tabs.remove(from_index);
-        self.tabs.insert(to_index, tab);
-
-        let old_active = self.active_tab_index;
-        self.active_tab_index = if old_active == from_index {
-            // The active tab is the one we just moved; it follows to `to_index`.
-            to_index
-        } else if from_index < to_index {
-            // Forward move: tabs in `(from_index, to_index]` slid left by one.
-            if old_active > from_index && old_active <= to_index {
-                old_active - 1
-            } else {
-                old_active
-            }
-        } else if old_active >= to_index && old_active < from_index {
-            // Backward move: tabs in `[to_index, from_index)` slid right by one.
-            old_active + 1
-        } else {
-            // Active tab is outside the affected span; its index is unchanged.
-            old_active
-        };
-
-        ctx.notify();
-    }
-
     pub fn toggle_tab_right_click_menu(
         &mut self,
         tab_index: usize,
@@ -8710,8 +8729,8 @@ impl Workspace {
                 return;
             }
         }
-        let can_move_left = self.can_move_tab(tab_index, TabMovement::Left);
-        let can_move_right = self.can_move_tab(tab_index, TabMovement::Right);
+        let can_move_left = self.can_move_tab(tab_index, TabMovement::Left, ctx);
+        let can_move_right = self.can_move_tab(tab_index, TabMovement::Right, ctx);
         let can_move_to_new_project = self.can_move_tab_to_new_project(ctx);
         let menu_items = {
             let tab = &self.tabs[tab_index];
@@ -9728,6 +9747,7 @@ impl Workspace {
             kind: TabOriginKind::Fork,
             parent_pane_uuid: source_pane_uuid,
             parent_title: pane_group.as_ref(ctx).display_title(ctx),
+            ancestors: self.ancestry_of(pane_group),
         };
         if let Some(pane_group) =
             self.launch_command_in_new_tab_placed(fork.command, cwd, None, None, Some(origin), ctx)
@@ -10523,9 +10543,7 @@ impl Workspace {
         ctx.notify();
     }
 
-    fn close_vertical_tabs_settings_popup(&mut self) {
-        self.vertical_tabs_panel.show_settings_popup = false;
-    }
+    fn close_vertical_tabs_settings_popup(&mut self) {}
 
     /// Sets the visibility state of the agent management view
     /// and updates the AgentConversationsModel to reflect the new state.
@@ -11656,7 +11674,7 @@ impl Workspace {
                         .with_padding_top(NEW_SESSION_SIDECAR_SEARCH_BOX_VERTICAL_PADDING)
                         .with_padding_bottom(NEW_SESSION_SIDECAR_SEARCH_BOX_VERTICAL_PADDING)
                         .with_border(Border::all(1.).with_border_fill(theme.surface_3()))
-                        .with_corner_radius(CornerRadius::with_top(Radius::Pixels(4.)))
+                        .with_corner_radius(CornerRadius::with_top(RADIUS_SM))
                         .finish(),
                 )
                 .with_height(NEW_SESSION_SIDECAR_SEARCH_BOX_HEIGHT)
@@ -11753,7 +11771,7 @@ impl Workspace {
                         .with_padding_bottom(NEW_SESSION_SIDECAR_FOOTER_VERTICAL_PADDING)
                         .with_background(bg)
                         .with_border(Border::top(1.).with_border_fill(border_fill))
-                        .with_corner_radius(CornerRadius::with_bottom(Radius::Pixels(5.)))
+                        .with_corner_radius(CornerRadius::with_bottom(RADIUS_SM))
                         .finish(),
                     )
                     .with_width(NEW_SESSION_SIDECAR_WIDTH)
@@ -12966,6 +12984,8 @@ impl Workspace {
                     pinned: FeatureFlag::PinnedTabs.is_enabled()
                         && self.tabs.get(tab_index).is_some_and(|tab| tab.pinned),
                     coordinator: self.tabs.get(tab_index).is_some_and(|tab| tab.coordinator),
+                    auto_coordinate: self.tabs.get(tab_index).and_then(|tab| tab.auto_coordinate),
+                    custom_title_auto: pane_group.custom_title_is_auto(),
                 }
             })
             .filter(|tab| {
@@ -13256,46 +13276,63 @@ impl Workspace {
         }
     }
 
-    /// Indices (in stable tab order) of tabs whose focused pane's agent is waiting on the user,
-    /// per the same attention-badge derivation the tab rows render. Shared by the cycling action
-    /// and the vertical-tabs "N waiting" chip so the two surfaces can't drift.
-    pub(crate) fn agent_attention_tab_indices(&self, ctx: &AppContext) -> Vec<usize> {
+    /// Tabs whose agent is blocked on a question or approval: the sidebar's amber count.
+    pub(crate) fn agent_needs_input_tab_indices(&self, ctx: &AppContext) -> Vec<usize> {
         agent_attention::attention_tab_indices(
-            self.tabs
-                .iter()
-                .map(|tab| Self::tab_needs_agent_attention(tab, ctx)),
+            self.tabs.iter().map(|tab| {
+                Self::tab_agent_attention(tab, ctx) == Some(TabAgentAttention::NeedsInput)
+            }),
         )
     }
 
-    /// Whether the tab's focused pane has an agent waiting on the user: one blocked on a question
-    /// or approval, or a CLI-agent turn that finished on a terminal the user is not viewing.
-    fn tab_needs_agent_attention(tab: &TabData, ctx: &AppContext) -> bool {
-        let Some(view) = tab.pane_group.as_ref(ctx).focused_session_view(ctx) else {
-            return false;
-        };
+    /// Where ⌘⌥A goes next: agents waiting on you first, then finished turns not yet looked at.
+    pub(crate) fn agent_attention_tab_indices(&self, ctx: &AppContext) -> Vec<usize> {
+        let attention = self
+            .tabs
+            .iter()
+            .map(|tab| Self::tab_agent_attention(tab, ctx))
+            .collect::<Vec<_>>();
+        let needs_input = agent_attention::attention_tab_indices(
+            attention
+                .iter()
+                .map(|kind| *kind == Some(TabAgentAttention::NeedsInput)),
+        );
+        if !needs_input.is_empty() {
+            return needs_input;
+        }
+        agent_attention::attention_tab_indices(attention.iter().map(Option::is_some))
+    }
+
+    /// What the tab's focused agent wants from the user, if anything. Neither answer depends on
+    /// which tab is active, so counts built from it hold steady while the user moves around.
+    fn tab_agent_attention(tab: &TabData, ctx: &AppContext) -> Option<TabAgentAttention> {
+        let view = tab.pane_group.as_ref(ctx).focused_session_view(ctx)?;
         let terminal_view = view.as_ref(ctx);
-        let Some(variant) = terminal_view_agent_icon_variant(terminal_view, ctx) else {
-            return false;
-        };
-        match variant {
+        match terminal_view_agent_icon_variant(terminal_view, ctx)? {
             IconWithStatusVariant::CLIAgent { status, .. } => match status {
-                Some(ConversationStatus::Blocked { .. }) => true,
-                Some(ConversationStatus::Success) => {
-                    active_focused_terminal_id(ctx) != Some(terminal_view.id())
+                Some(ConversationStatus::Blocked { .. }) => Some(TabAgentAttention::NeedsInput),
+                _ if AgentNotificationsModel::as_ref(ctx)
+                    .notifications()
+                    .has_unread_completed_project_cli_agent_for_terminal_view(
+                        terminal_view.id(),
+                    ) =>
+                {
+                    Some(TabAgentAttention::UnreadFinished)
                 }
-                _ => false,
+                _ => None,
             },
             IconWithStatusVariant::OzAgent { status, .. } => {
                 matches!(status, Some(ConversationStatus::Blocked { .. }))
+                    .then_some(TabAgentAttention::NeedsInput)
             }
-            IconWithStatusVariant::Neutral { .. }
-            | IconWithStatusVariant::NeutralElement { .. }
-            | IconWithStatusVariant::CustomAvatar { .. } => false,
+            IconWithStatusVariant::Neutral { .. } | IconWithStatusVariant::CustomAvatar { .. } => {
+                None
+            }
         }
     }
 
-    /// Moves focus to the next tab whose agent is waiting for input, starting after the active
-    /// tab and wrapping around. No-op when no agent is waiting.
+    /// Moves focus to the next tab whose agent wants the user (waiting first, then unread
+    /// finished turns), starting after the active tab and wrapping around. No-op when none do.
     pub fn focus_next_agent_attention(&mut self, ctx: &mut ViewContext<Self>) {
         let waiting = self.agent_attention_tab_indices(ctx);
         if let Some(index) =
@@ -13400,6 +13437,9 @@ impl Workspace {
             });
         }
 
+        if self.tabs[index].coordinator {
+            self.remember_closed_coordinator(index, ctx);
+        }
         let tab_data = self.tabs.remove(index);
         // Closing the coordinator keeps it closed: new projects and later launches stop
         // creating one until the user opens one again. Agent switches and tab moves
@@ -14487,7 +14527,11 @@ impl Workspace {
             NewTabPlacement::AfterAllTabs => active_group_id
                 .and_then(|gid| self.index_after_group(gid))
                 .unwrap_or_else(|| self.tab_count()),
-            NewTabPlacement::AfterCurrentTab => self.active_tab_index + 1,
+            // After the active tab's whole family, so a new tab never lands between a
+            // source and its forks.
+            NewTabPlacement::AfterCurrentTab => {
+                index_after_family(&self.tab_lineage_depths(ctx), self.active_tab_index)
+            }
         };
 
         // A standalone (ungrouped) new tab must not land inside the pinned
@@ -14518,21 +14562,91 @@ impl Workspace {
         );
     }
 
+    /// Fork/transfer depth of every tab, in `self.tabs` order.
+    pub(crate) fn tab_lineage_depths(&self, ctx: &AppContext) -> Vec<usize> {
+        lineage_depths(&self.tab_lineage(ctx))
+    }
+
+    fn tab_lineage(&self, ctx: &AppContext) -> Vec<TabLineage> {
+        self.tabs
+            .iter()
+            .map(|tab| TabLineage::for_tab(tab, ctx))
+            .collect()
+    }
+
+    /// `TabOrigin::ancestors` for a tab created from the tab holding `pane_group`.
+    fn ancestry_of(&self, pane_group: &ViewHandle<PaneGroup>) -> Vec<PaneUuid> {
+        TabOrigin::ancestry_from(
+            self.tabs
+                .iter()
+                .find(|tab| tab.pane_group.id() == pane_group.id())
+                .and_then(|tab| tab.origin.as_ref()),
+        )
+    }
+
+    /// Puts every restored family in pre-order, keeping the active tab active. Builds
+    /// before nested forks placed a fork of a fork after its source's later siblings.
+    fn restore_lineage_preorder(&mut self, ctx: &AppContext) {
+        let order = preorder(&self.tab_lineage(ctx));
+        if order.iter().copied().eq(0..order.len()) {
+            return;
+        }
+        let active_pane_group_id = self
+            .tabs
+            .get(self.active_tab_index)
+            .map(|tab| tab.pane_group.id());
+        let mut slots: Vec<Option<TabData>> = std::mem::take(&mut self.tabs)
+            .into_iter()
+            .map(Some)
+            .collect();
+        self.tabs = order
+            .into_iter()
+            .filter_map(|index| slots[index].take())
+            .collect();
+        if let Some(new_active) = active_pane_group_id
+            .and_then(|id| self.tabs.iter().position(|tab| tab.pane_group.id() == id))
+        {
+            self.active_tab_index = new_active;
+        }
+    }
+
+    /// Moves the contiguous `run` so it starts at `to`, an index into the list with `run`
+    /// removed. The active tab stays active. Families move through here as one unit.
+    fn move_tab_run(&mut self, run: Range<usize>, to: usize, ctx: &mut ViewContext<Self>) {
+        if run.is_empty() || run.end > self.tabs.len() {
+            return;
+        }
+        let to = to.min(self.tabs.len() - run.len());
+        if to == run.start {
+            return;
+        }
+        let active_pane_group_id = self
+            .tabs
+            .get(self.active_tab_index)
+            .map(|tab| tab.pane_group.id());
+        let moved: Vec<_> = self.tabs.drain(run).collect();
+        self.tabs.splice(to..to, moved);
+        if let Some(new_active) = active_pane_group_id
+            .and_then(|id| self.tabs.iter().position(|tab| tab.pane_group.id() == id))
+        {
+            self.active_tab_index = new_active;
+        }
+        ctx.notify();
+    }
+
     fn origin_tab_placement(
         &self,
         origin: &TabOrigin,
         ctx: &AppContext,
     ) -> Option<(usize, Option<TabGroupId>)> {
-        use crate::tab::lineage::{index_after_family, lineage_nesting, TabLineage};
-        let tabs: Vec<_> = self
-            .tabs
-            .iter()
-            .map(|tab| TabLineage::for_tab(tab, ctx))
-            .collect();
-        let parent_index = tabs
-            .iter()
-            .position(|tab| tab.pane_uuids.contains(&origin.parent_pane_uuid))?;
-        let index = index_after_family(&lineage_nesting(&tabs), parent_index);
+        let parent_index = self.tabs.iter().position(|tab| {
+            tab.pane_group
+                .as_ref(ctx)
+                .terminal_pane_uuids()
+                .contains(&origin.parent_pane_uuid)
+        })?;
+        // Directly under the source's own forks, so a fork of a fork nests a level deeper.
+        let index = index_for_child(&self.tab_lineage_depths(ctx), parent_index);
         let group_id = self.tabs[parent_index].group_id;
         // A child of a standalone pinned tab stays in the unpinned region. A
         // child joining a section inherits that section's existing position.
@@ -15854,91 +15968,65 @@ impl Workspace {
     /// split a group or cross the pinned/unpinned boundary. Used by the
     /// action handler to no-op blocked moves and by `move_tab_menu_items`
     /// to hide the entry.
-    pub(super) fn can_move_tab(&self, index: usize, direction: TabMovement) -> bool {
+    pub(super) fn can_move_tab(
+        &self,
+        index: usize,
+        direction: TabMovement,
+        ctx: &AppContext,
+    ) -> bool {
         let Some(tab) = self.tabs.get(index) else {
             return false;
         };
+        // A tab moves with its forks and steps over whole units, and a fork stays
+        // inside its source's subtree, so the neighbour that matters is the start
+        // of the unit it would trade places with.
+        let forward = matches!(direction, TabMovement::Right);
+        let Some(step) = lineage_step(&self.tab_lineage_depths(ctx), index, forward) else {
+            return false;
+        };
+        let neighbor = &self.tabs[step.neighbor.start];
+        // A grouped tab can only reorder within its own group; crossing the
+        // group boundary would split its contiguous run (first member moving
+        // left, etc.).
+        if tab.group_id.is_some() {
+            return tab.group_id == neighbor.group_id;
+        }
         let tab_pinned = self.is_tab_effectively_pinned(tab);
         match direction {
-            TabMovement::Left => {
-                if index == 0 {
-                    return false;
-                }
-                let neighbor = &self.tabs[index - 1];
-                // A grouped tab can only reorder within its own group;
-                // crossing the group boundary would split its contiguous
-                // run (first member moving left, etc.).
-                if tab.group_id.is_some() {
-                    return tab.group_id == neighbor.group_id;
-                }
-                // Unpinned tab can't move up into the pinned region.
-                tab_pinned || !self.is_tab_effectively_pinned(neighbor)
-            }
-            TabMovement::Right => {
-                if index + 1 >= self.tabs.len() {
-                    return false;
-                }
-                let neighbor = &self.tabs[index + 1];
-                if tab.group_id.is_some() {
-                    return tab.group_id == neighbor.group_id;
-                }
-                // Pinned tab can't move down into the unpinned region.
-                !tab_pinned || self.is_tab_effectively_pinned(neighbor)
-            }
+            // Unpinned tab can't move up into the pinned region.
+            TabMovement::Left => tab_pinned || !self.is_tab_effectively_pinned(neighbor),
+            // Pinned tab can't move down into the unpinned region.
+            TabMovement::Right => !tab_pinned || self.is_tab_effectively_pinned(neighbor),
         }
     }
 
-    /// Moves the tab at `index` one slot left/right, where a "slot" is either a
-    /// single tab or an entire adjacent group. If the neighbor in the move
-    /// direction belongs to a *different* group, the tab hops over that whole
-    /// group so it never lands inside the group's contiguous run. Moving past an
-    /// ungrouped tab, or reordering within the tab's own group, is an ordinary
-    /// one-slot move.
+    /// Moves the tab at `index`, with everything forked from it, one unit
+    /// left/right. A unit is a neighbouring family, a sibling subtree inside the
+    /// tab's own family, or an entire adjacent group: if the neighbour belongs to a
+    /// *different* group, the tab hops over that whole group so it never lands
+    /// inside the group's contiguous run.
     fn move_tab(&mut self, index: usize, direction: TabMovement, ctx: &mut ViewContext<Self>) {
-        if !self.can_move_tab(index, direction) {
+        if !self.can_move_tab(index, direction, ctx) {
             return;
         }
-        let tabs_len = self.tabs.len();
-        // The group the moved tab belongs to (if any), so we can distinguish
-        // "reorder within my own group" from "hop over a different group".
-        let moved_group_id = self.tabs.get(index).and_then(|tab| tab.group_id);
-        let target = match direction {
-            TabMovement::Left if index > 0 => {
-                let neighbor = index - 1;
-                match self.tabs[neighbor].group_id {
-                    // A different group sits to the left: target its first
-                    // member so the tab lands just before the whole group.
-                    Some(group_id) if Some(group_id) != moved_group_id => {
-                        group_member_index_range(&self.tabs, group_id)
-                            .map(|(first, _)| first)
-                            .unwrap_or(neighbor)
-                    }
-                    // Ungrouped neighbor, or a member of our own group: step one.
-                    Some(_) | None => neighbor,
-                }
-            }
-            TabMovement::Right if index < tabs_len - 1 => {
-                let neighbor = index + 1;
-                match self.tabs[neighbor].group_id {
-                    // A different group sits to the right: target its last
-                    // member; the remove+insert leaves the tab just past it.
-                    Some(group_id) if Some(group_id) != moved_group_id => {
-                        group_member_index_range(&self.tabs, group_id)
-                            .map(|(_, last)| last)
-                            .unwrap_or(neighbor)
-                    }
-                    // Ungrouped neighbor, or a member of our own group: step one.
-                    Some(_) | None => neighbor,
-                }
-            }
-            // Already at the start/end of the list: nothing to move past.
-            TabMovement::Left | TabMovement::Right => return,
+        let forward = matches!(direction, TabMovement::Right);
+        let Some(mut step) = lineage_step(&self.tab_lineage_depths(ctx), index, forward) else {
+            return;
         };
+        let moved_group_id = self.tabs[index].group_id;
+        if let Some((first, last)) = self.tabs[step.neighbor.start]
+            .group_id
+            .filter(|group_id| Some(*group_id) != moved_group_id)
+            .and_then(|group_id| group_member_index_range(&self.tabs, group_id))
+        {
+            step.neighbor = first..last + 1;
+        }
 
-        // `hop_tab_to_index` keeps the same tab active across the move, so we
-        // only capture whether the moved tab was the active one for telemetry.
+        // `move_tab_run` keeps the same tab active across the move, so we only
+        // capture whether the moved tab was the active one for telemetry.
         let moving_active_tab = index == self.active_tab_index;
-        self.hop_tab_to_index(index, target, ctx);
+        let to = step.destination();
+        self.move_tab_run(step.moving, to, ctx);
 
         if moving_active_tab {
             send_telemetry_from_ctx!(TelemetryEvent::MoveActiveTab { direction }, ctx);
@@ -18187,6 +18275,7 @@ impl Workspace {
                     kind: TabOriginKind::Transfer { from: *from },
                     parent_pane_uuid: source_pane_uuid.clone(),
                     parent_title: pane_group.as_ref(ctx).display_title(ctx),
+                    ancestors: self.ancestry_of(&pane_group),
                 };
                 self.transfer_cli_agent_session(command.clone(), cwd.clone(), origin, ctx);
             }
@@ -21806,7 +21895,7 @@ impl Workspace {
                         .finish(),
                 )
                 .with_background(background_color)
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
                 .with_uniform_padding(10.)
                 .with_border(Border::all(1.).with_border_color(border_color.into()))
                 .finish(),
@@ -22529,7 +22618,7 @@ impl Workspace {
                         } else {
                             internal_colors::fg_overlay_1(theme)
                         })
-                        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                        .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                         .with_padding_left(16.)
                         .with_padding_right(16.)
                         .with_padding_top(4.)
@@ -23454,6 +23543,7 @@ impl Workspace {
                 let activity = project_cli_agent_activity(
                     terminal_view.cli_agent_shows_working(session),
                     matches!(session.status, CLIAgentSessionStatus::Blocked { .. }),
+                    session.session_context.stop_reason.is_some(),
                     session.turn_interrupted_by_user,
                     has_unread_completed,
                     has_other_unread,
@@ -23492,8 +23582,9 @@ impl Workspace {
         .with_height(TAB_BAR_HEIGHT)
         .finish();
 
+        // Transparent, so the title bar keeps its height without drawing a line under itself.
         let tab_bar_border = Border::bottom(TAB_BAR_BORDER_HEIGHT)
-            .with_border_fill(super::chrome_divider_fill(appearance.theme()));
+            .with_border_fill(Fill::Solid(ColorU::transparent_black()));
 
         let tab_bar_element = Container::new(
             EventHandler::new(Clipped::new(self.render_tab_bar_hoverable(bar_contents)).finish())
@@ -23508,10 +23599,6 @@ impl Workspace {
                 .finish(),
         )
         .with_border(tab_bar_border)
-        // One fixed header color, shared with the terminal and the vertical tabs
-        // rail. The header used to carry a per-project tint, which meant the
-        // window's top edge changed hue every time you switched project tabs.
-        .with_background(appearance.theme().background())
         .finish();
 
         let dimming_color = appearance.theme().background().into();
@@ -23558,7 +23645,7 @@ impl Workspace {
     }
 
     fn render_new_session_button(&self, ctx: &AppContext) -> Box<dyn Element> {
-        const CORNER_RADIUS: Radius = Radius::Pixels(4.);
+        const CORNER_RADIUS: Radius = RADIUS_SM;
         const BUTTON_HEIGHT: f32 = 24.;
         const SIDE_MENU_WIDTH: f32 = 16.;
         const BUTTON_WIDTH: f32 = 24. + SIDE_MENU_WIDTH;
@@ -23756,7 +23843,7 @@ impl Workspace {
         let button = Hoverable::new(self.mouse_states.avatar_icon.clone(), |state| {
             let mut stack = Stack::new();
             let mut container = Container::new(avatar.build().finish())
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                 .with_uniform_padding(2.);
 
             if state.is_mouse_over_element() {
@@ -23810,7 +23897,7 @@ impl Workspace {
                 icons::Icon::Lightbulb,
                 &self.mouse_states.resource_center_icon,
                 WorkspaceAction::ToggleResourceCenter,
-                "Warp Essentials".to_string(),
+                "Keyboard shortcuts".to_string(),
                 self.cached_keybindings[TOGGLE_RESOURCE_CENTER_KEYBINDING_NAME].clone(),
                 false,
                 false,
@@ -23888,49 +23975,41 @@ impl Workspace {
             None,
         );
 
-        if presentation.awaiting_approval || presentation.connected_device_name.is_some() {
-            let dot_color = if presentation.awaiting_approval {
-                theme.ansi_fg_yellow()
-            } else {
-                theme.ansi_fg_green()
-            };
-            let dot = ConstrainedBox::new(
-                Container::new(Empty::new().finish())
-                    .with_background_color(dot_color)
-                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(3.5)))
-                    .finish(),
-            )
-            .with_width(7.)
-            .with_height(7.)
-            .finish();
+        let tokens = appearance.tokens();
+        let icon_color = if presentation.awaiting_approval {
+            tokens.status(StatusKind::NeedsYou)
+        } else if presentation.connected_device_name.is_some() {
+            tokens.status(StatusKind::Working)
+        } else {
+            muted_color
+        };
+        let icon = ConstrainedBox::new(
+            icons::Icon::Phone01
+                .to_warpui_icon(Fill::Solid(icon_color))
+                .finish(),
+        )
+        .with_width(16.)
+        .with_height(16.)
+        .finish();
+        button = if presentation.awaiting_approval {
             let text = Text::new_inline(
                 presentation.label.clone(),
                 appearance.ui_font_family(),
                 REMOTE_CONTROL_BUTTON_FONT_SIZE,
             )
-            .with_color(muted_color)
-            .with_style(Properties::default().weight(Weight::Semibold))
+            .with_color(icon_color)
             .finish();
-            button = button.with_custom_label(
+            button.with_custom_label(
                 Flex::row()
                     .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                    .with_child(dot)
-                    .with_child(Container::new(text).with_margin_left(6.).finish())
+                    .with_spacing(6.)
+                    .with_child(icon)
+                    .with_child(text)
                     .finish(),
-            );
+            )
         } else {
-            button = button.with_text_and_icon_label(
-                TextAndIcon::new(
-                    TextAndIconAlignment::IconFirst,
-                    presentation.label.clone(),
-                    icons::Icon::Phone01.to_warpui_icon(Fill::Solid(muted_color)),
-                    MainAxisSize::Min,
-                    MainAxisAlignment::Center,
-                    vec2f(12., 12.),
-                )
-                .with_inner_padding(5.),
-            );
-        }
+            button.with_custom_label(icon)
+        };
 
         let tooltip_description = if presentation.awaiting_approval {
             Some("A phone scanned your pairing code — approve it in Settings".to_string())
@@ -23961,7 +24040,7 @@ impl Workspace {
             font_weight: Some(Weight::Light),
             font_family_id: Some(appearance.ui_font_family()),
             border_color: None,
-            border_radius: Some(CornerRadius::with_all(Radius::Pixels(5.))),
+            border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
             border_width: Some(1.),
             width: Some(80.),
             height: Some(24.),
@@ -24002,7 +24081,7 @@ impl Workspace {
             font_weight: Some(Weight::Semibold),
             font_family_id: Some(appearance.ui_font_family()),
             border_color: Some(appearance.theme().active_ui_text_color().into()),
-            border_radius: Some(CornerRadius::with_all(Radius::Pixels(5.))),
+            border_radius: Some(CornerRadius::with_all(RADIUS_SM)),
             border_width: Some(1.),
             width: Some(80.),
             height: Some(24.),
@@ -24214,21 +24293,34 @@ impl Workspace {
             let pill = ConstrainedBox::new(
                 Container::new(
                     Flex::row()
+                        .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                        .with_spacing(6.)
+                        .with_child(
+                            ConstrainedBox::new(
+                                Container::new(Empty::new().finish())
+                                    .with_background_color(appearance.tokens().accent)
+                                    .with_corner_radius(corners_pill())
+                                    .finish(),
+                            )
+                            .with_width(6.)
+                            .with_height(6.)
+                            .finish(),
+                        )
                         .with_child(
                             Text::new_inline(
                                 pill_text,
                                 appearance.ui_font_family(),
                                 PILL_FONT_SIZE,
                             )
-                            .with_color(CLINCH_LOGO_GREEN)
+                            .with_color(appearance.tokens().text_2)
                             .finish(),
                         )
                         .with_main_axis_size(MainAxisSize::Max)
                         .with_main_axis_alignment(MainAxisAlignment::Center)
                         .finish(),
                 )
-                .with_border(Border::all(1.).with_border_fill(Fill::Solid(CLINCH_LOGO_GREEN)))
-                .with_corner_radius(CornerRadius::with_all(Radius::Percentage(50.)))
+                .with_background(Fill::Solid(appearance.tokens().surface_field))
+                .with_corner_radius(corners_md())
                 .with_uniform_margin(4.)
                 .with_uniform_padding(4.)
                 .with_margin_right(5.)
@@ -24258,6 +24350,110 @@ impl Workspace {
         }
     }
 
+    /// One strip above the card while sessions restore. When a tab needs the user, clicking the
+    /// strip jumps to it, and × hides the strip until the next restore.
+    fn render_restore_notice(
+        &self,
+        text: String,
+        attention_terminal: Option<EntityId>,
+        appearance: &Appearance,
+    ) -> Box<dyn Element> {
+        let tokens = *appearance.tokens();
+        let font_family = appearance.ui_font_family();
+        let needs_you = attention_terminal.is_some();
+        let (glyph, glyph_color) = if needs_you {
+            (Icon::AlertCircle, tokens.status(StatusKind::NeedsYou))
+        } else {
+            (Icon::Restoring, tokens.text_3)
+        };
+        let dismiss = Hoverable::new(
+            self.mouse_states.restore_notice_dismiss.clone(),
+            move |state| {
+                let (icon_color, background) = if state.is_hovered() {
+                    (tokens.text_1, tokens.surface_hover)
+                } else {
+                    (tokens.text_3, ColorU::transparent_black())
+                };
+                Container::new(
+                    ConstrainedBox::new(Icon::X.to_warpui_icon(Fill::Solid(icon_color)).finish())
+                        .with_width(14.)
+                        .with_height(14.)
+                        .finish(),
+                )
+                .with_uniform_padding(4.)
+                .with_corner_radius(corners_sm())
+                .with_background(Fill::Solid(background))
+                .finish()
+            },
+        )
+        .with_cursor(Cursor::PointingHand)
+        .on_click(|ctx, _, _| ctx.dispatch_typed_action(WorkspaceAction::DismissRestoreNotice))
+        .finish();
+
+        let strip = Hoverable::new(self.mouse_states.restore_notice.clone(), move |state| {
+            let mut row = Flex::row()
+                .with_main_axis_size(MainAxisSize::Max)
+                .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                .with_spacing(8.)
+                .with_child(
+                    ConstrainedBox::new(glyph.to_warpui_icon(Fill::Solid(glyph_color)).finish())
+                        .with_width(14.)
+                        .with_height(14.)
+                        .finish(),
+                )
+                .with_child(
+                    Shrinkable::new(
+                        1.,
+                        Text::new_inline(text.clone(), font_family, 12.)
+                            .with_color(tokens.text_2)
+                            .with_clip(ClipConfig::ellipsis())
+                            .finish(),
+                    )
+                    .finish(),
+                );
+            if needs_you {
+                row.add_child(
+                    Text::new_inline("Show", font_family, 12.)
+                        .with_color(glyph_color)
+                        .finish(),
+                );
+            }
+            let background = match (needs_you, state.is_hovered()) {
+                (true, true) => coloru_with_opacity(glyph_color, 25),
+                (true, false) => tokens.status_soft(StatusKind::NeedsYou),
+                (false, _) => tokens.surface_field,
+            };
+            Container::new(row.finish())
+                .with_horizontal_padding(12.)
+                .with_vertical_padding(6.)
+                .with_background(Fill::Solid(background))
+                .with_corner_radius(corners_md())
+                .finish()
+        });
+        let strip = match attention_terminal {
+            Some(terminal_view_id) => strip
+                .with_cursor(Cursor::PointingHand)
+                .on_click(move |ctx, _, _| {
+                    ctx.dispatch_typed_action(WorkspaceAction::FocusTerminalViewInWorkspace {
+                        terminal_view_id,
+                    });
+                })
+                .finish(),
+            None => strip.finish(),
+        };
+        Container::new(
+            Flex::row()
+                .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                .with_spacing(4.)
+                .with_child(Shrinkable::new(1., strip).finish())
+                .with_child(dismiss)
+                .finish(),
+        )
+        .with_margin_right(CARD_INSET)
+        .with_margin_bottom(6.)
+        .finish()
+    }
+
     fn render_banner_and_active_tab(
         &self,
         app: &AppContext,
@@ -24281,26 +24477,27 @@ impl Workspace {
             None => active_content,
         };
 
-        let terminal_content = if let Some(progress) =
-            crate::terminal::cli_agent_sessions::restore::AgentRestoreQueue::as_ref(app)
-                .progress_text()
-        {
-            let theme = appearance.theme();
-            let status = Container::new(
-                Text::new_inline(progress, appearance.ui_font_family(), 12.)
-                    .with_color(theme.main_text_color(theme.background()).into())
-                    .with_clip(ClipConfig::ellipsis())
-                    .finish(),
-            )
-            .with_uniform_padding(8.)
-            .finish();
+        let restore_queue =
+            crate::terminal::cli_agent_sessions::restore::AgentRestoreQueue::as_ref(app);
+        let terminal_content = if let Some(progress) = restore_queue.progress_text() {
+            let notice = self.render_restore_notice(
+                progress,
+                restore_queue.first_attention_terminal(app),
+                appearance,
+            );
             Flex::column()
-                .with_child(status)
+                .with_child(notice)
                 .with_child(Shrinkable::new(1., terminal_content).finish())
                 .finish()
         } else {
             terminal_content
         };
+
+        // The frame around the cards. The sidebar supplies its own gap on the left when it is open.
+        let terminal_content = Container::new(terminal_content)
+            .with_margin_right(CARD_INSET)
+            .with_margin_bottom(CARD_INSET)
+            .finish();
 
         let vertical_tabs_active = uses_vertical_tabs();
         let pane_group = self.active_tab_pane_group().as_ref(app);
@@ -24714,7 +24911,7 @@ impl Workspace {
                                 .finish(),
                             )
                             .with_uniform_padding(2.)
-                            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)));
+                            .with_corner_radius(CornerRadius::with_all(RADIUS_SM));
                             if state.is_hovered() {
                                 container = container
                                     .with_background_color(coloru_with_opacity(text_color, 20));
@@ -24790,7 +24987,7 @@ impl Workspace {
             );
 
             let mut container = Container::new(row.finish())
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
                 .with_horizontal_padding(8.);
             if matches!(variant, BannerButtonVariant::Outlined) {
                 container = container.with_border(Border::all(1.).with_border_color(text_color));
@@ -24888,15 +25085,11 @@ impl Workspace {
         container.finish()
     }
 
-    fn render_panel_separator(app: &AppContext) -> Box<dyn Element> {
-        let appearance = Appearance::as_ref(app);
-        ConstrainedBox::new(
-            Rect::new()
-                .with_background_color(appearance.theme().outline().into_solid())
-                .finish(),
-        )
-        .with_width(1.0)
-        .finish()
+    /// Panels are separated by a gap of chrome, the same as split panes.
+    fn render_panel_separator(_app: &AppContext) -> Box<dyn Element> {
+        ConstrainedBox::new(Empty::new().finish())
+            .with_width(CARD_INSET)
+            .finish()
     }
 
     fn add_panel_with_separator(
@@ -26165,6 +26358,15 @@ impl TypedActionView for Workspace {
             PinTab(tab_index) => self.pin_tab(*tab_index, ctx),
             SwitchCoordinatorAgent(tab_index) => self.switch_coordinator_agent(*tab_index, ctx),
             OpenCoordinatorSession => self.open_coordinator_from_menu(ctx),
+            SetAutoCoordinate(enabled) => self.set_auto_coordinate(*enabled, ctx),
+            SetCoordinatorTactic { tactic, enabled } => {
+                self.set_coordinator_tactic(*tactic, *enabled, ctx)
+            }
+            RunCoordinatorNow => {
+                self.vertical_tabs_panel.open_popover = None;
+                self.run_coordinator_now(ctx);
+            }
+            SetCoordinatorOn(on) => self.set_coordinator_on(*on, ctx),
             UnpinTab(tab_index) => self.unpin_tab(*tab_index, ctx),
             PinTabGroup(group_id) => self.pin_tab_group(*group_id, ctx),
             UnpinTabGroup(group_id) => self.unpin_tab_group(*group_id, ctx),
@@ -26874,12 +27076,18 @@ impl TypedActionView for Workspace {
                     ctx.notify();
                 }
             }
-            ToggleVerticalTabsSettingsPopup => {
-                if uses_vertical_tabs() && self.vertical_tabs_panel_open {
-                    self.vertical_tabs_panel.show_settings_popup =
-                        !self.vertical_tabs_panel.show_settings_popup;
-                    ctx.notify();
-                }
+            RevealTabDetailCardAfterDelay => {
+                ctx.spawn(
+                    Timer::after(vertical_tabs::DETAIL_CARD_DELAY),
+                    |_, _, ctx| {
+                        ctx.notify();
+                    },
+                );
+            }
+            ToggleSidebarPopover(popover) => {
+                let panel = &mut self.vertical_tabs_panel;
+                panel.open_popover = (panel.open_popover != Some(*popover)).then_some(*popover);
+                ctx.notify();
             }
             ToggleAutomaticWorktreeTabs => {
                 ClinchSettings::handle(ctx).update(ctx, |settings, ctx| {
@@ -27646,6 +27854,10 @@ impl TypedActionView for Workspace {
                 // Clear the stored width when hover ends
                 self.tab_fixed_width = None;
                 ctx.notify();
+            }
+            DismissRestoreNotice => {
+                crate::terminal::cli_agent_sessions::restore::AgentRestoreQueue::handle(ctx)
+                    .update(ctx, |queue, ctx| queue.dismiss_notice(ctx));
             }
             FocusTerminalViewInWorkspace { terminal_view_id } => {
                 if !self.focus_terminal_view_locally(*terminal_view_id, ctx) {
@@ -28736,7 +28948,7 @@ impl View for Workspace {
             let panels_row = self.render_panels(app, Shrinkable::new(1.0, content).finish(), true);
             outer_column.add_child(Shrinkable::new(1.0, panels_row).finish());
             Container::new(outer_column.finish())
-                .with_background(util::get_terminal_background_fill(self.window_id, app))
+                .with_background(util::get_chrome_background_fill(self.window_id, app))
                 .finish()
         } else {
             let mut outer_column = Flex::column();
@@ -28747,7 +28959,7 @@ impl View for Workspace {
             let panels_row = self.render_panels(app, Shrinkable::new(1.0, content).finish(), false);
             outer_column.add_child(Shrinkable::new(1.0, panels_row).finish());
             Container::new(outer_column.finish())
-                .with_background(util::get_terminal_background_fill(self.window_id, app))
+                .with_background(util::get_chrome_background_fill(self.window_id, app))
                 .finish()
         };
         let mut stack = Stack::new();
@@ -28804,26 +29016,60 @@ impl View for Workspace {
                 .finish(),
         );
 
-        if !use_simplified_wasm_tab_bar
-            && uses_vertical_tabs()
-            && self.vertical_tabs_panel_open
-            && self.vertical_tabs_panel.show_settings_popup
-        {
-            stack.add_positioned_overlay_child(
-                Dismiss::new(render_settings_popup(&self.vertical_tabs_panel, app))
+        if !use_simplified_wasm_tab_bar && uses_vertical_tabs() && self.vertical_tabs_panel_open {
+            // The Auto popover hangs off the coordinator row, so it goes when the coordinator does.
+            let open_popover = self.vertical_tabs_panel.open_popover.filter(|popover| {
+                *popover != vertical_tabs::SidebarPopover::AutoCoordinate
+                    || self.coordinator_tab_index().is_some()
+            });
+            if let Some(popover) = open_popover {
+                let anchor = match popover {
+                    vertical_tabs::SidebarPopover::Tasks => {
+                        vertical_tabs::SIDEBAR_TASKS_LINK_POSITION_ID
+                    }
+                    vertical_tabs::SidebarPopover::Bookmarks => {
+                        vertical_tabs::SIDEBAR_BOOKMARKS_LINK_POSITION_ID
+                    }
+                    vertical_tabs::SidebarPopover::AutoCoordinate => {
+                        auto_coordinate::AUTO_COORDINATE_PILL_POSITION_ID
+                    }
+                };
+                // Foot links open their popover upward; the coordinator's Auto settings hang
+                // below its row at the top of the list.
+                let (offset, parent_anchor, child_anchor) = match popover {
+                    vertical_tabs::SidebarPopover::Tasks
+                    | vertical_tabs::SidebarPopover::Bookmarks => (
+                        vec2f(0., -6.),
+                        PositionedElementAnchor::TopLeft,
+                        ChildAnchor::BottomLeft,
+                    ),
+                    vertical_tabs::SidebarPopover::AutoCoordinate => (
+                        vec2f(0., 6.),
+                        PositionedElementAnchor::BottomLeft,
+                        ChildAnchor::TopLeft,
+                    ),
+                };
+                stack.add_positioned_overlay_child(
+                    Dismiss::new(vertical_tabs::render_sidebar_popover(
+                        popover,
+                        &self.vertical_tabs_panel,
+                        self,
+                        app,
+                    ))
                     .prevent_interaction_with_other_elements()
-                    .on_dismiss(|ctx, _| {
-                        ctx.dispatch_typed_action(WorkspaceAction::ToggleVerticalTabsSettingsPopup);
+                    .on_dismiss(move |ctx, _| {
+                        ctx.dispatch_typed_action(WorkspaceAction::ToggleSidebarPopover(popover));
                     })
                     .finish(),
-                OffsetPositioning::offset_from_save_position_element(
-                    VERTICAL_TABS_SETTINGS_BUTTON_POSITION_ID,
-                    vec2f(0., 4.),
-                    PositionedElementOffsetBounds::WindowByPosition,
-                    PositionedElementAnchor::BottomLeft,
-                    ChildAnchor::TopLeft,
-                ),
-            );
+                    OffsetPositioning::offset_from_save_position_element(
+                        anchor,
+                        offset,
+                        PositionedElementOffsetBounds::WindowByPosition,
+                        parent_anchor,
+                        child_anchor,
+                    ),
+                );
+            }
         }
 
         // Claude Code + Codex usage detail panel. Rendered here at the workspace
@@ -30172,6 +30418,13 @@ impl Workspace {
         // Never split a group: a drop that resolves to the middle of a group's
         // run is pushed past the group's last member instead.
         let index = self.clamp_past_group(index);
+        // Nor a family: a drop between a source and its forks lands after them.
+        let depths = self.tab_lineage_depths(ctx);
+        let index = if depths.get(index).is_some_and(|depth| *depth > 0) {
+            index_after_family(&depths, index)
+        } else {
+            index
+        };
         let mut tab_data = TabData::new(pane_group);
         tab_data.selected_color = color.map_or(SelectedTabColor::Unset, SelectedTabColor::Color);
         tab_data.draggable_state = draggable_state;
@@ -30982,30 +31235,25 @@ impl Workspace {
                     // Deliberately skip the group-reassignment logic used by
                     // the normal reorder path below: the placeholder is
                     // detached mid cross-window drag and shouldn't churn group
-                    // membership.
-                    let use_vertical_tabs = uses_vertical_tabs();
-                    let new_index = if use_vertical_tabs {
-                        self.calculate_updated_tab_index_vertical(current_index, position, ctx)
-                    } else {
-                        self.calculate_updated_tab_index(current_index, position, ctx)
+                    // membership. Its forks still move with it, as they do in
+                    // an in-window drag.
+                    let depths = self.tab_lineage_depths(ctx);
+                    let step = self.lineage_drag_step(
+                        current_index,
+                        &depths,
+                        position,
+                        uses_vertical_tabs(),
+                        ctx,
+                    );
+                    let new_index = match step {
+                        None => current_index,
+                        Some(step) => match self.apply_tab_drag_step(current_index, step, ctx) {
+                            Some(new_index) => new_index,
+                            // Do not allow the placeholder to cross the pinned/unpinned
+                            // boundary, matching the in-window reorder path.
+                            None => return,
+                        },
                     };
-                    if new_index != current_index {
-                        // Do not allow the placeholder to cross the pinned/unpinned
-                        // boundary, matching the constraint enforced by the normal
-                        // in-window reorder path.
-                        if self.is_tab_effectively_pinned(&self.tabs[current_index])
-                            != self.is_tab_effectively_pinned(&self.tabs[new_index])
-                        {
-                            return;
-                        }
-                        self.tabs.swap(new_index, current_index);
-                        if current_index == self.active_tab_index {
-                            self.set_active_tab_index(new_index, ctx);
-                        } else if new_index == self.active_tab_index {
-                            self.set_active_tab_index(current_index, ctx);
-                        }
-                        ctx.notify();
-                    }
                     CrossWindowTabDrag::handle(ctx).update(ctx, |drag, _| {
                         drag.set_source_placeholder_index(new_index);
                     });
@@ -31181,78 +31429,140 @@ impl Workspace {
                 let target_group_range =
                     hovered_group.and_then(|gid| group_member_index_range(&self.tabs, gid));
 
-                // Assign the tab to the group we're dragging over (or clear its
+                // Everything forked from the dragged tab changes section with it.
+                let run = subtree(&self.tab_lineage_depths(ctx), current_index);
+
+                // Assign the run to the group we're dragging over (or clear its
                 // group if none). This intentionally leaves the pin untouched:
                 // a pinned tab dragged into a pinned group keeps its pin for the
                 // duration of the drag and only loses it on drop (see the
                 // `DropTab` handler).
-                self.assign_tab_to_group(current_index, hovered_group, ctx);
+                for index in run.clone() {
+                    self.assign_tab_to_group(index, hovered_group, ctx);
+                }
 
-                // Hop into the target group's contiguous block so the group
-                // stays one rendered container. Vertical tab rendering only
-                // groups consecutive tabs, so leaving `current_index` outside
-                // the block would split the group across the panel.
+                // Land at the edge of the target group's contiguous block that the
+                // drag entered from, so the group stays one rendered container and
+                // no family already inside it is split. Vertical tab rendering only
+                // groups consecutive tabs.
                 if let Some((first, last)) = target_group_range {
-                    let insert_at = if current_index < first { first } else { last };
-                    if insert_at != current_index {
-                        self.hop_tab_to_index(current_index, insert_at, ctx);
-                    }
+                    let to = if run.start < first {
+                        first - run.len()
+                    } else {
+                        last + 1
+                    };
+                    self.move_tab_run(run, to, ctx);
                 } else if let Some(target) = unpinned_region_start {
-                    // Relocate the now-unpinned tab to the first unpinned slot
+                    // Relocate the now-unpinned run to the first unpinned slot
                     // so the pinned region stays contiguous.
-                    self.move_tab_to_index(current_index, target, ctx);
+                    self.move_tab_run(run.clone(), target.saturating_sub(run.len()), ctx);
                 }
                 return;
             }
         }
 
-        let new_index = if use_vertical_tabs {
-            self.calculate_updated_tab_index_vertical(current_index, position, ctx)
-        } else {
-            self.calculate_updated_tab_index(current_index, position, ctx)
+        // The dragged tab moves with everything forked from it and trades places
+        // with a whole neighbouring unit (a family, or a sibling subtree inside
+        // one), so a source never loses its forks. A fork stays inside its
+        // source's subtree; dragging it to another section, project or window is
+        // the deliberate way to take it out.
+        let depths = self.tab_lineage_depths(ctx);
+        if let Some(step) =
+            self.lineage_drag_step(current_index, &depths, position, use_vertical_tabs, ctx)
+        {
+            self.apply_tab_drag_step(current_index, step, ctx);
+        }
+    }
+
+    /// Applies one drag step for the tab at `current_index` and returns its new index,
+    /// or `None` when the step would cross the pinned boundary.
+    fn apply_tab_drag_step(
+        &mut self,
+        current_index: usize,
+        mut step: LineageStep,
+        ctx: &mut ViewContext<Self>,
+    ) -> Option<usize> {
+        // Do not allow a tab to trade places with a neighbour whose pinned state
+        // does not match. This prevents an unpinned tab from entering the pinned
+        // area (and vice versa). Dragging into a pinned tab group is already
+        // handled by grouping logic in `on_tab_drag`.
+        if self.is_tab_effectively_pinned(&self.tabs[current_index])
+            != self.is_tab_effectively_pinned(&self.tabs[step.neighbor.start])
+        {
+            return None;
+        }
+
+        // Prevent dropping into a collapsed group: if the neighbour is in a
+        // collapsed group the dragged tab doesn't belong to, hop past the whole
+        // block instead of landing inside it.
+        let dragged_group = self.tabs[current_index].group_id;
+        let neighbor_collapsed_group = self.tabs[step.neighbor.start].group_id.filter(|gid| {
+            Some(*gid) != dragged_group && self.tab_groups.get(gid).is_some_and(|g| g.collapsed)
+        });
+        if let Some((first, last)) = neighbor_collapsed_group
+            .and_then(|group_id| group_member_index_range(&self.tabs, group_id))
+        {
+            step.neighbor = first..last + 1;
+        }
+
+        let active_moves = step.moving.contains(&self.active_tab_index)
+            || step.neighbor.contains(&self.active_tab_index);
+        let to = step.destination();
+        self.move_tab_run(step.moving, to, ctx);
+        if active_moves {
+            self.set_active_tab_index(self.active_tab_index, ctx);
+        }
+        Some(to)
+    }
+
+    /// The step the dragged subtree at `index` should take, once the drag midpoint
+    /// crosses the midpoint of the neighbouring unit on the active axis. Comparing
+    /// against the whole unit (rather than its nearest card) keeps hops between units
+    /// of different sizes from oscillating. Single tabs keep the per-tab thresholds.
+    fn lineage_drag_step(
+        &self,
+        index: usize,
+        depths: &[usize],
+        drag_position: RectF,
+        is_vertical: bool,
+        ctx: &mut ViewContext<Self>,
+    ) -> Option<LineageStep> {
+        let axis_midpoint = |rect: RectF| {
+            if is_vertical {
+                rect.center().y()
+            } else {
+                rect.center().x()
+            }
         };
-
-        if new_index != current_index {
-            // Do not allow a tab to swap places with a neighbouring tab if the
-            // pinned states do not match. This prevents an unpinned tab from
-            // entering the pinned area (and vice versa). Dragging into a pinned tab
-            // group is already handled by grouping logic above.
-            if self.is_tab_effectively_pinned(&self.tabs[current_index])
-                != self.is_tab_effectively_pinned(&self.tabs[new_index])
-            {
-                return;
+        let drag_midpoint = axis_midpoint(drag_position);
+        for forward in [false, true] {
+            let Some(step) = lineage_step(depths, index, forward) else {
+                continue;
+            };
+            let crossed = if step.moving.len() == 1 && step.neighbor.len() == 1 {
+                let new_index = if is_vertical {
+                    self.calculate_updated_tab_index_vertical(index, drag_position, ctx)
+                } else {
+                    self.calculate_updated_tab_index(index, drag_position, ctx)
+                };
+                new_index == step.neighbor.start
+            } else {
+                let first = self.neighbor_drag_rect(step.neighbor.start, is_vertical, ctx);
+                let last = self.neighbor_drag_rect(step.neighbor.end - 1, is_vertical, ctx);
+                first.zip(last).is_some_and(|(first, last)| {
+                    let unit_midpoint = axis_midpoint(first.union_rect(last));
+                    if forward {
+                        drag_midpoint > unit_midpoint
+                    } else {
+                        drag_midpoint < unit_midpoint
+                    }
+                })
+            };
+            if crossed {
+                return Some(step);
             }
-
-            // Prevent dropping into a collapsed group: if the swap target is a
-            // collapsed-group member the dragged tab doesn't belong to, hop
-            // past the whole block instead of swapping into it.
-            let dragged_group = self.tabs[current_index].group_id;
-            let neighbor_collapsed_group = self
-                .tabs
-                .get(new_index)
-                .and_then(|t| t.group_id)
-                .filter(|gid| {
-                    Some(*gid) != dragged_group
-                        && self.tab_groups.get(gid).is_some_and(|g| g.collapsed)
-                });
-            if let Some(group_id) = neighbor_collapsed_group {
-                if let Some((first, last)) = group_member_index_range(&self.tabs, group_id) {
-                    let insert_at = if current_index < first { last } else { first };
-                    self.hop_tab_to_index(current_index, insert_at, ctx);
-                    return;
-                }
-            }
-
-            self.tabs.swap(new_index, current_index);
-
-            if current_index == self.active_tab_index {
-                self.set_active_tab_index(new_index, ctx);
-            } else if new_index == self.active_tab_index {
-                self.set_active_tab_index(current_index, ctx);
-            }
-
-            ctx.notify();
         }
+        None
     }
 
     /// Performs the source-workspace cleanup indicated by `DropResult`.
@@ -31725,6 +32035,17 @@ fn group_member_index_range(tabs: &[TabData], group_id: TabGroupId) -> Option<(u
     let first = members.next()?;
     let last = members.last().unwrap_or(first);
     Some((first, last))
+}
+
+/// `index`, a position in the list with `run` still in it, as the matching position once
+/// `run` is removed: the form `Workspace::move_tab_run` takes. A run before `index`
+/// shifts it back.
+fn index_without_run(index: usize, run: &Range<usize>) -> usize {
+    if index > run.start {
+        index.saturating_sub(run.len())
+    } else {
+        index
+    }
 }
 
 /// Returns `true` when `group_id` has exactly one member in `tabs`. Shared

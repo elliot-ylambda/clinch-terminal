@@ -1,9 +1,10 @@
 use chrono::Local;
 use warp_core::ui::appearance::Appearance;
+use warp_core::ui::tokens::{RADIUS_MD, RADIUS_SM};
 use warp_graphql::queries::get_conversation_usage::ConversationUsage;
 use warpui::elements::{
     Border, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Empty, Flex, Hoverable,
-    MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement, Radius, Shrinkable, Text,
+    MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement, Shrinkable, Text,
 };
 use warpui::platform::Cursor;
 use warpui::{AppContext, Element, View};
@@ -72,7 +73,7 @@ impl UsageHistoryEntry {
         Container::new(res.finish())
             .with_border(Border::all(2.).with_border_fill(appearance.theme().surface_3()))
             .with_background(appearance.theme().surface_2())
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
             .finish()
     }
 
@@ -165,9 +166,9 @@ impl UsageHistoryEntry {
         )
         .with_uniform_padding(12.)
         .with_corner_radius(if self.is_expanded {
-            CornerRadius::with_top(Radius::Pixels(6.))
+            CornerRadius::with_top(RADIUS_MD)
         } else {
-            CornerRadius::with_all(Radius::Pixels(6.))
+            CornerRadius::with_all(RADIUS_MD)
         })
         .with_background(appearance.theme().surface_2())
         .finish();
@@ -202,7 +203,7 @@ impl UsageHistoryEntry {
                 .finish(),
         )
         .with_uniform_padding(12.)
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+        .with_corner_radius(CornerRadius::with_all(RADIUS_MD))
         .with_background(appearance.theme().surface_2())
         .finish()
     }
@@ -218,7 +219,7 @@ impl UsageHistoryEntry {
             .with_padding_left(width)
             .with_padding_top(height)
             .with_background(appearance.theme().surface_3())
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
             .finish()
     }
 }
