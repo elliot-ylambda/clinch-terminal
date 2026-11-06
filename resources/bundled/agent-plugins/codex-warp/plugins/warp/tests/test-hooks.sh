@@ -98,5 +98,16 @@ assert_eq "other tools are ignored" "" \
 assert_success "pre-tool hook fails open for malformed input" \
     run_captured_hook on-pre-tool-use.sh '{not-json'
 
+# Codex 0.167 SubagentStart/SubagentStop input carries the subagent's `agent_id`.
+for kind in start stop; do
+    BODY=$(run_captured_hook "on-subagent-$kind.sh" \
+        '{"session_id":"s1","cwd":"/tmp/project","agent_id":"agent-7","agent_type":"default","turn_id":"t1"}')
+    assert_eq "subagent $kind event" "subagent_$kind" "$(echo "$BODY" | jq -r '.event')"
+    assert_eq "subagent $kind carries the agent id" "agent-7" "$(echo "$BODY" | jq -r '.subagent_id')"
+    assert_eq "subagent $kind keeps the parent session" "s1" "$(echo "$BODY" | jq -r '.session_id')"
+    assert_eq "identity-less subagent $kind is dropped" "" \
+        "$(run_captured_hook "on-subagent-$kind.sh" '{"session_id":"s1","agent_type":"default"}')"
+done
+
 printf '%s passed, %s failed\n' "$passed" "$failed"
 test "$failed" -eq 0

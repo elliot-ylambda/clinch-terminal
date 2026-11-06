@@ -167,6 +167,20 @@ impl NativeComposer {
     }
 }
 
+/// The grid a native Claude Code or Codex TUI draws into: the alt screen in full-screen mode,
+/// otherwise the running block's output.
+pub(crate) fn cli_agent_native_grid(model: &TerminalModel) -> &GridHandler {
+    if model.is_alt_screen_active() {
+        model.alt_screen().grid_handler()
+    } else {
+        model
+            .block_list()
+            .active_block()
+            .output_grid()
+            .grid_handler()
+    }
+}
+
 fn grid_row_is_blank(grid: &GridHandler, row_idx: usize) -> bool {
     grid.row(row_idx)
         .is_some_and(|row| (0..row.len()).all(|col| matches!(row[col].c, '\0' | ' ' | '\u{a0}')))
@@ -1365,15 +1379,7 @@ impl TerminalView {
         if matches!(agent, Some(CLIAgent::Claude | CLIAgent::Codex)) {
             let native_draft_and_clear_bytes = {
                 let model = self.model.lock();
-                let grid = if model.is_alt_screen_active() {
-                    model.alt_screen().grid_handler()
-                } else {
-                    model
-                        .block_list()
-                        .active_block()
-                        .output_grid()
-                        .grid_handler()
-                };
+                let grid = cli_agent_native_grid(&model);
                 match agent {
                     Some(CLIAgent::Claude) => claude_native_composer_draft(grid)
                         .map(|draft| (draft, claude_stash_prompt_bytes(&model))),
@@ -1444,11 +1450,7 @@ impl TerminalView {
         if session.received_rich_notification {
             return true;
         }
-        let grid = if model.is_alt_screen_active() {
-            model.alt_screen().grid_handler()
-        } else {
-            block.output_grid().grid_handler()
-        };
+        let grid = cli_agent_native_grid(&model);
         match session.agent {
             CLIAgent::Claude => claude_native_composer(grid).is_some(),
             CLIAgent::Codex => codex_native_composer(grid).is_some(),
@@ -1493,15 +1495,7 @@ impl TerminalView {
 
     fn native_composer(&self, agent: CLIAgent) -> Option<NativeComposer> {
         let model = self.model.lock();
-        let grid = if model.is_alt_screen_active() {
-            model.alt_screen().grid_handler()
-        } else {
-            model
-                .block_list()
-                .active_block()
-                .output_grid()
-                .grid_handler()
-        };
+        let grid = cli_agent_native_grid(&model);
         match agent {
             CLIAgent::Claude => claude_native_composer(grid),
             CLIAgent::Codex => codex_native_composer(grid),

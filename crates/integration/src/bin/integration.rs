@@ -483,6 +483,7 @@ fn register_tests() -> HashMap<&'static str, BoxedBuilderFn> {
     // Rich Input Ctrl+Enter submit toggle (issue #11588)
     // Full-stack wiring guard: toggle ON → Enter inserts newline, Ctrl+Enter submits.
     register_test!(test_rich_input_toggle_on_enter_inserts_newline_and_ctrl_enter_submits);
+    register_test!(test_cli_agent_background_work_follows_the_status_line);
     // Regression: Enter must accept inline menus (not insert newline) when toggle=true (PR #11723)
     register_test!(test_rich_input_enter_accepts_menu_item_when_toggle_is_true);
 

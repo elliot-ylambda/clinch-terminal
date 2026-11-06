@@ -1,4 +1,5 @@
 pub mod auto_continue;
+pub mod background_work;
 #[cfg(not(target_family = "wasm"))]
 #[cfg_attr(not(feature = "local_tty"), allow(dead_code))]
 pub mod codex_host_check;
@@ -20,6 +21,7 @@ use instant::Instant;
 use warpui::r#async::Timer;
 use warpui::{Entity, EntityId, ModelContext, ModelHandle, SingletonEntity};
 
+use self::background_work::BackgroundWork;
 use self::listener::CLIAgentSessionListener;
 use super::CLIAgent;
 use crate::agent_resume::{
@@ -115,6 +117,10 @@ pub struct CLIAgentSessionContext {
     /// When Clinch observed the current turn start. A rollout-recorded Codex
     /// usage-limit stop only closes a turn that started before it.
     pub turn_started_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Background work the agent last showed on its own status line. Kept when the status line is
+    /// hidden (for example behind a dialog) and deliberately not reset by `Stop`: background
+    /// shells outlive the turn that started them.
+    pub screen_background_work: BackgroundWork,
 }
 
 /// State of the rich input editor for composing a prompt to send to a CLI agent.
@@ -357,6 +363,17 @@ impl CLIAgentSession {
 
     pub fn is_remote(&self) -> bool {
         self.remote_host.is_some()
+    }
+
+    /// Background work to show for this session: shells, monitors and task totals from the agent's
+    /// status line, and subagents from whichever of the status line and the subagent hooks reports
+    /// more (Claude lists only background subagents; hooks see all of them but need the plugin).
+    pub fn background_work(&self) -> BackgroundWork {
+        let mut work = self.session_context.screen_background_work;
+        let hooked_subagents =
+            u32::try_from(self.session_context.active_subagent_ids.len()).unwrap_or(u32::MAX);
+        work.subagents = work.subagents.max(hooked_subagents);
+        work
     }
 
     /// Whether the session surfaces trustworthy fine-grained status
@@ -1125,6 +1142,25 @@ impl CLIAgentSessionsModel {
             }
             _ => {}
         }
+    }
+
+    /// Records the background work read from the agent's status line. `None` means the status
+    /// line was not on screen, which keeps the last known counts. A change only notifies: tab
+    /// chrome observes this model, and nothing else depends on the counts.
+    pub fn update_screen_background_work(
+        &mut self,
+        terminal_view_id: EntityId,
+        work: Option<BackgroundWork>,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        let (Some(session), Some(work)) = (self.sessions.get_mut(&terminal_view_id), work) else {
+            return;
+        };
+        if session.session_context.screen_background_work == work {
+            return;
+        }
+        session.session_context.screen_background_work = work;
+        ctx.notify();
     }
 
     /// Seeds a restored pane from its persisted provider resume command before any plugin event.

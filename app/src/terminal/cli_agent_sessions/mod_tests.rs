@@ -5,6 +5,7 @@ use warp_core::channel::{Channel, ChannelConfig, ChannelState};
 use warp_core::AppId;
 use warpui::{App, Entity, EntityId};
 
+use super::background_work::BackgroundWork;
 use super::event::{
     parse_event, CLIAgentEvent, CLIAgentEventPayload, CLIAgentEventSource, CLIAgentEventType,
     CLIAgentStopReason,
@@ -2349,4 +2350,85 @@ fn only_a_session_with_hooks_can_block_a_submission_on_its_turn() {
 
     session.status = CLIAgentSessionStatus::Success;
     assert!(!session.turn_blocks_submission());
+}
+
+#[derive(Default)]
+struct NotificationCount(usize);
+
+impl Entity for NotificationCount {
+    type Event = ();
+}
+
+#[test]
+fn screen_background_work_survives_turn_end_and_hidden_status_lines() {
+    App::test((), |mut app| async move {
+        let sessions = app.add_model(|_| CLIAgentSessionsModel::new());
+        let pane = EntityId::new();
+        sessions.update(&mut app, |model, ctx| {
+            model.set_session(pane, idle_test_session(CLIAgent::Claude), ctx);
+        });
+        let notifications = app.add_model(|_| NotificationCount::default());
+        notifications.update(&mut app, |_, ctx| {
+            ctx.observe(&sessions, |count, _, _| count.0 += 1);
+        });
+        let one_shell = BackgroundWork {
+            shells: 1,
+            ..Default::default()
+        };
+        let notification_count = |app: &App| notifications.read(app, |count, _| count.0);
+
+        sessions.update(&mut app, |model, ctx| {
+            model.update_screen_background_work(pane, Some(one_shell), ctx);
+            // A redraw with the same counts is not a change.
+            model.update_screen_background_work(pane, Some(one_shell), ctx);
+            // A dialog hid the status line: keep what it last showed.
+            model.update_screen_background_work(pane, None, ctx);
+            // The turn ends while the shell keeps running.
+            model.update_from_event(
+                pane,
+                &activity_event(CLIAgent::Claude, CLIAgentEventType::Stop),
+                ctx,
+            );
+            assert_eq!(model.session(pane).unwrap().background_work(), one_shell);
+        });
+        assert_eq!(notification_count(&app), 1);
+
+        sessions.update(&mut app, |model, ctx| {
+            model.update_screen_background_work(pane, Some(BackgroundWork::default()), ctx);
+            assert!(model.session(pane).unwrap().background_work().is_empty());
+            // Panes without a session ignore scans.
+            model.update_screen_background_work(EntityId::new(), Some(one_shell), ctx);
+        });
+        assert_eq!(notification_count(&app), 2);
+    });
+}
+
+#[test]
+fn subagent_count_takes_the_larger_of_hooks_and_status_line() {
+    let mut session = idle_test_session(CLIAgent::Claude);
+    session.session_context.screen_background_work = BackgroundWork {
+        shells: 2,
+        subagents: 1,
+        ..Default::default()
+    };
+    assert_eq!(session.background_work().subagents, 1);
+
+    // Hooks also see foreground subagents, which Claude's status line does not list.
+    session.apply_event(&subagent_event(CLIAgentEventType::SubagentStart, "agent-a"));
+    session.apply_event(&subagent_event(CLIAgentEventType::SubagentStart, "agent-b"));
+    assert_eq!(
+        session.background_work(),
+        BackgroundWork {
+            shells: 2,
+            subagents: 2,
+            ..Default::default()
+        }
+    );
+
+    // Codex reports subagents only through hooks, with the same identity field.
+    let mut codex = idle_test_session(CLIAgent::Codex);
+    let mut start = subagent_event(CLIAgentEventType::SubagentStart, "codex-agent");
+    start.agent = CLIAgent::Codex;
+    codex.apply_event(&start);
+    assert_eq!(codex.background_work().subagents, 1);
 }
