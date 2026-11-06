@@ -184,18 +184,12 @@ cat > "$TMP/bin/corepack" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 [[ "${1:-}" == yarn ]] || { echo "unexpected corepack command: $*" >&2; exit 2; }
-cwd=.
-previous=
-for argument in "$@"; do
-  [[ "$previous" == --cwd ]] && cwd="$argument"
-  previous="$argument"
-done
 case " $* " in
   *' install '*)
-    mkdir -p "$cwd/.yarn/cache" "$cwd/node_modules"
+    mkdir -p .yarn/cache node_modules
     printf 'fixture package archive\n' \
-      > "$cwd/.yarn/cache/fixture-npm-1.0.0-fixture-8.zip"
-    printf 'fixture install state\n' > "$cwd/.yarn/install-state.gz"
+      > .yarn/cache/fixture-npm-1.0.0-fixture-8.zip
+    printf 'fixture install state\n' > .yarn/install-state.gz
     ;;
   *)
     echo "unexpected yarn command: $*" >&2
@@ -234,7 +228,7 @@ EOF
 printf '{}\n' > "$root/vendor/$vendor_id/fixture-1.0.0/.cargo-checksum.json"
 printf '# %s Corresponding Source\n\n%s\n\ncargo metadata --offline\n%s\n' \
   "$version" "$commit" \
-  'YARN_ENABLE_NETWORK=0 corepack yarn --cwd web/remote-control install --immutable --immutable-cache' \
+  'cd web/remote-control && YARN_ENABLE_NETWORK=0 corepack yarn install --immutable --immutable-cache' \
   > "$root/CORRESPONDING_SOURCE.md"
 /usr/bin/python3 - "$root/.clinch-source.json" "$version" "$commit" Cargo.lock \
   web/remote-control/yarn.lock <<'PY'

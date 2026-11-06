@@ -66,8 +66,8 @@ cat >> "$source_root/web/remote-control/.yarnrc.yml" <<'EOF'
 enableGlobalCache: false
 cacheFolder: .yarn/cache
 EOF
-corepack yarn --cwd "$source_root/web/remote-control" \
-  install --immutable --mode=skip-build
+# Corepack reads the pinned Yarn from package.json in its working directory, not from --cwd.
+(cd "$source_root/web/remote-control" && corepack yarn install --immutable --mode=skip-build)
 rm -rf "$source_root/web/remote-control/node_modules"
 rm -f "$source_root/web/remote-control/.yarn/install-state.gz"
 [[ -n "$(find "$source_root/web/remote-control/.yarn/cache" -type f -name '*.zip' -print -quit)" ]] \
@@ -92,10 +92,14 @@ without network access:
 \`\`\`sh
 cargo metadata --locked --offline --all-features --format-version 1
 cargo build --locked --offline --release --bin stable
-YARN_ENABLE_NETWORK=0 corepack yarn --cwd web/remote-control install \
+cd web/remote-control
+YARN_ENABLE_NETWORK=0 corepack yarn install \
   --immutable --immutable-cache --mode=skip-build
-YARN_ENABLE_NETWORK=0 corepack yarn --cwd web/remote-control build
+YARN_ENABLE_NETWORK=0 corepack yarn build
 \`\`\`
+
+Run the Yarn commands from \`web/remote-control\`: Corepack selects the pinned
+Yarn from the \`package.json\` in its working directory.
 EOF
 
 /usr/bin/python3 - "$source_root/.clinch-source.json" "$VERSION" "$COMMIT" \
@@ -128,11 +132,11 @@ echo "==> Proving the vendored source graph resolves offline"
     --locked --offline --all-features --format-version 1 >/dev/null
 )
 (
-  cd "$source_root"
-  YARN_ENABLE_NETWORK=0 corepack yarn --cwd web/remote-control \
+  cd "$source_root/web/remote-control"
+  YARN_ENABLE_NETWORK=0 corepack yarn \
     install --immutable --immutable-cache --mode=skip-build >/dev/null
-  rm -rf web/remote-control/node_modules
-  rm -f web/remote-control/.yarn/install-state.gz
+  rm -rf node_modules
+  rm -f .yarn/install-state.gz
 )
 
 archive_tmp="$work/Clinch.source.tar.gz"

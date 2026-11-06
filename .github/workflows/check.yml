@@ -1,0 +1,36 @@
+# Pull-request check: ./script/launch-check --quick, the source gate without the app build, Rust
+# component tests, Clippy, or the live advisory feed. Releases are built, signed, and published
+# from the release workstation, never here (script/tests/test_no_release_workflow.sh).
+name: Check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quick:
+    name: Quick check
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the Rust toolchain from rust-toolchain.toml
+        run: rustup toolchain install
+
+      - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+        with:
+          tool: cargo-deny@0.20.2
+
+      - name: Quick check
+        run: ./script/launch-check --quick

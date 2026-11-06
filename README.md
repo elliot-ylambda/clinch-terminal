@@ -388,9 +388,11 @@ make candidate
 `script/launch-check` covers formatting, installer/integration/update-format tests, the stable
 build, component tests, Clippy, dependency license policy, bundled notices, and advisories. It
 checks licenses and advisories first, because the advisory database is a live feed that can fail an
-unchanged commit. `make candidate` builds and verifies the native Apple Silicon app, ZIP, and DMG,
-both manifest signatures, minimum OS, entitlements, default-on/opt-out flow, and the ZIP/DMG app
-pair. It does not create a tag or release.
+unchanged commit. `./script/launch-check --quick` skips the build, Rust tests, Clippy, and
+advisories; it is the check every pull request runs on GitHub Actions. `make candidate` builds and
+verifies the native Apple Silicon app, ZIP, and DMG, both manifest signatures, minimum OS,
+entitlements, default-on/opt-out flow, and the ZIP/DMG app pair. It does not create a tag or
+release.
 
 Releases are Apple Silicon only by default. Build Intel only when it is explicitly wanted:
 `INTEL=1` adds a separate native Intel app, ZIP, and DMG, and `UNIVERSAL=1` ships one legacy fat

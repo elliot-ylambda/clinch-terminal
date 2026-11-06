@@ -12,8 +12,10 @@ for command in node corepack; do
   }
 done
 
-corepack yarn --cwd "$WEB" install --immutable
-corepack yarn --cwd "$WEB" build
+# Run corepack inside the web project: it picks the Yarn version from the package.json in its working
+# directory, not from Yarn's --cwd. From the repository root (which has no package.json) it falls
+# back to its last-known-good Yarn, which is Yarn 1 on a fresh machine.
+(cd "$WEB" && corepack yarn install --immutable && corepack yarn build)
 /usr/bin/python3 "$ROOT/script/generate-clinch-remote-control-notices" \
   "$WEB/node_modules" "$WEB/dist/THIRD_PARTY_LICENSES.txt"
 

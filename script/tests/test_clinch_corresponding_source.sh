@@ -125,23 +125,18 @@ STUB
 # assembler exports, caches, and verifies a source tree, not how Yarn resolves
 # a real dependency graph. The packaging logic only needs an offline cache to
 # exist, so the stub materializes one archive and the install state that the
-# assembler expects to clean up afterwards.
+# assembler expects to clean up afterwards. Like Corepack, it ignores --cwd and
+# works in its own working directory.
 cat > "$BIN/corepack" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 [[ "${1:-}" == yarn ]] || { echo "unexpected corepack command: $*" >&2; exit 2; }
-cwd=.
-previous=
-for argument in "$@"; do
-  [[ "$previous" == --cwd ]] && cwd="$argument"
-  previous="$argument"
-done
 case " $* " in
   *' install '*)
-    mkdir -p "$cwd/.yarn/cache" "$cwd/node_modules"
+    mkdir -p .yarn/cache node_modules
     printf 'fixture package archive\n' \
-      > "$cwd/.yarn/cache/fixture-npm-1.0.0-fixture-8.zip"
-    printf 'fixture install state\n' > "$cwd/.yarn/install-state.gz"
+      > .yarn/cache/fixture-npm-1.0.0-fixture-8.zip
+    printf 'fixture install state\n' > .yarn/install-state.gz
     ;;
   *)
     echo "unexpected yarn command: $*" >&2
