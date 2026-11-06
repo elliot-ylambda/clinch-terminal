@@ -175,7 +175,7 @@ stage_plugin_tests() {
 stage_remote_control() {
   ./script/check-clinch-companion-protocol
   ./script/build-clinch-remote-control-web
-  corepack yarn --cwd web/remote-control test
+  (cd web/remote-control && corepack yarn test)
 }
 
 stage_component_tests() {

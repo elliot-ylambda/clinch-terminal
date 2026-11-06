@@ -194,8 +194,9 @@ cleanup() {
 trap cleanup EXIT
 COPYFILE_DISABLE=1 tar -xzf "$ARCHIVE" -C "$verify_work"
 source_root="$verify_work/Clinch-${VERSION#v}-source"
-YARN_ENABLE_NETWORK=0 corepack yarn --cwd "$source_root/web/remote-control" \
-  install --immutable --immutable-cache --mode=skip-build >/dev/null
+# Corepack reads the pinned Yarn from package.json in its working directory, not from --cwd.
+(cd "$source_root/web/remote-control" && YARN_ENABLE_NETWORK=0 corepack yarn \
+  install --immutable --immutable-cache --mode=skip-build >/dev/null)
 rm -rf "$source_root/web/remote-control/node_modules"
 rm -f "$source_root/web/remote-control/.yarn/install-state.gz"
 echo "✓ Verified offline Remote Control dependencies for $VERSION"
