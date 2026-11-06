@@ -66,6 +66,7 @@ use crate::pane_group::{
 use crate::safe_triangle::SafeTriangle;
 use crate::tab::lineage::MAX_VISIBLE_LINEAGE_DEPTH;
 use crate::tab::{tab_position_id, SelectedTabColor, TabData, TabOriginKind};
+use crate::terminal::cli_agent_sessions::background_work::BackgroundWork;
 use crate::terminal::cli_agent_sessions::restore::{AgentRestoreQueue, RestoreState};
 use crate::terminal::cli_agent_sessions::{
     session_context_enabled, CLIAgentSessionKey, CLIAgentSessionStatus, CLIAgentSessionsModel,
@@ -692,6 +693,7 @@ pub enum SidebarPopover {
 struct PaneRowBadgeMouseStates {
     diff_stats: MouseStateHandle,
     pull_request: MouseStateHandle,
+    background_work: MouseStateHandle,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3902,6 +3904,91 @@ fn is_restoring(state: Option<RestoreState>) -> bool {
 }
 
 /// A ring that turns while a session restores. Each repaint picks the frame for the current time.
+/// Shows what a Claude Code or Codex tab is still running in the background: shells, monitors,
+/// other background tasks and subagents, each as an icon and a count, with a spelled-out tooltip.
+/// `None` when nothing runs in the background.
+fn render_background_work_badge(
+    terminal_view: &TerminalView,
+    mouse_state: MouseStateHandle,
+    appearance: &Appearance,
+    app: &AppContext,
+) -> Option<Box<dyn Element>> {
+    let work = CLIAgentSessionsModel::as_ref(app)
+        .session(terminal_view.id())?
+        .background_work();
+    if work.is_empty() {
+        return None;
+    }
+    let color = appearance.tokens().text_3;
+    let ui_builder = appearance.ui_builder().clone();
+    let tooltip_text = background_work_summary(&work);
+    let mut counts = Flex::row()
+        .with_cross_axis_alignment(CrossAxisAlignment::Center)
+        .with_spacing(6.);
+    for (icon, count) in [
+        (UiIcon::Terminal, work.shells),
+        (UiIcon::Eye, work.monitors),
+        (UiIcon::ClockLoader, work.tasks),
+        (UiIcon::Users, work.subagents),
+    ] {
+        if count == 0 {
+            continue;
+        }
+        counts.add_child(
+            Flex::row()
+                .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                .with_spacing(2.)
+                .with_child(
+                    ConstrainedBox::new(icon.to_warpui_icon(WarpThemeFill::Solid(color)).finish())
+                        .with_width(BADGE_ICON_SIZE)
+                        .with_height(BADGE_ICON_SIZE)
+                        .finish(),
+                )
+                .with_child(
+                    Text::new_inline(count.to_string(), appearance.ui_font_family(), 10.)
+                        .with_color(color)
+                        .finish(),
+                )
+                .finish(),
+        );
+    }
+    let counts = counts.finish();
+    Some(
+        Hoverable::new(mouse_state, move |hover_state| {
+            if !hover_state.is_hovered() {
+                return counts;
+            }
+            let mut stack = Stack::new().with_child(counts);
+            stack.add_positioned_overlay_child(
+                ui_builder.tool_tip(tooltip_text.clone()).build().finish(),
+                OffsetPositioning::offset_from_parent(
+                    vec2f(0., 4.),
+                    ParentOffsetBounds::WindowByPosition,
+                    ParentAnchor::BottomMiddle,
+                    ChildAnchor::TopMiddle,
+                ),
+            );
+            stack.finish()
+        })
+        .finish(),
+    )
+}
+
+/// Spells out background work for the badge tooltip, such as `2 background shells · 1 subagent`.
+fn background_work_summary(work: &BackgroundWork) -> String {
+    [
+        (work.shells, "background shell", "background shells"),
+        (work.monitors, "monitor", "monitors"),
+        (work.tasks, "background task", "background tasks"),
+        (work.subagents, "subagent", "subagents"),
+    ]
+    .into_iter()
+    .filter(|(count, _, _)| *count > 0)
+    .map(|(count, one, many)| format!("{count} {}", if count == 1 { one } else { many }))
+    .collect::<Vec<_>>()
+    .join(" · ")
+}
+
 fn render_restore_spinner(appearance: &Appearance) -> Box<dyn Element> {
     let frame = (std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -4105,6 +4192,15 @@ fn render_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn Element> {
             Shrinkable::new(1., text.finish()).finish()
         })
         .with_children(is_restoring(restore_state).then(|| render_restore_spinner(appearance)))
+        .with_children(match &props.typed {
+            TypedPane::Terminal(terminal_pane) => render_background_work_badge(
+                terminal_pane.terminal_view(app).as_ref(app),
+                props.badge_mouse_states.background_work.clone(),
+                appearance,
+                app,
+            ),
+            _ => None,
+        })
         .with_children(
             (props.is_coordinator
                 && props.is_pinned

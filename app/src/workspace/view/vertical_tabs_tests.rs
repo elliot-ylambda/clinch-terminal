@@ -889,3 +889,25 @@ fn drag_autoscroll_ignores_collapsed_list() {
     let viewport = RectF::new(Vector2F::new(0., 100.), Vector2F::new(240., 0.));
     assert_eq!(drag_autoscroll_step(viewport, 100.), 0.);
 }
+
+#[test]
+fn background_work_tooltip_spells_out_each_running_kind() {
+    use crate::terminal::cli_agent_sessions::background_work::BackgroundWork;
+
+    assert_eq!(
+        super::background_work_summary(&BackgroundWork {
+            shells: 1,
+            monitors: 2,
+            tasks: 0,
+            subagents: 4,
+        }),
+        "1 background shell · 2 monitors · 4 subagents"
+    );
+    assert_eq!(
+        super::background_work_summary(&BackgroundWork {
+            tasks: 1,
+            ..Default::default()
+        }),
+        "1 background task"
+    );
+}

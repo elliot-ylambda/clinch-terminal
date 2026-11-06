@@ -271,6 +271,7 @@ pub(super) fn snapshot(
                                 };
                                 let (revision, unavailable) =
                                     terminal_ref.local_control_agent_readiness(ctx);
+                                let background = session.background_work();
                                 let data = json!({
                                     "agent_id": agent_id, "provider": provider_name, "conversation_id": conversation_id,
                                     "window_id": window_id.to_string(), "project_id": project_id, "project_name": project_name,
@@ -281,6 +282,7 @@ pub(super) fn snapshot(
                                     "draft_source": terminal_ref.local_control_draft_source(ctx),
                                     "latest_prompt": session.latest_user_prompt_for_chrome(), "latest_response_preview": session.session_context.response,
                                     "tool_name": session.session_context.tool_name, "tool_input_preview": session.session_context.tool_input_preview,
+                                    "background": {"shells": background.shells, "monitors": background.monitors, "tasks": background.tasks, "subagents": background.subagents},
                                     "capabilities": {"read": true, "send": unavailable.is_none(), "queue": true, "durable_receipts": true, "event_replay": true, "interrupt": unavailable == Some("working")},
                                 });
                                 pane["kind"] = json!(provider_name);

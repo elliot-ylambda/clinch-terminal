@@ -7,6 +7,7 @@ pub mod assertions;
 pub mod autoupdate;
 pub mod block;
 pub mod block_filtering;
+pub mod cli_agent;
 pub mod clipboard;
 pub mod cloud_object;
 pub mod code_review;

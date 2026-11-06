@@ -6,6 +6,7 @@ mod block_banner;
 pub mod block_onboarding;
 pub(crate) mod blocklist_filter;
 mod bookmarks;
+mod cli_agent_background_work;
 mod context_menu;
 pub mod init;
 pub mod inline_banner;
@@ -2891,6 +2892,9 @@ pub struct TerminalView {
     cli_subagent_views: HashMap<BlockId, ViewHandle<CLISubagentView>>,
     cli_subagent_controller: ModelHandle<CLISubagentController>,
     use_agent_footer: ViewHandle<UseAgentToolbar>,
+    /// A background-work scan of the agent's status line is scheduled; see
+    /// `cli_agent_background_work`.
+    cli_agent_background_scan_pending: bool,
 
     agent_view_controller: ModelHandle<AgentViewController>,
     agent_view_back_button: ViewHandle<ActionButton>,
@@ -4867,6 +4871,7 @@ impl TerminalView {
             cli_subagent_views: Default::default(),
             cli_subagent_controller,
             use_agent_footer: use_agent_button_bar,
+            cli_agent_background_scan_pending: false,
             agent_view_controller,
             agent_view_back_button,
             orchestration_pill_bar,
@@ -10041,6 +10046,7 @@ impl TerminalView {
         self.use_agent_footer.update(ctx, |footer, ctx| {
             footer.notify_and_notify_children(ctx);
         });
+        self.schedule_cli_agent_background_scan(ctx);
 
         // Need to re-render both the alt screen and the blocklist on keypresses.
         ctx.notify();

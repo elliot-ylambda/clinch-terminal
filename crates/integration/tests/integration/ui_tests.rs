@@ -365,4 +365,7 @@ integration_tests! {
     test_rich_input_toggle_on_enter_inserts_newline_and_ctrl_enter_submits,
     // Regression: Enter must accept inline menus (not insert newline) when toggle=true
     test_rich_input_enter_accepts_menu_item_when_toggle_is_true,
+
+    // CLI agent tabs count background shells, monitors and subagents from the status line
+    test_cli_agent_background_work_follows_the_status_line,
 }
