@@ -6,6 +6,10 @@ resuming your CLI agent sessions (Claude Code, Codex) when the terminal
 restarts. It is **not affiliated with Warp** — please don't take Clinch
 questions to Warp's community channels or issue tracker.
 
+## Questions & ideas
+
+Ask in [Discussions](https://github.com/elliot-ylambda/clinch-terminal/discussions).
+
 ## Bugs & feature requests
 
 Open a [GitHub issue](https://github.com/elliot-ylambda/clinch-terminal/issues).
@@ -17,11 +21,17 @@ open a public issue.
 
 ## Pull requests
 
-PRs are welcome and reviewed on a best-effort basis. Before opening one:
+PRs are welcome and reviewed on a best-effort basis. Before opening one, run:
 
 1. `./script/format`
-2. `cargo clippy --workspace --all-targets --all-features --tests -- -D warnings`
-3. `cargo nextest run --no-fail-fast --workspace --exclude command-signatures-v2`
+2. `./script/launch-check --quick` (needs `cargo-deny` from
+   `./script/install_cargo_test_deps`, Node 22.12 or newer, and corepack)
+3. `cargo clippy --workspace --all-targets --all-features --tests -- -D warnings`
+4. `cargo nextest run --no-fail-fast --workspace --exclude command-signatures-v2`
+
+GitHub Actions runs step 2 on every PR, on an Apple Silicon Mac: formatting,
+dependency licenses, script syntax, the shell and Python test suites, and the
+Remote Control checks. It does not build the app, so steps 3 and 4 are yours.
 
 Build-from-source and verification commands are documented in the
 [README](README.md#build-and-verify-from-source).

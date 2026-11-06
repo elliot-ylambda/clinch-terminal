@@ -3,6 +3,9 @@ contact_links:
   - name: Clinch Releases
     url: https://github.com/elliot-ylambda/clinch-terminal/releases
     about: Download the latest build and read release notes.
+  - name: Questions and ideas
+    url: https://github.com/elliot-ylambda/clinch-terminal/discussions
+    about: Ask how something works or float an idea before opening an issue.
   - name: clinch.sh
     url: https://clinch.sh
     about: Install instructions and project overview.

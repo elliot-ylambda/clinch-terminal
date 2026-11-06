@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
 # Reproducible source gate used by local candidates and releases.
+#
+# --quick skips the stages that need the app build or the live advisory feed (advisories, Rust
+# component tests, and Clippy). It is the pull-request check in .github/workflows/check.yml;
+# candidates and releases always run the full gate.
 set -euo pipefail
+
+QUICK=0
+case "$*" in
+  "") ;;
+  --quick) QUICK=1 ;;
+  *) echo "usage: $0 [--quick]" >&2; exit 2 ;;
+esac
 
 # A release invoked from inside an older Make/agent process can inherit stale recursive-Make
 # flags or a previously exported release-note blob. Keep build scripts independent of that
@@ -17,7 +28,9 @@ unset RELEASE_NOTES MAKEFLAGS MFLAGS GNUMAKEFLAGS MAKELEVEL MAKEOVERRIDES \
 # profile match.
 export CARGO_INCREMENTAL=0
 
-for tool in cargo cargo-nextest cargo-deny node corepack; do
+required_tools=(cargo cargo-deny node corepack)
+(( QUICK )) || required_tools+=(cargo-nextest)
+for tool in "${required_tools[@]}"; do
   command -v "$tool" >/dev/null 2>&1 || {
     echo "error: $tool is required for the launch gate" >&2
     echo "run ./script/bootstrap and ./script/install_cargo_test_deps first" >&2
@@ -27,20 +40,33 @@ done
 
 # Dependency licenses and advisories come first: the advisory database is a live feed, so a newly
 # published advisory can fail an untouched commit, and that should cost seconds, not the whole gate.
+# The same feed is why --quick skips advisories: a pull request should not fail for an advisory it
+# did not introduce. Dependabot alerts and the release gate still catch them.
 echo "==> Dependency licenses"
 ./script/check_license_config_sync
 cargo deny check licenses
 
-echo "==> Dependency advisories"
-ADVISORY_METADATA_DIR="$(mktemp -d -t clinch-advisories)"
-trap 'rm -rf "$ADVISORY_METADATA_DIR"' EXIT
-for target in aarch64-apple-darwin x86_64-apple-darwin; do
-  cargo metadata --locked --format-version 1 --filter-platform "$target" \
-    > "$ADVISORY_METADATA_DIR/$target.json"
-  cargo deny check advisories --metadata-path "$ADVISORY_METADATA_DIR/$target.json"
-done
-rm -rf "$ADVISORY_METADATA_DIR"
-trap - EXIT
+if (( ! QUICK )); then
+  echo "==> Dependency advisories"
+  # cargo-deny 0.20 takes --metadata-path before the subcommand; 0.19 and older reject that form.
+  deny_version="$(cargo deny --version | awk '{print $2}')"
+  case "$deny_version" in
+    0.[0-9].*|0.1[0-9].*)
+      echo "error: the launch gate needs cargo-deny 0.20 or newer (found $deny_version)" >&2
+      echo "run ./script/install_cargo_test_deps" >&2
+      exit 1
+      ;;
+  esac
+  ADVISORY_METADATA_DIR="$(mktemp -d -t clinch-advisories)"
+  trap 'rm -rf "$ADVISORY_METADATA_DIR"' EXIT
+  for target in aarch64-apple-darwin x86_64-apple-darwin; do
+    cargo metadata --locked --format-version 1 --filter-platform "$target" \
+      > "$ADVISORY_METADATA_DIR/$target.json"
+    cargo deny --metadata-path "$ADVISORY_METADATA_DIR/$target.json" check advisories
+  done
+  rm -rf "$ADVISORY_METADATA_DIR"
+  trap - EXIT
+fi
 
 # The release dispatcher sets CLINCH_GATE_STATE for its pinned, clean commit; each stage that passes
 # is recorded there so a rerun after a failure resumes at the failing stage. The dependency checks
@@ -175,6 +201,10 @@ run_stage "Release dispatcher tests" stage_dispatcher_tests
 run_stage "Agent capture, durability, install, and replay tests" stage_agent_runtime_tests
 run_stage "Bundled notification plugin tests" stage_plugin_tests
 run_stage "Remote Control protocol and mobile PWA" stage_remote_control
+if (( QUICK )); then
+  echo "✓ Clinch quick source check passed (the full gate adds advisories, Rust tests, and Clippy)"
+  exit 0
+fi
 run_stage "Shipped component tests" stage_component_tests
 run_stage "Shipped component lints" stage_component_lints
 
