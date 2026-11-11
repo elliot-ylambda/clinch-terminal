@@ -3607,6 +3607,9 @@ fn render_section_header(
     });
     if let Some(group_id) = group_id {
         hoverable = hoverable.on_double_click(move |ctx, _, _| {
+            // The first click of the pair already toggled the section. Toggle it back so
+            // renaming leaves the section open or closed as it was.
+            ctx.dispatch_typed_action(WorkspaceAction::ToggleTabGroupCollapsed(group_id));
             ctx.dispatch_typed_action(WorkspaceAction::RenameTabGroup(group_id));
         });
         hoverable = hoverable.on_right_click(move |ctx, _, position| {

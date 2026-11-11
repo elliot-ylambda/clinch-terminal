@@ -263,7 +263,9 @@ impl Workspace {
         self.notify_project_metadata_changed(ctx);
         ctx.notify();
 
-        ctx.dispatch_typed_action_deferred(WorkspaceAction::RenameTabGroup(group_id));
+        // Ask for the name editor's focus now, not on a later pass: see
+        // `new_tab_group_from_tab`.
+        self.rename_tab_group(group_id, ctx);
     }
 
     /// "Move to group" menu action. The destination group's first-member

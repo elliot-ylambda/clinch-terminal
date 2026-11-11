@@ -8155,7 +8155,11 @@ impl Workspace {
     ///   the new (unpinned) group doesn't land inside the pinned area.
     fn new_tab_group_from_tab(&mut self, tab_index: usize, ctx: &mut ViewContext<Self>) {
         if let Some(group_id) = self.create_tab_group_from_tab(tab_index, None, ctx) {
-            ctx.dispatch_typed_action_deferred(WorkspaceAction::RenameTabGroup(group_id));
+            // Ask for the name editor's focus now, not on a later pass. This is only
+            // chosen from the tab menu, which hands focus to the terminal as it closes
+            // unless a request is already queued, and a terminal gaining focus cancels
+            // an open rename.
+            self.rename_tab_group(group_id, ctx);
         }
     }
 
@@ -10957,10 +10961,7 @@ impl Workspace {
                 // Copy, pin, and other actions can leave the menu focused after
                 // it disappears. Restore terminal input without stealing focus
                 // from an editor or dialog opened by the selected action.
-                let restore_focus = self.tab_right_click_menu.is_self_or_child_focused(ctx)
-                    || self
-                        .move_to_group_sidecar_menu
-                        .is_self_or_child_focused(ctx);
+                let restore_focus = self.tab_menu_will_hold_focus(ctx);
                 self.show_tab_right_click_menu = None;
                 self.show_tab_group_right_click_menu = None;
                 self.show_bookmarked_sessions_right_click_menu = None;
@@ -10973,6 +10974,28 @@ impl Workspace {
             }
             MenuEvent::ItemHovered | MenuEvent::ItemSelected => {
                 self.update_move_to_group_sidecar(ctx);
+            }
+        }
+    }
+
+    /// Whether the tab menu (or its sidecar) is where focus will rest once queued focus
+    /// changes have landed.
+    ///
+    /// A clicked row's action runs before the menu's close event is handled, so a rename
+    /// editor or dialog it opened has asked for focus but does not hold it yet. Looking
+    /// only at the current focus would still see the menu, and restoring terminal input
+    /// would then land after that request and take the focus straight back.
+    fn tab_menu_will_hold_focus(&self, ctx: &mut ViewContext<Self>) -> bool {
+        match ctx.pending_focus_view_id(ctx.window_id()) {
+            Some(view_id) => {
+                view_id == self.tab_right_click_menu.id()
+                    || view_id == self.move_to_group_sidecar_menu.id()
+            }
+            None => {
+                self.tab_right_click_menu.is_self_or_child_focused(ctx)
+                    || self
+                        .move_to_group_sidecar_menu
+                        .is_self_or_child_focused(ctx)
             }
         }
     }
@@ -11190,6 +11213,9 @@ impl Workspace {
         for section_items in [
             pin_section,
             vec![
+                MenuItemFields::new("Rename section")
+                    .with_on_select_action(WorkspaceAction::RenameTabGroup(group_id))
+                    .into_item(),
                 MenuItemFields::new("Remove section")
                     .with_on_select_action(WorkspaceAction::UngroupTabs(group_id))
                     .into_item(),
@@ -11199,9 +11225,6 @@ impl Workspace {
             ],
             move_section,
             color_section,
-            vec![MenuItemFields::new("Rename section")
-                .with_on_select_action(WorkspaceAction::RenameTabGroup(group_id))
-                .into_item()],
             close_section,
         ] {
             if section_items.is_empty() {
@@ -21945,6 +21968,9 @@ impl Workspace {
             ctx.dispatch_typed_action(WorkspaceAction::ToggleTabGroupCollapsed(group_id));
         });
         header = header.on_double_click(move |ctx, _, _| {
+            // The first click of the pair already toggled the section. Toggle it back so
+            // renaming leaves the section open or closed as it was.
+            ctx.dispatch_typed_action(WorkspaceAction::ToggleTabGroupCollapsed(group_id));
             ctx.dispatch_typed_action(WorkspaceAction::RenameTabGroup(group_id));
         });
 

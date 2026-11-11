@@ -4788,6 +4788,26 @@ impl AppContext {
             .and_then(|window| window.focused_view)
     }
 
+    /// The view that focus changes still waiting in the effect queue will leave focused in
+    /// `window_id`, or `None` when no such change is queued.
+    ///
+    /// `ViewContext::focus` only queues its change, so inside an action or event handler
+    /// [`Self::focused_view_id`] can still name a view that has already given focus away.
+    /// Code that hands focus back to a default view should check this first, or its own
+    /// request is queued behind the pending one and overrides it.
+    pub fn pending_focus_view_id(&self, window_id: WindowId) -> Option<EntityId> {
+        self.pending_effects
+            .iter()
+            .rev()
+            .find_map(|effect| match effect {
+                Effect::Focus {
+                    window_id: effect_window_id,
+                    view_id,
+                } if *effect_window_id == window_id => Some(*view_id),
+                _ => None,
+            })
+    }
+
     pub fn view_name(&self, window_id: WindowId, view_id: EntityId) -> Option<&str> {
         self.windows
             .get(&window_id)
