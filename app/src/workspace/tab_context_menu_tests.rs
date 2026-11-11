@@ -498,3 +498,475 @@ fn tab_menu_new_tab_below_opens_a_tab_directly_under_the_clicked_tab() {
         });
     });
 }
+
+// ---- Renaming from a menu or a section header, driven by real mouse and key events ----
+
+type ScenePresenter = std::rc::Rc<RefCell<warpui::Presenter>>;
+
+/// Lays out the workspace the way the window would before its next event. Mouse state
+/// lives in the views, so a fresh presenter per frame still sees hovers and clicks.
+fn render_scene(workspace: &ViewHandle<Workspace>, app: &mut App) -> ScenePresenter {
+    let (window_id, views) = workspace.read(app, |workspace, _| {
+        (
+            workspace.window_id,
+            HashSet::from([
+                workspace.tab_right_click_menu.id(),
+                workspace.tab_group_rename_editor.id(),
+                workspace.pane_rename_editor.id(),
+            ]),
+        )
+    });
+    let presenter = std::rc::Rc::new(RefCell::new(warpui::Presenter::new(window_id)));
+    app.update(|ctx| {
+        let mut updated = views;
+        updated.insert(workspace.id());
+        presenter.borrow_mut().invalidate(
+            warpui::WindowInvalidation {
+                updated,
+                ..Default::default()
+            },
+            ctx,
+        );
+        presenter
+            .borrow_mut()
+            .build_scene(vec2f(1200., 800.), 1., None, ctx);
+    });
+    presenter
+}
+
+fn send_events(
+    events: impl IntoIterator<Item = warpui::Event>,
+    workspace: &ViewHandle<Workspace>,
+    presenter: &ScenePresenter,
+    app: &mut App,
+) {
+    let window_id = workspace.read(app, |workspace, _| workspace.window_id);
+    app.update(|ctx| {
+        for event in events {
+            ctx.simulate_window_event(event, window_id, presenter.clone());
+        }
+    });
+}
+
+/// Two moves, as a real pointer makes: the innermost hover target takes the first for its
+/// own hover change, so a target wrapped around it only sees the second.
+fn hover(position: Vector2F) -> [warpui::Event; 2] {
+    [position, position + vec2f(1., 0.)].map(|position| warpui::Event::MouseMoved {
+        position,
+        cmd: false,
+        shift: false,
+        is_synthetic: false,
+    })
+}
+
+fn left_click(position: Vector2F, click_count: u32) -> [warpui::Event; 2] {
+    [
+        warpui::Event::LeftMouseDown {
+            position,
+            modifiers: Default::default(),
+            click_count,
+            is_first_mouse: false,
+        },
+        warpui::Event::LeftMouseUp {
+            position,
+            modifiers: Default::default(),
+        },
+    ]
+}
+
+/// Clicks a row of the open tab or section menu with the mouse.
+fn click_menu_row(workspace: &ViewHandle<Workspace>, app: &mut App, label: &str) {
+    let menu = workspace.read(app, |workspace, _| workspace.tab_right_click_menu.clone());
+    menu.update(app, |menu, ctx| {
+        // The selected row publishes its rendered bounds as submenu_0.
+        assert!(menu.set_selected_by_name(label, ctx), "missing {label}");
+    });
+    let presenter = render_scene(workspace, app);
+    let row = presenter
+        .borrow()
+        .position_cache()
+        .get_position("submenu_0")
+        .expect("menu row must have rendered bounds")
+        .center();
+    send_events(hover(row), workspace, &presenter, app);
+    send_events(left_click(row, 1), workspace, &presenter, app);
+}
+
+/// Types into whichever editor holds focus, then presses Enter.
+fn type_and_press_enter(workspace: &ViewHandle<Workspace>, app: &mut App, text: &str) {
+    let presenter = render_scene(workspace, app);
+    send_events(
+        [warpui::Event::TypedCharacters {
+            chars: text.to_owned(),
+        }],
+        workspace,
+        &presenter,
+        app,
+    );
+    let presenter = render_scene(workspace, app);
+    send_events(
+        [warpui::Event::KeyDown {
+            keystroke: warpui::keymap::Keystroke::parse("enter").unwrap(),
+            chars: "\r".to_owned(),
+            details: Default::default(),
+            is_composing: false,
+        }],
+        workspace,
+        &presenter,
+        app,
+    );
+}
+
+/// A two-tab workspace whose first tab sits in a section named "Backend", with the
+/// vertical tabs panel showing.
+fn setup_workspace_with_section(app: &mut App) -> (ViewHandle<Workspace>, TabGroupId) {
+    let workspace = setup_workspace(app);
+    // Enter reaches a rename editor through the editor's own key bindings.
+    app.update(crate::editor::init);
+    let group_id = workspace.update(app, |workspace, ctx| {
+        workspace.vertical_tabs_panel_open = true;
+        workspace.should_show_ai_assistant_warm_welcome = false;
+        workspace.add_terminal_tab(false, ctx);
+        let group_id = workspace
+            .create_named_tab_group_from_tab(0, "Backend".to_owned(), ctx)
+            .expect("tab becomes a section");
+        workspace.focus_active_tab(ctx);
+        group_id
+    });
+    (workspace, group_id)
+}
+
+struct SectionHeader {
+    /// A point on the header's title.
+    title: Vector2F,
+    /// The centre of the "..." button, which only renders while the section is hovered.
+    kebab: Vector2F,
+}
+
+/// Hovers the section and returns where its header controls are.
+fn hover_section_header(
+    workspace: &ViewHandle<Workspace>,
+    group_id: TabGroupId,
+    app: &mut App,
+) -> SectionHeader {
+    let presenter = render_scene(workspace, app);
+    let section = presenter
+        .borrow()
+        .position_cache()
+        .get_position(vertical_tabs::vtab_group_position_id(group_id))
+        .expect("section must be rendered");
+    send_events(hover(section.center()), workspace, &presenter, app);
+    let presenter = render_scene(workspace, app);
+    let kebab = presenter
+        .borrow()
+        .position_cache()
+        .get_position(vertical_tabs::vtab_group_kebab_position_id(group_id))
+        .expect("the section's ... button must render on hover")
+        .center();
+    let header = SectionHeader {
+        title: vec2f(section.origin_x() + 40., kebab.y()),
+        kebab,
+    };
+    send_events(hover(header.title), workspace, &presenter, app);
+    header
+}
+
+fn assert_section_rename_is_open(
+    workspace: &ViewHandle<Workspace>,
+    group_id: TabGroupId,
+    app: &App,
+) {
+    let (renaming, editor_id, window_id) = workspace.read(app, |workspace, _| {
+        (
+            workspace
+                .current_workspace_state
+                .is_tab_group_being_renamed(group_id),
+            workspace.tab_group_rename_editor.id(),
+            workspace.window_id,
+        )
+    });
+    assert!(renaming, "the section's name editor must be open");
+    assert_eq!(
+        app.focused_view_id(window_id),
+        Some(editor_id),
+        "the section's name editor must hold focus, or the first key press is lost"
+    );
+}
+
+/// Types a new name into the open section editor and checks it sticks.
+fn assert_typing_renames_section(
+    workspace: &ViewHandle<Workspace>,
+    group_id: TabGroupId,
+    input_focus: Option<EntityId>,
+    app: &mut App,
+) {
+    assert_section_rename_is_open(workspace, group_id, app);
+    type_and_press_enter(workspace, app, "API");
+    let (name, renaming, window_id) = workspace.read(app, |workspace, _| {
+        (
+            workspace.tab_groups[&group_id].name.clone(),
+            workspace
+                .current_workspace_state
+                .is_any_tab_group_being_renamed(),
+            workspace.window_id,
+        )
+    });
+    assert_eq!(name.as_deref(), Some("API"));
+    assert!(!renaming);
+    assert_eq!(app.focused_view_id(window_id), input_focus);
+}
+
+#[test]
+fn section_menus_list_rename_directly_above_remove() {
+    let _vertical_tabs = FeatureFlag::VerticalTabs.override_enabled(true);
+    let _grouped_tabs = FeatureFlag::GroupedTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        let (workspace, group_id) = setup_workspace_with_section(&mut app);
+        // The "..." button and a right-click on the header open the same menu.
+        for anchor in [
+            TabContextMenuAnchor::VerticalTabsKebab,
+            TabContextMenuAnchor::Pointer(vec2f(80., 100.)),
+        ] {
+            workspace.update(&mut app, |workspace, ctx| {
+                workspace.toggle_tab_group_right_click_menu(group_id, anchor, ctx);
+            });
+            workspace.read(&app, |workspace, ctx| {
+                let labels = workspace
+                    .tab_right_click_menu
+                    .as_ref(ctx)
+                    .items()
+                    .iter()
+                    .filter_map(|item| item.fields().map(|fields| fields.label()))
+                    .collect::<Vec<_>>();
+                let rename = labels
+                    .iter()
+                    .position(|label| *label == "Rename section")
+                    .expect("menu offers Rename section");
+                assert_eq!(labels.get(rename + 1), Some(&"Remove section"));
+            });
+            dispatch_menu_action(&workspace, &mut app, MenuAction::Close(false));
+        }
+    });
+}
+
+#[test]
+fn clicking_rename_section_in_the_kebab_menu_renames_the_section() {
+    let _vertical_tabs = FeatureFlag::VerticalTabs.override_enabled(true);
+    let _grouped_tabs = FeatureFlag::GroupedTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        let (workspace, group_id) = setup_workspace_with_section(&mut app);
+        let window_id = app.read(|ctx| workspace.window_id(ctx));
+        let input_focus = app.focused_view_id(window_id);
+
+        let header = hover_section_header(&workspace, group_id, &mut app);
+        let presenter = render_scene(&workspace, &mut app);
+        send_events(hover(header.kebab), &workspace, &presenter, &mut app);
+        send_events(
+            left_click(header.kebab, 1),
+            &workspace,
+            &presenter,
+            &mut app,
+        );
+        workspace.read(&app, |workspace, _| {
+            assert!(workspace.show_tab_group_right_click_menu.is_some());
+        });
+
+        click_menu_row(&workspace, &mut app, "Rename section");
+        assert_typing_renames_section(&workspace, group_id, input_focus, &mut app);
+    });
+}
+
+#[test]
+fn clicking_rename_section_in_the_right_click_menu_renames_the_section() {
+    let _vertical_tabs = FeatureFlag::VerticalTabs.override_enabled(true);
+    let _grouped_tabs = FeatureFlag::GroupedTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        let (workspace, group_id) = setup_workspace_with_section(&mut app);
+        let window_id = app.read(|ctx| workspace.window_id(ctx));
+        let input_focus = app.focused_view_id(window_id);
+
+        let header = hover_section_header(&workspace, group_id, &mut app);
+        let presenter = render_scene(&workspace, &mut app);
+        send_events(
+            [warpui::Event::RightMouseDown {
+                position: header.title,
+                cmd: false,
+                shift: false,
+                click_count: 1,
+            }],
+            &workspace,
+            &presenter,
+            &mut app,
+        );
+        workspace.read(&app, |workspace, _| {
+            assert!(workspace.show_tab_group_right_click_menu.is_some());
+        });
+
+        click_menu_row(&workspace, &mut app, "Rename section");
+        assert_typing_renames_section(&workspace, group_id, input_focus, &mut app);
+    });
+}
+
+#[test]
+fn double_clicking_a_section_header_renames_it_without_collapsing_it() {
+    let _vertical_tabs = FeatureFlag::VerticalTabs.override_enabled(true);
+    let _grouped_tabs = FeatureFlag::GroupedTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        let (workspace, group_id) = setup_workspace_with_section(&mut app);
+        let window_id = app.read(|ctx| workspace.window_id(ctx));
+        let input_focus = app.focused_view_id(window_id);
+        let is_collapsed = |app: &App| {
+            workspace.read(app, |workspace, _| {
+                workspace.tab_groups[&group_id].collapsed
+            })
+        };
+
+        let header = hover_section_header(&workspace, group_id, &mut app);
+        let presenter = render_scene(&workspace, &mut app);
+        send_events(
+            left_click(header.title, 1),
+            &workspace,
+            &presenter,
+            &mut app,
+        );
+        // A single click still folds the section away.
+        assert!(is_collapsed(&app));
+
+        let presenter = render_scene(&workspace, &mut app);
+        send_events(
+            left_click(header.title, 2),
+            &workspace,
+            &presenter,
+            &mut app,
+        );
+        assert!(
+            !is_collapsed(&app),
+            "the second click of a double-click must undo the first click's collapse"
+        );
+        assert_typing_renames_section(&workspace, group_id, input_focus, &mut app);
+        assert!(!is_collapsed(&app));
+    });
+}
+
+#[test]
+fn clicking_rename_pane_in_the_tab_menu_keeps_its_editor_focused() {
+    let _vertical_tabs = FeatureFlag::VerticalTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        let workspace = setup_workspace(&mut app);
+        let window_id = app.read(|ctx| workspace.window_id(ctx));
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.vertical_tabs_panel_open = true;
+            workspace.should_show_ai_assistant_warm_welcome = false;
+            workspace.toggle_tab_right_click_menu(
+                0,
+                TabContextMenuAnchor::Pointer(vec2f(300., 100.)),
+                ctx,
+            );
+        });
+
+        click_menu_row(&workspace, &mut app, "Rename pane");
+
+        let (editor_id, renaming) = workspace.read(&app, |workspace, _| {
+            (
+                workspace.pane_rename_editor.id(),
+                workspace
+                    .current_workspace_state
+                    .is_any_pane_being_renamed(),
+            )
+        });
+        assert!(renaming);
+        assert_eq!(app.focused_view_id(window_id), Some(editor_id));
+    });
+}
+
+#[test]
+fn new_section_from_the_tab_menu_opens_its_name_editor_by_mouse_and_by_keyboard() {
+    let _vertical_tabs = FeatureFlag::VerticalTabs.override_enabled(true);
+    let _grouped_tabs = FeatureFlag::GroupedTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        let workspace = setup_workspace(&mut app);
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.vertical_tabs_panel_open = true;
+            workspace.should_show_ai_assistant_warm_welcome = false;
+            workspace.add_terminal_tab(false, ctx);
+            workspace.focus_active_tab(ctx);
+        });
+
+        // The new section opens its name editor one step after the menu row's own action,
+        // so the menu closing must not hand focus to the terminal in between.
+        for (tab_index, by_mouse) in [(0, true), (1, false)] {
+            workspace.update(&mut app, |workspace, ctx| {
+                workspace.toggle_tab_right_click_menu(
+                    tab_index,
+                    TabContextMenuAnchor::Pointer(vec2f(300., 100.)),
+                    ctx,
+                );
+            });
+            if by_mouse {
+                click_menu_row(&workspace, &mut app, "New section with session");
+            } else {
+                choose_menu_item(&workspace, &mut app, "New section with session");
+            }
+            let group_id = workspace.read(&app, |workspace, _| {
+                workspace.tabs[tab_index]
+                    .group_id
+                    .expect("the tab moved into a new section")
+            });
+            assert_section_rename_is_open(&workspace, group_id, &app);
+            workspace.update(&mut app, |workspace, ctx| {
+                workspace.cancel_tab_group_rename(ctx);
+            });
+        }
+    });
+}
+
+#[test]
+fn creating_a_section_from_selected_sessions_opens_its_name_editor() {
+    let _vertical_tabs = FeatureFlag::VerticalTabs.override_enabled(true);
+    let _grouped_tabs = FeatureFlag::GroupedTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        let workspace = setup_workspace(&mut app);
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.vertical_tabs_panel_open = true;
+            workspace.should_show_ai_assistant_warm_welcome = false;
+            workspace.add_terminal_tab(false, ctx);
+            for tab in &mut workspace.tabs {
+                tab.in_multi_selection = true;
+            }
+            workspace.focus_active_tab(ctx);
+            workspace.toggle_tab_selection_right_click_menu(
+                0,
+                TabContextMenuAnchor::Pointer(vec2f(300., 100.)),
+                ctx,
+            );
+        });
+
+        click_menu_row(&workspace, &mut app, "Create section from sessions");
+
+        let group_id = workspace.read(&app, |workspace, _| {
+            assert_eq!(workspace.tabs[0].group_id, workspace.tabs[1].group_id);
+            workspace.tabs[0]
+                .group_id
+                .expect("the selected sessions moved into a new section")
+        });
+        assert_section_rename_is_open(&workspace, group_id, &app);
+    });
+}
+
+#[test]
+fn the_new_section_button_opens_the_new_sections_name_editor() {
+    let _vertical_tabs = FeatureFlag::VerticalTabs.override_enabled(true);
+    let _grouped_tabs = FeatureFlag::GroupedTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        let workspace = setup_workspace(&mut app);
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.handle_action(&WorkspaceAction::CreateNewTabGroup, ctx);
+        });
+        let group_id = workspace.read(&app, |workspace, _| {
+            workspace.tabs[workspace.active_tab_index()]
+                .group_id
+                .expect("the new session starts a new section")
+        });
+        assert_section_rename_is_open(&workspace, group_id, &app);
+    });
+}

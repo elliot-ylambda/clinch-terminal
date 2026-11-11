@@ -961,6 +961,58 @@ fn test_focus() {
     })
 }
 
+#[test]
+fn test_pending_focus_view_id() {
+    struct View;
+
+    impl Entity for View {
+        type Event = ();
+    }
+
+    impl super::View for View {
+        fn render<'a>(&self, _: &AppContext) -> Box<dyn Element> {
+            Empty::new().finish()
+        }
+
+        fn ui_name() -> &'static str {
+            "View"
+        }
+    }
+
+    impl TypedActionView for View {
+        type Action = ();
+    }
+
+    App::test((), |mut app| async move {
+        let app = &mut app;
+        let (window_id, view_1) = app.add_window(WindowStyle::NotStealFocus, |_| View);
+        let view_2 = app.add_view(window_id, |_| View);
+        let view_3 = app.add_view(window_id, |_| View);
+        let (other_window_id, _other_root) = app.add_window(WindowStyle::NotStealFocus, |_| View);
+
+        view_1.update(app, |_, ctx| {
+            assert_eq!(ctx.pending_focus_view_id(window_id), None);
+
+            // A focus request is queued, not applied, until this update finishes.
+            ctx.focus(&view_2);
+            assert_eq!(ctx.focused_view_id(window_id), Some(view_1.id()));
+            assert_eq!(ctx.pending_focus_view_id(window_id), Some(view_2.id()));
+
+            // The last request queued is the one that will stick.
+            ctx.focus(&view_3);
+            assert_eq!(ctx.pending_focus_view_id(window_id), Some(view_3.id()));
+
+            // Another window's queue is its own.
+            assert_eq!(ctx.pending_focus_view_id(other_window_id), None);
+        });
+
+        app.read(|ctx| {
+            assert_eq!(ctx.focused_view_id(window_id), Some(view_3.id()));
+            assert_eq!(ctx.pending_focus_view_id(window_id), None);
+        });
+    })
+}
+
 struct NestedView {
     children: Vec<ViewHandle<NestedView>>,
     name: String,
