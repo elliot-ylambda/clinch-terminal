@@ -511,6 +511,7 @@ fn render_scene(workspace: &ViewHandle<Workspace>, app: &mut App) -> ScenePresen
             workspace.window_id,
             HashSet::from([
                 workspace.tab_right_click_menu.id(),
+                workspace.tab_rename_editor.id(),
                 workspace.tab_group_rename_editor.id(),
                 workspace.pane_rename_editor.id(),
             ]),
@@ -968,5 +969,279 @@ fn the_new_section_button_opens_the_new_sections_name_editor() {
                 .expect("the new session starts a new section")
         });
         assert_section_rename_is_open(&workspace, group_id, &app);
+    });
+}
+
+// ---- Renaming a tab ----
+
+/// A two-tab workspace with the sidebar showing and the second tab active. Returns each
+/// tab's input view, which is where focus belongs once a rename is done.
+fn setup_workspace_with_two_tabs(app: &mut App) -> (ViewHandle<Workspace>, [Option<EntityId>; 2]) {
+    let workspace = setup_workspace(app);
+    // Enter reaches a rename editor through the editor's own key bindings.
+    app.update(crate::editor::init);
+    let window_id = app.read(|ctx| workspace.window_id(ctx));
+    workspace.update(app, |workspace, ctx| {
+        workspace.vertical_tabs_panel_open = true;
+        workspace.should_show_ai_assistant_warm_welcome = false;
+        workspace.add_terminal_tab(false, ctx);
+    });
+    let mut input_focus = [None; 2];
+    for tab_index in [0, 1] {
+        workspace.update(app, |workspace, ctx| {
+            workspace.activate_tab(tab_index, ctx);
+            workspace.focus_active_tab(ctx);
+        });
+        input_focus[tab_index] = app.focused_view_id(window_id);
+    }
+    (workspace, input_focus)
+}
+
+/// Hovers a tab's row in the sidebar and returns its centre.
+fn hover_tab_row(workspace: &ViewHandle<Workspace>, tab_index: usize, app: &mut App) -> Vector2F {
+    let presenter = render_scene(workspace, app);
+    let row = presenter
+        .borrow()
+        .position_cache()
+        .get_position(crate::tab::tab_position_id(tab_index))
+        .expect("the tab's row must be rendered")
+        .center();
+    send_events(hover(row), workspace, &presenter, app);
+    row
+}
+
+/// Opens the tab's menu from the "..." button that shows while its row is hovered.
+fn open_tab_menu_from_kebab(workspace: &ViewHandle<Workspace>, tab_index: usize, app: &mut App) {
+    hover_tab_row(workspace, tab_index, app);
+    let presenter = render_scene(workspace, app);
+    let buttons = presenter
+        .borrow()
+        .position_cache()
+        .get_position(vertical_tabs::vtab_action_buttons_position_id(tab_index))
+        .expect("the row's buttons must render on hover");
+    // The "..." button is the first of the row's square buttons.
+    let kebab = vec2f(
+        buttons.origin_x() + buttons.height() / 2.,
+        buttons.center().y(),
+    );
+    send_events(hover(kebab), workspace, &presenter, app);
+    send_events(left_click(kebab, 1), workspace, &presenter, app);
+}
+
+fn open_tab_menu_by_right_click(
+    workspace: &ViewHandle<Workspace>,
+    tab_index: usize,
+    app: &mut App,
+) {
+    let row = hover_tab_row(workspace, tab_index, app);
+    let presenter = render_scene(workspace, app);
+    send_events(
+        [warpui::Event::RightMouseDown {
+            position: row,
+            cmd: false,
+            shift: false,
+            click_count: 1,
+        }],
+        workspace,
+        &presenter,
+        app,
+    );
+}
+
+/// Checks the tab's name editor is open and focused, types `name`, presses Enter, and checks
+/// the name sticks and focus goes back to the tab's input.
+fn assert_typing_renames_tab(
+    workspace: &ViewHandle<Workspace>,
+    tab_index: usize,
+    name: &str,
+    input_focus: Option<EntityId>,
+    app: &mut App,
+) {
+    let (renaming, editor_id, window_id) = workspace.read(app, |workspace, _| {
+        (
+            workspace.current_workspace_state.tab_being_renamed(),
+            workspace.tab_rename_editor.id(),
+            workspace.window_id,
+        )
+    });
+    assert_eq!(
+        renaming,
+        Some(tab_index),
+        "the tab's name editor must be open"
+    );
+    assert_eq!(
+        app.focused_view_id(window_id),
+        Some(editor_id),
+        "the tab's name editor must hold focus, or the first key press is lost"
+    );
+    type_and_press_enter(workspace, app, name);
+    let (title, renaming) = workspace.read(app, |workspace, ctx| {
+        (
+            workspace.tabs[tab_index]
+                .pane_group
+                .as_ref(ctx)
+                .custom_title(ctx),
+            workspace.current_workspace_state.is_tab_being_renamed(),
+        )
+    });
+    assert_eq!(title.as_deref(), Some(name));
+    assert!(!renaming);
+    assert_eq!(
+        app.focused_view_id(window_id),
+        input_focus,
+        "after a rename, typing must reach the tab's terminal again"
+    );
+}
+
+#[test]
+fn clicking_rename_tab_in_the_right_click_menu_renames_the_tab() {
+    let _vertical_tabs = FeatureFlag::VerticalTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        let (workspace, input_focus) = setup_workspace_with_two_tabs(&mut app);
+        // The active tab first, then one in the background.
+        for (tab_index, name) in [(1, "Active"), (0, "Background")] {
+            open_tab_menu_by_right_click(&workspace, tab_index, &mut app);
+            workspace.read(&app, |workspace, _| {
+                assert!(workspace.show_tab_right_click_menu.is_some());
+            });
+            click_menu_row(&workspace, &mut app, "Rename tab");
+            assert_typing_renames_tab(
+                &workspace,
+                tab_index,
+                name,
+                input_focus[tab_index],
+                &mut app,
+            );
+        }
+    });
+}
+
+#[test]
+fn clicking_rename_tab_in_the_kebab_menu_renames_the_tab() {
+    let _vertical_tabs = FeatureFlag::VerticalTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        let (workspace, input_focus) = setup_workspace_with_two_tabs(&mut app);
+        for (tab_index, name) in [(1, "Active"), (0, "Background")] {
+            open_tab_menu_from_kebab(&workspace, tab_index, &mut app);
+            workspace.read(&app, |workspace, _| {
+                assert!(workspace.show_tab_right_click_menu.is_some());
+            });
+            click_menu_row(&workspace, &mut app, "Rename tab");
+            assert_typing_renames_tab(
+                &workspace,
+                tab_index,
+                name,
+                input_focus[tab_index],
+                &mut app,
+            );
+        }
+    });
+}
+
+#[test]
+fn double_clicking_a_tab_renames_it() {
+    let _vertical_tabs = FeatureFlag::VerticalTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        let (workspace, input_focus) = setup_workspace_with_two_tabs(&mut app);
+        for (tab_index, name) in [(1, "Active"), (0, "Background")] {
+            let row = hover_tab_row(&workspace, tab_index, &mut app);
+            let presenter = render_scene(&workspace, &mut app);
+            send_events(left_click(row, 1), &workspace, &presenter, &mut app);
+            let presenter = render_scene(&workspace, &mut app);
+            send_events(left_click(row, 2), &workspace, &presenter, &mut app);
+            assert_typing_renames_tab(
+                &workspace,
+                tab_index,
+                name,
+                input_focus[tab_index],
+                &mut app,
+            );
+        }
+    });
+}
+
+#[test]
+fn rename_tab_from_the_keyboard_renames_the_active_tab() {
+    let _vertical_tabs = FeatureFlag::VerticalTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        let (workspace, input_focus) = setup_workspace_with_two_tabs(&mut app);
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.handle_action(&WorkspaceAction::RenameActiveTab, ctx);
+        });
+        assert_typing_renames_tab(&workspace, 1, "Active", input_focus[1], &mut app);
+    });
+}
+
+/// The view focus returns to once `tab_index` is shown. Leaves that tab active.
+fn input_focus_of_tab(
+    workspace: &ViewHandle<Workspace>,
+    tab_index: usize,
+    app: &mut App,
+) -> Option<EntityId> {
+    workspace.update(app, |workspace, ctx| {
+        workspace.activate_tab(tab_index, ctx);
+        workspace.focus_active_tab(ctx);
+    });
+    let window_id = app.read(|ctx| workspace.window_id(ctx));
+    app.focused_view_id(window_id)
+}
+
+#[test]
+fn renaming_a_background_tab_inside_a_section_by_menu_and_by_double_click() {
+    let _vertical_tabs = FeatureFlag::VerticalTabs.override_enabled(true);
+    let _grouped_tabs = FeatureFlag::GroupedTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        let (workspace, group_id) = setup_workspace_with_section(&mut app);
+        let tab_index = workspace.read(&app, |workspace, _| {
+            workspace
+                .tabs
+                .iter()
+                .position(|tab| tab.group_id == Some(group_id))
+                .expect("a tab sits in the section")
+        });
+        let other_tab = 1 - tab_index;
+        let input_focus = input_focus_of_tab(&workspace, tab_index, &mut app);
+
+        input_focus_of_tab(&workspace, other_tab, &mut app);
+        open_tab_menu_by_right_click(&workspace, tab_index, &mut app);
+        click_menu_row(&workspace, &mut app, "Rename tab");
+        assert_typing_renames_tab(&workspace, tab_index, "From menu", input_focus, &mut app);
+
+        input_focus_of_tab(&workspace, other_tab, &mut app);
+        let row = hover_tab_row(&workspace, tab_index, &mut app);
+        let presenter = render_scene(&workspace, &mut app);
+        send_events(left_click(row, 1), &workspace, &presenter, &mut app);
+        let presenter = render_scene(&workspace, &mut app);
+        send_events(left_click(row, 2), &workspace, &presenter, &mut app);
+        assert_typing_renames_tab(
+            &workspace,
+            tab_index,
+            "By double-click",
+            input_focus,
+            &mut app,
+        );
+    });
+}
+
+#[test]
+fn renaming_a_split_tab_from_its_menus() {
+    let _vertical_tabs = FeatureFlag::VerticalTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        let (workspace, _) = setup_workspace_with_two_tabs(&mut app);
+        workspace.update(&mut app, |workspace, ctx| {
+            let group = workspace.active_tab_pane_group().clone();
+            group.update(ctx, |group, ctx| {
+                group.add_terminal_pane(Direction::Right, None, ctx);
+            });
+        });
+        let input_focus = input_focus_of_tab(&workspace, 1, &mut app);
+
+        open_tab_menu_by_right_click(&workspace, 1, &mut app);
+        click_menu_row(&workspace, &mut app, "Rename tab");
+        assert_typing_renames_tab(&workspace, 1, "Split", input_focus, &mut app);
+
+        open_tab_menu_from_kebab(&workspace, 1, &mut app);
+        click_menu_row(&workspace, &mut app, "Rename tab");
+        assert_typing_renames_tab(&workspace, 1, "Split again", input_focus, &mut app);
     });
 }
