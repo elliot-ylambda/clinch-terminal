@@ -415,7 +415,7 @@ typed-path = "0.10.0"
 streaming-iterator = "0.1.0"
 derivative = "2.2.0"
 parquet = { version = "55.0.0", features = ["arrow"] }
-rmcp = { version = "1.6" }
+rmcp = { version = "3.9" }
 
 [profile.release]
 # Use line-tables-only (debug = 1) rather than full debuginfo (debug = 2 /
@@ -534,8 +534,9 @@ opt-level = "s"
 
 [patch.crates-io]
 # Compatibility-only dependency updates until these parents adopt the fixed
-# crypto/compression releases. Provenance and removal criteria live in the patch README.
+# crypto/compression/SQLite releases. Provenance and removal criteria live in the patch README.
 aws-config = { path = "third_party/security-patches/aws-config-1.8.16" }
+diesel = { path = "third_party/security-patches/diesel-2.3.14" }
 opentelemetry-otlp = { path = "third_party/security-patches/opentelemetry-otlp-0.32.0" }
 tantivy-sstable = { path = "third_party/security-patches/tantivy-sstable-0.7.0" }
 # Pinned to the merge commit of servo/core-foundation-rs#746, which fixes a

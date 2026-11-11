@@ -314,7 +314,7 @@ pub async fn spawn_server(
     let server_info = service.peer_info();
     logger.log(format!("[info] MCP: Connected to server: {server_info:#?}"));
 
-    let capabilities = server_info.map(|info| &info.capabilities);
+    let capabilities = server_info.as_ref().map(|info| &info.capabilities);
 
     let resources =
         query_resources_for(capabilities, &server_name, || service.list_all_resources()).await;
@@ -445,11 +445,11 @@ async fn send_initialize_request(
     Ok(response.status())
 }
 
-/// Creates a [`ClientInfo`] for the MCP client.
+/// Creates a [`ClientConfig`] for the MCP client.
 ///
 /// This tells the MCP server who we are and what capabilities we have.
-fn make_client_info() -> rmcp::model::ClientInfo {
-    rmcp::model::ClientInfo::new(
+fn make_client_info() -> rmcp::model::ClientConfig {
+    rmcp::model::ClientConfig::new(
         Default::default(),
         rmcp::model::Implementation::new(
             warp_core::channel::ChannelState::app_id().to_string(),
