@@ -1276,3 +1276,102 @@ fn a_session_without_hook_status_reads_its_state_from_the_screen() {
         );
     }
 }
+
+#[test]
+fn claude_text_is_marked_as_a_paste_only_past_the_limit() {
+    let at_limit = vec![b'x'; CLAUDE_UNMARKED_TEXT_MAX_BYTES];
+    let past_limit = vec![b'x'; CLAUDE_UNMARKED_TEXT_MAX_BYTES + 1];
+
+    assert_eq!(
+        rich_input_submit_strategy(CLIAgent::Claude, &at_limit),
+        RichInputSubmitStrategy::DelayedEnter
+    );
+    assert_eq!(
+        rich_input_submit_strategy(CLIAgent::Claude, &past_limit),
+        RichInputSubmitStrategy::BracketedPasteDelayedEnter(CLI_AGENT_PTY_WRITE_DELAY)
+    );
+}
+
+#[test]
+fn claude_limit_counts_bytes_because_the_pty_does() {
+    let text = "語".repeat(CLAUDE_UNMARKED_TEXT_MAX_BYTES / 2);
+
+    assert!(text.chars().count() < CLAUDE_UNMARKED_TEXT_MAX_BYTES);
+    assert_eq!(
+        rich_input_submit_strategy(CLIAgent::Claude, text.as_bytes()),
+        RichInputSubmitStrategy::BracketedPasteDelayedEnter(CLI_AGENT_PTY_WRITE_DELAY)
+    );
+}
+
+#[test]
+fn other_agents_keep_their_strategy_at_any_length() {
+    let long = vec![b'x'; 64 * 1024];
+
+    for text in [b"hello".as_slice(), long.as_slice()] {
+        assert_eq!(
+            rich_input_submit_strategy(CLIAgent::Codex, text),
+            RichInputSubmitStrategy::BracketedPaste
+        );
+        assert_eq!(
+            rich_input_submit_strategy(CLIAgent::Copilot, text),
+            RichInputSubmitStrategy::BracketedPasteDelayedEnter(
+                CLI_AGENT_BRACKETED_PASTE_ENTER_DELAY
+            )
+        );
+        assert_eq!(
+            rich_input_submit_strategy(CLIAgent::OpenCode, text),
+            RichInputSubmitStrategy::DelayedEnter
+        );
+        assert_eq!(
+            rich_input_submit_strategy(CLIAgent::Amp, text),
+            RichInputSubmitStrategy::Inline
+        );
+    }
+}
+
+#[test]
+fn enter_delay_follows_the_strategy() {
+    assert_eq!(
+        RichInputSubmitStrategy::Inline.enter_delay(),
+        Duration::ZERO
+    );
+    assert_eq!(
+        RichInputSubmitStrategy::BracketedPaste.enter_delay(),
+        Duration::ZERO
+    );
+    assert_eq!(
+        RichInputSubmitStrategy::DelayedEnter.enter_delay(),
+        CLI_AGENT_PTY_WRITE_DELAY
+    );
+    assert_eq!(
+        RichInputSubmitStrategy::BracketedPasteDelayedEnter(CLI_AGENT_BRACKETED_PASTE_ENTER_DELAY)
+            .enter_delay(),
+        CLI_AGENT_BRACKETED_PASTE_ENTER_DELAY
+    );
+}
+
+#[test]
+fn unmarked_strategies_write_text_unchanged() {
+    for strategy in [
+        RichInputSubmitStrategy::Inline,
+        RichInputSubmitStrategy::DelayedEnter,
+    ] {
+        assert_eq!(strategy.composer_bytes(b"hello".to_vec()), b"hello");
+    }
+}
+
+#[test]
+fn text_cannot_end_a_marked_paste_early() {
+    let strategy = RichInputSubmitStrategy::BracketedPaste;
+    let text = [b"before ", BRACKETED_PASTE_END, b"\rafter"].concat();
+
+    assert_eq!(
+        strategy.composer_bytes(text),
+        [
+            BRACKETED_PASTE_START,
+            b"before [201~\rafter",
+            BRACKETED_PASTE_END
+        ]
+        .concat()
+    );
+}
