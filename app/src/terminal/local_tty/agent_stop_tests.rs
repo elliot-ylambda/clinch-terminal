@@ -1,6 +1,7 @@
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-use std::os::unix::process::CommandExt;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
+
+use command::blocking::Command;
 
 use super::*;
 
@@ -67,14 +68,21 @@ fn the_agent_is_the_outermost_one_below_its_launcher() {
 /// Starts `script` under `/bin/sh` in its own process group, the way a shell starts a job, and
 /// reaps it on another thread the way that shell would.
 fn spawn_job(script: &str) -> u32 {
-    let mut child = Command::new("/bin/sh")
+    let mut command = Command::new("/bin/sh");
+    command
         .args(["-c", script])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .process_group(0)
-        .spawn()
-        .expect("spawn test job");
+        .stderr(Stdio::null());
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setpgid(0, 0) < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let mut child = command.spawn().expect("spawn test job");
     let pid = child.id();
     std::thread::spawn(move || {
         let _ = child.wait();

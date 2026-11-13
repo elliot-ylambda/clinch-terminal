@@ -167,6 +167,7 @@ pub(crate) fn sleep_card_copy(sleep: &AgentSleep, now: DateTime<Local>) -> (Stri
 }
 
 impl TerminalView {
+    #[cfg(test)]
     pub(crate) fn agent_sleep(&self) -> Option<&AgentSleep> {
         self.agent_sleep.as_ref()
     }

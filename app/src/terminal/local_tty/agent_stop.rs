@@ -9,8 +9,9 @@
 //!
 //! Everything here blocks while it waits, so it runs on its own thread.
 use std::collections::{HashMap, HashSet};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use instant::Instant;
 use nix::sys::signal::{kill, killpg, Signal};
 use nix::unistd::Pid;
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};

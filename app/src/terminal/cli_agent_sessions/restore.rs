@@ -274,6 +274,7 @@ impl AgentRestoreQueue {
 
     /// Takes charge of a pane whose agent Clinch just stopped to put its tab to sleep. Waking it
     /// goes through the same checks as a restore at launch.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn put_to_sleep(
         &mut self,
         terminal: &ViewHandle<TerminalView>,
