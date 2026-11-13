@@ -1604,7 +1604,7 @@ impl TerminalView {
         };
         let model = self.model.lock();
         let block = model.block_list().active_block();
-        let reason = if self.agent_is_stopping_for_sleep() {
+        let reason = if self.agent_stop_is_pending() {
             // Clinch is stopping this agent to put its tab to sleep. Nothing may be typed into
             // it, and a queued message waits until it is asleep and then wakes it.
             Some("going_to_sleep")

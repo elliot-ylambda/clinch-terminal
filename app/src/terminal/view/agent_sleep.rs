@@ -38,6 +38,9 @@ const RECENT_START: Duration = Duration::from_secs(2 * 60);
 const QUEUED_MESSAGE_HOLD: Duration = Duration::from_secs(5);
 /// How long a wake may show as in progress when nothing else reports how it went.
 const WAKE_GRACE: Duration = Duration::from_secs(90);
+/// How long after a stop ran out of time the agent still counts as about to exit, and so takes no
+/// messages. On a machine deep in swap an idle agent can take minutes to notice a signal.
+const OVERDUE_STOP_HOLD: Duration = Duration::from_secs(5 * 60);
 
 const CARD_WIDTH: f32 = 300.;
 const CARD_PADDING: f32 = 14.;
@@ -62,6 +65,15 @@ pub(crate) enum AgentSleepPhase {
 pub(crate) struct AgentSleep {
     pub(crate) since: DateTime<Utc>,
     pub(crate) phase: AgentSleepPhase,
+}
+
+/// A stop that ran out of time. The signal can't be taken back, so if the agent exits after all,
+/// that exit still belongs to the sleep, unless the user has typed into the agent since.
+#[derive(Clone, Debug)]
+pub(super) struct OverdueStop {
+    resume_command: String,
+    since: DateTime<Utc>,
+    gave_up_at: Instant,
 }
 
 /// Why a pane's agent can't be put to sleep right now. When in doubt, the answer is a reason.
@@ -110,7 +122,7 @@ impl SleepBlocker {
     pub(crate) fn explanation(self) -> &'static str {
         match self {
             Self::NoAgent => "isn't running Claude Code or Codex",
-            Self::AlreadyAsleep => "is already asleep",
+            Self::AlreadyAsleep => "is already asleep or going to sleep",
             Self::Restoring => "is still starting up",
             Self::NoSavedSession => "has no saved conversation to come back to",
             Self::Working => "is working",
@@ -184,12 +196,41 @@ impl TerminalView {
         self.agent_asleep_since().is_some()
     }
 
+    /// Whether this pane's agent is asleep, or on its way into or out of sleep.
+    pub(crate) fn agent_is_asleep_or_changing(&self) -> bool {
+        self.agent_sleep.is_some()
+    }
+
     /// Whether Clinch has asked this pane's agent to stop and is waiting for it to exit.
     pub(crate) fn agent_is_stopping_for_sleep(&self) -> bool {
         matches!(
             self.agent_sleep.as_ref().map(|sleep| &sleep.phase),
             Some(AgentSleepPhase::Stopping { .. })
         )
+    }
+
+    /// Whether this pane's agent has been told to stop and may exit at any moment, including for
+    /// a while after Clinch stopped waiting for it. Nothing should be sent to it meanwhile.
+    pub(crate) fn agent_stop_is_pending(&self) -> bool {
+        self.agent_is_stopping_for_sleep()
+            || self
+                .agent_sleep_overdue
+                .as_ref()
+                .is_some_and(|overdue| overdue.gave_up_at.elapsed() < OVERDUE_STOP_HOLD)
+    }
+
+    /// The user typed into the agent itself. If Clinch had given up waiting for it to stop, it is
+    /// theirs again: a later exit is them closing it, not the sleep finishing.
+    pub(super) fn agent_received_user_input(&mut self, ctx: &mut ViewContext<Self>) {
+        if self.agent_sleep_overdue.take().is_some() {
+            ctx.emit(Event::AgentSleepCalledOff);
+        }
+    }
+
+    /// Whether the command that just ended was an agent stopped for sleep. Read once, by the
+    /// code that would otherwise report a command that ran for hours and failed.
+    pub(super) fn take_agent_block_ended_for_sleep(&mut self) -> bool {
+        std::mem::take(&mut self.agent_block_ended_for_sleep)
     }
 
     /// The agent's resume command is armed and nothing is running: show the pane as asleep.
@@ -235,6 +276,10 @@ impl TerminalView {
         match self.agent_sleep.as_ref().map(|sleep| &sleep.phase) {
             Some(AgentSleepPhase::Waking) => return Some(SleepBlocker::Restoring),
             Some(_) => return Some(SleepBlocker::AlreadyAsleep),
+            // Already told to stop. A second signal would not hurry it.
+            None if self.agent_sleep_overdue.is_some() => {
+                return Some(SleepBlocker::AlreadyAsleep);
+            }
             None => {}
         }
         if self.deferred_agent_start.is_some()
@@ -251,6 +296,11 @@ impl TerminalView {
             return Some(SleepBlocker::NoAgent);
         }
         if session.session_key().is_none() {
+            return Some(SleepBlocker::NoSavedSession);
+        }
+        // A session nobody has prompted has no conversation on disk yet, and its resume command
+        // would refuse to start: the tab would wake as a bare shell.
+        if session.prompt_count() == 0 {
             return Some(SleepBlocker::NoSavedSession);
         }
         // These read the terminal model, so they come before the lock below.
@@ -313,8 +363,8 @@ impl TerminalView {
     }
 
     /// Clinch is about to ask this pane's agent to stop. `resume_command` is what brings the same
-    /// conversation back. If the agent hasn't exited after [`STOP_TIMEOUT`] the sleep is called
-    /// off and the pane says so.
+    /// conversation back. If the agent hasn't exited after [`STOP_TIMEOUT`] the pane stops
+    /// saying it is going to sleep, and falls asleep whenever the agent does exit.
     pub(crate) fn begin_agent_sleep(
         &mut self,
         resume_command: String,
@@ -336,30 +386,56 @@ impl TerminalView {
     /// woken afterwards. The pane goes back to not being asleep, without a failure notice.
     pub(crate) fn abandon_agent_sleep(&mut self, ctx: &mut ViewContext<Self>) {
         self.agent_sleep = None;
+        self.agent_sleep_overdue = None;
         self.agent_sleep_generation = self.agent_sleep_generation.wrapping_add(1);
         ctx.notify();
     }
 
     fn give_up_stopping_agent(&mut self, generation: u64, ctx: &mut ViewContext<Self>) {
-        if self.agent_sleep_generation != generation || !self.agent_is_stopping_for_sleep() {
+        if self.agent_sleep_generation != generation {
             return;
         }
+        let Some(AgentSleep {
+            since,
+            phase: AgentSleepPhase::Stopping { resume_command },
+        }) = self.agent_sleep.clone()
+        else {
+            return;
+        };
         self.agent_sleep = None;
+        self.agent_sleep_overdue = Some(OverdueStop {
+            resume_command,
+            since,
+            gave_up_at: Instant::now(),
+        });
         self.touch_agent_activity();
-        ctx.emit(Event::AgentSleepFailed);
+        ctx.emit(Event::AgentSleepOverdue);
         ctx.notify();
     }
 
     /// Called when the pane's foreground command ends. Returns whether that was the agent exiting
     /// because Clinch stopped it for sleep, in which case its session stays with the pane.
     pub(super) fn agent_exited_for_sleep(&mut self, ctx: &mut ViewContext<Self>) -> bool {
-        let Some(AgentSleep {
-            since,
-            phase: AgentSleepPhase::Stopping { resume_command },
-        }) = self.agent_sleep.clone()
-        else {
-            return false;
+        let (resume_command, since) = match self.agent_sleep.clone() {
+            Some(AgentSleep {
+                since,
+                phase: AgentSleepPhase::Stopping { resume_command },
+            }) => (resume_command, since),
+            Some(_) => return false,
+            // It took longer than Clinch waited, but it was still Clinch's signal that ended it.
+            None => match self.agent_sleep_overdue.take() {
+                Some(overdue) => (overdue.resume_command, overdue.since),
+                None => return false,
+            },
         };
+        self.agent_sleep_overdue = None;
+        self.agent_sleep = Some(AgentSleep {
+            since,
+            phase: AgentSleepPhase::Stopping {
+                resume_command: resume_command.clone(),
+            },
+        });
+        self.agent_block_ended_for_sleep = true;
         let view_id = self.view_id;
         let kept = CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
             sessions.mark_session_asleep(view_id, ctx)
@@ -367,7 +443,7 @@ impl TerminalView {
         if !kept {
             // The session went away while its agent was stopping: nothing is left to wake.
             self.agent_sleep = None;
-            ctx.emit(Event::AgentSleepFailed);
+            ctx.emit(Event::AgentSleepCalledOff);
             ctx.notify();
             return false;
         }

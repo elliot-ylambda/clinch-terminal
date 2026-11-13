@@ -1142,7 +1142,8 @@ fn handle_terminal_view_event(
                 #[cfg(not(feature = "local_tty"))]
                 let _ = (resume_command, since);
             }
-            Event::AgentSleepFailed => group.agent_sleep_failed(pane_id, ctx),
+            Event::AgentSleepOverdue => group.agent_sleep_overdue(pane_id, ctx),
+            Event::AgentSleepCalledOff => group.agent_sleep_called_off(pane_id),
             Event::BlockCompleted { block, is_local } => {
                 match group.terminal_session_by_id(pane_id) {
                     Some(pane) => {

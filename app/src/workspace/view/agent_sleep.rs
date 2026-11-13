@@ -196,6 +196,18 @@ impl Workspace {
         wake_agents(&group, ctx)
     }
 
+    /// Brings a tab forward for the control CLI, as the activate-tab action does, without it
+    /// counting as the user choosing that tab. A coordinator that wants an agent running says
+    /// so, with `agent wake` or by sending to it.
+    pub(crate) fn activate_tab_without_waking(
+        &mut self,
+        index: usize,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        self.activate_tab(index, ctx);
+        ctx.dispatch_global_action("workspace:save_app", ());
+    }
+
     /// The user chose the tab that is now on screen: by clicking it, or with a tab shortcut. If
     /// it is asleep it wakes once the choice has held for a moment.
     pub(super) fn wake_chosen_tab_soon(&mut self, ctx: &mut ViewContext<Self>) {

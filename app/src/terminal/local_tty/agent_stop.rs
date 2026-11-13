@@ -162,24 +162,36 @@ pub(crate) fn stop_foreground_job_with(
     exit_timeout: Duration,
 ) -> StopOutcome {
     let tree = process_tree(&running_processes(), foreground_group);
-    match agent_process(&tree, is_agent) {
-        Some(agent) => signal(agent.pid, Signal::SIGTERM),
-        // No recognizable agent (a wrapper under another name, or the group leader has already
-        // gone): ask the whole job.
-        None => {
-            let _ = killpg(Pid::from_raw(foreground_group as i32), Signal::SIGTERM);
-        }
-    }
     let Some(leader) = tree.first().cloned() else {
+        // The group leader has already gone. Ask whatever is left of the job, and report it as
+        // stopped: there is no process left to follow.
+        let _ = killpg(Pid::from_raw(foreground_group as i32), Signal::SIGTERM);
         return StopOutcome {
             exited: true,
             ..Default::default()
         };
     };
-    let exited = wait_until(Instant::now() + exit_timeout, || {
-        survivors(std::slice::from_ref(&leader)).is_empty()
-    });
-    if !exited {
+    let deadline = Instant::now() + exit_timeout;
+    let exited = match agent_process(&tree, is_agent) {
+        // The agent ends its own helpers on the way out, and the job ends with it.
+        Some(agent) => {
+            signal(agent.pid, Signal::SIGTERM);
+            wait_until(deadline, || {
+                survivors(std::slice::from_ref(&leader)).is_empty()
+            })
+        }
+        // No recognizable agent (it runs under another name): ask the whole job, and give all
+        // of it the full time. The agent is somewhere in there, and must not be taken for a
+        // helper that outlived it.
+        None => {
+            let _ = killpg(Pid::from_raw(foreground_group as i32), Signal::SIGTERM);
+            wait_until(deadline, || survivors(&tree).is_empty())
+        }
+    };
+    if survivors(std::slice::from_ref(&leader)).is_empty() && !exited {
+        // Only possible when the whole job was asked: its leader went, something else did not.
+        log::warn!("part of a job stopped for sleep outlived its {exit_timeout:?} to exit");
+    } else if !exited {
         return StopOutcome::default();
     }
 

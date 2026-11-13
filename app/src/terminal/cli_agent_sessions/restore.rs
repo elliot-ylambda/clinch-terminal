@@ -268,6 +268,7 @@ impl AgentRestoreQueue {
             retry_stalled_command,
             (!continue_pending).then_some(asleep_since),
             continue_pending,
+            true,
             ctx,
         );
     }
@@ -287,6 +288,7 @@ impl AgentRestoreQueue {
     ) {
         self.entries
             .retain(|entry| entry.terminal.id() != terminal.id());
+        self.record_asleep(pane_uuid.clone(), asleep_since);
         self.insert(
             terminal,
             pane_uuid,
@@ -295,8 +297,22 @@ impl AgentRestoreQueue {
             retry_stalled_command,
             Some(asleep_since),
             false,
+            // Its agent has already stopped, so it is asleep whatever else is open. Another tab
+            // on the same conversation is no reason to leave this one in no state at all.
+            false,
             ctx,
         );
+    }
+
+    /// Writes down right away that a pane is asleep, or about to be. The regular record is only
+    /// taken every few seconds, and the updater reads this list to know which panes without an
+    /// agent process must keep their saved session.
+    pub(crate) fn record_asleep(&mut self, pane_uuid: Vec<u8>, since: DateTime<Utc>) {
+        let mut asleep = self.last_recorded_asleep.clone().unwrap_or_default();
+        if asleep.insert(pane_uuid, since) != Some(since) {
+            write_asleep_panes(&asleep);
+            self.last_recorded_asleep = Some(asleep);
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -309,14 +325,16 @@ impl AgentRestoreQueue {
         retry_stalled_command: RetryStalledCommand,
         asleep_since: Option<DateTime<Utc>>,
         continue_pending: bool,
+        refuse_duplicates: bool,
         ctx: &mut ModelContext<Self>,
     ) {
         // A second writer of the same conversation must never be started, by the queue or by
         // opening its tab.
-        let duplicate = self
-            .entries
-            .iter()
-            .any(|entry| entry.key == key && entry.terminal.upgrade(ctx).is_some());
+        let duplicate = refuse_duplicates
+            && self
+                .entries
+                .iter()
+                .any(|entry| entry.key == key && entry.terminal.upgrade(ctx).is_some());
         let state = match (duplicate, asleep_since) {
             (true, _) => RestoreState::Attention("Already restoring in another tab"),
             (false, Some(_)) => RestoreState::Asleep,
@@ -365,7 +383,6 @@ impl AgentRestoreQueue {
         entry.state = RestoreState::Starting;
         entry.started_at = Some(Instant::now());
         entry.woken = true;
-        self.completed_at = None;
         ctx.emit(());
         if !self.ticking {
             self.ticking = true;

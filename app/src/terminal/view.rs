@@ -1744,8 +1744,12 @@ pub enum Event {
         resume_command: String,
         since: chrono::DateTime<chrono::Utc>,
     },
-    /// The agent didn't stop in time, so it is still running and the pane is not asleep.
-    AgentSleepFailed,
+    /// The agent hasn't stopped in the time Clinch waits, so the pane is not asleep yet. It
+    /// falls asleep if the agent exits after all.
+    AgentSleepOverdue,
+    /// The sleep is off: the agent is in use again, or there is nothing left to wake. Its saved
+    /// session goes back to being removed when the user closes it.
+    AgentSleepCalledOff,
     // TODO: break this event down into higher-level events that hide the
     // `bytes` detail from the view.
     WriteBytesToPty {
@@ -2729,6 +2733,10 @@ pub struct TerminalView {
     agent_message_queued_at: Option<Instant>,
     /// The user-input count that a restore or wake in progress treats as "nothing typed yet".
     agent_restore_input_baseline: u64,
+    /// A stop Clinch stopped waiting for. See `agent_sleep::OverdueStop`.
+    agent_sleep_overdue: Option<agent_sleep::OverdueStop>,
+    /// The command that just ended was an agent stopped for sleep, not a command that failed.
+    agent_block_ended_for_sleep: bool,
 
     current_state: TerminalViewStateChange,
 
@@ -4901,6 +4909,8 @@ impl TerminalView {
             agent_session_started_at: None,
             agent_message_queued_at: None,
             agent_restore_input_baseline: 0,
+            agent_sleep_overdue: None,
+            agent_block_ended_for_sleep: false,
             current_state: TerminalViewStateChange::default(),
             did_notify_long_running: false,
             is_focused_and_active: true,
@@ -9869,6 +9879,7 @@ impl TerminalView {
             self.coordination_last_enter_at = Some(Instant::now());
         }
         self.touch_agent_activity();
+        self.agent_received_user_input(ctx);
         if cancels_auto_continue {
             self.cancel_auto_continue_on_user_input(ctx);
         }
@@ -12763,7 +12774,8 @@ impl TerminalView {
                     let block_duration = self.block_duration(&block_completed.serialized_block);
                     // An agent Clinch stopped to put its tab to sleep exits with a signal's
                     // status after running for hours. That is not a failed command to report.
-                    let stopped_for_sleep = self.agent_is_stopping_for_sleep();
+                    // By now the pane may already be asleep, so the exit left a note.
+                    let stopped_for_sleep = self.take_agent_block_ended_for_sleep();
                     if let Some(block_duration) = block_duration.filter(|_| !stopped_for_sleep) {
                         self.maybe_send_block_completed_notification(
                             block_completed,

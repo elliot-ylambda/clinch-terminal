@@ -147,6 +147,28 @@ fn an_agent_that_will_not_stop_is_left_running() {
     }
 }
 
+/// An agent installed under another name (a wrapper script, say) is not recognized, so the whole
+/// job is asked to stop. Everything in it then gets the full time to exit: a slow agent must
+/// not be taken for a helper and killed a second after its launcher went.
+#[test]
+fn an_unrecognized_agent_gets_the_full_time_before_anything_is_swept() {
+    // The launcher exits at once on SIGTERM. The "agent" under it takes two seconds to shut
+    // down, longer than helpers get to settle.
+    let job = spawn_job("(trap 'sleep 2; exit 0' TERM; sleep 300 & wait) & wait");
+    let tree = wait_for_children(job, 2);
+    assert!(tree.len() >= 3, "launcher, agent and its child: {tree:?}");
+
+    let started = Instant::now();
+    let outcome = stop_foreground_job_with(job, &|_| false, Duration::from_secs(10));
+    assert!(outcome.exited);
+    assert_eq!(outcome.helpers_killed, 0, "{outcome:?}");
+    assert!(
+        started.elapsed() >= Duration::from_secs(2),
+        "it waited for the slow agent to finish on its own"
+    );
+    assert!(survivors(&tree).is_empty(), "nothing is left running");
+}
+
 /// The real thing a pane has: a shell with job control on a PTY. The foreground group is the job
 /// the shell started, found from the PTY's controlling end, and never the shell itself.
 #[test]

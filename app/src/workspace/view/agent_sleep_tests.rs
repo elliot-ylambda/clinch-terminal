@@ -36,6 +36,13 @@ fn add_idle_agent_tab(
         session.status = CLIAgentSessionStatus::Success;
         session.has_observed_turn_activity = true;
         session.session_context.session_id = Some(format!("conversation-{}", terminal.id()));
+        session
+            .prompt_history
+            .prompts
+            .push(crate::agent_resume::AgentPrompt {
+                timestamp: None,
+                text: "fix the flaky test".into(),
+            });
         sessions.set_session(terminal.id(), session, ctx);
     });
     let index = workspace

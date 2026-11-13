@@ -215,6 +215,8 @@ Sending to an `asleep` session wakes it. A plain send starts the agent and is re
 with `target_state_conflict`, because nothing can be typed until the agent is up; send
 it with `--queue` instead and Clinch delivers it once the session is ready. Waking
 takes a few seconds and uses the user's memory, so wake only the sessions the task needs.
+`tab activate` on an asleep tab wakes it too, as choosing the tab by hand does; other
+control actions that only bring a tab forward to work on it do not.
 
 `unavailable_reason: human_input_or_draft` comes with `draft_source`, naming the
 unsent input that blocks writing:

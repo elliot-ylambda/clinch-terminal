@@ -19,7 +19,7 @@ use warpui::{AppContext, ModelContext, SingletonEntity, TypedActionView, ViewHan
 use crate::local_control::handlers::metadata::action_metadata_for_name;
 use crate::local_control::LocalControlBridge;
 use crate::pane_group::{ActivationReason, PaneGroup, PaneGroupAction, PaneId};
-use crate::workspace::{Workspace, WorkspaceAction, WorkspaceRegistry};
+use crate::workspace::{Workspace, WorkspaceRegistry};
 
 /// Pane and session ids come in two formats: opaque ids from workspace tree, project inspect, and
 /// agent list, and selectors from pane list and session list. Resolvers match selectors, so this
@@ -490,7 +490,9 @@ pub(crate) fn active_target_pane_group(
     if target.tab.is_some() {
         workspace.update(ctx, |workspace, ctx| {
             let tab_index = tab_index_from_target(target, workspace, ctx)?;
-            workspace.handle_action(&WorkspaceAction::ActivateTab(tab_index), ctx);
+            // Bringing a tab forward so another control action can work on it is not someone
+            // choosing that tab, and must not start its agent.
+            workspace.activate_tab_without_waking(tab_index, ctx);
             Ok::<_, ControlError>(())
         })?;
     }
@@ -506,7 +508,9 @@ pub(crate) fn activate_target(
     if target.tab.is_some() {
         workspace.update(ctx, |workspace, ctx| {
             let tab_index = tab_index_from_target(target, workspace, ctx)?;
-            workspace.handle_action(&WorkspaceAction::ActivateTab(tab_index), ctx);
+            // Bringing a tab forward so another control action can work on it is not someone
+            // choosing that tab, and must not start its agent.
+            workspace.activate_tab_without_waking(tab_index, ctx);
             Ok::<_, ControlError>(())
         })?;
     }

@@ -2520,6 +2520,11 @@ impl PaneGroup {
             .ok_or(SleepBlocker::NoSavedSession)?;
 
         crate::agent_resume::keep_session_through_sleep(&pane_uuid);
+        // On record before the agent is touched: an update that starts in the next few seconds
+        // must already find this pane listed as asleep, or it would drop its saved session.
+        AgentRestoreQueue::handle(ctx).update(ctx, |queue, _| {
+            queue.record_asleep(pane_uuid.clone(), chrono::Utc::now());
+        });
         terminal.update(ctx, |view, ctx| view.begin_agent_sleep(resume_command, ctx));
         let stopping = manager_handle.read(ctx, |manager, _| {
             manager
@@ -2602,21 +2607,28 @@ impl PaneGroup {
         ctx.notify();
     }
 
-    /// The agent didn't stop in time and is still running: its saved session goes back to being
-    /// removed when the user closes it.
-    pub(in crate::pane_group) fn agent_sleep_failed(
+    /// The agent hasn't stopped in the time Clinch waits. Its saved session stays guarded,
+    /// because the signal is still on its way and the agent may yet exit because of it.
+    pub(in crate::pane_group) fn agent_sleep_overdue(
         &mut self,
         pane_id: PaneId,
         ctx: &mut ViewContext<Self>,
     ) {
+        ctx.emit(Event::ShowToast {
+            message: "This session hasn't stopped yet, so it isn't asleep. It will sleep once \
+                      its agent exits."
+                .to_owned(),
+            flavor: ToastFlavor::Default,
+            pane_id: Some(pane_id),
+        });
+    }
+
+    /// The sleep is off for good: the session goes back to being removed when the user closes
+    /// its agent.
+    pub(in crate::pane_group) fn agent_sleep_called_off(&mut self, pane_id: PaneId) {
         if let Some(pane) = self.terminal_session_by_id(pane_id) {
             crate::agent_resume::stop_keeping_session_through_sleep(&pane.session_uuid());
         }
-        ctx.emit(Event::ShowToast {
-            message: "Couldn't put this session to sleep. It's still running.".to_owned(),
-            flavor: ToastFlavor::Error,
-            pane_id: Some(pane_id),
-        });
     }
 
     /// Running commands a restart would end for good. Agent sessions aren't among them, because

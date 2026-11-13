@@ -642,6 +642,11 @@ fn restored_sessions_that_were_idle_stay_asleep_until_one_is_woken() {
                 "the pane stops saying it is waking"
             );
         });
+        assert_eq!(
+            queue.read(&app, |queue, _| queue.progress_text()),
+            None,
+            "a tab that finished waking is not a restore that finished"
+        );
         for (index, pane) in panes.iter().enumerate() {
             if index != 2 {
                 assert_eq!(
@@ -769,5 +774,53 @@ fn a_session_put_to_sleep_later_wakes_through_the_queue_on_the_same_conversation
                 .map(|key| key.session_id)
         });
         assert_eq!(conversation.as_deref(), Some("conversation"));
+    });
+}
+
+/// Two open tabs can hold the same conversation. Putting one to sleep must still leave it asleep
+/// and wakeable: its agent has already been stopped, so refusing would leave it in no state.
+#[test]
+fn a_tab_put_to_sleep_is_asleep_even_if_another_tab_has_the_same_conversation() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        app.update(crate::remote_control::register);
+        let starts = Rc::new(Cell::new(0));
+        let other = enqueue(&mut app, "shared", starts.clone(), Rc::default());
+        let terminal = add_window_with_terminal(&mut app, None);
+        let wakes = starts.clone();
+        terminal.update(&mut app, |view, ctx| {
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                let mut session =
+                    super::super::tests::idle_test_session(crate::terminal::CLIAgent::Claude);
+                session.session_context.session_id = Some("shared".into());
+                sessions.set_session(view.id(), session, ctx);
+            });
+            view.defer_agent_start(Box::new(move |_| wakes.set(wakes.get() + 1)));
+        });
+        let queue = AgentRestoreQueue::handle(&app);
+        queue.update(&mut app, |queue, ctx| {
+            queue.put_to_sleep(
+                &terminal,
+                b"other-pane".to_vec(),
+                CLIAgentSessionKey {
+                    provider: AgentResumeProvider::Claude,
+                    session_id: "shared".into(),
+                },
+                Utc::now(),
+                Box::new(|_| false),
+                Rc::new(|_| {}),
+                ctx,
+            );
+        });
+        assert_eq!(
+            queue.read(&app, |queue, _| queue.state(terminal.id())),
+            Some(RestoreState::Asleep)
+        );
+        terminal.update(&mut app, |view, ctx| {
+            assert!(view.agent_is_asleep());
+            assert!(view.start_deferred_agent(ctx));
+        });
+        assert_eq!(starts.get(), 1);
+        other.read(&app, |view, _| assert!(view.agent_is_asleep()));
     });
 }

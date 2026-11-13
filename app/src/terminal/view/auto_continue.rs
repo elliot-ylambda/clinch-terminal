@@ -26,6 +26,8 @@ use crate::terminal::cli_agent_sessions::{CLIAgentSessionStatus, CLIAgentSession
 /// monotonic uptime clock, which stops while the Mac sleeps, so one long wait
 /// armed before a lid-closed night would fire hours after the reset.
 const MAX_AUTO_CONTINUE_TIMER_CHUNK: std::time::Duration = std::time::Duration::from_secs(60);
+/// How long an asleep agent gets to start before a due continue looks at it again.
+const WAKE_RETRY_SECONDS: i64 = 15;
 
 impl TerminalView {
     pub(super) fn register_subscriptions_for_auto_continue(&mut self, ctx: &mut ViewContext<Self>) {
@@ -143,6 +145,19 @@ impl TerminalView {
             });
         if !session_matches {
             AutoContinueModel::handle(ctx).update(ctx, |model, ctx| model.disarm(view_id, ctx));
+            return;
+        }
+
+        // An asleep pane has no agent to type into yet. A session that stopped at its limit
+        // comes back asleep after a restart, so wake it and try again once it has had time to
+        // start. The continue stays armed.
+        if self.agent_is_asleep_or_changing() {
+            self.wake_agent(ctx);
+            self.schedule_auto_continue_timer(
+                Utc::now() + chrono::Duration::seconds(WAKE_RETRY_SECONDS),
+                generation,
+                ctx,
+            );
             return;
         }
 

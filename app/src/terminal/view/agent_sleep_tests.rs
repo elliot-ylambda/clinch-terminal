@@ -5,7 +5,7 @@ use chrono::TimeZone as _;
 use warpui::{App, ViewHandle};
 
 use super::*;
-use crate::agent_resume::AgentResumeProvider;
+use crate::agent_resume::{AgentPrompt, AgentResumeProvider};
 use crate::terminal::cli_agent_sessions::event::CLIAgentStopReason;
 use crate::terminal::cli_agent_sessions::tests::idle_test_session;
 use crate::terminal::cli_agent_sessions::{CLIAgentSession, CLIAgentSessionKey};
@@ -19,6 +19,10 @@ fn idle_session() -> CLIAgentSession {
     session.status = CLIAgentSessionStatus::Success;
     session.has_observed_turn_activity = true;
     session.session_context.session_id = Some("conversation-1".into());
+    session.prompt_history.prompts.push(AgentPrompt {
+        timestamp: None,
+        text: "fix the flaky test".into(),
+    });
     session
 }
 
@@ -110,6 +114,23 @@ fn an_idle_agent_may_sleep_and_anything_in_use_stays_awake() {
         assert_eq!(
             blocker_for(&mut app, &terminal, unidentified),
             Some(SleepBlocker::NoSavedSession)
+        );
+
+        // Opened and never prompted: there is no conversation on disk to resume, so the resume
+        // command would refuse and the tab would wake as a bare shell.
+        let mut unprompted = idle_session();
+        unprompted.prompt_history.prompts.clear();
+        assert_eq!(
+            blocker_for(&mut app, &terminal, unprompted),
+            Some(SleepBlocker::NoSavedSession)
+        );
+
+        // Devin comes back asleep after a restart, but a running one is never stopped.
+        let mut devin = idle_session();
+        devin.agent = CLIAgent::Devin;
+        assert_eq!(
+            blocker_for(&mut app, &terminal, devin),
+            Some(SleepBlocker::NoAgent)
         );
 
         // Without hooks and with nothing readable on screen, nobody can say it is idle.
@@ -207,6 +228,10 @@ fn sleep_keeps_the_conversation_and_waking_resumes_it() {
 
             // The agent exits. An exit Clinch asked for keeps the session.
             assert!(view.agent_exited_for_sleep(ctx));
+            // By the time the exit is reported as a finished command the pane may already be
+            // asleep, so the exit leaves a note that it was not a failure. It is read once.
+            assert!(view.take_agent_block_ended_for_sleep());
+            assert!(!view.take_agent_block_ended_for_sleep());
         });
         assert_eq!(*stopped.borrow(), vec![RESUME_COMMAND.to_owned()]);
         let session = app
@@ -286,20 +311,25 @@ fn sleep_keeps_the_conversation_and_waking_resumes_it() {
     });
 }
 
+/// An agent deep in swap can take longer to notice the signal than Clinch waits. The pane stops
+/// saying it is going to sleep, but the signal is still on its way: when the agent does exit, the
+/// session is kept and the tab falls asleep, instead of the exit being taken for the user closing
+/// it and the conversation dropped from the tab.
 #[test]
-fn an_agent_that_does_not_stop_is_left_running_and_the_pane_says_so() {
+fn an_agent_that_stops_late_still_falls_asleep_with_its_conversation() {
     App::test((), |mut app| async move {
         initialize_app_for_terminal_view(&mut app);
         app.update(crate::remote_control::register);
         let terminal = add_window_with_terminal(&mut app, None);
         assert_eq!(blocker_for(&mut app, &terminal, idle_session()), None);
-        let failures = Rc::new(Cell::new(0));
-        let seen = failures.clone();
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let seen = events.clone();
         app.update(|ctx| {
-            ctx.subscribe_to_view(&terminal, move |_, event, _| {
-                if matches!(event, Event::AgentSleepFailed) {
-                    seen.set(seen.get() + 1);
-                }
+            ctx.subscribe_to_view(&terminal, move |_, event, _| match event {
+                Event::AgentSleepOverdue => seen.borrow_mut().push("overdue"),
+                Event::AgentSleepCalledOff => seen.borrow_mut().push("called off"),
+                Event::AgentStoppedForSleep { .. } => seen.borrow_mut().push("stopped"),
+                _ => {}
             })
         });
         terminal.update(&mut app, |view, ctx| {
@@ -310,12 +340,65 @@ fn an_agent_that_does_not_stop_is_left_running_and_the_pane_says_so() {
             let generation = view.agent_sleep_generation;
             // A timer left over from an earlier attempt does nothing.
             view.give_up_stopping_agent(generation.wrapping_sub(1), ctx);
-            assert!(view.agent_sleep().is_some());
+            assert!(view.agent_is_stopping_for_sleep());
             view.give_up_stopping_agent(generation, ctx);
-            assert!(view.agent_sleep().is_none());
-            assert_eq!(view.agent_sleep_blocker(ctx), None, "it can be tried again");
+            assert!(view.agent_sleep().is_none(), "the card comes down");
+            assert_eq!(
+                view.local_control_agent_readiness(ctx).1,
+                Some("going_to_sleep"),
+                "it may exit at any moment, so it still takes no messages"
+            );
+            assert_eq!(
+                view.agent_sleep_blocker(ctx),
+                Some(SleepBlocker::AlreadyAsleep),
+                "a second signal would not hurry it"
+            );
+
+            // It exits after all.
+            assert!(view.agent_exited_for_sleep(ctx));
         });
-        assert_eq!(failures.get(), 1);
+        assert_eq!(*events.borrow(), ["overdue", "stopped"]);
+        let conversation = app.read(|ctx| {
+            CLIAgentSessionsModel::as_ref(ctx)
+                .session(terminal.id())
+                .and_then(|session| session.session_key())
+                .map(|key| key.session_id)
+        });
+        assert_eq!(conversation.as_deref(), Some("conversation-1"));
+    });
+}
+
+/// If the user types into an agent Clinch gave up waiting for, it is theirs again, and a later
+/// exit is them closing it.
+#[test]
+fn typing_into_an_agent_that_did_not_stop_calls_the_sleep_off() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        app.update(crate::remote_control::register);
+        let terminal = add_window_with_terminal(&mut app, None);
+        assert_eq!(blocker_for(&mut app, &terminal, idle_session()), None);
+        let called_off = Rc::new(Cell::new(0));
+        let seen = called_off.clone();
+        app.update(|ctx| {
+            ctx.subscribe_to_view(&terminal, move |_, event, _| {
+                if matches!(event, Event::AgentSleepCalledOff) {
+                    seen.set(seen.get() + 1);
+                }
+            })
+        });
+        terminal.update(&mut app, |view, ctx| {
+            view.begin_agent_sleep(RESUME_COMMAND.to_owned(), ctx);
+            view.give_up_stopping_agent(view.agent_sleep_generation, ctx);
+            view.agent_received_user_input(ctx);
+            view.agent_received_user_input(ctx);
+            assert!(
+                !view.agent_exited_for_sleep(ctx),
+                "the exit is the user's now"
+            );
+            view.agent_session_started_at = None;
+            assert_eq!(view.agent_sleep_blocker(ctx), None, "it can be slept again");
+        });
+        assert_eq!(called_off.get(), 1);
     });
 }
 
