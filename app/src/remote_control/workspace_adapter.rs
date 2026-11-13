@@ -691,7 +691,8 @@ impl WorkspaceAdapter {
                 Some(request_id),
                 ProtocolErrorCode::InvalidRequest,
                 if starting {
-                    "That agent is still starting (Clinch starts restored agents when they are first opened); send again in a few seconds.".to_owned()
+                    "That session was asleep and is still waking; send again in a few seconds."
+                        .to_owned()
                 } else {
                     "That agent is not currently accepting prompt input.".to_owned()
                 },
@@ -1421,8 +1422,8 @@ impl WorkspaceAdapter {
             true,
         ))?;
         self.subscribe_to_desktop_input(&resolved.terminal, ctx);
-        // Opening a restored tab from the phone counts as showing it: start its
-        // agent if Clinch deferred that until the tab was first opened.
+        // Opening a tab from the phone is the user choosing it: wake its agent if the
+        // tab is asleep.
         resolved.terminal.update(ctx, |terminal, ctx| {
             terminal.start_deferred_agent(ctx);
         });

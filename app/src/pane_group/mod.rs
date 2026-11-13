@@ -119,7 +119,9 @@ use crate::terminal::available_shells::{AvailableShell, AvailableShells};
 #[cfg(not(target_family = "wasm"))]
 use crate::terminal::cli_agent_sessions::plugin_manager::PluginModalKind;
 #[cfg(feature = "local_tty")]
-use crate::terminal::cli_agent_sessions::CLIAgentSessionsModel;
+use crate::terminal::cli_agent_sessions::restore::AgentRestoreQueue;
+#[cfg(feature = "local_tty")]
+use crate::terminal::cli_agent_sessions::{CLIAgentSessionKey, CLIAgentSessionsModel};
 use crate::terminal::focus_env::add_session_focus_env_vars;
 use crate::terminal::general_settings::{GeneralSettings, GeneralSettingsChangedEvent};
 #[cfg(feature = "local_tty")]
@@ -135,6 +137,7 @@ use crate::terminal::shared_session::share_modal::{ShareSessionModal, ShareSessi
 use crate::terminal::shared_session::{
     self, IsSharedSessionCreator, SharedSessionActionSource, SharedSessionSource,
 };
+use crate::terminal::view::agent_sleep::SleepBlocker;
 use crate::terminal::view::inline_banner::{
     ZeroStatePromptSuggestionTriggeredFrom, ZeroStatePromptSuggestionType,
 };
@@ -176,6 +179,67 @@ use focus_state::PaneGroupFocusState;
 #[cfg(test)]
 #[path = "mod_tests.rs"]
 mod tests;
+
+/// The saved resume command as Clinch runs it: for exactly that conversation, so one that is
+/// no longer available stops visibly instead of starting something else in its place.
+#[cfg(feature = "local_tty")]
+fn exact_resume_command(command: &str) -> String {
+    format!("CLINCH_AGENT_RESTORE_EXACT=1 {command}")
+}
+
+/// What a pane with a held-back agent start hands out: how to start it, how to cancel it before
+/// it reaches the shell, and how to retry it if the shell never ran it. A pane restored at launch
+/// and a pane put to sleep later are armed the same way, so waking is one path.
+#[cfg(feature = "local_tty")]
+struct DeferredAgentHooks {
+    start: Box<dyn FnOnce(&mut AppContext)>,
+    cancel: Box<dyn FnOnce(&mut AppContext) -> bool>,
+    retry: std::rc::Rc<dyn Fn(&mut AppContext)>,
+}
+
+#[cfg(feature = "local_tty")]
+impl DeferredAgentHooks {
+    fn new(manager_handle: &ModelHandle<Box<dyn TerminalManager>>) -> Self {
+        fn with_manager<T: Default>(
+            manager: &warpui::WeakModelHandle<Box<dyn TerminalManager>>,
+            ctx: &mut AppContext,
+            run: impl FnOnce(&local_tty::TerminalManager, &mut AppContext) -> T,
+        ) -> T {
+            let Some(manager_handle) = manager.upgrade(ctx) else {
+                return T::default();
+            };
+            manager_handle.update(ctx, |terminal_manager, ctx| {
+                terminal_manager
+                    .as_any()
+                    .downcast_ref::<local_tty::TerminalManager>()
+                    .map(|manager| run(manager, ctx))
+                    .unwrap_or_default()
+            })
+        }
+        let (start, cancel, retry) = (
+            manager_handle.downgrade(),
+            manager_handle.downgrade(),
+            manager_handle.downgrade(),
+        );
+        Self {
+            start: Box::new(move |ctx| {
+                with_manager(&start, ctx, |manager, ctx| {
+                    manager.start_deferred_restore_command(ctx);
+                });
+            }),
+            cancel: Box::new(move |ctx| {
+                with_manager(&cancel, ctx, |manager, ctx| {
+                    manager.cancel_pending_restore_command(ctx)
+                })
+            }),
+            retry: std::rc::Rc::new(move |ctx| {
+                with_manager(&retry, ctx, |manager, ctx| {
+                    manager.retry_stalled_restore_command(ctx);
+                });
+            }),
+        }
+    }
+}
 
 pub use pane::ai_document_pane::AIDocumentPane;
 pub use pane::ai_fact_pane::AIFactPane;
@@ -1745,8 +1809,9 @@ impl PaneGroup {
                 )
                 .with_restored_local_cwd_fallback(restored_local_cwd_fallback);
 
-                // Restore in the existing pane, through one app-wide bounded queue.
-                // Shells bootstrap immediately; agents start without requiring tab activation.
+                // The shell starts now. The agent doesn't: its resume command waits until the
+                // tab is opened or something is sent to it, unless a restart cut it off mid-turn,
+                // in which case the restore queue starts it and tells it to carry on.
                 #[cfg(feature = "local_tty")]
                 {
                     if let Some(on_restore_command) = on_restore_command {
@@ -1757,50 +1822,30 @@ impl PaneGroup {
                                 .downcast_ref::<local_tty::TerminalManager>()
                             {
                                 manager.set_deferred_on_restore_command(
-                                    format!("CLINCH_AGENT_RESTORE_EXACT=1 {on_restore_command}"),
+                                    exact_resume_command(&on_restore_command),
                                     ctx,
                                 );
                             }
                         });
-                        let manager = manager_handle.downgrade();
+                        let hooks = DeferredAgentHooks::new(&manager_handle);
                         pane_data.terminal_view(ctx).update(ctx, |view, _ctx| {
-                            view.defer_agent_start(Box::new(move |ctx| {
-                                let Some(manager_handle) = manager.upgrade(ctx) else {
-                                    return;
-                                };
-                                manager_handle.update(ctx, |terminal_manager, ctx| {
-                                    if let Some(manager) = terminal_manager
-                                        .as_any()
-                                        .downcast_ref::<local_tty::TerminalManager>(
-                                    ) {
-                                        manager.start_deferred_restore_command(ctx);
-                                    }
-                                });
-                            }));
+                            view.defer_agent_start(hooks.start);
                         });
                         if let Some((provider, session_id)) = agent_session_seed {
                             let terminal = pane_data.terminal_view(ctx);
                             let pane_uuid = pane_data.session_uuid();
-                            let cancel_manager = manager_handle.downgrade();
-                            let retry_manager = manager_handle.downgrade();
-                            crate::terminal::cli_agent_sessions::restore::AgentRestoreQueue::handle(ctx).update(ctx, |queue, ctx| {
-                                queue.enqueue(&terminal, pane_uuid, crate::terminal::cli_agent_sessions::CLIAgentSessionKey { provider, session_id }, Box::new(move |ctx| {
-                                    if let Some(manager) = cancel_manager.upgrade(ctx) {
-                                        return manager.update(ctx, |manager, ctx| {
-                                            manager.as_any().downcast_ref::<local_tty::TerminalManager>()
-                                                .is_some_and(|manager| manager.cancel_pending_restore_command(ctx))
-                                        });
-                                    }
-                                    false
-                                }), std::rc::Rc::new(move |ctx| {
-                                    if let Some(manager) = retry_manager.upgrade(ctx) {
-                                        manager.update(ctx, |manager, ctx| {
-                                            if let Some(manager) = manager.as_any().downcast_ref::<local_tty::TerminalManager>() {
-                                                manager.retry_stalled_restore_command(ctx);
-                                            }
-                                        });
-                                    }
-                                }), ctx);
+                            AgentRestoreQueue::handle(ctx).update(ctx, |queue, ctx| {
+                                queue.enqueue(
+                                    &terminal,
+                                    pane_uuid,
+                                    CLIAgentSessionKey {
+                                        provider,
+                                        session_id,
+                                    },
+                                    hooks.cancel,
+                                    hooks.retry,
+                                    ctx,
+                                );
                             });
                         }
                     }
@@ -2399,6 +2444,191 @@ impl PaneGroup {
             .filter(|pane| pane.terminal_view(ctx).as_ref(ctx).agent_is_mid_turn(ctx))
             .map(|pane| pane.session_uuid())
             .collect()
+    }
+
+    /// Every asleep agent pane in this tab and when it went to sleep.
+    pub(crate) fn asleep_agent_panes(
+        &self,
+        ctx: &AppContext,
+    ) -> Vec<(Vec<u8>, chrono::DateTime<chrono::Utc>)> {
+        self.panes_of::<TerminalPane>()
+            .filter(|pane| !self.is_pane_hidden_for_close(pane.id()))
+            .filter_map(|pane| {
+                let since = pane.terminal_view(ctx).as_ref(ctx).agent_asleep_since()?;
+                Some((pane.session_uuid(), since))
+            })
+            .collect()
+    }
+
+    /// The panes in this tab whose agent Clinch restores, and so can leave or find asleep.
+    pub(crate) fn agent_terminal_views(&self, ctx: &AppContext) -> Vec<ViewHandle<TerminalView>> {
+        self.panes_of::<TerminalPane>()
+            .filter(|pane| !self.is_pane_hidden_for_close(pane.id()))
+            .map(|pane| pane.terminal_view(ctx))
+            .filter(|terminal| {
+                crate::terminal::cli_agent_sessions::CLIAgentSessionsModel::as_ref(ctx)
+                    .session(terminal.id())
+                    .is_some_and(|session| session.agent.has_clinch_hooks())
+            })
+            .collect()
+    }
+
+    /// Why the agent in `terminal`'s pane can't be put to sleep, or `None` if it can.
+    /// `direct_request` is the user asking for exactly this tab, which overrides the rules that
+    /// only guard against surprising them.
+    pub(crate) fn agent_sleep_blocker(
+        &self,
+        terminal: &ViewHandle<TerminalView>,
+        direct_request: bool,
+        ctx: &AppContext,
+    ) -> Option<SleepBlocker> {
+        terminal
+            .as_ref(ctx)
+            .agent_sleep_blocker(ctx)
+            .filter(|blocker| !(direct_request && blocker.yields_to_direct_request()))
+    }
+
+    /// Stops the agent in `terminal`'s pane so its tab can sleep. The pane counts as asleep once
+    /// the agent has exited, which `finish_agent_sleep` handles.
+    #[cfg(feature = "local_tty")]
+    pub(crate) fn sleep_agent(
+        &mut self,
+        terminal: &ViewHandle<TerminalView>,
+        direct_request: bool,
+        ctx: &mut ViewContext<Self>,
+    ) -> Result<(), SleepBlocker> {
+        if let Some(blocker) = self.agent_sleep_blocker(terminal, direct_request, ctx) {
+            return Err(blocker);
+        }
+        let pane = self
+            .panes_of::<TerminalPane>()
+            .find(|pane| pane.terminal_view(ctx).id() == terminal.id())
+            .ok_or(SleepBlocker::NoAgent)?;
+        let pane_uuid = pane.session_uuid();
+        let manager_handle = pane.terminal_manager(ctx);
+        let key = CLIAgentSessionsModel::as_ref(ctx)
+            .session(terminal.id())
+            .and_then(|session| session.session_key())
+            .ok_or(SleepBlocker::NoSavedSession)?;
+        // Waking runs the command a restart would. Without one saved for this exact
+        // conversation there would be nothing to wake, so the agent keeps running.
+        let resume_command = crate::agent_resume::read_on_restore_command(&pane_uuid)
+            .filter(|command| {
+                crate::agent_resume::agent_session_seed_from_restore_command(command)
+                    == Some((key.provider, key.session_id.clone()))
+            })
+            .ok_or(SleepBlocker::NoSavedSession)?;
+
+        crate::agent_resume::keep_session_through_sleep(&pane_uuid);
+        // On record before the agent is touched: an update that starts in the next few seconds
+        // must already find this pane listed as asleep, or it would drop its saved session.
+        AgentRestoreQueue::handle(ctx).update(ctx, |queue, _| {
+            queue.record_asleep(pane_uuid.clone(), chrono::Utc::now());
+        });
+        terminal.update(ctx, |view, ctx| view.begin_agent_sleep(resume_command, ctx));
+        let stopping = manager_handle.read(ctx, |manager, _| {
+            manager
+                .as_any()
+                .downcast_ref::<local_tty::TerminalManager>()
+                .is_some_and(|manager| manager.stop_foreground_job())
+        });
+        if !stopping {
+            crate::agent_resume::stop_keeping_session_through_sleep(&pane_uuid);
+            terminal.update(ctx, |view, ctx| view.abandon_agent_sleep(ctx));
+            return Err(SleepBlocker::NoAgent);
+        }
+        Ok(())
+    }
+
+    #[cfg(not(feature = "local_tty"))]
+    pub(crate) fn sleep_agent(
+        &mut self,
+        _terminal: &ViewHandle<TerminalView>,
+        _direct_request: bool,
+        _ctx: &mut ViewContext<Self>,
+    ) -> Result<(), SleepBlocker> {
+        Err(SleepBlocker::NoAgent)
+    }
+
+    /// The agent stopped for sleep has exited. Arms its resume command in the pane's shell, the
+    /// way a restore at launch leaves it, and hands the pane to the restore queue as asleep.
+    #[cfg(feature = "local_tty")]
+    pub(in crate::pane_group) fn finish_agent_sleep(
+        &mut self,
+        pane_id: PaneId,
+        resume_command: &str,
+        since: chrono::DateTime<chrono::Utc>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let Some(pane) = self.terminal_session_by_id(pane_id) else {
+            return;
+        };
+        let terminal = pane.terminal_view(ctx);
+        let pane_uuid = pane.session_uuid();
+        let manager_handle = pane.terminal_manager(ctx);
+        let key = CLIAgentSessionsModel::as_ref(ctx)
+            .session(terminal.id())
+            .and_then(|session| session.session_key());
+        let armed = manager_handle.update(ctx, |manager, ctx| {
+            manager
+                .as_any()
+                .downcast_ref::<local_tty::TerminalManager>()
+                .is_some_and(|manager| {
+                    manager.arm_restore_command_in_running_shell(
+                        exact_resume_command(resume_command),
+                        ctx,
+                    )
+                })
+        });
+        let (Some(key), true) = (key, armed) else {
+            // Nothing can wake this pane, so it is an ordinary shell again rather than a tab
+            // that claims a conversation it cannot reopen.
+            log::warn!("could not arm an agent's resume command after stopping it for sleep");
+            terminal.update(ctx, |view, ctx| view.abandon_agent_sleep(ctx));
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                sessions.remove_session(terminal.id(), ctx);
+            });
+            return;
+        };
+        let hooks = DeferredAgentHooks::new(&manager_handle);
+        terminal.update(ctx, |view, _| view.defer_agent_start(hooks.start));
+        AgentRestoreQueue::handle(ctx).update(ctx, |queue, ctx| {
+            queue.put_to_sleep(
+                &terminal,
+                pane_uuid,
+                key,
+                since,
+                hooks.cancel,
+                hooks.retry,
+                ctx,
+            );
+        });
+        ctx.emit(Event::AppStateChanged);
+        ctx.notify();
+    }
+
+    /// The agent hasn't stopped in the time Clinch waits. Its saved session stays guarded,
+    /// because the signal is still on its way and the agent may yet exit because of it.
+    pub(in crate::pane_group) fn agent_sleep_overdue(
+        &mut self,
+        pane_id: PaneId,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        ctx.emit(Event::ShowToast {
+            message: "This session hasn't stopped yet, so it isn't asleep. It will sleep once \
+                      its agent exits."
+                .to_owned(),
+            flavor: ToastFlavor::Default,
+            pane_id: Some(pane_id),
+        });
+    }
+
+    /// The sleep is off for good: the session goes back to being removed when the user closes
+    /// its agent.
+    pub(in crate::pane_group) fn agent_sleep_called_off(&mut self, pane_id: PaneId) {
+        if let Some(pane) = self.terminal_session_by_id(pane_id) {
+            crate::agent_resume::stop_keeping_session_through_sleep(&pane.session_uuid());
+        }
     }
 
     /// Running commands a restart would end for good. Agent sessions aren't among them, because

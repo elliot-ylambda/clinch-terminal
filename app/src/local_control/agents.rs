@@ -14,6 +14,7 @@ use crate::agent_resume::AgentResumeProvider;
 use crate::pane_group::{PaneGroup, PaneId};
 use crate::root_view::RootView;
 use crate::terminal::cli_agent_sessions::{CLIAgentSessionStatus, CLIAgentSessionsModel};
+use crate::terminal::view::agent_sleep::SleepBlocker;
 use crate::terminal::view::use_agent_footer::ObservedAgentState;
 use crate::terminal::{CLIAgent, TerminalView};
 use crate::workspace::Workspace;
@@ -243,7 +244,27 @@ pub(super) fn snapshot(
                                     provider_name,
                                     conversation_id
                                 ]));
-                                let (state, state_source) = if session.supports_rich_status() {
+                                let asleep_since = terminal_ref.agent_asleep_since();
+                                // Why `agent sleep` would be refused. The tab's own rules come
+                                // first: the pane can't know it is the Coordinator or on screen.
+                                let on_screen = workspace.active_tab_index() == tab_index
+                                    && project_window.active_project_index() == project_index;
+                                let sleep_blocker = if workspace
+                                    .tabs
+                                    .get(tab_index)
+                                    .is_some_and(|tab| tab.coordinator)
+                                {
+                                    Some(SleepBlocker::Coordinator)
+                                } else {
+                                    terminal_ref
+                                        .agent_sleep_blocker(ctx)
+                                        .or(on_screen.then_some(SleepBlocker::Visible))
+                                };
+                                let (state, state_source) = if asleep_since.is_some() {
+                                    // No agent process: Clinch stopped it, or has not started it
+                                    // since launch. A send or `agent wake` starts it.
+                                    ("asleep", "clinch")
+                                } else if session.supports_rich_status() {
                                     let state = if session.session_context.stop_reason.is_some() {
                                         "rate_limited"
                                     } else {
@@ -279,12 +300,14 @@ pub(super) fn snapshot(
                                     "section_id": section_id, "section_name": section.as_ref().and_then(|(_, section)| section.name.clone()),
                                     "tab_id": tab_id, "title": tab_title, "pane_id": pane_id_string, "cwd": pane["cwd"],
                                     "state": state, "state_source": state_source,
+                                    "asleep_since": asleep_since.map(|since| since.to_rfc3339()),
+                                    "sleep_unavailable_reason": sleep_blocker.map(SleepBlocker::code),
                                     "input_revision": revision, "ready": unavailable.is_none(), "unavailable_reason": unavailable,
                                     "draft_source": terminal_ref.local_control_draft_source(ctx),
                                     "latest_prompt": session.latest_user_prompt_for_chrome(), "latest_response_preview": session.session_context.response,
                                     "tool_name": session.session_context.tool_name, "tool_input_preview": session.session_context.tool_input_preview,
                                     "background": {"shells": background.shells, "monitors": background.monitors, "tasks": background.tasks, "subagents": background.subagents},
-                                    "capabilities": {"read": true, "send": unavailable.is_none(), "queue": true, "durable_receipts": true, "event_replay": true, "interrupt": unavailable == Some("working")},
+                                    "capabilities": {"read": true, "send": unavailable.is_none(), "queue": true, "durable_receipts": true, "event_replay": true, "interrupt": unavailable == Some("working"), "sleep": sleep_blocker.is_none(), "wake": asleep_since.is_some()},
                                 });
                                 pane["kind"] = json!(provider_name);
                                 pane["agent_id"] = json!(agent_id);
@@ -659,5 +682,81 @@ pub(super) fn interrupt(
     Ok(
         json!({"action": "agent.interrupt", "agent_id": params.agent_id, "interrupt_requested": true,
         "provider_confirmation": "unconfirmed"}),
+    )
+}
+
+/// Finds the project and tab an agent lives in, for an action that works on its tab.
+fn agent_tab(
+    entry: &AgentEntry,
+    ctx: &AppContext,
+) -> Result<(ViewHandle<Workspace>, usize), ControlError> {
+    let stale = || {
+        ControlError::new(
+            ErrorCode::StaleTarget,
+            "agent's tab is no longer present; run agent list again",
+        )
+    };
+    let project_id = entry.data["project_id"].as_str().ok_or_else(stale)?;
+    let tab_id = entry.data["tab_id"].as_str().ok_or_else(stale)?;
+    let project = super::handlers::projects::resolve_project(project_id, ctx)?;
+    let index = project
+        .workspace
+        .as_ref(ctx)
+        .tab_views()
+        .position(|group| group.id().to_string() == tab_id)
+        .ok_or_else(stale)?;
+    Ok((project.workspace, index))
+}
+
+/// Stops an idle agent's process so its tab sleeps. Refused, with the reason, whenever the agent
+/// is in use: a coordinator must never be able to stop work in progress.
+pub(super) fn sleep(
+    instance: &InstanceId,
+    params: ::local_control::agents::AgentTargetParams,
+    ctx: &mut warpui::ModelContext<super::LocalControlBridge>,
+) -> Result<Value, ControlError> {
+    let entry = resolve(instance, &params.agent_id, ctx)?;
+    if entry.terminal.as_ref(ctx).agent_is_asleep() {
+        return Ok(
+            json!({"action": "agent.sleep", "agent_id": params.agent_id, "state": "asleep", "changed": false}),
+        );
+    }
+    let (workspace, index) = agent_tab(&entry, ctx)?;
+    let terminal = entry.terminal.clone();
+    workspace
+        .update(ctx, |workspace, ctx| {
+            workspace.sleep_agent_in_tab(index, &terminal, false, ctx)
+        })
+        .map_err(|blocker| {
+            ControlError::new(
+                ErrorCode::TargetStateConflict,
+                format!(
+                    "agent sleep refused ({}): this session {}; inspect it again",
+                    blocker.code(),
+                    blocker.explanation()
+                ),
+            )
+        })?;
+    Ok(
+        json!({"action": "agent.sleep", "agent_id": params.agent_id, "state": "going_to_sleep", "changed": true,
+        "sleep_requested": true}),
+    )
+}
+
+/// Starts an asleep agent again on its saved conversation. Waking one that is already awake
+/// changes nothing.
+pub(super) fn wake(
+    instance: &InstanceId,
+    params: ::local_control::agents::AgentTargetParams,
+    ctx: &mut warpui::ModelContext<super::LocalControlBridge>,
+) -> Result<Value, ControlError> {
+    let entry = resolve(instance, &params.agent_id, ctx)?;
+    let woke = entry
+        .terminal
+        .update(ctx, |terminal, ctx| terminal.wake_agent(ctx));
+    Ok(
+        json!({"action": "agent.wake", "agent_id": params.agent_id, "changed": woke,
+        "state": if woke { "starting" } else { entry.data["state"].as_str().unwrap_or("unknown") },
+        "ready": false}),
     )
 }

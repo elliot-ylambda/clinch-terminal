@@ -281,6 +281,14 @@ impl LocalControlBridge {
                 .action
                 .params_as()
                 .and_then(|params| super::agents::interrupt(instance_id, params, ctx)),
+            ActionKind::AgentSleep => request
+                .action
+                .params_as()
+                .and_then(|params| super::agents::sleep(instance_id, params, ctx)),
+            ActionKind::AgentWake => request
+                .action
+                .params_as()
+                .and_then(|params| super::agents::wake(instance_id, params, ctx)),
             ActionKind::TabPin | ActionKind::TabUnpin => {
                 sections::pin_tab(request.action.kind, &request.target, ctx)
             }

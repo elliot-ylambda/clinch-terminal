@@ -273,6 +273,39 @@ fn deferred_restore_command_started_early_runs_at_bootstrap() {
     });
 }
 
+/// A pane put to sleep long after its shell started: the resume command is armed in the running
+/// shell, waits, and runs exactly once when the pane wakes. Then the pane can sleep again.
+#[test]
+fn a_resume_command_armed_in_a_running_shell_waits_until_started() {
+    App::test((), |mut app| async move {
+        let harness = build_pty_controller(&mut app);
+        let session_id = SessionId::from(7);
+        harness.controller.update(&mut app, |controller, ctx| {
+            assert!(
+                !controller.arm_restore_command_in_running_shell("claude --resume abc".to_owned()),
+                "there is no shell to type it into yet"
+            );
+            assert!(controller.pending_on_restore_command.is_none());
+
+            controller.shell_bootstrapped(false, session_id, ctx);
+            for _ in 0..2 {
+                assert!(controller
+                    .arm_restore_command_in_running_shell("claude --resume abc".to_owned()));
+                assert!(
+                    controller.pending_on_restore_command.is_some(),
+                    "an armed command must not run until the pane wakes"
+                );
+                assert!(controller.start_deferred_restore_command(ctx));
+                assert!(controller.pending_on_restore_command.is_none());
+                assert!(
+                    !controller.start_deferred_restore_command(ctx),
+                    "it runs only once per sleep"
+                );
+            }
+        });
+    });
+}
+
 /// Panes restored outside launch (undo-close, transfer) keep running at bootstrap.
 #[test]
 fn plain_restore_command_still_runs_at_bootstrap() {

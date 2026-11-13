@@ -252,6 +252,8 @@ are recorded in [CLI_COMPLETION_TEST.md](./CLI_COMPLETION_TEST.md).
 <ctl> agent wait AGENT_ID --until ready --timeout 120 --pid PID
 <ctl> agent launch --provider codex --project PROJECT_ID --section SECTION_ID --background --timeout 30 --pid PID
 <ctl> agent interrupt AGENT_ID --expected-revision REVISION --pid PID
+<ctl> agent sleep AGENT_ID --pid PID
+<ctl> agent wake AGENT_ID --pid PID
 <ctl> tab pin --project PROJECT_ID --tab TAB_ID --pid PID
 <ctl> tab unpin --project PROJECT_ID --tab TAB_ID --pid PID
 <ctl> section pin SECTION_ID --project PROJECT_ID --pid PID

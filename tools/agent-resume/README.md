@@ -70,13 +70,25 @@ capture (agent SessionStart hooks)          replay (Rust, in Clinch)
   Transfer uses the same background-captured identity and does not require another prompt.
   Uncaptured older sessions must be resumed by their exact ID; sending a message alone cannot
   reliably attach a shared-daemon session to its pane.
-- **App startup restores every saved conversation in place.** One app-wide queue admits
-  two agent starts at a time across all projects and windows. No tab activation is required.
+- **App startup restores every saved conversation in place, asleep.** Each restored pane gets
+  its shell, its seeded session and its resume command, and the agent itself does not start.
+  The tab shows a moon, and the agent starts when the user chooses the tab, presses Wake or a
+  key in it, or something sends to it. Only a session a restart cut off mid-turn starts at
+  launch: one app-wide queue admits two of those at a time, across all projects and windows,
+  and tells each to carry on. Starting every saved conversation at launch (the behavior from
+  2026-10-26 to 2026-11-13) left dozens of unused agents running, about 700 MB each.
   The global progress row and each queued/starting tab show restoration state; successful
   completion appears briefly, and failures remain marked. A native provider notification or
   native composer proves readiness; releasing a command alone does not. A 90-second timeout
   cancels any undispatched bootstrap/PTY write and advances the queue without replaying it.
   Human input cancels an undispatched restore rather than replacing the user's command.
+- **Sleep puts a running pane back into that state.** Clinch stops an idle agent with SIGTERM
+  (Claude Code exits cleanly within a second; Codex installs no signal handlers and ends at
+  once, as it does when Clinch quits), ends any helper process that outlives it, and arms the
+  pane's recorded resume command in the shell that is still running. Before signalling it
+  copies the pane's entry to `shutdown-owners/`, the guard a quitting app leaves, so the
+  agent's exit hook does not remove the mapping. `asleep-panes.json` records since when each
+  pane has been asleep, so a restart keeps saying so.
 - **Startup uses the exact saved identity.** Snapshot restore sets
   `CLINCH_AGENT_RESTORE_EXACT=1`: an unavailable conversation stops visibly instead of
   adopting a sibling's conversation or starting blank. Forks resume their captured child ID.

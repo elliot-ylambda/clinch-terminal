@@ -40,6 +40,7 @@ use crate::shell_indicator::ShellIndicatorType;
 use crate::terminal::cli_agent_sessions::{session_context_enabled, CLIAgentSessionsModel};
 use crate::terminal::session_settings::SessionSettings;
 use crate::terminal::shared_session::render_util::shared_session_indicator_color;
+use crate::terminal::view::agent_sleep::SleepBlocker;
 use crate::terminal::view::TerminalViewState;
 use crate::terminal::CLIAgent;
 use crate::themes::theme::{AnsiColorIdentifier, Fill as ThemeFill, VerticalGradient};
@@ -286,6 +287,7 @@ impl TabData {
             self.copy_metadata_menu_items(pane_name_target, ctx),
             name_and_pin_items,
             organize_items,
+            self.sleep_menu_items(index, ctx),
             self.session_sharing_menu_items(index, ctx),
             Self::save_config_menu_items(index),
             self.color_option_menu_items(index, terminal_colors),
@@ -300,6 +302,56 @@ impl TabData {
             menu_items.extend(section_items);
         }
         menu_items
+    }
+
+    /// Sleep and Wake for an agent tab, and the two ways to sleep every idle one. A tab that
+    /// can't sleep keeps a disabled Sleep row that says why.
+    fn sleep_menu_items(&self, index: usize, ctx: &AppContext) -> Vec<MenuItem<WorkspaceAction>> {
+        let group = self.pane_group.as_ref(ctx);
+        let agents = group.agent_terminal_views(ctx);
+        if agents.is_empty() {
+            return vec![];
+        }
+        let own_item = if agents
+            .iter()
+            .any(|terminal| terminal.as_ref(ctx).agent_is_asleep())
+        {
+            MenuItemFields::new("Wake").with_on_select_action(WorkspaceAction::WakeTab(index))
+        } else {
+            // The user is asking for this tab by name, so only the hard rules apply.
+            let blockers: Vec<_> = agents
+                .iter()
+                .map(|terminal| group.agent_sleep_blocker(terminal, true, ctx))
+                .collect();
+            let blocker = if self.coordinator {
+                Some(SleepBlocker::Coordinator)
+            } else if blockers.iter().any(Option::is_none) {
+                None
+            } else {
+                blockers.into_iter().flatten().next()
+            };
+            let item = MenuItemFields::new("Sleep")
+                .with_on_select_action(WorkspaceAction::SleepTab(index));
+            match blocker {
+                Some(blocker) => item.with_disabled(true).with_tooltip(
+                    crate::workspace::view::agent_sleep::tab_stayed_awake_message(blocker),
+                ),
+                None => item,
+            }
+        };
+        vec![
+            own_item.into_item(),
+            MenuItemFields::new("Sleep idle sessions in this project")
+                .with_on_select_action(WorkspaceAction::SleepIdleTabs {
+                    every_project: false,
+                })
+                .into_item(),
+            MenuItemFields::new("Sleep idle sessions in all projects")
+                .with_on_select_action(WorkspaceAction::SleepIdleTabs {
+                    every_project: true,
+                })
+                .into_item(),
+        ]
     }
 
     fn session_sharing_menu_items(

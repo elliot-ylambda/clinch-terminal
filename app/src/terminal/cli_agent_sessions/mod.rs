@@ -1541,6 +1541,41 @@ impl CLIAgentSessionsModel {
         self.start_prompt_history_load(terminal_view_id, ctx);
     }
 
+    /// Clinch stopped this pane's agent to put its tab to sleep. The session keeps its identity,
+    /// title and history, and otherwise goes back to how a restored pane starts out, so waking it
+    /// is the same as restoring it: nothing about the stopped process is trusted any more.
+    /// Returns whether the pane had a session to keep.
+    pub fn mark_session_asleep(
+        &mut self,
+        terminal_view_id: EntityId,
+        ctx: &mut ModelContext<Self>,
+    ) -> bool {
+        let Some(session) = self.sessions.get_mut(&terminal_view_id) else {
+            return false;
+        };
+        session.listener = None;
+        session.plugin_version = None;
+        session.received_rich_notification = false;
+        session.has_observed_turn_activity = false;
+        session.turn_interrupted_by_user = false;
+        session.status = CLIAgentSessionStatus::InProgress;
+        session.draft_text = None;
+        session.session_context.active_subagent_ids.clear();
+        session
+            .session_context
+            .has_deferred_completion_for_subagents = false;
+        session.session_context.stop_reason = None;
+        session.session_context.screen_background_work = BackgroundWork::default();
+        session.clear_permission_scoped_state();
+        let agent = session.agent;
+        self.forget_title_observations(terminal_view_id);
+        ctx.emit(CLIAgentSessionsModelEvent::SessionUpdated {
+            terminal_view_id,
+            agent,
+        });
+        true
+    }
+
     pub fn remove_session(&mut self, terminal_view_id: EntityId, ctx: &mut ModelContext<Self>) {
         self.remove_session_inner(terminal_view_id, false, ctx);
     }

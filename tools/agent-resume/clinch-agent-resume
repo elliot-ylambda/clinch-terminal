@@ -343,6 +343,16 @@ entry_owner_alive() {
   [[ "$actual_tty" == "$owner_tty" ]]
 }
 
+# Whether Clinch recorded this pane as asleep: its agent is stopped on purpose, either put to
+# sleep or not started since launch, and wakes from this pane's entry. Clinch keeps
+# asleep-panes.json current while it runs, keyed by pane id. The id is matched as a whole
+# JSON key, and pane ids are plain [A-Za-z0-9-], so no JSON parser is needed.
+pane_is_asleep() {
+  local file="$DIR/asleep-panes.json"
+  [[ -f "$file" ]] || return 1
+  /usr/bin/grep -qF -- "\"$1\":" "$file"
+}
+
 scrub_pane_bridge() {
   local uuid="$1" bridge="$2" f="$DIR/$uuid.json" rewritten journal tmp
   [[ -f "$f" ]] || return 0
@@ -425,6 +435,9 @@ repair_live_registry() {
         # A provider rename or transient process-scan race must not erase a mapping whose
         # hook-recorded owner PID is still alive on the same tty.
         entry_owner_alive "$DIR/$uuid.json" && continue
+        # An asleep tab has no agent process and must keep its mapping: removing it here ran
+        # before every update, and would have cut each asleep tab loose from its conversation.
+        pane_is_asleep "$uuid" && continue
         remove_entry "$uuid"
         removed=$((removed + 1))
       fi

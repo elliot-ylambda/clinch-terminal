@@ -163,6 +163,11 @@ pub struct TerminalManager {
     #[cfg(feature = "integration_tests")]
     pid: Option<u32>,
 
+    /// The PTY's controlling end and its shell, for finding what runs in the terminal's
+    /// foreground. None until the PTY has started.
+    #[cfg(unix)]
+    foreground: Option<(std::os::fd::RawFd, u32)>,
+
     /// An inactive receiver for PTY reads that we can upgrade to an active
     /// receiver as needed. We prefer to not create active receivers eagerly
     /// to avoid unnecessary allocations of data coming from the PTY (high throughput).
@@ -815,6 +820,8 @@ impl TerminalManager {
 
             #[cfg(feature = "integration_tests")]
             pid: None,
+            #[cfg(unix)]
+            foreground: None,
 
             inactive_pty_reads_rx,
             session_sharer,
@@ -996,6 +1003,10 @@ impl TerminalManager {
         let pid = pty.get_pid();
         #[cfg(unix)]
         let fd = pty.get_fd();
+        #[cfg(unix)]
+        {
+            self.foreground = Some((fd, pty.get_pid()));
+        }
 
         // Create the channel above and pass the receving side to the event loop.
         let event_loop_handle = Self::start_pty_event_loop(
@@ -1072,6 +1083,43 @@ impl TerminalManager {
         self.pty_controller.update(app_ctx, |pty_controller, ctx| {
             pty_controller.start_deferred_restore_command(ctx)
         })
+    }
+
+    /// Arms a resume command in this pane's running shell, held until
+    /// `start_deferred_restore_command`. See `PtyController::arm_restore_command_in_running_shell`.
+    pub fn arm_restore_command_in_running_shell(
+        &self,
+        command: String,
+        app_ctx: &mut AppContext,
+    ) -> bool {
+        self.pty_controller.update(app_ctx, |pty_controller, _ctx| {
+            pty_controller.arm_restore_command_in_running_shell(command)
+        })
+    }
+
+    /// Asks whatever runs in this pane's foreground to stop, and afterwards ends anything it
+    /// started that is still running. Returns false when only the shell is in the foreground, so
+    /// there is nothing to stop. The work waits on processes, so it runs on its own thread.
+    #[cfg(unix)]
+    pub fn stop_foreground_job(&self) -> bool {
+        let Some((fd, shell_pid)) = self.foreground else {
+            return false;
+        };
+        let Some(group) = super::agent_stop::foreground_job_group(fd, shell_pid) else {
+            return false;
+        };
+        std::thread::Builder::new()
+            .name("clinch-agent-sleep".into())
+            .spawn(move || {
+                let outcome = super::agent_stop::stop_foreground_job(group);
+                log::info!("stopped an agent for sleep: {outcome:?}");
+            })
+            .is_ok()
+    }
+
+    #[cfg(not(unix))]
+    pub fn stop_foreground_job(&self) -> bool {
+        false
     }
 
     /// Replaces the command this restored pane replays; see

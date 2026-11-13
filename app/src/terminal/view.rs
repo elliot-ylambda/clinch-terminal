@@ -1,4 +1,5 @@
 mod action;
+pub(crate) mod agent_sleep;
 mod agent_view;
 pub mod ambient_agent;
 mod auto_continue;
@@ -1737,6 +1738,18 @@ pub enum Event {
     },
     CtrlD,
     ShutdownPty,
+    /// The agent Clinch stopped to put this pane to sleep has exited. `resume_command` brings the
+    /// same conversation back when the pane wakes.
+    AgentStoppedForSleep {
+        resume_command: String,
+        since: chrono::DateTime<chrono::Utc>,
+    },
+    /// The agent hasn't stopped in the time Clinch waits, so the pane is not asleep yet. It
+    /// falls asleep if the agent exits after all.
+    AgentSleepOverdue,
+    /// The sleep is off: the agent is in use again, or there is nothing left to wake. Its saved
+    /// session goes back to being removed when the user closes it.
+    AgentSleepCalledOff,
     // TODO: break this event down into higher-level events that hide the
     // `bytes` detail from the view.
     WriteBytesToPty {
@@ -2708,6 +2721,22 @@ pub struct TerminalView {
     /// When a deferred agent start was released; readiness reports `starting`
     /// until the agent takes over the terminal.
     deferred_agent_started_at: Option<Instant>,
+    /// Set while this pane's agent is asleep, on its way there, or waking. See `agent_sleep.rs`.
+    agent_sleep: Option<agent_sleep::AgentSleep>,
+    /// Bumped whenever `agent_sleep` changes, so a timer from an earlier change does nothing.
+    agent_sleep_generation: u64,
+    agent_sleep_wake_mouse_state: MouseStateHandle,
+    /// When this pane's agent last did something or was last used. Automatic sleep reads it.
+    agent_last_active_at: Instant,
+    agent_session_started_at: Option<Instant>,
+    /// When delivery last found a coordinator message queued for this pane's agent.
+    agent_message_queued_at: Option<Instant>,
+    /// The user-input count that a restore or wake in progress treats as "nothing typed yet".
+    agent_restore_input_baseline: u64,
+    /// A stop Clinch stopped waiting for. See `agent_sleep::OverdueStop`.
+    agent_sleep_overdue: Option<agent_sleep::OverdueStop>,
+    /// The command that just ended was an agent stopped for sleep, not a command that failed.
+    agent_block_ended_for_sleep: bool,
 
     current_state: TerminalViewStateChange,
 
@@ -4873,6 +4902,15 @@ impl TerminalView {
             background_agent_restore: false,
             agent_command_stalled: false,
             deferred_agent_started_at: None,
+            agent_sleep: None,
+            agent_sleep_generation: 0,
+            agent_sleep_wake_mouse_state: Default::default(),
+            agent_last_active_at: Instant::now(),
+            agent_session_started_at: None,
+            agent_message_queued_at: None,
+            agent_restore_input_baseline: 0,
+            agent_sleep_overdue: None,
+            agent_block_ended_for_sleep: false,
             current_state: TerminalViewStateChange::default(),
             did_notify_long_running: false,
             is_focused_and_active: true,
@@ -9840,6 +9878,8 @@ impl TerminalView {
         if bytes.ends_with(b"\r") {
             self.coordination_last_enter_at = Some(Instant::now());
         }
+        self.touch_agent_activity();
+        self.agent_received_user_input(ctx);
         if cancels_auto_continue {
             self.cancel_auto_continue_on_user_input(ctx);
         }
@@ -12324,9 +12364,13 @@ impl TerminalView {
                     // The auto-toggle flag is irrelevant here because the
                     // session and any bookmark are removed immediately afterwards.
                     self.close_cli_agent_rich_input(CLIAgentRichInputCloseReason::Other, ctx);
-                    CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions_model, ctx| {
-                        sessions_model.remove_session_after_agent_exit(self.view_id, ctx);
-                    });
+                    // An agent Clinch stopped for sleep keeps its session and any bookmark: the
+                    // pane still holds that conversation, and waking it resumes it.
+                    if !self.agent_exited_for_sleep(ctx) {
+                        CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions_model, ctx| {
+                            sessions_model.remove_session_after_agent_exit(self.view_id, ctx);
+                        });
+                    }
                 }
 
                 let next_block_index = block_completed_event.block_index + BlockIndex::from(1);
@@ -12728,7 +12772,11 @@ impl TerminalView {
 
                 if let BlockType::User(block_completed) = block_type {
                     let block_duration = self.block_duration(&block_completed.serialized_block);
-                    if let Some(block_duration) = block_duration {
+                    // An agent Clinch stopped to put its tab to sleep exits with a signal's
+                    // status after running for hours. That is not a failed command to report.
+                    // By now the pane may already be asleep, so the exit left a note.
+                    let stopped_for_sleep = self.take_agent_block_ended_for_sleep();
+                    if let Some(block_duration) = block_duration.filter(|_| !stopped_for_sleep) {
                         self.maybe_send_block_completed_notification(
                             block_completed,
                             block_duration,
@@ -12782,7 +12830,9 @@ impl TerminalView {
                     let terminal_view_state = {
                         let model = self.model.lock();
                         match model.block_list().last_non_hidden_block() {
-                            Some(block) if block.has_failed() => TerminalViewState::Errored,
+                            Some(block) if block.has_failed() && !stopped_for_sleep => {
+                                TerminalViewState::Errored
+                            }
                             _ => TerminalViewState::Normal,
                         }
                     };
@@ -13955,6 +14005,13 @@ impl TerminalView {
                 terminal_view_id, ..
             } if *terminal_view_id == self.view_id => {
                 self.mark_active_block_as_cli_agent_tui();
+                self.agent_session_started_at = Some(Instant::now());
+                self.touch_agent_activity();
+            }
+            CLIAgentSessionsModelEvent::StatusChanged {
+                terminal_view_id, ..
+            } if *terminal_view_id == self.view_id => {
+                self.touch_agent_activity();
             }
             CLIAgentSessionsModelEvent::Ended {
                 terminal_view_id, ..
@@ -17551,21 +17608,34 @@ impl TerminalView {
             .is_block_in_view(block_index, block_visibility)
     }
 
+    /// The pane is on screen. That alone never starts an agent: focus and layout mark panes
+    /// visible in passing, at launch and whenever tabs move, so an asleep pane waits for something
+    /// the user meant (its Wake button, a key, choosing its tab) or for a message sent to it.
     pub fn mark_as_visible(&mut self, ctx: &mut ViewContext<Self>) {
         self.was_ever_visible = true;
-        self.start_deferred_agent(ctx);
+        self.touch_agent_activity();
+        // A restore command Clinch can't tie to a Claude Code or Codex conversation has no
+        // session to show as asleep, and so no moon or Wake button. It keeps starting when its
+        // pane is first shown, or nothing would ever start it.
+        if self.agent_sleep.is_none() {
+            self.start_deferred_agent(ctx);
+        }
     }
 
-    /// Holds an agent start until visibility or the background restore queue releases it.
+    /// Holds an agent start until the pane is woken or the restore queue releases it.
     pub(crate) fn defer_agent_start(&mut self, start: DeferredAgentStart) {
         self.deferred_agent_start = Some(start);
     }
 
-    /// Starts a deferred agent now. Returns whether one was waiting.
+    /// Starts a deferred agent now, which for an asleep pane is waking it. Returns whether one was
+    /// waiting.
     pub(crate) fn start_deferred_agent(&mut self, ctx: &mut ViewContext<Self>) -> bool {
-        // Focus and local-control delivery must not bypass the global startup limit.
+        // A pane the restore queue is bringing back must not bypass its startup limit.
         if self.background_agent_restore {
             return false;
+        }
+        if self.agent_is_asleep() {
+            return self.wake_agent(ctx);
         }
         self.release_deferred_agent(ctx)
     }
@@ -17591,7 +17661,7 @@ impl TerminalView {
     }
 
     pub(crate) fn agent_restore_has_user_input(&self) -> bool {
-        self.coordination_user_input_epoch != 0
+        self.coordination_user_input_epoch != self.agent_restore_input_baseline
     }
 
     pub(crate) fn manage_agent_restore_in_background(&mut self) {
@@ -17609,7 +17679,7 @@ impl TerminalView {
 
     #[cfg(test)]
     pub(crate) fn mark_user_input_for_test(&mut self) {
-        self.coordination_user_input_epoch = 1;
+        self.coordination_user_input_epoch = self.agent_restore_input_baseline.wrapping_add(1);
     }
 
     #[cfg(test)]
@@ -23032,6 +23102,19 @@ impl TerminalView {
                     self.coordination_user_input_epoch =
                         self.coordination_user_input_epoch.wrapping_add(1);
                     self.coordination_input_epoch = self.coordination_input_epoch.wrapping_add(1);
+                    self.touch_agent_activity();
+                    // Only a pane with keyboard focus is being typed into. The input of a pane
+                    // nobody is in can change too, when a saved draft is put back at launch, and
+                    // that must not wake it.
+                    if ctx.is_self_or_child_focused()
+                        && self.agent_sleep_saw_typing(ctx)
+                        && !self.input.as_ref(ctx).buffer_text(ctx).is_empty()
+                    {
+                        // The key woke the pane. It was never meant for the shell underneath.
+                        self.input.update(ctx, |input, ctx| {
+                            input.clear_buffer_and_reset_undo_stack(ctx);
+                        });
+                    }
                 }
                 // Editing the rich input means the user has taken over this
                 // stopped pane, just like typing directly into its PTY.
@@ -27619,7 +27702,8 @@ impl TypedActionView for TerminalView {
             | CycleNextOrchestrationChildAgent
             | ToggleCLIAgentRichInput
             | ToggleSessionRecording
-            | ToggleAutoContinueOnLimitReset => Empty,
+            | ToggleAutoContinueOnLimitReset
+            | WakeAgent => Empty,
         }
     }
 
@@ -28801,6 +28885,9 @@ impl TypedActionView for TerminalView {
                     self.open_cli_agent_rich_input(CLIAgentInputEntrypoint::CtrlG, ctx);
                 }
             }
+            WakeAgent => {
+                self.wake_agent(ctx);
+            }
         }
     }
 }
@@ -29300,6 +29387,22 @@ impl View for TerminalView {
                 Align::new(ChildView::new(&self.ssh_file_upload).finish())
                     .bottom_right()
                     .finish(),
+            );
+        }
+
+        // An asleep pane is dimmed, with a card saying so and how to wake it.
+        if let Some(dim) = self.render_agent_sleep_dim(app) {
+            stack.add_child(dim);
+        }
+        if let Some(card) = self.render_agent_sleep_card(app) {
+            stack.add_positioned_child(
+                card,
+                OffsetPositioning::offset_from_parent(
+                    vec2f(0., 0.),
+                    ParentOffsetBounds::ParentByPosition,
+                    ParentAnchor::Center,
+                    ChildAnchor::Center,
+                ),
             );
         }
 

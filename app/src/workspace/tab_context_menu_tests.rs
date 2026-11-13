@@ -499,6 +499,67 @@ fn tab_menu_new_tab_below_opens_a_tab_directly_under_the_clicked_tab() {
     });
 }
 
+/// An agent tab's menu offers Sleep, or Wake once it is asleep, and the two bulk commands. A
+/// plain terminal tab offers none of them.
+#[test]
+fn an_agent_tab_menu_offers_sleep_or_wake_and_a_plain_terminal_does_not() {
+    let _vertical_tabs = FeatureFlag::VerticalTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        let workspace = setup_workspace(&mut app);
+        let terminal = workspace.read(&app, |workspace, ctx| {
+            workspace.active_terminal_view_handle(ctx).unwrap()
+        });
+        let menu_rows = |workspace: &ViewHandle<Workspace>, app: &mut App| {
+            workspace.update(app, |workspace, ctx| {
+                workspace.toggle_tab_right_click_menu(
+                    0,
+                    TabContextMenuAnchor::Pointer(vec2f(80., 100.)),
+                    ctx,
+                );
+            });
+            let rows = workspace.read(app, |workspace, ctx| {
+                menu_signature(workspace.tab_right_click_menu.as_ref(ctx).items())
+            });
+            rows.into_iter()
+                .filter(|row| row.contains("leep") || row.starts_with("Wake"))
+                .collect::<Vec<_>>()
+        };
+
+        assert!(
+            menu_rows(&workspace, &mut app).is_empty(),
+            "a terminal with no agent has nothing to put to sleep"
+        );
+        dispatch_menu_action(&workspace, &mut app, MenuAction::Close(false));
+
+        // An agent tab with nothing running in it yet: Sleep is there, and says why it can't.
+        seed_session(terminal.id(), CLIAgent::Claude, "conversation", &mut app);
+        assert_eq!(
+            menu_rows(&workspace, &mut app),
+            [
+                "Sleep:true:Some(SleepTab(0))",
+                "Sleep idle sessions in this project:false:Some(SleepIdleTabs { every_project: false })",
+                "Sleep idle sessions in all projects:false:Some(SleepIdleTabs { every_project: true })",
+            ]
+        );
+        dispatch_menu_action(&workspace, &mut app, MenuAction::Close(false));
+
+        // Asleep: the same row is Wake, and choosing it starts the agent once.
+        let starts = std::rc::Rc::new(std::cell::Cell::new(0));
+        let counter = starts.clone();
+        terminal.update(&mut app, |view, ctx| {
+            view.defer_agent_start(Box::new(move |_| counter.set(counter.get() + 1)));
+            view.mark_agent_asleep(chrono::Utc::now(), ctx);
+        });
+        assert_eq!(
+            menu_rows(&workspace, &mut app)[0],
+            "Wake:false:Some(WakeTab(0))"
+        );
+        choose_menu_item(&workspace, &mut app, "Wake");
+        assert_eq!(starts.get(), 1);
+        terminal.read(&app, |view, _| assert!(!view.agent_is_asleep()));
+    });
+}
+
 // ---- Renaming from a menu or a section header, driven by real mouse and key events ----
 
 type ScenePresenter = std::rc::Rc<RefCell<warpui::Presenter>>;

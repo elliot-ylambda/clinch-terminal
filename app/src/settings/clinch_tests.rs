@@ -4,6 +4,7 @@ use super::{
     agent_conversation_finder_agent_value, agent_conversation_finder_scope_value,
     parse_agent_conversation_finder_agent, parse_agent_conversation_finder_scope,
     AgentConversationFinderAgent, AgentConversationFinderScope, AutoCreateWorktreesForNewTabs,
+    ClinchSleepIdleAgentTabsAfterHours,
 };
 use crate::search::command_palette::agent_conversations::{AgentFilter, ScopeFilter};
 
@@ -46,4 +47,9 @@ fn agent_conversation_finder_settings_round_trip_and_legacy_values_fall_back() {
         parse_agent_conversation_finder_agent("legacy_agent"),
         AgentFilter::default()
     );
+}
+
+#[test]
+fn idle_agent_tabs_sleep_after_two_hours_by_default() {
+    assert_eq!(ClinchSleepIdleAgentTabsAfterHours::default_value(), 2);
 }

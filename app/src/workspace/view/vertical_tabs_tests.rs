@@ -911,3 +911,20 @@ fn background_work_tooltip_spells_out_each_running_kind() {
         "1 background task"
     );
 }
+
+#[test]
+fn an_asleep_row_says_since_when_and_how_to_wake_it() {
+    use chrono::TimeZone as _;
+
+    let now = chrono::Local
+        .with_ymd_and_hms(2026, 11, 13, 16, 30, 0)
+        .unwrap();
+    let since = chrono::Local
+        .with_ymd_and_hms(2026, 11, 13, 14, 14, 0)
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    assert_eq!(
+        super::asleep_tooltip(since, now),
+        "Asleep since 2:14 PM. Select it to wake it."
+    );
+}

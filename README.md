@@ -158,6 +158,25 @@ or a background subagent, ended with it. Clinch skips the prompt if you typed in
 ignores a record more than 24 hours old. Turn this off with **Settings → Clinch → Continue running
 sessions after a restart**.
 
+Every other session comes back asleep: its tab, title and conversation are there, and its agent
+does not start until you choose the tab, press **Wake** or a key in it, or something sends to it.
+An asleep tab shows a moon. This keeps a launch from starting dozens of agents you may not use;
+an idle Claude Code session holds about 700 MB.
+
+### Sleeping tabs
+
+A Claude Code or Codex tab you are not using can sleep while Clinch runs, too. Clinch stops the
+agent and its helper processes, and keeps the tab. Waking it runs the same resume command a
+restart does, so the conversation picks up where it stopped.
+
+- Right-click a tab and choose **Sleep**, or **Sleep idle sessions** for the project or for every
+  project.
+- Tabs you have not used for 2 hours sleep on their own. Change the time or turn this off with
+  **Settings → Clinch → Put idle sessions to sleep after**.
+- A session never sleeps while it is working, waiting on you, running a background shell, monitor
+  or subagent, or holding a message you have not sent. The Coordinator and the tab on screen do
+  not sleep on their own.
+
 More implementation detail is in
 [tools/agent-resume/README.md](tools/agent-resume/README.md).
 

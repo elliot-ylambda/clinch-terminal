@@ -116,6 +116,9 @@ pub struct PtyController<T: EventLoopSender> {
     // session here instead; `start_deferred_restore_command` runs it.
     defer_on_restore_command: bool,
     restore_session_ready: Option<SessionId>,
+    /// The top-level shell's session once it has bootstrapped. A pane put to sleep later re-arms
+    /// its resume command against it.
+    bootstrapped_session: Option<SessionId>,
     /// The restore or launch command typed last, as stored, until its fate is known.
     last_restore_command: Option<(String, ShellType)>,
     /// A restore or launch command the shell never started, kept for a retry.
@@ -248,6 +251,7 @@ impl<T: EventLoopSender> PtyController<T> {
             in_flight_native_completions_state: None,
             pending_on_restore_command: None,
             defer_on_restore_command: false,
+            bootstrapped_session: None,
             restore_session_ready: None,
             last_restore_command: None,
             stalled_restore_command: None,
@@ -532,9 +536,13 @@ impl<T: EventLoopSender> PtyController<T> {
         #[cfg(not(target_family = "wasm"))]
         self.bootstrap_file.take();
 
+        if !is_subshell {
+            self.bootstrapped_session.get_or_insert(session_id);
+        }
+
         // On the first non-subshell bootstrap, run the one-shot agent-resume
         // command (if any) exactly once, unless its start is deferred until the
-        // pane is first shown. `take()` guarantees it fires only once.
+        // pane is woken. `take()` guarantees it fires only once.
         if !is_subshell && self.pending_on_restore_command.is_some() {
             if self.defer_on_restore_command {
                 self.restore_session_ready.get_or_insert(session_id);
@@ -583,6 +591,18 @@ impl<T: EventLoopSender> PtyController<T> {
     pub fn set_deferred_on_restore_command(&mut self, command: String) {
         self.set_on_restore_command(command);
         self.defer_on_restore_command = true;
+    }
+
+    /// Arms a resume command in a shell that is already running: the pane's agent was stopped to
+    /// put its tab to sleep. `start_deferred_restore_command` types it when the pane wakes.
+    /// Returns false if the shell never finished starting, when there is nowhere to type it.
+    pub fn arm_restore_command_in_running_shell(&mut self, command: String) -> bool {
+        let Some(session_id) = self.bootstrapped_session else {
+            return false;
+        };
+        self.set_deferred_on_restore_command(command);
+        self.restore_session_ready = Some(session_id);
+        true
     }
 
     /// Releases a deferred restore command: it runs now if the shell has already
