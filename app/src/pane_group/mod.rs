@@ -2460,7 +2460,7 @@ impl PaneGroup {
             .collect()
     }
 
-    /// The Claude Code and Codex panes in this tab, asleep or not.
+    /// The panes in this tab whose agent Clinch restores, and so can leave or find asleep.
     pub(crate) fn agent_terminal_views(&self, ctx: &AppContext) -> Vec<ViewHandle<TerminalView>> {
         self.panes_of::<TerminalPane>()
             .filter(|pane| !self.is_pane_hidden_for_close(pane.id()))
@@ -2468,12 +2468,7 @@ impl PaneGroup {
             .filter(|terminal| {
                 crate::terminal::cli_agent_sessions::CLIAgentSessionsModel::as_ref(ctx)
                     .session(terminal.id())
-                    .is_some_and(|session| {
-                        matches!(
-                            session.agent,
-                            crate::terminal::CLIAgent::Claude | crate::terminal::CLIAgent::Codex
-                        )
-                    })
+                    .is_some_and(|session| session.agent.has_clinch_hooks())
             })
             .collect()
     }

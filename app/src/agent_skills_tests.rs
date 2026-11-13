@@ -44,7 +44,7 @@ fn bundled_skill_proactively_suggests_reusable_conversation_patterns() {
 #[test]
 fn bundled_control_skill_routes_only_persistent_processes_to_new_tabs() {
     let contents = bundled_control_skill_contents();
-    assert!(contents.contains("<!-- managed-by: Clinch; version: 1.10.0 -->"));
+    assert!(contents.contains("<!-- managed-by: Clinch; version: 1.11.0 -->"));
     assert!(contents.contains("tab create"));
     assert!(contents.contains("--cwd"));
     assert!(contents.contains("dev server"));
@@ -347,7 +347,7 @@ fn bundled_skills_describe_asleep_sessions_and_the_sleep_and_wake_commands() {
         "/../resources/bundled/agent-skills/clinch-coordinate/SKILL.md"
     );
     let coordinate = std::fs::read_to_string(path).expect("bundled clinch-coordinate SKILL.md");
-    assert!(coordinate.contains("<!-- managed-by: Clinch; version: 1.12.0 -->"));
+    assert!(coordinate.contains("<!-- managed-by: Clinch; version: 1.13.0 -->"));
     for required in [
         "`asleep`",
         "asleep_since",

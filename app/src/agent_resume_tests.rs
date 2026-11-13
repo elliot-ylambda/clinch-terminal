@@ -883,6 +883,7 @@ fn native_transcripts_backfill_claude_and_codex_first_prompts() {
         &AgentTranscriptRoots {
             claude_projects: Some(dir.join("claude-projects")),
             codex_sessions: Some(dir.join("codex-sessions")),
+            devin_log: None,
         },
     );
 
@@ -972,6 +973,7 @@ fn provider_mirror_coalesces_inflight_retries_but_preserves_repeats_after_stop()
     let roots = AgentTranscriptRoots {
         claude_projects: Some(dir.join("native")),
         codex_sessions: None,
+        devin_log: None,
     };
     let history = read_prompt_history_in(
         AgentResumeProvider::Claude,
@@ -1175,6 +1177,7 @@ fn explicit_transcript_must_stay_inside_matching_provider_root() {
     let roots = AgentTranscriptRoots {
         claude_projects: Some(dir.join("claude")),
         codex_sessions: None,
+        devin_log: None,
     };
     assert_eq!(
         read_prompt_history_in(
@@ -1747,6 +1750,7 @@ fn codex_fork_reads_prompts_inherited_through_its_parents() {
     let roots = AgentTranscriptRoots {
         claude_projects: None,
         codex_sessions: Some(dir.path().to_path_buf()),
+        devin_log: None,
     };
 
     let history = read_prompt_history_in(AgentResumeProvider::Codex, &id(3), None, None, &roots);
@@ -2182,4 +2186,100 @@ fn the_sleep_guard_copies_the_pane_entry_and_can_be_released() {
     assert!(!guard.exists());
     // Releasing a guard that was never written is not an error.
     release_shutdown_owner_in(dir.path(), &pane);
+}
+
+#[test]
+fn direct_devin_resumes_yield_their_short_ids() {
+    let devin = AgentResumeProvider::Devin;
+    for command in [
+        "devin -r brisk-otter",
+        "devin --resume brisk-otter",
+        "devin --resume=brisk-otter",
+        "devin --model opus -r brisk-otter --permission-mode smart",
+    ] {
+        assert_eq!(
+            session_id_from_direct_resume_command(devin, command).as_deref(),
+            Some("brisk-otter"),
+            "{command}"
+        );
+    }
+    for command in [
+        "devin",
+        "devin -c",
+        "devin -r",
+        "devin -- -r brisk-otter",
+        "devin -r a;b",
+    ] {
+        assert_eq!(
+            session_id_from_direct_resume_command(devin, command),
+            None,
+            "{command}"
+        );
+    }
+}
+
+#[test]
+fn a_saved_devin_session_restores_and_reopens_by_its_id() {
+    let seed = |command: &str| agent_session_seed_from_restore_command(command);
+    let expected = Some((AgentResumeProvider::Devin, "brisk-otter".to_owned()));
+    assert_eq!(
+        seed("clinch_agent_resume_launch devin brisk-otter --model opus"),
+        expected
+    );
+    assert_eq!(
+        seed("CLINCH_COORDINATOR_ROLE=YWJj+/== CLINCH_AGENT_RESTORE_FRESH=1 clinch_agent_resume_launch devin brisk-otter"),
+        expected
+    );
+    assert_eq!(seed("clinch_agent_resume_launch devin a;b"), None);
+
+    assert_eq!(
+        conversation("devin", "brisk-otter", None, " --model opus", false).reopen_command(),
+        Some("devin -r brisk-otter --model opus".to_owned())
+    );
+    assert_eq!(
+        derive_fork_command("clinch_agent_resume_launch devin brisk-otter"),
+        None,
+        "Devin only forks from inside a session"
+    );
+}
+
+#[test]
+fn devin_history_comes_from_clinch_own_log() {
+    let dir = tempfile::tempdir().unwrap();
+    let log_dir = dir.path().join("prompts").join("devin");
+    std::fs::create_dir_all(&log_dir).unwrap();
+    let log = log_dir.join("brisk-otter.jsonl");
+    std::fs::write(
+        &log,
+        concat!(
+            r#"{"ts":"2026-11-04T01:00:00Z","cwd":"/repo","bridge":"","prompt":"fix it"}"#,
+            "\n",
+            r#"{"ts":"2026-11-04T01:00:09Z","stop":true,"response":"fixed"}"#,
+            "\n",
+        ),
+    )
+    .unwrap();
+    let roots = AgentTranscriptRoots {
+        claude_projects: None,
+        codex_sessions: None,
+        devin_log: Some(log_dir),
+    };
+    let history = read_prompt_history_in(
+        AgentResumeProvider::Devin,
+        "brisk-otter",
+        None,
+        Some(dir.path()),
+        &roots,
+    );
+    assert_eq!(history.prompts.len(), 1);
+    assert_eq!(history.prompts[0].text, "fix it");
+
+    assert_eq!(
+        find_provider_transcript(AgentResumeProvider::Devin, "brisk-otter", &roots),
+        Some(log)
+    );
+    assert_eq!(
+        find_provider_transcript(AgentResumeProvider::Devin, "another", &roots),
+        None
+    );
 }

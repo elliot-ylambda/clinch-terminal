@@ -671,12 +671,7 @@ impl TerminalView {
         session_context_enabled()
             && CLIAgentSessionsModel::as_ref(app)
                 .session(self.view_id)
-                .filter(|session| {
-                    matches!(
-                        session.agent,
-                        crate::terminal::CLIAgent::Claude | crate::terminal::CLIAgent::Codex
-                    )
-                })
+                .filter(|session| session.agent.has_clinch_hooks())
                 .is_some_and(|session| {
                     session.prompt_count() >= 1
                         || matches!(
@@ -1165,11 +1160,8 @@ impl TerminalView {
     ) -> Option<String> {
         let session = CLIAgentSessionsModel::as_ref(ctx).session(self.view_id)?;
 
-        let supports_session_context = session_context_enabled()
-            && matches!(
-                session.agent,
-                crate::terminal::CLIAgent::Claude | crate::terminal::CLIAgent::Codex
-            );
+        let supports_session_context =
+            session_context_enabled() && session.agent.has_clinch_hooks();
         if !supports_session_context && session.listener.is_none() {
             return None;
         }
@@ -1194,12 +1186,7 @@ impl TerminalView {
         let Some(session) = CLIAgentSessionsModel::as_ref(ctx).session(self.view_id) else {
             return false;
         };
-        if !session_context_enabled()
-            || !matches!(
-                session.agent,
-                crate::terminal::CLIAgent::Claude | crate::terminal::CLIAgent::Codex
-            )
-        {
+        if !session_context_enabled() || !session.agent.has_clinch_hooks() {
             return false;
         }
 

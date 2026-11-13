@@ -588,6 +588,7 @@ pub(crate) fn provider_for_agent(agent: CLIAgent) -> Option<AgentResumeProvider>
     match agent {
         CLIAgent::Claude => Some(AgentResumeProvider::Claude),
         CLIAgent::Codex => Some(AgentResumeProvider::Codex),
+        CLIAgent::Devin => Some(AgentResumeProvider::Devin),
         _ => None,
     }
 }
@@ -596,6 +597,7 @@ fn agent_for_provider(provider: AgentResumeProvider) -> CLIAgent {
     match provider {
         AgentResumeProvider::Claude => CLIAgent::Claude,
         AgentResumeProvider::Codex => CLIAgent::Codex,
+        AgentResumeProvider::Devin => CLIAgent::Devin,
     }
 }
 
@@ -910,8 +912,8 @@ impl CLIAgentSessionsModel {
         self.forks_awaiting_first_prompt.insert(terminal_view_id);
     }
 
-    /// Marks a Claude Code or Codex turn as working when Clinch submits a known, non-empty prompt
-    /// through its CLI-agent prompt pipeline.
+    /// Marks the turn of an agent Clinch has hooks for as working when Clinch submits a known,
+    /// non-empty prompt through its CLI-agent prompt pipeline.
     ///
     /// Rich plugins normally report `PromptSubmit`, but command-detected sessions and Codex's
     /// OSC 9 fallback may only report completion. Raw PTY carriage returns are deliberately not
@@ -925,9 +927,7 @@ impl CLIAgentSessionsModel {
         let Some(session) = self.sessions.get_mut(&terminal_view_id) else {
             return;
         };
-        if !matches!(session.agent, CLIAgent::Claude | CLIAgent::Codex)
-            || session.is_actively_working()
-        {
+        if !session.agent.has_clinch_hooks() || session.is_actively_working() {
             return;
         }
 
@@ -1022,7 +1022,7 @@ impl CLIAgentSessionsModel {
         let Some(session) = self.sessions.get_mut(&terminal_view_id) else {
             return;
         };
-        if !matches!(session.agent, CLIAgent::Claude | CLIAgent::Codex)
+        if !session.agent.has_clinch_hooks()
             || !matches!(
                 session.status,
                 CLIAgentSessionStatus::InProgress | CLIAgentSessionStatus::Blocked { .. }

@@ -231,6 +231,7 @@ pub(super) fn snapshot(
                                     Some(("claude-code", AgentResumeProvider::Claude))
                                 }
                                 CLIAgent::Codex => Some(("codex", AgentResumeProvider::Codex)),
+                                CLIAgent::Devin => Some(("devin", AgentResumeProvider::Devin)),
                                 _ => None,
                             };
                             if let Some((provider_name, provider)) = provider {
@@ -629,6 +630,7 @@ fn provider_launch_command(
             let script = "if command codex --help 2>/dev/null | command grep -q -- --no-daemon; then exec codex --no-daemon \"$@\"; else exec codex \"$@\"; fi";
             format!("sh -c {} clinch-codex", shell_words::quote(script))
         }
+        ::local_control::agents::AgentProvider::Devin => "devin".to_owned(),
     };
     if let Some(prompt) = prompt {
         command.push_str(" -- ");

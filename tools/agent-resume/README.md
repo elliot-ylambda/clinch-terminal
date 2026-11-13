@@ -1,6 +1,6 @@
 # Agent session resume on pane restore
 
-Make Clinch re-launch your Claude Code / Codex sessions when it restores tabs after a
+Make Clinch re-launch your Claude Code / Codex / Devin sessions when it restores tabs after a
 quit/relaunch. Clinch restores each pane's layout + cwd as usual; this adds: capture the
 agent session that was running in each pane, and on restore re-run its exact resume
 command (`claude --resume <id>` / `codex resume <id>`) once the shell finishes booting.
@@ -32,6 +32,17 @@ capture (agent SessionStart hooks)          replay (Rust, in Clinch)
   shell wrapper that tried to capture the id before launch was removed because it missed
   the picker and `--continue`; normal pane creation now scrubs inherited session identity,
   while the standalone replay wrapper handles replay launches.)
+- **Devin reports everything through one hook.** `devin-hook.sh` is wired once per event into
+  `~/.config/devin/config.json`, with the event name on its command line. It records the pane's
+  session and reports status directly to the pane, in place of a notification plugin. Devin's
+  session store isn't documented, so Clinch keeps its own log (`prompts/devin/<id>.jsonl`) of each
+  prompt and final reply: that log is what `agent read` returns and what says a session has a
+  conversation to reopen. A config with comments can't be rewritten safely, so it is left alone and
+  Devin tabs go without status and restore. Devin also runs Claude's hooks by default, so
+  `claude-capture.sh` exits early when `DEVIN_PROJECT_DIR` is set. Its screen runs the agent as a
+  `devin acp` child and hooks run beneath that, so a `devin` directly under `devin` is one session,
+  owned by the outer process. `/compact` fires no prompt hooks, so `PostCompaction` is reported as
+  a session start, the way Claude Code reports a compaction.
 - **Only the outermost agent owns the pane.** Hooks combine Claude/Codex process ancestry
   with the recorded root PID/tty, so even a detached/reparented nested tool cannot replace
   a different live owner. Nested tools still receive their own prompt mirror, but cannot
@@ -287,6 +298,7 @@ separate data dir (`~/.warp-oss`), so the two never clobber each other's session
 | `clinch_agent_resume_launch` | executable replay entrypoint bundled in `Clinch.app/Contents/Resources/bin`; works without an rcfile edit |
 | `clinch_codex_launch` | pane-local Codex entrypoint for Clinch-owned fresh sessions, resumes, and forks; detects `--no-daemon` support |
 | `codex-session-start.sh` / `codex-prompt-submit.sh` / `codex-session-end.sh` | Codex registry lifecycle plus prompt-only history capture |
+| `devin-hook.sh` | Devin lifecycle hook: registry, prompt and reply log, and status events |
 | `config.toml.snippet` | Codex hook registration (installer applies it) |
 | `install-agent-plugins.sh` | legacy/manual development helper; not bundled or run by the public installer |
 | `wire-claude-hooks.sh` | idempotent native merge of Claude hook entries into settings.json (used by `install.sh`) |

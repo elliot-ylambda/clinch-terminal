@@ -2,8 +2,8 @@ CLINCH_AGENT_RESUME_RUNTIME_DIR="${${(%):-%N}:A:h}"
 # Clinch agent-resume shell integration (loaded by the bundled standalone launcher; older
 # installs may also source it from ~/.zshrc).
 #
-# Capture is done by Claude's hooks (claude-capture.sh) and Codex's
-# SessionStart hook -- they record the live session per pane. This file only provides the
+# Capture is done by Claude's hooks (claude-capture.sh), Codex's SessionStart hook and
+# Devin's hook (devin-hook.sh) -- they record the live session per pane. This file only provides the
 # *replay* side, the functions Clinch invokes on restore:
 #
 #   clinch_agent_resume_resumable()   true if an agent session id has a resumable conversation
@@ -136,6 +136,26 @@ clinch_agent_resume_codex() {
   fi
 }
 
+# Restored zsh panes begin with --no-rcs, and a degraded rcfile bootstrap can leave the install
+# directory out of PATH, so fall back to where the Devin installers put it.
+clinch_agent_resume_devin() {
+  local devin_executable candidate
+  devin_executable="$(whence -p devin 2>/dev/null)" || devin_executable=""
+  if [[ -z "$devin_executable" ]]; then
+    for candidate in "$HOME/.local/bin/devin" /opt/homebrew/bin/devin /usr/local/bin/devin; do
+      if [[ -x "$candidate" ]]; then
+        devin_executable="$candidate"
+        break
+      fi
+    done
+  fi
+  if [[ -z "$devin_executable" ]]; then
+    print -u2 -- "clinch: Devin executable not found in PATH."
+    return 127
+  fi
+  "$devin_executable" "$@"
+}
+
 # Returns 0 if <agent>'s session <id> has a *resumable* conversation on disk.
 #
 # Resumable means a session file exists AND contains at least one real turn. We locate the
@@ -154,6 +174,10 @@ clinch_agent_resume_resumable() {
     codex)
       f="$(find "${CODEX_HOME:-$HOME/.codex}/sessions" -name "*-$id.jsonl" -print -quit 2>/dev/null)"
       [[ -n "$f" ]] && grep -Eq '"role":"(user|assistant)"' "$f"
+      ;;
+    # Devin's session store isn't documented, so Clinch's own prompt log is the evidence.
+    devin)
+      grep -q '"prompt"' "${WARP_AGENT_RESUME_DIR:-$HOME/.warp/agent-resume}/prompts/devin/$id.jsonl" 2>/dev/null
       ;;
     *) return 1 ;;
   esac
@@ -259,6 +283,9 @@ clinch_agent_resume_bridge_id() {
 #    Native resume keeps the provider's original session id and repaints the complete visible
 #    terminal history. Claude's `--teleport` creates a new local id and can restore model context
 #    without repainting the prior exchange, leaving an apparently blank restored pane.
+#    Devin's store is opaque, so `devin -r <id>` can still refuse a session Clinch's log knows about
+#    (deleted with /rm-session). A fast failure falls through; a non-zero exit after a real run is
+#    the user quitting, under the same grace period as a teleport.
 # 2. Bridged claude session without a usable local transcript -> `claude --teleport <bridge>`.
 #    This preserves cloud-only recovery (including turns continued from another device) without
 #    replacing a complete local transcript. A teleport that fails *fast* (dirty tree, git lock
@@ -287,10 +314,18 @@ clinch_agent_resume_launch() {
   [[ "$agent" == claude ]] && bridge="$(clinch_agent_resume_bridge_id)"
   if clinch_agent_resume_resumable "$agent" "$id"; then
     case "$agent" in
-      claude) claude --resume "$id" "$@" ;;
-      codex)  clinch_agent_resume_codex resume "$id" "$@" ;;
+      claude) claude --resume "$id" "$@"; return $? ;;
+      codex)  clinch_agent_resume_codex resume "$id" "$@"; return $? ;;
+      devin)
+        local _clinch_devin_start=$SECONDS _clinch_devin_rc
+        clinch_agent_resume_devin -r "$id" "$@"
+        _clinch_devin_rc=$?
+        if (( _clinch_devin_rc == 0 || SECONDS - _clinch_devin_start > ${WARP_AGENT_RESUME_TELEPORT_GRACE:-15} )); then
+          return $_clinch_devin_rc
+        fi
+        echo "clinch: devin could not reopen session $id." >&2
+        ;;
     esac
-    return $?
   fi
   if [[ -n "$bridge" ]]; then
     echo "clinch: local claude transcript is unavailable -- teleporting cloud session ($bridge)." >&2
@@ -324,6 +359,7 @@ clinch_agent_resume_launch() {
   case "$agent" in
     claude) WARP_AGENT_RESUME_STARTED_FRESH=1 claude "$@" ;;
     codex)  clinch_agent_resume_codex "$@" ;;
+    devin)  WARP_AGENT_RESUME_STARTED_FRESH=1 clinch_agent_resume_devin "$@" ;;
   esac
 }
 

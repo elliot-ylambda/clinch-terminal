@@ -32,7 +32,7 @@
 Clinch is an independent AGPL fork of Warp designed for people who keep several AI coding threads
 moving at once. Project tabs keep terminal tabs, splits, working directories, panels, and local
 agent state grouped as durable workspaces. With session capture enabled, Clinch can reopen a
-recoverable Claude Code or Codex conversation in the pane that owned it.
+recoverable Claude Code, Codex or Devin conversation in the pane that owned it.
 
 The stable app runs without a Clinch or Warp account and without a configured Warp backend,
 telemetry destination, or crash reporter. Clinch keeps its own UI configuration, so it can run
@@ -40,8 +40,8 @@ alongside Warp without inheriting Warp's settings.
 
 ## Why Clinch
 
-- **Pick up where the agent left off.** Reopen captured Claude Code and Codex conversations in
-  their original panes when the provider transcript is still recoverable.
+- **Pick up where the agent left off.** Reopen captured Claude Code, Codex and Devin conversations
+  in their original panes when the provider can still recover them.
 - **Keep parallel projects separate.** Preserve project order, working directories, terminal
   tabs, splits, and panels—and move live tabs between projects or windows.
 - **See what needs attention.** Local agent-status badges and macOS notifications help surface a
@@ -112,16 +112,18 @@ can coexist with Warp without inheriting Warp's theme, zoom, keybindings, or oth
 
 ## Session restore is enabled by default
 
-Clinch can reopen a captured Claude Code or Codex conversation in the pane that owned it. This
+Clinch can reopen a captured Claude Code, Codex or Devin conversation in the pane that owned it. This
 requires provider hooks, so Clinch enables its local session-capture integration on first launch.
-You can turn it off or back on at any time from **Clinch Settings → Agents → Claude Code and Codex
-session capture**.
+You can turn it off or back on at any time from **Clinch Settings → Agents → Claude Code, Codex and
+Devin session capture**.
 
 While session capture is enabled, Clinch:
 
-- adds clearly marked managed hooks to `~/.claude/settings.json` and `~/.codex/config.toml`;
+- adds clearly marked managed hooks to `~/.claude/settings.json`, `~/.codex/config.toml` and
+  `~/.config/devin/config.json`, leaving a Devin config with comments untouched;
 - installs Clinch-owned helper files in `~/.warp/agent-resume-bin/`; and
-- stores local pane mappings, a journal, and prompt mirrors in `~/.warp/agent-resume/`; and
+- stores local pane mappings, a journal, and prompt mirrors in `~/.warp/agent-resume/`, including
+  Devin's final replies because its own history has no documented format; and
 - records the enabled/disabled preference and a hash/mode receipt under
   `~/Library/Application Support/sh.clinch.Clinch/agent-integration/`.
 
@@ -281,7 +283,7 @@ privileged update authorizer.
 | Plan-limit gauges | **Off by default**; only if you enable them in Settings | `api.anthropic.com` for Claude. For Codex, your installed `codex app-server` asks its own service using your Codex login |
 | [Remote Control](#remote-control-beta) | **Off by default**; only while you have it enabled | Your own tailnet, phone to Mac — no Clinch relay |
 | Language servers, MCP servers, remote assets | Only when you start them | Wherever you point them |
-| Claude Code, Codex, SSH, package tooling | Only when you run them | Their own services |
+| Claude Code, Codex, Devin, SSH, package tooling | Only when you run them | Their own services |
 
 An update check uses ordinary HTTPS GETs for the release feed, manifest, and signature. Clinch
 attaches no unique identifier, machine fingerprint, installed version, operating-system version,
@@ -336,8 +338,8 @@ These invariants are also locked by tests in
 [`config_tests.rs`](crates/warp_core/src/channel/config_tests.rs): a change that reintroduced a
 telemetry destination, a crash reporter, or a live backend URL fails the build.
 
-Session-capture data stays in local Clinch-owned files. Claude Code and Codex continue to manage
-their own transcripts and credentials. Clinch does not delete provider transcripts or Keychain
+Session-capture data stays in local Clinch-owned files. Claude Code, Codex and Devin continue to
+manage their own transcripts and credentials. Clinch does not delete provider transcripts or Keychain
 credentials during uninstall.
 
 Clinch launches the provider CLIs with their existing sign-ins. On macOS, Clinch's own Keychain

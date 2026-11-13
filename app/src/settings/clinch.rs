@@ -46,7 +46,7 @@ define_settings_group!(ClinchSettings, settings: [
         sync_to_cloud: SyncToCloud::Never,
         private: false,
         toml_path: "clinch.sessions.continue_after_restart",
-        description: "After Clinch restarts or updates, tell Claude Code and Codex sessions that were mid-turn to continue where they left off.",
+        description: "After Clinch restarts or updates, tell Claude Code, Codex and Devin sessions that were mid-turn to continue where they left off.",
     },
     // An idle Claude Code tab holds about 700 MB, and a Codex tab keeps its helper processes too,
     // so dozens of forgotten tabs can fill memory. A tab asleep has no agent process and wakes on
@@ -78,7 +78,7 @@ define_settings_group!(ClinchSettings, settings: [
         sync_to_cloud: SyncToCloud::Never,
         private: false,
         toml_path: "clinch.coordinator.enabled",
-        description: "Pin a coordinator Claude Code or Codex session first in each project's tab list. Closing a coordinator turns this off.",
+        description: "Pin a coordinator Claude Code, Codex or Devin session first in each project's tab list. Closing a coordinator turns this off.",
     },
     coordinator_agent: CoordinatorSessionAgent {
         type: String,
@@ -87,7 +87,7 @@ define_settings_group!(ClinchSettings, settings: [
         sync_to_cloud: SyncToCloud::Never,
         private: false,
         toml_path: "clinch.coordinator.agent",
-        description: "The agent that new coordinator sessions start: \"claude\" or \"codex\".",
+        description: "The agent that new coordinator sessions start: \"claude\", \"codex\" or \"devin\".",
     },
     // Auto-coordinate spends turns of the user's own Claude or Codex plan, so a coordinator acts
     // on its own only once the user switches it on. Each project's switch overrides this default.
@@ -170,6 +170,7 @@ pub fn parse_agent_conversation_finder_agent(value: &str) -> AgentFilter {
     match value {
         "claude" => AgentFilter::Claude,
         "codex" => AgentFilter::Codex,
+        "devin" => AgentFilter::Devin,
         "all" => AgentFilter::All,
         _ => AgentFilter::default(),
     }
@@ -180,6 +181,7 @@ pub fn agent_conversation_finder_agent_value(agent: AgentFilter) -> &'static str
         AgentFilter::All => "all",
         AgentFilter::Claude => "claude",
         AgentFilter::Codex => "codex",
+        AgentFilter::Devin => "devin",
     }
 }
 

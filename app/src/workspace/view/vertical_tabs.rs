@@ -328,7 +328,7 @@ fn oz_icon_fill(theme: &WarpTheme) -> WarpThemeFill {
     theme.main_text_color(theme.background())
 }
 
-/// Returns the same Claude/Codex activity classification used by the project-tab hover card.
+/// Returns the same agent activity classification used by the project-tab hover card.
 /// Working follows the title glyph, so the dot never disagrees with the title beside it.
 /// Ambient runs keep their cloud/status treatment, and disabling agent status on tabs preserves
 /// the existing plain-terminal fallback.
@@ -349,7 +349,7 @@ fn vertical_tab_cli_agent_activity(
     else {
         return None;
     };
-    if !matches!(agent, CLIAgent::Claude | CLIAgent::Codex) {
+    if !agent.has_clinch_hooks() {
         return None;
     }
 
@@ -1902,6 +1902,7 @@ fn bookmarked_session_agent(conversation: &AgentConversation) -> Option<CLIAgent
     match conversation.agent.as_str() {
         "claude" => Some(CLIAgent::Claude),
         "codex" => Some(CLIAgent::Codex),
+        "devin" => Some(CLIAgent::Devin),
         _ => None,
     }
 }
@@ -4832,8 +4833,7 @@ fn terminal_agent_text(terminal_view: &TerminalView, app: &AppContext) -> Termin
     let cli_agent_session = CLIAgentSessionsModel::as_ref(app).session(terminal_view.id());
     let is_plugin_backed = cli_agent_session.is_some_and(|session| session.listener.is_some());
     let has_clinch_session_context = session_context_enabled()
-        && cli_agent_session
-            .is_some_and(|session| matches!(session.agent, CLIAgent::Claude | CLIAgent::Codex));
+        && cli_agent_session.is_some_and(|session| session.agent.has_clinch_hooks());
     let is_ambient_agent = terminal_view.is_ambient_agent_session(app);
 
     let mut agent_text = TerminalAgentText {

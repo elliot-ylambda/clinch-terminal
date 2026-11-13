@@ -317,7 +317,7 @@ pub(crate) enum AutoCoordinateStatus {
     WaitingForCoordinator,
     /// Something is due, but the user is typing to the coordinator.
     WaitingForUser,
-    /// The coordinator is not running a Claude Code or Codex session.
+    /// The coordinator is not running a Claude Code, Codex or Devin session.
     CoordinatorUnavailable,
 }
 
@@ -592,7 +592,7 @@ impl Workspace {
                 "Waiting for the coordinator to finish its turn.".to_owned()
             }
             AutoCoordinateStatus::CoordinatorUnavailable => {
-                "The coordinator isn't running Claude Code or Codex.".to_owned()
+                "The coordinator isn't running Claude Code, Codex or Devin.".to_owned()
             }
             AutoCoordinateStatus::Idle => {
                 let watched = match self.auto_coordinate_watched_sessions(app) {

@@ -557,7 +557,8 @@ fn submission_starts_agent_turn(text: &[u8]) -> bool {
 fn rich_input_submit_strategy(agent: CLIAgent, text: &[u8]) -> RichInputSubmitStrategy {
     match agent {
         CLIAgent::Codex => RichInputSubmitStrategy::BracketedPaste,
-        CLIAgent::Copilot => RichInputSubmitStrategy::BracketedPasteDelayedEnter(
+        // Shift+Enter is Devin's newline, so unmarked text with a line break would submit early.
+        CLIAgent::Copilot | CLIAgent::Devin => RichInputSubmitStrategy::BracketedPasteDelayedEnter(
             CLI_AGENT_BRACKETED_PASTE_ENTER_DELAY,
         ),
         CLIAgent::Claude if text.len() > CLAUDE_UNMARKED_TEXT_MAX_BYTES => {
@@ -1502,7 +1503,7 @@ impl TerminalView {
         let Some(session) = CLIAgentSessionsModel::as_ref(ctx).session(self.view_id) else {
             return false;
         };
-        if !matches!(session.agent, CLIAgent::Claude | CLIAgent::Codex) || session.is_remote() {
+        if !session.agent.has_clinch_hooks() || session.is_remote() {
             return false;
         }
         if matches!(
@@ -1520,14 +1521,15 @@ impl TerminalView {
 
     /// Whether this pane's agent shows an input box with nothing in it. A picker or a dialog at
     /// startup, which a typed prompt would answer by accident, doesn't count.
+    ///
+    /// Devin's input box isn't read from the screen yet. The hook its session reports when it
+    /// starts is the nearest evidence that it has finished loading.
     pub(crate) fn agent_composer_is_empty(&self, ctx: &AppContext) -> bool {
         CLIAgentSessionsModel::as_ref(ctx)
             .session(self.view_id)
-            .is_some_and(|session| {
-                matches!(
-                    self.native_composer(session.agent),
-                    Some(NativeComposer::Empty)
-                )
+            .is_some_and(|session| match session.agent {
+                CLIAgent::Devin => session.received_rich_notification,
+                agent => matches!(self.native_composer(agent), Some(NativeComposer::Empty)),
             })
     }
 
@@ -1616,7 +1618,7 @@ impl TerminalView {
             // Released but still booting: not yet owning the terminal, or not yet
             // reporting status through its hooks. Queued messages wait this out.
             Some("starting")
-        } else if !matches!(session.agent, CLIAgent::Claude | CLIAgent::Codex) {
+        } else if !session.agent.has_clinch_hooks() {
             Some("unsupported_provider")
         } else if session.is_remote() {
             Some("remote_session")

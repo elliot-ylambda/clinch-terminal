@@ -244,6 +244,8 @@ impl TerminalView {
         let Some(session) = CLIAgentSessionsModel::as_ref(ctx).session(self.view_id) else {
             return Some(SleepBlocker::NoAgent);
         };
+        // Only the agents whose way of stopping has been checked. Devin comes back asleep after
+        // a restart like the others, but a running one is left alone.
         if !matches!(session.agent, CLIAgent::Claude | CLIAgent::Codex) || session.is_remote() {
             return Some(SleepBlocker::NoAgent);
         }
